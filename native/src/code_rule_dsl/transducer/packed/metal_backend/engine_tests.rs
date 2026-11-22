@@ -4,7 +4,7 @@ use super::launch::*;
 use crate::code_rule_dsl::transducer::packed::Error;
 
 #[test]
-fn production_entry_preserves_the_outer_budget_and_returns_launch_limit() {
+fn production_entry_preserves_the_outer_budget_and_fails_past_it() {
     use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
     use crate::code_rule_dsl::transducer::packed::{Program, metal_program_backend};
     use ast_grep_core::tree_sitter::StrDoc;
@@ -13,10 +13,10 @@ fn production_entry_preserves_the_outer_budget_and_returns_launch_limit() {
     use std::sync::Arc;
 
     let _evaluation = LaunchScope::enter();
+    // The outer evaluation's whole budget taken: the production entry's first launch is past it.
     for _ in 0..KERNEL_LAUNCH_LIMIT {
-        assert!(reserve());
+        attempt(1, "the outer evaluation's", [1; 3], [1; 3], false, Vec::new());
     }
-    assert!(!reserve());
     let source = "name\n";
     let grammar = Grammar::new(GrammarDialect::Python).unwrap();
     let native = StrDoc::new(source, GrammarDialect::Python);
@@ -30,16 +30,11 @@ fn production_entry_preserves_the_outer_budget_and_returns_launch_limit() {
         &GrammarDialect::Python.get_ts_language(),
     )
     .unwrap();
-    let result = metal_program_backend::execute_packed_with_result_limits(
-        &metal_program_backend::compile_interpreter().unwrap(),
-        &[program],
-        &[doc],
-        &anchors,
-        None,
-    );
-    assert!(
-        matches!(result, Err(Error::BackendLaunchLimit)),
-        "production must preserve the evaluation budget"
-    );
-    assert_eq!(check_submission(), Err(Error::BackendLaunchLimit));
+    let interpreter = metal_program_backend::compile_interpreter().unwrap();
+    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        metal_program_backend::execute_packed_with_result_limits(&interpreter, &[program], &[doc], &anchors, None)
+    }));
+    // Past the budget is the hard failure (decision 0601), not an error the caller falls back on.
+    let payload = failed.err().expect("production must preserve the evaluation budget");
+    assert!(payload.downcast::<rerail_accel::exec::OverBudget>().is_ok(), "the launch budget's failure");
 }

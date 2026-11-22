@@ -122,12 +122,12 @@ impl Grammar {
     }
 
     /// Every grammar the engine registered, in the order error messages list them.
-    pub(crate) fn all() -> &'static [Grammar] {
+    pub fn all() -> &'static [Grammar] {
         GRAMMARS.get().map_or(&[], Vec::as_slice)
     }
 
     /// The language of this grammar's trees.
-    pub(crate) fn lang(self) -> SubLang {
+    pub fn lang(self) -> SubLang {
         SubLang(self)
     }
 
@@ -164,7 +164,7 @@ impl Grammar {
     }
 
     /// The host node kinds the grammar parses.
-    pub(crate) fn host_kinds(self) -> &'static [&'static str] {
+    pub fn host_kinds(self) -> &'static [&'static str] {
         self.0.host_kinds()
     }
 
@@ -172,11 +172,11 @@ impl Grammar {
         self.0.reads_comments()
     }
 
-    pub(crate) fn of_host_syntax(self) -> bool {
+    pub fn of_host_syntax(self) -> bool {
         self.0.of_host_syntax()
     }
 
-    pub(crate) fn item_resolves(self) -> bool {
+    pub fn item_resolves(self) -> bool {
         self.0.item_resolves()
     }
 
@@ -186,7 +186,7 @@ impl Grammar {
 
     /// Whether a tree depends on the literal alone, so a syntax error elsewhere cannot change it:
     /// whether a string is a type definition depends on the names the file binds.
-    pub(crate) fn reads_only_the_node(self) -> bool {
+    pub fn reads_only_the_node(self) -> bool {
         self.0.reads_only_the_node()
     }
 

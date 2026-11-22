@@ -42,8 +42,12 @@ pub fn program(name: &str, text: &str) -> Result<&'static Program, String> {
 /// A define is portable where a function constant is Metal's alone, and the compiler folds it the same way.
 ///
 /// A program is kept by its name, its text and its defines: two texts of one name are two programs.
+///
+/// Each program has a slot of its own: two threads that ask for one program compile it once (the second waits for
+/// it), and two programs compile at once (`compile_ahead` compiles a list so).
 pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<&'static Program, String> {
-    static PROGRAMS: OnceLock<Mutex<HashMap<String, Result<&'static Program, String>>>> = OnceLock::new();
+    type Slot = std::sync::Arc<OnceLock<Result<&'static Program, String>>>;
+    static PROGRAMS: OnceLock<Mutex<HashMap<String, Slot>>> = OnceLock::new();
     let digest = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -51,16 +55,126 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
         h.finish()
     };
     let key: String = std::iter::once(format!("{name} {digest:016x}")).chain(defines.iter().map(|(n, v)| format!(" -D{n}={v}"))).collect();
-    let mut programs = PROGRAMS.get_or_init(Default::default).lock().unwrap();
-    programs
-        .entry(key.clone())
-        .or_insert_with(|| {
-            let shared = crate::shared::get().ok_or("no device")?;
+    let slot: Slot = std::sync::Arc::clone(PROGRAMS.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).entry(key.clone()).or_default());
+    slot.get_or_init(|| {
+        let shared = crate::shared::get().ok_or("no device")?;
+        let started = std::time::Instant::now();
+        let (library, preprocessed, bytes) = if crate::vec::on(&shared.device) {
+            (crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?, started.elapsed(), text.len())
+        } else {
             let source = preprocess_with(name, text, defines)?;
-            let library = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?;
-            Ok(&*Box::leak(Box::new(Program { name: key, library, functions: Default::default() })))
+            let preprocessed = started.elapsed();
+            (ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?, preprocessed, source.len())
+        };
+        // `RERAIL_GPU_TIMES`, a measurement aid: each program's preprocessing and compile (or load), on stderr.
+        if std::env::var_os("RERAIL_GPU_TIMES").is_some() {
+            eprintln!("gpu program {name}: preprocessed {:.3} s ({bytes} bytes), compiled {:.3} s", preprocessed.as_secs_f64(), (started.elapsed() - preprocessed).as_secs_f64());
+        }
+        Ok(&*Box::leak(Box::new(Program { name: key, library, functions: Default::default() })))
+    })
+    .clone()
+}
+
+/// A program compiled ahead of its first use (decision 0395's tiers on the device layer): `make` asks for it as its
+/// use does (the same call, so the same name, defines and text, and the same entry in the store), and its use then
+/// finds it, in this process or in the store.
+pub struct Ahead {
+    pub name: String,
+    pub make: Box<dyn Fn() -> Result<(), String> + Send + Sync>,
+}
+
+impl Ahead {
+    pub fn new(name: impl Into<String>, make: impl Fn() -> Result<(), String> + Send + Sync + 'static) -> Ahead {
+        Ahead { name: name.into(), make: Box::new(make) }
+    }
+}
+
+/// What compiling one program ahead did: its time, the libraries it loaded (shipped or from the store) and
+/// compiled, and the entries it used (`kernels ship` copies them).
+#[derive(Debug)]
+pub struct Made {
+    pub name: String,
+    pub seconds: f64,
+    pub loaded: u64,
+    pub compiled: u64,
+    pub entries: Vec<std::path::PathBuf>,
+    pub result: Result<(), String>,
+    /// Not started: the list's time to start was up (`Bound::start_by`). Its use compiles it, or a later list.
+    pub skipped: bool,
+    /// Still compiling when the list's time was up (`Bound::end_by`): left to its thread, which the process may end.
+    pub unfinished: bool,
+}
+
+/// How long `compile_ahead` may take: no compile starts after `start_by`, and it returns at `end_by` whatever is still
+/// compiling (a compile cannot be stopped; its result is a rename into the store, so one cut off leaves nothing).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Bound {
+    pub start_by: Option<std::time::Instant>,
+    pub end_by: Option<std::time::Instant>,
+}
+
+/// Every program of `list`, `threads` at a time (each compile is the device compiler's, on the host's cores): in the
+/// list's order. A program that fails is reported, not fatal: its use fails the same way, saying why. Within `bound`:
+/// a bounded step, which the next one goes on from, since the store keeps what this one made.
+pub fn compile_ahead(list: Vec<Ahead>, threads: usize, bound: Bound) -> Vec<Made> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Work {
+        list: Vec<Ahead>,
+        next: AtomicUsize,
+        done: AtomicUsize,
+        made: Mutex<Vec<Option<Made>>>,
+        /// Each entry's start, while it compiles.
+        running: Mutex<Vec<Option<std::time::Instant>>>,
+    }
+    let n = list.len();
+    let work = Arc::new(Work { list, next: AtomicUsize::new(0), done: AtomicUsize::new(0), made: Mutex::new((0..n).map(|_| None).collect()), running: Mutex::new(vec![None; n]) });
+    for _ in 0..threads.clamp(1, n.max(1)) {
+        let work = Arc::clone(&work);
+        std::thread::spawn(move || {
+            loop {
+                let i = work.next.fetch_add(1, Ordering::Relaxed);
+                let Some(a) = work.list.get(i) else { break };
+                let m = if bound.start_by.is_some_and(|u| std::time::Instant::now() >= u) {
+                    Made { name: a.name.clone(), seconds: 0.0, loaded: 0, compiled: 0, entries: Vec::new(), result: Ok(()), skipped: true, unfinished: false }
+                } else {
+                    let started = std::time::Instant::now();
+                    work.running.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[i] = Some(started);
+                    let (loaded, compiled) = rerail_device::store::here();
+                    let (result, entries) = rerail_device::store::recording(|| (a.make)());
+                    let (l, c) = rerail_device::store::here();
+                    let seconds = started.elapsed().as_secs_f64();
+                    Made { name: a.name.clone(), seconds, loaded: l - loaded, compiled: c - compiled, entries, result, skipped: false, unfinished: false }
+                };
+                work.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[i] = Some(m);
+                work.done.fetch_add(1, Ordering::Release);
+            }
+        });
+    }
+    while work.done.load(Ordering::Acquire) < n {
+        if bound.end_by.is_some_and(|e| std::time::Instant::now() >= e) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // Each slot taken, not the list: a compile left running still writes its own slot.
+    let made: Vec<Option<Made>> = work.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter_mut().map(Option::take).collect();
+    let running = work.running.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    made.into_iter()
+        .enumerate()
+        .map(|(i, m)| {
+            m.unwrap_or_else(|| {
+                let a = &work.list[i];
+                let seconds = running[i].map_or(0.0, |s| s.elapsed().as_secs_f64());
+                Made { name: a.name.clone(), seconds, loaded: 0, compiled: 0, entries: Vec::new(), result: Ok(()), skipped: running[i].is_none(), unfinished: running[i].is_some() }
+            })
         })
-        .clone()
+        .collect()
+}
+
+/// The threads `compile_ahead` takes by default: half the host's cores (a compile is one core's), at least one.
+pub fn ahead_threads() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1))
 }
 
 impl Program {

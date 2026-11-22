@@ -13,8 +13,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 // Its tests parse Python, so the engine mounts it for them (tools/cratify/runtime-hosts.tsv); here it is a test hook.
-#[cfg(all(feature = "test-hooks", not(test)))]
-pub mod admission_spike;
+// cratify: `admission_spike` is rerail-transducer-cpu's (it mounts it)
 /// G's literal anchors over its positional search index (O21).
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]
@@ -26,7 +25,7 @@ use literal_anchors::*;
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]
 pub mod sql_backend;
-pub mod capture_run;
+// cratify: `capture_run` is rerail-transducer-cpu's (it mounts it)
 // capture_run_entry_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // capture_run_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
@@ -47,19 +46,46 @@ pub mod metal_batch_abi;
 pub mod device;
 pub use device::{RootJobs, RootsFound};
 
-#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+/// The CPU's compiled executor (rerail-transducer-cpu's `native_cpu`: a batch's programs compiled to native code by
+/// Cranelift), behind an interface as the device is. It registers itself (`CPU`, boot, and each test binary below
+/// boot that runs `CpuJit`); with none, `CpuJit` is refused (`Error::UnsupportedBackend`), as a device's backend with
+/// no device is.
+pub trait CpuExecutor: Send + Sync {
+    /// The batch on the compiled CPU, from `anchors`, at most `result_limits` results per program, each task held to
+    /// `budget` (decision 0334).
+    fn execute_packed(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error>;
+    /// The batch's outcomes on the compiled CPU.
+    fn execute_outcomes(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error>;
+    /// `program` compiled ahead of its first batch.
+    fn warm(&self, program: &Program) -> Result<(), Error>;
+    /// Whether every one of `programs` is compiled.
+    fn compiled(&self, programs: &[Program]) -> Result<bool, Error>;
+    /// `program` compiled into the cache (the background compilation of `CpuBackground`).
+    fn compile(&self, program: &Program) -> Result<(), Error>;
+}
+
+/// The registered compiled CPU executor.
+pub static CPU: rerail_registry::Slot<&'static dyn CpuExecutor> =
+    rerail_registry::Slot::new("the compiled CPU executor (transducer::packed::CPU)");
+
+/// The registered compiled CPU executor, or `UnsupportedBackend`.
+pub(in crate::code_rule_dsl) fn cpu() -> Result<&'static dyn CpuExecutor, Error> {
+    CPU.try_get().ok_or(Error::UnsupportedBackend)
+}
+
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
 pub fn reset_metal_execution_metrics() {
     if let Some(device) = device::matcher() {
         device.reset_execution_metrics();
     }
 }
 
-#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
 pub fn metal_execution_metrics() -> (usize, usize) {
     device::matcher().map_or((0, 0), |device| device.execution_metrics())
 }
-// The verifier's proofs (05 Phase 4 row 2, from Tempo's transducer, kept under `packed/verify/`
-// and declared here so their `super::` is the program and its opcodes, as in Tempo).
+// The verifier's proofs (05 Phase 4 row 2, from the predecessor's transducer, kept under `packed/verify/`
+// and declared here so their `super::` is the program and its opcodes, as in the predecessor).
 // cratify: `bounded_repeat_proof` is rerail-device-metal's (it mounts it)
 #[path = "packed/verify/closure_proof.rs"]
 pub mod closure_proof;
@@ -76,15 +102,11 @@ pub mod terminal_repeat_proof;
 #[cfg(test)]
 #[path = "packed/verify/backend_parity_tests.rs"]
 pub mod backend_parity_tests;
-// The tree-sitter query front end (05 Phase 4 row 4, from Tempo's `scm.rs`).
+// The tree-sitter query front end (05 Phase 4 row 4, from the predecessor's `scm.rs`).
 #[path = "packed/compile/scm.rs"]
 pub mod scm;
 // W's composite matcher as label passes and programs (06-first-slice S1).
-#[path = "packed/compile/matcher.rs"]
-#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-pub mod compile_matcher;
-// cratify: a re-export of rerail-device-metal's, which its facades of this module make
-pub use compile_matcher::{Backend as MatcherBackend, LoweredMatcher, LoweredWave, WaveRun};
+// cratify: `compile_matcher` (W's matchers and waves, lowered) is rerail-transducer's (it mounts it, over the CPU)
 // Label programs as node-set formulas (decision 0036).
 #[path = "packed/compile/sets.rs"]
 pub mod compile_sets;
@@ -96,22 +118,11 @@ pub use compile_micro::{Emit, Frames, Micro, RootRecord, steps as micro_steps};
 // cratify: `metal_semantic_conformance` is rerail-engine's (it mounts it: its fixtures parse documents)
 pub mod compilation;
 pub use compilation::PlanId;
-pub mod native_cpu;
-pub mod native_cpu_capture;
-pub mod native_cpu_capture_pair;
+// cratify: `native_cpu` and its parts are rerail-transducer-cpu's (it mounts them, over the base)
 use rerail_compiler::native_cpu_codegen;
-pub mod native_cpu_lua;
-pub mod native_cpu_output;
-pub mod native_cpu_output_sort;
-pub mod native_cpu_output_transform;
-pub mod native_cpu_reduction;
-pub mod native_cpu_regex;
-pub mod native_cpu_scheduler;
-pub mod native_cpu_tape;
-pub mod native_cpu_value;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
 #[allow(unused_imports)]
-pub use rerail_compiler::native_cpu_rows;
+pub use rerail_cpu_block::native_cpu_rows;
 // Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
 pub mod rows_sort;
 pub mod native_ir;
@@ -330,8 +341,8 @@ fn restarting_grown(
     crate::code_rule_dsl::logic::profile::decision("evaluations over their budget, restarted with twice the budget (0334)", || {
         format!("{} evaluations at {budget:?}", unfinished.len())
     });
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-        eprintln!("TEMPO_PACKED_RESTART budget={budget:?} next={next:?} unfinished={unfinished:?}");
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!("RERAIL_PACKED_RESTART budget={budget:?} next={next:?} unfinished={unfinished:?}");
     }
     let mut rerun = anchors.iter().map(|file| vec![Vec::new(); file.len()]).collect::<Vec<_>>();
     for &(file, program, _) in &unfinished {
@@ -2382,7 +2393,7 @@ impl Program {
     }
 
     pub fn label_name(&self, label: u16) -> Option<&str> {
-        rerail_compiler::rir_asm::label_name(self, label)
+        rerail_rir::rir_asm::label_name(self, label)
     }
 
     pub fn string_value(&self, string: u16) -> Option<&str> {
@@ -3447,7 +3458,7 @@ impl Program {
         self.execute_roots_from_with_work_limit(tape, roots, initial_pc, stats, MAX_STEPS_PER_PATH)
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
     pub fn execute_terminal_reference_with_work_limit(
         &self,
         tape: &TapeDoc,
@@ -4256,13 +4267,7 @@ fn execute_planned_once(
             let limits = result_limits.map_or_else(|| vec![u32::MAX; programs.len()], <[u32]>::to_vec);
             packed_batch::PackedExecution::interpret(programs, files, anchors, &limits)
         }
-        ExecutionBackend::CpuJit => native_cpu::execute_batch_packed_budgeted(
-            programs,
-            files,
-            anchors,
-            result_limits,
-            budget,
-        ),
+        ExecutionBackend::CpuJit => cpu()?.execute_packed(programs, files, anchors, result_limits, budget),
         ExecutionBackend::MetalInterpreter => {
             device::required()?.execute_packed(device::Engine::Interpreter, programs, files, anchors, result_limits, budget)
         }
@@ -4283,7 +4288,7 @@ pub fn execute_with_backend_outcomes(
 ) -> Result<BatchOutcome, Error> {
     match compilation::resolve(backend, programs)? {
         ExecutionBackend::CpuInterpreter => execute_batch_outcomes(programs, files, anchors),
-        ExecutionBackend::CpuJit => native_cpu::execute_batch_outcomes(programs, files, anchors),
+        ExecutionBackend::CpuJit => cpu()?.execute_outcomes(programs, files, anchors),
         backend @ (ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit) => {
             device::required()?.execute_outcomes(backend, programs, files, anchors)
         }
@@ -4485,8 +4490,9 @@ pub(in crate::code_rule_dsl) fn warm_production_programs(programs: &[Program]) -
     if let Some(device) = device::matcher() {
         return device.warm(programs);
     }
+    let cpu = cpu()?;
     for program in programs {
-        native_cpu::warm_jit(program)?;
+        cpu.warm(program)?;
     }
     Ok(())
 }

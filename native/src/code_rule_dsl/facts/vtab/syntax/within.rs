@@ -79,11 +79,32 @@ const LOOKUP_NS: f64 = 150.0;
 /// and the rows written.
 const SOLVE_NS: f64 = 12.0;
 
+/// A chunk of the rows made on lookup, in a block of the run's (decision 0353): an axis's answer written once where it
+/// is computed. On the heap before (a 300-file run's peak held 13 MB of them under one stratum's joins, on the M3).
+/// Written and read as atomics: a row is written under the lock, and read by any thread once its run is handed out.
+struct Pairs(crate::code_rule_dsl::facts::rows::BlockVec<u64>);
+
+impl Pairs {
+    fn new(n: usize) -> Self {
+        let mut v = crate::code_rule_dsl::facts::rows::BlockVec::with_capacity_in(None, n);
+        v.resize(n, 0);
+        Pairs(v)
+    }
+
+    /// Its row `i`.
+    fn at(&self, i: usize) -> &AtomicU64 {
+        assert!(i < self.0.len());
+        // SAFETY: `i` is within the vector, whose `u64`s lie aligned in its block for as long as it lives, and are
+        // only ever reached through this, as atomics.
+        unsafe { &*self.0.as_ptr().add(i).cast::<AtomicU64>() }
+    }
+}
+
 pub struct Within {
     batch: Arc<Batch>,
     mode: Mode,
     /// Per side, each row: inner node row << 32 | outer node row (rows of the batch's `node`).
-    chunks: [[OnceLock<Box<[AtomicU64]>>; CHUNKS]; 2],
+    chunks: [[OnceLock<Pairs>; CHUNKS]; 2],
     /// Per side, the rows made and per node row the run of its rows as inner (`0`) or outer (`1`).
     made: Mutex<([usize; 2], [FxHashMap<u32, (u32, u32)>; 2])>,
     /// Every node's containers made (a scan): the rows they span.
@@ -95,14 +116,18 @@ pub struct Within {
     len: AtomicUsize,
     /// An axis's set: per dialect tag, whether each kind code is in it.
     members: FxHashMap<u8, Box<[bool]>>,
+    /// The set's kind atoms, ascending: what the device tests a node's kind against (`has_walk`).
+    kinds: Arc<[i64]>,
     /// Where the batch's solve runs.
     binding: crate::code_rule_dsl::facts::nearest::Binding,
     /// The `n` lookups the planner expects, summed over its plans (`expect_lookups`).
     expected: Mutex<f64>,
     /// The batch's solve chosen: the next `n` lookup reads it.
     chosen: std::sync::atomic::AtomicBool,
-    /// The `n` side of every node, made once (`solved`).
-    solved: OnceLock<Solved>,
+    /// The `n` side of every node, made once (`solved`): its own, or another axis's over the same set (`solves`).
+    solved: OnceLock<Arc<Solved>>,
+    /// The solves of the batch's axes over its set (`Solves`), where it shares them.
+    solves: Option<Arc<Solves>>,
     /// The format a test reads the documents' tapes in (`reading`); else each is read as held.
     format: Option<Format>,
     /// Per document, the axis's set as its tape's code numbers (all of them for the tree's containment).
@@ -120,8 +145,16 @@ struct Solved {
     start: Vec<u32>,
     rows: crate::code_rule_dsl::facts::rows::Part,
     /// The starts' offset in the chunk, when the device made them.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     start_in_chunk: Option<usize>,
+}
+
+/// The solves of a batch's axes over one set of kinds, each mode's made once for all of them (decision 0494 step 7):
+/// an `inside` whose set nests nowhere is its `nearest`, the same rows.
+#[derive(Default)]
+pub struct Solves {
+    nearest: OnceLock<Arc<Solved>>,
+    inside: OnceLock<Arc<Solved>>,
 }
 
 /// Statistics from the tree (`Within::shape`): rows, and per column (`n`, `a`) distinct values and the sum of
@@ -131,6 +164,13 @@ struct Shape {
     rows: i64,
     ndv: [i64; 2],
     sq: [i64; 2],
+}
+
+/// Whether a node's nearest member ancestor (`found`, node rows) has one itself: an `inside`'s chains are longer than
+/// its `nearest`'s.
+fn nests(found: &[u32]) -> bool {
+    use crate::code_rule_dsl::facts::nearest::NONE;
+    found.iter().any(|&a| a != NONE && found[a as usize] != NONE)
 }
 
 fn slot(row: usize) -> (usize, usize) {
@@ -150,15 +190,22 @@ impl Within {
             shape: OnceLock::new(),
             len: AtomicUsize::new(0),
             members: FxHashMap::default(),
+            kinds: Arc::from(Vec::new()),
             binding: crate::code_rule_dsl::facts::nearest::Binding::Cpu,
             expected: Mutex::new(0.0),
             chosen: std::sync::atomic::AtomicBool::new(false),
             solved: OnceLock::new(),
+            solves: None,
             format: None,
             sets: (0..batch.docs.len()).map(|_| OnceLock::new()).collect(),
             shared: Mutex::new(FxHashMap::default()),
             batch,
         }
+    }
+
+    /// The same, its solve shared with the batch's other axes over its set (`Solves`).
+    pub fn sharing(self, solves: Arc<Solves>) -> Self {
+        Within { solves: Some(solves), ..self }
     }
 
     /// The same, solved where `binding` places it (`solved`).
@@ -303,7 +350,9 @@ impl Within {
                 (tag, table)
             })
             .collect();
-        Within { members, binding, ..Within::new(batch, Mode::Axis(axis)) }
+        let mut sorted: Vec<i64> = kinds.into_iter().collect();
+        sorted.sort_unstable();
+        Within { members, kinds: Arc::from(sorted), binding, ..Within::new(batch, Mode::Axis(axis)) }
     }
 
     /// Whether the batch's solve answers the `n` side: an axis of ancestors in the set (`has` reads every ancestor),
@@ -331,41 +380,67 @@ impl Within {
     }
 
     /// The batch's solve: every node's nearest strict ancestor in the set by the transducer's FIX, then per node its
-    /// rows (that ancestor, or for `inside` the chain of them).
+    /// rows (that ancestor, or for `inside` the chain of them). Shared with the batch's other axes over its set
+    /// (`Solves`): an `inside` whose set nests nowhere reads its `nearest`'s rows.
     fn solved(&self) -> &Solved {
         self.solved.get_or_init(|| {
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
-            if let Some(s) = self.solved_in_chunk() {
-                return s;
-            }
-            use crate::code_rule_dsl::logic::profile;
-            use crate::code_rule_dsl::facts::nearest::{self as file_local, Trees};
-            let _span = profile::span(|| "kind-set axis solved for the batch".into());
-            let n = self.batch.nodes().last().copied().unwrap_or(0);
-            let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
-            if self.binding == Binding::Cpu && (0..self.batch.docs.len()).all(|doc| self.doc_tape(doc).is_some()) {
-                profile::work(profile::Unit::Node, n as u64);
-                return self.solved_on_tapes(n, inside);
-            }
-            let (mut parent, mut kind) = (Vec::with_capacity(n), Vec::with_capacity(n));
-            for (doc, p) in self.batch.docs.iter().enumerate() {
-                let base = self.batch.nodes()[doc] as u32;
-                for l in 0..p.len() {
-                    let up = p.parent(l as usize);
-                    parent.push(if up == NONE { file_local::NONE } else { base + up });
-                }
-                self.each_member(doc, |_, m| kind.push(i64::from(m)));
-            }
-            profile::work(profile::Unit::Node, n as u64);
-            // Membership is the kind: the set is `{1}`.
-            let trees = Trees { parent: &parent, kind: &kind };
-            let found = file_local::nearest(&trees, &[vec![1]], self.binding)
-                .or_else(|_| file_local::nearest(&trees, &[vec![1]], Binding::Cpu))
-                .expect("the CPU's nearest pass")
-                .pop()
-                .unwrap_or_default();
-            self.solved_from(&found, inside)
+            let Some(solves) = &self.solves else { return self.solve(None) };
+            let slot = if matches!(self.mode, Mode::Axis(Axis::Inside)) { &solves.inside } else { &solves.nearest };
+            Arc::clone(slot.get_or_init(|| self.solve(Some(&solves.nearest))))
         })
+    }
+
+    /// The solve made: for an `inside` given its set's `nearest` (`Solves`), that one where no member's nearest member
+    /// ancestor has one (the chains are single), so both read one relation.
+    fn solve(&self, nearest: Option<&OnceLock<Arc<Solved>>>) -> Arc<Solved> {
+        let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
+        let nearest = nearest.filter(|_| matches!(self.mode, Mode::Axis(Axis::Inside)));
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        if let Some(s) = self.solved_in_chunk() {
+            // The device writes the rows, not the chains: an `inside`'s rows hold its `nearest`'s, so as many rows are
+            // the same rows.
+            if let Some(n) = nearest.and_then(|n| n.get()).filter(|n| n.rows.len() == s.rows.len()) {
+                return Arc::clone(n);
+            }
+            return Arc::new(s);
+        }
+        let found = self.found();
+        if let Some(slot) = nearest
+            && !nests(&found)
+        {
+            return Arc::clone(slot.get_or_init(|| Arc::new(self.solved_from(&found, false))));
+        }
+        Arc::new(self.solved_from(&found, inside))
+    }
+
+    /// Per node row its nearest strict ancestor in the set, a node row (`nearest::NONE` for none): on each document's
+    /// tape, or by the transducer's FIX over the batch's parents.
+    fn found(&self) -> Vec<u32> {
+        use crate::code_rule_dsl::logic::profile;
+        use crate::code_rule_dsl::facts::nearest::{self as file_local, Trees};
+        let _span = profile::span(|| "kind-set axis solved for the batch".into());
+        let n = self.batch.nodes().last().copied().unwrap_or(0);
+        if self.binding == Binding::Cpu && (0..self.batch.docs.len()).all(|doc| self.doc_tape(doc).is_some()) {
+            profile::work(profile::Unit::Node, n as u64);
+            return self.found_on_tapes(n);
+        }
+        let (mut parent, mut kind) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            let base = self.batch.nodes()[doc] as u32;
+            for l in 0..p.len() {
+                let up = p.parent(l as usize);
+                parent.push(if up == NONE { file_local::NONE } else { base + up });
+            }
+            self.each_member(doc, |_, m| kind.push(i64::from(m)));
+        }
+        profile::work(profile::Unit::Node, n as u64);
+        // Membership is the kind: the set is `{1}`.
+        let trees = Trees { parent: &parent, kind: &kind };
+        file_local::nearest(&trees, &[vec![1]], self.binding)
+            .or_else(|_| file_local::nearest(&trees, &[vec![1]], Binding::Cpu))
+            .expect("the CPU's nearest pass")
+            .pop()
+            .unwrap_or_default()
     }
 
     /// Per node row its rows: its nearest member ancestor (`found`, a node row), or for `inside` the chain of them;
@@ -388,9 +463,18 @@ impl Within {
             chain(v, &mut |_| len += 1);
         }
         start.push(len);
-        // A derived fact like a rule's head, in a run's block alone, with room for an index by each column (strata
-        // probe an axis by `n` and by `a`), as the device's solve writes it.
-        let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, 2);
+        // A derived fact like a rule's head, in a run's block alone, with room for an index by each key a stratum
+        // probes it by (`n`, `a`, and both in either order: `AXIS_KEYS`), as the device's solve writes it. File-local: a row's `n` and `a` are of
+        // one document, so each column holds its ids' low bits, their key a run's, one run a document that has rows
+        // (decision 0494 step 7).
+        let offsets = self.batch.nodes();
+        let first = |doc: usize| start[offsets[doc]];
+        let has_rows = |doc: usize| first(doc + 1) > first(doc);
+        let runs = (0..self.batch.docs.len()).filter(|&d| has_rows(d)).count();
+        let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, crate::code_rule_dsl::facts::rows::AXIS_KEYS, runs);
+        for (k, (doc, &key)) in self.batch.docs.keys().iter().enumerate().filter(|&(d, _)| has_rows(d)).enumerate() {
+            keys.put(k, first(doc), key);
+        }
         let mut at = 0u32;
         for v in 0..n {
             let id = self.batch.id(v);
@@ -408,14 +492,14 @@ impl Within {
         Solved {
             start,
             rows,
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             start_in_chunk: None,
         }
     }
 
-    /// The batch's solve on each document's tape: one pass of the set's matches (`nearest_all`), kept where the
-    /// projection has them, mapped to node rows.
-    fn solved_on_tapes(&self, n: usize, inside: bool) -> Solved {
+    /// Each node row's nearest member ancestor on its document's tape: one pass of the set's matches (`nearest_all`),
+    /// kept where the projection has them, mapped to node rows.
+    fn found_on_tapes(&self, n: usize) -> Vec<u32> {
         use crate::code_rule_dsl::facts::nearest as file_local;
         let mut found = Vec::with_capacity(n);
         let mut near = Vec::new();
@@ -430,19 +514,25 @@ impl Within {
                 a => base + p.local_of_node(a),
             }));
         }
-        self.solved_from(&found, inside)
+        found
     }
 
     /// The solve's first row per node row (`nodes + 1` values).
     fn starts(&self) -> &[u32] {
         let s = self.solved();
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         if let Some(at) = s.start_in_chunk {
             let n = self.batch.nodes().last().copied().unwrap_or(0) + 1;
             // SAFETY: the device wrote `n` values there, and the chunk lives as long as the batch this axis holds.
             return unsafe { std::slice::from_raw_parts(self.batch.chunk().block.ptr::<u32>(at), n) };
         }
         &s.start
+    }
+
+    /// Whether the axis is solved on the device: the binding is the device's and a solve is registered.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn on_device(&self) -> bool {
+        self.binding == Binding::Metal && super::device_chunk::CHUNK_AXIS.try_get().is_some()
     }
 
     /// The solve's rows: the axis's relation.
@@ -452,28 +542,33 @@ impl Within {
 
     /// The solve made on the device in the batch's chunk (decision 0289 §2), when the binding is the device's and
     /// one is registered: `None` sends it to the host's.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn solved_in_chunk(&self) -> Option<Solved> {
+        // The binding first: the batch's chunk block is the device's (its tapes in one block), made on first use and
+        // kept by the batch, so a CPU run that asked for it held the whole corpus's (6.2 GB of the driver's memory on
+        // 3,089 files, `rf_crossing`'s solve) to solve on the host anyway.
+        if !self.on_device() {
+            return None;
+        }
         self.solved_in(&[self.batch.chunk()]).map(|c| Solved { start: Vec::new(), rows: c.rows, start_in_chunk: Some(c.start) })
     }
 
     /// Its solve and those of `more`, the axis over a chunk's tape values (decision 0431 §8), made on the device in
     /// one relation: its rows, then each one's of `more`, as the device binds a layered source's (`values::Layered`).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub(super) fn solved_with(&self, more: &[&Within]) -> Option<crate::code_rule_dsl::facts::rows::Part> {
-        if !self.solvable() || more.iter().any(|w| w.mode != self.mode) {
+        if !self.solvable() || !self.on_device() || more.iter().any(|w| w.mode != self.mode) {
             return None;
         }
         let chunks: Vec<&super::device_chunk::Chunk> = std::iter::once(self).chain(more.iter().copied()).map(|w| w.batch.chunk()).collect();
         self.solved_in(&chunks).map(|c| c.rows)
     }
 
-    /// The axis solved on the device over `chunks`, in one relation (`nearest::ChunkAxis`).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    /// The axis solved on the device over `chunks`, in one relation (`device_chunk::ChunkAxis`).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn solved_in(&self, chunks: &[&super::device_chunk::Chunk]) -> Option<crate::code_rule_dsl::facts::nearest::InChunk> {
         use crate::code_rule_dsl::facts::core::KIND_STRIDE;
-        use crate::code_rule_dsl::facts::nearest::chunk_axis;
-        let solve = chunk_axis().filter(|_| self.binding == Binding::Metal)?;
+        let solve = super::device_chunk::CHUNK_AXIS.try_get().filter(|_| self.on_device())?;
         let _span = crate::code_rule_dsl::logic::profile::span(|| "kind-set axis solved on the device in the chunk".into());
         // Per tag and slot a bit: the host's `member`, ERROR at slot 0 (`kind_atom`), as the kernel reads an atom.
         let bits = (self.mode != Mode::Tree).then(|| {
@@ -684,8 +779,8 @@ impl Within {
         for (i, other) in others.iter().enumerate() {
             let (inner, outer) = if side == 0 { (row, base + other) } else { (base + other, row) };
             let (k, at) = slot(start + i);
-            let chunk = self.chunks[side][k].get_or_init(|| (0..BASE << k).map(|_| AtomicU64::new(0)).collect());
-            chunk[at].store(u64::from(inner) << 32 | u64::from(outer), Ordering::Relaxed);
+            let chunk = self.chunks[side][k].get_or_init(|| Pairs::new(BASE << k));
+            chunk.at(at).store(u64::from(inner) << 32 | u64::from(outer), Ordering::Relaxed);
         }
         made.0[side] += others.len();
         if side == 0 {
@@ -708,7 +803,7 @@ impl Within {
         debug_assert!(!(self.solvable() && row < LOOKED_UP), "a solved row is the relation's");
         let side = usize::from(row >= OUTER);
         let (k, at) = slot(row - if side == 0 { self.looked_up() } else { OUTER });
-        self.chunks[side][k].get().unwrap_or_else(|| panic!("within: row {row} not made (mode {:?}, solvable {}, solved {}, {} made)", self.mode, self.solvable(), self.solved.get().is_some(), self.made.lock().0[side]))[at].load(Ordering::Relaxed)
+        self.chunks[side][k].get().unwrap_or_else(|| panic!("within: row {row} not made (mode {:?}, solvable {}, solved {}, {} made)", self.mode, self.solvable(), self.solved.get().is_some(), self.made.lock().0[side])).at(at).load(Ordering::Relaxed)
     }
 
     fn shape(&self) -> Shape {
@@ -794,8 +889,9 @@ impl Source for Within {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
-    /// Read whole by the device: the batch's solve, the relation it was written into, where it lies (decision 0353
-    /// step 5).
+    /// Read whole (the device, a whole read's own index, on every target): the batch's solve, the relation it was
+    /// written into, where it lies (decision 0353 step 5). An axis with no solve has none: its rows are made per
+    /// looked-up node.
     fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         self.solvable().then(|| self.solved_rows().in_block(self.solved_rows().len()))
     }
@@ -841,6 +937,20 @@ impl Source for Within {
     }
     fn made_on_lookup(&self) -> bool {
         true
+    }
+    /// `has`, read by the device off the tape (decision 0353 step 5): where the batch's views are read in place, its
+    /// `node` view, which a stage's walk reads a node's kind, ancestors and subtree through, and the set's atoms.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
+        use super::device_chunk::{VIEW_NODE, read_kind, views_in_place};
+        if self.mode != Mode::Axis(Axis::Has) {
+            return None;
+        }
+        let chunk = self.batch.chunk();
+        let v = views_in_place(&self.batch, chunk)?;
+        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+        view.failed = view.cache_failed();
+        Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes().last().copied().unwrap_or(0), view, kinds: Arc::clone(&self.kinds) })
     }
     /// A kind-set axis or containment read whole (the device's keyed read, decision 0277): the batch's solve
     /// (decision 0143), one pass over the nodes, chosen from here on, so its `n` lookups read the same rows. Spans
@@ -897,6 +1007,26 @@ impl Source for Within {
             return Some(false);
         }
         Some(self.below(n, a))
+    }
+    /// By `n` on the batch's solve: each of the node's rows with its values, read from the solve's rows as they are
+    /// found. No list of rows is made, and no row's value is read again (`lookup` then `value`). An axis not solved
+    /// for the batch gives nothing here (`false`), and its rows are made per lookup as before.
+    fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        if column != 0 || !self.reads_solved() || columns.len() > 2 {
+            return false;
+        }
+        let Some((doc, local)) = self.batch.node(value) else { return true };
+        let row = self.batch.nodes()[doc] + local as usize;
+        let start = self.starts();
+        let rows = self.solved_rows();
+        let mut got = [0i64; 2];
+        for r in start[row]..start[row + 1] {
+            for (j, &c) in columns.iter().enumerate() {
+                got[j] = rows.get(r, c.min(1));
+            }
+            each(r as usize, &got[..columns.len()]);
+        }
+        true
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         let mut out = Vec::new();

@@ -62,3 +62,26 @@ looked alike, since each walked all of a document's nodes. The planner then star
   - the engine's `plan::tests` (60). `dot_of_the_empty_name_is_the_name` had failed before this change: its two runs
     shared a store, so the second found the first's strata kept and the native set engine solved nothing. Each run
     now has a store of its own (`run_both`).
+
+## 2026-11-21: the cut is priced over the order, not a step at a time
+
+Pricing `step`'s cut one step at a time assumed each walk's first row was a witness. Where no row passes the rest of
+the body, the walk reads all of a binding's rows, and the cut priced that walk at one read a binding. The search
+already dropped that cut (Q411). It counts every row walked and scales the tail once, by its witnesses
+(`witnessed`). The tail is read in full where fewer rows come out than bindings went in. The greedy order (decision
+0123 §7) and the explain record's step rows still took the per-step cut.
+
+Decision 0431 R9's rules meet that case. One is the key over a tape value's findings,
+`exists_N($d) :- demand($d), node($d, $v, …), !placed($v), finding($v)`. The other is a placement through a guest's
+string, factorized as `fzk…($d) :- demand($d), node($d, $s, …), guest_place($v, $s, $l, _), …`. Both were led from
+40 documents, with `node` by `$d` priced at one row a document: 118 rows of work. That is under a search's cost, so
+the greedy order was taken without a search. Each call read every node of its documents, 100 k rows, against about
+80 when the finding's one row is read first. On corpus0, one pack, 343 such strata took 19.9 s.
+
+- **The change:** `step` is now `step_all`. The greedy order keeps its tail as `price` does, and is `witnessed` at
+  the end. A fixed order, the search and the greedy order now price a step the same way.
+- **Corpus0 × B-now, off, one thread:**
+  - one pack: 1.591 T → 1.314 T instructions;
+  - normal packs: 3.838 T → 3.157 T;
+  - the same 463 findings (`d067ec2ebf6f`) in both.
+- **Test:** `plan::tests::a_walk_past_a_bound_head_reads_every_row_where_none_is_a_witness`.

@@ -40,7 +40,7 @@ import { loadNativeBinding, type GitPathIdentity, type GitPathSkipReason, type N
 import { acquireDirectoryAnalysisRegistration, acquireNamedAnalysisRun, analysisScopeHome, finishNamedAnalysisRegistration, scanContentStore } from "../engine/native/analysis-scope.js";
 import { assertContentStoreOwner } from "../engine/native/main-instance.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
-import { runGit } from "../engine/git.js";
+import { runGit, runGitBytes } from "../engine/git.js";
 import { isUtf8 } from "node:buffer";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { compareDeterministicStrings } from "../engine/stable-json.js";
@@ -49,7 +49,7 @@ import { repositories } from "../engine/storage/schema.js";
 import { tableColumns } from "../engine/storage/table-probe.js";
 import { setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
 import type { PackStore } from "../setup/rule-pack-store.js";
-import { declaredPacksOf, declaredScanPacks, type DeclaredPacks, type DeclaredScanPacks, type ScanPack, type ScanPackAttachment } from "./scan-packs.js";
+import { declaredPacksOf, declaredScanPacks, type DeclaredPacks, type DeclaredScanPacks, type RulesRefTree, type ScanPack, type ScanPackAttachment } from "./scan-packs.js";
 
 export const SCAN_SCHEMA = "rerail.scan/1";
 
@@ -165,7 +165,7 @@ export interface HeadlessScanOptions {
 }
 
 function gitBytes(cwd: string, args: readonly string[]): Buffer {
-  const result = runGit(cwd, args, { maxBuffer: 256 * 1024 * 1024, output: "bytes" });
+  const result = runGitBytes(cwd, args, { maxBuffer: 256 * 1024 * 1024 });
   if (result.error !== undefined) throw result.error;
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
   return result.stdout;
@@ -177,7 +177,7 @@ function gitMaybe(cwd: string, args: readonly string[]): string | null {
 }
 
 function checkoutRef(root: string): Pick<ScanReport["checkout"], "ref" | "refHex"> {
-  const result = runGit(root, ["symbolic-ref", "--quiet", "HEAD"], { output: "bytes" });
+  const result = runGitBytes(root, ["symbolic-ref", "--quiet", "HEAD"]);
   if (result.status !== 0) return { ref: null };
   const bytes = result.stdout.at(-1) === 10 ? result.stdout.subarray(0, -1) : result.stdout;
   return isUtf8(bytes) ? { ref: bytes.toString("utf8") } : { ref: null, refHex: bytes.toString("hex") };
@@ -219,18 +219,26 @@ interface RefRules {
   readonly rr?: { catalog: RuleCatalog; source: NativeGitRevisionSource };
 }
 
-/** Load the ref's policies through the same catalog rules used for a checkout. */
-function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies, invocation: string, installed: RuleCatalog): RefRules {
-  const binding = loadNativeBinding();
+/**
+ * The commit `ref` (`--rules-ref`) names in `root`, and its tree as the scan reads it: resolved once, before anything
+ * is read at it, and read through by the declared packs and the ref's policies alike. Throws, with Git's reason, when
+ * `ref` names nothing, or names a tree and not a commit.
+ */
+function resolveRulesRef(root: string, ref: string, invocation: string): RulesRefTree {
   let source: NativeGitRevisionSource;
   try {
-    source = new binding.GitRevisionSource(root, ref, "rules-ref", invocation);
+    source = new (loadNativeBinding().GitRevisionSource)(root, ref, "rules-ref", invocation);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot resolve --rules-ref ${ref} in ${root}. ${detail}`, { cause: error });
   }
   const commit = source.commit;
   if (!commit) throw new Error(`--rules-ref ${ref} resolved to tree ${source.tree}. This option requires a commit.`);
+  return { ref, commit, source };
+}
+
+/** Load the ref's policies through the same catalog rules used for a checkout. */
+function rulesAtRef(root: string, { ref, commit, source }: RulesRefTree, loadedRr: NativeLoadedRrPolicies, installed: RuleCatalog): RefRules {
   const provenance: RefRuleSource = { kind: "ref", ref, commit };
   const failures: ScanFailure[] = [];
   const unreadable = (path: string, error: unknown, pathIdentity = textPath(path)) => {
@@ -297,7 +305,7 @@ function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies,
     message: `${entry.reason}; it does not run`,
     path: `${ref}:${entry.path}`,
     pathIdentity: textPath(entry.path),
-    ruleId: null,
+    ruleId: entry.path.endsWith(".rerail") ? loadedRr.failedPolicy(entry.path, source) : null,
   }));
   return { provenance, documents, skipped: [...failures, ...skipped], ...(rr.length === 0 ? {} : { rr: { catalog, source } }) };
 }
@@ -760,8 +768,9 @@ async function withDeclaredPacks<T>(
  */
 async function scanReport(
   database: RerailDatabase, options: HeadlessScanOptions,
-  { root, home, packs, declaredPacks, scanId, startedAt, source, analysisStore, analysisRun }: {
+  { root, home, packs, declaredPacks, refTree, scanId, startedAt, source, analysisStore, analysisRun }: {
     root: string; home: RerailDatabase | undefined; packs: readonly string[]; declaredPacks: DeclaredScanPacks | undefined;
+    refTree: RulesRefTree | undefined;
     scanId: string; startedAt: number; source: NativeGitRevisionSource | undefined;
     analysisStore: string;
     analysisRun: NativeAnalysisScopeRun | undefined;
@@ -771,7 +780,7 @@ async function scanReport(
   const explicitRr = (options.rr?.length ?? 0) > 0;
   const loadedRr = new (loadNativeBinding().LoadedRrPolicies)(analysisStore);
   const installed = declaredPacks?.catalog ?? loadRuleCatalog();
-  const refRules = options.rulesRef === undefined ? undefined : rulesAtRef(root, options.rulesRef, loadedRr, resolve(options.repo), installed);
+  const refRules = refTree === undefined ? undefined : rulesAtRef(root, refTree, loadedRr, installed);
   const catalog = options.rulesRef !== undefined ? refRules?.rr?.catalog
     : explicitRr ? undefined : worktreeScanCatalog(installed, root, undefined, path => loadedRr.load(path));
   const pinned = new Map<string, RuleCatalog>([[root, refRules === undefined ? catalog ?? installed : installed]]);
@@ -820,7 +829,7 @@ async function scanReport(
     && pathFailures.length === 0
     && !refRules?.skipped.some(failure => failure.code === "adapter-error");
   for (const skipped of (refRules === undefined ? catalog?.skipped.filter(policy => policy.path?.endsWith(".rerail")) : undefined) ?? []) {
-    failures.push({ code: "adapter-error", message: skipped.reason, path: skipped.path, ruleId: null });
+    failures.push({ code: "adapter-error", message: skipped.reason, path: skipped.path, ruleId: skipped.path === undefined ? null : loadedRr.failedPolicy(skipped.path) });
     completed = false;
   }
   if (rr.length > 0) {
@@ -837,7 +846,7 @@ async function scanReport(
       if (explicitRr) selected = selected.filter(path => {
         try { loadedRr.load(resolve(path)); return true; }
         catch (error) {
-          failures.push({ code: "adapter-error", path: resolve(path), ruleId: null, message: error instanceof Error ? error.message : String(error) });
+          failures.push({ code: "adapter-error", path: resolve(path), ruleId: loadedRr.failedPolicy(resolve(path)), message: error instanceof Error ? error.message : String(error) });
           completed = false;
           return false;
         }
@@ -901,8 +910,10 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const directory = options.revision === undefined;
   const scanId = randomUUID();
   const { root, requested } = scanRoot(options);
+  // The ref is resolved once, before anything is read at it.
+  const refTree = options.rulesRef === undefined ? undefined : resolveRulesRef(root, options.rulesRef, resolve(options.repo));
   // `--pack` replaces the declared packs: the file is not read, and the scan runs the home's installed version of each.
-  const declared = options.rr?.length || options.packs.length > 0 ? undefined : await declaredPacksOf(root, options.rulesRef);
+  const declared = options.rr?.length || options.packs.length > 0 ? undefined : await declaredPacksOf(root, refTree);
   const analysisScope: ScanReport["analysisScope"] = options.analysisScope === undefined
     ? { kind: "directory", path: relative(root, requested).split(sep).join("/") || "." }
     : { kind: "named", name: options.analysisScope };
@@ -936,7 +947,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
       configuration = openRerailDatabase(":memory:");
       const database = configuration;
       const findings = await withDeclaredPacks(root, declared, options.packStore, declaredPacks =>
-        scanReport(database, options, { root, home, packs, declaredPacks, scanId, startedAt, source, analysisStore, analysisRun }));
+        scanReport(database, options, { root, home, packs, declaredPacks, refTree, scanId, startedAt, source, analysisStore, analysisRun }));
       report = { ...findings, analysisScope, cache };
     } finally {
       configuration?.$client.close();

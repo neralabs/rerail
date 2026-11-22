@@ -51,9 +51,9 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // name (`Words::word_kinds`).
         LEAF if operand == WORD_KIND => mode == 0 && !program.word_kinds.is_empty() && records.is_some_and(|r| r.words == program.strings),
         LEAF => mode <= 3 && operand != REMEMBERED,
-        // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it;
-        // `m & 64`: kept, for the callee its arm calls, which takes it (`MARK_KEEP`).
-        MARK => mode < 128 && usize::from(operand) < masks,
+        // Mark `m & MARK_ORDER` (its order), its bit in mask `operand`; `MARK_END`: the file's
+        // end has it; `MARK_KEEP`: kept, for the callee its arm calls, which takes it.
+        MARK => usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
         // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`);
         // `m=3` (a field): the node that one, a wrap, holds first. `RETAG m=3`: that node and
@@ -72,7 +72,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // `m=2`, `m=3+f`: a mark's `loses`, the second where flag `f` is set.
         // A settle's mask, or a `drops`'s or `loses`'s gap pattern (`Words::gap_patterns`).
         SETTLE if mode == 0 => operand < 32 && program.block_programs.first().and_then(|b| b.records.as_ref()).is_some_and(|r| r.own >> operand & 1 == 1),
-        SETTLE => mode < 3 + 16 && program.gap_patterns.get(usize::from(operand)).is_some_and(|m| usize::from(operand) == 0 || program.gap_patterns[usize::from(operand) - 1].order != m.order),
+        SETTLE => mode < SETTLE_REFUSE + 1 + 16 && program.gap_patterns.get(usize::from(operand)).is_some_and(|m| usize::from(operand) == 0 || program.gap_patterns[usize::from(operand) - 1].order != m.order),
         CLOSE => mode <= 1 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
         PUSH => mode <= 32 && usize::from(operand) < words,
@@ -125,24 +125,28 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         .filter(|&&w| split(w).0 == PUSH)
         .map(|&w| usize::from(split(w).2))
         .collect();
-    // A state: `TOKEN`, a `MARK` and its way (`GOTO` or `STOP`) per mark it tests, `SWITCH`.
+    // A state: `TOKEN`, a `MARK` and its way (`GOTO` or `STOP`) per mark it tests, `SWITCH`; or
+    // a state that only calls (decision 0492): `TOKEN`, then its call's code (its guards, acts,
+    // `PUSH`), or a `GOTO` to it, with no mark test.
     // After the `TOKEN`, a call's field on the node it made (`NODE_FIELD m=4`), where both
     // returns land (`RETURN m=0` at the `TOKEN`, `m=1` past it). A mark that loses (`, loses`)
-    // has its `SETTLE m=2` right before its `MARK`.
-    let lose = |q: usize| words.get(q).is_some_and(|&w| split(w).0 == SETTLE && split(w).1 >= 2);
+    // has its `SETTLE m=2` right before its `MARK`, and one that refuses (`, refuses`) its
+    // `SETTLE m=19` before that.
+    let asks = |q: usize| words.get(q).is_some_and(|&w| split(w).0 == SETTLE && split(w).1 >= 2);
+    let lose = |q: usize| (q..).take_while(|&i| asks(i)).count();
     let state = |p: usize| {
         let mut q = p + 1;
         if words.get(q).is_some_and(|&w| split(w).0 == NODE_FIELD && split(w).1 == 4) {
             q += 1;
         }
-        while words.get(q + usize::from(lose(q))).is_some_and(|&w| split(w).0 == MARK) {
-            q += usize::from(lose(q));
+        while words.get(q + lose(q)).is_some_and(|&w| split(w).0 == MARK) {
+            q += lose(q);
             if words.get(q + 1).is_none_or(|&w| !matches!(split(w).0, GOTO | STOP)) {
                 return false;
             }
             q += 2;
         }
-        split(words[p]).0 == TOKEN && words.get(q).is_some_and(|&w| split(w).0 == SWITCH)
+        split(words[p]).0 == TOKEN && words.get(q).is_some_and(|&w| split(w).0 == SWITCH || q == p + 1 + usize::from(split(words[p + 1]).0 == NODE_FIELD) && matches!(split(w).0, GOTO | PUSH | OPEN | FLAG | REMEMBER | SETTLE))
     };
     for &p in &returns {
         if !state(p) {
@@ -352,6 +356,14 @@ pub struct Refused {
 /// record (`records`), its first byte, its last byte and its code; `EMPTY` reads the totals.
 /// It executes the words only; the tables it reads are the program's switches, strings and
 /// checks.
+/// The reader a record's first byte `b`'s rule is, where tier 2 splits its regions (`Split::Tier2`).
+pub fn split_reader(r: &crate::records::Records, b: u8) -> Option<&crate::records::Reader> {
+    match r.rules.get(usize::from(r.ends[usize::from(b)])) {
+        Some(&crate::records::EndRule::Read(i)) => r.readers.get(usize::from(i)).filter(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2),
+        _ => None,
+    }
+}
+
 pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Result<Vec<Node>, Refused> {
     run_seen(program, bytes, tier1, &mut |_| {})
 }
@@ -382,11 +394,12 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     // them again). `pending`: the deferred extras' leaves at the table's end.
     // `keep`: while leaves are pending, the end of the token before them, where a node closed
     // then ends.
-    let (mut need, mut live, mut pending, mut keep) = (true, 0u32, 0usize, 0u32);
+    let (mut need, mut live, mut pending, mut keep) = (true, 0u64, 0usize, 0u32);
     // A region read in parts that tier 2 splits (`Split::Tier2`, decision 0323): where a record
     // is a whole region (at its opener, past its byte), its tokens (`records::read_parts`) with
     // their codes (`records::pass`), taken one a `TOKEN` before the next record.
-    let late = records.and_then(|r| r.readers.iter().find(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2).map(|rd| (r, rd, crate::records::WordTable::new(&r.words).expect("verified: the words fit a table"))));
+    let late = records.filter(|r| r.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2)).map(|r| (r, crate::records::WordTable::new(&r.words).expect("verified: the words fit a table")));
+
     let mut parts: std::collections::VecDeque<(u32, u32, u32)> = std::collections::VecDeque::new();
     let block = program.block_programs.first();
     let mask_bit = |m: u16, at: u32| -> bool {
@@ -397,9 +410,15 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     };
     // A `drops`'s or `loses`'s question (`Words::gap_patterns` from `o`) at the token, record
     // `next - 1`: none at the end.
-    let gap = |o: u16, next: usize, at_end: bool| -> bool {
-        !at_end && next > 0 && crate::program::patterns_hold(&program.gap_patterns, usize::from(o), &mut |m| gap_pattern_holds(m, &tier1.codes, starts, bytes, next - 1))
+    // A gap pattern's question at the token (at the end, past the last record: what `refuses`
+    // asks there; `drops` and `loses` need a token, `!at_end`).
+    // An extra's bit in its code (`Words::extras`), for a `since`'s grammar token before.
+    let gap_extra = program.extras.first().map_or(0, |e| 1u32 << (crate::records::MARK_SHIFT + u32::from(e.0)));
+    let gap_at = |o: u16, next: usize, at_end: bool| -> bool {
+        let here = if at_end { next } else { next.wrapping_sub(1) };
+        (at_end || next > 0) && crate::program::patterns_hold(&program.gap_patterns, usize::from(o), &mut |m| gap_pattern_holds(m, &tier1.codes, starts, bytes, here, gap_extra))
     };
+    let gap = |o: u16, next: usize, at_end: bool| -> bool { !at_end && gap_at(o, next, at_end) };
     let mut nodes: Vec<Node> = Vec::new();
     let mut open: Vec<usize> = Vec::new();
     // Wraps (docs/parser-generators/24-rr-and-bitlex-plan.md §2.5). Each open node's frame: its
@@ -465,7 +484,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     rec_end = lasts[next] + 1;
                     code = tier1.codes.get(next).copied().unwrap_or(0);
                     next += 1;
-                    if let Some((r, rd, table)) = &late {
+                    if let Some((r, rd, table)) = late.as_ref().and_then(|(r, t)| Some((*r, split_reader(r, bytes.get(start as usize).copied()?)?, t))) {
                         let opens = rd.arms.first().is_some_and(|a| tier1.outputs.get(usize::from(a.opener)).and_then(|w| w.get(start as usize / 64)).is_some_and(|w| w >> (start % 64) & 1 == 1));
                         if opens && rec_end > start + 1 {
                             let Some(tokens) = crate::records::read_parts(rd, start as usize, &tier1.outputs) else {
@@ -492,7 +511,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 // The marks live: all, or (`m=1+k`) none where no mark holds and the stream
                 // goes on.
                 let m = mode & !TOKEN_EXTRAS;
-                live = if m == 0 || at_end || mask_bit(u16::from(m - 1), start) { u32::MAX } else { 0 };
+                live = if m == 0 || at_end || mask_bit(u16::from(m - 1), start) { u64::MAX } else { 0 };
                 // A token mark that refuses (`TokenMark::refuses`): at a token its bit names,
                 // its tokens following, the file is refused.
                 let extra_bit = program.extras.first().map(|e| u32::from(e.0));
@@ -549,7 +568,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             MARK => {
-                let k = u32::from(mode % 32);
+                let k = u32::from(mode & crate::program::MARK_ORDER);
                 // A mark of one word (`Words::mark_words`): the token's record names it too.
                 let word_ok = || match program.mark_words.iter().find(|&&(x, _)| u32::from(x) == k) {
                     Some(&(_, s)) => crate::records::word_of(code) == u32::from(s) + 1,
@@ -560,7 +579,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 let in_code = (k as usize) < records.map_or(0, |r| r.mark_bits()) && records.is_none_or(|r| r.alone >> k & 1 == 0);
                 let token_mark = program.token_marks.iter().any(|m| u32::from(m.order) == k);
                 let here = if at_end {
-                    mode & 32 != 0
+                    mode & crate::program::MARK_END != 0
                 } else if in_code {
                     code >> (crate::records::MARK_SHIFT + k) & 1 == 1
                 } else if token_mark {
@@ -577,7 +596,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     // Taken: it and the marks before it are done at this token. Kept: its arm
                     // calls the level that takes it.
                     if mode & MARK_KEEP == 0 {
-                        live &= !(u32::MAX >> (31 - k));
+                        live &= !program.taken(k as u8);
                     }
                 } else {
                     pc += 1;
@@ -586,6 +605,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             ROW => {
                 if !mask_bit(operand, start) {
                     pc += 1;
+                }
+            }
+            SETTLE if mode >= SETTLE_REFUSE => {
+                // `refuses`: where the question holds at the token, at the mark's level.
+                let at_level = mode == SETTLE_REFUSE || flags >> (mode - SETTLE_REFUSE - 1) & 1 == 1;
+                if at_level && gap_at(operand, next, at_end) {
+                    return refuse!(pc - 1, "a mark's question that refuses");
                 }
             }
             SETTLE if mode >= 2 => {
@@ -818,7 +844,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
             PUSH => {
                 // Calls nested at most `DEPTH` deep, as tier 2's runs and simdjson's `DEFAULT_MAX_DEPTH` (0537).
-                if returns.len() >= crate::native_cpu_stream::DEPTH as usize {
+                if returns.len() >= DEPTH as usize {
                     return refuse!(pc - 1, "calls nested past the depth");
                 }
                 returns.push((operand, word, flags));
@@ -1020,9 +1046,9 @@ pub fn validate_local_checks(program: &Words) -> Result<(), Error> {
 /// (its bit gates it), with extras taken in the token step (they are skipped by their bit);
 /// its elements rising by offset, the mark's own (0) among them, the words the program's.
 pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
-    // A token mark past the code's (decision 0407) is a bit of `live`, which holds 32; one that
+    // A token mark past the code's (decision 0407) is a bit of `live`, which holds 64; one that
     // refuses is tested once a token by its code bit, so in the code.
-    let marks = 32;
+    let marks = 64;
     let bits = program.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.mark_bits());
     for (i, m) in program.token_marks.iter().enumerate() {
         if m.refuses && usize::from(m.order) >= bits {
@@ -1098,8 +1124,12 @@ pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: Op
 /// each element at its offset from it among the records as the lexer wrote them, extras
 /// included; one past either end, an element with `end` holds there (a `~` before the first).
 /// The element's `starting` tests the record's first byte, as the lean lexer's `asi` reads it.
-pub fn gap_pattern_holds(m: &TokenMark, codes: &[u32], starts: &[u32], bytes: &[u8], here: usize) -> bool {
-    m.elems.iter().all(|e| match here.checked_add_signed(isize::from(e.offset)).filter(|&j| j < codes.len()) {
+pub fn gap_pattern_holds(m: &TokenMark, codes: &[u32], starts: &[u32], bytes: &[u8], here: usize, extra_bit: u32) -> bool {
+    // `since`: from the grammar token before (none before the file's first: index -1), each
+    // before the token.
+    let g = || (0..here.min(codes.len())).rev().find(|&i| codes[i] & extra_bit == 0).map_or(0, |g| g + 1);
+    m.elems.iter().all(|e| match if e.since { (g() + e.offset as usize).checked_sub(1).filter(|&j| j < here) } else { here.checked_add_signed(isize::from(e.offset)).filter(|&j| j < codes.len()) } {
+        None if e.since && g() + e.offset as usize > here => false,
         None => e.holds(None),
         Some(j) => e.holds(Some(codes[j])) && starts.get(j).and_then(|&s| bytes.get(s as usize)).is_some_and(|&b| e.first_holds(b)),
     })
@@ -1156,11 +1186,11 @@ pub fn validate_extras(program: &Words) -> Result<(), Error> {
 /// token mark that refuses, which `TOKEN` tests) and a string of the records' words.
 pub fn validate_mark_words(program: &Words) -> Result<(), Error> {
     let records = program.block_programs.first().and_then(|b| b.records.as_ref());
-    let tested: Vec<u8> = program.words.iter().map(|&w| split(w)).filter(|w| w.0 == MARK).map(|w| w.1 % 32).collect();
+    let tested: Vec<u8> = program.words.iter().map(|&w| split(w)).filter(|w| w.0 == MARK).map(|w| w.1 & crate::program::MARK_ORDER).collect();
     for (i, &(k, s)) in program.mark_words.iter().enumerate() {
         let rising = i == 0 || program.mark_words[i - 1].0 < k;
         let refusing = program.token_marks.iter().any(|m| m.refuses && m.order == k);
-        let ok = rising && k < 32 && (tested.contains(&k) || refusing) && usize::from(s) < program.strings.len() && records.is_some_and(|r| r.words == program.strings);
+        let ok = rising && k <= crate::program::MARK_ORDER && (tested.contains(&k) || refusing) && usize::from(s) < program.strings.len() && records.is_some_and(|r| r.words == program.strings);
         if !ok {
             return Err(Error::InvalidOperand(i));
         }
@@ -1234,3 +1264,8 @@ pub fn validate_rules(program: &Words) -> Result<(), Error> {
     }
     Ok(())
 }
+
+/// Native calls nested at most this deep (`Cut::calls`): past it, the file is refused (to the
+/// fallback), as the machine's stack is the calls'. A rule's frame is at most about 350 bytes
+/// on `.rerail`: some 360 KB at the most.
+pub const DEPTH: i64 = 1024;

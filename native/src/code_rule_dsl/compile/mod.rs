@@ -3,7 +3,7 @@ pub mod ast_rule;
 // binding_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 pub mod binds;
 pub mod compare;
-pub mod config;
+pub use rerail_adapters::code_rule_dsl::compile::config;
 pub mod define;
 pub mod dialect;
 pub mod documents;
@@ -14,7 +14,7 @@ pub mod format_args;
 pub mod layout;
 pub mod line_state;
 pub mod nth_child;
-pub mod options;
+pub use rerail_adapters::code_rule_dsl::compile::options;
 pub mod order;
 // params_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 pub mod parse;
@@ -547,7 +547,7 @@ fn compile_clause(
             }
         }
         "relational" => ClauseKind::Relational(
-            crate::code_rule_dsl::residency::admission::relational::compile::compile(
+            crate::code_rule_dsl::residency::admission::relational::registered().compile(
                 &clause["relational"],
                 &format!("{path}/relational"),
                 capabilities,

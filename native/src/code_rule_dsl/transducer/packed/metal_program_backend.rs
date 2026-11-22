@@ -9,7 +9,7 @@ use super::*;
 use crate::code_rule_dsl::tape::TapeDoc;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 
@@ -110,6 +110,22 @@ impl MetalWorkspace {
             + output_storage_bytes as usize
     }
 
+    /// The profile's counts of a new workspace's buffers, in MB.
+    fn count_buffer_sizes(totals: WorkspaceTotals, scheduler_bytes: u32, output_storage_bytes: u32) {
+        use crate::code_rule_dsl::prof::count;
+        use std::mem::size_of;
+        count("ws.new", 1);
+        count("ws.pending_mb", (totals.pending as usize * size_of::<PendingRecord>()) >> 20);
+        count("ws.captures_mb", (totals.captures as usize * size_of::<CaptureRecord>()) >> 20);
+        count("ws.cursors_mb", (totals.cursors as usize * size_of::<CaptureRecord>()) >> 20);
+        count("ws.repeats_mb", (totals.repeats as usize * size_of::<RepeatRecord>()) >> 20);
+        count("ws.scheduler_mb", scheduler_bytes as usize >> 20);
+        count("ws.results_mb", (totals.results as usize * size_of::<ResultRecord>()) >> 20);
+        count("ws.value_states_mb", (totals.value_states as usize * 4) >> 20);
+        count("ws.output_mb", output_storage_bytes as usize >> 20);
+        count("ws.final_captures_mb", (totals.output_captures as usize * size_of::<FinalCaptureRecord>()) >> 20);
+    }
+
     fn new(
         totals: WorkspaceTotals,
         scheduler_bytes: u32,
@@ -117,18 +133,7 @@ impl MetalWorkspace {
         task_capacity: usize,
     ) -> Result<Self, Error> {
         if crate::code_rule_dsl::prof::on() {
-            use crate::code_rule_dsl::prof::count;
-            use std::mem::size_of;
-            count("ws.new", 1);
-            count("ws.pending_mb", (totals.pending as usize * size_of::<PendingRecord>()) >> 20);
-            count("ws.captures_mb", (totals.captures as usize * size_of::<CaptureRecord>()) >> 20);
-            count("ws.cursors_mb", (totals.cursors as usize * size_of::<CaptureRecord>()) >> 20);
-            count("ws.repeats_mb", (totals.repeats as usize * size_of::<RepeatRecord>()) >> 20);
-            count("ws.scheduler_mb", scheduler_bytes as usize >> 20);
-            count("ws.results_mb", (totals.results as usize * size_of::<ResultRecord>()) >> 20);
-            count("ws.value_states_mb", (totals.value_states as usize * 4) >> 20);
-            count("ws.output_mb", output_storage_bytes as usize >> 20);
-            count("ws.final_captures_mb", (totals.output_captures as usize * size_of::<FinalCaptureRecord>()) >> 20);
+            Self::count_buffer_sizes(totals, scheduler_bytes, output_storage_bytes);
         }
         Ok(Self {
             totals,
@@ -272,20 +277,12 @@ impl Drop for MetalWorkspaceLease {
 }
 
 const BATCH_ENTRY: &str = include_str!("batch_runtime.uglykl");
-/// The tape's reads and readers (decision 0310), before the runtime: every batch reads its documents in the
-/// batch's chunk block through the tape view (decision 0032), with no node records: the document table's entry as
-/// generated (`slabs::msl`, decision 0289 §4), the reads written once (decision 0310), then the readers.
-static TAPE_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| prefix(""));
-/// The interpreter of resident label batches: tasks from roots, not records (decision 0033).
-static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| prefix("#define RERAIL_RESIDENT 1\n"));
-
-fn prefix(defines: &str) -> String {
-    format!(
-        "{defines}{}{}{}",
-        crate::code_rule_dsl::residency::slabs::ukl(),
-        "#include <ukl/reads/tape_z.h>\n",
-        include_str!("device_tape.h")
-    )
+/// The interpreter of resident label batches (tasks from roots, not records: decision 0033), over a batch of tapes in
+/// `format` (0: mixed) as the label kernels read it ([`tape_view`]): the format told once, at the compile (decision
+/// 0576). A run places its tapes in format 15 or 16 (a 16z tape as 16), so its interpreter and sweep hold one
+/// format's reads, and no 16z read.
+fn resident_prefix(format: u32) -> String {
+    format!("#define RERAIL_RESIDENT 1\n{}", tape_view(format))
 }
 
 /// The device's tape view (decision 0032), which the label and pattern kernels read: the
@@ -388,6 +385,8 @@ pub enum Engine {
     Jit {
         kernel: lane::Kernel,
         programs: usize,
+        /// The tape format the kernel reads (0: mixed), as the interpreter's (decision 0576 §8, §23).
+        format: u32,
         buffers: ProgramBufferCache,
     },
 }
@@ -439,18 +438,12 @@ impl Engine {
     }
 }
 
-fn kernel_source(
-    fetch: &str,
-    native_dispatch: Option<&str>,
-    jit_support: &str,
-    jit_context: &str,
-    jit_output_context: &str,
-) -> String {
+fn kernel_source(fetch: &str, native_dispatch: Option<&str>, jit_support: &str, jit_context: &str) -> String {
     let mut source = BATCH_ENTRY
         .replace("/*FETCH*/", fetch)
         .replace("/*JIT_SUPPORT*/", jit_support)
         .replace("/*JIT_CONTEXT*/", jit_context)
-        .replace("/*JIT_OUTPUT_CONTEXT*/", jit_output_context);
+        .replace("/*JIT_OUTPUT_CONTEXT*/", "");
     let begin = source
         .find("/*OP_SWITCH_BEGIN*/")
         .expect("Metal runtime has an opcode-switch start marker");
@@ -460,14 +453,7 @@ fn kernel_source(
         + "/*OP_SWITCH_END*/".len();
     if let Some(dispatch) = native_dispatch {
         source.replace_range(begin..end, dispatch);
-        let output_begin = source
-            .find("/*OUTPUT_BEGIN*/")
-            .expect("Metal runtime has an output-call start marker");
-        let output_end = source
-            .find("/*OUTPUT_END*/")
-            .expect("Metal runtime has an output-call end marker")
-            + "/*OUTPUT_END*/".len();
-        source.replace_range(output_begin..output_end, "jit_apply_output(&outputContext)");
+        source = source.replace("/*OUTPUT_BEGIN*/", "").replace("/*OUTPUT_END*/", "");
     } else {
         source = source
             .replace("/*OP_SWITCH_BEGIN*/", "")
@@ -504,7 +490,6 @@ fn opcode_bodies() -> Result<std::collections::BTreeMap<u8, &'static str>, Error
 /// The JIT's context of a step (`jit_support`): the task's buffers and tables, and its state, which a step reads
 /// and writes through these pointers (UKL is C: no references).
 const JIT_CONTEXT: &str = "JitContext context={nodes,children,supertypes,words,longs,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,valueWork,stringBytes,source,assertions,assertionData,captures,cursors,repeats,queuedStates,greedyEntries,pending,results,lineStarts,task,file,program,node,evaluation,globalArenas,valueBase,valueCapacity,status,&path,&pendingCount,&captureCount,&cursorCount,&repeatCount,&resultCount,&candidateHead,&localOrdinal,&keep,&advance};";
-const JIT_OUTPUT_CONTEXT: &str = "JitOutputContext outputContext={assertionData,program,task,file,nodes,captures,raw.captureStart,raw.captureCount,finalCaptures,&finalCaptureCount,&captureBefore,outputStorage,&propertyCount,&outputByteCount,source,lineStarts,values,nfaStates,nfaData,nfaRanges,valueWork,resultIndex,&resultProperties,&dynamicProperties,&outputSteps,evaluation,sharedEvaluation,globalArenas,valueBase,valueCapacity};";
 
 /// The JIT's state of a task that a step changes, by name and type: a step works on copies under the names the
 /// opcode bodies use (as in `run_task_in`), written back when it finishes. A step that stops the task (`return
@@ -549,72 +534,120 @@ fn jit_support(
         }
         lowered.push(native);
     }
+    // Each inlined: one call of each, in `jit_step`'s switch (on an Arc 140V 11.2 s for a kernel of 116 programs, 10.3 s
+    // with the steps called).
     for opcode in &used {
         let body = bodies[opcode];
         source.push_str(&format!(
-            "UKL_COLD bool jit_step_{opcode}(UKL_PRIVATE JitContext* context,uint32_t mode,uint32_t operand){{{unpack}{copy_in}const uint32_t op={opcode}u;(void)op;{{{}}}{copy_out}return true;}}",
+            "UKL_INLINE bool jit_step_{opcode}(UKL_PRIVATE JitContext* context,uint32_t mode,uint32_t operand){{{unpack}{copy_in}const uint32_t op={opcode}u;(void)op;{{{}}}{copy_out}return true;}}",
             body.strip_suffix("break;")
                 .unwrap_or(body)
                 .replace("return;", "return false;")
         ));
     }
+    // A text test's and an asserted capture predicate's functions, numbered across the programs (the table's
+    // operand for them).
+    let mut values = Vec::new();
+    let mut checks = Vec::new();
     for (program_index, program) in programs.iter().enumerate() {
         for value in 0..program.value_programs.len() {
+            values.push((program_index, value));
             source.push_str(&format!(
                 "UKL_COLD bool jit_value_{program_index}_{value}(UKL_PRIVATE JitContext* context){{uint32_t outcome=evaluate_text(context->values,context->strings,context->nfaStates,context->nfaData,context->nfaRanges,context->luaInstructions,context->luaMembers,context->valueWork,context->stringBytes,context->source,context->program,context->node,context->task,{value}u,&context->path->steps,context->evaluation,context->globalArenas,context->valueBase,context->valueCapacity);if(outcome==2u){{context->status->error=6u;return false;}}if(outcome==3u){{context->status->error=4u;return false;}}if(outcome==4u){{context->status->error=2u;return false;}}*context->keep=outcome==1u;return true;}}"
             ));
         }
         for capture in 0..program.capture_programs.len() {
+            checks.push((program_index, capture));
             source.push_str(&format!(
                 "UKL_COLD bool jit_capture_{program_index}_{capture}(UKL_PRIVATE JitContext* context){{uint32_t outcome=evaluate_assertion(context->assertions[context->program.captureStart+{capture}u],context->assertionData,context->captures,context->path->captures,context->task,context->file,context->program,context->nodes,context->supertypes,context->source,context->strings,context->stringBytes,context->values,context->nfaStates,context->nfaData,context->nfaRanges,context->luaInstructions,context->luaMembers,context->valueWork,context->lineStarts,&context->path->steps,context->evaluation,context->globalArenas,context->valueBase,context->valueCapacity);if(outcome==2u){{context->status->error=6u;return false;}}if(outcome==3u){{context->status->error=4u;return false;}}if(outcome==4u){{context->status->error=2u;return false;}}*context->keep=outcome==1u;return true;}}"
             ));
         }
     }
-    source.push_str("typedef struct JitOutputContext{UKL_GLOBAL const uint32_t* assertionData;Program program;Task task;File file;UKL_PRIVATE const NodeTable* nodes;UKL_GLOBAL const Link* captures;uint32_t head;uint32_t captureCount;UKL_GLOBAL FinalCapture* finalCaptures;UKL_PRIVATE uint32_t* finalCount;UKL_PRIVATE uint32_t* captureStart;UKL_GLOBAL uint8_t* storage;UKL_PRIVATE uint32_t* propertyCount;UKL_PRIVATE uint32_t* byteCount;UKL_GLOBAL const uint8_t* source;UKL_PRIVATE const LineTable* lineStarts;UKL_GLOBAL const ValueRecord* values;UKL_GLOBAL const NfaState* nfaStates;UKL_GLOBAL const uint32_t* nfaData;UKL_GLOBAL const NfaRange* nfaRanges;UKL_GLOBAL uint32_t* valueWork;uint32_t resultIndex;UKL_PRIVATE uint32_t* resultProperties;UKL_PRIVATE uint32_t* dynamicProperties;UKL_PRIVATE uint32_t* steps;UKL_GLOBAL Evaluation* evaluation;UKL_GLOBAL Evaluation* sharedEvaluation;UKL_GLOBAL GlobalArenas* globalArenas;uint32_t valueBase;uint32_t valueCapacity;} JitOutputContext;");
-    for program_index in 0..programs.len() {
-        source.push_str(&format!(
-            "UKL_COLD uint32_t jit_output_{program_index}(UKL_PRIVATE JitOutputContext* c){{return apply_output(c->assertionData,c->program,c->task,c->file,c->nodes,c->captures,c->head,c->captureCount,c->finalCaptures,c->finalCount,c->captureStart,c->storage,c->propertyCount,c->byteCount,c->source,c->lineStarts,c->values,c->nfaStates,c->nfaData,c->nfaRanges,c->valueWork,c->resultIndex,c->resultProperties,c->dynamicProperties,c->steps,c->evaluation,c->sharedEvaluation,c->globalArenas,c->valueBase,c->valueCapacity);}}"
-        ));
-    }
-    source.push_str("UKL_INLINE uint32_t jit_apply_output(UKL_PRIVATE JitOutputContext* context){switch(context->task.program){");
-    for program_index in 0..programs.len() {
-        source.push_str(&format!("case {program_index}u:return jit_output_{program_index}(context);"));
-    }
-    source.push_str("default:return 2u;}}");
+    // The programs' steps, one word a step at `JIT_START[program] + pc` (`JIT_NONE` where no block starts): the
+    // opcode, its mode and its operand, as the interpreter's words; a text test `JIT_VALUE` and an asserted predicate
+    // `JIT_CHECK` with the function's number, a tree-sitter query's assertion `JIT_PASS` (its predicates are tested on
+    // its candidates at the task's end). Read by one switch that calls each step once (decision 0576 §23): a switch
+    // per program, each case a call, was a kernel's code per program, and Intel's compiler took 45.8 s over the 116
+    // programs of `all_backends_execute_every_verified_instruction_and_mode` (the steps are calls, so their operands,
+    // constants in a case, were never folded in).
+    let mut starts = Vec::with_capacity(programs.len() + 1);
+    let mut table: Vec<u32> = Vec::new();
+    let (mut value_at, mut check_at) = (0usize, 0usize);
     for (program_index, (program, native)) in programs.iter().zip(&lowered).enumerate() {
-        source.push_str(&format!(
-            "UKL_COLD bool jit_program_{program_index}(UKL_PRIVATE JitContext* context){{switch(context->path->pc){{"
-        ));
+        starts.push(table.len() as u32);
+        let len = native.structural.iter().map(|block| usize::from(block.position) + 1).max().unwrap_or(0);
+        let base = table.len();
+        table.resize(base + len, JIT_NONE);
         for block in &native.structural {
-            let pc = block.position;
             let (opcode, mode, operand) = block.operation.encoded();
-            if opcode == TEXT {
-                source.push_str(&format!("case {pc}u:return jit_value_{program_index}_{operand}(context);"));
+            let word = if opcode == TEXT {
+                let k = values[value_at..].iter().position(|&(p, v)| p == program_index && v == usize::from(operand)).ok_or(Error::BackendFailure)? + value_at;
+                u32::from(JIT_VALUE) | (k as u32) << 16
             } else if opcode == ASSERT && !program.tree_sitter_query {
-                // An ordinary program tests the capture predicate where it asserts it, on the captures so far, as the
-                // CPU's (`ASSERT`); a tree-sitter query's are tested on its candidates at the task's end.
-                source.push_str(&format!("case {pc}u:return jit_capture_{program_index}_{operand}(context);"));
+                let k = checks[check_at..].iter().position(|&(p, c)| p == program_index && c == usize::from(operand)).ok_or(Error::BackendFailure)? + check_at;
+                u32::from(JIT_CHECK) | (k as u32) << 16
             } else if opcode == ASSERT {
-                source.push_str(&format!("case {pc}u:return true;"));
+                u32::from(JIT_PASS)
             } else {
-                source.push_str(&format!("case {pc}u:return jit_step_{opcode}(context,{mode}u,{operand}u);"));
-            }
+                u32::from(opcode) | u32::from(mode) << 8 | u32::from(operand) << 16
+            };
+            table[base + usize::from(block.position)] = word;
         }
-        source.push_str("default:context->status->error=5u;return false;}}");
+        value_at += values[value_at..].iter().take_while(|&&(p, _)| p == program_index).count();
+        check_at += checks[check_at..].iter().take_while(|&&(p, _)| p == program_index).count();
     }
+    starts.push(table.len() as u32);
+    if values.len() > 0xffff || checks.len() > 0xffff {
+        return Err(Error::BackendCapacity);
+    }
+    let list = |v: &[u32]| v.iter().map(|w| format!("{w}u")).collect::<Vec<_>>().join(",");
+    if table.is_empty() {
+        table.push(JIT_NONE);
+    }
+    source.push_str(&format!(
+        "UKL_TABLE uint32_t JIT_START[{}]={{{}}};UKL_TABLE uint32_t JIT_STEPS[{}]={{{}}};",
+        starts.len(),
+        list(&starts),
+        table.len(),
+        list(&table)
+    ));
+    source.push_str(&format!(
+        "UKL_INLINE bool jit_step(UKL_PRIVATE JitContext* context){{uint32_t p=context->task.program,pc=context->path->pc;if(p>={programs}u||pc>=JIT_START[p+1u]-JIT_START[p]){{context->status->error=5u;return false;}}uint32_t word=JIT_STEPS[JIT_START[p]+pc],mode=(word>>8u)&255u,operand=word>>16u;switch(word&255u){{",
+        programs = programs.len()
+    ));
+    for opcode in &used {
+        source.push_str(&format!("case {opcode}u:return jit_step_{opcode}(context,mode,operand);"));
+    }
+    if !values.is_empty() {
+        source.push_str(&format!("case {JIT_VALUE}u:switch(operand){{"));
+        for (k, (p, v)) in values.iter().enumerate() {
+            source.push_str(&format!("case {k}u:return jit_value_{p}_{v}(context);"));
+        }
+        source.push_str("default:break;}break;");
+    }
+    if !checks.is_empty() {
+        source.push_str(&format!("case {JIT_CHECK}u:switch(operand){{"));
+        for (k, (p, c)) in checks.iter().enumerate() {
+            source.push_str(&format!("case {k}u:return jit_capture_{p}_{c}(context);"));
+        }
+        source.push_str("default:break;}break;");
+    }
+    source.push_str(&format!("case {JIT_PASS}u:return true;default:break;}}context->status->error=5u;return false;}}"));
     Ok(source)
 }
 
-fn jit_kernel_source(programs: &[Program]) -> Result<String, Error> {
+/// The JIT's table words (`jit_support`) that are no opcode: no block, a text test, an asserted predicate, a
+/// query's assertion.
+const JIT_NONE: u32 = 255;
+const JIT_VALUE: u8 = 254;
+const JIT_CHECK: u8 = 253;
+const JIT_PASS: u8 = 252;
+
+/// The JIT's kernel for `programs` over a batch of tapes in `format` (0: mixed): the format's reads alone
+/// ([`tape_view`]), as the interpreter's (decision 0576 §8, §23).
+fn jit_kernel_source(programs: &[Program], format: u32) -> Result<String, Error> {
     let bodies = opcode_bodies()?;
-    let mut dispatch = String::from("switch(task.program){");
-    for program_index in 0..programs.len() {
-        dispatch.push_str(&format!(
-            "case {program_index}u:if(!jit_program_{program_index}(&context))return;break;"
-        ));
-    }
-    dispatch.push_str("default:status->error=5u;return;}");
-    Ok(format!("{}{}", *TAPE_PREFIX, kernel_source("", Some(&dispatch), &jit_support(&bodies, programs)?, JIT_CONTEXT, JIT_OUTPUT_CONTEXT)))
+    Ok(format!("{}{}", tape_view(format), kernel_source("", Some("if(!jit_step(&context))return;"), &jit_support(&bodies, programs)?, JIT_CONTEXT)))
 }
 
 const INTERPRETER_FETCH: &str =
@@ -622,42 +655,96 @@ const INTERPRETER_FETCH: &str =
 
 /// The interpreter over resident tapes (the label passes'), compiled once (until the residency's
 /// drop releases it with the other pipelines' caches: it is held by the label runs' callers).
-pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
+pub(super) fn compile_resident_interpreter_cached(format: u32) -> Result<Engine, Error> {
     #[derive(Default)]
-    struct ResidentInterpreter(Mutex<Option<Engine>>);
+    struct ResidentInterpreter(Mutex<HashMap<u32, Engine>>);
     let held_ = crate::code_rule_dsl::logic::profile::machine::<ResidentInterpreter>();
     let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
-    if let Some(engine) = &*cached {
+    if let Some(engine) = cached.get(&format) {
         return Ok(engine.clone());
     }
-    let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
+    let source = format!("{}{}", resident_prefix(format), kernel_source(INTERPRETER_FETCH, None, "", ""));
     lane::device()?;
-    let engine = Engine::Interpreter { kernel: lane::kernel_fixed(&source, "run_batch", None), buffers: Arc::new(Mutex::new(None)) };
-    *cached = Some(engine.clone());
+    let engine = Engine::Interpreter { kernel: lane::kernel_fixed(&source, "run_batch", Some(format)), buffers: Arc::new(Mutex::new(None)) };
+    cached.insert(format, engine.clone());
     Ok(engine)
 }
 
+/// The program backend's fixed kernels, to compile ahead of their first use (`MatcherDevice::kernels_ahead`): the set
+/// steps', the lattice's and the nearest jumps' kernels, and the interpreter over tapes, the label passes' kernels,
+/// the interpreter over resident tapes and the sweep of formats 15 and 16 (the formats a run places its tapes in:
+/// `label_passes::warm`).
+/// Each is asked for as its use asks for it, so its use finds it.
+pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhead> {
+    fn made(name: &str, make: impl Fn() -> Result<(), Error> + Send + Sync + 'static) -> super::device::KernelAhead {
+        let make = move || {
+            let mut made = Ok(());
+            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = make().map_err(|e| format!("{e:?}"))))?;
+            made
+        };
+        (name.to_owned(), Box::new(make))
+    }
+    let mut v = vec![
+        made("set steps", || {
+            drop(set_steps::kernel());
+            Ok(())
+        }),
+        made("lattice", || {
+            drop(lattice::kernel());
+            Ok(())
+        }),
+        made("nearest jumps", || {
+            drop(nearest::kernel());
+            Ok(())
+        }),
+    ];
+    for format in [15u32, 16] {
+        v.push(made(&format!("interpreter {format}"), move || interpreter_kernel(format).map(drop)));
+        v.push(made(&format!("resident interpreter {format}"), move || compile_resident_interpreter_cached(format).map(drop)));
+        v.push(made(&format!("label passes {format}"), move || label_passes::compile_labels(format)));
+        // Not where NVRTC compiles (`rerail_metal::nvrtc_unbounded`).
+        if !rerail_metal::nvrtc_unbounded() {
+            v.push(made(&format!("label sweep {format}"), move || compile_sweep_cached(format).map(drop)));
+        }
+    }
+    v
+}
+
+/// The interpreter over tapes, of the run's format (`label_passes::run_format`): a batch's launch takes the kernel of
+/// its own format (`interpreter_kernel`), this one where the batch is the run's.
 pub fn compile_interpreter() -> Result<Engine, Error> {
+    Ok(Engine::Interpreter { kernel: interpreter_kernel(label_passes::run_format())?, buffers: Arc::new(Mutex::new(None)) })
+}
+
+/// The interpreter over a batch of tapes in `format` (0: mixed), compiled once per format: its tape reads are the
+/// format's alone (decision 0576), as the label kernels' are ([`tape_view`]).
+fn interpreter_kernel(format: u32) -> Result<lane::Kernel, Error> {
+    #[derive(Default)]
+    struct Interpreters(Mutex<HashMap<u32, lane::Kernel>>);
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<Interpreters>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
+    if let Some(kernel) = cached.get(&format) {
+        return Ok(kernel.clone());
+    }
     lane::device()?;
-    Ok(Engine::Interpreter {
-        kernel: lane::kernel_fixed(&format!("{}{}", *TAPE_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch", None),
-        buffers: Arc::new(Mutex::new(None)),
-    })
+    let kernel = lane::kernel_fixed(&format!("{}{}", tape_view(format), kernel_source(INTERPRETER_FETCH, None, "", "")), "run_batch", Some(format));
+    cached.insert(format, kernel.clone());
+    Ok(kernel)
 }
 
 /// The interpreter with a recursive group's sweep kernel (`label_passes`, `label_sweep`), compiled
 /// once per process. A program whose flags carry a route (bit 31; bit 30 captured nodes, bits 8..30
 /// the label) marks its label as each result is published; other programs run as in `run_batch`.
-pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<lane::Kernel, Error> {
+pub(in crate::code_rule_dsl) fn compile_sweep_cached(format: u32) -> Result<lane::Kernel, Error> {
     #[derive(Default)]
-    struct Sweep(Mutex<Option<lane::Kernel>>);
+    struct Sweep(Mutex<HashMap<u32, lane::Kernel>>);
     let held_ = crate::code_rule_dsl::logic::profile::machine::<Sweep>();
     let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
-    if let Some(pipeline) = &*cached {
+    if let Some(pipeline) = cached.get(&format) {
         return Ok(pipeline.clone());
     }
-    // The label passes' sweep, over resident tapes as their interpreter.
-    let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
+    // The label passes' sweep, over resident tapes as their interpreter, of the batch's format.
+    let source = format!("{}{}", resident_prefix(format), kernel_source(INTERPRETER_FETCH, None, "", ""));
     let edit = |source: String, from: &str, to: &str| {
         assert_eq!(source.matches(from).count(), 1, "the runtime has one {from}");
         source.replacen(from, to, 1)
@@ -671,25 +758,26 @@ pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<lane::Kernel, E
     );
     // The sweep's kernel takes the batch's rows (`run_batch`'s), after the runtime it runs tasks with.
     lane::device()?;
-    let kernel = lane::kernel_fixed(&format!("{source}\n{}", include_str!("label_sweep.uglykl")), "label_sweep", None);
-    *cached = Some(kernel.clone());
+    let kernel = lane::kernel_fixed(&format!("{source}\n{}", include_str!("label_sweep.uglykl")), "label_sweep", Some(format));
+    cached.insert(format, kernel.clone());
     Ok(kernel)
 }
 
-pub(super) fn compile_jit(programs: &[Program]) -> Result<Engine, Error> {
+pub(super) fn compile_jit(programs: &[Program], format: u32) -> Result<Engine, Error> {
     lane::device()?;
     Ok(Engine::Jit {
-        kernel: lane::kernel(&jit_kernel_source(programs)?, "run_batch", None),
+        kernel: lane::kernel(&jit_kernel_source(programs, format)?, "run_batch", Some(format)),
         programs: programs.len(),
+        format,
         buffers: Arc::new(Mutex::new(None)),
     })
 }
 
-pub(super) fn jit_cache_key(programs: &[Program]) -> Result<String, Error> {
+pub(super) fn jit_cache_key(programs: &[Program], format: u32) -> Result<String, Error> {
     Ok(format!(
         "metal-jit:{FORMAT_VERSION}:{}:{}",
         std::env::consts::ARCH,
-        jit_kernel_source(programs)?
+        jit_kernel_source(programs, format)?
     ))
 }
 
@@ -713,12 +801,19 @@ pub(in crate::code_rule_dsl) fn compile_interpreter_cached() -> Result<Engine, E
 
 /// Whether `programs`' kernel is compiled (`compile_jit_cached`), without compiling it.
 pub(in crate::code_rule_dsl) fn jit_ready(programs: &[Program]) -> Result<bool, Error> {
-    let key = jit_cache_key(programs)?;
+    let key = jit_cache_key(programs, label_passes::run_format())?;
     Ok(crate::code_rule_dsl::logic::profile::shared::<MetalPrograms>().0.lock().map_err(|_| Error::BackendFailure)?.contains_key(&key))
 }
 
+/// `programs`' kernel over the run's tape format (`label_passes::run_format`), compiled once: a batch of another
+/// format takes its own at its launch (`compile_jit_in`).
 pub(in crate::code_rule_dsl) fn compile_jit_cached(programs: &[Program]) -> Result<Engine, Error> {
-    let key = jit_cache_key(programs)?;
+    compile_jit_in(programs, label_passes::run_format())
+}
+
+/// `programs`' kernel over tapes in `format` (0: mixed), compiled once.
+fn compile_jit_in(programs: &[Program], format: u32) -> Result<Engine, Error> {
+    let key = jit_cache_key(programs, format)?;
     if let Some(engine) = crate::code_rule_dsl::logic::profile::shared::<MetalPrograms>().0
         .lock()
         .map_err(|_| Error::BackendFailure)?
@@ -727,7 +822,7 @@ pub(in crate::code_rule_dsl) fn compile_jit_cached(programs: &[Program]) -> Resu
     {
         return Ok(engine);
     }
-    let engine = compile_jit(programs)?;
+    let engine = compile_jit(programs, format)?;
     let held_ = crate::code_rule_dsl::logic::profile::shared::<MetalPrograms>();
     let mut cache = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(existing) = cache.get(&key) {
@@ -802,42 +897,70 @@ fn execute_packed_once(
     growth: &super::StateGrowth,
 ) -> Result<PackedExecution, Error> {
     let _evaluation = super::metal_backend::evaluation_scope();
-    if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
-        return Err(Error::InvalidAnchor);
-    }
-    // The tasks with no node records: the device reads the documents in the slabs (`DocTable`).
-    let mut batch = PackedBatch::new_in_place(programs, files, anchors).map_err(|error| {
-        if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-            eprintln!("TEMPO_PACKED_BATCH_ERROR stage=pack error={error:?}");
-        }
-        error
-    })?;
+    let mut batch = pack_batch(engine, programs, files, anchors)?;
     batch.apply_budget(budget, growth);
     if batch.tasks.is_empty() {
         return Ok(PackedExecution::new(batch, PackedResultPage::empty()));
     }
     let allocation_started = std::time::Instant::now();
     lane::device()?;
-    // Every lane reserves the widest evaluation's states: a workspace the pool refuses runs with half the lanes,
-    // down to one (decision 0334 §9). Fewer lanes run its tasks in fewer at a time; the results are the same.
+    let (totals, workspace) = lease_workspace(&mut batch, programs, result_limits)?;
+    execute_on_device(engine, programs, files, batch, totals, &workspace, allocation_started)
+}
+
+fn pack_batch(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+) -> Result<PackedBatch, Error> {
+    if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
+        return Err(Error::InvalidAnchor);
+    }
+    // The tasks with no node records: the device reads the documents in the slabs (`DocTable`).
+    PackedBatch::new_in_place(programs, files, anchors).map_err(|error| print_batch_error("pack", error))
+}
+
+/// `error`, printed with the stage that failed under `RERAIL_PACKED_BATCH_PROFILE`.
+fn print_batch_error(stage: &str, error: Error) -> Error {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!("RERAIL_PACKED_BATCH_ERROR stage={stage} error={error:?}");
+    }
+    error
+}
+
+/// The batch's workspace totals at `lanes` lanes.
+fn assign_batch_workspace(
+    batch: &mut PackedBatch,
+    programs: &[Program],
+    result_limits: Option<&[u32]>,
+    lanes: usize,
+) -> Result<WorkspaceTotals, Error> {
+    let totals = batch
+        .assign_workspace_with_result_limits_and_lanes(programs, result_limits, lanes)
+        .map_err(|error| print_batch_error("workspace", error))?;
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!(
+            "RERAIL_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} lanes={lanes} workspaceBytes={} totals={totals:?}",
+            programs.len(),
+            batch.tasks.len(),
+            batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
+        );
+    }
+    Ok(totals)
+}
+
+/// A workspace for `batch` and its totals, with the batch's evaluations and lanes in its generation. Every lane
+/// reserves the widest evaluation's states: a workspace the pool refuses runs with half the lanes, down to one
+/// (decision 0334 §9). Fewer lanes run its tasks in fewer at a time; the results are the same.
+fn lease_workspace(
+    batch: &mut PackedBatch,
+    programs: &[Program],
+    result_limits: Option<&[u32]>,
+) -> Result<(WorkspaceTotals, MetalWorkspaceLease), Error> {
     let mut lanes = EXECUTION_LANES;
     let (totals, workspace) = loop {
-        let totals = batch
-            .assign_workspace_with_result_limits_and_lanes(programs, result_limits, lanes)
-            .map_err(|error| {
-                if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-                    eprintln!("TEMPO_PACKED_BATCH_ERROR stage=workspace error={error:?}");
-                }
-                error
-            })?;
-        if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-            eprintln!(
-                "TEMPO_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} lanes={lanes} workspaceBytes={} totals={totals:?}",
-                programs.len(),
-                batch.tasks.len(),
-                batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
-            );
-        }
+        let totals = assign_batch_workspace(batch, programs, result_limits, lanes)?;
         match MetalWorkspaceLease::acquire(
             totals,
             batch.header.scheduler_byte_count,
@@ -857,27 +980,99 @@ fn execute_packed_once(
     for lane in &mut batch.evaluation_lanes {
         lane.generation = workspace.generation;
     }
-    let program_buffers = engine.program_buffers(&batch)?;
-    let task_buffer = HostMapped::from_slice(&batch.tasks)?;
-    let header_buffer = HostMapped::from_slice(&[batch.header])?;
+    Ok((totals, workspace))
+}
+
+/// Runs the packed batch on the device: what it binds is held here until its results are read.
+fn execute_on_device(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    batch: PackedBatch,
+    totals: WorkspaceTotals,
+    workspace: &MetalWorkspaceLease,
+    allocation_started: std::time::Instant,
+) -> Result<PackedExecution, Error> {
+    let (program_buffers, task_buffer, header_buffer) = upload_batch(engine, &batch)?;
     // The documents resident, gathered into one block (decision 0289 §4), in the batch's numbering: their views
     // where the files were, and the block where the node records were. The kernel reads nothing from the
     // children, source and line start slots; the block stands in for them.
+    let table = resident_doc_table(files)?;
+    let (file_buffer, block, supertype_buffer) = upload_documents(&table, &batch)?;
+    copy_scheduler_state(&workspace.scheduler, &batch);
+    let allocation_elapsed = allocation_started.elapsed();
+    print_workspace_profile(workspace);
+    // The rows by name (`run_batch`'s): the block stands for the node records, children, source and line starts.
+    let buffers = [
+        ("tasks", task_buffer.buffer()),
+        ("header", header_buffer.buffer()),
+        ("files", file_buffer.buffer()),
+        ("nodes", block),
+        ("programs", program_buffers.programs.buffer()),
+        ("words", program_buffers.words.buffer()),
+        ("longs", program_buffers.longs.buffer()),
+        ("children", block),
+        ("supertypes", supertype_buffer.buffer()),
+        ("pending", workspace.pending.buffer()),
+        ("captures", workspace.captures.buffer()),
+        ("cursors", workspace.cursors.buffer()),
+        ("repeats", workspace.repeats.buffer()),
+        ("schedulerStorage", workspace.scheduler.buffer()),
+        ("results", workspace.results.buffer()),
+        ("statuses", workspace.statuses.buffer()),
+        ("values", program_buffers.values.buffer()),
+        ("strings", program_buffers.strings.buffer()),
+        ("nfaStates", program_buffers.nfa_states.buffer()),
+        ("nfaData", program_buffers.nfa_data.buffer()),
+        ("nfaRanges", program_buffers.nfa_ranges.buffer()),
+        ("luaInstructions", program_buffers.lua_instructions.buffer()),
+        ("luaMembers", program_buffers.lua_members.buffer()),
+        ("assertions", program_buffers.assertions.buffer()),
+        ("assertionData", program_buffers.assertion_data.buffer()),
+        ("stringBytes", program_buffers.string_bytes.buffer()),
+        ("source", block),
+        ("valueWork", workspace.value_states.buffer()),
+        ("lineStarts", block),
+        ("finalCaptures", workspace.final_captures.buffer()),
+        ("outputStorage", workspace.output_storage.buffer()),
+    ];
+    dispatch_batch(engine, programs, buffers, &table, batch.evaluation_lanes.len() as u64, allocation_elapsed)?;
+    collect_results(batch, totals, workspace)
+}
+
+/// The batch's programs, tasks and header on the device.
+fn upload_batch(engine: &Engine, batch: &PackedBatch) -> Result<(Arc<ProgramBuffers>, HostMapped, HostMapped), Error> {
+    let program_buffers = engine.program_buffers(batch)?;
+    let task_buffer = HostMapped::from_slice(&batch.tasks)?;
+    let header_buffer = HostMapped::from_slice(&[batch.header])?;
+    Ok((program_buffers, task_buffer, header_buffer))
+}
+
+/// The documents resident, in one table: their views, the block, the batch's other slabs and the 16z cache.
+fn resident_doc_table(files: &[TapeDoc]) -> Result<crate::code_rule_dsl::residency::slabs::DocTable, Error> {
     let table = crate::code_rule_dsl::residency::slabs::admit_docs(files)?;
     let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or(Error::BackendCapacity)?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
+    Ok(table)
+}
+
+/// The table's views and block, and the batch's supertypes, on the device.
+fn upload_documents<'table>(
+    table: &'table crate::code_rule_dsl::residency::slabs::DocTable,
+    batch: &PackedBatch,
+) -> Result<(HostMapped, &'table lane::Buffer, HostMapped), Error> {
     let file_buffer = HostMapped::from_slice(&table.views)?;
     let block = table.block.as_ref().ok_or(Error::BackendFailure)?.device_buffer();
     // The derived classes alone (`has_supertype`): the classes are the codes', read on the tape.
     let supertypes = batch.metal_supertypes();
     let supertype_buffer = HostMapped::from_slice(&supertypes)?;
-    let pending_buffer = &workspace.pending;
-    let capture_buffer = &workspace.captures;
-    let cursor_buffer = &workspace.cursors;
-    let repeat_buffer = &workspace.repeats;
-    let scheduler_buffer = &workspace.scheduler;
+    Ok((file_buffer, block, supertype_buffer))
+}
+
+/// Writes the batch's global arenas, then its evaluations, then its evaluation lanes, to the scheduler buffer.
+fn copy_scheduler_state(scheduler_buffer: &HostMapped, batch: &PackedBatch) {
     unsafe {
         std::ptr::copy_nonoverlapping(
             std::ptr::from_ref(&batch.global_arenas).cast::<u8>(),
@@ -896,55 +1091,45 @@ fn execute_packed_once(
             std::mem::size_of_val(batch.evaluation_lanes.as_slice()),
         );
     }
-    let result_buffer = &workspace.results;
-    let status_buffer = &workspace.statuses;
-    let value_state_buffer = &workspace.value_states;
-    let final_capture_buffer = &workspace.final_captures;
-    let output_storage_buffer = &workspace.output_storage;
-    let allocation_elapsed = allocation_started.elapsed();
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+}
+
+fn print_workspace_profile(workspace: &MetalWorkspaceLease) {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_METAL_WORKSPACE reused={} generation={}",
+            "RERAIL_METAL_WORKSPACE reused={} generation={}",
             workspace.reused, workspace.generation,
         );
     }
-    // The rows by name (`run_batch`'s): the block stands for the node records, children, source and line starts.
-    let lanes = batch.evaluation_lanes.len() as u64;
-    let mut command = lane::Command::new("Tempo packed transducer batch");
-    let mut launch = command.launch(engine.kernel(), "Tempo packed transducer kernel");
-    for (name, buffer) in [
-        ("tasks", task_buffer.buffer()),
-        ("header", header_buffer.buffer()),
-        ("files", file_buffer.buffer()),
-        ("nodes", block),
-        ("programs", program_buffers.programs.buffer()),
-        ("words", program_buffers.words.buffer()),
-        ("longs", program_buffers.longs.buffer()),
-        ("children", block),
-        ("supertypes", supertype_buffer.buffer()),
-        ("pending", pending_buffer.buffer()),
-        ("captures", capture_buffer.buffer()),
-        ("cursors", cursor_buffer.buffer()),
-        ("repeats", repeat_buffer.buffer()),
-        ("schedulerStorage", scheduler_buffer.buffer()),
-        ("results", result_buffer.buffer()),
-        ("statuses", status_buffer.buffer()),
-        ("values", program_buffers.values.buffer()),
-        ("strings", program_buffers.strings.buffer()),
-        ("nfaStates", program_buffers.nfa_states.buffer()),
-        ("nfaData", program_buffers.nfa_data.buffer()),
-        ("nfaRanges", program_buffers.nfa_ranges.buffer()),
-        ("luaInstructions", program_buffers.lua_instructions.buffer()),
-        ("luaMembers", program_buffers.lua_members.buffer()),
-        ("assertions", program_buffers.assertions.buffer()),
-        ("assertionData", program_buffers.assertion_data.buffer()),
-        ("stringBytes", program_buffers.string_bytes.buffer()),
-        ("source", block),
-        ("valueWork", value_state_buffer.buffer()),
-        ("lineStarts", block),
-        ("finalCaptures", final_capture_buffer.buffer()),
-        ("outputStorage", output_storage_buffer.buffer()),
-    ] {
+}
+
+/// Launches the kernel over `buffers` for `lanes` evaluation lanes, the table's other slabs and cache used, and waits
+/// for it. A JIT engine compiled for another format than the batch's compiles `programs`' kernel for the batch's.
+fn dispatch_batch(
+    engine: &Engine,
+    programs: &[Program],
+    buffers: [(&str, &lane::Buffer); 31],
+    table: &crate::code_rule_dsl::residency::slabs::DocTable,
+    lanes: u64,
+    allocation_elapsed: std::time::Duration,
+) -> Result<(), Error> {
+    let mut command = lane::Command::new("Rerail packed transducer batch");
+    // The interpreter, or the programs' kernel, of the batch's format (0: mixed).
+    let format = table.format().unwrap_or(0);
+    let interpreter;
+    let jit;
+    let kernel = match engine {
+        Engine::Interpreter { .. } => {
+            interpreter = interpreter_kernel(format)?;
+            &interpreter
+        }
+        Engine::Jit { format: compiled, .. } if *compiled == format => engine.kernel(),
+        Engine::Jit { .. } => {
+            jit = compile_jit_in(programs, format)?;
+            jit.kernel()
+        }
+    };
+    let mut launch = command.launch(kernel, "Rerail packed transducer kernel");
+    for (name, buffer) in buffers {
         launch = launch.buffer(name, buffer);
     }
     // The batch's other slabs, which its reads reach from the block by the views' offsets (decision 0353 step 4,
@@ -960,25 +1145,30 @@ fn execute_packed_once(
     let execution_started = std::time::Instant::now();
     command.run()?;
     let execution_elapsed = execution_started.elapsed();
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
+            "RERAIL_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
             allocation_elapsed.as_nanos(),
             execution_elapsed.as_nanos(),
         );
     }
+    Ok(())
+}
+
+/// The batch's results, read from the workspace the kernel wrote them to.
+fn collect_results(mut batch: PackedBatch, totals: WorkspaceTotals, workspace: &MetalWorkspace) -> Result<PackedExecution, Error> {
     #[cfg(any(test, feature = "test-hooks"))]
     INVOCATIONS.set(INVOCATIONS.get() + 1);
     batch.global_arenas = unsafe {
-        scheduler_buffer.host().cast::<MetalGlobalArenas>().read()
+        workspace.scheduler.host().cast::<MetalGlobalArenas>().read()
     };
     let statuses = unsafe {
         std::slice::from_raw_parts(
-            status_buffer.host().cast::<TaskStatus>(),
+            workspace.statuses.host().cast::<TaskStatus>(),
             batch.tasks.len(),
         )
     };
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         let mut work = BTreeMap::<u32, (u64, u32)>::new();
         for (task, status) in batch.tasks.iter().zip(statuses) {
             let entry = work.entry(task.program).or_default();
@@ -988,13 +1178,13 @@ fn execute_packed_once(
         let mut work = work.into_iter().collect::<Vec<_>>();
         work.sort_by_key(|(_, (total, _))| std::cmp::Reverse(*total));
         eprintln!(
-            "TEMPO_PACKED_TASK_WORK {:?}",
+            "RERAIL_PACKED_TASK_WORK {:?}",
             work.into_iter().take(12).collect::<Vec<_>>()
         );
     }
     let results = unsafe {
         std::slice::from_raw_parts(
-            result_buffer.host().cast::<ResultRecord>(),
+            workspace.results.host().cast::<ResultRecord>(),
             totals
                 .candidates
                 .checked_add(totals.results)
@@ -1003,19 +1193,19 @@ fn execute_packed_once(
     };
     let final_captures = unsafe {
         std::slice::from_raw_parts(
-            final_capture_buffer.host().cast::<FinalCaptureRecord>(),
+            workspace.final_captures.host().cast::<FinalCaptureRecord>(),
             totals.output_captures as usize,
         )
     };
     let output_storage = unsafe {
         std::slice::from_raw_parts(
-            output_storage_buffer.host(),
+            workspace.output_storage.host(),
             batch.header.workspace_byte_count as usize,
         )
     };
     let properties = unsafe {
         std::slice::from_raw_parts(
-            output_storage_buffer.host().cast::<PropertyRecord>(),
+            workspace.output_storage.host().cast::<PropertyRecord>(),
             totals.properties as usize,
         )
     };

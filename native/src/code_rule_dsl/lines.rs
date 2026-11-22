@@ -239,7 +239,7 @@ impl LineTable {
     }
 }
 
-// cratify: `eslint` is rerail-w's (it mounts it)
+// cratify: `eslint` is rerail-workspace's (it mounts it)
 
 #[cfg(test)]
 pub mod tests {

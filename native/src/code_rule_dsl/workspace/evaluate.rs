@@ -140,7 +140,7 @@ fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> 
                         && !file.failures.contains_key(id)
                         && !failures.contains_key(id)
                         && grammar.admits_source(&file.input.source, &errors, &mut searched)
-                        && gates.admit(grammar))
+                        && grammar.admits(&gates))
                     .then(|| crate::code_rule_dsl::matcher::p_anchors::plan_for(grammar))
                 })
                 .collect::<Vec<_>>();
@@ -264,7 +264,7 @@ fn prefetch_results(
             }
             storage
                 .store
-                .local_check_results_by_key(&keys, catalog)
+                .workspace_results(&keys, catalog)
                 .map_err(|error| invalid(error.to_string()))?
         }
         None => HashMap::new(),
@@ -1112,7 +1112,7 @@ fn evaluate_document(
             !file.failures.contains_key(&file.candidates.ast[slot])
                 && admits_presence(&doc, grammar)
                 && grammar.admits_source(text, read, &mut searched)
-                && gates.admit(grammar)
+                && grammar.admits(&gates)
         })
         .collect::<Vec<_>>();
     #[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
@@ -1266,7 +1266,7 @@ fn fail_incomplete_candidates(
         if !failures.contains_key(&id)
             && grammar.invalid_syntax.is_none()
             && read.incomplete(grammar)
-            && gates.admit(grammar)
+            && grammar.admits(gates)
         {
             failures.insert(id, ("source-incomplete", SYNTAX_ERRORS));
         }

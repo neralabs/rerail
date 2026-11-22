@@ -574,7 +574,7 @@
   ],
   "repositories": [
     {
-      "repositoryKey": "remote:github.com/ananaq/interlace",
+      "repositoryKey": "remote:github.com/example/interlace",
       "displayName": "interlace",
       "aliases": [],
       "configuredAt": 1795109702953,

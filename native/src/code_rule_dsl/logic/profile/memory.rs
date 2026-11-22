@@ -142,14 +142,24 @@ pub(super) struct Sample {
 fn holders() -> [usize; 7] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
     // Relational work's device leases exist only where the device does (macOS).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     let (live, idle) = rerail_accel::gpu::shared::held_bytes();
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     let (live, idle) = (0, 0);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
     let (host, host_free) = rerail_accel::blocks::host_held();
     [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20]
 }
+
+/// The relations' blocks live now by the span that made them (span, life, bytes used, blocks), as the facts crate
+/// reads them (`rows::held_by_span`), which sets it at its first block: the sampler takes it at the peak.
+#[derive(Default)]
+pub struct BlocksBySpan(pub std::sync::OnceLock<fn() -> Vec<(u32, u8, usize, usize, String)>>);
+
+/// The runs' relations held now by name (name, rows, columns, bytes of values, runs holding it), as the evaluator
+/// reads them (`setfix::held_by_name`), which sets it at its first run: the sampler takes it at the peak.
+#[derive(Default)]
+pub struct RelationsByName(pub std::sync::OnceLock<fn() -> Vec<(String, usize, usize, usize, usize)>>);
 
 #[derive(Default)]
 pub(super) struct Sampled {
@@ -165,6 +175,11 @@ pub(super) struct Sampled {
     pub(super) heap: Vec<(u32, u64)>,
     /// The same by allocating call stack (`RERAIL_HEAP_FRAMES`).
     pub(super) heap_frames: Vec<((u32, Vec<usize>), u64)>,
+    /// The relations' blocks live then, by the span that made them and their life (`rows::held_by_span`): span,
+    /// life, bytes used, blocks.
+    pub(super) blocks: Vec<(u32, u8, usize, usize, String)>,
+    /// The runs' relations held then (`RelationsByName`).
+    pub(super) relations: Vec<(String, usize, usize, usize, usize)>,
     pub(super) heap_at: u64,
     /// `RERAIL_HEAP_AT=<text>`: the live heap by allocating span at the most footprint seen while a thread had a
     /// span open whose path holds the text (a phase that is not the peak's), and that footprint.
@@ -186,7 +201,7 @@ pub(super) fn sample() {
         let every_ms = std::env::var("RERAIL_PROF_MEMORY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5u64).max(1);
         SAMPLED.lock().unwrap().every_ms = every_ms;
         // Relational work's device leases are sampled as the heap is, under the span that leased them.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         if rerail_prof::heap::on() {
             rerail_accel::gpu::shared::set_lease_hook(|ptr, len| {
                 if len == 0 {
@@ -198,7 +213,9 @@ pub(super) fn sample() {
             // Q203 (c): what holds the device's budget when a lease is refused, by the span that leased it (the first
             // few refusals of a process).
             rerail_accel::gpu::shared::set_refusal_hook(|why| {
+                // Every refusal by the span that asked (one line), the holdings for the first few.
                 static TOLD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                eprintln!("rerail: refused in {}: {why}", rerail_prof::heap::name(rerail_prof::heap::span()));
                 if TOLD.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 6 {
                     return;
                 }
@@ -221,6 +238,8 @@ pub(super) fn sample() {
             });
         }
         let _ = rerail_accel::exec::service("profile memory", None, move || {
+            // It opens no span (it runs to the process's end): what it allocates is named by its thread.
+            rerail_prof::heap::name_thread("profile memory (the memory sampler)");
             let start = std::time::Instant::now();
             let mut last_max = footprint().1;
             loop {
@@ -258,9 +277,13 @@ pub(super) fn sample() {
                         drop(s);
                         let heap = rerail_prof::heap::snapshot();
                         let heap_frames = rerail_prof::heap::snapshot_frames();
+                        let blocks = super::machine::<BlocksBySpan>().0.get().map_or_else(Vec::new, |f| f());
+                        let relations = super::machine::<RelationsByName>().0.get().map_or_else(Vec::new, |f| f());
                         s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         s.heap = heap;
                         s.heap_frames = heap_frames;
+                        s.blocks = blocks;
+                        s.relations = relations;
                     }
                 }
                 if let Some(text) = heap_at_text()
@@ -331,23 +354,58 @@ pub(super) fn sampled_report(r: &mut String) {
     for p in &t.open {
         let _ = writeln!(r, "    {}", super::short(p, 160));
     }
-    // The footprint then, by holder: the heap's live bytes and what it keeps resident beyond them, the device's
-    // buffers (the driver's count; of them the pool's reservations and relational work's leases), SQLite's heap
-    // (inside jemalloc's when it allocates there), and the rest (stacks, code, maps, other allocators).
+    // The footprint then, by holder: the heap's live bytes and what it keeps resident beyond them, the device's own
+    // buffers (the pool's reservations, relational work's leases and its idle buffers: IOAccelerator memory), SQLite's
+    // heap (inside jemalloc's when it allocates there), the host blocks, and the rest (stacks, code, maps, other
+    // allocators). The driver's count (`current_allocated_size`) is shown apart: it counts every no-copy wrap of host
+    // memory (the blocks, the heap) again, so it is no holder of its own (ab145: 2,709 MB of it at a 3,051 MB
+    // footprint whose IOAccelerator regions were 971 MB).
     let [driver, reserved, leased, idle, sqlite, host, host_free] = t.holders;
     let heap_mb = |b: u64| (b >> 20) as usize;
-    let accounted = heap_mb(t.resident) + driver;
-    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; Metal driver {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} ({} free on their lists); the rest {}",
-        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), driver, reserved, leased, idle, sqlite, host, host_free, heap_mb(t.footprint).saturating_sub(accounted + host));
+    let accounted = heap_mb(t.resident) + reserved + leased + idle + host;
+    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} ({} free on their lists); the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
+        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, sqlite, host, host_free, heap_mb(t.footprint).saturating_sub(accounted), driver);
     // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
     // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
     let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
+    if let Some(census) = width_census::report() {
+        let _ = writeln!(r, "  {census}");
+        for line in width_census::top_spans(30) {
+            let _ = writeln!(r, "    {line}");
+        }
+        for line in width_census::top(40) {
+            let _ = writeln!(r, "    {line}");
+        }
+    }
+    // What threads keep on the device between strata, past every admission (Q203).
+    let [scratch] = rerail_accel::gpu::shared::kept();
+    let _ = writeln!(r, "  device kept by threads between strata: join scratch {} MB at most ({} MB at the end)", scratch.1 >> 20, scratch.0 >> 20);
     if !s.heap.is_empty() {
         let total: u64 = s.heap.iter().map(|h| h.1).sum();
         let _ = writeln!(r, "Live heap (and device leases) by the span that allocated it, near the peak (at {} MB footprint; sampled 1 in {} KB, all of 64 KB and more; {} MB in all, {} samples dropped):",
             mb(s.heap_at as f64), rerail_prof::heap::INTERVAL >> 10, mb(total as f64), rerail_prof::heap::DROPPED.load(std::sync::atomic::Ordering::Relaxed));
         for (id, bytes) in s.heap.iter().take(30) {
             let _ = writeln!(r, "{:>10} MB  {}", mb(*bytes as f64), super::short(&rerail_prof::heap::name(*id), 150));
+        }
+    }
+    if !s.blocks.is_empty() {
+        let total: usize = s.blocks.iter().map(|b| b.2).sum();
+        let _ = writeln!(r, "Relations' blocks live then, by the span that made them (at {} MB footprint; {} MB used in all, of {} blocks):",
+            mb(s.heap_at as f64), total >> 20, s.blocks.iter().map(|b| b.3).sum::<usize>());
+        let lives = ["a run's", "sources'", "kept", "a device run's own"];
+        for (id, life, bytes, n, by) in s.blocks.iter().take(30) {
+            let by = if by.is_empty() { String::new() } else { format!(", by {by}") };
+            let _ = writeln!(r, "{:>10} MB  {:>5} blocks, {}, made in {}{by}", bytes >> 20, n, lives.get(*life as usize).unwrap_or(&"?"), super::short(&rerail_prof::heap::name(*id), 140));
+        }
+    }
+    if !s.relations.is_empty() {
+        let total: usize = s.relations.iter().map(|r| r.3).sum();
+        let rows: usize = s.relations.iter().map(|r| r.1).sum();
+        let _ = writeln!(r, "The runs' relations held then, by name (at {} MB footprint; {} relations, {} rows, {} MB of values in all; rows, columns, MB, runs):",
+            mb(s.heap_at as f64), s.relations.len(), rows, total >> 20);
+        // Every one: what the rows are is read off the whole list, not its head.
+        for (name, rows, k, bytes, runs) in s.relations.iter() {
+            let _ = writeln!(r, "{:>10} KB  {:>9} rows  {k} columns  {runs} runs  {}", bytes >> 10, rows, super::short(name, 120));
         }
     }
     if let Some(text) = heap_at_text()
@@ -402,4 +460,190 @@ pub fn sampled_tsv() -> String {
         let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{h}\t{f}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
     }
     t
+}
+
+/// The memory ceiling in bytes: `RERAIL_MEMORY_MAX_MB`, else three quarters of the machine's memory; `None` with
+/// `off` (or where neither the machine's memory nor the process's can be read).
+pub fn memory_ceiling() -> Option<u64> {
+    match std::env::var("RERAIL_MEMORY_MAX_MB").ok().as_deref().map(str::trim) {
+        Some("off") | Some("0") => None,
+        Some(mb) if mb.parse::<u64>().is_ok() => Some(mb.parse::<u64>().unwrap() << 20),
+        _ => physical_bytes().map(|b| b / 4 * 3),
+    }
+    .filter(|_| resident_bytes().is_some())
+}
+
+/// The machine's memory, in bytes.
+pub fn physical_bytes() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut size: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        // SAFETY: `hw.memsize` is a u64; `size` and `len` describe its buffer.
+        let code = unsafe { libc::sysctlbyname(c"hw.memsize".as_ptr(), (&mut size as *mut u64).cast(), &mut len, std::ptr::null_mut(), 0) };
+        (code == 0 && size > 0).then_some(size)
+    }
+    #[cfg(all(unix, not(target_os = "macos"), not(target_family = "wasm")))]
+    {
+        // SAFETY: sysconf has no pointer arguments.
+        let (pages, page) = unsafe { (libc::sysconf(libc::_SC_PHYS_PAGES), libc::sysconf(libc::_SC_PAGESIZE)) };
+        (pages > 0 && page > 0).then(|| pages as u64 * page as u64)
+    }
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_physical_bytes()
+    }
+    #[cfg(not(any(all(unix, not(target_family = "wasm")), windows)))]
+    {
+        None
+    }
+}
+
+/// The process's resident memory, in bytes (`None` where it cannot be read).
+pub fn resident_bytes() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info = std::mem::MaybeUninit::<libc::mach_task_basic_info>::zeroed();
+        let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
+        unsafe extern "C" {
+            // The task's own port (`mach_task_self()` is a macro over it; libc's function is deprecated).
+            static mach_task_self_: libc::mach_port_t;
+        }
+        // SAFETY: task_info writes this C-layout buffer; count describes its capacity in words.
+        let code = unsafe { libc::task_info(mach_task_self_, libc::MACH_TASK_BASIC_INFO, info.as_mut_ptr().cast(), &mut count) };
+        // SAFETY: a successful task_info call initializes the output structure.
+        (code == libc::KERN_SUCCESS).then(|| unsafe { info.assume_init() }.resident_size)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/statm").ok()?;
+        let pages = status.split_whitespace().nth(1)?.parse::<u64>().ok()?;
+        // SAFETY: sysconf has no pointer arguments.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        (page_size > 0).then(|| pages.saturating_mul(page_size as u64))
+    }
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_working_set()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    {
+        None
+    }
+}
+
+/// A census of the columns of the run's relations as they are released (`RERAIL_WIDTH_CENSUS`): each column's bytes
+/// held (8 a value), by the bytes its values need as they are (unsigned: 1, 2, 4; else 8) and as an offset from the
+/// column's least value. What a compact layout would hold of them.
+pub mod width_census {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    /// Bytes held, by class: as they are (1, 2, 4, 8 bytes), then as offsets (1, 2, 4, 8); then values counted.
+    static BYTES: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
+    /// The bytes a split layout would hold: a node id's document part (above bit 32) as an offset from its least, and
+    /// its low part, each at the bytes it needs; a value below 2^32 as it is.
+    static SPLIT: AtomicU64 = AtomicU64::new(0);
+    /// The bytes per range of 4,096 rows, chosen by the blocks' encoder: as written, and each range sorted.
+    static RANGED: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+
+    /// Each relation's rows and values let go, by its name (a stratum's name prefix folded: `rr_narrow_` kept).
+    static BY_NAME: std::sync::Mutex<Vec<(String, u64, u64, u64)>> = std::sync::Mutex::new(Vec::new());
+
+    pub fn relation(name: &str, rows: u64, values: u64) {
+        let mut by = BY_NAME.lock().unwrap_or_else(|e| e.into_inner());
+        match by.iter_mut().find(|e| e.0 == name) {
+            Some(e) => {
+                e.1 += rows;
+                e.2 += values;
+                e.3 += 1;
+            }
+            None => by.push((name.to_owned(), rows, values, 1)),
+        }
+    }
+
+    /// Each released part's bytes (8 a value), by the span it was made in, its path's numbers and file names folded.
+    static BY_SPAN: std::sync::Mutex<Vec<(String, u64, u64)>> = std::sync::Mutex::new(Vec::new());
+
+    pub fn by_span(span: &str, bytes: u64) {
+        // A span's path less its per-item detail: a stratum's name kept, a chunk's or file's number dropped.
+        let key: String = span.split('/').map(|p| p.split(" (").next().unwrap_or(p)).collect::<Vec<_>>().join("/");
+        let mut by = BY_SPAN.lock().unwrap_or_else(|e| e.into_inner());
+        match by.iter_mut().find(|e| e.0 == key) {
+            Some(e) => {
+                e.1 += bytes;
+                e.2 += 1;
+            }
+            None => by.push((key, bytes, 1)),
+        }
+    }
+
+    pub fn top_spans(n: usize) -> Vec<String> {
+        let mut by = BY_SPAN.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        by.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut out = vec![format!("parts released, by the span that made them ({} spans):", by.len())];
+        out.extend(by.iter().take(n).map(|(span, bytes, times)| format!("{:>8} MB {times:>7}x  {}", bytes >> 20, super::super::short(span, 170))));
+        out
+    }
+
+    /// The relations that held the most values, with their rows and how many times one was let go.
+    pub fn top(n: usize) -> Vec<String> {
+        let mut by = BY_NAME.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        by.sort_by(|a, b| b.2.cmp(&a.2));
+        let total: u64 = by.iter().map(|e| e.2).sum();
+        let mut out = vec![format!("relations let go: {} names, {} M values in all; the most:", by.len(), total / 1_000_000)];
+        out.extend(by.iter().take(n).map(|(name, rows, values, times)| format!("{:>8.1} M values {:>8.1} M rows {times:>6}x  {name}", *values as f64 / 1e6, *rows as f64 / 1e6)));
+        out
+    }
+
+    pub fn ranged(written: u64, sorted: u64) {
+        RANGED[0].fetch_add(written, Relaxed);
+        RANGED[1].fetch_add(sorted, Relaxed);
+    }
+
+    pub fn on() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("RERAIL_WIDTH_CENSUS").is_some())
+    }
+
+    /// Whether each range is encoded too (`RERAIL_WIDTH_CENSUS=ranged`): about as long as the run again.
+    pub fn ranges() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var("RERAIL_WIDTH_CENSUS").is_ok_and(|v| v == "ranged"))
+    }
+
+    fn class(span: u64) -> usize {
+        match span {
+            0..=0xff => 0,
+            0x100..=0xffff => 1,
+            0x1_0000..=0xffff_ffff => 2,
+            _ => 3,
+        }
+    }
+
+    /// One column of `n` values, its least `lo` and greatest `hi`.
+    pub fn column(n: u64, lo: i64, hi: i64, split: (i64, i64, u64)) {
+        let bytes = 8 * n;
+        let width = |span: u64| [1u64, 2, 4, 8][class(span)];
+        let (dlo, dhi, low) = split;
+        let one = if lo >= 0 && hi < (1 << 32) { width(hi as u64) } else { width(dhi.wrapping_sub(dlo) as u64) + width(low) };
+        SPLIT.fetch_add(n * one, Relaxed);
+        let plain = if lo < 0 { 3 } else { class(hi as u64) };
+        BYTES[plain].fetch_add(bytes, Relaxed);
+        BYTES[4 + class(hi.wrapping_sub(lo) as u64)].fetch_add(bytes, Relaxed);
+        BYTES[8].fetch_add(n, Relaxed);
+    }
+
+    /// The census's line: MB held by each class.
+    pub fn report() -> Option<String> {
+        if !on() {
+            return None;
+        }
+        let mb = |i: usize| BYTES[i].load(Relaxed) >> 20;
+        let total: u64 = (0..4).map(|i| BYTES[i].load(Relaxed)).sum::<u64>() >> 20;
+        // What each would hold: as they are, at 1, 2, 4 or 8 bytes a value; as offsets, the same.
+        let compact = |base: usize| (0..4).map(|i| BYTES[base + i].load(Relaxed) / 8 * [1, 2, 4, 8][i]).sum::<u64>() >> 20;
+        Some(format!(
+            "width census: {total} MB of columns released ({} M values); needing 1/2/4/8 bytes as they are: {}/{}/{}/{} MB (compact {} MB), as offsets from their least: {}/{}/{}/{} MB (compact {} MB); split at bit 32, the document part an offset: {} MB; per range of 4,096 rows (the blocks' encoder, split at the granule where smaller): {} MB as written, {} MB each range sorted",
+            BYTES[8].load(Relaxed) / 1_000_000, mb(0), mb(1), mb(2), mb(3), compact(0), mb(4), mb(5), mb(6), mb(7), compact(4), SPLIT.load(Relaxed) >> 20, RANGED[0].load(Relaxed) >> 20, RANGED[1].load(Relaxed) >> 20
+        ))
+    }
 }

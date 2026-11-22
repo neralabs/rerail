@@ -5,12 +5,14 @@
 //! Copyright (c) 2026 Jeremy Barnes. This file is part of MLDB's forest as carried in Rerail. Apache-2.0 (see the
 //! LICENSE at `forest/src/mldb/`).
 //!
-//! - **No CUDA at build time.** The driver (`libcuda`) and NVRTC are opened at run time; without them there is no
+//! - **No CUDA at build time.** The driver (`libcuda`, Windows' `nvcuda.dll`) and NVRTC are opened at run time; without them there is no
 //!   device (`CudaDevice::system_default` is `None`), as on a Mac without Metal.
-//! - **Buffers are pinned, mapped host memory** (`cuMemHostAlloc`): the host reads and writes them in place
-//!   (`contents`), as Metal's shared storage, and kernels read them where they are. On a unified device (GB10) that
-//!   is as fast as device memory (0440 §2: 0.97x); on a discrete card it reads over the bus, which is correct and
-//!   slow: placing blocks in device memory there is the block directory's work (0440 §7.2, step 10).
+//! - **Buffers are host memory, mapped**: the host reads and writes them in place (`contents`), as Metal's shared
+//!   storage, and kernels read them where they are. On a device that reads pageable memory through the host's page
+//!   tables (a GB10's ATS) a block is the host's own pages; elsewhere it is pinned (`cuMemHostAlloc`). On a GB10 the
+//!   pinned path's atomics and fences are slow: a grid barrier of 32 groups 24-42 µs on it, 0.7-1.4 µs on the host's
+//!   pages (decision 0580). On a discrete card the pinned memory reads over the bus, which is correct and slow:
+//!   placing blocks in device memory there is the block directory's work (0440 §7.2, step 10).
 //! - **Arguments without reflection.** UKL's CUDA shim emits beside each kernel the text of its rows
 //!   (`Name__ukl_params`) and each row's type's size, alignment and kind (`Name__ukl_rows`), and for each `args`
 //!   structure its fields' names and a kernel that measures its layout (`Type__ukl_layout`). They give the same
@@ -58,6 +60,7 @@ struct Api {
     cu_event_destroy: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_func_set_attribute: unsafe extern "C" fn(Ptr, i32, i32) -> CUresult,
     cu_func_get_attribute: unsafe extern "C" fn(*mut i32, i32, Ptr) -> CUresult,
+    cu_occupancy_max_active_blocks_per_multiprocessor: unsafe extern "C" fn(*mut i32, Ptr, i32, usize) -> CUresult,
     cu_get_error_string: unsafe extern "C" fn(CUresult, *mut *const c_char) -> CUresult,
     nvrtc_create_program: unsafe extern "C" fn(*mut Ptr, *const c_char, *const c_char, i32, *const *const c_char, *const *const c_char) -> i32,
     nvrtc_compile_program: unsafe extern "C" fn(Ptr, i32, *const *const c_char) -> i32,
@@ -79,6 +82,7 @@ const CU_MEMHOSTALLOC_DEVICEMAP: u32 = 0x02;
 const CU_STREAM_NON_BLOCKING: u32 = 0x1;
 const CU_STREAM_WAIT_VALUE_GEQ: u32 = 0x0;
 const CU_ERROR_NOT_READY: CUresult = 600;
+const CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT: i32 = 16;
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR: i32 = 75;
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: i32 = 76;
 const CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN: i32 = 97;
@@ -90,13 +94,22 @@ const CU_MEMHOSTREGISTER_DEVICEMAP: u32 = 0x02;
 const CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES: i32 = 1;
 const CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES: i32 = 8;
 
-/// The first of `names` the loader opens.
-fn open(names: &[String]) -> Option<Ptr> {
-    names.iter().find_map(|n| {
-        let c = CString::new(n.as_str()).ok()?;
-        let h = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) };
-        (!h.is_null()).then_some(h)
-    })
+/// The driver's library, and NVRTC's in the system's search and in the toolkit's (`CUDA_HOME`, Windows' `CUDA_PATH`).
+fn library_names() -> (&'static [&'static str], Vec<String>) {
+    if cfg!(windows) {
+        let nvrtc = ["nvrtc64_130_0.dll", "nvrtc64_120_0.dll", "nvrtc64_112_0.dll"];
+        let mut names: Vec<String> = nvrtc.iter().map(|s| s.to_string()).collect();
+        if let Ok(home) = std::env::var("CUDA_PATH") {
+            names.extend(nvrtc.iter().map(|s| format!("{home}\\bin\\{s}")));
+        }
+        (&["nvcuda.dll"], names)
+    } else {
+        let home = std::env::var("CUDA_HOME").unwrap_or_else(|_| "/usr/local/cuda".into());
+        let nvrtc = ["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"];
+        let mut names: Vec<String> = nvrtc.iter().map(|s| s.to_string()).collect();
+        names.extend(nvrtc.iter().map(|s| format!("{home}/lib64/{s}")));
+        (&["libcuda.so.1", "libcuda.so"], names)
+    }
 }
 
 /// A symbol `dlsym` found, as the function pointer type `F` its field declares.
@@ -110,22 +123,17 @@ fn sym_as<F>(p: *mut c_void) -> F {
 fn api() -> Result<&'static Api, String> {
     static API: OnceLock<Result<Api, String>> = OnceLock::new();
     API.get_or_init(|| {
-        // The hardware queues the driver maps streams onto, round-robin in the order they are made: enough that no
-        // two of the process's streams (a root's each, `CudaQueueRoot`, and any a caller makes) share one. Read by the driver when it loads; a value the
-        // environment sets is kept.
-        if std::env::var_os("CUDA_DEVICE_MAX_CONNECTIONS").is_none() {
-            // SAFETY: once, before the driver loads, as the process's first use of the device.
-            unsafe { std::env::set_var("CUDA_DEVICE_MAX_CONNECTIONS", MAX_CONNECTIONS.to_string()) };
-        }
-        let cuda = open(&["libcuda.so.1".into(), "libcuda.so".into()]).ok_or("no CUDA driver (libcuda.so.1)")?;
-        let home = std::env::var("CUDA_HOME").unwrap_or_else(|_| "/usr/local/cuda".into());
-        let mut names: Vec<String> = ["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"].iter().map(|s| s.to_string()).collect();
-        names.extend(["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"].iter().map(|s| format!("{home}/lib64/{s}")));
-        let nvrtc = open(&names).ok_or("no NVRTC (libnvrtc.so; CUDA_HOME/lib64)")?;
+        // The hardware queues the driver maps streams onto, round-robin in the order they are made: one for each of
+        // the process's streams (a root's each, `CudaQueueRoot`), so no two share one.
+        crate::os::nvidia_hardware_queues(MAX_CONNECTIONS);
+        use crate::os::{Lib, Scope};
+        let (driver, nvrtc_names) = library_names();
+        let cuda = Lib::open(driver, Scope::Global).ok_or_else(|| format!("no CUDA driver ({})", driver.join(", ")))?;
+        let nvrtc = Lib::open(&nvrtc_names, Scope::Global).ok_or_else(|| format!("no NVRTC ({})", nvrtc_names.join(", ")))?;
         macro_rules! sym {
             ($lib:expr, $($name:literal)|+) => {{
                 let mut p: *mut c_void = std::ptr::null_mut();
-                $( if p.is_null() { p = unsafe { libc::dlsym($lib, concat!($name, "\0").as_ptr().cast()) }; } )+
+                $( if p.is_null() { p = $lib.sym($name); } )+
                 if p.is_null() {
                     return Err(format!("{} not found", [$($name),+].join(" or ")));
                 }
@@ -160,6 +168,7 @@ fn api() -> Result<&'static Api, String> {
             cu_event_destroy: sym!(cuda, "cuEventDestroy_v2"),
             cu_func_set_attribute: sym!(cuda, "cuFuncSetAttribute"),
             cu_func_get_attribute: sym!(cuda, "cuFuncGetAttribute"),
+            cu_occupancy_max_active_blocks_per_multiprocessor: sym!(cuda, "cuOccupancyMaxActiveBlocksPerMultiprocessor"),
             cu_get_error_string: sym!(cuda, "cuGetErrorString"),
             nvrtc_create_program: sym!(nvrtc, "nvrtcCreateProgram"),
             nvrtc_compile_program: sym!(nvrtc, "nvrtcCompileProgram"),
@@ -210,6 +219,9 @@ pub struct CudaDevice {
     /// Whether registered host memory is the device's at the host's address (`CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM`):
     /// then a wrap may span several registrations (`Registered`).
     host_pointer: bool,
+    /// Its streaming multiprocessors: a persistent grid's resident blocks are these times a block's occupancy
+    /// (`CudaComputeFunction::resident_groups`).
+    pub multiprocessors: u32,
 }
 
 unsafe impl Send for CudaDevice {}
@@ -228,7 +240,9 @@ impl CudaDevice {
         match Self::open() {
             Ok(d) => Some(d),
             Err(e) => {
-                if std::env::var_os("RERAIL_CUDA_DEBUG").is_some() {
+                // A process that asked for CUDA (`RERAIL_GPU=cuda`) says why it has none, as one that asked for OpenCL
+                // does: without it every unit after was refused as over capacity, with no word of the device.
+                if std::env::var_os("RERAIL_CUDA_DEBUG").is_some() || crate::device::chosen() == "cuda" {
                     eprintln!("no CUDA device: {e}");
                 }
                 None
@@ -251,9 +265,10 @@ impl CudaDevice {
             let max_shared_per_block = attr(CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN)? as u32;
             let pageable = attr(CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES).unwrap_or(0) != 0;
             let host_pointer = attr(CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM).unwrap_or(0) != 0;
+            let multiprocessors = attr(CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT)?.max(1) as u32;
             let mut ctx = std::ptr::null_mut();
             ck((a.cu_device_primary_ctx_retain)(&mut ctx, dev), "cuDevicePrimaryCtxRetain")?;
-            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable, host_pointer })
+            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable, host_pointer, multiprocessors })
         }
     }
 
@@ -320,7 +335,7 @@ impl Drop for Allocation {
     }
 }
 
-/// A pinned block of a size class, free.
+/// A block of a size class, free: the host's pages or pinned memory (`alloc_uninitialized_array_sync`).
 struct Block {
     host: *mut u8,
     dev: DevPtr,
@@ -393,6 +408,12 @@ pub fn alloc_uninitialized_array_sync<T>(device: &CudaDevice, length: usize) -> 
     sweep_pending(device.current());
     let reused = POOL.lock().unwrap().get_mut(&class).and_then(Vec::pop);
     let Block { host, dev } = reused.unwrap_or_else(|| {
+        // The host's pages where the device reads them through its page tables (decision 0580): a pinned block's
+        // atomics and fences take a slow path there. `RERAIL_CUDA_PINNED` keeps pinned blocks, a measurement aid.
+        if device.pageable && std::env::var_os("RERAIL_CUDA_PINNED").is_none() {
+            let host = crate::os::map_zeroed(class as usize).expect("the host's pages for a CUDA block");
+            return Block { host, dev: host as DevPtr };
+        }
         let a = device.current();
         let mut host = std::ptr::null_mut();
         must(unsafe { (a.cu_mem_host_alloc)(&mut host, class as usize, CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP) }, "cuMemHostAlloc");
@@ -445,7 +466,7 @@ static REGISTERED: std::sync::Mutex<std::collections::BTreeMap<u64, Run>> = std:
 
 fn page_bytes() -> u64 {
     static PAGE: OnceLock<u64> = OnceLock::new();
-    *PAGE.get_or_init(|| (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).max(4096) as u64)
+    *PAGE.get_or_init(|| crate::os::page_bytes() as u64)
 }
 
 /// Registers the pages of `[at, at + len)` that no run holds, as runs, and holds every run in it: the runs' starts.
@@ -567,7 +588,9 @@ impl CudaComputeFunctionLibrary {
     /// Compiles CUDA C++ (UKL preprocessed for this device) with NVRTC for the device's architecture, and loads it.
     pub fn compile_from_source(device: &CudaDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = device.current();
-        let options = [format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into()];
+        let mut options = vec![format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into()];
+        // `RERAIL_CUDA_OPTIONS`: more of NVRTC's options, a measurement aid (they are in the key).
+        options.extend(std::env::var("RERAIL_CUDA_OPTIONS").unwrap_or_default().split_whitespace().map(str::to_owned));
         // The store's cubin (`crate::store`), keyed by all the compile reads: NVRTC's and the driver's builds too.
         let (mut major, mut minor, mut driver) = (0, 0, 0);
         unsafe { (a.nvrtc_version)(&mut major, &mut minor) };
@@ -582,6 +605,7 @@ impl CudaComputeFunctionLibrary {
             }
         }
         crate::store::count(false);
+        crate::store::dump(file_name_to_appear_in_error_messages, "cu", &options.join(" "), preprocessed_source);
         let src = CString::new(preprocessed_source).map_err(|e| e.to_string())?;
         let name = CString::new(file_name_to_appear_in_error_messages).map_err(|e| e.to_string())?;
         let opts: Vec<CString> = options.into_iter().map(|o| CString::new(o).unwrap()).collect();
@@ -687,10 +711,29 @@ impl CudaComputeFunction {
     pub fn get_argument_info(&self) -> &[GridComputeFunctionArgument] {
         &self.arguments
     }
+
+    /// The blocks of `threads` threads, each with `dynamic` bytes of dynamic shared memory, that `device` holds at
+    /// once: the driver's occupancy of this function (its registers, its static and dynamic shared memory) times the
+    /// device's multiprocessors. A persistent grid's groups (decision 0568), the driver's answer, not a measure.
+    pub fn resident_groups(&self, device: &CudaDevice, threads: u32, dynamic: u64) -> Result<u64, String> {
+        let a = device.current();
+        let mut per = 0;
+        // SAFETY: the function's own handle, its context current.
+        ck(unsafe { (a.cu_occupancy_max_active_blocks_per_multiprocessor)(&mut per, self.func, threads as i32, dynamic as usize) }, "cuOccupancyMaxActiveBlocksPerMultiprocessor")?;
+        Ok(u64::from(device.multiprocessors) * per.max(0) as u64)
+    }
 }
 
-/// The hardware queues asked of the driver (its maximum).
-const MAX_CONNECTIONS: usize = 32;
+/// The streams the process makes: the waiting root's and the queue root's (`CudaQueueRoot`, `rerail_device`'s
+/// `shared`), one each.
+const STREAMS: usize = 2;
+
+/// The hardware queues asked of the driver: one a stream. Not its maximum of 32: each one costs the context's creation
+/// (`os::nvidia_hardware_queues`).
+const MAX_CONNECTIONS: usize = STREAMS;
+
+/// The streams made so far: past `STREAMS`, one would share a hardware queue with the waiting root's.
+static STREAMS_MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// What a queue's work goes to (`metal::CommandQueue`): one stream, made once. Its queues' work runs in the order it is
 /// flushed, as a Metal command queue's command buffers run in the order they are committed: the engine's batches rely
@@ -702,7 +745,8 @@ const MAX_CONNECTIONS: usize = 32;
 /// its hardware queue, and the work the host awaits before it signals may be among them: a deadlock (seen on a
 /// V100). Metal has the same rule within a command queue, which is why the forest keeps its waiting work on a queue
 /// of its own (`shared.waiting`). Here each root's stream has a hardware queue of its own (`MAX_CONNECTIONS`), so the
-/// waiting root's holds back nothing else.
+/// waiting root's holds back nothing else: the driver is given a hardware queue a stream the process makes, and a
+/// stream past them is refused (`STREAMS`).
 pub struct CudaQueueRoot {
     device: CudaDevice,
     stream: Ptr,
@@ -728,6 +772,8 @@ unsafe impl Sync for CudaQueueRoot {}
 impl CudaQueueRoot {
     /// A root on `device`. Made at the process's start (`shared`), the waiting root first.
     pub fn new(device: CudaDevice) -> CudaQueueRoot {
+        let made = STREAMS_MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        assert!(made < STREAMS, "a CUDA stream past the process's {STREAMS}: it would share a hardware queue with the waiting root's (MAX_CONNECTIONS)");
         let a = device.current();
         let mut stream = std::ptr::null_mut();
         must(unsafe { (a.cu_stream_create)(&mut stream, CU_STREAM_NON_BLOCKING) }, "cuStreamCreate");

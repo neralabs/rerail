@@ -1,5 +1,5 @@
 //! Core node facts from the tape (docs/final-shape/03-architecture.md §1, §5; 05 Phase 2), adapted
-//! from facts-a's per-content syntactic facts (Moti-Velz/facts-engine `spikes/facts-a/src/facts.rs`):
+//! from facts-a's per-content syntactic facts (the facts-engine branch, `spikes/facts-a/src/facts.rs`):
 //! columns indexed by preorder node id, built from Rerail's own tape so ids, kinds, fields and
 //! spans equal the matcher's (preorder transducer ids over every tree-sitter node, named and
 //! anonymous).
@@ -57,6 +57,11 @@ pub trait ValueReader: Send + Sync {
     );
 }
 
+/// The columns of a registered family's lazy relation (`facts::vtab::syntax::family_columns`, rerail-facts'), which
+/// the boot registers with the families; none registered: no family relation.
+pub static FAMILY_COLUMNS: rerail_registry::Slot<fn(&str) -> Option<&'static [&'static str]>> =
+    rerail_registry::Slot::new("a family's relation's columns (facts::core::FAMILY_COLUMNS)");
+
 static VALUE_READER: std::sync::OnceLock<&'static dyn ValueReader> = std::sync::OnceLock::new();
 
 /// Registers the reader of values (once, at load).
@@ -65,7 +70,7 @@ pub fn install_value_reader(reader: &'static dyn ValueReader) {
 }
 
 /// The registered reader of values; `None` where no engine registered one.
-pub(crate) fn value_reader() -> Option<&'static dyn ValueReader> {
+pub fn value_reader() -> Option<&'static dyn ValueReader> {
     VALUE_READER.get().copied()
 }
 
@@ -373,7 +378,7 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
 
 /// A parse's tape in a slab's room where a device reads tapes (`placed_parse`), else as the parser made it.
 fn placed_where_read(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<crate::code_rule_dsl::tape::TapeImage, String> {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if crate::code_rule_dsl::tape::placed::device().is_some() {
         return placed_parse(image, grammar).map(|(_, image)| image);
     }
@@ -565,6 +570,7 @@ fn build_in_wave_as(
             Built::Facts(facts)
         }
     };
+    // With no store (`build_with_frame`), a tape parsed is not queued.
     if let (Some(cache), Some((canonical, tape))) = (cache, queue) {
         cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, named, queued_programs(&built)?).map_err(|e| e.to_string())?;
     }
@@ -1177,10 +1183,10 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "rx_span" => &["p", "c", "j", "g", "m"],
         "ast_match" => &["p", "n", "g", "c"],
         // Decision 0055's (`facts::vtab::syntax::guests`).
+        "doc_grammar" => &["d", "g"],
         // The document underneath a file's program and its grammar (decision 0431 §4), for the lowering's findings
         // alone: a rule names a program by its file and place (`parsed`).
         "rr_program" => &["d", "file", "grammar"],
-        "doc_grammar" => &["d", "g"],
         "tape_of" => &["d", "t"],
         "sub_tape" => &["at", "grammar", "t"],
         "host_node" => &["n", "h"],
@@ -1214,7 +1220,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::MATCHES) => &["sp", "m"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
         // A registered family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
-        rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::family_columns(rel)?,
+        rel if rel.starts_with("py_") => FAMILY_COLUMNS.try_get()?(rel)?,
         _ => return None,
     })
 }

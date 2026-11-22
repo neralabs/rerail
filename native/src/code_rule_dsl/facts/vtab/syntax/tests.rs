@@ -7,36 +7,11 @@ use crate::content_store::Binding;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-fn root() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl")
-}
+use super::fixtures::{corpus, documents, facts, root};
+
 fn temp(what: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     std::env::temp_dir().join(format!("rerail-vtab-{what}-{}-{nonce}.sqlite", std::process::id()))
-}
-
-/// CPython 3.13's `fnmatch`, `ftplib`, `glob`, `json/` and `shlex`: the planner fixture's corpus, in its `doc` order.
-fn corpus() -> Vec<(String, String)> {
-    let raw = zstd::decode_all(std::fs::File::open(root().join("facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
-    serde_json::from_slice(&raw).unwrap()
-}
-fn facts(path: &str, source: &str) -> Arc<Facts> {
-    let file = FileInput::new(path.to_owned(), "python".to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
-    match core::build(&file).unwrap() {
-        Built::Facts(f) => Arc::new(f),
-        Built::Unparsed => panic!("{path} did not parse"),
-    }
-}
-/// The corpus as a batch, document `d` keyed `d`.
-pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
-    corpus()
-        .into_iter()
-        .enumerate()
-        .map(|(d, (path, source))| {
-            let facts = facts(&path, &source);
-            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
-        })
-        .collect()
 }
 
 /// How a column's integers decode to T's text.
@@ -349,9 +324,6 @@ fn a_kind_lookup_reads_the_rows_a_per_row_read_finds() {
     }
 }
 
-/// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
-/// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
-/// fields, and for a field it lacks.
 /// The statistics of a relation held as a view of `node` (decision 0329) are its rows' counts, made without reading
 /// them: per column, the distinct values, the squares of their counts and each value's count, as counting every row
 /// gives (`n`, the key: each value once, no counts).
@@ -379,6 +351,9 @@ fn a_node_columns_counts_are_its_rows_counts() {
     assert!(node_column_counts(&batch, 3).is_none());
 }
 
+/// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
+/// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
+/// fields, and for a field it lacks.
 #[test]
 fn a_fields_lookup_by_parent_and_field_holds_what_a_filter_keeps() {
     let store = ContentStore::open(&temp("lookup-eq")).unwrap();
@@ -688,6 +663,24 @@ fn within_with_both_given_is_an_interval_test() {
         for (n, a) in [(nodes - 1, 0), (1, 0), (0, 1)] {
             let eq = [(0, batch.id(n)), (1, batch.id(a))];
             assert_eq!(within.lookup_all(&eq).unwrap().len(), usize::from(within.holds(&eq).unwrap()), "{format:?}: {n} below {a}");
+        }
+    }
+    // As a chunk binds it (`values::Layered`, every source of a chunk's run): the same test, no row made.
+    {
+        let within = Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree));
+        let layered = super::values::Layered::new("within", Arc::clone(&within) as Arc<dyn Source>, Default::default());
+        for n in (0..nodes).step_by(97) {
+            for a in (0..nodes).step_by(13) {
+                let eq = [(0, batch.id(n)), (1, batch.id(a))];
+                assert_eq!(layered.holds(&eq), within.holds(&eq), "layered: node rows {n} below {a}");
+            }
+        }
+        assert!(within.made_rows() == 0, "layered: the test made no row");
+        // Probed by both columns at once, as the base is: the step's index is composite, which asks the test.
+        assert!(layered.composite(), "layered: both columns at once");
+        for (n, a) in [(nodes - 1, 0), (1, 0), (0, 1)] {
+            let eq = [(0, batch.id(n)), (1, batch.id(a))];
+            assert_eq!(layered.lookup_all(&eq), within.lookup_all(&eq), "layered: {n} below {a}");
         }
     }
 }
@@ -1116,7 +1109,7 @@ fn definition_slots_stay_below_the_span_bit() {
 fn span_ids_census() {
     use granules::ExtraSpan;
     // The data-layer pack's converted programs: pack test data (`npm run fixtures:pull`), not in git.
-    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
+    let pack = crate::source_tree::native().join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
     assert!(pack.exists(), "{} is missing: pack test data is not in git: run `npm run fixtures:pull`", pack.display());
     let literal = regex::Regex::new(r#"(?:match_all|match_group|rx_span)\("((?:[^"\\]|\\.)*)""#).unwrap();
     let mut patterns: BTreeSet<String> = BTreeSet::new();
@@ -1418,7 +1411,8 @@ fn cpu_now() -> f64 {
 
 /// A rule reading the text of a node whose kind no body fixes gets a twin reading `@rr_node_text` (decision 0109);
 /// a fixed kind, a field of leaves only, a short constant, and the twin itself need none. With the twin, no rule
-/// asks for every node's text at any length.
+/// asks for every node's text at any length. A negation gets no twin: of a short constant it needs no longer text,
+/// and otherwise every node's text is made at any length.
 #[test]
 fn long_text_twins_where_no_body_fixes_the_kind() {
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
@@ -1434,6 +1428,16 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
         assert_eq!(made, twins, "{body}");
         assert!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]).any.is_empty(), "{body}: every text is read");
         assert_eq!(crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(program, &Vec::new()).unwrap().1, 0, "{body}: twinned once");
+    }
+    for (body, negated_any) in [
+        ("out(\"doc\") :- node(_, n, _, _, _), !text(n, \"doc\").", 0),
+        ("out(t) :- node(_, n, _, _, _), field(n, \"attribute\", c), text(c, t), !text(n, t).", 1),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(program, &Vec::new()).unwrap();
+        assert_eq!(made, 0, "{body}: no twin");
+        let demand = crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]);
+        assert_eq!((demand.any.len(), demand.negated_any), (0, negated_any), "{body}");
     }
 }
 
@@ -1468,6 +1472,28 @@ fn text_only_for_the_nodes_read() {
     }
 }
 
+/// A negated `text` read narrows the nodes given `text` as a positive one does: by the field the node is in
+/// (PYI025's `field(a, "alias", al), !text(al, "AbstractSet")`), the constant it is compared with, or its fixed kind.
+/// Of a constant within the bound it needs no text past the bound, even of a fixed kind; compared with a variable, its
+/// fixed kind's text is made at any length.
+#[test]
+fn a_negated_text_read_narrows_the_nodes_it_tests() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    let set = |names: &[&str]| names.iter().map(|k| k.to_string()).collect::<BTreeSet<_>>();
+    for (body, read, long) in [
+        ("out(\"AbstractSet\") :- field(_, \"alias\", n), !text(n, \"AbstractSet\").", TextNodes { fields: set(&["alias"]), ..TextNodes::default() }, set(&[])),
+        ("out(\"self\") :- node(_, n, _, _, _), !text(n, \"self\").", TextNodes { values: set(&["self"]), ..TextNodes::default() }, set(&[])),
+        ("out(\"self\") :- kind(n, \"identifier\"), !text(n, \"self\").", TextNodes { kinds: set(&["identifier"]), ..TextNodes::default() }, set(&[])),
+        ("out(t) :- kind(n, \"identifier\"), kind(s, \"string\"), text(s, t), !text(n, t).", TextNodes { kinds: set(&["identifier", "string"]), ..TextNodes::default() }, set(&["identifier", "string"])),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let demand = crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]);
+        assert_eq!(demand.read, Some(read), "{body}: the nodes given text");
+        assert_eq!(demand.long, long, "{body}: the kinds whose text is made at any length");
+        assert_eq!((demand.any.len(), demand.negated_any), (0, 0), "{body}: no node of any kind");
+    }
+}
+
 /// A base relation's name (`kind`, `field`, `child`) the program gives rules of its own is a relation like any
 /// other: it narrows the nodes whose text is read only by what its rules give. Here they give nothing narrower than
 /// `edge`, so every node's text is read. `node`'s projection `kind(n, k) :- node(_, n, k, _, _)` is `kind` itself.
@@ -1495,6 +1521,27 @@ fn a_derived_base_name_narrows_no_text() {
     // `node`'s projection alone (the lowering's, `rr::lower` `projections`) is `kind` itself: it narrows.
     let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{decls}kind(n, k) :- node(_, n, k, _, _).\nout(t) :- kind(n, \"call\"), text(n, t).\n")).unwrap();
     assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]).read, Some(TextNodes { kinds: BTreeSet::from(["call".to_owned()]), ..TextNodes::default() }));
+}
+
+/// A negated `text` read demands the rows it tests, as a positive one does: a policy whose only read of a node's text
+/// is `!text(v, "self")` finds the same alone as beside a policy that reads those nodes' text. Alone, no identifier's
+/// text was made, and the negation held of `self` too.
+#[test]
+fn a_negated_text_read_finds_the_same_alone_and_beside_a_reader() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = |name: &str| dir.path().join(name);
+    std::fs::create_dir_all(at("root")).unwrap();
+    std::fs::write(at("root/a.py"), "self.x: int\nother.y: int\n").unwrap();
+    let policy = |id: &str, rule: &str| format!(".policy \"t:{id}\" revision 1\n.language python\n.mode steer\n.scope include \"**/*\"\n{rule}\n");
+    std::fs::write(at("negated.rerail"), policy("negated", ".violation Odd(at: node) code \"odd\" \"an attribute of a name other than self\"\nOdd(t) :- kind(t, \"attribute\"), field(t, \"object\", v), kind(v, \"identifier\"), !text(v, \"self\").")).unwrap();
+    std::fs::write(at("reader.rerail"), policy("reader", ".violation Named(at: node) code \"named\" \"a name\"\nNamed(v) :- kind(v, \"identifier\"), text(v, \"nothing\").")).unwrap();
+    let lines = |policies: &[&str], out: &str| -> Vec<i64> {
+        let paths: Vec<PathBuf> = policies.iter().map(|p| at(p)).collect();
+        let report = crate::code_rule_dsl::tools::run_policies(&paths, &at("root"), &at(out), &serde_json::Value::Null).unwrap();
+        report["diagnostics"].as_array().unwrap().iter().filter(|d| d["code"] == "odd").map(|d| d["line"].as_i64().unwrap()).collect()
+    };
+    assert_eq!(lines(&["negated.rerail"], "alone"), [2], "alone");
+    assert_eq!(lines(&["negated.rerail", "reader.rerail"], "beside"), [2], "beside a reader");
 }
 
 /// `node_text` (a node's exact text, at any length) is answered on request (decision 0174): each reader asks for the
@@ -1653,7 +1700,7 @@ fn definition_ids_are_pinned() {
         return;
     }
     use sha2::{Digest, Sha256};
-    let ruff = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let ruff = crate::code_rule_dsl::test_support::pack_test_data("packs/python/upstream/ruff/fixtures");
     let mut files: Vec<(&str, String, String)> = [
         ("python", "a.py", "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n"),
         ("tsx", "a.tsx", "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1>{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\n"),
@@ -1895,6 +1942,158 @@ fn an_axis_counts_its_rows_without_its_solve() {
     }
 }
 
+/// A solved axis probed by `n` reads each row's values off its solve as it finds them (`lookup_read`): the rows and
+/// values `lookup` and `value` give, for every node, with no list of rows made. Unsolved, it gives nothing, and the
+/// probe takes `lookup`'s rows made per lookup.
+#[test]
+fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-read")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes().last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    for (name, axis) in [("nearest", within::Axis::Nearest), ("inside", within::Axis::Inside)] {
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, Binding::Cpu);
+        let id = batch.id(nodes / 2);
+        assert!(!source.lookup_read(0, id, &[0, 1], &mut |_, _| panic!("{name}: read before its solve")), "{name}: unsolved, nothing read");
+        let _ = (0..source.len()).count();
+        let _ = source.value(0, 0);
+        assert!(source.is_solved(), "{name}");
+        let mut read_rows = 0;
+        for r in 0..nodes {
+            let n = batch.id(r);
+            let want: Vec<(usize, i64, i64)> = source.lookup(0, &[n]).unwrap().into_iter().map(|row| (row, source.value(row, 0), source.value(row, 1))).collect();
+            let mut got = Vec::new();
+            assert!(source.lookup_read(0, n, &[1, 0], &mut |row, v| got.push((row, v[1], v[0]))), "{name}");
+            assert_eq!(got, want, "{name}: node row {r}");
+            read_rows += got.len();
+        }
+        assert!(read_rows > 0, "{name}: some node has a member ancestor");
+        assert!(!source.lookup_read(1, id, &[0], &mut |_, _| ()), "{name}: by `a`, the solve's rows are searched as before");
+    }
+}
+
+/// A measurement (t50, `wstart`'s nearest step at ~375 ns a probe): ns per call of a solved axis's probe by `n`, by
+/// its parts, over every node of a few documents.
+#[test]
+#[ignore]
+fn an_axis_probes_cost() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-cost")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(8).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes().last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    let source = within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu);
+    let _ = source.value(0, 0);
+    let ids: Vec<i64> = (0..nodes).map(|r| batch.id(r)).collect();
+    let reps = (2_000_000 / nodes.max(1)).max(1);
+    let time = |what: &str, f: &mut dyn FnMut(i64) -> i64| {
+        let t = std::time::Instant::now();
+        let mut sum = 0i64;
+        for _ in 0..reps {
+            for &n in &ids {
+                sum = sum.wrapping_add(f(n));
+            }
+        }
+        let ns = t.elapsed().as_nanos() as f64 / (reps * ids.len()) as f64;
+        eprintln!("{what:<40} {ns:7.1} ns a probe ({} probes, sum {sum})", reps * ids.len());
+    };
+    time("Batch::node", &mut |n| batch.node(n).map_or(0, |(d, l)| d as i64 + i64::from(l)));
+    time("Within::lookup, then value", &mut |n| source.lookup(0, &[n]).unwrap().into_iter().map(|r| source.value(r, 1)).sum());
+    time("Within::lookup_read", &mut |n| {
+        let mut s = 0;
+        source.lookup_read(0, n, &[1], &mut |_, v| s += v[0]);
+        s
+    });
+    // The same probes through the set engine's join: a table of (node, repetition) probing the axis held as an input,
+    // against the same join without the axis.
+    use crate::code_rule_dsl::logic::native::{self as native, component as c};
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let path = crate::code_rule_dsl::fixtures::temp();
+    drop(crate::code_rule_dsl::fixtures::open(&path));
+    let db = rusqlite::Connection::open(path).unwrap();
+    native::register(&db).unwrap();
+    c::hold_source(&db, "ax", Arc::new(source), b"ii".to_vec());
+    db.execute_batch("CREATE TABLE probes(c0, c1); BEGIN").unwrap();
+    {
+        let mut ins = db.prepare("INSERT INTO probes VALUES (?1, ?2)").unwrap();
+        for k in 0..reps as i64 {
+            for &n in &ids {
+                ins.execute([n, k]).unwrap();
+            }
+        }
+    }
+    db.execute_batch("COMMIT").unwrap();
+    let probes = format!("t:b:{}:{}:ii", hex("probes"), hex("c0, c1"));
+    let joined = |name: &str, body: &str| {
+        c::open_spec(&db, &c::spec::ComponentSpec::parse(&format!("name {name}\nrel {name}_out i empty\nnowrite\nseed 0 {}", hex(body))).unwrap()).unwrap();
+        let _ = c::run(&db, name, 0).unwrap();
+        c::close(&db, name).unwrap();
+        c::open_spec(&db, &c::spec::ComponentSpec::parse(&format!("name {name}\nrel {name}_out i empty\nnowrite\nseed 0 {}", hex(body))).unwrap()).unwrap();
+        let t = std::time::Instant::now();
+        let report = c::run(&db, name, 0).unwrap();
+        let s = t.elapsed().as_secs_f64();
+        c::close(&db, name).unwrap();
+        (s, report)
+    };
+    let (plain, _) = joined("plain", &format!("pos {probes} v0 v2\nhead v0"));
+    let (axis, report) = joined("axis", &format!("pos {probes} v0 v2\npos r:{} v0 v1\nhead v1", hex("ax")));
+    let n = (reps * ids.len()) as f64;
+    eprintln!("join: scan alone {:.1} ns a row, with the axis's probe {:.1} ns a row: the probe {:.1} ns ({report})", plain * 1e9 / n, axis * 1e9 / n, (axis - plain) * 1e9 / n);
+}
+
+/// Decision 0353 step 5: a solvable axis's answer is one relation of ids in a block, written once: each row's two
+/// ids, as `value` reads them, in its order, every column at its place, which the device reads where it lies
+/// (`Source::in_block`), with room for an index on each column. Asked again, it is the same relation. Span
+/// containment has no solve, and no such relation.
+#[test]
+fn a_solved_axis_is_one_relation_of_ids_in_a_block() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-ids")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes().last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    for (name, source) in [
+        ("containment", within::Within::new(Arc::clone(&batch), within::Mode::Tree)),
+        ("nearest", within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu)),
+        ("inside", within::Within::axis(Arc::clone(&batch), within::Axis::Inside, &set, Binding::Cpu)),
+    ] {
+        let ib = source.in_block().unwrap_or_else(|| panic!("{name}: its answer in a block"));
+        assert_eq!(ib.rows as usize, source.len(), "{name}: every row");
+        assert!(ib.rows > 0, "{name}");
+        let rel = ib.relation();
+        for r in 0..ib.rows {
+            assert_eq!((rel.rows.get(r, 0), rel.rows.get(r, 1)), (source.value(r as usize, 0), source.value(r as usize, 1)), "{name}: row {r}");
+        }
+        let again = source.in_block().expect("again");
+        assert!(Arc::ptr_eq(&again.facts, &ib.facts) && again.at == ib.at, "{name}: written once");
+        // An index on each column is built in its block: a reader's probe does not copy it (`DevIndex::moved`).
+        assert!(ib.own_index(&[0]).is_some() && ib.own_index(&[1]).is_some(), "{name}: room for an index on each column");
+    }
+    assert!(within::Within::new(Arc::clone(&batch), within::Mode::Span).in_block().is_none(), "span containment has no solve");
+}
+
 /// The numbering reads' cases: a projection of each source, in each format, whole, as T and narrowed, with the tape
 /// nodes to read (every one, and 64 past the last).
 fn id_read_cases() -> Vec<(String, Projected, u32)> {
@@ -1990,7 +2189,7 @@ fn the_jits_id_reads_are_the_hosts() {
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
 /// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds. The
 /// kernel is UKL, on the process's device (decision 0440 step C).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_kernels_id_reads_are_the_hosts() {
     use rerail_gpu::device::ComputeQueue;
@@ -2065,7 +2264,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
 /// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
 /// start and end; each child's parent, id and place; each fielded node's parent, field and id; each node's tape node;
 /// each node's line, by its lines where they lie (step 4d). In all three formats, whole and narrowed.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_view_reads_are_the_hosts_rows() {
     use crate::code_rule_dsl::lines::LineTable;
@@ -2289,6 +2488,27 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
     assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
 }
 
+/// Decision 0353: `rr_long_text_node`'s statistics are counted on the tape, with no group made: the planner's measure
+/// of it made every document's rows of every relation before (a 158 MB block at the M3's 300-file peak). They are
+/// what its rows, once made, measure.
+#[test]
+fn long_text_nodes_are_measured_on_the_tape_with_no_row_made() {
+    let store = ContentStore::open(&temp("long-text-stats")).unwrap();
+    let long = "x".repeat(core_rr::TEXT_INLINE + 5);
+    let docs = || -> Vec<Document> {
+        (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return \"{long}\" + \"s{k}\"\n"))).collect()
+    };
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "rr_long_text_node", "doc"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let batch = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let texts = Arc::clone(&sources.iter().find(|(n, _, _)| *n == LONG_TEXT_NODES).unwrap().2);
+    let got = texts.statistics().expect("counted on the tape");
+    assert_eq!(batch.groups(), 0, "the statistics made no group");
+    let want = measured(&*texts);
+    assert!(want[0].1 >= 6, "each document's long string and the nodes holding it: {want:?}");
+    assert_eq!(got, want, "the tape's count, as the rows measure");
+}
+
 /// Decision 0494 (Q396): reads of a batch side by side make each document once. Each thread reads a relation whole;
 /// a read finding documents another is making waits for them, so every group made is kept, none made again and set
 /// aside (the base relations counted on the pool made the whole batch once each).
@@ -2498,4 +2718,171 @@ fn a_span_reader_s_places_are_the_view_s_then_the_spans() {
             assert_eq!(rows.iter().map(|&row| s.value(row, 1)).collect::<Vec<_>>(), [want], "{name} of line {l}'s span");
         }
     }
+}
+
+/// Decision 0353, step 3 on the CPU (step 1): a batch's views' directory is made with or without a device, and
+/// self-relative. Read from its offset in the batch's block, at the host's bases of its homes, each document's row
+/// names that document's entry, its tape's bytes and its lines' words where they lie. The device's address of it is
+/// given only where the device reads every home.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[test]
+fn the_views_directory_is_the_hosts_too() {
+    use rerail_clif::view_reads::{ViewDir, ViewDoc, ViewHome, ViewRow};
+    let store = ContentStore::open(&temp("views-dir-host")).unwrap();
+    let docs: Vec<Document> = (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return g(x, {k})\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["node".to_owned(), "child".to_owned()].into()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let chunk = batch.chunk();
+    let views = device_chunk::views_in_place(&batch, chunk).expect("a directory, device or not");
+    let block = &chunk.block;
+    // SAFETY: the directory, its rows and its homes, in the batch's block, which the batch holds.
+    let dir = unsafe { &*block.ptr::<ViewDir>(views.at) };
+    assert_eq!(dir.at as usize, views.at, "the directory's own offset");
+    assert_eq!(dir.ndocs as usize, batch.docs.len());
+    let rows = unsafe { std::slice::from_raw_parts(block.ptr::<ViewRow>(dir.rows as usize), dir.ndocs as usize) };
+    let homes = unsafe { std::slice::from_raw_parts(block.ptr::<ViewHome>(dir.homes as usize), dir.nhomes as usize) };
+    for (row, p) in rows.iter().zip(batch.docs.iter()) {
+        let entry = unsafe { &*block.ptr::<ViewDoc>(row.entry as usize) };
+        assert_eq!(entry.key, p.key, "the row's entry is its document's");
+        let (bytes, view) = p.facts.tape.as_ref().unwrap().in_place().unwrap();
+        assert_eq!(homes[row.homes[0] as usize].host + row.tape, bytes.as_ptr() as u64, "document {}'s tape, where it lies", p.key);
+        assert_eq!((row.view.format, row.view.nodes), (view.format, view.nodes));
+        assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.index().as_ptr() as u64, "document {}'s line index, in its tape or its own", p.key);
+    }
+    let all_on_device = crate::code_rule_dsl::tape::placed::device().is_some() && homes.iter().all(|h| h.gpu != 0);
+    assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every home");
+}
+
+/// Decision 0353, step 3 on the CPU (step 2): the directory's searches written directly in Rust (`ViewDir::doc_of_row`,
+/// `doc_of_key`) answer what their CLIF answers, by the JIT, for every row of every view, every key and a key of
+/// none, with a memo of the right document, of a wrong one, and of none. Documents of no rows in a view (a module's
+/// docstring alone) are among them.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[test]
+fn the_directorys_searches_are_the_jits() {
+    use rerail_clif::view_reads::{NO_DOC, VIEWS, ViewDir};
+    let store = ContentStore::open(&temp("views-dir-search")).unwrap();
+    let mut docs: Vec<Document> = (1..=5).map(|k| document(k * 3, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return g(x, {k})\n"))).collect();
+    docs.push(document(40, "m40.py", "python", "\"\"\"only a docstring\"\"\"\n"));
+    let projection = Projection { shape: Shape::Core, reads: Some(["node".to_owned(), "child".to_owned(), "field".to_owned()].into()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let chunk = batch.chunk();
+    let views = device_chunk::views_in_place(&batch, chunk).expect("a directory");
+    let jit = rerail_clif::jit::Reads::new();
+    type ByRow = extern "C" fn(*const u8, u32, u32, u32) -> u32;
+    type ByKey = extern "C" fn(*const u8, u32, u32) -> u32;
+    // SAFETY: each read's signature: the descriptor, then its arguments.
+    let (by_row, by_key): (ByRow, ByKey) = unsafe { (std::mem::transmute(jit.function("dir_doc_of_row")), std::mem::transmute(jit.function("dir_doc_of_key"))) };
+    let d = chunk.block.ptr::<u8>(views.at).cast_const();
+    // SAFETY: the directory in the batch's block, which the batch holds.
+    let dir = unsafe { &*d.cast::<ViewDir>() };
+    let rows = unsafe { dir.rows() };
+    let n = dir.ndocs;
+    assert_eq!(n, 6);
+    let mut tried = 0;
+    for k in 0..VIEWS.len() as u32 {
+        let last = rows.last().map_or(0, |r| r.rows[k as usize]) + 4;
+        for r in 0..last {
+            for memo in [0, n / 2, n - 1, n, NO_DOC] {
+                // SAFETY: as `dir`.
+                let host = unsafe { dir.doc_of_row(k, r, memo) };
+                assert_eq!(by_row(d, k, r, memo), host, "view {k}, row {r}, memo {memo}");
+                let next = rows.get(host as usize + 1).map_or(u32::MAX, |e| e.rows[k as usize]);
+                assert!(rows[host as usize].rows[k as usize] <= r && r < next || host + 1 == n, "view {k}, row {r}: document {host}");
+                tried += 1;
+            }
+        }
+    }
+    for key in 0..45 {
+        for memo in [0, 2, n, NO_DOC] {
+            // SAFETY: as `dir`.
+            let host = unsafe { dir.doc_of_key(key, memo) };
+            assert_eq!(by_key(d, key, memo), host, "key {key}, memo {memo}");
+            let expect = batch.docs.iter().position(|p| p.key == key).map_or(NO_DOC, |i| i as u32);
+            assert_eq!(host, expect, "key {key}");
+            tried += 1;
+        }
+    }
+    assert!(tried > 100);
+}
+
+/// Decision 0353, step 3 on the CPU (step 2): the directory's searches in the kernels (`clif_dir_doc_of_row`,
+/// `clif_dir_doc_of_key`, the UKL of their CLIF), over the directory where it lies in its batch's block, answer what
+/// the host's answer: every row of every view, every key and keys of none, with each memo. The kernel is UKL, on the
+/// process's device (decision 0440 step C).
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[test]
+fn the_kernels_directory_searches_are_the_hosts() {
+    use rerail_clif::view_reads::{NO_DOC, VIEWS, ViewDir};
+    use rerail_gpu::device::ComputeQueue;
+    use rerail_gpu::kernels::{alloc, launch, read};
+    let Some(shared) = rerail_gpu::shared::get() else { return };
+    /// A probe's arguments, each search's: the directory's offset in its block, then (view or key, row, memo) by
+    /// thread.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct DirP {
+        d: u64,
+        n: u32,
+        pad: u32,
+    }
+    unsafe impl rerail_gpu::Pod for DirP {}
+    const KERNEL: &str = r#"
+typedef struct DirP { uint64_t d; uint32_t n; uint32_t pad; } DirP;
+UKL_REFLECT_STRUCT(DirP, d, n, pad)
+DEFINE_KERNEL2(syntax_tests, dir_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, DirP, p, , ROBUFFER, uint32_t, ask, "[n * 4]",
+               RWBUFFER, uint32_t, out, "[n]", GID0, uint32_t, x, )
+{
+    if (x >= p.n) return;
+    UKL_GLOBAL const uint32_t* a = ask + x * 4u;
+    out[x] = a[0] == 0u ? clif_dir_doc_of_row(b, p.d, a[1], a[2], a[3]) : clif_dir_doc_of_key(b, p.d, a[1], a[3]);
+}
+"#;
+    let store = ContentStore::open(&temp("views-dir-kernel")).unwrap();
+    let mut docs: Vec<Document> = (1..=5).map(|k| document(k * 3, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return g(x, {k})\n"))).collect();
+    docs.push(document(40, "m40.py", "python", "\"\"\"only a docstring\"\"\"\n"));
+    let projection = Projection { shape: Shape::Core, reads: Some(["node".to_owned(), "child".to_owned(), "field".to_owned()].into()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let chunk = batch.chunk();
+    let views = device_chunk::views_in_place(&batch, chunk).expect("a directory");
+    // SAFETY: the directory in the batch's block, which the batch holds.
+    let dir = unsafe { &*chunk.block.ptr::<ViewDir>(views.at) };
+    let rows = unsafe { dir.rows() };
+    let n = dir.ndocs;
+    let mut asks: Vec<[u32; 4]> = Vec::new();
+    for k in 0..VIEWS.len() as u32 {
+        for r in 0..rows.last().map_or(0, |e| e.rows[k as usize]) + 4 {
+            for memo in [0, n / 2, n - 1, n, NO_DOC] {
+                asks.push([0, k, r, memo]);
+            }
+        }
+    }
+    for key in 0..45 {
+        for memo in [0, 2, n, NO_DOC] {
+            asks.push([1, key, 0, memo]);
+        }
+    }
+    // SAFETY: as `dir`.
+    let want: Vec<u32> = asks.iter().map(|&[op, a, r, memo]| unsafe { if op == 0 { dir.doc_of_row(a, r, memo) } else { dir.doc_of_key(a, memo) } }).collect();
+    let source = format!("#include <ukl/backend.h>\n#include <ukl/reads/relation.h>\n{KERNEL}");
+    let program = rerail_gpu::kernels::program("dir_probe.uglykl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("the directory's searches compile: {e}"));
+    let probe = program.function("dir_probe").unwrap();
+    let m = asks.len() as u32;
+    let flat: Vec<u32> = asks.iter().flatten().copied().collect();
+    let ask = rerail_gpu::kernels::buffer_of(&flat).unwrap();
+    let out = alloc::<u32>(asks.len()).unwrap();
+    let mut q = ComputeQueue::new(&shared.queue);
+    launch(&q, probe)
+        .buffer("b", &chunk.block.device_buffer(&shared.device).unwrap())
+        .value("p", &DirP { d: views.at as u64, n: m, pad: 0 })
+        .buffer("ask", &ask)
+        .buffer("out", &out)
+        .run(&[(u64::from(m)).div_ceil(64)], &[64])
+        .unwrap_or_else(|e| panic!("{e}"));
+    q.flush().await_().unwrap();
+    let got: Vec<u32> = read(&out, asks.len());
+    for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+        assert_eq!(g, w, "ask {:?}", asks[i]);
+    }
+    assert!(m > 100);
 }

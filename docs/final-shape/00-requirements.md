@@ -47,7 +47,7 @@ Sources: user statements in the PIAT, Typing-support and wolfeel sessions; memor
 | B12 | I | One AST, two concrete syntaxes: Datalog text for facts and inference, YAML/JSON (matcher style) for lint rules; both embed `ast(...)` | Typing 00:39 | §12 |
 | B13 | I | Extensions: `.lattice` (join, height or `widen k`), `count`/`min`/`max`, stratified negation, `$v = @f(...)` builtins, `.demand` magic sets with gated negation, `ast(...)`, tree built-ins (`nearest`, `inside`), a per-document partition, `must_`/`may_`/`*_open` three-valued results | Typing spike | §12 |
 | B14 | I | Builtins amend decision 0005's "no UDFs" | Typing 22:30 | §12 |
-| B15 | I | Trigram postings are not built unless textual clauses appear or a vocabulary scan nears the latency target; if built, custom u32 postings, never FTS5 | ast-index-spike S159; PIAT regex.md | §16 |
+| B15 | I | Trigram postings are not built unless textual clauses appear or a vocabulary scan nears the latency target; if built, custom u32 postings, never FTS5 | SQL index prototype S159; PIAT regex.md | §16 |
 
 ## C. Facts, storage, invalidation
 
@@ -68,7 +68,7 @@ Sources: user statements in the PIAT, Typing-support and wolfeel sessions; memor
 | C13 | C | Git tree hashes and their relationships are facts the engine works with | W26 | §15 |
 | C14 | I | Derivation tables `derivation(id, producer, rev, key_hash, status, reason, output_hash, cost)` and `derivation_input(id, ord, input_hash, name_id)`; names are mutable bindings to hashes changed only by observers; validity is one SQL join | Typing 23:44 | §14 |
 | C15 | I | No DRed and no level witness: an invalidated fact is recomputed from its inputs | ours | §2 |
-| C16 | I | Git tree facts: `git_tree`, `git_tree_entry`, `git_blob_alias`, `snapshot`, `overlay`, `clean(prefix)`, `context_chain`; Git events diff root trees to seed the push path; subtree-keyed derivations give a cutoff per directory | Tempo E31–E34; main schemas 9/10 | §15 |
+| C16 | I | Git tree facts: `git_tree`, `git_tree_entry`, `git_blob_alias`, `snapshot`, `overlay`, `clean(prefix)`, `context_chain`; Git events diff root trees to seed the push path; subtree-keyed derivations give a cutoff per directory | The predecessor's E31–E34; main schemas 9/10 | §15 |
 | C17 | X | Cross-file derivations record the tree hashes of the prefixes they read as coarse read-set entries | ours | §15 |
 | C18 | X | Interim-fact format: append-only columnar runs of u32 atoms per relation, spilling to a flat file at the cap, merged into SQLite in bulk | ours | §10.2 |
 | C19 | I | A counter of re-runs against facts that actually changed measures spurious invalidation | ours | §10.4 |
@@ -82,7 +82,7 @@ Sources: user statements in the PIAT, Typing-support and wolfeel sessions; memor
 | D3 | C | Transducers are combined and optimized, including AND/OR co-execution; fusion gets a detailed spec | W26 18:32; P25 14:43, 16:11 | §3 |
 | D4 | C | Lowering is driven by statistics: query shape depends on corpus statistics | P25 11:24; W26 18:32 | §6 |
 | D5 | C | Statistics live in SQL, ideally from indexes; Rust-side statistics need a stated reason | P25 11:48 | §6 |
-| D6 | C | Planner statistics are built at ingestion from an SQL index, as ast-index-spike does | T26 10:24 | §6 |
+| D6 | C | Planner statistics are built at ingestion from an SQL index, as the SQL index prototype does | T26 10:24 | §6 |
 | D7 | C | Statistics-based anchoring for walking up the tree | T26 01:56 | §6 |
 | D8 | C | Rules and statistics change rarely: compile output is cached, and compile time is recorded separately | P25 11:48 | §6 |
 | D9 | C | Interpreted Metal/CPU first, for reactivity; the JIT is built in the background | W26 18:32 | §3 |
@@ -106,9 +106,9 @@ Sources: user statements in the PIAT, Typing-support and wolfeel sessions; memor
 | E10 | C | One final layer of full SQL turns facts and matches into findings; per-wave later, not now | W26 18:32 | §8 |
 | E11 | C | SQLite indexes prefilter by file, anchor kind and identifier text so only the best anchors are used | W26 18:32 | §6 |
 | E12 | C | A full scan overlaps cache preparation with computation, possibly in several chunks | W26 18:43 | §10.1 |
-| E13 | C | File filtering may run regexes over the index or vocabulary, guided by ast-index-spike | W26 | §16 |
+| E13 | C | File filtering may run regexes over the index or vocabulary, guided by the SQL index prototype | W26 | §16 |
 | E14 | I | A wave is one SQL step plus one `demand(batch)` call over every document in the frontier | ours | §7 |
-| E15 | I | Regexes run once per distinct term per language (literal sets by join, patterns in Rust); probes come from the pattern; the vocabulary path never under-produces; the transducer reads `R[tid]`; whole-file text only for genuinely textual clauses | ast-index-spike; PIAT §17 | §16 |
+| E15 | I | Regexes run once per distinct term per language (literal sets by join, patterns in Rust); probes come from the pattern; the vocabulary path never under-produces; the transducer reads `R[tid]`; whole-file text only for genuinely textual clauses | SQL index prototype; PIAT §17 | §16 |
 | E16 | I | The findings layer feeds nothing back into the fixpoint | ours | §8 |
 
 ## F. GPU (Metal)
@@ -119,7 +119,7 @@ Sources: user statements in the PIAT, Typing-support and wolfeel sessions; memor
 | F2 | C | Data-dependent recursion on Metal; device-side enqueue | P25 14:43, 16:11; W26 | §7 |
 | F3 | C | Pinned GPU memory caches program source and tapes; wave preparation fills it | W26 18:32 | §5 |
 | F4 | C | Pinned GPU memory is dropped two minutes after each full execution | W26 18:32 | §5 |
-| F5 | C | Learn from Tempo's cached, pinned, page-allocated uncompressed tapes | P25 17:09 | §5 |
+| F5 | C | Learn from the predecessor's cached, pinned, page-allocated uncompressed tapes | P25 17:09 | §5 |
 | F6 | C | Prefiltering and memoised facts keep the incremental working set to very few files | W26 18:43 | §10.1 |
 | F7 | I | Residency: zstd frames decompress directly into 64 MiB slabs with one retained no-copy shared `MTLBuffer` per slab; batches reference documents and never copy | PIAT spec §20 | §5 |
 | F8 | X | Shared vs private Metal storage (Q-R1); pin cost per GB (Q-R7) | PIAT §20.12 | §10.1 |
@@ -128,12 +128,12 @@ Sources: user statements in the PIAT, Typing-support and wolfeel sessions; memor
 
 | # | St | Requirement | Source | § |
 |---|---|---|---|---|
-| G1 | C | One common tape, a minor variant of ast-index-spike's format | P25 11:24 | §17 |
+| G1 | C | One common tape, a minor variant of the SQL index prototype's format | P25 11:24 | §17 |
 | G2 | C | The tape is completely regular | P25 13:51 | §17 |
 | G3 | C | Disk space matters: no layout expansion without clear benefit | P25 14:43; W26 16:22 | §1 |
 | G4 | C | The tape holds structure only; Blade stores exactly what tree-sitter-php does | P25 14:43 | §17 |
 | G5 | C | ERROR/MISSING spans are stored as tree-sitter emits them; Blade may use a compatible generic form | P25 16:11 | §17 |
-| G6 | C | Take ast-index-spike's multiple-trees-per-file-range experiments into account | P25 13:51 | §17 |
+| G6 | C | Take the SQL index prototype's multiple-trees-per-file-range experiments into account | P25 13:51 | §17 |
 | G7 | C | Tapes stay processable in SQL; Rust-friendly changes must show clear benefits | P25 14:43 | §17 |
 | G8 | X | Tape v9np (`kf, size, base, off, tail`, no stored `par`), 0.93–1.01× v7, pending 4 measurements before lock | D0003 | §17 |
 | G9 | I | Ranges with injected languages are documents with an origin seam | main embedded-program documents | §17 |
@@ -202,7 +202,7 @@ All confirmed.
 | M2 | C | Construction costs are excluded from execution measurements and reported separately | P26 02:28 |
 | M3 | C | Measure before merging | P25 16:11 |
 | M4 | C | Estimates are grounded in the actual data-layer rules and corpus | P25 16:11 |
-| M5 | C | Consult ast-index-spike for every decision; never re-decide what is decided | P25 12:58; P26 02:28 |
+| M5 | C | Consult the SQL index prototype for every decision; never re-decide what is decided | P25 12:58; P26 02:28 |
 | M6 | C | Respect PR 2539's lessons | P25 11:24 |
 | M7 | C | Judge by shape, not completion; deliver a coherent design | W26 16:12 |
 | M8 | C | Deep research with tracked notes | W26 16:22 |
@@ -222,4 +222,4 @@ All confirmed.
 | H4 | Regex count estimate |
 | I11 | k |
 | I15 | `possible` tag |
-| Others | Cold cost of the repository-wide facts (estimated 1.5–2.5 s); facts by vtab (M3); lattice waves on Metal; Tempo subtree-reuse RSS rise (399 → 678 MB) |
+| Others | Cold cost of the repository-wide facts (estimated 1.5–2.5 s); facts by vtab (M3); lattice waves on Metal; the predecessor's subtree-reuse RSS rise (399 → 678 MB) |

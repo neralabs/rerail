@@ -66,11 +66,11 @@ pub fn install_terms(terms: Vec<TermCompiler>) {
 }
 
 /// The registered language terms.
-pub(crate) fn terms() -> &'static [TermCompiler] {
+pub fn terms() -> &'static [TermCompiler] {
     TERMS.get().map_or(&[], Vec::as_slice)
 }
 
 /// The language term compiled from `key`, if one is registered.
-pub(crate) fn term(key: &str) -> Option<&'static TermCompiler> {
+pub fn term(key: &str) -> Option<&'static TermCompiler> {
     terms().iter().find(|term| term.key == key)
 }

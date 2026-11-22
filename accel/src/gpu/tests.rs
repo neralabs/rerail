@@ -88,9 +88,9 @@ fn has_device() -> bool {
     has
 }
 
-/// Every kernel through one submission, compared with the reference; `None` on a host with no device.
-fn check(ks: &[Kernel]) -> Option<Stats> {
-    let g = gpu()?;
+/// Every kernel through one submission, compared with the reference.
+fn check(ks: &[Kernel]) -> Stats {
+    let Some(g) = gpu() else { return Stats::default() };
     for (i, k) in ks.iter().enumerate() {
         assert!(g.can(k), "launch {i} ({}) refused", k.form().name());
     }
@@ -110,7 +110,7 @@ fn check(ks: &[Kernel]) -> Option<Stats> {
             panic!("launch {i} ({}): gpu {} vs reference {}", k.form().name(), brief(o), brief(&want));
         }
     }
-    Some(stats)
+    stats
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn bit_product_counts_and_pairs() {
         ks.push(Kernel::BitProduct { a: a.clone(), b: b.clone(), min: Some(min.into()) });
         ks.push(Kernel::BitProduct { a, b, min: Some(vec![1; m].into()) });
     }
-    let Some(s) = check(&ks) else { return };
+    let s = check(&ks);
     assert_eq!(s.command_buffers, 1);
 }
 
@@ -139,7 +139,7 @@ fn count_table_counts_and_pairs() {
             ks.push(Kernel::CountTable { loff: loff.clone(), left: left.clone(), roff: roff.clone(), right: right.clone(), emit });
         }
     }
-    let Some(s) = check(&ks) else { return };
+    let s = check(&ks);
     assert_eq!(s.command_buffers, 1);
 }
 
@@ -188,7 +188,7 @@ fn pairs_past_the_first_buffer_are_rerun_exactly() {
         Kernel::BitProduct { a, b, min: Some(vec![0; 2100].into()) },
         Kernel::CountTable { loff: vec![0, 3000].into(), left: vec![7; 3000].into(), roff: vec![0, 3000].into(), right: vec![7; 3000].into(), emit: true },
     ];
-    let Some(s) = check(&ks) else { return };
+    let s = check(&ks);
     assert_eq!(s.command_buffers, 2);
 }
 
@@ -207,7 +207,7 @@ fn a_mixed_batch_is_one_command_buffer_through_the_executor() {
         Kernel::CountTable { loff, left, roff: off, right: codes, emit: true },
         Kernel::Closure { n: 400, off: goff, dst: gdst },
     ];
-    let Some(s) = check(&ks) else { return };
+    let s = check(&ks);
     assert_eq!(s.command_buffers, 1);
     let ex = Executor::with(vec![backend().unwrap()]);
     let (done, report) = ex.run(Batch(ks.iter().cloned().map(Launch::new).collect())).unwrap();
@@ -223,10 +223,10 @@ fn page_aligned_inputs_are_not_copied() {
     let Some(g) = gpu() else { return };
     let page = g.gpu.page;
     let n = page / 4 * 3;
-    // Three whole pages, page-aligned, freed at the end.
+    // Three pages, page-aligned, given back at the end.
     let layout = std::alloc::Layout::from_size_align(n * 4, page).unwrap();
     // SAFETY: a non-zero size.
-    let p = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<std::ffi::c_void>();
+    let p: *mut libc::c_void = unsafe { std::alloc::alloc_zeroed(layout) }.cast();
     assert!(!p.is_null());
     let col = unsafe { std::slice::from_raw_parts_mut(p as *mut u32, n) };
     col.iter_mut().enumerate().for_each(|(i, x)| *x = i as u32 * 7);

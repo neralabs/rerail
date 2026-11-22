@@ -2,7 +2,7 @@
 
 use super::matcher::GrammarMatcher;
 use super::model::{ClauseKind, Query};
-use super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
+use super::CompiledCodeRuleDsl;
 use napi::Result;
 use serde_json::{Map, Value, json};
 use std::path::PathBuf;
@@ -12,9 +12,7 @@ pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 /// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which is not in
 /// git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch and derive it.
 pub(super) fn pack_test_data(relative: &str) -> PathBuf {
-    let path = std::path::PathBuf::from(
-        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-    )
+    let path = crate::source_tree::native()
     .join("..")
     .join(relative);
     assert!(
@@ -64,11 +62,7 @@ pub(super) fn compile_typescript_rule(rule: Value) -> Result<CompiledCodeRuleDsl
             "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
         }],
     });
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        CAPABILITIES.to_owned(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES)
 }
 
 pub(super) fn evaluate_file(
@@ -103,11 +97,7 @@ pub(super) fn compile_document_with(
     document: Value,
     capabilities: &Value,
 ) -> Result<CompiledCodeRuleDsl> {
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        capabilities.to_string(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", &capabilities.to_string())
 }
 
 pub(super) fn clause_document(clause: Value) -> Value {
@@ -454,10 +444,17 @@ pub(crate) fn niced_self() -> std::process::Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
-        /// `IDLE_PRIORITY_CLASS`: the process runs when nothing else on the machine wants the CPU.
-        const IDLE_PRIORITY_CLASS: u32 = 0x40;
+        use windows_sys::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, IDLE_PRIORITY_CLASS};
         let mut c = std::process::Command::new(exe);
-        c.creation_flags(IDLE_PRIORITY_CLASS);
+        // Windows' classes are strict where Unix's nice is a share: a child in a class below the tests beside it
+        // (the farm runs them below normal) gets no core while they run (a 15 s graph took 37 s under the quick
+        // tier). A test already below normal hands its class on (a child inherits it); one at normal or above starts
+        // its child below normal.
+        // SAFETY: the process's pseudo-handle; no arguments otherwise.
+        let mine = unsafe { GetPriorityClass(GetCurrentProcess()) };
+        if mine != BELOW_NORMAL_PRIORITY_CLASS && mine != IDLE_PRIORITY_CLASS {
+            c.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+        }
         c
     }
     #[cfg(not(any(unix, windows)))]

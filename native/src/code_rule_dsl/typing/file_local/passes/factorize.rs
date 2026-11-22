@@ -102,7 +102,10 @@ fn functional(v: &Version, rule: RuleRef<'_>, part: &[LitRef<'_>], key: &str, he
 /// the index (`child(p, c, i)`, `field(p, f, c)`); a lattice by its key columns; and a derived relation by a column
 /// that, in every rule, determines the head (`determined`), found to a fixpoint. They price the factorized store's
 /// test only (a part of one row a key holds no more rows than the product): a wrong key costs rows, never findings.
-fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
+///
+/// With `roots`, a derived relation's keys only where the roots reach it through their rules: a relation's keys read
+/// only those of the relations its rules read, so these are the same as over every rule.
+fn relation_keys(v: &Version, f: Fields<'_>, roots: Option<&BTreeSet<String>>) -> Keys {
     let mut keys: Keys = BTreeMap::new();
     for rel in f.inputs() {
         let (Some(columns), Some(types)) = (crate::code_rule_dsl::logic::sql::select::input_columns(rel), f.columns(rel)) else { continue };
@@ -131,6 +134,23 @@ fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
         if derived.contains(h) {
             rules_of.entry(h).or_default().push(r);
         }
+    }
+    if let Some(roots) = roots {
+        let mut reached: BTreeSet<&str> = roots.iter().filter_map(|r| rules_of.get_key_value(r.as_str()).map(|(k, _)| *k)).collect();
+        let mut stack: Vec<&str> = reached.iter().copied().collect();
+        while let Some(rel) = stack.pop() {
+            for r in &rules_of[rel] {
+                for l in r.body() {
+                    if let L::Atom(a) = l.view()
+                        && let Some((k, _)) = rules_of.get_key_value(v.rel_name(a.rel()))
+                        && reached.insert(k)
+                    {
+                        stack.push(k);
+                    }
+                }
+            }
+        }
+        rules_of.retain(|rel, _| reached.contains(rel));
     }
     let mut step = 0usize;
     let mut gained: HashMap<String, usize> = HashMap::new();
@@ -672,7 +692,8 @@ pub fn factorize_intermediates(v: &std::sync::Arc<Version>, first: bool, names: 
     }
     let d = manager::analysis::<FieldsData>(v)?;
     let f = Fields::over(v, &d);
-    let keys = relation_keys(v, f);
+    // Its keys read in the named relations' rules alone (`choose`'s `functional`).
+    let keys = relation_keys(v, f, Some(names));
     let (rules, reads, rules_of, chosen) = choose(v, f, Scope::Intermediates(names), &keys);
     if chosen.is_empty() {
         return Ok(None);
@@ -699,7 +720,7 @@ impl ProgramPass for FactorizeExports {
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
         let split = cx.get::<FileLocal>()?;
-        let keys = relation_keys(v, f);
+        let keys = relation_keys(v, f, None);
         let (rules, reads, rules_of, mut chosen) = choose(v, f, Scope::Exports(&split.local), &keys);
         // Made, checked by the split, and made again without the relations whose parts it does not find file-local.
         loop {

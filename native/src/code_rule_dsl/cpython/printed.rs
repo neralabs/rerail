@@ -9,37 +9,37 @@ use super::unparse::{is_expr, unparse};
 
 /// The fields wanted.
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Want {
-    pub(crate) unparse: bool,
-    pub(crate) dump: bool,
-    pub(crate) dump_sha256: bool,
-    pub(crate) body_sha256: bool,
-    pub(crate) signature_sha256: bool,
+pub struct Want {
+    pub unparse: bool,
+    pub dump: bool,
+    pub dump_sha256: bool,
+    pub body_sha256: bool,
+    pub signature_sha256: bool,
 }
 
 impl Want {
-    pub(crate) fn any(self) -> bool {
+    pub fn any(self) -> bool {
         self.unparse || self.dump || self.dump_sha256 || self.body_sha256 || self.signature_sha256
     }
 }
 
 /// One located node: its UTF-8 byte range, its class, and the fields wanted that it has.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Printed {
-    pub(crate) start: u32,
-    pub(crate) end: u32,
-    pub(crate) class: &'static str,
-    pub(crate) unparse: Option<String>,
-    pub(crate) dump: Option<String>,
-    pub(crate) dump_sha256: Option<String>,
-    pub(crate) body_sha256: Option<String>,
-    pub(crate) signature_sha256: Option<String>,
+pub struct Printed {
+    pub start: u32,
+    pub end: u32,
+    pub class: &'static str,
+    pub unparse: Option<String>,
+    pub dump: Option<String>,
+    pub dump_sha256: Option<String>,
+    pub body_sha256: Option<String>,
+    pub signature_sha256: Option<String>,
 }
 
 /// Each located node of `source`'s tree, in preorder (outer before inner), but an f-string's own pieces (its
 /// `JoinedStr`'s values and their format specs: no tree-sitter kind is read as one), with the fields of `want` it
 /// has. None where `ast.parse` rejects the file.
-pub(crate) fn printed(source: &str, want: Want) -> Vec<Printed> {
+pub fn printed(source: &str, want: Want) -> Vec<Printed> {
     if !want.any() {
         return Vec::new();
     }
@@ -69,7 +69,7 @@ pub(crate) fn printed(source: &str, want: Want) -> Vec<Printed> {
 
 /// The located nodes of `root`'s tree (those with a span), in preorder, an f-string's pieces left out, as `printed`
 /// reads them: what W's worker finds a node among by its span.
-pub(crate) fn located(root: &Node) -> Vec<&Node> {
+pub fn located(root: &Node) -> Vec<&Node> {
     let mut out = Vec::new();
     walk(root, &mut out);
     out.retain(|n| n.span.is_some());
@@ -109,7 +109,7 @@ fn walk<'n>(n: &'n Node, out: &mut Vec<&'n Node>) {
 
 /// Whether W's worker reads a node of tree-sitter kind `kind` as one of CPython class `class` (its `KINDS`: `type`
 /// is any expression).
-pub(crate) fn of_kind(class: &str, kind: &str) -> bool {
+pub fn of_kind(class: &str, kind: &str) -> bool {
     let classes: &[&str] = match kind {
         "type" => return is_expr(class),
         "function_definition" => &["FunctionDef", "AsyncFunctionDef"],
@@ -165,6 +165,6 @@ pub(crate) fn of_kind(class: &str, kind: &str) -> bool {
 
 /// Whether W's worker, finding no node of kind `kind` at its span, takes the one node of its classes that starts
 /// where it does and ends within it (a def, a class or an assignment whose tree-sitter node runs past CPython's).
-pub(crate) fn by_start(kind: &str) -> bool {
+pub fn by_start(kind: &str) -> bool {
     matches!(kind, "function_definition" | "class_definition" | "assignment")
 }

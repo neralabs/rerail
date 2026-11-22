@@ -6,10 +6,11 @@
 //! A batch read whole from its first read makes one group, in key order: one relation per relation, as an eager batch.
 
 use super::*;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use crate::code_rule_dsl::facts::vtab::DeviceView;
 use crate::code_rule_dsl::facts::vtab::{ReadRow, RowCells, RowStream};
 use crate::code_rule_dsl::logic::profile;
+use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -26,6 +27,9 @@ pub struct Kept {
     pub counts: ViewCounts,
     pub size: FactsSize,
     pub file: bool,
+    /// A host file's tree's or program's host and file (decision 0512), and its tape tag: what a warm run makes it
+    /// pending with (`syntax::Pending::with_guest`).
+    pub guest: Option<(super::Hosted, u8)>,
 }
 
 /// A projection's views' counts.
@@ -163,8 +167,12 @@ impl Docs {
         self.slots[i].input.module()
     }
     /// Document `i`'s place in its host, a guest's; none is built for it.
-    pub fn guest(&self, i: usize) -> Option<&Arc<Guest>> {
+    pub fn guest(&self, i: usize) -> Option<super::GuestOf<'_>> {
         self.slots[i].input.guest()
+    }
+    /// Document `i`'s file (decision 0431 §4): a program's is its file's, any other document's its own key.
+    pub fn file(&self, i: usize) -> u32 {
+        Guest::file_key(self.guest(i), self.keys[i])
     }
     /// Document `i`'s path, digest and facts' size, as given; none is built for them.
     pub fn path(&self, i: usize) -> &str {
@@ -255,7 +263,7 @@ impl Docs {
         let new_span = profile::span(|| "projected".into());
         let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
         // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
-        p.file = Guest::file_key(d.guest.as_deref(), d.key);
+        p.file = Guest::file_key(d.guest.as_deref().map(Guest::of), d.key);
         drop(new_span);
         // A program that reads `end_point` has each node's end point among the positions, after the lines.
         let nodes = p.len();
@@ -594,8 +602,8 @@ impl Batch {
     pub(super) fn ensure(&self, want: &[usize]) {
         let me = std::thread::current().id();
         loop {
-            // What it needs, and its claim of those no thread has claimed, under one lock: two reads that both found
-            // a document unclaimed would each make it, one group set aside.
+            // What to make, and its claim, under one lock: a document another thread claims between the two would be
+            // made by both, and one group set aside.
             let (need, waits, claim) = {
                 let mut s = self.rows.state.lock();
                 let making = s.makers.contains(&me);
@@ -780,7 +788,7 @@ impl Batch {
                 for i in 0..self.docs.len() {
                     let Some(g) = self.docs.guest(i) else { continue };
                     match g.made {
-                        // A file's own tree (decision 0512) is its file's guest, at its whole text.
+                        // A file's tree (decision 0512) is its file's guest, as a program is its host's.
                         super::Made::Host | super::Made::File => of.entry(g.host).or_default().push(self.docs.key(i)),
                         super::Made::Tape { .. } => return None,
                         // A value document has no host, and no row of a place.
@@ -878,10 +886,10 @@ impl MadeRows {
 }
 
 impl Source for MadeRows {
-    fn python_batch(&self) -> Option<Arc<Batch>> {
+    fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         match self.done() {
-            Some(t) => t.python_batch(),
-            None => self.template().python_batch(),
+            Some(t) => t.syntax_batch(),
+            None => self.template().syntax_batch(),
         }
     }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {
@@ -1091,7 +1099,7 @@ impl Source for MadeRows {
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
         self.target().filter_eq(eqs)
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         self.done().and_then(|t| t.device_view())
     }
@@ -1369,11 +1377,10 @@ impl Source for TextTest {
         if let Some(w) = self.whole.get() {
             return Source::value(w, row, column);
         }
-        let probed = self.tested.state.lock().passed[self.k].rows.get(row).copied();
-        match probed {
-            Some(s) => s,
-            None => Source::value(self.whole(), row, column),
+        if let Some(&s) = self.tested.state.lock().passed[self.k].rows.get(row) {
+            return s;
         }
+        Source::value(self.whole(), row, column)
     }
     fn indexed(&self, column: usize) -> bool {
         column == 0

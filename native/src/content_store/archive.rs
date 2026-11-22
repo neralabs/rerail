@@ -12,7 +12,7 @@
 //! - **When:** the store's `Collect` upkeep job, after collection, while `corpus_state.archive_due` is set: ending a
 //!   session (collection) and a keep decision set it, and a pass that finds nothing clears it.
 
-use super::connection::Cached as _;
+use super::Cached as _;
 use super::object_segments::{Placing, object_dir, row_frame};
 use super::segments::SegmentMaps;
 use super::reclamation::{OBJECT_SOURCE, OBJECT_TAPE, SESSION_LANE};

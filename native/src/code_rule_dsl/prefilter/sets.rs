@@ -330,7 +330,7 @@ impl Program {
 
 /// The plans' set program as `rir` (list step 18; P `spec-tooling.md` §2.2.1, `setplan`): each
 /// operation `S<n>` on the earlier ones, then each plan's output.
-pub(in crate::code_rule_dsl) fn dump(plans: &[&AnchorPlan], grammar: Option<&crate::code_rule_dsl::transducer::packed::rir::Names>) -> String {
+pub fn dump(plans: &[&AnchorPlan], grammar: Option<&crate::code_rule_dsl::transducer::packed::rir::Names>) -> String {
     use std::fmt::Write as _;
     let program = Program::lower(plans);
     let sets = |ids: &[usize]| format!("[{}]", ids.iter().map(|id| format!("S{id}")).collect::<Vec<_>>().join(" "));
@@ -373,11 +373,14 @@ pub(super) fn select(
     let program = crate::code_rule_dsl::prof::time("sets.lower", || Program::lower(plans));
     let regexes = program.regexes();
     let lang = i64::from(lang);
-    // The gates write compiled plans, so the transaction always writes.
+    // The stored gates, opened before the transaction holds the store's connection; the gates it
+    // compiles are written after it (`gates::flush`).
+    let kept_gates = crate::code_rule_dsl::stats::plans::Plans::open(store)?;
+    let store_path = store.database_path().to_path_buf();
     let (space, leaves, gated) = store.candidate_transaction(true, |db| {
         let gated = {
             let _stage = crate::code_rule_dsl::prof::Stage::start("sets.gates");
-            super::gates::select(db, lang as u32, plans, files)?
+            super::gates::select(db, &store_path, kept_gates.as_ref(), lang as u32, plans, files)?
         };
         // The vocabulary's terms for each regex, as the SQL's vocabulary stages fill them.
         if !regexes.is_empty() {
@@ -521,12 +524,13 @@ pub(super) fn select(
         }
         Ok((space, leaves, gated))
     })?;
+    super::gates::flush(store);
     crate::code_rule_dsl::prof::peak("2a1.leaves");
     let _stage = crate::code_rule_dsl::prof::Stage::start("sets.evaluate");
     let started = std::time::Instant::now();
     let mut outputs = match device {
         Device::Cpu => evaluate(&program, &space, leaves),
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Device::Metal => evaluate_metal(&program, &space, &leaves)?,
     };
     crate::code_rule_dsl::prof::peak("2a2.evaluated");
@@ -544,18 +548,18 @@ pub(super) fn select(
     let candidates = outputs.iter().map(NodeSet::len).collect::<Vec<_>>();
     let backend = match device {
         Device::Cpu => "cpu",
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Device::Metal => "metal",
     };
-    store.candidate_transaction(true, |db| super::gates::observe(db, &gated, &candidates, space.len(), backend, ns_per_plan))?;
+    super::gates::observe(store, &gated, &candidates, space.len(), backend, ns_per_plan)?;
     Ok((space, outputs))
 }
 
 /// Where a set program's operations run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Device {
+pub enum Device {
     Cpu,
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     Metal,
 }
 
@@ -632,9 +636,9 @@ fn evaluate(program: &Program, space: &NodeSpace, mut leaves: HashMap<usize, Nod
 
 /// The program's outputs, its operations as Metal set steps: a slot per operation, the leaves
 /// written in theirs (`set_steps`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn evaluate_metal(program: &Program, space: &NodeSpace, leaves: &HashMap<usize, NodeSet>) -> StoreResult<Vec<NodeSet>> {
-    use crate::code_rule_dsl::transducer::packed::set_steps::{self, SetStep};
+    use crate::code_rule_dsl::transducer::packed::device::{self, SetStep};
     let slot = |id: usize| id as u32;
     let mut steps = Vec::new();
     for (id, op) in program.ops.iter().enumerate() {
@@ -661,7 +665,9 @@ fn evaluate_metal(program: &Program, space: &NodeSpace, leaves: &HashMap<usize, 
     let files = (0..space.files()).map(|file| (space.base(file), space.count(file))).collect::<Vec<_>>();
     let leaves = leaves.iter().map(|(&id, set)| (id, set.to_words(space))).collect::<Vec<_>>();
     let leaves = leaves.iter().map(|(id, words)| (*id, words.as_slice())).collect::<Vec<_>>();
-    let words = set_steps::run(&files, space.len(), program.ops.len(), &leaves, &steps, &program.outputs)
+    let metal = device::matcher().ok_or_else(|| crate::content_store::StoreError::Invalid("the set steps need a device, and none is registered".into()))?;
+    let words = metal
+        .set_steps(&files, space.len(), program.ops.len(), &leaves, &steps, &program.outputs)
         .map_err(|error| crate::content_store::StoreError::Invalid(format!("the set steps failed on Metal: {error:?}")))?;
     Ok(words.into_iter().map(|words| NodeSet::from_words(space, &words)).collect())
 }

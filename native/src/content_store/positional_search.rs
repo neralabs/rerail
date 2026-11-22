@@ -1,4 +1,4 @@
-//! Tempo's (G@4c94cf77e) positional search index as copied from `tempo/native/src/content_store.rs`
+//! The predecessor's (G@4c94cf77e) positional search index as copied from `<predecessor>/native/src/content_store.rs`
 //! (types, publication, and the anchor, exact-value and text readers), test-only, for G's literal
 //! anchors and their tests (`transducer::packed::literal_anchors`). W's search index keeps kind
 //! presence only (`search_index.rs`); this one adds G's value and text streams beside W's tables
@@ -9,7 +9,7 @@
 //! vocabulary and their delete trigger are created on first use (`POSITIONAL_SCHEMA`), since W's
 //! schema has only the kind stream; `search_index_sets` rows take W's `has_errors` default.
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::vtab::array::Array;
@@ -34,11 +34,6 @@ CREATE TRIGGER IF NOT EXISTS delete_tape_positional_search_index BEFORE DELETE O
 END;
 "#;
 
-impl TapeId {
-    pub const fn for_benchmark(value: i64) -> Self {
-        Self(value)
-    }
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TapeSearchIndex {

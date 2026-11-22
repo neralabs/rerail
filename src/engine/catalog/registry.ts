@@ -23,6 +23,8 @@ export interface RuleMatch {
   operator?: MatchOperator;
   tokenCount?: number;
   mode: RuleMode;
+  /** The rule's title, which the person's line names it by; absent when it has none. */
+  title?: string;
   action: ConversationRule["action"];
 }
 
@@ -128,6 +130,7 @@ export class ConversationRuleRegistry {
         return {
           ...match,
           mode: rule.mode,
+          ...(rule.title === undefined ? {} : { title: rule.title }),
           action: { ...rule.action },
         };
       });

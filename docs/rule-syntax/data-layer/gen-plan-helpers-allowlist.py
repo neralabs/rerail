@@ -1,12 +1,12 @@
 """Writes plan-helpers-allowlist.tables.rerail, the linter's name sets and its signed callsite allowlist.
-    python3 docs/rule-syntax/data-layer/gen-plan-helpers-allowlist.py [--check]
+    DATA_LAYER_REPO=<checkout> python3 docs/rule-syntax/data-layer/gen-plan-helpers-allowlist.py [--check]
 The source is scripts/lint_plan_helpers_allowlist.py at the pinned commit of the data-layer repository. Each table
 is read from the module-level literal of the same name. --check regenerates the text and fails if the committed
 file differs."""
 import ast, json, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
+REPO = os.environ.get("DATA_LAYER_REPO") or sys.exit("set DATA_LAYER_REPO to a checkout of the data-layer repository")
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 LINTER = "scripts/lint_plan_helpers_allowlist.py"
 OUT = os.path.join(HERE, "plan-helpers-allowlist.tables.rerail")

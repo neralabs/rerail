@@ -171,26 +171,9 @@ const SPAWN_SYNC_MAX_BUFFER = 1024 * 1024;
  */
 export function runGitSync(executable: string, args: readonly string[], env: NodeJS.ProcessEnv, limits: GitRunLimits = {}): GitRunResult {
   const ran = engine === undefined ? undefined : ranByEngine(engine, executable, args, env, limits);
-  if (ran !== undefined) return { ...ran, stdout: ran.stdout.toString("utf8") };
+  if (ran !== undefined) return ran;
   const result = spawnSync(executable, [...args], { encoding: "utf8", ...limits, env });
   return { status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr, ...(result.error === undefined ? {} : { error: result.error }) };
-}
-
-/** A {@link GitRunResult} whose stdout is the bytes Git wrote. */
-export interface GitRunBytes extends Omit<GitRunResult, "stdout"> {
-  /** Null where `spawnSync` could not start the program. */
-  stdout: Buffer | null;
-}
-
-/**
- * {@link runGitSync} with stdout as the bytes Git wrote, as `spawnSync` gives them with no encoding: Git's
- * NUL-delimited listings name paths as bytes, which a string would not keep (`git.ts`'s `runGit`, `output: "bytes"`).
- */
-export function runGitSyncBytes(executable: string, args: readonly string[], env: NodeJS.ProcessEnv, limits: GitRunLimits = {}): GitRunBytes {
-  const ran = engine === undefined ? undefined : ranByEngine(engine, executable, args, env, limits);
-  if (ran !== undefined) return ran;
-  const result = spawnSync(executable, [...args], { ...limits, env });
-  return { status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr?.toString("utf8") ?? null, ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
 /**
@@ -200,16 +183,37 @@ export function runGitSyncBytes(executable: string, args: readonly string[], env
  * fallback: a throw there is thrown on, as `spawnSync`'s own throws when its output cannot become a string, and Git has
  * run once.
  */
-function ranByEngine(starts: Starts, executable: string, args: readonly string[], env: NodeJS.ProcessEnv, limits: GitRunLimits): EngineAnswer | undefined {
+function ranByEngine(starts: Starts, executable: string, args: readonly string[], env: NodeJS.ProcessEnv, limits: GitRunLimits): GitRunResult | undefined {
+  const ran = engineRun(starts, executable, args, env, limits);
+  return ran === undefined ? undefined : answerOf(ran, executable, args);
+}
+
+/** The engine's run of Git, or undefined when `spawnSync` should run it ({@link ranByEngine}). */
+function engineRun(starts: Starts, executable: string, args: readonly string[], env: NodeJS.ProcessEnv, limits: GitRunLimits): EngineGitRun | undefined {
   const held = engineLimits(limits);
   if (!executable.includes("/") || held === undefined) return undefined;
-  let ran: EngineGitRun;
   try {
-    ran = starts.runGit(executable, [...args], environment(env), ...held);
+    return starts.runGit(executable, [...args], environment(env), ...held);
   } catch (error) {
     return refusedByEngine(error, "runGit");
   }
-  return answerOf(ran, executable, args);
+}
+
+/** A blocking Git run's answer with stdout as the bytes Git wrote (a raw path's bytes are its name). */
+export interface GitRunBytes extends Omit<GitRunResult, "stdout"> {
+  stdout: Buffer | null;
+}
+
+/** {@link runGitSync} with stdout as Git's bytes: through the engine where it is on, else `spawnSync`. */
+export function runGitSyncBytes(executable: string, args: readonly string[], env: NodeJS.ProcessEnv, limits: GitRunLimits = {}): GitRunBytes {
+  const ran = engine === undefined ? undefined : engineRun(engine, executable, args, env, limits);
+  if (ran !== undefined) {
+    const [status, signal] = runEndOf(ran);
+    const error = runError(ran, executable, args);
+    return { status, signal, stdout: ran.stdout, stderr: ran.stderr.toString("utf8"), ...(error === undefined ? {} : { error }) };
+  }
+  const result = spawnSync(executable, [...args], { ...limits, env });
+  return { status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr?.toString("utf8") ?? null, ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
 /** The largest number the engine's `u32` parameters hold. */
@@ -239,13 +243,11 @@ function engineTimeout(timeout: number | undefined): number | undefined | null {
   return Number.isInteger(timeout) && inU32(timeout) ? timeout : null;
 }
 
-/** The engine's run as `spawnSync` answers it, its stdout the bytes Git wrote (`runGitSync` makes them a string). */
-type EngineAnswer = GitRunBytes & { stdout: Buffer };
-
-function answerOf(ran: EngineGitRun, executable: string, args: readonly string[]): EngineAnswer {
+/** The engine's run as `spawnSync` answers it. */
+function answerOf(ran: EngineGitRun, executable: string, args: readonly string[]): GitRunResult {
   const [status, signal] = runEndOf(ran);
   const error = runError(ran, executable, args);
-  return { status, signal, stdout: ran.stdout, stderr: ran.stderr.toString("utf8"), ...(error === undefined ? {} : { error }) };
+  return { status, signal, stdout: ran.stdout.toString("utf8"), stderr: ran.stderr.toString("utf8"), ...(error === undefined ? {} : { error }) };
 }
 
 /**

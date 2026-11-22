@@ -25,7 +25,7 @@ use std::cmp::Ordering;
 /// The CPython `ast` class of an expression with a value (`literal_json`'s nodes): W's worker finds a node by its span
 /// and the classes its tree-sitter kind may be (`KINDS`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum Class {
+pub enum Class {
     Constant,
     Tuple,
     List,
@@ -35,7 +35,7 @@ pub(crate) enum Class {
 
 impl Class {
     /// The class's name in CPython's `ast`.
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Class::Constant => "Constant",
             Class::Tuple => "Tuple",
@@ -45,7 +45,7 @@ impl Class {
         }
     }
     /// Whether W's worker reads a node of tree-sitter kind `kind` as this class (its `KINDS`; `type` is any expression).
-    pub(crate) fn of_kind(self, kind: &str) -> bool {
+    pub fn of_kind(self, kind: &str) -> bool {
         match self {
             Class::Constant => matches!(kind, "string" | "concatenated_string" | "integer" | "float" | "true" | "false" | "none" | "ellipsis" | "type"),
             Class::Tuple => matches!(kind, "tuple" | "tuple_pattern" | "pattern_list" | "type"),
@@ -58,16 +58,16 @@ impl Class {
 
 /// One expression's JSON: its UTF-8 byte range in the source, its class and the text.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Literal {
-    pub(crate) start: u32,
-    pub(crate) end: u32,
-    pub(crate) class: Class,
-    pub(crate) json: String,
+pub struct Literal {
+    pub start: u32,
+    pub end: u32,
+    pub class: Class,
+    pub json: String,
 }
 
 /// Every expression of `source` with a `literal_json`, in source order of their visit (outer before inner). None where
 /// `ast.parse` rejects the file (or raises another exception).
-pub(crate) fn literals(source: &str) -> Vec<Literal> {
+pub fn literals(source: &str) -> Vec<Literal> {
     if !matches!(syntax_error(source), Ok(None)) {
         return Vec::new();
     }

@@ -61,5 +61,4 @@ pub mod tests {
     }
 }
 
-#[cfg(test)]
-mod integration_tests;
+// cratify: `integration_tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus)

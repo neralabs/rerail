@@ -1,0 +1,166 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "vue",
+  "equivalent": false,
+  "untranslated": {
+    "eslint-plugin-vue-no-child-content": "failed: check-rr reader-failed eslint-plugin-vue-no-child-content.rerail: not lowered yet: child_content: match_all over $e, a node or span not bound by `source`, `src_line`, `kind` or a capture"
+  },
+  "different": {
+    "eslint-plugin-vue-no-async-in-computed-properties": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 92,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-no-dupe-keys": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 69,
+          "translationOnly": 0
+        },
+        "samples-vue": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-no-export-in-script-setup": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 15,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-no-mutating-props": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 64,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-no-ref-as-operand": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 43,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-no-setup-props-reactivity-loss": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 61,
+          "translationOnly": 0
+        },
+        "samples-vue": {
+          "originalOnly": 12,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-no-side-effects-in-computed-properties": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 51,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-no-template-shadow": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 26,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-no-unused-refs": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 36
+        },
+        "samples-vue": {
+          "originalOnly": 0,
+          "translationOnly": 26
+        }
+      }
+    },
+    "eslint-plugin-vue-no-unused-vars": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 138,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-no-watch-after-await": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-require-valid-default-prop": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 70,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-return-in-computed-property": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 56,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-plugin-vue-valid-v-for": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 48
+        },
+        "samples-vue": {
+          "originalOnly": 0,
+          "translationOnly": 17
+        }
+      }
+    }
+  }
+}

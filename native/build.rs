@@ -48,7 +48,12 @@ fn main() {
 /// exported). Relax (`RELAX_STD` set) builds with its own (itself, or none), and `RERAIL_FARM_ANY_ENV=1` allows any
 /// (a measurement of the compiler itself). Elsewhere (CI, a machine without the farm) it does nothing.
 fn check_compiler_cache() {
-    for name in ["RUSTC_WRAPPER", "RERAIL_FARM_ANY_ENV", "RELAX_STD"] {
+    for name in [
+        "RUSTC_WRAPPER",
+        "RERAIL_FARM_ANY_ENV",
+        "RELAX_STD",
+        "RERAIL_FARM_CONFIG",
+    ] {
         println!("cargo:rerun-if-env-changed={name}");
     }
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
@@ -62,14 +67,7 @@ fn check_compiler_cache() {
     }
     let farm = home.join(".local/share/rerail-farm/rustc-wrapper");
     let wrapper = std::env::var_os("RUSTC_WRAPPER").unwrap_or_default();
-    // Relax drives its own cargo pass with itself as the wrapper (`RUSTC_WRAPPER=.../bin/relax`); its
-    // builds are outside the farm by design (AGENTS.md, "Relax: the live test loop").
-    let relax = std::env::var_os("RELAX_STD").is_some()
-        && (wrapper.is_empty()
-            || Path::new(&wrapper)
-                .file_name()
-                .is_some_and(|n| n == "relax"));
-    if wrapper == farm || relax {
+    if wrapper == farm || relax_build(&wrapper) {
         return;
     }
     panic!(
@@ -79,6 +77,16 @@ fn check_compiler_cache() {
          differ (scripts/build/farm/README.md, \"One configuration\").",
         farm.display()
     );
+}
+
+/// Relax drives its own cargo pass with itself as the wrapper (`RUSTC_WRAPPER=.../bin/relax`), or with none; its
+/// builds are outside the farm by design (AGENTS.md, "Relax: the live test loop").
+fn relax_build(wrapper: &std::ffi::OsStr) -> bool {
+    std::env::var_os("RELAX_STD").is_some()
+        && (wrapper.is_empty()
+            || Path::new(wrapper)
+                .file_name()
+                .is_some_and(|name| name == "relax"))
 }
 
 /// The registry's supported languages this build leaves out: each language `<id>` is built only with its feature

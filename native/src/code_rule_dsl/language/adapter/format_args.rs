@@ -1,10 +1,37 @@
 //! Format strings' arguments (`formatArgs`): `Semantic::FormatArgs`.
 
 use super::{Refusal, Refused};
-use crate::code_rule_dsl::matcher::Style;
+use crate::code_rule_dsl::literal::Grammar;
 use std::borrow::Cow;
 // cratify: `lang_python` is rerail-lang-python's (it mounts it)
 // cratify: `lang_php` is rerail-lang-php's (it mounts it)
+
+/// The format calls `formatArgs` reads, each style one family's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Style {
+    /// `str.format` templates (`braceFormat`).
+    Brace,
+    /// printf-style formats (`percentFormat`).
+    Percent,
+    /// PHP's printf-family formats (`printfFormat`).
+    Printf,
+    /// PHP's `sscanf`/`fscanf` formats (`scanfFormat`).
+    Scanf,
+    /// Rust's `format_args!`-family macro calls (`rustFormat`).
+    Rust,
+}
+
+impl Style {
+    pub fn grammar(self) -> Grammar {
+        match self {
+            Self::Brace => Grammar::expect("braceFormat"),
+            Self::Percent => Grammar::expect("percentFormat"),
+            Self::Printf => Grammar::expect("printfFormat"),
+            Self::Scanf => Grammar::expect("scanfFormat"),
+            Self::Rust => Grammar::expect("rustFormat"),
+        }
+    }
+}
 
 /// An option of `formatArgs` a family may not read.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -51,7 +78,7 @@ pub mod kit {
     use super::super::syntax::kit::refusal;
     use super::{FormatArgFeature, FormatArgRules};
     use crate::code_rule_dsl::language::adapter::Adapter;
-    use crate::code_rule_dsl::matcher::Style;
+    use crate::code_rule_dsl::language::adapter::format_args::Style;
 
     /// What a family's `FormatArgRules` answer.
     pub struct Expect {

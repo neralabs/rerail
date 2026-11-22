@@ -13,9 +13,9 @@ use super::persisted::file_context;
 use super::{ClauseId, FileState, WorkspaceState};
 use crate::code_rule_dsl::eval::file_language;
 use crate::code_rule_dsl::json::invalid;
-use crate::code_rule_dsl::model::{CompiledCodeRule, FileInput, Metrics};
+use crate::code_rule_dsl::model::{CompiledClause, CompiledCodeRule, FileInput, Metrics};
 use crate::code_rule_dsl::tape;
-use crate::content_store::{HashKey, LocalResultPublication, StoredLocalResult};
+use crate::content_store::{CandidateClause, HashKey, StoredLocalResult};
 use napi::Result;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -68,12 +68,7 @@ impl CrossFileScheduler {
         index: usize,
         code_rule: &mut Arc<CompiledCodeRule>,
     ) -> Result<()> {
-        if code_rule.clauses.iter().any(|clause| {
-            clause
-                .kind
-                .calls_query()
-                .is_some_and(|query| !query.calls().is_empty())
-        }) {
+        if code_rule.clauses.iter().any(CompiledClause::holds_calls) {
             state
                 .crossfile
                 .calls
@@ -107,7 +102,7 @@ impl CrossFileScheduler {
             .map(|stamp| calls_state::calls_context(context, stamp))
     }
 
-    pub(super) fn summary_publication(file: &FileState) -> Result<Option<LocalResultPublication>> {
+    pub(super) fn summary_publication(file: &FileState) -> Result<Option<(CandidateClause, HashKey, Vec<u8>)>> {
         calls_state::summary_publication(file)
     }
 

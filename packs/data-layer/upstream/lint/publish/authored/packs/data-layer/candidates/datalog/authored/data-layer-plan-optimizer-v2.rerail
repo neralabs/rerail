@@ -1,6 +1,6 @@
 // data-layer-plan-optimizer-v2: both clauses are relational SQL over a `pythonAst` stage (CPython 3.13 `ast` rows:
 // value/python_ast/metadata.py `structure_index` and worker.py's `ast_nodes` expansion, every node with a location
-// or fields, `ast.arguments` included; origin/jeremybarnes/Data-layer-rule-expressivity at 26704acc4, the first
+// or fields, `ast.arguments` included; Data-layer-rule-expressivity at 26704acc4, the first
 // with the policy's `ast_level`), which the converter cannot say (decision 0043).
 // Policy: gate/data-layer/packs/data-layer/rules/data-layer-plan-optimizer-v2.json.
 //

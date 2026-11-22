@@ -34,7 +34,7 @@ pub struct PushLocalJoins {
     /// Whether the cross-file part reads a base relation after the first push: the program's mode (a part's, its
     /// share of the run's, decision 0345 stage 2).
     pub reads_base: bool,
-    /// The rounds its pushes took: each writes the program and splits it again.
+    /// The rounds the last push took (`push_with`): a rule held back a level a round, at most two levels each.
     pub rounds: usize,
 }
 
@@ -196,18 +196,61 @@ fn node_read(v: &Version, rule: RuleRef<'_>, l: LitRef<'_>) -> Option<(String, S
     read(l, r).or_else(|| read(r, l))
 }
 
+/// The helpers a round made, by the rules that read them (`push_with`). A helper of the same content is made once and
+/// read by every rule whose component it is, so a helper the split does not take holds back all of its readers in one
+/// round. Held against its first reader alone, each other reader made it again the next round and failed again: a
+/// round per reader, each splitting the whole program (on main's Python pack the two pushes never ended; 3 rounds each
+/// now).
+#[derive(Default)]
+pub struct Readers {
+    reads: Vec<(usize, String)>,
+    seen: HashSet<(usize, String)>,
+}
+
+impl Readers {
+    /// Rule `rule` reads `helper`.
+    pub fn read(&mut self, rule: usize, helper: String) {
+        if self.seen.insert((rule, helper.clone())) {
+            self.reads.push((rule, helper));
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.reads.is_empty()
+    }
+    /// Each (rule, helper) read, in the order read.
+    pub fn reads(&self) -> &[(usize, String)] {
+        &self.reads
+    }
+    /// The rules that read a helper `taken` lacks: each once, however many of its helpers failed (a level a round).
+    pub fn refused(&self, taken: &BTreeSet<String>) -> BTreeSet<usize> {
+        self.reads.iter().filter(|(_, n)| !taken.contains(n)).map(|(i, _)| *i).collect()
+    }
+    /// Each helper once, in the order made.
+    pub fn names(self) -> Vec<String> {
+        let mut seen: HashSet<&str> = HashSet::with_capacity(self.reads.len());
+        self.reads.iter().filter(|(_, n)| seen.insert(n.as_str())).map(|(_, n)| n.clone()).collect()
+    }
+}
+
 /// A round of `PushLocalJoins`: the relations made, and the split of the program as it is left; `None` where it makes
 /// nothing.
+/// `rounds`: the rounds it took, each a split of the whole program.
 fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, keep_unrestricted: bool, rounds: &mut usize) -> Result<Option<Pushed<'v>>, String> {
     let equal_columns = push_equal_columns();
     let rules: Vec<RuleRef<'v>> = v.rules().collect();
     let decl_names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
     let base = |rel: &str| f.is_input(rel);
     let mut level: BTreeMap<usize, u8> = BTreeMap::new();
+    *rounds = 0;
     loop {
+        // A round: every rule pushed at its level, the program split again, and the rules whose push the split did not
+        // take held back a level. Its rules held back name it, so a profile counts the rounds.
+        let _round = crate::code_rule_dsl::logic::profile::span(|| format!("a round of the push ({} rules held back)", level.len()));
+        *rounds += 1;
         let mut used = std::collections::HashMap::new();
+        let mut by_content: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
-        let mut made: Vec<(usize, String)> = Vec::new();
+        let mut made = Readers::default();
         let mut program: Vec<Made<'v>> = Vec::with_capacity(rules.len());
         let mut helpers: Vec<Made<'v>> = Vec::new();
         for (i, &rule) in rules.iter().enumerate() {
@@ -296,6 +339,13 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                         outside.extend(lit_vars(v, rule, *l));
                     }
                 }
+                // A bound (`$x < k`) is the reader's, its variable handed on: two rules that differ only in their
+                // bounds (a narrow copy, its original and its candidates, decision 0575) then push one join.
+                for &j in &lits {
+                    if let L::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, l: TermRef::Var(_), r: TermRef::Int(_) } = body[j].view() {
+                        outside.extend(lit_vars(v, rule, body[j]));
+                    }
+                }
                 let mut iface: Vec<String> = Vec::new();
                 for &j in &lits {
                     for x in lit_vars(v, rule, body[j]) {
@@ -346,11 +396,33 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                     })
                     .collect();
                 let Some(typed) = typed else { continue };
-                let content = format!("{head_rel}({}) :- {}", iface.join(", "), lits.iter().map(|&j| v.show_lit(rule, body[j])).collect::<Vec<_>>().join(", "));
-                let helper = super::super::helper_name("fl", head_rel, &content, |n| decl_names.contains(n), &mut used);
+                // A test of the interface's values alone is the reader's: an order test (a bound, `t < k`), or a
+                // negation of a derived relation (the cross part holds no tree, so not of a base one). The join's rows
+                // are the same without it, so two rules that differ only in such tests (a narrow copy and its
+                // original, decision 0165) push one join, made once.
+                let in_iface: BTreeSet<String> = iface.iter().cloned().collect();
+                let reader_test = |l: LitRef<'_>| {
+                    let test = match l.view() {
+                        L::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, l: a, r: b } => [a, b].iter().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_))),
+                        L::Atom(a) => a.neg() && !a.gated() && !base(v.rel_name(a.rel())) && a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_))),
+                        _ => false,
+                    };
+                    test && lit_vars(v, rule, l).is_subset(&in_iface)
+                };
+                lits.retain(|&j| !reader_test(body[j]));
+                // Named by the join alone, not the rule's head: every rule that pushes the same join reads one helper.
+                let content = format!("({}) :- {}", iface.join(", "), lits.iter().map(|&j| v.show_lit(rule, body[j])).collect::<Vec<_>>().join(", "));
+                let helper = match by_content.get(&content) {
+                    Some(h) => h.clone(),
+                    None => {
+                        let h = super::super::helper_name("fl", head_rel, &content, |n| decl_names.contains(n), &mut used);
+                        by_content.insert(content.clone(), h.clone());
+                        h
+                    }
+                };
                 let args: Vec<NOwned<'v>> = iface.iter().map(|x| NOwned::V(x.clone())).collect();
-                // A helper of the same content (two files' parts of one join, `by_node_group`) is the one made: read
-                // again, not made again.
+                // A helper of the same content (two files' parts of one join, `by_node_group`; a narrow copy's and its
+                // original's join, decision 0575) is the one made: read again, not made again.
                 if !helpers.iter().any(|h| h.head.as_ref().is_some_and(|(name, _)| *name == helper)) {
                     decls.retain(|(r, _)| *r != helper);
                     decls.push((helper.clone(), typed));
@@ -361,12 +433,8 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 let at = lits.iter().copied().find(|j| !replaced.iter().any(|(at, _)| at == j)).expect("a literal no other helper's read took");
                 replaced.push((at, BodyItem::New(helper.clone(), args)));
                 taken.extend(lits);
-                // Every rule that reads it: a helper the split leaves outside the chunks undoes each reader's push
-                // at once. Only its first reader undone, `violation`'s helper of one content shared by 91 rules
-                // failed again in each of 91 rounds, a split of half the program each (ep2's cold run, 4 s).
-                if !made.iter().any(|(r, n)| *r == i && *n == helper) {
-                    made.push((i, helper));
-                }
+                // Read by this rule, as by every other rule it was made for (`Readers`).
+                made.read(i, helper);
             }
             if taken.is_empty() {
                 keep(&mut program);
@@ -387,25 +455,20 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
         }
         program.extend(helpers);
         let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new(), nullary: Vec::new() };
-        *rounds += 1;
+        let split_span = crate::code_rule_dsl::logic::profile::span(|| "the round's program, split again".into());
         let (candidate, split) = super::candidate(v, &round)?;
+        drop(split_span);
         let now = split.local.clone();
-        let mut failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();
-        failed.dedup();
-        let mut names: Vec<String> = Vec::new();
-        for (_, n) in made {
-            if !names.contains(&n) {
-                names.push(n);
-            }
-        }
+        // Each rule once, however many of its helpers failed: a level a round.
+        let failed = made.refused(&now);
         if failed.is_empty() {
-            return Ok(Some(Pushed { round, made: names, local: now, candidate }));
+            return Ok(Some(Pushed { round, made: made.names(), local: now, candidate }));
         }
-        crate::code_rule_dsl::logic::profile::decision("a pushed helper the split left outside the chunks: its readers pushed a level less (PushLocalJoins)", || {
-            let out: Vec<&str> = names.iter().filter(|n| !now.contains(*n)).map(String::as_str).collect();
-            let why = out.first().and_then(|n| split.causes.get(*n)).map_or("", String::as_str);
-            let rule = out.first().and_then(|n| candidate.rules().find(|r| candidate.rel_name(r.head().rel()) == *n)).map(|r| candidate.show_rule(r)).unwrap_or_default();
-            format!("{} of {} made, read by {} rules; the first: {why}: {rule}", out.len(), names.len(), failed.len())
+        crate::code_rule_dsl::logic::profile::decision("a pushed join the split did not take: its rules held back a level", || {
+            let gone: Vec<String> = made.reads().iter().filter(|(_, n)| !now.contains(n)).take(3).map(|(i, n)| format!("{n} of {}", v.show_rule(rules[*i]))).collect();
+            // The split's cause for the first helper it did not take.
+            let why = made.reads().iter().find(|(_, n)| !now.contains(n)).and_then(|(_, n)| split.causes.get(n)).map_or("", String::as_str);
+            format!("{} rules ({}): {}; the first's cause: {why}", failed.len(), level.len(), gone.join("; "))
         });
         for i in failed {
             *level.entry(i).or_default() += 1;

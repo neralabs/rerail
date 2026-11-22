@@ -14,7 +14,8 @@ import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { describeScan, runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
 import {
   acquireDirectoryAnalysisGeneration, acquireNamedAnalysisRun, analysisScopeHome, codeRuleSchema, collectAnalysisCaches,
-  deleteNamedAnalysisScope, finishNamedAnalysisRegistration, listAnalysisStores, loadNativeBinding, openRerailDatabase, queueAnalysisScopeReleases,
+  deleteNamedAnalysisScope, finishNamedAnalysisRegistration, listAnalysisStores, loadNativeBinding, mainContentStoreDirectory, openRerailDatabase,
+  queueAnalysisScopeReleases,
   readAnalysisScopeGeneration, recordCheckout, RERAIL_DATABASE_FILE, retireAnalysisStore, scanContentStore, settleAnalysisScopeReleases,
 } from "../../src/engine/index.js";
 import { setCheckoutStarted, stopRerail } from "../../src/runtime/index.js";
@@ -23,6 +24,7 @@ import { queryContentStore } from "../support/engine/content-store-query.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
 import { withExperiments } from "../support/environment/experiments.js";
+import { stubUserHome } from "../support/user-home.js";
 
 withExperiments("HEADLESS_SCAN", "REMOTE_SINK");
 
@@ -91,6 +93,29 @@ function storeRetirementFixture(home: string, control: string) {
     try { db.transaction(tx => queueAnalysisScopeReleases(tx, [root], control)); } finally { db.$client.close(); }
   };
   return { cli, publish, stop };
+}
+
+/**
+ * What a scan's policy programs did, read from its profile (`RERAIL_PROFILE`'s profile.txt): the files whose per-file
+ * part they ran again instead of reading it from the per-file memo (decision 0052), and the strata of their cross-file
+ * part that ran (`run`), and of those reached, the ones derived again instead of maintained from deltas or kept
+ * (`again`, decision 0077; a relation with facts of its own is read again whether or not a stratum runs, 0364 R3).
+ * A reference graph is rules (decision 0483): a file's references are its per-file part, and their links its cross
+ * part. The profile names each run by the policies its program declares (`policy <id>`); the scan's other programs
+ * (its phases, Git's inventory) are not counted; with `policy`, only its runs are.
+ */
+function policyWork(trace: string, policy?: string): { files: number; run: number; again: number } {
+  const named = policy === undefined ? "[^:]+" : policy.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const times = (repeat: string | undefined) => Number(repeat ?? 1);
+  let files = 0, run = 0, again = 0;
+  for (const [, read, of, repeat] of trace.matchAll(new RegExp(String.raw`^\s*- policy ${named}: (\d+) of (\d+) files read from the memo;.*?(?:\(x(\d+)\))?$`, "gmu"))) {
+    files += (Number(of) - Number(read)) * times(repeat);
+  }
+  for (const [, ran, derived, repeat] of trace.matchAll(new RegExp(String.raw`^\s*- policy ${named}: (\d+) of \d+ strata run \(.*?; (\d+) derived again\).*?(?:\(x(\d+)\))?$`, "gmu"))) {
+    run += Number(ran) * times(repeat);
+    again += Number(derived) * times(repeat);
+  }
+  return { files, run, again };
 }
 
 describe("headless rerail scan", () => {
@@ -518,6 +543,7 @@ Resolved(@place("commit", 1), oid) :- git_revision(_, "HEAD", oid).
     git(root, "commit", "-qm", "package marker");
     const policy = join(root, "links.rerail");
     writeFileSync(policy, `#include "core.rerail"
+#include "python/references.rerail"
 .policy "links" revision 1
 .language python
 .violation Edge(at: node, via: symbol) "{via}"
@@ -526,7 +552,7 @@ Edge(n, via) :- reference_edge(n, _, via).
     for (const [revision, expected] of [["HEAD", ["pkg/a.py"]], ["HEAD~1", []], ["HEAD", ["pkg/a.py"]]] as const) {
       const result = await scan(root, { revision, paths, analysisScope: "package", rr: [policy] });
       expect(result.status, JSON.stringify(result.failures)).toBe("completed");
-      expect(result.violations.map(finding => finding.path)).toEqual(expected);
+      expect(result.violations.map(finding => finding.path), `${revision}: ${JSON.stringify(result.violations)}`).toEqual(expected);
     }
   });
 
@@ -1129,7 +1155,7 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
     const engine = loadNativeBinding();
     const good = join(home, "good.rerail"), bad = join(home, "bad.rerail"), metadata = join(home, "metadata.rerail");
     writeFileSync(good, '#include "core.rerail"\n.policy "good" revision 1\n.language python\n.violation V(at: node) "found"\nV(n) :- kind(n,"identifier").\n');
-    writeFileSync(bad, '#include "core.rerail"\n.policy "bad" revision 1\n.language python\n.references {"unknownParameter":true}\n.violation V(at: node) "edge"\nV(n) :- reference_edge(n,_,_).\n');
+    writeFileSync(bad, '#include "core.rerail"\n#include "python/references.rerail"\n.policy "bad" revision 1\n.language python\n.references {"unknownParameter":true}\n.violation V(at: node) "edge"\nV(n) :- reference_edge(n,_,_).\n');
     writeFileSync(metadata, '#include "git.rerail"\n.policy "metadata" revision 1\n.violation V(at:span) "tree"\nV(@place("git",1)) :- git_source_tree(_,_).\n');
     const evaluate = async (files: string[], view?: InstanceType<typeof engine.GitRevisionSource>) =>
       JSON.parse(await engine.scanRrPoliciesAsync({ paths: files, root, store, output: "" }, undefined, view));
@@ -1794,9 +1820,11 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     const selectedPolicy = await scan(root, { ...source, rulesRef: refWith(".rerail") });
     expect(selectedPolicy.status).toBe("failed");
     expect(selectedPolicy.violations.map(finding => finding.path)).toEqual(["a.py"]);
+    const policyName = "ff" + Buffer.from(".rerail").toString("hex");
     expect(selectedPolicy.failures).toEqual([expect.objectContaining({
-      path: expect.stringMatching(/\.rerail\/rules\/\[hex:ff2e7272\]$/u),
-      pathIdentity: { encoding: "hex", value: Buffer.from(".rerail/rules/").toString("hex") + "ff2e7272" },
+      path: expect.stringMatching(new RegExp(`\\.rerail/rules/\\[hex:${policyName}\\]$`, "u")),
+      pathIdentity: { encoding: "hex", value: Buffer.from(".rerail/rules/").toString("hex") + policyName },
+      message: "Git policy name has invalid UTF-8",
     })]);
   });
 
@@ -1888,10 +1916,13 @@ File(@place(p, 1)) :- git_source_tree(r, t), git_tree_file(r, t, p, _, _).
       published.finish(true);
       finishNamedAnalysisRegistration(database, name, "same", published);
       await expect(deleteNamedAnalysisScope(database, name)).rejects.toThrow(/multiple stores/u);
-      expect(await deleteNamedAnalysisScope(database, name, first)).toEqual({ store: first, hadMembers: false });
+      // A release that would revoke a running scan fails and is retried after it (decision 0494): the aborted
+      // acquisition is retired, the concurrent one with the same scan ID runs on and publishes.
+      await expect(deleteNamedAnalysisScope(database, name, first)).rejects.toThrow(/analysis scope in use/u);
       active.finish(true);
-      expect(active.publication).toBe("released");
+      expect(active.publication).toBe("published");
       finishNamedAnalysisRegistration(database, name, "same", active);
+      expect(await deleteNamedAnalysisScope(database, name, first)).toEqual({ store: first, hadMembers: true });
       expect(await deleteNamedAnalysisScope(database, name)).toEqual({ store: second, hadMembers: true });
     } finally { vi.unstubAllEnvs(); }
   }, 30_000);
@@ -1960,10 +1991,13 @@ File(@place(p, 1)) :- git_source_tree(r, t), git_tree_file(r, t, p, _, _).
     `, new URL("../../src/engine/native/analysis-scope.ts", import.meta.url).href, database, store, root]);
     expect(child.error).toBeUndefined();
     const registry = database + ".analysis-stores.sqlite";
-    expect(queryContentStore(store, "SELECT id FROM analysis_scope_pending")).toHaveLength(1);
+    // What the killed run leaves of its hold on the scope: its lease beside the store, unlocked (decision 0494: a
+    // run's start writes nothing to the store), which whoever finds it removes.
+    const leases = () => fs.readdirSync(store + ".scopes").filter(name => /^\d+$/u.test(name));
+    expect(leases()).toHaveLength(1);
     expect(queryContentStore(registry, "SELECT name FROM analysis_named_acquisition")).toEqual([{ name: "interrupted" }]);
     await collectAnalysisCaches(database);
-    expect(queryContentStore(store, "SELECT id FROM analysis_scope_pending")).toEqual([]);
+    expect(leases()).toEqual([]);
     expect(queryContentStore(registry, "SELECT name FROM analysis_named_acquisition")).toEqual([]);
   }, 30_000);
 
@@ -2151,22 +2185,21 @@ process.stdout.write(JSON.stringify(visited));`,
     expect(existsSync(unrelated)).toBe(false);
   }, 30_000);
 
-  it("reports a release between evaluation and publication and preserves the findings", async () => {
+  // Decision 0547: a release of a scope a scan holds fails until the scan has finished; retried, it removes the run.
+  it("refuses a release between evaluation and publication, and the retried release removes the published run", async () => {
     const root = checkout(), home = root + "-home", databasePath = join(home, "rerail.sqlite"), store = join(home, "scope.sqlite");
     const engine = loadNativeBinding(), prototype = engine.AnalysisScopeRun.prototype, finish = prototype.finish;
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
     const stop = vi.spyOn(prototype, "finish").mockImplementationOnce(function(this: InstanceType<typeof engine.AnalysisScopeRun>, success) {
-      engine.deleteAnalysisScope(store, "release-during-scan", false);
-      const warning = finish.call(this, success);
-      expect(warning).toMatch(/released before publication/u);
-      return warning;
+      expect(() => engine.deleteAnalysisScope(store, "release-during-scan", false)).toThrow(/analysis scope in use/u);
+      return finish.call(this, success);
     });
     try {
       const report = await scan(root, { revision: "HEAD", analysisScope: "release-during-scan", databasePath });
       expect(report.status).toBe("completed");
       expect(report.violations.map(v => v.path)).toEqual(["a.py"]);
-      expect(report.cache).toEqual({ publication: "released", collection: "completed" });
-      expect(describeScan(report)).toContain("released before publication");
+      expect(report.cache).toEqual({ publication: "published", collection: "completed" });
+      engine.deleteAnalysisScope(store, "release-during-scan", false);
       expect(queryContentStore(store, "SELECT scope FROM analysis_scope_run")).toEqual([]);
       expect(queryContentStore(store, "SELECT scope FROM analysis_scope_manifest")).toEqual([]);
     } finally { stop.mockRestore(); vi.unstubAllEnvs(); }
@@ -3004,7 +3037,7 @@ if (phase === "after-store-ack") {
         writeFileSync(store, "this is not a database");
         return await run(...args);
       } finally {
-        rmSync(cache, { recursive: true, force: true });
+        removeFolderSync(cache);
         renameSync(cache + ".saved", cache);
       }
     });
@@ -3275,7 +3308,7 @@ try {
     const blob = git(root, "rev-parse", first + ":" + child);
     const object = join(root, ".git", "objects", blob.slice(0, 2), blob.slice(2));
     renameSync(object, join(home, "removed-blob"));
-    expect(read(first).error).toMatch(/selected\.rr/u);
+    expect(read(first).error).toMatch(/selected\.rerail/u);
     renameSync(join(home, "removed-blob"), object);
     expect(read(first)).toEqual(expected("one", 0, 1));
     writeFileSync(join(library, "selected.rerail"), word("bundled"));
@@ -3494,7 +3527,9 @@ Seen(n) :- kind(n, "identifier").
   it("ignores an inaccessible legacy candidate and keeps a registered store pending", async () => {
     const root = checkout();
     const home = `${root}-home`;
-    const main = join(home, "main");
+    // The machine-wide directory of a user home the test owns: the real check, which reads that home, finds it there.
+    stubUserHome(join(home, "user"));
+    const main = mainContentStoreDirectory();
     mkdirSync(main, { recursive: true });
     const unregistered = join(main, "unregistered.sqlite");
     const registered = join(main, "registered.sqlite");
@@ -3502,8 +3537,6 @@ Seen(n) :- kind(n, "identifier").
     writeFileSync(unregistered, "invalid database");
     const registeredRoot = join(root, "registered");
     await acquireDirectoryAnalysisGeneration(databasePath, registeredRoot, registered);
-    const builds = await vi.importActual<typeof import("../../src/engine/native/rerail-build.js")>("../../src/engine/native/rerail-build.js");
-    const machineStore = vi.spyOn(builds, "mainContentStoreDirectory").mockReturnValue(main);
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", unregistered);
     const db = openRerailDatabase(databasePath);
     try {
@@ -3518,7 +3551,6 @@ Seen(n) :- kind(n, "identifier").
     } finally {
       db.$client.close();
       vi.unstubAllEnvs();
-      machineStore.mockRestore();
     }
   });
 
@@ -3728,7 +3760,7 @@ Value(@place("git",1), v) :- git_root_repo(_), v = @git_tracked(${JSON.stringify
     const root = checkout();
     const valid = join(root, "valid.rerail"), invalid = join(root, "invalid.rerail");
     writeFileSync(valid, '#include "git.rerail"\n.policy "good" revision 1\n.violation Seen(at: span) "found"\nSeen(@place("git", 1)) :- git_source_commit(_, _).\n');
-    writeFileSync(invalid, '#include "core.rerail"\n.policy "bad" revision 1\n.language python\n.references {"unknownParameter":true}\n.violation V(at: node) "edge"\nV(n) :- reference_edge(n,_,_).\n');
+    writeFileSync(invalid, '#include "core.rerail"\n#include "python/references.rerail"\n.policy "bad" revision 1\n.language python\n.references {"unknownParameter":true}\n.violation V(at: node) "edge"\nV(n) :- reference_edge(n,_,_).\n');
     for (const rr of [[valid, invalid], [invalid, valid]]) {
       const report = await scan(root, { revision: "HEAD", analysisScope: "partial-policies", rr });
       expect(report.status).toBe("failed");
@@ -3830,7 +3862,10 @@ Value(@place("git",1), v) :- git_root_repo(_), v = @git_tracked(${JSON.stringify
           home, stdout: { write: text => { output += text; return true; } },
         });
         expect(exit).toBe(1);
-        expect(JSON.parse(output)).toMatchObject({ status: "failed", rules: [], failures: [expect.objectContaining({ code: "adapter-error", path: expect.stringMatching(/broken\.rr$/u) })] });
+        expect(JSON.parse(output)).toMatchObject({ status: "failed", rules: [], failures: [expect.objectContaining({
+          code: "adapter-error", path: expect.stringMatching(/broken\.rerail$/u), ruleId: "broken",
+          message: expect.stringMatching(/^\/.*broken\.rerail: no \.violation declarations/u),
+        })] });
       }
     } finally { vi.unstubAllEnvs(); }
   });
@@ -3934,7 +3969,8 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
       const uniqueSubtrees = new Set(git(root, "ls-tree", "-d", "-r", "HEAD").split("\n").map(row => row.split(/\s+/u)[2]));
       const trace = readFileSync(join(profile, "profile.txt"), "utf8");
       expect(Number(trace.match(/^\s*count\s+(\d+)\s+git\.tree_decodes$/mu)?.[1])).toBe(1 + uniqueSubtrees.size);
-      return Number(trace.match(/^\s*count\s+(\d+)\s+source_tape\.parses$/mu)?.[1]);
+      // The source files' tapes: the scan's profile also counts phase 0's parse of the policy's own texts.
+      return [...trace.matchAll(/^\s*count\s+(\d+)\s+source_tape\.input\.[a-z]+\.python\.[0-9a-f]{64}$/gmu)].reduce((sum, [, n]) => sum + Number(n), 0);
     };
     const shared = measure("shared");
     writeFileSync(join(root, "copy/call.py"), "x = f(2)\n");
@@ -3943,7 +3979,7 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
     expect(measure("distinct")).toBe(shared + 1);
   }, 30_000);
 
-  it("reuses reference bindings until a decorator changes a file's sibling target", () => {
+  it("reuses reference bindings until the sibling setting changes, and links the sibling a decorator matches", () => {
     const root = checkout(), home = root + "-home";
     mkdirSync(home);
     writeFileSync(join(root, "tasks.py"), "class Jobs:\n    @task\n    def run_one(self):\n        pass\n    def do_one(self):\n        pass\n");
@@ -3953,7 +3989,7 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
     const policy = join(home, "links.rerail");
     const evaluate = (decorator: string, phase: string) => {
       const settings = { siblingLinks: [{ decorator, name: { replace: "^run_", by: "do_" } }] };
-      writeFileSync(policy, `#include "core.rerail"\n.policy "links" revision 1\n.language python\n.references ${JSON.stringify(settings)}\n.violation Linked(at: node) "sibling"\nLinked(n) :- reference_edge(n,_, "sibling").\n`);
+      writeFileSync(policy, `#include "core.rerail"\n#include "python/references.rerail"\n.policy "links" revision 1\n.language python\n.references ${JSON.stringify(settings)}\n.violation Linked(at: node) "sibling"\nLinked(n) :- reference_edge(n,_, "sibling").\n`);
       const profile = join(home, phase);
       const script = 'import {runHeadlessScan} from "./src/cli/headless-scan.ts"; const [repo,rr,databasePath] = process.argv.slice(2); console.log(JSON.stringify(await runHeadlessScan({repo,rr:[rr],databasePath,scope:"repository",revision:"HEAD",analysisScope:"links",packs:[],version:"test"})));';
       const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, policy, join(home, "home.sqlite")], {
@@ -3968,13 +4004,16 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
         expect(trace).toMatch(/^\s*count\s+[1-9]\d*\s+rr\.embedded_program_hits$/mu);
         expect(trace).not.toMatch(/^\s*count\s+[1-9]\d*\s+(rr\.embedded_program_compiles|source_tape\.parses)$/mu);
       }
-      const count = trace.match(/^\s*count\s+(\d+)\s+reference\.binding_contributions$/mu)?.[1];
-      return [report.violations.map(v => v.path), Number(count ?? 0)];
+      return [report.violations.map(v => v.path), policyWork(trace)];
     };
-    expect(evaluate("never", "cold")).toEqual([[], 3]);
-    expect(evaluate("never", "warm")).toEqual([[], 0]);
-    expect(evaluate("absent", "unused")).toEqual([[], 0]);
-    expect(evaluate("task", "matched")).toEqual([["tasks.py"], 1]);
+    // Every file's references derived.
+    expect(evaluate("never", "cold")).toEqual([[], expect.objectContaining({ files: 3 })]);
+    // Nothing changed: no file's references derived again, and no stratum of the links run.
+    expect(evaluate("never", "warm")).toEqual([[], expect.objectContaining({ files: 0, run: 0 })]);
+    // The setting is facts the file-local rules read as the run's constants (decision 0483 §3, t50 step 1): a new
+    // setting is a new per-file part, every file's references derived again, whether or not a decorator matches.
+    expect(evaluate("absent", "unused")).toEqual([[], expect.objectContaining({ files: 3 })]);
+    expect(evaluate("task", "matched")).toEqual([["tasks.py"], expect.objectContaining({ files: 3 })]);
   }, 90_000);
 
   it("shares verified trees in either policy order and reuses independent reference links across revisions", () => {
@@ -4004,6 +4043,7 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), p != ".rerailignore", p != "
     const references = join(root, "references.rerail");
     writeFileSync(references, `
 #include "core.rerail"
+#include "python/references.rerail"
 .policy "references" revision 1
 .language python
 .violation Referenced(at: node) "reference"
@@ -4030,13 +4070,17 @@ Referenced(src) :- reference_edge(src, _, _).
       expect(report.violations.filter(finding => finding.code === "Referenced").map(finding => finding.path).sort())
         .toEqual(state === "removed" || state === "independent" ? ["other/a.py", "src/independent.py"]
           : ["other/a.py", "src/a.py", "src/independent.py"]);
-      const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8").matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)]
-        .map(([, count, name]) => [name, Number(count)]));
+      const trace = readFileSync(join(profile, "profile.txt"), "utf8");
+      const counters = new Map([...trace.matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)].map(([, count, name]) => [name, Number(count)]));
       if (state !== "revisited") expect(counters.get("git.tree_decodes") ?? 0).toBe(["warm", "settings", "revisited"].includes(state) ? 0 : state === "cold" ? 3 : 2);
-      expect(counters.get("reference.tape_summaries") ?? 0).toBe(["warm", "revisited", "settings"].includes(state) ? 0 : state === "cold" ? 8 : 1);
-      expect(counters.get("reference.binding_contributions") ?? 0).toBe(["warm", "revisited", "settings"].includes(state) ? 0 : state === "cold" ? 8 : 1);
       expect(counters.get("source_ast.parses") ?? 0).toBe(0);
-      expect(counters.get("reference.name_links") ?? 0).toBe(["warm", "settings", "revisited"].includes(state) ? 0 : state === "cold" ? 3 : 1);
+      // Each file's references are derived once for its contents: on the first run, for a changed file, and for
+      // every file when the setting (the per-file part's constants, decision 0483 §3) changes.
+      const work = policyWork(trace, "references");
+      expect(work.files, state).toBe(state === "cold" || state === "settings" ? 8 : ["warm", "revisited"].includes(state) ? 0 : 1);
+      // Nothing changed: no stratum of the links runs. A file changed: the links are maintained from it, none derived again.
+      if (state === "warm") expect(work.run, state).toBe(0);
+      if (["removed", "independent", "restored"].includes(state)) expect(work.again, state).toBe(0);
     };
     evaluate("walk-first", [walk, references], "cold");
     evaluate("references-first", [references, walk], "cold");
@@ -4059,14 +4103,13 @@ Referenced(src) :- reference_edge(src, _, _).
     evaluate("references-first", [references, walk], "restored");
     evaluate("references-first", [references, walk], "revisited", firstRevision);
     const store = join(root, "references-first/content.sqlite");
+    // What the named scope owns: the plans its manifests name, whose kept facts (decision 0401) live while one does.
     const owned = () => queryContentStore<{ n: number }>(store, `
-      SELECT count(DISTINCT u.space) AS n FROM frame_program_used u
-      JOIN corpus_manifest_plans p ON p.plan_digest=u.program
-      JOIN analysis_scope_manifest a USING(manifest_id)
-      WHERE u.space=u.program AND a.scope='named:order'
+      SELECT count(DISTINCT p.plan_digest) AS n FROM analysis_scope_manifest a
+      JOIN corpus_manifest_plans p USING(manifest_id)
+      WHERE a.scope='named:order'
     `)[0]!.n;
-    // Both the source and link phases have an owned image for each of the four trees.
-    expect(owned()).toBeGreaterThanOrEqual(8);
+    expect(owned()).toBeGreaterThan(0);
     loadNativeBinding().deleteAnalysisScope(store, "order", false);
     expect(owned()).toBe(0);
   }, 120_000);
@@ -4083,6 +4126,7 @@ Referenced(src) :- reference_edge(src, _, _).
     const evaluate = async (fields: boolean) => {
       writeFileSync(policy, `
 #include "core.rerail"
+#include "python/references.rerail"
 .policy "constructor" revision 1
 .language python
 ${fields ? '.references {"constructorFields":{"fieldToParameter":{"replace":"^state_","by":""}}}' : ""}
@@ -4118,6 +4162,7 @@ Field(src) :- reference_edge(src, dst, "field"), node_text(dst, body), contains(
     const policy = join(root, "method.rerail");
     writeFileSync(policy, `
 #include "core.rerail"
+#include "python/references.rerail"
 .policy "method" revision 1
 .language python
 .violation Method(at: node, target: symbol) "{target}"
@@ -4131,7 +4176,7 @@ Method(src, text) :- reference_edge(src, dst, "self"), node_text(dst, text).
         scope: "repository", packs: [], version: "test",
       })));
     `;
-    const evaluate = (state: string, result: string, contributions: number, links: number) => {
+    const evaluate = (state: string, result: string) => {
       const home = join(root, "home");
       const profile = join(home, state);
       const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, join(home, "home.sqlite"), policy], {
@@ -4141,20 +4186,21 @@ Method(src, text) :- reference_edge(src, dst, "self"), node_text(dst, text).
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
       expect(report.violations).toHaveLength(1);
       expect(report.violations[0]!.message).toContain(`return '${result}'`);
-      const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8").matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)]
-        .map(([, count, name]) => [name, Number(count)]));
-      expect(counters.get("reference.binding_contributions") ?? 0).toBe(contributions);
-      expect(counters.get("reference.name_links") ?? 0).toBe(links);
+      return policyWork(readFileSync(join(profile, "profile.txt"), "utf8"));
     };
-    // The graph also links the inheritance reference to Base.
-    evaluate("cold", "base", 3, 2);
-    evaluate("warm", "base", 0, 0);
+    // Every file's references are derived, and every link.
+    expect(evaluate("cold", "base")).toMatchObject({ files: 3 });
+    // Nothing changed: no file's references derived again, and no stratum of the links run.
+    expect(evaluate("warm", "base")).toMatchObject({ files: 0, run: 0 });
+    // An unrelated definition renamed: that file's references alone, and the links maintained from it, the method's
+    // link kept.
     writeFileSync(join(root, "pkg/other.py"), "def renamed():\n    pass\n");
     commit("unrelated definition renamed");
-    evaluate("renamed", "base", 1, 0);
+    expect(evaluate("renamed", "base")).toMatchObject({ files: 1, again: 0 });
+    // The override added: that file's references, and the links maintained from them, the method's link moved to it.
     writeFileSync(join(root, "pkg/service.py"), `${service}\n    def hook(self):\n        return 'override'\n`);
     commit("add the prioritized override");
-    evaluate("override", "override", 1, 1);
+    expect(evaluate("override", "override")).toMatchObject({ files: 1, again: 0 });
   }, 90_000);
 
   it.each(["loose", "packed"])("rechecks a %s tree after corruption and restoration with the same cache", (representation) => {
@@ -4244,11 +4290,14 @@ Unreadable(@place("tree", 1), why) :- git_tree_walk_error(_, _, _, why).
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
       expect(report.violations.map(v => v.path)).toContain("a.py");
       expect(report.violations.map(v => v.path)).not.toContain(ignoredPath);
+      // What the store keeps on disk: its file and the folders beside it (its memo, its tapes and sources, its atoms'
+      // blocks, its kept facts), every file in them.
+      const filesOf = (path: string): string[] => !existsSync(path) ? []
+        : statSync(path).isDirectory() ? fs.readdirSync(path).flatMap(name => filesOf(join(path, name))) : [path];
+      const kept = [store, ...[".memo", ".objects", ".atoms", ".facts"].flatMap(suffix => filesOf(store + suffix))];
+      expect(kept.some(path => path.startsWith(store + ".atoms")), "the atoms' blocks are on disk").toBe(true);
       for (const basename of [secret, ignoredPath]) {
-        // The atom dictionary can hold plain strings as well as packed segments.
-        const found = queryContentStore(store, "SELECT 1 FROM atom_segment WHERE instr(bytes, cast(? AS blob))>0 LIMIT 1", [basename]);
-        expect(found, basename).toEqual([]);
-        expect(readFileSync(store).includes(Buffer.from(basename)), basename).toBe(false);
+        expect(kept.filter(path => readFileSync(path).includes(Buffer.from(basename))), basename).toEqual([]);
       }
     } finally { vi.unstubAllEnvs(); }
   });

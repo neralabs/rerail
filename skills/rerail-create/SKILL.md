@@ -1,6 +1,6 @@
 ---
 name: rerail-create
-description: Suggest, write, test, tune and approve Rerail rules for the repository you are in. Suggests rules from this repo's own sessions (the person's corrections, risky commands, which rules already steer) and its written standards, drafts each rule as a code rule or a command rule, tests it against cases and the whole repo, and reads it back. Rules it suggests are added in Log, and approved so they steer only after the person says yes; a rule the person asked for is added after its read-back. Also writes architecture rules (where code belongs, which way dependencies run) from the repo's design docs and maintainers' review comments, proved against the repo's history. Changes where a rule applies, shipped rules included. Audits a rule or pack that waits for approval and asks the person before approving it. Use for /rerail-create, "suggest rules", "what rules should we have", "make a rule that…", "architecture rules", "layering rules", "this rule is wrong", "update the rule … I want it to apply to", "exclude tests from this rule", or "approve the rules" / a rule waiting for approval.
+description: Suggest, write, test, tune and approve Rerail rules for the repository you are in. Suggests rules from this repo's own sessions (the person's corrections, risky commands, which rules already steer) and its written standards, drafts each rule as a code rule or a command rule, tests it against cases and the whole repo, and reads it back. Every rule it adds runs in Log until the person approves it on its page in the dashboard; a rule the person asked for is added after its read-back. Also writes architecture rules (where code belongs, which way dependencies run) from the repo's design docs and maintainers' review comments, proved against the repo's history. Changes where a rule applies, shipped rules included. Audits a rule or pack that waits for approval before the person approves it in the dashboard. Use for /rerail-create, "suggest rules", "what rules should we have", "make a rule that…", "architecture rules", "layering rules", "this rule is wrong", "update the rule … I want it to apply to", "exclude tests from this rule", or "approve the rules" / a rule waiting for approval.
 ---
 
 # Create a Rerail rule
@@ -10,11 +10,16 @@ good rule catches what a reviewer of this repo would catch, and is right every t
 working code is worse than no rule.
 
 You do four things here. You suggest rules from evidence, you write and test one, you tune a rule that misfires, and you audit a
-rule that waits for approval. The person decides what steers: nothing is approved until they say yes. Rules you suggest are
-added before that, in Log, so the person sees them on the dashboard and approves them there or in the session.
+rule that waits for approval. The person decides what steers, and approves each rule themselves on its page in the
+dashboard: from your session `rerail rules approve` is refused. Every rule you add runs in Log until then, so the person
+sees it on the dashboard before it steers.
 
 A rule Rerail did not publish (one created by you, one in a worktree's `.rerail/rules/`, a third party's or a folder's pack)
-steers no one until a person approves its content; until then it runs in Log. An edit waits again.
+steers no one until a person approves its content; until then it runs in Log. A dashboard link you pass on shows the
+dashboard only in a browser already connected to Rerail: say so with it, and that for another browser the person runs
+`rerail manage` in a terminal. An edit waits again. From your session, an
+edit of the person's approved rule is saved as a copy (`<id>-copy`) that runs in Log beside it, and the rule keeps running
+as it is until the person approves the copy, which turns the original off.
 
 ## Before you start
 
@@ -40,7 +45,7 @@ steers no one until a person approves its content; until then it runs in Log. An
 
 - **The person said what the rule should check:** go to [Write](#write).
 - **No words, or "suggest", "what rules should we have":** go to [Suggest](#suggest). It writes and tests each candidate, adds
-  those that pass in Log, and asks once whether to approve them.
+  those that pass in Log, and lists them for the person to approve in the dashboard.
 - **"Architecture rules", layering, or where code belongs:** read
   [references/architecture-rules.md](references/architecture-rules.md), then go to [Suggest](#suggest) or [Write](#write) as
   above. It adds evidence to gather in Suggest and a history check in Write.
@@ -75,17 +80,16 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    write the cases, test, get it reviewed. Only code rules: leave out a candidate that would be a conversation rule, and name
    it under Left out. A candidate that fails a gate, or does not pass after about five rounds, is left out too.
 5. **Add the ones that pass, in Log.** First leave out a candidate that does the same as a rule in `rules export`, and say
-   so under Left out. Then give each a new id if its id is taken: `rules add` with the id of a rule in `rules export`
-   overwrites that rule, which then runs in Log until approved again, in every repo that has it; with the id of a By Rerail
-   rule (`rerail rules show <id>` prints one) it stores an edited copy, whose approval turns the original off. For each:
-   `rerail rules add <tmp>/draft.json`, and do **not** approve it. A rule that is added but not approved runs in Log
-   whatever its mode: Rerail records what it would catch and tells the agent nothing. It waits on the dashboard's Overview,
-   under "Your coding agent added …", and the person approves it from its page there.
-6. **Ask once, in exactly this form.** One block per rule added, in the order added:
+   so under Left out. Then give each a new id if its id is taken, by a rule in `rules export` or a By Rerail rule
+   (`rerail rules show <id>` prints one): `rules add` would change that rule, or save the draft as an edited copy of it.
+   For each: `rerail rules add <tmp>/draft.json`. A rule that is added but not approved runs in Log whatever its mode:
+   Rerail records what it would catch and tells the agent nothing. It waits on the dashboard's Overview, under "Your coding
+   agent added …", and the person approves it from its page there.
+6. **List them, in exactly this form.** One block per rule added, in the order added:
 
    ```text
    I added <N> rules to <repo>. Until you approve them, they run in Log: Rerail records what each would catch and tells
-   no one. Once approved, each runs in its own mode.
+   no one. Approve each one you want on its page in the dashboard; once approved, each runs in its own mode.
 
      1. <the title, as the dashboard will list it>
         From             <the evidence, e.g. "you corrected this 3 times">
@@ -98,11 +102,8 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
 
    Left out: <candidate>: <why, in one line>
 
-   Approve them so they steer?
-     1. Yes, all of them
-     2. Some of them (say which)
-     3. Not now: they stay in Log, and the dashboard's Overview sends you to them in Created by you
-     4. Show me a rule
+   Approve them on their pages: <the dashboard link rules add printed for each>. The dashboard's Overview also sends you
+   to them, in Created by you. Want one changed first, or to see one's JSON? Say which.
    ```
 
    - Each block opens with the rule's `title` word for word, so the person approves the name they will find in Created by
@@ -111,18 +112,14 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      Log.
    - **Tells the agent** is every message the rule can steer with, quoted exactly: the person approves what it says. Put
      `Reviewed: by me only` above the list when no fresh subagent reviewed the drafts.
-   - Leave out the Left out line when nothing was left out. Add the dashboard link if `rules add` printed one, and pass on its
-     line saying the repo was set up, if it printed one.
-   - **"Show me a rule"**: print that rule's JSON, then ask again.
-7. **Approve what the person says.** On 1, `rerail rules approve <id>` for each rule in the list. On 2, for each rule they
-   named, and only those. The person's yes after reading the list is their approval of what each rule says, as the
-   read-back is in Write. Reply in one line per rule approved, `● <its title> is approved, set to <Steer|Log>.`, then one
-   line for the rest: `The others stay in Log; the dashboard's Overview sends you to them in Created by you.` On 3, reply with that line
-   alone. Any rule can be removed from its page on the dashboard (`rerail manage --print` gives the link).
-8. **Offer to show one working**, as Write step 8, for a rule that was approved and set to Steer.
-
-To change one rule before approving it, the person says what; change it as [Tune](#tune) does (raise `revision`, test
-again), add it again, and show its block alone with the same question.
+   - Leave out the Left out line when nothing was left out. Where `rules add` printed no link (the daemon is not running),
+     write `rerail manage` opens the dashboard in its place. Pass on its line saying the repo was set up, if it printed one.
+   - Never run `rerail rules approve <id>` for the person: it is refused from your session, and their approval on the
+     rule's page is the point.
+7. **Answer what the person says.** To see a rule, print its JSON. To change one before they approve it, change it as
+   [Tune](#tune) does (raise `revision`, test again), add it again, and show its block alone. Any rule can be removed
+   from its page on the dashboard.
+8. **Offer to show one working**, as Write step 8, once the person says they approved one set to Steer.
 
 ## Write
 
@@ -219,16 +216,16 @@ again), add it again, and show its block alone with the same question.
    - **"Change something".** Offer Steer and Log, each with what it means; All of the repo or this worktree only (its rule
      runs nowhere else, not in the main checkout nor other worktrees); the title; and any other row the person names.
    - **"Show me the rule".** Print the rule JSON, then ask again.
-7. **Add it, only after the person says yes.** The person's yes to the card is also their approval of what it says: you wrote
-   the rule and they read it. For all of the repo:
+7. **Add it, only after the person says yes.** For all of the repo:
 
    ```sh
    rerail rules add <tmp>/draft.json
-   rerail rules approve <id>
    ```
 
-   Reply in one line, `● <what it checks> is on, set to <Steer|Log>.`. Add the dashboard link if the command printed one (it does
-   when the Rerail daemon is running), and pass on its line saying the repo was set up with this rule, if it printed one.
+   It runs in Log until the person approves it on its page in the dashboard; `rerail rules approve` is refused from your
+   session. Reply in one line, `● <what it checks> is added, set to <Steer|Log>. It runs in Log until you approve it on its
+   page: <the link the command printed>.` (the command prints the link when the Rerail daemon is running; without one, say
+   `rerail manage` opens the dashboard). Pass on its line saying the repo was set up with this rule, if it printed one.
 
    For this worktree only, write the rule into the worktree's own rules folder instead; there is nothing to add:
    - Check it can run: `rerail state` must print `started` and `rerail state --set-up` must print `set-up`. Otherwise say the
@@ -243,10 +240,10 @@ again), add it again, and show its block alone with the same question.
    - If `git check-ignore -q .rerail/rules/<short-kebab-name>.json` fails, the file is not ignored: say that committing it puts
      the rule in every checkout of the branch, and offer to add `.rerail/rules/` to `.git/info/exclude`. Change nothing in Git
      without a yes.
-   - Approve it: `rerail rules approve <id>` (it reads the file there).
-   - Reply in one line, `● <what it checks> is on in this worktree only, set to <Steer|Log>.`
-8. **Offer to show it working (code rules only).** Ask: "Want to see it fire? I'll write a throwaway file that breaks the rule,
-   show you Rerail's message, then delete it."
+   - Reply in one line, `● <what it checks> is in this worktree only, set to <Steer|Log>. It runs in Log until you approve it
+     on its page in the dashboard.` (`rerail manage` opens the dashboard.)
+8. **Offer to show it working (code rules only)**, once the person says they approved it. Ask: "Want to see it fire?
+   I'll write a throwaway file that breaks the rule, show you Rerail's message, then delete it."
    - On yes, write the file under the rule's scope. Show the `◆ Rerail` message that follows, then delete the file. This file is
      the one exception to not writing in the repository, and it must be gone before you reply.
    - If no message comes, say so. The repo may not be started; `/rerail-start` starts it.
@@ -275,8 +272,9 @@ A rule the person wrote by hand into `.rerail/rules/` can be checked as it is: `
    rebuilt from the rule's description and the repo. Raise `revision` by one. A rule from before titles has none: add one, as
    Write step 2 says, and show it in the read-back.
 4. **Test, read back and add** as in Write, steps 4 to 7; a worktree rule's file is written over in place. The edit waits for
-   approval again, and the person's yes to the read-back gives it. In the read-back, add one line above the card, at most two
-   sentences:
+   the person's approval on its page. An edit of an approved rule of theirs is saved as a copy (`<id>-copy`, which
+   `rules add` names): the rule keeps running as it is until they approve the copy, which turns it off. In the read-back,
+   add one line above the card, at most two sentences:
    `Changed: inline type imports (import { type User }) now pass; a mixed import is still caught.`
 
 ## Scope
@@ -289,7 +287,8 @@ handful of commands, not a new rule. `rules show` gives a rule that ships with R
    `<tmp>/draft.json`. A line on stderr says what saving does. Go on after the first two lines below, start again with
    the rule they name after the next two, and after the rest say what the line says, and stop:
    - "is yours, added to <repo>": saving changes the person's rule where it is. If the line says it is also added to
-     other repositories, saving changes it there too: the card's Saved as row names them.
+     other repositories, saving changes it there too: the card's Saved as row names them. When a second line says it "is
+     approved, so in … session rules add saves an edit of it as a copy", it is saved as that copy instead, here only.
    - "ships with Rerail": saved as the person's copy, added where it is; approving the copy turns it off there.
    - "already has your copy … Change that one": run `rules show` on the copy's id and start again with that one.
    - "is your copy of <original> for another repository": run `rules show <original>` and start again with that one.
@@ -324,8 +323,8 @@ handful of commands, not a new rule. `rules show` gives a rule that ships with R
      Left out now   tests/test_api.py, conftest.py
      Tested         Would catch <N> places in this repo | Would catch <N> places under <folder>/
      Unchanged      What it checks, its message, <Steer|Log>
-     Saved as       Your copy of <id>; the original turns off where the copy is added | <id>, revision <n>, here
-                    (and in <other repositories>)
+     Saved as       Your copy of <id>; the original turns off where the copy is added once you approve it
+                    | <id>, revision <n>, here (and in <other repositories>)
 
      1. Yes, save it
      2. Change something
@@ -335,10 +334,10 @@ handful of commands, not a new rule. `rules show` gives a rule that ships with R
    The diff lists only the globs added (`+`) and removed (`-`). If the person already said yes in this conversation to
    exactly these globs, every case passed, and that earlier preview said what saving does (what the Saved as row says),
    that yes stands: show the card without its question and save. Otherwise ask.
-5. **Save it, only after the person says yes.** `rerail rules add <tmp>/draft.json`, then `rerail rules approve <the id
-   rules add printed>`: the person's yes to the card is their approval, and a copy's approval turns the original off. A
-   rule in `.rerail/rules/` is saved by writing its file, then `rerail rules approve <id>`. Reply in one line:
-   `● <id> now applies to <the person's words>.`
+5. **Save it, only after the person says yes.** `rerail rules add <tmp>/draft.json`. The change runs in Log until the
+   person approves it on its page in the dashboard, and a copy's approval turns the original off. A rule in
+   `.rerail/rules/` is saved by writing its file, and waits for approval the same way. Reply in one line:
+   `● <id> applies to <the person's words> once you approve it on its page: <the link rules add printed>.`
 
 Anything else you notice on the way (a message you would word differently, a match that looks wrong) is one line after
 the reply, offered as its own change. Never fold it into this one.
@@ -350,17 +349,19 @@ Read [references/approving-rules.md](references/approving-rules.md) first.
 1. **See what waits:** `rerail rules approve` with no name lists every rule and pack waiting here, each with where it comes from.
 2. **Audit each one you did not write in this session**: read all of its content, and check what it would steer the agent with,
    as the reference says. You are looking for anything a reviewer would not expect a code rule to say or do.
-3. **Ask with the reference's card**, one per rule or pack, with every flag you found. Recommend keeping it in Log when you found
-   anything.
-4. **Approve only after a yes:** `rerail rules approve <id or package>`. Approve exactly what you read; if it changed since, read
-   it again.
+3. **Tell the person with the reference's card**, one per rule or pack, with every flag you found. Recommend keeping it in Log
+   when you found anything.
+4. **The person approves it** on its page in the dashboard. `rerail rules approve` is refused from your session: give them
+   the page's link (`rerail manage --print` prints the dashboard's; a rule's page is `#rule/<id>` on it), or tell them
+   `rerail manage` opens the dashboard.
 
 ## Never
 
 - Add, change or remove a rule the person has not confirmed in this session, except adding the rules
   [Suggest](#suggest) found, tested and listed for approval, unapproved, so they run in Log.
-- Approve a rule or pack the person has not said yes to in this session, or one whose content you have not read in full.
-  A yes to Suggest's list approves only the rules in it, at the content you showed.
+- Approve a rule or pack, or import a rules dump: `rerail rules approve` and `rerail rules import` are the person's, and
+  refused from your session. Never get around that: not by unsetting the variable that marks your session, nor through
+  the dashboard's API or Rerail's database.
 - Offer "every repo". A rule from here belongs to this repo only, or to this worktree only.
 - Use `block` mode.
 - Invent evidence, cases or test numbers, or quote the person beyond what the evidence shows.

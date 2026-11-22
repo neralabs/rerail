@@ -306,7 +306,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
     std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = crate::source_tree::native().join("../docs/rule-syntax/packs/python");
     let programs: Vec<String> = ["bandit-b301-pickle.rerail", "bandit-b307-eval.rerail"].iter().map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap()).collect();
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let (maintained, _) = edit(
@@ -730,7 +730,8 @@ fn a_load_whose_chunk_fails_ends_the_run_with_its_error() {
     let rule = dir.join("p.rerail");
     std::fs::write(&rule, format!(
         "#include \"core.rerail\"\nload(p, \"f\", \"python\") :- file_line(\"later.txt\", 1, p).\nload(p, \"b\", \"python\") :- dir_entry(\"{lib}\", \"b.pyi\", 0), p = cat(\"{lib}\", \"/b.pyi\").\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n",
-        lib = lib.display()
+        // Spelled with `/` in the rule's string literal, where `\` would start an escape (Windows takes either).
+        lib = lib.display().to_string().replace('\\', "/")
     )).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let (out, store) = (dir.join("out"), dir.join("store.sqlite"));
@@ -1758,7 +1759,7 @@ y = x{i} + 2
 fn one_corpus_run_for_a_parent() {
     let (Some(src), Some(out)) = (std::env::var_os("RERAIL_CHILD_RUN"), std::env::var_os("RERAIL_CHILD_OUT")) else { return };
     // `RERAIL_CHILD_PROGRAM=<file.rerail>`: that rule file, else the pickle pack's.
-    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = crate::source_tree::native().join("../docs/rule-syntax/packs/python");
     let file = std::env::var_os("RERAIL_CHILD_PROGRAM").map_or_else(|| rules.join("bandit-b301-pickle.rerail"), std::path::PathBuf::from);
     let program = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
     // `RERAIL_CHILD_RUNS=<n>`: n runs in this one process, as a daemon's or `repeat`'s; under `RERAIL_CHILD_SESSION`,
@@ -1848,7 +1849,7 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "from typing import Generic, Literal, TypeVar\nT = TypeVar('T')\nx: Literal[1, 1]\nclass C(Generic[T], int): pass\n").unwrap();
-    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = crate::source_tree::native().join("../docs/rule-syntax/packs/python");
     let programs: Vec<String> = ["ruff-pyi062-duplicate-literal-member.rerail", "ruff-pyi059-generic-not-last-base-class.rerail"]
         .iter()
         .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
@@ -1978,6 +1979,8 @@ fn every_switch_lowering_reads_is_classified() {
     /// and profiles, the store's and the cost model's paths, the session's binding.
     const NOT_PREPARING: &[&str] = &[
         "RERAIL_BLESS_CENSUS",
+        // Why a narrow copy is not diffed (decision 0575): a trace.
+        "RERAIL_NARROW_DIFF_DEBUG",
         "RERAIL_IDEMPOTENCY_DUMP",
         "RERAIL_MAGIC_CHECK",
         "RERAIL_MERGE_WHY",
@@ -1985,6 +1988,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_SPLIT_DUMP",
         "RERAIL_DEMAND_DUMP",
         "RERAIL_PREPARED_TRACE",
+        // Prints each diffed copy's change points (decision 0575).
+        "RERAIL_NARROW_DIFF_DEBUG",
         // How the combine's link is made (decision 0373): spliced into the last one, linked whole, or both and compared;
         // the program is the same (`check` asserts it).
         "RERAIL_COMBINE_LINK",
@@ -2035,7 +2040,7 @@ fn every_switch_lowering_reads_is_classified() {
         // A measurement aid (decision 0173): each version written out, the program unchanged.
         "RERAIL_VERSION_TRACE",
     ];
-    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
+    let root = crate::source_tree::native().join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
     let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
     // A file's own test module (`#[cfg(test)]`, `#[cfg(all(test, …))]`), which ends it.
@@ -2055,7 +2060,7 @@ fn every_switch_lowering_reads_is_classified() {
                 if let Some(m) = test_module.find(&text) {
                     text.truncate(m.start());
                 }
-                files.push((p.strip_prefix(&root).unwrap().display().to_string(), text));
+                files.push((p.strip_prefix(&root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"), text));
             }
         }
         files
@@ -2092,13 +2097,17 @@ fn every_switch_lowering_reads_is_classified() {
         }
         all
     };
-    // `corpus.rs` itself: its preparation (`run_observed` up to the prepared program) and `combine_tail`.
+    // `corpus.rs` itself: its preparation (`run_observed` up to the prepared program); and the corpus's base
+    // (`corpus/base.rs`, rerail-rr-root's), whose `combine_tail` combines the texts.
     let corpus = std::fs::read_to_string(root.join("logic/plan/corpus.rs")).unwrap();
-    let region = |from: &str, to: &str| -> String {
-        let a = corpus.find(from).unwrap_or_else(|| panic!("corpus.rs has no {from:?}"));
-        let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
-        corpus[a..b].to_owned()
+    let base = std::fs::read_to_string(root.join("logic/plan/corpus/base.rs")).unwrap();
+    let region_of = |file: &str, text: &str, from: &str, to: &str| -> String {
+        let a = text.find(from).unwrap_or_else(|| panic!("{file} has no {from:?}"));
+        let b = a + text[a..].find(to).unwrap_or_else(|| panic!("{file} has no {to:?} after {from:?}"));
+        text[a..b].to_owned()
     };
+    let region = |from: &str, to: &str| region_of("corpus.rs", &corpus, from, to);
+    let base_region = |from: &str, to: &str| region_of("corpus/base.rs", &base, from, to);
     // Combining: `combine_tail` (its link, `combine_linked_as`, and its tail, `tail_version`), what it calls that
     // reads a switch (`scoping`, the tail's passes), and the `.rerail` lowering its `rr::parse` runs
     // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
@@ -2106,10 +2115,10 @@ fn every_switch_lowering_reads_is_classified() {
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
         "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
     ]);
-    combining.push(("corpus.rs, combine_tail".to_owned(), region("\nfn combine_tail(", "\n}\n")));
-    combining.push(("corpus.rs, the combine's tail".to_owned(), region("\nenum Tail {", "\n/// The programs `programs` linked into one")));
+    combining.push(("corpus/base.rs, combine_tail".to_owned(), base_region("\npub fn combine_tail(", "\n}\n")));
+    combining.push(("corpus/base.rs, the combine's tail".to_owned(), base_region("\npub enum Tail {", "\n/// The programs `programs` linked into one")));
     // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).
-    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies, kept }))")));
+    combining.push(("corpus/base.rs, combine_linked_as".to_owned(), base_region("\npub fn combine_linked_as<", "Ok((all, Tail::Many { hide, policies, kept }))")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`combining::FoldOwn`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
@@ -2385,7 +2394,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
 /// Decision 0431 R8: CPU and Metal give the same rows, the device reading the same tapes, with both kinds: tape values
 /// read in the fixpoint (R10's program: values, a value inside one, and a scan that lists none), and a file's programs
 /// (an HTML file's scripts), whose `docof` and lines are the file's (R1).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn cpu_and_metal_read_the_same_tape_values() {
     use crate::code_rule_dsl::typing::file_local::Binding;
@@ -2524,7 +2533,9 @@ fn a_finding_no_file_holds_is_refused_naming_its_clause() {
     let text = ".policy \"p\" revision 1\n.language python\n.violation Assert(at: node) \"an assert\"\nAssert(n) :- kind(n, \"assert_statement\").\n";
     let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
     let shown = v.show();
-    assert!(shown.contains("rr_unplaced(\"Assert\") :- Assert(") && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
+    // The finding's node by its clause, and the program's one rule refusing those of no file's document.
+    let found = crate::code_rule_dsl::logic::rr::FOUND_NODE;
+    assert!(shown.contains(&format!("{found}(\"Assert\", ")) && shown.contains(&format!("rr_unplaced($rr_clause) :- {found}(")) && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
     assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
     let out = dir.join("out");
     let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
@@ -2569,4 +2580,287 @@ v(n) :- kind(n, \"assert_statement\").
     let got: Vec<(String, usize)> = ["c1", "c2", "c3", "v"].iter().map(|r| (r.to_string(), crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap().len())).collect();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(got, [("c1".to_owned(), 1), ("c2".to_owned(), 1), ("c3".to_owned(), 1), ("v".to_owned(), 1)]);
+}
+
+/// The engine's Git programs (`git::SOURCE_CHECKS`, `ROOT_TREE`, `INVENTORY`) each read as one program, their library
+/// modules included by name and each read once: what each derives is declared, and so are the trailers `git.rerail`
+/// includes (`git/messages.rerail`, which includes `git.rerail` again).
+#[test]
+fn the_git_programs_read_their_library_once() {
+    for (name, text, derives) in [
+        ("source checks", super::git::SOURCE_CHECKS, "git_selected_source_blob"),
+        ("root tree", super::git::ROOT_TREE, "git_root_tree_error"),
+        ("inventory", super::git::INVENTORY, "inventory_error"),
+    ] {
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        for rel in [derives, "git_trailer", "git_tree_entry"] {
+            assert!(v.decl_of(rel).is_some(), "{name}: {rel} is not declared");
+        }
+    }
+}
+
+/// Decision 0597 (`logic::contexts`), through the library: a context of quoted annotations holds its own instance of the library's `unparen` (and what it reads),
+/// while the host keeps its own for its own rules; the roots are the annotations' trees the host parses.
+#[test]
+fn a_context_holds_the_librarys_rules_it_reaches_as_its_own() {
+    use crate::code_rule_dsl::logic::rr::parse_version;
+    let rules_of = |v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str| -> Vec<String> { v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).map(|r| v.show_rule(r)).collect() };
+    let text = "\
+.language python
+#include \"python/ast.rerail\"
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl quoted_inner(r: node, e: node)
+quoted_inner(r, e) :- quoted_root(r), unparen(r, e).
+.decl host_inner(e: node)
+host_inner(e) :- kind(n, \"parenthesized_expression\"), unparen(n, e).
+.decl seen(e: node)
+seen(e) :- quoted(_, e).
+seen(e) :- host_inner(e).
+.output seen
+.context quoted of python roots quoted_root exports quoted_inner
+.from python quoted_root for quoted
+.from quoted quoted_inner as quoted
+";
+    let v = parse_version(text).unwrap();
+    let all = v.show();
+    assert!(!rules_of(&v, "rr_cx_quoted_unparen").is_empty(), "the context's own unparen: {all}");
+    assert!(rules_of(&v, "rr_cx_quoted_quoted_inner").iter().all(|r| r.contains("rr_cx_quoted_unparen(") && r.contains(" quoted_root(")), "{all}");
+    assert!(!rules_of(&v, "unparen").is_empty() && rules_of(&v, "host_inner").iter().all(|r| r.contains(" unparen(")), "the host's own: {all}");
+    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_quoted_quoted_inner(")), "{all}");
+}
+
+// ---- decision 0597: a guest context is a pass of its own rules (step 2's ladder) ----
+
+/// A host whose annotations are a context: the context's identifiers, read back by the host (`quoted_names`).
+const ANNOTATION_PASS: &str = "\
+.language python
+#include \"python/ast.rerail\"
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_ident(x: symbol)
+ann_ident(x) :- kind(i, \"identifier\"), text(i, x).
+.decl quoted_names(x: symbol)
+quoted_names(x) :- names(x).
+.output quoted_names
+.context quoted of python roots quoted_root exports ann_ident
+.from quoted ann_ident as names
+";
+
+/// A program of no context, for a pack beside one.
+const PLAIN_PASS: &str = ".language python\n#include \"python/ast.rerail\"\n.decl inner(e: node)\ninner(m) :- unparen(_, m).\n.output inner\n";
+
+/// `program` over one file read as a policy file is (`parse_file_version`), printed, and run (`corpus::run`): the rows
+/// of `rel`.
+fn printed_run(name: &str, file: (&str, &str), program: &str, rel: &str) -> Vec<Vec<String>> {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(file.0), file.1).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, program).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let out = dir.join("out");
+    super::run(&printed, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    rows
+}
+
+/// 0597 rung 2.2: a program whose host reads a context's export runs on each path a program is read by: a policy
+/// file read and printed, a run of it alone, and a pack beside a program of no context.
+#[test]
+fn a_host_reading_a_contexts_export_runs_on_every_reading_path() {
+    let file = ("a.py", "x: \"List[int]\" = []\n");
+    let printed = printed_run("pass-printed", file, ANNOTATION_PASS, "quoted_names");
+    let (alone, together) = alone_and_together("pass-paths", file, ANNOTATION_PASS, PLAIN_PASS, "quoted_names");
+    for (path, rows) in [("printed", &printed), ("alone", &alone), ("in a pack", &together)] {
+        assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "{path}: {rows:?}");
+    }
+}
+
+/// 0597 rung 2.3: a context's views give its roots' nodes alone: the annotation's identifiers are `List` and `int`,
+/// never the host's `x`.
+#[test]
+fn a_contexts_views_are_its_roots_nodes_alone() {
+    let file = ("a.py", "x: \"List[int]\" = []\ndef f(y: float): ...\n");
+    let (alone, together) = alone_and_together("pass-views", file, ANNOTATION_PASS, PLAIN_PASS, "quoted_names");
+    assert_eq!(alone, [["List"], ["int"]]);
+    assert_eq!(together, alone);
+}
+
+/// A host whose classes a context reads (`.from python defined`), and whose classes the context's names reach back.
+const RESOLVING_PASS: &str = "\
+.language python
+#include \"python/ast.rerail\"
+.decl defined(x: symbol)
+defined(x) :- kind(c, \"class_definition\"), field(c, \"name\", n), text(n, x).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_ident(x: symbol)
+ann_ident(x) :- kind(i, \"identifier\"), text(i, x).
+.decl resolved(x: symbol)
+resolved(x) :- ann_ident(x), defined(x).
+.decl quoted_resolved(x: symbol)
+quoted_resolved(x) :- res(x).
+.decl unnamed(x: symbol)
+unnamed(x) :- defined(x), !res(x).
+.output quoted_resolved, unnamed
+.context quoted of python roots quoted_root exports resolved
+.from python defined for quoted
+.from quoted resolved as res
+";
+
+/// 0597 rung 2.5: a context reads its host's finished rows: `x: \"Foo\"` resolves to the class `Foo`, `y: \"Bar\"`
+/// names no class and resolves to none.
+#[test]
+fn a_context_reads_its_hosts_finished_rows() {
+    let file = ("a.py", "class Foo: ...\nclass Baz: ...\nx: \"Foo\" = 1\ny: \"Bar\" = 1\n");
+    let (alone, together) = alone_and_together("pass-from", file, RESOLVING_PASS, PLAIN_PASS, "quoted_resolved");
+    assert_eq!(alone, [["Foo"]]);
+    assert_eq!(together, alone);
+}
+
+/// 0597 rung 2.6: host, context, host in one plan: the classes no annotation names (`Baz`) are the host's rows after
+/// the context's, which are after the host's classes.
+#[test]
+fn a_host_reads_a_context_that_read_the_host() {
+    let file = ("a.py", "class Foo: ...\nclass Baz: ...\nx: \"Foo\" = 1\ny: \"Bar\" = 1\n");
+    let (alone, together) = alone_and_together("pass-order", file, RESOLVING_PASS, PLAIN_PASS, "unnamed");
+    assert_eq!(alone, [["Baz"]]);
+    assert_eq!(together, alone);
+}
+
+/// 0597 rung 2.7: an annotation inside an annotation (`q: "Opt['Baz']"`): a pass's roots are its host's and its own,
+/// the roots relation's rules over the pass's own nodes, so the inner string's tree is the context's too.
+#[test]
+fn an_annotation_inside_an_annotation_is_the_contexts_own_root() {
+    let file = ("a.py", "class Baz: ...\nclass Opt: ...\nq: \"Opt['Baz']\" = 1\n");
+    let (alone, together) = alone_and_together("pass-nested", file, RESOLVING_PASS, PLAIN_PASS, "quoted_resolved");
+    assert_eq!(alone, [["Baz"], ["Opt"]]);
+    assert_eq!(together, alone);
+}
+
+/// 0597 rung 2.8: a finding at a context's node stands at its string's line in the file (0431 §3, R9's
+/// `guest_place`): the unresolved name of `y: "Bar"`, on line 3.
+#[test]
+fn a_finding_at_a_contexts_node_stands_at_its_strings_line() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("pass-place");
+    let (src, rules) = (root.join("src"), root.join("rules"));
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(src.join("a.py"), "class Foo: ...\nx: \"Foo\" = 1\ny: \"Bar\" = 1\n").unwrap();
+    let policy = rules.join("unresolved.rerail");
+    std::fs::write(
+        &policy,
+        "\
+.policy \"t:unresolved\" revision 1
+.language python
+#include \"python/ast.rerail\"
+.decl defined(x: symbol)
+defined(x) :- kind(c, \"class_definition\"), field(c, \"name\", n), text(n, x).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_unresolved(i: node)
+ann_unresolved(i) :- kind(i, \"identifier\"), text(i, x), !defined(x).
+.violation Unresolved(at: node) code \"unresolved\" \"an annotation names no class\"
+Unresolved(i) :- unresolved(i).
+.context quoted of python roots quoted_root exports ann_unresolved
+.from python defined for quoted
+.from quoted ann_unresolved as unresolved
+",
+    )
+    .unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &src, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+    let found: Vec<(u64, String)> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["line"].as_u64().unwrap_or(0), d["code"].as_str().unwrap_or("").to_owned())).collect();
+    assert_eq!(found, [(3, "unresolved".to_owned())], "{report:#}");
+}
+
+/// 0597 rung 2.10: a run over files with no root runs no rule of the context (0563 A: no rule can fill it): its nodes
+/// are empty, so each of its strata is held empty, no component opened. With a root, its rules run. The profile is the
+/// process's, so each run is a child process of its own (`context_root_child`), its heads read from its `heads.tsv`.
+#[test]
+fn a_run_with_no_root_runs_no_stratum_of_the_context() {
+    let ran = |source: &str| -> Vec<String> {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = directory.path().join("profile");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_root_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("CONTEXT_ROOT_SOURCE", source);
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success());
+        // part, head, cpu_s, work (rows into the head's steps), plans
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
+        heads.lines().skip(1).filter(|l| l.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_cx_quoted_"))).map(str::to_owned).collect()
+    };
+    let none = ran("x = 1\ndef f(y: int): ...\n");
+    assert!(none.is_empty(), "no root, no rule of the context runs: {none:?}");
+    let some = ran("x: \"List[int]\" = []\n");
+    assert!(some.iter().any(|h| h.split('\t').nth(1) == Some("rr_cx_quoted_ann_ident")), "with a root they run: {some:?}");
+}
+
+#[test]
+#[ignore = "child process of a_run_with_no_root_runs_no_stratum_of_the_context"]
+fn context_root_child() {
+    let source = std::env::var("CONTEXT_ROOT_SOURCE").unwrap();
+    printed_run("pass-root", ("a.py", &source), ANNOTATION_PASS, "quoted_names");
+}
+
+/// 0597 rung 2.12: one mechanism on the CPU and the device: 2.3's context views and 2.5's `.from` read give Metal's
+/// rows equal to the CPU's, every stratum the device can run placed there.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[test]
+fn a_contexts_rows_on_metal_are_the_cpus() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let file = [("a.py", "class Foo: ...\nx: \"List[int]\" = []\ny: \"Foo\" = 1\nz: \"Bar\" = 1\ndef f(w: float): ...\n")];
+    for (name, program, output) in [("views", ANNOTATION_PASS, "quoted_names"), ("from", RESOLVING_PASS, "quoted_resolved")] {
+        let (_, cpu) = batch_run_on(&format!("pass-{name}-cpu"), &file, program, output, Binding::Cpu);
+        let bound = crate::code_rule_dsl::logic::plan::placement::set_binding(crate::code_rule_dsl::logic::plan::placement::Binding::Always);
+        let (_, metal) = batch_run_on(&format!("pass-{name}-metal"), &file, program, output, Binding::Metal);
+        drop(bound);
+        assert!(!cpu.is_empty(), "{name}: rows");
+        assert_eq!(metal, cpu, "{name}: the device's rows are the CPU's");
+    }
+}
+
+/// The texts the combine last read (`kept_texts`): a text's kept modules stand while the text and each library file
+/// they list are as kept, so the combine does not read it again. An edited text, or one whose library file changed,
+/// is read again.
+#[test]
+fn a_kept_texts_modules_stand_while_it_and_its_files_are_as_kept() {
+    use crate::code_rule_dsl::logic::rr::Modules;
+    use std::collections::BTreeSet;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("kept-texts");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (a, b) = (dir.join("a.rerail"), dir.join("b.rerail"));
+    std::fs::write(&a, ".decl x(n: number)\n").unwrap();
+    std::fs::write(&b, ".decl y(n: number)\n").unwrap();
+    let (a, b) = (a.canonicalize().unwrap(), b.canonicalize().unwrap());
+    let digest = |p: &std::path::Path| -> [u8; 32] {
+        use sha2::Digest as _;
+        sha2::Sha256::digest(std::fs::read(p).unwrap()).into()
+    };
+    let modules = |files: &[&std::path::Path], head: &str| Modules {
+        files: files.iter().map(|p| (p.to_path_buf(), digest(p), BTreeSet::from([p.file_stem().unwrap().to_string_lossy().into_owned()]))).collect(),
+        heads: BTreeSet::from([head.to_owned()]),
+        declared: BTreeSet::new(),
+    };
+    let store = crate::content_store::ContentStore::open(&dir.join("store.sqlite")).unwrap();
+    let programs = ["p(1) :- x(1).", "q(1) :- y(1).", "r(1)."];
+    let modular = vec![Some(modules(&[&a], "p")), Some(modules(&[&a, &b], "q")), None];
+    super::kept_texts::keep(&store, &programs, &modular);
+    store.written().unwrap();
+    let shown = |known: Vec<Option<Option<Modules>>>| known.into_iter().map(|k| k.map(|m| m.map(|m| format!("{m:?}")))).collect::<Vec<_>>();
+    let kept: Vec<_> = modular.iter().map(|m| Some(m.as_ref().map(|m| format!("{m:?}")))).collect();
+    assert_eq!(shown(super::kept_texts::known(&store, &programs)), kept, "every text as kept");
+    let edited = ["p(1) :- x(1).", "q(2) :- y(1).", "r(1)."];
+    assert_eq!(shown(super::kept_texts::known(&store, &edited)), [kept[0].clone(), None, kept[2].clone()], "the edited text is read again");
+    std::fs::write(&b, ".decl y(n: number)\n.decl z(n: number)\n").unwrap();
+    assert_eq!(shown(super::kept_texts::known(&store, &programs)), [kept[0].clone(), None, kept[2].clone()], "b.rerail changed: its includer is read again");
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
 }

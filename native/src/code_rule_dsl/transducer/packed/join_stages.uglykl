@@ -9,6 +9,10 @@
 // of the group agrees on, but no two groups do.
 
 #define NONE 0xffffffffu
+// The space the kernels read and write their tables, counts, places and texts in, their blocks' (`<ukl/clif.h>`): a
+// program's worker (decision 0603) reads in one launch what other groups of it wrote, coherent across the device
+// (`CLIF_BLOCKS_COHERENT`).
+#define JSPACE CLIF_BLOCK_SPACE
 // The lanes of a SIMD group: a text kernel's threadgroup.
 #define SGW ((uint32_t)UKL_SIMD_WIDTH)
 
@@ -45,48 +49,60 @@ typedef struct Stage {
     // The probed relation's screen (decision 0488): its key `screen - 1`'s column's kept filter, a `bloom::Bloom` at
     // byte `screen_at` of the kernel's `F`; 0 for none.
     uint32_t screen, screen_at;
-    uint32_t screen_pad[2];
+    // A `has` axis probed off the tape (decision 0353 step 5, `DevRel::has`): its set's kind atoms, ascending, how it
+    // is probed (`DevIndex::walk`: 1 by its node, a climb; 2 by its ancestor, the subtree; 0: not), and the atoms'
+    // count.
+    JSPACE const int64_t* v_set;
+    uint32_t v_has, v_nset;
+    // The probed relation's first row: a stage reads its rows from `r_from`, by their ids (a fixpoint's delta, its
+    // head's rows past those it held: 0353 step 6); 0 for every row. `r_len` 1: its rows are its length as the device
+    // claimed it (`clif_rel_len`) past `r_from`, at most `nr` (a recursive component's relation, grown on the device
+    // round after round: decision 0603 step 3); 0: `nr`.
+    uint32_t r_from, r_len;
 } Stage;
-UKL_STATIC_ASSERT(sizeof(Stage) == 2336, "Stage: size");
+UKL_STATIC_ASSERT(sizeof(Stage) == 2352, "Stage: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, ops) == 208, "Stage.ops");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, arith) == 2176, "Stage.arith");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, v_dir) == 2304, "Stage.v_dir");
 
-typedef UKL_GLOBAL const Stage* StageP;
-typedef UKL_GLOBAL const int64_t* Longs;
+typedef JSPACE const Stage* StageP;
+typedef JSPACE const int64_t* Longs;
 
-// A view's row `r`'s value in column `col` (decision 0353 step 4d): the document whose rows hold it (the last whose
-// first row in the view is at or before it: an empty one starts where the next does), then the view's read written
-// once, over the document's entry, tape and view where they lie. `kind`: 1 + `device_chunk::VIEW_*`.
-UKL_COLD int64_t vread_dir(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, uint32_t col) {
-    UKL_GLOBAL const ViewRow* rows = d->rows;
+// A view's row `r`'s value in column `col` (decision 0353 step 4d): the document whose rows hold it (the
+// directory's search written once, `clif_dir_doc_of_row`, the caller's `memo` tried first and set to it), then the
+// view's read written once, over the document's entry, tape and view where they lie. `kind`: 1 + `device_chunk::VIEW_*`.
+UKL_COLD int64_t vread_dir(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, uint32_t col, UKL_PRIVATE uint32_t* memo) {
+    UKL_GLOBAL const ViewRow* rows = view_rows(d);
     uint32_t k = kind - 1u;
-    uint32_t lo = 0u, hi = d->ndocs;
-    while (hi - lo > 1u) {
-        uint32_t m = (lo + hi) / 2u;
-        if (rows[m].rows[k] <= r) lo = m; else hi = m;
-    }
+    uint32_t lo = clif_dir_doc_of_row(view_block(d), d->at, k, r, *memo);
+    *memo = lo;
     UKL_GLOBAL const ViewRow* e = &rows[lo];
     uint32_t i = r - e->rows[k];
     UKL_GLOBAL const uint32_t* v = e->view;
+    UKL_GLOBAL const uint8_t* c = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* l = view_lines(d, e);
     switch (k) {
-        case 0u: return (int64_t)clif_view_node(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 1u: return (int64_t)clif_view_child(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 2u: return (int64_t)clif_view_field(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 3u: return (int64_t)clif_view_core(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 4u: return (int64_t)clif_view_line(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 5u: return (int64_t)clif_view_loc_line(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 6u: return (int64_t)clif_view_loc_end(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 7u: return (int64_t)clif_view_loc_col(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        default: return (int64_t)clif_view_loc_docof(d->chunk, e->entry, e->tape, v, e->lines, i, col);
+        case 0u: return (int64_t)clif_view_node(c, e->entry, t, v, l, i, col);
+        case 1u: return (int64_t)clif_view_child(c, e->entry, t, v, l, i, col);
+        case 2u: return (int64_t)clif_view_field(c, e->entry, t, v, l, i, col);
+        case 3u: return (int64_t)clif_view_core(c, e->entry, t, v, l, i, col);
+        case 4u: return (int64_t)clif_view_line(c, e->entry, t, v, l, i, col);
+        case 5u: return (int64_t)clif_view_loc_line(c, e->entry, t, v, l, i, col);
+        case 6u: return (int64_t)clif_view_loc_end(c, e->entry, t, v, l, i, col);
+        case 7u: return (int64_t)clif_view_loc_col(c, e->entry, t, v, l, i, col);
+        case 8u: return (int64_t)clif_view_loc_docof(c, e->entry, t, v, l, i, col);
+        case 9u: return (int64_t)clif_view_tape(c, e->entry, t, v, l, i, col);
+        case 10u: return (int64_t)clif_view_depth(c, e->entry, t, v, l, i, col);
+        default: return (int64_t)clif_view_order(c, e->entry, t, v, l, i, col);
     }
 }
 
-// A place relation where a program reads spans (Q216, `places::Placed`): the `Loc` view's rows, then the places of
+// A place relation where a program reads spans (Q216, `places::Places`): the `Loc` view's rows, then the places of
 // the spans the batch made, a relation in its block (`tail` its base, `at` its descriptor). `rows`: the view's.
 typedef struct {
     UKL_GLOBAL const ViewDir* dir;
-    UKL_GLOBAL const uint8_t* tail;
+    JSPACE const uint8_t* tail;
     uint64_t at;
     uint32_t rows;
     uint32_t pad;
@@ -96,10 +112,10 @@ UKL_STATIC_ASSERT(sizeof(PlacedDir) == 32, "PlacedDir: size");
 #define VIEW_PLACED 16u
 
 // `kind`'s row `r` in column `col`: the view's read, or a placed relation's row, the view's or a span's where it lies.
-UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, uint32_t col) {
-    if ((kind & VIEW_PLACED) == 0u) return vread_dir(kind, d, r, col);
+UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, uint32_t col, UKL_PRIVATE uint32_t* memo) {
+    if ((kind & VIEW_PLACED) == 0u) return vread_dir(kind, d, r, col, memo);
     UKL_GLOBAL const PlacedDir* p = (UKL_GLOBAL const PlacedDir*)d;
-    if (r < p->rows) return vread_dir(kind & ~VIEW_PLACED, p->dir, r, col);
+    if (r < p->rows) return vread_dir(kind & ~VIEW_PLACED, p->dir, r, col, memo);
     return (int64_t)clif_rel_get(p->tail, p->at, r - p->rows, col);
 }
 
@@ -108,7 +124,7 @@ UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, u
 // index, a probe of it, the heads' set (`dedup`), a lattice's key table.
 #define KEY_SEED 0x243F6A8885A308D3ul
 UKL_INLINE uint64_t key_mix(uint64_t h, int64_t v) {
-    return clif_rel_key_mix((UKL_GLOBAL const uint8_t*)0, 0ul, h, (uint64_t)v);
+    return clif_rel_key_mix((JSPACE const uint8_t*)0, 0ul, h, (uint64_t)v);
 }
 UKL_INLINE uint64_t key_hash(UKL_PRIVATE const int64_t* kv, uint32_t n) {
     uint64_t h = KEY_SEED;
@@ -122,9 +138,12 @@ UKL_INLINE int64_t lane_of(int64_t v, uint32_t w) {
 
 // A value of the probed relation: row `r`'s in column `col`, read in its block through the generated reads (`r_at`,
 // decision 0325). Every relation the device reads lies in a block (step 5).
-UKL_INLINE int64_t rget(StageP s, Longs R, uint32_t r, uint32_t col) {
-    if (s->r_view != 0u) return vread(s->r_view, s->v_dir, r, col);
-    return (int64_t)clif_rel_get((UKL_GLOBAL const uint8_t*)R, s->r_at, r, col);
+UKL_SHARED int64_t rget(StageP s, Longs R, uint32_t r, uint32_t col) {
+    uint32_t memo = NONE;
+    // A `has` walk's candidate is the node of the column not probed (`by_has`): either column reads its id.
+    if (s->v_has != 0u) return vread(1u, s->v_dir, r, 1u, &memo);
+    if (s->r_view != 0u) return vread(s->r_view, s->v_dir, r, col, &memo);
+    return (int64_t)clif_rel_get((JSPACE const uint8_t*)R, s->r_at, r, col);
 }
 
 UKL_INLINE int64_t colval(StageP s, uint32_t k, Longs L, uint32_t t, Longs R, uint32_t r) {
@@ -140,7 +159,7 @@ UKL_INLINE int64_t parval(StageP s, uint32_t k, Longs L, uint32_t t) {
 // Arithmetic bind j's value for one row, as the CPU's checked arithmetic gives it: false where it has none (an
 // overflow, a zero divisor). Wrapping operations on uint64_t, then the overflow tested, so nothing is undefined.
 UKL_INLINE bool arith(StageP s, uint32_t j, Longs L, uint32_t t, Longs R, uint32_t r, UKL_PRIVATE int64_t* out) {
-    UKL_GLOBAL const uint32_t* a = s->arith[j];
+    JSPACE const uint32_t* a = s->arith[j];
     int64_t x = (a[3] & 1u) != 0 ? parval(s, a[1], L, t) : colval(s, a[1], L, t, R, r);
     int64_t y = (a[3] & 2u) != 0 ? parval(s, a[2], L, t) : colval(s, a[2], L, t, R, r);
     uint64_t ux = (uint64_t)x, uy = (uint64_t)y;
@@ -172,7 +191,7 @@ UKL_INLINE bool arith(StageP s, uint32_t j, Longs L, uint32_t t, Longs R, uint32
 }
 
 // Whether every arithmetic bind of the stage has a value for this row.
-UKL_INLINE bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
+UKL_SHARED bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
     for (uint32_t b = 0; b < s->nbinds && b < 16; b++) {
         if (s->bind_kind[b] != 3) continue;
         int64_t v = 0;
@@ -182,10 +201,10 @@ UKL_INLINE bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
 }
 
 // The row program's operations for one row: bit x of the result is operation x's value.
-UKL_INLINE uint64_t eval(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
+UKL_LARGE uint64_t eval(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
     uint64_t v = 0;
     for (uint32_t x = 0; x < s->nops && x < 64; x++) {
-        UKL_GLOBAL const uint32_t* o = s->ops[x];
+        JSPACE const uint32_t* o = s->ops[x];
         bool b = false;
         if (o[0] == 0) {
             uint32_t w = (o[3] >> 8) & 255;
@@ -218,14 +237,14 @@ UKL_INLINE bool out_bit(StageP s, uint64_t v, uint32_t k) {
 
 // Entry `q` of the probed relation's index `r_index` (its rows grouped by key, in its block): a row id.
 UKL_INLINE uint32_t group_row(StageP s, Longs R, uint32_t q) {
-    return clif_rel_group_row((UKL_GLOBAL const uint8_t*)R, s->r_at, s->r_index, q);
+    return clif_rel_group_row((JSPACE const uint8_t*)R, s->r_at, s->r_index, q);
 }
 
 // The group of index `index` of the relation at `at` for the keys `kv`: [lo, hi) of its entries (every row whose key
 // falls in the key's bucket; `matches` tests the key itself).
 UKL_INLINE void group_of(Longs R, uint64_t at, uint32_t index, UKL_PRIVATE const int64_t* kv, uint32_t n,
                          UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi) {
-    uint64_t g = clif_rel_group((UKL_GLOBAL const uint8_t*)R, at, index, key_hash(kv, n));
+    uint64_t g = clif_rel_group((JSPACE const uint8_t*)R, at, index, key_hash(kv, n));
     *lo = (uint32_t)(g >> 32);
     *hi = *lo + (uint32_t)(g & 0xfffffffful);
 }
@@ -233,10 +252,8 @@ UKL_INLINE void group_of(Longs R, uint64_t at, uint32_t index, UKL_PRIVATE const
 // The `child` view probed by its parent (decision 0353 step 4c, `Stage::v_parent`): the parent's children read off
 // the tape, its first child and each next sibling (`clif_view_child_first`, `clif_view_child_next`), with no index of
 // the view. A walk of a binding's candidates (`how`): 0 the rows [lo, hi), 1 an index group's entries [lo, hi), 2 a
-// parent's children from row lo, each step the next sibling's row (`NONE` ends it).
-UKL_INLINE UKL_GLOBAL const ViewDoc* vdoc(UKL_GLOBAL const ViewDir* d, uint32_t m) {
-    return (UKL_GLOBAL const ViewDoc*)(d->chunk + d->rows[m].entry);
-}
+// parent's children from row lo, each step the next sibling's row (`NONE` ends it), 3 a node's numbered ancestors
+// from row lo, each step the next one up (`has_up`; `NONE` ends it).
 
 // A parent `key`'s children: its document by bisection of the directory on its key (the batch's documents are in
 // key order), its numbered node (`clif_view_number`), then its first child. The root's children are also the nodes
@@ -245,19 +262,17 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     *lo = 0u; *hi = 0u; *how = 0u;
     if (key < 0 || d->ndocs == 0u) return;
-    uint32_t k = (uint32_t)((uint64_t)key >> 32);
-    uint32_t a = 0u, b = d->ndocs;
-    while (b - a > 1u) {
-        uint32_t m = (a + b) / 2u;
-        if (vdoc(d, m)->key <= k) a = m; else b = m;
-    }
-    if (vdoc(d, a)->key != k) return;
-    UKL_GLOBAL const ViewRow* e = &d->rows[a];
-    uint32_t l = clif_view_number(d->chunk, e->entry, e->tape, e->view, e->lines, (uint32_t)((uint64_t)key & 0xfffffffful));
+    uint32_t a = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)key >> 32), NONE);
+    if (a == NONE) return;
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines(d, e);
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
     uint32_t first = e->rows[1];
-    if (l == 0u) { *lo = first; *hi = a + 1u < d->ndocs ? d->rows[a + 1u].rows[1] : s->nr; return; }
-    uint32_t c = clif_view_child_first(d->chunk, e->entry, e->tape, e->view, e->lines, l);
+    if (l == 0u) { *lo = first; *hi = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[1] : s->nr; return; }
+    uint32_t c = clif_view_child_first(ch, e->entry, t, e->view, ls, l);
     if (c == NONE) return;
     *lo = first + c; *hi = NONE; *how = 2u;
 }
@@ -265,15 +280,60 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
 // The next sibling's row of `child` row `r`, or `NONE`: its document as `vread` finds it, then the read.
 UKL_INLINE uint32_t child_next(StageP s, uint32_t r) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
-    UKL_GLOBAL const ViewRow* rows = d->rows;
-    uint32_t lo = 0u, hi = d->ndocs;
-    while (hi - lo > 1u) {
-        uint32_t m = (lo + hi) / 2u;
-        if (rows[m].rows[1] <= r) lo = m; else hi = m;
-    }
-    UKL_GLOBAL const ViewRow* e = &rows[lo];
-    uint32_t n = clif_view_child_next(d->chunk, e->entry, e->tape, e->view, e->lines, r - e->rows[1]);
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 1u, r, NONE)];
+    uint32_t n = clif_view_child_next(view_block(d), e->entry, view_tape(d, e), e->view, view_lines(d, e), r - e->rows[1]);
     return n == NONE ? NONE : e->rows[1] + n;
+}
+
+// `has` probed off the tape (decision 0353 step 5, `Stage::v_has`), with no rows or index of its own: a candidate is
+// a node's row in the `node` view (its document's first row there and its number). Probed by its node (1), its
+// rows are the node's numbered ancestors, by a climb (`clif_view_up`), where the node is in the set; by its ancestor
+// (2), the numbered nodes of its subtree (`clif_view_end`), those in the set (`matches`). As the host's
+// `Within::containers_on` and `contained_on`.
+
+// Whether node row `q`'s kind atom is in the set (the stage's, ascending), by bisection.
+UKL_INLINE bool has_member(StageP s, uint32_t q) {
+    uint32_t memo = NONE;
+    int64_t k = vread(1u, s->v_dir, q, 2u, &memo);
+    uint32_t lo = 0u, hi = s->v_nset;
+    while (lo < hi) {
+        uint32_t m = (lo + hi) / 2u;
+        if (s->v_set[m] < k) lo = m + 1u; else hi = m;
+    }
+    return lo < s->v_nset && s->v_set[lo] == k;
+}
+
+// The candidates of node `key`: its document by bisection of the directory on its key, its number, then its walk.
+UKL_INLINE void by_has(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    *lo = 0u; *hi = 0u; *how = 0u;
+    if (key < 0 || d->ndocs == 0u) return;
+    uint32_t a = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)key >> 32), NONE);
+    if (a == NONE) return;
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines(d, e);
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, (uint32_t)((uint64_t)key & 0xfffffffful));
+    if (l == NONE) return;
+    uint32_t first = e->rows[0];
+    if (s->v_has == 1u) {
+        if (!has_member(s, first + l)) return;
+        uint32_t u = clif_view_up(ch, e->entry, t, e->view, ls, l);
+        if (u == NONE) return;
+        *lo = first + u; *hi = NONE; *how = 3u;
+        return;
+    }
+    *lo = first + l + 1u;
+    *hi = first + clif_view_end(ch, e->entry, t, e->view, ls, l);
+}
+
+// The next numbered ancestor's row of node row `q`, or `NONE`: its document as `vread` finds it, then the climb.
+UKL_INLINE uint32_t has_up(StageP s, uint32_t q) {
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 0u, q, NONE)];
+    uint32_t u = clif_view_up(view_block(d), e->entry, view_tape(d, e), e->view, view_lines(d, e), q - e->rows[0]);
+    return u == NONE ? NONE : e->rows[0] + u;
 }
 
 // A walk's candidate `q`: its row, and the next candidate.
@@ -281,13 +341,21 @@ UKL_INLINE uint32_t cand_row(StageP s, Longs R, uint32_t how, uint32_t q) {
     return how == 1u ? group_row(s, R, q) : q;
 }
 UKL_INLINE uint32_t cand_next(StageP s, uint32_t how, uint32_t q) {
-    return how == 2u ? child_next(s, q) : q + 1u;
+    return how == 2u ? child_next(s, q) : (how == 3u ? has_up(s, q) : q + 1u);
+}
+
+// R's rows from `r_from`: `nr`, or its length on the device past `r_from` (`r_len`), at most `nr`.
+UKL_INLINE uint32_t stage_rows(StageP s, Longs R) {
+    if (s->r_len == 0u) return s->nr;
+    uint32_t len = clif_rel_len((JSPACE const uint8_t*)R, s->r_at);
+    return len > s->r_from ? ukl_min(len - s->r_from, s->nr) : 0u;
 }
 
 // The candidates of keys `kv` in relation R (`s`'s): its index group, a parent's children, or every row.
 UKL_INLINE void probe(StageP s, Longs R, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi,
                       UKL_PRIVATE uint32_t* how) {
-    if (s->nkeys == 0) { *lo = 0; *hi = s->nr; *how = 0u; return; }
+    if (s->nkeys == 0) { *lo = s->r_from; *hi = s->r_from + stage_rows(s, R); *how = 0u; return; }
+    if (s->v_has != 0u) { by_has(s, kv[0], lo, hi, how); return; }
     if (s->v_parent != 0u) { by_parent(s, kv[0], lo, hi, how); return; }
     *how = 1u;
     group_of(R, s->r_at, s->r_index, kv, s->nkeys, lo, hi);
@@ -296,7 +364,7 @@ UKL_INLINE void probe(StageP s, Longs R, UKL_PRIVATE const int64_t* kv, UKL_PRIV
 // A binding's candidates (`probe`), and its key values.
 // A key the probed relation's screen refuses (`Stage::screen`, a column's kept filter: decision 0488) has none, and
 // its index group is not read. `F` is the screen's buffer.
-UKL_INLINE void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL const uint8_t* F, UKL_PRIVATE int64_t* kv,
+UKL_LARGE void candidates(StageP s, Longs L, uint32_t t, Longs R, JSPACE const uint8_t* F, UKL_PRIVATE int64_t* kv,
                            UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     *how = 0u;
     if (s->mode == 3) { *lo = 0; *hi = 1; return; }
@@ -311,11 +379,14 @@ UKL_INLINE void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL co
 // Whether row `r` of the probed relation is live: not marked by its dead rows' delta (`r_dead`, the generated
 // `clif_rel_dead`).
 UKL_INLINE bool row_live(StageP s, Longs R, uint32_t r) {
-    return s->r_dead == 0ul || clif_rel_dead((UKL_GLOBAL const uint8_t*)R, s->r_dead, r) == 0u;
+    return s->r_dead == 0ul || clif_rel_dead((JSPACE const uint8_t*)R, s->r_dead, r) == 0u;
 }
 
 // Whether row r matches the binding's keys and the relation's column tests.
-UKL_INLINE bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
+UKL_SHARED bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
+    // A `has` walk's candidates hold its key by their making (`by_has`); a descendant is a row where it is in the set.
+    // Its two columns are never one node (an ancestor is strict), so a test of them holds for no row.
+    if (s->v_has != 0u) return s->ntests == 0u && (s->v_has == 1u || has_member(s, r));
     if (!row_live(s, R, r)) return false;
     for (uint32_t i = 0; i < s->nkeys && i < 8; i++) if (rget(s, R, r, s->key_rcol[i]) != kv[i]) return false;
     for (uint32_t i = 0; i < s->ntests && i < 8; i++) if (rget(s, R, r, s->test_a[i]) != rget(s, R, r, s->test_b[i])) return false;
@@ -324,7 +395,7 @@ UKL_INLINE bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t
 
 // An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
 // or max of no rows, or a tested value that differs), 2 when a sum passes 64 bits.
-UKL_INLINE uint32_t aggregate(StageP s, Longs L, uint32_t t, Longs R, uint32_t lo, uint32_t hi, uint32_t how,
+UKL_LARGE uint32_t aggregate(StageP s, Longs L, uint32_t t, Longs R, uint32_t lo, uint32_t hi, uint32_t how,
                               UKL_PRIVATE const int64_t* kv, UKL_PRIVATE int64_t* v) {
     uint32_t kind = s->agg[0] & 0xff;
     int64_t cnt = 0, sum = 0, mn = 0, mx = 0;
@@ -356,14 +427,14 @@ UKL_INLINE int64_t key_value(StageP s, Longs L, uint32_t t, uint32_t k) {
 
 // The text arena (`Arena`): its first word the bytes given out (an atomic bump, counting on past the end, so a full
 // one says how much was wanted), its second its capacity, its bytes from the 16th.
-UKL_INLINE UKL_GLOBAL const uint8_t* arena_bytes(UKL_GLOBAL uint32_t* A) { return (UKL_GLOBAL const uint8_t*)A + 16; }
+UKL_INLINE JSPACE const uint8_t* arena_bytes(JSPACE uint32_t* A) { return (JSPACE const uint8_t*)A + 16; }
 
 // An arena text's value: the sign bit, its offset from bit 24, its length in the low 24 bits.
 UKL_INLINE int64_t arena_value(uint32_t off, uint32_t len) { return (int64_t)(0x8000000000000000ul | ((uint64_t)off << 24) | (uint64_t)len); }
 
 // A text operand: a symbol's name (b's empty), a held cat's text, never made (a's name, "." when `dot`, b's name), or
 // an arena text.
-typedef struct Txt { UKL_GLOBAL const uint8_t* a; uint32_t al; UKL_GLOBAL const uint8_t* b; uint32_t bl; uint32_t dot; } Txt;
+typedef struct Txt { JSPACE const uint8_t* a; uint32_t al; JSPACE const uint8_t* b; uint32_t bl; uint32_t dot; } Txt;
 
 UKL_INLINE uint32_t txt_len(Txt x) { return x.al + x.dot + x.bl; }
 
@@ -382,7 +453,7 @@ UKL_INLINE uint64_t txt_word(Txt x, uint32_t at, uint32_t end) {
 }
 
 // Whether n bytes of x from xs are those of y from ys: a word of eight at a time.
-UKL_INLINE bool txt_same(Txt x, uint32_t xs, Txt y, uint32_t ys, uint32_t n) {
+UKL_SHARED bool txt_same(Txt x, uint32_t xs, Txt y, uint32_t ys, uint32_t n) {
     for (uint32_t at = 0; at < n; at += 8) if (txt_word(x, xs + at, xs + n) != txt_word(y, ys + at, ys + n)) return false;
     return true;
 }
@@ -390,7 +461,7 @@ UKL_INLINE bool txt_same(Txt x, uint32_t xs, Txt y, uint32_t ys, uint32_t n) {
 // Symbol v's bytes where the atoms blocks hold them, through the atoms directory D (decision 0478 step 2e): a value
 // no atom of D's is (no symbol, or one interned after D was made) reads as empty and sets `unheld` (the stratum then
 // runs on the host).
-UKL_INLINE UKL_GLOBAL const uint8_t* sym_text(UKL_GLOBAL const uint8_t* D, int64_t v, UKL_PRIVATE uint32_t* len, UKL_PRIVATE bool* unheld) {
+UKL_INLINE JSPACE const uint8_t* sym_text(JSPACE const uint8_t* D, int64_t v, UKL_PRIVATE uint32_t* len, UKL_PRIVATE bool* unheld) {
     uint32_t n = v >= 0 && v <= (int64_t)0xffffffffu ? clif_atoms_len(D, 0ul, (uint32_t)v) : 0xffffffffu;
     if (n == 0xffffffffu) { *unheld = true; *len = 0; return D; }
     *len = n;
@@ -399,7 +470,7 @@ UKL_INLINE UKL_GLOBAL const uint8_t* sym_text(UKL_GLOBAL const uint8_t* D, int64
 
 // Operand kind 0: key k's symbol; 1: `cat`'s text of keys k and k + 1 (b's alone when a's is empty); 2:
 // `str_concat`'s; 3: key k's arena text. Symbols read in place through D (`sym_text`).
-UKL_INLINE Txt txt_of(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D, UKL_GLOBAL uint32_t* A, uint32_t k, uint32_t kind,
+UKL_INLINE Txt txt_of(StageP s, Longs L, uint32_t t, JSPACE const uint8_t* D, JSPACE uint32_t* A, uint32_t k, uint32_t kind,
                       UKL_PRIVATE bool* unheld) {
     Txt x;
     x.b = D;
@@ -426,39 +497,44 @@ UKL_INLINE Txt txt_of(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D
 // Mode 7: a literal text test of pattern X (keys 0, 1) and subject Y (keys 2, 3), each of kind agg[1] & 15 and
 // agg[1] >> 4: by op agg[0] >> 1 & 3, 0 equal, 1 Y begins with X, 2 Y ends with X; as agg[0] & 1 wants.
 UKL_INLINE bool textop_one(uint32_t op, Txt x, uint32_t xs, uint32_t lx, Txt y, uint32_t ly) {
-    if (op == 0) return lx == ly && txt_same(x, xs, y, 0, lx);
-    if (op == 1) return ly >= lx && txt_same(x, xs, y, 0, lx);
-    return ly >= lx && txt_same(x, xs, y, ly - lx, lx);
+    bool fits = op == 0 ? lx == ly : ly >= lx;
+    return fits && txt_same(x, xs, y, op >= 2 ? ly - lx : 0, lx);
 }
 
 // With `TEXT_SPLIT` (agg[0] bit 5), X is a set of patterns (`strings::SET_SEP` between them, empty ones too, as
 // `strings::test` splits it): Y passes when any one does. The separators are found a word of eight at a time (an exact
 // mask of the bytes equal to 0x1f), each member compared as one pattern. A bound pattern (`TEXT_BOUND`, agg[0] bit 6)
 // that holds the separator is no set: `host` set, and the stratum runs on the host. A constant set is split.
-UKL_INLINE bool textop_pass(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D, UKL_GLOBAL uint32_t* A, UKL_PRIVATE bool* unheld,
+UKL_LARGE bool textop_pass(StageP s, Longs L, uint32_t t, JSPACE const uint8_t* D, JSPACE uint32_t* A, UKL_PRIVATE bool* unheld,
                             UKL_PRIVATE bool* host) {
     Txt x = txt_of(s, L, t, D, A, 0, s->agg[1] & 15, unheld), y = txt_of(s, L, t, D, A, 2, s->agg[1] >> 4, unheld);
     uint32_t lx = txt_len(x), ly = txt_len(y);
     uint32_t op = (s->agg[0] >> 1) & 3;
+    bool split = (s->agg[0] & 32) != 0;
+    const uint64_t lo7 = 0x7f7f7f7f7f7f7f7ful;
+    // Each member of X in turn (X whole when it is no set): one ends at the next separator, the last at X's end.
+    // `m` holds the separators not yet taken of the word at `at - 8`.
     bool r = false;
-    if ((s->agg[0] & 32) == 0) r = textop_one(op, x, 0, lx, y, ly);
-    else {
-        const uint64_t lo7 = 0x7f7f7f7f7f7f7f7ful;
-        uint32_t start = 0;
-        for (uint32_t at = 0; at < lx; at += 8) {
+    uint32_t start = 0, at = 0;
+    uint64_t m = 0;
+    for (;;) {
+        while (split && m == 0 && at < lx) {
             uint64_t z = txt_word(x, at, lx) ^ 0x1f1f1f1f1f1f1f1ful;
             // Bytes past the text read 0 (z's 0x1f): never a separator.
-            uint64_t m = ~(((z & lo7) + lo7) | z | lo7);
+            m = ~(((z & lo7) + lo7) | z | lo7);
             *host = *host || (m != 0 && (s->agg[0] & 64) != 0);
-            for (uint32_t b = 0; b < 8 && m != 0; b++) {
-                uint32_t k = ukl_clz64(m) / 8;
-                uint32_t pos = at + k;
-                r = r || textop_one(op, x, start, pos - start, y, ly);
-                start = pos + 1;
-                m &= ~(0x8000000000000000ul >> (8 * k));
-            }
+            at += 8;
         }
-        r = r || textop_one(op, x, start, lx - start, y, ly);
+        bool last = m == 0;
+        uint32_t end = lx;
+        if (!last) {
+            uint32_t k = ukl_clz64(m) / 8;
+            end = at - 8 + k;
+            m &= ~(0x8000000000000000ul >> (8 * k));
+        }
+        r = r || textop_one(op, x, start, end - start, y, ly);
+        if (last) break;
+        start = end + 1;
     }
     return r == ((s->agg[0] & 1) != 0);
 }
@@ -476,7 +552,7 @@ UKL_INLINE uint32_t txt_chars(Txt x) {
 // A function of names (mode 6), of operands X (keys 0, 1) and Y (keys 2, 3) as mode 7's (kinds agg[1] & 15 and
 // agg[1] >> 4), its value into `bind_slot[0]`: by agg[0], 0 `str_cmp` (their order by bytes, a word of eight at a
 // time, then their lengths, as Rust's `str::cmp`), 1 `strlen` of X (its characters).
-UKL_INLINE int64_t strcmp_value(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D, UKL_GLOBAL uint32_t* A, UKL_PRIVATE bool* unheld) {
+UKL_INLINE int64_t strcmp_value(StageP s, Longs L, uint32_t t, JSPACE const uint8_t* D, JSPACE uint32_t* A, UKL_PRIVATE bool* unheld) {
     Txt x = txt_of(s, L, t, D, A, 0, s->agg[1] & 15, unheld);
     if (s->agg[0] == 1) return (int64_t)txt_chars(x);
     uint32_t lx = txt_len(x);
@@ -490,17 +566,8 @@ UKL_INLINE int64_t strcmp_value(StageP s, Longs L, uint32_t t, UKL_GLOBAL const 
 }
 
 // Each binding's rows out (`stage_scatter` writes them at their scanned offsets).
-DEFINE_KERNEL2(join, stage_count,
-               ROBUFFER, int64_t,  L,        "[slots * cap_in]",
-               ROBUFFER, int64_t,  R,        "[rows]",
-               ROBUFFER, uint32_t, totals,   "[slots]",
-               RWBUFFER, uint32_t, counters, "[counters]",
-               RWBUFFER, uint32_t, counts,   "[cap_in + 1]",
-               RWBUFFER, uint32_t, A,        "[arena]",
-               ROBUFFER, uint8_t,  D,        "[atoms directory]",
-               ROBUFFER, uint8_t,  F,        "[screen]",
-               ROBUFFER, Stage,    s,        "[1]",
-               GID0,     uint32_t, t,        )
+UKL_INLINE void stage_count_one(Longs L, Longs R, JSPACE const uint32_t* totals, JSPACE uint32_t* counters, JSPACE uint32_t* counts,
+                            JSPACE uint32_t* A, JSPACE const uint8_t* D, JSPACE const uint8_t* F, StageP s, uint32_t t)
 {
     if (t > s->cap_in) return;
     uint32_t n = ukl_min(totals[s->in_slot], s->cap_in);
@@ -548,7 +615,7 @@ DEFINE_KERNEL2(join, stage_count,
     }
 }
 
-UKL_INLINE void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, UKL_GLOBAL int64_t* O, uint32_t at) {
+UKL_LARGE void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, JSPACE int64_t* O, uint32_t at) {
     for (uint32_t k = 0; k < s->nslots; k++) O[(uint64_t)k * s->cap_out + at] = L[(uint64_t)k * s->cap_in + t];
     for (uint32_t b = 0; b < s->nbinds && b < 16; b++) {
         uint32_t kind = s->bind_kind[b];
@@ -560,33 +627,25 @@ UKL_INLINE void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, UK
 }
 
 // Each binding's rows at its offset; the rows' count into `totals[out_slot]`.
-DEFINE_KERNEL2(join, stage_scatter,
-               ROBUFFER, int64_t,  L,        "[slots * cap_in]",
-               ROBUFFER, int64_t,  R,        "[rows]",
-               RWBUFFER, uint32_t, totals,   "[slots]",
-               ROBUFFER, uint32_t, offsets,  "[cap_in + 1]",
-               RWBUFFER, int64_t,  O,        "[slots * cap_out]",
-               RWBUFFER, uint32_t, A,        "[arena]",
-               RWBUFFER, uint32_t, counters, "[counters]",
-               ROBUFFER, uint8_t,  D,        "[atoms directory]",
-               ROBUFFER, uint8_t,  F,        "[screen]",
-               ROBUFFER, Stage,    s,        "[1]",
-               GID0,     uint32_t, t,        )
+UKL_INLINE void stage_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O,
+                              JSPACE uint32_t* A, JSPACE uint32_t* counters, JSPACE const uint8_t* D, JSPACE const uint8_t* F, StageP s, uint32_t t)
 {
+    // Its offsets are its own: the level's scan's, less its first (`Batch::level`).
+    uint32_t o0 = offsets[0];
     uint32_t n = ukl_min(totals[s->in_slot], s->cap_in);
     // The offsets past the rows' are not scanned when the grids are sized on the device (`Scan::size`).
-    if (t == 0) totals[s->out_slot] = offsets[n];
+    if (t == 0) totals[s->out_slot] = (offsets[n] - o0);
     if (t >= n) return;
-    uint32_t at = offsets[t];
+    uint32_t at = (offsets[t] - o0);
     if (at >= s->cap_out) return;
     int64_t kv[8];
     uint32_t lo, hi, how;
     if (s->mode == 7) {
-        if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
+        if ((offsets[t + 1] - o0) > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
     if (s->mode == 6) {
-        if (offsets[t + 1] <= at) return;
+        if ((offsets[t + 1] - o0) <= at) return;
         write_row(s, L, t, R, 0, O, at);
         bool unheld = false;
         O[(uint64_t)s->bind_slot[0] * s->cap_out + at] = strcmp_value(s, L, t, D, A, &unheld);
@@ -594,7 +653,7 @@ DEFINE_KERNEL2(join, stage_scatter,
         return;
     }
     if (s->mode == 4) {
-        if (offsets[t + 1] <= at) return;
+        if ((offsets[t + 1] - o0) <= at) return;
         candidates(s, L, t, R, F, kv, &lo, &hi, &how);
         int64_t v = 0;
         aggregate(s, L, t, R, lo, hi, how, kv, &v);
@@ -604,7 +663,7 @@ DEFINE_KERNEL2(join, stage_scatter,
     }
     if (s->mode == 1 || s->mode == 2) {
         // The count pass decided: a row out is the binding as it is.
-        if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
+        if ((offsets[t + 1] - o0) > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
     candidates(s, L, t, R, F, kv, &lo, &hi, &how);
@@ -623,7 +682,7 @@ DEFINE_KERNEL2(join, stage_scatter,
 
 // A witness's probe (decision 0277): whether relation R has a row of `b`'s keys (a binding's slots, constants or the
 // candidate's columns) and column tests; an anti-join's, whether it has none. One loop over the keys' run.
-UKL_INLINE bool witness_probe(StageP b, Longs L, uint32_t t, uint32_t cap_in, StageP a, Longs RA, uint32_t ra, Longs R) {
+UKL_LARGE bool witness_probe(StageP b, Longs L, uint32_t t, uint32_t cap_in, StageP a, Longs RA, uint32_t ra, Longs R) {
     int64_t kv[8];
     for (uint32_t i = 0; i < b->nkeys && i < 8; i++) {
         uint32_t k = b->key_kind[i];
@@ -641,18 +700,8 @@ UKL_INLINE bool witness_probe(StageP b, Longs L, uint32_t t, uint32_t cap_in, St
 
 // A witness's count (mode 11): 1 for a binding with a candidate of the stage's relation that every probe passes,
 // found in the candidates' order, the loop ending at the first; else 0. `stage_scatter` (as a semi-join) writes them.
-DEFINE_KERNEL2(join, witness_count,
-               ROBUFFER, int64_t,  L,      "[slots * cap_in]",
-               ROBUFFER, int64_t,  R,      "[rows]",
-               ROBUFFER, uint32_t, totals, "[slots]",
-               RWBUFFER, uint32_t, counts, "[cap_in + 1]",
-               ROBUFFER, Stage,    bs,     "[3]",
-               ROBUFFER, int64_t,  R0,     "[rows]",
-               ROBUFFER, int64_t,  R1,     "[rows]",
-               ROBUFFER, int64_t,  R2,     "[rows]",
-               ROBUFFER, uint8_t,  F,      "[screen]",
-               ROBUFFER, Stage,    s,      "[1]",
-               GID0,     uint32_t, t,      )
+UKL_INLINE void witness_count_one(Longs L, Longs R, JSPACE const uint32_t* totals, JSPACE uint32_t* counts, StageP bs, Longs R0, Longs R1, Longs R2,
+                              JSPACE const uint8_t* F, StageP s, uint32_t t)
 {
     if (t > s->cap_in) return;
     uint32_t n = ukl_min(totals[s->in_slot], s->cap_in);
@@ -677,12 +726,12 @@ DEFINE_KERNEL2(join, witness_count,
 // The states after each of m (at most a lane's each) bytes of x, lane l's after byte `first + step * l`, from state `st`: the
 // bytes' transition functions (rows of table `tab`, S states of C classes) composed by a prefix over the lanes in
 // device scratch `f` (two rows of S bytes a lane), Hillis and Steele's: five steps of a row a lane.
-UKL_INLINE uint32_t chunk_states(UKL_GLOBAL const uint8_t* tab, uint32_t S, uint32_t C, Txt x, int32_t first, int32_t step, uint32_t m,
-                                 uint32_t st, UKL_GLOBAL uint8_t* f, uint32_t lane) {
-    UKL_GLOBAL const uint8_t* cls = tab;
-    UKL_GLOBAL const uint8_t* next = tab + 256;
-    UKL_GLOBAL uint8_t* a = f;
-    UKL_GLOBAL uint8_t* b = f + SGW * S;
+UKL_INLINE uint32_t chunk_states(JSPACE const uint8_t* tab, uint32_t S, uint32_t C, Txt x, int32_t first, int32_t step, uint32_t m,
+                                 uint32_t st, JSPACE uint8_t* f, uint32_t lane) {
+    JSPACE const uint8_t* cls = tab;
+    JSPACE const uint8_t* next = tab + 256;
+    JSPACE uint8_t* a = f;
+    JSPACE uint8_t* b = f + SGW * S;
     bool has = lane < m;
     uint32_t c = has ? (uint32_t)cls[txt_byte(x, (uint32_t)(first + step * (int32_t)lane))] : 0;
     for (uint32_t q = 0; q < S; q++) a[lane * S + q] = has ? next[q * C + c] : (uint8_t)q;
@@ -691,7 +740,7 @@ UKL_INLINE uint32_t chunk_states(UKL_GLOBAL const uint8_t* tab, uint32_t S, uint
         // The bytes before (lane - d's prefix), then this lane's: applied in order.
         for (uint32_t q = 0; q < S; q++) b[lane * S + q] = lane >= d ? a[lane * S + a[(lane - d) * S + q]] : a[lane * S + q];
         ukl_sg_barrier();
-        UKL_GLOBAL uint8_t* t = a; a = b; b = t;
+        JSPACE uint8_t* t = a; a = b; b = t;
     }
     uint32_t r = a[lane * S + st];
     ukl_sg_barrier();
@@ -699,7 +748,7 @@ UKL_INLINE uint32_t chunk_states(UKL_GLOBAL const uint8_t* tab, uint32_t S, uint
 }
 
 // A text's bytes as a text operand.
-UKL_INLINE Txt txt_raw(UKL_GLOBAL const uint8_t* p, uint32_t n) {
+UKL_INLINE Txt txt_raw(JSPACE const uint8_t* p, uint32_t n) {
     Txt x;
     x.a = p;
     x.al = n;
@@ -792,16 +841,16 @@ UKL_INLINE void text_range(uint32_t f, Txt x, int64_t n0, int64_t n1, uint32_t l
 // each match's end by the forward automaton (the last match before it dies), its start by the reverse one run back
 // from the end (the furthest match). The replaced text's length; written to o when `write`. f: the group's scratch
 // (two rows a lane of the automata's states).
-UKL_INLINE uint32_t rx_replace_txt(UKL_GLOBAL const uint8_t* G, Txt x, Txt z, bool write, UKL_GLOBAL uint8_t* o, UKL_GLOBAL uint8_t* f,
+UKL_INLINE uint32_t rx_replace_txt(JSPACE const uint8_t* G, Txt x, Txt z, bool write, JSPACE uint8_t* o, JSPACE uint8_t* f,
                                    uint32_t lane __UKL_PARAMS) {
-    UKL_GLOBAL const uint32_t* h = (UKL_GLOBAL const uint32_t*)G;
+    JSPACE const uint32_t* h = (JSPACE const uint32_t*)G;
     uint32_t fS = h[0], fC = h[1], fdead = h[4], rS = h[5], rC = h[6], rdead = h[9];
-    UKL_GLOBAL const uint8_t* ft = G + h[10];
-    UKL_GLOBAL const uint8_t* rt = G + h[11];
-    UKL_GLOBAL const uint8_t* feoi = ft + 256 + fS * fC;
-    UKL_GLOBAL const uint8_t* facc = feoi + fS;
-    UKL_GLOBAL const uint8_t* reoi = rt + 256 + rS * rC;
-    UKL_GLOBAL const uint8_t* racc = reoi + rS;
+    JSPACE const uint8_t* ft = G + h[10];
+    JSPACE const uint8_t* rt = G + h[11];
+    JSPACE const uint8_t* feoi = ft + 256 + fS * fC;
+    JSPACE const uint8_t* facc = feoi + fS;
+    JSPACE const uint8_t* reoi = rt + 256 + rS * rC;
+    JSPACE const uint8_t* racc = reoi + rS;
     uint32_t n = txt_len(x), lz = txt_len(z);
     uint32_t pos = 0, w = 0;
     while (pos < n) {
@@ -849,10 +898,10 @@ UKL_INLINE uint32_t rx_replace_txt(UKL_GLOBAL const uint8_t* G, Txt x, Txt z, bo
 
 // Whether text test table `tab` (`text::table::Table`: S states of C classes, from `start`) accepts x, walked by a
 // SIMD group a byte a lane at a time (`chunk_states`), the state after the end of text accepting.
-UKL_INLINE bool txt_verdict(UKL_GLOBAL const uint8_t* tab, uint32_t S, uint32_t C, uint32_t start, Txt x, UKL_GLOBAL uint8_t* f,
+UKL_INLINE bool txt_verdict(JSPACE const uint8_t* tab, uint32_t S, uint32_t C, uint32_t start, Txt x, JSPACE uint8_t* f,
                             uint32_t lane __UKL_PARAMS) {
-    UKL_GLOBAL const uint8_t* eoi = tab + 256 + S * C;
-    UKL_GLOBAL const uint8_t* acc = eoi + S;
+    JSPACE const uint8_t* eoi = tab + 256 + S * C;
+    JSPACE const uint8_t* acc = eoi + S;
     uint32_t n = txt_len(x), st = start;
     for (uint32_t k = 0; k < n; k += SGW) {
         uint32_t m = ukl_min(SGW, n - k);
@@ -865,7 +914,7 @@ UKL_INLINE bool txt_verdict(UKL_GLOBAL const uint8_t* tab, uint32_t S, uint32_t 
 // `replace_all` of literal y (not empty; empty: x itself) in x by z, by a SIMD group: each lane tests whether a match
 // starts at its byte (compared a word of eight at a time), the leftmost of a chunk taken, the next looked for past it
 // (matches not overlapping). The replaced text's length; written to o when `write`.
-UKL_INLINE uint32_t lit_replace_txt(Txt x, Txt y, Txt z, bool write, UKL_GLOBAL uint8_t* o, uint32_t lane __UKL_PARAMS) {
+UKL_INLINE uint32_t lit_replace_txt(Txt x, Txt y, Txt z, bool write, JSPACE uint8_t* o, uint32_t lane __UKL_PARAMS) {
     uint32_t n = txt_len(x), ly = txt_len(y), lz = txt_len(z), pos = 0, w = 0;
     while (ly > 0 && pos + ly <= n) {
         uint32_t m = NONE;
@@ -901,28 +950,15 @@ UKL_INLINE uint64_t pow10_of(uint32_t k) {
 // classes, start), kept as agg[0] bit 8 wants; 5 the same test of a symbol, its verdict kept in the rolling cache VC
 // (P[5]: the test's id). Symbols are read through the atoms directory D (decision 0478 step 2e); R is unused. P[0]: the
 // groups (persistent, a threadgroup each), P[1]: the states a group's scratch holds.
-DEFINE_KERNEL2(join, row_text,
-               ROBUFFER, int64_t,  L,        "[slots * cap_in]",
-               ROBUFFER, int64_t,  R,        "[text]",
-               RWBUFFER, uint32_t, A,        "[arena]",
-               ROBUFFER, uint32_t, totals,   "[slots]",
-               RWBUFFER, uint32_t, counters, "[counters]",
-               RWBUFFER, uint32_t, counts,   "[cap_in + 1]",
-               RWBUFFER, int64_t,  V,        "[cap_in + 1]",
-               ROBUFFER, uint8_t,  G,        "[automata]",
-               RWBUFFER, uint8_t,  scratch,  "[groups * 2 * lanes * states]",
-               ROBUFFER, uint32_t, P,        "[8]",
-               ROBUFFER, uint8_t,  D,        "[atoms directory]",
-               RWBUFFER, uint8_t,  VC,       "[rolling cache]",
-               ROBUFFER, Stage,    s,        "[1]",
-               TGID0,    uint32_t, sg,       ,
-               LANE,     uint32_t, lane,     )
+UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t* totals, JSPACE uint32_t* counters, JSPACE uint32_t* counts,
+                         JSPACE int64_t* V, JSPACE const uint8_t* G, JSPACE uint8_t* scratch, JSPACE const uint32_t* P, JSPACE const uint8_t* D,
+                         JSPACE uint8_t* VC, StageP s, uint32_t sg, uint32_t lane __UKL_PARAMS)
 {
     uint32_t n = ukl_min(totals[s->in_slot], s->cap_in);
     uint32_t groups = P[0];
     for (uint32_t r = n + sg * SGW + lane; r <= s->cap_in; r += groups * SGW) counts[r] = 0;
     if (sg >= groups) return;
-    UKL_GLOBAL uint8_t* fs = scratch + (uint64_t)sg * 2 * SGW * P[1];
+    JSPACE uint8_t* fs = scratch + (uint64_t)sg * 2 * SGW * P[1];
     uint32_t op = s->agg[0] & 15;
     bool want = ((s->agg[0] >> 8) & 1) != 0;
     if (op == 5) {
@@ -1013,7 +1049,7 @@ DEFINE_KERNEL2(join, row_text,
                 off = ukl_sg_shuffle(off, 0u __UKL_ARGS);
                 bool full = (uint64_t)off + len > ukl_atomic_load(&A[1]);
                 if (!full) {
-                    UKL_GLOBAL uint8_t* o = (UKL_GLOBAL uint8_t*)A + 16 + off;
+                    JSPACE uint8_t* o = (JSPACE uint8_t*)A + 16 + off;
                     for (uint32_t i = lane; i < len; i += SGW) o[i] = e[16 + i];
                 }
                 if (lane == 0) {
@@ -1033,7 +1069,7 @@ DEFINE_KERNEL2(join, row_text,
             dot = op == 0 && lx > 0 ? 1 : 0;
             len = lx + dot + txt_len(y);
         } else if (op == 2) {
-            len = rx_replace_txt(G, x, y, false, (UKL_GLOBAL uint8_t*)A, fs, lane __UKL_ARGS);
+            len = rx_replace_txt(G, x, y, false, (JSPACE uint8_t*)A, fs, lane __UKL_ARGS);
         } else if (f == 5 || f == 11) {
             // to_string(n): its decimal digits, a lane each (at most 20). zero_pad(n, w): zeros after the sign up to
             // w columns (0 to 64, as the host's `{:0w$}`).
@@ -1052,7 +1088,7 @@ DEFINE_KERNEL2(join, row_text,
             // replace_all of a literal pattern (key 2) by key 4's text.
             y = txt_of(s, L, row, D, A, 2, 0, &unheld);
             z = txt_of(s, L, row, D, A, 4, 0, &unheld);
-            len = lit_replace_txt(x, y, z, false, (UKL_GLOBAL uint8_t*)A, lane __UKL_ARGS);
+            len = lit_replace_txt(x, y, z, false, (JSPACE uint8_t*)A, lane __UKL_ARGS);
         } else {
             bool high;
             text_range(f, x, key_value(s, L, row, 5), key_value(s, L, row, 6), lane, &from, &to, &high __UKL_ARGS);
@@ -1073,7 +1109,7 @@ DEFINE_KERNEL2(join, row_text,
         uint32_t cap = ukl_atomic_load(&A[1]);
         bool full = (uint64_t)off + len > cap;
         if (!full) {
-            UKL_GLOBAL uint8_t* o = (UKL_GLOBAL uint8_t*)A + 16 + off;
+            JSPACE uint8_t* o = (JSPACE uint8_t*)A + 16 + off;
             if (op == 2) rx_replace_txt(G, x, y, true, o, fs, lane __UKL_ARGS);
             else if (op <= 1) for (uint32_t i = lane; i < len; i += SGW) o[i] = i < lx ? txt_byte(x, i) : (i < lx + dot ? (uint8_t)'.' : txt_byte(y, i - lx - dot));
             else if (f == 6) lit_replace_txt(x, y, z, true, o, lane __UKL_ARGS);
@@ -1102,7 +1138,7 @@ DEFINE_KERNEL2(join, row_text,
             if ((r & 3ul) == 1ul) {
                 // Read by other groups: written coherently, as they read it.
                 UKL_COHERENT uint8_t* e = (UKL_COHERENT uint8_t*)(VC + (r & ~3ul));
-                UKL_GLOBAL const uint8_t* o = (UKL_GLOBAL const uint8_t*)A + 16 + off;
+                JSPACE const uint8_t* o = (JSPACE const uint8_t*)A + 16 + off;
                 for (uint32_t i = lane; i < len; i += SGW) e[16 + i] = o[i];
                 ukl_sg_barrier();
                 if (lane == 0) clif_cache_done(VC, 0ul, r & ~3ul);
@@ -1118,20 +1154,15 @@ DEFINE_KERNEL2(join, row_text,
 }
 
 // Mode 10's rows out: those `row_text` kept, each its value (V's) in `bind_slot[0]` but for a test's.
-DEFINE_KERNEL2(join, row_scatter,
-               ROBUFFER, int64_t,  L,       "[slots * cap_in]",
-               ROBUFFER, int64_t,  V,       "[cap_in + 1]",
-               RWBUFFER, uint32_t, totals,  "[slots]",
-               ROBUFFER, uint32_t, offsets, "[cap_in + 1]",
-               RWBUFFER, int64_t,  O,       "[slots * cap_out]",
-               ROBUFFER, Stage,    s,       "[1]",
-               GID0,     uint32_t, t,       )
+UKL_INLINE void row_scatter_one(Longs L, Longs V, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, StageP s, uint32_t t)
 {
+    // Its offsets are its own: the level's scan's, less its first (`Batch::level`).
+    uint32_t o0 = offsets[0];
     uint32_t n = ukl_min(totals[s->in_slot], s->cap_in);
-    if (t == 0) totals[s->out_slot] = offsets[n];
+    if (t == 0) totals[s->out_slot] = (offsets[n] - o0);
     if (t >= n) return;
-    uint32_t at = offsets[t];
-    if (offsets[t + 1] <= at || at >= s->cap_out) return;
+    uint32_t at = (offsets[t] - o0);
+    if ((offsets[t + 1] - o0) <= at || at >= s->cap_out) return;
     for (uint32_t k = 0; k < s->nslots; k++) O[(uint64_t)k * s->cap_out + at] = L[(uint64_t)k * s->cap_in + t];
     // A test (a made text's, `ROW_TEST`; a symbol's, `ROW_VERDICT`) binds nothing: its rows pass as they are.
     uint32_t op = s->agg[0] & 15;
@@ -1146,41 +1177,39 @@ DEFINE_KERNEL2(join, row_scatter,
 typedef struct Copy {
     int64_t konst[16];
     uint32_t src[16];
-    uint32_t n, ncols, src_stride, dst_stride, dst_off, count_slot, pad0, pad1;
+    // `src_from`: a source relation's first row (`DevRel::from`): its row `t` is its id `src_from + t`.
+    uint32_t n, ncols, src_stride, dst_stride, dst_off, count_slot, src_from, pad1;
+    // Where its rows go past `dst_off`: when `flags & 1`, past a word an earlier phase wrote (`sum_one`, rows end to
+    // end); when `flags & 2`, past the destination's rows as the device claimed them (`clif_rows_len`, a relation grown
+    // on the device: decision 0603 step 3).
+    JSPACE const uint32_t* off;
     uint64_t src_at, dst_rows_at;
     UKL_GLOBAL const ViewDir* v_dir;
     uint32_t r_view;
-    uint32_t v_pad;
+    uint32_t flags;
 } Copy;
-UKL_STATIC_ASSERT(sizeof(Copy) == 256, "Copy: size");
-UKL_STATIC_ASSERT(UKL_OFFSETOF(Copy, v_dir) == 240, "Copy.v_dir");
+UKL_STATIC_ASSERT(sizeof(Copy) == 264, "Copy: size");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Copy, v_dir) == 248, "Copy.v_dir");
 
-DEFINE_KERNEL2(join, rows_copy,
-               ROBUFFER, uint8_t,  S,      "[source]",
-               RWBUFFER, uint8_t,  D,      "[destination]",
-               ROBUFFER, uint32_t, totals, "[slots]",
-               ROBUFFER, Copy,     c,      "[1]",
-               GID0,     uint32_t, t,      )
+UKL_INLINE void rows_copy_one(JSPACE const uint8_t* S, JSPACE uint8_t* D, JSPACE const uint32_t* totals, JSPACE const Copy* c, uint32_t t)
 {
     uint32_t n = c->count_slot == NONE ? c->n : ukl_min(totals[c->count_slot], c->n);
     if (t >= n) return;
+    uint32_t at = c->dst_off + ((c->flags & 1u) != 0u ? *c->off : 0u) + ((c->flags & 2u) != 0u ? clif_rows_len((JSPACE const uint8_t*)D, c->dst_rows_at) : 0u) + t;
+    uint32_t memo = NONE;
     for (uint32_t k = 0; k < c->ncols && k < 16; k++) {
         uint32_t from = c->src[k];
         int64_t v = from == NONE ? c->konst[k]
-                  : c->r_view != 0u ? vread(c->r_view, c->v_dir, t, from)
-                  : c->src_at == 0ul ? ((UKL_GLOBAL const int64_t*)S)[(uint64_t)from * c->src_stride + t]
-                  : (int64_t)clif_rel_get(S, c->src_at, t, from);
-        if (c->dst_rows_at == 0ul) ((UKL_GLOBAL int64_t*)D)[(uint64_t)k * c->dst_stride + c->dst_off + t] = v;
-        else clif_rows_put((UKL_GLOBAL const uint8_t*)D, c->dst_rows_at, c->dst_off + t, k, (uint64_t)v);
+                  : c->r_view != 0u ? vread(c->r_view, c->v_dir, t, from, &memo)
+                  : c->src_at == 0ul ? ((JSPACE const int64_t*)S)[(uint64_t)from * c->src_stride + t]
+                  : (int64_t)clif_rel_get(S, c->src_at, c->src_from + t, from);
+        if (c->dst_rows_at == 0ul) ((JSPACE int64_t*)D)[(uint64_t)k * c->dst_stride + at] = v;
+        else clif_rows_put((JSPACE const uint8_t*)D, c->dst_rows_at, at, k, (uint64_t)v);
     }
 }
 
 // Slots set in place, in order: a later one may read an earlier one.
-DEFINE_KERNEL2(join, stage_map,
-               RWBUFFER, int64_t,  B,      "[slots * cap_in]",
-               ROBUFFER, uint32_t, totals, "[slots]",
-               ROBUFFER, Stage,    s,      "[1]",
-               GID0,     uint32_t, t,      )
+UKL_INLINE void stage_map_one(JSPACE int64_t* B, JSPACE const uint32_t* totals, StageP s, uint32_t t)
 {
     uint32_t n = ukl_min(totals[s->in_slot], s->cap_in);
     if (t >= n) return;
@@ -1198,22 +1227,18 @@ DEFINE_KERNEL2(join, stage_map,
 }
 
 // A join from one binding (a rule's first table): a thread per candidate row, not one thread walking them all.
-DEFINE_KERNEL2(join, scan_count,
-               ROBUFFER, int64_t,  L,        "[slots]",
-               ROBUFFER, int64_t,  R,        "[rows]",
-               RWBUFFER, uint32_t, counters, "[counters]",
-               RWBUFFER, uint32_t, counts,   "[nr + 1]",
-               ROBUFFER, uint32_t, totals,   "[slots]",
-               ROBUFFER, Stage,    s,        "[1]",
-               GID0,     uint32_t, r,        )
+UKL_INLINE void scan_count_one(Longs L, Longs R, JSPACE uint32_t* counters, JSPACE uint32_t* counts, JSPACE const uint32_t* totals, StageP s, uint32_t r)
 {
     if (r > s->nr) return;
-    if (r == s->nr || totals[s->in_slot] == 0) { counts[r] = 0; return; }
+    // Past R's rows (its length on the device, at most `nr`): no candidate, a count of none.
+    if (r >= stage_rows(s, R) || totals[s->in_slot] == 0) { counts[r] = 0; return; }
     int64_t kv[8];
     for (uint32_t i = 0; i < s->nkeys && i < 8; i++) kv[i] = s->key_kind[i] == 1 ? L[(uint64_t)s->key_slot[i] * s->cap_in] : s->key_const[i];
     uint32_t c = 0;
-    if (matches(s, R, r, kv)) {
-        uint64_t v = s->nops > 0 ? eval(s, L, 0, R, r) : 0;
+    // Thread `r`'s row: the relation's `r_from + r` (its rows from `r_from`).
+    uint32_t id = s->r_from + r;
+    if (matches(s, R, id, kv)) {
+        uint64_t v = s->nops > 0 ? eval(s, L, 0, R, id) : 0;
         if (s->counter != NONE) {
             ukl_atomic_add(&counters[s->counter], 1u);
             for (uint32_t m = 0; m < s->npassed && m < 16; m++) {
@@ -1225,26 +1250,24 @@ DEFINE_KERNEL2(join, scan_count,
     counts[r] = c;
 }
 
-DEFINE_KERNEL2(join, scan_scatter,
-               ROBUFFER, int64_t,  L,       "[slots]",
-               ROBUFFER, int64_t,  R,       "[rows]",
-               RWBUFFER, uint32_t, totals,  "[slots]",
-               ROBUFFER, uint32_t, offsets, "[nr + 1]",
-               RWBUFFER, int64_t,  O,       "[slots * cap_out]",
-               ROBUFFER, Stage,    s,       "[1]",
-               GID0,     uint32_t, r,       )
+UKL_INLINE void scan_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, StageP s, uint32_t r)
 {
-    if (r == 0) totals[s->out_slot] = offsets[s->nr];
-    if (r >= s->nr) return;
-    uint32_t at = offsets[r];
-    if (offsets[r + 1] > at && at < s->cap_out) write_row(s, L, 0, R, r, O, at);
+    // Its offsets are its own: the level's scan's, less its first (`Batch::level`).
+    uint32_t o0 = offsets[0];
+    uint32_t rows = stage_rows(s, R);
+    if (r == 0) totals[s->out_slot] = (offsets[rows] - o0);
+    if (r >= rows) return;
+    uint32_t at = (offsets[r] - o0);
+    if ((offsets[r + 1] - o0) > at && at < s->cap_out) write_row(s, L, 0, R, s->r_from + r, O, at);
 }
 
 // A rule's head rows made distinct: each row claims a place in an open-addressed table by its columns' hash (the
 // least row index of rows equal to it wins), and a row is kept when it holds its place. The kept rows keep their order.
-typedef struct Dedup { uint32_t cap; uint32_t in_slot; uint32_t out_slot; uint32_t ncols; uint32_t mask; uint32_t cols[16]; } Dedup;
-UKL_STATIC_ASSERT(sizeof(Dedup) == 84, "Dedup: size");
-typedef UKL_GLOBAL const Dedup* DedupP;
+// `cap`: its rows' table's stride; `ocap`: its distinct rows' (a table its size script placed: as many as they are);
+// `places`: its places, `mask + 1` (its clear's count).
+typedef struct Dedup { uint32_t cap; uint32_t in_slot; uint32_t out_slot; uint32_t ncols; uint32_t mask; uint32_t cols[16]; uint32_t ocap; uint32_t places; } Dedup;
+UKL_STATIC_ASSERT(sizeof(Dedup) == 92, "Dedup: size");
+typedef JSPACE const Dedup* DedupP;
 
 UKL_INLINE bool same_row(DedupP d, Longs T, uint32_t a, uint32_t b) {
     for (uint32_t c = 0; c < d->ncols && c < 16; c++) if (T[(uint64_t)d->cols[c] * d->cap + a] != T[(uint64_t)d->cols[c] * d->cap + b]) return false;
@@ -1257,20 +1280,12 @@ UKL_INLINE uint32_t row_hash(DedupP d, Longs T, uint32_t x) {
     return (uint32_t)h & d->mask;
 }
 
-DEFINE_KERNEL2(join, dedup_clear,
-               RWBUFFER, uint32_t, P, "[mask + 1]",
-               ROBUFFER, Dedup,    d, "[1]",
-               GID0,     uint32_t, i, )
+UKL_INLINE void dedup_clear_one(JSPACE uint32_t* P, DedupP d, uint32_t i)
 {
     if (i <= d->mask) P[i] = 0xffffffffu;
 }
 
-DEFINE_KERNEL2(join, dedup_claim,
-               ROBUFFER, int64_t,  T,      "[ncols * cap]",
-               ROBUFFER, uint32_t, totals, "[slots]",
-               RWBUFFER, uint32_t, P,      "[mask + 1]",
-               ROBUFFER, Dedup,    d,      "[1]",
-               GID0,     uint32_t, x,      )
+UKL_INLINE void dedup_claim_one(Longs T, JSPACE const uint32_t* totals, JSPACE uint32_t* P, DedupP d, uint32_t x)
 {
     uint32_t n = ukl_min(totals[d->in_slot], d->cap);
     if (x >= n) return;
@@ -1284,13 +1299,7 @@ DEFINE_KERNEL2(join, dedup_claim,
     }
 }
 
-DEFINE_KERNEL2(join, dedup_mark,
-               ROBUFFER, int64_t,  T,      "[ncols * cap]",
-               ROBUFFER, uint32_t, totals, "[slots]",
-               ROBUFFER, uint32_t, P,      "[mask + 1]",
-               RWBUFFER, uint32_t, counts, "[cap + 1]",
-               ROBUFFER, Dedup,    d,      "[1]",
-               GID0,     uint32_t, x,      )
+UKL_INLINE void dedup_mark_one(Longs T, JSPACE const uint32_t* totals, JSPACE const uint32_t* P, JSPACE uint32_t* counts, DedupP d, uint32_t x)
 {
     if (x > d->cap) return;
     uint32_t n = ukl_min(totals[d->in_slot], d->cap);
@@ -1307,24 +1316,67 @@ DEFINE_KERNEL2(join, dedup_mark,
     counts[x] = keep;
 }
 
-DEFINE_KERNEL2(join, dedup_scatter,
-               ROBUFFER, int64_t,  T,       "[ncols * cap]",
-               RWBUFFER, uint32_t, totals,  "[slots]",
-               ROBUFFER, uint32_t, offsets, "[cap + 1]",
-               RWBUFFER, int64_t,  O,       "[ncols * cap]",
-               ROBUFFER, Dedup,    d,       "[1]",
-               GID0,     uint32_t, x,       )
+UKL_INLINE void dedup_scatter_one(Longs T, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, DedupP d, uint32_t x)
 {
-    if (x == 0) totals[d->out_slot] = offsets[d->cap];
-    if (x >= d->cap) return;
-    uint32_t at = offsets[x];
-    if (offsets[x + 1] == at) return;
-    for (uint32_t c = 0; c < d->ncols && c < 16; c++) O[(uint64_t)c * d->cap + at] = T[(uint64_t)d->cols[c] * d->cap + x];
+    // Its offsets are its own: the level's scan's, less its first (`Batch::level`).
+    uint32_t o0 = offsets[0];
+    // Its rows' counts alone: past them, a slot may hold another round's (a phase's items are its rows', 0603 step 5).
+    uint32_t n = ukl_min(totals[d->in_slot], d->cap);
+    if (x == 0) totals[d->out_slot] = (offsets[n] - o0);
+    if (x >= n) return;
+    uint32_t at = (offsets[x] - o0);
+    if ((offsets[x + 1] - o0) == at) return;
+    if (at >= d->ocap) return;
+    for (uint32_t c = 0; c < d->ncols && c < 16; c++) O[(uint64_t)c * d->ocap + at] = T[(uint64_t)d->cols[c] * d->cap + x];
 }
+
+// ---- A batch's jobs (decisions 0601, 0603): its levels' work, run by its program (`join_run`). ----
+//
+// A batch queues its stages, maps, text rows, dedups, copies and indexes (`Batch::queue`), a level of them between two
+// dependencies: a stratum's rules' stages at one depth, its heads' dedups. A job's buffers are reached by their
+// device addresses (`Job`), as a view's directory is; its counts lie in the program's one buffer of counts from
+// `base` (its `n` values), which its level's scan makes offsets, each job's its own less its first (`o0`).
+typedef struct Job {
+    Longs L;
+    Longs R;
+    JSPACE uint32_t* totals;
+    JSPACE uint32_t* counters;
+    JSPACE int64_t* O;
+    JSPACE uint32_t* A;
+    JSPACE const uint8_t* D;
+    JSPACE const uint8_t* F;
+    Longs W[3];
+    JSPACE const uint8_t* G;
+    JSPACE uint8_t* S;
+    JSPACE uint8_t* VC;
+    JSPACE int64_t* V;
+    JSPACE uint32_t* H;
+    StageP s;
+    StageP ws;
+    StageP bs;
+    DedupP dd;
+    JSPACE const uint32_t* P;
+    uint32_t base, n;
+    // An index's first bucket and first key in its level's sort (`ix_key_one`).
+    uint32_t kb, eb;
+    // A count an earlier phase wrote (a lattice fold's rows: `LatP::pad & 1`).
+    JSPACE const uint32_t* cnt;
+    // Where its size script placed its tables in the arena (decision 0603 step 5), each its offset and one (0: none,
+    // the pointer's): `L` and `O`, a row's values `V` (8 bytes a unit), a dedup's places `H` (4 bytes).
+    uint32_t l_at, o_at, v_at, h_at;
+} Job;
+UKL_STATIC_ASSERT(sizeof(Job) == 208, "Job: size");
+// The words of a job's descriptor its level's size script writes: `base`, `l_at`, `o_at`, `v_at`, `h_at`.
+#define JOB_BASE_WORD 42u
+#define JOB_AT_WORD 48u
+
 
 // A relation's index built on the device (decision 0325 step 5): each row's bucket, its key's hash (`key_hash`, as
 // the host's builder and every probe hash it) masked. A view read in place (decision 0353 step 4d) is read through its
 // directory (`dir`, `kind`; kind 0: a relation).
+// `ncols`' bit 31 (`IX_LIVE`): its rows are its relation's length on the device (`clif_rel_len`) past `from`, at
+// most `n`; a key past them is the index's own last bucket (`mask + 1`), which sorts after its keys and places none.
+#define IX_LIVE 0x80000000u
 typedef struct IxP {
     uint32_t n;
     uint32_t ncols;
@@ -1333,47 +1385,54 @@ typedef struct IxP {
     uint32_t cols[8];
     UKL_GLOBAL const ViewDir* dir;
     uint64_t kind;
+    // The relation's first row: the index is of its rows `from..from + n`, by their ids (a fixpoint's delta).
+    uint32_t from, pad;
 } IxP;
-UKL_STATIC_ASSERT(sizeof(IxP) == 72, "IxP: size");
+UKL_STATIC_ASSERT(sizeof(IxP) == 80, "IxP: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(IxP, dir) == 56, "IxP.dir");
 
-DEFINE_KERNEL2(join, ix_bucket,
-               ROBUFFER, uint8_t,  B,   "[block]",
-               RWBUFFER, uint32_t, out, "[n]",
-               ROBUFFER, IxP,      p,   "[1]",
-               GID0,     uint32_t, t,   )
-{
-    if (t >= p->n) return;
-    uint64_t h = KEY_SEED;
-    for (uint32_t i = 0; i < p->ncols && i < 8; i++)
-        h = key_mix(h, p->kind != 0ul ? vread((uint32_t)p->kind, p->dir, t, p->cols[i]) : (int64_t)clif_rel_get(B, p->at, t, p->cols[i]));
-    out[t] = (uint32_t)(h & p->mask);
+// Its keys are the level's (`Program`, decision 0603): every index of the level sorted at once, each one's buckets
+// from its first, `kb`; its rows' keys from its first, `eb`, each with its place among them (the sort's values).
+// An index's rows from `from`: `n`, or a live one's relation's length on the device past `from`, at most `n`
+// (`IX_LIVE`).
+UKL_INLINE uint32_t ix_rows(JSPACE const uint8_t* B, JSPACE const IxP* p) {
+    if ((p->ncols & IX_LIVE) == 0u) return p->n;
+    uint32_t len = clif_rel_len(B, p->at);
+    return len > p->from ? ukl_min(len - p->from, p->n) : 0u;
 }
 
-// The index's rows and buckets written into its relation's block, from the rows sorted (stably) by bucket: entry `t`
-// is the sort's row `t` (so a bucket's rows are in id order, as the host's builder places them), and run `t` (a
-// bucket that has rows) sets its bucket's start and the empty buckets' before it; the last run the rest. a: p0 the
-// rows, p1 the buckets, b0 the buckets' offset in the block, b1 the rows' offset.
-DEFINE_KERNEL2(join, ix_place,
-               RWBUFFER, uint8_t,  B,     "[block]",
-               ROBUFFER, uint32_t, perm,  "[a.p0]",
-               ROBUFFER, uint32_t, starts,"[a.p0 + 1]",
-               ROBUFFER, uint32_t, rkeys, "[a.p0]",
-               ROBUFFER, uint32_t, nruns, "[1]",
-               ARGS,     JoinP,    a,     ,
-               GID0,     uint32_t, t,     )
+UKL_INLINE void ix_key_one(JSPACE const uint8_t* B, JSPACE uint32_t* out, JSPACE uint32_t* places, JSPACE const IxP* p, uint32_t kb, uint32_t eb, uint32_t t)
 {
-    uint32_t n = a.p0, cap = a.p1;
-    UKL_GLOBAL uint32_t* offs = (UKL_GLOBAL uint32_t*)(B + (uint64_t)a.b0);
-    UKL_GLOBAL uint32_t* rows = (UKL_GLOBAL uint32_t*)(B + (uint64_t)a.b1);
-    if (t < n) rows[t] = perm[t];
-    uint32_t runs = nruns[0];
-    if (t >= runs) return;
-    uint32_t b = rkeys[t];
-    uint32_t from = t == 0 ? 0u : rkeys[t - 1] + 1u;
-    for (uint32_t x = from; x <= b; x++) offs[x] = starts[t];
-    if (t == runs - 1) for (uint32_t x = b + 1; x <= cap; x++) offs[x] = n;
+    if (t >= p->n) return;
+    places[eb + t] = eb + t;
+    // Past a live index's rows: its own last bucket, after its keys.
+    if (t >= ix_rows(B, p)) { out[eb + t] = kb + (uint32_t)p->mask + 1u; return; }
+    uint64_t h = KEY_SEED;
+    uint32_t memo = NONE;
+    for (uint32_t i = 0; i < (p->ncols & ~IX_LIVE) && i < 8; i++)
+        h = key_mix(h, p->kind != 0ul ? vread((uint32_t)p->kind, p->dir, t, p->cols[i], &memo) : (int64_t)clif_rel_get(B, p->at, p->from + t, p->cols[i]));
+    out[eb + t] = kb + (uint32_t)(h & p->mask);
 }
+
+// The index's rows and buckets written into its relation's block, from the level's keys sorted (stably) with their
+// places: its sorted place `t` is the level's `eb + t`, its row's id the place it came from less `eb`, past the
+// relation's first row `from` (so a bucket's rows are in id order, as the host's builder places them). A place
+// whose bucket is not the one before's starts it, and sets the empty buckets' before it; the last place the rest.
+// `offs` the buckets in the block, `rows` the rows.
+UKL_INLINE void ix_place_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys, JSPACE const uint32_t* places, JSPACE uint32_t* offs, JSPACE uint32_t* rows,
+                             JSPACE const IxP* p, uint32_t kb, uint32_t eb, uint32_t t)
+{
+    uint32_t n = ix_rows(B, p), cap = (uint32_t)p->mask + 1u;
+    // No rows: every bucket empty.
+    if (n == 0u && t == 0u) for (uint32_t x = 0u; x <= cap; x++) offs[x] = 0u;
+    if (t >= n) return;
+    rows[t] = p->from + places[eb + t] - eb;
+    uint32_t b = keys[eb + t] - kb;
+    uint32_t from = t == 0 ? 0u : keys[eb + t - 1u] - kb + 1u;
+    for (uint32_t x = from; x <= b; x++) offs[x] = t;
+    if (t == n - 1u) for (uint32_t x = b + 1u; x <= cap; x++) offs[x] = n;
+}
+
 
 // A lattice relation's rounds on the device (decision 0124): a round's rows `U` (a table of `k` slots: the key's
 // `nkeys` columns, then the value) folded by key into the lattice's relation `R` itself (its `k` columns, `had` rows
@@ -1385,18 +1444,18 @@ DEFINE_KERNEL2(join, ix_place,
 // `D`, the next round's delta: `counters[0]` of them, `counters[1]` new. `level`: the round, written to a changed or
 // new key's slot where the relation keeps levels (decision 0311); 0: none.
 typedef struct LatP { int64_t top; uint32_t n; uint32_t had; uint32_t nkeys; uint32_t code; uint32_t after; uint32_t pmask; uint32_t hmask; uint32_t level;
-                      uint32_t omask; uint32_t pad; uint64_t r_at, r_rows_at, h_at, h0_at; } LatP;
-UKL_REFLECT_STRUCT(LatP, top, n, had, nkeys, code, after, pmask, hmask, level, omask, pad, r_at, r_rows_at, h_at, h0_at)
+                      uint32_t omask; uint32_t counted; uint64_t r_at, r_rows_at, h_at, h0_at; } LatP;
+UKL_REFLECT_STRUCT(LatP, top, n, had, nkeys, code, after, pmask, hmask, level, omask, counted, r_at, r_rows_at, h_at, h0_at)
 UKL_STATIC_ASSERT(sizeof(LatP) == 80, "LatP: size");
 
 // The relation `R`'s row `row` in column `c`, and the place to write it: `R` is a relation in its block
 // (decision 0325 step 5), its descriptor at `r_at`, its rows' at `r_rows_at`; written through the writer written
 // once, bounded by its chunks (decision 0463).
-UKL_INLINE int64_t lat_r(UKL_GLOBAL const uint8_t* R, UKL_PRIVATE const LatP* p, uint32_t row, uint32_t c) {
+UKL_INLINE int64_t lat_r(JSPACE const uint8_t* R, UKL_PRIVATE const LatP* p, uint32_t row, uint32_t c) {
     return (int64_t)clif_rel_get(R, p->r_at, row, c);
 }
-UKL_INLINE void lat_put(UKL_GLOBAL uint8_t* R, UKL_PRIVATE const LatP* p, uint32_t row, uint32_t c, int64_t v) {
-    clif_rows_put((UKL_GLOBAL const uint8_t*)R, p->r_rows_at, row, c, (uint64_t)v);
+UKL_INLINE void lat_put(JSPACE uint8_t* R, UKL_PRIVATE const LatP* p, uint32_t row, uint32_t c, int64_t v) {
+    clif_rows_put((JSPACE const uint8_t*)R, p->r_rows_at, row, c, (uint64_t)v);
 }
 
 UKL_INLINE uint32_t lat_hash(UKL_PRIVATE const int64_t* key, uint32_t nk, uint32_t mask) {
@@ -1408,15 +1467,9 @@ UKL_INLINE bool lat_same(Longs T, uint32_t stride, uint32_t a, uint32_t b, uint3
     return true;
 }
 
-DEFINE_KERNEL2(join, lat_clear,
-               RWBUFFER, uint32_t, P,     "[pmask + 1]",
-               RWBUFFER, uint32_t, best,  "[pmask + 1]",
-               RWBUFFER, uint32_t, flags, "[pmask + 1]",
-               ARGS,     LatP,     a,     ,
-               GID0,     uint32_t, i,     )
+UKL_INLINE void lat_clear_one(JSPACE uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE const LatP* pp, uint32_t i)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
+    LatP p = *pp;
     if (i > p.pmask) return;
     P[i] = 0xffffffffu;
     best[i] = 0xffffffffu;
@@ -1424,15 +1477,11 @@ DEFINE_KERNEL2(join, lat_clear,
 }
 
 // The key map's slot `i` emptied (a map new, or grown).
-DEFINE_KERNEL2(join, lat_hclear,
-               RWBUFFER, uint8_t,  HB, "[block]",
-               ARGS,     LatP,     a,  ,
-               GID0,     uint32_t, i,  )
+UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t i)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
+    LatP p = *pp;
     if (i > p.hmask) return;
-    UKL_GLOBAL uint32_t* H = (UKL_GLOBAL uint32_t*)(HB + p.h_at);
+    JSPACE uint32_t* H = (JSPACE uint32_t*)(HB + p.h_at);
     H[3 * i] = 0xffffffffu;
     H[3 * i + 1] = 0;
     H[3 * i + 2] = 0;
@@ -1440,20 +1489,14 @@ DEFINE_KERNEL2(join, lat_hclear,
 
 // The old map's slot `s` (at `h0_at` in `OB`, `omask + 1` slots) into the new one (grown: every key placed again, its
 // changes and round with it); its key read in `R`'s row.
-DEFINE_KERNEL2(join, lat_rehash,
-               ROBUFFER, uint8_t,  R,  "[block]",
-               ROBUFFER, uint8_t,  OB, "[block]",
-               RWBUFFER, uint8_t,  HB, "[block]",
-               ARGS,     LatP,     a,  ,
-               GID0,     uint32_t, s,  )
+UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB, JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t s)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
+    LatP p = *pp;
     if (s > p.omask) return;
-    UKL_GLOBAL const uint32_t* O = (UKL_GLOBAL const uint32_t*)(OB + p.h0_at);
+    JSPACE const uint32_t* O = (JSPACE const uint32_t*)(OB + p.h0_at);
     uint32_t t = O[3 * s];
     if (t == 0xffffffffu) return;
-    UKL_GLOBAL uint32_t* H = (UKL_GLOBAL uint32_t*)(HB + p.h_at);
+    JSPACE uint32_t* H = (JSPACE uint32_t*)(HB + p.h_at);
     int64_t key[8];
     for (uint32_t c = 0; c < p.nkeys && c < 8; c++) key[c] = lat_r(R, &p, t, c);
     uint32_t at = lat_hash(key, p.nkeys, p.hmask);
@@ -1468,15 +1511,11 @@ DEFINE_KERNEL2(join, lat_rehash,
     }
 }
 
-DEFINE_KERNEL2(join, lat_claim,
-               ROBUFFER, int64_t,  U, "[(nkeys + 1) * n]",
-               RWBUFFER, uint32_t, P, "[pmask + 1]",
-               ARGS,     LatP,     a, ,
-               GID0,     uint32_t, x, )
+UKL_INLINE void lat_claim_one(Longs U, JSPACE uint32_t* P, JSPACE const uint32_t* cnt, JSPACE const LatP* pp, uint32_t x)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
-    if (x >= p.n) return;
+    LatP p = *pp;
+    // Its rows: `n` (the stride of `U`'s columns), or as many as the word an earlier phase wrote (`counted`).
+    if (x >= ((p.counted & 1u) != 0u ? ukl_min(*cnt, p.n) : p.n)) return;
     int64_t key[8];
     for (uint32_t c = 0; c < p.nkeys && c < 8; c++) key[c] = U[(uint64_t)c * p.n + x];
     uint32_t at = lat_hash(key, p.nkeys, p.pmask);
@@ -1489,7 +1528,7 @@ DEFINE_KERNEL2(join, lat_claim,
 }
 
 // The place of row `x`'s key in `P` (claimed: it is there).
-UKL_INLINE uint32_t lat_place(Longs U, UKL_GLOBAL const uint32_t* P, UKL_PRIVATE const LatP* p, uint32_t x) {
+UKL_INLINE uint32_t lat_place(Longs U, JSPACE const uint32_t* P, UKL_PRIVATE const LatP* p, uint32_t x) {
     int64_t key[8];
     for (uint32_t c = 0; c < p->nkeys && c < 8; c++) key[c] = U[(uint64_t)c * p->n + x];
     uint32_t at = lat_hash(key, p->nkeys, p->pmask);
@@ -1504,7 +1543,7 @@ UKL_INLINE uint32_t lat_place(Longs U, UKL_GLOBAL const uint32_t* P, UKL_PRIVATE
 
 // Code 3 (`shortlex_min`, decision 0307): whether arena text `a` is before `b`, by their characters, then their
 // bytes (as `ShortlexMin`: `(chars, bytes)`), a word of eight at a time.
-UKL_INLINE bool lat_text_less(UKL_GLOBAL uint32_t* A, int64_t a, int64_t b) {
+UKL_INLINE bool lat_text_less(JSPACE uint32_t* A, int64_t a, int64_t b) {
     uint64_t ua = (uint64_t)a, ub = (uint64_t)b;
     Txt x = txt_raw(arena_bytes(A) + (uint32_t)((ua & 0x7ffffffffffffffful) >> 24), (uint32_t)(ua & 0xfffffful));
     Txt y = txt_raw(arena_bytes(A) + (uint32_t)((ub & 0x7ffffffffffffffful) >> 24), (uint32_t)(ub & 0xfffffful));
@@ -1520,7 +1559,7 @@ UKL_INLINE bool lat_text_less(UKL_GLOBAL uint32_t* A, int64_t a, int64_t b) {
 
 // Whether value `a` (of row `ra`) is chosen over `b` (of `rb`): the top absorbs; min the least, max the greatest,
 // shortlex the least text (code 3, over the arena `A`); a tie to the first row.
-UKL_INLINE bool lat_better(UKL_PRIVATE const LatP* p, UKL_GLOBAL uint32_t* A, int64_t a, uint32_t ra, int64_t b, uint32_t rb) {
+UKL_INLINE bool lat_better(UKL_PRIVATE const LatP* p, JSPACE uint32_t* A, int64_t a, uint32_t ra, int64_t b, uint32_t rb) {
     if (b == p->top) return false;
     if (a == p->top) return true;
     if (a == b) return ra < rb;
@@ -1531,18 +1570,12 @@ UKL_INLINE bool lat_better(UKL_PRIVATE const LatP* p, UKL_GLOBAL uint32_t* A, in
     return p->code == 0 ? a < b : a > b;
 }
 
-DEFINE_KERNEL2(join, lat_best,
-               ROBUFFER, int64_t,  U,     "[(nkeys + 1) * n]",
-               ROBUFFER, uint32_t, P,     "[pmask + 1]",
-               RWBUFFER, uint32_t, best,  "[pmask + 1]",
-               RWBUFFER, uint32_t, flags, "[pmask + 1]",
-               RWBUFFER, uint32_t, A,     "[arena]",
-               ARGS,     LatP,     a,     ,
-               GID0,     uint32_t, x,     )
+UKL_INLINE void lat_best_one(Longs U, JSPACE const uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE uint32_t* A, JSPACE const uint32_t* cnt,
+                         JSPACE const LatP* pp, uint32_t x)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
-    if (x >= p.n) return;
+    LatP p = *pp;
+    // Its rows: `n` (the stride of `U`'s columns), or as many as the word an earlier phase wrote (`counted`).
+    if (x >= ((p.counted & 1u) != 0u ? ukl_min(*cnt, p.n) : p.n)) return;
     uint32_t s = lat_place(U, P, &p, x);
     if (s == 0xffffffffu) return;
     int64_t v = U[(uint64_t)p.nkeys * p.n + x];
@@ -1561,7 +1594,7 @@ DEFINE_KERNEL2(join, lat_best,
 
 // The join of two present values (`code`: 0 min, 1 max, 2 flat, 3 shortlex over the arena `A`, a tie to `a`), the
 // top absorbing.
-UKL_INLINE int64_t lat_lub(UKL_PRIVATE const LatP* p, UKL_GLOBAL uint32_t* A, int64_t a, int64_t b) {
+UKL_INLINE int64_t lat_lub(UKL_PRIVATE const LatP* p, JSPACE uint32_t* A, int64_t a, int64_t b) {
     if (a == p->top || b == p->top) return p->top;
     if (p->code == 3) return lat_text_less(A, b, a) ? b : a;
     if (p->code == 0) return ukl_min(a, b);
@@ -1577,22 +1610,16 @@ UKL_INLINE int64_t lat_widen(UKL_PRIVATE const LatP* p, int64_t old, int64_t now
     return now;
 }
 
-DEFINE_KERNEL2(join, lat_merge,
-               ROBUFFER, int64_t,  U,        "[(nkeys + 1) * n]",
-               ROBUFFER, uint32_t, P,        "[pmask + 1]",
-               ROBUFFER, uint32_t, best,     "[pmask + 1]",
-               ROBUFFER, uint32_t, flags,    "[pmask + 1]",
-               RWBUFFER, uint8_t,  R,        "[block]",
-               RWBUFFER, uint8_t,  HB,       "[block]",
-               RWBUFFER, int64_t,  D,        "[(nkeys + 1) * n]",
-               RWBUFFER, uint32_t, counters, "[2]",
-               RWBUFFER, uint32_t, A,        "[arena]",
-               ARGS,     LatP,     a,        ,
-               GID0,     uint32_t, s,        )
+UKL_INLINE void lat_merge_one(Longs U, JSPACE const uint32_t* P, JSPACE const uint32_t* best, JSPACE const uint32_t* flags, JSPACE uint8_t* R, JSPACE uint8_t* HB,
+                          JSPACE int64_t* D, JSPACE uint32_t* counters, JSPACE uint32_t* A, JSPACE const uint32_t* round, JSPACE const LatP* pp, uint32_t s)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
-    UKL_GLOBAL uint32_t* H = (UKL_GLOBAL uint32_t*)(HB + p.h_at);
+    // Its parameter block, a private copy (helpers take its address).
+    LatP p = *pp;
+    // A relation grown on the device (`counted & 2`): its rows held are its length as the device claimed it; its
+    // round (`counted & 4`) the program's round word (decision 0603 step 3).
+    if ((p.counted & 2u) != 0u) p.had = clif_rows_len((JSPACE const uint8_t*)R, p.r_rows_at);
+    if ((p.counted & 4u) != 0u) p.level = *round;
+    JSPACE uint32_t* H = (JSPACE uint32_t*)(HB + p.h_at);
     if (s > p.pmask) return;
     uint32_t rep = P[s];
     if (rep == 0xffffffffu) return;
@@ -1644,3 +1671,445 @@ DEFINE_KERNEL2(join, lat_merge,
     for (uint32_t c = 0; c < p.nkeys && c < 8; c++) D[(uint64_t)c * p.n + d] = key[c];
     D[(uint64_t)p.nkeys * p.n + d] = v;
 }
+
+// Rows of several sources end to end (`Batch::append_rows`): each source's count (`src`) and its offset (`off`, the
+// counts before it), and their total (`total`). One thread: a union has a source a rule.
+typedef struct SumPart { JSPACE const uint32_t* src; JSPACE uint32_t* off; } SumPart;
+typedef struct SumP { uint32_t m, pad; JSPACE uint32_t* total; SumPart part[1]; } SumP;
+UKL_INLINE void sum_one(JSPACE const SumP* p, uint32_t t)
+{
+    if (t != 0u) return;
+    uint32_t at = 0u;
+    for (uint32_t i = 0u; i < p->m; i++) {
+        *p->part[i].off = at;
+        at += *p->part[i].src;
+    }
+    *p->total = at;
+}
+
+// A program's gate (`Batch::gate`): a table's rows (`count`, and `plus` too where `has`: a relation's rows and a
+// round's new rows onto it) past its room (`cap`) stops the program at this phase
+// (`ctl[6]`'s bit 2), before any phase after it writes what it would make from the short table: the host grows the
+// table and runs the work again (decision 0540's rerun). A thread a table.
+typedef struct GateCheck { JSPACE const uint32_t* count; JSPACE const uint32_t* plus; uint32_t cap, has; } GateCheck;
+typedef struct GateP { uint32_t m, pad0, pad1, pad2; GateCheck check[1]; } GateP;
+UKL_INLINE void gate_one(JSPACE const GateP* p, UKL_GLOBAL uint32_t* ctl, uint32_t t)
+{
+    if (t >= p->m) return;
+    GateCheck c = p->check[t];
+    uint64_t n = (uint64_t)*c.count + (c.has != 0u ? (uint64_t)*c.plus : 0u);
+    if (n > (uint64_t)c.cap) ukl_atomic_or(&ctl[6], 2u);
+}
+
+// A recursive component's round's end (`Batch::round_end`, decision 0603 step 3): one thread. Its new rows claimed
+// and its next deltas' lengths set (`ops`, in order: 0 `*to += *from`, 1 `*to = *from`, 2 `to[0..n)` zeroed, 3
+// `to[round] = *from`, a round's count logged by its round (`*round` before it is counted); 4 a count the round made,
+// any of them non-zero going on; 5 `to[k] += from[k]` for `k < n`, counts summed over rounds); the round
+// counted (`round`: the next round's number; and this launch's, `ctl[8]`); then on to the round after: the next template's first phase
+// (`next`), as a jump (`ctl[7]`, the phase and one; its finisher empties that phase's count as it pushes it). With no
+// new rows the program ends (`ctl[6]` bit 16); with a round past `max` next it stops (bit 4); after `until` rounds in this launch
+// it yields (bit 8, `ctl[9]` the phase and one it goes on from): the host launches it again from there, so a launch's
+// GPU time is a few rounds'.
+typedef struct RoundOp { JSPACE uint32_t* to; JSPACE const uint32_t* from; uint32_t op, n; } RoundOp;
+typedef struct RoundP { JSPACE uint32_t* round; uint32_t nops, max, until, next, pad0, pad1; RoundOp ops[1]; } RoundP;
+UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint32_t t)
+{
+    if (t != 0u) return;
+    bool any = false;
+    for (uint32_t i = 0u; i < p->nops; i++) if (p->ops[i].op == 4u && *p->ops[i].from != 0u) any = true;
+    uint32_t cur = *p->round;
+    for (uint32_t i = 0u; i < p->nops; i++) {
+        RoundOp o = p->ops[i];
+        if (o.op == 0u) *o.to += *o.from;
+        else if (o.op == 1u) *o.to = *o.from;
+        else if (o.op == 2u) for (uint32_t k = 0u; k < o.n; k++) o.to[k] = 0u;
+        else if (o.op == 3u && cur < o.n) o.to[cur] = *o.from;
+        else if (o.op == 5u) for (uint32_t k = 0u; k < o.n; k++) o.to[k] += o.from[k];
+    }
+    *p->round = cur + 1u;
+    ukl_fence_device();
+    if (!any) { ukl_atomic_or(&ctl[6], 16u); ukl_atomic_store(&ctl[7], 0xFFFFFFFFu); return; }
+    if (cur + 1u > p->max) { ukl_atomic_or(&ctl[6], 4u); ukl_atomic_store(&ctl[7], 0xFFFFFFFFu); return; }
+    if (ukl_atomic_add(&ctl[8], 1u) + 1u >= p->until) {
+        ukl_atomic_store(&ctl[9], p->next + 1u);
+        ukl_atomic_or(&ctl[6], 8u);
+        ukl_atomic_store(&ctl[7], 0xFFFFFFFFu);
+        return;
+    }
+    ukl_atomic_store(&ctl[7], p->next + 1u);
+}
+
+#ifdef JOIN_PROGRAM
+// A batch's program (`metal_join::Program`, decision 0603): its levels' work in one launch, a work queue whose items
+// are continuations. Its scans and its indexes' sorts are phases too: the library's tile passes over its memory.
+#include <ukl/workqueue.h>
+#include <ukl/scan.h>
+#define UKL_SCAN_NAME(f) f##_prog
+#define UKL_SCAN_SPACE JSPACE
+#include <ukl/body/scan_tile.h>
+#include <ukl/radix.h>
+#define UKL_RADIX_NAME(f) f##_u32_prog
+#define UKL_RADIX_KEY uint32_t
+#define UKL_RADIX_SPACE JSPACE
+#include <ukl/body/radix_tile.h>
+
+// What an item runs (`Program`'s `Item::what >> 24`).
+#define PK_COPY 1u
+#define PK_IX_KEY 2u
+#define PK_RADIX_HIST 3u
+#define PK_RADIX_SCATTER 4u
+#define PK_IX_PLACE 5u
+#define PK_DEDUP_CLEAR 6u
+#define PK_DEDUP_CLAIM 7u
+#define PK_MAP 8u
+#define PK_STAGE_COUNT 9u
+#define PK_SCAN_COUNT 10u
+#define PK_WITNESS_COUNT 11u
+#define PK_ROW_TEXT 12u
+#define PK_DEDUP_MARK 13u
+#define PK_SCAN_SUMS 14u
+#define PK_SCAN_TILES 15u
+#define PK_STAGE_SCATTER 16u
+#define PK_SCAN_SCATTER 17u
+#define PK_ROW_SCATTER 18u
+#define PK_DEDUP_SCATTER 19u
+// A lattice fold's passes (`lat_*_one`): its key map emptied, grown, its places emptied, claimed, the best value a
+// key, merged into the relation.
+#define PK_LAT_HCLEAR 20u
+#define PK_LAT_REHASH 21u
+#define PK_LAT_CLEAR 22u
+#define PK_LAT_CLAIM 23u
+#define PK_LAT_BEST 24u
+#define PK_LAT_MERGE 25u
+#define PK_SUM 26u
+#define PK_GATE 27u
+#define PK_ROUND 28u
+#define PK_SIZE 29u
+
+// An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase, its
+// segment and one (`Seg`; 0: none).
+typedef struct Item { uint32_t what; uint32_t group; uint32_t phase; uint32_t seg; } Item;
+UKL_STATIC_ASSERT(sizeof(Item) == 16, "Item: size");
+// A job's items in its phase, as many as a count on the device needs (decision 0603 step 5): `ceil((*count + plus) /
+// per)` of its `items` from `first`, at most them; all of them where `per` is 0 (a job of no count). A phase of
+// segments pushes theirs, at least one item in all.
+typedef struct Seg { JSPACE const uint32_t* count; uint32_t first, items, per, plus; } Seg;
+UKL_STATIC_ASSERT(sizeof(Seg) == 24, "Seg: size");
+UKL_INLINE uint32_t seg_items(UKL_GLOBAL const Seg* g)
+{
+    if (g->per == 0u) return g->items;
+    uint64_t need = ((uint64_t)*g->count + g->plus + g->per - 1u) / g->per;
+    return need < (uint64_t)g->items ? (uint32_t)need : g->items;
+}
+
+// A scan's level: its `n` values scanned in place, its tiles' sums (their offsets once scanned), whether it has them.
+// A level a size script sizes (decision 0603 step 5) has its `n` and its values' first word in `in` (`at`, its arena
+// there) set by it: read as words, coherent, as the script wrote them.
+typedef struct ScanLevel { JSPACE uint32_t* in; JSPACE uint32_t* sums; uint32_t n; uint32_t offsets; uint32_t at; uint32_t sums_at; } ScanLevel;
+#define SCAN_N_WORD 4u
+#define SCAN_AT_WORD 6u
+#define SCAN_SUMS_AT_WORD 7u
+UKL_STATIC_ASSERT(sizeof(ScanLevel) == 32, "ScanLevel: size");
+// A sort's pass: its keys and places in, its histograms (scanned: each digit's offset for each tile), out.
+typedef struct SortPass {
+    JSPACE uint32_t* keys;
+    JSPACE uint32_t* values;
+    JSPACE uint32_t* hist;
+    JSPACE uint32_t* out_keys;
+    JSPACE uint32_t* out_values;
+    uint32_t n, shift, tiles, pad;
+    uint64_t pad2;
+} SortPass;
+UKL_STATIC_ASSERT(sizeof(SortPass) == 64, "SortPass: size");
+// The program's phases, its queue's capacity, and its first phase's items (the seeds).
+// Its phases; its queue's room; its first phase (`first`, a launch from a round's) and that phase's items (`seeds`).
+typedef struct ProgP { uint32_t phases; uint32_t capacity; uint32_t seeds; uint32_t first; } ProgP;
+UKL_REFLECT_STRUCT(ProgP, phases, capacity, seeds, first)
+
+// A level's sizes (decision 0603 step 5): one thread runs a script of `ops` (`Item::group` of them from
+// `Item::what`'s index), over 64-bit registers `r`, in order. Each op's `k` its result's register, `x`/`y` its
+// operands', `w` a word's address, `c` a constant:
+//  0 `r[k] = w[0] + c`; 2 `r[k] = c`; 3 `r[k] = r[x] + r[y] + c`; 4 `r[k] = r[x] - r[y]` (0 below);
+//  5 `r[k] = r[x] * c`; 6 `r[k] = ceil(r[x] / c)`; 7 `r[k] = min(r[x], r[y])`; 8 `r[k] = max(r[x], c)`;
+// 13 `r[k]` the least power of two at least `max(r[x], c)`; 14 a check that the arena holds `c` units more past its
+//    top (`w`, `y` its room): else the program stops, as a claim past it does;
+//  9 a claim of `r[x]` bytes of the program's arena (16 a unit, `w` its top in units, `y` its room in them, `c` its
+//    address): `r[k]` their address; past the room, the program stops (`ctl[6]`'s bits 2 and 32) and `r[k]` is
+//    the arena's start;
+// 11 `w[0] = r[k]`; 12 `r[k] = w[r[x]]`.
+// Its writes are words of a job's descriptor and its parameters and of a scan level, which the phases after it read
+// as words, coherent (a pointer of theirs is the host's; a size its offset).
+typedef struct SizeOp { JSPACE uint32_t* w; uint64_t c; uint32_t op, k, x, y; } SizeOp;
+UKL_STATIC_ASSERT(sizeof(SizeOp) == 32, "SizeOp: size");
+UKL_INLINE void size_one(UKL_GLOBAL const SizeOp* ops, uint32_t n, UKL_GLOBAL uint32_t* ctl, uint32_t t)
+{
+    if (t != 0u) return;
+    uint64_t r[16];
+    for (uint32_t k = 0u; k < 16u; k++) r[k] = 0u;
+    for (uint32_t i = 0u; i < n; i++) {
+        SizeOp o = ops[i];
+        uint32_t k = o.k & 15u, x = o.x & 15u, y = o.y & 15u;
+        switch (o.op) {
+            case 0u: r[k] = (uint64_t)*o.w + o.c; break;
+            case 2u: r[k] = o.c; break;
+            case 3u: r[k] = r[x] + r[y] + o.c; break;
+            case 4u: r[k] = r[x] > r[y] ? r[x] - r[y] : 0u; break;
+            case 5u: r[k] = r[x] * o.c; break;
+            case 6u: r[k] = (r[x] + o.c - 1u) / o.c; break;
+            case 7u: r[k] = r[x] < r[y] ? r[x] : r[y]; break;
+            case 8u: r[k] = r[x] > o.c ? r[x] : o.c; break;
+            case 9u: {
+                uint64_t units = (r[x] + 15u) / 16u;
+                uint32_t got = units > 0xFFFFFFFFu ? 0xFFFFFFFFu : (uint32_t)units;
+                uint32_t old = ukl_atomic_add(o.w, got);
+                bool full = (uint64_t)old + got > (uint64_t)o.y;
+                if (full) ukl_atomic_or(&ctl[6], 2u | 32u);
+                r[k] = full ? o.c : o.c + 16u * (uint64_t)old;
+                break;
+            }
+            case 11u: *o.w = (uint32_t)r[k]; break;
+            case 12u: r[k] = (uint64_t)o.w[r[x]]; break;
+            case 14u:
+                if ((uint64_t)*o.w + o.c > (uint64_t)o.y) ukl_atomic_or(&ctl[6], 2u | 32u);
+                break;
+            case 13u: {
+                uint64_t v = r[x] > o.c ? r[x] : o.c, q = 1u;
+                for (uint32_t b = 0u; b < 40u && q < v; b++) q <<= 1;
+                r[k] = q;
+                break;
+            }
+            default: break;
+        }
+    }
+}
+
+// The threadgroup memory the scans' and sorts' tile passes take.
+typedef struct ProgLocal {
+    UKL_LOCAL uint32_t* scratch;
+    UKL_LOCAL uint32_t* h;
+    UKL_LOCAL uint32_t* counts;
+    UKL_LOCAL uint32_t* before;
+    UKL_LOCAL uint32_t* base;
+    UKL_LOCAL uint32_t* digits;
+} ProgLocal;
+
+// Item `it`'s work, a group of `JOIN_TG` threads (`l` this one's). The group runs one item at a time, so a tile
+// pass's barriers are the group's.
+UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel* scans, UKL_GLOBAL const SortPass* sorts, UKL_GLOBAL const Seg* segs, UKL_GLOBAL const SizeOp* script,
+                          JSPACE uint32_t* counts, UKL_GLOBAL uint32_t* ctl, Item it, uint32_t l, ProgLocal m __UKL_PARAMS)
+{
+    uint32_t kind = it.what >> 24, x = it.what & 0xffffffu, g = it.group, t = kind == PK_SIZE ? 0u : g * JOIN_TG + l;
+    // A segment's item strides its job's rows (decision 0603 step 5): its threads `t`, `t + step`, ..., below its
+    // count's, `step` the segment's items pushed. Its kernels are a thread a row.
+    uint32_t step = 0u, lim = 0u;
+    if (it.seg != 0u && segs[it.seg - 1u].per != 0u) {
+        UKL_GLOBAL const Seg* sg = &segs[it.seg - 1u];
+        step = seg_items(sg) * JOIN_TG;
+        lim = *sg->count + sg->plus;
+    }
+    if (kind == PK_SIZE) {
+        if (l == 0u) size_one(script + x, g, ctl, 0u);
+        return;
+    }
+    if (kind == PK_SCAN_SUMS || kind == PK_SCAN_TILES) {
+        ScanLevel lv = scans[x];
+        // Its sizes as its level's script set them (a word read: the descriptors' pointers are read as written by
+        // the host).
+        JSPACE const uint32_t* sw = (JSPACE const uint32_t*)(scans + x);
+        lv.n = sw[SCAN_N_WORD];
+        lv.in += sw[SCAN_AT_WORD];
+        lv.sums += sw[SCAN_SUMS_AT_WORD];
+        UklScanArgs a;
+        a.n = lv.n;
+        a.hasOffsets = lv.offsets;
+        a.popcount = 0u;
+        a.level = 0u;
+        // Its tiles: this item's, then each `step` on (its segment's items pushed) while below its values'; tile 0
+        // at least (its total).
+        uint32_t tiles = (lv.n + JOIN_TG * UKL_SCAN_ITEMS - 1u) / (JOIN_TG * UKL_SCAN_ITEMS), tstep = step / JOIN_TG;
+        for (uint32_t tile = g; tile < UKL_WQ_TURNS; tile += tstep) {
+            if (kind == PK_SCAN_SUMS) ukl_scan_tile_sum_prog(lv.in, lv.sums, a, m.scratch, tile, l, JOIN_TG __UKL_ARGS);
+            else ukl_scan_tile_prog(lv.in, lv.in, lv.sums, a, m.scratch, tile, l, JOIN_TG __UKL_ARGS);
+            if (tstep == 0u || tile + tstep >= tiles) break;
+        }
+        return;
+    }
+    if (kind == PK_RADIX_HIST || kind == PK_RADIX_SCATTER) {
+        SortPass sp = sorts[x];
+        UklRadixArgs a;
+        a.n = sp.n;
+        a.shift = sp.shift;
+        a.tiles = sp.tiles;
+        if (kind == PK_RADIX_HIST) ukl_radix_hist_tile_u32_prog(sp.keys, sp.hist, a, m.h, g, l, JOIN_TG);
+        else ukl_radix_scatter_tile_u32_prog(sp.keys, sp.values, sp.hist, sp.out_keys, sp.out_values, a, m.counts, m.before, m.base, m.digits, g, l, JOIN_TG __UKL_ARGS);
+        return;
+    }
+    UKL_GLOBAL const Job* j = &jobs[x];
+    // Its counts' first word, and its tables where its size script placed them, as it set them.
+    JSPACE const uint32_t* jw = (JSPACE const uint32_t*)(jobs + x);
+    JSPACE uint32_t* c = counts + jw[JOB_BASE_WORD];
+    uint32_t l_at = jw[JOB_AT_WORD], o_at = jw[JOB_AT_WORD + 1u], v_at = jw[JOB_AT_WORD + 2u], h_at = jw[JOB_AT_WORD + 3u];
+    JSPACE int64_t* arena = (JSPACE int64_t*)counts;
+    Longs L = l_at != 0u ? (Longs)(arena + (l_at - 1u)) : j->L;
+    JSPACE int64_t* O = o_at != 0u ? arena + (o_at - 1u) : j->O;
+    JSPACE int64_t* V = v_at != 0u ? arena + (v_at - 1u) : j->V;
+    JSPACE uint32_t* H = h_at != 0u ? counts + (h_at - 1u) : j->H;
+    for (uint32_t pass = 0u; pass < UKL_WQ_TURNS; pass++) {
+    switch (kind) {
+        case PK_COPY: rows_copy_one((JSPACE const uint8_t*)L, (JSPACE uint8_t*)O, j->totals, (JSPACE const Copy*)j->P, t); break;
+        case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)L, H, (JSPACE uint32_t*)j->S, (JSPACE const IxP*)j->P, j->kb, j->eb, t); break;
+        case PK_IX_PLACE: ix_place_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, (JSPACE const uint32_t*)j->VC, j->A, j->counters, (JSPACE const IxP*)j->P, j->kb, j->eb, t); break;
+        case PK_DEDUP_CLEAR: dedup_clear_one(H, j->dd, t); break;
+        case PK_DEDUP_CLAIM: dedup_claim_one(L, j->totals, H, j->dd, t); break;
+        case PK_MAP: stage_map_one(O, j->totals, j->s, t); break;
+        case PK_STAGE_COUNT: stage_count_one(L, j->R, j->totals, j->counters, c, j->A, j->D, j->F, j->s, t); break;
+        case PK_SCAN_COUNT: scan_count_one(L, j->R, j->counters, c, j->totals, j->s, t); break;
+        case PK_WITNESS_COUNT: witness_count_one(L, j->R, j->totals, c, j->bs, j->W[0], j->W[1], j->W[2], j->F, j->s, t); break;
+        case PK_ROW_TEXT:
+            row_text_one(L, j->A, j->totals, j->counters, c, V, j->G, j->S, j->P, j->D, j->VC, j->s, g * (JOIN_TG / SGW) + l / SGW, l % SGW __UKL_ARGS);
+            break;
+        case PK_DEDUP_MARK: dedup_mark_one(L, j->totals, H, c, j->dd, t); break;
+        case PK_STAGE_SCATTER: stage_scatter_one(L, j->R, j->totals, c, O, j->A, j->counters, j->D, j->F, j->ws, t); break;
+        case PK_SCAN_SCATTER: scan_scatter_one(L, j->R, j->totals, c, O, j->s, t); break;
+        case PK_ROW_SCATTER: row_scatter_one(L, V, j->totals, c, O, j->s, t); break;
+        case PK_DEDUP_SCATTER: dedup_scatter_one(L, j->totals, c, O, j->dd, t); break;
+        // A fold's buffers: `L` its rows, `A` its places, `totals` the best row a place, `H` its flags, `S` the relation's
+        // block, `VC` its key map's, `G` the old map's, `O` the changed rows, `counters` theirs, `V` the arena.
+        case PK_LAT_HCLEAR: lat_hclear_one(j->VC, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_REHASH: lat_rehash_one((JSPACE const uint8_t*)j->S, j->G, j->VC, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_CLEAR: lat_clear_one(j->A, j->totals, H, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_CLAIM: lat_claim_one(L, j->A, j->cnt, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_BEST: lat_best_one(L, j->A, j->totals, H, (JSPACE uint32_t*)V, j->cnt, (JSPACE const LatP*)j->P, t); break;
+        case PK_SUM: sum_one((JSPACE const SumP*)j->P, t); break;
+        case PK_GATE: gate_one((JSPACE const GateP*)j->P, ctl, t); break;
+        case PK_ROUND: round_one((JSPACE const RoundP*)j->P, ctl, t); break;
+        case PK_LAT_MERGE:
+            lat_merge_one(L, j->A, j->totals, H, j->S, j->VC, O, j->counters, (JSPACE uint32_t*)V, (JSPACE const uint32_t*)j->G, (JSPACE const LatP*)j->P, t);
+            break;
+        default: break;
+    }
+    // Bounded: a pass a stride of its rows.
+    if (step == 0u || t + step >= lim || t + step < t) break;
+    t += step;
+    }
+}
+
+// The program, one launch (decision 0603; 0540 step 6's scheme): a group of `JOIN_TG` threads an item. The first
+// phase's items are there from the start (the seeds, taken from a counter); the group that finishes a phase's last
+// item pushes the next phase's, the continuation, and takes items on: a pushed item has a worker that is running. A
+// group that finds nothing to take ends. No group waits for another.
+//
+// `ctl`: 0-4 the queue's control (head, tail, active, overflow, base), 5 the seeds taken, 6 the program's flags (1:
+// a push past the queue's capacity; 2: a gate stopped it; 4, 8, 16: a round's end stopped it past its rounds,
+// yielded, ended it; 32: a claim past its arena's room, with 2), `counts` the arena (each level's counts at the offsets
+// its size script claimed, decision 0603 step 5), 7 a round's end's jump, 8 the rounds this launch ran, 9 where a yield goes on (the phase and
+// one), then each phase's items done (emptied as the phase is pushed: a round runs a phase again), then each phase's
+// items as pushed (0: all of them; a phase of segments, theirs). `phases`: each phase's first item, its items, its
+// first segment and its segments (`segs`). `phases`: each phase's first item and
+// its items. Ordering: a group's writes, a device barrier and fence, then its count; the pusher's fence, then its
+// pushes; the taker's fence after its take.
+DEFINE_KERNEL2(join, join_run,
+               RWBUFFER, Job,       jobs,    "[jobs]",
+               ROBUFFER, Item,      items,   "[items]",
+               ROBUFFER, uint32_t,  phases,  "[4 * phases]",
+               ROBUFFER, Seg,       segs,    "[segs]",
+               RWBUFFER, ScanLevel, scans,   "[scans]",
+               ROBUFFER, SortPass,  sorts,   "[sorts]",
+               ROBUFFER, SizeOp,    script,  "[ops]",
+               RWBUFFER, uint32_t,  ctl,     "[10 + 2 * phases]",
+               RWBUFFER, uint32_t,  slots,   "[capacity]",
+               RWBUFFER, uint32_t,  counts,  "[counts]",
+               ARGS,     ProgP,     a,       ,
+               SHARED,   uint32_t,  took,    4,
+               SHARED,   uint32_t,  scratch, UKL_TG_SCRATCH,
+               SHARED,   uint32_t,  h,       UKL_RADIX_DIGITS,
+               SHARED,   uint32_t,  rcounts, UKL_RADIX_GROUPS * UKL_RADIX_DIGITS,
+               SHARED,   uint32_t,  before,  UKL_RADIX_DIGITS,
+               SHARED,   uint32_t,  base,    UKL_RADIX_DIGITS,
+               SHARED,   uint32_t,  digits,  UKL_RADIX_SPILL,
+               LID0,     uint32_t,  l,       )
+{
+    UklWorkQueue q;
+    q.control = ctl;
+    q.slots = slots;
+    q.capacity = a.capacity;
+    q.ring = 0u;
+    q.budget = 0u;
+    ProgLocal m;
+    m.scratch = scratch;
+    m.h = h;
+    m.counts = rcounts;
+    m.before = before;
+    m.base = base;
+    m.digits = digits;
+    UKL_GLOBAL uint32_t* done = ctl + 10u;
+    UKL_GLOBAL uint32_t* target = ctl + 10u + a.phases;
+    // Bounded: each turn does an item or ends the group.
+    for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
+        if (l == 0u) {
+            // A seed while any are left, else a continuation; else none (0).
+            uint32_t got = 0u, item = 0u;
+            if (ukl_atomic_poll(&ctl[5]) < a.seeds) {
+                item = ukl_atomic_add(&ctl[5], 1u);
+                got = item < a.seeds ? 1u : 0u;
+                item += phases[4u * a.first];
+            }
+            if (got == 0u && ukl_wq_take(q, &item)) got = 2u;
+            // What the phase before wrote, seen after the take (the pusher's fence before its push).
+            ukl_fence_device();
+            took[0] = got;
+            took[1] = item;
+        }
+        ukl_tg_barrier();
+        uint32_t got = took[0], item = took[1];
+        ukl_tg_barrier();
+        if (got == 0u) return;
+        Item it = items[item];
+        prog_item(jobs, scans, sorts, segs, script, (JSPACE uint32_t*)counts, ctl, it, l, m __UKL_ARGS);
+        // The group's writes, then the item counted: the one that brings its phase's count to its items pushes the
+        // next phase's.
+        ukl_tg_barrier_device();
+        if (l == 0u) {
+            ukl_fence_device();
+            uint32_t p = it.phase;
+            uint32_t finished = ukl_atomic_add(&done[p], 1u) + 1u;
+            uint32_t want = ukl_atomic_poll(&target[p]);
+            bool all = finished == (want != 0u ? want : phases[4u * p + 1u]);
+            // A round's end's jump (`ctl[7]`: the phase and one, or the end), else the next phase; a gate that stopped
+            // the program (`ctl[6]`'s bit 2): no phase after it.
+            uint32_t jump = all ? ukl_atomic_poll(&ctl[7]) : 0u;
+            if (jump != 0u) ukl_atomic_store(&ctl[7], 0u);
+            took[2] = jump != 0u ? (jump == 0xFFFFFFFFu ? 0u : jump)
+                    : all && p + 1u < a.phases && (ukl_atomic_poll(&ctl[6]) & 2u) == 0u ? p + 2u : 0u;
+            took[3] = 0u;
+            if (took[2] != 0u) {
+                // The phase pushed (again, by a round): its count emptied before its items are (its last run's all
+                // counted), and its items as its segments' counts need them, at least one.
+                uint32_t q = took[2] - 1u, s0 = phases[4u * q + 2u], ns = phases[4u * q + 3u], m = 0u;
+                for (uint32_t g = 0u; g < ns; g++) m += seg_items(&segs[s0 + g]);
+                took[3] = ns != 0u && m == 0u ? 1u : 0u;
+                ukl_atomic_store(&target[q], ns == 0u ? 0u : ukl_max(m, 1u));
+                ukl_atomic_store(&done[q], 0u);
+            }
+            ukl_fence_device();
+        }
+        ukl_tg_barrier();
+        uint32_t next = took[2], none = took[3];
+        if (next != 0u) {
+            uint32_t pq = next - 1u, first = phases[4u * pq], count = phases[4u * pq + 1u], s0 = phases[4u * pq + 2u], ns = phases[4u * pq + 3u];
+            if (ns == 0u) {
+                for (uint32_t i = l; i < count; i += JOIN_TG)
+                    if (!ukl_wq_push(q, first + i)) ukl_atomic_or(&ctl[6], 1u);
+            }
+            for (uint32_t g = 0u; g < ns; g++) {
+                // A segment's items: its count's, the first segment's first where none needs any (the phase goes on).
+                uint32_t m = none != 0u && g == 0u ? 1u : seg_items(&segs[s0 + g]);
+                for (uint32_t i = l; i < m; i += JOIN_TG)
+                    if (!ukl_wq_push(q, segs[s0 + g].first + i)) ukl_atomic_or(&ctl[6], 1u);
+            }
+        }
+        ukl_tg_barrier_device();
+        if (l == 0u && got == 2u) ukl_wq_done(q);
+    }
+}
+#endif

@@ -5,8 +5,6 @@
 //! - [`reads`]: the tape's primitive reads, format 15's and format 16's, as CLIF functions built
 //!   once (a node's code number, its subtree size, its start and end, its parent, hops over its
 //!   children and siblings), each marked hot or cold.
-//! - [`rust`]: CLIF as Rust source (`translate`) and a source's fingerprint. No read is translated: every read in Rust
-//!   is written directly (decisions 0534, 0536).
 //! - [`ukl`]: CLIF as UKL: the reads for every GPU's kernels (`<ukl/reads/*.h>`).
 //! - [`relation`]: a relation's reads (decision 0325), the second family: a value of `rerail_blocks`' rows, a
 //!   dead bit, an index's group, each read through the block's self-relative references.
@@ -24,7 +22,9 @@ pub mod ids;
 pub mod id_reads;
 #[cfg(feature = "ir")]
 pub mod inline;
-#[cfg(feature = "ir")]
+// The browser build has no JIT (`wasm/README.md`), so no JIT of the reads either: the manifest
+// leaves cranelift-jit out there.
+#[cfg(all(feature = "ir", not(target_family = "wasm")))]
 pub mod jit;
 /// The text tests' verdicts in the rolling cache (decision 0478 step 2d).
 #[cfg(feature = "ir")]
@@ -38,8 +38,6 @@ pub mod reads;
 pub mod relation;
 #[cfg(feature = "ir")]
 pub mod ukl;
-#[cfg(feature = "ir")]
-pub mod rust;
 pub mod view;
 /// The tape's writer in CLIF (decision 0434 §6): its state's layout, and (with `ir`) its ops.
 pub mod writer;

@@ -1,13 +1,12 @@
 //! Cross-file clauses over `evidence` relations (plan §7, E1–E3): incremental results equal a fresh
 //! workspace's, eviction and restart change nothing, and incomplete evidence never proves absence.
 
-use super::super::CodeRuleDslRuntime;
 use super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
 use super::storage::StorageContext;
 use super::storage_tests::{
     BusyDeadline, BusyWindowClock, HeldWriter, UnpublishedBudget, spend_deadline_on_busy_attempts,
 };
-use super::tests::WORKSPACE_TEST_SLOT;
+use super::fixtures::WORKSPACE_TEST_SLOT;
 use super::*;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::content_store::{ContentStore, GitTree, HashKey};
@@ -32,17 +31,13 @@ fn compile(id: &str, clauses: Value) -> CompiledCodeRuleDsl {
 }
 
 fn compile_scoped(id: &str, include: &[&str], clauses: Value) -> CompiledCodeRuleDsl {
-    CodeRuleDslRuntime::compile(
-        json!({
+    crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": id, "revision": 1,
             "mode": "steer",
             "scope": { "include": include, "exclude": [] },
             "clauses": clauses,
         })
-        .to_string(),
-        "json".into(),
-        CAPABILITIES.into(),
-    )
+        .to_string(), "json", CAPABILITIES)
     .unwrap()
 }
 
@@ -671,6 +666,50 @@ fn only_a_rule_with_calls_terms_is_copied_into_a_workspace() {
     assert_eq!(calls.inner.clauses.len(), clauses);
 }
 
+/// Whether a code rule's finding in one file can depend on another file's text, which a host orders
+/// a workspace's edits by (`CompiledCodeRuleDsl::reads_other_files`): a rule for each way the
+/// workspace reads past a file, and one for each kind that reads its own file only.
+#[test]
+fn a_rule_reads_other_files_where_the_workspace_reads_past_its_file() {
+    let needle = json!({ "regex": { "source": "file.content", "pattern": "NEEDLE" } });
+    let clause = |form: &str, query: Value| json!([{ "id": "c", "violation": violation("X", "x"), form: query }]);
+    let import = json!({ "kind": "import_statement" });
+    let imports = json!({ "ast": { "language": "python", "rule": import } });
+    let select_when = json!({ "select_when": { "select": needle.clone(), "exists": imports } });
+    let target = json!({ "kind": "string", "importTarget": { "via": "import", "failed": true } });
+    let import_target = json!({ "ast": { "language": "typescript", "rule": target } });
+    let gated = json!([
+        { "id": "gate", "define": { "report_when": { "count": { "gt": 3 } } } },
+        { "id": "c", "violation": violation("X", "x"), "forbid": needle.clone() },
+    ]);
+    let rules = [
+        ("regex", compile("regex", clause("forbid", needle)), false),
+        (
+            "select_when",
+            compile("select-when", clause("forbid", select_when)),
+            true,
+        ),
+        ("calls", async_blocking_code_rule(), true),
+        (
+            "importTarget",
+            compile("import-target", clause("forbid", import_target)),
+            true,
+        ),
+        ("report_when", compile("gated", gated), true),
+        // The engine answers an `llm` clause with a missing-capability failure that names no file.
+        ("llm", compile("llm", clause("llm", json!({}))), false),
+    ];
+    let answered = rules
+        .iter()
+        .map(|(name, rule, _)| (*name, rule.reads_other_files()))
+        .collect::<Vec<_>>();
+    let expected = rules
+        .iter()
+        .map(|(name, _, reads)| (*name, *reads))
+        .collect::<Vec<_>>();
+    assert_eq!(answered, expected);
+}
+
 /// A Python file with the module a package walk gives it (`pkg/__init__.py` is `pkg.__init__`).
 fn module_file(path: &str, source: &str) -> Value {
     let module = path.strip_suffix(".py").unwrap().replace('/', ".");
@@ -907,7 +946,7 @@ fn e4_results_of_consumers_gone_quiet_are_readable_after_eviction() {
             ));
             assert_eq!(applied, found(expected, &[]), "{case}: apply");
             assert!(workspace.evict_inactive().unwrap(), "{case}");
-            let page = super::tests::result_page(&workspace, 0, 64 * 1024 * 1024)
+            let page = super::fixtures::result_page(&workspace, 0, 64 * 1024 * 1024)
                 .map(|page| outcome(&serde_json::from_str(&page).unwrap()));
             assert_eq!(
                 page.map_err(|error| error.reason),
@@ -987,7 +1026,7 @@ fn an_evicted_file_kept_for_a_consumer_that_ran_out_keeps_its_other_results() {
                 .contains(&("budget-exceeded".to_owned(), "app/api.py".to_owned())),
             "the consumer ran out on api.py: {applied:?}"
         );
-        let page = super::tests::result_page(&workspace, 0, 64 * 1024 * 1024)
+        let page = super::fixtures::result_page(&workspace, 0, 64 * 1024 * 1024)
             .map(|page| outcome(&serde_json::from_str(&page).unwrap()))
             .unwrap();
         for (seen, case) in [(&applied, "apply"), (&page, "page")] {
@@ -1063,7 +1102,7 @@ fn e4_a_consumer_restamped_while_the_store_is_busy_keeps_its_results_through_evi
     let workspace = stored_workspace(&store, "/e4-busy-restamp", &code_rule);
     // Each violation's path and code, as a result page reads them.
     let paged = || {
-        super::tests::result_page(&workspace, 0, 64 * 1024 * 1024)
+        super::fixtures::result_page(&workspace, 0, 64 * 1024 * 1024)
             .map(|page| {
                 serde_json::from_str::<Value>(&page).unwrap()["violations"]
                     .as_array()

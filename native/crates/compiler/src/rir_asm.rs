@@ -502,6 +502,14 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.mark_words.push((k, s));
         }
+        "markpasses" => {
+            let k: u8 = line.number("")?;
+            let m: u64 = line.number("")?;
+            if parts.mark_passes.last().is_some_and(|&(x, _)| x >= k) {
+                return Err(format!("markpasses {k} out of order"));
+            }
+            parts.mark_passes.push((k, m));
+        }
         "wordkind" => {
             let s: u16 = line.number("s")?;
             let k = line.kind()?;
@@ -572,6 +580,8 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     elems.last_mut().ok_or("an `end` before its element")?.end = true;
                 } else if w == "run" {
                     elems.last_mut().ok_or("a `run` before its element")?.run = true;
+                } else if w == "since" {
+                    elems.last_mut().ok_or("a `since` before its element")?.since = true;
                 } else if let Some(h) = w.strip_prefix('r') {
                     // A kind of a shared first byte: its rows' start's mark bits (`TokenElem::rows`).
                     let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad row mark set `{w}`"))?;
@@ -795,12 +805,23 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
                     _ => None,
                 };
-                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), split: crate::records::Split::Tier1, quiet: false });
+                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false });
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
-                let part = matches!(line.word(), Ok(w) if w == "part");
-                r.retags.push(crate::records::Retag { o, kind, marks, part });
+                let (mut part, mut first) = (false, [0u64; 4]);
+                while let Ok(w) = line.word() {
+                    match w.as_str() {
+                        "part" => part = true,
+                        "first" => {
+                            for x in &mut first {
+                                *x = u64::from_str_radix(&line.word()?, 16).map_err(|e| format!("block {at} recretag first: {e}"))?;
+                            }
+                        }
+                        w => return Err(format!("block {at} recretag: `part` or `first`, not {w}")),
+                    }
+                }
+                r.retags.push(crate::records::Retag { o, kind, marks, part, first });
             } else if first == "recarm" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recarm before its records"))?;
                 let k: usize = line.number("")?;
@@ -836,6 +857,18 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 }
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recpart {k}: no such reader"))?;
                 rd.parts.push(crate::records::ReadPart { start, bytes, last, kind });
+            } else if first == "reccontent" {
+                // `reccontent K KIND`: reader K's content's own kind (`Reader::content`).
+                let r = program.records.as_mut().ok_or(format!("block {at} reccontent before its records"))?;
+                let k: usize = line.number("")?;
+                let kind: u8 = line.number("")?;
+                r.readers.get_mut(k).ok_or(format!("block {at} reccontent {k}: no such reader"))?.content = Some(kind);
+            } else if first == "recclose" {
+                // `recclose K BYTE KIND`: reader K's closer at BYTE has its own kind (`Reader::closers`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recclose before its records"))?;
+                let k: usize = line.number("")?;
+                let (b, kind): (u8, u8) = (line.number("")?, line.number("")?);
+                r.readers.get_mut(k).ok_or(format!("block {at} recclose {k}: no such reader"))?.closers.push((b, kind));
             } else if first == "recquiet" {
                 // `recquiet K`: reader K's region holds no mask mark (`Reader::quiet`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recquiet before its records"))?;
@@ -1065,6 +1098,7 @@ pub fn head_rows(out: &mut String, program: &Words) {
     }
     reading_rows(out, &program.readings);
     crate::rir_text::mark_word_rows(out, &program.mark_words);
+    crate::rir_text::mark_pass_rows(out, &program.mark_passes);
     crate::rir_text::word_kind_rows(out, &program.word_kinds);
     crate::rir_text::extra_rows(out, &program.extras);
     crate::rir_text::token_mark_rows(out, &program.token_marks);

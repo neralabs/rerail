@@ -3,7 +3,7 @@
 //! `rerail_accel::upkeep::Job`.
 
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::{CapacityState, ContentStore, CorpusPolicy};
 use rerail_accel::upkeep::{Due, Job, Qos, Slice, Step};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
@@ -50,8 +50,7 @@ impl Work {
 }
 
 /// One SQLite file's upkeep: its write-ahead log checkpointed and truncated, its free pages given back, and the
-/// tables named analyzed (approximately: `analysis_limit`), never a table whose statistics `fact_stats` writes
-/// (`stats::plans::write_stat1`: the planner's statistics are its own, never `ANALYZE`'s). Each step is one
+/// tables named analyzed (approximately: `analysis_limit`). Each step is one
 /// action on a connection of its own that waits for no lock (a file in use is tried at a later poll).
 pub struct SqliteFile {
     path: PathBuf,
@@ -61,7 +60,7 @@ pub struct SqliteFile {
     analyzed: Option<Instant>,
 }
 
-/// The tables a file's upkeep analyzes: never SQLite's own (`sqlite_*`) or one `fact_stats` names.
+/// The tables a file's upkeep analyzes: never SQLite's own (`sqlite_*`).
 #[derive(Clone, Debug)]
 pub enum Tables {
     All,
@@ -99,7 +98,6 @@ impl SqliteFile {
         if self.analyzed.is_none_or(|t| t.elapsed() >= ANALYZE_EVERY) {
             let has = |sql: &str, t: &str| db.query_row(sql, [t], |_| Ok(())).optional().map(|r| r.is_some());
             let stat1 = has("SELECT 1 FROM sqlite_schema WHERE name = ?1", "sqlite_stat1")?;
-            let fact_stats = has("SELECT 1 FROM sqlite_schema WHERE name = ?1", "fact_stats")?;
             let all: Vec<String> = db
                 .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")?
                 .query_map([], |r| r.get(0))?
@@ -109,9 +107,6 @@ impl SqliteFile {
                 Tables::Only(only) => only.iter().filter(|t| all.contains(t)).cloned().collect(),
             };
             for t in &tables {
-                if fact_stats && has("SELECT 1 FROM fact_stats WHERE tbl = ?1 LIMIT 1", t)? {
-                    continue;
-                }
                 // Analyzed in this process's day, or before it (rows in `sqlite_stat1`): only after a day here.
                 let analyzed = stat1 && has("SELECT 1 FROM sqlite_stat1 WHERE tbl = ?1 LIMIT 1", t)?;
                 if !analyzed || self.analyzed.is_some() {
@@ -460,15 +455,16 @@ mod tests {
         let p = dir.join(format!("upkeep-{auto}.sqlite"));
         let db = Connection::open(&p).unwrap();
         db.execute_batch(&format!(
-            "PRAGMA auto_vacuum = {auto}; PRAGMA journal_mode = WAL;
-             CREATE TABLE rows(k INTEGER PRIMARY KEY, v TEXT); CREATE INDEX rows_v ON rows(v);
-             CREATE TABLE fact_stats(tbl TEXT, col TEXT, rows INTEGER, sq INTEGER);
-             CREATE TABLE facts(a INTEGER); INSERT INTO fact_stats VALUES ('facts', 'a', 1, 1);"
+            "PRAGMA auto_vacuum = {auto}; PRAGMA journal_mode = WAL; PRAGMA synchronous = OFF;
+             CREATE TABLE rows(k INTEGER PRIMARY KEY, v TEXT, w INTEGER); CREATE INDEX rows_w ON rows(w);
+             CREATE TABLE facts(a INTEGER);"
         ))
         .unwrap();
         let tx = db.unchecked_transaction().unwrap();
-        for i in 0..20_000 {
-            tx.execute_cached("INSERT INTO rows(v) VALUES (?1)", [format!("{i:0>1000}")]).unwrap();
+        // More than `FREE_BYTES` free once three quarters are deleted (18 MB of 24): the rows' text, its index a small
+        // column's (an index of the text doubled what the fixture wrote), unsynced (the fixture is no subject).
+        for i in 0..24_000i64 {
+            tx.execute_cached("INSERT INTO rows(v, w) VALUES (?1, ?2)", rusqlite::params![format!("{i:0>1000}"), i % 64]).unwrap();
         }
         tx.commit().unwrap();
         db.execute_batch("DELETE FROM rows WHERE k % 4 != 0; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
@@ -511,10 +507,10 @@ mod tests {
             let p = file(dir.path(), auto);
             let before = std::fs::metadata(&p).unwrap().len();
             let only = SqliteFile::new(&p, Tables::Only(vec!["facts".into(), "missing".into()])).probe().unwrap();
-            assert!(only.analyze.is_empty(), "{auto}: the planner's table and a missing one are left out: {only:?}");
+            assert_eq!(only.analyze, vec!["facts".to_string()], "{auto}: a missing table is left out: {only:?}");
             let mut job = SqliteFile::new(&p, Tables::All);
             let work = job.probe().unwrap();
-            assert_eq!(work.analyze, vec!["fact_stats".to_string(), "rows".to_string()], "{auto}");
+            assert_eq!(work.analyze, vec!["facts".to_string(), "rows".to_string()], "{auto}");
             // Three quarters free: a whole vacuum in either mode.
             assert_eq!((work.free_pages, work.vacuum), (0, true), "{auto}: {work:?}");
             assert!(run(&mut job) > 0);

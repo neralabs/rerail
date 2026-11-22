@@ -144,7 +144,7 @@ impl<'s> Stream<'s, '_> {
         let slot: Slot<R> = Arc::new(Mutex::new(None));
         let to = Arc::clone(&slot);
         let job = Box::new(move || {
-            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).map_err(crate::exec::abort_over_budget);
             *to.lock().unwrap_or_else(|p| p.into_inner()) = Some(r);
         });
         let ticket = st.board.queue(Lane::Cpu, vec![Item { form: st.name, units: 0.0, estimate, host: estimate }]);

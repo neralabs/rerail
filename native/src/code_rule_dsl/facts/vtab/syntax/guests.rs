@@ -22,7 +22,6 @@ use super::{Document, Guest, Made, Placement, Projected, Relation, TapePlace};
 #[derive(Default)]
 pub struct GuestRows {
     program: Vec<[i64; 3]>,
-    /// A file's grammar (`doc_grammar`): what parsed it, for the rules that read a document's Git provenance.
     grammar: Vec<[i64; 2]>,
     tape: Vec<[i64; 2]>,
     parsed: Vec<[i64; 3]>,

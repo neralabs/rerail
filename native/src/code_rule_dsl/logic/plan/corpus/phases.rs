@@ -32,7 +32,7 @@ use crate::code_rule_dsl::logic::program_image::Version;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::typing::file_local::Binding;
 
-const SEP: &str = "__";
+use crate::code_rule_dsl::logic::plan::phased::SEP;
 
 /// The phases whose runs are under way, outermost first, in the run's context: a phase reading a later phase's export
 /// runs that phase inside its own run, so a phase met again is a cycle. A run in a job is inside the same phases.
@@ -50,14 +50,14 @@ pub(super) const SOURCES: &str = "sources";
 
 /// What phase 1 handed on, for the run that ran it and every phase run inside that run: its documents are theirs.
 #[derive(Clone)]
-pub(super) struct PhaseOne {
+pub struct PhaseOne {
     /// The tree it read, and its grammar: a run of another tree or grammar (phase 0's) does not take its documents.
     pub(super) root: PathBuf,
     pub(super) label: String,
     /// The source files it made documents of, `(path, grammar, content)`, in the order given.
-    pub(super) documents: Vec<(String, String, String)>,
+    pub documents: Vec<(String, String, String)>,
     /// The library documents the imports reached, `(canonical path, module, grammar, content)`.
-    pub(super) libraries: Vec<(String, String, String, String)>,
+    pub libraries: Vec<(String, String, String, String)>,
     /// Its exports, as a reader of `sources__<export>` takes them.
     rows: BTreeMap<String, Vec<Vec<Value>>>,
 }
@@ -67,17 +67,17 @@ pub(super) struct PhaseOne {
 struct HeldPhaseOne(Option<std::sync::Arc<PhaseOne>>);
 
 /// Holds phase 1's result for the run until dropped.
-pub(super) struct PhaseOneHeld {
+pub struct PhaseOneHeld {
     _one: crate::code_rule_dsl::logic::profile::Bound,
 }
 impl PhaseOneHeld {
-    pub(super) fn enter(one: PhaseOne) -> PhaseOneHeld {
+    pub fn enter(one: PhaseOne) -> PhaseOneHeld {
         PhaseOneHeld { _one: crate::code_rule_dsl::logic::profile::bind(HeldPhaseOne(Some(std::sync::Arc::new(one)))) }
     }
 }
 
 /// Phase 1's result, while a run that ran it is under way here, if it read `root` in `label`.
-pub(super) fn phase_one(root: &Path, label: &str) -> Option<std::sync::Arc<PhaseOne>> {
+pub fn phase_one(root: &Path, label: &str) -> Option<std::sync::Arc<PhaseOne>> {
     crate::code_rule_dsl::logic::profile::bound::<HeldPhaseOne>().0.filter(|o| o.root == root && o.label == label)
 }
 
@@ -206,13 +206,8 @@ pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::sha
     Ok(out)
 }
 
-/// Whether `rel` names an earlier phase's export (`<phase>__<export>`), or an input the runner binds with the phases'
-/// (Git's, the analysis history's and the source languages'): shared by every program of a run
-/// (`corpus::combine` does not prefix it).
-pub fn is_phased(rel: &str) -> bool {
-    super::analysis_history::is_input(rel) || super::git::INPUTS.contains(&rel) || super::source_languages::is_input(rel)
-        || rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("rr_") && !e.contains(SEP))
-}
+/// Whether `rel` is an input shared by every program of a run (the planner's, `plan::phased`).
+pub use crate::code_rule_dsl::logic::plan::phased::is_phased;
 
 /// A batch of policies run one after another over one tree (`tools::run_policies`): while it is held, phase 1's runs
 /// are kept by their inputs and taken again by a policy whose run has the same ones. Nothing is kept past it, so an
@@ -303,7 +298,7 @@ impl Reading {
 
 /// The tape cache, for a read outside a run: the handle the holders share (`Reading`), opened at the first read; with
 /// none under way, or another tape cache this thread's (a test's own), one opened for the read.
-pub(in crate::code_rule_dsl) fn reading_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+pub fn reading_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
     let path = super::tape_cache_path();
     if let Some(reading) = crate::code_rule_dsl::logic::profile::bound::<ReadingUnderWay>().0 {
         let mut r = reading.0.lock().expect("the reading store");
@@ -327,7 +322,7 @@ pub(in crate::code_rule_dsl) fn reading_store() -> Option<std::sync::Arc<crate::
 /// root's last `protected_runs` (2): of a 44-policy batch, 42 plans were dead at the next decision, their memo spaces
 /// dropped, and the next batch found a hit's memo entry gone. The batch is one run of the root. `None` outside a
 /// batch.
-pub(super) fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Option<Vec<[u8; 32]>> {
+pub fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Option<Vec<[u8; 32]>> {
     let state = Batch::state()?;
     let mut all = state.plans.lock().expect("the batch's plans");
     let plans = all.entry(root.to_owned()).or_default();
@@ -352,7 +347,7 @@ pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
 /// The facts `prog` reads from earlier phases (`<phase>__<export>`), each phase run first in its own space, and the
 /// phases' runs, in the order they ran.
-pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, root: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
+pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, root: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
     // A phase's own run: its upstream facts were worked out by the run that started it.
     if let Some(me) = declared(prog)
         && let Some(f) = crate::code_rule_dsl::logic::profile::with_bound(|h: &HandedDown| h.0.last().filter(|(n, _)| *n == me.name).map(|(_, f)| Facts::clone(f)))
@@ -448,7 +443,7 @@ pub(super) fn handed_down_text() -> String {
 }
 
 /// Content already observed for source requests, available before the request waves start.
-pub(super) fn observed_source_digests() -> Vec<[u8; 32]> {
+pub fn observed_source_digests() -> Vec<[u8; 32]> {
     crate::code_rule_dsl::logic::profile::with_bound(|handed: &HandedDown| {
         handed.0.last().and_then(|(_, facts)| facts.get("observer__source_file"))
             .into_iter().flatten()
@@ -487,12 +482,12 @@ pub(super) fn handed_files() -> Vec<(Vec<String>, String, [u8; 32])> {
 }
 
 /// Whether a phase's run is under way on this thread (its documents are its own: phase 1 does not run inside it).
-pub(super) fn in_phase() -> bool {
+pub fn in_phase() -> bool {
     crate::code_rule_dsl::logic::profile::with_bound(|r: &Phases| !r.0.is_empty())
 }
 
 /// The innermost phase whose run is under way on this thread, if any: its facts are its own fact space's.
-pub(super) fn current() -> Option<String> {
+pub fn current() -> Option<String> {
     crate::code_rule_dsl::logic::profile::with_bound(|r: &Phases| r.0.last().cloned())
 }
 
@@ -505,7 +500,7 @@ pub(super) fn sources_path() -> PathBuf {
 /// as documents by `sources.rerail`, its own run of the same engine, with the libraries their imports reach. What it hands
 /// on is each file that became a document, `(path, grammar, content)`, in the order given, and each library document:
 /// the later phases' documents.
-pub(super) fn sources(
+pub fn sources(
     files: &[(String, String, String, String)],
     // The texts the run read for `files`' digests, which this phase's builder borrows (decision 0300).
     texts: &super::texts::Sources,
@@ -570,7 +565,8 @@ pub(super) fn sources(
         let file = if crate::git_workspace::snapshot::contains(root) {
             p.clone()
         } else {
-            crate::git_workspace::snapshot::canonicalize(root.join(p)).ok()?.into_os_string().into_string().ok()?
+            // Spelled with `/` on every OS, as the rules join and split paths (`corpus::slashed`).
+            super::slashed(&crate::git_workspace::snapshot::canonicalize(root.join(p)).ok()?)
         };
         Some(vec![Value::Str(p.clone().into()), Value::Str(file.into())])
     }).collect();

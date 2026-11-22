@@ -43,6 +43,7 @@ pub fn released<T>(f: impl FnOnce() -> T) -> T {
 
 pub mod join;
 pub mod kernels;
+pub mod launch;
 pub mod shared;
 pub mod space;
 pub mod tile;
@@ -71,6 +72,43 @@ enum Pipe {
 
 const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_level", "cl_gather"];
 
+/// `f`, a compile that is fatal where it fails (decision 0382), as a result: what compiling ahead reports (its use
+/// still stops the run, naming the kernel).
+pub fn caught(f: impl FnOnce()) -> Result<(), String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|p| {
+        p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "a panic".into())
+    })
+}
+
+/// The lane's kernels, to compile ahead of their first use (`rerail_gpu::kernels::compile_ahead`): the UKL library,
+/// the joins' fixed kernels and each width's sort and gather (as `join::prewarm` makes them), and the relational
+/// kernels (`relational.uglykl`). Each is made as its use makes it, so its use then finds it.
+pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
+    let mut v = vec![ahead("ukl library", || released(rerail_gpu::library::ready))];
+    // The fused sorts and probes only where the device can run them (`Fused::can`), as `join::prewarm`.
+    let fused: &[&'static str] = if join::Fused::can() { &["sort_all", "probe_all"] } else { &[] };
+    for &name in ["pair_keys", "col_span", "col_base", "col_narrow"].iter().chain(fused) {
+        v.push(ahead(format!("join {name}"), move || released(|| join::fixed(name).map(drop))));
+    }
+    for w in [join::Width::W64, join::Width::W32, join::Width::W16] {
+        v.push(ahead(format!("join sort {w:?}"), move || released(|| join::sort_and_gather(w))));
+    }
+    for name in PIPES {
+        v.push(ahead(format!("relational {name}"), move || released(|| caught(|| _ = kernels::function_fixed(SOURCE, name, None)))));
+    }
+    v
+}
+
+/// A kernel to compile ahead (`rerail_gpu::kernels::Ahead`), made in its caller's run (decision 0442): its compile
+/// runs on a thread of its own, and what it makes is the caller's machine's, as its use's is.
+pub fn ahead(name: impl Into<String>, make: impl Fn() -> Result<(), String> + Send + Sync + 'static) -> rerail_gpu::kernels::Ahead {
+    let run = rerail_context::job_run();
+    rerail_gpu::kernels::Ahead::new(name, move || {
+        let _run = rerail_context::enter(run.clone());
+        make()
+    })
+}
+
 /// The process's device in the device layer and the compiled kernels: once per process, on any backend.
 struct Gpu {
     layer: shared::Layer,
@@ -88,7 +126,7 @@ impl Gpu {
         }
         // Through the store of compiled kernels (decision 0395); one that does not compile is fatal.
         let functions = PIPES.iter().map(|name| kernels::function_fixed(SOURCE, name, None)).collect();
-        let page = rerail_device::page_size();
+        let page = rerail_device::os::page_bytes();
         Ok(Gpu { layer, functions, page, max_buffer: layer.max_buffer })
     }
 }
@@ -339,7 +377,10 @@ impl crate::exec::Pending for Running {
     fn finish_counted(self: Box<Self>) -> (Result<Vec<Output>, String>, f64) {
         match self.0.recv() {
             Ok((Ok(r), cpu)) => (r, cpu),
-            Ok((Err(_), cpu)) => (Err("its submission panicked".into()), cpu),
+            Ok((Err(p), cpu)) => {
+                crate::exec::resume_over_budget(p);
+                (Err("its submission panicked".into()), cpu)
+            }
             Err(_) => (Err("its submission's thread ended without a result".into()), 0.0),
         }
     }
@@ -349,8 +390,10 @@ impl crate::exec::Pending for Running {
 }
 
 impl GpuBackend {
-    /// Runs `ks` as one submission, with what it took on the device.
+    /// Runs `ks` as one submission, with what it took on the device: an evaluation of the launch budget (`launch`),
+    /// or the caller's when it is in one, its pairs' scatter again a rerun's.
     pub fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Stats), String> {
+        let _evaluation = launch::LaunchScope::enter();
         let mut plan = Planner { gpu: &self.gpu, inputs: HashMap::new(), leases: Default::default() };
         let t = std::time::Instant::now();
         let jobs: Vec<Job> = crate::score::phase("upload", || ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>())?;
@@ -376,6 +419,7 @@ impl GpuBackend {
             }
         }
         if !rerun.is_empty() {
+            let _rerun = launch::rerun();
             let stage = [Stage { steps: rerun }];
             self.execute(std::iter::once(&stage[..]), &mut stats)?;
         }
@@ -410,6 +454,9 @@ impl GpuBackend {
         let gpu = &*self.gpu;
         let (c0, t0) = (crate::score::thread_cpu(), std::time::Instant::now());
         let q = shared::Queue::new()?;
+        // The submission's key in the evaluation's records.
+        let key = Box::new(0u8);
+        let pointer = std::ptr::from_ref::<u8>(&key) as usize;
         let depth = jobs.clone().map(|j| j.len()).max().unwrap_or(0);
         for s in 0..depth {
             if s > 0 {
@@ -417,14 +464,17 @@ impl GpuBackend {
             }
             for stage in jobs.clone().filter_map(|j| j.get(s)) {
                 for step in &stage.steps {
-                    stats.dispatches += step.enqueue(gpu, &q)?;
+                    stats.dispatches += step.enqueue(gpu, &q, pointer)?;
                 }
             }
         }
         crate::score::add("encode", crate::score::thread_cpu() - c0, t0.elapsed().as_secs_f64());
+        launch::check_submission();
+        launch::mark(pointer, false);
         let event = crate::score::phase("gpu commit", || q.flush());
         // What the steps read and write is held until the submission completes (decision 0487 step 2).
         crate::score::phase("gpu wait", || event.await_()).map_err(|e| format!("the submission failed: {e}"))?;
+        launch::mark(pointer, true);
         stats.device += event.gpu_seconds();
         stats.command_buffers += 1;
         Ok(())
@@ -534,13 +584,20 @@ enum Step {
 }
 
 impl Step {
-    /// Enqueued on `q`: the launches it took.
-    fn enqueue(&self, gpu: &Gpu, q: &ComputeQueue) -> Result<usize, String> {
+    /// Enqueued on `q`, each launch charged first to the launch budget as the command `pointer`'s (`launch`): the
+    /// launches it took. A launch past the budget is the hard failure (decision 0601), before it is enqueued.
+    fn enqueue(&self, gpu: &Gpu, q: &ComputeQueue, pointer: usize) -> Result<usize, String> {
+        let charge = |kernel: &str, groups: [u64; 3], threads: [u64; 3]| {
+            let grid = [groups[0] * threads[0], groups[1] * threads[1], groups[2] * threads[2]];
+            launch::attempt(pointer, kernel, grid, threads, false, Vec::new());
+            Ok::<(), String>(())
+        };
         match self {
             Step::Kernel(d) => {
                 if d.groups.iter().product::<u64>() == 0 {
                     return Ok(0);
                 }
+                charge(&format!("{:?}", d.pipe), d.groups, d.threads)?;
                 let mut l = rerail_gpu::kernels::launch(q, &gpu.functions[d.pipe as usize]);
                 for (name, b) in &d.binds {
                     l = match b {
@@ -552,20 +609,22 @@ impl Step {
                 Ok(1)
             }
             Step::Scan { input, output, n, pop } => {
-                if *pop {
-                    rerail_gpu::library::scan_exclusive_popcount_u32(q, input, output, *n)?;
-                } else {
-                    rerail_gpu::library::scan_exclusive_u32(q, input, output, *n)?;
-                }
-                Ok(1)
+                // The library says its launches once it has made them (its levels' count): charged then, past the
+                // budget the hard failure.
+                let made = rerail_gpu::library::scan_exclusive_u32_in(q, input, output, *n, *pop, &rerail_gpu::library::ScanSpace::new(*n)?)?;
+                launch::charge_made(pointer, "ukl_scan_u32", made);
+                Ok(made)
             }
             Step::Histogram { codes, offsets, parts, width, h, bad } => {
+                // One launch of the library's (`histogram`).
+                charge("ukl_histogram", [u64::from(*parts), 1, 1], [1, 1, 1])?;
                 rerail_gpu::library::histogram::<u16>(q, codes, offsets, *parts, *width, h, bad)?;
                 Ok(1)
             }
             Step::Zero { buf, words } => {
+                // A fill, not a compute launch (as a `lane::Command`'s fill).
                 q.enqueue_fill_array(buf, &0u32, 0, Some(*words));
-                Ok(1)
+                Ok(0)
             }
         }
     }

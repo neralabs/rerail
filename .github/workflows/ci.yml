@@ -91,8 +91,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # Its cache is saved by a push to main alone; any other run restores main's.
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          save-cache: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       # Every file carries licence information and every licence it names has its text in LICENSES/.
       - name: REUSE lint
@@ -215,6 +218,7 @@ jobs:
       e2e: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.e2e || 'true' }}
       integration: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.integration || 'true' }}
       sessions: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.sessions || 'true' }}
+      translations: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.translations || 'true' }}
       # Which Rust packages' tests the change can affect (scripts/check/ci/rust-selection.mjs): the changed crates and every
       # crate that depends on one. Everything off pull requests, past 3000 files, and when the step fails: rust-all
       # 'true', rust-packages every package (or ["all"] when even the package list could not be read), rust-cargo-args
@@ -381,6 +385,25 @@ jobs:
               - *common
               - *package
               - 'scripts/host/**'
+            # The translation suite: the pack's translations and the libraries they include, the pack's rules, the
+            # engine both sides run, the product's runner, the suite and the corpora it pins. tsx reads tsconfig.json.
+            translations:
+              - *common
+              - *engine
+              - 'docs/rule-syntax/**'
+              - 'packs/rerail/**'
+              - 'conformance/**'
+              - 'src/engine/**'
+              - 'scripts/s3/**'
+              - 'scripts/samples/**'
+              - 'scripts/ship/translations*'
+              - 'scripts/ship/product-run.ts'
+              - 'scripts/ship/engine-json.ts'
+              - 'scripts/ship/corpus-tree.ts'
+              - 'scripts/ship/metric.ts'
+              - 'scripts/ship/verdict.ts'
+              - 'scripts/ship/corpora.json'
+              - 'tsconfig.json'
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -633,6 +656,65 @@ jobs:
           artifact: ${{ steps.compile-cache.outputs.artifact }}
           dir: ${{ steps.compile-cache.outputs.dir }}
 
+  # The engine's browser build (native/wasm/README.md): no other job builds the engine for wasm32-wasip1, so a change
+  # that broke it failed no check. Checks, not builds: the library with its default features, then the shape a page
+  # ships, the rule explorer's (the binary and its library, `headless` and one language, without `tape-cache` or
+  # `dump-cli`), since code gated on those features compiles only there. wasi-sdk brings the clang, llvm-ar, wasi-libc
+  # and libc++ that native/wasm/env.sh takes from Homebrew on macOS. Gated as rust-windows is, when the change reaches
+  # the engine (`rust-engine`). A job of its own with no compile cache: its failure, or a failed download for it, leaves
+  # what rust-clippy saves as it was. Cold, at 4 jobs, the check takes 2.5 to 7 minutes.
+  rust-wasm:
+    name: Rust engine (browser build)
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.rust-engine != 'false' &&
+        needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The grammars' parsers, which the build scripts compile for the target, are LFS objects.
+      - uses: ./.github/actions/lfs
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Check the engine's browser build (wasm32-wasip1)
+        env:
+          RUST_CHANNEL: ${{ steps.rust-toolchain.outputs.channel }}
+          WASI_SDK: wasi-sdk-34.0-x86_64-linux
+          WASI_SDK_SHA256: b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4
+        run: |
+          rustup target add wasm32-wasip1 --toolchain "$RUST_CHANNEL"
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/$WASI_SDK.tar.gz" \
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/$WASI_SDK.tar.gz"
+          echo "$WASI_SDK_SHA256  $RUNNER_TEMP/$WASI_SDK.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$WASI_SDK.tar.gz" -C "$RUNNER_TEMP"
+          export WASI_SDK_PATH="$RUNNER_TEMP/$WASI_SDK"
+          . native/wasm/env.sh
+          cargo check -p rerail-engine --lib --target wasm32-wasip1
+          cargo check -p rerail-engine --bin rerail-engine --target wasm32-wasip1 --no-default-features --features headless,lang-python
+
   # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/ci/native-test-legs.mjs): it runs
   # `cargo test --workspace` with that script as cargo's target runner, which records each test binary with the
   # working directory and environment cargo gives it instead of running it, and runs the doc tests. It then lists every
@@ -783,6 +865,8 @@ jobs:
       # The canonical Python AST facts (`value::python_ast`) run CPython 3.13 as `python3.13`; the runner has 3.12.
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          save-cache: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - name: Put CPython 3.13 on PATH
         run: |
@@ -1284,7 +1368,7 @@ jobs:
           ref: ${{ env.WARM_REF }}
 
       - name: Engine Windows tests
-        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
+        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-tests-rr -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
 
       - name: Save the compile cache
         if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}
@@ -1299,10 +1383,12 @@ jobs:
   # the unit job's do; with vitest's split by a hash of each path the slowest of the five held nearly twice the
   # fastest's test time. The count is the matrix's alone: the name and `--shard` read it as `strategy.job-total`. Gated
   # as the unit job is, and reads the same test data: the test-data job's artifact, downloaded and verified against the
-  # locks as on Linux. The engine is build-windows' artifact; the package is built here, which takes seconds.
+  # locks as on Linux. The engine is build-windows' artifact; the package (dist/) is the build job's, as every Linux job
+  # takes it, rather than `npm run build:js` in each shard (about 20 s): tsc and esbuild emit the same JavaScript for Node
+  # on any OS, from sources checked out with LF line ends (.gitattributes), and dist/ names no build machine's path.
   unit-windows:
     name: Unit tests (Windows, ${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: [test-data, build-windows, select-tests]
+    needs: [test-data, build, build-windows, select-tests]
     if: >-
       ${{
         needs.select-tests.outputs.windows-shards != '[]' &&
@@ -1350,8 +1436,15 @@ jobs:
           name: engine-windows
           path: native
 
-      - name: Build the package
-        run: npm run build:js
+      # dist/ alone: the artifact's Linux engine stays out of native/.
+      - name: Download the built package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: built
+          path: ${{ runner.temp }}/built
+
+      - name: Take dist/ from the built package
+        run: mv "$RUNNER_TEMP/built/dist" dist
 
       # A runner's first Python start reads the interpreter and its standard library cold: about a second here, but
       # 0.5 to 11 s once the tests run beside it, and up to 87 s, past the 30 s a test may take, in the test of
@@ -1381,7 +1474,7 @@ jobs:
 
       # The integration job runs on Linux only. This file replays a Claude Code session through the built hook as
       # Claude Code runs it on Windows (dist/harness/hook-launcher.js), against a daemon of this build, including a
-      # session VS Code opens with a lower-case `c:`; it needs the engine and dist/ the steps above made, and takes
+      # session VS Code opens with a lower-case `c:`; it needs the engine and dist/ the steps above took, and takes
       # about a minute, so one shard runs it, which the split gives that much less of the suite (`firstShardExtraMs`
       # in the times).
       - name: Claude Code hook integration test
@@ -1700,6 +1793,84 @@ jobs:
             gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body" > /dev/null
           fi
 
+  # The rerail pack's `.rerail` translations against its JSON rules (scripts/ship/translations.ts): each rule's findings
+  # through both, on the pack's examples and on an export of this repository at the commit scripts/ship/corpora.json
+  # pins (`rerail-translations`, checked against its pin), must be what docs/rule-syntax/packs/rerail/equivalence.json
+  # declares. The originals run through the product's path on the build job's engine; the translations through the
+  # release `rerail-engine` binary built here, from its own compile cache.
+  translations:
+    name: Rule translations against their originals
+    needs: [changes, build]
+    if: needs.changes.outputs.translations != 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # actions: main's compile cache, an artifact of another run.
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # build.rs refuses the Unicode names table's LFS pointer.
+      - uses: ./.github/actions/lfs
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - id: compile-cache
+        uses: ./.github/actions/rust-compile-cache
+        with:
+          name: translations-engine
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      - name: Build the rerail-engine binary
+        run: cargo build --release --manifest-path native/Cargo.toml --bin rerail-engine
+
+      # Straight after the build, so a later step's failure keeps it.
+      - name: Save the compile cache for later runs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/rust-compile-cache/save
+        with:
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
+
+      # The checkout keeps no credentials, so the pinned commit is fetched alone with the token; the suite exports the
+      # corpus from it and fails when it does not match the pin.
+      - name: Fetch the corpus's pinned commit
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          commit="$(node -p 'require("./scripts/ship/corpora.json").corpora["rerail-translations"].commit')"
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$commit"
+
+      - name: Check the rerail pack's translations
+        run: npm run translations:check -- --pack rerail --engine target/release/rerail-engine --corpora "$RUNNER_TEMP/translations/corpora" --out "$RUNNER_TEMP/translations/out"
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: translations
+          path: ${{ runner.temp }}/translations/out/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
   # Real sessions call hosted models, which costs money on every run: they and provider-smoke run when the sessions
   # filter matches.
   real-sessions:
@@ -1991,6 +2162,7 @@ jobs:
       - build-windows
       - build-macos
       - rust-windows
+      - rust-wasm
       - unit
       - unit-windows
       - ui-e2e
@@ -1999,6 +2171,7 @@ jobs:
       - conformance
       - tools
       - conformance-report
+      - translations
       - real-sessions
       - provider-smoke
     if: always()

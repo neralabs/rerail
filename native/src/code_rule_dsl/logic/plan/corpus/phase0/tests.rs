@@ -34,7 +34,7 @@
             assert_eq!(graph, builtin, "{text}");
         }
         // A text made from a program file keeps the graph a run of `bootstrap.rerail` would give it (`keep_text`).
-        let programs = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs");
+        let programs = crate::source_tree::native().join("src/code_rule_dsl/typing/programs");
         for file in [programs.join("calls_cx.rerail"), lib.join("python/conditions.rerail")] {
             let text = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
             let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
@@ -65,6 +65,29 @@
             let alone = super::derive(std::slice::from_ref(seed)).unwrap().of(seed, 0);
             assert_eq!(shared.of(seed, k).digest(), alone.digest(), "{seed:?}");
         }
+    }
+
+    /// A call's graphs share their look at each file (`Looks`): two kept graphs of one module, the module edited, and
+    /// the next call finds both stale and derives both again, each holding the module's new digest; the look one graph
+    /// took answers the other.
+    #[test]
+    fn graphs_sharing_a_module_all_see_its_edit() {
+        let dir = std::env::temp_dir().join(format!("rerail-p0-shared-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("shared.rerail"), "t(1).\n").unwrap();
+        for name in ["a", "b"] {
+            std::fs::write(dir.join(format!("{name}.rerail")), format!("#include \"shared.rerail\"\n.decl {name}(x: number)\n{name}(1).\n.output {name}\n")).unwrap();
+        }
+        let seeds: Vec<super::Seed> = ["a", "b"].iter().map(|n| super::Seed::File(dunce::canonicalize(dir.join(format!("{n}.rerail"))).unwrap())).collect();
+        let before: Vec<[u8; 32]> = super::graphs(&seeds).unwrap().iter().map(|g| g.digest()).collect();
+        // A new size and content: the observer's stat sees it, whatever the clock's grain.
+        std::fs::write(dir.join("shared.rerail"), "t(1).\nt(2).\n").unwrap();
+        let after = super::graphs(&seeds).unwrap();
+        for (k, g) in after.iter().enumerate() {
+            assert_ne!(g.digest(), before[k], "{:?}'s graph still holds the old module:\n{}", seeds[k], g.describe());
+            assert!(g.holds_now(), "{}", g.describe());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A rule's include beside it whose directory lies outside phase 0's roots (`rules/../packs/…`, a benchmark's

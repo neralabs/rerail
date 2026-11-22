@@ -20,7 +20,7 @@ struct TestArgs {
 }
 unsafe impl Pod for TestArgs {}
 
-/// The work queue's tests' arguments: polls, nodes and a worker's budget (`QueueArgs`).
+/// The work queue's tests' arguments: unused, nodes and a worker's budget (`QueueArgs`).
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct QueueArgs {
@@ -589,7 +589,7 @@ fn radix_sorts_are_stable() {
 
 /// The tree walk of `nodes` by `kernel`'s workers, each taking `budget` items a launch at most (0: no budget),
 /// launched again while items remain; the launches.
-fn walk(p: &Program, q: &mut ComputeQueue, kernel: &str, nodes: u32, polls: u32, budget: u32) -> u32 {
+fn walk(p: &Program, q: &mut ComputeQueue, kernel: &str, nodes: u32, budget: u32) -> u32 {
     {
         let capacity = 4 * nodes as usize;
         let mut slots = vec![0u32; capacity];
@@ -604,7 +604,7 @@ fn walk(p: &Program, q: &mut ComputeQueue, kernel: &str, nodes: u32, polls: u32,
             let bound = (capacity as u32).checked_div(budget).map_or(1000, |launches| launches + 1);
             assert!(launches <= bound, "{}: the work queue of {nodes} did not drain in {bound} launches", crate::device::backend());
             launch(q, p.function(kernel).unwrap())
-                .value("args", &QueueArgs { n: polls, w: nodes, b: budget, pad: 0 })
+                .value("args", &QueueArgs { n: 0, w: nodes, b: budget, pad: 0 })
                 .buffer("slots", &sb)
                 .buffer("control", &cb)
                 .buffer("visits", &vb)
@@ -628,12 +628,12 @@ fn walk(p: &Program, q: &mut ComputeQueue, kernel: &str, nodes: u32, polls: u32,
 fn a_work_queue_visits_every_item_once() {
     let Some((p, mut q)) = setup() else { return };
     // A SIMD group at a time: the form for many workers.
-    for (nodes, polls) in [(1u32, 64u32), (1000, 64), (100_000, 64), (100_000, 2)] {
-        walk(p, &mut q, "t_workqueue_sg", nodes, polls, 0);
+    for nodes in [1u32, 1000, 100_000] {
+        walk(p, &mut q, "t_workqueue_sg", nodes, 0);
     }
     // A thread at a time: each item a swap that every worker contends for, so few items.
-    for (nodes, polls) in [(1u32, 64u32), (300, 64), (300, 1)] {
-        walk(p, &mut q, "t_workqueue", nodes, polls, 0);
+    for nodes in [1u32, 300] {
+        walk(p, &mut q, "t_workqueue", nodes, 0);
     }
 }
 
@@ -645,14 +645,14 @@ fn a_work_queue_budget_ends_a_launch_and_the_next_takes_the_rest() {
     let Some((p, mut q)) = setup() else { return };
     // 64 groups of 64 threads: 2 SIMD groups of 32 a group (Apple's, CUDA's), each a claim of 32 items a take.
     for (nodes, budget) in [(1u32, 1u32), (100_000, 1), (100_000, 4)] {
-        let launches = walk(p, &mut q, "t_workqueue_sg", nodes, 64, budget);
+        let launches = walk(p, &mut q, "t_workqueue_sg", nodes, budget);
         // 128 SIMD groups of a claim each take 4,096 items a launch at most.
         if nodes == 100_000 && budget == 1 {
             assert!(launches > 1, "{}: a tree past a launch's budgets takes more than one launch", crate::device::backend());
         }
     }
     for (nodes, budget) in [(300u32, 1u32), (300, 3)] {
-        walk(p, &mut q, "t_workqueue", nodes, 64, budget);
+        walk(p, &mut q, "t_workqueue", nodes, budget);
     }
 }
 
@@ -745,8 +745,9 @@ fn grid_barriers_see_every_groups_writes() {
         let wrong: Vec<u32> = read(&out, groups as usize);
         eprintln!("{}: {groups} groups dispatched, {} took part; arrived {}, generation {} (barrier {}), failed {}", crate::device::backend(), c[3] & 0x7fff_ffff, c[0], c[1], c[1] / 2, c[2]);
         assert_eq!(c[2], 0, "{}: {groups} groups: a barrier failed, at generation {} of {}", crate::device::backend(), c[1], 4 * rounds);
-        grid_joined(&c);
-        assert_eq!(c[1], 4 * rounds, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
+        // A grid of one group waits at its threadgroup's barrier, and writes no control word (`ukl/grid.h`).
+        let want = if grid_joined(&c) == 1 { 0 } else { 4 * rounds };
+        assert_eq!(c[1], want, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
         assert!(wrong.iter().all(|&w| w == 0), "{}: {groups} groups: reads before the barrier's writes: {wrong:?}", crate::device::backend());
     }
 }
@@ -774,8 +775,39 @@ fn a_grid_past_residency_is_the_groups_that_run() {
     eprintln!("{}: {groups} groups of {lsz}: {joined} took part, failed {}, after {:?}", crate::device::backend(), c[2], start.elapsed());
     assert_eq!(c[2], 0, "{}: a grid of {joined} of {groups} groups of {lsz} failed a barrier", crate::device::backend());
     assert!((1..=groups).contains(&joined), "{}: {joined} groups of {groups}", crate::device::backend());
-    assert_eq!(c[1], 4 * 4, "{}: the barriers' generation (two a barrier)", crate::device::backend());
+    // A grid of one group writes no control word at a barrier (its threadgroup's: `ukl/grid.h`).
+    assert_eq!(c[1], if joined == 1 { 0 } else { 4 * 4 }, "{}: the barriers' generation (two a barrier)", crate::device::backend());
     assert!(wrong.iter().all(|&w| w == 0), "{}: reads before the barrier's writes: {wrong:?}", crate::device::backend());
+}
+
+/// Decision 0540 §3 on the CPU backend (t51 item 4): its groups take turns at a yield, and it knows how many run at
+/// once (the launch's `resident`). A dispatch of four times that many has exactly that many in its grid (not the
+/// first group alone, as a window that yields nowhere gave), and its barriers pass.
+#[test]
+fn the_cpus_grid_is_its_resident_groups() {
+    let Some((p, mut q)) = setup() else { return };
+    if crate::device::backend() != "CPU" {
+        return;
+    }
+    let lsz = 256u32;
+    let f = p.function("t_grid_barrier").unwrap();
+    let resident = crate::shared::get().and_then(|s| s.device.resident_groups(lsz, f.threadgroup_bytes())).expect("the CPU's resident count") as u32;
+    let groups = 4 * resident;
+    let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
+    launch(&q, f)
+        .value("args", &TestArgs { n: 4, w: groups })
+        .buffer("ctl", &ctl)
+        .buffer("slots", &slots)
+        .buffer("out", &out)
+        .run(&[groups as u64], &[lsz as u64])
+        .unwrap();
+    q.flush().await_().unwrap();
+    let c: Vec<u32> = read(&ctl, 4);
+    assert_eq!(c[2], 0, "a barrier failed");
+    assert_eq!(grid_joined(&c), resident, "the grid is the {resident} groups that run at once, of {groups}");
+    assert_eq!(c[1], 4 * 4, "the barriers' generation (two a barrier)");
+    let wrong: Vec<u32> = read(&out, groups as usize);
+    assert!(wrong.iter().all(|&w| w == 0), "reads before the barrier's writes: {wrong:?}");
 }
 
 /// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share

@@ -1,4 +1,4 @@
-//! Streaming adapter for packed posting segments (`nera_postings`), from Pulling-it-all-together's
+//! Streaming adapter for packed posting segments (`nera_postings`), from PIAT's
 //! anchor store. Every store connection has it (`configure_connection`), so the prefilter's SQL
 //! decodes postings where it selects them. SQLite owns all selection and joins.
 use rusqlite::{
@@ -35,7 +35,7 @@ struct Cursor {
     pre: u32,
     done: bool,
 }
-pub(super) fn install(db: &Connection) -> Result<()> {
+pub fn install(db: &Connection) -> Result<()> {
     const MODULE: Module<Table> = Module::eponymous_only_module();
     db.create_module(c"nera_postings", &MODULE, None::<()>)?;
     const SEGMENTS: Module<SegmentTable> = Module::eponymous_only_module();

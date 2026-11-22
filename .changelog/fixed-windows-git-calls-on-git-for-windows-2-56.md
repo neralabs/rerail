@@ -1,1 +1,0 @@
-On Windows, each of Rerail's own Git calls starts one `git.exe`: Rerail runs Git for Windows' own `git.exe` (in `ucrt64\bin` from 2.56) with the environment its launcher gives it, so with `MSYSTEM` set, Git reads that run a filter such as Git LFS's no longer fail. The Rerail daemon finds Git again after an upgrade removes it.

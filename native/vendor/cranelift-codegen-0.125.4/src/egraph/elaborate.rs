@@ -13,7 +13,7 @@ use crate::scoped_hash_map::ScopedHashMap;
 use crate::trace;
 use alloc::vec::Vec;
 use cranelift_control::ControlPlane;
-use cranelift_entity::{SecondaryMap, packed_option::ReservedValue};
+use cranelift_entity::{SecondaryMap, packed_option::PackedOption, packed_option::ReservedValue};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
@@ -63,6 +63,14 @@ pub(crate) struct Elaborator<'a> {
     block_stack: Vec<BlockStackEntry>,
     /// Copies of values that have been rematerialized.
     remat_copies: FxHashMap<(Block, Value), Value>,
+    /// Each best value's uses' common dominator (rerail's patch): the block of the
+    /// side-effecting instructions that use it, through the pure ones, met in the
+    /// dominator tree. A pure instruction is placed no deeper than it, so uses in sibling
+    /// blocks share one copy instead of each computing its own (the scoped map forgets a
+    /// value placed in one sibling when the walk leaves it).
+    use_lca: SecondaryMap<Value, PackedOption<Block>>,
+    /// Each block's depth in the scoped map, for the blocks on the walk's path.
+    block_scope: SecondaryMap<Block, u32>,
     /// Stats for various events during egraph processing, to help
     /// with optimization of this infrastructure.
     stats: &'a mut Stats,
@@ -133,7 +141,11 @@ enum ElabStackEntry {
 
 #[derive(Clone, Debug)]
 enum BlockStackEntry {
-    Elaborate { block: Block, idom: Option<Block> },
+    /// `loops`: the loop stack of `idom` (rerail's patch): a block starts from
+    /// its parent's, not from whatever the walk of a sibling's subtree left
+    /// (a sibling outside a loop pops it, and the next sibling, inside, would
+    /// then hoist nothing out of it).
+    Elaborate { block: Block, idom: Option<Block>, loops: SmallVec<[LoopStackEntry; 8]> },
     Pop,
 }
 
@@ -163,6 +175,8 @@ impl<'a> Elaborator<'a> {
             elab_result_stack: vec![],
             block_stack: vec![],
             remat_copies: FxHashMap::default(),
+            use_lca: SecondaryMap::new(),
+            block_scope: SecondaryMap::new(),
             stats,
             ctrl_plane,
         }
@@ -377,6 +391,7 @@ impl<'a> Elaborator<'a> {
     /// `true` if a rewrite occurred.
     fn maybe_remat_arg(
         remat_values: &FxHashSet<Value>,
+        loop_analysis: &LoopAnalysis,
         func: &mut Function,
         remat_copies: &mut FxHashMap<(Block, Value), Value>,
         insert_block: Block,
@@ -390,7 +405,11 @@ impl<'a> Elaborator<'a> {
         // would affect, e.g., adds-with-one-constant-arg, which are
         // currently rematerialized. Right now we don't do this, to
         // avoid the need for another fixpoint loop here.
-        if arg.in_block != insert_block && remat_values.contains(&arg.value) {
+        // A value with arguments (an add of a constant) is not made again in a loop
+        // deeper than where it is (rerail's patch): that would undo its hoisting.
+        let deeper = func.dfg.value_def(arg.value).inst().is_some_and(|i| !func.dfg.inst_args(i).is_empty())
+            && loop_analysis.loop_level(insert_block) > loop_analysis.loop_level(arg.in_block);
+        if arg.in_block != insert_block && remat_values.contains(&arg.value) && !deeper {
             let new_value = match remat_copies.entry((insert_block, arg.value)) {
                 HashEntry::Occupied(o) => *o.get(),
                 HashEntry::Vacant(v) => {
@@ -560,17 +579,41 @@ impl<'a> Elaborator<'a> {
                     // place the instruction. This is the current
                     // block *unless* we hoist above a loop when all
                     // args are loop-invariant (and this op is pure).
+                    let cur_block = self.func.layout.inst_block(before).unwrap();
+                    // Never inside a loop the block using it is not in (a use after the loop
+                    // and one in it meet at the loop's header): out to the loop's dominator,
+                    // as far as its arguments are made (one made in the loop stays there, for
+                    // its uses in and after it to share).
+                    let lca = self.use_lca[self.func.dfg.inst_results(inst)[result_idx]].expand().map(|mut t| {
+                        while let Some(lp) = self.loop_analysis.innermost_loop(t) {
+                            if self.loop_analysis.is_in_loop(cur_block, lp) {
+                                break;
+                            }
+                            match self.domtree.idom(t) {
+                                Some(up) if arg_values.iter().all(|a| self.domtree.block_dominates(a.in_block, up)) => t = up,
+                                _ => break,
+                            }
+                        }
+                        t
+                    });
                     let (scope_depth, before, insert_block) = if loop_hoist_level
                         == self.loop_stack.len()
                     {
-                        // Depends on some value at the current
-                        // loop depth, or remat forces it here:
-                        // place it at the current location.
-                        (
-                            self.value_to_elaborated_value.depth(),
-                            before,
-                            self.func.layout.inst_block(before).unwrap(),
-                        )
+                        match lca {
+                            // Its uses' common dominator, above this block, where its
+                            // arguments are: there, for every use to share.
+                            Some(t)
+                                if t != cur_block
+                                    && self.domtree.block_dominates(t, cur_block)
+                                    && arg_values.iter().all(|a| self.domtree.block_dominates(a.in_block, t)) =>
+                            {
+                                (self.block_scope[t] as usize, self.func.layout.last_inst(t).unwrap(), t)
+                            }
+                            // Depends on some value at the current
+                            // loop depth, or remat forces it here:
+                            // place it at the current location.
+                            _ => (self.value_to_elaborated_value.depth(), before, cur_block),
+                        }
                     } else {
                         // Does not depend on any args at current
                         // loop depth: hoist out of loop.
@@ -599,6 +642,7 @@ impl<'a> Elaborator<'a> {
                     for arg_value in arg_values.iter_mut() {
                         if Self::maybe_remat_arg(
                             &self.remat_values,
+                            self.loop_analysis,
                             &mut self.func,
                             &mut self.remat_copies,
                             insert_block,
@@ -746,6 +790,7 @@ impl<'a> Elaborator<'a> {
                 let mut new_arg = self.elaborate_eclass_use(*arg, before);
                 Self::maybe_remat_arg(
                     &self.remat_values,
+                    self.loop_analysis,
                     &mut self.func,
                     &mut self.remat_copies,
                     block,
@@ -779,10 +824,62 @@ impl<'a> Elaborator<'a> {
         }
     }
 
+    /// `use_lca`: from each side-effecting instruction's block, up through the pure
+    /// instructions its arguments' best values are made by, each value's block met with
+    /// the one before in the dominator tree (until it no longer rises).
+    fn compute_use_lcas(&mut self) {
+        let mut work: Vec<(Value, Block)> = Vec::new();
+        let mut block = self.func.layout.entry_block();
+        while let Some(b) = block {
+            let mut inst = self.func.layout.first_inst(b);
+            while let Some(i) = inst {
+                for v in self.func.dfg.inst_values(i) {
+                    work.push((v, b));
+                }
+                inst = self.func.layout.next_inst(i);
+            }
+            block = self.func.layout.next_block(b);
+        }
+        while let Some((v, b)) = work.pop() {
+            if !self.func.dfg.value_is_real(v) {
+                continue;
+            }
+            let best = self.value_to_best_value[v].1;
+            if best == Value::reserved_value() {
+                continue;
+            }
+            let met = match self.use_lca[best].expand() {
+                None => b,
+                Some(old) => {
+                    let mut x = old;
+                    while !self.domtree.block_dominates(x, b) {
+                        match self.domtree.idom(x) {
+                            Some(up) => x = up,
+                            None => break,
+                        }
+                    }
+                    if x == old {
+                        continue;
+                    }
+                    x
+                }
+            };
+            self.use_lca[best] = met.into();
+            if let ValueDef::Result(inst, _) = self.func.dfg.value_def(best) {
+                if self.func.layout.inst_block(inst).is_none() {
+                    for a in self.func.dfg.inst_values(inst) {
+                        work.push((a, met));
+                    }
+                }
+            }
+        }
+    }
+
     fn elaborate_domtree(&mut self, domtree: &DominatorTree) {
         self.block_stack.push(BlockStackEntry::Elaborate {
             block: self.func.layout.entry_block().unwrap(),
             idom: None,
+            loops: SmallVec::new(),
         });
 
         // A temporary workspace for elaborate_block, allocated here to maximize the use of the
@@ -791,9 +888,11 @@ impl<'a> Elaborator<'a> {
 
         while let Some(top) = self.block_stack.pop() {
             match top {
-                BlockStackEntry::Elaborate { block, idom } => {
+                BlockStackEntry::Elaborate { block, idom, loops } => {
+                    self.loop_stack = loops;
                     self.block_stack.push(BlockStackEntry::Pop);
                     self.value_to_elaborated_value.increment_depth();
+                    self.block_scope[block] = self.value_to_elaborated_value.depth() as u32;
 
                     self.elaborate_block(&mut elab_values, idom, block);
 
@@ -805,6 +904,7 @@ impl<'a> Elaborator<'a> {
                         self.block_stack.push(BlockStackEntry::Elaborate {
                             block: child,
                             idom: Some(block),
+                            loops: self.loop_stack.clone(),
                         });
                     }
                     // Reverse what we just pushed so we elaborate in
@@ -824,6 +924,7 @@ impl<'a> Elaborator<'a> {
         self.stats.elaborate_func += 1;
         self.stats.elaborate_func_pre_insts += self.func.dfg.num_insts() as u64;
         self.compute_best_values();
+        self.compute_use_lcas();
         self.elaborate_domtree(&self.domtree);
         self.stats.elaborate_func_post_insts += self.func.dfg.num_insts() as u64;
     }

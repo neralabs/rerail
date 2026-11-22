@@ -39,7 +39,7 @@ A Git hook runs with Git's lookup variables set for its own checkout (`GIT_DIR`,
 "We need to abstract away from a filesystem. We should not be running git commands at all in the code that we're
 bringing, we should use gix to get whatever we need from the repo directly." Point 1 adds no Git process (the
 bare-repository check by `rev-parse --is-bare-repository` and the common-directory lookup are gone). Moving the
-TypeScript catalog's remaining Git commands to the engine's gix reads is work queue Q387.
+TypeScript catalog's remaining Git commands to the engine's gix reads is work queue Q459.
 
 ## Tests
 

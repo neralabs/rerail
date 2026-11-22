@@ -8,7 +8,7 @@
 //! (`SegmentBytes`), in the producer's mapping or, from a row, in the segment's file mapped (`SegmentMaps`). The memo's
 //! entries (`memo_pack`) and the frames (`frames`) are kept this way, each kind in a directory of its own.
 
-use super::connection::Cached as _;
+use super::Cached as _;
 use super::{StoreError, StoreResult};
 use rerail_blocks::block::{Frozen, kind};
 use std::collections::HashMap;
@@ -36,6 +36,10 @@ impl SegmentBytes {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+    /// The `len` bytes at `at` of these, read where they lie: one of an entry's parts (a workspace's clause result).
+    pub fn range(&self, at: usize, len: usize) -> Option<SegmentBytes> {
+        (at.checked_add(len)? <= self.len).then(|| SegmentBytes { block: self.block.clone(), at: self.at + at, len })
+    }
     /// `bytes` alone, in a block of their own (a test's entry, an entry not stored).
     pub fn of(bytes: &[u8]) -> SegmentBytes {
         let block = rerail_blocks::alloc::host(kind::JOURNAL, rerail_blocks::journal::reserve_for(1, std::iter::once(bytes.len()), ALIGN).next_multiple_of(rerail_blocks::block::PAGE));
@@ -52,11 +56,11 @@ impl std::fmt::Debug for SegmentBytes {
 }
 
 /// An entry's alignment in a segment: 0239's images are read at 16 bytes; 64 keeps each on its own cache lines.
-pub(super) const ALIGN: usize = 64;
+pub const ALIGN: usize = 64;
 
 /// Where an entry is, as a row names it: its segment's number, its offset and length.
 #[derive(Clone, Copy)]
-pub(super) struct Place {
+pub struct Place {
     pub seg: i64,
     pub at: u64,
     pub len: usize,
@@ -64,7 +68,7 @@ pub(super) struct Place {
 
 /// The bytes of the store's segments on disk (the memo's, the tapes' and sources', the atoms', the kept facts'): the directories
 /// beside its file, as the store's disk budget counts them.
-pub(super) fn segment_bytes(database: &Path) -> u64 {
+pub fn segment_bytes(database: &Path) -> u64 {
     let mut bytes = 0;
     for suffix in [".memo", ".objects", ".atoms", ".facts"] {
         let mut dir = database.as_os_str().to_owned();
@@ -100,14 +104,14 @@ pub(super) fn segment_path(dir: &Path, seg: i64) -> PathBuf {
 /// root's frames, files never parsed again) each left one more segment. Past the budget, the next collection pass that
 /// compacts (the passes that compact by bytes) merges all but the oldest half of the budget (`retired`): its cost is
 /// the named bytes of those segments, about half the kind's, in one write transaction.
-pub(super) const SEGMENT_BUDGET: usize = 1024;
+pub const SEGMENT_BUDGET: usize = 1024;
 
 /// A kind's segments as compaction weighs them: their bytes, the bytes their rows name, and their numbers, oldest
 /// first.
-pub(super) struct SegmentUse {
-    pub(super) held: u64,
-    pub(super) named: u64,
-    pub(super) numbers: Vec<i64>,
+pub struct SegmentUse {
+    pub held: u64,
+    pub named: u64,
+    pub numbers: Vec<i64>,
 }
 
 /// The oldest segment compaction retires, of a kind's `usage`: it and every newer one are merged into one numbered
@@ -115,7 +119,7 @@ pub(super) struct SegmentUse {
 /// newest first), is kept. Every one where the bytes no row names are at least `floor` and half of the bytes (the space
 /// freed pays for the copy); else, past `budget` segments, all but the oldest half of the budget. `None`: no
 /// compaction is due.
-pub(super) fn retired(usage: &SegmentUse, floor: u64, budget: usize) -> Option<i64> {
+pub fn retired(usage: &SegmentUse, floor: u64, budget: usize) -> Option<i64> {
     let SegmentUse { held, named, numbers } = usage;
     if *held >= floor && held.saturating_sub(*named) >= held / 2 {
         return numbers.first().copied();
@@ -125,10 +129,10 @@ pub(super) fn retired(usage: &SegmentUse, floor: u64, budget: usize) -> Option<i
 
 /// A kind of segment, as compaction finds and merges it: the table that numbers its segments and the column, and the
 /// directory of their files.
-pub(super) struct SegmentKind<'a> {
-    pub(super) table: &'static str,
-    pub(super) column: &'static str,
-    pub(super) dir: &'a Path,
+pub struct SegmentKind<'a> {
+    pub table: &'static str,
+    pub column: &'static str,
+    pub dir: &'a Path,
 }
 
 impl SegmentKind<'_> {
@@ -144,14 +148,14 @@ impl SegmentKind<'_> {
     }
 
     /// Removes the retired segments' files, once the transaction that retired them committed.
-    pub(super) fn remove(&self, retired: &[i64]) {
+    pub fn remove(&self, retired: &[i64]) {
         for &n in retired {
             let _ = std::fs::remove_file(segment_path(self.dir, n));
         }
     }
 
     /// Its use, read in `t`: `named` sums the bytes its rows name.
-    pub(super) fn usage(&self, t: &rusqlite::Connection, named: &str) -> rusqlite::Result<SegmentUse> {
+    pub fn usage(&self, t: &rusqlite::Connection, named: &str) -> rusqlite::Result<SegmentUse> {
         let numbers = self.numbers(t)?;
         let named: i64 = t.query_row_cached(named, [], |r| r.get(0))?;
         Ok(SegmentUse { held: self.held(&numbers), named: named as u64, numbers })
@@ -162,7 +166,7 @@ impl SegmentKind<'_> {
     /// `placed` finds in them moved or lost. A segment a row names is named in place by the time a compaction can read
     /// the row (`SealedSegments::name`), so an entry found missing is lost. Returns the retired segments, whose files
     /// go once `t` commits (`remove`).
-    pub(super) fn compact<K>(
+    pub fn compact<K>(
         &self,
         t: &rusqlite::Connection,
         usage: &SegmentUse,
@@ -177,11 +181,11 @@ impl SegmentKind<'_> {
 }
 
 /// An entry compaction copies: what names it (`K`, its row), its document key and content digest, and where it is.
-pub(super) struct Moved<K> {
-    pub(super) key: K,
-    pub(super) doc: i64,
-    pub(super) digest: [u8; 32],
-    pub(super) place: Place,
+pub struct Moved<K> {
+    pub key: K,
+    pub doc: i64,
+    pub digest: [u8; 32],
+    pub place: Place,
 }
 
 /// Merges `kind`'s segments numbered `from` and after in its write transaction `t` (decision 0295 §4): each of
@@ -232,7 +236,7 @@ fn install<K>(t: &rusqlite::Connection, kind: &SegmentKind<'_>, seg: i64, kept: 
             })
         })
         .collect();
-    let mut placed = write_segments(kind.dir, &entries, crate::content_store::connection::flush_of(t))?;
+    let mut placed = write_segments(kind.dir, &entries, crate::content_store::flush_of(t))?;
     if placed.files().len() != 1 {
         return Err(StoreError::Invalid(format!("the compaction of {} made more than one segment", kind.table)));
     }
@@ -244,17 +248,17 @@ fn install<K>(t: &rusqlite::Connection, kind: &SegmentKind<'_>, seg: i64, kept: 
 }
 
 /// The segments a read finds by rows, each mapped once: one whose file is not there or does not check is `None`.
-pub(super) struct SegmentMaps {
+pub struct SegmentMaps {
     dir: PathBuf,
     open: HashMap<i64, Option<Frozen>>,
 }
 
 impl SegmentMaps {
-    pub(super) fn new(dir: PathBuf) -> SegmentMaps {
+    pub fn new(dir: PathBuf) -> SegmentMaps {
         SegmentMaps { dir, open: HashMap::new() }
     }
     /// The entry at `w`, where it is: `None` when its segment is not there, or holds no such range.
-    pub(super) fn at(&mut self, w: Place) -> Option<SegmentBytes> {
+    pub fn at(&mut self, w: Place) -> Option<SegmentBytes> {
         let block = self.open.entry(w.seg).or_insert_with(|| rerail_blocks::journal::open(&segment_path(&self.dir, w.seg)).ok()).as_ref()?;
         let at = w.at as usize;
         (at.checked_add(w.len)? <= block.used()).then(|| SegmentBytes { block: block.clone(), at, len: w.len })
@@ -277,18 +281,18 @@ pub struct SegmentWriter {
 
 /// A segment being written: a deferrable lease of the pool, or (no mapping, WASI) a block in memory.
 enum Open {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Mapped(rerail_blocks::deferrable::Deferrable),
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     Memory(rerail_blocks::block::Block, PathBuf),
 }
 
 /// A segment sealed, on its way to the writer, then written back; its file under its writer's name until the
 /// batch's rows name it.
 enum Done {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Mapped(rerail_blocks::deferrable::Sealed, Frozen),
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     Memory(Frozen, PathBuf),
     /// Written back: its block, read in place, and its file.
     Written(Frozen, PathBuf),
@@ -297,21 +301,21 @@ enum Done {
 impl Open {
     fn block(&self) -> &rerail_blocks::block::Block {
         match self {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Open::Mapped(d) => d.block(),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Open::Memory(b, _) => b,
         }
     }
     fn seal(self) -> Done {
         match self {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Open::Mapped(d) => {
                 let sealed = d.seal();
                 let reader = sealed.reader();
                 Done::Mapped(sealed, reader)
             }
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Open::Memory(b, path) => Done::Memory(b.freeze(), path),
         }
     }
@@ -320,18 +324,18 @@ impl Open {
 impl Done {
     fn reader(&self) -> &Frozen {
         match self {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Done::Mapped(_, r) => r,
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Done::Memory(r, _) => r,
             Done::Written(r, _) => r,
         }
     }
     fn file(&self) -> &Path {
         match self {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Done::Mapped(s, _) => s.path(),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Done::Memory(_, f) => f,
             Done::Written(_, f) => f,
         }
@@ -340,14 +344,14 @@ impl Done {
     /// wrapped stays mapped, its readers reading on), or (no mapping) its bytes written as one file. Once.
     fn write_back(self, flush: rerail_blocks::block::Flush) -> StoreResult<Done> {
         match self {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Done::Mapped(sealed, reader) => {
                 let path = sealed.path().to_owned();
                 let frozen = sealed.write_back(flush)?;
                 drop(reader);
                 Ok(Done::Written(frozen, path))
             }
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Done::Memory(frozen, path) => {
                 let _ = flush;
                 std::fs::write(&path, frozen.bytes(0, frozen.used()))?;
@@ -392,11 +396,11 @@ impl SegmentWriter {
         super::prepare_cache_directory(&self.dir)?;
         let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let file = self.dir.join(format!("w-{}-{n}.seg", std::process::id()));
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let open = Open::Mapped(rerail_accel::gpu::shared::lease_deferrable_host(kind::JOURNAL, bytes, &file).map_err(StoreError::Invalid)?);
         #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
         let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true)?);
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let open = Open::Memory(rerail_blocks::alloc::host(kind::JOURNAL, bytes.next_multiple_of(rerail_blocks::block::PAGE)), file);
         rerail_blocks::journal::init(open.block(), self.slots());
         Ok(open)
@@ -463,7 +467,7 @@ impl SealedSegments {
     }
     /// Writes every segment back that is not yet (the writer's half; again after a failure, only those left), as the
     /// store's `flush` says (decision 0481).
-    pub(super) fn write_back(&mut self, flush: rerail_blocks::block::Flush) -> StoreResult<()> {
+    pub fn write_back(&mut self, flush: rerail_blocks::block::Flush) -> StoreResult<()> {
         for d in &mut self.done {
             match d.take() {
                 Some(segment) => *d = Some(segment.write_back(flush)?),
@@ -473,14 +477,14 @@ impl SealedSegments {
         Ok(())
     }
     /// Each segment's file, under its writer's name until `name`.
-    pub(super) fn files(&self) -> Vec<PathBuf> {
+    pub fn files(&self) -> Vec<PathBuf> {
         self.done.iter().flatten().map(|d| d.file().to_owned()).collect()
     }
 }
 
 impl SealedSegments {
     /// Entry `i`'s segment (an index of `files`), offset and length.
-    pub(super) fn placed(&self, i: usize) -> (usize, usize, usize) {
+    pub fn placed(&self, i: usize) -> (usize, usize, usize) {
         self.placed[i]
     }
     /// Once the rows naming them are written: each segment renamed to its number (`numbers`, in `files`' order) in
@@ -491,7 +495,7 @@ impl SealedSegments {
     /// their files are both there (`a_compaction_cannot_run_inside_the_batch_that_names_its_segments`). A write run
     /// with no writer (a handle that writes at once) is its run's, done while the run holds its collection lease,
     /// which every compaction waits out (`try_collect`, `collect_corpus_pass`).
-    pub(super) fn name(&mut self, dir: &Path, numbers: &[i64]) -> StoreResult<()> {
+    pub fn name(&mut self, dir: &Path, numbers: &[i64]) -> StoreResult<()> {
         self.named = true;
         for (file, seg) in self.files().iter().zip(numbers) {
             std::fs::rename(file, segment_path(dir, *seg))?;
@@ -511,7 +515,7 @@ impl Drop for SealedSegments {
 }
 
 /// `entries` (each an image, its document key and content digest) in new segments of `dir`, written back.
-pub(super) fn write_segments(dir: &Path, entries: &[(&[u8], i64, &[u8; 32])], flush: rerail_blocks::block::Flush) -> StoreResult<SealedSegments> {
+pub fn write_segments(dir: &Path, entries: &[(&[u8], i64, &[u8; 32])], flush: rerail_blocks::block::Flush) -> StoreResult<SealedSegments> {
     let mut w = SegmentWriter::new(dir, entries.len(), rerail_blocks::journal::reserve_for(entries.len(), entries.iter().map(|e| e.0.len()), ALIGN));
     for (bytes, key, digest) in entries {
         w.put(bytes.len(), *key, digest, |out| out.copy_from_slice(bytes))?;

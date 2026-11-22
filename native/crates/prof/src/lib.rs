@@ -94,20 +94,33 @@ pub fn process_cpu() -> Duration {
     user + kernel
 }
 
-/// Windows: the (user, kernel) CPU time of the calling thread (`thread`) or of the process, from
-/// `GetThreadTimes` / `GetProcessTimes`; zero if the call fails.
+/// Windows: the (user, kernel) CPU time of the calling thread (`thread`) or of the process; zero if the call fails.
+/// The total is the TSC cycles Windows counts for it (`QueryThreadCycleTime`, `QueryProcessCycleTime`), exact; the
+/// split is `GetThreadTimes`' / `GetProcessTimes`', which move only at the scheduler's tick (15.6 ms): read alone, a
+/// 17 ms span read 31 ms of CPU.
 #[cfg(windows)]
 pub fn windows_cpu(thread: bool) -> (Duration, Duration) {
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread};
+    // SAFETY: the pseudo-handles name the calling thread and the process.
+    unsafe { windows_times(if thread { GetCurrentThread() } else { GetCurrentProcess() }, thread) }
+}
+
+/// The (user, kernel) CPU time of `handle`, a thread's (`thread`) or a process's, as `windows_cpu` reads it.
+///
+/// # Safety
+/// `handle` is open, with query access, and names a thread when `thread`, a process otherwise.
+#[cfg(windows)]
+unsafe fn windows_times(handle: windows_sys::Win32::Foundation::HANDLE, thread: bool) -> (Duration, Duration) {
     use windows_sys::Win32::Foundation::FILETIME;
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, GetProcessTimes, GetThreadTimes};
+    use windows_sys::Win32::System::Threading::{GetProcessTimes, GetThreadTimes};
     let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
     let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
-    // SAFETY: the pseudo-handles name the calling thread and process, and every out-pointer is a FILETIME.
+    // SAFETY: the caller's handle, and every out-pointer is a FILETIME.
     let got = unsafe {
         if thread {
-            GetThreadTimes(GetCurrentThread(), &mut created, &mut exited, &mut kernel, &mut user)
+            GetThreadTimes(handle, &mut created, &mut exited, &mut kernel, &mut user)
         } else {
-            GetProcessTimes(GetCurrentProcess(), &mut created, &mut exited, &mut kernel, &mut user)
+            GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user)
         }
     };
     if got == 0 {
@@ -115,7 +128,50 @@ pub fn windows_cpu(thread: bool) -> (Duration, Duration) {
     }
     // FILETIME counts 100 ns ticks.
     let time = |t: FILETIME| Duration::from_nanos(((u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)) * 100);
-    (time(user), time(kernel))
+    let (user, kernel) = (time(user), time(kernel));
+    // SAFETY: the caller's handle.
+    let Some(total) = (unsafe { cycle_seconds(handle, thread) }) else { return (user, kernel) };
+    // The exact total, split as the tick clock splits it (all user before its first tick).
+    let ticks = (user + kernel).as_secs_f64();
+    let user_share = if ticks > 0.0 { user.as_secs_f64() / ticks } else { 1.0 };
+    (Duration::from_secs_f64(total * user_share), Duration::from_secs_f64(total * (1.0 - user_share)))
+}
+
+/// The CPU seconds of `handle`'s TSC cycles; `None` where the call fails, and off x86_64 (an ARM64 PC's cycle count
+/// is not of a counter whose rate is known).
+///
+/// # Safety
+/// As `windows_times`.
+#[cfg(windows)]
+unsafe fn cycle_seconds(handle: windows_sys::Win32::Foundation::HANDLE, thread: bool) -> Option<f64> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use windows_sys::Win32::System::WindowsProgramming::{QueryProcessCycleTime, QueryThreadCycleTime};
+        let mut cycles = 0u64;
+        // SAFETY: the caller's handle; `cycles` is the one out-pointer.
+        let got = unsafe { if thread { QueryThreadCycleTime(handle, &mut cycles) } else { QueryProcessCycleTime(handle, &mut cycles) } };
+        (got != 0).then(|| cycles as f64 / tsc_per_second())
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (handle, thread);
+        None
+    }
+}
+
+/// The TSC's cycles per second, which Windows' cycle times count in (an invariant TSC: one rate, whatever a core's
+/// clock). Measured once a process against the monotonic clock, over 5 ms asleep: no CPU spent, an error near 1e-5.
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn tsc_per_second() -> f64 {
+    static RATE: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RATE.get_or_init(|| {
+        use std::arch::x86_64::_rdtsc;
+        // SAFETY: `rdtsc` reads the counter; every x86_64 has it.
+        let (t0, c0) = (std::time::Instant::now(), unsafe { _rdtsc() });
+        std::thread::sleep(Duration::from_millis(5));
+        let (c1, t1) = (unsafe { _rdtsc() }, std::time::Instant::now());
+        c1.wrapping_sub(c0) as f64 / (t1 - t0).as_secs_f64()
+    })
 }
 
 /// Windows: the process's peak working set (its resident high-water mark), in bytes; 0 if the call fails.
@@ -131,6 +187,102 @@ pub fn windows_peak_working_set() -> u64 {
         return 0;
     }
     counters.PeakWorkingSetSize as u64
+}
+
+/// Windows: the process's working set now (its resident memory), in bytes; `None` if the call fails.
+#[cfg(windows)]
+pub fn windows_working_set() -> Option<u64> {
+    use windows_sys::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    // SAFETY: as in `windows_peak_working_set`.
+    let mut counters = unsafe { std::mem::zeroed::<PROCESS_MEMORY_COUNTERS>() };
+    counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+    (unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) } != 0).then_some(counters.WorkingSetSize as u64)
+}
+
+/// Windows: the machine's physical memory, in bytes; `None` if the call fails.
+#[cfg(windows)]
+pub fn windows_physical_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    // SAFETY: MEMORYSTATUSEX is plain integers; `dwLength` is the size of the struct written.
+    let mut status = unsafe { std::mem::zeroed::<MEMORYSTATUSEX>() };
+    status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    (unsafe { GlobalMemoryStatusEx(&mut status) } != 0 && status.ullTotalPhys > 0).then_some(status.ullTotalPhys)
+}
+
+/// Windows: the calling thread's system id, which `windows_threads` lists and `windows_thread_cpu` reads.
+#[cfg(windows)]
+pub fn windows_thread_id() -> u32 {
+    // SAFETY: no arguments, no failure.
+    unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() }
+}
+
+/// Windows: the process's threads, as (system id, name): the name is the thread's description, which Rust's
+/// `thread::Builder::name` sets in full (no length limit, unlike Linux's 15 bytes), and empty for an unnamed thread.
+/// A thread that ends while it is listed is left out.
+#[cfg(windows)]
+pub fn windows_threads() -> Vec<(u32, String)> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE, LocalFree};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcessId, GetThreadDescription, OpenThread, THREAD_QUERY_LIMITED_INFORMATION};
+    // SAFETY: a snapshot of the system's threads (the process id is ignored for threads), closed below.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Vec::new();
+    }
+    let me = unsafe { GetCurrentProcessId() };
+    // SAFETY: THREADENTRY32 is plain integers; `dwSize` is the size of the struct written.
+    let mut entry = unsafe { std::mem::zeroed::<THREADENTRY32>() };
+    entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+    let mut ids = Vec::new();
+    // SAFETY: the snapshot is open and `entry` is sized.
+    let mut more = unsafe { Thread32First(snapshot, &mut entry) } != 0;
+    while more {
+        if entry.th32OwnerProcessID == me {
+            ids.push(entry.th32ThreadID);
+        }
+        more = unsafe { Thread32Next(snapshot, &mut entry) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    ids.into_iter()
+        .filter_map(|id| {
+            // SAFETY: a thread of this process, opened only to query it, and closed below; one that has ended gives null.
+            let thread = unsafe { OpenThread(THREAD_QUERY_LIMITED_INFORMATION, 0, id) };
+            if thread.is_null() {
+                return None;
+            }
+            let mut text: *mut u16 = std::ptr::null_mut();
+            // SAFETY: the description is a NUL-ended wide string the system allocates; it is freed with LocalFree.
+            let name = if unsafe { GetThreadDescription(thread, &mut text) } >= 0 && !text.is_null() {
+                let len = (0..).take_while(|&i| unsafe { *text.add(i) } != 0).count();
+                let name = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, len) });
+                unsafe { LocalFree(text.cast()) };
+                name
+            } else {
+                String::new()
+            };
+            unsafe { CloseHandle(thread) };
+            Some((id, name))
+        })
+        .collect()
+}
+
+/// Windows: the CPU (user + kernel) seconds of the thread with system id `id`, read from any thread of the process;
+/// `None` for a thread that has ended.
+#[cfg(windows)]
+pub fn windows_thread_cpu(id: u32) -> Option<f64> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenThread, THREAD_QUERY_LIMITED_INFORMATION};
+    // SAFETY: opened only to query it, and closed below; a thread that has ended gives null.
+    let thread = unsafe { OpenThread(THREAD_QUERY_LIMITED_INFORMATION, 0, id) };
+    if thread.is_null() {
+        return None;
+    }
+    // SAFETY: the handle is open with query access, and names a thread.
+    let (user, kernel) = unsafe { windows_times(thread, true) };
+    unsafe { CloseHandle(thread) };
+    // A thread that ended after the open still has its times (its handle keeps them).
+    Some((user + kernel).as_secs_f64())
 }
 
 /// Prints the stages' times under `title` and clears them.
@@ -351,16 +503,57 @@ pub mod heap {
     /// The threads' names by number, as each named itself (`name_thread`).
     static THREAD_NAMES: std::sync::Mutex<Vec<(u32, String)>> = std::sync::Mutex::new(Vec::new());
 
-    /// This thread's number (1 on), given at its first ask without allocating.
+    /// This thread's number (1 on), given at its first ask without allocating. Its name as the system holds it is
+    /// kept by its number (`SYSTEM_NAMES`), read on the thread itself: a thread that names itself to the system alone
+    /// (a pool's, `thread_name`, as std's start sets it before the thread runs) is named in the report.
     fn thread_ix() -> u32 {
         THREAD_IX
             .try_with(|c| {
                 if c.get() == 0 {
-                    c.set(THREADS.fetch_add(1, Relaxed) + 1);
+                    let ix = THREADS.fetch_add(1, Relaxed) + 1;
+                    keep_system_name(ix);
+                    c.set(ix);
                 }
                 c.get()
             })
             .unwrap_or(0)
+    }
+
+    /// The bytes of a system name kept (`SYSTEM_NAMES`), NUL-padded.
+    const NAME_WORDS: usize = 8;
+    /// The numbered threads' system names, by number: `NAME_WORDS` words of bytes each (0: none kept).
+    static SYSTEM_NAMES: [[AtomicU64; NAME_WORDS]; 4096] = [const { [const { AtomicU64::new(0) }; NAME_WORDS] }; 4096];
+
+    /// Keeps the calling thread's system name as thread `ix`'s, without allocating.
+    fn keep_system_name(ix: u32) {
+        #[cfg(unix)]
+        if let Some(slot) = SYSTEM_NAMES.get(ix as usize) {
+            let mut buf = [0u8; NAME_WORDS * 8];
+            // SAFETY: the calling thread's own handle; the name is written NUL-ended into `buf`, of its length.
+            if unsafe { libc::pthread_getname_np(libc::pthread_self(), buf.as_mut_ptr().cast(), buf.len()) } == 0 {
+                for (w, bytes) in slot.iter().zip(buf.chunks_exact(8)) {
+                    w.store(u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])), Relaxed);
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = ix;
+    }
+
+    /// A thread that names itself to the system alone (a pool's) is named by that name where it opened no span.
+    #[cfg(all(test, unix))]
+    #[test]
+    fn a_thread_named_to_the_system_alone_is_named() {
+        let ix = std::thread::Builder::new().name("rr-lane-host 3".into()).spawn(thread_ix).unwrap().join().unwrap();
+        assert_eq!(system_name(ix).as_deref(), Some("rr-lane-host 3"));
+        assert!(name(THREAD | ix).ends_with("rr-lane-host 3"), "{}", name(THREAD | ix));
+    }
+
+    /// Thread `ix`'s system name, as it was when it was numbered.
+    fn system_name(ix: u32) -> Option<String> {
+        let slot = SYSTEM_NAMES.get(ix as usize)?;
+        let bytes: Vec<u8> = slot.iter().flat_map(|w| w.load(Relaxed).to_le_bytes()).take_while(|&b| b != 0).collect();
+        (!bytes.is_empty()).then(|| String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Names this thread for its samples taken with no span open (the profile names each thread at its first span).
@@ -392,6 +585,11 @@ pub mod heap {
     /// The span this thread's allocations are charged to (`intern`'s id; 0 none).
     pub fn set_span(id: u32) {
         let _ = SPAN.try_with(|s| s.set(id));
+    }
+
+    /// The span this thread's allocations are charged to now (0 none): a refused device lease's (Q203).
+    pub fn span() -> u32 {
+        SPAN.try_with(Cell::get).unwrap_or(0)
     }
 
     fn slot(ptr: usize) -> usize {
@@ -661,7 +859,10 @@ pub mod heap {
             let names = THREAD_NAMES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             return match names.iter().find(|(i, _)| *i == ix) {
                 Some((_, n)) => format!("(no span open) on {n}"),
-                None => format!("(no span open) on thread #{ix}, unnamed (it opened no span)"),
+                None => match system_name(ix) {
+                    Some(n) => format!("(no span open) on thread #{ix}, {n}"),
+                    None => format!("(no span open) on thread #{ix}, unnamed (it opened no span)"),
+                },
             };
         }
         if id == 0 {

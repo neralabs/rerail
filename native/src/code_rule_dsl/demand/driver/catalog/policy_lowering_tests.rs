@@ -1,7 +1,6 @@
 use super::relational::{SqlCatalogPlan, SqlShape, TerminalKind, TerminalPlan};
 use super::relational_ir::qualified_row_columns;
 use super::{PackedFileInput, SqlPlans};
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::model::Anchor;
@@ -59,8 +58,7 @@ fn compile_code_rule_with_capabilities(
     message: &str,
     capabilities: String,
 ) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
-    CodeRuleDslRuntime::compile(
-        json!({
+    crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1",
             "id": "lowering",
             "revision": 1,
@@ -71,10 +69,7 @@ fn compile_code_rule_with_capabilities(
                 "violation": { "anchor": "witness.span", "code": "X", "message": message }
             }]
         })
-        .to_string(),
-        "json".to_owned(),
-        capabilities,
-    )
+        .to_string(), "json", &capabilities)
     .expect("valid test policy")
 }
 
@@ -2071,7 +2066,7 @@ pub(super) fn sql_violation_values_for_statement(
     }
     .expect("typed SQL violation output");
     assert!(outcome.rows.is_empty(), "production returned packed rows");
-    assert!(outcome.failures.is_empty(), "production returned failures");
+    assert!(outcome.failures.is_empty(), "production returned failures: {:?}", outcome.failures);
     outcome
         .violations
         .iter()

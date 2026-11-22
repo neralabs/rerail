@@ -981,13 +981,12 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * Git honours `GIT_NO_LAZY_FETCH` from 2.45.0 and in the 2024-04-19 security releases 2.39.4, 2.40.2, 2.41.1, 2.42.2,
  * 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
  */
-function gitEnvironment(executable: string, overrides: RunGitOptions["env"] = {}, ownRepository = false): NodeJS.ProcessEnv {
-  // With `ownRepository` the read is of the directory its caller names (a content read): a Git hook can export its own
-  // checkout, index, object database and refs, which would override -C, so this process's are left out
-  // ({@link repositoryEnvironment}). Without it Git sees them, and a placement answers as Git answers under them.
+function gitEnvironment(executable: string, overrides: RunGitOptions["env"] = {}): NodeJS.ProcessEnv {
+  // Every caller names the directory to read. A Git hook can export its own checkout, index, object database and refs,
+  // which would override -C, in batch reads too: this process's are left out ({@link repositoryEnvironment}).
   const inherited: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (!ownRepository || !repositoryEnvironment.has(process.platform === "win32" ? key.toUpperCase() : key)) inherited[key] = value;
+    if (!isRepositoryVariable(key)) inherited[key] = value;
   }
   return { ...processGit.startEnvironment(executable, { ...inherited, ...overrides }), GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
 }
@@ -1002,10 +1001,7 @@ function timeLeft(limitMs: number): () => number {
   return () => Math.max(0, Math.floor(deadline - performance.now()));
 }
 
-/**
- * The variables through which a Git hook names a repository of its own: never inherited by a read of a named
- * checkout's content, nor by a command that names its checkout ({@link leaveInheritedRepository}).
- */
+/** The variables through which a Git hook names a repository of its own: never inherited by Rerail's Git calls. */
 const repositoryEnvironment = new Set([
   "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_PREFIX", "GIT_INDEX_FILE",
   "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_SHALLOW_FILE",
@@ -1013,13 +1009,22 @@ const repositoryEnvironment = new Set([
 ]);
 
 /**
+ * Whether `name` is one of the variables a Git hook names a repository by ({@link repositoryEnvironment}): never handed
+ * to a Git Rerail starts, so it moves no answer Git gives Rerail.
+ */
+export function isRepositoryVariable(name: string): boolean {
+  return repositoryEnvironment.has(process.platform === "win32" ? name.toUpperCase() : name);
+}
+
+/**
  * Drops this process's repository variables ({@link repositoryEnvironment}): for a command whose arguments name the
  * checkout it reads, run in a process of its own (a headless scan, from a Git hook too), so every Git it starts, and
- * every placement it asks of Git, is of that checkout. A process serving other checkouts keeps them.
+ * every placement it asks of Git or of the engine's reads, is of that checkout. A process serving other checkouts
+ * keeps them.
  */
 export function leaveInheritedRepository(): void {
   for (const key of Object.keys(process.env)) {
-    if (repositoryEnvironment.has(process.platform === "win32" ? key.toUpperCase() : key)) delete process.env[key];
+    if (isRepositoryVariable(key)) delete process.env[key];
   }
 }
 
@@ -1029,22 +1034,15 @@ export function leaveInheritedRepository(): void {
  * missing, never on a non-zero exit. When the Git kept for the process is gone, it runs once more with the Git found
  * again ({@link ProcessGit.replacedNow}): the look and that second start get what is left of the call's time limit
  * ({@link timeLeft}), since the call blocks the thread and a look may wait on a folder far longer; with none left, the
- * call fails as its start did. With `output: "bytes"`, stdout is the bytes Git wrote: the raw names of Git's
- * NUL-delimited listings, which a string would not keep. Every blocking Git start goes through here.
+ * call fails as its start did.
  */
-export function runGit(cwd: string, args: readonly string[], options: RunGitOptions & { output: "bytes" }): GitBytesResult;
-export function runGit(cwd: string, args: readonly string[], options?: RunGitOptions): GitResult;
-export function runGit(cwd: string, args: readonly string[], options: RunGitOptions & { output?: "bytes" } = {}): GitResult | GitBytesResult {
-  const { output, ...limits } = options;
-  const result = runGitOnce(cwd, args, limits);
-  return output === "bytes" ? result : { ...result, stdout: result.stdout.toString("utf8") };
+export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
+  const result = runGitBytes(cwd, args, options);
+  return { ...result, stdout: result.stdout.toString("utf8") };
 }
 
-/** A {@link GitResult} whose stdout is the bytes Git wrote ({@link runGit}'s `output: "bytes"`). */
-export type GitBytesResult = Omit<GitResult, "stdout"> & { stdout: Buffer };
-
-/** {@link runGit}'s start, its stdout as bytes. */
-function runGitOnce(cwd: string, args: readonly string[], options: RunGitOptions): GitBytesResult {
+/** {@link runGit} with stdout as the bytes Git wrote: the raw names of Git's NUL-delimited listings. */
+export function runGitBytes(cwd: string, args: readonly string[], options: RunGitOptions = {}): Omit<GitResult, "stdout"> & { stdout: Buffer } {
   const command = [...SAFE_CONFIG, "-C", cwd, ...args];
   const left = timeLeft(options.timeout ?? DEFAULT_TIMEOUT_MS);
   const executable = gitExecutable();
@@ -1054,8 +1052,8 @@ function runGitOnce(cwd: string, args: readonly string[], options: RunGitOptions
   return again === undefined || rest === 0 ? result : runGitWith(again, command, { ...options, timeout: rest });
 }
 
-/** One blocking start of the Git at `executable` with `args`, as {@link runGit} makes it. */
-function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): GitBytesResult {
+/** One blocking start of the Git at `executable` with `args`, as {@link runGitBytes} makes it. */
+function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): Omit<GitResult, "stdout"> & { stdout: Buffer } {
   const { env, ...limits } = options;
   const result = runGitSyncBytes(executable, args, gitEnvironment(executable, env), { timeout: DEFAULT_TIMEOUT_MS, ...limits });
   return { status: result.status, stdout: result.stdout ?? Buffer.alloc(0), stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
@@ -1121,9 +1119,18 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
   }, { timeoutMs: timeout, signal });
   // Git may exit before reading all of its input; the broken pipe is no failure of the read.
   child.stdin.on("error", () => undefined);
-  child.stdin.end(options.input ?? "");
+  endInput(child, options.input);
   const [result] = await Promise.all([promise, exited(child)]);
   return result;
+}
+
+/**
+ * Closes Git's stdin after `input`. With none it only closes it: a write of nothing to a Git that has already exited, as
+ * one outside any repository does at once, fails with EPIPE, and the error's stack is built for nothing.
+ */
+function endInput(child: GitProcess, input: string | undefined): void {
+  if (input === undefined || input === "") child.stdin.end();
+  else child.stdin.end(input);
 }
 
 /** Trimmed stdout of a successful `git -C <cwd> <args>`, or undefined when it fails. */
@@ -1289,13 +1296,12 @@ type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readon
  * Runs a Git command as `gitOutput` does, and says how it ended. Git's stderr goes to the null device, as `streamGit`'s
  * does: no answer reads it, and a process Git started that outlives Git (a repository's clean filter can leave one)
  * holds it for as long as it runs and writes there as much as it likes, while the read answers once Git has exited and
- * its output has closed. Run again with the Git found again when the one kept is gone ({@link readWithGit}). It reads
- * the repository `cwd` names alone ({@link gitEnvironment}'s `ownRepository`).
+ * its output has closed. Run again with the Git found again when the one kept is gone ({@link readWithGit}).
  */
 async function readGit(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer: number): Promise<GitRead> {
   const read = await readWithGit<GitRead>({ timeoutMs: DEFAULT_TIMEOUT_MS, signal }, async (executable, limits) => {
     const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
-    const child = startOrError(() => startGit(executable, [...SAFE_CONFIG, "-C", cwd, ...args], { ...gitEnvironment(executable, {}, true), GIT_TERMINAL_PROMPT: "0" }, "ignore"));
+    const child = startOrError(() => startGit(executable, [...SAFE_CONFIG, "-C", cwd, ...args], { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" }, "ignore"));
     if (child instanceof Error) return { answer: { ended: "failed" }, missing: false };
     const missing = startMissing(child);
     const printed = gitPrinted(child, maxBuffer);
@@ -1504,23 +1510,39 @@ function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, pl
   return textGetsCrlf(config, platform) ? declared : undefined;
 }
 
+/** The attributes `lineEndingAttributes` asks `check-attr` for, each of which it prints for every path it answers. */
+const LINE_ENDING_ATTRIBUTES = ["text", "crlf", "eol"] as const;
+
 /**
  * The `text`, `crlf` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty
  * without Git, outside a repository or past the timeout.
  */
 async function lineEndingAttributes(cwd: string, paths: readonly string[], signal: AbortSignal | undefined): Promise<Map<string, LineEndingAttributes>> {
-  const attributes = new Map<string, { text: string; crlf: string; eol: string }>();
   const chunks: Buffer[] = [];
-  await streamGit(cwd, ["check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
+  await streamGit(cwd, ["check-attr", "-z", "--stdin", ...LINE_ENDING_ATTRIBUTES], {
     input: paths.map(path => `${path}\0`).join(""), onData: chunk => chunks.push(chunk), signal,
   });
-  // `<path> NUL <attribute> NUL <value> NUL`, once per path and attribute.
-  const fields = Buffer.concat(chunks).toString("utf8").split("\0");
-  for (let at = 0; at + 2 < fields.length; at += 3) {
-    const [path, name, value] = [fields[at]!, fields[at + 1]!, fields[at + 2]!];
-    const entry = attributes.get(path) ?? { text: "unspecified", crlf: "unspecified", eol: "unspecified" };
-    if (name === "text" || name === "crlf" || name === "eol") entry[name] = value;
-    attributes.set(path, entry);
+  return lineEndingAttributesFrom(Buffer.concat(chunks).toString("utf8"));
+}
+
+/**
+ * `check-attr -z`'s output, `<path> NUL <attribute> NUL <value> NUL` once per path and attribute, by path: only the
+ * paths whose three attributes all arrived, each value with its closing NUL. Output cut at the timeout leaves its last
+ * path partly read, which says nothing of the attributes or the end of a value that did not arrive, so that path is not
+ * answered, as the paths after it are not.
+ */
+function lineEndingAttributesFrom(output: string): Map<string, LineEndingAttributes> {
+  const values = new Map<string, Map<string, string>>();
+  const fields = output.split("\0");
+  // A value's closing NUL arrived where a field follows it: the empty one after the output's last NUL, at the least.
+  for (let at = 0; at + 3 < fields.length; at += 3) {
+    const byName = values.get(fields[at]!) ?? new Map<string, string>();
+    values.set(fields[at]!, byName.set(fields[at + 1]!, fields[at + 2]!));
+  }
+  const attributes = new Map<string, LineEndingAttributes>();
+  for (const [path, byName] of values) {
+    if (LINE_ENDING_ATTRIBUTES.every(name => byName.has(name)))
+      attributes.set(path, { text: byName.get("text")!, crlf: byName.get("crlf")!, eol: byName.get("eol")! });
   }
   return attributes;
 }
@@ -1553,6 +1575,9 @@ export async function gitCrlfPaths(
   }
   return rules;
 }
+
+// The pieces of `gitCrlfPaths` a reader that keeps its answers by the stamps of their inputs asks again (`git-crlf-reader.ts`).
+export { crlfRule, lineEndingAttributes, lineEndingAttributesFrom, type LineEndingAttributes, type LineEndingConfig };
 
 /** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
@@ -1732,12 +1757,11 @@ interface GitStream extends GitReadOptions {
  * each chunk it prints to `stream.onData`. Settles once Git is done ({@link settleWhenDone}) and has exited
  * ({@link GitReadOptions}); without Git, or once `stream.signal` is aborted, it starts nothing. Run again with the Git
  * found again when the one kept is gone ({@link readWithGit}); a start that found no program printed nothing.
- * It reads the repository `cwd` names alone ({@link gitEnvironment}'s `ownRepository`).
  */
 async function streamGit(cwd: string, args: readonly string[], stream: GitStream): Promise<void> {
   await readWithGit({ timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal }, async (executable, limits) => {
     const { promise, resolve: settle } = Promise.withResolvers<void>();
-    const child = startOrError(() => startGit(executable, [...SAFE_CONFIG, "-C", cwd, ...args], { ...gitEnvironment(executable, {}, true), GIT_TERMINAL_PROMPT: "0" }, "ignore"));
+    const child = startOrError(() => startGit(executable, [...SAFE_CONFIG, "-C", cwd, ...args], { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" }, "ignore"));
     if (child instanceof Error) return { answer: undefined, missing: false };
     const missing = startMissing(child);
     child.stdout.on("data", stream.onData);

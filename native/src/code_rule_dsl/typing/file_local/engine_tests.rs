@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn t_programs_split_into_file_local_and_cross_file() {
     for name in ["calls.rerail", "calls_rust.rerail", "workload.rerail"] {
-        let path = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs").join(name);
+        let path = crate::source_tree::native().join("src/code_rule_dsl/typing/programs").join(name);
         let v = crate::code_rule_dsl::logic::rr::parse_version(&crate::code_rule_dsl::logic::settings::program_text(&path).unwrap()).unwrap();
         let local = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&v).unwrap().local.clone();
         let inputs = v.input_names();

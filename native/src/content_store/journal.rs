@@ -84,14 +84,14 @@ pub fn volume(path: &Path) -> Option<[u8; 16]> {
 }
 
 /// FSEvents' latest event id: a test's cursor taken now (`observe`'s Q189 test).
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
 pub fn current_id() -> u64 {
     fsevents::current_id()
 }
 
 /// Drops this process's streams, as a new process starts with none: its next question is a replay from the cursor
 /// it gives (`observe`'s Q189 test, which moves a stored cursor past an edit as a merged replay does).
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
 pub fn forget_streams() {
     fsevents::forget_streams();
 }
@@ -99,7 +99,7 @@ pub fn forget_streams() {
 /// An id every change under `root` made before now has (FSEvents'): the cookie id of a replay from `from`, which
 /// comes after each change's event (`fsevents::sync`), where `current_id` may be taken before a late event's id is
 /// given (`observe`'s Q189 test, on a loaded host).
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
 pub fn id_past(root: &Path, from: u64, cookie_dir: &Path) -> Option<u64> {
     match fsevents::since(std::slice::from_ref(&root.to_path_buf()), Some(from), cookie_dir, std::time::Duration::from_secs(20)) {
         Since::Changed { cursor, .. } | Since::Behind { cursor } => Some(cursor),
@@ -354,7 +354,7 @@ mod fsevents {
     const META: u32 = 0x400 | 0x2000 | 0x4000 | 0x8000;
 
     /// Whether an event of `flags` names its path: any but one of metadata alone. fseventsd keeps one record a path
-    /// whose flags gather (Q451): a change of a file's times soon after it was made, in the stream that was told of
+    /// whose flags gather (Q456): a change of a file's times soon after it was made, in the stream that was told of
     /// its making, comes with the making's bits too (`0x11500`, not `0x10400`), and is named. A path looked at
     /// again, the safe answer, never one missed.
     pub(super) fn names(flags: u32) -> bool {
@@ -386,7 +386,7 @@ mod fsevents {
         /// Whether the marker written before the stream started came in its history (decision 0400): fseventsd had
         /// logged every change made before it, so the replay holds them.
         marker_in_history: bool,
-        /// Each event's flags as fseventsd gave them, by its path: a test reads what record a change came in (Q451).
+        /// Each event's flags as fseventsd gave them, by its path: a test reads what record a change came in (Q456).
         #[cfg(test)]
         flags: Vec<(String, u32)>,
     }
@@ -428,6 +428,11 @@ mod fsevents {
                 seen.cookies.entry(path).or_insert((id, at));
                 seen.cookie_at = Some(Instant::now());
                 continue;
+            }
+            // `RERAIL_JOURNAL_TRACE`: each event's flags as delivered, to tell a metadata-only change from a write
+            // (Q422: a file whose times were set was once named under load).
+            if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
+                eprintln!("journal flags {id} {flag:#x} {path}");
             }
             #[cfg(test)]
             seen.flags.push((path.clone(), flag));
@@ -504,7 +509,7 @@ mod fsevents {
         all.iter().flat_map(|l| l.shared.seen.lock().unwrap_or_else(|e| e.into_inner()).flags.iter().filter(|(p, _)| *p == path).map(|(_, f)| *f).collect::<Vec<_>>()).collect()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn forget_streams() {
         streams().0.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
@@ -617,7 +622,7 @@ mod fsevents {
     }
 
     /// The system's latest event id (a test's stand-in for a cursor taken now).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn current_id() -> u64 {
         // SAFETY: no arguments; returns the latest id.
         unsafe { FSEventsGetCurrentEventId() }
@@ -679,7 +684,7 @@ mod fsevents {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn since(roots: &[PathBuf], cursor: Option<u64>, cookie_dir: &Path, settle: Duration) -> Since {
         since_within(roots, cursor, cookie_dir, settle, None)
     }
@@ -884,7 +889,7 @@ mod tests {
     /// The journal names a file written after the cursor; once every earlier event is in, a replay from a later
     /// cursor names nothing. A write just before a cursor may be named too (its event's id came after the cursor):
     /// a path looked at again, never one missed.
-    /// What an event names, by its flags (Q451, as fseventsd gave them on an M1 Max): a file's times set alone
+    /// What an event names, by its flags (Q456, as fseventsd gave them on an M1 Max): a file's times set alone
     /// (inode metadata) names nothing; a write, or the times set in the record of the file's making (fseventsd's
     /// record of a path gathers its flags), names it.
     #[test]
@@ -948,7 +953,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(500));
         next_epoch();
         let (paths, touched) = changed!(base, since(std::slice::from_ref(&root), Some(settled), &cookies, SETTLE));
-        // As the record came (Q451): fseventsd may give the times set in the record of the file's making, its flags
+        // As the record came (Q422): fseventsd may give the times set in the record of the file's making, its flags
         // gathered (`0x11500`), which is named; of metadata alone (`0x10400`), it is not.
         let came = super::fsevents::flags_of(&kept).split_off(told);
         if came.iter().any(|f| super::fsevents::names(*f)) {

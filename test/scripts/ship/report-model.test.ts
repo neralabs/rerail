@@ -10,7 +10,7 @@ import { LINUX_METHOD } from "../../../scripts/ship/platform.js";
 import { attribute, buildReport, metricStatus, ruleHint, type RunMeta, SCHEMA } from "../../../scripts/ship/report-model.js";
 import { renderReport } from "../../../scripts/ship/report.js";
 import type { CellVerdict, Corpus, MeasuredMetric, OneFileVerdict, OneRuleTiming, OneRuleVerdict, PackVerdict, RuleTiming, Verdict } from "../../../scripts/ship/shipbar.js";
-import { compareMetric, type FileLabel, judgeTime, SLICES_TOLERANCE_PERCENT } from "../../../scripts/ship/verdict.js";
+import { compareMetric, type FileLabel, judgeTime, RR_RULE_TIME, SLICES_TOLERANCE_PERCENT } from "../../../scripts/ship/verdict.js";
 
 function measured(metric: string, main: number[], candidate: number[], confirm?: [number[], number[]], locator: string | null = null): MeasuredMetric {
   return {
@@ -88,7 +88,7 @@ function cell(corpus: Corpus, metrics: MeasuredMetric[]): CellVerdict {
 
 /** A pack measured in all three slices: B on each A corpus, C's three files where real code is in scope. */
 function pack(name: string, cells: CellVerdict[], over: Partial<PackVerdict> = {}): PackVerdict {
-  return { pack: name, noBaseline: false, missing: [], extra: [], cells, oneRule: cells.map((c) => oneRule(c.corpus)), oneFile: cells.some((c) => c.corpus === "real") ? threeFiles() : [], slicesNote: null, ...over };
+  return { pack: name, noBaseline: false, missing: [], extra: [], cells, oneRule: cells.map((c) => oneRule(c.corpus)), oneFile: cells.some((c) => c.corpus === "real") ? threeFiles() : [], gate: null, ...over };
 }
 
 function verdict(packs: PackVerdict[], partial: string[] = []): Verdict {
@@ -219,7 +219,7 @@ describe("the report", () => {
       grouping: { policies: 20, combined: 18, alone: 2, largest: 6 },
       fallback: [],
     };
-    const v = verdict([pack("python", [rr], { oneRule: [], oneFile: [], slicesNote: "the .rerail rewrites measure slice A only" })]);
+    const v = verdict([pack("python", [rr], { oneRule: [], oneFile: [], gate: { counted: true, reason: "counted: docs/rule-syntax/packs/python/equivalence.json says equivalent" } })]);
     const report = buildReport({ ...v, candidates: [{ candidate: "rr", description: "the .rerail rewrites", packs: v.candidates[0]!.packs }], gate: ["rr"], machine: { ...v.machine, memCap: ["24G", "56G"], timeCapS: [2700, 14400] } }, meta);
     const cellItem = report.candidates[0]!.packs[0]!.cells[0]!;
     expect(cellItem.chunked).toMatchObject({ chunks: 2, rules_run: 20 });
@@ -355,11 +355,11 @@ describe("a missing slice", () => {
     expect(r.verdict.status).toBe("PASS");
   });
 
-  it("makes a candidate that measures slice A only INCOMPLETE", () => {
-    const v = verdict([pack("sql", cells(), { oneRule: [], oneFile: [], slicesNote: "the .rerail rewrites measure slice A only" })]);
+  it("makes a .rerail pack that lacks slices B and C INCOMPLETE, as any candidate's", () => {
+    const v = verdict([pack("sql", cells(), { oneRule: [], oneFile: [], gate: { counted: true, reason: "counted: docs/rule-syntax/packs/sql/equivalence.json says equivalent" } })]);
     const r = buildReport({ ...v, candidates: [{ candidate: "rr", description: "the .rerail rewrites", packs: v.candidates[0]!.packs }], gate: ["rr"] }, meta);
     expect(r.verdict.status).toBe("INCOMPLETE");
-    expect(r.candidates[0]!.packs[0]!.incomplete.map((m) => m.slice)).toEqual(["B", "C"]);
+    expect(r.candidates[0]!.packs[0]!.incomplete.map((m) => m.slice)).toEqual(["B", "B", "C"]);
   });
 
   it("still FAILs a pack that fails and lacks a slice", () => {
@@ -387,5 +387,55 @@ describe("a partial run", () => {
 
   it("is PASS only when every pack is measured in all three slices and nothing narrowed it", () => {
     expect(buildReport(verdict(packs()), meta).verdict.status).toBe("PASS");
+  });
+});
+
+describe("the .rerail side's gate", () => {
+  const counted = { counted: true, reason: "counted: docs/rule-syntax/packs/node/equivalence.json says equivalent" };
+  const reported = { counted: false, reason: "reported only: no docs/rule-syntax/packs/sql/equivalence.json" };
+  const failing = (): CellVerdict[] => [cell("real", [measured("wall-cold", [100], [200])])];
+  const passingCells = (): CellVerdict[] => [cell("real", passing())];
+  const withRr = (rrPacks: PackVerdict[]): Verdict => {
+    const v = verdict([pack("node", passingCells())]);
+    return { ...v, candidates: [...v.candidates, { candidate: "rr", description: "the .rerail rewrites", packs: rrPacks }], gate: ["ships", "rr"] };
+  };
+
+  it("fails the run on a pack whose equivalence.json says equivalent", () => {
+    const r = buildReport(withRr([pack("node", failing(), { gate: counted })]), meta);
+    expect(r.verdict.status).toBe("FAIL");
+    expect(r.candidates[1]).toMatchObject({ status: "FAIL", counted_status: "FAIL" });
+    expect(r.candidates[1]!.failures.every((f) => f.counted)).toBe(true);
+  });
+
+  it("reports a failing pack without an equivalent declaration and never fails the run on it", () => {
+    const r = buildReport(withRr([pack("sql", failing(), { gate: reported })]), meta);
+    expect(r.verdict.status).toBe("PASS");
+    expect(r.verdict.candidates.rr).toMatchObject({ status: "FAIL", counted_status: null });
+    expect(r.candidates[1]!.counts.reported_packs).toBe(1);
+    expect(r.candidates[1]!.failures.map((f) => f.counted)).toEqual([false]);
+    const md = renderReport(r);
+    expect(md).toContain("## rr: FAIL (counted: none; 1 pack reported only)");
+    expect(md).toContain("**Reported only**: never fails the run; reported only: no docs/rule-syntax/packs/sql/equivalence.json.");
+    expect(md).toContain("`rr/sql/real/wall-cold` (reported only)");
+  });
+
+  it("counts the equivalent packs only when some are reported", () => {
+    const r = buildReport(withRr([pack("node", passingCells(), { gate: counted }), pack("sql", failing(), { gate: reported })]), meta);
+    expect(r.candidates[1]).toMatchObject({ status: "FAIL", counted_status: "PASS" });
+    expect(r.verdict.status).toBe("PASS");
+  });
+
+  it("keeps a narrowed run PARTIAL when nothing of a gated candidate counts", () => {
+    const v = withRr([pack("sql", passingCells(), { gate: reported })]);
+    const r = buildReport({ ...v, candidates: [v.candidates[1]!], gate: ["rr"], partial: ["--packs sql: 1 of 13 packs"] }, meta);
+    expect(r.verdict.status).toBe("PARTIAL");
+  });
+
+  it("names the .rerail side's rule time its net wall against main's compile + evaluate", () => {
+    const slow: OneRuleTiming = { ...rule("eslint-x", [100, 100], [200, 200]), times: [judgeTime(RR_RULE_TIME, [100, 100], [200, 200])] };
+    const r = buildReport(withRr([pack("node", passingCells(), { gate: counted, oneRule: [oneRule("real", [slow])] })]), meta);
+    expect(r.candidates[1]!.failures.find((f) => f.item === "rule time")?.reason).toMatch(/^`eslint-x` compile \+ evaluate → net wall \(cold wall less the empty rule set's\) 100 ms → 200 ms/);
+    expect(r.candidates[1]!.packs[0]!.one_rule[0]!.rule_time).toBe("compile + evaluate → net wall (cold wall less the empty rule set's)");
+    expect(renderReport(r)).toContain("| Rule | compile + evaluate → net wall (cold wall less the empty rule set's), baseline → candidate |");
   });
 });

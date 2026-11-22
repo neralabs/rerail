@@ -162,7 +162,7 @@ impl<'a> Native<'a> {
                             || !grammar.file.as_ref().is_none_or(|condition| {
                                 condition.holds(path, file.module.as_deref(), None, &file.source)
                             })
-                            || !gates.admit(grammar)
+                            || !grammar.admits(&gates)
                             || !grammar.text.as_ref().is_none_or(|text| {
                                 text.holds_with(&file.source, &mut |source: &str, literal| {
                                     memchr::memmem::find(source.as_bytes(), literal.as_bytes())

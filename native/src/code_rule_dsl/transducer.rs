@@ -11,12 +11,12 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(any(test, feature = "test-hooks"))]
 use std::ops::Range;
 
-// The packed runtime (05 Phase 4, from scale-test-the-re-railer): every backend over one
+// The packed runtime (05 Phase 4, from N): every backend over one
 // program. Nothing outside its tests calls it until the demand vtab (Phase 5) drives it.
 #[allow(dead_code)]
 pub mod packed;
-// N's semantic fact rows, which the matcher's families emit for N's catalog backend (tests).
-pub use rerail_w::code_rule_dsl::transducer::semantic_facts;
+// cratify: `semantic_facts` (N's semantic fact rows, which the matcher's families emit for N's catalog backend: tests)
+// is rerail-rules'; rerail-transducer re-exports it here
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub const STOP: u8 = 0x00;

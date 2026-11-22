@@ -172,7 +172,7 @@ impl Usage {
 
     /// The private member a declaration name node spanning exactly this range declares, with the
     /// declaration's index among the member's.
-    pub(crate) fn private_at(&self, start: usize, end: usize) -> Option<(&PrivateMember, usize)> {
+    pub fn private_at(&self, start: usize, end: usize) -> Option<(&PrivateMember, usize)> {
         let index = self
             .private_names
             .binary_search_by_key(&(start, end), |(name, _, _)| {
@@ -206,7 +206,7 @@ impl Usage {
     }
 
     /// The bindings whose name node is exactly this node.
-    pub(crate) fn named_at(
+    pub fn named_at(
         &self,
         start: usize,
         end: usize,
@@ -332,7 +332,7 @@ impl ScopeTable {
     /// scope, the latest one of the nearest enclosing function or module scope that binds the name
     /// when `id` is made (a function body is read after the scopes around it). A nested function's
     /// `nonlocal` binding shadows none (Ruff keeps it after the `nonlocal` declaration).
-    pub(crate) fn shadowed<'t>(&'t self, id: BindingId<'t>) -> Option<(BindingId<'t>, bool)> {
+    pub fn shadowed<'t>(&'t self, id: BindingId<'t>) -> Option<(BindingId<'t>, bool)> {
         let chain = self.chain(id);
         let binding = &chain[id.index];
         if id.index > 0 {
@@ -439,7 +439,7 @@ impl ScopeTable {
 
     /// The qualified name a binding imports, as Ruff compares imports (`import a.b` imports
     /// `a.b`); relative imports by their level and text.
-    pub(crate) fn imported(binding: &Binding) -> Option<String> {
+    pub fn imported(binding: &Binding) -> Option<String> {
         binding.import_kind?;
         if let Some(submodule) = &binding.submodule {
             return Some(submodule.to_string());

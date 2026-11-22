@@ -89,7 +89,7 @@ The memo's plan digest moves to `rerail.corpus-local/v3`: the plans made before 
 
 ## Prior work consulted
 
-- **ast-index-spike design index, §1 (L37):** "A row costs about 94 B. A set member inside a per-file blob
+- **SQL index prototype design index, §1 (L37):** "A row costs about 94 B. A set member inside a per-file blob
   costs about 5 B."
   - **Agrees.** One frame per document (§1).
 - **History index, finding 6:** "The recurring illness: a per-file cost turned into a per-row cost."

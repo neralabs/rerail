@@ -320,9 +320,8 @@ impl ThreadConnection {
         counted
     }
 
-    /// An in-memory store's one connection: nothing of it reaches a disk.
-    pub(super) fn memory(connection: Connection, identity: i64) -> Self {
-        Self { database_path: PathBuf::new(), connections: connections(), identity, pinned: Some(Arc::new(ParkingMutex::new(Some(connection)))), flush: Flush::None }
+    pub(super) fn memory(connection: Connection, identity: i64, flush: Flush) -> Self {
+        Self { database_path: PathBuf::new(), connections: connections(), identity, pinned: Some(Arc::new(ParkingMutex::new(Some(connection)))), flush }
     }
 
     /// How the store's writes reach the disk.
@@ -528,16 +527,9 @@ fn synchronous(flush: Flush) -> &'static str {
     }
 }
 
-/// The flush mode of `connection`'s store, as its `synchronous` says (`configure_connection`): what code that holds
-/// only a connection (the atoms, the kept facts) writes its blocks back by. A connection the store did not configure
-/// (SQLite's default, `FULL`) reads as `Synced`.
-pub fn flush_of(connection: &Connection) -> Flush {
-    match connection.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0)) {
-        Ok(0) => Flush::None,
-        Ok(1) => Flush::Os,
-        _ => Flush::Synced,
-    }
-}
+// `flush_of` is the store base's (`base.rs`), re-exported here.
+pub use super::base::flush_of;
+
 
 pub(super) fn configure_connection(connection: &mut Connection, flush: Flush) -> StoreResult<()> {
     trace_for_hazards(connection);
@@ -955,41 +947,6 @@ impl ContentStore {
     }
 }
 
-/// `Connection::query_row` and `Connection::execute` through the connection's statement cache (decision 0240): the
-/// plain forms parse their SQL at every call, and the store's writer made several such calls a tape (the tape's
-/// generation, its source's hash), parsing SQL for each of 27,000 files.
-pub(crate) trait Cached {
-    fn query_row_cached<
-        T,
-        P: rusqlite::Params,
-        F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
-    >(
-        &self,
-        sql: &str,
-        params: P,
-        f: F,
-    ) -> rusqlite::Result<T>;
-    fn execute_cached<P: rusqlite::Params>(&self, sql: &str, params: P) -> rusqlite::Result<usize>;
-}
-
-impl Cached for Connection {
-    fn query_row_cached<
-        T,
-        P: rusqlite::Params,
-        F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
-    >(
-        &self,
-        sql: &str,
-        params: P,
-        f: F,
-    ) -> rusqlite::Result<T> {
-        self.prepare_cached(sql)?.query_row(params, f)
-    }
-
-    fn execute_cached<P: rusqlite::Params>(&self, sql: &str, params: P) -> rusqlite::Result<usize> {
-        self.prepare_cached(sql)?.execute(params)
-    }
-}
 
 #[cfg(test)]
 mod mmap_tests {

@@ -9,7 +9,6 @@ use super::super::findings::{Layer, PROGRAM as FINDINGS, Shape};
 use super::super::schedule::{Limits, batches::run, family_name};
 use crate::code_rule_dsl::findings::contract::Coverage;
 use super::*;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::facts::observe::roots::directory_root;
 use crate::code_rule_dsl::matcher::{GrammarMatcher, match_tree, node_at};
 use crate::code_rule_dsl::model::{ClauseKind, Query};
@@ -22,7 +21,7 @@ use std::path::{Path, PathBuf};
 const WS: &str = "/slice";
 
 fn pack() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python")
+    crate::source_tree::native().join("../packs/python")
 }
 
 fn files(directory: &Path, extension: &str, found: &mut Vec<PathBuf>) {
@@ -149,7 +148,7 @@ fn the_wave_finds_ws_matches_from_the_prefilters_candidates() {
 
 /// On Metal: the labels in one command buffer, the roots through `demand(batch)` on Metal's
 /// compiled kernel, or in the background mode its interpreter until the kernel is built.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn the_wave_finds_ws_matches_on_metal() {
     gate(8, Limits::default(), ExecutionBackend::MetalJit);
@@ -196,7 +195,7 @@ fn the_wave_dumps_as_rir_and_assembles_back() {
     }
     let tables = wave.dump(false, false).unwrap();
     assert!(!tables.contains("\nplan\n") && !tables.contains("\ngroup ") && !tables.contains("\nsetplan") && tables.contains("\nprogram "));
-    let golden = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/waves/matches/wave.rir");
+    let golden = crate::source_tree::native().join("src/code_rule_dsl/waves/matches/wave.rir");
     if std::env::var_os("RERAIL_BLESS").is_some() {
         std::fs::write(&golden, &dump).unwrap();
     }
@@ -260,7 +259,7 @@ fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Can
     let outcome = run(&lease, &store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(&lease, &store, WS, chunk)).unwrap();
     let elapsed = started.elapsed();
     assert_eq!(outcome.waves as usize, 2 * outcome.chunks);
-    wave.statistics(&lease, WS).unwrap();
+    wave.statistics(&lease, &store).unwrap();
 
     let position = documents.iter().enumerate().map(|(at, d)| (i64::from(d.key), at)).collect::<BTreeMap<_, _>>();
     let mut matches = vec![vec![BTreeSet::new(); documents.len()]; clauses.len()];
@@ -310,7 +309,9 @@ fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Can
         let family = family_name(WS, PROGRAM, &format!("matched:{name}"));
         assert!(store.derivation_valid(&family).unwrap(), "{family}");
     }
-    let estimate: i64 = lease.query_row("SELECT rows FROM fact_stats WHERE tbl = 'rerail_terminal_match'", [], |row| row.get(0)).unwrap();
+    store.written().unwrap();
+    let estimate = store.terminal_estimate().unwrap().expect("the wave kept its estimate");
+    assert!(estimate >= 1, "{estimate}");
     eprintln!(
         "S4 wave ({route:?}): {} clauses ({} passes) on {} fixtures in {} chunks, {:?}: {expected_nodes} matched nodes; \
          candidates {candidate_nodes} of {all_nodes} clause-nodes; {} under-produced, {} differ; terminal estimate {estimate}",
@@ -330,7 +331,7 @@ fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Can
 
 /// On Metal the wave is one evaluation: every clause's passes and root programs, from the same
 /// prefilter candidates, in one command buffer, with W's matches.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn the_wave_is_one_evaluation_on_metal() {
     let (store, paths) = ingested(15);
@@ -382,7 +383,7 @@ fn policies() -> Vec<(String, crate::code_rule_dsl::CompiledCodeRuleDsl)> {
         .into_iter()
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path).ok()?;
-            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+            let compiled = crate::code_rule_dsl::rule_api::compile(&text, "json", CAPABILITIES).ok()?;
             Some((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled))
         })
         .collect()
@@ -428,7 +429,7 @@ fn the_findings_follow_ws_anchors_suppressions_and_ceilings() {
         let mut document: serde_json::Value = serde_json::from_str(text).unwrap();
         document["id"] = serde_json::json!(id);
         edit(&mut document);
-        let compiled = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+        let compiled = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES).unwrap();
         (id.to_owned(), compiled)
     };
     let ceiling = |gt: u64| {
@@ -568,7 +569,7 @@ fn findings_gate(store: &ContentStore, paths: &[String], policies: &[(String, cr
     assert!(outcome.changed.is_empty(), "{:?}", outcome.changed);
 }
 
-/// List step 20: the wave's planned program is kept in `compiled_plans` under a `CompiledPlanId`,
+/// List step 20: the wave's planned program is kept (`compiled_plan`) under a `CompiledPlanId`,
 /// reused while its decisions hold, and planned again in a store whose atom ids differ (its SQL
 /// holds them).
 #[test]
@@ -576,12 +577,8 @@ fn the_wave_program_is_a_compiled_plan() {
     let (clauses, _) = clauses();
     let wave = Wave::new(&clauses, ExecutionBackend::CpuInterpreter).unwrap();
     let rows = |store: &ContentStore| -> Vec<(Vec<u8>, String)> {
-        store
-            .candidate_transaction(false, |db| {
-                let mut statement = db.prepare("SELECT plan, decisions FROM compiled_plans WHERE compiler = 2 AND decisions <> '' ORDER BY plan")?;
-                statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()
-            })
-            .unwrap()
+        let kept = crate::code_rule_dsl::stats::plans::kept_plans(store);
+        kept.plans.into_iter().filter(|(_, c)| !c.decisions.is_empty()).map(|(plan, c)| (plan.to_vec(), c.decisions)).collect()
     };
     let digest = |program: &Program| program.steps.iter().map(|step| step.sql.clone()).collect::<Vec<_>>();
     let first = ContentStore::open(&temp("plans-a").with_extension("sqlite")).unwrap();

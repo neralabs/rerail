@@ -1,4 +1,4 @@
-//! File-backed positional FTS, following ast-index-spike. SQL selects candidates;
+//! File-backed positional FTS, following the SQL index prototype. SQL selects candidates;
 //! the existing matcher validates them and constructs captures.
 #[path = "lower/audit.rs"]
 pub mod audit;
@@ -103,7 +103,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
     }
 
     #[cfg(feature = "code-rule-profile")]
-    pub(in crate::code_rule_dsl) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.nodes
     }
     pub fn visited_nodes(&self) -> usize {
@@ -119,7 +119,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
             .adopt(self._root.root().get_doc().node(pre as u32))
     }
     #[cfg(feature = "code-rule-profile")]
-    pub(in crate::code_rule_dsl) fn estimated_bytes(&self) -> usize {
+    pub fn estimated_bytes(&self) -> usize {
         self.file.as_ref().map_or(0, |file| file.bytes)
     }
 
@@ -164,7 +164,6 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
 }
 
 // preparation_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
-#[cfg(all(test, feature = "code-rule-profile"))]
-pub mod retention_spikes;
+// retention_spikes: a test the engine hosts, beside `tests`, which it reads (rerail-tests-anchors)
 // cratify: `lab` is rerail-engine's (it mounts it)
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

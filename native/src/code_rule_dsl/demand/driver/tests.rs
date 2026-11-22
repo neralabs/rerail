@@ -14,7 +14,7 @@ fn packed_sql_backend_registers_narrow_typed_relations() {
     let connection = rusqlite::Connection::open(path).expect("content store");
     register_module(&connection, Arc::new(MatchRegistry::default())).expect("relation modules");
 
-    // Estimates come from `fact_stats`; no seeded statistics table.
+    // The terminal estimate comes from the registry (the last wave's, kept facts); no seeded statistics table.
     let seeded = connection
         .query_row(
             "SELECT count(*) FROM sqlite_schema WHERE name = 'rerail_relation_statistics'",

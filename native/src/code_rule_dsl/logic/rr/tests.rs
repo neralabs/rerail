@@ -1,8 +1,7 @@
 //! The `.rerail` front end: the rule-syntax files parse and pass `check_rr.py`'s checks, the spellings lower to the
 //! engine's forms, and every `.rdl` program translates to `.rerail` that lowers to the same program.
 
-#[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, TermRef, Version, about::About, analyses};
@@ -238,7 +237,7 @@ Seen(n, t) :- selected(d, t), kind(n, "identifier"), docof(n, d).
 }
 
 fn repo() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("..")
+    crate::source_tree::native().join("..")
 }
 
 fn rule_syntax() -> PathBuf {
@@ -270,7 +269,7 @@ fn rr_files() -> Vec<PathBuf> {
 }
 
 fn short(p: &Path) -> String {
-    p.strip_prefix(rule_syntax()).unwrap_or(p).display().to_string()
+    p.strip_prefix(rule_syntax()).unwrap_or(p).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
 }
 
 #[test]
@@ -294,11 +293,30 @@ fn rule_syntax_files_pass_check_rr() {
     // Phase 0 resolves every file's includes in one run of `bootstrap.rerail`, not one run each.
     let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonical().unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
-    for f in rr_files() {
+    let programs: Vec<(PathBuf, Vec<(PathBuf, Vec<from_tape::Stmt>)>)> = rr_files().into_iter().map(|f| {
+        let program = program(&f).unwrap().0;
+        (f, program)
+    }).collect();
+    // A library file another library file includes is a part of that file's program, as a run reads a directory of
+    // programs (`tools::logic_command`: "not a program of its own"): alone it has neither the declarations it reads
+    // nor the rules that fill its inputs (`git/messages.rerail`, which `git.rerail` includes before declaring
+    // `git_message`). It is checked in its includer's program, which reads it in.
+    // Canonical both: the files are named from the manifest's directory (`native/..`), the library as the engine finds it.
+    let lib_dir = library().canonical().unwrap();
+    let parts: BTreeSet<PathBuf> = programs
+        .iter()
+        .filter(|(f, _)| f.canonical().unwrap().starts_with(&lib_dir))
+        // A program's own file is its last (`rr::program`: includes first).
+        .flat_map(|(_, program)| program.iter().rev().skip(1).filter_map(|(p, _)| p.canonical().ok()).collect::<Vec<_>>())
+        .collect();
+    for (f, program) in programs {
         for (line, vars) in check::grounded(&read(&f).unwrap().0, &given) {
             problems.push(format!("{}:{line}: unbound {}", short(&f), vars.join(", ")));
         }
-        let mut program = program(&f).unwrap().0;
+        if parts.contains(&f.canonical().unwrap()) {
+            continue;
+        }
+        let mut program = program;
         let core = library().join("core.rerail").canonical().unwrap();
         if !program.iter().any(|(p, _)| *p == core) {
             program.push((core.clone(), read(&core).unwrap().0));
@@ -329,6 +347,13 @@ fn check_rr_finds_problems() {
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
     let refs: Vec<&from_tape::Stmt> = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
+    // A negation in a component that reads a world answer is the engine's gated negation (decision 0065 §2a, as
+    // `c/includes.rerail`'s `#include_next`); an aggregate there is still refused.
+    let world = ".decl dir_entry(d: symbol, n: symbol, k: number)\n.input dir_entry\n.decl a(x: symbol)\n.decl b(x: symbol)\n";
+    let gated = statements(&format!("{world}a(x) :- b(x), dir_entry(x, _, 0), !a(x).\nb(x) :- a(x).\n"));
+    assert!(check::strata(&gated.iter().collect::<Vec<_>>()).is_empty());
+    let counted = statements(&format!("{world}.decl c(x: symbol, n: number)\nc(x, n) :- b(x), dir_entry(x, _, 0), n = count : {{ c(x, _) }}.\nb(x) :- c(x, _).\n"));
+    assert_eq!(check::strata(&counted.iter().collect::<Vec<_>>()).len(), 1);
     let twice = vec![("a.rerail".to_owned(), statements(".decl a(x: number)")), ("b.rerail".to_owned(), statements(".decl a(x: number)\n.decl glob(x: symbol)"))];
     assert_eq!(check::declarations(&twice).len(), 2);
 }
@@ -911,7 +936,7 @@ fn difference(a: &Version, b: &Version) -> Option<String> {
 /// The authored `.rdl` programs, as (name, text): T's, the pinned goldens, the data-layer programs (each after its
 /// prelude) and the serverplan-quality program.
 fn authored() -> Vec<(String, String, PathBuf)> {
-    let src = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
+    let src = crate::source_tree::native().join("src/code_rule_dsl");
     let mut out = Vec::new();
     for dir in ["typing/programs", "logic/plan/golden/programs"] {
         let mut found = Vec::new();
@@ -984,7 +1009,7 @@ fn rdl_programs_translate_to_the_same_program() {
 /// read back as themselves.
 #[test]
 fn rr_programs_print_as_themselves() {
-    let dir = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/programs/data_layer");
+    let dir = crate::source_tree::native().join("src/code_rule_dsl/logic/programs/data_layer");
     let prelude = std::fs::read_to_string(dir.join("prelude.rerail")).unwrap();
     let mut found = Vec::new();
     files(&dir, "rerail", &mut found);
@@ -2521,6 +2546,74 @@ Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), ki
     assert_eq!(at, [("a.py", "3")], "at the string's line in its file: {found:?}");
 }
 
+/// Decision 0431 R9: a tape value's node's place in a file (`guest_place` at a string, its document's path) is one
+/// relation a program's findings read, not a join each finding writes again: 346 diagnostics on corpus0 each made the
+/// same rows, every guest's placement.
+#[test]
+fn findings_placed_through_a_string_read_one_placement() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("tape-placed-once");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = r#"
+.policy "t:tape-placed-once" revision 1
+.language python
+.violation Inner(at: node) "a name inside an annotation"
+.violation Other(at: node) "an integer inside an annotation"
+Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, "List").
+Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "integer").
+"#;
+    let rule = dir.join("placed-once.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let rules: Vec<&str> = flat.lines().filter(|l| l.contains(":-")).collect();
+    let joins: Vec<&str> = rules.iter().copied().filter(|l| l.contains("guest_place(") && l.contains("doc(")).collect();
+    let placed: Vec<&&str> = joins.iter().filter(|l| l.starts_with(super::lower::findings::PLACED_LINE)).collect();
+    assert_eq!(placed.len(), 1, "one rule places a value's node in its file: {joins:#?}");
+    assert!(joins.iter().all(|l| l.starts_with(super::lower::findings::PLACED_AT) || l.starts_with(super::lower::findings::PLACED_LINE)), "no finding joins the placement again: {joins:#?}");
+    let readers = rules.iter().filter(|l| l.contains(&format!("{}(", super::lower::findings::PLACED_LINE)) && !l.starts_with(super::lower::findings::PLACED_LINE)).count();
+    assert!(readers >= 4, "each finding's diagnostic and violation read it: {rules:#?}");
+}
+
+/// Decision 0431 R9: a program refuses its unplaced findings in one rule, over its findings' nodes, not in a rule each:
+/// each finding's own rule, negated reads and all, was a negation split, a demand and a join of its own (three strata
+/// a finding, 470 of a pack's on corpus0). A finding writes its clause and node alone, a positive projection.
+#[test]
+fn a_program_refuses_its_unplaced_findings_in_one_rule() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unplaced-once");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let guests = r#"
+.policy "t:unplaced-once" revision 1
+.language python
+.violation Inner(at: node) "a name inside an annotation"
+.violation Other(at: node) "an integer inside an annotation"
+Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, "List").
+Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "integer").
+"#;
+    let plain = r#"
+.policy "t:unplaced-once-plain" revision 1
+.language python
+.violation Name(at: node) "a name"
+.violation Number(at: node) "an integer"
+Name(i) :- kind(i, "identifier").
+Number(i) :- kind(i, "integer").
+"#;
+    for (name, program, found) in [("guests", guests, super::lower::findings::FOUND_THROUGH), ("plain", plain, super::lower::findings::FOUND_NODE)] {
+        let rule = dir.join(format!("{name}.rerail"));
+        std::fs::write(&rule, program).unwrap();
+        let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+        let rules: Vec<&str> = flat.lines().filter(|l| l.contains(":-")).collect();
+        let unplaced: Vec<&&str> = rules.iter().filter(|l| l.starts_with(super::lower::findings::UNPLACED)).collect();
+        assert_eq!(unplaced.len(), 1, "{name}: one rule refuses the unplaced findings: {unplaced:#?}");
+        assert!(unplaced[0].contains(&format!("{found}(")), "{name}: it reads the findings' nodes: {unplaced:#?}");
+        let projections: Vec<&&str> = rules.iter().filter(|l| l.starts_with(&format!("{found}("))).collect();
+        assert_eq!(projections.len(), 2, "{name}: a projection a finding: {projections:#?}");
+        assert!(projections.iter().all(|l| !l.contains('!')), "{name}: each positive: {projections:#?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0431 R9: a finding at a node of a string inside another tape value (`'int'` in `"List['int']"`) has no
 /// place: that string stands in the outer value's text, which is no file's. It is refused, naming its clause, not
 /// dropped.
@@ -3485,7 +3578,7 @@ fn files_with_tests() -> Vec<PathBuf> {
 /// its own (`testing::run`, 3–9 s at O0): four run at once, so the 44 the files carry fit the test's time.
 #[test]
 fn rule_files_pass_their_own_tests() {
-    let work = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-tests");
+    let work = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-tests");
     let mut cases = Vec::new();
     for (k, file) in files_with_tests().iter().enumerate() {
         for (j, test) in super::testing::tests(file).unwrap().into_iter().enumerate() {
@@ -3531,7 +3624,7 @@ fn a_rule_files_tests_are_no_part_of_its_program() {
 /// A failed `.expect` names its line and what the run had instead; `exactly` names the findings no `.expect` lists.
 #[test]
 fn failed_expectations_say_what_the_run_had() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-fail");
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-test-fail");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("t.rerail");
     std::fs::write(&file, r#".policy "t:fail" revision 1
@@ -3561,12 +3654,34 @@ Call(c) :- kind(c, "call").
     ], "{outcome:?}");
 }
 
+/// A file the report is given by name is read, tests or none: one that is not there, or that does not parse, is an
+/// error. The files a directory holds are read only when they may hold a test, so a directory's other files pass unread.
+#[test]
+fn a_named_rule_file_is_read_with_or_without_tests() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rr-named");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (missing, junk, rule) = (dir.join("missing.rerail"), dir.join("junk.rerail"), dir.join("rule.rerail"));
+    std::fs::write(&junk, "garbage here (\n").unwrap();
+    std::fs::write(&rule, ".decl r(x: symbol)\nr(\"a\").\n").unwrap();
+    let missing_report = super::testing::report(std::slice::from_ref(&missing), None);
+    let junk_report = super::testing::report(std::slice::from_ref(&junk), None);
+    let rule_rows = super::testing::report(std::slice::from_ref(&rule), None);
+    let walked = super::testing::report(std::slice::from_ref(&dir), None);
+    let _ = std::fs::remove_dir_all(&dir);
+    let missing_error = missing_report.unwrap_err();
+    let junk_error = junk_report.unwrap_err();
+    assert!(missing_error.contains("missing.rerail"), "{missing_error}");
+    assert!(junk_error.contains("junk.rerail"), "{junk_error}");
+    assert_eq!(rule_rows, Ok(serde_json::json!([])));
+    assert_eq!(walked, Ok(serde_json::json!([])));
+}
+
 /// A file's tests run again add no corpus root to the store: each test runs in the same directory every run
 /// (`testing::in_work`), so the store's root for it, and the frames kept by its path, are the last run's. A directory
 /// of each run's own made the store a root and its frames more on every run of the same tests.
 #[test]
 fn running_a_files_tests_again_adds_no_root_to_the_store() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-again");
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-test-again");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("t.rerail");
     std::fs::write(&file, r#".policy "t:again" revision 1
@@ -3603,7 +3718,7 @@ Call(c) :- kind(c, "call").
 /// share one.
 #[test]
 fn a_tests_directory_is_the_stores_or_the_runs_own() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-dirs");
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-test-dirs");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("t.rerail");
     std::fs::write(&file, "").unwrap();
@@ -3637,7 +3752,7 @@ fn test_blocks_parse_only_whole() {
 
 /// A file of `text` in a directory of its own, its tests, and each one's outcome (or its error).
 fn run_tests_of(name: &str, text: &str) -> Vec<(String, Result<Vec<String>, String>)> {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension(name);
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("t.rerail");
     std::fs::write(&file, text).unwrap();
@@ -3812,7 +3927,7 @@ fn a_printed_test_reads_back_as_written() {
         ".decl r(x: symbol)\nr(\"a\").\n{}",
         super::testing::print_test("printed", false, &[("src/a.py".to_owned(), content.to_owned())], &["no _ at \"src/a.py\"".to_owned(), "r(\"a\")".to_owned()])
     );
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-printed");
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-printed");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("t.rerail"), &text).unwrap();
     let tests = super::testing::tests(&dir.join("t.rerail")).unwrap();
@@ -3838,12 +3953,12 @@ fn a_flattened_file_keeps_its_tests() {
 #[test]
 fn converted_cases_are_tests() {
     let rule = repo().join("packs/rerail/rules/rerail-fixed-value-lists.json");
-    let cases = repo().join("fixtures/rerail/rerail-fixed-value-lists.cases.json");
+    let cases = std::path::PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("rerail/rerail-fixed-value-lists.cases.json");
     let report = crate::code_rule_dsl::tools::convert_rr_with(&[(rule, Some(cases.clone()))]);
     let tests = report[0]["tests"].as_str().unwrap_or_else(|| panic!("{report}"));
     let n: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cases).unwrap()).unwrap();
     let (caught, passed) = (n["caught"].as_array().unwrap().len(), n["passed"].as_array().unwrap().len());
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-cases");
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-cases");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("t.rerail"), tests).unwrap();
     let read = super::testing::tests(&dir.join("t.rerail")).unwrap();
@@ -3858,7 +3973,7 @@ fn converted_cases_are_tests() {
 /// program it lowers to with each candidate stratified whole.
 #[test]
 fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
-    let dir = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
+    let dir = crate::source_tree::native().join("../docs/rule-syntax/data-layer");
     let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     paths.sort();
     let (mut read, mut demanded) = (0, 0);
@@ -3883,7 +3998,7 @@ fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
 /// A file that is no program of its own (a library module's part) is passed over. `RERAIL_IDEMPOTENCY_DUMP=<dir>`
 /// writes both prints of each that differs.
 fn lowers_back(dirs: &[&str], k: usize, n: usize) {
-    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let root = crate::source_tree::native().join("../docs/rule-syntax");
     let mut paths: Vec<_> = dirs
         .iter()
         .flat_map(|d| std::fs::read_dir(root.join(d)).unwrap().map(|e| e.unwrap().path()))
@@ -3978,7 +4093,7 @@ fn lowering_is_idempotent_other_packs() {
 /// each group within the time a test may take), `preparation::Prune` of the program lowered from the rest is the program lowered whole, pruned: the same rules (each helper of the lowering's, numbered as it is met,
 /// as many), natives and outputs, the same inputs read, and the same declarations of the relations those rules name.
 fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usize)) -> usize {
-    let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let manifest = crate::source_tree::native().join("../docs/rule-syntax");
     let mut pending: Vec<PathBuf> = dirs.iter().map(|d| manifest.join(d)).collect();
     let mut paths = Vec::new();
     while let Some(dir) = pending.pop() {
@@ -4555,6 +4670,8 @@ libs(m) :- sources__library(_, m, "c", _).
 "#;
     let files = [("a.c", "#include \"inc/h.h\"\nint a;\n"), ("inc/h.h", "#include \"d.h\"\n"), ("inc/d.h", "int d;\n"), ("unused.h", "int u;\n")];
     let [docs, libs] = <[Vec<String>; 2]>::try_from(joined(guests_run("cheaders", &files, rule, &["docs", "libs"]))).unwrap();
+    // A library document is named by its path as the engine has it: on Windows, with `\`.
+    let docs: Vec<String> = docs.iter().map(|p| p.replace(std::path::MAIN_SEPARATOR, "/")).collect();
     let mut docs: Vec<&str> = docs.iter().map(|p| p.rsplit(".cheaders/").next().unwrap()).collect();
     docs.sort();
     assert_eq!(docs, ["a.c", "inc/d.h", "inc/h.h"], "parsed, each a translation unit");
@@ -5125,8 +5242,8 @@ fn a_demand_split_stays_linear_in_the_modules() {
         let c: Vec<&str> = l.split('\t').collect();
         (c[0], c[1], c[3].parse().unwrap())
     }).collect();
-    // The typing programs run as phases (decision 0083), each its part: `joins: phase <name>: run`.
-    assert!(rows.iter().any(|(part, _, _)| part.starts_with("joins: phase ") && part.ends_with(": run") && !part.contains("phase 1")), "the typing program ran: {heads}");
+    // The typing program runs as the run's phases (decision 0083; the job of its own went in 91f31ae830).
+    assert!(rows.iter().any(|(part, _, _)| part.contains("phase types: run")), "the typing phases ran: {heads}");
     let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
     for (part, head, work) in &rows {
         if head.starts_with("pre_") || head.starts_with("demand_") {
@@ -5136,10 +5253,10 @@ fn a_demand_split_stays_linear_in_the_modules() {
 }
 
 #[test]
-#[ignore = "child process of a_demand_split_stays_linear_in_the_modules"]
+#[ignore = "child process of a_demand_split_stays_linear_in_the_modules and a_run_on_two_threads_ends"]
 fn demand_split_child() {
     let var = |k: &str| {
-        std::path::PathBuf::from(std::env::var_os(k).unwrap_or_else(|| panic!("{k} unset: run by a_demand_split_stays_linear_in_the_modules")))
+        std::path::PathBuf::from(std::env::var_os(k).unwrap_or_else(|| panic!("{k} unset: run by a_demand_split_stays_linear_in_the_modules or a_run_on_two_threads_ends")))
     };
     crate::code_rule_dsl::tools::run_rr(&var("DEMAND_SPLIT_RULE"), &var("DEMAND_SPLIT_ROOT"), &var("DEMAND_SPLIT_OUT"), &serde_json::Value::Null).unwrap();
 }
@@ -5351,7 +5468,7 @@ fn a_host_files_own_nodes_are_not_shown() {
 
 /// Q324 (decision 0431 §4, "a program is named by its file and place"): where a program declares `docof` over nodes
 /// as T's programs do, it is `node`'s projection, and `node`'s document column is a program's file, so `docof` of a
-/// script's node is the HTML file that holds it, as core.rr's `docof` is.
+/// script's node is the HTML file that holds it, as core.rerail's `docof` is.
 #[test]
 fn a_t_programs_docof_of_a_programs_node_is_its_file() {
     let html = "<p>x</p>\n<script>f(1)</script>\n";
@@ -5375,4 +5492,120 @@ keys(i, d) :- node(_, i, "identifier", _, _), docof(i, d).
     // The node's id keeps the program's own key underneath; its document is the file's, not that key.
     assert_eq!(keys.len(), 1, "{keys:?}");
     assert!(!keys[0][0].starts_with(&format!("guest{}:", keys[0][1])), "docof is the file's key, not the program's: {keys:?}");
+}
+
+/// python/calls over four modules, with its cone of requests and its typing run, on a pool of 2 threads: the run
+/// ends. The cone (`threads::beside`) was a job that held one of the pool's threads while it waited for its answers,
+/// and the typing run's main thread, itself a job, waited on its bell running none, so no thread was left to build
+/// the chunks the run waited for: it never ended (netbox at 4 threads; any corpus at 2). The pool is the process's,
+/// so the run is a child process of its own (`demand_split_child`), killed if it has not ended in 120 s.
+#[test]
+fn a_run_on_two_threads_ends() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("src");
+    std::fs::create_dir_all(&root).unwrap();
+    for m in 0..4 {
+        std::fs::write(root.join(format!("m{m}.py")), format!("def f{m}(x):\n    return len(x)\n\n\ndef g{m}():\n    print(f{m}([1]))\n")).unwrap();
+    }
+    let rule = directory.path().join("calls.rerail");
+    std::fs::write(&rule, ".policy \"two-threads\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
+        .env("RERAIL_THREADS", "2")
+        .env("RERAIL_TAPE_CACHE", "off")
+        .env("DEMAND_SPLIT_RULE", &rule)
+        .env("DEMAND_SPLIT_ROOT", &root)
+        .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
+    let running = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.spawn()).unwrap();
+    let status = ended_within(running, std::time::Duration::from_secs(120));
+    assert!(status.is_some_and(|s| s.success()), "the run on 2 threads did not end well within 120 s: {status:?}");
+}
+
+/// `child`'s exit, or `None` (and the child killed) when it has not ended within `limit`.
+fn ended_within(mut child: std::process::Child, limit: std::time::Duration) -> Option<std::process::ExitStatus> {
+    let start = std::time::Instant::now();
+    while start.elapsed() < limit {
+        if let Some(status) = child.try_wait().unwrap() {
+            return Some(status);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    None
+}
+
+/// A policy whose program does not load names the policies its own text declares, read without its includes or
+/// its lowering: a setting its lowering refuses still leaves its `.policy` readable.
+#[test]
+fn a_texts_declared_policies_read_without_lowering() {
+    let src = "#include \"core.rerail\"\n.policy \"bad\" revision 1\n.language python\n.references {\"unknownParameter\":true}\n.violation V(at: node) \"edge\"\nV(n) :- kind(n, \"call\").\n";
+    assert_eq!(declared_policies(src), ["bad"]);
+    assert_eq!(declared_policies(".policy \"one\" revision 1\n.policy \"two\" revision 1\n"), ["one", "two"]);
+    assert!(declared_policies(".violation V(at: node) \"x\"\nV(n) :- kind(n, \"call\").\n").is_empty());
+    assert!(declared_policies(".policy \"unclosed").is_empty(), "a text that does not parse declares none");
+}
+
+/// Every native step's answer is declared in the library (`.answer`, t33 K3), and the library declares no other:
+/// the engine's registry (`rr::WORLD`, and `load`'s `loaded`) and the library's declarations are one list. Here, in
+/// the binary booted as the engine boots (its languages' answerers installed), since the crate split.
+#[test]
+fn every_native_answer_is_declared_in_the_library() {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut engine: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (rel, req) in super::WORLD.iter().copied().chain([("loaded", "load")]) {
+        engine.entry(req.to_owned()).or_default().insert(rel.to_owned());
+    }
+    let mut library: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut dirs = vec![super::library()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "rerail") {
+                for line in std::fs::read_to_string(&path).unwrap().lines() {
+                    let Some(text) = line.trim().strip_prefix(".answer ") else { continue };
+                    let answer = crate::code_rule_dsl::logic::front::answers::parse(text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                    library.entry(answer.req).or_default().extend(answer.produces);
+                }
+            }
+        }
+    }
+    assert_eq!(library, engine, "the library's `.answer`s and the engine's answerers");
+}
+
+/// A run's call opens the image store once and holds it until it returns (`held_image_store`, `HoldImages`): opened at
+/// each ask, its every close made SQLite delete and make again its write-ahead log. A call after it opens its own, and
+/// none holds it once returned; outside a call, each ask opens it.
+#[test]
+fn a_run_opens_the_image_store_once() {
+    let opened = std::sync::atomic::AtomicUsize::new(0);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("held-image-store");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let open = || {
+        opened.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::content_store::ContentStore::open_images(&dir.join("images.sqlite")).ok().map(std::sync::Arc::new)
+    };
+    let count = || opened.load(std::sync::atomic::Ordering::Relaxed);
+    super::held_image_store(open);
+    super::held_image_store(open);
+    assert_eq!(count(), 2, "outside a run, each ask opens it");
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    for call in 1..=2 {
+        {
+            let _call = super::HoldImages::enter();
+            let _inner = super::HoldImages::enter();
+            let a = super::held_image_store(open).expect("the store");
+            drop(_inner);
+            let b = super::held_image_store(open).expect("the store");
+            assert!(std::sync::Arc::ptr_eq(&a, &b), "call {call}: one store, past an inner call");
+            assert_eq!(count(), 2 + call, "call {call} opened it once");
+        }
+        // The call returned: nothing holds the store open (a test's store is checked so after its run).
+        assert_eq!(crate::content_store::holding(&dir.join("images.sqlite")), (0, 0), "call {call} let it go");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

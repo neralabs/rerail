@@ -1,7 +1,6 @@
 //! The converter's run over the data-layer pack, and checks of what it writes.
 
 use super::*;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::test_support::{CAPABILITIES, pack_test_data};
 use std::path::{Path, PathBuf};
@@ -9,7 +8,7 @@ use std::path::{Path, PathBuf};
 mod reference_tests;
 mod reference_stage_tests;
 
-/// The rules converted: the pack as rewritten by Pulling-it-all-together (`rules-ast`, decision 0037 step 1).
+/// The rules converted: the pack as rewritten by PIAT (`rules-ast`, decision 0037 step 1).
 const RULES: &str = "rules-ast";
 
 /// The data-layer pack's candidates, pack test data (`packs/data-layer/upstream/lint/`, not in git).
@@ -195,7 +194,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
             if let Some(c) = cache.borrow().get(text.as_str()) {
                 return Ok(c.clone());
             }
-            let c = CodeRuleDslRuntime::compile(text.clone(), "json".to_owned(), CAPABILITIES.to_owned()).map_err(|e| e.reason.to_string())?.inner;
+            let c = crate::code_rule_dsl::rule_api::compile(&text, "json", CAPABILITIES).map_err(|e| e.reason.to_string())?.inner;
             cache.borrow_mut().insert(text.clone(), c.clone());
             Ok(c)
         })
@@ -386,7 +385,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     Ok(Converted { program, clauses, approx: e.approx.clone(), configured, when })
 }
 
-/// The rules the converter reads, by id: the 60 of Pulling-it-all-together's rewrite (`rules-ast`), then the
+/// The rules the converter reads, by id: the 60 of PIAT's rewrite (`rules-ast`), then the
 /// newer rules of Data-layer-rule-expressivity (its candidates in `rules`, its certified rules in the pack's
 /// `rules`), each rule once, the first source winning.
 fn rule_files() -> Vec<PathBuf> {
@@ -697,17 +696,17 @@ fn regexes_become_exact_globs() {
         (r"\basyncio\s*\.\s*to_thread$", Text::Name, Some(&["*.asyncio.to_thread", "asyncio.to_thread"])),
         (r"^(?:materialize|assert_result|.*_post_op)$", Text::Name, Some(&["*_post_op", "assert_result", "materialize"])),
         (r"(?:^|/)tests(?:/|$)", Text::Path, Some(&["**/tests", "**/tests/**"])),
-        (r"^(?:api/)?impl/common/l2070_server_plan(?:/|$)", Text::Path, None),
-        (r"(?:^|/)l2070_batching/(?:.*/)?executor\.py$", Text::Path, None),
-        (r"(?:^|/)l9750_graphql/", Text::Path, None),
+        (r"^(?:api/)?src/core/query_plan(?:/|$)", Text::Path, None),
+        (r"(?:^|/)batching/(?:.*/)?executor\.py$", Text::Path, None),
+        (r"(?:^|/)graphql/", Text::Path, None),
         (r"(?i)cursor|^(?:db|conn)$", Text::Name, None),
         (r"^(?:ab|c)+$", Text::Name, Some(&[])),
     ];
     let samples = [
         "a_b", "_ab", "ab", "apply_x_effect", "apply__effect", "_my_cache_x", "cache", "PyResult", "Pyresult", "Py", "_Async", "__Lazy_x", "Lazy",
-        "materialize", "x_post_op", "_post_op", "tests", "a/tests", "a/tests/b.py", "tests/b", "attests/b", "a/b/tests/c/d.py", "impl/common/l2070_server_plan",
-        "api/impl/common/l2070_server_plan/x.py", "impl/common/l2070_server_planx", "l2070_batching/executor.py", "a/l2070_batching/x/y/executor.py",
-        "xl2070_batching/executor.py", "l9750_graphql/a.py", "a/l9750_graphql/b/c.py", "l9750_graphqlx/a.py", "raw_CURSOR", "db", "dbx", "conn", "asyncio.to_thread", "x.asyncio.to_thread", "xasyncio.to_thread",
+        "materialize", "x_post_op", "_post_op", "tests", "a/tests", "a/tests/b.py", "tests/b", "attests/b", "a/b/tests/c/d.py", "src/core/query_plan",
+        "api/src/core/query_plan/x.py", "src/core/query_planx", "batching/executor.py", "a/batching/x/y/executor.py",
+        "xbatching/executor.py", "graphql/a.py", "a/graphql/b/c.py", "graphqlx/a.py", "raw_CURSOR", "db", "dbx", "conn", "asyncio.to_thread", "x.asyncio.to_thread", "xasyncio.to_thread",
     ];
     for (re, text, expect) in cases {
         let got = globs(&parse(re), text);
@@ -1461,7 +1460,7 @@ fn has_filters_the_ancestor_by_its_own_kinds() {
     let _ = std::fs::remove_dir_all(&dir);
     got.sort();
     // W, on the same source: its findings of the clauses converted (its lines 0-based).
-    let compiled = CodeRuleDslRuntime::compile(std::fs::read_to_string(&rule).unwrap(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+    let compiled = crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(&rule).unwrap(), "json", CAPABILITIES).unwrap();
     let result = crate::code_rule_dsl::test_support::evaluate_file(&compiled, "python", path, source);
     let converted: BTreeSet<&str> = c.clauses.iter().filter(|(_, r)| r.is_ok()).map(|(id, _)| id.as_str()).collect();
     let mut w: Vec<String> = result["violations"]
@@ -1485,7 +1484,7 @@ fn converted_and_w(rule: &Path, path: &str, source: &str, name: &str) -> (Vec<St
     write_files(&dir, [(path, source)]);
     let mut got = findings(&c.program, &dir).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
-    let compiled = CodeRuleDslRuntime::compile(std::fs::read_to_string(rule).unwrap(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+    let compiled = crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(rule).unwrap(), "json", CAPABILITIES).unwrap();
     let result = crate::code_rule_dsl::test_support::evaluate_file(&compiled, "python", path, source);
     let converted: BTreeSet<&str> = c.clauses.iter().filter(|(_, r)| r.is_ok()).map(|(id, _)| id.as_str()).collect();
     let mut w: Vec<String> = result["violations"]
@@ -1785,7 +1784,7 @@ struct Baseline {
 
 impl Baseline {
     fn path() -> PathBuf {
-        std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
+        crate::source_tree::native().join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
     }
 
     /// The recorded baseline, or why it does not read.

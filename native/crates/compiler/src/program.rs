@@ -48,10 +48,15 @@ pub const ACCEPT: u8 = 0x5b;
 pub const SPAN: u8 = 0x5c;
 /// Refuses unless one of tier 1's totals is zero: the fallback.
 pub const EMPTY: u8 = 0x5d;
-/// A mark (a token of no width) before the token: `m=k` its order, the operand its mask.
+/// A mark (a token of no width) before the token: `m & MARK_ORDER` its order, the operand its
+/// mask.
 pub const MARK: u8 = 0x5e;
+/// `MARK`'s mode bits for the mark's order: 64 marks.
+pub const MARK_ORDER: u8 = 63;
+/// `MARK`'s mode bit: the file's end has the mark.
+pub const MARK_END: u8 = 64;
 /// `MARK`'s mode bit: on the mark, its arm, the mark kept for the callee that arm calls.
-pub const MARK_KEEP: u8 = 64;
+pub const MARK_KEEP: u8 = 128;
 /// `TOKEN`'s mode bit: the extras taken in the token step (`Words::extras`), as the lean parser
 /// places comments where it passes them: a token that is an extra is its leaf, deferred, and
 /// the next token is taken.
@@ -104,8 +109,12 @@ pub const CHECK: u8 = 0x66;
 /// (`Words::gap_patterns`, its first entry), the extra pending last is dropped: no node of the
 /// tape (decision 0416, the lean lexer's swallowed comment). `m=2`, and `m=3+F` where flag `F`
 /// is set (`mark … , loses …`): where gap pattern `operand` holds, the extra pending last is
-/// lost: of no width, after the token (decision 0451, the lean lexer's `asi`).
+/// lost: of no width, after the token (decision 0451, the lean lexer's `asi`). `m=19`, and
+/// `m=20+F` where flag `F` is set (`mark … , refuses …`): where gap pattern `operand` holds, the
+/// file is refused (what the lean lexer's `asi` reads there the grammar does not say yet).
 pub const SETTLE: u8 = 0x84;
+/// `SETTLE`'s first refusing mode (`m=19`; `m=20+F` with a flag).
+pub const SETTLE_REFUSE: u8 = 19;
 
 // The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
 // sources (a file's tape, a range of the TU's arena), with a token register `T`, a macro register
@@ -244,8 +253,7 @@ pub fn split(word: u32) -> (u8, u8, u16) {
 
 /// The grammar's names for a program's numbers (`name rule R "N"`, `name kind #K "N"`, `name
 /// field F "N"`, `name token K "N"`, `name mark K "N"`): each rule's (by its place among
-/// `Words::rules`), each node kind's and field's (rising by number: what `rust_stream`'s labels
-/// are named by too), each record kind's (the token kinds tier 1's records give), and each mark's
+/// `Words::rules`), each node kind's and field's (rising by number; no word reads them), each record kind's (the token kinds tier 1's records give), and each mark's
 /// in the records' code (`Records::marks`, by its bit).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Names {
@@ -288,6 +296,9 @@ pub struct Words {
     /// order) holds where its mask does and the token's record names string `W`, as a parser
     /// tests the next token's word. Rising by mark.
     pub mark_words: Vec<(u8, u16)>,
+    /// The marks each mark passes too where it is taken, past those before it (`markpasses K
+    /// M`, a mark's `, passes`): mark `K`'s, a bit each by order. Rising by mark.
+    pub mark_passes: Vec<(u8, u64)>,
     /// Each keyword's node kind (`wordkind sW #K`): a token whose record names string `W` makes a
     /// leaf of kind `K` where a `LEAF` names `stream_ir::WORD_KIND`. Rising by string.
     pub word_kinds: Vec<(u16, u16)>,
@@ -316,6 +327,15 @@ pub struct Words {
     pub local_checks: Vec<LocalCheck>,
     /// The preprocessing words' tables (`pp_words`), when the program has them.
     pub pp: PpTables,
+}
+
+impl Words {
+    /// The marks done at a token where mark `order` is taken: it, the marks before it, and those
+    /// it passes (`mark_passes`).
+    pub fn taken(&self, order: u8) -> u64 {
+        let passes = self.mark_passes.iter().find(|p| p.0 == order).map_or(0, |p| p.1);
+        u64::MAX >> (63 - u32::from(order & crate::program::MARK_ORDER)) | passes
+    }
 }
 
 /// The preprocessing words' tables: what a paste (`##`) may make, which a dialect sets.
@@ -535,6 +555,11 @@ pub struct TokenElem {
     /// The bytes the record's token may begin with (`starting "B"`, a gap pattern's only): a
     /// set of 256 bits, none for no test. The lean lexer's `asi` reads the byte after a comment.
     pub first: [u64; 4],
+    /// A gap pattern's `since` (decision 0451): `offset` counts from the grammar token before
+    /// the token (0; none before the file's first), and the record must be before the token.
+    /// The first comment after a line break, however many follow it, where the lean lexer's
+    /// `asi` decides.
+    pub since: bool,
     /// The marks (bits of the records' marks) that take a record as one of the kinds: a kind
     /// whose first byte another token's starts too has its rows' starts as a mark bit of the
     /// code, read as tier 2's `ROW` reads a row's start, and `kinds` holds only the classes of

@@ -187,6 +187,8 @@ mod on_version;
 pub use on_version::FileLocal;
 mod passes;
 pub use passes::{FactorCaches, FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, factorize_intermediates, locate_all};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use passes::Readers;
 pub mod export_demand;
 pub use export_demand::DemandExports;
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
@@ -194,14 +196,14 @@ use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 
 /// The inputs whose rows are the run's options (`facts::repository::options`): the same beside every chunk and the
 /// cross-file part, and named by the corpus memo's key (`corpus::memo::with_options`), so constants to the split.
-pub(crate) fn option_input(rel: &str) -> bool {
+pub fn option_input(rel: &str) -> bool {
     matches!(rel, "option" | "option_item")
 }
 
 /// An input with one value for the whole run, as a fact has: the run's options (`option_input`), or an earlier
 /// phase's export (`corpus::phases`), bound once its rows are known. A rule reading one joins no document by it.
-pub(crate) fn run_constant(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str) -> bool {
-    option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.input_names().iter().any(|i| i == rel))
+pub fn run_constant(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str) -> bool {
+    option_input(rel) || (crate::code_rule_dsl::logic::plan::phased::is_phased(rel) && prog.input_names().iter().any(|i| i == rel))
 }
 
 /// Rule `rule`'s `a = b` between two variables, and its `d = @doc(n)` (decision 0091's scope guards), by their slots:
@@ -324,7 +326,10 @@ pub fn assemble(
     // overlay over it (decision 0244).
     let local_outputs: Vec<String> = f.outputs().filter(|o| is_local(o)).map(str::to_owned).chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     let local_inputs: Vec<String> = f.inputs().map(str::to_owned).collect();
-    let cross_outputs: Vec<String> = f.outputs().filter(|o| !is_local(o)).map(str::to_owned).collect();
+    // An output the cross part reads too (an export: a pack's `rr_found_through` over a file-local finding) is handed
+    // on by it, read where its input is bound: the file-local part keeps its exports in the engine for the cross part,
+    // not decoded, so an exported output is the cross part's to write.
+    let cross_outputs: Vec<String> = f.outputs().filter(|o| !is_local(o) || exports.iter().any(|x| x == o)).map(str::to_owned).collect();
     let cross_inputs: Vec<String> = base_read.into_iter().chain(exports.iter().cloned()).collect();
     let versions = {
         use crate::code_rule_dsl::logic::program_image::PartFields;
@@ -350,7 +355,7 @@ pub fn assemble(
 
 /// Whether the factorized store is on (decision 0099): it is, unless `RERAIL_FACTORIZE=off` or the run's option
 /// `factorize: off` turns it off, for comparison. The prepared program's key names it (`corpus`'s `prepared_key`).
-pub(crate) fn factorize_on(options: &serde_json::Value) -> bool {
+pub fn factorize_on(options: &serde_json::Value) -> bool {
     std::env::var("RERAIL_FACTORIZE").map_or(true, |v| v != "off") && options.get("factorize").and_then(|v| v.as_str()) != Some("off")
 }
 
@@ -359,7 +364,7 @@ pub(crate) fn factorize_on(options: &serde_json::Value) -> bool {
 /// edit renames only the helpers of the rules it changes, where a counter renumbered every helper after them. The
 /// digits keep the shape the profile's and the run's readers parse (`fl<digits>_<head>`). A name the program already
 /// declares (`existing`), or one this round gave other content (`used`), is hashed again with a salt.
-pub(crate) fn helper_name(prefix: &str, rel: &str, content: &str, existing: impl Fn(&str) -> bool, used: &mut std::collections::HashMap<String, String>) -> String {
+pub fn helper_name(prefix: &str, rel: &str, content: &str, existing: impl Fn(&str) -> bool, used: &mut std::collections::HashMap<String, String>) -> String {
     let mut salt = 0u32;
     loop {
         // FNV-1a over the salt and the text: the same in every process and build.

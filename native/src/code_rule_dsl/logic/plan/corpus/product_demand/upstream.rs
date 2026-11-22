@@ -54,8 +54,9 @@ fn filter_term(v: &Version, term: TermRef<'_>) -> bool {
     }
 }
 
-/// Follow relation reads backwards so a guard can drop any atom that would read the relation it bounds.
-fn readers_of(program: &Program<'_>, target: &str) -> BTreeSet<String> {
+/// Each relation's readers in the program as it is: the heads of the rules that read it, the natives that read it, a
+/// request's answers.
+fn reader_graph<'p>(program: &'p Program<'_>) -> BTreeMap<&'p str, Vec<&'p str>> {
     let v = program.v();
     let mut readers = BTreeMap::<&str, Vec<&str>>::new();
     for rule in v.rules() {
@@ -74,6 +75,11 @@ fn readers_of(program: &Program<'_>, target: &str) -> BTreeSet<String> {
     for (request, answers) in &program.f.answers {
         readers.entry(request).or_default().extend(answers.iter().map(String::as_str));
     }
+    readers
+}
+
+/// Follow relation reads backwards so a guard can drop any atom that would read the relation it bounds.
+fn readers_of(readers: &BTreeMap<&str, Vec<&str>>, target: &str) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     let mut pending = vec![target];
     while let Some(next) = pending.pop() {
@@ -129,7 +135,7 @@ fn demand_body(
 }
 
 /// A demand's rule `install` writes: of rule `rule`'s read at literal `read` (its key at the columns), its parts.
-pub(super) struct Proof {
+pub struct Proof {
     pub(super) rule: RuleId,
     pub(super) read: usize,
     own: bool,
@@ -137,26 +143,46 @@ pub(super) struct Proof {
 }
 
 fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTreeSet<String>, require_anchor: bool) -> Result<bool, String> {
-    install_named(program, rel, cols, products, require_anchor, PREFIX, &|_, _| true)
+    install_alone(program, rel, cols, &Ask { products, require_anchor, prefix: PREFIX }, &|_, _| true)
 }
 
-/// `install` under another prefix: the deferred joins' pair relations (`DEFERRED_PAIRS`, decision 0488). None is
-/// installed unless `restricts` finds the demand's rules restrict the relation (a request that asks for every key
-/// costs a join of its own and restricts nothing).
-pub(super) fn install_named(
-    program: &mut Program<'_>,
+/// What a restriction is installed under: the products its demand leaves out, whether a read must anchor it, and its
+/// guard's prefix.
+#[derive(Clone, Copy)]
+struct Ask<'a> {
+    products: &'a BTreeSet<String>,
+    require_anchor: bool,
+    prefix: &'a str,
+}
+
+/// A restriction `install` writes, planned on the program as it is: `rel`'s guard `name` at its columns `cols`, the
+/// producers it guards, the demand's rules (`proofs`) and constant rows, and the relations those rules read.
+struct Plan {
+    rel: String,
+    name: String,
+    cols: Vec<usize>,
+    producers: BTreeSet<RuleId>,
+    proofs: Vec<Proof>,
+    rows: Vec<List<Value>>,
+    columns: Vec<(String, String)>,
+    reads: BTreeSet<String>,
+}
+
+/// `rel`'s restriction at `cols` as `ask` asks, if one can be installed: every read supplies the columns, and
+/// `restricts` finds the demand's rules restrict the relation. `dependent` is what reads `rel` (`readers_of`).
+fn plan(
+    program: &Program<'_>,
     rel: &str,
     cols: &[usize],
-    products: &BTreeSet<String>,
-    require_anchor: bool,
-    prefix: &str,
+    ask: &Ask<'_>,
+    dependent: &BTreeSet<String>,
     restricts: &dyn Fn(&Version, &[Proof]) -> bool,
-) -> Result<bool, String> {
+) -> Option<Plan> {
+    let Ask { products, require_anchor, prefix } = *ask;
     let name = format!("{prefix}{rel}");
     if program.columns(&name).is_some() {
-        return Ok(false);
+        return None;
     }
-    let dependent = readers_of(program, rel);
     let v = program.v();
     let mut anchored = false;
     let mut proofs = Vec::new();
@@ -165,14 +191,7 @@ pub(super) fn install_named(
     let mut readers = 0;
     for rule in v.rules() {
         let own = program.head_rel(rule) == rel;
-        let own_key = if own {
-            match keys(rule.head(), cols) {
-                Some(key) => key,
-                None => return Ok(false),
-            }
-        } else {
-            Vec::new()
-        };
+        let own_key = if own { keys(rule.head(), cols)? } else { Vec::new() };
         if own {
             producers.insert(rule.id());
         }
@@ -181,18 +200,18 @@ pub(super) fn install_named(
                 continue;
             };
             if read.gated() {
-                return Ok(false);
+                return None;
             }
             // For aggregates, the prefix below must bind every chosen column outside the aggregate.
             // Inner columns stay out of the guard, so the aggregate still sees every row of each group.
-            let Some(key) = keys(read, cols) else { return Ok(false) };
+            let key = keys(read, cols)?;
             let same_key = key.len() == own_key.len() && key.iter().zip(&own_key).all(|(a, b)| same(*a, *b));
             if own && same_key && matches!(literal.view(), Lit::Atom(_)) && !read.neg() {
                 continue;
             }
             readers += 1;
             if readers > 48 {
-                return Ok(false);
+                return None;
             }
             let wanted = vars_of(&key);
             if wanted.is_empty() {
@@ -202,7 +221,7 @@ pub(super) fn install_named(
             }
             // For a recursive walk, start with the parent's requested key and derive the child's key.
             let guard = own.then(|| vars_of(&own_key));
-            let Some(parts) = demand_body(v, rule, guard, &dependent, products, &wanted) else { return Ok(false) };
+            let parts = demand_body(v, rule, guard, dependent, products, &wanted)?;
             if !own {
                 anchored |= parts.iter().any(|part| {
                     let Part::Lit(j) = *part else { return false };
@@ -217,24 +236,44 @@ pub(super) fn install_named(
         }
     }
     if producers.is_empty() || readers == 0 || (require_anchor && !anchored) || !restricts(v, &proofs) {
-        return Ok(false);
+        return None;
     }
     let columns: Vec<(String, String)> = {
         let all = program.columns(rel).unwrap_or_default();
         cols.iter().map(|&i| all[i].clone()).collect()
     };
-    let mut qualifiers = program.f.qualifiers.clone();
-    qualifiers.entry(name.clone()).or_default().extend(["no_inline".to_owned(), "no_magic".to_owned()]);
-    // This relation is guarded once the restriction holds. Keep explicit demand on other relations.
-    let demand: Vec<String> = program.f.demand.iter().filter(|d| *d != rel).cloned().collect();
-    let made = program.derive(
-        &mut |first, v, r, b| {
-            if !producers.contains(&r.id()) {
-                return Ok(false);
+    let mut reads = BTreeSet::new();
+    for proof in &proofs {
+        let r = v.rule(proof.rule).expect("a reader of the version");
+        for part in &proof.parts {
+            if let Part::Lit(j) = *part
+                && let Some(a) = r.body().nth(j).and_then(|l| l.atom())
+            {
+                reads.insert(v.rel_name(a.rel()).to_owned());
             }
-            let key = keys(r.head(), cols).expect("a producer's plain key");
+        }
+    }
+    Some(Plan { rel: rel.to_owned(), name, cols: cols.to_vec(), producers, proofs, rows, columns, reads })
+}
+
+/// One derivation of the program with each of `plans` installed: its producers guarded, its guard declared, its
+/// demand's rules after the rules, in the plans' order.
+fn derive_plans(program: &Program<'_>, plans: &[Plan]) -> Result<std::sync::Arc<Version>, String> {
+    let by_producer: BTreeMap<RuleId, &Plan> = plans.iter().flat_map(|p| p.producers.iter().map(move |r| (*r, p))).collect();
+    let mut qualifiers = program.f.qualifiers.clone();
+    for plan in plans {
+        qualifiers.entry(plan.name.clone()).or_default().extend(["no_inline".to_owned(), "no_magic".to_owned()]);
+    }
+    // These relations are guarded once the restrictions hold. Keep explicit demand on other relations.
+    let demand: Vec<String> = program.f.demand.iter().filter(|d| !plans.iter().any(|p| &p.rel == *d)).cloned().collect();
+    program.derive(
+        &mut |first, v, r, b| {
+            let Some(plan) = by_producer.get(&r.id()) else {
+                return Ok(false);
+            };
+            let key = keys(r.head(), &plan.cols).expect("a producer's plain key");
             let guard: Vec<T<'_>> = key.iter().map(|t| t_of(r, *t)).collect();
-            let mut rb = rewritten(first, v, r, b).atom(name.as_str(), &guard);
+            let mut rb = rewritten(first, v, r, b).atom(plan.name.as_str(), &guard);
             for l in r.body() {
                 rb = rb.lit(v, r, l);
             }
@@ -242,32 +281,115 @@ pub(super) fn install_named(
         },
         &mut |v, b| {
             use crate::code_rule_dsl::logic::program_image::fields::FieldsMut as _;
-            let pairs: Vec<(&str, &str)> = columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            b.fields().declare(&name, &pairs);
-            if !rows.is_empty() {
-                b.fields().set_facts(&name, &rows);
-            }
-            for proof in &proofs {
-                let r = v.rule(proof.rule).expect("a reader of the version");
-                let read = r.body().nth(proof.read).and_then(|l| l.atom()).expect("the read");
-                let head: Vec<T<'_>> = keys(read, cols).expect("a plain key").iter().map(|t| t_of(r, *t)).collect();
-                let guard: Vec<T<'_>> = if proof.own {
-                    keys(r.head(), cols).expect("a producer's plain key").iter().map(|t| t_of(r, *t)).collect()
-                } else {
-                    Vec::new()
-                };
-                write_demand(v, r, b, &name, &head, (&name, &guard), &proof.parts)?;
+            for plan in plans {
+                let pairs: Vec<(&str, &str)> = plan.columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+                b.fields().declare(&plan.name, &pairs);
+                if !plan.rows.is_empty() {
+                    b.fields().set_facts(&plan.name, &plan.rows);
+                }
+                for proof in &plan.proofs {
+                    let r = v.rule(proof.rule).expect("a reader of the version");
+                    let read = r.body().nth(proof.read).and_then(|l| l.atom()).expect("the read");
+                    let head: Vec<T<'_>> = keys(read, &plan.cols).expect("a plain key").iter().map(|t| t_of(r, *t)).collect();
+                    let guard: Vec<T<'_>> = if proof.own {
+                        keys(r.head(), &plan.cols).expect("a producer's plain key").iter().map(|t| t_of(r, *t)).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    write_demand(v, r, b, &plan.name, &head, (&plan.name, &guard), &proof.parts)?;
+                }
             }
             b.fields().set_field(Field::Qualifiers(&qualifiers));
             b.fields().set_field(Field::Demand(&demand));
             Ok(())
         },
-    )?;
-    let apart = Program::components(&made).is_ok_and(|parts| parts.iter().all(|part| !(part.contains(rel) && part.contains(&name))));
+    )
+}
+
+/// Whether each plan's guard sits outside its relation's component in `made`.
+fn apart(made: &Version, plans: &[Plan]) -> bool {
+    Program::components(made).is_ok_and(|parts| {
+        parts.iter().all(|part| plans.iter().all(|p| !(part.contains(p.rel.as_str()) && part.contains(p.name.as_str()))))
+    })
+}
+
+/// `install` under another prefix, alone.
+fn install_alone(
+    program: &mut Program<'_>,
+    rel: &str,
+    cols: &[usize],
+    ask: &Ask<'_>,
+    restricts: &dyn Fn(&Version, &[Proof]) -> bool,
+) -> Result<bool, String> {
+    let dependent = readers_of(&reader_graph(program), rel);
+    let Some(plan) = plan(program, rel, cols, ask, &dependent, restricts) else {
+        return Ok(false);
+    };
+    let plans = [plan];
+    let made = derive_plans(program, &plans)?;
+    let apart = apart(&made, &plans);
     if apart {
         program.set(made);
     }
     Ok(apart)
+}
+
+/// `install` under another prefix for each of `requests`, in order: the deferred joins' pair relations
+/// (`DEFERRED_PAIRS`, decision 0488), which of them installed. None is installed unless `restricts` finds the
+/// demand's rules restrict the relation (a request that asks for every key costs a join of its own and restricts
+/// nothing).
+///
+/// The requests go in rounds: a round's are planned on the program the round before left, made in one derivation,
+/// and its components found once. A round ends before a request whose plan an earlier one of the round changes: what
+/// reads its relation (`readers_of`) holds that one's relation (its producers would read the new guard) or a relation
+/// its demand reads (the demand would read this one). A round one of whose guards is not apart is installed a request
+/// at a time, as before: a restriction only adds edges, so a guard apart in the round's whole program is apart in any
+/// part of it, and the rounds install what one request at a time would.
+pub fn install_requests(
+    program: &mut Program<'_>,
+    requests: &[(String, &[usize])],
+    prefix: &str,
+    restricts: &dyn Fn(&str, &[usize], &Version, &[Proof]) -> bool,
+) -> Result<Vec<bool>, String> {
+    let none = BTreeSet::new();
+    let ask = Ask { products: &none, require_anchor: false, prefix };
+    let mut installed = vec![false; requests.len()];
+    let mut next = 0;
+    while next < requests.len() {
+        let mut round: Vec<(usize, Plan)> = Vec::new();
+        let mut end = next;
+        {
+            let graph = reader_graph(program);
+            while let Some((rel, cols)) = requests.get(end) {
+                let dependent = readers_of(&graph, rel);
+                if round.iter().any(|(_, p)| dependent.contains(&p.rel) || !p.reads.is_disjoint(&dependent)) {
+                    break;
+                }
+                if let Some(plan) = plan(program, rel, cols, &ask, &dependent,&|v, proofs| restricts(rel, cols, v, proofs)) {
+                    round.push((end, plan));
+                }
+                end += 1;
+            }
+        }
+        next = end;
+        if round.is_empty() {
+            continue;
+        }
+        let (at, plans): (Vec<usize>, Vec<Plan>) = round.into_iter().unzip();
+        let made = derive_plans(program, &plans)?;
+        if apart(&made, &plans) {
+            program.set(made);
+            for i in at {
+                installed[i] = true;
+            }
+            continue;
+        }
+        for i in at {
+            let (rel, cols) = &requests[i];
+            installed[i] = install_alone(program, rel, cols, &ask, &|v, proofs| restricts(rel, cols, v, proofs))?;
+        }
+    }
+    Ok(installed)
 }
 
 fn node_columns(program: &Program<'_>, rel: &str) -> Vec<usize> {
@@ -281,7 +403,7 @@ fn node_columns(program: &Program<'_>, rel: &str) -> Vec<usize> {
         .collect()
 }
 
-fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String>, tuple: bool, require_anchor: bool) -> Result<bool, String> {
+pub fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String>, tuple: bool, require_anchor: bool) -> Result<bool, String> {
     if products.contains(rel) || !eligible(program, rel) {
         return Ok(false);
     }
@@ -407,7 +529,7 @@ impl Arg {
 /// Restate the witness of a node minimum or maximum after reversing its order key. Its original atom tells
 /// placement which document supplied the node. An empty group has no node_order row. Node-order keys in the tape
 /// binding are injective, so a nonempty group's returned node is a witness of the original atom.
-pub(super) fn restore_order_witnesses(program: &mut Program<'_>, narrowed: &BTreeSet<String>) -> Result<usize, String> {
+pub fn restore_order_witnesses(program: &mut Program<'_>, narrowed: &BTreeSet<String>) -> Result<usize, String> {
     let f = &program.f;
     let v = program.v();
     if !f.inputs.iter().any(|r| r == "node_order")
@@ -541,105 +663,4 @@ pub(super) fn restore_order_witnesses(program: &mut Program<'_>, narrowed: &BTre
     Ok(count)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use super::super::tests::parse;
-
-    #[test]
-    fn bound_columns_keep_wildcards_and_scope_the_point_walk() {
-        let v = parse(
-            "
-            .decl kind(n: node, k: symbol)
-            .decl child(n: node, c: node, i: number)
-            .decl chosen(x: node)
-            .input kind, child, chosen
-            .decl peel(x: node, y: node)
-            peel(x, x) :- kind(x, k), k != \"wrap\".
-            peel(x, y) :- kind(x, \"wrap\"), child(x, c, _), peel(c, y).
-            .decl missing(x: node)
-            .output missing
-            missing(x) :- chosen(x), !peel(x, _).
-        ",
-        )
-        .unwrap();
-        let mut p = Program::of(&v);
-        assert!(restrict(&mut p, "peel", &BTreeSet::new(), false, false).unwrap());
-        let specs = p.shown(Some("rr_reader_demand_peel"));
-        assert!(specs.iter().any(|r| r.contains("chosen($x)")));
-        assert!(specs.iter().any(|r| r.starts_with("rr_reader_demand_peel($c)")
-            && r.contains("rr_reader_demand_peel($x)")
-            && r.contains("child($x, $c")));
-    }
-
-    #[test]
-    fn a_negated_reader_supplies_its_filter_to_the_tuple_demand() {
-        let v = parse(
-            "
-            .decl attrs(n: node, r: node, s: symbol)
-            .decl a(n: node)
-            .decl b(n: node)
-            .input attrs, a, b
-            .decl product(r: node, n: node)
-            product(r, n) :- a(r), b(n).
-            .decl reader(r: node, n: node)
-            reader(r, n) :- attrs(n, r, _), product(r, n).
-            .decl out(n: node)
-            .output out
-            out(n) :- attrs(n, r, s), prefix(\"_\", s), !reader(r, n).
-            ",
-        )
-        .unwrap();
-        let mut p = Program::of(&v);
-        let rewritten = super::super::rewrite(&mut p, true).unwrap();
-        assert!(rewritten.products.contains("product"));
-        assert!(rewritten.readers.contains("reader"));
-        let proof = p.shown(Some("rr_reader_demand_reader")).remove(0);
-        assert!(proof.contains("@prefix"), "{proof}");
-        assert!(p.shown(Some("rr_product_demand_product")).iter().any(|r| r.contains("rr_reader_demand_reader(")));
-    }
-
-    #[test]
-    fn a_node_maximum_retains_its_group_witness() {
-        let v = parse(
-            "
-            .decl node_order(n: node, k: number)
-            .decl site(n: node, b: node)
-            .decl asked(n: node)
-            .input node_order, site, asked
-            .decl rr_ordered0(n: node, k: number)
-            rr_ordered0(n, k) :- site(n, b), node_order(b, k).
-            .decl selected(n: node, b: node)
-            .output selected
-            selected(n, b) :- asked(n), k = max r : { rr_ordered0(n, r) }, node_order(b, k).
-            ",
-        )
-        .unwrap();
-        let mut p = Program::of(&v);
-        assert_eq!(
-            restore_order_witnesses(&mut p, &BTreeSet::from(["selected".to_owned()])).unwrap(),
-            1
-        );
-        let selected = p.shown(Some("selected")).remove(0);
-        assert!(selected.ends_with("site($n, $b)"), "{selected}");
-    }
-
-    #[test]
-    fn an_open_reader_preserves_the_whole_relation() {
-        let v = parse(
-            "
-            .decl edge(x: node, y: node)
-            .input edge
-            .decl all(x: node, y: node)
-            all(x, y) :- edge(x, y).
-            .decl out(x: node, y: node)
-            .output out
-            out(x, y) :- all(x, y).
-        ",
-        )
-        .unwrap();
-        let mut p = Program::of(&v);
-        assert!(!restrict(&mut p, "all", &BTreeSet::new(), true, false).unwrap());
-        assert!(p.columns("rr_reader_demand_all").is_none());
-    }
-}
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)

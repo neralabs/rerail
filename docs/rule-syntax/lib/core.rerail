@@ -320,6 +320,12 @@
 .decl file_digest(path: symbol, c: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol) extensible
 .decl loaded(path: symbol, module: symbol, grammar: symbol)
+// Each answered by a native step (t33 K3): the request, then what its answer adds rows to. A file system request is
+// derived from the literals that bind its key (`rr::lower`).
+.answer rr_dir_req -> dir_entry
+.answer rr_file_req -> file_line
+.answer rr_digest_req -> file_digest
+.answer load -> loaded
 // ---- a coding agent's tool calls (`tool-calls.md`) ----
 // tool_call(c, tool): a tool call the run is given (the `toolCalls` option, `run-policies --tool-calls`), by its id c,
 // and the tool's name (`Bash`, `shell`). tool_input(c, key, value): each string argument of call c, by its key, a
@@ -611,6 +617,10 @@
 .decl git_revision_of(repo: symbol, expression: symbol, oid: symbol, status: symbol)
 .decl git_view_revision_of(view: symbol, expression: symbol, oid: symbol, status: symbol)
 .decl git_object_of(repo: symbol, oid: symbol, field: symbol, position: number, first: symbol, second: symbol, value: number, offset: number)
+// Answered by native steps (t33 K3), their requests made by `git.rerail`'s rules.
+.answer git_revision_request -> git_revision_of
+.answer git_view_revision_request -> git_view_revision_of
+.answer git_object_request -> git_object_of
 .decl source_grammar_suffix(grammar: symbol, suffix: symbol, order: number, built: number)
 .decl source_grammar_registry(version: symbol)
 .decl source_tape_version(grammar_build: symbol, tape_format: number)
@@ -770,8 +780,14 @@
 //                                              repositories laid out differently (the scripts' --application-root).
 // .requires "data-layer:a", "data-layer:b"    a suite policy: one finding per member policy that fails, or that
 //                                              ends unknown on any file. Members run as usual.
-// .scope tests false                          drops documents with a `test` or `tests` path part. Walks always
-//                                              skip .git, .venv, venv, __pycache__ and tmp.
+// .scope tests false                          drops documents with a `test` or `tests` path part. Walks (the
+//                                              corpus, file()) always skip the host's ignored directories, at
+//                                              any depth: .git, .hg, .svn, .rerail, .venv, __pycache__,
+//                                              node_modules, dist, build, .next, .turbo, coverage, target and
+//                                              vendor (src/engine/code-rule/ignored-directories.ts). Hidden
+//                                              ones (.github) are read. In a Git work tree, the corpus (and an
+//                                              .artifact's inputs) also leaves out what Git ignores. A site
+//                                              directory (one holding a *.dist-info) skips no folder.
 // .references {"siblingLinks": […], "constructorFields": {…}, "scope": {…}}
 //                                              the reference graph's links, as the policy's `references` gives
 //                                              them, over the files of `scope` (default: every file): facts

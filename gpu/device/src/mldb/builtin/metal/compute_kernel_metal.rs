@@ -207,6 +207,27 @@ impl MetalComputeFunction {
         let desc = ComputePipelineDescriptor::new();
         desc.set_compute_function(Some(&function));
         let options = MTLPipelineOption::ArgumentInfo | MTLPipelineOption::BufferTypeInfo;
+        // A debugging aid: `RERAIL_METAL_BINARY_ARCHIVE` names a binary archive whose GPU code a pipeline is made
+        // from, where it holds the function's (a compiler's code run in place of this OS's, `metal-tt`); a function
+        // it does not hold is compiled as usual. Each says which.
+        if let Some(path) = std::env::var_os("RERAIL_METAL_BINARY_ARCHIVE") {
+            let ad = metal::BinaryArchiveDescriptor::new();
+            ad.set_url(&metal::URL::new_with_string(&format!("file://{}", path.to_string_lossy())));
+            match device.new_binary_archive_with_descriptor(&ad) {
+                Ok(archive) => {
+                    desc.set_binary_archives(&[&archive]);
+                    match device.new_compute_pipeline_state_with_reflection(&desc, options | MTLPipelineOption::FailOnBinaryArchiveMiss) {
+                        Ok((state, reflection)) => {
+                            eprintln!("RERAIL_METAL_BINARY_ARCHIVE: {}: from the archive", function.name());
+                            return Self::from_reflection(function, state, &reflection);
+                        }
+                        Err(e) => eprintln!("RERAIL_METAL_BINARY_ARCHIVE: {}: not in the archive ({e}), compiled", function.name()),
+                    }
+                    desc.set_binary_archives(&[]);
+                }
+                Err(e) => eprintln!("RERAIL_METAL_BINARY_ARCHIVE: {}: {e}", path.to_string_lossy()),
+            }
+        }
         let (state, reflection) = device.new_compute_pipeline_state_with_reflection(&desc, options).map_err(|e| format!("Error making pipeline state for function: {e}"))?;
         Self::from_reflection(function, state, &reflection)
     }
@@ -240,8 +261,18 @@ impl MetalComputeFunctionLibrary {
         if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
             eprintln!("RERAIL_DEVICE_TRACE a library compiled, {file_name_to_appear_in_error_messages} (driver {} MB):\n{}", device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
         }
+        // A debugging aid: `RERAIL_METAL_SOURCE_DIR` keeps each library's source as Metal compiles it, for an offline
+        // compile of the same text (its AIR and GPU code, `xcrun metal`, `metal-objdump`).
+        if let Some(dir) = std::env::var_os("RERAIL_METAL_SOURCE_DIR") {
+            let name: String = file_name_to_appear_in_error_messages.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '-' }).collect();
+            if let Err(e) = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.metal")), preprocessed_source) {
+                eprintln!("RERAIL_METAL_SOURCE_DIR: {name}: {e}");
+            }
+        }
         let lib = objc::rc::autoreleasepool(|| device.new_library_with_source(preprocessed_source, &metal::CompileOptions::new()));
         let mtl_library = lib.map_err(|e| format!("Error compiling Metal library from source ({file_name_to_appear_in_error_messages}): {e}"))?;
+        // Compiled: the device layer keeps no Metal form (the engine's Metal kernels are `rerail_accel::gpu::kernels`').
+        crate::store::count(false);
         Ok(MetalComputeFunctionLibrary { mtl_library })
     }
 
@@ -277,6 +308,9 @@ enum Open {
 const STAGING_BYTES: u64 = 64 << 10;
 
 /// A committed command buffer (`MetalComputeEvent`).
+/// The start of a failed command's message when the system stopped it, the work not at fault (`await_`).
+pub const PREEMPTED: &str = "preempted: ";
+
 pub struct MetalComputeEvent {
     pub command_buffer: metal::CommandBuffer,
 }
@@ -290,7 +324,25 @@ impl MetalComputeEvent {
                 GPU_NANOS.fetch_add((self.gpu_seconds() * 1e9) as u64, std::sync::atomic::Ordering::Relaxed);
                 Ok(())
             }
-            s => Err(format!("Metal command buffer: {s:?}")),
+            s => {
+                // The command buffer's error: its code (MTLCommandBufferError: 2 a timeout, 3 a page fault, …) and text.
+                let error: *mut objc::runtime::Object = unsafe { msg_send![&*self.command_buffer, error] };
+                let why = if error.is_null() {
+                    String::new()
+                } else {
+                    let code: i64 = unsafe { msg_send![error, code] };
+                    let text: *mut objc::runtime::Object = unsafe { msg_send![error, localizedDescription] };
+                    let utf8: *const std::os::raw::c_char = unsafe { msg_send![text, UTF8String] };
+                    let text = if utf8.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(utf8) }.to_string_lossy().into_owned() };
+                    format!(" (code {code}: {text})")
+                };
+                // Stopped by the system for the display (IOGPU's `kIOGPUCommandBufferCallbackErrorImpactingInteractivity`,
+                // under `MTLCommandBufferErrorInternal`), or discarded in its recovery from another command's hang
+                // (`kIOGPUCommandBufferCallbackErrorInnocentVictim`): marked, so a caller may run the work again
+                // (`PREEMPTED`).
+                let mark = if why.contains("ImpactingInteractivity") || why.contains("InnocentVictim") { PREEMPTED } else { "" };
+                Err(format!("{mark}Metal command buffer: {s:?}{why}"))
+            }
         }
     }
 

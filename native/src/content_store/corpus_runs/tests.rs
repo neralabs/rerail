@@ -1,5 +1,26 @@
+use rerail_store::Canonical as _;
 use super::*;
 use crate::content_store::tests::store;
+use rerail_blocks::kept::KeptRead as _;
+
+/// The space the tests' memo entries are kept in.
+const MEMO_SPACE: [u8; 32] = [0x6d; 32];
+
+/// A memo entry kept under `plan`, held by the source of bytes `source` and by the plan (`HOLDER`): its partition the
+/// plan's first byte.
+fn keep_entry(store: &ContentStore, source: &[u8], plan: [u8; 32]) {
+    use crate::content_store::kept_facts::{KeptPut, KeptWhat, holder_put};
+    let part = i64::from(plan[0]);
+    let held = crate::content_store::HashKey::sha256(source).sha256_bytes().unwrap();
+    let entry = KeptPut { rel: "entry".into(), ident: [1; 32], part, digest: part as u64, reads: Vec::new(), types: b"i".to_vec(), what: KeptWhat::Picked(Box::new(crate::content_store::kept_facts::BlockFlat::of_row(&[part]))) };
+    store.queue_kept(MEMO_SPACE, vec![entry, holder_put(part, held, Some(plan))]);
+    store.written().unwrap();
+}
+
+/// The memo entries kept under `plan` (`keep_entry`).
+fn kept_entries(store: &ContentStore, plan: [u8; 32]) -> i64 {
+    store.kept_space(&MEMO_SPACE).unwrap().map_or(0, |k| k.view().of("entry").filter(|e| e.key.part == i64::from(plan[0])).count() as i64)
+}
 
 fn manifest(id: i64, root: i64, last_time: i64, sources: &[i64]) -> Manifest {
     Manifest { id, root, last_time, grammar_version: 1, tape_format: 1, plan: vec![id as u8; 32], lane: None, policy: None, sources: sources.to_vec() }
@@ -96,7 +117,7 @@ fn releasing_one_use_names_compacts_generations_and_never_revives_a_stale_owner(
 fn a_numbered_parent_stop_compacts_only_fully_covered_directory_generations() {
     use crate::content_store::analysis_scope::{self, AnalysisRun, Publication, RunSource};
     let (file, store) = store("directory-generation-compaction");
-    let parent = file.parent().unwrap().canonicalize().unwrap().join("project");
+    let parent = file.parent().unwrap().canonical().unwrap().join("project");
     let child = parent.join("0");
     let scope = |dir: &std::path::Path, home| analysis_scope::directory_in(dir, Some(home));
     let begin = |dir: &std::path::Path, home, id: &str, control| {
@@ -115,14 +136,17 @@ fn a_numbered_parent_stop_compacts_only_fully_covered_directory_generations() {
     let mut future = begin(&active, "home", "future", 21);
     let mut overtaken = begin(&active, "home", "older-on-same-path", 9);
     let mut elsewhere = begin(&child, "other", "other-home", 10);
+    // Decision 0547: a stop that would revoke a running writer (its control generation at most the cutoff) fails
+    // until that writer has finished.
+    assert!(matches!(store.delete_directory_analysis_scopes(&parent, Some("20:stop:home")), Err(crate::content_store::StoreError::InUse(_))));
+    delayed.finish(true).unwrap();
+    overtaken.finish(true).unwrap();
+    assert_eq!(delayed.publication, Some(Publication::Published));
+    assert_eq!(overtaken.publication, Some(Publication::Published));
     store.delete_directory_analysis_scopes(&parent, Some("20:stop:home")).unwrap();
     assert_eq!(count("analysis_scope_generation"), 2);
     assert_eq!(count("analysis_scope_run"), 0);
     assert_eq!(count("analysis_directory_acquisition"), 2);
-    delayed.finish(true).unwrap();
-    overtaken.finish(true).unwrap();
-    assert_eq!(delayed.publication, Some(Publication::Released));
-    assert_eq!(overtaken.publication, Some(Publication::Released));
     let mut late = begin(&child, "home", "late", 20);
     late.finish(true).unwrap();
     assert_eq!(late.publication, Some(Publication::Released));
@@ -151,7 +175,7 @@ fn a_numbered_parent_stop_compacts_only_fully_covered_directory_generations() {
 fn directory_generation_compaction_preserves_an_unobserved_legacy_acquisition() {
     use crate::content_store::analysis_scope;
     let (file, store) = store("legacy-directory-generation");
-    let parent = file.parent().unwrap().canonicalize().unwrap().join("project");
+    let parent = file.parent().unwrap().canonical().unwrap().join("project");
     let scope = analysis_scope::directory(&parent.join("child"));
     let old = store.begin_analysis_scope_at(&scope, 21).unwrap();
     {
@@ -293,7 +317,9 @@ fn a_publication_error_rolls_back_history_and_its_ancestor_index_before_retry() 
     store.connection.lock().unwrap().execute_batch("CREATE TRIGGER fail_fixture BEFORE INSERT ON analysis_scope_run
         BEGIN SELECT RAISE(ABORT,'interrupted fixture'); END;").unwrap();
     assert!(run.finish(true).is_err());
-    assert_eq!(counts(), (1, 0, 0, false));
+    // A run keeps no pending row (decision 0547): its lease, kept by the failed publication, is its pending state.
+    assert_eq!(counts(), (0, 0, 0, false));
+    assert!(run.is_open());
     store.connection.lock().unwrap().execute_batch("DROP TRIGGER fail_fixture").unwrap();
     run.finish(true).unwrap();
     assert_eq!(counts(), (0, 1, 1, true));
@@ -360,7 +386,7 @@ fn analysis_scope_rejects_finished_and_foreign_run_owners() {
 }
 
 #[test]
-fn named_scope_release_requires_the_registered_store_and_revokes_an_unfinished_run() {
+fn named_scope_release_requires_the_registered_store_and_fails_while_a_run_is_unfinished() {
     use crate::content_store::analysis_scope::{AnalysisRun, RunSource, release_named_scope};
     let (first_path, first) = store("scope-release-first");
     let (second_path, second) = store("scope-release-replacement");
@@ -371,9 +397,11 @@ fn named_scope_release_requires_the_registered_store_and_revokes_an_unfinished_r
     published.finish(true).unwrap();
     assert!(release_named_scope(&second_path, "test", &[first.identity()]).is_err());
     assert_eq!(second.completed_analysis_runs().unwrap().len(), 1);
-    assert_eq!(release_named_scope(&first_path, "test", &[first.identity()]).unwrap(), (first.identity(), false));
+    // Decision 0547: a release of a scope a run holds fails until the run has finished, and is retried then.
+    assert!(matches!(release_named_scope(&first_path, "test", &[first.identity()]), Err(crate::content_store::StoreError::InUse(_))));
     unfinished.finish(true).unwrap();
-    assert_eq!(unfinished.publication.unwrap().as_str(), "released");
+    assert_eq!(unfinished.publication.unwrap().as_str(), "published");
+    assert_eq!(release_named_scope(&first_path, "test", &[first.identity()]).unwrap(), (first.identity(), true));
     assert!(first.completed_analysis_runs().unwrap().is_empty());
     assert_eq!(release_named_scope(&second_path, "test", &[second.identity()]).unwrap(), (second.identity(), true));
     assert_eq!(release_named_scope(&second_path, "test", &[]).unwrap(), (second.identity(), false));
@@ -409,8 +437,10 @@ fn completed_analysis_runs_survive_restart_and_scope_deletion_preserves_shared_s
     assert!(!warned.owner.warn("later warning".into()));
     assert_eq!(warned.publication_warning().as_deref(), Some("could not retain"));
     let mut stale = begin("named:stale");
-    store.delete_analysis_scope("named:stale").unwrap();
+    // Decision 0547: a deletion of a scope a run holds fails until the run has finished.
+    assert!(matches!(store.delete_analysis_scope("named:stale"), Err(crate::content_store::StoreError::InUse(_))));
     stale.finish(true).unwrap();
+    store.delete_analysis_scope("named:stale").unwrap();
     let fresh = ContentStore::open(&path).unwrap();
     let rows = fresh.completed_analysis_runs().unwrap();
     assert_eq!(rows.iter().map(|r| r.scope.as_str()).collect::<Vec<_>>(), ["named:a", "named:a", "named:b"]);
@@ -567,7 +597,7 @@ fn numbered_directory_stops_keep_one_cutoff_per_directory() {
 fn a_parent_receipt_replaces_covered_children_and_survives_replay() {
     use crate::content_store::analysis_scope;
     let (file, store) = store("scope-parent-receipt");
-    let parent = file.parent().unwrap().canonicalize().unwrap().join("project[1]");
+    let parent = file.parent().unwrap().canonical().unwrap().join("project[1]");
     let sibling = parent.with_file_name("project[1]-other");
     let child = parent.join("0");
     let ahead = parent.join("ahead");
@@ -674,10 +704,14 @@ fn a_numbered_home_stop_revokes_older_unqualified_directory_writers_once() {
     let mut newer = begin(None, 11, "higher-generation");
     let mut other = begin(Some("other"), 5, "other-home");
     let mut qualified = begin(Some("home"), 5, "qualified");
+    // Decision 0547: the stop would revoke `old` (unqualified) and `qualified`: it fails until both have finished.
+    assert!(matches!(store.delete_directory_analysis_scopes(parent, Some("10:stop:home")), Err(crate::content_store::StoreError::InUse(_))));
+    old.finish(true).unwrap();
+    qualified.finish(true).unwrap();
     store.delete_directory_analysis_scopes(parent, Some("10:stop:home")).unwrap();
     let mut fresh = begin(None, 0, "after-delivery");
     store.delete_directory_analysis_scopes(parent, Some("10:stop:home")).unwrap();
-    for r in [&mut old, &mut newer, &mut other, &mut qualified, &mut fresh] { r.finish(true).unwrap(); }
+    for r in [&mut newer, &mut other, &mut fresh] { r.finish(true).unwrap(); }
     let mut scans: Vec<_> = store.completed_analysis_runs().unwrap().into_iter().map(|r| r.scan_id).collect();
     scans.sort();
     assert_eq!(scans, ["after-delivery", "higher-generation", "other-home"]);
@@ -898,26 +932,6 @@ fn a_new_store_vacuums_incrementally_and_an_old_one_converts() {
     assert_eq!(mode(&store), 2);
 }
 
-#[test]
-fn the_stat_index_trusts_old_unchanged_stats_of_stored_sources() {
-    let (_path, store) = store("corpus-stats");
-    let a = store.put_source(b"a = 1\n", &[]).unwrap();
-    let b = store.put_source(b"b = 2\n", &[]).unwrap();
-    let at = |mtime_ns| FileStat { size: 6, mtime_ns, inode: 7 };
-    let now = 100 * RACY_NS;
-    // `a` last changed long before the recording; `b` within the racy window.
-    store.record_corpus_stats("/repo", &[("a.py".into(), at(now - 3 * RACY_NS), a), ("b.py".into(), at(now - RACY_NS / 2), b)], now).unwrap();
-    let index = store.corpus_stats("/repo").unwrap();
-    assert_eq!(index.source("a.py", at(now - 3 * RACY_NS)), Some(a));
-    assert_eq!(index.source("a.py", at(now)), None, "a changed stat is read again");
-    assert_eq!(index.source("a.py", FileStat { inode: 8, ..at(now - 3 * RACY_NS) }), None, "so is a replaced file");
-    assert_eq!(index.source("b.py", at(now - RACY_NS / 2)), None, "an entry in the racy window is not trusted");
-    assert!(store.corpus_stats("/other").unwrap().is_empty(), "stats are per root");
-    // A later recording of `b` past the window is trusted, and replaces the first.
-    store.record_corpus_stats("/repo", &[("b.py".into(), at(now - RACY_NS / 2), b)], now + 2 * RACY_NS).unwrap();
-    assert_eq!(store.corpus_stats("/repo").unwrap().source("b.py", at(now - RACY_NS / 2)), Some(b));
-}
-
 /// O95: a source looked up, then collected before its tape is stored, fails the tape's foreign key; a source and
 /// tape stored in one transaction cannot be split by a pass.
 #[test]
@@ -1026,7 +1040,7 @@ fn a_runs_lease_keeps_its_sources_and_plan_from_collection_without_holds() {
         }
     };
     let plan = [41u8; 32];
-    let rows = || -> i64 { store.connection.lock().unwrap().query_row("SELECT count(*) FROM facts_results WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).unwrap() };
+    let rows = || kept_entries(&store, plan);
     // An earlier run's manifest, under another plan: what a collector decides from.
     let earlier = store.put_source(&noise(20, 256), &[]).unwrap();
     assert!(store.record_corpus_run_naming("/repo", &[earlier], 7, 9, [40u8; 32], &[], 1_000).unwrap());
@@ -1034,40 +1048,32 @@ fn a_runs_lease_keeps_its_sources_and_plan_from_collection_without_holds() {
     let (named, unnamed) = (noise(21, 256), noise(22, 256));
     let named_id = store.put_source(&named, &[]).unwrap();
     store.put_source(&unnamed, &[]).unwrap();
-    let set = crate::content_store::FactsPlanSet::new(vec![plan]);
-    let result = crate::content_store::FactsResult { plan, path_dependent: true, entry: vec![1, 2, 3] };
-    store.put_facts_memo(crate::content_store::FactsMemoKey { source: named_id, fact_schema: live_fact_schema(150), path: "a.py" }, &set, &[result], &[]).unwrap();
+    keep_entry(&store, &named, plan);
     passes(2_000);
     let found = |bytes: &[u8]| store.source_by_hash(crate::content_store::HashKey::sha256(bytes)).unwrap();
     assert!(found(&named).is_some() && found(&unnamed).is_some(), "the run's sources, neither held nor named, are kept while it runs");
-    assert_eq!(rows(), 1, "and its plan's rows");
+    assert_eq!(rows(), 1, "and its plan's entries");
     // The run's record: its manifest names the one source and the plan; then the lease goes.
     assert!(store.record_corpus_run_naming("/repo", &[named_id], 7, 9, plan, &[], 3_000).unwrap());
     drop(lease);
     passes(4_000);
     assert_eq!(found(&named), Some(named_id), "named by the manifest, kept");
-    assert_eq!(rows(), 1, "the plan's rows, named, kept");
+    assert_eq!(rows(), 1, "the plan's entries, named, kept");
     assert_eq!(found(&unnamed), None, "named by nothing, collected once the run is done");
 }
 
-/// Old memo rows of every writer go, while their source lives on: a prepared program's plans a later build replaced
-/// (named by the manifests, `record_corpus_run_naming`), a held plan whose hold lapsed (the slice's memo), and rows
-/// of the corpus memo's retired schemas. A plan still named, a hold still running and other schemas' rows stay.
+/// Old memo entries of every writer go, while their source lives on: a prepared program's plans a later build
+/// replaced (named by the manifests, `record_corpus_run_naming`) and a held plan whose hold lapsed (the slice's
+/// memo). A plan still named, a hold still running and a plan nothing recorded stay.
 #[test]
-fn old_memo_rows_are_collected_while_their_source_lives() {
+fn old_memo_entries_are_collected_while_their_source_lives() {
     let (_path, store) = store("corpus-old-memo");
     let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, decide_every_secs: 1 << 40, ..CorpusPolicy::default() };
-    let source = store.put_source(&noise(1, 256), &[]).unwrap();
+    let bytes = noise(1, 256);
+    let source = store.put_source(&bytes, &[]).unwrap();
     store.put_tape(source, 1, 7, 9, &noise(2, 256)).unwrap();
-    let put = |schema: u32, path: &str, plan: [u8; 32]| {
-        let set = crate::content_store::FactsPlanSet::new(vec![plan]);
-        // The corpus memo's rows are under their path; the others read none.
-        let result = crate::content_store::FactsResult { plan, path_dependent: schema == 2, entry: vec![1, 2, 3] };
-        store.put_facts_memo(crate::content_store::FactsMemoKey { source, fact_schema: schema, path }, &set, &[result], &[]).unwrap();
-    };
-    let rows = |plan: [u8; 32]| -> i64 {
-        store.connection.lock().unwrap().query_row("SELECT count(*) FROM facts_results WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).unwrap()
-    };
+    let put = |plan: [u8; 32]| keep_entry(&store, &bytes, plan);
+    let rows = |plan: [u8; 32]| kept_entries(&store, plan);
     let passes = |now: i64| {
         for _ in 0..4 {
             if !store.corpus_pass_wanted(&policy, now).unwrap() {
@@ -1078,26 +1084,24 @@ fn old_memo_rows_are_collected_while_their_source_lives() {
     };
     // Two builds' runs, each naming its memo plan and its prepared program's plan, over the same source.
     let (old_pointer, new_pointer) = ([11u8; 32], [12u8; 32]);
-    put(101, "rerail/prepared", old_pointer);
+    put(old_pointer);
     assert!(store.record_corpus_run_naming("/repo", &[source], 7, 9, [1u8; 32], &[old_pointer], 1_000).unwrap());
-    put(101, "rerail/prepared", new_pointer);
+    put(new_pointer);
     assert!(store.record_corpus_run_naming("/repo", &[source], 7, 9, [2u8; 32], &[new_pointer], 1_000).unwrap());
     // A writer that holds its plans: one hold lapses at 1,500, one runs to 9,000.
     let (lapsed, running) = ([21u8; 32], [22u8; 32]);
     store.hold_corpus_plan(lapsed, "slice-memo", 1_500).unwrap();
     store.hold_corpus_plan(running, "slice-memo", 9_000).unwrap();
-    put(1, "a.py", lapsed);
-    put(1, "a.py", running);
-    // Rows of a retired corpus memo schema, and of the slice's schema under a plan nothing ever recorded.
-    let (retired, unrecorded) = ([31u8; 32], [32u8; 32]);
-    put(2, "a.py", retired);
-    put(1, "b.py", unrecorded);
+    put(lapsed);
+    put(running);
+    // An entry under a plan nothing ever recorded.
+    let unrecorded = [32u8; 32];
+    put(unrecorded);
     passes(1_000);
     assert_eq!((rows(old_pointer), rows(new_pointer)), (0, 1), "the replaced build's program plan goes; the kept one stays");
-    assert_eq!(rows(retired), 0, "a retired schema's rows are swept");
     assert_eq!((rows(lapsed), rows(running), rows(unrecorded)), (1, 1, 1), "holds still running at 1,000");
     passes(2_000);
-    assert_eq!((rows(lapsed), rows(running), rows(unrecorded)), (0, 1, 1), "the lapsed hold's rows go, with no new run to prompt it");
+    assert_eq!((rows(lapsed), rows(running), rows(unrecorded)), (0, 1, 1), "the lapsed hold's entries go, with no new run to prompt it");
     assert!(store.get_source(source).is_ok(), "the source lives on");
 }
 
@@ -1371,4 +1375,127 @@ fn a_store_mostly_free_is_left_to_the_whole_vacuum() {
     store.collect(1_000, 64).unwrap();
     // The collector's own vacuum left them: each of its pages walks a free list this long.
     assert_eq!(count("freelist_count"), free);
+}
+
+/// Decision 0547: a run's start only reads. Its lease, a file beside the store, is what other processes see; the
+/// store gets its acquisition with its first write, which the writer applies behind the run.
+#[test]
+fn a_runs_start_commits_nothing_to_the_store() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, _store) = store("scope-start-reads-only");
+    let watcher = rusqlite::Connection::open(&path).unwrap();
+    let version = || watcher.query_row("PRAGMA data_version", [], |r| r.get::<_, i64>(0)).unwrap();
+    let before = version();
+    let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:reads-only", "scan").unwrap();
+    assert_eq!(version(), before, "a run's start committed to the store");
+    assert!(crate::content_store::scope_lease::live(&path, Some(run.acquisition())), "a run's lease names it");
+    run.finish(true).unwrap();
+    assert_eq!(run.publication.map(|p| p.as_str()), Some("published"));
+    assert!(!crate::content_store::scope_lease::live(&path, Some(run.acquisition())), "a finished run's lease is gone");
+}
+
+/// Decision 0547: a deletion, or a stop, of a scope a run holds fails until the run has finished; retried then, it
+/// removes the run's publication. A stop below a later writer's control generation leaves that writer alone.
+#[test]
+fn a_deletion_of_a_running_scope_fails_until_the_run_has_finished() {
+    use crate::content_store::{StoreError, analysis_scope::{self, AnalysisRun, RunSource}};
+    let (path, store) = store("scope-deletion-waits");
+    let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:held", "scan").unwrap();
+    run.select_source(RunSource::directory(std::path::Path::new("/repo"))).unwrap();
+    let other = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:elsewhere", "scan").unwrap();
+    assert!(matches!(store.delete_analysis_scope("named:held"), Err(StoreError::InUse(_))));
+    run.finish(true).unwrap();
+    assert_eq!(run.publication.map(|p| p.as_str()), Some("published"));
+    assert_eq!(store.completed_analysis_runs().unwrap().len(), 1);
+    store.delete_analysis_scope("named:held").unwrap();
+    assert!(store.completed_analysis_runs().unwrap().is_empty());
+    drop(other);
+    let dir = path.parent().unwrap().canonical().unwrap().join("work");
+    let begin = |control| AnalysisRun::begin_at(ContentStore::open(&path).unwrap(), &analysis_scope::directory_in(&dir, Some("home")), "watch", control).unwrap();
+    let mut later = begin(30);
+    store.delete_directory_analysis_scopes(&dir, Some("20:stop:home")).unwrap();
+    let mut covered = begin(10);
+    later.finish(true).unwrap();
+    covered.finish(true).unwrap();
+    assert_eq!(later.publication.map(|p| p.as_str()), Some("published"));
+    assert_eq!(covered.publication.map(|p| p.as_str()), Some("released"), "a run below a delivered stop's cutoff");
+}
+
+/// Decision 0547: two runs that each find no generation for their scope create the same one, so both publish.
+#[test]
+fn runs_that_start_a_new_scope_together_share_its_generation() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, store) = store("scope-shared-generation");
+    let mut first = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:new", "a").unwrap();
+    let mut second = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:new", "b").unwrap();
+    second.finish(true).unwrap();
+    first.finish(true).unwrap();
+    assert_eq!((first.publication.map(|p| p.as_str()), second.publication.map(|p| p.as_str())), (Some("published"), Some("published")));
+    let generation: i64 = store.connection.lock().unwrap()
+        .query_row("SELECT generation FROM analysis_scope_generation WHERE scope='named:new'", [], |r| r.get(0)).unwrap();
+    assert_eq!(generation, first.acquisition(), "the scope's generation is the first creator's acquisition");
+    assert!(second.acquisition() > first.acquisition());
+}
+
+/// Decision 0547: a lease its run left behind (a process that died) has no lock: it neither keeps a deletion out
+/// nor survives one.
+#[test]
+fn a_dead_runs_lease_neither_blocks_a_deletion_nor_survives_it() {
+    let (path, store) = store("scope-dead-lease");
+    let dir = std::path::PathBuf::from(format!("{}.scopes", path.canonical().unwrap().display()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("41"), "named:dead\n0\n0\n0\n").unwrap();
+    store.delete_analysis_scope("named:dead").unwrap();
+    assert!(!dir.join("41").exists());
+}
+
+/// A run an analysis run owns is read under the owner's lease (decision 0547), which holds every collection off while
+/// it lasts: the run leaves its collection to the owner, which collects as it finishes (`collect_after`). Each of
+/// ep2's runs started its own and found the lease held: no decision in 13 runs, every program's plans live.
+#[test]
+fn an_analysis_run_collects_as_it_finishes() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, store) = store("analysis-run-collects");
+    let check = ContentStore::open(&path).unwrap();
+    let mut run = AnalysisRun::begin(store, "named:review", "test").unwrap();
+    let root = "/virtual/repository";
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    // Three programs over the root, one after another: the first past the root's two protected runs, so a decision
+    // is worth making.
+    for (i, plan) in [[1u8; 32], [2u8; 32], [3u8; 32]].into_iter().enumerate() {
+        assert!(check.record_corpus_run_retaining(root, &[], 1, 1, plan, &[], None, None, now - 3 + i as i64, None, Some(&run.owner)).unwrap());
+    }
+    let decided = || -> i64 { check.connection.lock().unwrap().query_row("SELECT coalesce((SELECT run FROM corpus_decided WHERE singleton=1), 0)", [], |r| r.get(0)).unwrap() };
+    let live = |plan: [u8; 32]| -> bool { check.connection.lock().unwrap().query_row("SELECT coalesce((SELECT live FROM corpus_plans WHERE plan_digest=?1), 0)", [&plan[..]], |r| r.get::<_, i64>(0)).unwrap() == 1 };
+    let pass = check.collect_corpus_pass(&CorpusPolicy::default(), now).unwrap();
+    assert!(pass.kept.is_none() && decided() == 0, "the owner's lease holds a pass off");
+    run.finish(true).unwrap();
+    assert!(decided() > 0, "decided as the owner finished");
+    assert!(live([1; 32]) && live([2; 32]) && live([3; 32]), "under the history's high water, the decision keeps all three");
+}
+
+/// A whole-run cutoff's hit under an analysis run (decision 0547) records nothing new: it re-owns the manifests the
+/// recorded run wrote, which the owner publishes as it finishes. Skipped instead, each `logic` command's warm run
+/// evaluated again.
+#[test]
+fn a_cutoff_under_an_analysis_run_owns_the_recorded_manifests() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, store) = store("cutoff-owns-recorded");
+    let check = ContentStore::open(&path).unwrap();
+    let root = "/virtual/repository";
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    let mut first = AnalysisRun::begin(store, "named:review", "test").unwrap();
+    assert!(check.record_corpus_run_retaining(root, &[], 1, 1, [1; 32], &[[2; 32]], None, None, now - 1, None, Some(&first.owner)).unwrap());
+    first.finish(true).unwrap();
+    let owned_by = |acquisition: i64| -> i64 {
+        check.connection.lock().unwrap().query_row("SELECT count(*) FROM analysis_scope_manifest WHERE acquisition=?1", [acquisition], |r| r.get(0)).unwrap()
+    };
+    let last_run = || -> i64 { check.connection.lock().unwrap().query_row("SELECT max(last_run) FROM corpus_manifests", [], |r| r.get(0)).unwrap() };
+    let before = last_run();
+    let mut second = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:review", "test").unwrap();
+    assert_eq!(check.own_recorded_manifests("/virtual/elsewhere", &[[1; 32], [2; 32]], &second.owner, now).unwrap(), 0, "another root's are not this run's");
+    assert_eq!(check.own_recorded_manifests(root, &[[1; 32], [2; 32]], &second.owner, now).unwrap(), 1, "the recorded run's manifest");
+    assert_eq!(owned_by(second.owner.acquisition), 1, "staged under this run's acquisition");
+    assert!(last_run() > before, "its run moved: protected as the newest");
+    second.finish(true).unwrap();
 }

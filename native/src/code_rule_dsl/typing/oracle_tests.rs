@@ -40,7 +40,8 @@ fn python_files(root: &Path) -> BTreeMap<String, String> {
             if path.is_dir() {
                 walk(root, &path, out);
             } else if path.extension().is_some_and(|e| e == "py") {
-                out.insert(path.strip_prefix(root).unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&path).unwrap());
+                // Keyed as documents are named, with `/` on every OS.
+                out.insert(path.strip_prefix(root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"), std::fs::read_to_string(&path).unwrap());
             }
         }
     }
@@ -169,7 +170,7 @@ fn the_combined_program_has_no_relation_twice_and_no_rule_twice() {
 }
 
 fn program(name: &str) -> String {
-    crate::code_rule_dsl::logic::settings::program_text(&std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rerail"))).unwrap()
+    crate::code_rule_dsl::logic::settings::program_text(&crate::source_tree::native().join(format!("src/code_rule_dsl/typing/programs/{name}.rerail"))).unwrap()
 }
 
 /// Where `calls.rerail` answers otherwise than CPython ran, and why (2026-11-06: 84 agree, these 9 depart, none
@@ -578,7 +579,8 @@ fn calls_into_the_standard_library_reach_its_stubs() {
     // Nodes of documents: the one call is main.py's, its target in the stub.
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].get(0).path(), Some("main.py"), "{rows:?}");
-    assert!(rows[0].get(1).path().unwrap().ends_with("world_load/ts/stdlib/os/path.pyi"), "{rows:?}");
+    // A library document is named as the engine has the file: on Windows, with `\`.
+    assert!(std::path::Path::new(rows[0].get(1).path().unwrap()).ends_with("world_load/ts/stdlib/os/path.pyi"), "{rows:?}");
     drop(rows);
     drop(outputs);
     let _ = std::fs::remove_dir_all(&out);
@@ -598,7 +600,7 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let outputs = Outputs::open(&out).unwrap();
     let text = outputs.rows("call_target");
-    let mut got: Vec<String> = text.iter().map(|r| r.get(1).path().unwrap().split("world_site/").nth(1).unwrap().to_owned()).collect();
+    let mut got: Vec<String> = text.iter().map(|r| r.get(1).path().unwrap().replace(std::path::MAIN_SEPARATOR, "/").split("world_site/").nth(1).unwrap().to_owned()).collect();
     got.sort();
     assert_eq!(
         got,
@@ -633,7 +635,7 @@ fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
     assert_eq!(got, ["None", "bytes", "str", "str"], "{text:?}");
     let outputs = Outputs::open(&out).unwrap();
     let targets = outputs.rows("call_target");
-    let reaches = |file: &str| targets.iter().any(|r| r.get(1).path().is_some_and(|p| p.ends_with(file)));
+    let reaches = |file: &str| targets.iter().any(|r| r.get(1).path().is_some_and(|p| std::path::Path::new(p).ends_with(file)));
     assert!(reaches("world_decl/decls/vendor/core.pyi"), "{targets:?}");
     assert!(reaches("world_decl/decls/other.pyi"), "{targets:?}");
     assert!(reaches("site-packages/vendor/__init__.py"), "{targets:?}");
@@ -1246,7 +1248,7 @@ fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
 #[test]
 fn leg_083_typed_counts_resolve_by_the_receivers_type() {
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/leg083");
-    let rule_src = std::fs::read_to_string(std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/leg-083-typed.rerail")).unwrap();
+    let rule_src = std::fs::read_to_string(crate::source_tree::native().join("../docs/rule-syntax/data-layer/leg-083-typed.rerail")).unwrap();
     let spans = "
 .decl at(p: symbol, s: number, what: symbol)
 at(p, s, \"lazy\") :- lazy_terminal(c), node(d, c, _, s, _), doc(d, p, _).
@@ -1519,7 +1521,7 @@ fn spike_liveness_of_the_calls_program() {
     let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("{} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
-    let counts = liveness::read_counts(&Outputs::open(&out).unwrap());
+    let counts = crate::code_rule_dsl::logic::plan::output::read_counts(&Outputs::open(&out).unwrap());
     let _ = std::fs::remove_dir_all(&out);
     let get = |m: &BTreeMap<String, u64>, w: &str| m.get(w).copied().unwrap_or(0);
     let mut rows: Vec<(&String, &BTreeMap<String, u64>)> = counts.iter().collect();
@@ -1605,11 +1607,9 @@ ats(s, p, l) :- struct__at(s, p, l).
     let full_store = format!("{kept_store}.full");
     let full = || {
         let _ = std::fs::remove_file(format!("{full_store}.phases"));
-        // SAFETY: the spike's thread is the only one running between runs.
-        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
-        let r = crate::code_rule_dsl::logic::plan::corpus::session::full(run);
-        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &kept_store) };
-        r
+        // Held for the full run alone (`switches::set`, the kept store again as it drops).
+        let _full = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_TAPE_CACHE", full_store.as_str())]);
+        crate::code_rule_dsl::logic::plan::corpus::session::full(run)
     };
     // `RERAIL_SPIKE_SESSION`: the runs are a session's (decision 0063), as the explorer's are; the full runs are not.
     let session = std::env::var_os("RERAIL_SPIKE_SESSION").is_some();
@@ -1678,8 +1678,8 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
             let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
             let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
             let rows: usize = p.exports.iter().map(|e| e.1).sum();
-            println!("T28 {what}: {} {cpu:.2} s CPU; strata {:?} (a new process's {:?}), maintained {:?}; export rows {rows}; parts: {}",
-                p.name, p.report.cross_strata, p.report.cross_kept, p.report.cross_maintained, parts.join(", "));
+            println!("T28 {what}: {} {cpu:.2} s CPU; strata {:?} (a new process's {:?}), maintained {:?}, quiet {:?}; export rows {rows}; parts: {}",
+                p.name, p.report.cross_strata, p.report.cross_kept, p.report.cross_maintained, p.report.cross_quiet, parts.join(", "));
         }
         println!("T28 {what}: the reader's run: {:.2} s", r.phases.iter().map(|x| x.1 + x.2).sum::<f64>());
     };
@@ -1721,14 +1721,12 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
         // The full run: no session, a phase store of its own.
         let store = std::env::var("RERAIL_TAPE_CACHE").expect("RERAIL_TAPE_CACHE");
         let full_store = format!("{store}.full");
-        // SAFETY: the spike's thread is the only one running between runs.
-        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
-        // Its cross-file part derived, not maintained from what its store kept (t32 4.1).
-        unsafe { std::env::set_var("RERAIL_KEPT_PART", "off") };
+        // Its cross-file part derived, not maintained from what its store kept (t32 4.1): held for the full run alone
+        // (`switches::set`, restored as it drops).
+        let switched = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_TAPE_CACHE", full_store.as_str()), ("RERAIL_KEPT_PART", "off")]);
         profile_as(&format!("{edit} full"));
         let full = session::full(run);
-        unsafe { std::env::remove_var("RERAIL_KEPT_PART") };
-        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &store) };
+        drop(switched);
         show(&format!("{edit} full"), &full);
         let derived = dump();
         let differ: Vec<String> = exports.iter().filter(|e| kept[*e] != derived[*e]).map(|e| format!("{e} ({} kept, {} derived)", kept[e].len(), derived[e].len())).collect();

@@ -24,6 +24,7 @@ the UI files project.
 
 | Generated file | Generator | Command |
 |---|---|---|
+| `native/src/ignored_directories.generated.json` | `scripts/generate/walk/ignored-directories.ts` | `npm run generate:ignored-directories`, from the host's `IGNORED_DIRECTORIES` (`src/engine/code-rule/ignored-directories.ts`); `test/engine/code-rule/worktree-walks/ignored-directories.test.ts` fails when it is stale |
 | `native/src/code_rule_dsl/scope/data/es_globals.generated.json` | `scripts/generate/scope/es-globals.mjs` | `node scripts/generate/scope/es-globals.mjs <tools>/node_modules/eslint` (eslint 10.11.0) |
 | `native/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json` | `scripts/generate/scope/ts-lib-globals.mjs` | `node scripts/generate/scope/ts-lib-globals.mjs <tools>/node_modules/@typescript-eslint/scope-manager` (8.70.1) |
 | `native/src/code_rule_dsl/scope/data/php_builtins.generated.json` | `scripts/generate/scope/php-builtins.php` | `php -n scripts/generate/scope/php-builtins.php` (PHP 8.5.11 with the extensions in `scripts/generate/scope/php-runtime.json`) |
@@ -63,6 +64,9 @@ exemption `engine-layout`).
 | `native/crates/ukl/lib/ukl/reads/view.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these` |
 | `native/crates/ukl/lib/ukl/reads/relation.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these` |
 | `native/crates/ukl/lib/ukl/reads/ids.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these` |
+| `native/crates/ukl/lib/ukl/body/view_reads.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these` |
+| `native/crates/kotlin_aot/src/tier1.rs` | `native/crates/compiler/src/bitlex_lex_rust.rs` | `RERAIL_BLESS=1 cargo test -p rerail-kotlin-parser rust_is_current` |
+| `native/crates/kotlin_aot/src/tier2.rs` | `native/crates/compiler/src/bitlex_rust.rs` | `RERAIL_BLESS=1 cargo test -p rerail-kotlin-parser rust_is_current` |
 | `native/src/code_rule_dsl/language/adapter/pack.rs` | `tools/cratify/packgen.py` | one step of the crate split (`tools/cratify/regenerate.sh`) |
 | `tools/cratify/test-hosts.tsv` | `tools/cratify/hosts.py` | `tools/cratify/regenerate.sh <index dir> <work dir>` (its fixpoint loop) |
 | `tools/cratify/runtime-hosts.tsv` | `tools/cratify/runtime_hosts.py` | `python3 tools/cratify/runtime_hosts.py` over a split's test run |
@@ -107,6 +111,19 @@ exemption `engine-layout`).
 | `packs/typescript/rules/vitest-expect-expect.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | `node scripts/generate/packs/typescript-vitest-policies.mjs` (reads no tools; writes the three @vitest/eslint-plugin 1.6.27 ports). Writes `suppress.eslint` and `suppress.oxlint` (oxlint 1.88.0's `vitest` plugin implements all three); copies each violation's `suppress.biome` from the committed document; a document whose content changes gets the next revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
 | `packs/typescript/rules/vitest-no-disabled-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
 | `packs/typescript/rules/vitest-no-focused-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
+| `packs/python/rules/bandit-b401-import-telnetlib.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | `node scripts/generate/packs/python-bandit-import-blacklist.mjs` (reads no tools; writes the 13 ports of Bandit 1.9.4's import blacklist, B401 to B415, from its qualnames). A port marked `candidate` goes to `packs/python/candidates/rules/`, and one that moves leaves no copy behind; only the document moves, so the rest of a promotion (`conformance.json`, `pack.json`, README, changeset, anchors pin) is by hand, as `docs/adding-rules-to-a-pack.md` lists; a document whose content changes gets the next revision. `test/scripts/generate/python-bandit-import-blacklist.test.mjs` fails when one is stale |
+| `packs/python/rules/bandit-b402-import-ftplib.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b405-import-xml-etree.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b406-import-xml-sax.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b407-import-xml-expat.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b408-import-xml-minidom.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b409-import-xml-pulldom.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b411-import-xmlrpclib.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b413-import-pycrypto.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b415-import-pyghmi.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/candidates/rules/bandit-b403-import-pickle.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/candidates/rules/bandit-b404-import-subprocess.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/candidates/rules/bandit-b412-import-httpoxy.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
 | `packs/next/rules/` | `scripts/generate/packs/next-policies.mjs` | `node scripts/generate/packs/next-policies.mjs` (reads no tools): every document; a port that fails its fixtures or the port readiness gates goes to `packs/next/candidates/rules/` instead (none today). Writes `suppress.eslint`, and `suppress.oxlint` for the rules oxlint 1.88.0's `nextjs` plugin implements; copies each violation's `suppress.biome` from the committed document and keeps its revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
 | `packs/next/conformance.json` | `scripts/generate/packs/next-policies.mjs` | as `packs/next/rules/`: its `capabilities` and `rules` lists; the rest is written by hand |
 | `packs/next/pack.json` | `scripts/generate/packs/next-policies.mjs` | as `packs/next/rules/`: its `rules` list, keeping each entry's hand-written fields (examples, mode, on); the rest is written by hand |

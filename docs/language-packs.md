@@ -58,6 +58,17 @@ Each language family has one adapter type, and every engine call site asks it in
 | `sql` | `sql` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
 | `rr` | `rr` (`.rerail` rule files, the engine's own grammar `native:rr`) | none: all five `Refused`; rules match its kinds and text | none |
 | `json` | `json` | none: all five `Refused` (rules read its tree) | none |
+| `format` | `python-format`, `eslint-directive` (grammars of a string's value, which a `.rerail` rule reads with `parsed`) | none: all five `Refused` | none |
+| `java` | `java` | none yet: all five `not-supported-yet` | none |
+| `csharp` | `csharp` | none yet: all five `not-supported-yet` | none |
+| `html` | `html` | none yet: all five `not-supported-yet` | none |
+| `css` | `css` | none yet: all five `not-supported-yet` | none |
+| `markdown` | `markdown` (and `markdown-inline`, the content of its `inline` nodes) | none yet: all five `not-supported-yet` | none |
+| `kotlin` | `kotlin` | none yet: all five `not-supported-yet` | none |
+| `swift` | `swift` | none yet: all five `not-supported-yet` | none |
+| `scala` | `scala` | none yet: all five `not-supported-yet` | none |
+| `go` | `go` | none yet: all five `not-supported-yet` | none |
+| `c` | `c`, `cpp` (`.h` is C++) | none yet: all five `not-supported-yet` | none |
 
 <details>
 <summary>What each concern trait holds</summary>
@@ -77,8 +88,8 @@ Each language family has one adapter type, and every engine call site asks it in
 <details>
 <summary>How dispatch, refusals and embedding work</summary>
 
-- **Adapter files:** `Python` (`adapter/scope.rs`, `value.rs`, ...), `Rust` (`adapter/rust.rs`), `Vue`
-  (`adapter/vue.rs`), `Sql` (`adapter/sql.rs`), `Rr` (`adapter/rr.rs`) and `Json` (`adapter/json.rs`).
+- **Adapter files:** each family's type is in `adapter/<family>.rs` (`Python` in `adapter/python.rs`, `Ecma` in
+  `adapter/ecma.rs`, ...); the concern traits' shared code is in `adapter/scope.rs`, `value.rs` and the rest.
 - **`with_adapter!`** is the one exhaustive match on a family. It, `Family`, `GrammarDialect`, `Family::of` and
   `honours` are generated from the registry; no enum is edited by hand.
 - **Every other call site** asks the adapter. One that needs a concern's associated type calls a function generic over

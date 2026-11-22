@@ -27,7 +27,7 @@ static ALLOWED: Mutex<Option<HashMap<Key, Duration>>> = Mutex::new(None);
 
 /// How an allowance knows its test's thread. Linux cuts a thread's name to 15 bytes, `code_rule_dsl::` for nearly
 /// every test, so a name there would grant one test's allowance to every test: the key is the thread's system id. On
-/// macOS the name (63 bytes) is the test's path.
+/// macOS the name (63 bytes) is the test's path, and on Windows (a thread's description, uncut) all of it.
 #[cfg(target_os = "linux")]
 type Key = u64;
 #[cfg(not(target_os = "linux"))]
@@ -55,10 +55,13 @@ fn key(thread: &(u64, String)) -> &Key {
     &thread.1
 }
 
-/// The longest thread name the system reports (macOS: 64 bytes with its NUL; Linux: 16).
+/// The longest thread name the system reports (macOS: 64 bytes with its NUL; Linux: 16; Windows: a thread's
+/// description, whole).
 #[cfg(target_os = "macos")]
 const MAX_NAME: usize = 63;
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+const MAX_NAME: usize = usize::MAX;
+#[cfg(not(any(target_os = "macos", windows)))]
 const MAX_NAME: usize = 15;
 
 /// Lets the calling test run for up to `limit` (capped by `RERAIL_TEST_TIMEOUT` when it is set).
@@ -86,6 +89,8 @@ fn configured() -> Option<Option<Duration>> {
 #[used]
 #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
 #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+// The C runtime's initializers, which it calls before `main` (MSVC).
+#[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
 static START: extern "C" fn() = start;
 
 extern "C" fn start() {
@@ -200,7 +205,13 @@ fn threads() -> Vec<(u64, String)> {
         .collect()
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// Windows: the process's threads, each named by its description (`rerail_prof::windows_threads`).
+#[cfg(windows)]
+fn threads() -> Vec<(u64, String)> {
+    rerail_prof::windows_threads().into_iter().map(|(id, name)| (u64::from(id), name)).collect()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn threads() -> Vec<(u64, String)> {
     Vec::new()
 }
@@ -253,7 +264,8 @@ mod tests {
             .unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(124), "{err}");
-        // Named as the system reports the thread (`MAX_NAME` bytes: all of it on macOS, `test_watchdog::` on Linux).
+        // Named as the system reports the thread (`MAX_NAME` bytes: all of it on macOS and Windows, `test_watchdog::`
+        // on Linux).
         assert!(err.contains(&format!("`{}` ran", short("test_watchdog::tests::a_test_past_its_limit_ends_the_run"))), "{err}");
         assert!(t0.elapsed() < Duration::from_secs(20));
     }
@@ -330,7 +342,41 @@ mod faults {
         }
     }
 
-    extern "C" fn handler(sig: libc::c_int, _: *mut libc::siginfo_t, _: *mut libc::c_void) {
+    /// `v` in hex, into a buffer of the handler's stack (a handler allocates nothing).
+    fn hex(v: usize, out: &mut [u8; 18]) -> &[u8] {
+        out[0] = b'0';
+        out[1] = b'x';
+        for i in 0..16 {
+            let d = (v >> ((15 - i) * 4)) & 0xf;
+            out[2 + i] = b"0123456789abcdef"[d];
+        }
+        &out[..]
+    }
+
+    /// The faulting instruction's address and its return address (the caller's), where the platform's context names
+    /// them: a fault in JIT code has no symbols, and these place it.
+    #[allow(unused_variables)]
+    fn pc_lr(ctx: *mut libc::c_void) -> Option<(usize, usize)> {
+        if ctx.is_null() {
+            return None;
+        }
+        // SAFETY: the kernel's context for this signal (`SA_SIGINFO`), read where each platform lays it out.
+        unsafe {
+            let uc = ctx as *const libc::ucontext_t;
+            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+            return Some(((*uc).uc_mcontext.pc as usize, (*uc).uc_mcontext.regs[30] as usize));
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            return Some(((*(*uc).uc_mcontext).__ss.__pc as usize, (*(*uc).uc_mcontext).__ss.__lr as usize));
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            return Some(((*uc).uc_mcontext.gregs[libc::REG_RIP as usize] as usize, 0));
+            #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+            return Some(((*(*uc).uc_mcontext).__ss.__rip as usize, 0));
+            #[allow(unreachable_code)]
+            None
+        }
+    }
+
+    extern "C" fn handler(sig: libc::c_int, info: *mut libc::siginfo_t, ctx: *mut libc::c_void) {
         let write = |b: &[u8]| unsafe {
             libc::write(2, b.as_ptr().cast(), b.len());
         };
@@ -340,7 +386,20 @@ mod faults {
         let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
         write(if sig == libc::SIGBUS { b"\ntest watchdog: a bus error on thread `" } else { b"\ntest watchdog: a segmentation fault on thread `" });
         write(&name[..end]);
-        write(b"`; the tests running:\n");
+        let mut buf = [0u8; 18];
+        write(b"`");
+        if !info.is_null() {
+            write(b" at address ");
+            // SAFETY: the kernel's siginfo for a fault, which names its address.
+            write(hex(unsafe { (*info).si_addr() } as usize, &mut buf));
+        }
+        if let Some((pc, lr)) = pc_lr(ctx) {
+            write(b", instruction ");
+            write(hex(pc, &mut buf));
+            write(b", return address ");
+            write(hex(lr, &mut buf));
+        }
+        write(b"; the tests running:\n");
         let len = LEN.load(std::sync::atomic::Ordering::Acquire);
         // SAFETY: reads what the watchdog wrote (see `Buffer`).
         write(unsafe { &(&*RUNNING.0.get())[..len] });

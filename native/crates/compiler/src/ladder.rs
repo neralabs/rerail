@@ -669,12 +669,61 @@ pub fn check_shape(name: &str, c: &Compiled) {
     // (`native_cpu_codegen::switch_trees`: its Arm jump tables carry a speculation
     // barrier), so neither tier's machine code has a jump table or a `br`.
     for (tier, asm, own) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls()), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls)] {
-        // A jump table's sequence is one line, its `br` inside, its entries the function's labels.
-        let (tables_asm, rest): (Vec<&str>, Vec<&str>) = asm.lines().partition(|l| l.contains("jt_entries"));
-        let out: Vec<&&str> = rest.iter().filter(|l| l.contains(" bl ") || l.contains(" br ") || l.trim_start().starts_with("br ")).take(4).collect();
+        let (tables_asm, rest): (Vec<&str>, Vec<&str>) = asm.lines().partition(|l| MachineCode::table(l));
+        let out: Vec<&&str> = rest.iter().filter(|l| MachineCode::out(l)).take(4).collect();
         assert!(out.is_empty(), "{name}: {tier} jumps out: {out:?}");
         assert!(tables_asm.is_empty(), "{name}: {tier} has a jump table in Cranelift's code: {tables_asm:?}");
-        assert_eq!(asm.matches("blr").count(), own, "{name}: {tier} calls out: {:?}", asm.lines().filter(|l| l.contains("blr")).collect::<Vec<_>>());
+        let calls: Vec<&str> = asm.lines().filter(|l| MachineCode::own_call(l)).collect();
+        assert_eq!(calls.len(), own, "{name}: {tier} calls out: {calls:?}");
+    }
+}
+
+/// The forms of Cranelift's machine code (its VCode text) the ladder's checks read, the target's: a jump table, a
+/// jump or call out of the function, and a call of one of its own outlined functions (through a register, as the
+/// JIT calls them).
+struct MachineCode;
+
+#[cfg(target_arch = "aarch64")]
+impl MachineCode {
+    /// A jump table's sequence is one line, its `br` inside, its entries the function's labels.
+    fn table(l: &str) -> bool {
+        l.contains("jt_entries")
+    }
+    fn out(l: &str) -> bool {
+        l.contains(" bl ") || l.contains(" br ") || l.trim_start().starts_with("br ")
+    }
+    fn own_call(l: &str) -> bool {
+        l.contains("blr")
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl MachineCode {
+    /// A jump table's sequence is one line (`br_table`).
+    fn table(l: &str) -> bool {
+        l.trim_start().starts_with("br_table")
+    }
+    /// A direct call, an indirect jump, or a tail call.
+    fn out(l: &str) -> bool {
+        let l = l.trim_start();
+        (l.starts_with("call ") && !l.starts_with("call    *")) || l.starts_with("jmpq") || l.starts_with("return_call")
+    }
+    fn own_call(l: &str) -> bool {
+        l.trim_start().starts_with("call    *")
+    }
+}
+
+/// A target with no JIT (wasm32) compiles no step, so it has no machine code to read.
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+impl MachineCode {
+    fn table(_: &str) -> bool {
+        false
+    }
+    fn out(_: &str) -> bool {
+        false
+    }
+    fn own_call(_: &str) -> bool {
+        false
     }
 }
 

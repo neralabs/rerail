@@ -1,4 +1,4 @@
-//! File-backed positional FTS, following ast-index-spike. SQL selects candidates;
+//! File-backed positional FTS, following the SQL index prototype. SQL selects candidates;
 //! the existing matcher validates them and constructs captures.
 #[path = "lower/audit.rs"]
 pub mod audit;
@@ -167,8 +167,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
 }
 
 // preparation_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
-#[cfg(all(test, feature = "code-rule-profile"))]
-pub mod retention_spikes;
+// retention_spikes: a test the engine hosts, beside `tests`, which it reads (rerail-tests-anchors)
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 #[path = "corpus/cache.rs"]

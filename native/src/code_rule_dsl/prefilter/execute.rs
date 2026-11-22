@@ -1,5 +1,5 @@
 //! Physical SQL boundaries for shared candidate sets. Temporary storage can spill to disk.
-//! Adapted from Pulling-it-all-together's `matcher/anchors/sql/execute.rs`: statements run on the
+//! Adapted from PIAT's `matcher/anchors/sql/execute.rs`: statements run on the
 //! content store's connection (`ContentStore::candidate_transaction`) rather than a private
 //! anchor database, so there are no incremental tape readers to close and no structural fill.
 use super::lower::{Statement, lifetime::Action};
@@ -8,7 +8,7 @@ use rusqlite::{Connection, Result, params_from_iter};
 
 /// The candidate rows of `statement`: one transaction, which writes only when the statement
 /// registers vocabulary predicates.
-pub(super) fn candidates(
+pub fn candidates(
     store: &ContentStore,
     statement: &Statement,
     mut emit: impl FnMut(usize, i64, usize),
@@ -18,7 +18,7 @@ pub(super) fn candidates(
 }
 
 /// Fills the `request_file` temp table with the requested tapes.
-pub(super) fn request(db: &Connection, files: &[i64]) -> Result<()> {
+pub fn request(db: &Connection, files: &[i64]) -> Result<()> {
     db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS request_file(fid INTEGER PRIMARY KEY) WITHOUT ROWID")?;
     db.execute("DELETE FROM request_file", [])?;
     for files in files.chunks(128) {
@@ -34,7 +34,7 @@ pub(super) fn request(db: &Connection, files: &[i64]) -> Result<()> {
 }
 
 /// Runs `statement` in the caller's transaction on `db`, emitting (plan, tape, preorder) rows.
-pub(super) fn rows(db: &Connection, statement: &Statement, emit: &mut impl FnMut(usize, i64, usize)) -> Result<()> {
+pub fn rows(db: &Connection, statement: &Statement, emit: &mut impl FnMut(usize, i64, usize)) -> Result<()> {
     let relation_names: Vec<_> = statement.stages.iter().map(|s| s.name.as_str()).collect();
     let mut live = vec![false; statement.stages.len()];
     let mut populated = vec![false; statement.stages.len()];

@@ -30,10 +30,10 @@ use ruff_text_size::{Ranged, TextRange, TextSize};
 /// CPython's `SyntaxError`: its `lineno` (1 where CPython gives none, for a null byte), `msg`, and where it is (`at`:
 /// none for a null byte, where CPython's attributes are all `None`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SyntaxError {
-    pub(crate) line: usize,
-    pub(crate) msg: String,
-    pub(crate) at: Option<Located>,
+pub struct SyntaxError {
+    pub line: usize,
+    pub msg: String,
+    pub at: Option<Located>,
 }
 
 /// A `SyntaxError`'s `lineno`, `offset`, `text`, `end_lineno` and `end_offset`, as CPython 3.13 sets them: offsets in
@@ -41,12 +41,12 @@ pub(crate) struct SyntaxError {
 /// else without), `end_offset` -1 where the token has no end (an `INDENT`, the end of the file) and 0 at a bracket
 /// never closed.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Located {
-    pub(crate) lineno: usize,
-    pub(crate) offset: i64,
-    pub(crate) text: String,
-    pub(crate) end_lineno: usize,
-    pub(crate) end_offset: i64,
+pub struct Located {
+    pub lineno: usize,
+    pub offset: i64,
+    pub text: String,
+    pub end_lineno: usize,
+    pub end_offset: i64,
 }
 
 /// Where CPython puts an error, by how it raises it (byte offsets in the source).
@@ -211,13 +211,13 @@ fn chars_to(text: &str, bytes: usize) -> i64 {
 /// `UnicodeDecodeError` the parser's action lets through as it is. W's worker catches only `SyntaxError`: its batch
 /// fails.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Raised {
-    pub(crate) class: &'static str,
-    pub(crate) message: String,
+pub struct Raised {
+    pub class: &'static str,
+    pub message: String,
 }
 
 /// `ast.parse(source)`'s verdict: `Ok(None)` where it parses, its `SyntaxError`, or another exception it raises.
-pub(crate) fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> {
+pub fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> {
     if source.contains('\0') {
         return Ok(Some(SyntaxError { line: 1, msg: "source code string cannot contain null bytes".into(), at: None }));
     }
@@ -814,7 +814,7 @@ fn expr_name(e: &Expr) -> &'static str {
 
 /// Ruff's errors on `source` and the brackets left open, for a difference report.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) fn explain(source: &str) -> String {
+pub fn explain(source: &str) -> String {
     let parsed = parse_unchecked(source, ParseOptions::from(Mode::Module).with_target_version(super::VERSION));
     let lines = Lines::new(source);
     let mut out: Vec<String> = parsed.errors().iter().map(|e| format!("L{} {:?}", lines.line(e.location.start()), e.error)).collect();

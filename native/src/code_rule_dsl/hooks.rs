@@ -19,7 +19,7 @@ pub(in crate::code_rule_dsl) const PROGRESS_STEPS: i32 = 64;
 
 /// A connection's hook slots: none until `register`, and setting one then is an error, not a hook that never runs.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Hooks(Option<Slots>);
+pub struct Hooks(Option<Slots>);
 
 struct Slots {
     progress: Arc<Mutex<Option<Progress>>>,
@@ -43,7 +43,7 @@ impl Hooks {
 
     /// Calls `handler` every `PROGRESS_STEPS` instructions, which interrupts the statement when it returns true;
     /// `None`: no progress closure.
-    pub(in crate::code_rule_dsl) fn progress<F>(&self, handler: Option<F>) -> rusqlite::Result<()>
+    pub fn progress<F>(&self, handler: Option<F>) -> rusqlite::Result<()>
     where
         F: FnMut() -> bool + Send + 'static,
     {
@@ -52,7 +52,7 @@ impl Hooks {
     }
 
     /// Authorizes each statement prepared from now on with `authorize`; `None`: every action is allowed.
-    pub(in crate::code_rule_dsl) fn authorizer<F>(&self, authorize: Option<F>) -> rusqlite::Result<()>
+    pub fn authorizer<F>(&self, authorize: Option<F>) -> rusqlite::Result<()>
     where
         F: for<'r> FnMut(AuthContext<'r>) -> Authorization + Send + 'static,
     {

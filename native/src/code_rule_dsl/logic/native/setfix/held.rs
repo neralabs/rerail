@@ -44,7 +44,7 @@ impl Held {
             }
         }
         let k = held.len();
-        let mut rows = if n > 0 && k > 0 { Rows::with_index_room(k, Life::Kept, n, (k + 2).min(rerail_blocks::relation::ADDED_INDEXES)) } else { Rows::living(k, Life::Kept) };
+        let mut rows = if n > 0 && k > 0 { Rows::with_index_room(k, Life::Kept, n, rerail_blocks::relation::ADDED_INDEXES) } else { Rows::living(k, Life::Kept) };
         if k > 0 {
             let mut row = vec![0i64; k];
             for r in 0..n {

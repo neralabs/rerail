@@ -192,7 +192,7 @@ function exempt(value: string): boolean {
 }
 
 /**
- * True for a filesystem path: absolute with two or more segments (`/Users/jeff/project`, as `PWD` and `OLDPWD` hold),
+ * True for a filesystem path: absolute with two or more segments (`/Users/alex/project`, as `PWD` and `OLDPWD` hold),
  * home- or dot-relative (`~/.config`, `./certs/dev`), or under a Windows drive. Its segments hold no `+`, `=`, `$` or
  * other symbol a generated secret is made of.
  */

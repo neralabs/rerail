@@ -1,6 +1,6 @@
     use super::*;
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     #[test]
     fn metal_backend_rejects_execution_without_platform_support() {
         assert!(matches!(
@@ -22,22 +22,15 @@
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    /// The Metal JIT's result, or None where it refuses the batch: the launch bound (99, list step 13), or a
-    /// shared arena sized short for it (`BackendCapacity`, work queue Q64, the grid's retirement having moved these
+    /// The Metal JIT's result, or None where it refuses the batch: a shared arena sized short for it (`BackendCapacity`, work queue Q64, the grid's retirement having moved these
     /// programs to the JIT). The CPU backends' parity is still asserted.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn metal<T>(result: Result<T, Error>) -> Option<T> {
         match result {
-            Err(Error::BackendLaunchLimit) => {
-                eprintln!("Metal refused the launch bound; its parity is not checked here");
-                None
-            }
             Err(Error::BackendCapacity) => {
                 eprintln!("Metal's JIT refused the batch's arenas (Q64); its parity is not checked here");
                 None
             }
-            // A host with no GPU (a Linux host without one): the device's parity is checked where there is one.
-            Err(Error::UnsupportedBackend) if rerail_accel::gpu::join::device().is_err() => None,
             result => Some(result.unwrap()),
         }
     }
@@ -164,13 +157,9 @@
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[test]
     fn production_corpus_executes_all_files_in_one_packed_grid() {
-        // The grid is the device's: a host with none (a Linux host without a GPU) has no grid to run.
-        if rerail_accel::gpu::join::device().is_err() {
-            return;
-        }
         const FILE_COUNT: usize = 129;
         let kind = tape("value = other\n").transducer_kind(1);
         let programs = [Program::new(
@@ -238,7 +227,7 @@
                 expected
             );
         }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             let backend = ExecutionBackend::MetalJit;
             if let Some(actual) = metal(execute_with_backend(backend, programs, tapes, &anchors))
@@ -268,7 +257,7 @@
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn assert_metal_parity(programs: &[Program], tapes: &[TapeDoc]) {
         let anchors = tapes
             .iter()
@@ -646,11 +635,11 @@
         .unwrap();
         let jit_elapsed = rerail_prof::process_cpu().saturating_sub(jit_started);
         assert_eq!(jit_output[0][0], plain_output);
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         if let Some(actual) = metal(execute_with_backend(ExecutionBackend::MetalJit, &jit_programs, &jit_tapes, &jit_anchors)) {
             assert_eq!(actual[0][0], plain_output);
         }
-        if let Some(iterations) = std::env::var("TEMPO_QUANTIFIER_PROFILE_ITERATIONS")
+        if let Some(iterations) = std::env::var("RERAIL_PACKED_QUANTIFIER_PROFILE_ITERATIONS")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
         {
@@ -787,7 +776,7 @@
             execute_with_backend(ExecutionBackend::CpuJit, &programs, &tapes, &anchors).unwrap(),
             expected
         );
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         assert_metal_parity(&programs, &tapes);
     }
 
@@ -841,7 +830,7 @@
             ]),
             plain(vec![word(GOTO, 0, 1), word(EMIT, 0, 0)]),
         ];
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let mut metal_programs = programs.clone();
         for required in 0_u8..=0x0f {
             for forbidden in 0_u16..=0x000f {
@@ -879,7 +868,7 @@
                 vec![],
             )
             .unwrap();
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             metal_programs.push(program.clone());
             programs.push(program);
         }
@@ -897,13 +886,13 @@
             vec![],
         )
         .unwrap();
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         metal_programs.push(assertion_program.clone());
         programs.push(assertion_program);
         let source = "# first\nvalue = call(argument)\nif value:\n  pass\n";
         let python_tape = tape(source);
         assert_jit_parity(&programs, std::slice::from_ref(&python_tape));
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             let alternatives = |blocks: Vec<Vec<u32>>| {
                 let prefix = blocks.len() + 1;
@@ -956,9 +945,8 @@
             )
             .unwrap_err();
             assert_eq!(actual, expected);
-            // The device's refusal, where the host has a GPU.
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
-            if rerail_accel::gpu::join::device().is_ok() {
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            {
                 let actual = execute_with_backend(
                     ExecutionBackend::MetalJit,
                     std::slice::from_ref(&program),
@@ -996,7 +984,7 @@
             std::slice::from_ref(&supertype),
             std::slice::from_ref(&js_tape),
         );
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         assert_metal_parity(std::slice::from_ref(&supertype), &[js_tape]);
 
         let opcodes = programs
@@ -1118,7 +1106,7 @@
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected, "query: {query}");
         }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         assert_metal_parity(&programs, std::slice::from_ref(&tape));
     }
 
@@ -1196,7 +1184,7 @@
             .iter()
             .flat_map(|program| program.execute(&directive_tape).unwrap())
             .collect::<Vec<_>>();
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             assert_metal_parity(&directive_programs, std::slice::from_ref(&directive_tape));
             assert_metal_parity(
@@ -1234,7 +1222,7 @@
         .unwrap();
         let value_tape = tape("value\n");
         let output = program.execute(&value_tape).unwrap();
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         assert_metal_parity(
             std::slice::from_ref(&program),
             std::slice::from_ref(&value_tape),
@@ -1855,7 +1843,7 @@
 #[test]
     fn query_independent_fts_feeds_batched_execution_and_scopes_ordinals_to_tapes() {
         let database = std::env::temp_dir().join(format!(
-            "tempo-transducer-anchor-{}-{}.sqlite",
+            "rerail-transducer-anchor-{}-{}.sqlite",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1934,7 +1922,7 @@
         ];
         let programs = [identifier_program("execute"), identifier_program("absent")];
         let database = std::env::temp_dir().join(format!(
-            "tempo-sql-indexed-match-{}-{}.sqlite",
+            "rerail-sql-indexed-match-{}-{}.sqlite",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1991,9 +1979,8 @@
         assert_eq!(negatives, 2);
         assert_eq!(registry.execution_count(batch), Some(1));
         registry.remove_batch(batch);
-        // The device's batch, where the host has a GPU.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        if rerail_accel::gpu::join::device().is_ok() {
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        {
             let anchors = files
                 .iter()
                 .map(|file| {
@@ -2287,14 +2274,14 @@
     #[ignore = "controlled corpus benchmark"]
     fn benchmark_three_ast_grep_paths() {
         let root = PathBuf::from(
-            std::env::var("TEMPO_TRANSDUCER_CORPUS")
+            std::env::var("RERAIL_PACKED_TRANSDUCER_CORPUS")
                 .unwrap_or_else(|_| "../../data-layer".into()),
         );
-        let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
+        let limit = std::env::var("RERAIL_PACKED_TRANSDUCER_FILES")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(usize::MAX);
-        let iterations = std::env::var("TEMPO_TRANSDUCER_ITERATIONS")
+        let iterations = std::env::var("RERAIL_PACKED_TRANSDUCER_ITERATIONS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(7usize);
@@ -2412,7 +2399,7 @@
         let transducer_median = median(transducer_times);
         let ms = |duration: Duration| duration.as_secs_f64() * 1000.0;
         let report = json!({
-            "benchmark": "tempo-fixed-word-transducer-v1",
+            "benchmark": "predecessor-fixed-word-transducer-v1",
             "corpus": dunce::canonicalize(&root).unwrap(),
             "files": paths.len(), "sourceBytes": source_bytes, "patterns": names,
             "matches": expected.len(), "orderedRangeSha256": digest,
@@ -2431,14 +2418,14 @@
     }
 
 #[test]
-    #[ignore = "full ast-index-spike source corpus indexing benchmark"]
+    #[ignore = "full SQL index prototype source corpus indexing benchmark"]
     fn benchmark_full_fts_source_corpus() {
         let corpus = PathBuf::from(
-            std::env::var("TEMPO_SOURCE_CORPUS")
-                .expect("TEMPO_SOURCE_CORPUS must name ast-index-spike bench/corpus/repos"),
+            std::env::var("RERAIL_PACKED_SOURCE_CORPUS")
+                .expect("RERAIL_PACKED_SOURCE_CORPUS must name the SQL index prototype bench/corpus/repos"),
         );
         let database = std::env::temp_dir().join(format!(
-            "tempo-full-fts-{}-{}.sqlite",
+            "rerail-full-fts-{}-{}.sqlite",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -2485,7 +2472,7 @@
             ("lua", SupportLang::Lua, &["lua"]),
             ("json", SupportLang::Json, &["json"]),
         ];
-        let selected_languages = std::env::var("TEMPO_BENCH_LANGS")
+        let selected_languages = std::env::var("RERAIL_PACKED_BENCH_LANGS")
             .ok()
             .map(|value| value.split(',').map(str::to_owned).collect::<BTreeSet<_>>());
         let started = Instant::now();
@@ -2630,17 +2617,17 @@
     }
 
     #[test]
-    #[ignore = "full ast-index-spike tree-sitter query oracle benchmark"]
+    #[ignore = "full SQL index prototype tree-sitter query oracle benchmark"]
     fn benchmark_tree_sitter_query_oracle() {
         use tree_sitter::StreamingIterator;
 
         let query_root = PathBuf::from(
-            std::env::var("TEMPO_QUERY_CORPUS")
-                .expect("TEMPO_QUERY_CORPUS must name ast-index-spike bench/corpus/queries"),
+            std::env::var("RERAIL_PACKED_QUERY_CORPUS")
+                .expect("RERAIL_PACKED_QUERY_CORPUS must name the SQL index prototype bench/corpus/queries"),
         );
         let source_root = PathBuf::from(
-            std::env::var("TEMPO_SOURCE_CORPUS")
-                .expect("TEMPO_SOURCE_CORPUS must name ast-index-spike bench/corpus/repos"),
+            std::env::var("RERAIL_PACKED_SOURCE_CORPUS")
+                .expect("RERAIL_PACKED_SOURCE_CORPUS must name the SQL index prototype bench/corpus/repos"),
         );
         let languages: &[(&str, SupportLang, &[&str])] = &[
             ("python", SupportLang::Python, &["py"]),
@@ -2672,19 +2659,19 @@
             ("lua", SupportLang::Lua, &["lua"]),
             ("json", SupportLang::Json, &["json"]),
         ];
-        let selected_languages = std::env::var("TEMPO_QUERY_LANGS")
+        let selected_languages = std::env::var("RERAIL_PACKED_QUERY_LANGS")
             .ok()
             .map(|value| value.split(',').map(str::to_owned).collect::<BTreeSet<_>>());
-        let query_filter = std::env::var("TEMPO_QUERY_FILTER").ok();
-        let source_limit = std::env::var("TEMPO_QUERY_SOURCE_BYTES")
+        let query_filter = std::env::var("RERAIL_PACKED_QUERY_FILTER").ok();
+        let source_limit = std::env::var("RERAIL_PACKED_QUERY_SOURCE_BYTES")
             .ok()
             .map(|value| value.parse::<usize>().unwrap())
             .unwrap_or(1_000_000);
-        let shard_count = std::env::var("TEMPO_QUERY_SHARD_COUNT")
+        let shard_count = std::env::var("RERAIL_PACKED_QUERY_SHARD_COUNT")
             .ok()
             .map(|value| value.parse::<usize>().unwrap())
             .unwrap_or(1);
-        let shard_index = std::env::var("TEMPO_QUERY_SHARD_INDEX")
+        let shard_index = std::env::var("RERAIL_PACKED_QUERY_SHARD_INDEX")
             .ok()
             .map(|value| value.parse::<usize>().unwrap())
             .unwrap_or(0);
@@ -2792,7 +2779,7 @@
                    "maxMs":all_micros.last().copied().unwrap_or_default() as f64/1_000.0,
                    "deadlineViolations":deadline_violations,"slowQueries":slow_queries,
                    "languages":per_language,
-                   "unsupported":["SQL grammar","Tempo transducer compilation of .scm queries"]})
+                   "unsupported":["SQL grammar","the predecessor's transducer compilation of .scm queries"]})
         );
     }
 
@@ -2800,8 +2787,8 @@
     #[ignore = "pinned Python SCM execution-signature profile"]
     fn profile_pinned_python_execution_signatures() {
         let query_root = PathBuf::from(
-            std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR")
-                .expect("TEMPO_PYTHON_SCM_QUERY_DIR must name pinned Python SCM queries"),
+            std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR")
+                .expect("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR must name pinned Python SCM queries"),
         );
         let grammar = SupportLang::Python.get_ts_language();
         let mut paths = fs::read_dir(query_root)
@@ -2837,7 +2824,7 @@
         let mut groups = signatures.into_iter().collect::<Vec<_>>();
         groups.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
         println!(
-            "TEMPO_PYTHON_EXECUTION_SIGNATURES {}",
+            "RERAIL_PACKED_PYTHON_EXECUTION_SIGNATURES {}",
             json!({"programs":programs,"signatures":groups.len(),"groups":groups})
         );
         assert_eq!(programs, 335);
@@ -2855,18 +2842,18 @@
                 maxima
             },
         );
-        println!("TEMPO_PYTHON_STRUCTURAL_MAXIMA {structural_maxima:?}");
+        println!("RERAIL_PACKED_PYTHON_STRUCTURAL_MAXIMA {structural_maxima:?}");
         // The spike counted opcode shapes. Resource classes can split those
         // shapes, but must never merge different opcode/ABI contracts.
         assert_eq!(groups.len(), 106);
     }
 
 #[test]
-    #[ignore = "full ast-index-spike tree-sitter query corpus audit"]
+    #[ignore = "full SQL index prototype tree-sitter query corpus audit"]
     fn audit_tree_sitter_query_corpus() {
         let query_root = PathBuf::from(
-            std::env::var("TEMPO_QUERY_CORPUS")
-                .expect("TEMPO_QUERY_CORPUS must name ast-index-spike bench/corpus/queries"),
+            std::env::var("RERAIL_PACKED_QUERY_CORPUS")
+                .expect("RERAIL_PACKED_QUERY_CORPUS must name the SQL index prototype bench/corpus/queries"),
         );
         let languages = [
             ("python", SupportLang::Python),
@@ -2915,7 +2902,7 @@
                         match Program::compile_tree_sitter_query_pattern(pattern, &grammar) {
                             Ok(_) => lowered += 1,
                             Err(error) => {
-                                if std::env::var_os("TEMPO_QUERY_AUDIT_ERRORS").is_some() {
+                                if std::env::var_os("RERAIL_PACKED_QUERY_AUDIT_ERRORS").is_some() {
                                     eprintln!(
                                         "SCM_LOWERING_ERROR lang={name} error={error:?} pattern={pattern:?}"
                                     );
@@ -2991,7 +2978,7 @@
                    "loweringErrors": sql_errors,
                    "grammarSymbols": sql.node_kind_count(), "grammarFields": sql.field_count()}),
         );
-        if let Ok(path) = std::env::var("TEMPO_QUERY_CORPUS_OUTPUT") {
+        if let Ok(path) = std::env::var("RERAIL_PACKED_QUERY_CORPUS_OUTPUT") {
             fs::write(path, serde_json::to_vec_pretty(&corpus).unwrap()).unwrap();
         }
         println!(
@@ -3004,14 +2991,14 @@
     #[ignore = "controlled corpus FTS storage and lookup benchmark"]
     fn benchmark_fts_search_index() {
         let root = PathBuf::from(
-            std::env::var("TEMPO_TRANSDUCER_CORPUS")
+            std::env::var("RERAIL_PACKED_TRANSDUCER_CORPUS")
                 .unwrap_or_else(|_| "../../data-layer".into()),
         );
-        let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
+        let limit = std::env::var("RERAIL_PACKED_TRANSDUCER_FILES")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(usize::MAX);
-        let iterations = std::env::var("TEMPO_TRANSDUCER_ITERATIONS")
+        let iterations = std::env::var("RERAIL_PACKED_TRANSDUCER_ITERATIONS")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(7usize);
@@ -3028,7 +3015,7 @@
         paths.truncate(limit);
         assert!(!paths.is_empty());
         let database = std::env::temp_dir().join(format!(
-            "tempo-fts-benchmark-{}-{}.sqlite",
+            "rerail-fts-benchmark-{}-{}.sqlite",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -3084,7 +3071,7 @@
         let ms = |duration: Duration| duration.as_secs_f64() * 1000.0;
         #[allow(unused_mut)]
         let mut report = json!({
-            "benchmark": "tempo-contentless-fts-search-index-v1",
+            "benchmark": "predecessor-contentless-fts-search-index-v1",
             "corpus": dunce::canonicalize(&root).unwrap(),
             "files": paths.len(),
             "sourceBytes": source_bytes,
@@ -3149,14 +3136,14 @@
     #[ignore = "Apple Silicon backend benchmark"]
     fn benchmark_anchored_cpu_and_gpu_anchor_scan() {
         let root = PathBuf::from(
-            std::env::var("TEMPO_TRANSDUCER_CORPUS")
+            std::env::var("RERAIL_PACKED_TRANSDUCER_CORPUS")
                 .unwrap_or_else(|_| "../../data-layer".into()),
         );
-        let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
+        let limit = std::env::var("RERAIL_PACKED_TRANSDUCER_FILES")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(usize::MAX);
-        let iterations = std::env::var("TEMPO_TRANSDUCER_ITERATIONS")
+        let iterations = std::env::var("RERAIL_PACKED_TRANSDUCER_ITERATIONS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(7usize);
@@ -3290,6 +3277,6 @@
         }
         let gpu_fused_terminal = median(gpu_fused_terminal);
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
-        let report = json!({"benchmark":"tempo-anchored-transducer-and-anchor-scan-v5","corpus":dunce::canonicalize(&root).unwrap(),"files":paths.len(),"sourceBytes":source_bytes,"patterns":names,"matches":expected.len(),"orderedRangeSha256":digest_ranges(&expected),"iterations":iterations,"cpuAnchorBuildMs":ms(anchor_time),"prepareMs":{"gpuAnchorScan":ms(gpu_anchor_prepare)},"compileMs":{"cpuJit":ms(cpu_compile)},"medianMs":{"cpuUnanchored":ms(medians[0]),"cpuInterpreted":ms(medians[1]),"cpuJit":ms(medians[2]),"gpuAnchorScanWarm":ms(medians[3])},"gpuAnchorProfile":{"dispatchAndWaitMs":ms(gpu_anchor_dispatch),"reconstructionMs":ms(gpu_anchor_reconstruction),"fusedTerminalMs":ms(gpu_fused_terminal),"sparseHitCount":gpu_anchor_hits},"anchorSpeedup":ms(medians[0])/ms(medians[1]),"speedupVsCpuInterpreted":{"cpuJit":ms(medians[1])/ms(medians[2])}});
+        let report = json!({"benchmark":"predecessor-anchored-transducer-and-anchor-scan-v5","corpus":dunce::canonicalize(&root).unwrap(),"files":paths.len(),"sourceBytes":source_bytes,"patterns":names,"matches":expected.len(),"orderedRangeSha256":digest_ranges(&expected),"iterations":iterations,"cpuAnchorBuildMs":ms(anchor_time),"prepareMs":{"gpuAnchorScan":ms(gpu_anchor_prepare)},"compileMs":{"cpuJit":ms(cpu_compile)},"medianMs":{"cpuUnanchored":ms(medians[0]),"cpuInterpreted":ms(medians[1]),"cpuJit":ms(medians[2]),"gpuAnchorScanWarm":ms(medians[3])},"gpuAnchorProfile":{"dispatchAndWaitMs":ms(gpu_anchor_dispatch),"reconstructionMs":ms(gpu_anchor_reconstruction),"fusedTerminalMs":ms(gpu_fused_terminal),"sparseHitCount":gpu_anchor_hits},"anchorSpeedup":ms(medians[0])/ms(medians[1]),"speedupVsCpuInterpreted":{"cpuJit":ms(medians[1])/ms(medians[2])}});
         println!("TRANSDUCER_BACKEND_BENCHMARK={report}");
     }

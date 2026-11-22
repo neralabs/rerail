@@ -320,14 +320,14 @@ impl ValueProgram {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LuaProgram {
-    pub(super) anchored: bool,
-    pub(super) end_anchored: bool,
-    pub(super) capture_count: u32,
-    pub(super) items: Vec<LuaInstruction>,
+    pub anchored: bool,
+    pub end_anchored: bool,
+    pub capture_count: u32,
+    pub items: Vec<LuaInstruction>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum LuaInstruction {
+pub enum LuaInstruction {
     Atom {
         matcher: ValueMatcher,
         repetition: u8,
@@ -476,7 +476,7 @@ impl LuaProgram {
     }
 
     /// Exercise the shared CPU work counter with exactly `remaining` steps available.
-    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
     pub fn test_match_with_budget(
         &self,
         bytes: &[u8],
@@ -841,7 +841,7 @@ impl ByteNfa {
     }
 
     /// Exercise the same bounded CPU matcher used by the unbounded cost oracle.
-    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
     pub fn test_match_with_budget(
         &self,
         bytes: &[u8],

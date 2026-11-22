@@ -170,7 +170,7 @@ PROBES = {
                       "requests.get(\n    \"https://example.com\",\n)  # nosec\nrequests.get(\n"
                       "    \"https://example.com\",  # nosec B101\n)\ntry:\n    run()\nexcept Exception:\n"
                       "    pass  # nosec B110\n",
-    # From Moti's review of #29. Each port still misreads its case, so it stays a candidate until it agrees.
+    # From the review of #29. Each port still misreads its case, so it stays a candidate until it agrees.
     # B104: a string statement is skipped, and an implicit concatenation is one string.
     "b104-docstring-concatenation.py": "\"0.0.0.0\"\nx = \"not-\" \"0.0.0.0\"\n",
     # B108: a parenthesized string statement is still a statement.

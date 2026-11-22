@@ -9,14 +9,13 @@ use crate::code_rule_dsl::matcher::{GrammarMatcher, MatchTree, Stop, match_tree,
 use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use crate::code_rule_dsl::test_support::CAPABILITIES;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use ast_grep_core::AstGrep as Root;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn pack() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python")
+    crate::source_tree::native().join("../packs/python")
 }
 
 fn files(directory: &Path, extension: &str, found: &mut Vec<PathBuf>) {
@@ -53,7 +52,7 @@ fn clauses() -> Vec<(String, crate::code_rule_dsl::CompiledCodeRuleDsl)> {
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path).ok()?;
             let compiled =
-                CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+                crate::code_rule_dsl::rule_api::compile(&text, "json", CAPABILITIES).ok()?;
             let name = path.file_stem()?.to_string_lossy().into_owned();
             Some((name, compiled))
         })
@@ -300,7 +299,7 @@ fn a_recursive_utility_inside_another_settles() {
             "violation": { "anchor": "witness.span", "code": "NESTED", "message": "A list concatenation." }
         }]
     }"#;
-    let compiled = CodeRuleDslRuntime::compile(policy.to_owned(), "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let compiled = crate::code_rule_dsl::rule_api::compile(policy, "json", CAPABILITIES).expect("the policy compiles");
     let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
     let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
     let tape = python_tape("x = ['a'] + b + c\ny = (['a'] + b) + c\nz = d + e\n");
@@ -342,7 +341,7 @@ fn seeded_clauses() -> (crate::code_rule_dsl::CompiledCodeRuleDsl, TapeDoc) {
             "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{}]}}"#,
         clauses.join(", ")
     );
-    let compiled = CodeRuleDslRuntime::compile(policy, "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy, "json", CAPABILITIES).expect("the policy compiles");
     let tape = python_tape("import os\nx = 1\nprint(x)\n\ndef f(a, b=2, *c):\n    g(a, b)\n    return a\n\nclass K:\n    def m(self):\n        x\n\ns = f\"plain\"\nt = f\"{x}\"\nu = \"{x}\"\nv = f\"{1:>10}\"\n");
     (compiled, tape)
 }
@@ -419,7 +418,7 @@ fn nested_recursion() -> LoweredMatcher {
             "violation": { "anchor": "witness.span", "code": "NESTED", "message": "A list concatenation." }
         }]
     }"#;
-    let compiled = CodeRuleDslRuntime::compile(policy.to_owned(), "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let compiled = crate::code_rule_dsl::rule_api::compile(policy, "json", CAPABILITIES).expect("the policy compiles");
     let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
     LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles")
 }
@@ -511,7 +510,7 @@ fn facts_on_metal_are_read_in_their_block() {
             "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{}]}}"#,
         clauses.join(", ")
     );
-    let compiled = CodeRuleDslRuntime::compile(policy, "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy, "json", CAPABILITIES).expect("the policy compiles");
     let tapes = vec![
         python_tape("x = 1\ny = \"s\"\nz = 2\nprint(x, y)\n"),
         python_tape("def f(a, b):\n    c = 3\n    d = a\n    return c\n"),
@@ -532,7 +531,7 @@ fn facts_on_metal_are_read_in_their_block() {
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
 /// fixtures, in one command buffer (plus one per extra round of a recursive group), and give the
 /// CPU interpreter's root sets on every fixture.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn lowered_clauses_find_the_same_roots_on_metal() {
     use super::compile_matcher::Backend;
@@ -602,7 +601,7 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
 /// passes mark their bits as they publish (`packed_batch::MARKS`). A clause refused for the
 /// interpreter's per-lane workspace or the launch bound (5 of 39, O38; the packed batch refused the
 /// same ones) is counted, not compared: it runs as walks in production.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
     use super::compile_matcher::Backend;
@@ -629,7 +628,7 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
             });
             match (cpu, metal) {
                 (Ok(cpu), Ok(metal)) if cpu == metal => equal += 1,
-                (Ok(_), Err(error @ (Error::BackendCapacity | Error::BackendLaunchLimit))) => {
+                (Ok(_), Err(error @ Error::BackendCapacity)) => {
                     refused += 1;
                     eprintln!("  refused {policy}/{clause}: {error:?}");
                 }
@@ -654,7 +653,7 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
 /// Decision 0334: the label sweep under the replanned budget, with every program it walks priced at almost nothing
 /// (a step per node, times the slack). Its tasks run over their budgets, the run goes again with twice the budget
 /// until they finish, and it finds the full budget's roots.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
     use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
@@ -681,10 +680,10 @@ fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
     INTERPRET_ONLY.set(true);
     let (mut checked, mut replanned) = (0, 0);
     for matcher in matchers.iter().step_by(4).take(12) {
-        // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
-        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") };
+        // Held for the read alone (`switches::set`, restored as it drops): the binary's other tests read it too.
+        let _full = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_BUDGET", "full")]);
         let full = matcher.roots_metal(&tapes);
-        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") };
+        let _replan = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_BUDGET", "replan")]);
         let replan = matcher.roots_metal(&tapes);
         match (full, replan) {
             (Ok((full, _)), Ok((replan, outcome))) => {
@@ -692,11 +691,10 @@ fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
                 replanned += outcome.replanned;
                 checked += 1;
             }
-            (Err(Error::BackendCapacity | Error::BackendLaunchLimit), _) => {}
+            (Err(Error::BackendCapacity), _) => {}
             (full, replan) => panic!("full {:?}, replanned {:?}", full.err(), replan.err()),
         }
     }
-    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
     INTERPRET_ONLY.set(false);
     eprintln!("{checked} clauses checked, {replanned} reruns with twice the budget");
     assert!(checked > 0, "no clause ran");
@@ -713,7 +711,9 @@ fn a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it
     use super::compile_matcher::{Backend, LoweredWave};
     use crate::code_rule_dsl::transducer::packed::WorkBudget;
     use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
-    // One large file (the fixtures' sources one after another) and a few small ones.
+    // One large file (the fixtures' sources one after another) and a few small ones. The fixtures are pack test data:
+    // without them the file is too small for any walk to outrun its budget.
+    crate::code_rule_dsl::test_support::pack_test_data("packs/python/upstream/ruff/fixtures");
     let mut sources = Vec::new();
     files(pack().join("upstream").as_path(), "py", &mut sources);
     // Without them the large file is empty, and no evaluation outruns its budget: say so.
@@ -815,17 +815,14 @@ fn replan_finds_the_full_budgets_roots(backend: super::compile_matcher::Backend,
         let Ok(wave) = LoweredWave::new(&matchers) else { continue };
         let active = vec![vec![true; tapes.len()]; matchers.len()];
         let run = |budget: WorkBudget| {
-            // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
-            match budget {
-                WorkBudget::Full => unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") },
-                WorkBudget::Replan { .. } => unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") },
-            }
+            // Held for the run alone (`switches::set`, restored as it drops): the binary's other tests read it too.
+            let _budget = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_BUDGET", match budget { WorkBudget::Full => "full", WorkBudget::Replan { .. } => "replan" })]);
             wave.roots_batch_budgeted(backend, &tapes, &active, budget)
         };
         let started = std::time::Instant::now();
         let full = match run(WorkBudget::Full) {
             Ok(found) => found,
-            Err(Error::BackendCapacity | Error::BackendLaunchLimit) => continue,
+            Err(Error::BackendCapacity) => continue,
             Err(e) => panic!("full: {e:?}"),
         };
         let full_time = started.elapsed();
@@ -850,7 +847,6 @@ fn replan_finds_the_full_budgets_roots(backend: super::compile_matcher::Backend,
         }
         waves += 1;
     }
-    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
     eprintln!("{backend:?}: {} clauses in {waves} waves on {} tapes: {checked} evaluations, {given} given to W, {replanned} reruns", lowered.len(), tapes.len());
     assert!(waves > 0);
 }
@@ -860,7 +856,7 @@ fn replan_finds_the_full_budgets_roots_on_the_pack() {
     replan_finds_the_full_budgets_roots(super::compile_matcher::Backend::Cpu, 16);
 }
 
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn on_metal_replan_finds_the_full_budgets_roots_on_the_pack() {
     // Wider waves: a Metal wave's time is mostly its dispatches, not its clauses.
@@ -871,7 +867,7 @@ fn on_metal_replan_finds_the_full_budgets_roots_on_the_pack() {
 /// the interpreter (no micro walks). Where W is priced higher, a run whose tasks ran over goes again with twice the
 /// budget and finds the full run's roots; where W is priced lower, the unfinished (pass, file) go to W
 /// (`WaveRun::limited`: the clause's candidates, every root the full run found among them).
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not() {
     use super::compile_matcher::{Backend, LoweredWave};
@@ -913,15 +909,15 @@ fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where
     let (mut checked, mut handed, mut replanned) = (0, 0, 0);
     for matcher in matchers.iter().step_by(4).take(12) {
         let wave = LoweredWave::new(&[matcher]).unwrap();
-        // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
-        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") };
+        // Held for the read alone (`switches::set`, restored as it drops): the binary's other tests read it too.
+        let _full = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_BUDGET", "full")]);
         evaluation_costs::install(Default::default());
         let full = match wave.roots_batch(Backend::MetalInterpreter, &tapes, &active) {
             Ok(found) => found,
-            Err(Error::BackendCapacity | Error::BackendLaunchLimit) => continue,
+            Err(Error::BackendCapacity) => continue,
             Err(e) => panic!("full: {e:?}"),
         };
-        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") };
+        let _replan = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_BUDGET", "replan")]);
         priced(&wave, 1e9);
         let (again, again_run) = wave.roots_batch(Backend::MetalInterpreter, &tapes, &active).unwrap();
         replanned += again_run.replanned;
@@ -941,7 +937,6 @@ fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where
         handed += cheap_run.limited.len().saturating_sub(full.1.limited.len());
         checked += 1;
     }
-    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
     INTERPRET_ONLY.set(false);
     eprintln!("{checked} clauses checked, {replanned} reruns, {handed} evaluations given to W");
     assert!(checked > 0, "no clause ran");
@@ -950,7 +945,7 @@ fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where
 
 /// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too, over the CPU check's
 /// tapes (`widened_tapes`), 16 a launch.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn metal_catches_a_widened_walk() {
     let tapes = widened_tapes();
@@ -1025,8 +1020,8 @@ fn anchored_walks_find_the_unanchored_roots() {
     let chunks: Vec<_> = lowered.chunks(16).collect();
     let waves: Vec<LoweredWave> = chunks.iter().map(|chunk| LoweredWave::new(&chunk.iter().map(|(_, m)| m).collect::<Vec<_>>()).unwrap()).collect();
     let run = |mode: &str| {
-        // SAFETY: nextest runs each test in a process of its own.
-        unsafe { std::env::set_var("RERAIL_ANCHORS", mode) };
+        // Held for the read alone (`switches::set`, restored as it drops): the binary's other tests read it too.
+        let _mode = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_ANCHORS", mode)]);
         drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
         let cpu = || {
             let (user, system) = crate::code_rule_dsl::prof::process_usage();
@@ -1057,7 +1052,6 @@ fn anchored_walks_find_the_unanchored_roots() {
     };
     let (unanchored, plain, _, _, _) = run("off");
     let (anchored, with, kept, dropped, swept) = run("on");
-    unsafe { std::env::remove_var("RERAIL_ANCHORS") };
     // A run's findings: its roots, or W's matcher at its candidates where it gave the clause to W.
     // A run's roots by clause and text, and the (clause, text)s it gave to W.
     type Found = (Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>);
@@ -1100,7 +1094,7 @@ fn anchored_walks_find_the_unanchored_roots() {
 /// recursive groups, the wave's listed roots and the root records' walks, their text tests reading the walks' rows; and
 /// the formula passes as device formulas (§9). With and without them (`RERAIL_ANCHORS`, `RERAIL_SETS=walk`), on Metal
 /// both: the settled findings of the wave's roots are the same, and so are the root records from every node.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn on_metal_anchored_walks_find_the_unanchored_roots() {
     use super::compile_matcher::Backend;
@@ -1120,10 +1114,9 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
     let every: Vec<Vec<u32>> = tapes.iter().map(|tape| (0..tape.transducer_len() as u32).collect()).collect();
     type Records = Vec<Option<Vec<BTreeSet<String>>>>;
     let run = |mode: &str| {
-        // SAFETY: nextest runs each test in a process of its own.
+        // Held for the read alone (`switches::set`, restored as it drops): the binary's other tests read it too.
         // Off: no anchors, and every formula pass walked (`RERAIL_SETS=walk`).
-        unsafe { std::env::set_var("RERAIL_ANCHORS", mode) };
-        unsafe { std::env::set_var("RERAIL_SETS", if mode == "off" { "walk" } else { "formulas" }) };
+        let _mode = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_ANCHORS", mode), ("RERAIL_SETS", if mode == "off" { "walk" } else { "formulas" })]);
         drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
         let started = std::time::Instant::now();
         let found: Vec<_> = waves
@@ -1158,8 +1151,6 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
     let _ = run("on");
     let (unanchored, plain) = run("off");
     let (anchored, with) = run("on");
-    unsafe { std::env::remove_var("RERAIL_ANCHORS") };
-    unsafe { std::env::remove_var("RERAIL_SETS") };
     let settled = |found: &(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>, bool), w: usize, c: usize, t: usize| -> BTreeSet<u32> {
         if !found.1.contains(&(c, t)) {
             return found.0[c][t].clone();
@@ -1684,7 +1675,7 @@ fn micro_walks_are_the_interpreters_label_outputs() {
 /// Whether a walk's first move, reached from its start through saves, forks and jumps only, is `after` with a tail
 /// that marks the start alone (tests, a `load` and its tests, a capture, the emit): the shape the device answers once
 /// for a parent's children (`label_passes.uglykl`'s `sibling_pass`, work queue Q182).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn sibling_shape(words: &[u32]) -> bool {
     let (mut pc, mut seen) = (0, 0);
     while pc < words.len() && seen <= words.len() {
@@ -1719,7 +1710,7 @@ fn sibling_shape(words: &[u32]) -> bool {
 /// gives frames away (a descendant range halved, a move frame whole), and the wave's findings on Metal are still the
 /// CPU's (each side's roots, or W's matcher at its candidates where it gave the clause to W: a backend may stop at
 /// its limit where the other does not). A frame lost, walked twice where a tally counts, or given its walk's wrong start shows here.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn spilled_walks_find_the_cpus_roots() {
     use super::compile_matcher::Backend;
@@ -1833,7 +1824,7 @@ const BINDING_FIXTURES: &[&str] = &[
     "flake8_bugbear/B006_B008.py", "flake8_return/RET504.py",
 ];
 fn binding_fixtures() -> Vec<(String, TapeDoc)> {
-    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let root = crate::code_rule_dsl::test_support::pack_test_data("packs/python/upstream/ruff/fixtures");
     BINDING_FIXTURES
         .iter()
         .map(|path| {
@@ -2021,4 +2012,189 @@ fn ast_pattern_end_of_children_meets_implied_tokens() {
         assert_eq!(packed, want, "packed");
         assert_eq!(core, want, "ast-grep-core");
     }
+}
+
+/// The wave's labels on Metal against the CPU's, label by label (decision 0540's wave, Metal only): every Python clause
+/// in one wave, every clause active on every tape, as Metal labels them (`spread`). Each label whose nodes differ is
+/// named, in id order (a clause's labels in its evaluation order, an earlier clause's before a later's), with its
+/// clause, its kind and the first nodes it misses or adds: the first is where the two first part.
+///
+/// It holds what the whole wave found on Metal (0540 step 7): a formula pass starts within its demand (`Domain::Within`,
+/// 0460); a chain's levels are a loop of the run's phases, not a run again with more
+/// (three runs spent the evaluation's launches); and a rerun's launches are the reruns' budget's (a third run's were
+/// left out). `RERAIL_WAVE_CLAUSES` and `RERAIL_WAVE_PICK` narrow it to the clauses where two part.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn the_waves_labels_on_metal_are_the_cpus() {
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(1);
+    }
+    let compiled = clauses();
+    let mut names = Vec::new();
+    let mut lowered = Vec::new();
+    for (policy, compiled) in &compiled {
+        for (clause, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                names.push(format!("{policy}/{clause}"));
+                lowered.push(matcher);
+            }
+        }
+    }
+    // `RERAIL_WAVE_CLAUSES`: the first that many clauses only; `RERAIL_WAVE_PICK`: those clauses (`2,173`) only.
+    let most = std::env::var("RERAIL_WAVE_CLAUSES").ok().and_then(|n| n.parse().ok()).unwrap_or(lowered.len());
+    lowered.truncate(most);
+    names.truncate(most);
+    if let Ok(pick) = std::env::var("RERAIL_WAVE_PICK") {
+        let pick = pick.split(',').filter_map(|n| n.trim().parse::<usize>().ok()).collect::<BTreeSet<_>>();
+        let keep = |at: &usize| pick.contains(at);
+        lowered = lowered.into_iter().enumerate().filter(|(at, _)| keep(at)).map(|(_, m)| m).collect();
+        names = names.into_iter().enumerate().filter(|(at, _)| keep(at)).map(|(_, n)| n).collect();
+    }
+    if let (Some(name), Some(last)) = (names.last(), lowered.last()) {
+        let kinds = last.labels.defs.iter().map(|def| match def {
+            Label::Pattern(..) => "pattern",
+            Label::Constrained(..) => "constrained",
+            Label::Roots(..) => "roots",
+            Label::Targets(..) => "targets",
+            Label::Count { .. } => "count",
+            Label::Complement(_) => "complement",
+            Label::Fact(..) => "fact",
+            Label::Empty => "empty",
+        });
+        eprintln!("last clause: {name}: {}", kinds.collect::<Vec<_>>().join(" "));
+    }
+    let wave = LoweredWave::new(&lowered.iter().collect::<Vec<_>>()).unwrap();
+    let active = vec![vec![true; tapes.len()]; wave.clauses.len()];
+    let cpu = wave.labelled(&tapes, &active).unwrap();
+    // With the root records from every node, as the engine's demand runs them (`waves::matches`).
+    let programs = wave.programs();
+    let every: Vec<Vec<u32>> = tapes.iter().map(|tape| (0..tape.transducer_len() as u32).collect()).collect();
+    let jobs = crate::code_rule_dsl::transducer::packed::RootJobs { programs: programs.iter().collect(), starts: vec![every; programs.len()] };
+    drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
+    // The evaluation's launches, by kernel, from its ledger (decision 0540).
+    let scope = crate::code_rule_dsl::transducer::packed::metal_backend::launch::LaunchScope::enter();
+    let (metal, outcome) = wave.labelled_metal(&tapes, &active, Some(&jobs)).unwrap();
+    let mut kernels = std::collections::BTreeMap::<String, usize>::new();
+    for record in scope.snapshot().iter() {
+        *kernels.entry(record.kernel.clone()).or_default() += 1;
+    }
+    drop(scope);
+    eprintln!("launches by kernel: {kernels:?}");
+    // Under `RERAIL_PROF`: the device formulas' text tests, read from a row or not.
+    for (name, (_, calls)) in crate::code_rule_dsl::prof::stages().iter().filter(|(name, _)| name.starts_with("gpu.anchor") || name.starts_with("gpu.formula")) {
+        eprintln!("  prof {name}: {calls}");
+    }
+    let total = |views: &[TapeDoc]| -> (usize, usize) {
+        let sets = views.iter().flat_map(|view| view.transducer_labels().iter());
+        sets.fold((0, 0), |(bits, nonzero), set| {
+            let ones = set.iter().map(|w| w.count_ones() as usize).sum::<usize>();
+            (bits + ones, nonzero + usize::from(ones > 0))
+        })
+    };
+    eprintln!(
+        "wave: {} clauses, {} labels, {} tapes; Metal {} launches in {} command buffers, {:.1} ms on the device, {} rounds, \
+         {} unfinished, interpreted {}, {} label words back; set bits, nonzero labels: CPU {:?}, Metal {:?}",
+        wave.clauses.len(),
+        wave.labels,
+        tapes.len(),
+        outcome.dispatches,
+        outcome.command_buffers,
+        outcome.device * 1e3,
+        outcome.rounds,
+        outcome.unfinished.len(),
+        outcome.interpreted,
+        outcome.labels.len(),
+        total(&cpu),
+        total(&metal)
+    );
+    let kind = |def: &Label| match def {
+        Label::Pattern(..) => "pattern",
+        Label::Constrained(..) => "constrained",
+        Label::Roots(..) => "roots",
+        Label::Targets(..) => "targets",
+        Label::Count { .. } => "count",
+        Label::Complement(_) => "complement",
+        Label::Fact(..) => "fact",
+        Label::Empty => "empty",
+    };
+    // A pass that starts within its demand (`Domain::Within`, decision 0460) may label more outside it, where no reader
+    // reads its value: on Metal a recursive group's anchors read the group's own labels as every node (Q133), so a demand
+    // that reads them is wider there. Such a label, and a complement of one, are compared within the demand, as the
+    // CPU's labels give it.
+    let demands = wave
+        .clauses
+        .iter()
+        .flat_map(|matcher| matcher.labels.defs.iter().enumerate().map(move |(at, def)| (matcher.labels.offset() + at, def)))
+        .filter_map(|(label, def)| match def {
+            Label::Roots(_, domain) | Label::Targets(_, domain) => domain.demand().map(|set| (label, set.clone())),
+            _ => None,
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let indexes = cpu.iter().map(|_| super::compile_sets::Index::default()).collect::<Vec<_>>();
+    let mut differ = Vec::new();
+    for (clause, (matcher, name)) in wave.clauses.iter().zip(&names).enumerate() {
+        for (at, def) in matcher.labels.defs.iter().enumerate() {
+            let label = matcher.labels.offset() + at;
+            let demand = match def {
+                Label::Complement(of) => demands.get(&usize::from(of - crate::code_rule_dsl::tape::DERIVED_CLASS_BASE)),
+                _ => demands.get(&label),
+            };
+            for (t, (c, m)) in cpu.iter().zip(&metal).enumerate() {
+                let within = demand.map(|set| super::compile_sets::Reader { tape: c, index: &indexes[t], labels: c.transducer_labels(), texts: &[] }.eval(set));
+                let bits = |view: &TapeDoc| -> BTreeSet<u32> {
+                    let words = view.transducer_labels().get(label).cloned().unwrap_or_default();
+                    let has = |bits: &[u64], n: u32| bits.get(n as usize / 64).is_some_and(|w| w >> (n % 64) & 1 != 0);
+                    (0..view.transducer_len() as u32).filter(|&n| has(&words, n) && within.as_ref().is_none_or(|within| has(within, n))).collect()
+                };
+                let (want, got) = (bits(c), bits(m));
+                if want != got {
+                    let show = |nodes: Vec<u32>| {
+                        nodes
+                            .iter()
+                            .take(3)
+                            .map(|&n| format!("{n}:{:?}", c.transducer_text_str(n).chars().take(24).collect::<String>()))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    };
+                    let missing = want.difference(&got).copied().collect::<Vec<_>>();
+                    let extra = got.difference(&want).copied().collect::<Vec<_>>();
+                    let reads = match def {
+                        Label::Complement(of) => format!(" of {}", of - crate::code_rule_dsl::tape::DERIVED_CLASS_BASE),
+                        Label::Fact(_, slots) => format!(" slots {:?}", slots.iter().map(|s| s - crate::code_rule_dsl::tape::DERIVED_CLASS_BASE).collect::<Vec<_>>()),
+                        _ => String::new(),
+                    };
+                    // A roots or targets label's walk as a set, and its device formula: what a formula pass evaluates.
+                    let set = match def {
+                        Label::Roots(program, _) | Label::Targets(program, _) => super::compile_micro::Micro::of(program).map(|walk| {
+                            let set = super::compile_sets::Set::of(&walk.words);
+                            let device = set.as_ref().and_then(|set| set.device()).map(|formula| formula.words);
+                            let domain = match def {
+                                Label::Roots(_, domain) | Label::Targets(_, domain) => format!("{domain:?}"),
+                                _ => String::new(),
+                            };
+                            format!("\n      set {set:?}\n      device {device:?}\n      domain {}", domain.chars().take(300).collect::<String>())
+                        }),
+                        _ => None,
+                    };
+                    differ.push(format!(
+                        "label {label} ({} of clause {clause} {name}{reads}) tape {t}: {} missing [{}], {} extra [{}]{}",
+                        kind(def),
+                        missing.len(),
+                        show(missing.clone()),
+                        extra.len(),
+                        show(extra.clone()),
+                        set.unwrap_or_default()
+                    ));
+                }
+            }
+        }
+    }
+    eprintln!("{} labels differ", differ.len());
+    for line in differ.iter().take(40) {
+        eprintln!("  {line}");
+    }
+    assert!(differ.is_empty());
 }

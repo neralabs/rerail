@@ -42,7 +42,7 @@ pub fn suppresses<D: Doc>(
         let pack = language_pack::pack(Family::of(file.dialect()));
         language_pack::suppresses(
             pack,
-            violation,
+            &violation.code,
             suppress,
             node,
             file.source(),

@@ -136,25 +136,31 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
             && component_loop
             && insertion_coverage
     );
-    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+    let root = crate::source_tree::native().parent().unwrap().to_path_buf();
     let output = std::process::Command::new("node")
         .arg(root.join("scripts/profiling/sql-report.mjs"))
         .arg("--sql-session")
         .arg(directory.path().join("sql"))
         .arg(directory.path().join("report"))
-        .output();
-    // The report is Node's (`sql-report.mjs`): a host without Node (a Linux farm host) checks the sessions alone.
-    match output {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => eprintln!("no `node` here: the SQL report is not checked"),
-        output => {
-            let output = output.unwrap();
-            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-            let report: Value = serde_json::from_slice(&std::fs::read(directory.path().join("report/profile.json")).unwrap()).unwrap();
-            assert!(report["captureCoverage"]["complete"].as_bool().unwrap());
-            assert!(report["executionInventory"]["phases"]["relationalEvaluation"].as_u64().unwrap() > 0);
-            assert_ne!(report["executionBudget"]["accepted"], true);
-        }
-    }
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(
+        &std::fs::read(directory.path().join("report/profile.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(report["captureCoverage"]["complete"].as_bool().unwrap());
+    assert!(
+        report["executionInventory"]["phases"]["relationalEvaluation"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_ne!(report["executionBudget"]["accepted"], true);
     let report = std::fs::read_to_string(directory.path().join("logic/profile.txt")).unwrap();
     assert!(
         report.contains("SQL extension request") && report.contains("EXPLAIN ANALYZE"),

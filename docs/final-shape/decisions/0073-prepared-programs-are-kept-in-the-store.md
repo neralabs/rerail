@@ -103,15 +103,15 @@ not this record's and is not attributed here.
 
 - **Lessons ledger 25:** restoring a stored derivation beats redoing it (20 to 26x for tapes). A prepared program is
   restored the same way.
-- **ast-index-spike history index L919-920:** key memoised analysis by what it is a function of, and make the
+- **SQL index prototype history index L919-920:** key memoised analysis by what it is a function of, and make the
   language part of every key. The plan names the build, the grammar version and the dialect, and the source names
   the text.
-- **ast-index-spike history index L417 (DH L2185-2189):** "storing data in memory... is dishonest". Decision 0060's
+- **SQL index prototype history index L417 (DH L2185-2189):** "storing data in memory... is dishonest". Decision 0060's
   prepared cache was per process; the store now holds it.
-- **ast-index-spike history index L460 (DH L3187-3191, L3319-3343):** persisted planning state is re-derived or
+- **SQL index prototype history index L460 (DH L3187-3191, L3319-3343):** persisted planning state is re-derived or
   refused on a fingerprint mismatch when a store is attached. Here the interned atoms are the fingerprint, and a
   mismatch prepares again.
-- **ast-index-spike design index S112 (the compiled artifact):** a compiled query is an artifact of its own, kept
+- **SQL index prototype design index S112 (the compiled artifact):** a compiled query is an artifact of its own, kept
   apart from the run that uses it.
 - **Decisions 0052, 0060 and 0062:** the facts memo, the in-process prepared cache and its atom check, and the
   step this record takes.

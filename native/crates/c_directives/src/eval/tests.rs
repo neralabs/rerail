@@ -1,4 +1,4 @@
-use rerail_c_pp::tape::{IDENTIFIER, image};
+use rerail_c_pp::tape::{IDENTIFIER, PUNCT, image};
 use rerail_metal::pp_eval::{Unit, evaluate, name_key};
 use rerail_tape_format::View;
 
@@ -53,7 +53,7 @@ fn the_evaluator_copies_no_tape() {
 
 /// §5 of decision 0468: the evaluator is UKL, launched through the lane: its source has no MSL
 /// (no Metal kernel, attribute, address space or SIMD function of its own) and takes UKL's grid.
-/// It runs in rounds (decision 0527), so it takes no work queue.
+/// Its expansion is a loop a thread a piece (decision 0588): no work queue, no rounds, no pool.
 #[test]
 fn the_evaluator_is_ukl() {
     let src = rerail_metal::pp_arena::source();
@@ -62,7 +62,10 @@ fn the_evaluator_is_ukl() {
         assert!(code.is_empty(), "the evaluator's source has MSL `{msl}`: {code:?}");
     }
     assert!(src.contains("#include <ukl/grid.h>"), "UKL's grid");
-    assert!(!src.contains("#include <ukl/workqueue.h>") && !src.contains("ukl_wq_"), "no work queue: the rounds (decision 0527)");
+    assert!(!src.contains("#include <ukl/workqueue.h>") && !src.contains("ukl_wq_"), "no work queue (decision 0588)");
+    for rounds in ["px_drain", "PX_DRAIN", "px_item", "ukl_pool_", "<ukl/pool.h>", "PxList"] {
+        assert!(!src.contains(rounds), "the rounds' `{rounds}` (decision 0588: the loop alone)");
+    }
     assert!(src.contains("DEFINE_KERNEL2(pp, pp_setup") && !src.contains("DEFINE_KERNEL2(pp, px_expand") && src.contains("DEFINE_KERNEL2(pp, pp_check"), "the grid's kernels are UKL's");
     let arena = include_str!("../../../metal/src/pp_arena.rs");
     assert!(arena.contains("lane::Command") && !arena.contains("new_compute_command_encoder"), "launched through the lane");
@@ -81,8 +84,8 @@ fn the_arena_is_one_block() {
 }
 
 /// The device's reader gives every node of every file as `View` does, and each identifier leaf's
-/// key is its bytes' (`name_key`), every other node's 0; the unit's node bases are the files'
-/// counts' prefix sum.
+/// key is its bytes' (`name_key`), a one-byte punctuator's its byte under `0x100`, every other
+/// node's 0; the unit's node bases are the files' counts' prefix sum.
 #[test]
 fn the_names_pass_reads_the_tapes_in_place() {
     let mut files = vec![
@@ -103,7 +106,12 @@ fn the_names_pass_reads_the_tapes_in_place() {
         for i in 0..v.len() {
             let want = [v.key(i), v.start(i), v.end(i), v.size(i) as u32];
             same(got.nodes[g], want, format!("file {f} node {i}"));
-            let key = if (v.key(i) & 0x3ff) as u16 == IDENTIFIER { name_key(&src[v.start(i) as usize..v.end(i) as usize]) } else { 0 };
+            let text = &src[v.start(i) as usize..v.end(i) as usize];
+            let key = match (v.key(i) & 0x3ff) as u16 {
+                IDENTIFIER => name_key(text),
+                PUNCT if text.len() == 1 => 0x100 | u64::from(text[0]),
+                _ => 0,
+            };
             same(got.keys[g], key, format!("file {f} node {i}'s key"));
             g += 1;
         }
@@ -164,10 +172,10 @@ fn the_directives_pass_gives_the_spikes_tables() {
 /// device (`pp_expand::definitions`: S1 a thread a row, S2 a thread a parameter list's leaf, S4 a
 /// thread a body leaf), is the serial pass's (`Pp::parse_define`, through the spike's
 /// `parallel::tables`): malformed or not, function-like, variadic, the parameters' names, and each
-/// body token's spelling, parameter, paste operator and white space before it.
+/// body token's spelling, parameter, paste operator, white space before it, and whether it is `#`.
 #[test]
 fn the_definitions_are_the_serial_passes() {
-    use rerail_metal::pp_expand::{D_BAD, D_DEFINE, D_FNLIKE, D_VARIADIC, I_PASTE, I_SPACE, NO_PARAM, definitions};
+    use rerail_metal::pp_expand::{D_BAD, D_DEFINE, D_FNLIKE, D_VARIADIC, I_HASH, I_PASTE, I_SPACE, NO_PARAM, definitions};
     let shapes: [&[u8]; 13] = [
         b"#define A\n#define B 1\n#define C (1)\n#define D(x) x\n",
         b"#define F(a, b) a ## b # a b##a\n#define G(...) __VA_ARGS__\n#define H(a, ...) a __VA_ARGS__\n",
@@ -231,6 +239,7 @@ fn the_definitions_are_the_serial_passes() {
                 let p = item & 0xffff;
                 same(&*spelled, text.as_slice(), format!("{at}: body token {j}'s spelling"));
                 same((if p == NO_PARAM { None } else { Some(p as usize) }, item & I_PASTE != 0, item & I_SPACE != 0), (*param, *paste, *space), format!("{at}: body token {j} {:?}", String::from_utf8_lossy(text)));
+                same(item & I_HASH != 0, text.as_slice() == b"#" || text.as_slice() == b"%:", format!("{at}: body token {j} {:?} is `#`", String::from_utf8_lossy(text)));
             }
         }
         rows += tables.dirs.len();
@@ -365,21 +374,25 @@ type SettledUnit = Result<(super::rounds::Settled, Vec<Vec<u8>>), &'static str>;
 /// refused it; the runs counted in `ran`.
 fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::files::Files + '_>, String)], ran: &mut Ran) -> Vec<SettledUnit> {
     let cpp = cfg.opts.cpp;
-    let r = super::rounds::run_many(cfg, cpp, units, |u, l, s| {
+    let r = super::rounds::run_many(cfg, cpp, units, |pairs, sizes| {
         let t0 = std::time::Instant::now();
-        let x = rerail_metal::pp_expand::expand_sized(u, l, s, rerail_metal::pp_arena::groups());
-        if std::env::var_os("RERAIL_PP_TIME").is_some() {
-            eprintln!("TIME expand {:.3} ms (device {:.3} ms, {} rounds)", t0.elapsed().as_secs_f64() * 1e3, x.as_ref().map_or(0.0, |x| x.gpu_seconds * 1e3), x.as_ref().map_or(0, |x| x.rounds));
-        }
-        if let Ok(x) = &x {
+        let xs = rerail_metal::pp_expand::expand_teams(pairs, sizes);
+        if let Ok(xs) = &xs {
+            // The batch's GPU time is each answer's (`Expanded::run`): counted once.
+            let gpu = xs.iter().flatten().map(|x| x.gpu_seconds).next().unwrap_or(0.0);
+            if std::env::var_os("RERAIL_PP_TIME").is_some() {
+                eprintln!("TIME expand {} units {:.3} ms (device {:.3} ms)", pairs.len(), t0.elapsed().as_secs_f64() * 1e3, gpu * 1e3);
+            }
             ran.runs += 1;
-            ran.gpu_seconds += x.gpu_seconds;
-            for (k, &(u, c)) in x.room.iter().enumerate() {
-                ran.per_top[k] = ran.per_top[k].max(f64::from(u) / x.caps.top.max(1) as f64);
-                ran.per_cap[k] = ran.per_cap[k].max(f64::from(u) / f64::from(c.max(1)));
+            ran.gpu_seconds += gpu;
+            for x in xs.iter().flatten() {
+                for (k, &(u, c)) in x.room.iter().enumerate() {
+                    ran.per_top[k] = ran.per_top[k].max(f64::from(u) / x.caps.top.max(1) as f64);
+                    ran.per_cap[k] = ran.per_cap[k].max(f64::from(u) / f64::from(c.max(1)));
+                }
             }
         }
-        x
+        xs
     });
     r.into_iter()
         .zip(units.iter())
@@ -838,8 +851,8 @@ fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str,
 
 /// Decisions 0468 §4 and 0485 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
 /// text inside its P1 iterations) and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
-/// definitions, and one that runs again at a larger rung. A grid past the groups the device holds
-/// at once fails its barrier, never hangs, and runs again at half the groups to the same output.
+/// definitions, and one that runs again at a larger rung. A dispatch past the groups the device
+/// holds at once is refused (decision 0568); at them, it gives the default grid's output.
 #[test]
 fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut big = String::new();
@@ -862,12 +875,15 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
     let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
     let (unit, lay) = (&d.unit, &d.lay);
-    let wide = rerail_metal::pp_expand::expand_at(unit, lay, 0, 4096).unwrap();
+    // Decision 0568: refused on the host, past the grid kernel's resident groups, before it is encoded.
+    let resident = rerail_metal::pp_arena::residency();
+    assert!(resident.groups < 4096, "{resident:?}");
+    assert!(matches!(rerail_metal::pp_expand::expand_at(unit, lay, 0, 4096), Err(rerail_metal::Error::BackendCapacity)), "a grid past residency is refused");
+    // At its residency, it runs: the same output as the grid it dispatches by default.
+    let full = rerail_metal::pp_expand::expand_at(unit, lay, 0, resident.groups).unwrap();
     let narrow = rerail_metal::pp_expand::expand_from(unit, lay, 0).unwrap();
-    assert!(wide.groups < 4096, "the grid past residency ran at {} groups", wide.groups);
-    same(wide.refused, 0, "the halved grid's refusals");
-    same(&wide.out, &narrow.out, "the halved grid's output");
-    eprintln!("past residency: ran again at {} groups", wide.groups);
+    same(full.refused, 0, "the resident grid's refusals");
+    same(&full.out, &narrow.out, "the resident grid's output");
 }
 
 /// A part's output spelled: each ref's token in its file (`files` and `tapes`, the unit's), each
@@ -953,6 +969,47 @@ fn pragma_rows_are_the_serial_passes() {
 /// counts with the text's uses in the serial reading's order: text before and after, two lines,
 /// an arm not read, the text's uses feeding an `#if`, a call whose arguments run over a
 /// directive that counts, a header's uses. Each in C and C++, 2 launches.
+/// An `#if` line longer than its SIMD group's window (`p1_if_line`: 64 tokens a lane's, past them
+/// the group's, 32 tokens a step): a token the window does not read (`defined`, `__has_include`, a
+/// character constant, an alternative operator) at each place about a window's edge, and after
+/// it, the window again. Each as the serial pass, true and false.
+#[test]
+fn a_long_if_line_is_read_by_its_group() {
+    use rerail_c_pp::files::DirKind;
+    let head = "#define X
+#define T8 1+1+1+1+1+1+1+1
+#define T32 T8+T8+T8+T8
+";
+    let mut lines = vec![
+        "T32 + T32 + defined X + defined(Y) == 65".to_string(),
+        "T32 + T32 + defined X + defined(Y) == 66".to_string(),
+        "T32 && __has_include(<h1.h>) && T32 - 31 == 1".to_string(),
+        "T32 && __has_include(<none.h>) || T32 + T32 == 63".to_string(),
+        "(T32 * 2 > 63) ? 'a' == 97 : 0".to_string(),
+        "T32 - T32 or (T32 and 0) or (0x20 == T32)".to_string(),
+        "-T32 + T32 == 0 && !(T32 < 0) && (T32 | 64) == 96".to_string(),
+    ];
+    for pad in [29, 30, 31, 32, 33, 63, 64, 65, 66] {
+        let ones = "1+".repeat(pad);
+        lines.push(format!("{ones} defined X + T32 + defined Y == {}", pad + 33));
+        lines.push(format!("{ones} 'b' - 'a' + T32 == {}", pad + 32));
+    }
+    for line in &lines {
+        let main = format!("{head}#if {line}
+yes
+#else
+no
+#endif
+end
+");
+        for cpp in [false, true] {
+            let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+            let (got, want, _, _) = expanded_in(&[("main.c", main.as_str()), ("inc/h1.h", "h\n")], cfg, &[("inc", DirKind::Angle)]);
+            same(got.map(|g| show(&g)), Ok(show(&want)), format!("{line}, C++ {cpp}"));
+        }
+    }
+}
+
 #[test]
 fn counters_in_directives_are_the_serial_passes() {
     use rerail_c_pp::files::DirKind;
@@ -990,8 +1047,8 @@ fn counters_in_directives_are_the_serial_passes() {
 /// Decision 0468, batching: units expanded in one batch give each its own serial answer. The same
 /// names are defined differently, undefined, or left undefined from unit to unit, so a unit that
 /// saw an earlier unit's row would differ; `__FILE__` used after another unit redefined it; one
-/// unit the device refuses (a call past its file's end), so the batch splits and that unit alone
-/// is refused.
+/// unit the device refuses (a call past its file's end), and that unit alone is refused: each
+/// unit is a team of its own (decision 0588 §6), and the batch is one run.
 #[test]
 fn a_batch_is_its_units() {
     use rerail_c_pp::files::Search;
@@ -1030,9 +1087,11 @@ fn a_batch_is_its_units() {
     }
     eprintln!("refused alone: {alone:?}");
     same(alone, vec![(5, rerail_metal::pp_expand::X_ACROSS)], "the units refused: a call past its file's end");
-    // The units before a refused one ran in a batch of more than one; the unit with an include
-    // took two rounds, the others riding with it.
-    assert!(std::rc::Rc::ptr_eq(&settled[0].0.part.x, &settled[1].0.part.x), "units 0 and 1 in one batch");
+    // Every unit's first round, the refused one's too, was the batch's one run; the unit with an
+    // include took two rounds, and its second ran alone.
+    let runs: Vec<u64> = settled.iter().map(|(s, _)| s.part.x.run).collect();
+    assert!(runs.iter().enumerate().all(|(k, &r)| k == 6 || r == runs[0]), "the units of one round in one run: {runs:?}");
+    assert_ne!(runs[6], runs[0], "the include's second round its own run");
     same(settled.iter().map(|(s, _)| s.rounds).collect::<Vec<_>>(), vec![1, 1, 1, 1, 1, 1, 2, 1], "each unit's rounds");
 }
 
@@ -1207,12 +1266,35 @@ fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand
     let best = |f: &dyn Fn() -> f64| (0..5).map(|_| f()).fold(f64::MAX, f64::min) * 1e6;
     let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
         .iter()
-        .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(&unit, &lay, last, 0, 32).unwrap().unwrap_or(f64::NAN))))
+        .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(&unit, &lay, last, 0, 32).unwrap_or(f64::NAN))))
         .collect();
     eprintln!("a batch of {} units (us, cumulative): {}", units.len(), t.join(", "));
-    let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(&unit, &lay, TO_ALL + 1, k, 32).unwrap().unwrap_or(f64::NAN))).collect();
+    let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(&unit, &lay, TO_ALL + 1, k, 32).unwrap_or(f64::NAN))).collect();
     let steps: Vec<String> = at.windows(2).enumerate().map(|(k, w)| format!("{}:{:.0}", k + 1, w[1] - w[0])).collect();
     eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
+    // `RERAIL_PP_STAGES_ALL`: every phase's cost (best of 3), to the run's end; with `RERAIL_PP_TRACE` and
+    // `RERAIL_PP_TRACE_ALL`, a traced run first names each phase's line.
+    // `RERAIL_PP_STOPS`: the run stopped at each of the given phases (best of 9).
+    if let Ok(stops) = std::env::var("RERAIL_PP_STOPS") {
+        let best9 = |stop: u32| (0..9).map(|_| stage_seconds(&unit, &lay, TO_ALL + 1, stop, 32).unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e6;
+        let t: Vec<String> = stops.split(',').map(|k| format!("{k}:{:.0}", best9(k.parse().unwrap()))).collect();
+        eprintln!("STOPS {} whole {:.0}", t.join(" "), best9(u32::MAX));
+    }
+    if std::env::var_os("RERAIL_PP_STAGES_ALL").is_some() {
+        let best3 = |stop: u32| (0..3).map(|_| stage_seconds(&unit, &lay, TO_ALL + 1, stop, 32).unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e6;
+        let whole = best3(u32::MAX);
+        let (mut prev, mut near) = (best3(1), 0);
+        eprintln!("STOPK whole {whole:.1} us");
+        for k in 1..4000u32 {
+            let t = best3(k + 1);
+            eprintln!("STOPK {k} {:.1}", t - prev);
+            prev = t;
+            near = if t >= whole * 0.995 { near + 1 } else { 0 };
+            if near >= 8 {
+                break;
+            }
+        }
+    }
 }
 
 /// R8 of decision 0467 (and R10 of 0448): the corpus preprocessed on the device, each file its
@@ -1265,6 +1347,74 @@ fn boost_preprocessor_is_the_serial_passes() {
 /// The launches of an evaluation's command buffer: `pp_setup` and `pp_check` (decisions 0468 §4,
 /// 0485 §1).
 const LAUNCHES: usize = 2;
+
+/// Decision 0588's Tests: the serial pass over the corpus batch (`the_corpus_preprocesses_on_the_device`'s units,
+/// `RERAIL_PP_FIRST` and `RERAIL_PP_COUNT` alike), a thread a core, each taking the next unit: its wall time, best
+/// and median of 5, the files read into memory first (the device's time is its GPU time, the files placed). Run in
+/// the optimized build (`--profile profiling`).
+#[test]
+#[ignore = "a measurement over the corpus (~/orca/rerail-shared/lean-corpus)"]
+fn measure_the_serial_pass_on_all_cores() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::{DirKind, Search};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Count(usize);
+    impl rerail_c_pp::sink::Sink for Count {
+        fn token(&mut self, _t: &rerail_c_pp::macros::Tk, _text: &[u8], _at: Option<rerail_c_pp::sink::At>, _off: u32) {
+            self.0 += 1;
+        }
+    }
+    let root = corpus_root();
+    let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(40);
+    let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let mut units: Vec<(String, bool)> = Vec::new();
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<String> = rd.flatten().map(|e| e.path().to_string_lossy().into_owned()).collect();
+        paths.sort();
+        units.extend(paths.into_iter().skip(first).take(count).map(|p| (p, cpp)));
+    }
+    assert!(!units.is_empty(), "no corpus at {}", root.display());
+    let files: std::sync::Arc<std::collections::HashMap<String, Vec<u8>>> =
+        std::sync::Arc::new(units.iter().filter_map(|(p, _)| std::fs::read(p).ok().map(|b| (p.clone(), b))).collect());
+    let cfgs = [Config::new(crate::pp::options(false)), Config::new(crate::pp::options(true))];
+    let dirs = vec![("<stub>".to_string(), DirKind::After)];
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let run = |threads: usize| -> (f64, usize) {
+        let next = AtomicUsize::new(0);
+        let tokens = AtomicUsize::new(0);
+        let t0 = std::time::Instant::now();
+        std::thread::scope(|sc| {
+            for _ in 0..threads {
+                sc.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((path, cpp)) = units.get(i) else { break };
+                        let f = std::sync::Arc::clone(&files);
+                        let mut io = Search::new(dirs.clone(), move |q: &str| f.get(q).cloned().or_else(|| q.starts_with("<stub>").then(Vec::new)));
+                        let mut sink = Count(0);
+                        let mut pp = rerail_c_pp::Pp::new(cfgs[usize::from(*cpp)].clone(), &mut io, &mut sink);
+                        pp.run(path);
+                        drop(pp);
+                        tokens.fetch_add(sink.0, Ordering::Relaxed);
+                    }
+                });
+            }
+        });
+        (t0.elapsed().as_secs_f64() * 1e3, tokens.load(Ordering::Relaxed))
+    };
+    for t in [1, threads] {
+        let mut ms: Vec<f64> = Vec::new();
+        let mut tokens = 0;
+        for _ in 0..5 {
+            let (m, k) = run(t);
+            ms.push(m);
+            tokens = k;
+        }
+        ms.sort_by(f64::total_cmp);
+        eprintln!("SERIAL {} units, {tokens} tokens, {t} threads: best {:.2} ms, median {:.2} ms", units.len(), ms[0], ms[2]);
+    }
+}
 
 /// What `against_serial` found.
 struct Against {
@@ -1355,7 +1505,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
             use rerail_metal::pp_expand::{expand_sized, stage_seconds_as};
             for (e, (unit, lay)) in entries.iter().zip(&units) {
                 let Ok(x) = expand_sized(unit, lay, &mut Sizes::first(unit, lay), rerail_metal::pp_arena::groups()) else { continue };
-                let at = |last: u32, iters: u32| (0..3).map(|_| stage_seconds_as(unit, lay, last, 0, iters, &x).ok().flatten().unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e3;
+                let at = |last: u32, iters: u32| (0..3).map(|_| stage_seconds_as(unit, lay, last, 0, iters, &x).unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e3;
                 let best = |last: u32| at(last, 0);
                 let name = e.path.rsplit('/').next().unwrap_or(e.path);
                 eprintln!(
@@ -1375,15 +1525,22 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
         if let Some(k) = std::env::var("RERAIL_PP_STAGES").ok().and_then(|k| k.parse::<usize>().ok()) {
             batch_stages(&units[..k.min(units.len())]);
         }
-        let mut seen: Vec<*const Expanded> = Vec::new();
+        // A batch's units answer with its run (`Expanded::run`): its GPU time once, and its units.
+        let mut seen: Vec<u64> = Vec::new();
         for e in &entries {
             let (path, part) = (e.path, &e.s.part);
             let x = &*part.x;
-            if !seen.contains(&std::ptr::from_ref(x)) {
-                seen.push(std::ptr::from_ref(x));
-                launches = launches.max(x.launches);
-                gpu.push(x.gpu_seconds);
-                batches.push(x.unit_out.len().saturating_sub(1).max(1));
+            launches = launches.max(x.launches);
+            match seen.iter().position(|&r| r == x.run) {
+                Some(b) => {
+                    let at = batches.len() - seen.len() + b;
+                    batches[at] += 1;
+                }
+                None => {
+                    seen.push(x.run);
+                    gpu.push(x.gpu_seconds);
+                    batches.push(1);
+                }
             }
             // Room counts only alone: with another refusal the unit is not rerun, and the other is why.
             let refused_by = if x.refused & !X_ROOM != 0 { x.refused & !X_ROOM } else { x.refused };
@@ -1471,33 +1628,44 @@ fn calls_past_an_end_are_the_serial_passes() {
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }
 
-/// R8 of decision 0448: a unit past its rung's room. An 8⁴ fan-out used three times wants more
-/// than rung 0's arena of tokens, and a `#` of 512 long names more scratch bytes than rung 0's
-/// 64 KB: the device refuses (`X_ROOM`), the unit runs again at the next rung, and it gives the
-/// serial pass's tokens there. So does an `#if` line past its room that decides an include.
+/// R8 of decision 0448: a unit past its rung's room runs again at the next rung (`X_ROOM`), and gives the serial
+/// pass's tokens there. `text`'s expansion is past rung 0's room of `what`.
+fn past_its_room_runs_again_larger(what: &str, text: &str) {
+    let files = [("main.c", text)];
+    for cpp in [false, true] {
+        let (got, want, rung, _) = expanded(&files, cpp);
+        let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
+        same(show(&got), show(&want), what);
+        assert!(rung > 0, "{what}: ran at rung 0");
+        eprintln!("{what}: {} tokens at rung {rung}", got.len());
+    }
+}
+
+/// R8: an 8⁴ fan-out of a one-token body used three times: 12,288 expansions, each a piece of the output
+/// (decision 0588: the loop's room), and more than rung 0's arena of tokens.
 #[test]
-fn a_unit_past_its_room_runs_again_larger() {
-    let fan = "#define A0 x x x x x x x x\n#define A1 A0 A0 A0 A0 A0 A0 A0 A0\n#define A2 A1 A1 A1 A1 A1 A1 A1 A1\n#define A3 A2 A2 A2 A2 A2 A2 A2 A2\n";
-    let tokens = format!("{fan}A3 A3 A3\n");
+fn a_unit_past_its_token_room_runs_again_larger() {
+    let fan = "#define A0 x\n#define A1 A0 A0 A0 A0 A0 A0 A0 A0\n#define A2 A1 A1 A1 A1 A1 A1 A1 A1\n#define A3 A2 A2 A2 A2 A2 A2 A2 A2\n#define A4 A3 A3 A3 A3 A3 A3 A3 A3\n";
+    past_its_room_runs_again_larger("tokens", &format!("{fan}A4 A4 A4\n"));
+}
+
+/// R8: a `#` of 512 long names wants more scratch bytes than rung 0's 64 KB.
+#[test]
+fn a_unit_past_its_scratch_room_runs_again_larger() {
     // 512 names of 256 bytes: 131 KB stringized.
     let name = "n".repeat(256);
     let bytes = format!("#define B0 {name} {name} {name} {name} {name} {name} {name} {name}\n#define B1 B0 B0 B0 B0 B0 B0 B0 B0\n#define B2 B1 B1 B1 B1 B1 B1 B1 B1\n#define S(a) #a\n#define X(a) S(a)\nX(B2) end\n");
-    for (what, text) in [("tokens", tokens), ("scratch bytes", bytes)] {
-        let files = [("main.c", text.as_str())];
-        for cpp in [false, true] {
-            let (got, want, rung, _) = expanded(&files, cpp);
-            let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
-            same(show(&got), show(&want), what);
-            assert!(rung > 0, "{what}: ran at rung 0");
-            eprintln!("{what}: {} tokens at rung {rung}", got.len());
-        }
-    }
-    // An `#if` line past rung 0's room that decides an include: the rounds and the expansion's
-    // run both run it again larger before reading what the lines decided (a request made from
-    // a line cut short is none).
+    past_its_room_runs_again_larger("scratch bytes", &bytes);
+}
+
+/// R8: an `#if` line past rung 0's room that decides an include. The rounds and the expansion's run both run it
+/// again larger before reading what the lines decided (a request made from a line cut short is none). Two 8⁴
+/// fan-outs: 16,383 pieces of the line's output (decision 0588: the loop's room).
+#[test]
+fn a_line_past_its_room_runs_again_larger() {
     let fan = "#define A0 1+1+1+1+1+1+1+1\n#define A1 A0+A0+A0+A0+A0+A0+A0+A0\n#define A2 A1+A1+A1+A1+A1+A1+A1+A1\n\
-               #define A3 A2+A2+A2+A2+A2+A2+A2+A2\n";
-    let main = format!("{fan}#if A3 == 4096\n#include \"h.h\"\n#endif\nend\n");
+               #define A3 A2+A2+A2+A2+A2+A2+A2+A2\n#define A4 A3+A3+A3+A3+A3+A3+A3+A3\n";
+    let main = format!("{fan}#if A4 + A4 == 65536\n#include \"h.h\"\n#endif\nend\n");
     for cpp in [false, true] {
         let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
         let (got, want, rung, _) = expanded_in(&[("main.c", main.as_str()), ("h.h", "in h\n")], cfg, &[]);
@@ -1533,19 +1701,14 @@ fn a_flat_argument_is_read_in_place() {
     }
 }
 
-/// Decision 0486 §10: the blocks no item reads again are given back between rounds, and used
-/// again. Chains of calls each passing a state of 120 tokens on, the blocks given back every 16
-/// units of a store's growth (`RERAIL_PP_GIVE_GAP`; a chain's pieces are a few a level, decision
-/// 0520, so at the default gap of a 32nd of the room a chain this short would give nothing back):
-/// each gives back, settles at rung 0 and gives the serial pass's tokens. The state passed through
+/// Decision 0486 §10: what no reader reads again is given back, and used again: the loop gives
+/// back what is dead below a substitution's list (decision 0588). Chains of calls each passing a
+/// state of 120 tokens on: each gives back, settles at rung 0 and gives the serial pass's tokens. The state passed through
 /// plain calls, through an argument scanned at each level (a dead argument's list), and through
 /// an exit at each level (a join); `__LINE__` in it (its origin read from the lists' `lref`, not
 /// their tokens), `#` of it at the end, and in C and C++.
 #[test]
 fn reclaimed_tokens_keep_a_chain_at_rung_0() {
-    // SAFETY: the variable is read when a run is sized; another test reading it then gives back
-    // more often, which changes no result.
-    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
     let levels = 40;
     let chain = |body: &dyn Fn(usize) -> String, last: &str, tail: &str| {
@@ -1580,16 +1743,12 @@ fn reclaimed_tokens_keep_a_chain_at_rung_0() {
 
 /// R1 of decision 0520: what a chain holds at once is flat in its length. The chains of
 /// `reclaimed_tokens_keep_a_chain_at_rung_0` at 25, 50 and 100 levels, each store's most use
-/// (`Exp::room`, as the serial pass's), the blocks no item reads again given back every 16 of a
-/// store's growth (`RERAIL_PP_GIVE_GAP`): a store whose use grows with the chain's length holds what
-/// no item reads again, which is what made Boost's units climb the rungs. A pending level keeps its
-/// list, as the serial pass keeps its frame (its macro is disabled until its result is read): the
-/// lists grow by at most one a level.
+/// (`Exp::room`, as the serial pass's): a store whose use grows with the chain's length holds what
+/// no reader reads again, which is what made Boost's units climb the rungs. A pending level keeps
+/// a word for its macro, as the serial pass keeps its frame (its macro is disabled until its
+/// result is read).
 #[test]
 fn a_chains_use_is_flat_in_its_length() {
-    // SAFETY: the variable is read when a run is sized; another test reading it then gives back
-    // more often, which changes no result.
-    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
     use rerail_metal::pp_expand::ROOM_STORES;
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
     let chain = |levels: usize, body: &dyn Fn(usize) -> String| {
@@ -1611,7 +1770,7 @@ fn a_chains_use_is_flat_in_its_length() {
             .iter()
             .map(|&n| {
                 let text = chain(n, body);
-                let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+                let (got, want, room, _) = expanded_x(&[("main.c", text.as_str())], false);
                 let got = got.unwrap_or_else(|why| panic!("{what}, {n} levels: refused {why}"));
                 same(show(&got), show(&want), what);
                 room.iter().map(|&(used, _)| used).collect()
@@ -1619,13 +1778,12 @@ fn a_chains_use_is_flat_in_its_length() {
             .collect();
         for (s, name) in ROOM_STORES.iter().enumerate() {
             // The output and the scratch grow with the input (the state written out once, the
-            // literals and the `#line` rows' room, two tokens a directive), and the queue's ring is
-            // used to half its room between pauses; every other store's use at 100 levels is at
-            // most its use at 25 and a 16th more.
+            // literals and the `#line` rows' room, two tokens a directive); the tokens' use at 100
+            // levels is at most its use at 25, a 16th more, and a word a level.
             let (a, b, c) = (uses[0][s], uses[1][s], uses[2][s]);
             eprintln!("{what}: {name}: {a} {b} {c}");
-            let grows = ["output", "scratch bytes", "scratch tokens", "queue items"].contains(name);
-            let bound = if *name == "lists" { a + 75 + 16 } else { a + a / 16 + 64 };
+            let grows = ["output", "scratch bytes", "scratch tokens"].contains(name);
+            let bound = a + a / 16 + 75 + 64;
             if !grows && c > bound {
                 flat = false;
             }
@@ -1634,9 +1792,43 @@ fn a_chains_use_is_flat_in_its_length() {
     assert!(flat, "a store's use grows with the chain's length (above)");
 }
 
+/// A done call's span is given back through its exits' chain, to the chain's last `)` (decision
+/// 0588: the substitution gives back what is dead below its list). Each level of a chain has a
+/// done call beside its pending one whose exits chain two deep in the level's list
+/// (`F2(s)(s)(...)`: `F2` gives `G2`, whose call gives `H2`), the last's arguments 31 pieces. A
+/// level adds 64 tokens (its expansion, which the output holds); stopping at the first exit's `)`
+/// would keep the last's arguments too (96 a level), so the bound is 80.
+#[test]
+fn a_done_calls_exits_are_given_back_to_their_last() {
+    use rerail_metal::pp_expand::ROOM_STORES;
+    let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
+    let last = (0..16).map(|_| "s").collect::<Vec<_>>().join(" a ");
+    let chain = |levels: usize| {
+        let mut t = String::from("#define L0(s) [s]\n#define F2(x) x G2\n#define G2(x) x H2\n#define H2(x) x\n");
+        for k in 1..=levels {
+            t += &format!("#define L{k}(s) F2(s)(s)({last}) a L{}(s) b\n", k - 1);
+        }
+        t += &format!("L{levels}({state})\nend\n");
+        t
+    };
+    let tokens = ROOM_STORES.iter().position(|s| *s == "tokens").unwrap();
+    let uses: Vec<u32> = [16usize, 48]
+        .iter()
+        .map(|&n| {
+            let text = chain(n);
+            let (got, want, room, _) = expanded_x(&[("main.c", text.as_str())], false);
+            let got = got.unwrap_or_else(|why| panic!("{n} levels: refused {why}"));
+            same(show(&got), show(&want), "a chain of exits beside it");
+            room[tokens].0
+        })
+        .collect();
+    eprintln!("tokens: {} {}", uses[0], uses[1]);
+    assert!(uses[1] <= uses[0] + 80 * 32, "the tokens grow {} a level", (uses[1] - uses[0]) / 32);
+}
+
 /// A unit expanded with its run's own figures (`expanded_x`): its output spelled, or its refusal bits; the serial
-/// pass's output; each room's use.
-type RoomsRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS]);
+/// pass's output; each room's use; the output's pieces.
+type RoomsRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS], u32);
 /// §3 of decision 0520: the output is pieces. A top level's run of tokens no call covers is one
 /// piece, and a call's expansion its pieces: a text of 2,000 plain tokens on 200 lines, with a call
 /// after each 500 (`G`: `[`, `g`, `]`, `g`, each its own piece of `F`'s body or `G`'s), is its 5 runs
@@ -1649,11 +1841,60 @@ fn the_output_is_pieces_that_refer_to_the_text() {
         text += &line;
         text += if k % 50 == 49 { " G\n" } else { "\n" };
     }
-    let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+    let (got, want, _, pieces) = expanded_x(&[("main.c", text.as_str())], false);
     let got = got.unwrap_or_else(|why| panic!("refused {why}"));
     same(show(&got), show(&want), "the text");
-    let out = rerail_metal::pp_expand::ROOM_STORES.iter().position(|s| *s == "output").unwrap();
-    assert!(want.len() > 2000 && room[out].0 <= 5 + 4 * 4, "{} tokens in {} pieces", want.len(), room[out].0);
+    assert!(want.len() > 2000 && pieces <= 5 + 4 * 4, "{} tokens in {pieces} pieces", want.len());
+}
+
+/// Decision 0588 §1: the text's expansion is one phase of the loop, whatever its rescans' depth (the rounds took
+/// a few phases a rescan): a run's phases are the same for chains of object-like and function-like macros 1, 8 and
+/// 20 deep (within the loop's stacks: deeper is refused for depth, `X_DEPTH`), and each output is the serial pass's.
+#[test]
+fn the_expansion_is_one_loop_phase() {
+    use rerail_c_pp::files::Search;
+    use rerail_metal::pp_expand::{expand_from, phase_lines};
+    let mut runs: Vec<(usize, Vec<u32>)> = Vec::new();
+    for depth in [1usize, 8, 20] {
+        let mut text = String::from("#define C0 x\n#define F0(a) [a]\n");
+        for k in 1..=depth {
+            text += &format!("#define C{k} C{}\n#define F{k}(a) F{}(a C{k})\n", k - 1, k - 1);
+        }
+        text += &format!("int a = C{depth};\nint b = F{depth}(y) + C{};\n", depth / 2);
+        let (got, want, _, _) = expanded(&[("main.c", text.as_str())], false);
+        same(got.map(|g| show(&g)), Ok(show(&want)), format!("the output at depth {depth}"));
+        let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), text.into_bytes())].into_iter().collect();
+        let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+        let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
+        let x = expand_from(&d.unit, &d.lay, 0).unwrap();
+        same(x.refused, 0, format!("refused at depth {depth}"));
+        runs.push((depth, phase_lines(&d.unit, &d.lay, &x).unwrap()));
+    }
+    assert!(!runs[0].1.is_empty(), "a traced run writes its phases");
+    for (depth, lines) in &runs[1..] {
+        same(lines.len(), runs[0].1.len(), format!("the phases at depth {depth}, against depth 1"));
+        same(lines, &runs[0].1, format!("the phases' lines at depth {depth}"));
+    }
+}
+
+/// Decision 0588: the loop writes its output once, where each piece makes it. A piece that reads
+/// past its end (a body's call left open, `#define C F(`, its arguments in the text after it, past
+/// the next pieces' starts) takes the pieces it reads, and the pass runs again without them: the
+/// output is the serial pass's, with plain text and calls around each, across several pieces'
+/// lengths.
+#[test]
+fn a_piece_read_past_its_end_takes_the_pieces_it_reads() {
+    let args = (0..80).map(|i| format!("a{i}")).collect::<Vec<_>>().join(" ");
+    let mut text = String::from("#define F(x, y) <x|y>\n#define C F(\n");
+    for k in 0..6 {
+        text += &format!("p{k} q{k} r{k}\n");
+        text += &format!("C {args} , {args} )\n");
+        text += "s t u v w\n";
+    }
+    let (got, want, _, _) = expanded_x(&[("main.c", text.as_str())], false);
+    let got = got.unwrap_or_else(|why| panic!("refused {why}"));
+    assert!(want.len() > 900, "{} tokens", want.len());
+    same(show(&got), show(&want), "the text");
 }
 
 /// `expanded`, with the run's own figures (its rooms' use).
@@ -1670,7 +1911,7 @@ fn expanded_x(files: &[(&str, &str)], cpp: bool) -> RoomsRun {
     let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
     let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
     let got = if s.part.x.refused != 0 { Err(s.part.x.refused) } else { Ok(part_tokens(&s.part, &s.loaded.files, &tapes)) };
-    (got, serial.0, s.part.x.room)
+    (got, serial.0, s.part.x.room, s.part.x.pieces)
 }
 
 /// Plan step 11 of decision 0448 (the built-ins): `__LINE__` is the line of the outermost call's
@@ -1717,11 +1958,11 @@ fn where_an_evaluations_gpu_time_goes() {
         for g in [1u64, 32] {
             let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
                 .iter()
-                .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(unit, lay, last, 0, g).unwrap().unwrap_or(f64::NAN))))
+                .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(unit, lay, last, 0, g).unwrap_or(f64::NAN))))
                 .collect();
             eprintln!("{what}, {g} groups (us, cumulative): {}", t.join(", "));
             // Each phase's cost: the run stopped before phase k+1 less the run stopped before k.
-            let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(unit, lay, TO_ALL + 1, k, g).unwrap().unwrap_or(f64::NAN))).collect();
+            let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(unit, lay, TO_ALL + 1, k, g).unwrap_or(f64::NAN))).collect();
             let steps: Vec<String> = at.windows(2).enumerate().map(|(k, w)| format!("{}:{:.0}", k + 1, w[1] - w[0])).collect();
             eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
         }

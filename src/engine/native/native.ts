@@ -102,6 +102,13 @@ export interface NativeCompiledCodeRuleDsl {
   readsServerGraph(): boolean;
   /** Whether the code rule reads text: some clause, however nested, is a `regex` or `file` query, so files no language lists are read for it. */
   readsText(): boolean;
+  /**
+   * Whether a finding of the code rule in one file can depend on another file's text: a clause the engine evaluates over
+   * many files (any but a `regex`, `ast` or `file` forbid, and an `llm` clause, which reads no file), a `calls` or
+   * `importTarget` term, or a `report_when` gate.
+   * The engine routes each clause by the same predicates, so the answer cannot drift from what it evaluates.
+   */
+  readsOtherFiles(): boolean;
 }
 
 export interface NativeCodeRuleDslEditor {
@@ -272,6 +279,13 @@ export interface NativeGitIgnoreMatcher {
    * ignored folder names the folder's pattern. Null when Git does not ignore it; throws as `ignored` does.
    */
   ignoredBy(relativePath: string, isDirectory: boolean): NativeGitIgnoreMatch | null;
+  /**
+   * Whether a matcher opened now at this root would read the rules this one read: the configuration, read again as Git
+   * reads it (the system, global and repository files, their includes and conditions), chooses the same excludes file
+   * and pattern case, and the root `.gitignore`, `info/exclude` and the excludes file are as this matcher read them.
+   * When it would, each folder's `.gitignore` is read again as the next path enters the folder.
+   */
+  sourcesUnchanged(): boolean;
 }
 
 /** A pattern of Git's exclude stack that ignores a path (`NativeGitIgnoreMatcher.ignoredBy`). */
@@ -351,6 +365,11 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   /** Canonical CPython facts for a whole document demand batch; source is never executed. */
   pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
+  /**
+   * `compile` on a thread of Node's worker pool, so the JS thread runs other work while a rule compiles. An engine built
+   * before it lacks it.
+   */
+  compileAsync?(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): Promise<NativeCompiledCodeRuleDsl>;
   /**
    * The tests the `.rerail` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
    * `NativeRrTestResult` (`rerail-engine test-rr`).
@@ -478,7 +497,12 @@ export interface NativeTreeWatcher {
    * network or remote file system, a WSL path, past Linux's watch budget, Windows with no oplock, an OS with no
    * adapter). Watching a root already watched replaces its folder set.
    */
-  watch(root: string, folders: string[]): boolean;
+  watch(root: string, folders: readonly string[]): boolean;
+  /**
+   * Watches `root` as `watch` does, but only with room the Linux watch budget has left: a root `watch` asks for that
+   * needs the room takes it, and this root's watch ends. Elsewhere, as `watch`. An engine built before it lacks it.
+   */
+  watchSpare?(root: string, folders: readonly string[]): boolean;
   /** Stops watching `root` and releases every handle on it, so `git worktree remove` and renames work at once. */
   unwatch(root: string): void;
   /** Takes every notice since the last take, at most one per root. Never blocks on the OS. */
@@ -498,6 +522,8 @@ export interface NativeAnalysisScopeRun {
 
 export interface NativeLoadedRrPolicies {
   load(path: string, source?: NativeGitRevisionSource): string;
+  /** The policy a failed `load` of `path` names: the one `.policy` its own text declares, read without lowering it. */
+  failedPolicy(path: string, source?: NativeGitRevisionSource): string | null;
 }
 
 export interface NativeBinding {

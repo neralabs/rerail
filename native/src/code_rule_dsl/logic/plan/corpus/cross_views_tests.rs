@@ -198,18 +198,20 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
         inside = made.keys().any(|(t, x)| t == "the base relations' old documents (decision 0458)" && x.contains("listed inside the waves"));
         made.into_keys().filter(|(t, _)| t == "the base relations' statistics (decision 0458)").map(|(_, x)| x).collect::<BTreeSet<String>>()
     };
-    // Each relation's statistics, as the run took them: all the same way, `how`.
-    let all = |made: &BTreeSet<String>, how: &str| !made.is_empty() && made.iter().all(|x| x.ends_with(&format!(": {how}")));
+    // Each relation's statistics, as the run took them: all the same way, `how`. A semi-join's are its kept rows' at the
+    // held nodes (`retain::semijoin_rows`), a decision of their own.
+    let all = |made: &BTreeSet<String>, how: &str, held: &str| !made.is_empty() && made.iter().all(|x| x.ends_with(&format!(": {how}")) || x.ends_with(&format!(": {held} at the held nodes")));
     let cold = how(&mut c);
     let warm = how(&mut c);
     c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
     let edit = how(&mut c);
     profile::set(false);
     let patched = |x: &String| x.ends_with(": patched by the changed documents");
-    assert!(all(&cold, "counted"), "a cold run counts them: {cold:?}");
-    assert!(all(&warm, "kept"), "the run after it takes them as kept: {warm:?}");
+    assert!(all(&cold, "counted", "counted"), "a cold run counts them: {cold:?}");
+    assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
     assert!(edit.iter().any(patched), "an edit patches them: {edit:?}");
-    assert!(edit.iter().all(patched) || inside, "counted again after an edit only inside another run's waves: {edit:?}");
+    // After an edit every base relation's are patched, unless the run is inside another run's waves.
+    assert!(edit.iter().all(|x| patched(x) || x.ends_with(": counted at the held nodes")) || inside, "counted again after an edit only inside another run's waves: {edit:?}");
 }
 
 /// A session (0077) holds its corpus batch from run to run, its changed files' documents replaced (decision 0458), and
@@ -234,17 +236,17 @@ fn a_session_holds_its_corpus_batch_and_keeps_its_base_statistics() {
         let of = |topic: &str| made.keys().filter(|(t, _)| t == topic).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
         (of("the base relations' statistics (decision 0458)"), of("the corpus batch (decision 0458)"), rows)
     };
-    let all = |made: &BTreeSet<String>, how: &str| !made.is_empty() && made.iter().all(|x| x.ends_with(&format!(": {how}")));
+    let all = |made: &BTreeSet<String>, how: &str, held: &str| !made.is_empty() && made.iter().all(|x| x.ends_with(&format!(": {how}")) || x.ends_with(&format!(": {held} at the held nodes")));
     let (cold, cold_batch, _) = run(&mut c);
     let (warm, warm_batch, _) = run(&mut c);
     c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
     let (edit, edit_batch, rows) = run(&mut c);
     profile::set(false);
-    assert!(all(&cold, "counted"), "a session's first run counts them: {cold:?}");
+    assert!(all(&cold, "counted", "counted"), "a session's first run counts them: {cold:?}");
     assert_eq!(cold_batch, BTreeSet::from(["4 documents made, none held".to_owned()]), "and makes every document");
-    assert!(all(&warm, "kept"), "the run after it takes them as kept: {warm:?}");
+    assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
     assert_eq!(warm_batch, BTreeSet::from(["0 documents made, 4 held from the session's last run".to_owned()]), "and makes none");
-    assert!(all(&edit, "patched by the changed documents"), "an edit patches them: {edit:?}");
+    assert!(all(&edit, "patched by the changed documents", "counted"), "an edit patches them: {edit:?}");
     assert_eq!(edit_batch, BTreeSet::from(["1 documents made, 3 held from the session's last run".to_owned()]), "and makes the changed file's alone");
     every_output_has_rows(&rows);
     assert_eq!(rows, c.fresh(), "the session's outputs after the edit are a fresh run's");

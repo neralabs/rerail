@@ -27,6 +27,9 @@
 //! dropping a literal only widens the superset. A cross-file literal on a kept location is its own superset,
 //! `dm_<rel>_<column>`, made the same way (recursively; a cycle is an ordinary file-local recursion). A rule whose
 //! location the kept literals do not bind makes the superset everything (`top`): it filters nothing, and is left out.
+//! So does one whose only cut was a `top` superset, when what is left binds the location through a column that holds
+//! every node (`dm_exc_qual_0(e) :- unparen(e, m)`, where `unparen(e, e) :- kind(e, k), k != …`): stored, it was every
+//! node of the chunk.
 //!
 //! An export is left whole when a reader reads it negatively, in an aggregate, natively, or with nothing to cut it
 //! by; when it is an output, a lattice or a gate's; and when the cut relations do not split as file-local.

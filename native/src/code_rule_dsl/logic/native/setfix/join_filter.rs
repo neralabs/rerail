@@ -262,7 +262,7 @@ impl JoinFilter {
         };
         let rejects = Self::sampled(&filter, outer.len, |i| outer.at(i));
         let overlap = outer.sketch.zip(inner.sketch).map(|(a, b)| a.overlap(b));
-        use crate::code_rule_dsl::logic::plan::joins;
+        use crate::code_rule_dsl::logic::bloom as joins;
         let use_filter = joins::use_bloom(joins::BloomProbeInput { probe_rows: outer.len,
             build_rows: inner.len, distinct_overlap: overlap, sampled: SAMPLES, rejected: rejects, kept });
         let what = || format!(

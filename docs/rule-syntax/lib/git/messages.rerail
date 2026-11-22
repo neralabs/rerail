@@ -1,8 +1,8 @@
-// Commit message trailers under Git's default configuration (`git.rerail`'s part, over `git_message`).
-#include "git/records.rerail"
-.pragma "bound-family" "git_object_request git_message_readable git_message git_subject git_trailer"
-// The input is a stored commit, without a patch divider.
-// Discard the scissors line, trailing comments and the old "Conflicts:" list. Take the paragraph after the last blank line.
+// Commit message trailers under Git's default configuration, over `git.rerail`'s messages (which includes this module).
+// The input is a stored commit, without a patch divider. Discard the scissors line, trailing comments and the old
+// "Conflicts:" list. Take the paragraph after the last blank line.
+#include "git.rerail"
+
 .decl git_trailer_paragraph(repo: symbol, commit: symbol, paragraph: symbol)
 git_trailer_paragraph(r, c, block) :-
     git_message(r, c, msg),

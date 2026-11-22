@@ -95,6 +95,15 @@ pub const VIEW_LOC_COL: u32 = 7;
 pub const VIEW_LOC_DOCOF: u32 = 8;
 /// The `line` view (`View::Line`): each node's id and the line its start is on, by the facts' own lines.
 pub const VIEW_LINE: u32 = 9;
+/// The `tape`, `ast_depth` and `node_order` views (`View::Tape`, `View::Depth`, `View::Order`), read in place only
+/// (no device code makes their rows).
+pub const VIEW_TAPE: u32 = 10;
+pub const VIEW_DEPTH: u32 = 11;
+pub const VIEW_ORDER: u32 = 12;
+
+/// The views' reads' views (`rerail_clif::view_reads::VIEWS`): a directory's document has its first row in each.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+const NVIEWS: usize = rerail_clif::view_reads::VIEWS.len();
 
 /// A view's number in the views' reads (`vread`'s `kind`: 1 + its place in `rerail_clif::view_reads::VIEWS`), of its
 /// device code.
@@ -109,6 +118,9 @@ pub fn read_kind(view: u32) -> u32 {
         VIEW_LOC_END => 7,
         VIEW_LOC_COL => 8,
         VIEW_LOC_DOCOF => 9,
+        VIEW_TAPE => 10,
+        VIEW_DEPTH => 11,
+        VIEW_ORDER => 12,
         _ => panic!("view {view} has no read"),
     }
 }
@@ -125,6 +137,9 @@ pub fn device_view(view: View) -> Option<u32> {
         View::Loc(Place::Col) => VIEW_LOC_COL,
         View::Loc(Place::Docof) => VIEW_LOC_DOCOF,
         View::Line => VIEW_LINE,
+        View::Tape => VIEW_TAPE,
+        View::Depth => VIEW_DEPTH,
+        View::Order => VIEW_ORDER,
         _ => return None,
     })
 }
@@ -140,69 +155,78 @@ pub struct Chunk {
     lines: std::sync::OnceLock<bool>,
     /// The views' directory (`views_in_place`), once asked; `None` when a document's tape is not where the device
     /// reads it.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     views: std::sync::OnceLock<Option<ViewsInPlace>>,
 }
 
 /// A batch's documents as the views' reads find them on the device (decision 0353 step 4d, `ViewDir`): each one's
 /// entry, beside its projection's numbering in the batch's block, and its tape where it lies in its slab. A stage
 /// reads a view through them; nothing makes the view's rows.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub struct ViewsInPlace {
-    /// The directory's GPU address, which a stage's constants point at (`Stage::v_dir`).
-    pub dir: u64,
-    /// The buffers the reads reach by address, which a pass that reads a view makes resident: the batch's block's
-    /// (the one the addresses are of), and each slab a tape lies in.
+    /// The directory's offset in the batch's block (`ViewDir::at`): every executor's reads take it there, the host's at
+    /// the block's host address, the device's at its device address.
+    pub at: usize,
+    /// The directory's GPU address, which a stage's constants point at (`Stage::v_dir`): `None` where there is no
+    /// device, or a document's tape is in a home the device does not read (a vector of the host's).
+    pub dir: Option<u64>,
+    /// The buffers the device's reads reach by address, which a pass that reads a view makes resident: the batch's
+    /// block's (the directory's, its entries' and its cache's), and each slab a tape or its lines lie in.
     pub buffers: Vec<rerail_device::device::Buffer>,
-    /// Whether every document's lines are in a slab (`LineTable::placed`), so the `line` view is read in place too.
+    /// Whether the device reads every document's lines in place (each in a slab: `LineTable::placed`), so the `line`
+    /// view is read in place too.
     pub lines: bool,
     /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, or a guest
-    /// placed in its host, its places' lines in a slab), so the `Loc` views are read in place too.
+    /// placed in its host, its places' lines in a slab) and the device reads them, so the `Loc` views are read in place
+    /// too.
     pub locs: bool,
-    /// The cache a 16z document's reads decode its blocks into (decision 0353 step 4b, `view::cache`), which every
-    /// stage that reads the batch's views shares: none where no tape is 16z.
-    pub cache: Option<rerail_device::device::Buffer>,
+    /// The cache a 16z document's reads decode its blocks into (decision 0353 step 4b, `view::cache`), in the batch's
+    /// block, which every reader of the batch's views shares, on the host and on the device: none where no tape is
+    /// 16z.
+    pub cache: Option<crate::code_rule_dsl::facts::vtab::ZCache>,
+    /// The tape format of every document read off its tape (15, 16, `F16Z_FORMAT`), or 0 for a batch of several: the
+    /// stages that read its views are compiled for it (decision 0576).
+    pub format: u32,
     _entries: Vec<super::view_docs::ViewEntry>,
 }
 
 
 /// The batch's cache's counts in the profile when its directory goes (the statistics mode's too, where it is on).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl Drop for ViewsInPlace {
     fn drop(&mut self) {
         if let Some(cache) = &self.cache {
-            // SAFETY: the cache's shared buffer, all of it; no stage reads the views once the directory goes.
-            let c = rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(cache.contents().cast::<u8>(), cache.length() as usize) });
-            for (name, n) in c.named() {
+            // No reader reads the views once the directory goes.
+            for (name, n) in cache.counts().named() {
                 crate::code_rule_dsl::prof::count(name, n as usize);
             }
         }
     }
 }
 
-/// The batch's views' directory (`ViewsInPlace`), made on its first ask: `None` when a document's tape is not in a
-/// slab (a tape held in a vector of its own), or the batch has no device.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+/// The batch's views' directory (`ViewsInPlace`), made on its first ask, with or without a device: `None` when a
+/// document is in another block or has no tape read in place. Where the device reads it is `ViewsInPlace::dir`.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsInPlace> {
     chunk.views.get_or_init(|| build_views(batch, chunk)).as_ref()
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
-    build_dir(&chunk.block, &docs_of(batch, [0; 9]))
+    build_dir(&chunk.block, &docs_of(batch, [0; NVIEWS]))
 }
 
 /// One document of a views' directory: its projection, its dialect, and its first row in each view (`VIEWS`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct DirDoc<'a> {
     p: &'a super::Projected,
     dialect: &'a super::Dialect,
-    rows: [u32; 9],
+    rows: [u32; NVIEWS],
 }
 
 /// `batch`'s documents in a directory, each view's rows past `past` of that view.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn docs_of(batch: &Batch, past: [u32; 9]) -> Vec<DirDoc<'_>> {
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+fn docs_of(batch: &Batch, past: [u32; NVIEWS]) -> Vec<DirDoc<'_>> {
     let (nodes, children, fields, locs) = (batch.offsets(View::Node), batch.offsets(View::Child), batch.offsets(View::Field), batch.offsets(View::Loc(Place::Line)));
     batch
         .docs
@@ -210,27 +234,27 @@ fn docs_of(batch: &Batch, past: [u32; 9]) -> Vec<DirDoc<'_>> {
         .enumerate()
         .map(|(i, p)| {
             let (n, loc) = (nodes[i] as u32, locs.get(i).map_or(0, |&r| r as u32));
-            let own = [n, children[i] as u32, fields[i] as u32, n, n, loc, loc, loc, loc];
+            let own = [n, children[i] as u32, fields[i] as u32, n, n, loc, loc, loc, loc, n, n, n];
             DirDoc { p, dialect: &batch.dialects[p.tag], rows: std::array::from_fn(|v| past[v] + own[v]) }
         })
         .collect()
 }
 
 /// Each view's rows of `batch` (`VIEWS`' order).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn rows_of(batch: &Batch) -> [u32; 9] {
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+fn rows_of(batch: &Batch) -> [u32; NVIEWS] {
     let last = |v: View| batch.offsets(v).last().map_or(0, |&r| r as u32);
     let (n, loc) = (last(View::Node), last(View::Loc(Place::Line)));
-    [n, last(View::Child), last(View::Field), n, n, loc, loc, loc, loc]
+    [n, last(View::Child), last(View::Field), n, n, loc, loc, loc, loc, n, n, n]
 }
 
 /// The views' directory of a chunk's batch and the tape values admitted inside its fixpoint (decision 0431 §8,
 /// `values::Layered`): the batch's documents, then each value's batch's, each view's rows of a value past those
 /// before it, as a layered source numbers them. Every document is in the batch's block: `None` where one is not, or
 /// a tape is not where the device reads it.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> {
-    let mut docs = docs_of(batch, [0; 9]);
+    let mut docs = docs_of(batch, [0; NVIEWS]);
     let mut past = rows_of(batch);
     for v in values {
         docs.extend(docs_of(v, past));
@@ -241,20 +265,35 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
 }
 
 /// The directory of `docs`, made in `b` (`ViewsInPlace`): each one's entry, tape and lines where the device reads them.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
-    use rerail_clif::view_reads::{ViewDir, ViewRow};
+    use crate::code_rule_dsl::tape::placed;
+    use rerail_clif::view_reads::{ViewDir, ViewHome, ViewRow};
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
-    let device = crate::code_rule_dsl::tape::placed::device()?;
+    // Made whether or not a device is open (decision 0353 step 3 on the CPU): the host reads it too.
+    let device = placed::device();
     let n = docs.len();
     let rows: *mut ViewRow = b.alloc_t(n.max(1));
     let dir: *mut ViewDir = b.alloc_t(1);
-    let mut slabs: Vec<rerail_device::device::Buffer> = Vec::new();
+    // The homes the documents' tapes and lines lie in (`ViewHome`), each once, in the order first named.
+    let mut homes: Vec<placed::HomeOf> = Vec::new();
+    let mut home = |h: placed::HomeOf| -> (u32, u64, bool) {
+        let at = h.at;
+        let on_device = h.device.is_some();
+        let k = homes.iter().position(|o| o.id == h.id).unwrap_or_else(|| {
+            homes.push(h);
+            homes.len() - 1
+        });
+        (k as u32, at, on_device)
+    };
     let mut entries = Vec::with_capacity(n);
-    let mut lines = true;
+    // What the device reads: every tape of a document with nodes (else no stage reads the directory), every
+    // document's lines (else the batch's `line` view is made, counted), its `Loc` rows.
+    let (mut on_device, mut lines) = (device.is_some(), true);
     // The 16z documents' rows, their blocks and their largest block's entry: their cache made after the rows.
     let (mut zrows, mut zblocks, mut zentry) = (Vec::new(), 0usize, 0usize);
     let mut locs = docs.iter().all(|d| d.p.extra.is_some());
+    let mut format: Option<u32> = None;
     for (i, &DirDoc { p, dialect, rows: first_rows }) in docs.iter().enumerate() {
         // Each refusal counted by why: what step 4b (16z laid out apart) and the loads not yet placed leave.
         let refused = |why: &'static str| {
@@ -278,18 +317,16 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
             locs = false;
         }
         // A document with no nodes has rows only in the `Loc` views (a withheld one's text and lines): where its tape
-        // is not on the device, those alone are made.
+        // is not read in place, those alone are made.
         let only_locs = p.len() == 0;
         if p.len() > 0 || (locs && p.locs() > 0) {
-            let tape_on_device = || -> Result<_, &'static str> {
+            let tape_in_place = || -> Result<_, &'static str> {
                 let tape = p.facts.tape.as_ref().ok_or("views.refused.no_tape")?;
                 let (bytes, view) = tape.in_place().map_err(|_| "views.refused.not_in_place")?;
-                let room = tape.image().room().ok_or(if tape.image().format() == crate::code_rule_dsl::tape::formats::Format::F16Z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" })?;
-                let (address, slab) = crate::code_rule_dsl::tape::placed::on_device(room, bytes).ok_or("views.refused.not_in_room")?;
-                Ok((address, slab, view))
+                Ok((placed::home_of(tape.image().room(), bytes), view, tape.image().format()))
             };
-            let (address, slab, view) = match tape_on_device() {
-                Ok(on) => on,
+            let (at, view, tape_format) = match tape_in_place() {
+                Ok(t) => t,
                 Err(why) if !only_locs => return refused(why),
                 Err(why) => {
                     crate::code_rule_dsl::prof::count(why, 1);
@@ -299,31 +336,32 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
                     continue;
                 }
             };
-            if !slabs.iter().any(|s| s.device_address() == slab.device_address()) {
-                slabs.push(slab);
+            let (tape_home, tape_at, tape_on_device) = home(at);
+            if !tape_on_device && device.is_some() {
+                // The device's refusal, by why: the host reads it all the same.
+                let why = if tape_format == crate::code_rule_dsl::tape::formats::Format::F16Z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" };
+                crate::code_rule_dsl::prof::count(why, 1);
+                if only_locs { locs = false } else { on_device = false }
             }
-            // Its lines where the device reads them (its places' lines: a guest's are its host's, `Locs::place_lines`):
-            // else the batch's `line` view is made (counted), and its `Loc` views.
+            // Its lines, read where they lie (its places' lines: a guest's are its host's, `Locs::place_lines`).
             let table = p.extra.as_deref().map_or(&p.facts.lines, |x| x.place_lines());
+            // The lines' index (decision 0612), in the document's tape or in a slab's room beside it.
             let bytes = table.index();
-            match table.room().and_then(|room| crate::code_rule_dsl::tape::placed::on_device(room, bytes)) {
-                Some((address, slab)) => {
-                    row.lines = address;
-                    if !slabs.iter().any(|s| s.device_address() == slab.device_address()) {
-                        slabs.push(slab);
-                    }
-                }
-                None => {
-                    if lines || locs {
-                        crate::code_rule_dsl::prof::count("views.refused.lines_unplaced", 1);
-                    }
-                    (lines, locs) = (false, false);
-                }
+            let (lines_home, lines_at, lines_on_device) = home(placed::home_of(table.room(), bytes));
+            // The `Loc` views read the lines' words too (decision 0612): lines the device cannot reach refuse both.
+            if !lines_on_device && (lines || locs) && device.is_some() {
+                crate::code_rule_dsl::prof::count("views.refused.lines_unplaced", 1);
+                (lines, locs) = (false, false);
             }
             let entry = super::view_docs::ViewEntry::new(b, p, dialect);
             row.entry = b.offset_of(entry.desc()) as u64;
-            row.tape = address;
+            (row.tape, row.lines, row.homes) = (tape_at, lines_at, [tape_home, lines_home]);
             row.view = view;
+            format = match format {
+                None => Some(view.format),
+                Some(f) if f == view.format => Some(f),
+                Some(_) => Some(0),
+            };
             if view.format == rerail_clif::view::F16Z_FORMAT {
                 zrows.push(i);
                 zblocks += (view.nodes as usize).div_ceil(rerail_clif::view::F16Z_BLOCK as usize);
@@ -334,35 +372,72 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
         // SAFETY: row `i` of the rows just allocated in `b`.
         unsafe { rows.add(i).write(row) };
     }
-    // The 16z documents' cache, shared by every thread of every stage that reads the views: each one's view names it
-    // by its address less its tape's, its entry size the cache's, its reads checked (shared).
+    // The 16z documents' cache, in a block of its own (one more home: its reads write it, the batch's block they do
+    // not), shared by every reader of the views on either executor: its entry size in each one's view, its reads
+    // checked (shared).
     let cache = (!zrows.is_empty()).then(|| {
         let spec = rerail_clif::view::cache::Spec::configured(zblocks, zentry);
         crate::code_rule_dsl::prof::count("zcache.batches", 1);
         crate::code_rule_dsl::prof::count("zcache.blocks", zblocks);
         crate::code_rule_dsl::prof::count("zcache.entries", spec.entries as usize);
         crate::code_rule_dsl::prof::count("zcache.entry_kb", spec.entry_bytes() >> 10);
-        let cache = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, spec.bytes());
-        // SAFETY: the buffer's bytes, shared with the host, read by no stage yet.
-        spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).expect("a cache's buffer of its size");
+        let block = Arc::new(Block::anon(rerail_blocks::block::kind::SCRATCH, spec.bytes() + 2 * 4096));
+        let at = block.alloc(spec.bytes(), rerail_clif::view::cache::ALIGN);
+        // SAFETY: the cache's bytes, just allocated in its block, read by no reader yet.
+        spec.init(unsafe { std::slice::from_raw_parts_mut(block.ptr::<u8>(at), spec.bytes()) }).expect("a cache's room of its size");
         for &i in &zrows {
             // SAFETY: row `i`, written above in `b`.
             let row = unsafe { &mut *rows.add(i) };
-            // An address: the slabs' tapes had theirs, so the device's buffers have them.
-            let rel = cache.device_address().expect("a buffer's address where tapes have theirs").wrapping_sub(row.tape) as i64;
-            (row.view.side[0], row.view.side[1]) = (rel as u32, (rel >> 32) as u32);
             (row.view.columns[3], row.view.columns[4]) = (spec.entry_bytes() as u32, 1);
         }
-        cache
+        let buffer = device.and_then(|d| block.device_buffer(d).ok());
+        crate::code_rule_dsl::facts::vtab::ZCache { block, at, len: spec.bytes(), buffer }
     });
-    // The block's buffer made after the last allocation, so it covers them: the addresses are its.
-    let buffer = b.device_buffer(device).ok()?;
-    let base = buffer.device_address()?;
+    // Its home: the cache's block, the device's where the device has it (else the device reads no 16z view).
+    let cache_home = cache.as_ref().map(|c| {
+        let host = c.block.ptr::<u8>(c.at) as usize;
+        let device = c.buffer.as_ref().and_then(|buf| Some((buf.device_address()? + c.at as u64, buf.clone())));
+        on_device &= device.is_some();
+        home(placed::HomeOf { id: host, host: host as u64, at: 0, device }).0
+    });
+    let homes_at: *mut ViewHome = b.alloc_t(homes.len().max(1));
+    for (k, h) in homes.iter().enumerate() {
+        // SAFETY: home `k` of the homes just allocated in `b`.
+        unsafe { homes_at.add(k).write(ViewHome { host: h.host, gpu: h.device.as_ref().map_or(0, |d| d.0) }) };
+    }
+    let at = b.offset_of(dir);
     // SAFETY: the directory just allocated in `b`.
-    unsafe { dir.write(ViewDir { chunk: base, ndocs: n as u32, pad: 0, rows: base + b.offset_of(rows) as u64 }) };
-    let mut buffers = vec![buffer];
-    buffers.extend(slabs);
-    Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, lines, locs, cache, _entries: entries })
+    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: homes.len() as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes_at) as u64, cache: cache_home.map_or(0, |k| u64::from(k) + 1) }) };
+    // The device's: the block's buffer made after the last allocation, so it covers them, and each 16z view's cache
+    // offset, the cache's device address less its tape's (the kernels read the view where it lies).
+    let mut buffers = Vec::new();
+    let mut dir_on_device = None;
+    if let Some(device) = device.filter(|_| on_device) {
+        let buffer = b.device_buffer(device).ok()?;
+        let base = buffer.device_address()?;
+        let device_of = |k: u32| homes[k as usize].device.as_ref().map_or(0, |d| d.0);
+        if let Some(k) = cache_home {
+            for &i in &zrows {
+                // SAFETY: row `i`, written above in `b`.
+                let row = unsafe { &mut *rows.add(i) };
+                let rel = device_of(k).wrapping_sub(device_of(row.homes[0]) + row.tape) as i64;
+                (row.view.side[0], row.view.side[1]) = (rel as u32, (rel >> 32) as u32);
+            }
+        }
+        buffers.push(buffer);
+        // The cache's home is bound apart (`ViewInPlace::cache`), written.
+        for h in homes.iter().enumerate().filter(|&(k, _)| Some(k as u32) != cache_home).map(|(_, h)| h) {
+            if let Some((_, slab)) = &h.device
+                && !buffers.iter().any(|s| s.device_address() == slab.device_address())
+            {
+                buffers.push(slab.clone());
+            }
+        }
+        dir_on_device = Some(base + at as u64);
+    }
+    let lines = lines && dir_on_device.is_some();
+    let locs = locs && dir_on_device.is_some();
+    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, cache, format: format.unwrap_or(0), _entries: entries })
 }
 
 /// Copies `src` into the block and points `span` at it.
@@ -507,7 +582,7 @@ fn build_in(batch: &Batch) -> Chunk {
         root: at,
         locs: std::sync::OnceLock::new(),
         lines: std::sync::OnceLock::new(),
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         views: std::sync::OnceLock::new(),
     }
 }
@@ -604,3 +679,13 @@ pub fn ukl() -> String {
 
 /// NONE, as the kernels test a parent with it.
 pub const NO_NODE: u32 = NONE;
+
+/// What makes an axis's solve in a chunk: `members` per dialect tag (256) and kind code (1,024) a bit, `None` for
+/// every kind (containment); `inside` for every ancestor in the set, else the nearest. Several chunks' rows go in one
+/// relation, each chunk's past those before (a chunk's batch and its tape values, decision 0431 §8); the starts are
+/// the first's.
+pub type ChunkAxis = fn(&[&Chunk], Option<&[u32]>, bool) -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String>;
+
+/// The device's solve of an axis in a chunk: the Metal device's, which it registers at load.
+pub static CHUNK_AXIS: rerail_registry::Slot<ChunkAxis> =
+    rerail_registry::Slot::new("the device's kind-set axis in a chunk (facts::vtab::syntax::device_chunk::CHUNK_AXIS)");

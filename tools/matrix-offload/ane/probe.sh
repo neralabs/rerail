@@ -1,10 +1,10 @@
 #!/bin/bash
 # probe.sh LOGNAME "ANEBENCH ARGS" NAME [NAME ...]
 # Builds any missing models (gen.py), then runs anebench on each and appends the result line to
-# $RUNS/out/LOGNAME.log. RUNS defaults to the scratchpad ane-runs folder; PY to its cmlenv python.
+# $RUNS/out/LOGNAME.log. RUNS is required (the runs folder, with bin/anebench); PY defaults to $RUNS/../cmlenv's python.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-RUNS="${RUNS:-/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-More-ergonomic-rule-syntax/78cde71d-54c1-4e1a-929e-bd4447f5ff71/scratchpad/ane-runs}"
+RUNS="${RUNS:?set RUNS to the runs folder (it holds bin/anebench)}"
 PY="${PY:-$RUNS/../cmlenv/bin/python}"
 log="$1"; shift
 args="$1"; shift

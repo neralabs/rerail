@@ -6,16 +6,11 @@ use crate::git_workspace::snapshot::{self, SourceLanguages};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-const REGISTRY: &str = "git_inventory_host_registry";
-const SUFFIX: &str = "git_inventory_host_suffix";
-const NAME: &str = "git_inventory_host_name";
-const PATH: &str = "workspace_language_path";
+// The inputs' names are the planner's (`plan::phased`), which typing reads.
+use crate::code_rule_dsl::logic::plan::phased::source_languages::{NAME, PATH, REGISTRY, SUFFIX};
+pub(super) use crate::code_rule_dsl::logic::plan::phased::source_languages::is_input;
 
-pub(super) fn is_input(relation: &str) -> bool {
-    matches!(relation, REGISTRY | SUFFIX | NAME | PATH)
-}
-
-pub(super) fn inputs(program: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), root: &Path, options: &serde_json::Value) -> BTreeMap<String, Vec<Vec<front::Value>>> {
+pub fn inputs(program: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), root: &Path, options: &serde_json::Value) -> BTreeMap<String, Vec<Vec<front::Value>>> {
     use front::Value::Str;
     let mut rows: BTreeMap<String, Vec<Vec<front::Value>>> = program.input_names().into_iter()
         .filter(|name| is_input(name)).map(|name| (name, Vec::new())).collect();

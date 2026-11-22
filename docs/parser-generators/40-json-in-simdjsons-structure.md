@@ -593,6 +593,244 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 59: the generated Rust beside the lean parser, piece by piece
+
+The generated parser is `rerail-json-aot`: `tier1.rs` (`bitlex_lex_rust`) and `tier2.rs` (`bitlex_rust::tier2_loop`).
+The reference is `rerail-json-lean`: simdjson's arm64 stage 1 (`stage1.rs`) and the kernel's stage 2 (`stage2.rs`),
+translated line for line. Both are Rust and both go through rustc, so each difference below is a difference in the
+source the compiler writes. The order is the order of the fixes: what one unblocks comes first.
+
+### Tier 2 against `stage2.rs`'s `walk`, before the fixes
+
+| | `walk` | `tier2.rs` |
+|---|---|---|
+| A token known by the test before it | tested once | tested again: `0x22 => match peek { 0x22 => {} … }`, `0x2c => match peek { 0x2c => … }`; `0x7b` then `peek(i) == 0x7b && peek(i + 1) == 0x7d`; an atom's word decided, then its kind's bytes and its word again |
+| A value | `primitive` and `string`, one method each, called at each place | the value's code written out at each of its five places |
+| The walk | each container's cycle a loop of its own (`object_key` to `object_continue`, `array_value` to `array_continue`); only an open and a close pass the `match label` | one `'run: loop { match st }`: every place after a call an arm, every transition `st = N; continue` |
+| Where a close returns | `object[d]`, a flag by depth: `scope_end` goes to the object's or the array's continue | a `Vec<u8>` of return places, `push` and `pop` |
+| A pair's close | in `object_continue`, after the value | a place of its own (`5`, `10`), and `9` only goes on to `8` |
+| A token | `take!()`: `*next`, the index ending in three entries (`len`, `len`, 0) | `peek`, `at`, `starts[i]`: each bounds-checked, 256 or the file's length past the end |
+| An atom | a `switch` on its first byte, then `str4ncmp` and the byte after | the run of `wordbyte` from tier 1's mask (`run_last`), then `match` on the bytes as a slice |
+| A number | `number_end`: one read of its bytes | `run_last` over the mask, then `check_number`, which tests each byte twice (`if matches!(x) { if !matches!(x) { return false } }`) |
+| A string | `backslash_quote`: the bytes 32 at a time from the quote, the common case (no `\` before the closer) two nodes written at once | the closer from tier 1's mask (`first_bit(&m.q)`), each escape from another (`first_bit(&m.esc)`) |
+| A node | `open`, `leaf`, `close`: the columns' stores | the writer's ops, then `commit` after every node |
+
+### Tier 1 against `stage1.rs`'s `index`, before the fixes
+
+| | `index` | `tier1.rs` |
+|---|---|---|
+| A string | `prefix_xor` of the unescaped quotes, carried to the next block: in the pass | a scalar walk after the pass (`first_bit` from each opener to its closer), writing `o_str`, `f_str` and `hidden` as the file's words |
+| The masks made of the strings | in the pass: `structural_start`, `non_quote_inside_string` | about fifteen more passes over the file's words (`body`, `esc`, `code`, `word`, `t4` to `t11`) |
+| The structurals | written in the pass, a block behind (`bit_indexer::write`: the bits reversed, four indexes, then two at a time, then one) | a loop over the file's words after the passes, one `push` a bit |
+| What it writes | the indexes | the starts, and a code a token (`KINDS[src[s]]`, the same in each of three branches), which tier 2 does not read |
+| What it keeps for stage 2 | nothing | four masks of the file (`q`, `esc`, `rd0_open`, `run_number`) |
+| A block | loaded where it is; the last one copied once, padded | copied into a `[u8; 64]`; each of three stages works out its in-file bits and the byte order mark again |
+| UTF-8 | `utf8_checker`: simdjson's lookup tables on the bytes' nibbles, a block of ASCII skipped | 26 classes as bitmasks, then the grammar's expression over them with `prev`, and a second stage two blocks behind for `next` |
+| `\u`'s digits and surrogates | checked in stage 2 (`escaped_string`) | checked in tier 1, over the file's words |
+
+### The fixes, in order
+
+1. Tier 2 tests no token twice. Done (decision 0581).
+2. Tier 2 writes each rule used at several places once, as a method, as `primitive` and `string`. Done (decision 0582).
+3. Tier 2's walk: a loop a container's cycle; a close returns by the container's kind at its depth. Done (decision 0583).
+4. Tier 2 reads its tokens as `take!()`, and writes its nodes without a commit each. Its writes done (decision 0584): the writer's nodes final as written. Its reads done (decision 0585): the source padded, the index ending in three entries.
+5. Tier 1 makes the strings and the masks made of them in its pass, and writes the structurals there. Done (decision 0585).
+6. Tier 1 writes no codes tier 2 does not read (done in 0585), and keeps no mask that tier 2 can read from the bytes, as `walk`
+   reads a string and a number. Done (decision 0586).
+7. Tier 1's UTF-8 check in simdjson's form. Done (decision 0591).
+
+Steps 5 and 6 are also 0556's second step (`bitlex_lex_rust` is Kotlin's and `.rerail`'s tier 1 too); steps 1 to 4
+are `tier2_loop`'s, which only JSON's grammar reaches.
+
+### After the seven fixes (2026-11-21)
+
+The same reading, after 0591. These are the differences left, by source shape.
+
+Tier 2 against `walk`:
+
+| | `walk` | `tier2.rs` |
+|---|---|---|
+| A container's cycle | an inner `loop`: pair (or element), then `,` back to the top or `}` out; only a container's begin and end go through `match label` | each place an arm of the one `match st`: between two pairs of an object, the pair (3), its close (5) and its `,` or `}` (4) are three trips through the match; an array's element and its `,` two |
+| A container's begin | `ObjectBegin` takes `{` and tests the key's quote in the same arm, then enters the loop | its own place (2, 6) that takes the opener, then the next place (3, 7) |
+| A pair's close | inline after the value, or in `ScopeEnd` for a container value | a place of its own (5), which every pair passes through |
+| A value's byte | one `match *v`: `{`, `[`, else `primitive`, which switches on the byte once | the place's `match` on a range of bytes that holds `"`, then `value`'s `match` on `"` against the rest, then a `match` on the first byte for `true`, `false`, `null`, a number |
+| A string | `backslash_quote` 32 bytes at a time; with no escape before the closer, the string and its content written at once | `marks` 64 bytes at a time; each piece a leaf |
+| A node's write | the columns' stores, through pointers in `Walk`'s locals | `w_open_with`, `w_leaf_with`, `w_close_with` on the writer's state (`d`), final as written, no commit |
+| A close's return | `object[d]`, then the container's kind's continue | `ret[d]`, the place number (the same shape) |
+| Reads of a token, an atom, a number, the depth, the root's closer | | the same as `walk` (0581–0586) |
+
+Tier 1 against `index`:
+
+| | `index` | `tier1.rs` |
+|---|---|---|
+| `\u`'s digits and surrogates | checked in stage 2, when it reads an escape | checked in tier 1 at every block: five classes (`hex`, `u`, `dee`, `high_2`, `low_2`) and a second stage a block behind for their `next`s |
+| A mask's word | a local of the block | written into a ring (`r_X[q % RING]`) and read back from it, a mask with no `next` reader too |
+| The file's length and the byte order mark | the length's bits once, the byte order mark skipped before the loop | `lv` and the byte order mark's test in each of the two stages, at every block |
+| A string open at the file's end | the carry tested once after the loop | `f_str & last_byte` at every block, `last_byte` a mask of its own |
+| The classes | one pair of nibble tables (`whitespace`, `op`), compares for `"` and `\` | two pairs: ws, control, op and the `\u` classes; compares for `"`, `\`, `u` |
+| UTF-8 | `utf8_checker` | `utf8_checker`, derived from the grammar (0591); a block's end tested by three byte compares, not a vector compare |
+| The strings, the escapes, the records, the padding | | the same as `index` (0585, 0586) |
+
+### What was left, in order: done (decision 0599)
+
+8. Tier 2's cycles as loops: a list's head and cycle one inner loop inside the place of its level, the opener taken in it,
+   and a pair's close written where its value ends. Only a level's call and its end go through `match st`. Done.
+9. A value decided once: `value`'s alternatives as the arms of the place's own `match`, so the byte is matched once.
+   Done: one `match src[s]` at each value place, `{`, `[`, `"`, the atoms and the number its arms; no `value` method.
+10. `\u`'s digits and surrogates checked where tier 2 reads an escape, with tier 1's five classes and its second stage
+    gone. This is a grammar question too: the checks are the grammar's `error` statements over masks. Done
+    (`bitlex_piece_checks`).
+11. Tier 1's masks as locals of the block, except those a `next` reads. The length's bits and the byte order mark worked
+    out once; the end's errors tested once after the loop. Done.
+12. A string with no escape written as its node and its content at once. Done (the writer's `leaf_in`).
+
+### After the twelve fixes (2026-11-21)
+
+The same reading, after 0599. These are the differences left, by source shape.
+
+Tier 2 against `walk`:
+
+| | `walk` | `tier2.rs` |
+|---|---|---|
+| A container's cycle | an inner `loop`; `ObjectBegin \| ObjectKey` one arm | the same: `'l2: loop` and `'l5: loop`, `1 \| 2` and `4 \| 5` |
+| A pair's close | after the value | the same |
+| A value's byte | `match *v` for `{` and `[`, then `primitive` tests it again | one `match src[s]`, every alternative its arm |
+| A string with no escape | its node and its content at once, from 32 bytes | the same, from 64 bytes (`marks`) |
+| `\u`'s digits and surrogates | in `escaped_string`: the four digits read as a number, the surrogates tested on it | at a `\u` in `string`: each digit's class, `D`, and the third byte's class; a low one's high one from a word of the pieces before |
+| A node's write | the columns' stores, through pointers in `Walk`'s locals | the writer's ops on its state (`d`): `open`, `leaf`, `leaf_in`, `close` |
+
+Tier 1 against `index`:
+
+| | `index` | `tier1.rs` |
+|---|---|---|
+| A mask's word, the file's bits, the byte order mark, the end | locals; once; once; after the loop | the same |
+| The classes | one pair of nibble tables, compares for `"` and `\` | the same |
+| The masks made of the strings | `scalar`, `follows`, `in_string`: those the structurals need | the grammar's names: `o_str`, `hidden`, `body`, `code`, `wordbyte`, `word`, each a local |
+| A control byte in a string | ORed into the error word, tested after the loop | the same (`errors \|= v_t2`) |
+| UTF-8 | `utf8_checker` | `utf8_checker`, derived from the grammar (0591); a block's end tested by three byte compares, not a vector compare |
+
+### The six differences after the twelve fixes: done (decision 0602, 2026-11-22)
+
+The same reading, after 0602.
+
+Tier 2 against `walk`:
+
+| | `walk` | `tier2.rs` |
+|---|---|---|
+| A string's read | `backslash_quote`, 32 bytes a step | the same: `S::marks32`, `x += 32`, the backend chosen once (`run_best`) |
+| A primitive | `primitive`, called from each place's `_` | the same: `value_primitive`, written once, each place's `_` (the byte matched at the place, then in it, as `walk`'s) |
+| `\u`'s digits and surrogates | the four digits a number; the surrogates its ranges; a high one's low one checked and marked (`low_checked`) | the four digits a number (`cp`, `HEX_VALUE`); `high` and `low` ranges of it; a high one's pair from its next escape's two digits, a number too; a low one's high one one position (`after2`) |
+| A node's write | the columns' stores, through pointers in `Walk`'s locals | the cells' stores through `Cursor`, `run`'s local; the state's op only at a block's first node, a close of a block before, or a bound that fails |
+
+Tier 1 against `index`:
+
+| | `index` | `tier1.rs` |
+|---|---|---|
+| The masks made of the strings | `scalar`, `follows`, `in_string`, `string_tail` | the same names and expressions; `body` too, for the escapes |
+| The structurals | `(op \| scalar & ~follows) & ~string_tail` | `((q \| op) \| nonquote_scalar & ~follows) & ~string_tail`: the quote outside `~follows`, as the grammar refuses `1"a"` in tier 2's tree, not in a number's end |
+| UTF-8's end | `is_incomplete`: one compare against `max_value` | the same (`gt_bits`, `MAX_VALUE`) |
+
+### The generated Rust in the lean parser's shape: done (decision 0604, 2026-11-22)
+
+The same reading, after 0604. Each row was a difference after 0602.
+
+Tier 2 against `walk`:
+
+| | `walk` | `tier2.rs` |
+|---|---|---|
+| The `\u` pair | a high one's low one read as four digits; that escape's checks skipped (`low_checked`) | the same: `n7` four digits, a range of it; `if after2 != y { … }`; a low one reached otherwise lone (`if m3`) |
+| A node's bounds | none: the walk's order is its contract | the same: `Cursor::begin`'s contract, checked in a debug build |
+| A run of closers | `ScopeEnd`'s loop, `object[d]` deciding | the places returned to one arm, `'ret: loop { match st { … } }`, a closer `continue 'ret` |
+| A separator, an opener, a `:` | `take!()` | `i += 1` alone; a closer's end kept, its node's |
+| A record's byte | `*v` | `peek`, a `u8` |
+| A stride's or a block's first node | `base[n / STRIDE] = start`, inline | the cursor makes the block inline (`start_block`), then writes the node in its own path; the block before settled |
+| A close of a node in a block before | stored at `ord` | stored in its block's cells; the block settled once final |
+| A string's end bound | none: stage 1 refused an open string | none (tier 1 refuses it, `c_m_in_string`) |
+| An escape's second byte | one branch: `u`, else `ESCAPE_MAP` | one `match src[y]`: `0x75` the checks, the other words, else refused |
+| A number's first byte | a digit or `-` | `0x2d \| 0x30..=0x39`, else refused |
+| A number's reads | `*p`, the padding ending it; the sign one test | `b[j]`; the sign one test |
+| A scalar's end | `is_not_structural_or_whitespace`, refused otherwise (`[1"a"]`) | the same: `ends(b)`, `matches!(ROWS[b], 0 \| 2)`, from tier 1's records |
+
+Tier 1 against `index`:
+
+| | `index` | `tier1.rs` |
+|---|---|---|
+| The records | `structural_start = (op \| scalar & ~follows) & ~string_tail` | the same expression (`v_m_structural_start`) |
+| The errors | the control byte, UTF-8, the open string | the same: a quote after a scalar is tier 2's (`run_end_covers`) |
+| The file's bits | none: the last block padded with spaces | none (no record or error holds at a space, proved) |
+| The byte order mark | the blocks start after it | the same (`off`) |
+| The string mask's name | `in_string` | the same |
+| A string open at the end | `prev_in_string != 0` (`finish`) | `c_m_in_string != 0` |
+| The records' write | `bit_indexer::write`, the block before's at each block, the last after the loop | the same (`write_indexes`, `prev_structurals`) |
+
+The files accepted differ in one way, which is not shape:
+- **The numbers accepted.** `number_end` keeps no value, but works one out where it decides the answer: it refuses a
+  float past the doubles' range (`1e400`) and an integer past 64 bits. The grammar states neither bound, so tier 2
+  and the JIT accept those numbers. This is the user's choice (2026-11-22): JSON accepts them, as RFC 8259 states it.
+
+## Step 58, done: the benchmark on the generated Rust, `rust_stream`'s tests gone (decision 0555)
+
+`simdjson_form_against_simdjson` now times `rerail-json-aot` (tier 1 and tier 2 from the grammar) against simdjson.
+`simdjson_forms_rust_trees_are_the_jits` and `aot_tests`, the tests of `rust_stream`'s output named in the steps
+above, are removed; `json_rusts_tapes_are_the_jits` compares with the JIT in their place. On the M3: `twitter.json`
+77.9 instructions a byte (tier 1 36.3, tier 2 41.2) against simdjson's 5.8, 24.8 times its time; `numbers.json` 69.7
+against 14.3, 5.5 times. The benchmark found that tier 1 refused UTF-8: an error read a name (`high`) the grammar
+defines again after it.
+
+## Step 57, done: the cells at constant widths (decision 0554)
+
+The generated parser names its language's widths (`WIDTHS`) and calls the writer's open, leaf and close at them as
+constants (`Fixed`): each column's offset and each cell's width known where the code is compiled, a cell one store.
+The writer's other callers keep the state's widths, with the same code.
+
+## Step 56, done: the empty container and the root's closer, in the loop (decision 0553)
+
+Steps 49 and 53 again, from the grammar: a level whose rule is a one-byte opener, what may be empty and a one-byte
+closer peeks at its call for the closer and writes one leaf (`empty!`); where its call returns to the root's end,
+the file's last record is tested first (`last != '}'`).
+
+## Step 55, done: the loop's writer reserved once (decision 0552)
+
+The generated tier 2 reserves its run's room once, as the JIT does, and calls the writer's ops on its state: an
+open, a leaf, a close and a commit cannot fail, and the writer's failure is read once after the walk. On the way,
+`reserve_final` had reserved no laid entry for a run's blocks (only for the blocks made before it).
+
+## Step 54, done: JSON's Rust from the grammar, in one loop (decision 0551)
+
+Steps 41 to 53 wrote tier 2's Rust from its native IR (`rust_stream`), which 0550 deprecates. The Bitlex compiler
+now writes JSON's parser from the grammar, as it writes Kotlin's: tier 1 from the lexer's statements, as simdjson's
+stage 1 (each token's first byte; no `skip`), and tier 2 from the tree rules as one loop, simdjson's stage 2's
+shape:
+
+| | simdjson's stage 2 | tier 2 as one loop (`rerail-json-aot`) |
+|---|---|---|
+| The walk | `goto` between `object_begin`, `object_field`, `object_continue`, `array_begin`, `array_value`, `array_continue`, `scope_end` | `'run: loop { match st { … } }`: each nested rule's first place, and each place after a level's call |
+| A level | `depth++`, its kind on the stack | its node opened by the caller, its return place pushed, `DEPTH` checked |
+| A value | `switch` on the token's byte | `match` on the next record's first byte; `true`, `false`, `null` by the word |
+| A string | `parse_string` at the quote | read at its token: content and escape leaves, each escape one of its kind's words |
+| A number | `parse_number` | `check number`'s function of its bytes |
+
+Its tapes are the JIT's, byte for byte, in format 16 and 16z, on the tree test's files; the refusals are the JIT's.
+Not yet: a writer with its room reserved once and constant widths, and steps 45 to 53's work in this form.
+
+## Step 53, done: the document's closer checked before the walk (decision 0579)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| The outer container | `last != '}'` before the walk, then `next == index + count` after it | the count after the walk alone | `if s.n == 0 \|\| s.byte(starts[(s.n - 1) * rs]) != 0x7d { refuse }` in the `{` arm (`0x5d` in `[`), then the count |
+
+## Step 52, done: a return two ways (decision 0578)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A container's return | `scope_end`: `d == 0` ends the walk, else `object[d]` | `match ret { 0, 1, 2, _ => refuse }`, and `keep_ret(0)` at the document's calls | `if s.depth == 0 { … } else if ret == 1 { … } else { … }`, no number kept for the document |
+
+## Step 51, done: a close that cannot fail (decision 0577)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A node closed | `close`: two stores, no failure | `s.close::<…>(…)?`, the writer testing for an open node, the bounds and the room | `s.close::<…>(…);`, the writer asserting them |
+
 ## Step 50, done: the end the stream's count, tested once (decision 0546)
 
 | | the lean parser | before | now |

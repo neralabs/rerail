@@ -6,7 +6,7 @@
 //! The warm tier, these with the warm-run tests elsewhere (`.config/nextest.toml`'s `warm` profile):
 //!
 //! ```text
-//! cargo nextest run -p rerail-engine --lib --features test-hooks --profile warm
+//! cargo nextest run -p rerail-tests-corpus --lib --profile warm
 //! ```
 
 use super::CorpusDocs;
@@ -36,6 +36,8 @@ struct Corpus {
     dir: PathBuf,
     marker: String,
     program: String,
+    /// The relation whose rows a run reads back (`Ran::rows`).
+    output: &'static str,
     runs: usize,
 }
 
@@ -67,15 +69,20 @@ impl Ran {
 
 impl Corpus {
     fn new(name: &str) -> Corpus {
+        Corpus::of(name, PROGRAM, FILES, "named")
+    }
+
+    /// `files` under `program`, whose `output` a run reads back.
+    fn of(name: &str, program: &str, files: &[(&str, &str)], output: &'static str) -> Corpus {
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension(format!("warm-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let marker = format!("# {name} {:?}\n", std::time::SystemTime::now());
         let rule = dir.join("program.rerail");
-        std::fs::write(&rule, PROGRAM).unwrap();
+        std::fs::write(&rule, program).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
-        let c = Corpus { dir, marker, program, runs: 0 };
-        for (file, body) in FILES {
+        let c = Corpus { dir, marker, program, output, runs: 0 };
+        for (file, body) in files {
             c.write(file, body);
         }
         c
@@ -93,7 +100,7 @@ impl Corpus {
         let out = self.dir.join(format!("out{}", self.runs));
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join(store)));
         let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-        let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "named").unwrap_or_default().into_iter().collect();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, self.output).unwrap_or_default().into_iter().collect();
         let phases: Vec<(String, CorpusDocs)> = report.phase_runs.iter().map(|p| (p.name.clone(), p.report.corpus_docs)).collect();
         let corpus = phases.iter().fold(report.corpus_docs, |a, (_, p)| CorpusDocs {
             from_tape: a.from_tape + p.from_tape,
@@ -108,9 +115,15 @@ impl Corpus {
     /// A cold run, then the warm one over the same store after `edit` (none: the files as they were), and a cold run
     /// over the files as they are then, from an empty store: R10's truth.
     fn cold_then_warm(name: &str, edit: Option<(&str, &str)>) -> (Ran, Ran, BTreeSet<Vec<String>>) {
-        let mut c = Corpus::new(name);
+        Corpus::new(name).then_warm(FILES.len(), edit)
+    }
+
+    /// This corpus's cold run, of at least `documents` documents, then the warm one after `edit`, and a fresh cold
+    /// run's rows (`cold_then_warm`).
+    fn then_warm(mut self, documents: usize, edit: Option<(&str, &str)>) -> (Ran, Ran, BTreeSet<Vec<String>>) {
+        let c = &mut self;
         let cold = c.run_over("kept.sqlite");
-        assert!(cold.corpus.documents >= FILES.len(), "the cold run's corpus batch holds every file's document: {cold:?}");
+        assert!(cold.corpus.documents >= documents, "the cold run's corpus batch holds every file's document: {cold:?}");
         if let Some((file, body)) = edit {
             c.write(file, body);
         }
@@ -181,4 +194,46 @@ fn a_warm_edits_own_batch_makes_the_changed_document_alone() {
     assert_eq!(warm.rows, fresh, "the warm edit's outputs are a cold run's");
     assert_eq!(warm.main.from_tape, 0, "Q332: the run's batch builds no unchanged file's document from its tape: {:?} (warm run: {warm:?})", warm.main);
     assert!(warm.main.made <= 1, "Q332: the run's batch makes the changed document's rows alone: {:?} (warm run: {warm:?})", warm.main);
+}
+
+/// A JavaScript run over the scripts HTML files hold (`.embedded on`, decision 0470 step 2): each name a script calls
+/// that `d.js` defines, at its line. The cross-file rule reads `line` of a node another file's rule found, so it reads
+/// the corpus batch's base relations, the host files' documents among them.
+const HOSTED: &str = ".language javascript\n.embedded on\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"identifier\"), text(c, x).\n.decl defined(x: symbol)\ndefined(x) :- kind(d, \"function_declaration\"), field(d, \"name\", n), text(n, x).\n.decl named(x: symbol, l: number)\nnamed(x, l) :- called(c, x), defined(x), line(c, l).\n.output named\n";
+
+/// The host files, HTML files whose scripts call `foo`, and the script of the run's own grammar that defines it.
+const HOSTS: &[(&str, &str)] = &[
+    ("d.js", "function foo(a) {\n  return a;\n}\n"),
+    ("a.html", "<p>x</p>\n<script>foo(1)</script>\n"),
+    ("b.html", "<script>foo(2); bar()</script>\n"),
+    ("c.html", "<script>solo()</script>\n"),
+];
+
+/// Decision 0512 on a warm run: a file read for its programs is two documents, its text and its tree (a guest of the
+/// file), and an unchanged one's are made when first read, as any unchanged file's are (Q332). The warm run builds
+/// neither from its tape, so it builds no document at all.
+#[test]
+fn a_warm_run_builds_no_unchanged_host_files_documents() {
+    let (_, warm, fresh) = Corpus::of("hosts", HOSTED, HOSTS, "named").then_warm(2 * HOSTS.len() - 1, None);
+    assert_eq!(warm.rows, fresh, "the warm run's outputs are a cold run's");
+    // Each file starts with its marker's line: foo is defined at d.js's line 2 and called at a.html's 3 and b.html's 2, the
+    // files' lines, not the scripts' own (decision 0512).
+    assert_eq!(fresh, [["foo", "2"], ["foo", "3"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect(), "foo at its definition's and its calls' lines");
+    assert_eq!(warm.corpus.from_tape, 0, "Q332: no unchanged host file's documents are built from their tape: {:?} (warm run: {warm:?})", warm.corpus);
+    assert_eq!(warm.corpus.parsed, 0, "Q332: no unchanged host file is parsed for the corpus batch: {:?} (warm run: {warm:?})", warm.corpus);
+}
+
+/// An edit of one host file: the unchanged host files' texts, trees and programs are pending, the changed one's old
+/// documents are made whole (`hit_document`, its programs with them), and the edit's outputs are a cold run's.
+#[test]
+fn a_warm_edit_of_a_host_file_reads_as_a_cold_run() {
+    let (_, warm, fresh) = Corpus::of("hosts-edit", HOSTED, HOSTS, "named").then_warm(2 * HOSTS.len() - 1, Some(("c.html", "<p>y</p>\n<p>z</p>\n<script>solo(); foo(4)</script>\n")));
+    assert_eq!(warm.rows, fresh, "the warm edit's outputs are a cold run's");
+    // Q332 for host files: the run's batch builds no unchanged host file's documents from their tape, and makes the
+    // changed file's three alone (its text, its tree and its script's: `d.js`'s one and each host file's three are
+    // the batch's 10). Its plans' statistics of `kind` are `node`'s kind column's, patched by the edit
+    // (`Stats::kinds_counted`), not counted off every document.
+    assert_eq!(warm.main.from_tape, 0, "Q332: the run's batch builds no unchanged host file's documents: {:?} (warm run: {warm:?})", warm.main);
+    assert!(warm.main.made <= 3, "Q332: the run's batch makes the changed file's three documents' rows alone: {:?} (warm run: {warm:?})", warm.main);
+    assert!(fresh.contains(&vec!["foo".to_owned(), "4".to_owned()]), "the edit's call of foo, at c.html's line 4 (its marker's, two paragraphs, its script): {fresh:?}");
 }

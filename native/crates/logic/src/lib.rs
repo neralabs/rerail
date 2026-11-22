@@ -114,7 +114,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::tape;
     pub use rerail_facts::code_rule_dsl::text;
     pub use rerail_lang::code_rule_dsl::tree;
-    pub mod typing;
+    pub use rerail_typing::code_rule_dsl::typing;
     pub mod value {
         pub use rerail_lang::code_rule_dsl::value::text_regex;
         #[allow(unused_imports)]
@@ -136,12 +136,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::value::text_regex::MAX_STRING_BYTES;
     }
-    #[path = "waves"]
-    pub mod waves {
-        pub mod owner;
-        pub mod schedule;
-        pub mod storage;
-    }
+    pub use rerail_setfix::code_rule_dsl::waves;
     #[allow(unused_imports)]
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) use crate::code_rule_dsl::fixtures::{fixtures_dir, oracle};
@@ -156,6 +151,5 @@ pub mod code_rule_dsl {
     #[allow(unused_imports)]
     use std::sync::Arc;
 }
-#[path = "../../../src/threads.rs"]
-pub mod threads;
+pub use rerail_setfix::threads;
 // cratify: mounts end

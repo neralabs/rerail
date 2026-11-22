@@ -4,7 +4,7 @@ use super::*;
 
 /// The engine stratum `key` ran on, and why (the first reason given; one loop per call).
 /// Records where native stratum `key` ran (`plan::placement`), its shape, the work it did and the CPU it took.
-pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Placement, shape: &crate::code_rule_dsl::logic::plan::placement::Shape, work: u64, cpu: f64, device: Option<&DeviceReport>) {
+pub fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Placement, shape: &crate::code_rule_dsl::logic::plan::placement::Shape, work: u64, cpu: f64, device: Option<&DeviceReport>) {
     if !on() {
         return;
     }
@@ -32,6 +32,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 in_place: u64::from(d.in_place),
                 sorts: u64::from(d.sorts),
                 sort_hits: u64::from(d.sort_hits),
+                moved: u64::from(d.moved),
                 rows: d.rows,
                 distinct: d.distinct,
                 placed: d.placed,
@@ -39,7 +40,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 made: d.made,
                 waved: u64::from(d.waved),
                 arena_reruns: u64::from(d.arena_reruns),
-                sized: u64::from(d.sized),
+                levels: u64::from(d.levels),
                 screened: u64::from(d.screened),
             });
             true
@@ -721,9 +722,9 @@ fn metal_summary(r: &mut String, state: &State) {
         let _ = writeln!(r, "  {form:<26} {:<4} {n:>6} launches {wall:>9.2} s wall {cpu:>9.2} s job CPU ({:.2} ms wall a launch)", lane.name(), wall * 1e3 / *n as f64);
     }
     let _ = writeln!(r, "  matcher label passes: {label_gpu:.1} ms on the GPU (command buffers); the GPU lane's wall less it is the host's part and the waits");
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     let (begun, beside) = rerail_accel::gpu::programs_begun();
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     let (begun, beside) = (0, 0);
     if begun > 0 {
         let _ = writeln!(r, "  GPU lane programs: {begun} batches begun, {beside} of them while another ran (decision 0344: one's host part beside another's command buffers)");

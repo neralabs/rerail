@@ -1,6 +1,7 @@
 //! The N-API surface: the `CodeRuleDslWorkspace` class, the lease that guards its state, and the
 //! storage, apply, completion and result page async tasks.
 
+use rerail_store::Canonical as _;
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
 use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
@@ -18,7 +19,7 @@ use super::results::{
     serialize_result_page,
 };
 use super::secret_names::{SecretNamePatterns, SecretNames};
-use super::storage::{Attached, StorageContext, attach_storage, unix_seconds};
+use super::storage::{Attached, StorageContext, attach_storage};
 use super::{
     CLAUSE_WORK_BUDGET, CandidateSets, STORED_RESULT_UNAVAILABLE, WorkspaceState, check_closed,
 };
@@ -35,7 +36,7 @@ use crate::code_rule_dsl::prof::release_allocator_memory;
 use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
-use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
+use crate::content_store::{OperationDeadline, StoreError};
 use crate::content_store::analysis_scope::{self, AnalysisOwner, AnalysisRun};
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
@@ -65,8 +66,7 @@ pub struct CodeRuleDslWorkspace {
     /// Whether a code rule has an AST clause in a family whose files read their nearest
     /// `package.json`, answered without the state lock.
     pub(super) package_manifests: AtomicBool,
-    #[napi(skip)]
-    pub closed: Arc<AtomicBool>,
+    #[napi(skip)] pub closed: Arc<AtomicBool>,
     /// What the workspace's runs share by design (decision 0442): its own, as apart from another workspace's as one
     /// in another process.
     #[napi(skip)] pub shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
@@ -305,7 +305,7 @@ impl AnalysisScopeRun {
         if !run.is_open() {
             return Err(invalid("analysis scope run has finished"));
         }
-        if store != run.store_path() && !store.canonicalize().ok().zip(run.store_path().canonicalize().ok())
+        if store != run.store_path() && !store.canonical().ok().zip(run.store_path().canonical().ok())
             .is_some_and(|(requested, owned)| requested == owned) {
             return Err(invalid("analysis scope run belongs to another content store"));
         }
@@ -1176,6 +1176,9 @@ impl Task for WorkspaceStorageTask {
             // The task's run, on the workspace's shared object (decision 0442).
             let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             check_closed(&self.closed)?;
+            // Every write of the attach waits on other writers for one deadline in all: the store's open, the
+            // analysis scope's acquisition and the snapshot's publication (which joins this one).
+            let _deadline = OperationDeadline::enter();
             // A workspace Git cannot describe (no repository, an unreadable untracked directory, a
             // corrupt index) attaches no store: the host walks it, reporting what it cannot read,
             // and interactive edits evaluate without reuse. Only a root outside any repository is
@@ -1250,17 +1253,16 @@ impl Task for WorkspaceStorageTask {
                 deferred,
             )?;
             let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
+            let unavailable = |reason: String| StorageAttachment {
+                attached: false,
+                reason: Some(reason),
+                cache_unavailable: true,
+                discovery_milliseconds,
+                publication_milliseconds,
+            };
             let context = match attached {
                 Attached::Storage(context) => context,
-                Attached::Unavailable(reason) => {
-                    return Ok(StorageAttachment {
-                        attached: false,
-                        reason: Some(reason),
-                        cache_unavailable: true,
-                        discovery_milliseconds,
-                        publication_milliseconds,
-                    });
-                }
+                Attached::Unavailable(reason) => return Ok(unavailable(reason)),
             };
             let owner = if scoped_after {
                 if let Err(error) = check_store_identity(&context.store, self.expected_store.as_deref()) { return Ok(cache_failed(error)); }
@@ -1954,7 +1956,7 @@ impl Task for WorkspaceCompletionTask {
             // One deadline for the publication under the lock and the completion write after it,
             // so an apply waiting on the lock waits at most one.
             let _deadline = OperationDeadline::enter();
-            let (storage, catalog, revision, server_graph) = {
+            let (storage, catalog, server_graph) = {
                 let mut state = self.lock_state()?;
                 let Some(storage) = state.storage.clone() else {
                     return Ok(());
@@ -1973,33 +1975,18 @@ impl Task for WorkspaceCompletionTask {
                     .code_rules
                     .iter()
                     .any(|code_rule| code_rule.reads_server_graph());
-                (storage, catalog, i64::from(state.revision), server_graph)
+                (storage, catalog, server_graph)
             };
-            let completed_at = unix_seconds()?;
-            let written = if let Some(repository) = &storage.repository {
-                let mut manifests = super::ingest::repository_context(
-                    repository.worktree_root.join(&storage.repository_prefix),
-                    server_graph,
-                );
-                let directories =
-                    reusable_directories(repository, &storage.repository_prefix, &mut *manifests);
-                storage.store.complete_directories(
-                    WorkspaceCompletion {
-                        workspace_id: storage.workspace_id,
-                        revision,
-                        completed_at,
-                    },
-                    catalog,
-                    &directories,
-                )
-            } else {
-                storage.store.complete_workspace_revision(
-                    storage.workspace_id,
-                    revision,
-                    catalog,
-                    completed_at,
-                )
+            let Some(repository) = &storage.repository else {
+                return Ok(());
             };
+            let mut manifests = super::ingest::repository_context(
+                repository.worktree_root.join(&storage.repository_prefix),
+                server_graph,
+            );
+            let directories =
+                reusable_directories(repository, &storage.repository_prefix, &mut *manifests);
+            let written = storage.store.complete_directories(catalog, &directories);
             if matches!(written, Err(StoreError::Busy)) {
                 self.lock_state()?
                     .note_store_busy("while recording repository reuse");

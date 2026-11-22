@@ -4,9 +4,9 @@
 //! - **Programs.** Its two programs (`source`, the program as demanded; `lowered`, as lowered) are each kept as their
 //!   `.rerail` text (`program_text`), a source of the store by its sha256, and read back by the rr parser straight into a
 //!   program: nothing is lowered or joined again.
-//! - **Pointer.** One facts-memo entry (decision 0052) under the program text's source, for the run's plan: what
-//!   preparing found (`prepared_*` relations, small: per relation or per intern call, not per node) and the two
-//!   programs' digests (`prepared_program`). A run reads the pointer and the two texts; when any is gone it prepares.
+//! - **Pointer.** Kept facts of the store (t33 step 2, `pointer`), one partition a program: what preparing found
+//!   (`prepared_*` relations, small: per relation or per intern call, not per node) and the two programs' digests
+//!   (`prepared_program`). A run reads the pointer and the two texts; when any is gone it prepares.
 //!
 //! The plan names what preparing reads besides the texts: the engine build, the grammar version, the dialect and what
 //! the run added to the program (`prepared_key`). The split (`file_local::programs_of`) is a function of the lowered
@@ -28,17 +28,14 @@ use crate::code_rule_dsl::logic::front::Value;
 use crate::code_rule_dsl::logic::program_facts::{self, Facts};
 use crate::code_rule_dsl::logic::program_text;
 use crate::code_rule_dsl::logic::strings::Vocabulary;
-use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreError, StoreResult};
+use crate::content_store::{ContentStore, FactsPlanSet, HashKey, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155; 106: the
-/// decisions preparing made, decision 0269).
-const POINTER: u32 = crate::content_store::live_fact_schema(106);
-
-/// The path a lookup names. The entries read no path (`path_dependent: false`); the store keeps them under none.
-const PATH: &str = "rerail/prepared";
+/// decisions preparing made, decision 0269). It names the shipped pointer (`shipped_key`).
+const POINTER: u32 = 106;
 
 /// The pointer's plan: the engine build, the grammar version and `key` (the program's texts, the dialect and the
 /// run's additions).
@@ -391,6 +388,7 @@ pub fn prepared_of(
         split,
         interned,
         documents: Default::default(),
+        runs: None,
         cone: Default::default(),
         maintained: Default::default(),
         parts: Default::default(),
@@ -443,22 +441,19 @@ pub(super) enum Found {
 pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<(Prepared, Vec<SourceId>, Found)>> {
     super::memo::off();
     let start = std::time::Instant::now();
-    let set = pointer_plan(key);
-    let kept = match source {
-        Some(source) => store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?.results.remove(&set.plans[0]).map(|r| r.entry),
-        None => None,
-    };
-    let entry: std::borrow::Cow<'static, [u8]> = match kept {
-        Some(entry) => entry.into(),
+    // The store's, where its program's text is stored (a pointer is kept only beside its text, `record`).
+    let kept = source.and_then(|_| pointer::get(store, key));
+    let (mut facts, size) = match kept {
+        Some(facts) => (facts, 0),
         None => match crate::code_rule_dsl::logic::rr::images::shipped().and_then(|b| b.get(shipped_key(key))) {
             Some(bytes) => {
                 crate::code_rule_dsl::prof::count("corpus.prepared_shipped", 1);
-                bytes.into()
+                let Ok(facts) = program_facts::decode(bytes) else { return Ok(None) };
+                (facts, bytes.len())
             }
             None => return Ok(None),
         },
     };
-    let Ok(mut facts) = program_facts::decode(&entry) else { return Ok(None) };
     let mut texts: BTreeMap<String, [u8; 32]> = BTreeMap::new();
     for row in facts.remove(PROGRAM).unwrap_or_default() {
         let [Value::Str(name), Value::Str(digest)] = row.as_slice() else { return Ok(None) };
@@ -497,8 +492,8 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
     };
     let got = prepared_of(&facts, source, version, dialect);
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
-        eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of facts; read {:.3} s, to a prepared program {:.3} s{}",
-            super::phases::current().unwrap_or_else(|| "main".into()), entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
+        eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of shipped facts; read {:.3} s, to a prepared program {:.3} s{}",
+            super::phases::current().unwrap_or_else(|| "main".into()), size as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
             got.as_ref().err().map(|e| format!("; not read: {e}")).unwrap_or_default());
     }
     Ok(got.ok().map(|p| (p, documents, found)))
@@ -544,11 +539,8 @@ pub fn relocate(
 
 /// The sources of the programs' texts the program `key` names under `source` (`lookup`'s), with neither program read:
 /// for a run that holds the prepared program in memory. Empty when the store keeps none.
-pub(super) fn documents(store: &ContentStore, source: SourceId, key: &[u8; 32]) -> StoreResult<Vec<SourceId>> {
-    let set = pointer_plan(key);
-    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?;
-    let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(Vec::new()) };
-    let Ok(mut facts) = program_facts::decode(&result.entry) else { return Ok(Vec::new()) };
+pub(super) fn documents(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Vec<SourceId>> {
+    let Some(mut facts) = pointer::get(store, key) else { return Ok(Vec::new()) };
     let mut digests = Vec::new();
     for row in facts.remove(PROGRAM).unwrap_or_default() {
         if let [Value::Str(name), Value::Str(digest)] = row.as_slice()
@@ -581,14 +573,18 @@ pub(super) fn record(store: &ContentStore, source: Option<SourceId>, text: Strin
         facts.entry(PROGRAM.to_owned()).or_default().push([Value::Str(name.to_owned().into()), Value::Str(hex(&encoded.digest).into())].into());
         programs.push(encoded);
     }
-    let entry = program_facts::encode(&facts);
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
-    // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships the pointer; its programs'
-    // images ship with `program_text::encode_version`.
-    crate::code_rule_dsl::logic::rr::images::export(shipped_key(key), &entry);
-    let (packed, pieces) = program_text::pack(programs, entry);
+    // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships the pointer, encoded; its
+    // programs' images ship with `program_text::encode_version`.
+    if std::env::var_os("RERAIL_EXPORT_IMAGES").is_some() {
+        crate::code_rule_dsl::logic::rr::images::export(shipped_key(key), &program_facts::encode(&facts));
+    }
+    // The programs' texts (and the run's text, which the pointer is kept beside), by the store's writer in the run's
+    // record; the pointer as kept facts, behind the run.
+    let (packed, pieces) = program_text::pack(programs, Vec::new());
+    pointer::put(store, &text, key, &facts);
     store.record_held("the prepared program", vec![queued(key)], &(source, text, *key, packed), pieces, apply);
 }
+
 
 fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
     let (source, text, key, packed): (Option<SourceId>, String, [u8; 32], program_text::Packed) = crate::content_store::record::codec::from_body("the prepared program", body)?;
@@ -600,10 +596,10 @@ fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_stor
             id
         }
     };
-    let (documents, entry) = program_text::store_packed(cx.store, &packed, cx.pieces)?;
+    let _ = (source, key);
+    let (documents, _) = program_text::store_packed(cx.store, &packed, cx.pieces)?;
     cx.name(documents);
-    let set = pointer_plan(&key);
-    cx.store.put_facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.to_vec() }], &[]).map(drop)
+    Ok(())
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
@@ -611,3 +607,31 @@ fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_stor
 
 // Its tests run in the engine's test binary (its facade of this module mounts `identity_tests.rs`): they read what the
 // engine registers as it loads (the languages, their `.rerail` libraries).
+
+/// The pointer as kept facts of the store (t33 step 2, decisions 0104 and 0456): each of its relations
+/// (`prepared_*`, `prepared_program`) a kept relation of the store's prepared programs' space, the program's rows one
+/// partition (its pointer plan's: the engine build, the grammar version and `key`), held by the run's text's source
+/// and the pointer plan (`kept_entry`), as the facts-memo entry it stood in (decision 0052) was.
+mod pointer {
+    use super::Facts;
+    use crate::code_rule_dsl::logic::plan::kept_entry::Entries;
+    use crate::content_store::{ContentStore, HashKey};
+
+    const ENTRIES: Entries = Entries::new("rerail.prepared");
+
+    fn plan(key: &[u8; 32]) -> [u8; 32] {
+        super::pointer_plan(key).plans[0]
+    }
+
+    /// The program `key`'s pointer, as kept; `None` when the store keeps none (or one that no longer reads).
+    pub(super) fn get(store: &ContentStore, key: &[u8; 32]) -> Option<Facts> {
+        ENTRIES.get(store, Entries::part(&plan(key)))
+    }
+
+    /// Keeps `facts` as the program `key`'s pointer, held by the source of the run's `text`, behind the run.
+    pub(super) fn put(store: &ContentStore, text: &str, key: &[u8; 32], facts: &Facts) {
+        let plan = plan(key);
+        let holder = HashKey::sha256(text.as_bytes()).sha256_bytes().expect("a sha256 key");
+        ENTRIES.put(store, Entries::part(&plan), holder, Some(plan), facts);
+    }
+}

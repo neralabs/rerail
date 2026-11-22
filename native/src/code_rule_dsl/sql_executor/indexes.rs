@@ -5,7 +5,7 @@ use super::*;
 
 /// Native tables already serve contiguous leading prefixes from their complete-row tree.
 /// Keep requirements separate for each alias: two uses of one relation can probe different fields.
-pub(super) fn native<'a>(
+pub fn native<'a>(
     queries: impl IntoIterator<Item = &'a Query>,
 ) -> BTreeMap<String, Vec<usize>> {
     fn block(select: &Select, wanted: &mut BTreeMap<String, BTreeSet<usize>>) {
@@ -74,7 +74,7 @@ pub(super) fn native<'a>(
         .collect()
 }
 
-pub(super) fn wanted(emitted: &plan::emit::Emitted) -> BTreeSet<(String, Vec<u32>)> {
+pub fn wanted(emitted: &plan::emit::Emitted) -> BTreeSet<(String, Vec<u32>)> {
     let tables: BTreeSet<_> = emitted
         .program
         .relations

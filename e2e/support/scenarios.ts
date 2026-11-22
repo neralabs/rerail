@@ -188,6 +188,16 @@ const NO_INNER_HTML = regexRule(
   "Render the text through React instead of assigning innerHTML.",
 );
 
+/** A rule created by you and approved, which a coding agent edited: its copy waits for approval. */
+const NO_ALERT = regexRule(
+  "storefront-no-alert",
+  "steer",
+  "Storefront shows messages in its toast, never with window.alert.",
+  "\\balert\\(",
+  "STOREFRONT-ALERT",
+  "Show the message in the toast instead of alert().",
+);
+
 const NO_DEFAULT_EXPORT = regexRule(
   "storefront-no-default-export",
   "log",
@@ -232,6 +242,31 @@ interface SessionPlan {
   readonly endedAt: number | null;
   readonly index: number;
   readonly daysAgo: number;
+}
+
+/** A place a session's turn end could not check, as its walk records it. */
+type WalkGap = Parameters<SqliteSessionStore["recordDiscoveryGap"]>[1];
+const OVERSIZE = "Source exceeds 1000000 byte policy limit";
+/** What the oldest `mature` session's turn end could not check: a folder, a file too large to read, another worktree's folder. */
+const OLDEST_SESSION_WALK_GAPS: readonly WalkGap[] = [
+  { boundary: "turn", path: "src/vendor/locked", reason: "EACCES: permission denied, opendir '/work/storefront/src/vendor/locked'", key: JSON.stringify(["src/vendor/locked", "EACCES"]) },
+  { boundary: "turn", path: "data/catalog.json", reason: OVERSIZE, key: JSON.stringify(["data/catalog.json", OVERSIZE]) },
+  {
+    boundary: "turn", path: "../storefront-hotfix/src/cache", reason: "EACCES: permission denied, opendir '/work/storefront-hotfix/src/cache'",
+    key: JSON.stringify(["../storefront-hotfix/src/cache", "EACCES"]),
+  },
+];
+
+/**
+ * In `mature`, a step for each of `OLDEST_SESSION_WALK_GAPS`, recorded at the oldest session's turn end, six minutes after
+ * it starts (`recordSession`); none in another scenario.
+ */
+function walkGapSteps(scenario: ScenarioName, context: HistoryContext, plans: readonly SessionPlan[]): Array<{ at: number; run: () => void }> {
+  const oldest = plans.find(plan => plan.index === 0);
+  if (scenario !== "mature" || oldest === undefined) return [];
+  const at = oldest.startedAt + 6 * MINUTE;
+  const session = { host: oldest.host, sessionId: oldest.sessionId, cwd: context.checkoutPath };
+  return OLDEST_SESSION_WALK_GAPS.map(gap => ({ at, run: () => atTime(at, () => context.sessions.recordDiscoveryGap(session, gap)) }));
 }
 
 /** A repository change at an instant: set-up, a setting, a new library rule, a stop. */
@@ -488,7 +523,7 @@ function storedConflict(conflict: Omit<Conflict, "kind" | "status" | "dismissal"
  * on an open card, so the open ones carry the links it must refuse.
  */
 function storefrontConflicts(now: number): StoredConflict[] {
-  const mine = side({ label: "This branch", ref: "main", author: "tbelanger", summary: "Round the order total to cents." });
+  const mine = side({ label: "This branch", ref: "main", author: "akim", summary: "Round the order total to cents." });
   return [
     storedConflict({
       id: OPEN_CONFLICT_ID, shortId: "c4a7e1", quiet: false, question: "src/cart/cart.ts#1-3",
@@ -498,26 +533,26 @@ function storefrontConflicts(now: number): StoredConflict[] {
         hunk: "@@ -1,3 +1,3 @@\n export function total(prices: number[]): number {\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return Math.round(prices.reduce((sum, price) => sum + price, 0));\n",
       },
       theirs: side({
-        label: "PR #398", ref: "refs/pull/398/head", author: "Tim", summary: HOSTILE_TEXT, url: OPEN_PR_URL,
+        label: "PR #398", ref: "refs/pull/398/head", author: "Sam", summary: HOSTILE_TEXT, url: OPEN_PR_URL,
         tip: { at: isoAt(now - 4 * HOUR), pushed: true }, location: "src/cart/cart.ts:2",
         hunk: `@@ -1,3 +1,3 @@\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return prices.reduce((sum, price) => sum + price, 0); // ${HOSTILE_TEXT}\n`,
       }),
       evidence: ["Both change src/cart/cart.ts lines 1–3."],
       detectedAt: isoAt(now - 3 * HOUR),
-      summary: "PR #398 (Tim) is changing function total",
+      summary: "PR #398 (Sam) is changing function total",
     }, "src/cart/cart.ts"),
     storedConflict({
       id: "conflict:package-lock.json#10-14:bump-react", shortId: "5d02b9", quiet: true, question: "package-lock.json#10-14",
       title: "package-lock.json",
       mine: { ...mine, summary: "edits package-lock.json", location: "package-lock.json:12" },
       theirs: side({
-        label: "jbarnes/bump-react", ref: "refs/heads/jbarnes/bump-react", author: "jbarnes", summary: "Bump react to 19.2.0", url: OTHER_REPOSITORY_URL,
+        label: "jdoe/bump-react", ref: "refs/heads/jdoe/bump-react", author: "jdoe", summary: "Bump react to 19.2.0", url: OTHER_REPOSITORY_URL,
         tip: { at: isoAt(now - 2 * HOUR), pushed: false }, location: "package-lock.json:12",
         hunk: "@@ -12 +12 @@\n-      \"version\": \"19.1.0\",\n+      \"version\": \"19.2.0\",\n",
       }),
       evidence: ["Both change package-lock.json lines 10–14."],
       detectedAt: isoAt(now - HOUR),
-      summary: "jbarnes/bump-react (jbarnes) is changing package-lock.json",
+      summary: "jdoe/bump-react (jdoe) is changing package-lock.json",
     }, "package-lock.json"),
     storedConflict({
       id: "conflict:CHANGELOG.md#3-5:pr402", shortId: "7b19d4", quiet: true, question: "CHANGELOG.md#3-5",
@@ -539,7 +574,7 @@ function storefrontConflicts(now: number): StoredConflict[] {
       theirs: side({ label: HOSTILE_TEXT, ref: "refs/pull/391/head", author: HOSTILE_TEXT, summary: "Log payments", url: SCRIPT_URL }),
       evidence: ["Both change src/checkout/payment.ts lines 1–3."],
       detectedAt: isoAt(now - 5 * HOUR),
-      dismissal: { name: "tbelanger", at: isoAt(now - 2 * HOUR) },
+      dismissal: { name: "akim", at: isoAt(now - 2 * HOUR) },
       summary: "PR #391 (Ana) is changing function pay",
     }, "src/checkout/payment.ts"),
   ];
@@ -586,9 +621,17 @@ function addLibraryRule(rule: CodeRule, catalog: () => RuleCatalog, approved = t
 
 /** An edited copy of By Rerail rule `sourceId`, stored as editing one stores it: `<id>-copy`, added where the original is, unapproved. */
 function addRerailRuleCopy(sourceId: string, catalog: () => RuleCatalog): Change["apply"] {
+  return addRuleCopy(() => catalog().documents.get(sourceId)!.rule as CodeRule, catalog);
+}
+
+/**
+ * An edited copy of rule `original()`, stored as `rules add` stores one (of a By Rerail rule, or of your approved rule a
+ * coding agent edited): `<id>-copy`, added to the whole repository, where the original is, unapproved.
+ */
+function addRuleCopy(original: () => CodeRule, catalog: () => RuleCatalog): Change["apply"] {
   return (db, repositoryKey, at) => {
-    const original = catalog().documents.get(sourceId)!.rule as CodeRule;
-    const copy = { ...original, id: `${sourceId}-copy`, revision: original.revision + 1 };
+    const source = original(), sourceId = source.id;
+    const copy = { ...source, id: `${sourceId}-copy`, revision: source.revision + 1 };
     upsertLibraryRule(db, catalog(), copy, "code", { copiedFromRuleId: sourceId, now: at, createdAt: at });
     addAttachment(db, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: copy.id }, at);
   };
@@ -612,7 +655,8 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
       }];
     case "awaiting-approval":
       // Three rules a coding agent wrote into the library (as /rerail-create adds the rules it finds), an edited copy of
-      // a By Rerail rule, and one in the checkout's own .rerail/rules: none approved.
+      // a By Rerail rule, a coding agent's edited copy of your approved rule, and one in the checkout's own .rerail/rules:
+      // none approved but your rule.
       return [{
         checkout: { ...STOREFRONT, files: { ...STOREFRONT_FILES, ".rerail/rules/no-legacy-client.json": JSON.stringify(NO_LEGACY_CLIENT) } },
         recordedAt: now - HOUR,
@@ -622,6 +666,8 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
           { at: now - 29 * MINUTE, apply: addLibraryRule(NO_INNER_HTML, catalog, false) },
           { at: now - 28 * MINUTE, apply: addLibraryRule(NO_DEFAULT_EXPORT, catalog, false) },
           { at: now - 27 * MINUTE, apply: addRerailRuleCopy("typescript-eslint-no-explicit-any", catalog) },
+          { at: now - 26 * MINUTE, apply: addLibraryRule(NO_ALERT, catalog) },
+          { at: now - 25 * MINUTE, apply: addRuleCopy(() => NO_ALERT, catalog) },
         ],
         ...noSessions,
       }];
@@ -753,6 +799,7 @@ export async function seedScenario(scenario: ScenarioName, folder: string, now: 
       const steps = [
         ...plan.changes.map(change => ({ at: change.at, run: () => atTime(change.at, () => change.apply(db, recorded.repositoryKey, change.at)) })),
         ...plan.sessions.map(session => ({ at: session.startedAt, run: () => recordSession(context, session, plan.schedules, plan.declines ?? [], violating) })),
+        ...walkGapSteps(scenario, context, plan.sessions),
       ].sort((left, right) => left.at - right.at);
       for (const step of steps) step.run();
       const listing = listRepositories(db).find(repository => repository.repositoryKey === recorded.repositoryKey)!;

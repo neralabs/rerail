@@ -183,7 +183,7 @@ impl RulePass for Memberships {
 /// (`@str_cmp($t, $s) > 0`), and a kind's or field's membership tested on atoms (`@in`).
 struct Lowering<'a> {
     k: &'a Constants<'a>,
-    domains: &'a Domains,
+    pub domains: &'a Domains,
     cols: &'a HashMap<&'a str, Vec<Option<Domain>>>,
 }
 

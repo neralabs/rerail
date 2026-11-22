@@ -142,7 +142,7 @@ by any caller in the process, so two callers of different trust could not be kep
 - Step 5, as done (2026-11-19). `global-state.txt` holds only `stays` (293 entries); no class that moves is left.
   At its merge into the sync branch (2026-11-19) the statics that branch had added were classed, each with its
   reason, and two left as `shared`: the pinned Git revisions (`git_snapshot`'s `VIEWS` and its count), a read under
-  a root from any run in the process goes to them (work queue Q450).
+  a root from any run in the process goes to them (work queue Q455).
   - What moved:
     - The machine's: the pool's accounts, the device and its pipelines, the price and cost tables, the lanes, the
       batch pricer, the roofline, the CPU slot for workspace work.

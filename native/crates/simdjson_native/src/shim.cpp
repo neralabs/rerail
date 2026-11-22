@@ -29,6 +29,12 @@
 #if defined(_MSC_VER) && !defined(__clang__)
 #define RERAIL_TARGET(T)
 #define simdjson_inline_lambda
+#elif defined(__clang__)
+// Clang's region (`RERAIL_TARGET_REGION`) reaches no lambda's call operator: a lambda in a region takes its target
+// itself, `RERAIL_LAMBDA_TARGET`, which each region names (an `always_inline` callee of the region's target is
+// inlined into no function without it).
+#define RERAIL_TARGET(T) __attribute__((target(T)))
+#define simdjson_inline_lambda __attribute__((always_inline, target(RERAIL_LAMBDA_TARGET)))
 #else
 #define RERAIL_TARGET(T) __attribute__((target(T)))
 #define simdjson_inline_lambda __attribute__((always_inline))
@@ -334,12 +340,14 @@ bool cpu_has_sha() {
 
 #if SIMDJSON_IMPLEMENTATION_ARM64
 RERAIL_TARGET_REGION(RERAIL_ARM_SHA)
+#define RERAIL_LAMBDA_TARGET RERAIL_ARM_SHA
 namespace simdjson {
 namespace arm64 {
 namespace {
 #define RERAIL_IMPLEMENTATION "arm64"
 #include "kernel.inc"
 #undef RERAIL_IMPLEMENTATION
+#undef RERAIL_LAMBDA_TARGET
 }  // namespace
 }  // namespace arm64
 }  // namespace simdjson
@@ -348,12 +356,14 @@ RERAIL_UNTARGET_REGION
 
 #if SIMDJSON_IMPLEMENTATION_ICELAKE
 RERAIL_TARGET_REGION("avx512f,avx512dq,avx512cd,avx512bw,avx512vbmi,avx512vbmi2,avx512vl,avx2,bmi,bmi2,pclmul,lzcnt,popcnt," RERAIL_NI_SHA)
+#define RERAIL_LAMBDA_TARGET "avx512f,avx512dq,avx512cd,avx512bw,avx512vbmi,avx512vbmi2,avx512vl,avx2,bmi,bmi2,pclmul,lzcnt,popcnt," RERAIL_NI_SHA
 namespace simdjson {
 namespace icelake {
 namespace {
 #define RERAIL_IMPLEMENTATION "icelake"
 #include "kernel.inc"
 #undef RERAIL_IMPLEMENTATION
+#undef RERAIL_LAMBDA_TARGET
 }  // namespace
 }  // namespace icelake
 }  // namespace simdjson
@@ -362,12 +372,14 @@ RERAIL_UNTARGET_REGION
 
 #if SIMDJSON_IMPLEMENTATION_HASWELL
 RERAIL_TARGET_REGION("avx2,bmi,bmi2,pclmul,lzcnt,popcnt," RERAIL_NI_SHA)
+#define RERAIL_LAMBDA_TARGET "avx2,bmi,bmi2,pclmul,lzcnt,popcnt," RERAIL_NI_SHA
 namespace simdjson {
 namespace haswell {
 namespace {
 #define RERAIL_IMPLEMENTATION "haswell"
 #include "kernel.inc"
 #undef RERAIL_IMPLEMENTATION
+#undef RERAIL_LAMBDA_TARGET
 }  // namespace
 }  // namespace haswell
 }  // namespace simdjson
@@ -376,12 +388,14 @@ RERAIL_UNTARGET_REGION
 
 #if SIMDJSON_IMPLEMENTATION_WESTMERE
 RERAIL_TARGET_REGION("sse4.2,pclmul,popcnt," RERAIL_NI_SHA)
+#define RERAIL_LAMBDA_TARGET "sse4.2,pclmul,popcnt," RERAIL_NI_SHA
 namespace simdjson {
 namespace westmere {
 namespace {
 #define RERAIL_IMPLEMENTATION "westmere"
 #include "kernel.inc"
 #undef RERAIL_IMPLEMENTATION
+#undef RERAIL_LAMBDA_TARGET
 }  // namespace
 }  // namespace westmere
 }  // namespace simdjson

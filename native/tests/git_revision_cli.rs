@@ -295,7 +295,9 @@ fn failed_batch_reports_each_policy_in_argument_order() {
     let f = Checkout::new();
     let out = f.area.path().join("batch");
     let broken = f.area.path().join("bad references.rerail");
-    fs::write(&broken, "#include \"python/references.rerail\"\n.policy \"broken\" revision 1\n.language python\n.references {\"unknownParameter\":true}\n.violation Edge(at: node) \"edge\"\nEdge(n) :- reference_edge(n,_,_).\n").unwrap();
+    // The reference graph is `python/references.rerail`'s rules (decision 0483), which read the `.references`
+    // setting: without the include, `reference_edge` has no rule and the setting is never read.
+    fs::write(&broken, ".policy \"broken\" revision 1\n.language python\n#include \"python/references.rerail\"\n.references {\"unknownParameter\":true}\n.violation Edge(at: node) \"edge\"\nEdge(n) :- reference_edge(n,_,_).\n").unwrap();
     for scope in [Some("batch"), None] {
         for bad_first in [true, false] {
             let (first, second) = if bad_first {
@@ -944,7 +946,7 @@ fn the_documented_head_queries_preserve_the_worktree_in_answers_and_errors() {
             .map(|(program, _)| program).find(|program| program.lines().any(|line| line == format!(".output {relation}"))).unwrap()
     };
     let view_tip = example(include_str!("../../docs/rule-syntax/git.md"), "view_tip");
-    let empty = example(include_str!("../../docs/final-shape/notes/git-inputs/library.md"), "empty_head_message");
+    let empty = example(include_str!("../../docs/rule-syntax/git.md"), "empty_head_message");
     let main_row = evaluate(&f.repo, view_tip, "view_tip");
     let link_row = evaluate(&linked, view_tip, "view_tip");
     let main: Vec<_> = main_row.trim_end().split('\t').collect();

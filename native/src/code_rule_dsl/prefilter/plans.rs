@@ -1,5 +1,5 @@
 //! Gather the complete rule frontier before lowering SQL. Pointer identities retain shared plans.
-//! From Pulling-it-all-together's `matcher/anchors/sql/plans.rs`, without its per-file demand
+//! From PIAT's `matcher/anchors/sql/plans.rs`, without its per-file demand
 //! discovery (`for_file`: candidates are selected for a batch of tapes, never one file at a time)
 //! and its profile provenance.
 use crate::code_rule_dsl::{
@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
 };
 
-pub(in crate::code_rule_dsl) fn plans<'a>(
+pub fn plans<'a>(
     rules: impl IntoIterator<Item = &'a CompiledCodeRule>,
 ) -> BTreeMap<u32, Vec<Arc<AnchorPlan>>> {
     fn query(q: &Query, out: &mut BTreeMap<u32, Vec<Arc<AnchorPlan>>>, seen: &mut HashSet<usize>) {

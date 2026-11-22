@@ -271,7 +271,7 @@ impl<'v> Program<'v> {
 
     /// An input with one value for the whole run (`file_local::run_constant`).
     fn run_constant(&self, rel: &str) -> bool {
-        option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && self.f.is_input(rel))
+        option_input(rel) || (crate::code_rule_dsl::logic::plan::phased::is_phased(rel) && self.f.is_input(rel))
     }
 
     /// An input a file-local rule may join and stay file-local: the run's options alone. An earlier phase's export is
@@ -314,7 +314,7 @@ impl<'v> Program<'v> {
     fn keys(&self) -> Keys {
         let mut g = hasher();
         // The inputs a split asks about: derived, facts, or a phase's exports.
-        let mut inputs: Vec<&str> = self.f.inputs().filter(|i| self.f.derives(i) || self.fact(i) || crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(i)).collect();
+        let mut inputs: Vec<&str> = self.f.inputs().filter(|i| self.f.derives(i) || self.fact(i) || crate::code_rule_dsl::logic::plan::phased::is_phased(i)).collect();
         inputs.sort_unstable();
         inputs.hash(&mut g);
         let mut facts: Vec<&str> = self.v.all_facts().into_iter().filter(|f| !f.about()).map(|f| self.v.text(f.name())).collect();

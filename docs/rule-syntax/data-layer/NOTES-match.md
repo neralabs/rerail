@@ -15,9 +15,7 @@ matching_architecture use it.
 
 (a) The stock `rrlab dl` stops with an error on these four checks, before it runs any rule. Their batch-10 records
 write `expected` in shapes that `dl.py` does not read (see "Harness change request" below). I scored them with a
-wrapper that only changes how those records are read:
-`/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-More-ergonomic-rule-syntax/1ecc536f-2d93-443b-ac6f-d3945bb921ac/scratchpad/dl/match/dlx.py`.
-It loads `dl.py` and changes only `_load` and `events`.
+wrapper that only changes how those records are read (`dlx.py`, in a session scratchpad, not kept). It loads `dl.py` and changes only `_load` and `events`.
 
 (b) In 47 events, conditional_architecture is called through `conditional_architecture_findings`. That function
 returns every finding of the facts module, and the findings have no code. The plugin keeps only the findings whose
