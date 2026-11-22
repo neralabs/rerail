@@ -81,6 +81,26 @@ found these differences:
    - The function is simdjson's `bit_indexer::write`: nothing where the bits are none; then four; then two at a time,
      each test inside the one before, to 24; then one at a time.
 
+Later, the same day, a second reading found four more differences, done as follows:
+
+10. **`peek` returns the record's byte** (`u8`), as `walk` reads `*v`. Every arm it feeds is a byte pattern.
+11. **A string's escapes are read as `escaped_string` reads them.**
+    - **No end bound.** Where tier 1 refuses a file whose region is open at its end (`refuses_open_at_end`: an error
+      of the region's fill at the file's last byte), the read tests no bound at the file's end. Before, it tested
+      `x >= len` after each 32 bytes and each escape. `parse` runs no tier 2 on a refused file.
+    - **The second byte decided once.** The pieces' words are two bytes with the lead's first, and the checks' gate
+      is among their second bytes. So the second byte is one `match src[y]`, as `escaped_string`'s `c`: the gate's arm
+      holds the `\u` checks, the other words' arm does nothing, and any other byte is refused. Before, the two bytes
+      were matched against every word, and the `u` was then tested again. `piece_checks` now returns the gate and the
+      code inside it.
+12. **A number's arm is its check's first bytes** (`0x2d | 0x30..=0x39`), as `walk`'s `*v - '0' < 10 || *v == '-'`.
+    Any other byte is the `_`'s refusal, at the same byte where the check refused it before. The rule is: a split
+    kind's own arm, where it is a checked run whose check matches no empty run.
+13. **A check reads its bytes as `number_end` does.**
+    - Where none of a check's bytes is the padding's (a space), its match stops at the padding at the latest. So it
+      reads `b[j]` (still a slice index), not an `Option` at each byte.
+    - Alternatives that are each one byte are one test: the exponent's sign, as in `parse_exponent`.
+
 Implementer's choices:
 - **The string's start.** It stays `q & ~string_tail`, not `structural_start & q`: the JIT's split of a region read
   in parts requires the opener's own mask. The records are still `structural_start`, by the proof in 5.
@@ -88,6 +108,9 @@ Implementer's choices:
   stage 2. The refused files are the same.
 - **The write's stepping** follows the lean parser's `write` (two at a time to 24), with `trailing_zeros` in place of
   `reverse_bits` and `leading_zeros`.
+- **The number's value.** `number_end` also computes the number's value, and refuses an integer past 64 bits
+  (`BigintError`). The grammar's check states no value and no bound on the digits, so tier 2 computes none. It accepts
+  those integers, as the JIT does.
 - **Generic over the grammar.** The proofs, the returns' loop and the separator rule are generic over a grammar's
   statements. Only JSON's grammar meets their conditions here: Kotlin's and `.rerail`'s Rust is unchanged (their
   tier 1s have stages behind).
@@ -116,6 +139,14 @@ Implementer's choices:
     - one `write_indexes`, called at each block with the block before's bits and once after the pass.
   - The JIT's `simdjson_forms_starts_are_simdjsons_indexes` and `simdjson_forms_sixteen_run_is_direct`, on the new
     grammar.
+- **After items 10 to 13:**
+  - JSON's 14 tests pass, with escapes of a byte that is no word (`\x`, `\'`, `\U`), a backslash at the file's end,
+    and every word in one string.
+  - `json_escape_checks_are_tier2s` checks the one `match src[y]`, and that the string has no word match and no
+    `x >= len`.
+  - `json_tier2_is_walks_shape` checks the number's arm and the check's `b[j]` reads and one sign test.
+  - A unit test checks that `refuses_open_at_end` holds for JSON's grammar and fails without its error.
+  - 82 of 82 pass on an aarch64 Linux host.
 - **New unit tests** in `bitlex_lex_rust`:
   - the records proof holds for JSON's grammar, and fails without the new error;
   - `without_lv`'s rewrites;

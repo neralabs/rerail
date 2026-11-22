@@ -742,6 +742,11 @@ Tier 2 against `walk`:
 | A node's bounds | none: the walk's order is its contract | the same: `Cursor::begin`'s contract, checked in a debug build |
 | A run of closers | `ScopeEnd`'s loop, `object[d]` deciding | the places returned to one arm, `'ret: loop { match st { … } }`, a closer `continue 'ret` |
 | A separator, an opener, a `:` | `take!()` | `i += 1` alone; a closer's end kept, its node's |
+| A record's byte | `*v` | `peek`, a `u8` |
+| A string's end bound | none: stage 1 refused an open string | none (tier 1 refuses it, `c_m_in_string`) |
+| An escape's second byte | one branch: `u`, else `ESCAPE_MAP` | one `match src[y]`: `0x75` the checks, the other words, else refused |
+| A number's first byte | a digit or `-` | `0x2d \| 0x30..=0x39`, else refused |
+| A number's reads | `*p`, the padding ending it; the sign one test | `b[j]`; the sign one test; no value computed (the grammar states none) |
 
 Tier 1 against `index`:
 
