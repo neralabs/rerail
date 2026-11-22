@@ -1148,3 +1148,16 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   - CI's step that named `rerail-tests-logic` for `logic::rr::tests` names `rerail-tests-rr`.
   - Tests: on a Linux host, the four crates in full: 878 of 880. The two failures are one pack-data test and the SQL
     report test that runs `node`, which that host lacks.
+  - rerail-tests-compile (38.4k) is now five crates. Two mounts follow what they read: `compile::parse::ruff` goes
+    with resolve, since it reads `binds::ruff`, and `scope::php::flow_tests` goes with value, since it reads the
+    PHP oracle (`value::php::tests`).
+
+    | crate | test lines | what it holds |
+    |---|---:|---|
+    | rerail-tests-resolve | 10.3k | `compile::resolve`, `binds`, `binding_tests`, `order`, `parse::ruff` |
+    | rerail-tests-scope | 6.9k | `scope` (but PHP's flow tests), `module_graph`, `identifier`, `lines` |
+    | rerail-tests-value | 9.6k | `value`, `blade`, `php_view`, `matcher::arguments`, `scope::php::flow_tests` |
+    | rerail-tests-calls | 6.6k | `calls`, `literal`, `eval`, `query`, `soundness`, `embed`, `regexes` |
+    | rerail-tests-compile | 6.9k | the rest of `compile` (parse, format arguments, configuration, values) |
+
+    Tests: on a Linux host, the five crates in full: 752 of 756. The 4 failures are pack-data tests.

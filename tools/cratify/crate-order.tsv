@@ -101,5 +101,9 @@ rerail-tests-corpus	test
 rerail-tests-rr	test
 rerail-tests-sql	test
 rerail-tests-compile	test
+rerail-tests-resolve	test
+rerail-tests-scope	test
+rerail-tests-value	test
+rerail-tests-calls	test
 rerail-tests-matcher	test
 rerail-tests-lang	test

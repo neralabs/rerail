@@ -1,6 +1,6 @@
 //! Blade's Forte parser (`blade::forte`): its lexer, parser, directives, scan and trees. It reads the language's
 //! metavariables and the literal trees' ids (rerail-adapters'), nothing of PHP; the PHP pack (rerail-lang-php)
-//! re-exports it under `blade`, where its view and tape read it. Its tests are rerail-tests-compile's (they compile and
+//! re-exports it under `blade`, where its view and tape read it. Its tests are rerail-tests-value's (they compile and
 //! evaluate rules over Blade documents).
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.

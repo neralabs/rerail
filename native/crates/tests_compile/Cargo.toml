@@ -1,4 +1,4 @@
-# The engine's tests of rule compiling: the compiler, scopes, values, calls, literals and the evaluator (docs/final-shape/proposals/crate-split/incremental-plan.md, step 2).
+# The engine's tests of rule compiling: the compiler's parse, format arguments, configuration and values (docs/final-shape/proposals/crate-split/incremental-plan.md, step 7i).
 # A test crate: its library is its tests (`#![cfg(test)]`). Its manifest is boot's, with boot below it
 # (tools/cratify/test_crates.py), and kept by hand since.
 [package]
@@ -6,7 +6,7 @@ name = "rerail-tests-compile"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The engine's tests of rule compiling: the compiler, scopes, values, calls, literals and the evaluator."
+description = "The engine's tests of rule compiling: the compiler's parse, format arguments, configuration and values."
 
 [features]
 # Every registry language (`languages/<id>.json`) is built by default. A build without `lang-<id>` keeps the
