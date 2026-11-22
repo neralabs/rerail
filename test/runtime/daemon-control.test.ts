@@ -1042,10 +1042,10 @@ describe("a state file Windows left behind", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
-  // An end that leaves the process running after the stop's wait, or that cannot open it while its pid runs, keeps the
-  // record, and the stop says so: a later stop finds the daemon again.
+  // An end that leaves the process running after the stop's kill wait, or that cannot open it while its pid runs, keeps
+  // the record, and the stop says so: a later stop finds the daemon again.
   it.each([
-    ["is still running after the stop's wait", "running", /still running 5s after/u],
+    ["is still running after the stop's kill wait", "running", /still running 5s after/u],
     ["cannot open it while its pid runs", "unread", /could not prove that pid/u],
   ] as const)("keeps the record of a daemon whose engine has no proof when its end %s", async (_how, end, said) => {
     const stateFile = join(home, DAEMON_STATE_FILE);

@@ -184,8 +184,8 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
   });
 
   // The end waits on the process's handle with no limit of its own; only a PowerShell or an end that hangs meets the
-  // call's one bound, the stop's wait, and is ended there.
-  it("ends a PowerShell whose end of a process does not answer at the stop's wait, and reports nothing ended", async () => {
+  // call's one bound, the stop's wait and its kill wait, and is ended there.
+  it("ends a PowerShell whose end of a process does not answer at the stop's wait and its kill wait, and reports nothing ended", async () => {
     const seen: childProcess.SpawnSyncOptions[] = [];
     await standIn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], seen);
     const asked = Date.now();
