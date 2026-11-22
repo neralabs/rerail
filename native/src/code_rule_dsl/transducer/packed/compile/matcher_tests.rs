@@ -2017,3 +2017,180 @@ fn ast_pattern_end_of_children_meets_implied_tokens() {
         assert_eq!(core, want, "ast-grep-core");
     }
 }
+
+/// The wave's labels on Metal against the CPU's, label by label (decision 0540's wave, Metal only): every Python clause
+/// in one wave, every clause active on every tape, as Metal labels them (`spread`). Each label whose nodes differ is
+/// named, in id order (a clause's labels in its evaluation order, an earlier clause's before a later's), with its
+/// clause, its kind and the first nodes it misses or adds: the first is where the two first part.
+///
+/// It holds what the whole wave found on Metal (0540 step 7): a formula pass starts within its demand (`Domain::Within`,
+/// 0460); a chain's levels are a loop of the run's phases, not a run again with more
+/// (three runs spent the evaluation's launches); and a rerun's launches are the reruns' budget's (a third run's were
+/// left out). `RERAIL_WAVE_CLAUSES` and `RERAIL_WAVE_PICK` narrow it to the clauses where two part.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn the_waves_labels_on_metal_are_the_cpus() {
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(1);
+    }
+    let compiled = clauses();
+    let mut names = Vec::new();
+    let mut lowered = Vec::new();
+    for (policy, compiled) in &compiled {
+        for (clause, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                names.push(format!("{policy}/{clause}"));
+                lowered.push(matcher);
+            }
+        }
+    }
+    // `RERAIL_WAVE_CLAUSES`: the first that many clauses only; `RERAIL_WAVE_PICK`: those clauses (`2,173`) only.
+    let most = std::env::var("RERAIL_WAVE_CLAUSES").ok().and_then(|n| n.parse().ok()).unwrap_or(lowered.len());
+    lowered.truncate(most);
+    names.truncate(most);
+    if let Ok(pick) = std::env::var("RERAIL_WAVE_PICK") {
+        let pick = pick.split(',').filter_map(|n| n.trim().parse::<usize>().ok()).collect::<BTreeSet<_>>();
+        let keep = |at: &usize| pick.contains(at);
+        lowered = lowered.into_iter().enumerate().filter(|(at, _)| keep(at)).map(|(_, m)| m).collect();
+        names = names.into_iter().enumerate().filter(|(at, _)| keep(at)).map(|(_, n)| n).collect();
+    }
+    if let (Some(name), Some(last)) = (names.last(), lowered.last()) {
+        let kinds = last.labels.defs.iter().map(|def| match def {
+            Label::Pattern(..) => "pattern",
+            Label::Constrained(..) => "constrained",
+            Label::Roots(..) => "roots",
+            Label::Targets(..) => "targets",
+            Label::Count { .. } => "count",
+            Label::Complement(_) => "complement",
+            Label::Fact(..) => "fact",
+            Label::Empty => "empty",
+        });
+        eprintln!("last clause: {name}: {}", kinds.collect::<Vec<_>>().join(" "));
+    }
+    let wave = LoweredWave::new(&lowered.iter().collect::<Vec<_>>()).unwrap();
+    let active = vec![vec![true; tapes.len()]; wave.clauses.len()];
+    let cpu = wave.labelled(&tapes, &active).unwrap();
+    // With the root records from every node, as the engine's demand runs them (`waves::matches`).
+    let programs = wave.programs();
+    let every: Vec<Vec<u32>> = tapes.iter().map(|tape| (0..tape.transducer_len() as u32).collect()).collect();
+    let jobs = crate::code_rule_dsl::transducer::packed::RootJobs { programs: programs.iter().collect(), starts: vec![every; programs.len()] };
+    drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
+    let (metal, outcome) = wave.labelled_metal(&tapes, &active, Some(&jobs)).unwrap();
+    // Under `RERAIL_PROF`: the device formulas' text tests, read from a row or not.
+    for (name, (_, calls)) in crate::code_rule_dsl::prof::stages().iter().filter(|(name, _)| name.starts_with("gpu.anchor") || name.starts_with("gpu.formula")) {
+        eprintln!("  prof {name}: {calls}");
+    }
+    let total = |views: &[TapeDoc]| -> (usize, usize) {
+        let sets = views.iter().flat_map(|view| view.transducer_labels().iter());
+        sets.fold((0, 0), |(bits, nonzero), set| {
+            let ones = set.iter().map(|w| w.count_ones() as usize).sum::<usize>();
+            (bits + ones, nonzero + usize::from(ones > 0))
+        })
+    };
+    eprintln!(
+        "wave: {} clauses, {} labels, {} tapes; Metal {} launches in {} command buffers, {:.1} ms on the device, {} rounds, \
+         {} unfinished, interpreted {}, {} label words back; set bits, nonzero labels: CPU {:?}, Metal {:?}",
+        wave.clauses.len(),
+        wave.labels,
+        tapes.len(),
+        outcome.dispatches,
+        outcome.command_buffers,
+        outcome.device * 1e3,
+        outcome.rounds,
+        outcome.unfinished.len(),
+        outcome.interpreted,
+        outcome.labels.len(),
+        total(&cpu),
+        total(&metal)
+    );
+    let kind = |def: &Label| match def {
+        Label::Pattern(..) => "pattern",
+        Label::Constrained(..) => "constrained",
+        Label::Roots(..) => "roots",
+        Label::Targets(..) => "targets",
+        Label::Count { .. } => "count",
+        Label::Complement(_) => "complement",
+        Label::Fact(..) => "fact",
+        Label::Empty => "empty",
+    };
+    // A pass that starts within its demand (`Domain::Within`, decision 0460) may label more outside it, where no reader
+    // reads its value: on Metal a recursive group's anchors read the group's own labels as every node (Q133), so a demand
+    // that reads them is wider there. Such a label, and a complement of one, are compared within the demand, as the
+    // CPU's labels give it.
+    let demands = wave
+        .clauses
+        .iter()
+        .flat_map(|matcher| matcher.labels.defs.iter().enumerate().map(move |(at, def)| (matcher.labels.offset() + at, def)))
+        .filter_map(|(label, def)| match def {
+            Label::Roots(_, domain) | Label::Targets(_, domain) => domain.demand().map(|set| (label, set.clone())),
+            _ => None,
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let indexes = cpu.iter().map(|_| super::compile_sets::Index::default()).collect::<Vec<_>>();
+    let mut differ = Vec::new();
+    for (clause, (matcher, name)) in wave.clauses.iter().zip(&names).enumerate() {
+        for (at, def) in matcher.labels.defs.iter().enumerate() {
+            let label = matcher.labels.offset() + at;
+            let demand = match def {
+                Label::Complement(of) => demands.get(&usize::from(of - crate::code_rule_dsl::tape::DERIVED_CLASS_BASE)),
+                _ => demands.get(&label),
+            };
+            for (t, (c, m)) in cpu.iter().zip(&metal).enumerate() {
+                let within = demand.map(|set| super::compile_sets::Reader { tape: c, index: &indexes[t], labels: c.transducer_labels(), texts: &[] }.eval(set));
+                let bits = |view: &TapeDoc| -> BTreeSet<u32> {
+                    let words = view.transducer_labels().get(label).cloned().unwrap_or_default();
+                    let has = |bits: &[u64], n: u32| bits.get(n as usize / 64).is_some_and(|w| w >> (n % 64) & 1 != 0);
+                    (0..view.transducer_len() as u32).filter(|&n| has(&words, n) && within.as_ref().is_none_or(|within| has(within, n))).collect()
+                };
+                let (want, got) = (bits(c), bits(m));
+                if want != got {
+                    let show = |nodes: Vec<u32>| {
+                        nodes
+                            .iter()
+                            .take(3)
+                            .map(|&n| format!("{n}:{:?}", c.transducer_text_str(n).chars().take(24).collect::<String>()))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    };
+                    let missing = want.difference(&got).copied().collect::<Vec<_>>();
+                    let extra = got.difference(&want).copied().collect::<Vec<_>>();
+                    let reads = match def {
+                        Label::Complement(of) => format!(" of {}", of - crate::code_rule_dsl::tape::DERIVED_CLASS_BASE),
+                        Label::Fact(_, slots) => format!(" slots {:?}", slots.iter().map(|s| s - crate::code_rule_dsl::tape::DERIVED_CLASS_BASE).collect::<Vec<_>>()),
+                        _ => String::new(),
+                    };
+                    // A roots or targets label's walk as a set, and its device formula: what a formula pass evaluates.
+                    let set = match def {
+                        Label::Roots(program, _) | Label::Targets(program, _) => super::compile_micro::Micro::of(program).map(|walk| {
+                            let set = super::compile_sets::Set::of(&walk.words);
+                            let device = set.as_ref().and_then(|set| set.device()).map(|formula| formula.words);
+                            let domain = match def {
+                                Label::Roots(_, domain) | Label::Targets(_, domain) => format!("{domain:?}"),
+                                _ => String::new(),
+                            };
+                            format!("\n      set {set:?}\n      device {device:?}\n      domain {}", domain.chars().take(300).collect::<String>())
+                        }),
+                        _ => None,
+                    };
+                    differ.push(format!(
+                        "label {label} ({} of clause {clause} {name}{reads}) tape {t}: {} missing [{}], {} extra [{}]{}",
+                        kind(def),
+                        missing.len(),
+                        show(missing.clone()),
+                        extra.len(),
+                        show(extra.clone()),
+                        set.unwrap_or_default()
+                    ));
+                }
+            }
+        }
+    }
+    eprintln!("{} labels differ", differ.len());
+    for line in differ.iter().take(40) {
+        eprintln!("  {line}");
+    }
+    assert!(differ.is_empty());
+}

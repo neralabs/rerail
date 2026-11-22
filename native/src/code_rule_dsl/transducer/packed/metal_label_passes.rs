@@ -325,11 +325,10 @@ const _: () = assert!(ROOT_POOL * ROOT_STACK_WORDS <= STACK_WORDS);
 const GROUP_STACK_WORDS: usize = 32 * 17;
 
 /// A formula's word that is a leaf (decision 0365): a test of the node alone, read for every formula by `label_leaves`.
-/// A formula's phases (`phase_program`) at the first chain levels, its leaf tests as the rows the device reads them
-/// by: a plan's launches.
+/// A formula's phases (`phase_program`), its leaf tests as the rows the device reads them by: a plan's launches.
 fn formula_phase_count(formula: &DeviceFormula) -> usize {
     let words = formula.words.iter().map(|&word| if formula_leaf(word) { compile_sets::device_ops::LEAF } else { word }).collect::<Vec<_>>();
-    phase_program(&words, PHASE_CHAIN_LEVELS).map_or(1, |program| program.phases as usize)
+    phase_program(&words).map_or(1, |program| program.phases as usize)
 }
 
 fn formula_leaf(word: u32) -> bool {
@@ -377,17 +376,25 @@ fn pack_anchor(programs: &[&Program]) -> Option<std::sync::Arc<DeviceFormula>> {
 
 /// A roots pass's program as a device formula (decision 0036 on Metal, 0365 §9): its micro walk's formula (`Set::of`,
 /// exact), where the device evaluates it exactly: no text test (a formula pass reads no text row) and no targets image.
-pub(in crate::code_rule_dsl) fn device_formula(program: &Program) -> Option<std::sync::Arc<DeviceFormula>> {
+/// A pass that starts within a demand's set (`Domain::Within`, decision 0460) is within it here too: its rule names
+/// only the set's kinds, and a walk's anchor holds the rest (`device_anchor`), which a formula pass has none of.
+pub(in crate::code_rule_dsl) fn device_formula(program: &Program, demand: Option<&compile_sets::Set>) -> Option<std::sync::Arc<DeviceFormula>> {
     use compile_sets::device_ops;
     let walk = Micro::of(program)?;
-    let formula = compile_sets::Set::of(&walk.words)?.device()?;
+    let set = compile_sets::Set::of(&walk.words)?;
+    let set = match demand {
+        Some(demand) => compile_sets::Set::all_of(vec![set, demand.clone()]),
+        None => set,
+    };
+    let formula = set.device()?;
     (!formula.words.iter().any(|&word| word & 255 == device_ops::TEXT)).then(|| std::sync::Arc::new(formula))
 }
 
 /// A targets pass's program as a device formula (decision 0036 on Metal, 0365 §10): the image of its starts under its
 /// micro walk (`Set::targets`, exact where the capture is the walk's last act), the starts its rule over codes (kinds
 /// and entry tests) as tests the formula reads. No text test, as `device_formula`; listed roots are not a formula's.
-pub(in crate::code_rule_dsl) fn device_targets(program: &Program, roots: &Roots) -> Option<std::sync::Arc<DeviceFormula>> {
+/// Starts within a demand's set (`Domain::Within`) are within it, as `device_formula`'s.
+pub(in crate::code_rule_dsl) fn device_targets(program: &Program, roots: &Roots, demand: Option<&compile_sets::Set>) -> Option<std::sync::Arc<DeviceFormula>> {
     use compile_sets::{Set, device_ops};
     let Roots::Codes { kinds, entry, anchor: None, .. } = roots else { return None };
     let walk = Micro::of(program)?;
@@ -395,6 +402,7 @@ pub(in crate::code_rule_dsl) fn device_targets(program: &Program, roots: &Roots)
     if let Some(kinds) = kinds {
         starts.push(Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect()));
     }
+    starts.extend(demand.cloned());
     let formula = Set::targets(&walk.words, Set::And(starts))?.device()?;
     (!formula.words.iter().any(|&word| word & 255 == device_ops::TEXT)).then(|| std::sync::Arc::new(formula))
 }
@@ -947,13 +955,15 @@ const PHASE_KERNEL: usize = 6;
 /// `label_parents` (0475): the batch's parents once, for `label_phase`.
 const PARENTS_KERNEL: usize = 7;
 /// A formula compiled for `label_phase` (decision 0474): its instructions (`[code, dst, src, extra]`, the kernel's
-/// `PHASE_*`), its phases, the slot of its set, and its slots.
+/// `PHASE_*`), its phases, the slot of its set, its slots, and its loops (a chain's levels, `PHASE_LOOP`), each as the
+/// phase that ends it and its first.
 #[derive(Debug, PartialEq)]
 struct PhaseProgram {
     code: Vec<[u32; 4]>,
     phases: u32,
     result: u32,
     slots: u32,
+    loops: Vec<(u32, u32)>,
 }
 
 /// The kernel's instructions (`label_passes.uglykl`'s `PHASE_*`).
@@ -972,21 +982,19 @@ const PHASE_COVER: u32 = 12;
 const PHASE_BLOCKERS: u32 = 13;
 const PHASE_ANDNOT: u32 = 14;
 const PHASE_COPY: u32 = 15;
-const PHASE_CHECK: u32 = 16;
+const PHASE_LOOP: u32 = 16;
 const PHASE_CLIMB: u32 = 17;
 /// `label_phase`'s threadgroup: its words (`PHASE_WORDS`), a thread each.
 const PHASE_WORDS: u64 = 64;
-/// The levels of a chain's reach (`REACH_CHAIN`) a run's programs hold at first, each two descendant scans: a member
-/// below a blocker below a member is a level. A chain with more fails its run (flags bit 512), which runs again with
-/// twice the levels (`Error::ChainLevels`, 0475). One held every chain of s1000.
-const PHASE_CHAIN_LEVELS: usize = 1;
-/// Past this many levels a chain's run fails (`label_phase` runs a level's formulas whether the walks are micro or
-/// interpreted).
-const PHASE_CHAIN_MOST: usize = 64;
+/// The most levels of a chain's reach (`REACH_CHAIN`), each two descendant scans: a member below a blocker below a member
+/// is a level. A chain's level is a loop of `label_phase`'s phases (`PHASE_LOOP`), run again while a member is left, so a
+/// run holds every chain up to this many levels; one with more fails its run (flags bit 512), on the device or the
+/// interpreter alike (`label_phase` runs a level's formulas either way). The queue holds this many (decision 0540).
+const PHASE_CHAIN_MOST: u32 = 64;
 
 /// `words` (a lowered formula, `compile_sets::DeviceFormula`'s postfix) as `label_phase`'s program (decision 0475), where its steps
 /// are rows, AND, OR, the one-hop steps (`CHILD`, `PARENT`, `CHILD_IN`), the siblings (`FOLLOWING`, `FOLLOWING_IN`,
-/// `REACH_FOLLOWING`), descendants (`REACH_DESCENDANT`), a chain's reach (`REACH_CHAIN`, `levels` of it) and the
+/// `REACH_FOLLOWING`), descendants (`REACH_DESCENDANT`), a chain's reach (`REACH_CHAIN`, its levels a loop) and the
 /// climbs (`DESCENDANT`, `DESCENDANT_IN`, `CHAIN`); else `None` (a word no device formula has).
 ///
 /// Every value has a slot. A step that reads only its thread's word needs its operands settled there; a pull (the
@@ -994,7 +1002,7 @@ const PHASE_CHAIN_MOST: usize = 64;
 /// earlier phase. A push sets bits in other words, into a slot cleared in phase 0, so its value is whole only in the
 /// next phase. A slot is used again only after the phase that freed it. A node's parent is read where
 /// `label_parents` wrote it, once a batch, before the first level (`label_parents`).
-fn phase_program(words: &[u32], levels: usize) -> Option<PhaseProgram> {
+fn phase_program(words: &[u32]) -> Option<PhaseProgram> {
     use compile_sets::device_ops as op;
     #[derive(Clone, Copy)]
     struct Value {
@@ -1072,6 +1080,7 @@ fn phase_program(words: &[u32], levels: usize) -> Option<PhaseProgram> {
         }
     }
     let mut b = Build { code: Vec::new(), zeros: Vec::new(), free: Vec::new(), pending: Vec::new(), slots: 0, phase: 0 };
+    let mut loops = Vec::new();
     let mut stack = Vec::<Value>::new();
     for &word in words {
         let (kind, arg) = (word & 255, word >> 8);
@@ -1177,23 +1186,32 @@ fn phase_program(words: &[u32], levels: usize) -> Option<PhaseProgram> {
                 let mut from = stack.pop()?;
                 b.settle(&mut through);
                 b.settle(&mut from);
-                let (blockers, out, mut level) = (b.take(), b.take(), b.take());
+                let (blockers, out, members, below) = (b.take(), b.take(), b.take(), b.take());
                 b.code.push([PHASE_BLOCKERS, blockers, through.slot, from.slot]);
                 b.code.push([PHASE_ZERO, out, 0, 0]);
-                b.code.push([PHASE_COPY, level, from.slot, 0]);
+                b.code.push([PHASE_COPY, members, from.slot, 0]);
                 b.pending.push(through.slot);
                 // Two pairs for the scans' ends, in turn: a cover reads one while the next span writes the other.
                 let pairs = [(b.fresh(1), b.fresh(1)), (b.fresh(1), b.fresh(1))];
-                for step in 0..2 * levels {
-                    let (keep, cut) = if step % 2 == 0 { (blockers, false) } else { (from.slot, true) };
-                    let reached = b.descend(level, pairs[step % 2]);
-                    b.code.push([if cut { PHASE_ANDNOT } else { PHASE_OR }, out, reached, 0]);
-                    b.code.push([PHASE_AND, reached, keep, 0]);
-                    b.pending.push(level);
-                    level = reached;
-                }
-                b.code.push([PHASE_CHECK, 0, level, 0]);
-                b.pending.extend([level, blockers, from.slot]);
+                let ends = |pair: (u32, u32)| pair.0 | pair.1 << 16;
+                b.code.push([PHASE_SPAN, pairs[0].0, members, pairs[0].1]);
+                b.end_phase();
+                // A level, two phases: the members' descendants into the reach, cut to the blockers; the blockers'
+                // descendants out of it, cut to the members, the next level's. Again while a member is left.
+                let first = b.phase;
+                b.code.push([PHASE_COVER, below, members, ends(pairs[0])]);
+                b.code.push([PHASE_OR, out, below, 0]);
+                b.code.push([PHASE_AND, below, blockers, 0]);
+                b.code.push([PHASE_SPAN, pairs[1].0, below, pairs[1].1]);
+                b.end_phase();
+                b.code.push([PHASE_COVER, members, below, ends(pairs[1])]);
+                b.code.push([PHASE_ANDNOT, out, members, 0]);
+                b.code.push([PHASE_AND, members, from.slot, 0]);
+                b.code.push([PHASE_SPAN, pairs[0].0, members, pairs[0].1]);
+                b.code.push([PHASE_LOOP, first, members, 0]);
+                loops.push((b.phase, first));
+                b.end_phase();
+                b.pending.extend([members, below, blockers, from.slot]);
                 stack.push(b.value(out));
             }
             _ => return None,
@@ -1203,7 +1221,7 @@ fn phase_program(words: &[u32], levels: usize) -> Option<PhaseProgram> {
     b.settle(&mut result);
     let mut code = b.zeros;
     code.extend(b.code);
-    Some(PhaseProgram { code, phases: b.phase + 1, result: result.slot, slots: b.slots })
+    Some(PhaseProgram { code, phases: b.phase + 1, result: result.slot, slots: b.slots, loops })
 }
 /// `label_phase`'s scratch: the formulas of a dispatch each have their own slots, so a level's formulas take as many
 /// dispatches as this holds (and a leaf group's rows, `Runner::formulas`).
@@ -1548,9 +1566,6 @@ struct Runner<'a> {
     micro: bool,
     /// Whether the loop tier runs with 128-frame stacks (`label_micro_deep`).
     deep: bool,
-    /// The levels of a chain's reach the formulas' phases hold (`PHASE_CHAIN_LEVELS`, doubled when a run's chain
-    /// outgrows them).
-    chain_levels: usize,
     walks: HashMap<usize, Walks>,
     /// Every pass's roots as rules (`RootTable`), one buffer for the run (`root_words`).
     root_table: RootTable,
@@ -1796,7 +1811,6 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
     let (mut lanes, mut micro, mut deep, mut released) = (NARROW, !interpret_only(), false, false);
     let (mut budget, mut replanned) = (super::WorkBudget::current(), 0);
-    let mut chain_levels = PHASE_CHAIN_LEVELS;
     let mut attempt = 0_usize;
     loop {
         // Every run after the first is a rerun: its launches are the run's reruns' budget's (decision 0540, user
@@ -1806,16 +1820,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
             rounds = plan_rounds(super::super::metal_backend::launch::rerun_available(), &wanted)?;
         }
         attempt += 1;
-        let mut outcome = match encode(plan, files, &rounds, lanes, micro, deep, chain_levels, budget) {
-            // A chain's reach outgrew the levels its phases hold (0475): the run again with twice them, the walks
-            // micro or interpreted alike (`label_phase` runs a level's formulas either way, so the interpreter's
-            // walks hold no more of a chain: a run past the most fails).
-            Err(Error::ChainLevels) if chain_levels < PHASE_CHAIN_MOST => {
-                crate::code_rule_dsl::prof::count("run.chain_levels", 1);
-                chain_levels *= 2;
-                continue;
-            }
-            Err(Error::ChainLevels) => return Err(Error::BackendFailure),
+        let mut outcome = match encode(plan, files, &rounds, lanes, micro, deep, budget) {
             // A task over its step budget, below the ceiling (decision 0334): the run again with twice the
             // budget, until its tasks' budgets are the ceiling (then a stop is `WorkLimit`'s failure).
             Err(Error::OverBudget) => {
@@ -1965,7 +1970,6 @@ fn encode(
     lanes: (usize, Option<u32>),
     micro: bool,
     deep: bool,
-    chain_levels: usize,
     budget: super::WorkBudget,
 ) -> Result<Outcome, Error> {
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
@@ -2019,7 +2023,6 @@ fn encode(
         budget,
         micro,
         deep,
-        chain_levels,
         walks: HashMap::new(),
         root_table: RootTable::default(),
         root_words: None,
@@ -2109,10 +2112,11 @@ fn encode(
             eprintln!("rerail: a label pass took a node past its batch's {} (decision 0463, Q265): not written; the passes on the interpreter", runner.nodes);
         }
     }
-    // A chain's reach with more levels than `label_phase`'s programs hold (0475): the run again with twice them.
+    // A chain's reach with more levels than `label_phase`'s loops run (`PHASE_CHAIN_MOST`, 0475): no run holds it, on the
+    // device or the interpreter (`label_phase` runs a level's formulas either way).
     if runner.flag(0) & 512 != 0 {
         crate::code_rule_dsl::prof::count("gpu.phase_levels_overflow", 1);
-        return Err(Error::ChainLevels);
+        return Err(Error::BackendFailure);
     }
     // A micro walk that outgrew its frames: the passes again on the interpreter.
     if runner.flag(0) & 2 != 0 {
@@ -2987,7 +2991,7 @@ impl Runner<'_> {
         // kernel to run it.
         let mut programs = Vec::with_capacity(unique.len());
         for (words, _) in &unique {
-            let Some(program) = phase_program(words, self.chain_levels) else {
+            let Some(program) = phase_program(words) else {
                 eprintln!("rerail: a device formula with a step label_phase does not hold: {words:?}");
                 return Err(Error::BackendFailure);
             };
@@ -3072,13 +3076,19 @@ impl Runner<'_> {
         for first in (0..programs.len()).step_by(at_once) {
             let own = &programs[first..(first + at_once).min(programs.len())];
             // Each formula's header (its instructions' first word, their count, its result, its phases), then the
-            // instructions, then each phase's first instruction.
+            // instructions, then each phase's first instruction, then each phase's loop word: 0, or for the phase that
+            // ends a loop its first phase + 1 and the most times it runs again << 16.
             let mut program = vec![0_u32; 4 * own.len()];
             for (index, compiled) in own.iter().enumerate() {
                 let at = program.len() as u32;
                 program.extend(compiled.code.iter().flatten());
                 program.push(0);
                 program.extend(compiled.code.iter().enumerate().filter(|(_, code)| code[0] == PHASE_END).map(|(i, _)| i as u32 + 1));
+                let loops = program.len();
+                program.resize(loops + compiled.phases as usize, 0);
+                for &(last, first) in &compiled.loops {
+                    program[loops + last as usize] = (first + 1) | (PHASE_CHAIN_MOST - 1) << 16;
+                }
                 program[4 * index..4 * index + 4].copy_from_slice(&[at, compiled.code.len() as u32, compiled.result, compiled.phases]);
             }
             let phases = own.iter().map(|program| program.phases).max().unwrap_or(1);
@@ -3089,17 +3099,19 @@ impl Runner<'_> {
             // its phase's last (`label_phase`). A group a seed is dispatched; one that finds nothing to take ends.
             let shape = Shape { item_count: first as u32, target_count: own.len() as u32, recursive: region as u32, queue: (slots * region) as u32, ..self.shape() };
             let formulas = own.len() as u64;
-            // The continuations: each formula's phases past its first, its blocks each; and a slot a group more, which a
-            // take that came before its push's write gives up (<ukl/workqueue.h>): a group ends at a take that finds
-            // nothing, so it gives up one at most.
+            // The continuations: each formula's phases past its first, and its loops' phases run again, at most
+            // `PHASE_CHAIN_MOST - 1` times each, its blocks each; and a slot a group more, which a take that came before
+            // its push's write gives up (<ukl/workqueue.h>): a group ends at a take that finds nothing, so it gives up
+            // one at most.
             let dispatched = groups * formulas;
-            let capacity = own.iter().map(|program| u64::from(program.phases.max(1) - 1) * groups).sum::<u64>() + dispatched;
-            if u64::from(phases) * formulas * groups >= u64::from(u32::MAX - 2) || 6 + formulas + capacity > u64::from(u32::MAX) {
+            let again = |program: &PhaseProgram| program.loops.iter().map(|&(last, first)| u64::from(last - first + 1) * u64::from(PHASE_CHAIN_MOST - 1)).sum::<u64>();
+            let capacity = own.iter().map(|program| (u64::from(program.phases.max(1) - 1) + again(program)) * groups).sum::<u64>() + dispatched;
+            if u64::from(phases) * formulas * groups >= u64::from(u32::MAX - 2) || 6 + 3 * formulas + capacity > u64::from(u32::MAX) {
                 return Err(Error::BackendCapacity);
             }
-            // Not an upload: the queue's control, its seeds' count and each formula's items done, all zero, and its
-            // capacity (word 5), written once here; its slots, empty.
-            let queue = HostMapped::zeroed::<u32>((6 + formulas + capacity) as usize)?;
+            // Not an upload: the queue's control, its seeds' count and each formula's items done, loop word and runs
+            // again, all zero, and its capacity (word 5), written once here; its slots, empty.
+            let queue = HostMapped::zeroed::<u32>((6 + 3 * formulas + capacity) as usize)?;
             unsafe { queue.host().cast::<u32>().add(5).write(capacity as u32) };
             let queue_buffer = queue.buffer().clone();
             self.phase_queues.push(queue);
@@ -3982,44 +3994,45 @@ mod phase_program_tests {
         let (a, b) = (word(op::CLASS, 16384), word(op::CLASS, 16385));
         // CHILD(a): the parents of a's named members.
         assert_eq!(
-            phase_program(&[a, word(op::CHILD, 1)], 1),
+            phase_program(&[a, word(op::CHILD, 1)]),
             Some(PhaseProgram {
                 code: vec![[PHASE_ZERO, 1, 0, 0], [PHASE_ROW, 0, a, 0], end, [PHASE_UP, 1, 0, 1], end],
                 phases: 3,
                 result: 1,
                 slots: 2,
+                loops: Vec::new(),
             })
         );
         // OR(PARENT(a), b): the pull reads `a` from the phase before.
-        let program = phase_program(&[a, word(op::PARENT, 0), b, word(op::OR, 2)], 1).expect("phases hold it");
+        let program = phase_program(&[a, word(op::PARENT, 0), b, word(op::OR, 2)]).expect("phases hold it");
         assert_eq!(program.code, vec![[PHASE_ROW, 0, a, 0], end, [PHASE_DOWN, 1, 0, 0], [PHASE_ROW, 2, b, 0], [PHASE_OR, 1, 2, 0]]);
         assert_eq!(program.phases, 2);
         // CHILD_IN(b, a): a's parents, cut to b when read.
-        let program = phase_program(&[b, a, word(op::CHILD_IN, 0)], 1).expect("phases hold it");
+        let program = phase_program(&[b, a, word(op::CHILD_IN, 0)]).expect("phases hold it");
         assert_eq!(program.code.last(), Some(&[PHASE_AND, program.result, 0, 0]));
         // FOLLOWING(a): the last member child of each parent (a node array, 32 slots), then the nodes before it.
-        let program = phase_program(&[a, word(op::FOLLOWING, 1)], 1).expect("phases hold it");
+        let program = phase_program(&[a, word(op::FOLLOWING, 1)]).expect("phases hold it");
         assert_eq!(
             program.code,
             vec![[PHASE_ZERO32, 1, 0, 0], [PHASE_ROW, 0, a, 0], end, [PHASE_LAST, 1, 0, 1], end, [PHASE_BEFORE, 33, 1, 0]]
         );
         assert_eq!((program.result, program.slots, program.phases), (33, 34, 3));
         // REACH_DESCENDANT(a): the members' ends and the blocks', then the cover.
-        let program = phase_program(&[a, word(op::REACH_DESCENDANT, 0)], 1).expect("phases hold it");
+        let program = phase_program(&[a, word(op::REACH_DESCENDANT, 0)]).expect("phases hold it");
         assert_eq!(program.code, vec![[PHASE_ROW, 0, a, 0], [PHASE_SPAN, 1, 0, 2], end, [PHASE_COVER, 3, 0, 1 | 2 << 16]]);
-        // REACH_CHAIN(a, b): two scans a level, and a check that no member is left.
-        for levels in [1, 2, 4] {
-            let program = phase_program(&[a, b, word(op::REACH_CHAIN, 0)], levels).expect("phases hold it");
-            assert_eq!(program.phases as usize, 2 * levels + 1);
-            assert_eq!(program.code.last().map(|c| c[0]), Some(PHASE_CHECK));
-        }
+        // REACH_CHAIN(a, b): a level is two scans, the second phase ending in a loop back to the first while a member
+        // is left (0540: no chain reruns its run).
+        let program = phase_program(&[a, b, word(op::REACH_CHAIN, 0)]).expect("phases hold it");
+        assert_eq!((program.phases, program.loops.clone()), (4, vec![(2, 1)]));
+        let ends = program.code.iter().enumerate().filter(|(_, code)| code[0] == PHASE_END).map(|(at, _)| at).collect::<Vec<_>>();
+        assert_eq!(program.code[ends[2] - 1][..2], [PHASE_LOOP, 1]);
         // DESCENDANT(a): a climb from a's named members.
-        let program = phase_program(&[a, word(op::DESCENDANT, 1)], 1).expect("phases hold it");
+        let program = phase_program(&[a, word(op::DESCENDANT, 1)]).expect("phases hold it");
         assert_eq!(program.code, vec![[PHASE_ZERO, 1, 0, 0], [PHASE_ROW, 0, a, 0], end, [PHASE_CLIMB, 1, 0, 1], end]);
         // CHAIN(b, a): a climb from a's members through b's, b whole before it.
-        let program = phase_program(&[b, a, word(op::CHAIN, 0)], 1).expect("phases hold it");
+        let program = phase_program(&[b, a, word(op::CHAIN, 0)]).expect("phases hold it");
         assert_eq!(program.code, vec![[PHASE_ZERO, 2, 0, 0], [PHASE_ROW, 0, b, 0], [PHASE_ROW, 1, a, 0], end, [PHASE_CLIMB, 2, 1, 2], end]);
         // A leaf test reaches the device as its row (`LEAF`); its own op is no step.
-        assert_eq!(phase_program(&[word(op::KIND, 3)], 1), None);
+        assert_eq!(phase_program(&[word(op::KIND, 3)]), None);
     }
 }

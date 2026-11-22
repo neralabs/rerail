@@ -338,6 +338,29 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      `flags[0]`. The level's settle (`label_settle`) does that fold now. It skips exactly when the sink skipped, since
      a settled round's programs return at once too. `label_sink` is gone, and a level plans one launch for its
      programs, not two.
+   - **Done: the whole wave is the CPU's labels on Metal.** Before the settles are changed, the wave they are measured
+     on must be right. A test now labels every Python clause in one wave on Metal and compares it with the CPU, label
+     by label (`the_waves_labels_on_metal_are_the_cpus`). It found three faults:
+     - **A formula pass dropped its demand.** A pass of `Domain::Within` (0460) names only the set's kinds in its
+       rule; a walk's anchor holds the set itself. A pass made into a formula has no anchor, so it labelled every
+       node of those kinds. Now `device_formula` and `device_targets` AND the demand in.
+     - **A rerun charged the evaluation's own budget.** `launch::attempt`, which every launch goes through, took each
+       launch from the evaluation's own budget even during a rerun. But `check_submission` read only the rerun's
+       refusals. Three runs of 84 launches passed the evaluation's 200, and the third was submitted with its last 52
+       launches left out: 316 labels were lost at 174 clauses, and every label at 492. Now one charge
+       (`Evaluation::charge`) serves `attempt` and `reserve`: a rerun's launch is charged to the reruns' budget, and is
+       refused where the submission check reads it.
+     - **A chain's levels were a run again.** `REACH_CHAIN` was unrolled to a fixed number of levels. A deeper chain
+       failed its run (`Error::ChainLevels`), which ran again with twice the levels: 1, 2, 4, each time the whole
+       sweep. Now a level is two phases, and the second ends in `PHASE_LOOP`. While a member is left, the group that
+       finishes the loop's phase pushes the loop's first phase again, not the next phase. The decision is a
+       continuation in the same queue, with no wait. A loop runs again at most `PHASE_CHAIN_MOST - 1` times (64
+       levels, the old cap), and the queue's capacity holds that. The whole wave now runs once: 124 launches, no label
+       apart. `Error::ChainLevels` and its reruns are gone.
+     One difference stays, by 0460's design. In a recursive group, a demand can read the group's own labels. The
+     group's anchors read those labels as every node (Q133), so on Metal such a pass labels more nodes outside its
+     demand, where nothing reads its value. The test compares such a label, and a complement of one, within the demand
+     only.
    - **Marked: `<ukl/grid.h>`'s barrier** is not for new code; no engine kernel includes it. The preprocessor's own
      MSL (`pp_blocks.metal`, `pp_expand.metal`'s idle wait, `work_queue.metal`) still waits so: the preprocessor is
      another agent's, so its waits are left to it. Outside the device, forest's random-forest predictor has a "spin"

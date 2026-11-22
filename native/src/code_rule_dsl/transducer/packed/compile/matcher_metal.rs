@@ -241,7 +241,9 @@ fn metal<'a>(
         for (_, levels) in steps.iter_mut().filter(|(recursive, _)| !recursive) {
             for pass in levels.iter_mut().flatten() {
                 let Pass::Program { target, program, roots, captured } = pass else { continue };
-                let formula = if *captured { device_targets(program, roots) } else { device_formula(program) };
+                // Within its demand's set where it has one (`demands`), as a walk's anchor is.
+                let demand = demands.get(&(Arc::as_ptr(roots) as usize));
+                let formula = if *captured { device_targets(program, roots, demand) } else { device_formula(program, demand) };
                 let Some(formula) = formula else { continue };
                 *pass = Pass::Formula { target: *target, roots: Arc::clone(roots), formula, image: *captured };
             }
