@@ -693,7 +693,7 @@ mod pointer {
             }
             let digest = u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes"));
             let types = b"ii".repeat(width);
-            puts.push(KeptPut { rel: rel.clone(), ident: ident(rel), part, digest, reads: Vec::new(), types: types.clone(), what: KeptWhat::Flat { widths: vec![8; types.len()], rows: flat, n: rows.len(), levels: None, given: true } });
+            puts.push(KeptPut { rel: rel.clone(), ident: ident(rel), part, digest, reads: Vec::new(), types: types.clone(), what: KeptWhat::Picked(Box::new(crate::content_store::kept_facts::BlockFlat::of_rows(&flat, types.len(), true))) });
         }
         // What the partition kept before that this program has no rows of.
         let written: BTreeSet<&str> = puts.iter().map(|p| p.rel.as_str()).collect();

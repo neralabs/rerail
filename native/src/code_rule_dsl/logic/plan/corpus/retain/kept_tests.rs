@@ -27,8 +27,8 @@ fn fixture_text(count: usize) -> String {
 /// An entry of `rows`, flat, of `types`' columns, at partition `part`: a relation's (part 0) in canonical order, a
 /// granule's or statistics' words as given (`retain::kept_flat`).
 fn put(rel: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>) -> KeptPut {
-    let n = if types.is_empty() { 0 } else { rows.len() / types.len() };
-    KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest, reads, what: crate::content_store::kept_facts::KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: None, given: part != DOCS_PART }, types }
+    let rows = crate::content_store::kept_facts::BlockFlat::of_rows(&rows, types.len(), part != DOCS_PART);
+    KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest, reads, what: crate::content_store::kept_facts::KeptWhat::Picked(Box::new(rows)), types }
 }
 fn gone(rel: &KeptRel, part: i64) -> KeptPut {
     KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest: 0, reads: vec![], types: vec![], what: crate::content_store::kept_facts::KeptWhat::Gone }

@@ -98,7 +98,7 @@ impl ModelStore for StoreModels {
             h.update(v.to_le_bytes());
         }
         let digest = u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes"));
-        let put = KeptPut { rel: MODEL.to_owned(), ident: ident(), part: part(&key), digest, reads: Vec::new(), types: TYPES.to_vec(), what: KeptWhat::Flat { widths: vec![8; TYPES.len()], rows: flat, n, levels: None, given: true } };
+        let put = KeptPut { rel: MODEL.to_owned(), ident: ident(), part: part(&key), digest, reads: Vec::new(), types: TYPES.to_vec(), what: KeptWhat::Picked(Box::new(crate::content_store::kept_facts::BlockFlat::of_rows(&flat, TYPES.len(), true))) };
         store.queue_kept_as(space(), vec![put], "the Neural Engine's model");
         store.settle_kept(&space());
     }

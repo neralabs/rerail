@@ -10253,3 +10253,10 @@ beside the other corpus tests (`notes/roll-up-51-cost-classifier-metal-rf.md`).
 split batches. Ours' moved `Device` impl loses `install_launch_guard`, the test loader registers its carriers once, and
 ours' `InFlight` index records stay on theirs' commit. Ours' new submissions all go through charged commits
 (`notes/roll-up-52-django-bugs.md`).
+
+### Q474. Roll-up 53 (final-rerail-shape 39de0fce60 onto Pulling-it-all-together): what the merge chose
+
+Theirs' picked puts taken: no kept put holds a heap vector, and ours' new puts (reader record, observer facts, slice,
+prepared facts, models) are blocks. A source's structure statistics keep ours' one patchable form; theirs'
+unpatchable `of_structure` and format 4 go. `source_rows` moves to the planner, which reads it
+(`notes/roll-up-53-final-rerail-shape.md`).

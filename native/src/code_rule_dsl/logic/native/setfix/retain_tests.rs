@@ -27,7 +27,12 @@ fn a_relation_over_a_source_reads_its_rows_through_it() {
     assert!(d.is_some() && d == retain::held_digest(&cells, &flat), "a view's digest is its rows'");
     let put = retain::kept_put(&crate::content_store::KeptRel { name: "r".into(), ident: [1; 32] }, 0, Vec::new(), b"ii".to_vec(), &r);
     match put.what {
-        crate::content_store::kept_facts::KeptWhat::Flat { rows, n, .. } => assert_eq!((rows, n), (vec![1, 3, 2, 4, 5, 0], 3), "every row of the view kept"),
+        crate::content_store::kept_facts::KeptWhat::Picked(p) => {
+            use crate::content_store::kept_facts::KeptPicked as _;
+            let mut cols = vec![0i64; p.rows() * p.width()];
+            p.fill(&mut cols, None);
+            assert_eq!((cols, p.rows(), p.given()), (vec![1, 2, 5, 3, 4, 0], 3, false), "every row of the view kept, read through it");
+        }
         _ => panic!("a view is kept as its rows"),
     }
 }
