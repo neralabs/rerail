@@ -553,6 +553,17 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     expect(said.mock.calls.map(([text]) => String(text)).filter(text => text.startsWith("rerail:"))).toEqual([]);
   }, 60_000);
 
+  it("a Git that does not answer its version has each call guarded", async () => {
+    const root = await folder();
+    vi.stubEnv("PATH", `${await olderGit(root, "2.53.0", "exit 1;")}${delimiter}${process.env.PATH ?? ""}`);
+    vi.resetModules();
+    const { runGitWithoutBlocking } = await import("../../../src/engine/git.js");
+    const { work, marker } = await checkoutWithDriver(root);
+
+    expect((await runGitWithoutBlocking(work, AUDIT_DIFF)).stdout).toBe("notes.txt\0");
+    expect(existsSync(marker)).toBe(false);
+  }, 60_000);
+
   it("two calls at once on Git 2.25.1 say why once", async () => {
     const root = await folder();
     const asked = join(root, "version-asked");
