@@ -10481,3 +10481,18 @@ On the way:
 - `RERAIL_WIDTH_CENSUS` only measures (`profile::memory`), so the run's key leaves it out.
 - The converter's overlay carries a library's `.pass` settings (decision 0597 step 2) with the merged program, as it
   does `.global library` and `.answer`.
+
+### Q496. The converter's overlay keeps a made pass with what it names, or drops it whole
+
+`an_overlay_includes_the_python_library` failed: ".context annotation: its roots ann_tree are not declared". The
+overlay's merged program keeps only what `violation` reaches (`convert::reachable`). That undeclared every relation
+no rule left reads, but it kept every `.pass` setting (decision 0597 step 2). So a pass nothing reached kept a `.pass`
+naming roots no longer declared, and the next read of the program refused it. Now a made pass, as the unpruned
+program declares it, stays while a rule left reaches one of its exports' instances. Its roots, its exports' instances
+and what it reads stay declared with it. A pass's reads may be another pass's exports, which keeps that pass in turn.
+A pass nothing reaches goes, with its `.pass` setting, as its rules went.
+
+The pack's stored converter output (`candidates/datalog/`, compared byte for byte by
+`the_pack_holds_the_converters_run_over_every_authored_file`) predated t33 K3's `.answer` lines and the Python
+library's later rules. It is regenerated (`convert_the_data_layer_pack`) and staged in the lint tool-pack's
+`publish/` (`npm run fixtures:stage -- --pack data-layer --tool lint`) for the pack-data publish workflow.
