@@ -1318,3 +1318,22 @@ fn a_struct_argument_is_read_in_place_unless_its_copy_is_written() {
         assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
     }
 }
+
+/// The nearest ancestors' kernel as Rust (`rs.rs`), at 8 lanes: written from its vector tape, it is the checked-in
+/// module of `rerail-ukl-aot` (whose tests run it against a scalar and a hand-vectorized version). `UKL_RS_WRITE=1`
+/// writes it again.
+#[test]
+fn the_nearest_kernels_rust_is_the_checked_in_one() {
+    let text = include_str!("../../../src/code_rule_dsl/transducer/packed/nearest.uglykl");
+    let src = super::source("/<kernels>/nearest.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("nearest_jump").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()));
+    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_aot/src/nearest_jump_w8.rs");
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}

@@ -544,6 +544,23 @@ impl<'t> View<'t> {
         self.v.children(i)
     }
 
+    /// The tape as text, a node a line indented by its depth: its number, kind, level (a vector tape's) and words.
+    pub fn listing(&self) -> String {
+        let mut out = String::new();
+        let mut ends: Vec<usize> = Vec::new();
+        for i in 0..self.len() {
+            while ends.last().is_some_and(|&e| i >= e) {
+                ends.pop();
+            }
+            // A node's words run to the next node's (preorder: its first child's, or the one after it).
+            let end = if i + 1 < self.len() { self.v.start(i + 1) as usize } else { self.words.len() };
+            let words = end.saturating_sub(self.v.start(i) as usize).min(10);
+            out += &format!("{:indent$}{i} {:?} {:?} {:?}\n", "", self.kind(i), self.level(i), self.ws(i, 0, words), indent = 2 * ends.len());
+            ends.push(i + self.size(i));
+        }
+        out
+    }
+
     /// Node `i`'s `k`-th child.
     pub fn child(&self, i: usize, k: usize) -> usize {
         // Children follow their parent in preorder, each after the one before's subtree.

@@ -1,0 +1,10 @@
+[package]
+name = "rerail-ukl-aot"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "UKL kernels as Rust ahead of time (decision 0567 step 3): rerail-ukl-vec's Rust of a kernel's vector tape, checked in, beside the kernel vectorized by hand and as scalar code, to compare them."
+
+[features]
+# The test-only items of the crates below (none), for the tests above them (native/Cargo.toml, `test-hooks`).
+test-hooks = []
