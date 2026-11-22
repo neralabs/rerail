@@ -483,16 +483,17 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect([printed.status, printed.error?.message]).toEqual([null, "Git printed more than maxBuffer (1 bytes) to stdout"]);
   }, 60_000);
 
-  // Each row: what is at a submodule's `.git`, made from that path, and Git's message, which names the submodule by its
-  // path from the top and a folder a `.git` file names as Git joins it from there.
-  it.each<[string, (dotGit: string) => void, string]>([
-    ["a `.git` file that names no folder", dotGit => writeFileSync(dotGit, "gitdir: ../missing\n"), "not a git repository: sub/../missing"],
+  // Each row: what is at a submodule's `.git`, made from that path; Git's message, which names the submodule by its path
+  // from the top and a folder a `.git` file names as Git joins it from there, and Rerail's; and the message Git 2.56.0
+  // gives on Windows 11, which names a `.git` file that names no repository by its own path.
+  it.each<[string, (dotGit: string) => void, string, string]>([
+    ["a `.git` file that names no folder", dotGit => writeFileSync(dotGit, "gitdir: ../missing\n"), "not a git repository: sub/../missing", NO_VALID_REPOSITORY],
     ["a `.git` file that names a folder that holds no repository", dotGit => {
       mkdirSync(join(dotGit, "..", "..", "..", "outside"));
       writeFileSync(dotGit, "gitdir: ../../outside\n");
-    }, "not a git repository: sub/../../outside"],
-    ["a `.git` folder that holds no repository", dotGit => mkdirSync(dotGit), "'sub/.git' not recognized as a git repository"],
-  ])("and fail a diff where a submodule's `.git` is %s, with Git's message, as Git's own diff fails", async (_what, made, said) => {
+    }, "not a git repository: sub/../../outside", NO_VALID_REPOSITORY],
+    ["a `.git` folder that holds no repository", dotGit => mkdirSync(dotGit), "'sub/.git' not recognized as a git repository", "'sub/.git' not recognized as a git repository"],
+  ])("and fail a diff where a submodule's `.git` is %s, with Git's message, as Git's own diff fails", async (_what, made, said, later) => {
     const root = await folder();
     const { work, gitfile } = await submoduleGitfile(root);
     made(gitfile);
@@ -500,7 +501,8 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
     const gits = [gitStderr(work, AUDIT_DIFF), gitStderr(work, SCAN_DIFF)];
 
-    expect([...gits, ...answers.map(answer => answer.stderr)]).toEqual(Array.from({ length: 4 }, () => `fatal: ${said}\n`));
+    expect(answers.map(answer => answer.stderr)).toEqual([`fatal: ${said}\n`, `fatal: ${said}\n`]);
+    expect(gits.map(stderr => [`fatal: ${said}\n`, `fatal: ${later}\n`].includes(stderr ?? ""))).toEqual([true, true]);
     expect(answers.map(answer => [answer.status === 0, answer.stdout])).toEqual([[false, ""], [false, ""]]);
   }, 60_000);
 
@@ -851,6 +853,9 @@ function markSubmodules(work: string, flag: string): void {
   const gitlinks = git(work, "ls-files", "-z", "--stage").split("\0").filter(entry => entry.startsWith("160000 "));
   git(work, "update-index", flag, "--", ...gitlinks.map(entry => entry.slice(entry.indexOf("\t") + 1)));
 }
+
+/** Git 2.56.0's message on Windows 11 for a submodule's `.git` file that names no repository. */
+const NO_VALID_REPOSITORY = "gitfile does not point to a valid repository: sub/.git";
 
 /** What the test's own Git prints to its error stream for `git <args>` in `cwd`; undefined when it answers. */
 function gitStderr(cwd: string, args: readonly string[]): string | undefined {
