@@ -79,6 +79,7 @@ pub mod code_rule_dsl {
                 pub mod import_closure;
                 pub mod inputs;
                 pub mod kept_link;
+                pub mod kept_texts;
                 pub mod link;
                 pub mod phase0;
                 pub mod phases;

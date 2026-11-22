@@ -10363,3 +10363,11 @@ Places off the tape with span rows only, and the measure's rows in blocks (`note
 - **One load hook** in rerail-device-metal's test binary: ours', with strict mode and the core names theirs' second
   hook added (two registered the carriers twice).
 - **0601 in theirs' test**: the index-again test's launches are an evaluation's.
+
+### Q484. Roll-up 63 (final-rerail-shape-rr-align 994e894b9d onto Pulling-it-all-together): what the merge chose
+
+0401's combine, stats and deferred joins (`notes/roll-up-63-rr-align.md`):
+- **Theirs' merges are merges**: the files it changed only through them take ours. Its own files are ours with its
+  commits applied, so its hub merges' older text (`SemijoinRows` without statistics) does not come back.
+- **The kept texts** live beside the combine in ours' `corpus/base.rs` (rerail-rr-root).
+- **The watched constants** are on ours' statkeep column, and theirs' test is in ours' tests file.

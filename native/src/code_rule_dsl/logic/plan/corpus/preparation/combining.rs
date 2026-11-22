@@ -598,9 +598,10 @@ impl ProgramPass for FoldOwn<'_> {
         let kept = |folded: &HashMap<String, String>| -> Result<(BTreeSet<String>, BTreeSet<String>, BTreeSet<String>)> {
             let originals = annotated(folded);
             let mut narrowing = Narrowing { widened: &originals, asking: asks.clone(), shown: shown.clone(), same: BTreeSet::new() };
+            let shape = Shape::of(v, &f, folded)?;
             loop {
                 let read = narrowing.reads(v, folded);
-                let (within, same) = one_document(v, &f, &read, &narrowing, folded, [narrow, narrow << 32])?;
+                let (within, same) = one_document(v, &f, &read, &narrowing, folded, &shape, [narrow, narrow << 32])?;
                 if same.is_empty() {
                     return Ok((narrowing.same, read, within));
                 }
@@ -1120,32 +1121,53 @@ fn for_annotation(copy: &str, orig: &str) -> bool {
 /// not (`Kept`): which of their columns are an annotation's where another is (two of one document: a base relation's
 /// locations, `hide::located`; `nearest`; an equality, a document's `@doc`), and which always are (the trees
 /// `parsed(_, "annotation", r)` gives: hidden, over the narrow bound).
-fn one_document(v: &Version, f: &Fields<'_>, read: &BTreeSet<String>, narrowing: &Narrowing<'_>, folded: &HashMap<String, String>, bounds: [i64; 2]) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
+/// What `one_document` reads of the program `v` with the copies of `folded` folded in, which none of its rounds changes
+/// (the `same` it finds changes only what is read narrow): each relation's rules, what each relation keeps in every row
+/// (`Kept`) and each rule's graph. Made once for the fold, not once a round (an ep2 edit made it in two rounds, 1.5 G each).
+struct Shape<'a> {
+    natives: BTreeMap<String, front::ast::Native>,
+    lattice: BTreeMap<String, front::ast::LatticeDecl>,
+    rules_of: BTreeMap<&'a str, Vec<RuleRef<'a>>>,
+    graphs: HashMap<u32, Reach>,
+}
+
+impl<'a> Shape<'a> {
+    fn of(v: &'a Version, f: &Fields<'_>, folded: &'a HashMap<String, String>) -> Result<Self> {
+        let natives = v.native_map()?;
+        let lattice = v.lattice_decls()?;
+        let (_, base) = super::hide::bases(v);
+        let name = |a: AtomRef<'_>| -> &'a str {
+            let r = v.rel_name(a.rel());
+            folded.get(r).map_or(r, String::as_str)
+        };
+        let mut rules_of: BTreeMap<&'a str, Vec<RuleRef<'a>>> = BTreeMap::new();
+        for r in v.rules() {
+            let head = v.rel_name(r.head().rel());
+            if !folded.contains_key(head) && !natives.contains_key(head) {
+                rules_of.entry(head).or_default().push(r);
+            }
+        }
+        let kept = Kept::of(v, f, &rules_of, &base, &name, &natives);
+        // Each rule's graph over its variables: `x → y` where `y` is an annotation's where `x` is (`always`, a slot past
+        // the variables, reaches those that always are).
+        let graphs: HashMap<u32, Reach> = rules_of.values().flatten().map(|&r| (r.id().0, kept.graph(v, r, &name, &base, &natives))).collect();
+        Ok(Shape { natives, lattice, rules_of, graphs })
+    }
+}
+
+fn one_document(v: &Version, f: &Fields<'_>, read: &BTreeSet<String>, narrowing: &Narrowing<'_>, folded: &HashMap<String, String>, shape: &Shape<'_>, bounds: [i64; 2]) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
     if read.is_empty() {
         return Ok(Default::default());
     }
-    let natives = v.native_map()?;
-    let lattice = v.lattice_decls()?;
-    let (_, base) = super::hide::bases(v);
+    let Shape { natives, lattice, rules_of, graphs } = shape;
     let name = |a: AtomRef<'_>| -> &str {
         let r = v.rel_name(a.rel());
         folded.get(r).map_or(r, String::as_str)
     };
-    let mut rules_of: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
-    for r in v.rules() {
-        let head = v.rel_name(r.head().rel());
-        if !folded.contains_key(head) && !natives.contains_key(head) {
-            rules_of.entry(head).or_default().push(r);
-        }
-    }
     let node = |rel: &str, c: usize| f.column_type(rel, c) == Some("node");
     let var = |t: TermRef<'_>| t.var().map(|s| s.0 as usize);
     // A constant node column holds no annotation's node (`-1`, no node).
     let none = |t: TermRef<'_>| matches!(t, TermRef::Int(k) if k < bounds[1]);
-    let kept = Kept::of(v, f, &rules_of, &base, &name, &natives);
-    // Each rule's graph over its variables: `x → y` where `y` is an annotation's where `x` is (`always`, a slot past the
-    // variables, reaches those that always are).
-    let graphs: HashMap<u32, Reach> = rules_of.values().flatten().map(|&r| (r.id().0, kept.graph(v, r, &name, &base, &natives))).collect();
     let graph = |r: RuleRef<'_>| &graphs[&r.id().0];
     // A read of an original kept narrow, not of a copy folded into it: a rule as hiding left it reads a copy (an
     // annotation's, `rr_in_annotation_0_nameref`) where it reaches an annotation, and its narrow copy reads the widened
@@ -1194,7 +1216,7 @@ fn one_document(v: &Version, f: &Fields<'_>, read: &BTreeSet<String>, narrowing:
     // The greatest set: each relation is taken to be covered until one of its rules is not. A rule is covered over
     // fewer relations no more often, so a relation that leaves the set rechecks only its readers.
     let mut readers: HashMap<&str, BTreeSet<&str>> = HashMap::new();
-    for (head, rs) in &rules_of {
+    for (head, rs) in rules_of {
         for r in rs {
             for l in r.body() {
                 if let Lit::Atom(a) | Lit::Agg { atom: a, .. } = l.view() {
@@ -1377,6 +1399,22 @@ impl Reach {
         }
         false
     }
+
+    /// Every slot `from` reaches (itself too), as `reaches` finds each.
+    fn reached(&self, from: usize) -> Vec<bool> {
+        let mut seen = vec![false; self.to.len()];
+        let mut work = vec![from];
+        seen[from] = true;
+        while let Some(x) = work.pop() {
+            for &y in &self.to[x] {
+                if !seen[y] {
+                    seen[y] = true;
+                    work.push(y);
+                }
+            }
+        }
+        seen
+    }
 }
 
 impl<'a> Kept<'a> {
@@ -1386,30 +1424,47 @@ impl<'a> Kept<'a> {
             pairs: rules_of.keys().map(|&r| (r, (0..width(r)).flat_map(|i| (0..width(r)).filter(move |&j| j != i).map(move |j| (i, j))).collect())).collect(),
             always: rules_of.keys().map(|&r| (r, (0..width(r)).collect())).collect(),
         };
-        loop {
-            let mut next = Kept { pairs: BTreeMap::new(), always: BTreeMap::new() };
-            for (&rel, rules) in rules_of {
-                let (mut pairs, mut always) = (kept.pairs[rel].clone(), kept.always[rel].clone());
-                for &r in rules {
-                    let g = kept.graph(v, r, name, base, natives);
-                    let args: Vec<TermRef<'_>> = r.head().args().collect();
-                    let at = |c: usize| args[c].var().map(|s| s.0 as usize);
-                    // A constant holds no annotation's node: a pair from it holds, one to it does not.
-                    pairs.retain(|&(i, j)| match (at(i), at(j)) {
-                        (None, _) => true,
-                        (Some(x), Some(y)) => g.reaches(x, y) || g.reaches(g.always, y),
-                        (Some(_), None) => false,
-                    });
-                    always.retain(|&c| at(c).is_some_and(|y| g.reaches(g.always, y)));
+        // The greatest such, by a worklist: a relation's pairs shrink only when a relation its rules read positively
+        // shrinks (fewer pairs, fewer edges, fewer reached), so a relation that changes rechecks only its readers, and
+        // the set is the one rounds over every rule reach. Rounds over every rule, each remaking every rule's graph and
+        // searching it once a pair, were most of that.
+        let mut readers: HashMap<&str, BTreeSet<&'a str>> = HashMap::new();
+        for (&head, rules) in rules_of {
+            for r in rules {
+                for l in r.body() {
+                    if let Lit::Atom(a) = l.view()
+                        && !a.neg()
+                    {
+                        readers.entry(name(a)).or_default().insert(head);
+                    }
                 }
-                next.pairs.insert(rel, pairs);
-                next.always.insert(rel, always);
             }
-            if next.pairs == kept.pairs && next.always == kept.always {
-                return kept;
-            }
-            kept = next;
         }
+        let mut queue: BTreeSet<&'a str> = rules_of.keys().copied().collect();
+        while let Some(rel) = queue.pop_first() {
+            let (mut pairs, mut always) = (kept.pairs[rel].clone(), kept.always[rel].clone());
+            for &r in &rules_of[rel] {
+                let g = kept.graph(v, r, name, base, natives);
+                let args: Vec<TermRef<'_>> = r.head().args().collect();
+                let at = |c: usize| args[c].var().map(|s| s.0 as usize);
+                // What each variable reaches, found once for all its pairs.
+                let from_always = g.reached(g.always);
+                let mut from: HashMap<usize, Vec<bool>> = HashMap::new();
+                // A constant holds no annotation's node: a pair from it holds, one to it does not.
+                pairs.retain(|&(i, j)| match (at(i), at(j)) {
+                    (None, _) => true,
+                    (Some(x), Some(y)) => from_always[y] || from.entry(x).or_insert_with(|| g.reached(x))[y],
+                    (Some(_), None) => false,
+                });
+                always.retain(|&c| at(c).is_some_and(|y| from_always[y]));
+            }
+            if pairs != kept.pairs[rel] || always != kept.always[rel] {
+                kept.pairs.insert(rel, pairs);
+                kept.always.insert(rel, always);
+                queue.extend(readers.get(rel).into_iter().flatten().copied());
+            }
+        }
+        kept
     }
 
     /// Rule `r`'s graph (`Reach`), from what its positive literals keep.
@@ -1805,7 +1860,8 @@ pub fn filters_of(v: &std::sync::Arc<Version>, read: &BTreeSet<String>, folded: 
     let p = crate::code_rule_dsl::logic::plan::body::Placed::whole(v.clone());
     let f = p.fields().unwrap();
     let narrowing = Narrowing { widened: read, asking: BTreeSet::new(), shown: shown_columns(v), same: BTreeSet::new() };
-    one_document(v, &f, read, &narrowing, folded, [narrow, narrow << 32]).unwrap()
+    let shape = Shape::of(v, &f, folded).unwrap();
+    one_document(v, &f, read, &narrowing, folded, &shape, [narrow, narrow << 32]).unwrap()
 }
 
 /// Each original's narrow copy written as the original less what the annotations change (decision 0165 §3), where it

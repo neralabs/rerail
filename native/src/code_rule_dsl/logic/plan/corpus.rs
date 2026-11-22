@@ -7548,15 +7548,30 @@ fn run_observed_within(
                         let mut count: Vec<(usize, i64)> = Vec::new();
                         for c in (0..types.len()).filter(|c| types[*c] != "node") {
                             match r.exact(c) {
-                                Some(vals) => totals.consts.extend(vals.map(|(v, n)| (rel.clone(), format!("c{c}"), v, n))),
+                                Some(vals) => vals.for_each(|(v, n)| totals.constant(rel, c, v, n)),
                                 None => count.extend(tested.get(rel.as_str()).into_iter().flatten().filter(|(tc, _)| *tc == c)),
                             }
                         }
+                        // A constant the keeper watches is counted as kept; one new to it is counted in the rows
+                        // held, once, and watched from then on, so an edit counts none of the rows.
                         if !count.is_empty() {
-                            let src = exports.borrow_mut().source(rel, types.len());
-                            for (c, v) in count {
-                                let n = (0..src.len()).filter(|&i| src.value(i, c) == v).count();
-                                totals.consts.push((rel.clone(), format!("c{c}"), v, n as i64));
+                            let mut counted: Vec<(usize, i64, Option<i64>)> = count.into_iter().map(|(c, v)| (c, v, r.watched(c, v))).collect();
+                            if counted.iter().any(|(.., n)| n.is_none()) {
+                                let src = exports.borrow_mut().source(rel, types.len());
+                                for (c, v, n) in counted.iter_mut().filter(|(.., n)| n.is_none()) {
+                                    *n = Some((0..src.len()).filter(|&i| src.value(i, *c) == *v).count() as i64);
+                                }
+                            }
+                            let mut watched: BTreeMap<usize, Vec<(i64, i64)>> = BTreeMap::new();
+                            for (c, v, n) in counted {
+                                let n = n.expect("counted");
+                                totals.constant(rel, c, v, n);
+                                watched.entry(c).or_default().push((v, n));
+                            }
+                            if let Some(k) = keeper.as_mut() {
+                                for (c, pairs) in watched {
+                                    k.watch(rel, c, pairs);
+                                }
                             }
                         }
                         from_kept += 1;
@@ -9843,8 +9858,8 @@ struct Totals {
     rels: BTreeMap<String, (usize, BTreeMap<String, [i64; 4]>)>,
     /// Per (relation, value column).
     vals: BTreeMap<(String, String), ValTotals>,
-    /// Constants' counts of columns whose statistics are given whole (`add`): (relation, column, value, count).
-    consts: Vec<(String, String, i64, i64)>,
+    /// Constants' counts of columns whose statistics are given whole (`add`), by relation: (column, value, count).
+    consts: BTreeMap<String, Vec<(String, i64, i64)>>,
 }
 /// A value column's totals over the chunks.
 #[derive(Clone, Default)]
@@ -9893,8 +9908,16 @@ impl Totals {
     /// Drops `rel`'s measurements (to measure it again).
     fn forget(&mut self, rel: &str) {
         self.rels.remove(rel);
-        self.vals.retain(|(r, _), _| r != rel);
-        self.consts.retain(|(r, ..)| r != rel);
+        // Its own columns' range: every relation forgotten in turn (an edit's exports, given whole) costs its own.
+        let cols: Vec<(String, String)> = self.vals.range((rel.to_owned(), String::new())..).take_while(|((r, _), _)| r == rel).map(|(k, _)| k.clone()).collect();
+        for k in cols {
+            self.vals.remove(&k);
+        }
+        self.consts.remove(rel);
+    }
+    /// `rel`'s column `c`'s count of constant `v`, given with its statistics (`add`).
+    fn constant(&mut self, rel: &str, c: usize, v: i64, n: i64) {
+        self.consts.entry(rel.to_owned()).or_default().push((format!("c{c}"), v, n));
     }
     /// `from`'s measurements also under the name `to` (the same rows, measured once).
     fn alias(&mut self, from: &str, to: &str) {
@@ -9903,8 +9926,9 @@ impl Totals {
         }
         let vals: Vec<_> = self.vals.iter().filter(|((r, _), _)| r == from).map(|((_, c), v)| ((to.to_owned(), c.clone()), v.clone())).collect();
         self.vals.extend(vals);
-        let consts: Vec<_> = self.consts.iter().filter(|(r, ..)| r == from).map(|(_, c, v, n)| (to.to_owned(), c.clone(), *v, *n)).collect();
-        self.consts.extend(consts);
+        if let Some(consts) = self.consts.get(from).cloned() {
+            self.consts.entry(to.to_owned()).or_default().extend(consts);
+        }
     }
     fn add(&mut self, rel: &str, rows: usize, measured: &[(String, i64, i64, i64, i64)]) {
         let entry = self.rels.entry(rel.to_owned()).or_default();
@@ -9955,8 +9979,8 @@ impl Totals {
             let values = per.few.as_ref().unwrap_or(&per.tested);
             stats.measured(rel, [(col.clone(), [rows, ndv.max(1), sq, per.sqd])], values.iter().map(|(v, n)| (col.clone(), *v, *n)));
         }
-        for (rel, col, v, n) in &self.consts {
-            stats.measured(rel, [], [(col.clone(), *v, *n)]);
+        for (rel, consts) in &self.consts {
+            stats.measured(rel, [], consts.iter().map(|(col, v, n)| (col.clone(), *v, *n)));
         }
     }
 }

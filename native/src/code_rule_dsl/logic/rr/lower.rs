@@ -663,6 +663,38 @@ pub struct Module {
     /// The bound families it declares (`.pragma "bound-family"`), read off its version once: each scope that reaches
     /// it reads them (`seeds`).
     families: Vec<String>,
+    /// What it gives each scope that reaches it (`Lowerer::seed`), read off its version once.
+    given: Given,
+}
+
+/// A module's header less its helpers (`Lowerer::made`): what it gives the scopes that reach it (`Lowerer::seed`).
+#[derive(Clone)]
+struct Given {
+    decls: Vec<(String, Vec<(String, String)>)>,
+    inputs: Vec<String>,
+    natives: BTreeMap<String, Native>,
+    kindsets: BTreeMap<String, Vec<String>>,
+    lattice: BTreeMap<String, LatticeDecl>,
+    tapes: BTreeMap<String, BTreeSet<usize>>,
+    qualifiers: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl Given {
+    /// Read off version `p` of a module whose lowerer is `l`.
+    fn of(l: &Lowerer, p: &crate::code_rule_dsl::logic::program_image::Version) -> Given {
+        use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as F;
+        let helpers: BTreeSet<String> = l.made.iter().map(|(stem, n)| format!("rr_{stem}{n}")).collect();
+        let decls = F::declared_names(p)
+            .into_iter()
+            .filter(|r| !helpers.contains(r))
+            .map(|rel| {
+                let cols = F::columns_of(p, &rel).unwrap_or_default();
+                (rel, cols)
+            })
+            .collect();
+        let inputs = F::input_names(p).into_iter().filter(|r| !helpers.contains(r)).collect();
+        Given { decls, inputs, natives: F::natives(p), kindsets: F::kindsets(p), lattice: F::lattice(p), tapes: F::tapes(p), qualifiers: F::qualifiers(p) }
+    }
 }
 
 /// `statements` lowered as a module whose includes are `scope` (each module it reaches, once): its clauses read their
@@ -877,7 +909,8 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
     // for.
     shapes_hold(&version, &shapes)?;
     let families = bound_family::specs(&*version);
-    Ok(Module { l, written, docof, places, version, families })
+    let given = Given::of(&l, &version);
+    Ok(Module { l, written, docof, places, version, families, given })
 }
 
 /// Each `.shape`'s rules, read in `version`, read its relation (and what it waits after), and have each variable it
@@ -1030,7 +1063,8 @@ impl Module {
             l.deps.entry(r).or_default().insert(x);
         }
         let families = bound_family::specs(&*version);
-        Ok(Module { l, written: p.written.into_iter().collect(), docof: p.docof, places: p.places, version, families })
+        let given = Given::of(&l, &version);
+        Ok(Module { l, written: p.written.into_iter().collect(), docof: p.docof, places: p.places, version, families, given })
     }
 }
 
@@ -1096,47 +1130,40 @@ impl Lowerer {
     /// The names a module's clauses read from its includes (`scope`): their declarations, inputs, natives, kind sets,
     /// lattices, `must, may` relations, `.violation`s and what each derived relation reads. Their helpers (`made`)
     /// are their own: a module numbers its own from one.
+    ///
+    /// Each module's header was read once (`Given`); the scope's natives, kind sets, lattice, tapes and qualifiers are
+    /// gathered over its modules, in order, and each field stated once.
     fn seed(&mut self, scope: &[&Module]) -> Seeded {
         let mut seeded = Seeded { decls: BTreeSet::new(), inputs: BTreeSet::new(), natives: BTreeSet::new(), kindsets: BTreeSet::new(), lattice: BTreeSet::new(), tapes: BTreeSet::new(), qualifiers: BTreeSet::new(), lattices: BTreeSet::new(), three: BTreeSet::new(), violations: Vec::new() };
+        let mut natives = BTreeMap::new();
+        let mut kindsets = BTreeMap::new();
+        let mut lattice = BTreeMap::new();
+        let mut tapes: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+        let mut qualifiers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for m in scope {
-            let helpers: BTreeSet<String> = m.l.made.iter().map(|(stem, n)| format!("rr_{stem}{n}")).collect();
-            // Its header, read from its version.
-            use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as F;
-            let p = &*m.version;
-            for rel in F::declared_names(p).into_iter().filter(|r| !helpers.contains(r)) {
-                let cols = F::columns_of(p, &rel).unwrap_or_default();
+            let g = &m.given;
+            for (rel, cols) in &g.decls {
                 seeded.decls.insert(rel.clone());
-                self.prog.declare_cols(&rel, cols);
+                self.prog.declare_cols(rel, cols.iter().map(|(c, t)| (c.as_str(), t.as_str())));
             }
-            for rel in F::input_names(p).into_iter().filter(|r| !helpers.contains(r)) {
+            for rel in &g.inputs {
                 if seeded.inputs.insert(rel.clone()) {
-                    self.prog.fields().add_input(&rel);
+                    self.prog.fields().add_input(rel);
                 }
             }
-            let natives = F::natives(p);
-            seeded.natives.extend(natives.keys().cloned());
-            if !natives.is_empty() {
-                self.prog.edit(|b| b.natives(), |n| Field::Natives(n), |n| n.extend(natives));
+            seeded.natives.extend(g.natives.keys().cloned());
+            natives.extend(g.natives.iter().map(|(r, n)| (r.clone(), n.clone())));
+            seeded.kindsets.extend(g.kindsets.keys().cloned());
+            kindsets.extend(g.kindsets.iter().map(|(r, k)| (r.clone(), k.clone())));
+            seeded.lattice.extend(g.lattice.keys().cloned());
+            lattice.extend(g.lattice.iter().map(|(r, d)| (r.clone(), d.clone())));
+            seeded.tapes.extend(g.tapes.keys().cloned());
+            for (rel, cols) in &g.tapes {
+                tapes.entry(rel.clone()).or_default().extend(cols.iter().copied());
             }
-            let kindsets = F::kindsets(p);
-            seeded.kindsets.extend(kindsets.keys().cloned());
-            if !kindsets.is_empty() {
-                self.prog.edit(|b| b.kindsets(), |k| Field::Kindsets(k), |k| k.extend(kindsets));
-            }
-            let lattice = F::lattice(p);
-            seeded.lattice.extend(lattice.keys().cloned());
-            if !lattice.is_empty() {
-                self.prog.edit(|b| b.lattice(), |d| Field::Lattice(d), |d| d.extend(lattice));
-            }
-            let tapes = F::tapes(p);
-            seeded.tapes.extend(tapes.keys().cloned());
-            if !tapes.is_empty() {
-                self.prog.edit(|b| b.tapes(), |t| Field::Tapes(t), |t| tapes.into_iter().for_each(|(rel, cols)| t.entry(rel).or_default().extend(cols)));
-            }
-            let qualifiers = F::qualifiers(p);
-            seeded.qualifiers.extend(qualifiers.keys().cloned());
-            if !qualifiers.is_empty() {
-                self.prog.edit(|b| b.qualifiers(), |q| Field::Qualifiers(q), |q| qualifiers.into_iter().for_each(|(rel, qs)| q.entry(rel).or_default().extend(qs)));
+            seeded.qualifiers.extend(g.qualifiers.keys().cloned());
+            for (rel, qs) in &g.qualifiers {
+                qualifiers.entry(rel.clone()).or_default().extend(qs.iter().cloned());
             }
             for (name, l) in &m.l.lattices {
                 seeded.lattices.insert(name.clone());
@@ -1156,6 +1183,21 @@ impl Lowerer {
             if let Some(d) = m.docof {
                 self.docof_of_locs = d;
             }
+        }
+        if !natives.is_empty() {
+            self.prog.edit(|b| b.natives(), |n| Field::Natives(n), |n| n.extend(natives));
+        }
+        if !kindsets.is_empty() {
+            self.prog.edit(|b| b.kindsets(), |k| Field::Kindsets(k), |k| k.extend(kindsets));
+        }
+        if !lattice.is_empty() {
+            self.prog.edit(|b| b.lattice(), |d| Field::Lattice(d), |d| d.extend(lattice));
+        }
+        if !tapes.is_empty() {
+            self.prog.edit(|b| b.tapes(), |t| Field::Tapes(t), |t| tapes.into_iter().for_each(|(rel, cols)| t.entry(rel).or_default().extend(cols)));
+        }
+        if !qualifiers.is_empty() {
+            self.prog.edit(|b| b.qualifiers(), |q| Field::Qualifiers(q), |q| qualifiers.into_iter().for_each(|(rel, qs)| q.entry(rel).or_default().extend(qs)));
         }
         seeded
     }

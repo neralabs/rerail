@@ -840,14 +840,11 @@ impl KeptGather {
                 Some(&i) => {
                     let was = &mut list[i];
                     if p.rel == READERS {
+                        // A reader record only grows (decision 0401 step 8): two of a wave are one, naming both's.
                         let all: BTreeSet<[u8; 32]> = put_idents(was).into_iter().chain(put_idents(&p)).collect();
                         *was = readers_put(p.ident, &all);
                     } else if matches!(p.what, KeptWhat::Reads) && !matches!(was.what, KeptWhat::Reads | KeptWhat::Gone) {
                         was.reads = p.reads;
-                    } else if p.rel == READERS {
-                        // A reader record only grows (decision 0401 step 8): two of a wave are one, naming both's.
-                        let all: BTreeSet<[u8; 32]> = put_idents(was).into_iter().chain(put_idents(&p)).collect();
-                        *was = readers_put(p.ident, &all);
                     } else {
                         *was = p;
                     }
