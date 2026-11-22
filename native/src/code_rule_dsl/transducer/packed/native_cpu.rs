@@ -2897,8 +2897,12 @@ fn build_task_contexts(
         context.node_base = view.node_base;
         context.source_base = view.source_base;
         context.node_count = node_count;
-        context.source = batch.source.as_ptr();
-        context.source_length = batch.source.len() as u32;
+        // The document's source where its tape holds it (decision 0353 step 7), based so the batch's numbering of
+        // source bytes indexes it: its bytes lie at `source_start..source_start + source_length`, its nodes' spans
+        // with them.
+        let doc = &files[task.file as usize];
+        context.source = doc.transducer_source().as_ptr().wrapping_sub(file.source_start as usize);
+        context.source_length = file.source_start + file.source_length;
         context.values = unsafe { batch.values.as_ptr().add(program.value_start as usize) };
         context.value_count = value_count;
         context.nfa_states = batch.nfa_states.as_ptr();
@@ -2979,7 +2983,8 @@ fn build_task_contexts(
                 .add(totals.candidates as usize + arena_starts[ArenaKind::Result as usize] as usize)
         };
         context.result_quota_limit = batch.evaluation_limit(task, ArenaKind::Result);
-        context.line_starts = unsafe { batch.line_starts.as_ptr().add(file.line_start as usize) };
+        // Its line starts, the document's own (`line_start_at` adds `source_base`).
+        context.line_starts = doc.transducer_rows().as_ptr();
         context.line_count = file.line_count;
         context.final_captures = unsafe {
             final_captures

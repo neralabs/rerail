@@ -3082,10 +3082,15 @@ impl TapeDoc {
         None
     }
 
-    /// The whole source, for the Metal backend's concatenated buffer.
-    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    /// The whole source, where the document holds it.
     pub fn transducer_source(&self) -> &[u8] {
         self.source.as_bytes()
+    }
+
+    /// Tree-sitter's rows' starts (only `\n` ends one), from 0: the positions' line table, made once and held with
+    /// the document, which the transducer reads in place (decision 0353 step 7).
+    pub fn transducer_rows(&self) -> &[u32] {
+        self.points.rows.get_or_init(|| LineTable::tree_sitter(&self.points.source)).starts()
     }
 
     /// A node's source slice. Restoring the tape validates every span as a UTF-8 boundary.

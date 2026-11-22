@@ -69,19 +69,19 @@ struct OutputInstructionRecord {
 /// 0324).
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Layout {
-    /// The source and line starts: the executor reads each document's tape in place (`new_in_place`).
+    /// The derived classes' rows: the executor reads each document's tape, source and line starts in place
+    /// (`new_in_place`).
     InPlace,
     /// Nothing: the device reads the documents resident in the slabs (`new_resident`).
     Resident,
 }
 
 #[derive(Clone, Default)]
-// copy (0353 step 7): the packed batch's node records (44 bytes a node) and child lists are copies of the
-// tape. They go: the transducer reads the tape (decisions 0293, 0353).
 pub struct PackedBatch {
     pub header: MetalBatchHeader,
-    pub source: Vec<u8>,
-    pub line_starts: Vec<u32>,
+    /// Each file's source, where its document holds it (shared, never copied: decision 0353 step 7). A file's
+    /// bytes are numbered from its `source_start` (`source_of`).
+    pub(super) sources: Vec<Arc<String>>,
     /// The batch's rows over its nodes, `derived_words` words of bits each: the files' derived classes
     /// (`TapeDoc::with_labels`, per class from `DERIVED_CLASS_BASE`, `derived_classes` rows), then each contains
     /// test's row (`contains_rows`).
@@ -344,23 +344,15 @@ impl PackedBatch {
         }
     }
 
-    /// `build_tapes_in`, its copies of the tapes counted (decision 0353's row 11): the sources and line starts a batch
-    /// holds of its own.
-    fn build_tapes(
-        programs: &[Program],
-        files: &[TapeDoc],
-        anchors: &[Vec<Vec<u32>>],
-        materialize_tasks: bool,
-        layout: Layout,
-    ) -> Result<Self, Error> {
-        const PACKED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(11, "7", "the transducer's packed batch: sources and line starts (PackedBatch)");
-        let copying = PACKED.start();
-        let batch = Self::build_tapes_in(programs, files, anchors, materialize_tasks, layout);
-        copying.done(batch.as_ref().map_or(0, |b| b.source.len() + std::mem::size_of_val(b.line_starts.as_slice())));
-        batch
+    /// File `file`'s source bytes `start..start + length`, in the batch's numbering: `None` past the file's.
+    pub(super) fn source_of(&self, file: usize, start: u32, length: u32) -> Option<&[u8]> {
+        let record = self.files.get(file)?;
+        let from = start.checked_sub(record.source_start)? as usize;
+        let to = from.checked_add(length as usize)?;
+        (to <= record.source_length as usize).then(|| self.sources.get(file)?.as_bytes().get(from..to)).flatten()
     }
 
-    fn build_tapes_in(
+    fn build_tapes(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
@@ -386,60 +378,31 @@ impl PackedBatch {
         let mut documents = Vec::new();
         let (mut source_length, mut line_length) = (0usize, 0usize);
         for tape in files.iter().take(file_count) {
-            if layout == Layout::Resident {
-                let source = tape.transducer_source();
-                let lines = 1 + source.iter().filter(|&&byte| byte == b'\n').count();
-                let nodes = tape.transducer_len();
-                batch.files.push(BatchFile {
-                    node_start: checked_u32(navigation[0])?,
-                    node_count: checked_u32(nodes)?,
-                    source_start: checked_u32(source_length)?,
-                    source_length: checked_u32(source.len())?,
-                    line_start: checked_u32(line_length)?,
-                    line_count: checked_u32(lines)?,
-                    supertype_start: 0,
-                    supertype_count: 0,
-                });
-                navigation[0] += nodes;
-                navigation[1] += nodes.saturating_sub(1);
-                navigation[3] += lines;
-                source_length += source.len();
-                line_length += lines;
-                documents.push(tape);
-                continue;
-            }
-            let node_start = checked_u32(navigation[0])?;
-            let source_start = checked_u32(batch.source.len())?;
+            // The file's place in the batch's numbering of nodes, source bytes and lines; its source and line
+            // starts are read where the document holds them (decision 0353 step 7).
             let source = tape.transducer_source();
-            batch.source.extend_from_slice(source);
-            let line_start = checked_u32(navigation[3])?;
-            let first_line = batch.line_starts.len();
-            batch.line_starts.push(source_start);
-            batch.line_starts.extend(
-                source
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, byte)| **byte == b'\n')
-                    .map(|(index, _)| source_start + index as u32 + 1),
-            );
-            if !tape.transducer_labels().is_empty() {
+            let lines = 1 + memchr::memchr_iter(b'\n', source).count();
+            let nodes = tape.transducer_len();
+            let node_start = checked_u32(navigation[0])?;
+            if layout == Layout::InPlace && !tape.transducer_labels().is_empty() {
                 derived.push((node_start, tape.transducer_labels_shared()));
             }
-            // The source and line starts are the batch's; the nodes are read on the tape.
-            let nodes = tape.transducer_len();
-            navigation[0] += nodes;
-            navigation[1] += nodes.saturating_sub(1);
-            navigation[3] += batch.line_starts.len() - first_line;
             batch.files.push(BatchFile {
                 node_start,
                 node_count: checked_u32(nodes)?,
-                source_start,
+                source_start: checked_u32(source_length)?,
                 source_length: checked_u32(source.len())?,
-                line_start,
-                line_count: checked_u32(batch.line_starts.len() - first_line)?,
+                line_start: checked_u32(line_length)?,
+                line_count: checked_u32(lines)?,
                 supertype_start: 0,
                 supertype_count: 0,
             });
+            batch.sources.push(Arc::clone(&tape.source));
+            navigation[0] += nodes;
+            navigation[1] += nodes.saturating_sub(1);
+            navigation[3] += lines;
+            source_length += source.len();
+            line_length += lines;
             documents.push(tape);
         }
         drop(stage);
@@ -1460,7 +1423,7 @@ impl<'a> PackedResults<'a> {
                 .checked_add(file.source_length)
                 .ok_or(Error::BackendFailure)?;
             if file_node_end > self.batch.header.node_count
-                || file_source_end as usize > self.batch.source.len()
+                || self.batch.source_of(task.file as usize, file.source_start, file.source_length).is_none()
             {
                 return Err(Error::BackendFailure);
             }
@@ -1521,11 +1484,6 @@ impl<'a> PackedResults<'a> {
                     }
                     counts.1 = counts.1.checked_add(1).ok_or(Error::BackendFailure)?;
                     let task = &self.batch.tasks[task_index];
-                    let file = &self.batch.files[task.file as usize];
-                    let file_source_end = file
-                        .source_start
-                        .checked_add(file.source_length)
-                        .ok_or(Error::BackendFailure)?;
                     let key = checked_range(
                         property.key_start,
                         property.key_length,
@@ -1537,23 +1495,16 @@ impl<'a> PackedResults<'a> {
                     {
                         return Err(Error::BackendFailure);
                     }
-                    let value = checked_range(
-                        property.value_start,
-                        property.value_length,
-                        if property.value == 1 {
-                            self.output_storage.len()
-                        } else {
-                            self.batch.source.len()
-                        },
-                    )?;
                     let valid = if property.value == 1 {
+                        let value = checked_range(property.value_start, property.value_length, self.output_storage.len())?;
                         value.start >= byte_range.start
                             && value.end <= byte_range.end
                             && std::str::from_utf8(&self.output_storage[value]).is_ok()
                     } else {
-                        value.start >= file.source_start as usize
-                            && value.end <= file_source_end as usize
-                            && std::str::from_utf8(&self.batch.source[value]).is_ok()
+                        // The file's own bytes, read where its document holds them.
+                        self.batch
+                            .source_of(task.file as usize, property.value_start, property.value_length)
+                            .is_some_and(|value| std::str::from_utf8(value).is_ok())
                     };
                     if !valid {
                         return Err(Error::BackendFailure);
@@ -2103,7 +2054,7 @@ impl PackedExecution {
                     page,
                     record: &page.results[index as usize],
                     file: file_record,
-                    source: &self.batch.source,
+                    source: self.batch.sources.get(file).map_or(&[][..], |s| s.as_bytes()),
                     task_ordinal_base,
                 });
             }
@@ -2213,13 +2164,14 @@ impl<'a> PackedResultView<'a> {
             .map(move |property| {
                 let key = &self.page.output_storage[property.key_start as usize
                     ..(property.key_start + property.key_length) as usize];
-                let bytes = if property.value == 1 {
-                    &self.page.output_storage
+                // A source value in the batch's numbering: `source` is the file's own, from its `source_start`.
+                let value = if property.value == 1 {
+                    &self.page.output_storage[property.value_start as usize
+                        ..(property.value_start + property.value_length) as usize]
                 } else {
-                    self.source
+                    let from = (property.value_start - self.file.source_start) as usize;
+                    &self.source[from..from + property.value_length as usize]
                 };
-                let value = &bytes[property.value_start as usize
-                    ..(property.value_start + property.value_length) as usize];
                 (key, Some(value))
             })
     }
@@ -2504,20 +2456,13 @@ impl GridPublication {
                 if std::str::from_utf8(&output_storage[key]).is_err() {
                     return Err(grid_result_failure());
                 }
-                let source = if property.value == 1 {
-                    output_storage.as_slice()
+                // A value of the file's source: its bytes where its document holds them.
+                let value = if property.value == 1 {
+                    &output_storage[checked_range(property.value_start, property.value_length, output_storage.len())?]
                 } else {
-                    batch.source.as_slice()
+                    batch.source_of(evaluation.file as usize, property.value_start, property.value_length).ok_or_else(grid_result_failure)?
                 };
-                let value =
-                    checked_range(property.value_start, property.value_length, source.len())?;
-                if property.value == 0
-                    && (value.start < file.source_start as usize
-                        || value.end > (file.source_start + file.source_length) as usize)
-                {
-                    return Err(grid_result_failure());
-                }
-                if std::str::from_utf8(&source[value]).is_err() {
+                if std::str::from_utf8(value).is_err() {
                     return Err(grid_result_failure());
                 }
             }
@@ -2884,14 +2829,13 @@ impl PackedResultPage {
                         let key = self.output_storage[property.key_start as usize
                             ..(property.key_start + property.key_length) as usize]
                             .to_vec();
-                        let bytes = if property.value == 1 {
-                            &self.output_storage
+                        let value = if property.value == 1 {
+                            &self.output_storage[property.value_start as usize
+                                ..(property.value_start + property.value_length) as usize]
                         } else {
-                            &batch.source
-                        };
-                        let value = bytes[property.value_start as usize
-                            ..(property.value_start + property.value_length) as usize]
-                            .to_vec();
+                            batch.source_of(task.file as usize, property.value_start, property.value_length).unwrap_or_default()
+                        }
+                        .to_vec();
                         (key, Some(value))
                     })
                     .collect();
@@ -3005,14 +2949,13 @@ impl PackedBatch {
                         let key = output_storage[property.key_start as usize
                             ..(property.key_start + property.key_length) as usize]
                             .to_vec();
-                        let bytes = if property.value == 1 {
-                            output_storage
+                        let value = if property.value == 1 {
+                            &output_storage[property.value_start as usize
+                                ..(property.value_start + property.value_length) as usize]
                         } else {
-                            &self.source
-                        };
-                        let value = bytes[property.value_start as usize
-                            ..(property.value_start + property.value_length) as usize]
-                            .to_vec();
+                            self.source_of(task.file as usize, property.value_start, property.value_length).unwrap_or_default()
+                        }
+                        .to_vec();
                         (key, Some(value))
                     })
                     .collect();
@@ -3093,7 +3036,7 @@ pub mod tests {
             batch.global_arenas.arenas[kind as usize].capacity = 1;
         }
         batch.evaluations.push(evaluation);
-        batch.source.push(b'x');
+        batch.sources.push(Arc::new("x".to_owned()));
         batch.root_spans.push(1);
         batch.header.node_count = 1;
         batch

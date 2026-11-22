@@ -389,7 +389,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | 0: gone (21 MB in 972 calls on cold hogql before: push_fresh 15.6, absorb 5.3, the device's staged 0.1) | Done (step 6, 2026-11-22) |
 | 9 | A relation of many parts merged for the device (`in_block`). The key's copy is gone (step 6, 2026-11-22): a key past a block's room refuses its stratum, and a relation alone in a block has room for its whole directory. Before: a second key's index copied the relation (`DevIndex::moved`). Since 0384 (steps 1–8, 2026-11-18) a relation is one relation or a chain of continuations read in place, so the merge is left only where a part is appended after another relation's rows (`append_part`, counted), with a chain's newest two segments compacted past `MAX_SEGMENTS`. A recursive component's deltas on the device are made with room for an index of each key its plans probe them by (`Own::keyed`, `Part::for_device_indexed`, 2026-11-20), and its totals grow in a block with room for theirs (row 10). That was not most of the row: on the M3's 300-file run it copied 852.4 MB in 279 copies before (ab108) and 901.8 MB in 322 after (ab109). The site now says where the relation copied lies, the device's own (an upload, a delta) or in a block of the run's with no room left, and the device's report counts each (`moved`): 766.4 MB in 247 copies were in a block with no room (ab110). A head relation the device writes of 4,096 rows or more is now alone in a block with room for its indexes (`head_room`, `Part::with_index_room`, anonymous memory taken as written): 621.7 MB in 114 copies left (ab111), each about 5 MB, of relations not yet told apart | `metal_join.rs`; `facts/rows.rs`; `device.rs` | Q85 counts them; 0 merges on cold 300-file runs; 0 on cold hogql since 2026-11-22 (8.3 MB in 2 before: the axis relation, room for 2 indexes, probed by 3 keys) | Step 6 |
 | 10 | Gone (2026-11-20): a device fixpoint's total copied into a run's block at its end, and each round's total made anew with the last round's rows copied into it (rounds × rows). A set head's relation is now one relation in a block of the run's life from its first round, each round's new rows written past its rows, its indexes forgotten as it grows, taken by the store as it lies (`SetHead`), as a lattice head's is (decision 0384 step 5). Measured before: 187.4 MB in 225 copies at the end on the M3's 300-file run (ab109); the rounds' copies were not counted | `device.rs` (0325 step 4) | 0 | Step 6 |
-| 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
+| 11 | Gone (step 7, 2026-11-22): the transducer's packed batch's copies of the tape. Its node records and child lists went first (every executor reads the tape, decisions 0310, 0324); its sources and line starts, the last, are read where the documents hold them: a batch shares each file's source (`PackedBatch::sources`, read by `source_of` in the batch's numbering), and the CPU JIT's context points at the document's own source and tree-sitter line starts (`TapeDoc::transducer_rows`, made once with the document), `line_start_at` adding the file's `source_base` | — | — | Done |
 | 12 | Gone (step 8, 2026-11-22): findings, frames and memo entries copied into rows of their own. The kept writer packs every put's rows where they lie (`packed::RowsIn`); granules, views, inputs and a stratum's relations are lent; the documents' entries, the statistics' words and the documents' table are read where they lie; a request's rows reach its answerer as a handle on its relation's rows (`component::Asked`), and a request's answers are held after the rows the engine holds, shared (`retain_with`) | — | — | Done |
 | 13 | The transducer's residency: every tape it reads copied into slabs of its own. (Documents copied between slabs, `gather`, are gone, 0471: a batch reads each document in its own slab, by the slabs' GPU addresses.) | `residency::slabs::admit_docs`, `insert`'s `place` | Each tape a Metal batch reads | Step 7 |
 | 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 0: gone | Done (step 4, 2026-11-22) |
@@ -1143,6 +1143,31 @@ made again (`HELD_AGAIN`, which neither bench reached). `component::kept_rows` i
 
 The 300-file bench and cold hogql: no row 12 copy (it was 0.0 MB in 3 and 9 calls); 463 violations; 1,629 findings
 with the CPU run's digest.
+
+### Step 7: the transducer reads the tape (2026-11-22)
+
+Row 11. The packed batch held no node records or child lists already: the CPU JIT, the grid and the register
+machines read each document's tape. What it still copied was each file's source, concatenated, and its line
+starts, made again for every batch (`build_tapes`, about one word a line). Now:
+
+- The batch keeps each file's source as its document holds it (`PackedBatch::sources`: the document's `Arc`,
+  shared). Files keep their place in the batch's numbering of source bytes (`source_start`), which the device's
+  document table numbers alike; `source_of(file, start, length)` reads a range in that numbering, `None` past the
+  file's bytes. The published results' checks and their decoding read values through it.
+- The CPU JIT's context points at the file's own source, based by its `source_start` so the batch's numbering
+  indexes it (`context.source`), and at the document's line starts: tree-sitter's rows (only `\n` ends one, as the
+  batch's did), from 0, made once with the document (`TapeDoc::transducer_rows`, the positions' table). The JIT's
+  three reads of a line start add the file's `source_base` (`line_start_at`).
+- The `Layout` of a resident batch and an in-place one differ only in the derived classes' rows now.
+
+Tests: the transducer crates' libraries on Linux (251) and their Metal and in-place tests on the M1 Max (232). Cold
+hogql: 1,629 findings with the CPU run's digest (its rule set runs no transducer batch, so row 11 was 0 there).
+
+Row 13, the residency's copy of an in-memory tape into a slab, is left: a document parsed this run holds its source
+as a heap string and its tape as an image serialized for its digest (`tape_digest_and_image`), so neither lies in
+device memory to be taken as it lies. It goes with the parse writing its tape into its room (step 4a) and the
+reader loading the source into a room beside it; the document's view already reads each part at an offset from the
+document's first byte (`tape_doc`), so the residency then binds those rooms with no copy.
 
 ## What it replaces
 

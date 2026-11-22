@@ -113,6 +113,23 @@ fn capture_oldest(
     )
 }
 
+/// Line `address`'s start (a word of the document's own line starts, read on its tape: `TapeDoc::transducer_rows`),
+/// in the batch's numbering: the file's `source_base` added.
+fn line_start_at(
+    function: &mut FunctionBuilder<'_>,
+    task: cranelift_codegen::ir::Value,
+    address: cranelift_codegen::ir::Value,
+) -> cranelift_codegen::ir::Value {
+    let start = function.ins().load(types::I32, MemFlags::trusted(), address, 0);
+    let base = function.ins().load(
+        types::I32,
+        MemFlags::trusted(),
+        task,
+        mem::offset_of!(NativeTaskContext, source_base) as i32,
+    );
+    function.ins().iadd(start, base)
+}
+
 /// The line (from 0) source byte `byte` lies in (the batch's numbering): a search of the task's line starts.
 pub(super) fn line_for(
     function: &mut FunctionBuilder<'_>,
@@ -167,9 +184,7 @@ pub(super) fn line_for(
         mem::offset_of!(NativeTaskContext, line_starts),
     );
     let address = indexed::<u32>(function, starts, middle);
-    let start = function
-        .ins()
-        .load(types::I32, MemFlags::trusted(), address, 0);
+    let start = line_start_at(function, task, address);
     let before = function
         .ins()
         .icmp(IntCC::UnsignedLessThanOrEqual, start, byte);
@@ -237,9 +252,7 @@ fn byte_for(
         mem::offset_of!(NativeTaskContext, line_starts),
     );
     let start_address = indexed::<u32>(function, starts, row);
-    let start = function
-        .ins()
-        .load(types::I32, MemFlags::trusted(), start_address, 0);
+    let start = line_start_at(function, task, start_address);
     let next_row = function.ins().iadd_imm(row, 1);
     let has_next = function
         .ins()
@@ -247,9 +260,7 @@ fn byte_for(
     function.ins().brif(has_next, next_end, &[], file_end, &[]);
     function.switch_to_block(next_end);
     let next_address = indexed::<u32>(function, starts, next_row);
-    let end = function
-        .ins()
-        .load(types::I32, MemFlags::trusted(), next_address, 0);
+    let end = line_start_at(function, task, next_address);
     let end = function.ins().iadd_imm(end, -1);
     function.ins().jump(check, &[start.into(), end.into()]);
     function.switch_to_block(file_end);
@@ -1264,14 +1275,8 @@ pub(super) fn define(
                     );
                     let start_line_address = indexed::<u32>(&mut function, starts, start_row);
                     let end_line_address = indexed::<u32>(&mut function, starts, end_row);
-                    let start_line =
-                        function
-                            .ins()
-                            .load(types::I32, MemFlags::trusted(), start_line_address, 0);
-                    let end_line =
-                        function
-                            .ins()
-                            .load(types::I32, MemFlags::trusted(), end_line_address, 0);
+                    let start_line = line_start_at(&mut function, task, start_line_address);
+                    let end_line = line_start_at(&mut function, task, end_line_address);
                     let start_column = function.ins().isub(start, start_line);
                     let end_column = function.ins().isub(end, end_line);
                     let new_start_row = function.ins().iadd_imm(start_row, i64::from(offsets[0]));
