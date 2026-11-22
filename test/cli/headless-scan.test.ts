@@ -23,6 +23,8 @@ import { queryContentStore } from "../support/engine/content-store-query.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
 import { withExperiments } from "../support/environment/experiments.js";
+import { stubUserHome } from "../support/user-home.js";
+import { mainContentStoreDirectory } from "../../src/engine/native/rerail-build.js";
 
 withExperiments("HEADLESS_SCAN", "REMOTE_SINK");
 
@@ -3525,7 +3527,9 @@ Seen(n) :- kind(n, "identifier").
   it("ignores an inaccessible legacy candidate and keeps a registered store pending", async () => {
     const root = checkout();
     const home = `${root}-home`;
-    const main = join(home, "main");
+    // The machine-wide directory of a user home the test owns: the real check, which reads that home, finds it there.
+    stubUserHome(join(home, "user"));
+    const main = mainContentStoreDirectory();
     mkdirSync(main, { recursive: true });
     const unregistered = join(main, "unregistered.sqlite");
     const registered = join(main, "registered.sqlite");
@@ -3533,8 +3537,6 @@ Seen(n) :- kind(n, "identifier").
     writeFileSync(unregistered, "invalid database");
     const registeredRoot = join(root, "registered");
     await acquireDirectoryAnalysisGeneration(databasePath, registeredRoot, registered);
-    const builds = await vi.importActual<typeof import("../../src/engine/native/rerail-build.js")>("../../src/engine/native/rerail-build.js");
-    const machineStore = vi.spyOn(builds, "mainContentStoreDirectory").mockReturnValue(main);
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", unregistered);
     const db = openRerailDatabase(databasePath);
     try {
@@ -3549,7 +3551,6 @@ Seen(n) :- kind(n, "identifier").
     } finally {
       db.$client.close();
       vi.unstubAllEnvs();
-      machineStore.mockRestore();
     }
   });
 
