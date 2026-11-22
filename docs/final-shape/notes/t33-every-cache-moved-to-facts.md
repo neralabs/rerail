@@ -158,7 +158,7 @@ removed with nothing in its place but K1–K4.
 |---|---|---|
 | `rr.rs` `PARSED`, `LIBRARIES`, `PROGRAMS` | a file's path and digest; the files' digests | a rule file is a document loaded by `load(path, _, "rr")` (phase 0 already does); its statements are 0074's program facts, stored in K1 under the file's `file` row |
 | `phase0.rs` `KEPT` | the seed; held while every module is as it was | `bootstrap.rr`'s output relations (the include graph), stored in K1 |
-| `corpus.rs` `COMBINED`, `PREPARED`, `prepared.rs`'s memo entries | the texts' digest; the texts, additions, stage, dialect, build | `prepared(p, …) :- program(p, digest), engine(b), …` answered by preparing; its rows are the `prepared_*` program facts 0074 already writes |
+| `corpus.rs` `COMBINED`, `PREPARED`, `prepared.rs`'s memo entries | the texts' digest; the texts, additions, stage, dialect, build | `prepared(p, …) :- program(p, digest), engine(b), …` answered by preparing; its rows are the `prepared_*` program facts 0074 already writes. **Pointer built** (2026-11-21, `prepared.rs` `pointer`): the `prepared_*` and `prepared_program` rows are kept facts of the store's prepared programs' space, a partition a program (its pointer plan: build, grammar, key); `PREPARED` is their in-memory copy (state). The programs' texts stay sources |
 | `choices.rs` `KEPT` | a digest of the program, the build and three switches, "a scale at most GROWTH times theirs" | an answer keyed by the program's facts and the statistics it read (with step 6) |
 
 ### Step 3: a document's facts

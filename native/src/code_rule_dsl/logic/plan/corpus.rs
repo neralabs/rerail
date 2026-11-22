@@ -4285,7 +4285,7 @@ fn run_observed_within(
             // Its texts' sources, which a run that read it from the store names: known where this process wrote or
             // read it in this store; else (its write still queued, or another store's) settled and asked of the
             // store, with no program read. Left out, the manifest of a process's second run differed from its first.
-            if let Some(Some(source)) = durable {
+            if let Some(Some(_)) = durable {
                 let documents = match p.documents_in(store.database_path()) {
                     Some(d) => d,
                     None => {
@@ -4293,7 +4293,7 @@ fn run_observed_within(
                         match p.documents_in(store.database_path()) {
                             Some(d) => d,
                             None => {
-                                let d = prepared::documents(store, source, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?;
+                                let d = prepared::documents(store, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?;
                                 p.keep_documents(store.database_path(), &d);
                                 d
                             }
