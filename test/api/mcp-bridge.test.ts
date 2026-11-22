@@ -256,7 +256,7 @@ describe("Rerail MCP bridge", () => {
     const restarted = async (machine: Machine): Promise<Response> => {
       machine.listeners.delete(51_234);
       machine.listeners.set(52_345, process.pid);
-      await recordDaemon(machine.home, { pid: process.pid, port: 52_345, startedAt: 2 });
+      await recordDaemon(machine.home, { pid: process.pid, port: 52_345, startedAt: 1 });
       throw new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) });
     };
     const run = await runBridge([first, second], [restarted, new Response(pong, { status: 200 })], {
