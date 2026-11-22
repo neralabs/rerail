@@ -385,6 +385,12 @@ fn word_end(b: &[u8], w: &micro::Window, from: usize) -> usize {
 /// end by the run of `word` bits, the word's code by one load and a table. A rare token is
 /// read by its micro-lexer, and the starts it covers are cleared; one that ends past the block
 /// starts the next block where it ends.
+/// Whether bytes between two tokens hold a line end of the rule files' terminators (decision 0612). Of `Newlines`, any
+/// `\r` or `\n` between tokens ends a line: a `\r` before a `\n` has the `\n` after it, which no token starts at.
+fn ends_a_line(between: &[u8]) -> bool {
+    between.iter().any(|c| crate::syntax::TERMINATORS.last_bytes().contains(c))
+}
+
 fn lex(src: &str) -> Lexed {
     let b = src.as_bytes();
     let n = b.len();
@@ -692,11 +698,11 @@ impl<L: Layout> Parser<'_, L> {
     }
 
     /// Whether the next token is on the line of byte `*seen`, the bytes up to `*seen` known
-    /// to be on it: no newline from there to the token's start. `*seen` moves to the start, so
+    /// to be on it: no line end from there to the token's start. `*seen` moves to the start, so
     /// a line's bytes are read once. As `syntax::Lines` compares lines, with no index of them.
     fn on_line(&self, seen: &mut u32) -> bool {
         let start = self.start();
-        let same = !self.b[(*seen as usize).min(start as usize)..start as usize].contains(&b'\n');
+        let same = !ends_a_line(&self.b[(*seen as usize).min(start as usize)..start as usize]);
         *seen = start;
         same
     }
@@ -1070,7 +1076,7 @@ impl<L: Layout> Parser<'_, L> {
         let first = save.i;
         self.reset(save);
         let b = self.b;
-        let line_start = |at: usize| b[..at].iter().rev().take_while(|&&c| c != b'\n').all(|c| c.is_ascii_whitespace());
+        let line_start = |at: usize| b[..at].iter().rev().take_while(|c| !crate::syntax::TERMINATORS.last_bytes().contains(c)).all(|c| c.is_ascii_whitespace());
         let n = self.n;
         let mut k = first + 1;
         while k < n {

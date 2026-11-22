@@ -116,11 +116,7 @@ fn native_run_at(
             let path = v["path"].as_str().unwrap();
             let doc = ids[path];
             let start = v["span"]["startByte"].as_u64().unwrap() as usize;
-            let line = sources[doc as usize].as_bytes()[..start]
-                .iter()
-                .filter(|&&c| c == b'\n')
-                .count()
-                + 1;
+            let line = crate::code_rule_dsl::lines::line_at_path(path, &sources[doc as usize], start);
             (v["code"].as_str().unwrap().to_owned(), doc, line)
         })
         .collect()

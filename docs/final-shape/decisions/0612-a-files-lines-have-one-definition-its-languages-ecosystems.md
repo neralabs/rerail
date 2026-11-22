@@ -110,6 +110,25 @@ Ruff's. The old `Loc` view read `line(e - 1)` instead. It is now `line(e)`, the 
     it with the generated reads, not a search of its own.
 - The packed batch's line starts (in its listed copy, 0353 step 7) are the document's lines, read off its index. They
   were its `\n`s.
+- A text no tape holds reads its lines through `newlines::Lines`: an index of its own, in the tape's format, read by the
+  tape's reads. Every other count of a file's lines is gone:
+  - The rule files' parser reads the rr language's lines (`rr_syntax::syntax::TERMINATORS`, which the rr adapter
+    names). This covers `Lines`, `line_of`, the translator's errors, and its two baseline lexers. They counted `\n`
+    alone.
+  - The C preprocessor reads C's line ends (`tape::LINE_ENDS`). The directive scan and the TU's facts count them
+    forward (`tape::LineCount`). The pp words' `__LINE__` and `#line` read each unit's index, interpreted and
+    compiled.
+    - The compiled words call the CLIF `lines_line`, which the module's pass inlines.
+    - The cold reads it reaches are defined once (`inline::define_cold_of`), and they are kept with the IR that
+      `pp_aot` lowers.
+    - The Metal pp already read the tape's index.
+  - CPython's syntax errors read Python's `LineTable`.
+  - Tree-sitter's rows (`TSPoint`'s, `\n` alone) are `Lf`'s lines wherever they are given. That covers `Points`,
+    Blade's source, literal subtrees, the transducer's directives and its same-line predicate (`TapeDoc::row`).
+  - One function, `terminators_of`, gives the set for a file of no language (ECMAScript's). The evidence, the
+    evaluator, the workspace and the text facts all call it.
+  - A test oracle that labels a finding with its line reads `lines::line_of` in the fixture's language, or
+    `line_at_path`.
 - The data-layer pack's test data follows. The overlays were edited, the converter's output was regenerated
   (`convert_the_data_layer_pack`), and the 50 changed files were staged in the lint tool-pack's `publish/`
   (`npm run fixtures:stage`).

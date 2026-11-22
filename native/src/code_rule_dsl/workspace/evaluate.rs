@@ -20,7 +20,7 @@ use crate::code_rule_dsl::eval::{
 };
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::lines::LineTable;
 #[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
 use crate::code_rule_dsl::matcher::{AnchorPlan, FileAnchorIndex, Selection};
 use crate::code_rule_dsl::matcher::{FileGates, FileScopeSlot, GrammarMatcher, UtilLimit};
@@ -617,9 +617,7 @@ pub fn evaluate_file(
                 )
         });
     let line_index_started = Instant::now();
-    let terminators = file_language(&file.input)
-        .map(crate::code_rule_dsl::lines::terminators)
-        .unwrap_or(Terminators::Eslint);
+    let terminators = crate::code_rule_dsl::lines::terminators_of(file_language(&file.input));
     let prepared_lines = file
         .prepared
         .as_ref()

@@ -2892,6 +2892,11 @@ impl TapeDoc {
         &self.source_digest
     }
 
+    /// The tree-sitter row (`TSPoint`'s, from 0) holding `byte`, as a native tree's node positions give it.
+    pub fn row(&self, byte: usize) -> usize {
+        self.points.point(byte as u32).line()
+    }
+
     /// The source's line table, shared with the evaluator that restored this document.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn line_table(&self) -> &LineTable {

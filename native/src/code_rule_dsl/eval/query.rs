@@ -1,7 +1,7 @@
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::json::meta_name;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
-use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::matcher::{
     FileGates, FileScopeSlot, GrammarMatcher, UtilLimit, WITNESS_NODE, export_text, exported_span,
     is_span_variable,
@@ -498,9 +498,7 @@ impl<'a> Leaf<'a> {
                 let lines = matches!(source, RegexSource::Content).then(|| {
                     LineTable::new(
                         &file.source,
-                        file_language(file)
-                            .map(crate::code_rule_dsl::lines::terminators)
-                            .unwrap_or(Terminators::Eslint),
+                        crate::code_rule_dsl::lines::terminators_of(file_language(file)),
                     )
                 });
                 let span = |start: usize, end: usize| {

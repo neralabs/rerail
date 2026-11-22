@@ -239,7 +239,7 @@ impl Translator<'_> {
 
     fn fail<T>(&self, what: &str) -> Result<T, Error> {
         let at = self.toks.get(self.i).map_or(self.src.len(), |t| t.1);
-        let line = self.src[..at].bytes().filter(|&b| b == b'\n').count() + 1;
+        let line = rerail_rr_syntax::syntax::line_of(self.src, at);
         Err(Error::Syntax(format!("line {line}: expected {what}, got {:?}", self.peek())))
     }
 

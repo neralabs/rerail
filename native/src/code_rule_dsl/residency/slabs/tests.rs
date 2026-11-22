@@ -346,7 +346,7 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
         // SAFETY: the kernel wrote `nodes * FIELDS` u32s, and the command finished.
         let read = unsafe { std::slice::from_raw_parts(out.contents().cast::<u32>(), table.nodes * FIELDS) };
         for (doc, (tape, view)) in docs.iter().zip(&table.views).enumerate() {
-            let source = sources[doc].0.as_bytes();
+            let lines = crate::code_rule_dsl::lines::LineTable::new(&sources[doc].0, crate::code_rule_dsl::lines::terminators(sources[doc].1));
             let global = |node: Option<u32>| node.map_or(u32::MAX, |node| node + view.node_base);
             let mut classes = vec![0u32; tape.transducer_len()];
             for (node, _) in tape.transducer_supertypes() {
@@ -367,9 +367,9 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
                     span.end as u32,
                     global(tape.transducer_children(node).next()),
                     classes[node as usize],
-                    // The line of the node's start, and that line's first byte: from the source's newlines.
-                    source[..span.start].iter().filter(|&&byte| byte == b'\n').count() as u32,
-                    source[..span.start].iter().rposition(|&byte| byte == b'\n').map_or(0, |at| at as u32 + 1),
+                    // The line of the node's start, and that line's first byte: the language's lines.
+                    lines.line(span.start) as u32,
+                    lines.start(lines.line(span.start)) as u32,
                 ];
                 let g = (view.node_base + node) as usize;
                 assert_eq!(&read[g * FIELDS..][..FIELDS], &expected, "{format:?}, over two slabs {split}: document {doc} node {node}");

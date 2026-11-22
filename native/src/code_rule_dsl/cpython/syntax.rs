@@ -286,48 +286,38 @@ pub(crate) fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> 
     Ok(Some(SyntaxError { line: chosen.line, at: Some(chosen.span.locate(&cx)), msg: chosen.msg }))
 }
 
-/// Line starts, at CPython's terminators (`\r\n`, `\r`, `\n`).
+/// The file's lines, Python's (`\r\n`, `\r`, `\n`, as CPython's tokenizer ends them): its `LineTable` (decision
+/// 0612), read here from 1.
 struct Lines {
-    starts: Vec<usize>,
+    table: crate::code_rule_dsl::lines::LineTable,
     len: usize,
 }
 
 impl Lines {
     fn new(source: &str) -> Self {
-        let bytes = source.as_bytes();
-        let mut starts = vec![0];
-        let mut i = 0;
-        while i < bytes.len() {
-            match bytes[i] {
-                b'\r' if bytes.get(i + 1) == Some(&b'\n') => {
-                    starts.push(i + 2);
-                    i += 2;
-                    continue;
-                }
-                b'\r' | b'\n' => starts.push(i + 1),
-                _ => {}
-            }
-            i += 1;
-        }
-        Self { starts, len: bytes.len() }
+        let terminators = crate::code_rule_dsl::lines::terminators(crate::code_rule_dsl::language::GrammarDialect::Python);
+        Self { table: crate::code_rule_dsl::lines::LineTable::new(source, terminators), len: source.len() }
     }
 
     /// The 1-based line of byte offset `at`.
     fn line(&self, at: TextSize) -> usize {
-        self.starts.partition_point(|&s| s <= at.to_usize())
+        self.table.line(at.to_usize().min(self.len)) + 1
     }
 
-    /// The byte offset line `line` starts at.
+    /// The byte offset line `line` starts at (the text's end past its last line).
     fn start(&self, line: usize) -> usize {
-        self.starts.get(line.saturating_sub(1)).copied().unwrap_or(self.len)
+        let l = line.saturating_sub(1);
+        if l < self.table.count() { self.table.start(l) } else { self.len }
     }
 
     /// Line `line`'s text without its terminator, and the terminator ("" on a last line without one).
     fn text<'s>(&self, source: &'s str, line: usize) -> (&'s str, &'s str) {
-        let (start, end) = (self.start(line), self.starts.get(line).copied().unwrap_or(self.len));
-        let all = &source[start..end.max(start)];
-        let body = all.strip_suffix("\r\n").or_else(|| all.strip_suffix(['\n', '\r'])).unwrap_or(all);
-        (body, &all[body.len()..])
+        let l = line.saturating_sub(1);
+        if l >= self.table.count() {
+            return ("", "");
+        }
+        let (start, body, end) = (self.table.start(l), self.table.end(l, source.as_bytes()), self.table.full_end(l));
+        (&source[start..body], &source[body..end])
     }
 
     /// The line the tokenizer is on at the end of the text: its last character's.

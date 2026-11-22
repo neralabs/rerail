@@ -29,7 +29,7 @@ fn found(language: &str, ast: Value, source: &str) -> Vec<String> {
         .zip(lines)
         .map(|(violation, text)| {
             let start = violation["span"]["startByte"].as_u64().expect("start") as usize;
-            format!("{}:{text}", source[..start].matches('\n').count() + 1)
+            format!("{}:{text}", crate::code_rule_dsl::lines::line_at_path(path, source, start))
         })
         .collect()
 }

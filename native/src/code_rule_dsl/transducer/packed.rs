@@ -2834,13 +2834,8 @@ impl Program {
                 right,
                 negated,
             } => {
-                let line = |node| {
-                    let start = tape.transducer_span(node).start;
-                    tape.transducer_source()[..start]
-                        .iter()
-                        .filter(|byte| **byte == b'\n')
-                        .count()
-                };
+                // A native tree's rows (`start_pos().line()`, below): the tape's tree-sitter rows.
+                let line = |node| tape.row(tape.transducer_span(node).start);
                 let results = nodes(*left)
                     .into_iter()
                     .zip(nodes(*right))
@@ -3239,27 +3234,26 @@ impl Program {
         captures: &mut Vec<Capture>,
         source: &[u8],
     ) -> Result<Option<Vec<DynamicProperty>>, Error> {
-        fn point(source: &[u8], byte: usize) -> (i64, i64) {
-            let prefix = &source[..byte];
-            let row = prefix.iter().filter(|byte| **byte == b'\n').count() as i64;
-            let column = prefix
-                .iter()
-                .rposition(|byte| *byte == b'\n')
-                .map_or(byte, |newline| prefix.len() - newline - 1) as i64;
-            (row, column)
+        // Rows and columns as tree-sitter's `TSPoint` counts them (only `\n` ends a row): `Lf`'s lines (decision
+        // 0612), made on first use.
+        use crate::code_rule_dsl::lines::{LineTable, Terminators};
+        let rows = std::cell::OnceCell::new();
+        let rows = || rows.get_or_init(|| LineTable::of_bytes(source, Terminators::Lf));
+        fn point(rows: &LineTable, byte: usize) -> (i64, i64) {
+            let (row, column) = rows.point(byte);
+            (row as i64, column as i64)
         }
-        fn byte_at(source: &[u8], row: i64, column: i64) -> Option<usize> {
+        fn byte_at(rows: &LineTable, source: &[u8], row: i64, column: i64) -> Option<usize> {
             if row < 0 || column < 0 {
                 return None;
             }
-            let mut start = 0_usize;
-            for _ in 0..row {
-                start = source[start..].iter().position(|byte| *byte == b'\n')? + start + 1;
+            let row = usize::try_from(row).ok()?;
+            if row >= rows.count() {
+                return None;
             }
-            let end = source[start..]
-                .iter()
-                .position(|byte| *byte == b'\n')
-                .map_or(source.len(), |newline| start + newline);
+            let start = rows.start(row);
+            // To its `\n`, which tree-sitter's row ends before.
+            let end = if row + 1 < rows.count() { rows.start(row + 1) - 1 } else { source.len() };
             let byte = start.checked_add(usize::try_from(column).ok()?)?;
             (byte <= end
                 && std::str::from_utf8(source).is_ok_and(|source| source.is_char_boundary(byte)))
@@ -3281,9 +3275,10 @@ impl Program {
                 }
                 Directive::Offset { capture, offsets } => {
                     for found in captures.iter_mut().filter(|found| found.label == *capture) {
-                        let (start_row, start_column) = point(source, found.span.start);
-                        let (end_row, end_column) = point(source, found.span.end);
+                        let (start_row, start_column) = point(rows(), found.span.start);
+                        let (end_row, end_column) = point(rows(), found.span.end);
                         let Some(start) = byte_at(
+                            rows(),
                             source,
                             start_row + i64::from(offsets[0]),
                             start_column + i64::from(offsets[1]),
@@ -3291,6 +3286,7 @@ impl Program {
                             return Ok(None);
                         };
                         let Some(end) = byte_at(
+                            rows(),
                             source,
                             end_row + i64::from(offsets[2]),
                             end_column + i64::from(offsets[3]),
@@ -3346,7 +3342,7 @@ impl Program {
                     let Some(target_start) = captures
                         .iter()
                         .find(|found| found.label == *target)
-                        .map(|found| point(source, found.span.start).0)
+                        .map(|found| point(rows(), found.span.start).0)
                     else {
                         continue;
                     };
@@ -3359,12 +3355,12 @@ impl Program {
                     let mut next_start = target_start;
                     while keep > 0 {
                         let found = selected[keep - 1].1;
-                        let end_row = point(source, found.span.end).0;
+                        let end_row = point(rows(), found.span.end).0;
                         if end_row + 1 < next_start {
                             break;
                         }
                         keep -= 1;
-                        next_start = point(source, found.span.start).0;
+                        next_start = point(rows(), found.span.start).0;
                     }
                     let remove = selected[..keep]
                         .iter()

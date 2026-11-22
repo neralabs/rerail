@@ -298,6 +298,55 @@ pub fn len_of(index: &[u8]) -> Option<usize> {
     Some(HEAD + 8 * (zs + os + words) + (m * l).div_ceil(8))
 }
 
+/// The lines of a text no tape holds (a rule file, a preprocessor's input): an index of its own in the tape's format,
+/// read by the tape's reads (`reads::f16::line`, `line_start`), so its lines are a tape's lines (decision 0612).
+pub struct Lines {
+    /// The index, then a word's room.
+    index: Vec<u8>,
+    len: u32,
+}
+
+impl Lines {
+    pub fn of(source: &[u8], terminators: Terminators) -> Self {
+        let mut index = Vec::new();
+        index_into(&mut index, source, terminators);
+        index.resize(index.len() + 8, 0);
+        Self { index, len: u32::try_from(source.len()).expect("a text within 4 GB") }
+    }
+
+    /// The index, then its word's room: what the reads take (`line`, the CLIF `lines_line`).
+    pub fn bytes(&self) -> &[u8] {
+        &self.index
+    }
+
+    /// The 0-based line holding `byte` (the source's length: its last line); a terminator's bytes belong to the line
+    /// they end.
+    pub fn line(&self, byte: usize) -> usize {
+        line(&self.index, byte.min(self.len as usize) as u32) as usize
+    }
+
+    /// Line `line`'s (0-based) first byte.
+    pub fn start(&self, line: usize) -> usize {
+        crate::reads::f16::line_start(&self.index, &lines_view(), line as u32) as usize
+    }
+
+    /// The lines, the empty one after a final terminator too.
+    pub fn count(&self) -> usize {
+        count(&self.index).expect("an index") as usize + 1
+    }
+}
+
+/// The view the tape's reads take of an index at the start of its bytes.
+fn lines_view() -> rerail_clif::view::TapeView {
+    rerail_clif::view::TapeView::default()
+}
+
+/// The 0-based line of byte `x`, by an index at the start of `index` (its word's room after it): the line ends before
+/// `x`, the tape's read (`reads::f16::line`).
+pub fn line(index: &[u8], x: u32) -> u32 {
+    crate::reads::f16::line(index, &lines_view(), x)
+}
+
 /// The newlines' count an index holds (a document has one line more).
 pub fn count(index: &[u8]) -> Option<u32> {
     Some(u32::from_le_bytes(index.get(..4)?.try_into().ok()?))

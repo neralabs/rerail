@@ -26,6 +26,24 @@ pub fn terminators(language: GrammarDialect) -> Terminators {
     crate::code_rule_dsl::language::base(Family::of(language)).terminators()
 }
 
+/// `terminators`, of a file that may have no language: one with none ends a line at ECMAScript's terminators (W's,
+/// decision 0612's table).
+pub fn terminators_of(language: Option<GrammarDialect>) -> Terminators {
+    language.map_or(Terminators::Eslint, terminators)
+}
+
+/// The line (from 1) of byte `byte` of the file at `path` (its language by its path, `terminators_of`): an oracle's
+/// line of a violation.
+pub fn line_at_path(path: &str, source: &str, byte: usize) -> usize {
+    let language = crate::code_rule_dsl::language::label_of_path(path).and_then(crate::code_rule_dsl::language::dialect_by_label);
+    LineTable::new(source, terminators_of(language)).line(byte) + 1
+}
+
+/// The line (from 1) of byte `byte` of a `language` file, by its lines (an oracle's line, a message's).
+pub fn line_of(source: &str, language: GrammarDialect, byte: usize) -> usize {
+    LineTable::new(source, terminators(language)).line(byte) + 1
+}
+
 /// A file's lines, read off its line index (`rerail_tape_format::newlines`, decision 0612): its tape's, where it has
 /// a format 16 tape (`of_tape`, shared with it), else one of its own (`new`), placed in a slab's room where the
 /// device reads tapes (`placed`). The index holds each terminator's last byte; a line's start is one past the one
@@ -73,6 +91,11 @@ impl LineTable {
     /// The lines of `source` that `terminators` end, in an index of their own.
     pub fn new(source: &str, terminators: Terminators) -> Self {
         Self::own(source.as_bytes(), terminators, false)
+    }
+
+    /// `new`, of bytes not known to be text (a template's).
+    pub fn of_bytes(source: &[u8], terminators: Terminators) -> Self {
+        Self::own(source, terminators, false)
     }
 
     /// `new`, its index in a slab's room where the device reads tapes (decision 0353 step 4d: the views' reads find
@@ -130,7 +153,7 @@ impl LineTable {
 
     /// The 0-based line holding `byte`; a terminator's bytes belong to the line they end.
     pub fn line(&self, byte: usize) -> usize {
-        rerail_tape_format::reads::f16::line(&self.home, &self.view(), byte as u32) as usize
+        rerail_tape_format::reads::f16::line(&self.home, &self.view(), byte.min(self.len as usize) as u32) as usize
     }
 
     /// The 0-based line and byte column holding `byte`.

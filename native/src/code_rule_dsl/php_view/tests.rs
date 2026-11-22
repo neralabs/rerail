@@ -430,7 +430,7 @@ fn violation_lines(result: &Value, source: &str) -> Vec<usize> {
         .iter()
         .map(|violation| {
             let start = violation["span"]["startByte"].as_u64().expect("start") as usize;
-            source[..start].matches('\n').count() + 1
+            crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Php, start)
         })
         .collect()
 }

@@ -126,7 +126,7 @@ fn rust_usedness_agrees_with_rustc_unused_lints() {
                         continue;
                     }
                     judged += 1;
-                    let line = text[..name_node.start as usize].matches('\n').count() + 1;
+                    let line = crate::code_rule_dsl::lines::line_of(text, crate::code_rule_dsl::language::GrammarDialect::Rust, name_node.start as usize);
                     let unused = reported.iter().any(|(at, message)| {
                         *at == line
                             && (message.contains(&format!("`{name}`"))

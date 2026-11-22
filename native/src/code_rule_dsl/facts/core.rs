@@ -742,9 +742,9 @@ fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<
 pub const TEXT: u8 = u8::MAX;
 
 /// The facts of a file read as text only (core.rerail's `.scope text`): its source and lines, no tree. Its lines are W's
-/// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
+/// for a file with no language (`lines::terminators_of(None)`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
 pub fn text(source: Arc<String>) -> Facts {
-    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
+    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators_of(None)));
     Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 

@@ -825,7 +825,7 @@ fn linked(graph: &Graph, sources: &[(&str, &str)], name: &str) -> (Vec<String>, 
         .map(|def| {
             let (path, start) = graph.def_site(*def);
             let source = sources.iter().find(|(p, _)| *p == path.as_ref()).unwrap().1;
-            let line = source[..start as usize].matches('\n').count() + 1;
+            let line = crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Python, start as usize);
             format!("{}:{line}", graph.def_label(*def))
         })
         .collect();
