@@ -429,19 +429,23 @@ const FILE_WORK_STOPPED = sql.raw(`(json_extract(value, '$.blind') IS NULL AND j
   AND json_extract(value, '$.ruleId') IS NOT NULL AND coalesce(json_extract(value, '$.stage'), '') NOT IN ('read', 'scan'))`);
 
 /**
- * `column` of `audits` in SQL when it holds a JSON array, else an empty one; and whether it holds none, as 1 or 0. An
- * audit record lists such a list as none and one failure that says so (`readLists`), which the summary counts.
+ * A stored list in SQL when it holds a JSON array, else an empty one, so that reading it fails no query: an audit record
+ * reads such a list as none and lists a failure for it (`readLists`).
  */
-function readableList(column: SQLiteColumn): SQL<string> {
-  return sql<string>`(CASE WHEN NOT json_valid(${column}) THEN '[]' WHEN json_type(${column}) = 'array' THEN ${column} ELSE '[]' END)`;
+function readableList(text: SQLiteColumn): SQL<string> {
+  return sql<string>`(CASE WHEN NOT json_valid(${text}) THEN '[]' WHEN json_type(${text}) = 'array' THEN ${text} ELSE '[]' END)`;
 }
-function unreadableList(column: SQLiteColumn): SQL<number> {
-  return sql<number>`(CASE WHEN NOT json_valid(${column}) THEN 1 WHEN json_type(${column}) = 'array' THEN 0 ELSE 1 END)`;
+/** How many of an audit's stored lists hold no JSON array: the failures its record lists for them (`readLists`). */
+function unreadableLists(): SQL<number> {
+  const texts = [audits.ruleRevisions, ruleProvenanceText(), audits.paths, audits.violations, audits.failures];
+  const unreadable = texts.map(text => sql`(CASE WHEN NOT json_valid(${text}) THEN 1 WHEN json_type(${text}) = 'array' THEN 0 ELSE 1 END)`);
+  return sql<number>`(${sql.join(unreadable, sql` + `)})`;
 }
 
 /**
- * The session's latest audit's counts, in SQL. Its violations or failures, when they are no JSON array, count as none
- * and their failure counts, as the audit's record lists them, rather than failing the session's page.
+ * The session's latest audit's counts, in SQL, each the audit record's: violations or failures that are no JSON array
+ * count as none, and each stored list that is none counts the failure its record lists, rather than failing the
+ * session's page.
  */
 function latestAuditSummary(database: RerailDatabase, sessionId: string): AuditSummary | undefined {
   const violations = readableList(audits.violations);
@@ -452,8 +456,7 @@ function latestAuditSummary(database: RerailDatabase, sessionId: string): AuditS
     mode: audits.mode,
     status: audits.status,
     violationCount: sql<number>`json_array_length(${violations})`,
-    failureCount: sql<number>`json_array_length(${failures}) + ${unreadableList(audits.violations)} + ${unreadableList(audits.failures)}
-      + ${unlistedFailures(database)}`,
+    failureCount: sql<number>`json_array_length(${failures}) + ${unreadableLists()} + ${unlistedFailures(database)}`,
     unlistedFailureCount: unlistedFailures(database),
     blindFileCount: sql<number>`(SELECT count(*) FROM json_each(${failures}) WHERE json_extract(value, '$.blind') IS NOT NULL)`,
     gapCount: sql<number>`(SELECT count(*) FROM json_each(${failures}) WHERE ${COVERAGE_GAP})`,

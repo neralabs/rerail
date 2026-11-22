@@ -1741,9 +1741,11 @@ describe("an audit whose other stored lists do not read", () => {
     }
   });
 
+  const BROKEN = '[{"ruleId":"typescript/broken"';
   it.each([
-    ["violations", '[{"ruleId":"typescript/broken"'], ["violations", "{}"], ["failures", '[{"ruleId":"typescript/broken"'], ["failures", "{}"],
-  ] as const)("answers the session's summary when its latest audit's %s read as %s, counting the failure its record lists", async (list, text) => {
+    ["ruleRevisions", BROKEN], ["ruleProvenance", BROKEN], ["paths", "{}"], ["violations", BROKEN], ["violations", "{}"],
+    ["failures", BROKEN], ["failures", "{}"],
+  ] as const)("answers the session's summary when its latest audit's %s read as %s, with the counts of its record", async (list, text) => {
     const path = await temporaryDatabase();
     threeAudits(path);
     const latest = new SqliteAuditStore(path);
@@ -1751,7 +1753,8 @@ describe("an audit whose other stored lists do not read", () => {
     latest.close();
     const healthy = { workspaceRoot: "/home/dev/app", scope: "touched-files", mode: "steer", status: "completed", violationCount: 1,
       failureCount: 1, unlistedFailureCount: 0, blindFileCount: 0, gapCount: 0, outOfWorkRuleCount: 0, fileWorkStoppedRuleCount: 0 };
-    damageList(path, latestId, list, text);
+    if (list === "ruleProvenance") damageAuditRow(path, latestId, text);
+    else damageList(path, latestId, list, text);
     const stderr = spyOnStderr();
     const store = new SqliteAuditStore(path);
     const reader = new SqliteAuditReader(path);
