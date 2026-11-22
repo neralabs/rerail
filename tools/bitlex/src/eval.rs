@@ -440,7 +440,7 @@ impl<'a> Ev<'a> {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 self.exec(body)?;
             }
-            Stmt::Node { kind, nested, whole, body } => {
+            Stmt::Node { kind, nested, whole, body, .. } => {
                 let tree = self.tree.get_or_insert_with(TreeDecl::default);
                 if tree.rules.is_empty() {
                     tree.whole = *whole;

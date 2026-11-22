@@ -269,6 +269,8 @@ struct Emit<'a> {
     /// where an extra opens the root (`grammar::with_extras`).
     token_extras: bool,
     whole: bool,
+    /// A `whole padded` root: `ACCEPT m=1`, its start its first token's or comment's.
+    padded: bool,
     /// The counts of tokens (`COUNT`): each one's ups' and downs' kinds.
     counts: Vec<(Vec<u16>, Vec<u16>)>,
     /// The local checks (`CHECK`): each one's token kinds, and the mark whose refusing states
@@ -1191,7 +1193,7 @@ impl Emit<'_> {
                 for _ in 0..c + u8::from(nested && st.own) {
                     self.push("CLOSE", 0, Arg::None);
                 }
-                self.push(if nested { "RETURN" } else { "ACCEPT" }, u8::from(nested), Arg::None);
+                self.push(if nested { "RETURN" } else { "ACCEPT" }, u8::from(nested || self.padded), Arg::None);
                 pc
             }
         };
@@ -1422,12 +1424,13 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool, token_extras: bool, counts: &[(Vec<u16>, Vec<u16>)], checks: &[(Vec<u16>, Option<u16>)]) -> Result<Lowered, String> {
+pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, (whole, padded): (bool, bool), survey: bool, rules: bool, token_extras: bool, counts: &[(Vec<u16>, Vec<u16>)], checks: &[(Vec<u16>, Option<u16>)]) -> Result<Lowered, String> {
     let mut e = Emit {
         counts: counts.to_vec(),
         checks: checks.to_vec(),
         token_extras,
         whole,
+        padded,
         rule_of: Vec::new(),
         rule: 0,
         by_rules: rules,

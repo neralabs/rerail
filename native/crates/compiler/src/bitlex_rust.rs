@@ -811,9 +811,9 @@ impl<'a> G<'a> {
     }
 
     fn rule(&self, name: &str) -> Result<String, String> {
-        let (body, node, nested, whole) = match self.rules[name] {
-            Stmt::Node { body, nested, whole, .. } => (body, true, *nested, *whole),
-            Stmt::Choice { body, nested, .. } => (body, false, *nested, false),
+        let (body, node, nested, whole, padded) = match self.rules[name] {
+            Stmt::Node { body, nested, whole, padded, .. } => (body, true, *nested, *whole, *padded),
+            Stmt::Choice { body, nested, .. } => (body, false, *nested, false, false),
             _ => unreachable!(),
         };
         let root = self.order.first() == Some(&name);
@@ -824,7 +824,7 @@ impl<'a> G<'a> {
         if root {
             let _ = writeln!(out, "        self.open_root({});", self.kind_const(name)?);
             out.push_str(&self.code(body, &[], name, "        ")?);
-            let _ = writeln!(out, "        self.close_root({whole})");
+            let _ = writeln!(out, "        self.close_root({whole}, {padded})");
         } else {
             if node {
                 // A kind of the grammar's own (no tape kind, always retagged inside): a placeholder until its retag.
@@ -1687,14 +1687,21 @@ impl<'a> P<'a> {
         self.made.push(NONE);
     }
 
-    /// The root closed at the end of the file: from its first token or comment, or the file's start (`whole`).
-    fn close_root(&mut self, whole: bool) -> R {
+    /// The root closed at the end of the file: from the file's start (`whole`), else (or `whole padded`) from its
+    /// first token or comment, as tree-sitter's root starts past the file's leading blanks.
+    fn close_root(&mut self, whole: bool, padded: bool) -> R {
         if self.i < self.n {
             return self.refuse();
         }
         self.flush();
         // From its first token or comment (none: the file's end), to the file's end (`whole`) or its last token's.
-        let first = if self.w.len() > 1 { self.w.start(1) } else { self.src.len() as u32 };
+        let first = if whole && !padded {
+            0
+        } else if self.w.len() > 1 {
+            self.w.start(1)
+        } else {
+            self.src.len() as u32
+        };
         let end = if whole { self.src.len() as u32 } else { self.last_end };
         self.w.set_start(0, first);
         self.w.close(0, end);

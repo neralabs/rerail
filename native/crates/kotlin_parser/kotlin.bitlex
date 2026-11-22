@@ -79,7 +79,8 @@ mask last_byte  = ~next(~empty)
 
 mask line_open  = slash & next(slash)
 mask block_open = slash & next(star)
-mask block_end  = slash & prev(star)
+# Its `*/`, not over the opener's `*` (`/*/` is open): the lean lexer reads from two bytes past the `/*`.
+mask block_end  = slash & prev(star) & ~prev(block_open, 2)
 # A string's closer: a `"` no backslash escapes.
 mask dq_close   = dq & ~escaped(backslash)
 mask sq_close   = sq & ~escaped(backslash)
@@ -494,7 +495,7 @@ mark recv       = tokens simple_identifier | backtick_name (simple_identifier | 
 mark dotted     = tokens "." simple_identifier | backtick_name "." | "<" | ">" | "?." | ","
 
 tree kotlin {
-  node source_file whole = (file_at file_annotation semi)* [package_header] [import_list] (statement (semi | ';'))*
+  node source_file whole padded = (file_at file_annotation semi)* [package_header] [import_list] (statement (semi | ';'))*
   # A name: a word, or a soft keyword, which tree-sitter keeps as a leaf under the name's node.
   # `file` is a keyword for `@file:` alone: as a name, the lean parser's plain one (no word leaf).
   choice name           = simple_identifier | backtick_name as simple_identifier | soft_name | 'file' as simple_identifier | 'out' as simple_identifier | 'by' as simple_identifier

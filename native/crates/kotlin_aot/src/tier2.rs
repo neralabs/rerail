@@ -269,17 +269,18 @@ pub mod t {
     pub const INTEGER_LITERAL: u32 = 7;
     pub const BACKTICK_NAME: u32 = 8;
     pub const SIMPLE_IDENTIFIER: u32 = 9;
-    pub const UNI_DIGITS: u32 = 10;
-    pub const CHARACTER_ESCAPE_SEQ: u32 = 11;
-    pub const CHAR_CONTENT: u32 = 12;
-    pub const BACKSLASH_U: u32 = 13;
-    pub const INTERPOLATED_IDENTIFIER: u32 = 14;
-    pub const QUOTE_QUOTE: u32 = 15;
-    pub const INTERPOLATION_EXPRESSION_START: u32 = 16;
-    pub const QUOTE__CLOSE: u32 = 17;
-    pub const STRING_CONTENT: u32 = 18;
-    pub const INTERPOLATION_IDENTIFIER_START: u32 = 19;
-    pub const TICK__CLOSE: u32 = 20;
+    pub const INTERPOLATION_EXPRESSION_END_CLOSE: u32 = 10;
+    pub const UNI_DIGITS: u32 = 11;
+    pub const CHARACTER_ESCAPE_SEQ: u32 = 12;
+    pub const CHAR_CONTENT: u32 = 13;
+    pub const BACKSLASH_U: u32 = 14;
+    pub const INTERPOLATED_IDENTIFIER: u32 = 15;
+    pub const QUOTE_QUOTE: u32 = 16;
+    pub const INTERPOLATION_EXPRESSION_START: u32 = 17;
+    pub const QUOTE__CLOSE: u32 = 18;
+    pub const STRING_CONTENT: u32 = 19;
+    pub const INTERPOLATION_IDENTIFIER_START: u32 = 20;
+    pub const TICK__CLOSE: u32 = 21;
 }
 
 /// The words, as a record's code names them.
@@ -541,7 +542,7 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
             b"out" => w::OUT_93,
             _ => 0,
         },
-        14 => match b {
+        15 => match b {
             b"expect" => w::EXPECT_107,
             b"data" => w::DATA_52,
             b"inner" => w::INNER_85,
@@ -593,7 +594,7 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
 }
 
 /// Each byte's record kind, as a token's first byte (`Records::kinds`).
-const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 10, 11, 12, 13, 16, 17, 18, 19, 14, 15, 1, 5, 6, 4, 0, 0];
+const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 21, 11, 12, 13, 14, 17, 18, 19, 20, 15, 16, 1, 5, 6, 4, 0, 0];
 
 
 /// A record of an extra (a comment): the extra's mark in its code.
@@ -958,14 +959,21 @@ impl<'a> P<'a> {
         self.made.push(NONE);
     }
 
-    /// The root closed at the end of the file: from its first token or comment, or the file's start (`whole`).
-    fn close_root(&mut self, whole: bool) -> R {
+    /// The root closed at the end of the file: from the file's start (`whole`), else (or `whole padded`) from its
+    /// first token or comment, as tree-sitter's root starts past the file's leading blanks.
+    fn close_root(&mut self, whole: bool, padded: bool) -> R {
         if self.i < self.n {
             return self.refuse();
         }
         self.flush();
         // From its first token or comment (none: the file's end), to the file's end (`whole`) or its last token's.
-        let first = if self.w.len() > 1 { self.w.start(1) } else { self.src.len() as u32 };
+        let first = if whole && !padded {
+            0
+        } else if self.w.len() > 1 {
+            self.w.start(1)
+        } else {
+            self.src.len() as u32
+        };
         let end = if whole { self.src.len() as u32 } else { self.last_end };
         self.w.set_start(0, first);
         self.w.close(0, end);
@@ -1192,7 +1200,7 @@ impl P<'_> {
                 }
             }
         }
-        self.close_root(true)
+        self.close_root(true, true)
     }
 
     /// `name`.
@@ -9634,7 +9642,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 2 | 17)
+        matches!(c & 0xff, 2 | 18)
     }
 
     fn at_quote(&self) -> bool {
@@ -9644,7 +9652,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_quote_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 2 | 17)
+        matches!(c & 0xff, 2 | 18)
     }
 
     fn at_quote_quote_at(&self, j: usize) -> bool {
@@ -9652,7 +9660,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 15)
+        matches!(c & 0xff, 16)
     }
 
     fn at_quote_quote(&self) -> bool {
@@ -9662,7 +9670,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_quote_quote_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 15)
+        matches!(c & 0xff, 16)
     }
 
     fn at_tick_at(&self, j: usize) -> bool {
@@ -9670,7 +9678,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 3 | 20)
+        matches!(c & 0xff, 3 | 21)
     }
 
     fn at_tick(&self) -> bool {
@@ -9680,7 +9688,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_tick_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 3 | 20)
+        matches!(c & 0xff, 3 | 21)
     }
 
     fn at_backslash_u_at(&self, j: usize) -> bool {
@@ -9688,7 +9696,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 13)
+        matches!(c & 0xff, 14)
     }
 
     fn at_backslash_u(&self) -> bool {
@@ -9698,7 +9706,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_backslash_u_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 13)
+        matches!(c & 0xff, 14)
     }
 
     fn at_backtick_name_at(&self, j: usize) -> bool {
@@ -9742,7 +9750,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 12)
+        matches!(c & 0xff, 13)
     }
 
     fn at_char_content(&self) -> bool {
@@ -9752,7 +9760,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_char_content_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 12)
+        matches!(c & 0xff, 13)
     }
 
     fn at_character_escape_seq_at(&self, j: usize) -> bool {
@@ -9760,7 +9768,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 11)
+        matches!(c & 0xff, 12)
     }
 
     fn at_character_escape_seq(&self) -> bool {
@@ -9770,7 +9778,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_character_escape_seq_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 11)
+        matches!(c & 0xff, 12)
     }
 
     fn at_hex_literal_at(&self, j: usize) -> bool {
@@ -9814,7 +9822,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 14)
+        matches!(c & 0xff, 15)
     }
 
     fn at_interpolated_identifier(&self) -> bool {
@@ -9824,7 +9832,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolated_identifier_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 14)
+        matches!(c & 0xff, 15)
     }
 
     fn at_interpolation_expression_end_at(&self, j: usize) -> bool {
@@ -9832,7 +9840,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 1)
+        matches!(c & 0xff, 1 | 10)
     }
 
     fn at_interpolation_expression_end(&self) -> bool {
@@ -9842,7 +9850,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_expression_end_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 1)
+        matches!(c & 0xff, 1 | 10)
     }
 
     fn at_interpolation_expression_start_at(&self, j: usize) -> bool {
@@ -9850,7 +9858,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 16)
+        matches!(c & 0xff, 17)
     }
 
     fn at_interpolation_expression_start(&self) -> bool {
@@ -9860,7 +9868,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_expression_start_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 16)
+        matches!(c & 0xff, 17)
     }
 
     fn at_interpolation_identifier_start_at(&self, j: usize) -> bool {
@@ -9868,7 +9876,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 19)
+        matches!(c & 0xff, 20)
     }
 
     fn at_interpolation_identifier_start(&self) -> bool {
@@ -9878,7 +9886,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_identifier_start_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 19)
+        matches!(c & 0xff, 20)
     }
 
     fn at_real_literal_at(&self, j: usize) -> bool {
@@ -9922,7 +9930,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 18)
+        matches!(c & 0xff, 19)
     }
 
     fn at_string_content(&self) -> bool {
@@ -9932,7 +9940,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_string_content_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 18)
+        matches!(c & 0xff, 19)
     }
 
     fn at_uni_digits_at(&self, j: usize) -> bool {
@@ -9940,7 +9948,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 10)
+        matches!(c & 0xff, 11)
     }
 
     fn at_uni_digits(&self) -> bool {
@@ -9950,7 +9958,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_uni_digits_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 10)
+        matches!(c & 0xff, 11)
     }
 
     /// Reading `assignable`: each kind's way (`Some(Some(K))` read as `K`, `Some(None)` gone, `None` kept with what is inside it).
@@ -10032,22 +10040,22 @@ impl P<'_> {
             }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 18);
+                self.piece(at, to - 1, 19);
             }
             match part {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (e + 1, 15),
+                        0 => (e + 1, 16),
                         1 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 18),
-                        2 => (e + 0, 19),
+                        }, 19),
+                        2 => (e + 0, 20),
                         3 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 14),
-                        4 => (e + 0, 18),
+                        }, 15),
+                        4 => (e + 0, 19),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -10055,13 +10063,13 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = if bit(&m.t_dollar, c) {
-                        (c + 1, 16)
+                        (c + 1, 17)
                     } else if bit(&m.o_str, s) {
                         // `str`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 17)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 18)
                     } else {
                         // `rstr`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 17)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 18)
                     };
                     self.piece(c, l, kind);
                     if bit(&m.t_dollar, c) {
@@ -10112,7 +10120,7 @@ impl P<'_> {
             }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 18);
+                self.piece(at, to - 1, 19);
             }
             match part {
                 Some((e, _, i)) => {
@@ -10120,13 +10128,13 @@ impl P<'_> {
                         0 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 18),
-                        1 => (e + 0, 19),
+                        }, 19),
+                        1 => (e + 0, 20),
                         2 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 14),
-                        3 => (e + 0, 18),
+                        }, 15),
+                        3 => (e + 0, 19),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -10134,11 +10142,11 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = if bit(&m.rd1_closes0, c) {
-                        (c + 0, 17)
+                        (c + 0, 18)
                     } else if bit(&m.rd1_closes1, c) {
-                        (c + 2, 17)
+                        (c + 2, 18)
                     } else if bit(&m.t_dollar, c) {
-                        (c + 1, 16)
+                        (c + 1, 17)
                     } else if bit(&m.o_tail, s) {
                         // `tail`
                         (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
@@ -10190,14 +10198,14 @@ impl P<'_> {
             }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 12);
+                self.piece(at, to - 1, 13);
             }
             match part {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (e + 1, 13),
-                        1 => (e + 3, 10),
-                        2 => (e + 1, 11),
+                        0 => (e + 1, 14),
+                        1 => (e + 3, 11),
+                        2 => (e + 1, 12),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -10205,7 +10213,7 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = {
-                        (c + 0, 20)
+                        (c + 0, 21)
                     };
                     self.piece(c, l, kind);
                     return Ok(());

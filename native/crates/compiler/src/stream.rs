@@ -34,7 +34,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
             let m = mode & !TOKEN_EXTRAS;
             (m == 0 || usize::from(m - 1) < masks) && (mode & TOKEN_EXTRAS == 0 || !program.extras.is_empty()) && usize::from(operand) < extracts && records.is_some_and(|r| r.starts == operand)
         }
-        ACCEPT => mode == 0 && operand == 0,
+        // `m=1`: a padded root (`whole padded`), from its first token or comment.
+        ACCEPT => mode <= 1 && operand == 0,
         EMPTY => mode == 0 && usize::from(operand) < totals,
         SWITCH => mode == 0 && usize::from(operand) < program.switches.len(),
         // `m=1`: a test, which skips the next word where the token is not the string.
@@ -943,6 +944,11 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     return refuse!(pc - 1, "the file ends inside a node");
                 }
                 let at = open[0];
+                // A padded root (`m=1`): from its first token or comment (none: the file's end),
+                // as tree-sitter's root starts past the file's leading blanks.
+                if mode == 1 {
+                    nodes[at].start = nodes.iter().enumerate().filter(|&(i, n)| i != at && n.kind != DEAD).map(|(_, n)| n.start).min().unwrap_or(bytes.len() as u32);
+                }
                 nodes[at].end = bytes.len() as u32;
                 nodes[at].size = (nodes.len() - at) as u32;
                 if nodes.iter().any(|n| n.kind != DEAD && n.field != 0 && program.readings.provisional.contains(&n.field)) {

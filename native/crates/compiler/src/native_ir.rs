@@ -400,6 +400,8 @@ pub struct Structure {
     pub block_programs: Vec<BlockNative>,
     pub output: FunctionRef,
     pub reduction: FunctionRef,
+    /// A padded root (`ACCEPT m=1`, `whole padded`): its start its first token's or comment's.
+    pub padded: bool,
 }
 
 pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> Result<Structure, LoweringError> {
@@ -582,5 +584,6 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         output: FunctionRef::Output,
         reduction: FunctionRef::Reduction,
+        padded: program.words.iter().any(|&w| split(w) == (ACCEPT, 1, 0)),
     })
 }

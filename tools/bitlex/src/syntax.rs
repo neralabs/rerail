@@ -760,8 +760,10 @@ pub enum Stmt {
     Tree { name: String, body: Vec<Stmt> },
     /// `node KIND [nested] = G`: a node of the kind spans what `G` matches; the first is the
     /// root. `nested`: it may contain itself, and runs on a stack frame (doc 18 §1).
-    /// `whole`: the root spans the whole file, from byte 0, and may hold no token.
-    Node { kind: String, nested: bool, whole: bool, body: Gram },
+    /// `whole`: the root spans the whole file, from byte 0, and may hold no token. `whole
+    /// padded`: from its first token or comment (none: the file's end), as tree-sitter's root
+    /// starts past the file's leading blanks, its padding.
+    Node { kind: String, nested: bool, whole: bool, padded: bool, body: Gram },
     /// `choice NAME [supertype S] = A | B …`: no node of its own; each alternative's node has
     /// supertype `S`.
     /// `choice N [supertype S] [nested] = …`: `nested`, a level of its own, called where it is
@@ -2117,8 +2119,9 @@ impl P {
                 let kind = self.kind()?;
                 let nested = self.eat_kw("nested");
                 let whole = self.eat_kw("whole");
+                let padded = whole && self.eat_kw("padded");
                 self.want_p("=")?;
-                Stmt::Node { kind, nested, whole, body: self.gram()? }
+                Stmt::Node { kind, nested, whole, padded, body: self.gram()? }
             }
             "choice" => {
                 let name = self.ident()?;

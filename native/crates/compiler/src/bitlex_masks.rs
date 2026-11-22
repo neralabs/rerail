@@ -4493,13 +4493,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     }
     let checks = merged;
     let check_kinds: Vec<(Vec<u16>, Option<u16>)> = checks.iter().map(|c| (c.0.clone(), c.1)).collect();
-    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, true, by_rules, token_extras, &counts, &check_kinds)?.tested;
+    // A `whole padded` root (the tree's first rule): its start its first token's or comment's.
+    let padded = low.tree.iter().find_map(|s| if let Stmt::Node { padded, .. } = s { Some(*padded) } else { None }).unwrap_or(false);
+    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, (whole, padded), true, by_rules, token_extras, &counts, &check_kinds)?.tested;
     for (j, &r) in tested.iter().enumerate() {
         rows[r].mask = Some(row_masks + j as u16);
         mark_masks.push(token_rows[r].1);
     }
     // The words, once the fallback's totals are known: each must be zero.
-    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, false, by_rules, token_extras, &counts, &check_kinds)?;
+    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, (whole, padded), false, by_rules, token_extras, &counts, &check_kinds)?;
     crate::rir_text::count_rows(&mut lowered.text, &count_most);
     // The extras' kinds: the node table flags their nodes (comments).
     readings.extras = low.extra.iter().map(|k| id(k)).collect::<Result<_, _>>()?;

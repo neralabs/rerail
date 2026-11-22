@@ -866,6 +866,23 @@ fn templates_read_again_across_a_block_are_the_lean_parsers() {
     same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+/// A file's leading blanks are no node's: the root starts at its first token or comment, at
+/// the file's end where it has none, as tree-sitter's root starts past its padding.
+#[test]
+fn leading_blanks_are_the_lean_parsers() {
+    same(&["\n", "  \n", "\n// c\n", "\nval a = 1\n", "  val a = 1\n", "\n\n/* c */ val a = 1\n"]);
+    // Over many of the tape's blocks, which start at their first node's offset.
+    let long = format!("\n\n{}", "val a = f(b, c) // d\n".repeat(600));
+    same(&[&long]);
+}
+
+/// A block comment's `*/` is past its `/*` (`/*/` is open), and a raw string opened by more quotes
+/// than three.
+#[test]
+fn comment_ends_are_the_lean_parsers() {
+    same(&["val a = 1 /*/ x */ + 2\n", "val a = 1 /**/ + 2\n", "/*/ x\n */\nval b = 1\n"]);
+}
+
 /// `where` constraints, a function's, a property's and a class's.
 #[test]
 fn type_constraints_are_the_lean_parsers() {

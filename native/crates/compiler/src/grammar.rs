@@ -790,7 +790,7 @@ fn gather(stmts: &[Stmt], tokens: &[String]) -> (Vec<Rule>, Vec<(String, Option<
     let mut balanced = Vec::new();
     for s in stmts {
         match s {
-            Stmt::Node { kind, nested, whole, body } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced, tokens), own: true, supertype: None }),
+            Stmt::Node { kind, nested, whole, body, .. } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced, tokens), own: true, supertype: None }),
             Stmt::Choice { name, supertype, nested: true, body } => nested_choices.push(Rule { kind: name.clone(), nested: true, whole: false, body: desugar(body, &mut balanced, tokens), own: false, supertype: supertype.clone() }),
             Stmt::Choice { name, supertype, body, .. } => choices.push((name.clone(), supertype.clone(), desugar(body, &mut balanced, tokens))),
             _ => {}

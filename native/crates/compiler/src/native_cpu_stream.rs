@@ -2560,6 +2560,8 @@ struct Table<'a> {
     /// A format 16 run whose every node's key is known at its word (`native_cpu_direct::direct_keys`): each node word's key
     /// bits from the words after it, by its place. Each node then goes to the writer's ops at its word, with no row.
     direct: Option<&'a [(u32, u32)]>,
+    /// A padded root (`Structure::padded`): its start given at its pass (`pass`).
+    padded: bool,
 }
 
 /// A reader whose regions tier 2 splits: its opener and closer (outputs), its parts (each its start, its
@@ -3243,6 +3245,27 @@ impl Table<'_> {
     fn pass(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, from: Value, to: Value, keep: bool) {
         let s = self.fns.sixteen.as_ref().expect("a format 16 run's");
         let (desc, rows, size_c, numbers) = ((e.ctx)(f, WRITER), (e.ctx)(f, ROWS), (e.ctx)(f, SIZE_C), (e.ctx)(f, NUMBERS));
+        // The root passed first: its start the node's after it (none: the file's end), as
+        // tree-sitter's root starts past the file's leading blanks. That node is made: a pass
+        // leaves the last node, and at the end there is none after the root only in a file of
+        // no token or comment.
+        let (root, on) = (f.create_block(), f.create_block());
+        let from_root = if self.padded { from } else { f.ins().iconst(types::I64, 1) };
+        f.ins().brif(from_root, on, &[], root, &[]);
+        f.switch_to_block(root);
+        let nodes = (e.get)(f, Mem::Nodes);
+        let more = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, nodes, 1);
+        let one = f.ins().iconst(types::I64, 1);
+        let zero = f.ins().iconst(types::I64, 0);
+        let after = f.ins().select(more, one, zero);
+        let after_row = NodeCol::row(f, rows, after);
+        let first = NodeCol::of(rows, AT_START).get_row(f, after_row);
+        let len = (e.ctx)(f, LEN);
+        let first = f.ins().select(more, first, len);
+        let root_row = NodeCol::row(f, rows, zero);
+        NodeCol::of(rows, AT_START).put_row(f, root_row, first);
+        f.ins().jump(on, &[]);
+        f.switch_to_block(on);
         let (snode, skind, supers) = ((e.ctx)(f, SUPER_NODE), (e.ctx)(f, SUPER_KIND), (e.get)(f, Mem::Supers));
         let keep = f.ins().iconst(types::I64, i64::from(keep));
         call_own(f, s.pass.0, &s.pass.1, &[desc, rows, size_c, numbers, snode, skind, supers, from, to, keep]);
@@ -5168,7 +5191,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     // The records `TOKEN` makes from each start (page 40).
     let fetch = fetch_of(native)?;
     let direct = if sixteen { crate::rust_stream::direct_keys(native, widths_tag.0, widths_tag.1) } else { None };
-    let table = Table { inner: crate::rust_stream::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()), fetch: fetch.as_deref(), direct: direct.as_deref() };
+    let table = Table { inner: crate::rust_stream::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()), fetch: fetch.as_deref(), direct: direct.as_deref(), padded: native.padded };
     let passes: Vec<u32> = table_fns.shift.iter().chain(&table_fns.drop).map(|f| f.0.as_u32()).collect();
     let row_fns: Vec<u32> = [&table_fns.blocks, &table_fns.commit, &table_fns.uncode, &table_fns.finish].into_iter().chain(table_fns.sixteen.iter().flat_map(|s| [&s.pass, &s.retag])).map(|f| f.0.as_u32()).collect();
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
@@ -7559,6 +7582,30 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         let root = f.ins().uload32(flags, open_c, 0);
                         let root_row = NodeCol::row(&mut f, rows_here, root);
                         end_c.put_row(&mut f, root_row, len);
+                        // From its first token or comment, the row after it (none: the file's
+                        // end), as tree-sitter's root starts past the file's leading blanks.
+                        let after = f.ins().iadd_imm(root, 1);
+                        let more = f.ins().icmp(IntCC::UnsignedLessThan, after, nodes);
+                        let after = f.ins().select(more, after, root);
+                        let after_row = NodeCol::row(&mut f, rows_here, after);
+                        let first = NodeCol::of(rows_here, AT_START).get_row(&mut f, after_row);
+                        let first = f.ins().select(more, first, len);
+                        // A format 16 run gave the root's start to its writer when it passed it
+                        // (`Table::pass`). Else, where it moved (leading blanks): its row, and
+                        // the first block's base and offsets again.
+                        if table.fns.sixteen.is_none() && native.padded {
+                            let old = NodeCol::of(rows_here, AT_START).get_row(&mut f, root_row);
+                            let moved = f.ins().icmp(IntCC::NotEqual, first, old);
+                            let (again, on) = (f.create_block(), f.create_block());
+                            f.ins().brif(moved, again, &[], on, &[]);
+                            f.switch_to_block(again);
+                            f.set_cold_block(again);
+                            NodeCol::of(rows_here, AT_START).put_row(&mut f, root_row, first);
+                            let b0 = f.ins().iconst(types::I64, 0);
+                            table.blocks(&mut f, &env, b0, nodes);
+                            f.ins().jump(on, &[]);
+                            f.switch_to_block(on);
+                        }
                         let size = f.ins().isub(nodes, root);
                         let last = f.ins().iadd_imm(nodes, -1);
                         table.close_cells(&mut f, &env, Closed { at: root, size, last }, len, None);
