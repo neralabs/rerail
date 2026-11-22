@@ -6578,6 +6578,12 @@ dependencies = [
 [[package]]
 name = "rerail-ukl-aot"
 version = "0.1.0"
+dependencies = [
+ "rerail-clif",
+ "rerail-json-aot",
+ "rerail-tape-format",
+ "rerail-ukl-aot",
+]
 
 [[package]]
 name = "rerail-ukl-vec"

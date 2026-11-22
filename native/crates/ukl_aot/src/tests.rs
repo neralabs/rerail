@@ -103,3 +103,47 @@ fn the_kernels_rust_mix_is_the_scalar_one() {
         }
     }
 }
+
+/// Format 16's parent read, the host's (the reference): on every test document, a node's parent is before it and
+/// holds it in its subtree, and only the root has none.
+#[test]
+fn the_hosts_parent_read_is_each_nodes_parent() {
+    let lang = crate::parent::json_lang();
+    // The paths the read takes: a slot of its array's width, an escaped one (its side list's), and a walk back over
+    // a leaf's siblings (a parent not the node before).
+    let (mut escaped, mut walked) = (0, 0);
+    for d in crate::parent::documents(&lang) {
+        let want = crate::parent::scalar(&d);
+        assert!(!want.is_empty(), "{}: no nodes", d.name);
+        let w = d.view.widths & 15;
+        let ones = if w >= 8 { u64::MAX } else { (1u64 << (8 * w)) - 1 };
+        escaped += (0..d.nodes()).filter(|&i| rerail_tape_format::reads::f16::slot(&d.bytes, &d.view, i) >= ones).count();
+        walked += want.iter().enumerate().filter(|&(i, &p)| i > 0 && p as usize + 1 != i).count();
+        for (i, &p) in want.iter().enumerate() {
+            if i == 0 {
+                assert_eq!(p, crate::parent::NONE, "{}: the root's parent", d.name);
+                continue;
+            }
+            let size = rerail_tape_format::reads::f16::size(&d.bytes, &d.view, p);
+            assert!((p as usize) < i && i < p as usize + size as usize, "{}: node {i}'s parent {p} (size {size})", d.name);
+        }
+    }
+    assert!(escaped > 0 && walked > 1000, "{escaped} escaped slots, {walked} walks over siblings");
+}
+
+/// rerail-ukl-vec's Rust of `f16_parent` at 8 lanes: the host's parents, on every node of every test document, at
+/// groups that end in part of a chunk.
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn the_kernels_rust_parent_is_the_hosts() {
+    let lang = crate::parent::json_lang();
+    for d in crate::parent::documents(&lang) {
+        let want = crate::parent::scalar(&d);
+        for block in [8, 20, 32, 36, 256] {
+            let got = unsafe { crate::parent::run(crate::parent_all_w8::parent_all_w8, &d, block) };
+            if let Some(i) = (0..want.len()).find(|&i| got[i] != want[i]) {
+                panic!("{} ({} nodes), groups of {block}: node {i}'s parent {} (the host's {})", d.name, want.len(), got[i], want[i]);
+            }
+        }
+    }
+}

@@ -6,5 +6,18 @@ publish = false
 description = "UKL kernels as Rust ahead of time (decision 0567 step 3): rerail-ukl-vec's Rust of a kernel's vector tape, checked in, beside the kernel vectorized by hand and as scalar code, to compare them."
 
 [features]
-# The test-only items of the crates below (none), for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = []
+# The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
+test-hooks = ["rerail-tape-format/test-hooks", "rerail-json-aot/test-hooks", "rerail-clif/test-hooks"]
+
+[dependencies]
+# Format 16's tapes, written by the engine's writer, and the host's reads of them: `f16_parent`'s documents and its
+# scalar reference (`reads::f16::parent`).
+rerail-tape-format = { path = "../tape_format" }
+# The view a tape's reads are told where it lies by (`TapeView`, the kernel's `view`), without the reads' IR.
+rerail-clif = { path = "../clif", default-features = false }
+# JSON's parser as Rust, which writes format 16 through the engine's writer: real documents for `f16_parent`.
+rerail-json-aot = { path = "../json_aot" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-ukl-aot = { path = ".", features = ["test-hooks"] }
