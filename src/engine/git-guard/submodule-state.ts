@@ -732,17 +732,20 @@ function isFile(file: number): boolean {
 /**
  * The bytes of the open file `file` to its end; undefined past `most`. The buffer is sized from the file's own size,
  * at most `most` and one byte, and grows to that bound where the file holds more by the read, so one that grew after
- * its stat is still read to its end.
+ * its stat is still read to its end. A read that gives fewer bytes than it asked for met the end of the file, as a
+ * read of a regular file does, so a file of the size its stat gave takes one read.
  */
 function readWithin(file: number, most: number): Buffer | undefined {
   let bytes = Buffer.alloc(Math.min(fstatSync(file).size, most) + 1);
   let read = 0;
+  let wanted: number;
   let got: number;
   do {
     if (read === bytes.length) bytes = Buffer.concat([bytes], most + 1);
-    got = readSync(file, bytes, read, bytes.length - read, null);
+    wanted = bytes.length - read;
+    got = readSync(file, bytes, read, wanted, null);
     read += got;
-  } while (got > 0 && read <= most);
+  } while (got === wanted && read <= most);
   return read > most ? undefined : bytes.subarray(0, read);
 }
 
