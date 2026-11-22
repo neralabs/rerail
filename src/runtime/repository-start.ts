@@ -178,7 +178,8 @@ export function isRerailStarted(workspace: string, databasePath = defaultRerailD
 export function checkoutName(workspace: string, wholeRepository: boolean): string {
   const location = repositoryIdentityLocation(workspace);
   const repository = repositoryFolderName(location);
-  return wholeRepository || location.main ? repository : `${basename(location.workspaceRoot)}, a worktree of ${repository}`;
+  // Outside Git, a worktree whose Git folder is gone included, the repository's name is the folder's own.
+  return wholeRepository || location.main || !location.git ? repository : `${basename(location.workspaceRoot)}, a worktree of ${repository}`;
 }
 
 /**

@@ -824,6 +824,14 @@ export type IdleClose =
   /** Its memory is freed and its record ended, as its end would (`end`); its next event opens it again. */
   | { readonly kind: "ended" };
 
+/**
+ * Whether the session of `state` records its rule coverage: published (unpublished sessions have no session row yet;
+ * the session-start ingest records coverage once they do) and not closed.
+ */
+function recordsCoverage(state: RuntimeSessionState | undefined): state is RuntimeSessionState {
+  return state !== undefined && !state.closed && state.ownerClaim !== undefined;
+}
+
 /** The bridge option that resumes the session's walks where `suspension` left them; none for a fresh open. */
 function walkResumeOption(suspension: SessionSuspension | undefined): { resume?: SessionWalkResume } {
   return suspension?.walk === undefined ? {} : { resume: suspension.walk };
@@ -1343,7 +1351,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
       const deliveries = await this.#ingestOrDropOwed(event);
       if (event.kind !== "assistant-delta" || event.final
-          || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) this.recordRuleCoverage(sessionId);
+          || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) {
+        await this.#sessionRulesBuilt(sessionId);
+        this.recordRuleCoverage(sessionId);
+      }
       return deliveries;
     });
   }
@@ -2065,11 +2076,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
+  /**
+   * Settles once the rules of the session's checkout are built, compiled off the daemon's thread (`CheckoutCatalogs.prepare`):
+   * at once after the first time. The coverage this event records then reads them as built, and the answer that waits for
+   * it names the session's rules as before, while every other session's events run.
+   */
+  async #sessionRulesBuilt(sessionId: string): Promise<void> {
+    const state = this.#sessions.get(sessionId);
+    if (!recordsCoverage(state)) return;
+    // A build that fails here is the coverage's to report, as it builds the rules itself then.
+    await this.#catalogs.prepare(state.checkout.root).catch(() => undefined);
+  }
+
   /** Report loaded sources, never refresh enforcement for presentation metadata. */
   recordRuleCoverage(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
-    // Unpublished sessions have no session row yet; the session-start ingest records coverage once they do.
-    if (state === undefined || state.closed || state.ownerClaim === undefined) return;
+    if (!recordsCoverage(state)) return;
     try {
       const { root } = state.checkout;
       const repositoryId = this.#repositoryKey(state.checkout);
@@ -2104,6 +2126,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    */
   async codeRulesOpened(sessionId: string): Promise<void> {
     await this.#sessions.get(sessionId)?.codeRuleWorkspace.catch(() => undefined);
+  }
+
+  /**
+   * Settles once the session's evaluator is open and has built the rules it builds ahead of any call: those of the
+   * repositories the session's earlier checks ran in.
+   */
+  async rulesBuiltAhead(sessionId: string): Promise<void> {
+    const bridge = await this.#sessions.get(sessionId)?.codeRuleWorkspace.catch(() => undefined);
+    await bridge?.rulesBuiltAhead();
   }
 
   async dispose(): Promise<void> {
@@ -3330,8 +3361,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
     // The session's rule coverage reads the checkout's catalog before its evaluator opens. Other sessions' lanes in the
-    // checkout share that catalog and read it again only at their own use, so its rules are read here.
-    if (this.#catalogs.refresh(start.checkoutRoot) !== "unrecorded") this.#catalogs.catalog(start.checkoutRoot).refresh();
+    // checkout share that catalog and read it again only at their own use, so its rules are read here. A catalog not
+    // built yet is built off the daemon's thread before the coverage reads it (`#sessionRulesBuilt`).
+    if (this.#catalogs.refresh(start.checkoutRoot) !== "unrecorded") this.#catalogs.refreshCatalog(start.checkoutRoot);
     return { root: start.checkoutRoot, folder: start.path, cwd };
   }
 
