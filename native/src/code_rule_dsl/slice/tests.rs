@@ -857,6 +857,9 @@ fn documents_seen_before_take_their_rows_from_the_content_memo() {
     let back = apply(&store, WS, directory_root(&store, &one).unwrap(), &mut rules).unwrap();
     assert_eq!((back.evaluated.len(), back.reused.as_slice()), (0, &["b.py".to_owned()][..]));
     assert_eq!(keys(&back), keys(&first));
+    // The memo's entries are kept facts (t33 step 3): no facts-memo row holds one (its schema was 108).
+    let rows = store.query_rows("SELECT count(*) FROM facts_results WHERE fact_schema = 108", [], |row| row.get::<_, i64>(0)).unwrap()[0];
+    assert_eq!(rows, 0);
 }
 
 #[test]

@@ -178,8 +178,9 @@ fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, 
     // Of those, the ones whose blob the content memo knows under these rules take its rows.
     let mut evaluate = Vec::with_capacity(changed.len());
     let mut reused = Vec::new();
+    let entries = if changed.is_empty() { None } else { memo::open(store)? };
     for document in changed {
-        match prof::time("slice.memo_lookup", || memo::lookup(store, scope, &rules.digest, &document))? {
+        match prof::time("slice.memo_lookup", || memo::lookup(store, entries.as_ref(), scope, &rules.digest, &document))? {
             Some(rows) => reused.push((document, rows)),
             None => evaluate.push(document),
         }
