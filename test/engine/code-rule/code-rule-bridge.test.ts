@@ -5653,9 +5653,8 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(recorded).toContainEqual([repositoryPath(root, join(worktree, "src", "again.py")), "log"]);
   });
 
-  // A walk that began before `git worktree remove` can hand the session the removed worktree's snapshot after the session
-  // let go of it, and a checkout inside the session folder can be deleted: whichever way a kept checkout's `.git` entry
-  // went, the walks after read no `HEAD` of it.
+  // A checkout inside the session folder can be deleted, or a file can take its folder's place: whichever way a kept
+  // checkout's `.git` entry went, the walks after read no `HEAD` of it.
   it("reads no `HEAD` of a checkout it kept once that checkout's `.git` entry is gone", async () => {
     const { root, nested, extra } = await nestedCheckout();
     const { bridge } = await opened(root, extra);

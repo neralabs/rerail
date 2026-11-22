@@ -319,10 +319,9 @@ async function readEntriesInto(discovery: SourceDiscovery, root: string, unmerge
 /**
  * Each of `roots`, checkouts whose `HEAD` the session keeps, whose `.git` entry stands. A read of one whose entry is
  * absent asks Git, one Git after another inside the walk a shell command's result waits for, and Git finds no checkout
- * there: a worktree `git worktree remove` took, whose snapshot a walk that began before the removal handed back, a
- * checkout deleted inside the session folder, or one whose `.git` was moved aside for a while. Its `HEAD` and unmerged
- * entries stay as the last walk read them, as a failed read leaves them, so a checkout whose entry comes back is read
- * against them again.
+ * there: a checkout deleted inside the session folder, or one whose `.git` was moved aside for a while. Its `HEAD` and
+ * unmerged entries stay as the last walk read them, as a failed read leaves them, so a checkout whose entry comes back
+ * is read against them again.
  */
 async function standingCheckouts(roots: readonly string[]): Promise<string[]> {
   const standing: string[] = [];
