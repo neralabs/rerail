@@ -9,9 +9,6 @@ import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import { scrubSecrets, scrubValue } from "../secret-scrub.js";
 import {
   blindFilePaths,
-  isCoverageGap,
-  isFileWorkStopped,
-  isOutOfWork,
   type AuditFailure,
   type AuditRecorder,
   type AuditInput,
@@ -420,23 +417,52 @@ function listAudits(database: RerailDatabase, query: AuditQuery = {}, repository
   return { audits: page, total };
 }
 
+/** `isOutOfWork` over one failure of `json_each`, in SQL. */
+const OUT_OF_WORK = sql.raw(`(json_extract(value, '$.blind') IS NULL AND json_extract(value, '$.code') = 'budget-exceeded'
+  AND json_extract(value, '$.ruleId') IS NOT NULL AND coalesce(json_extract(value, '$.stage'), '') NOT IN ('read', 'scan'))`);
+/** `isCoverageGap` over one failure of `json_each`, in SQL. */
+const COVERAGE_GAP = sql.raw(`(json_extract(value, '$.blind') = 'budget' OR (json_extract(value, '$.blind') IS NULL
+  AND json_extract(value, '$.code') IN ('budget-exceeded', 'file-budget-exceeded') AND json_extract(value, '$.ruleId') IS NOT NULL
+  AND coalesce(json_extract(value, '$.stage'), '') NOT IN ('read', 'scan')))`);
+/** A rule the file's work stopped (`file-budget-exceeded`), over one failure of `json_each`, in SQL. */
+const FILE_WORK_STOPPED = sql.raw(`(json_extract(value, '$.blind') IS NULL AND json_extract(value, '$.code') = 'file-budget-exceeded'
+  AND json_extract(value, '$.ruleId') IS NOT NULL AND coalesce(json_extract(value, '$.stage'), '') NOT IN ('read', 'scan'))`);
+
 /**
- * The session's latest audit, summed up from its record, so each count is the record's: an audit whose stored list
- * does not read counts the failure that says so, rather than failing the session's page.
+ * `column` of `audits` in SQL when it holds a JSON array, else an empty one; and whether it holds none, as 1 or 0. An
+ * audit record lists such a list as none and one failure that says so (`readLists`), which the summary counts.
+ */
+function readableList(column: SQLiteColumn): SQL<string> {
+  return sql<string>`(CASE WHEN NOT json_valid(${column}) THEN '[]' WHEN json_type(${column}) = 'array' THEN ${column} ELSE '[]' END)`;
+}
+function unreadableList(column: SQLiteColumn): SQL<number> {
+  return sql<number>`(CASE WHEN NOT json_valid(${column}) THEN 1 WHEN json_type(${column}) = 'array' THEN 0 ELSE 1 END)`;
+}
+
+/**
+ * The session's latest audit's counts, in SQL. Its violations or failures, when they are no JSON array, count as none
+ * and their failure counts, as the audit's record lists them, rather than failing the session's page.
  */
 function latestAuditSummary(database: RerailDatabase, sessionId: string): AuditSummary | undefined {
-  const row = database.select(auditColumns(database)).from(audits).where(eq(audits.sessionId, sessionId))
+  const violations = readableList(audits.violations);
+  const failures = readableList(audits.failures);
+  return database.select({
+    workspaceRoot: audits.workspaceRoot,
+    scope: audits.scope,
+    mode: audits.mode,
+    status: audits.status,
+    violationCount: sql<number>`json_array_length(${violations})`,
+    failureCount: sql<number>`json_array_length(${failures}) + ${unreadableList(audits.violations)} + ${unreadableList(audits.failures)}
+      + ${unlistedFailures(database)}`,
+    unlistedFailureCount: unlistedFailures(database),
+    blindFileCount: sql<number>`(SELECT count(*) FROM json_each(${failures}) WHERE json_extract(value, '$.blind') IS NOT NULL)`,
+    gapCount: sql<number>`(SELECT count(*) FROM json_each(${failures}) WHERE ${COVERAGE_GAP})`,
+    outOfWorkRuleCount: sql<number>`(SELECT count(DISTINCT json_extract(value, '$.ruleId')) FROM json_each(${failures})
+      WHERE ${OUT_OF_WORK})`,
+    fileWorkStoppedRuleCount: sql<number>`(SELECT count(DISTINCT json_extract(value, '$.ruleId')) FROM json_each(${failures})
+      WHERE ${FILE_WORK_STOPPED})`,
+  }).from(audits).where(eq(audits.sessionId, sessionId))
     .orderBy(desc(audits.startedAt), desc(audits.auditId)).limit(1).get();
-  if (row === undefined) return undefined;
-  const { workspaceRoot, scope, mode, status, violations, failures, failureCount, unlistedFailureCount } = record(database, row);
-  const rules = (counted: (failure: AuditFailure) => boolean): number => new Set(failures.filter(counted).map(failure => failure.ruleId)).size;
-  return {
-    workspaceRoot, scope, mode, status, violationCount: violations.length, failureCount, unlistedFailureCount,
-    blindFileCount: failures.filter(failure => failure.blind !== undefined).length,
-    gapCount: failures.filter(isCoverageGap).length,
-    outOfWorkRuleCount: rules(isOutOfWork),
-    fileWorkStoppedRuleCount: rules(isFileWorkStopped),
-  };
 }
 
 function listRepositoryAudits(
