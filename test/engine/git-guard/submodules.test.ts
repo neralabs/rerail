@@ -597,6 +597,28 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect(gits.map(([ok]) => ok)).toEqual([true, !(failsBefore256 && looksOutsideFolder(git(work, "version")))]);
   }, 60_000);
 
+  // A known difference: Rerail decides on no marked submodule outside the folder, so it answers where a Git before 2.56
+  // reads the rules of one whose commit changed and fails. A change that closes it turns this case.
+  it("and answer from a folder with no submodule below it where a Git before 2.56 fails: a marked submodule outside it whose commit changed, and a `.gitmodules` Git cannot read", async () => {
+    const root = await folder();
+    const { work, gitfile, named } = await submoduleGitfile(root);
+    await writeFile(gitfile, `${named}\n`);
+    mkdirSync(join(work, "dir"));
+    writeFileSync(join(work, "dir", "file.txt"), "one\n");
+    git(work, "add", "dir");
+    git(work, "commit", "--quiet", "-m", "dir");
+    git(join(work, "sub"), "commit", "--quiet", "--allow-empty", "-m", "moved");
+    git(work, "add", "sub");
+    git(work, "update-index", "--assume-unchanged", "sub");
+    writeFileSync(join(work, ".gitmodules"), "[submodule\n");
+    const dir = join(work, "dir");
+
+    const answer = await runGitWithoutBlocking(dir, SCAN_DIFF);
+
+    expect([answer.status === 0, answer.stdout]).toEqual([true, ""]);
+    expect(gitAnswer(dir, SCAN_DIFF)).toEqual([!looksOutsideFolder(git(work, "version")), ""]);
+  }, 60_000);
+
   // Git's diff looks into no submodule marked assume-unchanged or skip-worktree, so it opens no `.git` of one.
   it.for(["assume-unchanged", "skip-worktree"].flatMap(mark => MARKED_STATES.map(([what, made]) => [mark, what, made] as const)))(
     "and answer as Git's own diff for a submodule marked %s %s", { timeout: 60_000 }, async ([mark, _what, made], context) => {

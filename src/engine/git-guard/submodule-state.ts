@@ -519,9 +519,12 @@ async function changedSubmodules(stdout: string, { diff, gitlinks, top, open }: 
 /**
  * The submodules of `gitlinks` a diff decides on ({@link shownSubmodules}): each one Git's diff looks into, and a marked
  * one ({@link Gitlinks.marked}) only where Git's diff in Rerail `named` it, as its commit changed, so that its rules may
- * leave it out, as they leave it out of Git's own diff. Git reads no rule of a marked one it does not name, nor of one
- * outside the folder of a `--relative` diff but where it decides on those ({@link NameDiff.decidesOutside}), so where
- * the diff decides on none no rule is read; where it decides on those, they are read, and fail as Git's diff fails.
+ * leave it out, as they leave it out of Git's own diff. Git reads no rule of a marked one whose commit did not change,
+ * nor of one outside the folder of a `--relative` diff but where it decides on those ({@link NameDiff.decidesOutside}),
+ * so where the diff decides on none no rule is read; where it decides on those, they are read, and fail as Git's diff
+ * fails. Not decided: a marked one outside the folder, whose commit change the diff does not print. A Git before 2.56
+ * reads its rules once its commit changed, and fails where it cannot read them (a `.gitmodules` it cannot read); Rerail
+ * answers there.
  */
 function decidedSubmodules(gitlinks: Gitlinks, named: ReadonlySet<string>, prefix: string, diff: NameDiff): Shown[] {
   return shownSubmodules(gitlinks.paths, prefix, diff).filter(shown => !gitlinks.marked.has(shown.path) || (shown.printed && named.has(shown.name)));
