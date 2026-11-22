@@ -444,39 +444,39 @@ fn a_filter_may_test_derived_relations_of_its_head() {
 #[test]
 fn a_computed_view_is_inlined_where_its_reader_reads_its_domain() {
     let view = r#"
-        .decl split_line(d: number, l: number, t: symbol)
-        .input split_line
+        .decl raw_line(d: number, l: number, t: symbol)
+        .input raw_line
         .decl picked(d: number)
         .input picked
         .decl trim(raw: symbol, s: symbol)
-        trim(raw, @replace_all(raw, "^ +", "")) :- split_line(_, _, raw).
+        trim(raw, @replace_all(raw, "^ +", "")) :- raw_line(_, _, raw).
         .decl line(d: number, l: number, s: symbol)
         .output line
-        line(d, l, s) :- picked(d), split_line(d, l, raw), trim(raw, s).
+        line(d, l, s) :- picked(d), raw_line(d, l, raw), trim(raw, s).
     "#;
     // `other` does not read `trim`'s domain: inlined there, it would read every line; so `trim` stays built.
     let (report, _) = simplified(&format!("{view}\n.decl other(s: symbol)\n.output other\nother(s) :- picked(r), trim(r, s).\n"));
     assert!(!report.inlined.contains(&"trim".to_owned()), "{report:?}");
     let (report, v) = simplified(view);
     assert!(report.inlined.contains(&"trim".to_owned()), "{report:?}");
-    // The function of the reader's own line; the domain's second `split_line` read is implied and dropped.
-    assert_eq!(rules(&v), vec![r#"line($d, $l, $s) :- picked($d), split_line($d, $l, $raw), $s = @replace_all($raw, "^ +", "")"#]);
+    // The function of the reader's own line; the domain's second `raw_line` read is implied and dropped.
+    assert_eq!(rules(&v), vec![r#"line($d, $l, $s) :- picked($d), raw_line($d, $l, $raw), $s = @replace_all($raw, "^ +", "")"#]);
     // The reader's own `$raw` (here its result, not the definition's `raw`) stays the reader's.
     let (report, v) = simplified(
         r#"
-        .decl split_line(d: number, l: number, t: symbol)
-        .input split_line
+        .decl raw_line(d: number, l: number, t: symbol)
+        .input raw_line
         .decl picked(d: number)
         .input picked
         .decl trim(raw: symbol, s: symbol)
-        trim(raw, @replace_all(raw, "^ +", "")) :- split_line(_, _, raw).
+        trim(raw, @replace_all(raw, "^ +", "")) :- raw_line(_, _, raw).
         .decl line(d: number, l: number, s: symbol)
         .output line
-        line(d, l, raw) :- picked(d), split_line(d, l, x), trim(x, raw).
+        line(d, l, raw) :- picked(d), raw_line(d, l, x), trim(x, raw).
         "#,
     );
     assert!(report.inlined.contains(&"trim".to_owned()));
-    assert_eq!(rules(&v), vec![r#"line($d, $l, $raw) :- picked($d), split_line($d, $l, $x), $raw = @replace_all($x, "^ +", "")"#]);
+    assert_eq!(rules(&v), vec![r#"line($d, $l, $raw) :- picked($d), raw_line($d, $l, $x), $raw = @replace_all($x, "^ +", "")"#]);
 }
 
 /// An attribute's request is read by name (`syntax::VALUE_REQ`): a request over one node is a test of one node, but

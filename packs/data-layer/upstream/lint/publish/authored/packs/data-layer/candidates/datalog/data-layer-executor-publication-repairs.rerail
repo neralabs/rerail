@@ -1,0 +1,46 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.global library pyl_extra, py_line_sep, pyl_rest, py_line
+.decl doc(d: number, path: symbol, module: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl publication_line(d: number, l: number, s: symbol)
+.decl py_line(d: number, n: number, s: symbol)
+.decl py_line_sep(s: symbol)
+.decl pyl_extra(d: number, l: number, k: number)
+.decl pyl_rest(d: number, l: number, j: number, r: symbol)
+.decl rr_agg1(d: number, k: number, l: number, m: number)
+.decl rr_agg3(d: number, k: number, l: number, m: number)
+.decl rr_agg5(d: number, k: number, l: number, m: number)
+.decl rr_ctx2(d: number, l: number)
+.decl rr_ctx4(d: number, l: number)
+.decl rr_ctx6(d: number, l: number)
+.decl rr_demand_agg_rr_agg1(d: number, l: number)
+.decl rr_demand_agg_rr_agg3(d: number, l: number)
+.decl rr_demand_agg_rr_agg5(d: number, l: number)
+.decl src_line(d: number, l: number, sp: node)
+.decl text(n: node, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, text, src_line
+.output violation
+in_scope(d) :- doc(d, p, _), glob("l2070_batching/executor.py", p).
+pyl_extra(d, l, k) :- src_line(d, l, sp), text(sp, s), py_line_sep(s), k = @count_matches("[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]", s).
+py_line_sep(s) :- pyl_rest(_, _, _, s), match("(?s).*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}].*", s).
+pyl_rest(d, l, 0, s) :- src_line(d, l, sp), text(sp, s).
+pyl_rest(d, l, @add(j, 1), a) :- pyl_rest(d, l, j, r), match("[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?<a>(?s).*)", r), a = @rx_group(r, "^(?:[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?<a>(?s).*))$", "a").
+rr_ctx2(d, l) :- pyl_rest(d, l, 0, s).
+rr_agg1(d, k, l, m) :- rr_demand_agg_rr_agg1(d, l), rr_ctx2(d, l), pyl_extra(d, m, k), m < l.
+py_line(d, n, s) :- pyl_rest(d, l, 0, s), !py_line_sep(s), off = sum k : { rr_agg1(d, k, l, _) }, n = @add(l, off).
+rr_ctx4(d, l) :- pyl_rest(d, l, j, r).
+rr_agg3(d, k, l, m) :- rr_demand_agg_rr_agg3(d, l), rr_ctx4(d, l), pyl_extra(d, m, k), m < l.
+py_line(d, n, h) :- pyl_rest(d, l, j, r), py_line_sep(r), match("(?<h>[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*)[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?s).*", r), h = @rx_group(r, "^(?:(?<h>[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*)[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?s).*)$", "h"), off = sum k : { rr_agg3(d, k, l, _) }, n = @add(@add(l, off), j).
+rr_ctx6(d, l) :- pyl_rest(d, l, j, r), j > 0.
+rr_agg5(d, k, l, m) :- rr_demand_agg_rr_agg5(d, l), rr_ctx6(d, l), pyl_extra(d, m, k), m < l.
+py_line(d, n, r) :- pyl_rest(d, l, j, r), j > 0, !py_line_sep(r), off = sum k : { rr_agg5(d, k, l, _) }, n = @add(@add(l, off), j).
+publication_line(d, l, s) :- doc(d, _, _), in_scope(d), !out_scope(d), py_line(d, l, s).
+violation("data-layer-executor-publication-repairs", "cte_output_columns", "executor_publication_repair", p, l) :- publication_line(d, l, s), contains("_cte_output_columns", s), doc(d, p, _).
+violation("data-layer-executor-publication-repairs", "cte_column_type_hints", "executor_publication_repair", p, l) :- publication_line(d, l, s), contains("_cte_column_type_hints", s), doc(d, p, _).
+violation("data-layer-executor-publication-repairs", "publication_contract_cache", "executor_publication_repair", p, l) :- publication_line(d, l, s), contains("_publication_contract_cache", s), doc(d, p, _).
+violation("data-layer-executor-publication-repairs", "cte_publication_contract_cache", "executor_publication_repair", p, l) :- publication_line(d, l, s), contains("_cte_publication_contract_cache", s), doc(d, p, _).
+rr_demand_agg_rr_agg1(d, l) :- pyl_rest(d, l, 0, s).
+rr_demand_agg_rr_agg3(d, l) :- pyl_rest(d, l, j, r), py_line_sep(r), match("(?<h>[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*)[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?s).*", r), h = @rx_group(r, "^(?:(?<h>[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*)[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?s).*)$", "h").
+rr_demand_agg_rr_agg5(d, l) :- pyl_rest(d, l, j, r), j > 0.

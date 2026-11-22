@@ -1051,8 +1051,7 @@ fn projection_axes_and_token_spans_are_read_without_renumbering() {
     expected.sort_unstable();
     let tokens = expected.len();
     expected.push([0,f.source.len() as u32]);
-    let lines = core_rr::Lines::new(&f.source,true);
-    expected.extend((1..=lines.count()).map(|l|lines.span(l)));
+    expected.extend((1..=f.lines.count()).map(|l|f.lines.text_of(l)));
     assert_eq!(p.extra.as_ref().unwrap().tokens as usize,tokens);
     assert_eq!(p.locs(),p.len()+expected.len() as u32);
     for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
@@ -1081,7 +1080,7 @@ fn projection_axes_and_token_spans_are_read_without_renumbering() {
 #[test]
 fn definition_slots_stay_below_the_span_bit() {
     use granules::{ExtraSpan, INDEX, extra_low, span_of};
-    let kinds = [ExtraSpan::Line, ExtraSpan::Lf, ExtraSpan::Tape, ExtraSpan::Comment, ExtraSpan::Match];
+    let kinds = [ExtraSpan::Line, ExtraSpan::Comment, ExtraSpan::Match];
     let mut extra = BTreeSet::new();
     for kind in kinds {
         assert_eq!(extra_low(kind, kind.capacity()), None, "{kind:?} past its capacity");
@@ -1124,15 +1123,15 @@ fn span_ids_census() {
         regexes.iter().map(|re| re.captures_iter(text).map(|c| c.iter().skip(1).flatten().count() + 1).sum::<usize>()).sum()
     };
     for corpus in crate::code_rule_dsl::cpython::parity::corpora() {
-        // (value, file) maxima: positions, lines, lf lines, tape lines, comments, matches.
+        // (value, file) maxima: positions, lines, comments, matches.
         let files = &corpus.files;
         let threads = 16;
-        let maxima: Vec<[(usize, String); 6]> = std::thread::scope(|s| {
+        let maxima: Vec<[(usize, String); 4]> = std::thread::scope(|s| {
             (0..threads)
                 .map(|t| {
                     let count = &count;
                     s.spawn(move || {
-                        let mut most: [(usize, String); 6] = Default::default();
+                        let mut most: [(usize, String); 4] = Default::default();
                         for (path, shown) in files.iter().skip(t).step_by(threads) {
                             let Ok(src) = std::fs::read_to_string(path) else { continue };
                             let Ok(file) = FileInput::new(shown.clone(), "python".to_owned(), Arc::new(src.clone()), None, None, "core") else { continue };
@@ -1141,12 +1140,10 @@ fn span_ids_census() {
                             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
                             let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
                             let f = &*facts;
-                            let lines = physical_lines(&src, true);
-                            let lf = physical_lines(&src, false);
-                            let tape: Vec<std::ops::Range<usize>> = (0..f.lines.starts().len()).map(|i| f.lines.start(i)..f.lines.end(i)).collect();
+                            let lines: Vec<std::ops::Range<usize>> = (1..=f.lines.count()).map(|l| f.lines.text_of(l)).map(|[a, b]| a as usize..b as usize).collect();
                             let comments = (0..f.len() as u32).filter(|&id| f.named(id) && crate::code_rule_dsl::language::adapter::is_comment_kind(dialect.name(f, id))).count();
-                            let matches = count(&src) + [&lines, &lf, &tape].iter().flat_map(|ls| ls.iter()).map(|r| count(&src[r.clone()])).sum::<usize>();
-                            let now = [(p.locs() - p.len()) as usize, lines.len() + 1, lf.len(), tape.len(), comments, matches];
+                            let matches = count(&src) + lines.iter().map(|r| count(&src[r.clone()])).sum::<usize>();
+                            let now = [(p.locs() - p.len()) as usize, lines.len() + 1, comments, matches];
                             for (m, v) in most.iter_mut().zip(now) {
                                 if v > m.0 {
                                     *m = (v, shown.clone());
@@ -1161,8 +1158,8 @@ fn span_ids_census() {
                 .map(|h| h.join().unwrap())
                 .collect()
         });
-        let capacity = [granules::POSITIONS, u64::from(ExtraSpan::Line.capacity()), u64::from(ExtraSpan::Lf.capacity()), u64::from(ExtraSpan::Tape.capacity()), u64::from(ExtraSpan::Comment.capacity()), u64::from(ExtraSpan::Match.capacity())];
-        for (k, name) in ["positions", "source and physical lines", "\\n lines", "tape lines", "comments", "matches and groups"].into_iter().enumerate() {
+        let capacity = [granules::POSITIONS, u64::from(ExtraSpan::Line.capacity()), u64::from(ExtraSpan::Comment.capacity()), u64::from(ExtraSpan::Match.capacity())];
+        for (k, name) in ["positions", "source and lines", "comments", "matches and groups"].into_iter().enumerate() {
             let (v, at) = maxima.iter().map(|m| m[k].clone()).max().unwrap_or_default();
             eprintln!("census {}: {} files: {name}: at most {v} per document ({at}), capacity {}", corpus.name, files.len(), capacity[k]);
         }
@@ -1727,8 +1724,10 @@ fn definition_ids_are_pinned() {
     let got: String = h.finalize()[..16].iter().map(|b| format!("{b:02x}")).collect();
     // Moved once by decision 0353 step 2: a granule's tokens are numbered in preorder of the tokens, not by their
     // nodes' order, so the granule table counts them off a rank index (was f280acef04fbe4f44e98f401f7f7d4f8; the
-    // nodes' and spans' ids are unchanged).
-    assert_eq!(got, "a181683bc9d837ac82beba26e6ff7057", "the definition ids moved");
+    // nodes' and spans' ids are unchanged). Moved again by decision 0612: a file's lines are its facts' (`LineTable`),
+    // the empty line after its final terminator one of them, so each file has one more line position (was
+    // a181683bc9d837ac82beba26e6ff7057; the nodes' ids are unchanged).
+    assert_eq!(got, "0c858a2fb1fb44c99224f605ef3cbea9", "the definition ids moved");
 }
 
 /// What a kind is to the granules (a definition, a wrapper, a body, a container's owner) is a table by kind code,

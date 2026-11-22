@@ -368,6 +368,10 @@ pub struct Stats {
     pub card: table::RelMap<f64>,
     /// Current wave cardinalities, distinct from full relation cardinalities.
     pub delta_rows: table::RelMap<f64>,
+    /// A line whose delta is read through its own index (a maintain mode's removal or add join, decision 0364): the
+    /// delta (`first`) is sized by its rows but need not lead, and a probe of it is the relation's probe at the
+    /// delta's share of its rows. A semi-naive probe's delta leads its wave (`false`).
+    pub lead_free: bool,
     /// (rel, col) → posting-weighted fanout of an equality probe: sq / rows.
     pub fan: ColMap<f64>,
     /// (derived rel, col) → {value: postings}, for a column of few values (native statistics).
@@ -524,6 +528,7 @@ impl Stats {
             parents: Default::default(),
             card: Default::default(),
             delta_rows: Default::default(),
+            lead_free: false,
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
@@ -718,6 +723,7 @@ impl Stats {
                 .collect()),
             card: Default::default(),
             delta_rows: Default::default(),
+            lead_free: false,
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
@@ -904,6 +910,7 @@ impl Model {
             parents: st.parents.clone(),
             card: Default::default(),
             delta_rows: Default::default(),
+            lead_free: false,
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
@@ -2670,7 +2677,8 @@ impl Model {
                 plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
             }
         });
-        if source_orders() {
+        // A lead-free line's order is not its delta-led line's (`line_key` is the body and the delta).
+        if source_orders() && !self.stats.lead_free {
             orders_put(line_key(b, first), &got.0.0);
         }
         remember(&key, &got);
@@ -2689,7 +2697,8 @@ impl Model {
                 plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
             }
         });
-        if source_orders() {
+        // A lead-free line's order is not its delta-led line's (`line_key` is the body and the delta).
+        if source_orders() && !self.stats.lead_free {
             orders_put(line_key(b, first), &got.0.0);
         }
         // Its sizes now, as `plan_rule_reused` keeps them with its plan.
@@ -2747,7 +2756,7 @@ impl Model {
     /// differs), else, for a maintenance rule (`Body::origin`), its source rule's order (`source_order`). Which of the
     /// two (0, 1) with it. None where a search prices fewer than `START_CANDIDATES` orders: it prices the start's.
     fn start_order(&self, b: &Body<'_>, first: Option<usize>) -> Option<(Vec<Step>, usize)> {
-        if !source_orders() {
+        if !source_orders() || self.stats.lead_free {
             return None;
         }
         // Why a line is searched, not started (the profile's decisions).
@@ -2786,6 +2795,10 @@ impl Model {
             d.u64(b.key() as u64);
             d.u64((b.key() >> 64) as u64);
             d.u64(first.map_or(u64::MAX, |f| f as u64));
+            // Its delta free to start anywhere: another line than the one its delta leads.
+            if self.stats.lead_free {
+                d.str("lead free");
+            }
             d.u64(self.stats.solving_digest as u64);
             d.u64((self.stats.solving_digest >> 64) as u64);
             // A changed key domain can make another order cheaper while row and distinct counts stay fixed.
@@ -2863,6 +2876,9 @@ impl Model {
     /// demand-restricted aggregate's demand (`Body::demand_first`); and a demanded relation's rule from a lead its
     /// demand bounds (`Body::demand_bounds_lead`), so a kept order led by a scan is searched again (Q59).
     pub fn valid_live_driver(&self, order: &[Step], b: &Body<'_>, first: Option<usize>) -> bool {
+        if self.stats.lead_free {
+            return true;
+        }
         let driven = first.or_else(|| b.demand_first()).is_none_or(|f| order.first().is_some_and(|s| s.at == f));
         driven && (first.is_some() || order.first().is_none_or(|s| b.demand_bounds_lead(s.at)))
     }
@@ -2909,8 +2925,9 @@ impl Model {
         if with_plans(|p| p.is_none()) {
             return self.plan_inner(pf, b, first, None, true);
         }
-        // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
-        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes) {
+        // A line planned with the program (decision 0361 step 5): no key, no cache, no price. Delta-led: not a
+        // lead-free line's.
+        if !self.stats.lead_free && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes) {
             self.log_assumed(line_key(b, first));
             super::super::profile::decision("prepared plans (decision 0361 step 5)", || format!("{}: a live plan taken as prepared, not searched or priced", b.rel(b.head())));
             return Ok((plan, None));
@@ -3395,6 +3412,7 @@ impl Model {
     ) -> Result<(Plan, Option<super::super::profile::RulePlan>)> {
         // A line planned with the program from its layouts (decision 0361 step 5): taken as kept, not searched.
         if fixed.is_none()
+            && !self.stats.lead_free
             && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes)
         {
             self.log_assumed(line_key(b, first));
@@ -3581,7 +3599,7 @@ impl Model {
         let delta_misses = self.delta_misses(b, first);
         let delta_vars = first.and_then(|f| b.atom(f)).map(body::atom_vars);
         let delta_size = first.and_then(|f| b.atom(f)).and_then(|a| self.stats.delta_rows.get(b.rel(a))).copied();
-        let starts = |i: usize| first.is_none_or(|f| f == i);
+        let starts = |i: usize| self.stats.lead_free || first.is_none_or(|f| f == i);
         // Which rule priced the atom last (`atom_rows`), and the containment share it applied: the explain record
         // names it per step, so a misprediction shows the rule that made it.
         let basis: std::cell::Cell<&'static str> = std::cell::Cell::new("");
@@ -3946,7 +3964,13 @@ impl Model {
                 for &c in &cols {
                     let TermRef::Var(v) = args[c] else { continue };
                     if c == first && misses_counted.get() >> c.min(63) & 1 != 0 { continue }
-                    let Some(here) = t.col(c, b, i, self).ndv else { continue };
+                    // A column holds no more distinct values than its relation's rows: where its own are not measured,
+                    // the rows measured bound them (a relation of the component being solved is still growing). Left
+                    // out, a one-row finding probed by a moved line's node kept every binding: ep2's import edit
+                    // ordered `p49_ASYNC100($v0, _)` after four old versions' probes of 4,672 rows, in each of 163
+                    // rules' lines (`violation` maintained: 34.8 s; read after the delta, under 0.02 s).
+                    let measured = || stats.card.get(rel).copied().filter(|_| !stats.solving.contains(rel)).map(|n| n.max(1.0));
+                    let Some(here) = t.col(c, b, i, self).ndv.or_else(measured) else { continue };
                     let (from, at) = binding_domains
                         .iter()
                         .filter_map(|(d, vars, domains)| {
@@ -4005,7 +4029,15 @@ impl Model {
             let a = b.atom(i).expect("an atom");
             let (rel, args) = (b.rel(a), b.args(i));
             let mut rows = atom_rows_(i, bound);
-            if first == Some(i)
+            // A delta read through its own index past the lead (`Stats::lead_free`): the relation's probe, at the
+            // delta's share of its rows (measured). Led by its delta, a line reads the delta's rows at most.
+            let share = (self.stats.lead_free && args.iter().any(|t| joins_with(*t, bound)))
+                .then(|| delta_size.zip(stats.card.get(rel).copied().filter(|&c| c > 0.0)))
+                .flatten();
+            if first == Some(i) && let Some((n, card)) = share {
+                rows = (rows * (n / card).min(1.0)).max(1e-6);
+                basis.set("delta share");
+            } else if first == Some(i)
                 && let Some(n) = delta_size && n.max(0.01) < rows { rows = n.max(0.01); basis.set("delta size"); }
             // A cross product never filters a binding: each one reads every matching row, and a relation empty
             // where the plan was priced is not empty where it is reused. At least one row per binding, so a connected
@@ -5323,14 +5355,13 @@ pub fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "token_before" | "token_after" => &[&["x"]],
         "end_point" => &[&["n"], &["p"]],
         "next_sibling" => &[&["a"], &["b"]],
-        "split_line" | "lf_line" => &[&["d"]],
         "str_part" | "str_part_start" | "str_part_word" => &[&["lit"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
         // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).
         "within" => &[&["n"], &["a"]],
         "span_within" => &[&["inner"], &["outer"]],
         "doc" | "pkg" | "unpackaged" | "tape_error" | "syntax_error" | "source" | "line_count" => &[&["d"]],
-        "src_line" | "src_line_lf" | "tape_line" => &[&["d", "l"], &["sp"]],
+        "src_line" => &[&["d", "l"], &["sp"]],
         "op_at" | "prev_token" => &[&["n"], &["s", "n"]],
         "token" | "rr_token_anon" => &[&["p", "i"], &["start"]],
         "rr_token_named" => &[&["p", "i"], &["c"], &["start"]],

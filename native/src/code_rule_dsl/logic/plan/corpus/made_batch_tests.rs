@@ -271,9 +271,9 @@ fn r7_a_run_after_an_edit_makes_no_document() {
 /// `called` is cross-file (an identifier naming a function any file defines; an output, so not inlined into its
 /// reader, decision 0099), so `late` is too, and an edit takes
 /// a.py's `__future__` import away: its `lead` row goes, and the removal join walks `called`, every file's, through
-/// `docof`. The walk computes each node's document (the decision says so) and no probe of `docof` by its node makes
-/// one. At this size no document is made either way (the effect is ep2's: 0.96 → 0.44 s of the insert's cross-file
-/// joins), so the test holds the plan's shape and the edit's rows against a cold run's.
+/// `docof`. The walk computes each node's document (the decision says so), and the edit makes a.py's document alone:
+/// probed by node, `docof` made b.py's and c.py's too, one built again from its tape (`Report::corpus_docs`). The
+/// edit's rows are a cold run's.
 #[test]
 fn a_removal_join_computes_docof_from_the_node() {
     const LATE: &str = r#"
@@ -303,18 +303,22 @@ late(n) :- called(n), docof(n, d), lead(d).
     assert!(in_a(&cold) > 0 && cold.len() > in_a(&cold), "calls in a.py and c.py: {cold:?}");
     c.write("a.py", &format!("from b import g\n{pad}\ndef f(x):\n    return g(x)\n"));
     // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
-    let (rows, probed) = {
+    let (report, rows, probed) = {
         use crate::code_rule_dsl::logic::profile;
         let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         profile::set(true);
         profile::take_decisions();
-        let (_, rows) = c.run_over("kept.sqlite");
+        let (report, rows) = c.run_over("kept.sqlite");
         let made = profile::take_decisions();
         profile::set(false);
-        let said: BTreeSet<(String, String)> = made.into_keys().collect();
-        (rows, said)
+        (report, rows, made.into_keys().collect::<BTreeSet<(String, String)>>())
     };
     assert_eq!((in_a(&rows), rows.len()), (0, cold.len() - in_a(&cold)), "a.py's calls are no longer late: {rows:?}");
+    // The effect: each of the edit's batches (the main run's and its phases') makes a.py's document alone. Probing
+    // `docof` by node instead made b.py's and c.py's documents too, one built again from its tape, to tell each
+    // `called` node's document.
+    let docs: Vec<super::CorpusDocs> = std::iter::once(report.corpus_docs).chain(report.phase_runs.iter().map(|p| p.report.corpus_docs)).collect();
+    assert!(docs.iter().all(|d| d.made <= 1 && d.from_tape + d.parsed == 0), "the edit makes only the changed file's document: {docs:?}");
     let computed = |t: &str| t == "a removal join's `docof` as it was, its node bound: the node's document, from its id (decision 0083 §3)";
     assert!(probed.iter().any(|(t, x)| computed(t) && x.ends_with("late")), "the removal join computes each `called` node's document: {probed:?}");
     assert!(!probed.contains(&("a batch's documents made by a probe (decision 0494)".to_owned(), "docof column 0".to_owned())), "no probe of `docof` by its node makes a document: {probed:?}");

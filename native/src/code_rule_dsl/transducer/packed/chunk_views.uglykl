@@ -43,8 +43,7 @@ UKL_INLINE int64_t loc_global(DocP d, uint32_t l) {
     return (int64_t)((uint64_t)d->key << 32 | (uint64_t)low);
 }
 
-// The lines of `st` (`n` starts) starting at or before byte `at` (`core_rr::Lines::line`, before its `max(1)`;
-// `Facts::start_line`: `LineTable::line` + 1).
+// The lines of `st` (`n` starts) starting at or before byte `at` (`Facts::start_line`: `LineTable::line` + 1).
 UKL_INLINE uint32_t starts_at_or_before(UKL_GLOBAL const uint32_t* st, uint32_t n, uint32_t at) {
     uint32_t lo = 0u, hi = n;
     while (lo < hi) {
@@ -53,7 +52,6 @@ UKL_INLINE uint32_t starts_at_or_before(UKL_GLOBAL const uint32_t* st, uint32_t 
     }
     return lo;
 }
-UKL_INLINE uint32_t line_of(DocP d, uint32_t at) { return starts_at_or_before(ITEMS(uint32_t, d->lines), (uint32_t)d->lines.len, at); }
 UKL_INLINE uint32_t fline_of(DocP d, uint32_t at) { return starts_at_or_before(ITEMS(uint32_t, d->flines), (uint32_t)d->flines.len, at); }
 
 // The document holding node row `row` (of `node`): the last whose rows start at or before it.
@@ -116,10 +114,11 @@ DEFINE_KERNEL2(join, view_expand,
             } else if (placed) {
                 v = (int64_t)(view == 5u ? pl[0] : (view == 6u ? pl[1] : pl[2]));
             } else {
-                uint32_t line = ukl_max(line_of(d, s), 1u);
+                // Its place on the facts' lines (`LineTable::place`): the line of its start, the line holding its end.
+                uint32_t line = fline_of(d, s);
                 if (view == 5u) v = (int64_t)line;
-                else if (view == 6u) v = (int64_t)(e > s ? ukl_max(line_of(d, e - 1u), 1u) : line);
-                else v = (int64_t)(s - ITEMS(uint32_t, d->lines)[line - 1u]);
+                else if (view == 6u) v = (int64_t)fline_of(d, e);
+                else v = (int64_t)(s - ITEMS(uint32_t, d->flines)[line - 1u]);
             }
             view_put(out, rows_at, r, c, v);
         }

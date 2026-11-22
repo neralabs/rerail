@@ -2627,20 +2627,38 @@ impl<'a> Run<'a, '_> {
         let (mut maintain, mut derive) = (0.0, 0.0);
         for b in &bodies {
             plan_site("the threshold's price of a derive (0090 §4)");
-            derive += self.model.plan_rule_reused(pf, b, None)?.0.1;
+            let derived = self.model.plan_rule_reused(pf, b, None)?.0.1;
+            derive += derived;
             for k in 0..b.len() {
                 let Lit::Atom(a) = b.view(k) else { continue };
                 let rel = b.rel(a);
                 let Some(&n) = deltas.get(rel).filter(|n| **n > 0) else { continue };
                 let was = self.model.stats.delta_rows.insert(rel, n as f64);
                 plan_site("the threshold's price of the mode (0090 §4)");
-                let priced = self.model.plan_rule_reused(pf, b, (!a.neg()).then_some(k));
+                // Priced as the mode plans it (`maintain_mode`): a positive driver past the floor free to start
+                // anywhere.
+                let first = (!a.neg()).then_some(k);
+                self.model.stats.lead_free = first.is_some() && crate::code_rule_dsl::logic::plan::again::past_floor(n);
+                let mut priced = self.model.plan_rule_reused(pf, b, first).map(|p| p.0.1);
+                // A kept order is run as it is while its work re-priced is under `REPLAN_ROWS`: a search could save
+                // no more than that. Its price may still be far over the line's best, and here it is summed with
+                // the stratum's others against the derive: a line priced over its rule's derive is searched, and
+                // priced at its best. After ep2's append, three lines kept from its few moved lines were each
+                // priced 9,836 at the import's 9,350 (their best, 10 to 60), and the mode's 30,377 against the
+                // derive's 3,505 derived `violation` again, its finding's places making 33 documents.
+                if let Ok(kept) = priced
+                    && kept > derived
+                    && let Ok(((_, best, _), _)) = self.model.plan_inner(pf, b, first, None, false)
+                {
+                    priced = Ok(kept.min(best));
+                }
+                self.model.stats.lead_free = false;
                 match was {
                     Some(w) => self.model.stats.delta_rows.insert(rel, w),
                     None => self.model.stats.delta_rows.remove(rel),
                 };
                 // A removal and an add, each over its side of the delta: priced once over the whole delta.
-                maintain += priced?.0.1;
+                maintain += priced?;
             }
         }
         Ok((maintain, derive))
@@ -2790,9 +2808,22 @@ impl<'a> Run<'a, '_> {
                     };
                     // The line's order: the driver first, then the rest as planned from its variables bound.
                     let led = led.map(|o| std::iter::once(Step { at: k, mode: None }).chain(o.into_iter().filter(|st| st.at != k)).collect::<Vec<_>>());
+                    // A positive driver's line is a whole join (`Line::Remove`, `Line::Seed`), its delta probed
+                    // through its own index where another atom binds it (`Source::Version`): past 0090 §4's floor,
+                    // sized by its rows, it leads only where it is the cheapest start (`Stats::lead_free`). Led by
+                    // it, a one-row finding read after 4,672 moved lines was each of 163 rules' lines in ep2's import
+                    // edit, and their price (1.9 M) kept `violation` derived again: 33 documents made for their
+                    // places (0.19 s). Under the floor a line costs little whatever its order, and keeps the
+                    // program's (its prepared and kept plans): planned free, ep2's appends' lines cost 1 G more.
                     let (order, key) = match (&led, &led_body) {
                         (Some(o), Some(lb)) => (o.clone(), self.model.reused_key(lb, None)),
-                        _ => (self.model.plan_rule_reused(pf, b, first)?.0.0, self.model.reused_key(b, first)),
+                        _ => {
+                            // The relation's change, both sides, as the clause's price reads it (`mode_costs`).
+                            self.model.stats.lead_free = crate::code_rule_dsl::logic::plan::again::past_floor(gone + added);
+                            let planned = self.model.plan_rule_reused(pf, b, first).map(|p| (p.0.0, self.model.reused_key(b, first)));
+                            self.model.stats.lead_free = false;
+                            planned?
+                        }
                     };
                     // The changed inputs' literals read their versions: the driver's, and as they were in a removal.
                     self.mode_reads.clear();
