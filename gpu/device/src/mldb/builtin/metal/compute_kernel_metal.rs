@@ -308,6 +308,9 @@ enum Open {
 const STAGING_BYTES: u64 = 64 << 10;
 
 /// A committed command buffer (`MetalComputeEvent`).
+/// The start of a failed command's message when the system stopped it, the work not at fault (`await_`).
+pub const PREEMPTED: &str = "preempted: ";
+
 pub struct MetalComputeEvent {
     pub command_buffer: metal::CommandBuffer,
 }
@@ -333,7 +336,12 @@ impl MetalComputeEvent {
                     let text = if utf8.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(utf8) }.to_string_lossy().into_owned() };
                     format!(" (code {code}: {text})")
                 };
-                Err(format!("Metal command buffer: {s:?}{why}"))
+                // Stopped by the system for the display (IOGPU's `kIOGPUCommandBufferCallbackErrorImpactingInteractivity`,
+                // under `MTLCommandBufferErrorInternal`), or discarded in its recovery from another command's hang
+                // (`kIOGPUCommandBufferCallbackErrorInnocentVictim`): marked, so a caller may run the work again
+                // (`PREEMPTED`).
+                let mark = if why.contains("ImpactingInteractivity") || why.contains("InnocentVictim") { PREEMPTED } else { "" };
+                Err(format!("{mark}Metal command buffer: {s:?}{why}"))
             }
         }
     }

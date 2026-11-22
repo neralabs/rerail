@@ -76,11 +76,36 @@ pub trait Sink {
     /// A macro's expansion (`Expansion`).
     fn expansion(&mut self, e: Expansion<'_>) {}
 
+    /// Whether `entered` is to be told each macro invocation (a measurement's: what an expansion
+    /// depends on, decision 0613).
+    fn wants_entries(&self) -> bool {
+        false
+    }
+
+    /// A macro invocation entered (`wants_entries`): what its expansion depends on.
+    fn entered(&mut self, e: Entered) {}
+
     /// A pragma (a `#pragma` line's text after `pragma`, or `_Pragma`'s string).
     fn pragma(&mut self, file: u32, at: u32, text: &[u8]) {}
 
     /// A diagnostic, at `at` in `file`.
     fn diag(&mut self, file: u32, at: u32, d: Diag, text: &[u8]) {}
+}
+
+/// A macro invocation as its expansion depends on it (`Sink::entered`).
+/// - `key`: the definition (its spelling), its arguments' spellings, and the names of the macros
+///   disabled where it is entered: equal in two units where their expansions are.
+/// - `epoch_key`: `key` and the count of `#define`s and `#undef`s before it, so that every name its
+///   rescan looks up resolves alike (a key equal in this one is equal at any place).
+/// - `depth`: the expansions it is inside (its rescans' and its arguments').
+/// - `size`: its tokens after substitution, before their rescan.
+#[derive(Clone, Copy, Debug)]
+pub struct Entered {
+    pub def: u32,
+    pub key: u64,
+    pub epoch_key: u64,
+    pub depth: u32,
+    pub size: u32,
 }
 
 /// No outputs.
@@ -122,6 +147,13 @@ impl Sink for Tee<'_> {
     fn expansion(&mut self, e: Expansion<'_>) {
         self.0.expansion(e);
         self.1.expansion(e);
+    }
+    fn wants_entries(&self) -> bool {
+        self.0.wants_entries() || self.1.wants_entries()
+    }
+    fn entered(&mut self, e: Entered) {
+        self.0.entered(e);
+        self.1.entered(e);
     }
     fn pragma(&mut self, file: u32, at: u32, text: &[u8]) {
         self.0.pragma(file, at, text);

@@ -208,6 +208,8 @@ pub struct Pp<'a> {
     pub exps: Vec<Expansion>,
     once: Vec<bool>,
     counter: u64,
+    /// The `#define`s and `#undef`s so far (`Sink::entered`'s `epoch_key`).
+    epoch: u32,
     /// Reading an `#if`'s line: `defined` is an operator.
     in_if: bool,
     /// Collecting a call's arguments: a file's end ends them, not the file.
@@ -272,6 +274,7 @@ impl<'a> Pp<'a> {
             exps: Vec::new(),
             once: Vec::new(),
             counter: 0,
+            epoch: 0,
             in_if: false,
             collecting: 0,
             lines,
@@ -312,6 +315,7 @@ impl<'a> Pp<'a> {
     }
 
     fn set_macro(&mut self, sym: u32, slot: u32) {
+        self.epoch += 1;
         if self.macros.len() <= sym as usize {
             self.macros.resize(sym as usize + 1, 0);
         }
@@ -700,7 +704,11 @@ impl<'a> Pp<'a> {
         }
         let body = self.defs[d as usize].body.clone();
         let mut pre: Vec<Option<Vec<Tk>>> = vec![None; args.len()];
+        let entry = self.sink.wants_entries().then(|| self.entry_key(d, &args));
         let mut out = self.substitute(d, &body, &args, &mut pre, id);
+        if let Some((key, epoch_key, depth)) = entry {
+            self.sink.entered(crate::sink::Entered { def: d, key, epoch_key, depth, size: out.len() as u32 });
+        }
         self.paste_all(&mut out, id);
         out.retain(|t| !t.is_placemarker());
         if let Some(f) = out.first_mut() {
@@ -708,6 +716,48 @@ impl<'a> Pp<'a> {
         }
         self.defs[d as usize].disabled = true;
         self.stack.push(Src::Toks { toks: out, pos: 0, def: Some(d), stop: false });
+    }
+
+    /// What macro `d`'s expansion of `args` depends on (`Sink::entered`): its key, with the
+    /// definitions' count, and the expansions it is inside.
+    fn entry_key(&self, d: u32, args: &[Vec<Tk>]) -> (u64, u64, u32) {
+        fn mix(h: &mut u64, b: &[u8]) {
+            for &c in b {
+                *h = (*h ^ u64::from(c)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        // The definition by its spelling (its name, parameters and body), so that two units' are equal.
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let def = &self.defs[d as usize];
+        mix(&mut h, self.syms.text(def.name));
+        mix(&mut h, &[u8::from(def.fnlike), u8::from(def.variadic)]);
+        for p in &def.params {
+            mix(&mut h, &[0xfc]);
+            mix(&mut h, self.syms.text(*p));
+        }
+        for t in &def.body {
+            mix(&mut h, &[0xfb]);
+            mix(&mut h, self.text(t));
+        }
+        for a in args {
+            mix(&mut h, &[0xff]);
+            for t in a {
+                mix(&mut h, &[0xfe, t.flags & (NOEXP | SPACE)]);
+                mix(&mut h, self.text(t));
+            }
+        }
+        let mut off: Vec<u32> = self.stack.iter().filter_map(|s| if let Src::Toks { def: Some(x), .. } = s { Some(*x) } else { None }).collect();
+        let depth = self.stack.iter().filter(|s| matches!(s, Src::Toks { .. })).count() as u32;
+        off.sort_unstable();
+        off.dedup();
+        mix(&mut h, &[0xfd]);
+        for x in off {
+            mix(&mut h, &[0xfa]);
+            mix(&mut h, self.syms.text(self.defs[x as usize].name));
+        }
+        let key = h;
+        mix(&mut h, &self.epoch.to_le_bytes());
+        (key, h, depth)
     }
 
     /// The file position a token was called from: through its expansions to the token read from
