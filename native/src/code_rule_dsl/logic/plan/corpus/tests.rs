@@ -2666,3 +2666,45 @@ fn a_contexts_views_are_its_roots_nodes_alone() {
     assert_eq!(alone, [["List"], ["int"]]);
     assert_eq!(together, alone);
 }
+
+/// A host whose classes a context reads (`.from python defined`), and whose classes the context's names reach back.
+const RESOLVING_PASS: &str = "\
+.language python
+#include \"python/ast.rerail\"
+.decl defined(x: symbol)
+defined(x) :- kind(c, \"class_definition\"), field(c, \"name\", n), text(n, x).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_ident(x: symbol)
+ann_ident(x) :- kind(i, \"identifier\"), text(i, x).
+.decl resolved(x: symbol)
+resolved(x) :- ann_ident(x), defined(x).
+.decl quoted_resolved(x: symbol)
+quoted_resolved(x) :- res(x).
+.decl unnamed(x: symbol)
+unnamed(x) :- defined(x), !res(x).
+.output quoted_resolved, unnamed
+.context quoted of python roots quoted_root exports resolved
+.from python defined for quoted
+.from quoted resolved as res
+";
+
+/// 0597 rung 2.5: a context reads its host's finished rows: `x: \"Foo\"` resolves to the class `Foo`, `y: \"Bar\"`
+/// names no class and resolves to none.
+#[test]
+fn a_context_reads_its_hosts_finished_rows() {
+    let file = ("a.py", "class Foo: ...\nclass Baz: ...\nx: \"Foo\" = 1\ny: \"Bar\" = 1\n");
+    let (alone, together) = alone_and_together("pass-from", file, RESOLVING_PASS, PLAIN_PASS, "quoted_resolved");
+    assert_eq!(alone, [["Foo"]]);
+    assert_eq!(together, alone);
+}
+
+/// 0597 rung 2.6: host, context, host in one plan: the classes no annotation names (`Baz`) are the host's rows after
+/// the context's, which are after the host's classes.
+#[test]
+fn a_host_reads_a_context_that_read_the_host() {
+    let file = ("a.py", "class Foo: ...\nclass Baz: ...\nx: \"Foo\" = 1\ny: \"Bar\" = 1\n");
+    let (alone, together) = alone_and_together("pass-order", file, RESOLVING_PASS, PLAIN_PASS, "unnamed");
+    assert_eq!(alone, [["Baz"]]);
+    assert_eq!(together, alone);
+}
