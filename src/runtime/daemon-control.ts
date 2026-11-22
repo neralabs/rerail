@@ -1277,9 +1277,10 @@ export function otherDaemonKeptMessage(env: NodeJS.ProcessEnv = process.env): st
  * another package or of a release before the engine's proof ({@link daemonServesPackage}), which is how a hook keeps
  * an older daemon from receiving fields it predates, and sends such a daemon nothing where it may not replace it; a
  * client that outlives an update passes false after its first event so it keeps using the newer daemon instead of
- * displacing it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon, and throws `AutostartOffError`
- * without one and `OtherDaemonKeptError` beside one it may not use. A daemon that is alive but busy is waited for (`patientLookup`), until `deadline` (epoch ms) when the
- * caller names one, as a hook does.
+ * displacing it, though never a daemon of a release before the proof, which proved nothing. `RERAIL_AUTOSTART=0`
+ * starts nothing and requires a running daemon, and throws `AutostartOffError` without one and `OtherDaemonKeptError`
+ * beside one it may not use. A daemon that is alive but busy is waited for (`patientLookup`), until `deadline` (epoch
+ * ms) when the caller names one, as a hook does.
  */
 export async function daemonEngineEndpoint(
   replaceOtherPackage: boolean,
@@ -1294,7 +1295,7 @@ export async function daemonEngineEndpoint(
   if (daemon === undefined) {
     throw new AutostartOffError(`RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
   }
-  if (replaceOtherPackage && !(await daemonServesPackage(daemon, control.packageRoot))) {
+  if (daemon.older === true || (replaceOtherPackage && !(await daemonServesPackage(daemon, control.packageRoot)))) {
     throw otherPackageDaemon(machine.env);
   }
   return engineEndpointOf(daemon.state);

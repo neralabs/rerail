@@ -1,5 +1,6 @@
 import * as childProcess from "node:child_process";
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
@@ -15,6 +16,7 @@ import {
   type DaemonHealth,
   type DaemonMachine,
   type DaemonState,
+  type EngineEndpoint,
   type FoundDaemon,
   type NativeLaunch,
   type StartDaemonResult,
@@ -60,6 +62,7 @@ import {
 import { LOCKS_DIR, processStartedAt } from "../../src/engine/index.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/daemon/engine-pipe.js";
 import { engineCapabilityProof } from "../../src/runtime/daemon/engine-proof.js";
+import { ingestEngineEvent } from "../../src/runtime/engine-service.js";
 import { DEAD_PID, olderDaemon, until } from "../support/processes/daemon-home.js";
 import { type ProbeLaunch, type StartedProbe, runConsoleProbe } from "../support/platform/console-probe.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
@@ -1039,16 +1042,24 @@ describe("a state file Windows left behind", () => {
   const OWN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
   const OTHER_ROOT = String.raw`C:\Users\me\AppData\Roaming\npm\node_modules\@neralabs\rerail`;
 
+  /** Where a record names a daemon: its URL and its engine pipe. */
+  interface RecordedAt { url: string; pipe: string }
+
   /**
    * A Windows machine whose daemon.json in `home` names a live daemon of Rerail 0.1.4 or earlier, launched from
-   * `packageRoot`, whose process started at `started` (undefined: its start cannot be read). Each request to its URL,
-   * each signal to its pid and each launch goes to `events`, in order. A launched daemon's pid is one no process holds
-   * here, so it reads as exited at once, whether or not the earlier daemon still runs: a start ends without its 15 s
-   * wait, and the order of events alone decides.
+   * `packageRoot`, whose process started at `started` (undefined: its start cannot be read), at `where`. Each request to
+   * its URL, each signal to its pid and each launch goes to `events`, in order. A launched daemon's pid is one no process
+   * holds here, so it reads as exited at once, whether or not the earlier daemon still runs: a start ends without its
+   * 15 s wait, and the order of events alone decides.
    */
-  async function besideOlderDaemon(started: number | undefined, packageRoot: string, events: string[], url = "http://127.0.0.1:1/"): Promise<DaemonMachine> {
+  async function besideOlderDaemon(
+    started: number | undefined,
+    packageRoot: string,
+    events: string[],
+    where: RecordedAt = { url: "http://127.0.0.1:1/", pipe: PIPE },
+  ): Promise<DaemonMachine> {
     const state = stateFor({
-      pid: DEAD_PID, version: "0.1.4", kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native", startedAt: OLDER_STARTED_AT, packageRoot, url,
+      pid: DEAD_PID, version: "0.1.4", kernelSocketPath: where.pipe, accessToken: "capability", nativeToken: "native", startedAt: OLDER_STARTED_AT, packageRoot, url: where.url,
     });
     vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
       const path = new URL(url).pathname;
@@ -1059,6 +1070,7 @@ describe("a state file Windows left behind", () => {
     let running = true;
     return {
       ...olderEngine(started),
+      pipes: () => [pipeNameOf(where.pipe)],
       env: { RERAIL_HOME: home },
       // A signal ends it, as one ends a daemon of 0.1.4, so a caller that signals it goes on to what it does next.
       kill: (pid, signal) => {
@@ -1200,44 +1212,106 @@ describe("a state file Windows left behind", () => {
     expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(true);
   });
 
+  /** Listeners on the engine pipe and the port a record names, and each connection either heard, in order. */
+  interface Listening extends RecordedAt {
+    heard: string[];
+    /** Resolves at the first connection: a caller that sent something may then wait on a daemon that never comes. */
+    connected: Promise<void>;
+    close: () => Promise<void>;
+  }
+
+  /**
+   * Listens where a record of a daemon whose engine has no proof points, as another user may once that daemon let go of
+   * its pipe and port: the pipe, a fresh name in Windows' one namespace, hangs up on each connection, and the port
+   * answers each request as the daemon's health would. Elsewhere a pipe's path is a file name, which the listener and
+   * every caller resolve from this process's folder, so that folder is `home` until the listeners close.
+   */
+  async function listenWhereRecorded(): Promise<Listening> {
+    const folder = process.cwd();
+    if (process.platform !== "win32") process.chdir(home);
+    const heard: string[] = [];
+    const first = Promise.withResolvers<void>();
+    const hear = (what: string): void => {
+      heard.push(what);
+      first.resolve();
+    };
+    const pipe = `${String.raw`\\.\pipe\rerail-`}${randomBytes(12).toString("hex")}-${process.pid.toString(16)}`;
+    const engine = createServer(socket => socket.destroy()).on("connection", () => hear("pipe")).listen(pipe);
+    const port = createHttpServer((_request, response) => response.end(JSON.stringify({ status: "ok", pid: DEAD_PID })))
+      .on("connection", () => hear("port")).listen(0, "127.0.0.1");
+    await Promise.all([once(engine, "listening"), once(port, "listening")]).catch((error: unknown) => {
+      process.chdir(folder);
+      throw error;
+    });
+    const close = async (): Promise<void> => {
+      port.closeAllConnections();
+      await Promise.all([new Promise(done => engine.close(done)), new Promise(done => port.close(done))]);
+      process.chdir(folder);
+    };
+    return { pipe, url: `http://127.0.0.1:${(port.address() as AddressInfo).port}/`, heard, connected: first.promise, close };
+  }
+
+  /** Sends an event to `endpoint` as a hook and the event stream send each event to the endpoint they are handed. */
+  async function sendEvent(endpoint: EngineEndpoint): Promise<void> {
+    await ingestEngineEvent(endpoint, { kind: "session-start", eventId: "s:start", session: { host: "claude-code", sessionId: "s", cwd: home } });
+  }
+
+  // A session's events after its first ask for the daemon without replacing another package's, and a daemon whose
+  // engine has no proof still takes none of them: under RERAIL_AUTOSTART=0, which replaces nothing, and beside one a
+  // start found only after it looked. The pipe and the port hear nothing, and the error says what to run.
+  it.each([
+    [
+      "RERAIL_AUTOSTART=0 keeps it",
+      (machine: DaemonMachine): DaemonMachine => ({ ...machine, env: { RERAIL_HOME: home, RERAIL_AUTOSTART: "0" } }),
+      new OtherDaemonKeptError("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package, and the running one is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET"),
+    ],
+    [
+      "a start found it only after it looked",
+      (machine: DaemonMachine): DaemonMachine => {
+        let reads = 0;
+        return { ...machine, processStartedAt: () => (++reads === 1 ? undefined : OLDER_STARTED_AT - 600) };
+      },
+      new Error("the running Rerail daemon is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start"),
+    ],
+  ])("sends a session's later events nothing beside a daemon whose engine has no proof when %s, and says why", async (_when, as, said) => {
+    const listening = await listenWhereRecorded();
+    try {
+      const machine = as(await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, [], listening));
+      vi.unstubAllGlobals();
+      await expect(daemonEngineEndpoint(false, undefined, machine).then(sendEvent)).rejects.toThrow(said);
+      expect(listening.heard).toEqual([]);
+    } finally {
+      await listening.close();
+    }
+  });
+
   // While a daemon shuts down, its pid lives on after it let go of its pipe and port, and another user may take both:
-  // a daemon whose engine has no proof is found by its start alone, so nothing that carries a capability goes to the
-  // listener where its record points. Set-up looks and stops through the lookup and the stop, the uninstall through the
-  // stop, the audit through findRunningDaemon.
+  // a daemon whose engine has no proof is found by its start alone, so no caller that takes a daemon from a lookup
+  // connects to either, nor hands on an endpoint an event goes to. Set-up looks, stops and starts through the lookup,
+  // the stop and the start, the uninstall through the stop, the audit through findRunningDaemon, and a pi or omp
+  // session through a hook's start.
   it.each<[string, (machine: DaemonMachine) => Promise<unknown>]>([
-    ["status", async machine => await lookupDaemon(home, machine)],
+    ["status and the support bundle", async machine => await lookupDaemon(home, machine)],
     ["rerail daemon stop", async machine => await stopDaemon(home, machine)],
     ["rerail daemon start", async machine => await startDaemon({ home, packageRoot: OWN_ROOT, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) }, { dev: true, port: 0 }, machine)],
     ["a hook's start", async machine => await hookStart(machine)],
-    ["a hook's endpoint lookup", async machine => await runningDaemonEngineEndpoint(undefined, machine)],
-    ["a hook's event after the session's start", async machine => await daemonEngineEndpoint(false, undefined, machine)],
+    ["a hook's event", async machine => {
+      const found = await runningDaemonEngineEndpoint(undefined, machine);
+      if (found.status === "running") await sendEvent(found.endpoint);
+    }],
+    ["a session's start", async machine => await sendEvent(await daemonEngineEndpoint(true, undefined, machine))],
+    ["a session's later event", async machine => await sendEvent(await daemonEngineEndpoint(false, undefined, machine))],
+    ["a session's later event under RERAIL_AUTOSTART=0", async machine => await sendEvent(await daemonEngineEndpoint(false, undefined, { ...machine, env: { RERAIL_HOME: home, RERAIL_AUTOSTART: "0" } }))],
     ["the audit's lookup", async machine => await findRunningDaemon(home, machine)],
-  ])("sends no capability to another listener on the port of a daemon whose engine has no proof: %s", async (_caller, call) => {
-    const heard: string[] = [];
-    const carriesToken = (line: string): boolean => line.includes("capability") || line.includes("native");
-    // The listener hearing a token ends the wait as the caller's own end does: a caller that sent one may then wait on
-    // a daemon that never comes.
-    let tokenHeard = (): void => {};
-    const heardToken = new Promise<void>(resolve => {
-      tokenHeard = resolve;
-    });
-    const listener = createHttpServer((request, response) => {
-      const line = `${request.url} ${String(request.headers["x-rerail-access"] ?? "")} ${String(request.headers.authorization ?? "")}`;
-      heard.push(line);
-      if (carriesToken(line)) tokenHeard();
-      response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ status: "ok", pid: DEAD_PID }));
-    });
-    listener.listen(0, "127.0.0.1");
-    await once(listener, "listening");
+  ])("sends nothing to the pipe or the port of a daemon whose engine has no proof: %s", async (_caller, call) => {
+    const listening = await listenWhereRecorded();
     try {
-      const { port } = listener.address() as AddressInfo;
-      const machine = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, [], `http://127.0.0.1:${port}/`);
+      const machine = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, [], listening);
       vi.unstubAllGlobals();
-      await Promise.race([call(machine).catch(() => undefined), heardToken]);
-      expect(heard.filter(carriesToken)).toEqual([]);
+      await Promise.race([call(machine).catch(() => undefined), listening.connected]);
+      expect(listening.heard).toEqual([]);
     } finally {
-      listener.close();
+      await listening.close();
     }
   });
 
