@@ -443,8 +443,39 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
     }
     let total: usize = each.iter().map(|e| e.2).sum();
     let first_start = each.first().map_or(0, |e| e.1);
-    // Alone in its block, with room for an index by each column: strata probe an axis by `n` and by `a`.
-    let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, 2);
+    // Each document's first row where it has rows (a chunk's rows past the ones' before): the runs of its ids' keys
+    // (decision 0494 step 7), read off the scanned starts where they lie.
+    let runs_of = |put: &mut dyn FnMut(u32, u32)| {
+        let mut past = 0u32;
+        for (chunk, &(_, start_at, len)) in chunks.iter().zip(&each) {
+            let b = &chunk.block;
+            // SAFETY: the chunk's root and documents, which `device_chunk::build` wrote; its starts, scanned above.
+            unsafe {
+                let root = &*b.ptr::<ChunkRoot>(chunk.root);
+                let n = root.nodes as usize;
+                let starts = std::slice::from_raw_parts(b.ptr::<u32>(start_at), n + 1);
+                let docs = root.docs.as_slice();
+                for (i, d) in docs.iter().enumerate() {
+                    let end = docs.get(i + 1).map_or(n, |e| e.node_row as usize);
+                    let (from, to) = (starts[d.node_row as usize], starts[end]);
+                    if to > from {
+                        put(past + from, d.key);
+                    }
+                }
+            }
+            past += len as u32;
+        }
+    };
+    let mut runs = 0;
+    runs_of(&mut |_, _| runs += 1);
+    // Alone in its block, with room for an index by each column: strata probe an axis by `n` and by `a`. Each column
+    // its ids' low bits, under the documents' keys.
+    let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, 2, runs);
+    let mut k = 0;
+    runs_of(&mut |first, key| {
+        keys.put(k, first, key);
+        k += 1;
+    });
     if total > 0 {
         let needed = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
         let rows_at = rows.rows_at() as i64;

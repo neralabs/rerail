@@ -103,8 +103,10 @@ pub struct Within {
     expected: Mutex<f64>,
     /// The batch's solve chosen: the next `n` lookup reads it.
     chosen: std::sync::atomic::AtomicBool,
-    /// The `n` side of every node, made once (`solved`).
-    solved: OnceLock<Solved>,
+    /// The `n` side of every node, made once (`solved`): its own, or another axis's over the same set (`solves`).
+    solved: OnceLock<Arc<Solved>>,
+    /// The solves of the batch's axes over its set (`Solves`), where it shares them.
+    solves: Option<Arc<Solves>>,
     /// The format a test reads the documents' tapes in (`reading`); else each is read as held.
     format: Option<Format>,
     /// Per document, the axis's set as its tape's code numbers (all of them for the tree's containment).
@@ -126,6 +128,14 @@ struct Solved {
     start_in_chunk: Option<usize>,
 }
 
+/// The solves of a batch's axes over one set of kinds, each mode's made once for all of them (decision 0494 step 7):
+/// an `inside` whose set nests nowhere is its `nearest`, the same rows.
+#[derive(Default)]
+pub struct Solves {
+    nearest: OnceLock<Arc<Solved>>,
+    inside: OnceLock<Arc<Solved>>,
+}
+
 /// Statistics from the tree (`Within::shape`): rows, and per column (`n`, `a`) distinct values and the sum of
 /// squared postings.
 #[derive(Clone, Copy)]
@@ -133,6 +143,13 @@ struct Shape {
     rows: i64,
     ndv: [i64; 2],
     sq: [i64; 2],
+}
+
+/// Whether a node's nearest member ancestor (`found`, node rows) has one itself: an `inside`'s chains are longer than
+/// its `nearest`'s.
+fn nests(found: &[u32]) -> bool {
+    use crate::code_rule_dsl::facts::nearest::NONE;
+    found.iter().any(|&a| a != NONE && found[a as usize] != NONE)
 }
 
 fn slot(row: usize) -> (usize, usize) {
@@ -157,11 +174,17 @@ impl Within {
             expected: Mutex::new(0.0),
             chosen: std::sync::atomic::AtomicBool::new(false),
             solved: OnceLock::new(),
+            solves: None,
             format: None,
             sets: (0..batch.docs.len()).map(|_| OnceLock::new()).collect(),
             shared: Mutex::new(FxHashMap::default()),
             batch,
         }
+    }
+
+    /// The same, its solve shared with the batch's other axes over its set (`Solves`).
+    pub fn sharing(self, solves: Arc<Solves>) -> Self {
+        Within { solves: Some(solves), ..self }
     }
 
     /// The same, solved where `binding` places it (`solved`).
@@ -336,41 +359,67 @@ impl Within {
     }
 
     /// The batch's solve: every node's nearest strict ancestor in the set by the transducer's FIX, then per node its
-    /// rows (that ancestor, or for `inside` the chain of them).
+    /// rows (that ancestor, or for `inside` the chain of them). Shared with the batch's other axes over its set
+    /// (`Solves`): an `inside` whose set nests nowhere reads its `nearest`'s rows.
     fn solved(&self) -> &Solved {
         self.solved.get_or_init(|| {
-            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-            if let Some(s) = self.solved_in_chunk() {
-                return s;
-            }
-            use crate::code_rule_dsl::logic::profile;
-            use crate::code_rule_dsl::facts::nearest::{self as file_local, Trees};
-            let _span = profile::span(|| "kind-set axis solved for the batch".into());
-            let n = self.batch.nodes().last().copied().unwrap_or(0);
-            let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
-            if self.binding == Binding::Cpu && (0..self.batch.docs.len()).all(|doc| self.doc_tape(doc).is_some()) {
-                profile::work(profile::Unit::Node, n as u64);
-                return self.solved_on_tapes(n, inside);
-            }
-            let (mut parent, mut kind) = (Vec::with_capacity(n), Vec::with_capacity(n));
-            for (doc, p) in self.batch.docs.iter().enumerate() {
-                let base = self.batch.nodes()[doc] as u32;
-                for l in 0..p.len() {
-                    let up = p.parent(l as usize);
-                    parent.push(if up == NONE { file_local::NONE } else { base + up });
-                }
-                self.each_member(doc, |_, m| kind.push(i64::from(m)));
-            }
-            profile::work(profile::Unit::Node, n as u64);
-            // Membership is the kind: the set is `{1}`.
-            let trees = Trees { parent: &parent, kind: &kind };
-            let found = file_local::nearest(&trees, &[vec![1]], self.binding)
-                .or_else(|_| file_local::nearest(&trees, &[vec![1]], Binding::Cpu))
-                .expect("the CPU's nearest pass")
-                .pop()
-                .unwrap_or_default();
-            self.solved_from(&found, inside)
+            let Some(solves) = &self.solves else { return self.solve(None) };
+            let slot = if matches!(self.mode, Mode::Axis(Axis::Inside)) { &solves.inside } else { &solves.nearest };
+            Arc::clone(slot.get_or_init(|| self.solve(Some(&solves.nearest))))
         })
+    }
+
+    /// The solve made: for an `inside` given its set's `nearest` (`Solves`), that one where no member's nearest member
+    /// ancestor has one (the chains are single), so both read one relation.
+    fn solve(&self, nearest: Option<&OnceLock<Arc<Solved>>>) -> Arc<Solved> {
+        let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
+        let nearest = nearest.filter(|_| matches!(self.mode, Mode::Axis(Axis::Inside)));
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        if let Some(s) = self.solved_in_chunk() {
+            // The device writes the rows, not the chains: an `inside`'s rows hold its `nearest`'s, so as many rows are
+            // the same rows.
+            if let Some(n) = nearest.and_then(|n| n.get()).filter(|n| n.rows.len() == s.rows.len()) {
+                return Arc::clone(n);
+            }
+            return Arc::new(s);
+        }
+        let found = self.found();
+        if let Some(slot) = nearest
+            && !nests(&found)
+        {
+            return Arc::clone(slot.get_or_init(|| Arc::new(self.solved_from(&found, false))));
+        }
+        Arc::new(self.solved_from(&found, inside))
+    }
+
+    /// Per node row its nearest strict ancestor in the set, a node row (`nearest::NONE` for none): on each document's
+    /// tape, or by the transducer's FIX over the batch's parents.
+    fn found(&self) -> Vec<u32> {
+        use crate::code_rule_dsl::logic::profile;
+        use crate::code_rule_dsl::facts::nearest::{self as file_local, Trees};
+        let _span = profile::span(|| "kind-set axis solved for the batch".into());
+        let n = self.batch.nodes().last().copied().unwrap_or(0);
+        if self.binding == Binding::Cpu && (0..self.batch.docs.len()).all(|doc| self.doc_tape(doc).is_some()) {
+            profile::work(profile::Unit::Node, n as u64);
+            return self.found_on_tapes(n);
+        }
+        let (mut parent, mut kind) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            let base = self.batch.nodes()[doc] as u32;
+            for l in 0..p.len() {
+                let up = p.parent(l as usize);
+                parent.push(if up == NONE { file_local::NONE } else { base + up });
+            }
+            self.each_member(doc, |_, m| kind.push(i64::from(m)));
+        }
+        profile::work(profile::Unit::Node, n as u64);
+        // Membership is the kind: the set is `{1}`.
+        let trees = Trees { parent: &parent, kind: &kind };
+        file_local::nearest(&trees, &[vec![1]], self.binding)
+            .or_else(|_| file_local::nearest(&trees, &[vec![1]], Binding::Cpu))
+            .expect("the CPU's nearest pass")
+            .pop()
+            .unwrap_or_default()
     }
 
     /// Per node row its rows: its nearest member ancestor (`found`, a node row), or for `inside` the chain of them;
@@ -394,8 +443,17 @@ impl Within {
         }
         start.push(len);
         // A derived fact like a rule's head, in a run's block alone, with room for an index by each column (strata
-        // probe an axis by `n` and by `a`), as the device's solve writes it.
-        let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, 2);
+        // probe an axis by `n` and by `a`), as the device's solve writes it. File-local: a row's `n` and `a` are of
+        // one document, so each column holds its ids' low bits, their key a run's, one run a document that has rows
+        // (decision 0494 step 7).
+        let offsets = self.batch.nodes();
+        let first = |doc: usize| start[offsets[doc]];
+        let has_rows = |doc: usize| first(doc + 1) > first(doc);
+        let runs = (0..self.batch.docs.len()).filter(|&d| has_rows(d)).count();
+        let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, 2, runs);
+        for (k, (doc, &key)) in self.batch.docs.keys().iter().enumerate().filter(|&(d, _)| has_rows(d)).enumerate() {
+            keys.put(k, first(doc), key);
+        }
         let mut at = 0u32;
         for v in 0..n {
             let id = self.batch.id(v);
@@ -418,9 +476,9 @@ impl Within {
         }
     }
 
-    /// The batch's solve on each document's tape: one pass of the set's matches (`nearest_all`), kept where the
-    /// projection has them, mapped to node rows.
-    fn solved_on_tapes(&self, n: usize, inside: bool) -> Solved {
+    /// Each node row's nearest member ancestor on its document's tape: one pass of the set's matches (`nearest_all`),
+    /// kept where the projection has them, mapped to node rows.
+    fn found_on_tapes(&self, n: usize) -> Vec<u32> {
         use crate::code_rule_dsl::facts::nearest as file_local;
         let mut found = Vec::with_capacity(n);
         let mut near = Vec::new();
@@ -435,7 +493,7 @@ impl Within {
                 a => base + p.local_of_node(a),
             }));
         }
-        self.solved_from(&found, inside)
+        found
     }
 
     /// The solve's first row per node row (`nodes + 1` values).

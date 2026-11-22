@@ -10199,3 +10199,9 @@ Each choice is read by both sides' invariants in `notes/roll-up-44-cuda-support.
 The farm tooling (farm 54–57) is taken whole. In `test-remote`'s main, theirs' one line takes the new
 `--arch`/`--memory`/`--cpu-feature` results and keeps the single `pack_data` trees line both sides added
 (`notes/roll-up-45-build-and-test-loop-time.md`).
+
+### Q467. Roll-up 46 (final-rerail-shape-phased-facts 1c87fb5754 onto Pulling-it-all-together): what the merge chose
+
+0494 step 7 (key-run columns, 8-byte solves, shared axis solves) is taken whole. Its `solve` takes ours' Windows
+device gate. The manifests are ours', with one `rerail-clif` dev-dependency. 0494's section appears once
+(`notes/roll-up-46-phased-facts.md`).
