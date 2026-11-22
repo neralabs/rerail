@@ -102,8 +102,15 @@ impl Slab {
         let device = crate::lane::device()?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
-        let block = rerail_blocks::alloc::block(&need).map_err(|_| Error::BackendCapacity)?;
-        let buffer = block.device_buffer(device).map_err(|_| Error::BackendCapacity)?;
+        // Refused for room; `RERAIL_PP_WHY` says by what.
+        let why = |what: &str, e: &dyn std::fmt::Debug| {
+            if std::env::var_os("RERAIL_PP_WHY").is_some() {
+                eprintln!("pp: a slab of {bytes} bytes: {what}: {e:?}");
+            }
+            Error::BackendCapacity
+        };
+        let block = rerail_blocks::alloc::block(&need).map_err(|e| why("the block", &e))?;
+        let buffer = block.device_buffer(device).map_err(|e| why("its device buffer", &e))?;
         Ok(Slab { id, block, buffer, tables: Mutex::default() })
     }
 

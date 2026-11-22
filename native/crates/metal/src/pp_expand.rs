@@ -1194,7 +1194,7 @@ impl Exp {
             // The output's pieces: five columns, `out` words each (decision 0520 §3), their order and
             // the loop's chunks (`lp_flush`).
             out: zeroed(7 * out)?,
-            sc_tok: [(); 6].map(|()| zeroed(sc)).into_iter().collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| Error::BackendFailure)?,
+            sc_tok: [(); 6].map(|()| zeroed(sc)).into_iter().collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| crate::pp_arena::failure(concat!(file!(), ":", line!())))?,
             sc_ckeys: arena.zeroed::<u64>(sc)?,
             sc_sort: Sort::new(arena, sc)?,
             sc_cap: sc as u32,
@@ -1321,16 +1321,16 @@ impl Exp {
             // SAFETY: the device finished; a store holds `bytes()` bytes of `u32` words.
             unsafe { std::slice::from_raw_parts(b.host().cast::<u32>(), b.byte_length() / 4) }
         }
-        let refused = *words(&self.ctl).get(2).ok_or(Error::BackendFailure)?;
+        let refused = *words(&self.ctl).get(2).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         if refused != 0 {
             return Ok((refused, Vec::new()));
         }
-        let n = *words(&self.vscan.total).first().ok_or(Error::BackendFailure)? as usize;
+        let n = *words(&self.vscan.total).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize;
         let cap = self.out_cap as usize;
-        let np = (*words(&self.opscan.total).first().ok_or(Error::BackendFailure)? as usize).min(cap);
-        let o = words(&self.out).get(..6 * cap).ok_or(Error::BackendFailure)?;
-        let n_gaps = *words(&vis.n_gaps).first().ok_or(Error::BackendFailure)? as usize;
-        let gat = words(&vis.gat).get(..n_gaps).ok_or(Error::BackendFailure)?;
+        let np = (*words(&self.opscan.total).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize).min(cap);
+        let o = words(&self.out).get(..6 * cap).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
+        let n_gaps = *words(&vis.n_gaps).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize;
+        let gat = words(&vis.gat).get(..n_gaps).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let firsts = words(&vis.gfirsts);
         let nodes = words(&front.text_nodes);
         // SAFETY: as `words`, of `PpDef` records.
@@ -1341,7 +1341,7 @@ impl Exp {
             // The loop's order of its pieces (`lp_place`).
             let e = o[5 * cap + i] as usize;
             if e >= cap {
-                return Err(Error::BackendFailure);
+                return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
             }
             let (src, len, st) = (o[e], o[cap + e] & PN_LEN, o[2 * cap + e]);
             if show {
@@ -1351,16 +1351,16 @@ impl Exp {
                 if std::env::var_os("RERAIL_PP_WHY").is_some() {
                     eprintln!("pp: the output's piece {i} of {np} (room {cap}) passes its count {n}");
                 }
-                return Err(Error::BackendFailure);
+                return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
             }
-            for k in st..st.checked_add(len).ok_or(Error::BackendFailure)? {
+            for k in st..st.checked_add(len).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? {
                 out.push(match src & P_KIND {
                     P_TOP => {
                         let j = gat.partition_point(|&g| g <= k).max(1) - 1;
-                        let at = firsts.get(j).ok_or(Error::BackendFailure)?.checked_add(k.wrapping_sub(*gat.get(j).ok_or(Error::BackendFailure)?)).ok_or(Error::BackendFailure)?;
-                        *nodes.get(at as usize).ok_or(Error::BackendFailure)?
+                        let at = firsts.get(j).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?.checked_add(k.wrapping_sub(*gat.get(j).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?)).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
+                        *nodes.get(at as usize).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?
                     }
-                    P_BODY => d.get((src & !P_KIND) as usize).ok_or(Error::BackendFailure)?.body + k,
+                    P_BODY => d.get((src & !P_KIND) as usize).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?.body + k,
                     _ => k,
                 });
             }
@@ -1369,7 +1369,7 @@ impl Exp {
             if std::env::var_os("RERAIL_PP_WHY").is_some() {
                 eprintln!("pp: the output's {np} pieces (room {cap}) hold {} tokens, its count {n}", out.len());
             }
-            return Err(Error::BackendFailure);
+            return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
         }
         Ok((0, out))
     }

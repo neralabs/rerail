@@ -39,6 +39,10 @@ pub enum Error {
     /// again with twice them.
     ChainLevels,
     BackendFailure,
+    /// The system stopped the command before it completed, the work not at fault: macOS's GPU watchdog ends a
+    /// command buffer that holds the GPU while the display waits ("Impacting Interactivity"), as several at once on
+    /// a Mac with a display do. The run again is the caller's, a bounded number of times.
+    BackendPreempted,
     /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
     RefusedShape(String),
 }

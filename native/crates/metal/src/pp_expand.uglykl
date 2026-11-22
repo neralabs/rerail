@@ -1007,21 +1007,39 @@ UKL_INLINE Tk pc_tok_in(Ux u, PP_GLOBAL const uint32_t* cols, uint32_t cap, uint
 // The output (decision 0520 §3): its `np` pieces in five columns from `out`, `cap` words each (and
 // their order, the sixth, and the loop's chunks, the seventh: `lp_flush`), the
 // top level's runs and each call's expansion. Token `k` of it: its piece found by its place.
-typedef struct Ov { PP_GLOBAL const uint32_t* cols; uint32_t cap, np; } Ov;
-// The pieces are where the loop made them, in its order by `ORDER` (the sixth column, `lp_place`).
-UKL_INLINE Tk ov_tok(Ux u, Ov o, uint32_t k) {
-    PP_GLOBAL const uint32_t* pat = o.cols + 3u * o.cap;
-    PP_GLOBAL const uint32_t* ord = o.cols + 5u * o.cap;
-    uint32_t lo = 0u, hi = ukl_min(o.np, o.cap);
-    for (uint32_t step = 0u; step < 32u && hi - lo > 1u; step++) {
-        uint32_t mid = (lo + hi) / 2u;
-        if (pat[ord[mid]] <= k) lo = mid; else hi = mid;
-    }
-    uint32_t e = ord[lo];
-    return pc_tok_in(u, o.cols, o.cap, e, k - pat[e]);
+// `ci`: the piece a reader read last (its number in the order, `OV_NONE` none), its first token's place
+// `cp` and its tokens `cn`: a reader walks forward, so a token is in it or the next, and only a jump
+// is a search.
+#define OV_NONE (0xffffffffu)
+typedef struct Ov { PP_GLOBAL const uint32_t* cols; uint32_t cap, np, ci, cp, cn; } Ov;
+UKL_INLINE Ov ov_new(PP_GLOBAL const uint32_t* cols, uint32_t cap, uint32_t np) {
+    Ov o; o.cols = cols; o.cap = cap; o.np = ukl_min(np, cap); o.ci = OV_NONE; o.cp = 0u; o.cn = 0u;
+    return o;
 }
-UKL_INLINE uint32_t ov_ref(Ux u, Ov o, uint32_t k) { return ov_tok(u, o, k).ref; }
-UKL_INLINE uint32_t ov_flags(Ux u, Ov o, uint32_t k) { return ov_tok(u, o, k).flags; }
+// The pieces are where the loop made them, in its order by `ORDER` (the sixth column, `lp_place`).
+UKL_INLINE void ov_at(UKL_PRIVATE Ov* o, uint32_t i) {
+    PP_GLOBAL const uint32_t* pat = o->cols + 3u * o->cap;
+    PP_GLOBAL const uint32_t* ord = o->cols + 5u * o->cap;
+    o->ci = i; o->cp = pat[ord[i]];
+    o->cn = i + 1u < o->np ? pat[ord[i + 1u]] - o->cp : 0xffffffffu - o->cp;
+}
+UKL_INLINE bool ov_in(UKL_PRIVATE const Ov* o, uint32_t k) { return o->ci != OV_NONE && k >= o->cp && k - o->cp < o->cn; }
+UKL_INLINE Tk ov_tok(Ux u, UKL_PRIVATE Ov* o, uint32_t k) {
+    if (!ov_in(o, k) && o->ci != OV_NONE && o->ci + 1u < o->np && k >= o->cp) ov_at(o, o->ci + 1u);
+    if (!ov_in(o, k)) {
+        PP_GLOBAL const uint32_t* pat = o->cols + 3u * o->cap;
+        PP_GLOBAL const uint32_t* ord = o->cols + 5u * o->cap;
+        uint32_t lo = 0u, hi = o->np;
+        for (uint32_t step = 0u; step < 32u && hi - lo > 1u; step++) {
+            uint32_t mid = (lo + hi) / 2u;
+            if (pat[ord[mid]] <= k) lo = mid; else hi = mid;
+        }
+        ov_at(o, lo);
+    }
+    return pc_tok_in(u, o->cols, o->cap, o->cols[5u * o->cap + o->ci], k - o->cp);
+}
+UKL_INLINE uint32_t ov_ref(Ux u, UKL_PRIVATE Ov* o, uint32_t k) { return ov_tok(u, o, k).ref; }
+UKL_INLINE uint32_t ov_flags(Ux u, UKL_PRIVATE Ov* o, uint32_t k) { return ov_tok(u, o, k).flags; }
 
 // A number token in the scratch: its ref.
 UKL_INLINE uint32_t px_number(Ar a, uint32_t value) {

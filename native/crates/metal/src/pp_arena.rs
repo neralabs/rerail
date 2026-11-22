@@ -376,6 +376,15 @@ pub fn refuse_past(groups: u64) -> Result<(), Error> {
     if groups > residency().groups { Err(capacity(concat!(file!(), ":", line!()))) } else { Ok(()) }
 }
 
+/// `BackendFailure`, at `at` (`file:line`), which `RERAIL_PP_WHY` prints: a device run whose answer does not add up
+/// (or a barrier that failed), and the log says which check found it.
+pub fn failure(at: &str) -> Error {
+    if std::env::var_os("RERAIL_PP_WHY").is_some() {
+        eprintln!("pp: BackendFailure at {at}");
+    }
+    Error::BackendFailure
+}
+
 /// A grid of `groups` groups failed a barrier: the grid kernel's resident groups are half of it from now on, kept
 /// for the machine (`rerail_device::grid::halved`), and the run is the caller's to run again at them. `None` at
 /// one group, which no halving helps, and where the backend answered (`Known::Api`): its count is resident, so its

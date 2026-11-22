@@ -351,6 +351,10 @@ impl Committed {
             if std::env::var_os("RERAIL_LAUNCHES").is_some() {
                 eprintln!("{}: {e}", self.label);
             }
+            // The system took the GPU back (its watchdog, for the display): the work is not at fault.
+            if e.starts_with("preempted: ") {
+                return Err(Error::BackendPreempted);
+            }
             return Err(Error::BackendFailure);
         }
         crate::launch::mark(std::ptr::from_ref::<u8>(&self.key) as usize, true);

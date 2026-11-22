@@ -73,9 +73,9 @@ pub fn placement<'a>(
         // SAFETY: `insert` gave `offset..offset + bytes` of the slab to this document alone.
         let (tape, source) = unsafe { (std::slice::from_raw_parts_mut(base.add(offset), tape_len), std::slice::from_raw_parts_mut(base.add(source_at), source_len)) };
         write(tape, source);
-        let p = rerail_tape_format::f16::placement(tape).map_err(|_| Error::BackendFailure)?;
-        let placed = p.view(lang, 0).map_err(|_| Error::BackendFailure)?;
-        let table_at = table_at.ok_or(Error::BackendFailure)?;
+        let p = rerail_tape_format::f16::placement(tape).map_err(|_| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
+        let placed = p.view(lang, 0).map_err(|_| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
+        let table_at = table_at.ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let new_table = (!table_at.held).then(|| {
             let mut t = vec![0u8; 24 * codes];
             for (n, e) in lang.table().entries().iter().enumerate() {
@@ -403,7 +403,7 @@ impl Front {
         // SAFETY: the device finished writing every buffer; each holds the counts read here.
         unsafe {
             if *self.bad.host().cast::<u32>() != 0 {
-                return Err(Error::BackendFailure);
+                return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
             }
             let total = *self.scan.total.host().cast::<u32>();
             let dir_total = *self.dir_scan.total.host().cast::<u32>() as usize;
@@ -444,7 +444,7 @@ pub fn run_timed_over<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnc
     // another command is refused.
     let records = scope.snapshot();
     if records.iter().any(|r| r.command != records[0].command) {
-        return Err(Error::BackendFailure);
+        return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
     }
     Ok((records.len(), seconds))
 }
@@ -489,7 +489,7 @@ pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) 
     }
     if front.barrier_failed() {
         crate::pp_arena::halved(groups);
-        return Err(Error::BackendFailure);
+        return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
     }
     Ok(ran)
 }
@@ -525,16 +525,25 @@ fn report_trace(t: &[(u32, u64)], gpu: f64, barriers: u32) {
 /// `run` at `groups` groups (decision 0568): refused past the grid kernel's residency
 /// (`pp_arena::refuse_past`), and run again at the halved residency while a failed barrier lowers
 /// it (`on_grid`). Any other failure is the caller's.
+///
+/// A run the system stopped (`BackendPreempted`: macOS's GPU watchdog, the display waiting while other work holds
+/// the GPU) runs again, at most `PREEMPTED_RUNS` times in all; past them it is a failure.
 pub fn at_resident<T>(groups: u64, mut run: impl FnMut(u64) -> Result<T, Error>) -> Result<T, Error> {
     crate::pp_arena::refuse_past(groups)?;
     let mut groups = groups;
+    let mut stopped = 0;
     loop {
         match run(groups) {
             Err(Error::BackendFailure) if crate::pp_arena::residency().groups < groups => groups = crate::pp_arena::residency().groups,
+            Err(Error::BackendPreempted) if stopped + 1 < PREEMPTED_RUNS => stopped += 1,
+            Err(Error::BackendPreempted) => return Err(Error::BackendFailure),
             r => return r,
         }
     }
 }
+
+/// The runs of a unit the system may stop before it is a failure (`at_resident`).
+pub const PREEMPTED_RUNS: u32 = 4;
 
 /// A name's key, as `pp_eval.uglykl`'s `name_key` makes it: its bytes 8 at a time, line splices
 /// left out (its phase-2 spelling).
