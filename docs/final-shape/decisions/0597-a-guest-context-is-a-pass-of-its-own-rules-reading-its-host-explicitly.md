@@ -423,6 +423,22 @@ The template's findings stand at the file's lines.
      `a_policys_rule_of_a_librarys_context_reads_the_librarys_relations` (5.10). Each case runs alone and beside
      another policy, and its findings are the same. `a_components_code_is_pieces_made_where_a_rule_asks` reads the
      pieces' nodes in the contexts now: with `vue/component`'s contexts in the program a host rule reads none (step 4).
+   - **Step 5's gate** (2026-11-22, an M1 Max):
+     - corpus0 × B-now first gave 426 findings: B009, B010 and PYI034 lost in files with a quoted annotation. A
+       value's long-text part was registered under its places' hosts' keys too, so, kept when empty, it took every
+       host node's value read to a string annotation's batch. A value's long-text nodes now answer for its own key
+       alone (`values::Values::add`; test `a_values_long_text_nodes_answer_for_its_own_nodes_alone`, rerail-facts).
+     - corpus0 × B-now then gives 463 findings, digest 75193ca656bd, identical to the baseline.
+     - The probe gives 20 findings, the same with and without string annotations, the baseline's.
+     - The quick tier of rerail-logic, rerail-tests-logic, rerail-tests-lang and rerail-facts (1,603 tests): two
+       failures fixed, two data tests not run.
+       - Rung 3.2 asserted `$n` guarded in `ann_names(x) :- name_node(n), host_node(n, h), …`. Its node is bound by
+         the context's `rr_pass_annotation_name_node`, whose own rule is guarded: the test now checks that, and that
+         `$h` is never guarded.
+       - The executors' coverage ledger: the bound text match's row counts 72 library files, not 70. The two are
+         `vue/expression` and `vue/script`, new in step 5, which include `vue/template`'s match.
+       - `vue::view::tests::corpus` and `definition_ids_are_pinned` need pack test data that is not in git
+         (eslint-plugin-vue's fixtures, pyflakes' F601.py); the host has none.
 6. **Measure.** corpus0 × B-now against the targets (one pack 0.786 T, normal packs 2.428 T, 463 findings,
    d067ec2ebf6f).
 

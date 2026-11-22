@@ -146,13 +146,17 @@ fn a_context_declared_twice_exports_both_declarations() {
 }
 
 /// 0597 step 3, rung 3.2: a guest's view of its host (`host_node(n, h)`, `guest_of(n, s)`) names a host's node in its
-/// second column: a context's rule reading it binds its own node to its nodes, not the host's.
+/// second column: a context's rule reading it binds its own node to its nodes, not the host's. Its own node is bound by
+/// the context's instance of `name_node`, whose rule is guarded: a node a relation of the program binds is not guarded
+/// again (rung 5.9, `tfree`'s host attribute).
 #[test]
 fn a_contexts_read_of_its_hosts_node_binds_only_its_own() {
     let text = PROGRAM.replace(".input kind, text", ".decl host_node(n: node, h: node)\n.input kind, text, host_node").replace("ann_names(x) :- name_node(n), text(n, x), bound(x).", "ann_names(x) :- name_node(n), host_node(n, h), text(n, x), bound(x).");
     let v = parse_version(&text).unwrap();
     let names = rules_of(&v, "rr_pass_annotation_ann_names");
-    assert!(names.len() == 1 && names[0].contains("rr_pass_annotation_rr_nodes($n)") && !names[0].contains("rr_pass_annotation_rr_nodes($h)"), "{}", v.show());
+    assert!(names.len() == 1 && names[0].contains("rr_pass_annotation_name_node($n)") && !names[0].contains("rr_pass_annotation_rr_nodes($h)"), "{}", v.show());
+    let own = rules_of(&v, "rr_pass_annotation_name_node");
+    assert!(own.len() == 1 && own[0].contains("rr_pass_annotation_rr_nodes($n)"), "{}", v.show());
 }
 
 /// 0597 step 3, rung 3.3: a host relation that counts the context's rows says so in a rule of its own (rule 5), reading

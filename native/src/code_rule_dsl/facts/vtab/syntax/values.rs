@@ -191,6 +191,7 @@ impl Values {
             if src.len() == 0 && !src.made_on_lookup() && name != super::LONG_TEXT_NODES {
                 continue;
             }
+            let own = if name == super::LONG_TEXT_NODES { &keys[..keys.len().min(1)] } else { keys };
             let p = Arc::make_mut(parts.entry(name).or_default());
             let i = p.list.len();
             // Its rows past the chunk's and the parts' before, in their block relation: the device binds that whole.
@@ -199,7 +200,10 @@ impl Values {
             p.whole = slice.filter(|_| p.sliced).map(|sl| Arc::clone(&sl.whole));
             p.list.push(Part { start: p.total, src: Arc::clone(&src) });
             p.total += src.len();
-            for &k in keys {
+            // The long-text nodes are the value's own nodes: the binding a node read goes through is the value's for
+            // its own key alone. Under its places' hosts' keys too, a host file's node read (`value` of a `getattr`'s
+            // string) went to a string annotation's batch, which holds no node of the file, and found nothing.
+            for &k in own {
                 p.by_key.add(k, i);
             }
         }
@@ -903,6 +907,19 @@ mod tests {
         assert_eq!(layered.len(), 9);
         assert_eq!(layered.value(8, 0), 2);
         assert_eq!(layered.lookup(1, &[2]), Some(vec![5, 8]));
+    }
+
+    /// A value's long-text nodes, kept though it has none (a Vue piece's string reads its value in its own batch),
+    /// answer for the value's own nodes alone, not its places' hosts': a host file's node read went to a string
+    /// annotation's batch and found nothing (corpus0: B009's `getattr(b, "x")` in a file with a quoted annotation).
+    #[test]
+    fn a_values_long_text_nodes_answer_for_its_own_nodes_alone() {
+        let values = Values::default();
+        let nodes = Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>;
+        values.add(&[7, 1], vec![(super::super::LONG_TEXT_NODES.to_owned(), nodes), ("r".to_owned(), Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>)]);
+        assert!(values.source_of(super::super::LONG_TEXT_NODES, 7 << 32).is_some(), "the value's own node");
+        assert!(values.source_of(super::super::LONG_TEXT_NODES, 1 << 32).is_none(), "its host's node is the batch's");
+        assert!(values.source_of("r", 1 << 32).is_some(), "another relation's rows of its host's nodes");
     }
 
     /// Every source a chunk binds is layered (decision 0431 §8), read or not: layering one counts none of its rows,
