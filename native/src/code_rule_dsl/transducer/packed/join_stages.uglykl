@@ -1319,6 +1319,14 @@ UKL_INLINE void dedup_scatter_one(Longs T, JSPACE uint32_t* totals, JSPACE const
 // dependencies: a stratum's rules' stages at one depth, its heads' dedups. A job's buffers are reached by their
 // device addresses (`Job`), as a view's directory is; its counts lie in the program's one buffer of counts from
 // `base` (its `n` values), which its level's scan makes offsets, each job's its own less its first (`o0`).
+// A job's words (a word record, `UKL_WORD_RECORD`): its counts' first in the program's arena (`base`, its level's
+// size script's) and their number; an index's first bucket and first key in its level's sort (`ix_key_one`); and
+// where its size script placed its tables in the arena (decision 0603 step 5), each its offset and one (0: none, the
+// pointer's): `L` and `O`, a row's values `V` (8 bytes a unit), a dedup's places `H` (4 bytes).
+typedef struct JobWords { uint32_t base, n, kb, eb, l_at, o_at, v_at, h_at; } JobWords;
+UKL_WORD_RECORD(JobWords, base, n, kb, eb, l_at, o_at, v_at, h_at);
+#define JOB_WORD(jw, f) (jw)[UKL_WORD_INDEX(JobWords, f)]
+
 typedef struct Job {
     Longs L;
     Longs R;
@@ -1339,19 +1347,12 @@ typedef struct Job {
     StageP bs;
     DedupP dd;
     JSPACE const uint32_t* P;
-    uint32_t base, n;
-    // An index's first bucket and first key in its level's sort (`ix_key_one`).
-    uint32_t kb, eb;
     // A count an earlier phase wrote (a lattice fold's rows: `LatP::pad & 1`).
     JSPACE const uint32_t* cnt;
-    // Where its size script placed its tables in the arena (decision 0603 step 5), each its offset and one (0: none,
-    // the pointer's): `L` and `O`, a row's values `V` (8 bytes a unit), a dedup's places `H` (4 bytes).
-    uint32_t l_at, o_at, v_at, h_at;
+    // Its words, some its level's size script writes (a word record).
+    JobWords at;
 } Job;
 UKL_STATIC_ASSERT(sizeof(Job) == 208, "Job: size");
-// The words of a job's descriptor its level's size script writes: `base`, `l_at`, `o_at`, `v_at`, `h_at`.
-#define JOB_BASE_WORD 42u
-#define JOB_AT_WORD 48u
 
 
 
@@ -1368,8 +1369,8 @@ UKL_STATIC_ASSERT(sizeof(Job) == 208, "Job: size");
 // A relation's index built on the device (decision 0325 step 5): each row's bucket, its key's hash (`key_hash`, as
 // the host's builder and every probe hash it) masked. A view read in place (decision 0353 step 4d) is read through its
 // directory (`dir`, `kind`; kind 0: a relation).
-// `ncols`' bit 31 (`IX_LIVE`): its rows are its relation's length on the device (`clif_rel_len`), at most `n`; a key
-// past them is the index's own last bucket (`mask + 1`), which sorts after its keys and places none.
+// `ncols`' bit 31 (`IX_LIVE`): its rows are its relation's length on the device (`clif_rel_len`), at most `n`, and
+// so are its keys in the level's sort (its first key `eb`, the level's size script's).
 #define IX_LIVE 0x80000000u
 typedef struct IxP {
     uint32_t n;
@@ -1392,10 +1393,9 @@ UKL_INLINE uint32_t ix_rows(JSPACE const uint8_t* B, JSPACE const IxP* p) {
 
 UKL_INLINE void ix_key_one(JSPACE const uint8_t* B, JSPACE uint32_t* out, JSPACE uint32_t* places, JSPACE const IxP* p, uint32_t kb, uint32_t eb, uint32_t t)
 {
-    if (t >= p->n) return;
+    // A live index's keys are its rows as claimed (decision 0603 step 5e): the level's sort holds them only.
+    if (t >= ix_rows(B, p)) return;
     places[eb + t] = eb + t;
-    // Past a live index's rows: its own last bucket, after its keys.
-    if (t >= ix_rows(B, p)) { out[eb + t] = kb + (uint32_t)p->mask + 1u; return; }
     uint64_t h = KEY_SEED;
     for (uint32_t i = 0; i < (p->ncols & ~IX_LIVE) && i < 8; i++)
         h = key_mix(h, p->kind != 0ul ? vread((uint32_t)p->kind, p->dir, t, p->cols[i]) : (int64_t)clif_rel_get(B, p->at, t, p->cols[i]));
@@ -1794,19 +1794,22 @@ UKL_INLINE uint32_t seg_items(UKL_GLOBAL const Seg* g)
 // A scan's level: its `n` values scanned in place, its tiles' sums (their offsets once scanned), whether it has them.
 // A level a size script sizes (decision 0603 step 5) has its `n` and its values' first word in `in` (`at`, its arena
 // there) set by it: read as words, coherent, as the script wrote them.
-typedef struct ScanLevel { JSPACE uint32_t* in; JSPACE uint32_t* sums; uint32_t n; uint32_t offsets; uint32_t at; uint32_t sums_at; } ScanLevel;
-#define SCAN_N_WORD 4u
-#define SCAN_AT_WORD 6u
-#define SCAN_SUMS_AT_WORD 7u
+typedef struct ScanWords { uint32_t n; uint32_t offsets; uint32_t at; uint32_t sums_at; } ScanWords;
+UKL_WORD_RECORD(ScanWords, n, offsets, at, sums_at);
+typedef struct ScanLevel { JSPACE uint32_t* in; JSPACE uint32_t* sums; ScanWords w; } ScanLevel;
 UKL_STATIC_ASSERT(sizeof(ScanLevel) == 32, "ScanLevel: size");
 // A sort's pass: its keys and places in, its histograms (scanned: each digit's offset for each tile), out.
+// A sort pass's words (a word record): its keys, the byte it sorts by, its tiles. A level's size script sets its keys
+// and tiles from its indexes' rows as claimed (decision 0603 step 5e): read as words, coherent.
+typedef struct SortWords { uint32_t n, shift, tiles, pad; } SortWords;
+UKL_WORD_RECORD(SortWords, n, shift, tiles, pad);
 typedef struct SortPass {
     JSPACE uint32_t* keys;
     JSPACE uint32_t* values;
     JSPACE uint32_t* hist;
     JSPACE uint32_t* out_keys;
     JSPACE uint32_t* out_values;
-    uint32_t n, shift, tiles, pad;
+    SortWords w;
     uint64_t pad2;
 } SortPass;
 UKL_STATIC_ASSERT(sizeof(SortPass) == 64, "SortPass: size");
@@ -1820,8 +1823,7 @@ UKL_REFLECT_STRUCT(ProgP, phases, capacity, seeds, first)
 // operands', `w` a word's address, `c` a constant:
 //  0 `r[k] = w[0] + c`; 2 `r[k] = c`; 3 `r[k] = r[x] + r[y] + c`; 4 `r[k] = r[x] - r[y]` (0 below);
 //  5 `r[k] = r[x] * c`; 6 `r[k] = ceil(r[x] / c)`; 7 `r[k] = min(r[x], r[y])`; 8 `r[k] = max(r[x], c)`;
-// 13 `r[k]` the least power of two at least `max(r[x], c)`; 14 a check that the arena holds `c` units more past its
-//    top (`w`, `y` its room): else the program stops, as a claim past it does;
+// 13 `r[k]` the least power of two at least `max(r[x], c)`;
 //  9 a claim of `r[x]` bytes of the program's arena (16 a unit, `w` its top in units, `y` its room in them, `c` its
 //    address): `r[k]` their address; past the room, the program stops (`ctl[6]`'s bits 2 and 32) and `r[k]` is
 //    the arena's start;
@@ -1858,9 +1860,6 @@ UKL_INLINE void size_one(UKL_GLOBAL const SizeOp* ops, uint32_t n, UKL_GLOBAL ui
             }
             case 11u: *o.w = (uint32_t)r[k]; break;
             case 12u: r[k] = (uint64_t)o.w[r[x]]; break;
-            case 14u:
-                if ((uint64_t)*o.w + o.c > (uint64_t)o.y) ukl_atomic_or(&ctl[6], 2u | 32u);
-                break;
             case 13u: {
                 uint64_t v = r[x] > o.c ? r[x] : o.c, q = 1u;
                 for (uint32_t b = 0u; b < 40u && q < v; b++) q <<= 1;
@@ -1904,18 +1903,18 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         ScanLevel lv = scans[x];
         // Its sizes as its level's script set them (a word read: the descriptors' pointers are read as written by
         // the host).
-        JSPACE const uint32_t* sw = (JSPACE const uint32_t*)(scans + x);
-        lv.n = sw[SCAN_N_WORD];
-        lv.in += sw[SCAN_AT_WORD];
-        lv.sums += sw[SCAN_SUMS_AT_WORD];
+        JSPACE const uint32_t* sw = (JSPACE const uint32_t*)&scans[x].w;
+        lv.w.n = sw[UKL_WORD_INDEX(ScanWords, n)];
+        lv.in += sw[UKL_WORD_INDEX(ScanWords, at)];
+        lv.sums += sw[UKL_WORD_INDEX(ScanWords, sums_at)];
         UklScanArgs a;
-        a.n = lv.n;
-        a.hasOffsets = lv.offsets;
+        a.n = lv.w.n;
+        a.hasOffsets = lv.w.offsets;
         a.popcount = 0u;
         a.level = 0u;
         // Its tiles: this item's, then each `step` on (its segment's items pushed) while below its values'; tile 0
         // at least (its total).
-        uint32_t tiles = (lv.n + JOIN_TG * UKL_SCAN_ITEMS - 1u) / (JOIN_TG * UKL_SCAN_ITEMS), tstep = step / JOIN_TG;
+        uint32_t tiles = (lv.w.n + JOIN_TG * UKL_SCAN_ITEMS - 1u) / (JOIN_TG * UKL_SCAN_ITEMS), tstep = step / JOIN_TG;
         for (uint32_t tile = g; tile < UKL_WQ_TURNS; tile += tstep) {
             if (kind == PK_SCAN_SUMS) ukl_scan_tile_sum_prog(lv.in, lv.sums, a, m.scratch, tile, l, JOIN_TG __UKL_ARGS);
             else ukl_scan_tile_prog(lv.in, lv.in, lv.sums, a, m.scratch, tile, l, JOIN_TG __UKL_ARGS);
@@ -1925,29 +1924,40 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
     }
     if (kind == PK_RADIX_HIST || kind == PK_RADIX_SCATTER) {
         SortPass sp = sorts[x];
+        JSPACE const uint32_t* sw = (JSPACE const uint32_t*)&sorts[x].w;
         UklRadixArgs a;
-        a.n = sp.n;
-        a.shift = sp.shift;
-        a.tiles = sp.tiles;
+        a.n = sw[UKL_WORD_INDEX(SortWords, n)];
+        a.shift = sp.w.shift;
+        a.tiles = sw[UKL_WORD_INDEX(SortWords, tiles)];
         if (kind == PK_RADIX_HIST) ukl_radix_hist_tile_u32_prog(sp.keys, sp.hist, a, m.h, g, l, JOIN_TG);
         else ukl_radix_scatter_tile_u32_prog(sp.keys, sp.values, sp.hist, sp.out_keys, sp.out_values, a, m.counts, m.before, m.base, m.digits, g, l, JOIN_TG __UKL_ARGS);
         return;
     }
     UKL_GLOBAL const Job* j = &jobs[x];
     // Its counts' first word, and its tables where its size script placed them, as it set them.
-    JSPACE const uint32_t* jw = (JSPACE const uint32_t*)(jobs + x);
-    JSPACE uint32_t* c = counts + jw[JOB_BASE_WORD];
-    uint32_t l_at = jw[JOB_AT_WORD], o_at = jw[JOB_AT_WORD + 1u], v_at = jw[JOB_AT_WORD + 2u], h_at = jw[JOB_AT_WORD + 3u];
+    JSPACE const uint32_t* jw = (JSPACE const uint32_t*)&jobs[x].at;
+    JSPACE uint32_t* c = counts + JOB_WORD(jw, base);
+    uint32_t l_at = JOB_WORD(jw, l_at), o_at = JOB_WORD(jw, o_at), v_at = JOB_WORD(jw, v_at), h_at = JOB_WORD(jw, h_at);
     JSPACE int64_t* arena = (JSPACE int64_t*)counts;
     Longs L = l_at != 0u ? (Longs)(arena + (l_at - 1u)) : j->L;
     JSPACE int64_t* O = o_at != 0u ? arena + (o_at - 1u) : j->O;
     JSPACE int64_t* V = v_at != 0u ? arena + (v_at - 1u) : j->V;
     JSPACE uint32_t* H = h_at != 0u ? counts + (h_at - 1u) : j->H;
+    // A fold's places, its keys' chosen rows and their flags: placed together where its script placed them (`h_at`,
+    // decision 0603 step 5d), three arrays of its places (its mask and one) each.
+    JSPACE uint32_t* LA = j->A;
+    JSPACE uint32_t* LT = j->totals;
+    if (h_at != 0u && kind >= PK_LAT_CLEAR && kind <= PK_LAT_MERGE) {
+        uint32_t places = ((JSPACE const LatP*)j->P)->pmask + 1u;
+        LA = H;
+        LT = H + places;
+        H = H + 2u * places;
+    }
     for (uint32_t pass = 0u; pass < UKL_WQ_TURNS; pass++) {
     switch (kind) {
         case PK_COPY: rows_copy_one((JSPACE const uint8_t*)L, (JSPACE uint8_t*)O, j->totals, (JSPACE const Copy*)j->P, t); break;
-        case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)L, H, (JSPACE uint32_t*)j->S, (JSPACE const IxP*)j->P, j->kb, j->eb, t); break;
-        case PK_IX_PLACE: ix_place_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, (JSPACE const uint32_t*)j->VC, j->A, j->counters, (JSPACE const IxP*)j->P, j->kb, j->eb, t); break;
+        case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)L, H, (JSPACE uint32_t*)j->S, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
+        case PK_IX_PLACE: ix_place_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, (JSPACE const uint32_t*)j->VC, j->A, j->counters, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
         case PK_DEDUP_CLEAR: dedup_clear_one(H, j->dd, t); break;
         case PK_DEDUP_CLAIM: dedup_claim_one(L, j->totals, H, j->dd, t); break;
         case PK_MAP: stage_map_one(O, j->totals, j->s, t); break;
@@ -1966,14 +1976,14 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         // block, `VC` its key map's, `G` the old map's, `O` the changed rows, `counters` theirs, `V` the arena.
         case PK_LAT_HCLEAR: lat_hclear_one(j->VC, (JSPACE const LatP*)j->P, t); break;
         case PK_LAT_REHASH: lat_rehash_one((JSPACE const uint8_t*)j->S, j->G, j->VC, (JSPACE const LatP*)j->P, t); break;
-        case PK_LAT_CLEAR: lat_clear_one(j->A, j->totals, H, (JSPACE const LatP*)j->P, t); break;
-        case PK_LAT_CLAIM: lat_claim_one(L, j->A, j->cnt, (JSPACE const LatP*)j->P, t); break;
-        case PK_LAT_BEST: lat_best_one(L, j->A, j->totals, H, (JSPACE uint32_t*)V, j->cnt, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_CLEAR: lat_clear_one(LA, LT, H, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_CLAIM: lat_claim_one(L, LA, j->cnt, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_BEST: lat_best_one(L, LA, LT, H, (JSPACE uint32_t*)V, j->cnt, (JSPACE const LatP*)j->P, t); break;
         case PK_SUM: sum_one((JSPACE const SumP*)j->P, t); break;
         case PK_GATE: gate_one((JSPACE const GateP*)j->P, ctl, t); break;
         case PK_ROUND: round_one((JSPACE const RoundP*)j->P, ctl, t); break;
         case PK_LAT_MERGE:
-            lat_merge_one(L, j->A, j->totals, H, j->S, j->VC, O, j->counters, (JSPACE uint32_t*)V, (JSPACE const uint32_t*)j->G, (JSPACE const LatP*)j->P, t);
+            lat_merge_one(L, LA, LT, H, j->S, j->VC, O, j->counters, (JSPACE uint32_t*)V, (JSPACE const uint32_t*)j->G, (JSPACE const LatP*)j->P, t);
             break;
         default: break;
     }

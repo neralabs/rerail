@@ -2525,9 +2525,11 @@ struct LatRound {
 }
 
 /// Head `h`'s rows of a round from every rule of `rules` that makes it (`runs`), end to end in one table on the device
-/// (`append_rows`), their count in slot 0 of words of 3 (`[union, distinct, new]`), and the table's rows: none when no
-/// rule of it ran.
-fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: usize, store: &Store, named: &HashMap<i64, i64>, floor: &HashMap<usize, usize>, batch: &mut mj::Batch) -> Result<Option<(mj::Table, mj::Words, usize)>, String> {
+/// (`append_rows`), their count in slot 0 of words of 3 (`[union, distinct, new]`), and the rows guessed: none when no
+/// rule of it ran. The table is placed by its rows (decision 0603 step 5d). `floor`: where its head's relation's room
+/// is reserved for the rows guessed (a round on the host's, `encode_tail`), what a gate that stopped a round before
+/// saw at least; past it, its gate stops the round. None: the head gate's (a program of rounds', `encode_live_tail`).
+fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: usize, store: &Store, named: &HashMap<i64, i64>, floor: Option<&HashMap<usize, usize>>, batch: &mut mj::Batch) -> Result<Option<(mj::Table, mj::Words, usize)>, String> {
     let text_head = matches!(store.rels[h].device_lattice(), Some(Ok((3, ..))));
     let k = store.rels[h].k;
     let from: Vec<(usize, &Run<'_>)> = runs.iter().enumerate().filter_map(|(x, r)| r.as_ref().filter(|_| rules[x].2 == h).map(|r| (x, r))).collect();
@@ -2535,11 +2537,8 @@ fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: us
     if cap == 0 {
         return Ok(None);
     }
-    // Its rules' rows are placed tables (decision 0603 step 5), their rows the device's: the union's room is what
-    // they were guessed to be, or what a gate that stopped a round before saw (`floor`), and its gate's
-    // (`append_rows`).
-    let cap = cap.max(floor.get(&h).copied().unwrap_or(0));
-    let union = mj::Table::new(k, cap).map_err(|e| format!("{e:?}: a union of {cap} rows"))?;
+    let cap = cap.max(floor.and_then(|f| f.get(&h)).copied().unwrap_or(0));
+    let union = batch.table(k, cap).map_err(|e| format!("{e:?}: a union of {cap} rows"))?;
     let words = mj::Words::zeroed(3).map_err(|e| format!("{e:?}"))?;
     let cols: Vec<Vec<mj::Col>> = from.iter().map(|(x, r)| {
         let plan = rules[*x].0;
@@ -2554,7 +2553,7 @@ fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: us
         let u = r.uniq.as_ref().expect("the head's rows");
         (u, u.cap, &r.totals, r.totals.len - 1, c.as_slice())
     }).collect();
-    batch.append_rows(&srcs, &union, (&words, 0)).map_err(|e| format!("{e:?}"))?;
+    batch.append_rows(&srcs, &union, (&words, 0), floor.map(|_| cap)).map_err(|e| format!("{e:?}"))?;
     Ok(Some((union, words, cap)))
 }
 
@@ -2590,15 +2589,16 @@ fn encode_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], he
     let mut tail = Tail::default();
     let mut unions = Vec::new();
     for &h in heads {
-        if let Some(u) = union_of(runs, rules, h, store, named, floor, batch)? {
+        if let Some(u) = union_of(runs, rules, h, store, named, Some(floor), batch)? {
             unions.push((h, u));
         }
     }
-    // Every head's union before any head's rows go on: a union past its room (its gate) stops the round before work
-    // that may not run twice (a lattice fold), and so does an arena that would not hold the rest (`room_check`).
-    if !unions.is_empty() {
-        batch.room_check().map_err(|e| format!("{e:?}"))?;
-    }
+    // Every head's union before any head's rows go on, its gate before them; the set heads' work, then the lattice
+    // heads' folds, together, then their rows' copies. A fold may not run twice, and everything that may stop the
+    // round runs before it: its gates, and every claim of the arena (the folds' own at their level's start, before
+    // they run; after them, copies only, which claim none).
+    unions.sort_by_key(|(h, _)| lattices.contains_key(h));
+    let mut copies = Vec::new();
     for (h, (union, words, cap)) in unions {
         let k = store.rels[h].k;
         tail.unions.push((h, cap));
@@ -2639,16 +2639,16 @@ fn encode_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], he
             };
             // Bound after the room and the map were made in the block, so its buffer reaches them.
             let r = mj::DevRel::in_block(&part.in_block(lh.had as u32), k).map_err(|e| format!("{e:?}"))?;
-            let changed = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
+            let changed = batch.table(k, cap).map_err(|e| format!("{e:?}"))?;
             let counters = mj::Words::zeroed(2).map_err(|e| format!("{e:?}"))?;
             let lv = leveled(h).then_some(level);
             batch.lattice_fold(&union, cap, &r, lh.had, k - 1, lh.code, map_at(map), first, &counters, &changed, shared.map(|a| &**a), lv.map(mj::LatLevel::Round), Some((&words, 0))).map_err(|e| format!("{e:?}"))?;
-            batch.place_rows(mj::Rows::Table(&changed), cap, Some(0), &counters, &ident, into_delta, 0).map_err(|e| format!("{e:?}"))?;
+            copies.push((changed, cap, tail.lats.len(), ident, into_delta));
             tail.lats.push(LatRound { head: h, counters, delta, map: made, words });
-            tail.hold.extend([union, changed]);
+            tail.hold.push(union);
             continue;
         }
-        let distinct = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
+        let distinct = batch.table(k, cap).map_err(|e| format!("{e:?}"))?;
         let all: Vec<usize> = (0..k).collect();
         batch.dedup(&union, &all, 0, 1, &words, &distinct).map_err(|e| format!("{e:?}"))?;
         // Its relation's sort was built before the gate (`round_index`): found, not built, here.
@@ -2661,7 +2661,7 @@ fn encode_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], he
                     d.key_slot[c] = c as u32;
                 }
                 d.nkeys = k as u32;
-                let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
+                let fresh_rows = batch.table(k, cap).map_err(|e| format!("{e:?}"))?;
                 let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
                 batch.stage(d, &distinct, Some((&total, ix.as_deref())), None, 1, 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
                 tail.hold.push(distinct);
@@ -2691,6 +2691,10 @@ fn encode_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], he
         batch.place_rows(mj::Rows::Table(&rows), cap, Some(slot), &words, &ident, into_delta, 0).map_err(|e| format!("{e:?}"))?;
         tail.hold.push(union);
         tail.sets.push(SetRound { head: h, rows, words, anti, delta });
+    }
+    for (changed, cap, at, ident, into_delta) in copies {
+        batch.place_rows(mj::Rows::Table(&changed), cap, Some(0), &tail.lats[at].counters, &ident, into_delta, 0).map_err(|e| format!("{e:?}"))?;
+        tail.hold.push(changed);
     }
     Ok(tail)
 }
@@ -3012,7 +3016,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         drop(old);
         if any {
             let mut lp = Looped { own: &mut own, rep: &mut rep, lattices: &mut lattices, sets: &mut sets, set_levels: &mut set_levels, made: &mut made, rounds: &mut rounds };
-            device_rounds(deltas, seeds.len(), heads, store, names, &named, shared.as_ref(), &mut dparts, &mut union_floor, &mut lp)?;
+            device_rounds(deltas, seeds.len(), heads, store, names, &named, shared.as_ref(), &mut dparts, &mut lp)?;
         }
     }
     drop(dparts);
@@ -3150,7 +3154,7 @@ impl HeadEnd {
 /// that round (decision 0540's rerun).
 #[allow(clippy::too_many_arguments)]
 fn device_rounds(deltas: &[(&Plan, &JoinRule, usize)], base: usize, heads: &[usize], store: &Store, names: &Interner, named: &HashMap<i64, i64>,
-                 shared: Option<&Rc<mj::Arena>>, dparts: &mut HashMap<usize, Part>, union_floor: &mut HashMap<usize, usize>, lp: &mut Looped<'_>) -> Result<(), String> {
+                 shared: Option<&Rc<mj::Arena>>, dparts: &mut HashMap<usize, Part>, lp: &mut Looped<'_>) -> Result<(), String> {
     fn e(e: impl std::fmt::Debug) -> String {
         format!("{e:?}")
     }
@@ -3228,7 +3232,7 @@ fn device_rounds(deltas: &[(&Plan, &JoinRule, usize)], base: usize, heads: &[usi
         batch.arena_floor(floor);
         let mut kept = Kept::default();
         // Encoded, not launched, on an error: dropped with its batch, which nothing ran.
-        let templates = encode_program(deltas, heads, store, names, named, shared, lp, &live, &mut sizes, &mut sums, &logs, side, &round, union_floor, &mut batch, &mut kept)?;
+        let templates = encode_program(deltas, heads, store, names, named, shared, lp, &live, &mut sizes, &mut sums, &logs, side, &round, &mut batch, &mut kept)?;
         let (t0, w0) = (Instant::now(), thread_cpu());
         let mut done = batch.finish().map_err(e)?;
         while done.yielded {
@@ -3271,18 +3275,13 @@ fn device_rounds(deltas: &[(&Plan, &JoinRule, usize)], base: usize, heads: &[usi
         let r = round.get(0) as usize;
         let t = (r - r0) % 2;
         side ^= t;
-        // Its arena past its room: the next program's is twice what its claims wanted (decision 0603 step 5). A
-        // union past its room: it grows to twice its rows seen.
+        // Its arena past its room: the next program's is twice what its claims wanted (decision 0603 step 5).
         if done.arena_full {
             floor = floor.max(2 * done.arena_wanted).max(batch.floor());
         }
         for end in &kept.ends[t] {
             let l = live.get_mut(&end.head).expect("a head");
             l.room = l.room.max(2 * end.words.get(end.slot()) as usize);
-            let n = end.words.get(0) as usize;
-            if !done.arena_full && n > end.cap {
-                union_floor.insert(end.head, 2 * n);
-            }
         }
         for (x, run) in templates[t].iter().enumerate() {
             let Some(run) = run else { continue };
@@ -3326,7 +3325,7 @@ fn device_rounds(deltas: &[(&Plan, &JoinRule, usize)], base: usize, heads: &[usi
 #[allow(clippy::too_many_arguments)]
 fn encode_program<'p>(deltas: &[(&'p Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, named: &HashMap<i64, i64>, shared: Option<&Rc<mj::Arena>>,
                       lp: &mut Looped<'_>, live: &HashMap<usize, LiveHead>, sizes: &mut HashMap<(usize, usize), usize>, sums: &mut [Option<mj::Words>],
-                      logs: &HashMap<usize, mj::Words>, side: usize, round: &mj::Words, union_floor: &HashMap<usize, usize>, batch: &mut mj::Batch, kept: &mut Kept) -> Result<Vec<Vec<Option<Run<'p>>>>, String> {
+                      logs: &HashMap<usize, mj::Words>, side: usize, round: &mj::Words, batch: &mut mj::Batch, kept: &mut Kept) -> Result<Vec<Vec<Option<Run<'p>>>>, String> {
     fn e(e: impl std::fmt::Debug) -> String {
         format!("{e:?}")
     }
@@ -3373,7 +3372,7 @@ fn encode_program<'p>(deltas: &[(&'p Plan, &JoinRule, usize)], heads: &[usize], 
         round_index(&runs, deltas, heads, store, lp.own, lp.rep, batch, lp.lattices, &HashMap::new())?;
         // The gate: every stage's table by its room.
         round_gate(&runs, batch)?;
-        let ends = encode_live_tail(&runs, deltas, heads, store, lp, live, writes, round, named, shared, union_floor, batch, kept)?;
+        let ends = encode_live_tail(&runs, deltas, heads, store, lp, live, writes, round, named, shared, batch, kept)?;
         for (x, r) in runs.iter().enumerate() {
             if let (Some(r), None) = (r, &sums[x]) {
                 sums[x] = Some(mj::Words::zeroed(r.totals.len).map_err(e)?);
@@ -3421,7 +3420,7 @@ fn encode_program<'p>(deltas: &[(&'p Plan, &JoinRule, usize)], heads: &[usize], 
 /// claimed by the round's end.
 #[allow(clippy::too_many_arguments)]
 fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, lp: &mut Looped<'_>, live: &HashMap<usize, LiveHead>, writes: usize,
-                    round: &mj::Words, named: &HashMap<i64, i64>, shared: Option<&Rc<mj::Arena>>, union_floor: &HashMap<usize, usize>, batch: &mut mj::Batch, kept: &mut Kept) -> Result<Vec<HeadEnd>, String> {
+                    round: &mj::Words, named: &HashMap<i64, i64>, shared: Option<&Rc<mj::Arena>>, batch: &mut mj::Batch, kept: &mut Kept) -> Result<Vec<HeadEnd>, String> {
     fn e(e: impl std::fmt::Debug) -> String {
         format!("{e:?}")
     }
@@ -3440,13 +3439,13 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
     let mut made = Vec::new();
     for &h in heads {
         let k = store.rels[h].k;
-        let Some((union, words, cap)) = union_of(runs, rules, h, store, named, union_floor, batch)? else { continue };
+        let Some((union, words, cap)) = union_of(runs, rules, h, store, named, None, batch)? else { continue };
         let delta = Rc::new(into(h)?);
         if lp.lattices.contains_key(&h) {
             made.push(Made { end: HeadEnd { head: h, words, lat: Some(mj::Words::zeroed(2).map_err(e)?), anti: None, delta, cap }, union, cap, fresh: None });
             continue;
         }
-        let distinct = mj::Table::new(k, cap).map_err(e)?;
+        let distinct = batch.table(k, cap).map_err(e)?;
         let all: Vec<usize> = (0..k).collect();
         batch.dedup(&union, &all, 0, 1, &words, &distinct).map_err(e)?;
         // Its relation's sort, built before the joins' gate (`round_index`) of its rows as the round reads them.
@@ -3458,7 +3457,7 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
             d.key_slot[c] = c as u32;
         }
         d.nkeys = k as u32;
-        let fresh = mj::Table::new(k, cap).map_err(e)?;
+        let fresh = batch.table(k, cap).map_err(e)?;
         let counters = mj::Words::zeroed(1).map_err(e)?;
         batch.stage(d, &distinct, Some((&total, ix.as_deref())), None, 1, 2, &words, &counters, None, &fresh).map_err(e)?;
         kept.tables.push(distinct);
@@ -3473,6 +3472,9 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
     batch.gate(&checks).map_err(e)?;
     drop(checks);
     let mut ends = Vec::new();
+    // The folds together, then their rows' copies: a fold may not run twice, and the claims of the arena are all
+    // before them (theirs at their level's start; after them, copies only).
+    let mut copies = Vec::new();
     for Made { end, union, cap, fresh } in made {
         let h = end.head;
         let k = store.rels[h].k;
@@ -3481,11 +3483,10 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
         match (fresh, &end.lat) {
             (None, Some(counters)) => {
                 let lh = &lp.lattices[&h];
-                let changed = mj::Table::new(k, cap).map_err(e)?;
+                let changed = batch.table(k, cap).map_err(e)?;
                 let lv = store.rels[h].keeps_levels().then_some(mj::LatLevel::Word(round));
                 batch.lattice_fold(&union, cap, &total, 0, k - 1, lh.code, map_at(lh.map.as_ref().expect("its key map")), mj::MapFirst::Ready, counters, &changed, shared.map(|a| &**a), lv, Some((&end.words, 0))).map_err(e)?;
-                batch.place_rows(mj::Rows::Table(&changed), cap, Some(0), counters, &ident, into(h)?, 0).map_err(e)?;
-                kept.tables.push(changed);
+                copies.push((changed, cap, ends.len(), ident));
             }
             (Some(fresh), _) => {
                 batch.append_live(mj::Rows::Table(&fresh), cap, (2, &end.words), &ident, &total).map_err(e)?;
@@ -3497,6 +3498,11 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
         kept.tables.push(union);
         kept.rels.push(total);
         ends.push(end);
+    }
+    for (changed, cap, at, ident) in copies {
+        let end: &HeadEnd = &ends[at];
+        batch.place_rows(mj::Rows::Table(&changed), cap, Some(0), end.lat.as_ref().expect("a lattice head's counters"), &ident, into(end.head)?, 0).map_err(e)?;
+        kept.tables.push(changed);
     }
     Ok(ends)
 }

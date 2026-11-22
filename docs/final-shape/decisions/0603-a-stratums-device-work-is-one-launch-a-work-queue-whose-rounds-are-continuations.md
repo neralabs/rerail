@@ -273,7 +273,8 @@ its launches: fewer than its rounds.
 - **A union over placed rows has a gate** (`append_rows`): its rows' total against its room. Past it, the round
   stops, and the head's union floor is twice the rows seen (`union_floor`). A round's tail makes every head's union
   first, then checks that the arena holds the rest (`room_check`, a `CHECK` op of the size script), before any
-  work that may not run twice (a lattice's fold).
+  work that may not run twice (a lattice's fold). (Both changed in 5d, below: the union is placed, and the room
+  check is gone.)
 - **A count's words order the work.** A stage, a witness, a row's scatter and a dedup now list their totals as read
   and written (`Job::order`). A union's sum read the count a dedup wrote in the same level once no host gate ended
   the level between them: the stage gates are gone for placed tables (`round_gate` skips them).
@@ -281,3 +282,64 @@ its launches: fewer than its rounds.
   Its places are 5d's other half.
 - **Measured:** spark2's CPU backend, 45 of 45 (67 s); the mini's Metal (an M1), 32 of 32: its compiler takes the
   kernel.
+
+### Done (2026-11-22): the compiler refuses a pointer in a record a size script writes
+
+5b's lesson made a rule the compilers check, on both sides:
+
+- **The kernel's records of words** (`UKL_WORD_RECORD`, `ukl/backend.h`). The words a size script writes, and other
+  groups read one word at a time, coherent, are their own structs: `JobWords` (a job's counts' first word, its
+  index's first bucket and key, its placed tables' offsets), `ScanWords` and `SortWords`. The macro names every field.
+  A pointer among them is a compile error: a pointer has no remainder (`% 1u`). So is a field that is not 32 bits,
+  or a field left out (the sizes named are not the record's). A word is read by its index, `UKL_WORD_INDEX(T, f)`,
+  which compiles only for a record. Checked offline: a pointer put in `ScanWords`, and a field left out, each fail
+  Metal's front end at the record.
+- **The host's word sites** (`WordAt`, `word_at!`). Every place a size script writes or loads (`Late::Desc`, `Scan`,
+  `Sort`, `Pending`, and the parameter blocks' cap sites) is a `WordAt`. Only `word_at!(T, field)` makes one, and it
+  refuses a field that is not a `u32`: `word_at!(JobDesc, cnt)`, a 64-bit address, fails with "expected `&u32`,
+  found `&u64`". A dedup's word array is indexed (`WordAt::word`). The magic offsets (`JOB_BASE_WORD`,
+  `JOB_AT_WORD`, `SCAN_*_WORD`, `DD_*` bytes) are gone.
+
+### Done (2026-11-22): 5d, a fold's places and tables are the device's
+
+- **A union is placed** (`Batch::table`, `append_rows`). A `Place` job (`JobKind::Place`, no items) claims it at the
+  start of the level after the union's sum, its rows the sum's total word (`Job::o_rows`, `OutRows::Word`). Its copies
+  write into it (`Job::d_place`, `writes_placed`): its offset and its stride (`CP_DST_STRIDE`) from its place. A union
+  no longer overflows. The gate left in `append_rows` is optional (`room`): it guards the head relation's rows
+  reserved (a round on the host's, `encode_tail`), not the union's table. A program of rounds has none: its head gate
+  (the deltas' rooms, the relations' bounds) covers it, and `union_floor` is gone from it.
+- **The tables after a union are placed**: a set head's distinct rows and new rows (the anti-join's), and a lattice
+  head's changed rows.
+- **A fold's places are a count's** (`HPlace`). Its places, its keys' chosen rows and their flags are three arrays,
+  claimed together where its union is placed: a power of two of twice the union's room (16 at least). The script
+  writes their mask (`LP_PMASK`) and its rows' room (`LP_N`, its columns' stride). The kernel takes them from `h_at`
+  (`LA`, `LT`, `H`). Its clear's and its merge's items are its mask's word and one (a segment's `plus`). Its changed
+  rows are claimed with its union's room at its level's start (`OutRows::InRoom`). A dedup's places use the same
+  `HPlace`.
+- **The room check is gone.** Every claim a round makes is now in a level's script, at that level's start, before
+  the level runs, and a fold claims at its own level's start. So a round's tail runs its set heads' work first, then
+  every lattice fold, in one level, then the folds' copies, which claim nothing. A stop for the arena's room comes
+  before any fold, and a fold never runs twice. `Batch::room_check`, the script's `CHECK` op, `Late::Rest` and
+  `Program::checks` are removed. A fold read its text arena as a write (`job.order`), which kept two folds apart. It
+  is a read.
+- **Measured:** spark2's CPU backend, 45 of 45; the mini's Metal (an M1), 32 of 32.
+
+### Done (2026-11-22): 5e, a live relation's index sorts its rows as claimed
+
+- **A level's keys end to end, as claimed.** The level's size script sums its indexes' rows: a live relation's
+  length as claimed (at most its bound), else its bound. It writes each index's first key (`JobWords::eb`), each sort
+  pass's keys and tiles (`SortWords`), and its histograms' scan, a sized scan (`Program::scan_levels_sized`, one for
+  every pass) of 256 words a tile.
+- **Its passes push what those need.** An index's key and place items are its relation's length's (`Job::rows`,
+  `ROWS_ITEMS`). The radix passes' tiles are segments of the tiles word. A live index's keys past its rows are not
+  made, so its padding bucket (`mask + 1`) is gone.
+- **Measured:** spark2's CPU backend, 45 of 45; the mini's Metal, 32 of 32 (the closure test's assertion below
+  with them).
+
+### Done (2026-11-22): the closure test's launches are fewer than its rounds
+
+`a_recursive_stratum_on_the_device_is_the_cpus_fixpoint` asserts `dispatches < rounds`. On spark2's CPU backend it
+takes 8 rounds in 5 launches: the seed round, then programs of rounds that stopped 3 times. Twice the arena was full
+(a program's first arena is twice its claims as guessed on the host: about 0.8 MB, then 31 MB, wanted), once a
+round's new rows passed its delta's room (3,120 rows in 1,024). Both are reruns step 5 left by design. Making them
+rare is next: a first arena and deltas' rooms from the rows a component can reach, not from the host's guesses.

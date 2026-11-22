@@ -186,6 +186,9 @@
                 let r = report.as_ref().expect("a device report");
                 assert!(r.refused.is_none(), "{r:?}");
                 assert!(r.rounds > 5, "the closure takes rounds: {r:?}");
+                // Its rounds on the device, many a launch (decision 0603): its tables sized there, so no round stops
+                // for a table's room and goes back to the host.
+                assert!(r.dispatches < r.rounds, "the closure's launches fewer than its rounds: {r:?}");
                 // Written in place into the head's block (decision 0325 step 4): none read back.
                 assert!(r.placed > 1000 && r.placed == r.distinct, "the fixpoint's rows written in place: {r:?}");
                 // Its total is probed by `v1` (the left rule) and made distinct of by both columns, each round: its

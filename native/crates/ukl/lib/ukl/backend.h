@@ -512,6 +512,34 @@ UKL_INLINE uint32_t ukl_mask_rank(ukl_mask_t m, uint32_t l) { return ukl_mask_co
 #endif
 #endif
 
+// A word record (decision 0603 step 5b): a struct whose words a kernel writes and other groups read one word at a
+// time, coherent: offsets into an arena, counts, sizes, never a pointer. `UKL_WORD_RECORD(T, f, ...)` names every
+// field of `T`, and the compiler refuses the record when one is a pointer (a pointer has no remainder) or not 32 bits,
+// or when a field is left out (their sizes are not the record's). A word is read by its index (`UKL_WORD_INDEX`),
+// which names a record's field only. A coherent load of a struct holding pointers crashed the M1's Metal compiler
+// service at each try, and the offline check did not show it: a pointer in a record is an error here instead.
+#define __UKL_WORD_SIZE(T, f) + (0u * sizeof(((UKL_PRIVATE T*)0)->f % 1u) + (sizeof(((UKL_PRIVATE T*)0)->f) == 4u ? 4u : 1u))
+#define __UKL_EACH_1(m, T, a) m(T, a)
+#define __UKL_EACH_2(m, T, a, ...) m(T, a) __UKL_EACH_1(m, T, __VA_ARGS__)
+#define __UKL_EACH_3(m, T, a, ...) m(T, a) __UKL_EACH_2(m, T, __VA_ARGS__)
+#define __UKL_EACH_4(m, T, a, ...) m(T, a) __UKL_EACH_3(m, T, __VA_ARGS__)
+#define __UKL_EACH_5(m, T, a, ...) m(T, a) __UKL_EACH_4(m, T, __VA_ARGS__)
+#define __UKL_EACH_6(m, T, a, ...) m(T, a) __UKL_EACH_5(m, T, __VA_ARGS__)
+#define __UKL_EACH_7(m, T, a, ...) m(T, a) __UKL_EACH_6(m, T, __VA_ARGS__)
+#define __UKL_EACH_8(m, T, a, ...) m(T, a) __UKL_EACH_7(m, T, __VA_ARGS__)
+#define __UKL_EACH_9(m, T, a, ...) m(T, a) __UKL_EACH_8(m, T, __VA_ARGS__)
+#define __UKL_EACH_10(m, T, a, ...) m(T, a) __UKL_EACH_9(m, T, __VA_ARGS__)
+#define __UKL_EACH_11(m, T, a, ...) m(T, a) __UKL_EACH_10(m, T, __VA_ARGS__)
+#define __UKL_EACH_12(m, T, a, ...) m(T, a) __UKL_EACH_11(m, T, __VA_ARGS__)
+#define __UKL_EACH_N(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, N, ...) N
+#define __UKL_EACH_CAT(a, b) a##b
+#define __UKL_EACH_AT(n) __UKL_EACH_CAT(__UKL_EACH_, n)
+#define __UKL_EACH(m, T, ...) __UKL_EACH_AT(__UKL_EACH_N(__VA_ARGS__, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0))(m, T, __VA_ARGS__)
+#define UKL_WORD_RECORD(T, ...)                                                                                        \
+    enum { T##_is_a_word_record = 1 };                                                                                 \
+    UKL_STATIC_ASSERT(sizeof(T) == 0u __UKL_EACH(__UKL_WORD_SIZE, T, __VA_ARGS__), #T ": a word record's fields are its 32-bit words, all named")
+#define UKL_WORD_INDEX(T, f) ((uint32_t)T##_is_a_word_record * (uint32_t)(UKL_OFFSETOF(T, f) / 4u))
+
 // A program's specialization constant (decision 0440 step B): `UKL_CONSTANT_U32(name)` declares `name`, a uint32_t
 // fixed when the program is made, so the compiler folds it (the label passes' tape format). Metal's function constant
 // 0; elsewhere the define `UKL_CONSTANT_0` each value's program is compiled with (`rerail_gpu::kernels::program_with`).
