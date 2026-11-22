@@ -1978,6 +1978,8 @@ fn every_switch_lowering_reads_is_classified() {
     /// and profiles, the store's and the cost model's paths, the session's binding.
     const NOT_PREPARING: &[&str] = &[
         "RERAIL_BLESS_CENSUS",
+        // Why a narrow copy is not diffed (decision 0575): a trace.
+        "RERAIL_NARROW_DIFF_DEBUG",
         "RERAIL_IDEMPOTENCY_DUMP",
         "RERAIL_MAGIC_CHECK",
         "RERAIL_MERGE_WHY",

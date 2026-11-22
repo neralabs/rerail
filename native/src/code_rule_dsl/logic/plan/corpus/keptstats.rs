@@ -756,9 +756,10 @@ pub(super) struct SemijoinCounts {
 
 impl SemijoinCounts {
     /// Node `node`'s row, its columns in `input_columns` order with the node at `at`: counted unless counted already.
-    pub(super) fn row(&mut self, node: i64, at: usize, row: &[i64]) {
+    /// Whether it was counted now.
+    pub(super) fn row(&mut self, node: i64, at: usize, row: &[i64]) -> bool {
         if !self.nodes.insert(node) {
-            return;
+            return false;
         }
         self.node = Some(at);
         if self.all.len() < row.len() {
@@ -770,6 +771,7 @@ impl SemijoinCounts {
             *self.all[c].entry(v).or_default() += 1;
             *self.by_doc[c].entry((v, d)).or_default() += 1;
         }
+        true
     }
 
     /// The statistics (`syntax::statistics`' rows) of the columns `names`, each named in `input` (the rows' columns):

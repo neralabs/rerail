@@ -1481,6 +1481,19 @@ pub mod tests {
     }
     use super::*;
 
+    /// A semi-join's rows at the held nodes read back as kept: the nodes walked, a node with no row among them, and
+    /// each row; a width of 0 or rows that are not whole are not read as kept.
+    #[test]
+    fn a_semijoins_kept_rows_read_back_as_written() {
+        let node = |d: i64, i: i64| d << 32 | i;
+        let kept = SemijoinRows { width: 3, held: vec![node(1, 0), node(1, 1), node(2, 4)], rows: vec![1 << 32, node(1, 0), 7, 1 << 32, node(1, 1), 9] };
+        assert_eq!(SemijoinRows::decode(&kept.encode()), Some(kept.clone()));
+        let mut words = kept.encode();
+        words.pop();
+        assert_eq!(SemijoinRows::decode(&words), None);
+        assert_eq!(SemijoinRows::decode(&[0, 0]), None);
+    }
+
     /// A kept input with its delta reads as its rows now: the changed owners' kept rows gone, their new rows after
     /// the rest, and a lookup finds a row through the kept rows' index at its place now.
     #[test]
@@ -2185,6 +2198,67 @@ pub(in crate::code_rule_dsl) fn put_base_stats(store: &ContentStore, was: &InKep
         i64::from_le_bytes(w)
     }));
     let name = KeptRel { name: base_stats_name(rel), ident: base_documents_ident(&binds) };
+    let n = words.len();
+    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'], words, n)]);
+}
+
+fn semijoin_rows_name(rel: &str) -> String {
+    format!("#semijoin-rows/{rel}")
+}
+
+/// A semi-join relation's rows at the nodes the exports held (Q396), kept beside the documents' table as the base
+/// relations' statistics are (`base_stats`), with the digest of the documents they were read of: the nodes walked
+/// (`held`, sorted), and each one's row (`rows`, `width` values a row, in `input_columns` order). A next run takes the
+/// rows of its held nodes from them and walks only the nodes they do not answer for, where reading every held node's
+/// document again made all of them (ep2's edit: 300 documents, 1.1 s).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct SemijoinRows {
+    pub(in crate::code_rule_dsl) width: usize,
+    pub(in crate::code_rule_dsl) held: Vec<i64>,
+    pub(in crate::code_rule_dsl) rows: Vec<i64>,
+}
+
+impl SemijoinRows {
+    /// As words: the width, the held nodes' number and the nodes, then the rows.
+    fn encode(&self) -> Vec<i64> {
+        let mut words = Vec::with_capacity(2 + self.held.len() + self.rows.len());
+        words.extend([self.width as i64, self.held.len() as i64]);
+        words.extend_from_slice(&self.held);
+        words.extend_from_slice(&self.rows);
+        words
+    }
+
+    fn decode(words: &[i64]) -> Option<Self> {
+        let [width, n, ..] = *words else { return None };
+        let (width, n) = (usize::try_from(width).ok().filter(|&w| w > 0)?, usize::try_from(n).ok()?);
+        let held = words.get(2..2 + n)?.to_vec();
+        let rows = words[2 + n..].to_vec();
+        (rows.len() % width == 0).then_some(SemijoinRows { width, held, rows })
+    }
+}
+
+/// Each semi-join relation `rels`' rows at the held nodes as kept beside the documents' table of `binds`
+/// (`put_semijoin_rows`), with the digest of the documents they were read of.
+pub(in crate::code_rule_dsl) fn semijoin_rows(store: &ContentStore, space: [u8; 32], binds: [u8; 32], rels: &[&str]) -> Result<HashMap<String, (u64, SemijoinRows)>> {
+    let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(HashMap::new()) };
+    let ident = base_documents_ident(&binds);
+    let mut out = HashMap::new();
+    for rel in rels {
+        let Some(entry) = bound.entry(&semijoin_rows_name(rel), &ident, DOCS_PART) else { continue };
+        let mut words: Vec<i64> = Vec::with_capacity(entry.len());
+        entry.each_rows(&mut |r| words.extend_from_slice(r));
+        if let Some(rows) = SemijoinRows::decode(&words) {
+            out.insert((*rel).to_owned(), (entry.digest(), rows));
+        }
+    }
+    Ok(out)
+}
+
+/// Queues semi-join relation `rel`'s rows at the held nodes, read of documents of digest `digest`, beside the
+/// documents' table (`semijoin_rows`).
+pub(in crate::code_rule_dsl) fn put_semijoin_rows(store: &ContentStore, was: &InKept, binds: [u8; 32], rel: &str, digest: u64, rows: &SemijoinRows) {
+    let words = rows.encode();
+    let name = KeptRel { name: semijoin_rows_name(rel), ident: base_documents_ident(&binds) };
     let n = words.len();
     store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'], words, n)]);
 }
