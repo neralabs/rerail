@@ -79,11 +79,32 @@ const LOOKUP_NS: f64 = 150.0;
 /// and the rows written.
 const SOLVE_NS: f64 = 12.0;
 
+/// A chunk of the rows made on lookup, in a block of the run's (decision 0353): an axis's answer written once where it
+/// is computed. On the heap before (a 300-file run's peak held 13 MB of them under one stratum's joins, on the M3).
+/// Written and read as atomics: a row is written under the lock, and read by any thread once its run is handed out.
+struct Pairs(crate::code_rule_dsl::facts::rows::BlockVec<u64>);
+
+impl Pairs {
+    fn new(n: usize) -> Self {
+        let mut v = crate::code_rule_dsl::facts::rows::BlockVec::with_capacity_in(None, n);
+        v.resize(n, 0);
+        Pairs(v)
+    }
+
+    /// Its row `i`.
+    fn at(&self, i: usize) -> &AtomicU64 {
+        assert!(i < self.0.len());
+        // SAFETY: `i` is within the vector, whose `u64`s lie aligned in its block for as long as it lives, and are
+        // only ever reached through this, as atomics.
+        unsafe { &*self.0.as_ptr().add(i).cast::<AtomicU64>() }
+    }
+}
+
 pub struct Within {
     batch: Arc<Batch>,
     mode: Mode,
     /// Per side, each row: inner node row << 32 | outer node row (rows of the batch's `node`).
-    chunks: [[OnceLock<Box<[AtomicU64]>>; CHUNKS]; 2],
+    chunks: [[OnceLock<Pairs>; CHUNKS]; 2],
     /// Per side, the rows made and per node row the run of its rows as inner (`0`) or outer (`1`).
     made: Mutex<([usize; 2], [FxHashMap<u32, (u32, u32)>; 2])>,
     /// Every node's containers made (a scan): the rows they span.
@@ -759,8 +780,8 @@ impl Within {
         for (i, other) in others.iter().enumerate() {
             let (inner, outer) = if side == 0 { (row, base + other) } else { (base + other, row) };
             let (k, at) = slot(start + i);
-            let chunk = self.chunks[side][k].get_or_init(|| (0..BASE << k).map(|_| AtomicU64::new(0)).collect());
-            chunk[at].store(u64::from(inner) << 32 | u64::from(outer), Ordering::Relaxed);
+            let chunk = self.chunks[side][k].get_or_init(|| Pairs::new(BASE << k));
+            chunk.at(at).store(u64::from(inner) << 32 | u64::from(outer), Ordering::Relaxed);
         }
         made.0[side] += others.len();
         if side == 0 {
@@ -783,7 +804,7 @@ impl Within {
         debug_assert!(!(self.solvable() && row < LOOKED_UP), "a solved row is the relation's");
         let side = usize::from(row >= OUTER);
         let (k, at) = slot(row - if side == 0 { self.looked_up() } else { OUTER });
-        self.chunks[side][k].get().unwrap_or_else(|| panic!("within: row {row} not made (mode {:?}, solvable {}, solved {}, {} made)", self.mode, self.solvable(), self.solved.get().is_some(), self.made.lock().0[side]))[at].load(Ordering::Relaxed)
+        self.chunks[side][k].get().unwrap_or_else(|| panic!("within: row {row} not made (mode {:?}, solvable {}, solved {}, {} made)", self.mode, self.solvable(), self.solved.get().is_some(), self.made.lock().0[side])).at(at).load(Ordering::Relaxed)
     }
 
     fn shape(&self) -> Shape {

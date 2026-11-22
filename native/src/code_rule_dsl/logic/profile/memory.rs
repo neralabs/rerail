@@ -238,6 +238,8 @@ pub(super) fn sample() {
             });
         }
         let _ = rerail_accel::exec::service("profile memory", None, move || {
+            // It opens no span (it runs to the process's end): what it allocates is named by its thread.
+            rerail_prof::heap::name_thread("profile memory (the memory sampler)");
             let start = std::time::Instant::now();
             let mut last_max = footprint().1;
             loop {

@@ -10355,3 +10355,11 @@ Main's #985 (a session lets go of removed worktrees) is taken whole, beside roll
 - **The reads**: written again from the merged CLIF, bodies included (`write-reads.sh` now prints every generated
   header).
 - **The lines in place**: ours' `home()` reads; theirs' guest places; the `Loc` views refused with the lines.
+
+### Q483. Roll-up 62 (benchmarks-on-integration b5fe5fcaa6 onto Pulling-it-all-together): what the merge chose
+
+Places off the tape with span rows only, and the measure's rows in blocks (`notes/roll-up-62-benchmarks.md`):
+- **The place rows**: theirs' `node_places` gate on ours' one placing closure (0612).
+- **One load hook** in rerail-device-metal's test binary: ours', with strict mode and the core names theirs' second
+  hook added (two registered the carriers twice).
+- **0601 in theirs' test**: the index-again test's launches are an evaluation's.

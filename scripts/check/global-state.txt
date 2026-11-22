@@ -55,6 +55,7 @@ native/crates/prof/src/lib.rs::SIZES	stays	the allocator's heap sampler (`RERAIL
 native/crates/prof/src/lib.rs::SPANS	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::START	stays	the process's start: a clock origin
 native/crates/prof/src/lib.rs::STATE	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
+native/crates/prof/src/lib.rs::SYSTEM_NAMES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): each numbered thread's system name, kept from inside an allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::TABLE	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::THREADS	stays	an id counter: append-only
 native/crates/prof/src/lib.rs::THREAD_NAMES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is

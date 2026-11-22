@@ -2327,7 +2327,7 @@ impl<'a> Run<'a, '_> {
             if (*rows as i64) < OBS_MIN {
                 continue;
             }
-            let joined: u64 = ha.iter().map(|(k, n)| n * hc.get(k).copied().unwrap_or(0)).sum();
+            let joined: u64 = ha.iter().map(|(k, n)| n * hc.get(k)).sum();
             out.push((b.sig(c, b.vars(a)), [*rows as i64, joined as i64]));
         }
         out

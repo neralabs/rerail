@@ -1605,6 +1605,22 @@ impl<'p> Run<'p> {
         }
     }
 
+    /// The indexes stages `from..` probe, found again for `batch`, which encodes them again (`complete`): an index
+    /// the batch they were first encoded in built may have gone back when it was done (`mj::Batch::again`).
+    fn indexes_again(&mut self, from: usize, batch: &mut mj::Batch) -> Result<(), String> {
+        for k in from..self.plan.stages.len() {
+            if let Some((dev, Some(ix))) = &mut self.rels[k] {
+                *ix = batch.again(dev, ix).map_err(|e| format!("{e:?}: an index found again"))?;
+            }
+            for (dev, ix, _) in self.probes[k].iter_mut().flatten() {
+                if let Some(ix) = ix {
+                    *ix = batch.again(dev, ix).map_err(|e| format!("{e:?}: a probe's index found again"))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Encodes stages `from..` into `batch`; the component's own relations are `own`'s.
     fn encode(&mut self, from: usize, batch: &mut mj::Batch, rep: &mut Report, own: &mut Own, names: &Interner) -> Result<(), String> {
         for k in from..self.plan.stages.len() {
@@ -2158,6 +2174,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
         // A run again is a rerun (decision 0540): its launches charge the run's reruns' budget.
         let _rerun = rerail_accel::gpu::launch::rerun();
         for (k, s) in again {
+            runs[k].indexes_again(s, b)?;
             runs[k].encode(s, b, rep, &mut Own::default(), names)?;
         }
         finish_timed(b, rep)?;
@@ -2457,9 +2474,15 @@ impl Own {
             return Ok(Some((dev, None)));
         }
         let key = (rel, delta, cols.to_vec());
-        if let Some(ix) = self.sorts.get(&key) {
-            rep.sort_hits += 1;
-            return Ok(Some((dev, Some(ix.clone()))));
+        // A sort an earlier round's batch made is found again where its relation keeps it (`mj::Batch::again`): that
+        // batch may have given it back (another batch built the same one, or its builder was cut by an overflow), and
+        // a given-back index reads no rows. The cache handed it out as it was before: the next round's probes then
+        // derived nothing from it.
+        if let Some(ix) = self.sorts.get(&key).cloned() {
+            let ix = batch.again(&dev, &ix).map_err(|e| format!("{e:?}: an index of {} rows found again", dev.rows))?;
+            if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+            self.sorts.insert(key, ix.clone());
+            return Ok(Some((dev, Some(ix))));
         }
         let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
@@ -2543,7 +2566,8 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         pending = again.iter().map(|&(k, _)| k).collect();
         rerun.get_or_insert_with(rerail_accel::gpu::launch::rerun);
         for (k, s) in again {
-            if let Err(e) = runs[k].as_mut().expect("a run").encode(s, &mut batch, rep, own, names) {
+            let r = runs[k].as_mut().expect("a run");
+            if let Err(e) = r.indexes_again(s, &mut batch).and_then(|()| r.encode(s, &mut batch, rep, own, names)) {
                 let _ = batch.finish();
                 return Err(e);
             }
