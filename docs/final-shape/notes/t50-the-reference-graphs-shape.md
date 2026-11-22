@@ -735,6 +735,55 @@ strata 99.9 → 117.2 s, cross 24.8 → 36.8 s, the rest 18.1 → 14.4 s. Next b
 - `rf_unq_bare` in the cross part (5.2 s), now reading `text` at the named nodes there.
 - The batch's whole read for `text` (above).
 
+### Step 6 in part: parent edges, label formulas and field captures in the matcher wave (2026-11-22)
+
+Three changes, each with its rows checked (s1000's digest, `all`'s 17 relations) and its own switch:
+
+- **A root's negated parent edge is the matcher's.** `Absorb` (0106 §4) takes `!field(_, "F", r)` into the root's
+  matcher as `{"not": {"inside": {"pattern": "$_P", "field": "F", "stopBy": "neighbor"}}}`
+  (`RERAIL_AST_PART_PARENTS=off`), but only in a rule it rewrites for its fields anyway. Taken alone, it made
+  `nameref` (a kind and two parent edges) a matcher, and `pre_227` and `pre_152` (6.1 s) were gone. That lost every
+  read inside a guest: a quoted annotation's nodes have no tape in the wave. Two typing oracle tests failed
+  (`quoted_annotations_are_read_as_their_code`, `leg_083_typed_counts_resolve_by_the_receivers_type`). So `nameref`
+  stays a join until the wave runs over guests' trees; that is the change that gets the 6 s back.
+- **A root program of label reads is their AND** (`LoweredMatcher::label_formula`). `KIND k; SUPERTYPE L…; CAPTURE;
+  EMIT` has as roots the entry's nodes in every label, the labels' words ANDed, where it ran a program at each
+  candidate (measured with `nameref` a matcher: its 2.7 M and 2.5 M roots had cost 0.57 µs each, and the root walks
+  went 11.1–12.3 s → 8.8 s). On the CPU; Metal keeps `label_copy` (step 9).
+- **A capture that is the root's field child is read from the tape** (`ast_wave::field_captures`,
+  `RERAIL_AST_DIRECT_CAPTURES=off`): `Absorb`'s capture matchers (`attribute`'s `attribute` and `object`, `call`'s
+  `function`, …) took 1.2 s of W's matcher at each root, now 0.13 s. `field_captures_read_from_the_tape_are_ws`.
+
+The run (m1max, profiling, cold), as committed: instructions 1,819 → 1,806 G, CPU 178.7 s at load 12 (182.7 s
+before); rows the same. With `nameref` a matcher it was 1,786 G.
+The profile now names each matcher's root walks and W's captures (`wave.roots_us.<rel>`, `wave.captures_us.<rel>`).
+
+Left, by size:
+
+- **The wave's interpreter**, about 9 s of root walks and 3–6 s of label passes over 9.6 M nodes and 27 matchers. Its
+  CPU form has no Cranelift form (`cpu-jit-form` missing); the authored `inside … argument_list` (`rr_ast_24`) runs its
+  program at every node, 0.66 s, for a parent's kind.
+- **W's captures of authored matchers**, 2.5 s: `rr_ast_21_2` (1.1 s), `rr_ast_9_2` (0.8 s), `rr_ast_20_1`,
+  `rr_ast_6_1`, `rr_ast_19_1`, `rr_ast_5_1`. Each captures through `inside … stopBy end` with `any` alternatives, so a
+  root's captures need the root programs' own capture output (0106 §3, Open). `rr_ast_6_1` is `nearest` to a
+  function definition, an axis.
+
+### Steps 5 and 8, where they stand (2026-11-22)
+
+- **Step 5.** The climb runs in one wave (0570) with its readers in it (0561); what is left is its probes, about
+  200–260 ns each into the index runs (`look`'s stratum 3.9 s, `wstart`'s 3.3 s). The structure that would answer
+  them faster, a sorted hash, was declined for its memory (2026-11-21, above). So step 5 is as far as that decision
+  lets it go; the rest is the executor's per-row work, spread over every rule.
+- **Step 8.** Already holds: a file's memo entry keeps its exports (93) and its file-local outputs, and the cross
+  part keeps 4 relations for the next run. What is left is the writing of them: the entries into their segments
+  (1.0 s) and their statistics (0.9 s, `keptstats`).
+- **The cross part's `text`.** Five cross rules read `rf_named($e, $t), text($e, $x)` (`rf_unq_bare`, `rf_ref`'s four
+  cross rules), `rf_named` cross-file itself, so no chunk can join them. The first stratum to read `text` has the
+  corpus batch make every document's node rows and string annotations again: 3.3 s on one thread (`rf_unq_bare`'s
+  `node rows` 2.15 s, `produced rows: string annotations` 1.18 s), where the chunks made them already. That is the
+  site marked `copy (0353 step 3)`: core.rerail's per-node rows, which become tape views. It is the largest serial
+  item left in the run.
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.

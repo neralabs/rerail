@@ -155,7 +155,7 @@ fn fresh(held: &mut HashSet<String>, count: &mut usize, stem: &str) -> String {
 /// tested without a kind stays a join. With `parents`, a negated parent edge of the root, `!field(_, "F", r)` (the
 /// root is no parent's field `F`, whatever the parent's kind), is the matcher's `{"not": {"inside": {"pattern":
 /// "$_P", "field": "F", "stopBy": "neighbor"}}}`, tested in its pass rather than probed per row as an anti-join (t50
-/// step 6: `nameref`'s). `rewritten` counts the rules rewritten.
+/// step 6), where the rule is a matcher for its fields anyway. `rewritten` counts the rules rewritten.
 struct Absorb {
     capture: bool,
     parents: bool,
@@ -227,8 +227,11 @@ impl RulePass for Absorb {
                 }
                 taken.extend([fi, ki]);
             }
-            // The root's negated parent edges: `!field(_, "F", r)`, its first argument a wildcard.
-            if self.parents {
+            // The root's negated parent edges: `!field(_, "F", r)`, its first argument a wildcard. Only in a rule
+            // rewritten for its fields anyway: a matcher runs over a file's tape, not a guest's (a quoted annotation's
+            // nodes have no tape in the wave), so a rule of only a kind and its parent edges (`nameref`'s) made a
+            // matcher lost every read inside a guest (`quoted_annotations_are_read_as_their_code`).
+            if self.parents && parts.len() >= 2 {
                 for (ni, nl) in body.iter().enumerate() {
                     let Lit::Atom(a) = nl.view() else { continue };
                     if !a.neg() || v.rel_name(a.rel()) != "field" || drop.contains(&ni) || taken.contains(&ni) {
