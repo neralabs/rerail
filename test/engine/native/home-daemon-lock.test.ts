@@ -5,7 +5,8 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type * as FileReplace from "../../../src/engine/file-replace.js";
 import {
   holdHomeDaemonLock,
   HomeDaemonConflictError,
@@ -22,11 +23,30 @@ import { removeFolder } from "../../support/platform/remove-folder.js";
 const packageRoot = resolve(import.meta.dirname, "..", "..", "..");
 const lockModule = pathToFileURL(join(packageRoot, "src", "engine", "native", "home-daemon-lock.ts")).href;
 
+/** How many of this process's next whole-file writes fail, as one does while another program has the file open. */
+const writes = vi.hoisted(() => ({ failing: 0 }));
+
+vi.mock("../../../src/engine/file-replace.js", async importActual => {
+  const real = await importActual<typeof FileReplace>();
+  return {
+    ...real,
+    replaceFileSync: (...args: Parameters<typeof real.replaceFileSync>): void => {
+      if (writes.failing > 0) {
+        writes.failing -= 1;
+        throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+      }
+      real.replaceFileSync(...args);
+    },
+  };
+});
+
 const children: ChildProcess[] = [];
 const leases: HomeDaemonLease[] = [];
 const homes: string[] = [];
 
 afterEach(async () => {
+  writes.failing = 0;
+  vi.restoreAllMocks();
   for (const lease of leases.splice(0)) lease.release();
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
@@ -110,6 +130,40 @@ describe("the daemon lock of a Rerail home", () => {
     expect(homeDaemonStarting(home)).toBeUndefined();
   });
 
+  // The record said `starting` for the daemon's whole life when its rewrite at the end of the start failed: the rewrite
+  // was made only after a read of the record, which can fail, and a failed write was neither tried again nor logged.
+  it("records its start as over though its record does not read", async () => {
+    const home = await temporaryHome();
+    const lease = await holdHomeDaemonLock(home);
+    leases.push(lease!);
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), "not a record");
+    lease!.started();
+    expect(homeDaemonHolder(home)).toBe(process.pid);
+  });
+
+  it("records its start as over at a second try when the first write fails, and logs nothing", async () => {
+    const home = await temporaryHome();
+    const lease = await holdHomeDaemonLock(home);
+    leases.push(lease!);
+    const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    writes.failing = 1;
+    lease!.started();
+    expect(homeDaemonHolder(home)).toBe(process.pid);
+    expect(homeDaemonStarting(home)).toBeUndefined();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  // The daemon calls it once it serves: a throw there would end a daemon that serves.
+  it("says in its log that it could not record its start as over when both writes fail, and returns", async () => {
+    const home = await temporaryHome();
+    const lease = await holdHomeDaemonLock(home);
+    leases.push(lease!);
+    const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    writes.failing = 2;
+    expect(() => lease!.started()).not.toThrow();
+    expect(log.mock.calls).toEqual([[`rerail daemon: could not record in ${join(home, LOCKS_DIR, "daemon.json")} that this daemon's start is over\n`]]);
+  });
+
   it("reads a starting record that says nothing of the log as output from the log's beginning", async () => {
     const home = await temporaryHome();
     await mkdir(join(home, LOCKS_DIR), { recursive: true });
@@ -184,6 +238,9 @@ describe("the daemon lock of a Rerail home", () => {
     const other = await holdInAnotherProcess(home);
     expect(homeDaemonHolder(home)).toBe(other.pid);
     expect(lease!.holdsHome()).toBe(false);
+    // The end of its start leaves the record of the daemon that holds the home at the path now.
+    lease!.started();
+    expect(homeDaemonHolder(home)).toBe(other.pid);
     // Letting go, as its process exits, leaves the record of the daemon that holds the home at the path now.
     lease!.release();
     expect(homeDaemonHolder(home)).toBe(other.pid);

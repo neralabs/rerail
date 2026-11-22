@@ -45,7 +45,8 @@ export interface HomeDaemonLease {
   holdsHome(): boolean;
   /**
    * Records that the daemon's start is over: it has written daemon.json and answers. Until then its record beside the
-   * lock says it is starting, so a start that finds it waits for it ({@link homeDaemonStarting}).
+   * lock says it is starting, so a start that finds it waits for it ({@link homeDaemonStarting}). A record it cannot
+   * write at a second try is said in the daemon's log, and the daemon goes on.
    */
   started(): void;
   /** Gives the lock up before process exit, once the daemon has closed. */
@@ -148,14 +149,18 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
   held = taken;
   // The file this process locked, read by path just after: only a home moved in that instant could give another.
   const locked = fileAt(path);
-  return {
+  const lease: HomeDaemonLease = {
     holdsHome() {
       if (locked === undefined || locked === "none") return true;
       const now = fileAt(path);
       return now === undefined || (now !== "none" && now.dev === locked.dev && now.ino === locked.ino);
     },
     started() {
-      if (held === taken && homeDaemonHolder(home) === process.pid) recordHolder(home, false);
+      // Whether this process still holds the home decides, not a read of the record, which can fail: a home moved and
+      // made again at its path holds another daemon's record. A failed write gets one more try, then a line in the log.
+      if (held !== taken || !lease.holdsHome()) return;
+      if (recordHolder(home, false) || recordHolder(home, false)) return;
+      process.stderr.write(`rerail daemon: could not record in ${homeDaemonHolderFile(home)} that this daemon's start is over\n`);
     },
     release() {
       if (held !== taken) return;
@@ -171,6 +176,7 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
       }
     },
   };
+  return lease;
 }
 
 /**
@@ -200,18 +206,20 @@ async function waitForLock(home: string, tryLock: () => NativeExclusiveFileLock 
  * left, or this one, never none. A starting record says where the daemon's output starts in the home's log
  * ({@link logEnd}), so a start that finds it and sees it fail shows that output whole. Never fails the daemon: a holder
  * that could not record itself holds the home all the same, and removes the record an earlier holder left, so the
- * refusal names no pid rather than one that runs no daemon.
+ * refusal names no pid rather than one that runs no daemon. Says whether the record was written.
  */
-function recordHolder(home: string, starting: boolean): void {
+function recordHolder(home: string, starting: boolean): boolean {
   const record = join(home, LOCKS_DIR, HOLDER_FILE);
   try {
     replaceFileSync(record, `${JSON.stringify(starting ? { pid: process.pid, starting, logOffset: logEnd(home) } : { pid: process.pid })}\n`, { mode: 0o600 });
+    return true;
   } catch {
     try {
       rmSync(record, { force: true });
     } catch {
       // Unrecorded, the holder holds the home all the same.
     }
+    return false;
   }
 }
 
