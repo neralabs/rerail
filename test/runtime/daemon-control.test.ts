@@ -843,7 +843,7 @@ describe("a state file Windows left behind", () => {
   });
 
   /** When the daemon of the records below stamped `startedAt`. */
-  const OLDER_STARTED_AT = 1_800_000_000_000;
+  const OLDER_STARTED_AT = 1_700_000_000_000;
 
   /**
    * A Windows machine where the daemon a state file records runs an engine of a release before the proof, which has no
@@ -1040,6 +1040,39 @@ describe("a state file Windows left behind", () => {
     await writeFile(stateFile, JSON.stringify(state));
     expect(await stopDaemon(home, machine)).toBe("not-daemon");
     expect(existsSync(stateFile)).toBe(false);
+  });
+
+  // A record stamped while the clock ran an hour ahead of the time it was set back to: every live process started
+  // before that stamp, so its start shows no process wrote the record. The lookup keeps it as not answering, and the
+  // stop ends nothing, sends nothing and says why.
+  it("keeps the record of a daemon whose engine has no proof and whose start lies an hour past this machine's clock, and ends nothing", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: Date.now() + 3_600_000 });
+    const sent: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      sent.push(String(url));
+      return Response.json({ status: "ok", pid: DEAD_PID });
+    }));
+    const signals: Array<string | number | undefined> = [];
+    const ends: number[] = [];
+    const machine: DaemonMachine = {
+      ...olderEngine(Date.now() - 60_000),
+      kill: (_pid, signal) => {
+        signals.push(signal);
+        return true;
+      },
+      endProcessStartedBy: pid => {
+        ends.push(pid);
+        return "ended";
+      },
+    };
+    await writeFile(stateFile, JSON.stringify(state));
+    expect(await lookupDaemon(home, machine)).toEqual({ status: "unresponsive", state });
+    await expect(stopDaemon(home, machine)).rejects.toThrow(new RegExp(`could not prove that pid ${DEAD_PID}, which .* names, is this home's daemon, so it ended nothing`, "u"));
+    expect(ends).toEqual([]);
+    expect(signals.filter(signal => signal !== 0)).toEqual([]);
+    expect(sent).toEqual([]);
+    expect(existsSync(stateFile)).toBe(true);
   });
 
   // A daemon that exited by itself between the lookup and its end: the end cannot open it, and its pid is free. The stop
@@ -1687,6 +1720,36 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(await stopDaemon(home, machineWith(platform, signals, () => false, anHourLater))).toBe("not-daemon");
     expect(signals).toEqual([]);
     expect(existsSync(stateFile)).toBe(false);
+  });
+
+  // A record stamped while the clock ran an hour ahead of the time it was set back to, or written so: a process that
+  // started a minute ago, as any live one started before that stamp, would pass for the daemon that wrote it.
+  it.each(["linux", "win32"] as const)("keeps the record and ends nothing, saying why, when its start lies an hour past this machine's clock (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    const ahead = { ...state(platform), startedAt: Date.now() + 3_600_000 };
+    await writeFile(stateFile, JSON.stringify(ahead));
+    const machine = machineWith(platform, signals, () => false, () => Date.now() - 60_000);
+    expect(await lookupDaemon(home, machine)).toEqual({ status: "unresponsive", state: ahead });
+    await expect(stopDaemon(home, machine)).rejects.toThrow(new RegExp(`could not prove that pid ${LIVE_PID}, which .* names, is this home's daemon, so it ended nothing`, "u"));
+    expect(signals).toEqual([]);
+    expect(existsSync(stateFile)).toBe(true);
+  });
+
+  it.runIf(process.platform === "linux")("ends nothing when its start lies an hour past this machine's clock and a live process of this user holds its pid", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const other = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
+    const closed = once(other, "close");
+    try {
+      const ahead = stateFor({ pid: other.pid!, kernelSocketPath: "/nowhere/engine.sock", accessToken: "capability", startedAt: Date.now() + 3_600_000 });
+      await writeFile(stateFile, JSON.stringify(ahead));
+      await expect(stopDaemon(home)).rejects.toThrow(new RegExp(`could not prove that pid ${other.pid}, which .* names, is this home's daemon, so it ended nothing`, "u"));
+      expect([other.exitCode, other.signalCode]).toEqual([null, null]);
+      expect(existsSync(stateFile)).toBe(true);
+    } finally {
+      other.kill();
+      await closed;
+    }
   });
 
   // The home's daemon holds its lock and is busy, beside a holder record an earlier holder left that it could neither

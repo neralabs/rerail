@@ -452,7 +452,9 @@ capability or the native token goes to its URL or pipe, the health probe include
 state without either. `rerail daemon stop`, `rerail daemon start`, a hook's start, set-up and `rerail install --remove`
 end it through its process: one call opens the process, reads its start and ends it through that handle, so the process ended is the one
 whose start was read. A start later by more than 10 s and a pid this user may not signal drop the state unprobed; a
-start not read, or later by 10 s or less, keeps it, and nothing is sent. Every other reader sends such an engine nothing.
+start not read, or later by 10 s or less, keeps it, and nothing is sent, as does a recorded start more than 10 s past
+the reader's clock, which any process's start would come before: no lookup, stop or end takes the process for the daemon
+on it. Every other reader sends such an engine nothing.
 
 **What remains:**
 

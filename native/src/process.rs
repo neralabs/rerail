@@ -127,7 +127,8 @@ pub fn process_started_at(pid: u32) -> Result<Option<f64>> {
 /// and waits through that one handle, so the process ended is the one whose start was read: a pid Windows gives to
 /// another process between two calls is never ended for the one that held it. It answers `ended`, `running` (ended,
 /// still running after the wait), `later` (started after `started_at`, let alone) or `unread` (not opened, as when no
-/// process holds `pid`, its start not read, the wait for its exit failed, or `started_at` no finite number).
+/// process holds `pid`, its start not read, the wait for its exit failed, or `started_at` no finite number or more than
+/// 10 s past this machine's clock).
 #[napi]
 pub fn end_process_started_by(pid: u32, started_at: f64, wait_ms: u32) -> Result<String> {
     #[cfg(windows)]
@@ -152,6 +153,7 @@ mod windows {
     use std::os::windows::ffi::OsStrExt;
     use std::ptr::{null, null_mut};
     use std::sync::{Mutex, PoisonError};
+    use std::time::{SystemTime, UNIX_EPOCH};
     use windows_sys::Win32::Foundation::{
         CloseHandle, FILETIME, GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
         WAIT_OBJECT_0, WAIT_TIMEOUT,
@@ -393,10 +395,24 @@ mod windows {
         }
     }
 
+    /// How far the clock may have moved since a daemon stamped its start, as the TypeScript side allows
+    /// (`START_CLOCK_SLACK_MS`): one set back since then puts the stamp up to this far past now.
+    const START_CLOCK_SLACK_MS: f64 = 10_000.0;
+
+    /// Whether `started_at` can name the time a process started: a finite number of milliseconds since the Unix epoch
+    /// no more than the slack past this machine's clock. Every creation time compares no later than Infinity, or than
+    /// a start further ahead, and none compares to NaN, so any process at the pid would pass for the one it names. A
+    /// clock that reads before the epoch reads as the epoch, so nothing then passes but a start within the slack of it.
+    fn names_a_start(started_at: f64) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_secs_f64() * 1_000.0);
+        started_at.is_finite() && started_at <= now + START_CLOCK_SLACK_MS
+    }
+
     pub(super) fn end_process_started_by(pid: u32, started_at: f64, wait_ms: u32) -> &'static str {
-        // Every creation time compares no later than Infinity, and not later than NaN: a start that is not a finite
-        // number names no process, and nothing is ended.
-        if !started_at.is_finite() {
+        // A start that names no time a process started ends nothing.
+        if !names_a_start(started_at) {
             return "unread";
         }
         let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE;
@@ -573,13 +589,15 @@ mod tests {
             end_process_started_by(child.id(), started - 1.0, 5_000).expect("the call runs");
         assert_eq!(later, "later");
         assert!(child.try_wait().expect("the child is asked").is_none());
-        // A start that is no finite number names no process: it runs on.
-        for nonsense in [f64::INFINITY, f64::NAN] {
+        // A start that is no finite number, or an hour past now, names no process: it runs on.
+        for nonsense in [f64::INFINITY, f64::NAN, started + 3_600_000.0] {
             let end = end_process_started_by(child.id(), nonsense, 0).expect("the call runs");
             assert_eq!(end, "unread");
         }
         assert!(child.try_wait().expect("the child is asked").is_none());
-        let ended = end_process_started_by(child.id(), started, 5_000).expect("the call runs");
+        // One 5 s past now, as a clock set back since the start was stamped leaves it, still names it: it ends.
+        let ended =
+            end_process_started_by(child.id(), started + 5_000.0, 5_000).expect("the call runs");
         assert_eq!(ended, "ended");
         assert!(child.try_wait().expect("the child is asked").is_some());
         assert_eq!(

@@ -32,6 +32,8 @@ import {
   processStartedAt,
   processStartedAtThroughEngine,
   processState,
+  START_CLOCK_SLACK_MS,
+  startNamesProcess,
   type ProcessEnd,
   type ProcessSignal,
 } from "../engine/process-liveness.js";
@@ -426,8 +428,9 @@ const isOptionalString = (value: unknown): boolean => value === undefined || typ
 /**
  * A finite number above 0, as a pid and a start time must be to name a process. Signal 0 answers for a pid of 0 or
  * below, which POSIX `kill` reads as a process group and libuv's Windows `uv_kill` reads 0 as the caller, so such a
- * record would read as a live daemon. A `startedAt` of Infinity, which `JSON.parse` makes of 1e400, comes after every
- * process's start, so any process at the pid would read as the daemon that wrote the record.
+ * record would read as a live daemon. A `startedAt` of Infinity, which `JSON.parse` makes of 1e400, makes no record. A
+ * finite one past the reader's clock still makes one, as a clock set back since the daemon stamped it leaves it, but
+ * proves nothing of the process at its pid ({@link startVerdict}).
  */
 const isPositiveFinite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
 
@@ -784,8 +787,8 @@ function predatesProof(version: string): boolean {
  * ({@link startVerdict}). A process keeps its pid for life, so one that started no later than the record's `startedAt`
  * is the daemon that wrote it: `older`, which is sent nothing ({@link OlderDaemon}). A process that took a gone
  * daemon's pid, one that started later than `startedAt` by more than {@link START_CLOCK_SLACK_MS}, is `gone`, and the
- * record is dropped. A start not read, or within the slack, proves neither: `silent`, so the record is kept and nothing
- * is sent, as for a busy daemon.
+ * record is dropped. A start not read, or within the slack, proves neither, nor does a `startedAt` past the reader's
+ * clock by more than the slack: `silent`, so the record is kept and nothing is sent, as for a busy daemon.
  */
 function olderDaemon(state: DaemonState, machine: DaemonMachine, deadline: number): RecordedEngine {
   return START_VERDICT_ENGINE[startVerdict(state, machine, deadline)];
@@ -829,17 +832,11 @@ export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMac
  *   written that record ({@link holderWroteRecord}), or it started after `startedAt` by more than
  *   {@link START_CLOCK_SLACK_MS}, as a process that took a dead daemon's pid did.
  * - `unknown`: nothing decides: no lock held, no holder record, a lock that cannot be asked, a holder not shown to hold
- *   it, and a start time that cannot be read or falls within the slack; a daemon of a release before the home's lock
+ *   it, a start time that cannot be read or falls within the slack, and a `startedAt` past the reader's clock by more
+ *   than the slack, which names no start ({@link startVerdict}); a daemon of a release before the home's lock
  *   holds none.
  */
 type RecordedProcess = "ours" | "not-ours" | "unknown";
-
-/**
- * How much later than the record's `startedAt` a process must have started to count as another process. A daemon starts
- * before it stamps `startedAt`, so its own start is never later; a process that took its pid started after it died. The
- * slack covers a wall clock set forward since the daemon started, which Linux reads its start against.
- */
-const START_CLOCK_SLACK_MS = 10_000;
 
 /**
  * {@link RecordedProcess} for the process daemon.json in `home` names (`state`), its start times read by `deadline`
@@ -888,8 +885,15 @@ function recordedHolderRuns(home: string, machine: DaemonMachine): boolean {
   return holder !== undefined && processAlive(holder, machine.kill);
 }
 
-/** {@link RecordedProcess} from when the process `state.pid` started, read by `deadline`, against the record's `startedAt`. */
+/**
+ * {@link RecordedProcess} from when the process `state.pid` started, read by `deadline`, against the record's `startedAt`.
+ * A daemon starts before it stamps `startedAt`, so its own start is never later; a process that took its pid started
+ * after it died, later by more than {@link START_CLOCK_SLACK_MS}, which covers a clock set forward since the daemon
+ * started. A `startedAt` further past the reader's clock than that slack, as a daemon stamps while the clock runs ahead
+ * of a time it is set back to, names no start ({@link startNamesProcess}): `unknown`, and nothing is read.
+ */
 function startVerdict(state: DaemonState, machine: DaemonMachine, deadline: number): RecordedProcess {
+  if (!startNamesProcess(state.startedAt)) return "unknown";
   const started = machine.processStartedAt(state.pid, deadline - Date.now());
   if (started === undefined) return "unknown";
   if (started <= state.startedAt) return "ours";

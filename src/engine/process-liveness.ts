@@ -94,6 +94,22 @@ export function processStartedAtThroughEngine(
   return startedAt(pid, platform, () => engineStartedAt(pid, engine));
 }
 
+/**
+ * How far the reader's clock may have moved since a daemon stamped its start, either way. A clock set forward since
+ * then puts a later read of the daemon's own start up to this much after the stamp; one set back puts the stamp up to
+ * this much past the reader's now.
+ */
+export const START_CLOCK_SLACK_MS = 10_000;
+
+/**
+ * Whether a recorded start (epoch ms) can name the time a process started: a finite number no more than
+ * {@link START_CLOCK_SLACK_MS} past the reader's clock. Every process's start compares no later than Infinity, or than a
+ * start further ahead, so any process at the pid would pass for the one that wrote it, and none compares to NaN.
+ */
+export function startNamesProcess(startedAt: number): boolean {
+  return Number.isFinite(startedAt) && startedAt <= Date.now() + START_CLOCK_SLACK_MS;
+}
+
 /** Linux's start of `pid`, `windows` on Windows, and none elsewhere. */
 function startedAt(pid: number, platform: NodeJS.Platform, windows: () => number | undefined): number | undefined {
   if (platform === "linux") return linuxStartedAt(pid);
@@ -130,7 +146,8 @@ function reportEngineReadFailure(error: unknown): void {
  * What ending a daemon of a release before the engine's proof through its process came to ({@link endProcessStartedBy}):
  * it exited (`ended`), it was ended and still runs after the wait (`running`), the process holding the pid started
  * after the record's `startedAt` and was let alone (`later`), or the process could not be opened, its start read or
- * waited on, as when no process holds the pid, or `startedAt` is no finite number (`unread`).
+ * waited on, as when no process holds the pid, or `startedAt` names no time a process started ({@link startNamesProcess})
+ * (`unread`). A wait that failed came after the end was asked, so an `unread` process may have been ended.
  */
 export type ProcessEnd = "ended" | "running" | "later" | "unread";
 
@@ -168,8 +185,8 @@ export function endProcessStartedBy(
  * ended before it, or one that cannot run, ends nothing it reports: `unread`.
  */
 export function endProcessStartedByPowerShell(pid: number, startedAt: number, waitMs: number): ProcessEnd {
-  // A start that is not a finite number names no time a process started: nothing is ended, as the engine's end answers.
-  if (!Number.isFinite(startedAt)) return "unread";
+  // A start that names no time a process started ends nothing, as the engine's end answers.
+  if (!startNamesProcess(startedAt)) return "unread";
   const latest = (BigInt(Math.floor(startedAt)) + BigInt(FILETIME_EPOCH_MS)) * 10_000n + 9_999n;
   const script = `$p = Get-Process -Id ${pid} -ErrorAction Stop; $null = $p.Handle; `
     + `if ($p.StartTime.ToFileTimeUtc() -gt ${latest}) { 'later' } else { Stop-Process -InputObject $p -Force -ErrorAction Stop; `

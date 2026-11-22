@@ -543,7 +543,7 @@ describe("a session's start where RERAIL_AUTOSTART keeps hooks from starting or 
   /** The engine pipe as `\\.\pipe\` lists it. */
   const PIPE_NAME = PIPE.slice(PIPE.lastIndexOf("\\") + 1);
   /** When the kept daemon stamped `startedAt`; its process started 0.6 s before. */
-  const STARTED_AT = 1_800_000_000_000;
+  const STARTED_AT = 1_700_000_000_000;
   // A daemon of Rerail 0.1.4 or earlier, whose engine has no proof, launched from the hooks' own package as an upgrade
   // in place leaves its record; and a daemon of another install, whose engine proves itself.
   const keptDaemons = [

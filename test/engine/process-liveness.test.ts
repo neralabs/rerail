@@ -226,6 +226,17 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
     expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(calls);
   });
 
+  // A start an hour past this machine's clock comes after every live process's start, so any process at the pid would
+  // pass for the one it names: the end answers as the engine's does, and starts no PowerShell. One 5 s past it, as a
+  // clock set back since the daemon stamped it leaves it, still names a start.
+  it("ends nothing through PowerShell for a start an hour past this machine's clock, and starts no PowerShell", async () => {
+    const calls = vi.mocked(childProcess.spawnSync).mock.calls.length;
+    expect(endProcessStartedByPowerShell(DEAD_PID, Date.now() + 3_600_000, 5_000)).toBe("unread");
+    expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(calls);
+    await standIn(process.execPath, ["-e", "process.stdout.write('asked\\r\\nended\\r\\n')"]);
+    expect(endProcessStartedByPowerShell(DEAD_PID, Date.now() + 5_000, 5_000)).toBe("ended");
+  });
+
   it("reads nothing from a PowerShell the machine cannot run, and starts none with no time left", async () => {
     await standIn(join(tmpdir(), "rerail-no-such-powershell", "powershell.exe"), []);
     expect(processStartedAt(process.pid, 30_000, "win32")).toBeUndefined();

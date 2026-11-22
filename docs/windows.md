@@ -585,7 +585,8 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   session's start also tells the person that nothing is recorded until a daemon from the active package runs, and to
   run `rerail daemon stop`, then `rerail daemon start`. A pid behind such an engine that started more than 10 s later,
   or that this user may not signal, is not that daemon, and the record is removed; one whose start is not read, or is
-  later by 10 s or less, is kept as a busy daemon is, and sent nothing. Every other reader
+  later by 10 s or less, is kept as a busy daemon is, and sent nothing, as is one whose recorded start lies more than
+  10 s past the reader's clock, before which any process started: nothing is ended on it. Every other reader
   (each hook's check whether Rerail runs in its repository, the status line, the MCP bridge) sends such an engine
   nothing and reads no start, as for an engine that does not prove itself, and removes nothing: a hook makes that check
   before every tool call. An engine that does not answer the proof in time is taken for a busy daemon: its
