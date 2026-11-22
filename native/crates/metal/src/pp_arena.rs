@@ -194,9 +194,9 @@ pub const TG: u64 = 256;
 /// The threads of a group on the process's device: `TG` on a GPU; 32 on the CPU (decision 0527
 /// §3), where each of a group's threads is a coroutine that every barrier switches, so a phase
 /// costs its group's width in switches (the radix sort's tiles run 8 of their threads a thread).
+/// Read from the device each time: the device layer holds the device, so no copy of its kind is kept.
 pub fn tg() -> u64 {
-    static T: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *T.get_or_init(|| if matches!(lane::device(), Ok(lane::Device::Cpu(_))) { 32 } else { TG })
+    if matches!(lane::device(), Ok(lane::Device::Cpu(_))) { 32 } else { TG }
 }
 
 /// A probe's scalars (`pp_probes.uglykl`'s `PpProbeArgs`).
@@ -349,7 +349,7 @@ pub const SLOTS: &[&str] = &[
     "CLOSE_BITS", "CEND", "EHEADS", "REACH", "STATE", "OFLAG", "OID", "OTOTAL", "LISTS", "SLOTS", "CTL", "QCTL", "XFLAG", "XAT",
     "XTOTAL", "XPOS", "XCOVER", "V", "OBASE", "VTOTAL", "OPV", "OPBASE", "OPTOTAL", "OUT", "SCANS", "SUBS", "CALLS", "SB_L", "FINS", "PLACES", "SC_N", "SC_BASE", "SC_XJ", "SC_TOTAL", "SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT",
     "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK", "SC_CTOTAL", "SC_LTOTAL", "SC_CKEYS", "SC_FIRST", "SC_KB", "SC_VA", "SC_VB", "SC_HIST", "SC_CAP", "TOKENS", "ARGS", "WORDS", "SCRATCH", "LIST_CAP", "OUT_CAP", "Q_CAP",
-    "TRIE", "TRIE_LV",
+    "TRIE", "TRIE_LV", "HX", "HX_MASK", "CH", "CHW", "TCH", "TCH_CAP",
 ];
 
 fn slot(name: &str) -> usize {

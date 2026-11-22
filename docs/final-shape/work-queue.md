@@ -4014,6 +4014,10 @@ always a refusal.
   `jeremybarnes/build-and-test-loop-time`). The caller sends the `--extern` paths; the agent
   reports each one as it read it; a difference compiles here, uncached. The daemon also asks the
   host again for them before each compile. Not installed: the farm owner merges and installs it.
+- **Seen again** (2026-11-20, merging Parser-generators-final-shape, whose vendored `cranelift-codegen` adds
+  patches; written as Q377 on Swift-Kotlin-Scala-support): a profiling build of `rerail-kotlin-aot` failed at
+  `rerail-clif` with E0463 for `cranelift_frontend`, its `.rmeta` present; the debug build never failed. A
+  rebuild with `SCCACHE_RECACHE=1` (`RERAIL_FARM_ANY_ENV=1`) went through.
 - **Done when**: farm 24 (or its merge) is installed and the reproduction above no longer fails.
 
 ### Q123. (Done) An M1 Max repeats the persistent dispatch's launch (`a_batch_of_files_and_programs_is_one_launch`)
@@ -10142,3 +10146,18 @@ Each choice is read by both sides' invariants in `notes/roll-up-40-cuda-support.
 > complete now, and once it is complete it is not recorded here at all: the commit says what was done. An "Open:",
 > "Next:" or "left for later" line written instead of doing the work is a failure, not a record. The only things that
 > may go here are items the user has decided to defer, or a choice that is the user's to make, with the evidence.
+
+### Q462. Roll-up 41 (final-rerail-shape-rr-align ae1421e5c0 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-41-rr-align.md`:
+
+- **Narrow copies**: theirs' copies (within one document, diffed, beside a twin, 0575) over ours' reads (only an
+  atom that feeds a shown column). One per-atom predicate, `Redirect::narrows`, for the fold and the copies'
+  analyses, where theirs had a rule-wide bool. One `Narrowing::declare`.
+- **The push**: ours' `Readers`. Theirs' hunks were the same fix.
+- **The manifest's root**: theirs' `manifest_root`, on ours' `Canonical` trait.
+- **A reader record in a wave**: the gather unions two puts of one record. Found by the warm-run tests.
+- **The Bitlex writers**: mounted by `rerail-bitlex`. `rust_block` and the old Kotlin build go, as theirs removed
+  them.
+- **Device gates**: theirs' arms (only no device is skipped) on ours' platforms (Windows too).
+- **The preprocessor grid**: theirs' state words, ours' join.

@@ -2838,6 +2838,33 @@ fn a_probe_on_several_columns_reads_a_combinations_rows() {
     assert!((work - (100.0 + 100.0 * 1.0)).abs() < 1e-6, "work {work}");
 }
 
+/// Decision 0299's combination floor is for columns one reached from another: two columns bound by a cross
+/// product's atoms are independent pairs, and most are none of the relation's. `open_tuple(t) :- kind(t, tuple),
+/// child(t, c, _), unparen(c, m), …` was planned `kind`, a scan of `unparen`, then `child` by (t, c), priced a row a
+/// pair: past the head's binding the witness pricing (Q146) made the cross product nearly free (ep2: 61 M rows).
+#[test]
+fn a_cross_products_pairs_are_not_priced_a_combinations_rows() {
+    let p = parse_version(".decl k(t: number)\n.decl e(t: number, c: number, i: number)\n.decl u(c: number, m: number)\n.decl lit(m: number)\n.decl o(t: number)\no(t) :- k(t), e(t, c, _), !lit(c), u(c, m), !lit(m).\n.output o\n").unwrap();
+    let mut model = bare_model(&p);
+    for (rel, rows, cols) in [
+        ("k", 200.0, vec![(200.0, 1.0)]),
+        ("e", 70_000.0, vec![(20_000.0, 3.5), (70_000.0, 1.0), (40.0, 1_750.0)]),
+        ("u", 65_000.0, vec![(65_000.0, 1.0), (65_000.0, 1.0)]),
+        ("lit", 30_000.0, vec![(30_000.0, 1.0)]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 70_000.0;
+    let (order, work) = priced_first_rule(&model, &p);
+    let at = |name: &str| order.iter().position(|s| s.starts_with(name)).unwrap();
+    assert!(at("e(") < at("u("), "the tuple's children before `u`, not a scan of `u` per tuple: {order:?} at {work}");
+    assert!(work < 10_000.0, "a few rows a tuple: {work} {order:?}");
+}
+
 #[test]
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse_version(".decl a(x:number,y:number)\n").unwrap();

@@ -501,10 +501,19 @@ pub fn strata(statements: &[&Stmt]) -> Vec<String> {
         }
     }
     let comp = tarjan(&idb, &graph);
+    // A component that reads an answer of the world (`WORLD`: the file system's, a language's) holds its request too
+    // once lowered, and the engine gates each negation in it per key until its answers are whole (decision 0065 §2a,
+    // `answers::gate`). An aggregate there (a dep of an aggregate's body: a scope past the rule's own) is refused by
+    // the engine, and here.
+    let answer = |rel: &str| super::lower::WORLD.iter().any(|(a, _)| *a == rel);
+    let answered: BTreeSet<usize> = rules.iter().filter(|(_, _, _, ds, _)| ds.iter().any(|(d, ..)| answer(d))).map(|(_, h, ..)| comp[h]).collect();
     let mut out = Vec::new();
     for (line, h, n, ds, scopes) in &rules {
         for (d, neg, m, scope) in ds {
             if !neg || !idb.contains(d) || comp[d] != comp[h] {
+                continue;
+            }
+            if *scope == 0 && answered.contains(&comp[h]) {
                 continue;
             }
             if let (Some(o), Some(m), Some(n)) = (ordered.get(h), m, n)

@@ -85,3 +85,28 @@ component until the product overflowed before its bound of 4,000.
 Tests: `a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone` (C408 beside its twin, and a policy that includes
 `ruff-classes.rerail`), `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone` (main's #923, its `Ann`
 placed at the string as R9 asks).
+
+### A copy within one document is its original's rows under the bound
+
+Added 2026-11-21. A narrow copy made each of its original's rules again: on corpus0 × B-now (one pack, one thread)
+the copies cost 11.6 s of the run's 92.6 s and doubled its instructions against the tree before the merge. Most
+originals keep each row in one document and make it from that document's rows alone: widened, such a rule makes in
+a document under the narrow bound exactly what it made there before. Its copy is then a filter of the widened
+original, `rr_narrow_r(c..) :- r(c..), c_node < narrow`, one rule per original, not its rules made again
+(`combining::one_document`).
+
+- A rule keeps its rows in one document when every location its head holds is joined to one document through positive
+  atoms whose rows are each in one document: a base relation's locations (`hide::located`, but a guest's reads,
+  which join documents), a relation found so, `nearest`, an equality. It has a node column to filter by.
+- Each bound of the rule's own (`$x < RUN_VALUE_KEYS`, a node's or a document's) is on that document, and each read of
+  an original kept narrow is of one found so, at a location of that document.
+- The largest such set is taken (a greatest fixpoint), then a relation whose filter would put its copy in a cycle with
+  its original once the fold is done is made again.
+- A row joined to another document by a value (`pair(n) :- e(n), text(n, t), asg(m), text(m, t)`), bounded in
+  another one, a native operator's, a lattice's and one with facts are made again, as before.
+
+Measured on corpus0 × B-now, off, one thread, on an M1 Max: one pack 1.314 T to 1.114 T instructions, the normal
+packs 3.157 T to 2.756 T; 463 findings, the same set (d067ec2ebf6f).
+
+Test: `a_narrow_copy_of_an_original_within_one_document_is_its_rows_under_the_narrow_bound`; #923's
+`a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone` passes.
