@@ -13,7 +13,7 @@ use rusqlite::Connection;
 use rusqlite::functions::{Context, FunctionFlags};
 use rusqlite::types::Value;
 
-use crate::code_rule_dsl::facts::vtab::syntax::{LONG_TEXT_NODES, NODE_READS};
+use crate::code_rule_dsl::facts::vtab::{LONG_TEXT_NODES, NODE_READS};
 
 /// An argument or result: a symbol (text) or a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,14 +122,14 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // C's `%0Nd`: an integer's digits zero-padded to `width` columns, the sign first, never truncated (`@printf`'s
     // lowering, `rr::lower::printf_pieces`).
     ("zero_pad", &[Number, Number], Text),
-    // A node's text past `text`'s inline bound (`facts::vtab::syntax::LongTexts::long_text`): none for a shorter one, which
+    // A node's text past `text`'s inline bound (the syntax table's `LongTexts::long_text`): none for a shorter one, which
     // `text` holds. The long-text twin of a rule reading `text(v, t)` reads it (`preparation::text`'s `Twins`).
     ("rr_node_text", &[Number], Text),
-    // A node's exact text at any length (`facts::vtab::syntax::LongTexts::text_any`): `node_text`'s answer (decision 0174).
+    // A node's exact text at any length (the syntax table's `LongTexts::text_any`): `node_text`'s answer (decision 0174).
     ("rr_node_text_any", &[Number], Text),
-    // A node's value as W reads it (`facts::vtab::syntax::LongTexts::value_any`): `value`'s answer (decision 0174).
+    // A node's value as W reads it (the syntax table's `LongTexts::value_any`): `value`'s answer (decision 0174).
     ("rr_node_value", &[Number], Text),
-    // A node's string literal's content (`facts::vtab::syntax::LongTexts::str_any`): `str`'s answer (decisions 0174,
+    // A node's string literal's content (the syntax table's `LongTexts::str_any`): `str`'s answer (decisions 0174,
     // 0353 step 3).
     ("rr_node_str", &[Number], Text),
     // `.rerail`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
@@ -206,11 +206,11 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
     Ok(())
 }
 
-/// A node read (`syntax::NODE_READS`) of node `n`: `@rr_node_text`'s text past `text`'s inline bound,
+/// A node read (`vtab::NODE_READS`) of node `n`: `@rr_node_text`'s text past `text`'s inline bound,
 /// `@rr_node_text_any`'s text at any length, `@rr_node_value`'s value, read through `nodes`, the run's binding of the
 /// long-text nodes with their batch (`syntax::LongTexts`); none without one. Its value is the run's, so `eval` has none.
 pub fn node_read(name: &str, nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64) -> Option<String> {
-    crate::code_rule_dsl::facts::vtab::syntax::LongTexts::of(nodes?, name, n)
+    nodes?.node_read(name, n)
 }
 
 /// `product x : {…}` as the SQL aggregate `rr_product(x)`: the product of the integers, saturating at i64's range;

@@ -979,3 +979,37 @@ decision record. There are no A/B triples. One run per state, with the host's lo
       with and without tests.
     - On a Linux host, the three crates in full: 293 of 293 (4 ignored child-process and measurement tests).
     - The engine's and rerail-workspace's `git_access`, `git_ignore`, `workspace` and `content_store` tests: 54 of 54.
+- **Step 7c** (2026-11-22): the facts, 32.9k production lines, are now three crates.
+  - **rerail-ygraph** (`native/crates/ygraph`, 4.0k): M's Y1 reference graph (`facts::ygraph`). It reads nothing else
+    of the facts, only `logic::profile`; `facts.rs` re-exports it.
+  - **rerail-facts-base** (`native/crates/facts_base`, 15.9k): every module of the facts but the syntax table and
+    the families' store reads. It also has the text, the strings, the producers, the SQL profiles and admission,
+    and the statistics.
+  - **rerail-facts** (13.0k; same name, so no reader above changes) mounts `facts::vtab::syntax` and
+    `facts::families` over a glob of the base.
+  - Four reads went up into the syntax table. Each one is cut:
+    - `core::input_columns` read the families' columns for `py_*` relations. It now reads them through
+      `facts::core::FAMILY_COLUMNS`, a `rerail_registry::Slot` that boot registers beside the families
+      (`register_family_columns`).
+    - The device's kind-set axis in a chunk (`ChunkAxis`, a OnceLock in `nearest.rs`) named the chunk's type. It
+      moved beside the chunk (`device_chunk::CHUNK_AXIS`), as a `Slot` the Metal device registers. Its hook left
+      `install-hooks.txt`.
+    - `Source::python_batch` returned the syntax table's `Batch`. The base's `Source` now has `syntax_batch` (an
+      `Arc<dyn Any + Send + Sync>`), and the syntax table's `PythonBatch` extension trait gives it as a `Batch`.
+      Its readers import that trait.
+    - The string functions' node reads (`rr_node_text`, `_any`, `rr_node_value`, `rr_node_str`) downcast their
+      source to `LongTexts` (`LongTexts::of`). They are now a `Source` method, `node_read`, which `LongTexts` and
+      the layered binding implement. `LONG_TEXT_NODES` and `NODE_READS` moved down to `vtab.rs`; `syntax`
+      re-exports them.
+  - Fixed on the way, from 7b: the journal's test reads (`current_id`, `id_past`, `forget_streams`, `fsevents::since`)
+    were `cfg(test)` in the store base. The observer's Mac tests, a crate above, could not see them. They are
+    `test-hooks` items now.
+  - `tools/cratify/crate-order.tsv` has rerail-ygraph and the base before rerail-facts.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the three crates and
+      boot.
+    - On a Linux host, the three crates in full: 109 of 110, 2 ignored. The one failure is a pack-data test
+      (`serverplan_quality_s_regexes_lower`; its data is not pulled).
+    - The logic's and the compiler's test crates' tests of Python's families, the node reads and the Python batch:
+      90 of 93. The 3 failures are pack-data tests (`python_shortcuts_change_no_pack_result_*`).
+    - On a Mac, the store base and the observer in full: 61 of 61, with the FSEvents journal's tests.

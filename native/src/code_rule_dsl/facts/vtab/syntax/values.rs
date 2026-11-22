@@ -20,6 +20,7 @@
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use super::super::DeviceView;
 use super::super::Source;
+use super::PythonBatch as _;
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use std::ops::Range;
@@ -305,8 +306,12 @@ impl Layered {
 }
 
 impl Source for Layered {
-    fn python_batch(&self) -> Option<Arc<super::Batch>> {
-        self.base.python_batch()
+    fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        self.base.syntax_batch()
+    }
+    /// A chunk's layered binding (decision 0431 §8): a tape value's node is read through its own batch.
+    fn node_read(&self, name: &str, n: i64) -> Option<String> {
+        self.source_of(n).node_read(name, n)
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)

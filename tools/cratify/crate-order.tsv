@@ -54,6 +54,8 @@ rerail-parser-tests	test
 rerail-rr-parser	core
 rerail-kotlin-parser	core
 rerail-pp-aot	core
+rerail-ygraph	core
+rerail-facts-base	core
 rerail-facts	core
 rerail-rr-aot	core
 rerail-c-directives	core

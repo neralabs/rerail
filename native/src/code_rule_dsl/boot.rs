@@ -62,6 +62,12 @@ fn install_with(ids: Option<BuildIds>) {
 
 /// The engine's language packs, into the core's registry (`language::adapter::pack`). Called as the library
 /// loads, before any run: the core asks a family's questions of the pack registered here.
+/// The families' relations' columns, for the facts' base (`facts::core::FAMILY_COLUMNS`), which reads them as an
+/// input's (`input_columns`) and cannot name the syntax table that registers the families.
+fn register_family_columns() {
+    facts::core::FAMILY_COLUMNS.register("rerail-facts (the syntax table's families)", facts::vtab::syntax::family_columns);
+}
+
 pub fn install_languages(tests: bool) {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
@@ -159,6 +165,7 @@ pub fn install_languages(tests: bool) {
     ]);
     // The families' lazy relations over a batch (Python's `py.*`).
     facts::vtab::syntax::install_families(vec![&facts::vtab::syntax::py_families::Families]);
+    register_family_columns();
     // The families' tables over a bound `node` relation (Python's semantic producers).
     facts::vtab::install_node_tables(vec![facts::vtab::python::register]);
     // The semantic facts a program's native steps demand (Python's).

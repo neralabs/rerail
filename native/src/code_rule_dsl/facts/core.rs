@@ -57,6 +57,11 @@ pub trait ValueReader: Send + Sync {
     );
 }
 
+/// The columns of a registered family's lazy relation (`facts::vtab::syntax::family_columns`, rerail-facts'), which
+/// the boot registers with the families; none registered: no family relation.
+pub static FAMILY_COLUMNS: rerail_registry::Slot<fn(&str) -> Option<&'static [&'static str]>> =
+    rerail_registry::Slot::new("a family's relation's columns (facts::core::FAMILY_COLUMNS)");
+
 static VALUE_READER: std::sync::OnceLock<&'static dyn ValueReader> = std::sync::OnceLock::new();
 
 /// Registers the reader of values (once, at load).
@@ -65,7 +70,7 @@ pub fn install_value_reader(reader: &'static dyn ValueReader) {
 }
 
 /// The registered reader of values; `None` where no engine registered one.
-pub(crate) fn value_reader() -> Option<&'static dyn ValueReader> {
+pub fn value_reader() -> Option<&'static dyn ValueReader> {
     VALUE_READER.get().copied()
 }
 
@@ -1216,7 +1221,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::MATCHES) => &["sp", "m"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
         // A registered family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
-        rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::family_columns(rel)?,
+        rel if rel.starts_with("py_") => FAMILY_COLUMNS.try_get()?(rel)?,
         _ => return None,
     })
 }

@@ -531,12 +531,11 @@ impl Within {
         self.solved_in(&chunks).map(|c| c.rows)
     }
 
-    /// The axis solved on the device over `chunks`, in one relation (`nearest::ChunkAxis`).
+    /// The axis solved on the device over `chunks`, in one relation (`device_chunk::ChunkAxis`).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn solved_in(&self, chunks: &[&super::device_chunk::Chunk]) -> Option<crate::code_rule_dsl::facts::nearest::InChunk> {
         use crate::code_rule_dsl::facts::core::KIND_STRIDE;
-        use crate::code_rule_dsl::facts::nearest::chunk_axis;
-        let solve = chunk_axis().filter(|_| self.binding == Binding::Metal)?;
+        let solve = super::device_chunk::CHUNK_AXIS.try_get().filter(|_| self.binding == Binding::Metal)?;
         let _span = crate::code_rule_dsl::logic::profile::span(|| "kind-set axis solved on the device in the chunk".into());
         // Per tag and slot a bit: the host's `member`, ERROR at slot 0 (`kind_atom`), as the kernel reads an atom.
         let bits = (self.mode != Mode::Tree).then(|| {

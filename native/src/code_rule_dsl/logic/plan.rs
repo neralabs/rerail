@@ -21,6 +21,7 @@
 //! and profiles, with `timed_plan`, T's planning timer) and its 1 GB page caches (over the 500 MB budget; SQLite's
 //! defaults instead).
 
+use crate::code_rule_dsl::facts::vtab::syntax::PythonBatch as _;
 use super::front::Value;
 use super::program_image::{AtomRef, CmpOp, Lit, Slot as VarSlot, TermRef, Version};
 use body::{Body, RuleKey, VarSet};

@@ -885,10 +885,10 @@ impl MadeRows {
 }
 
 impl Source for MadeRows {
-    fn python_batch(&self) -> Option<Arc<Batch>> {
+    fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         match self.done() {
-            Some(t) => t.python_batch(),
-            None => self.template().python_batch(),
+            Some(t) => t.syntax_batch(),
+            None => self.template().syntax_batch(),
         }
     }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {

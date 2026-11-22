@@ -412,28 +412,20 @@ impl LongTexts {
             },
         }
     }
-
-    /// Node `n`'s text or value as function `name` reads it (`NODE_READS`) through `source`, a binding of
-    /// `rr_long_text_node`; none for another source or function.
-    pub fn of(source: &dyn Source, name: &str, n: i64) -> Option<String> {
-        // A chunk's layered binding (decision 0431 §8): a tape value's node is read through its own batch.
-        if let Some(layered) = source.as_any()?.downcast_ref::<values::Layered>() {
-            return Self::of(&*layered.source_of(n), name, n);
-        }
-        let texts = source.as_any()?.downcast_ref::<Self>()?;
-        match name {
-            "rr_node_text" => texts.long_text(n),
-            "rr_node_text_any" => texts.text_any(n),
-            "rr_node_value" => texts.value_any(n),
-            "rr_node_str" => texts.str_any(n),
-            _ => None,
-        }
-    }
 }
 
 impl Source for LongTexts {
-    fn python_batch(&self) -> Option<Arc<Batch>> {
-        Some(Arc::clone(&self.batch))
+    fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        Some(Arc::clone(&self.batch) as _)
+    }
+    fn node_read(&self, name: &str, n: i64) -> Option<String> {
+        match name {
+            "rr_node_text" => self.long_text(n),
+            "rr_node_text_any" => self.text_any(n),
+            "rr_node_value" => self.value_any(n),
+            "rr_node_str" => self.str_any(n),
+            _ => None,
+        }
     }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
         self.nodes.rows_of_documents(docs)
@@ -491,13 +483,19 @@ pub fn made_sources(batch: &Arc<Batch>) -> Vec<(&str, Option<&'static str>, Arc<
         .collect()
 }
 
-/// The relation of the nodes whose text `@rr_node_text` reads, bound with the batch every node read goes through
-/// (`LongTexts`).
-pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
+// The node reads' relation and functions are the virtual tables' (`vtab.rs`), which the string functions read.
+pub use super::{LONG_TEXT_NODES, NODE_READS};
 
-/// The functions that read a node's text or value from the run's batch (`LongTexts::of`): their values are the run's,
-/// so `functions::eval` gives none.
-pub const NODE_READS: [&str; 4] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str"];
+/// A source's syntax batch (`Source::syntax_batch`) as the syntax table's `Batch`.
+pub trait PythonBatch {
+    fn python_batch(&self) -> Option<Arc<Batch>>;
+}
+
+impl<S: Source + ?Sized> PythonBatch for S {
+    fn python_batch(&self) -> Option<Arc<Batch>> {
+        self.syntax_batch()?.downcast::<Batch>().ok()
+    }
+}
 
 /// The request relation of `value` (decision 0174): a batch reads W's values off its documents' tapes where a program
 /// derives it.
@@ -3885,7 +3883,7 @@ pub fn node_column_counted(column: usize) -> bool {
 }
 
 impl Source for Viewed {
-    fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
+    fn syntax_batch(&self)->Option<Arc<dyn std::any::Any + Send + Sync>> {Some(Arc::clone(&self.batch) as _)}
     /// A view's rows are in document order (decision 0494): a document's lie at its offset, counted.
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
         let offsets = self.batch.offsets(self.view);

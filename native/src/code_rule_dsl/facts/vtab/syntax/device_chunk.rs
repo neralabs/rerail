@@ -632,3 +632,13 @@ pub fn ukl() -> String {
 
 /// NONE, as the kernels test a parent with it.
 pub const NO_NODE: u32 = NONE;
+
+/// What makes an axis's solve in a chunk: `members` per dialect tag (256) and kind code (1,024) a bit, `None` for
+/// every kind (containment); `inside` for every ancestor in the set, else the nearest. Several chunks' rows go in one
+/// relation, each chunk's past those before (a chunk's batch and its tape values, decision 0431 §8); the starts are
+/// the first's.
+pub type ChunkAxis = fn(&[&Chunk], Option<&[u32]>, bool) -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String>;
+
+/// The device's solve of an axis in a chunk: the Metal device's, which it registers at load.
+pub static CHUNK_AXIS: rerail_registry::Slot<ChunkAxis> =
+    rerail_registry::Slot::new("the device's kind-set axis in a chunk (facts::vtab::syntax::device_chunk::CHUNK_AXIS)");
