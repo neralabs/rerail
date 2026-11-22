@@ -59,8 +59,13 @@ pub fn run(p: &Placed, db: &Connection, mut inputs: Inputs, lowered: Option<lowe
         stages::run_with(&cut,db,inputs,lowered,hooks,clean.clone())?
     };
     for root in roots.iter().filter(|r|!clean.contains(*r)) {
-        let got=component::kept_rows(db,root).zip(provenance.remove(root).flatten())
-            .map(|((types,flat,n),reads)|(crate::code_rule_dsl::logic::plan::rows_digest(&crate::code_rule_dsl::logic::plan::Cells::new(&crate::content_store::atoms::Atoms::for_connection(db),&crate::code_rule_dsl::logic::plan::stored_types(f,root,types.clone())),&flat,n),types,flat,n,reads));
+        // The engine's relation, its digest taken where its rows lie (decision 0353 step 8).
+        let got=component::kept_rel(db,root).zip(provenance.remove(root).flatten()).and_then(|(rel,reads)| {
+            let atoms=crate::content_store::atoms::Atoms::for_connection(db);
+            let cells=crate::code_rule_dsl::logic::plan::Cells::new(&atoms,&crate::code_rule_dsl::logic::plan::stored_types(f,root,rel.types().to_vec()));
+            let d=crate::code_rule_dsl::logic::plan::held_digest(&cells,&rel)?;
+            Some((d,rel.types().to_vec(),crate::code_rule_dsl::logic::plan::RanRows::Held(Arc::clone(&rel)),rel.rows(),reads))
+        });
         ks.ran(root,got);
     }
     ks.counted(ran,all);

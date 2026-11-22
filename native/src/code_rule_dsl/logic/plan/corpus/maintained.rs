@@ -102,7 +102,7 @@ pub(in crate::code_rule_dsl) fn run_with(
     }
     let frames = kept.as_mut().and_then(retain::Retained::take_frames);
     let by_name: HashMap<&str, &Arc<dyn Source>> = inputs.iter().map(|(r, s, ..)| (r.as_str(), s)).collect();
-    let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
+    let mut input_docs: HashMap<String, Arc<retain::Docs>> = HashMap::new();
     // An input's delta, found from its old rows by document: hashed by content, as the frames hold its documents'.
     let atoms = store.map_or_else(|| crate::content_store::atoms::Atoms::for_connection(db), |s| s.atoms_handle());
     let mut given = |rel: &str| -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {

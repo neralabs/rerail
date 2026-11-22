@@ -98,8 +98,8 @@ struct IxPlan<'s> {
     parts: [(&'s [i64], Choice); 3],
 }
 
-/// Everything chosen before it is placed, so the block is made exactly its size: the columns (column `c`'s `n`
-/// values at `cols[c * n..]`, in canonical order) and their encodings, and the indexes.
+/// Everything chosen before it is placed, so the block is made exactly its size: the columns (each read where its
+/// values lie, in canonical order) and their encodings, and the indexes.
 struct Plan<'s> {
     arity: usize,
     n: usize,
@@ -119,67 +119,183 @@ impl Plan<'_> {
     }
 }
 
-/// A column's values as a part holds them: the column's own, or made from them.
-enum Vals<'s> {
-    Of(&'s [i64]),
-    Made(Vec<i64>),
+/// Rows the packer reads where they lie (decision 0353 step 8): `n` rows of `arity` columns, row `r`'s value in
+/// column `c`. A kept relation's live rows, an input's granule read through its source, or column-major values.
+pub trait RowsIn: Sync {
+    fn n(&self) -> usize;
+    fn arity(&self) -> usize;
+    fn get(&self, r: usize, c: usize) -> i64;
 }
 
-impl std::ops::Deref for Vals<'_> {
-    type Target = [i64];
-    fn deref(&self) -> &[i64] {
+/// Where a part's values are read: column-major values (`n` rows, column `c` at `raw[c * n..]`), or rows read where
+/// they lie.
+#[derive(Clone, Copy)]
+enum Src<'s> {
+    Cols { raw: &'s [i64], n: usize },
+    Rows(&'s dyn RowsIn),
+}
+
+impl Src<'_> {
+    #[inline]
+    fn get(&self, r: usize, c: usize) -> i64 {
         match self {
-            Vals::Of(v) => v,
-            Vals::Made(v) => v,
+            Src::Cols { raw, n } => raw[c * n + r],
+            Src::Rows(rows) => rows.get(r, c),
         }
     }
 }
 
-/// A column planned: its form (`PCol`'s `split` and `rel`) and its parts' values and encodings (one, or two when split).
+/// How a part reads its column (`PCol`'s `split` and `rel`): whole, the high or low part of a split value, and each
+/// less column 0's same part at the row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Whole,
+    Hi,
+    Lo,
+    RelWhole,
+    RelHi,
+    RelLo,
+}
+
+/// A column's values as a part packs them, read in place (decision 0353 step 8): column `c` of `src`, its rows in
+/// `order` (positions in `src`) or as they lie, read as `form` says. Nothing is made of them first.
+#[derive(Clone, Copy)]
+struct Part<'s> {
+    src: Src<'s>,
+    order: Option<&'s [u32]>,
+    n: usize,
+    c: usize,
+    form: Form,
+}
+
+impl crate::col::Vals for Part<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.n
+    }
+    #[inline]
+    fn at(&self, i: usize) -> i64 {
+        let r = self.order.map_or(i, |o| o[i] as usize);
+        let x = self.src.get(r, self.c);
+        let b = if matches!(self.form, Form::RelWhole | Form::RelHi | Form::RelLo) { self.src.get(r, 0) } else { 0 };
+        form_of(self.form, x, b)
+    }
+}
+
+/// What a column's job reads: a part of a column, or values derived from them (an index's, the levels), made once.
+#[derive(Clone, Copy)]
+enum JobVals<'s> {
+    Part(Part<'s>),
+    Made(&'s [i64]),
+}
+
+impl crate::col::Vals for JobVals<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            JobVals::Part(p) => p.n,
+            JobVals::Made(v) => v.len(),
+        }
+    }
+    #[inline]
+    fn at(&self, i: usize) -> i64 {
+        match self {
+            JobVals::Part(p) => crate::col::Vals::at(p, i),
+            JobVals::Made(v) => v[i],
+        }
+    }
+}
+
+/// A column planned: its form (`PCol`'s `split` and `rel`) and its parts with their encodings (one, or two when split).
 struct ColPlan<'s> {
     split: u32,
     rel: bool,
-    parts: Vec<(Vals<'s>, Choice)>,
+    parts: Vec<(Part<'s>, Choice)>,
 }
 
 impl ColPlan<'_> {
     /// What it takes in a block: each part's words, and the alignment a part's placement may cost.
-    fn cost(parts: &[(Vals<'_>, Choice)]) -> usize {
+    fn cost(parts: &[(Part<'_>, Choice)]) -> usize {
         parts.iter().map(|(_, c)| c.bytes() + 2 * 64).sum()
+    }
+}
+
+/// Column `c`'s value read as `form`, from its value `x` and column 0's `b` at the row.
+#[inline]
+fn form_of(form: Form, x: i64, b: i64) -> i64 {
+    let (s, m) = (ID_SPLIT, (1i64 << ID_SPLIT) - 1);
+    match form {
+        Form::Whole => x,
+        Form::Hi => x >> s,
+        Form::Lo => x & m,
+        Form::RelWhole => x.wrapping_sub(b),
+        Form::RelHi => (x >> s).wrapping_sub(b >> s),
+        Form::RelLo => (x & m) - (b & m),
     }
 }
 
 /// Column `c`'s form and encodings, the smallest of: whole; split at `ID_SPLIT`; and, where `rel` may be (`Rel`),
 /// each of those less column 0's. Only a column whose values span past `2^ID_SPLIT` is tried split or relative:
-/// below it its high part is constant.
-fn plan_col<'s>(cols: &'s [i64], n: usize, c: usize, may_rel: Rel) -> ColPlan<'s> {
-    let v = &cols[c * n..(c + 1) * n];
-    let whole = ColPlan { split: 0, rel: false, parts: vec![(Vals::Of(v), choose(v))] };
-    let (lo, hi) = v.iter().fold((i64::MAX, i64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+/// below it its high part is constant. Every form's statistics come from one pass over the rows, each row's value
+/// and column 0's read once where they lie (decision 0353 step 8; `col::Stats` is `choose`'s).
+fn plan_col<'s>(src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, may_rel: Rel) -> ColPlan<'s> {
+    use crate::col::{Stats, Vals};
+    let rel = may_rel != Rel::Never && c > 0;
+    let forms: &[Form] = if rel { &[Form::Whole, Form::Hi, Form::Lo, Form::RelWhole, Form::RelHi, Form::RelLo] } else { &[Form::Whole, Form::Hi, Form::Lo] };
+    let x = Part { src, order, n, c, form: Form::Whole };
+    let b = Part { src, order, n, c: 0, form: Form::Whole };
+    let read = |i: usize| (x.at(i), if rel { b.at(i) } else { 0 });
+    let ends: Vec<(i64, i64)> = if n == 0 {
+        vec![(0, 0); forms.len()]
+    } else {
+        let ((x0, b0), (x1, b1)) = (read(0), read(n - 1));
+        forms.iter().map(|&f| (form_of(f, x0, b0), form_of(f, x1, b1))).collect()
+    };
+    // Each piece: every form's statistics, and whether a difference from column 0 wraps.
+    let pieces = crate::col::over_pieces(n, |r| {
+        let before = (r.start > 0).then(|| read(r.start - 1));
+        let mut st: Vec<Stats> = forms.iter().zip(&ends).map(|(&f, &(first, last))| Stats::piece(first, last, n, before.map(|(x, b)| form_of(f, x, b)))).collect();
+        let mut wraps = false;
+        for i in r {
+            let (x, b) = read(i);
+            for (k, &f) in forms.iter().enumerate() {
+                st[k].push(i, form_of(f, x, b));
+            }
+            wraps |= rel && x.checked_sub(b).is_none();
+        }
+        (st, wraps)
+    });
+    let mut joined: Option<Vec<Stats>> = None;
+    let mut wraps = false;
+    for (st, w) in pieces {
+        wraps |= w;
+        joined = Some(match joined {
+            None => st,
+            Some(j) => j.into_iter().zip(st).map(|(a, b)| a.join(b)).collect(),
+        });
+    }
+    let stats = joined.unwrap_or_default();
+    let part = |k: usize| -> (Part<'s>, Choice) { (Part { src, order, n, c, form: forms[k] }, stats.get(k).map_or_else(|| choose(&x), |s| s.choice(n))) };
+    let whole = ColPlan { split: 0, rel: false, parts: vec![part(0)] };
+    let (lo, hi) = stats.first().map_or((0, 0), |s| s.range());
     if n < 2 || (hi as i128 - lo as i128) < 1 << ID_SPLIT {
         return whole;
     }
-    let (s, m) = (ID_SPLIT, (1i64 << ID_SPLIT) - 1);
-    let part = |f: &dyn Fn(usize) -> i64| -> (Vals<'s>, Choice) {
-        let made: Vec<i64> = (0..n).map(f).collect();
-        let ch = choose(&made);
-        (Vals::Made(made), ch)
-    };
+    let s = ID_SPLIT;
     let mut best = whole;
     let mut take = |cand: ColPlan<'s>| {
         if ColPlan::cost(&cand.parts) < ColPlan::cost(&best.parts) {
             best = cand;
         }
     };
-    take(ColPlan { split: s, rel: false, parts: vec![part(&|i| v[i] >> s), part(&|i| v[i] & m)] });
-    if may_rel != Rel::Never && c > 0 {
-        let b = &cols[..n];
+    take(ColPlan { split: s, rel: false, parts: vec![part(1), part(2)] });
+    if rel {
         // A searched column keeps its order less a constant only where no difference wraps; the split parts' never
         // do (each part is under 2^46).
-        if may_rel == Rel::Any || (0..n).all(|i| v[i].checked_sub(b[i]).is_some()) {
-            take(ColPlan { split: 0, rel: true, parts: vec![part(&|i| v[i].wrapping_sub(b[i]))] });
+        if may_rel == Rel::Any || !wraps {
+            take(ColPlan { split: 0, rel: true, parts: vec![part(3)] });
         }
-        take(ColPlan { split: s, rel: true, parts: vec![part(&|i| (v[i] >> s).wrapping_sub(b[i] >> s)), part(&|i| (v[i] & m) - (b[i] & m))] });
+        take(ColPlan { split: s, rel: true, parts: vec![part(4), part(5)] });
     }
     best
 }
@@ -194,7 +310,8 @@ enum Rel {
     Never,
 }
 
-fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, cols: &'s [i64], n: usize) -> Plan<'s> {
+fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, src: Src<'s>, order: Option<&'s [u32]>, n: usize) -> Plan<'s> {
+    use crate::col::Vals;
     let mut indexes = Vec::new();
     for ix in &spec.indexes {
         if on_order(spec, ix) {
@@ -202,15 +319,15 @@ fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, cols: &'s [i64], n:
         }
         assert_eq!(ix.len(), 1, "a packed index off the order is on one column");
         let c = ix[0] as usize;
-        let v = &cols[c * n..(c + 1) * n];
+        let v = Part { src, order, n, c, form: Form::Whole };
         // Positions grouped by the column's value: a radix sort of the values (less their minimum), stable, so
         // positions stay in canonical order within a value.
-        let lo = v.iter().copied().min().unwrap_or(0);
-        let hi = v.iter().copied().max().unwrap_or(0);
+        let lo = (0..n).map(|i| v.at(i)).min().unwrap_or(0);
+        let hi = (0..n).map(|i| v.at(i)).max().unwrap_or(0);
         let keys: &mut [u64] = scratch.take(n);
         let perm: &mut [u32] = scratch.take(n);
         for (i, (k, p)) in keys.iter_mut().zip(perm.iter_mut()).enumerate() {
-            *k = (v[i] as i128 - lo as i128) as u64;
+            *k = (v.at(i) as i128 - lo as i128) as u64;
             *p = i as u32;
         }
         let bits = 64 - ((hi as i128 - lo as i128) as u64).leading_zeros();
@@ -240,7 +357,7 @@ fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, cols: &'s [i64], n:
         _ if spec.order.first() == Some(&0) => Rel::Searched,
         _ => Rel::Never,
     };
-    let choices = each(n * arity >= PAR_MIN, arity, |c| plan_col(cols, n, c, rel(c)));
+    let choices = each(n * arity >= PAR_MIN, arity, |c| plan_col(src, order, n, c, rel(c)));
     Plan { arity, n, choices, indexes, levels: None }
 }
 
@@ -271,7 +388,7 @@ fn stats_of(plan: &Plan, bytes: usize) -> PackStats {
 }
 
 /// A column to pack: its encoding, its values, and its words and runs' words in the block.
-type Job<'a> = (&'a Choice, &'a [i64], &'a mut [u64], &'a mut [u64]);
+type Job<'a> = (&'a Choice, JobVals<'a>, &'a mut [u64], &'a mut [u64]);
 
 /// Places `plan` in `block` (open): its descriptor first, then its columns' words, all from one point on, so the
 /// packed relation is one contiguous range of the block (decision 0456 K4: it moves by `memcpy`).
@@ -296,7 +413,7 @@ fn place_at(block: &Block, plan: &Plan, spec: &Spec) -> *mut Packed {
             for (k, (v, ch)) in cpl.parts.iter().enumerate() {
                 let at = if k == 0 { &raw mut (*pc).hi } else { &raw mut (*pc).lo };
                 let (d, r) = IntCol::lay_out(at, block, ch);
-                jobs.push((ch, &v[..], d, r));
+                jobs.push((ch, JobVals::Part(*v), d, r));
             }
         }
         for (x, ixp) in plan.indexes.iter().enumerate() {
@@ -305,7 +422,7 @@ fn place_at(block: &Block, plan: &Plan, spec: &Spec) -> *mut Packed {
             let [(k, kc), (s, sc), (m, mc)] = &ixp.parts;
             for (at, v, ch) in [(&raw mut (*ix).keys, k, kc), (&raw mut (*ix).starts, s, sc), (&raw mut (*ix).perm, m, mc)] {
                 let (d, r) = IntCol::lay_out(at, block, ch);
-                jobs.push((ch, v, d, r));
+                jobs.push((ch, JobVals::Made(v), d, r));
             }
         }
         (*p).nindex = plan.indexes.len() as u32;
@@ -313,10 +430,10 @@ fn place_at(block: &Block, plan: &Plan, spec: &Spec) -> *mut Packed {
         Span::set(&raw mut (*p).indexes, ip, plan.indexes.len());
         if let Some((v, ch)) = &plan.levels {
             let (d, r) = IntCol::lay_out(&raw mut (*p).levels, block, ch);
-            jobs.push((ch, v, d, r));
+            jobs.push((ch, JobVals::Made(v), d, r));
         }
     }
-    let write = |(ch, v, d, r): Job| crate::col::write(ch, v, d, r);
+    let write = |(ch, v, d, r): Job| crate::col::write(ch, &v, d, r);
     if n * plan.arity >= PAR_MIN { rerail_context::on_cores(|| jobs.into_par_iter().for_each(write)) } else { jobs.into_iter().for_each(write) }
     p
 }
@@ -347,7 +464,7 @@ pub fn pack(view: &View, spec: &Spec, kind: u32) -> (Block, PackStats) {
                 (cols, n)
             }
         };
-        place(&plan(s, a, spec, cols, n), spec, kind)
+        place(&plan(s, a, spec, Src::Cols { raw: cols, n }, None, n), spec, kind)
     })
 }
 
@@ -396,7 +513,7 @@ pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Bl
         } else {
             cols.chunks_mut(m.max(1)).enumerate().for_each(gather)
         }
-        place(&plan(s, a, spec, cols, m), spec, kind)
+        place(&plan(s, a, spec, Src::Cols { raw: cols, n: m }, None, m), spec, kind)
     })
 }
 
@@ -409,11 +526,11 @@ pub struct Prepared<'s> {
     pub in_order: bool,
 }
 
-/// Whether `cols` (`n` rows, column-major) are strictly increasing in `key`'s order: in canonical order, distinct.
-fn in_canonical_order(cols: &[i64], n: usize, key: &[usize]) -> bool {
+/// Whether `src`'s `n` rows are strictly increasing in `key`'s order: in canonical order, distinct.
+fn in_canonical_order(src: Src<'_>, n: usize, key: &[usize]) -> bool {
     (1..n).all(|i| {
         for &c in key {
-            let (x, y) = (cols[c * n + i - 1], cols[c * n + i]);
+            let (x, y) = (src.get(i - 1, c), src.get(i, c));
             if x != y {
                 return x < y;
             }
@@ -432,19 +549,30 @@ pub enum Order {
 }
 
 /// `n` rows of `a` columns (`raw`, column-major), with each row's level when they have one, prepared to be placed:
-/// one pass checks whether they are in canonical order and distinct already (an input's granule usually is, and a
-/// relation that declares its output sorted, K7, always); else they are sorted as `pack_open` sorts and their
-/// duplicates dropped, the levels following their rows. Then each column's encoding is chosen.
+/// `prepare_rows` over them.
+pub fn prepare<'s>(s: &'s Scratch, raw: &'s [i64], n: usize, a: usize, spec: &Spec, levels: Option<&[u32]>, given: Order) -> Prepared<'s> {
+    assert_eq!(raw.len(), n * a);
+    prepare_src(s, Src::Cols { raw, n }, n, a, spec, levels, given)
+}
+
+/// `rows`, with each row's level when they have one, prepared to be placed, read where they lie (decision 0353
+/// step 8: nothing is read into columns first): one pass checks whether they are in canonical order and distinct
+/// already (an input's granule usually is, and a relation that declares its output sorted, K7, always); else their
+/// positions are sorted as `pack_open` sorts its rows, by the packed key or by comparing rows, and their duplicates
+/// dropped, the levels following their rows. Then each column's encoding is chosen, read in that order.
 ///
 /// `Order::AsGiven`: the rows are kept in the order given, none dropped, and the packed rows record no order (an
 /// input's granule: its rows by owner, its readers' ranges by position, decision 0117 step 2).
-pub fn prepare<'s>(s: &'s Scratch, raw: &'s [i64], n: usize, a: usize, spec: &Spec, levels: Option<&[u32]>, given: Order) -> Prepared<'s> {
-    assert_eq!(raw.len(), n * a);
+pub fn prepare_rows<'s>(s: &'s Scratch, rows: &'s dyn RowsIn, spec: &Spec, levels: Option<&[u32]>, given: Order) -> Prepared<'s> {
+    prepare_src(s, Src::Rows(rows), rows.n(), rows.arity(), spec, levels, given)
+}
+
+fn prepare_src<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec, levels: Option<&[u32]>, given: Order) -> Prepared<'s> {
     assert!(levels.is_none_or(|l| l.len() == n), "a level a row");
     let key = canonical_cols(spec, a);
     let as_given = given == Order::AsGiven;
-    let in_order = as_given || in_canonical_order(raw, n, &key);
-    let (cols, lv, m): (&'s [i64], Option<&'s [i64]>, usize) = if in_order {
+    let in_order = as_given || in_canonical_order(src, n, &key);
+    let (order, lv, m): (Option<&'s [u32]>, Option<&'s [i64]>, usize) = if in_order {
         let lv = levels.map(|l| {
             let out: &mut [i64] = s.take(n);
             for (o, &x) in out.iter_mut().zip(l) {
@@ -452,30 +580,31 @@ pub fn prepare<'s>(s: &'s Scratch, raw: &'s [i64], n: usize, a: usize, spec: &Sp
             }
             &*out
         });
-        (raw, lv, n)
+        (None, lv, n)
     } else {
-        let range = |c: usize| raw[c * n..(c + 1) * n].iter().fold((i64::MAX, i64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+        let range = |c: usize| (0..n).fold((i64::MAX, i64::MIN), |(a, b), r| {
+            let v = src.get(r, c);
+            (a.min(v), b.max(v))
+        });
         let (lo, hi): (Vec<i64>, Vec<i64>) = (0..a).map(range).unzip();
         let ids: &mut [u32] = s.take(n);
         for (i, id) in ids.iter_mut().enumerate() {
             *id = i as u32;
         }
-        let keys = sort_canonical(s, raw, n, &key, &lo, &hi, ids);
+        let keys = sort_rows(s, src, n, &key, &lo, &hi, ids);
         let order: &mut [u32] = s.take(n);
         let mut m = 0;
         for p in 0..n {
-            if p == 0 || !same_row(raw, n, &key, keys, ids, p) {
+            let same = p > 0 && match keys {
+                Some(k) => k[p] == k[p - 1],
+                None => key.iter().all(|&c| src.get(ids[p] as usize, c) == src.get(ids[p - 1] as usize, c)),
+            };
+            if !same {
                 order[m] = ids[p];
                 m += 1;
             }
         }
         let order = &order[..m];
-        let cols: &mut [i64] = s.take(m * a);
-        for (c, out) in cols.chunks_mut(m.max(1)).enumerate().take(a) {
-            for (d, &i) in out.iter_mut().zip(order) {
-                *d = raw[c * n + i as usize];
-            }
-        }
         let lv = levels.map(|l| {
             let out: &mut [i64] = s.take(m);
             for (o, &i) in out.iter_mut().zip(order) {
@@ -483,12 +612,46 @@ pub fn prepare<'s>(s: &'s Scratch, raw: &'s [i64], n: usize, a: usize, spec: &Sp
             }
             &*out
         });
-        (&*cols, lv, m)
+        (Some(order), lv, m)
     };
-    let mut plan = plan(s, a, spec, cols, m);
+    let mut plan = plan(s, a, spec, src, order, m);
     plan.levels = lv.map(|v| (v, choose(v)));
     let order = if as_given { Vec::new() } else { spec.order.clone() };
     Prepared { plan, order, indexes: spec.indexes.clone(), in_order: in_order && !as_given }
+}
+
+/// Sorts `ids` (positions of `src`'s rows, column `c` ranging over `lo[c]..=hi[c]`) into the canonical order of
+/// `key`, reading the rows where they lie: as `relation::sort_canonical` sorts columns, the packed keys radix sorted
+/// with the ids and returned alongside them when the key packs into 64 bits, else the ids sorted by comparing rows.
+fn sort_rows<'s>(scratch: &'s Scratch, src: Src<'_>, n: usize, key: &[usize], lo: &[i64], hi: &[i64], ids: &mut [u32]) -> Option<&'s [u64]> {
+    let m = ids.len();
+    let bits_for = |range: u64| 64 - range.leading_zeros();
+    let kbits: Vec<u32> = key.iter().map(|&c| if n == 0 { 0 } else { bits_for((hi[c] as i128 - lo[c] as i128) as u64) }).collect();
+    let packed_bits: u32 = kbits.iter().sum();
+    if packed_bits > 64 {
+        ids.sort_unstable_by(|&x, &y| {
+            for &c in key {
+                let o = src.get(x as usize, c).cmp(&src.get(y as usize, c));
+                if o != std::cmp::Ordering::Equal {
+                    return o;
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+        return None;
+    }
+    let keys: &mut [u64] = scratch.take(m);
+    for (k, &i) in keys.iter_mut().zip(ids.iter()) {
+        let mut x = 0u64;
+        for (j, &c) in key.iter().enumerate() {
+            // A column of one value takes no bits; `checked_shl` keeps a 64-bit shift of an empty key defined.
+            x = x.checked_shl(kbits[j]).unwrap_or(0) | (src.get(i as usize, c) as i128 - lo[c] as i128) as u64;
+        }
+        *k = x;
+    }
+    let (tk, ti) = (scratch.take::<u64>(m), scratch.take::<u32>(m));
+    crate::sort::radix_pairs(keys, ids, packed_bits, tk, ti);
+    Some(keys)
 }
 
 impl Prepared<'_> {

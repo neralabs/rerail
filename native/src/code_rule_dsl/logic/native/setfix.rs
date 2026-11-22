@@ -3167,7 +3167,11 @@ pub fn pending(conn: impl Scoped, name: &str) -> Result<Vec<(String, Vec<Vec<i64
     for (r, answered) in &mut comp.requests {
         let rel = &store.rels[*r];
         if rel.n > *answered {
-            out.push((rel.table.clone(), (*answered..rel.n).filter(|&i| !rel.dead(i as u32)).map(|i| rel.row(i).to_vec()).collect()));
+            // copy (0353 step 8): a request's new rows read out of its relation for the answerer.
+            let rows: Vec<Vec<i64>> = (*answered..rel.n).filter(|&i| !rel.dead(i as u32)).map(|i| rel.row(i).to_vec()).collect();
+            const PENDING: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "a request's new rows read for its answerer (pending)");
+            PENDING.copied(8 * rows.iter().map(Vec::len).sum::<usize>());
+            out.push((rel.table.clone(), rows));
             *answered = rel.n;
         }
     }
@@ -4782,6 +4786,12 @@ pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
     forgotten_on_close();
     // Not observed (`author_joins::observe`): an earlier run's set, which this run's maintenance changes, not its own.
     on(conn).derived.lock().insert(table.to_owned(), rel);
+}
+
+/// A native relation of `conn`'s run with rows of its own (not a view), as a reader that keeps it reads it: where its
+/// rows lie (decision 0353 step 8).
+pub fn kept_rel(conn: &Connection, table: &str) -> Option<Arc<InRel>> {
+    on(conn).derived.lock().get(table).filter(|rel| rel.view.is_none()).cloned()
 }
 
 /// A native relation of `conn`'s run as it can be kept and held again (`hold_rows`): its columns' types and its live

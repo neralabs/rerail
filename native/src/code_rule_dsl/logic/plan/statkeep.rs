@@ -688,12 +688,19 @@ impl RelStats {
 
     /// `encode`'s statistics back from `bytes` at `*at`, which moves past them; `None` if they are not.
     pub fn decode(bytes: &[u8], at: &mut usize) -> Option<RelStats> {
-        fn take<'a>(bytes: &'a [u8], at: &mut usize, n: usize) -> Option<&'a [u8]> {
-            let b = bytes.get(*at..*at + n)?;
-            *at += n;
-            Some(b)
-        }
-        let int = |at: &mut usize| -> Option<i64> { Some(i64::from_le_bytes(take(bytes, at, 8)?.try_into().ok()?)) };
+        RelStats::decode_at(&|i| bytes[i], bytes.len(), at)
+    }
+
+    /// `decode` of a blob of `n` bytes, each read by position where it lies (`byte`): a blob in a kept entry's words
+    /// is not read into bytes first (decision 0353 step 8).
+    pub fn decode_at(byte: &dyn Fn(usize) -> u8, n: usize, at: &mut usize) -> Option<RelStats> {
+        let take = |at: &mut usize, k: usize| -> Option<std::ops::Range<usize>> {
+            let end = at.checked_add(k).filter(|&e| e <= n)?;
+            let r = *at..end;
+            *at = end;
+            Some(r)
+        };
+        let int = |at: &mut usize| -> Option<i64> { Some(take(at, 8)?.rev().fold(0u64, |w, i| w << 8 | byte(i) as u64) as i64) };
         // Format 3: format 2's `sqd` held the document-key rows' part, summed by document (not to be patched).
         let exact = |at: &mut usize| -> Option<Option<Exact>> {
             let e = int(at)?;
@@ -707,17 +714,17 @@ impl RelStats {
             }
             Some(Some(m))
         };
-        if take(bytes, at, 1)? != [3] {
+        if byte(take(at, 1)?.start) != 3 {
             return None;
         }
         let k = usize::try_from(int(at)?).ok()?;
         let mut columns = Vec::with_capacity(k.min(1024));
         for _ in 0..k {
             let l = usize::try_from(int(at)?).ok()?;
-            columns.push(String::from_utf8(take(bytes, at, l)?.to_vec()).ok()?);
+            columns.push(String::from_utf8(take(at, l)?.map(byte).collect()).ok()?);
         }
         let rows = int(at)?;
-        let partial = take(bytes, at, 1)?[0] != 0;
+        let partial = byte(take(at, 1)?.start) != 0;
         let mut cols = Vec::with_capacity(k);
         for _ in 0..k {
             let (sqd, zero_sq) = (int(at)?, int(at)?);
@@ -725,10 +732,15 @@ impl RelStats {
             let (local_ndv, crossing) = (int(at)?, int(at)?);
             let exact = exact(at)?;
             let l = usize::try_from(int(at)?).ok()?;
-            let sketch = Sketch::decode(take(bytes, at, l)?)?;
+            let r = take(at, l)?;
+            let sketch = Sketch::decode_at(byte, r.start, l)?;
             let pairs = match int(at)? {
                 l if l < 0 => None,
-                l => Some(Sketch::decode(take(bytes, at, usize::try_from(l).ok()?)?)?),
+                l => {
+                    let l = usize::try_from(l).ok()?;
+                    let r = take(at, l)?;
+                    Some(Sketch::decode_at(byte, r.start, l)?)
+                }
             };
             cols.push(Column { sqd, zero, zero_sq, local_ndv, crossing, exact, sketch, pairs });
         }

@@ -390,7 +390,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 9 | A relation of many parts merged for the device (`in_block`). The key's copy is gone (step 6, 2026-11-22): a key past a block's room refuses its stratum, and a relation alone in a block has room for its whole directory. Before: a second key's index copied the relation (`DevIndex::moved`). Since 0384 (steps 1–8, 2026-11-18) a relation is one relation or a chain of continuations read in place, so the merge is left only where a part is appended after another relation's rows (`append_part`, counted), with a chain's newest two segments compacted past `MAX_SEGMENTS`. A recursive component's deltas on the device are made with room for an index of each key its plans probe them by (`Own::keyed`, `Part::for_device_indexed`, 2026-11-20), and its totals grow in a block with room for theirs (row 10). That was not most of the row: on the M3's 300-file run it copied 852.4 MB in 279 copies before (ab108) and 901.8 MB in 322 after (ab109). The site now says where the relation copied lies, the device's own (an upload, a delta) or in a block of the run's with no room left, and the device's report counts each (`moved`): 766.4 MB in 247 copies were in a block with no room (ab110). A head relation the device writes of 4,096 rows or more is now alone in a block with room for its indexes (`head_room`, `Part::with_index_room`, anonymous memory taken as written): 621.7 MB in 114 copies left (ab111), each about 5 MB, of relations not yet told apart | `metal_join.rs`; `facts/rows.rs`; `device.rs` | Q85 counts them; 0 merges on cold 300-file runs; 0 on cold hogql since 2026-11-22 (8.3 MB in 2 before: the axis relation, room for 2 indexes, probed by 3 keys) | Step 6 |
 | 10 | Gone (2026-11-20): a device fixpoint's total copied into a run's block at its end, and each round's total made anew with the last round's rows copied into it (rounds × rows). A set head's relation is now one relation in a block of the run's life from its first round, each round's new rows written past its rows, its indexes forgotten as it grows, taken by the store as it lies (`SetHead`), as a lattice head's is (decision 0384 step 5). Measured before: 187.4 MB in 225 copies at the end on the M3's 300-file run (ab109); the rounds' copies were not counted | `device.rs` (0325 step 4) | 0 | Step 6 |
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
-| 12 | Findings, frames and memo entries copied into rows of their own. Counted since 2026-11-22: a granule's rows gathered into its kept entry (`retain.rs`); an input's documents read into a table or a layout, and a kept entry's or a documents' table's words read for their decoders (warm runs); and the writer's columns, a kept relation's or a granule's rows read into columns for the packer (`kept_facts::columns`), which the store's writer makes after the profile is reported | The output, frames and memo stores; `retain.rs`; `kept_facts.rs` | 216.0 MB in 21,643 calls on the M1 Max's 300-file run (`--metal`), all the granules' gather; 6.1 MB in 1,539 on cold hogql | Step 8 (0325 step 7) |
+| 12 | Findings, frames and memo entries copied into rows of their own. Frames gone (step 8, 2026-11-22): the kept writer packs every put's rows where they lie (`packed::RowsIn`); a granule, a view, an input and the documents are read in place; the documents' entries, the statistics' words and the documents' table are read where they lie. Left: the request protocol's rows, read out of a request relation for its answerer (`component::pending`, `answer_complete`'s `asked`) and a relation's rows held again with its answers (`retain`) | `setfix.rs`, `pending`; `plan.rs`, `asked` and `HELD_AGAIN` | Under 0.1 MB in 3–9 calls a run (hogql and the 300-file bench); `HELD_AGAIN` none | Step 8 |
 | 13 | The transducer's residency: every tape it reads copied into slabs of its own. (Documents copied between slabs, `gather`, are gone, 0471: a batch reads each document in its own slab, by the slabs' GPU addresses.) | `residency::slabs::admit_docs`, `insert`'s `place` | Each tape a Metal batch reads | Step 7 |
 | 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 0: gone | Done (step 4, 2026-11-22) |
 | 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
@@ -1099,6 +1099,36 @@ findings with the CPU run's digest, and 6.5 MB copied, all row 17.
 Test: `a_key_past_a_relations_room_is_refused_not_copied` replaces `a_relation_moved_for_an_index_lives_until_its_batch_is_done`.
 
 Left in row 9: `Rows::merged`, and a chain's compaction past `MAX_SEGMENTS`.
+
+### Step 8: the frames are read where they lie (2026-11-22)
+
+Row 12 was counted first (`Site(12, "8")`): 216.0 MB in 21,643 calls on the M1 Max's 300-file run, all of it a
+granule's rows gathered into its kept entry. The store's writer then read every flat put's rows into columns for
+the packer (`kept_facts::columns`), after the profile is reported, so it went uncounted.
+
+- **The packer reads rows where they lie.** `col`'s encoder takes any `Vals`, a column read by position, and
+  `packed` takes any `RowsIn`, rows read by row and column: `prepare_rows` checks the order, sorts positions (a
+  derived order, never the rows) and dedupes; each column's part is read through as whole, split or less column 0's
+  as it is written. The plan for a column's forms takes one pass over the rows (`col::Stats`, which chooses as
+  `choose` does: `one_pass_statistics_choose_as_choose_does`). `KeptWriter::put_rows` writes a `KeptWhat::Read`.
+  `kept_facts::columns` is deleted; a relation's put and a flat one are read through `PutRows`, and the atom
+  columns are mapped as read (`Mapped`, each distinct atom mapped once).
+- **The puts lend their rows.** A changed granule is runs of its input's rows (`GranuleRows`: each owner's range
+  in a maintained input's source, or each row by its place), a run's document found once by its memo
+  (`Source::value_memo`). A view's put reads its live rows through it (`LiveRows`), an input's whole rows are one
+  run (`retain::source_rows`, `kept_strata::keep`), and a stratum's relation reaches `KeptStrata::ran` whole
+  (`RanRows::Held`, its digest taken in place, `plan::held_digest`), not flattened by `component::kept_rows`.
+- **Readers read the entries where they lie.** An input's documents are `retain::Docs`: those a run computed
+  (`Made`), the kept entry itself, found by a search of its leading column (`Kept`), or an edit's documents over the
+  kept ones (`Over`, which the owner patch made by cloning the kept table). The documents' frame is written from
+  them, the writer sorting. A layout (`lay_out`) reads the entry for its ranges. The statistics' words, a base
+  relation's statistics and the documents' table decode from the entry's words by position
+  (`kept_stats::from_words`, `RelStats::decode_at`, `Sketch::decode_at`).
+
+The 300-file bench on the M1 Max (`--metal`): 463 violations. The writer held 4.3–8.9 MB of puts, against
+420.9–422.7 MB with the gather, and took 7.3–7.9 s of its threads against 3.6–4.7 s: a view's value is read once a
+column and form, and the gather read it once. The writer runs after the run. Row 12: 216.0 MB to under 0.1 MB.
+Cold hogql: 1,629 findings with the CPU run's digest.
 
 ## What it replaces
 

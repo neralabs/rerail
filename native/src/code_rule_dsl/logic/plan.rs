@@ -11202,9 +11202,9 @@ pub trait KeptStrata {
     /// The earlier run's rows of `rel`: its columns' types as kept, and its rows as a relation the engine holds under
     /// `types` (its own), bound where they lie (decision 0401 F3).
     fn rows(&mut self, rel: &str, types: &[u8]) -> Option<(Vec<u8>, Arc<super::native::component::InRel>)>;
-    /// This run derived `rel`: its digest, and its rows (types, flat, count), with the digest each relation its
+    /// This run derived `rel`: its digest, and its rows (types, rows, count), with the digest each relation its
     /// stratum read had; `None` when SQL derived it, or a read's digest is not known.
-    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Vec<i64>, usize, Vec<(String, u64)>)>);
+    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, RanRows, usize, Vec<(String, u64)>)>);
     /// The run's end: the strata it evaluated, of all.
     fn counted(&mut self, evaluated: usize, of: usize);
 }
@@ -11280,6 +11280,13 @@ fn with_answers(f: Fields<'_>, db: &Connection, scc: &BTreeSet<String>, reads: O
     Some(reads)
 }
 
+/// A stratum's relation's rows as `KeptStrata::ran` takes them: the engine's relation, read where its rows lie
+/// (decision 0353 step 8), or SQL's answers, flat (rows the engine does not hold).
+pub enum RanRows {
+    Flat(Vec<i64>),
+    Held(Arc<super::native::component::InRel>),
+}
+
 /// After a stratum ran: each of its relations' digest and rows, given to `ks` with what the stratum read
 /// (`reads`, each with its digest then), and its digest to this run's `fresh`.
 fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BTreeSet<String>, reads: Option<&Vec<(String, u64)>>, fresh: &mut HashMap<String, Option<u64>>) {
@@ -11289,19 +11296,26 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BT
     let mut members = Vec::new();
     let f = run.fields();
     for r in scc.iter().filter(|r| !run.views.contains(*r)) {
+        let atoms = crate::content_store::atoms::Atoms::for_connection(db);
         let got = if run.native_rels.contains(r) {
-            super::native::component::kept_rows(db, r)
+            // The engine's relation, its digest taken where its rows lie.
+            super::native::component::kept_rel(db, r).map(|rel| {
+                let cells = Cells::new(&atoms, &stored_types(f, r, rel.types().to_vec()));
+                (rel.types().to_vec(), held_digest(&cells, &rel), rel.rows(), RanRows::Held(rel))
+            })
         } else if f.produced(r) && !f.is_input(r) {
             // SQL holds the answers when the relation is outside the native component.
-            produced_rows(db, run, r)
+            produced_rows(db, run, r).map(|(types, rows, n)| {
+                let d = rows_digest(&Cells::new(&atoms, &stored_types(f, r, types.clone())), &rows, n);
+                (types, Some(d), n, RanRows::Flat(rows))
+            })
         } else {
             None
         };
-        let atoms = crate::content_store::atoms::Atoms::for_connection(db);
-        let digest = got.as_ref().map(|(types, rows, n)| rows_digest(&Cells::new(&atoms, &stored_types(f, r, types.clone())), rows, *n));
+        let digest = got.as_ref().and_then(|g| g.1);
         fresh.insert(r.clone(), digest);
         members.push((r.clone(), digest));
-        ks.ran(r, got.zip(reads).map(|((types, rows, n), reads)| (digest.expect("rows give a digest"), stored_types(f, r, types), rows, n, reads.clone())));
+        ks.ran(r, got.zip(reads).map(|((types, d, n, rows), reads)| (d.expect("rows give a digest"), stored_types(f, r, types), rows, n, reads.clone())));
     }
     for v in scc.iter().filter(|r| run.views.contains(*r)) {
         fresh.insert(v.clone(), view_digest(reads.map(Vec::as_slice), &members));
@@ -11598,6 +11612,13 @@ pub const SMALL_NDV: i64 = 64;
 
 /// An order-independent digest of rows (a set) of their content (`Cells`), as `corpus::retain::digest` takes a
 /// source's.
+/// A relation's digest taken from its rows where they lie: the digest `rows_digest` takes of its live rows, copied.
+pub fn held_digest(cells: &Cells, held: &super::native::component::InRel) -> Option<u64> {
+    Some(cells.digest_batches(held.len(), held.rows(), &|lo, hi, f| {
+        held.each_live_batch(lo, hi, |rows| f(rows));
+    }))
+}
+
 pub fn rows_digest(cells: &Cells, rows: &[i64], n: usize) -> u64 {
     cells.sum(rows) ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
 }
@@ -13015,6 +13036,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         // made: no table, no rows), or its table's.
                         let native = run.native_rels.contains(&req).then(|| super::native::component::kept_rows(db, &req)).flatten();
                         let asked: Vec<Vec<i64>> = if let Some((_, flat, _)) = native.filter(|_| width > 0) {
+                            // copy (0353 step 8): a request's rows read out of the engine's relation for the answerer.
+                            const ASKED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "a request's rows read for its answerer (answer_complete)");
+                            ASKED.copied(8 * flat.len());
                             flat.chunks(width).map(<[i64]>::to_vec).collect()
                         } else if run.pending.contains_key(&req) && !run.native_rels.contains(&req) {
                             Vec::new()
@@ -13054,6 +13078,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 let mut rows = rows;
                 if run.native_rels.contains(rel)
                     && let Some((_, flat, k)) = super::native::component::kept_rows(db, rel).filter(|(_, _, k)| *k == types.len() && *k > 0) {
+                        // copy (0353 step 8): a relation's rows read out to be held again with a request's answers.
+                        const HELD_AGAIN: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "a relation's rows held again with its answers (retain)");
+                        HELD_AGAIN.copied(8 * flat.len());
                         rows.extend(flat.chunks(k).map(<[i64]>::to_vec));
                     }
                 super::native::component::retain(db, rel, rows, types)?;

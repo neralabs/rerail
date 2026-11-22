@@ -5426,7 +5426,7 @@ fn run_observed_within(
     // The kept inputs' deltas as their owners changed (decision 0117 step 2): `r__plus` and `r__minus` as given, their
     // digests by owner after the edit, and the base relations bound as the kept rows with their delta.
     let mut given_deltas: HashMap<String, (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = HashMap::new();
-    let mut kept_input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
+    let mut kept_input_docs: HashMap<String, Arc<retain::Docs>> = HashMap::new();
     let mut base_layered: HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = HashMap::new();
     let maintained_early: std::cell::RefCell<Option<lower::Lowered>> = std::cell::RefCell::new(None);
     // The memo hits' exports are not measured while the keeper counts them: their statistics are its (after the chunks).
@@ -10294,7 +10294,7 @@ fn run_observed_within(
                     };
                     let (mut from_entries, mut from_entries_rows, mut hashed) = (0usize, 0usize, Vec::<String>::new());
                     // The kept inputs' digests by owner after the edit (decision 0117 step 2), for the frames written back.
-                    let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = std::mem::take(&mut kept_input_docs);
+                    let mut input_docs: HashMap<String, Arc<retain::Docs>> = std::mem::take(&mut kept_input_docs);
                     let mut from_owners = 0usize;
                     let mut answer = |rel: &str| -> Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> {
                         if by_rules_only {
@@ -13051,7 +13051,7 @@ struct OwnerPatch {
     changed: Vec<(i64, Vec<Vec<i64>>)>,
     plus: Vec<u32>,
     minus: Vec<u32>,
-    docs: Option<retain::DocDigests>,
+    docs: Option<retain::Docs>,
     digest: u64,
     /// Measured (`RERAIL_STATS_KEEP_TRACE`): the owners read, the kept rows read, the owners found unchanged.
     read: (usize, usize, usize),
@@ -13107,7 +13107,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: &rustc_h
     }
     let (kept_docs, kept_ranges) = (kept.docs()?, kept.ranges()?);
     let all: Vec<usize> = (0..width).collect();
-    let mut docs: Option<retain::DocDigests> = None;
+    let mut docs: Option<retain::Docs> = None;
     let (mut changed, mut plus, mut minus) = (Vec::new(), Vec::new(), Vec::new());
     let sorted = |mut rows: Vec<Vec<i64>>| {
         rows.sort_unstable();
@@ -13128,7 +13128,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: &rustc_h
             let rows = by_new.get(&o).map_or(&[][..], Vec::as_slice);
             let distinct: rustc_hash::FxHashSet<&[i64]> = rows.iter().map(Vec::as_slice).collect();
             let (sum, n) = (distinct.iter().map(|r| cells.row(r)).fold(0u64, u64::wrapping_add), distinct.len());
-            if kept_docs.get(&o).copied() == (n > 0).then_some((sum, n as u64)) {
+            if kept_docs.get(&o) == (n > 0).then_some((sum, n as u64)) {
                 by_new.remove(&o);
                 continue;
             }
@@ -13143,7 +13143,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: &rustc_h
                 let mut row = vec![0i64; width];
                 let rows: Vec<Vec<i64>> = (start..start + n).map(|r| { kept.source.row_at(r as usize, &all, &mut row); row.clone() }).collect();
                 let sum = cells.rows(&rows.concat()).into_iter().fold(0u64, u64::wrapping_add);
-                if kept_docs.get(&o) != Some(&(sum, n as u64)) {
+                if kept_docs.get(&o) != Some((sum, n as u64)) {
                     return Err(format!("{rel}: owner {o}'s kept rows are not its digest's"));
                 }
                 rows
@@ -13184,15 +13184,12 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: &rustc_h
         once.clear();
         plus.extend(now.iter().enumerate().filter(|(_, r)| !a.contains(*r) && once.insert(r.as_slice())).map(|(i, _)| appended + i as u32));
         appended += now.len() as u32;
-        let d = docs.get_or_insert_with(|| (**kept_docs).clone());
-        if now.is_empty() {
-            d.remove(&o);
-        } else {
-            d.insert(o, (cells.rows(&now.concat()).into_iter().fold(0u64, u64::wrapping_add), now.len() as u64));
-        }
+        // This run's documents over the kept ones, none of those read into a table of its own (decision 0353 step 8).
+        let d = docs.get_or_insert_with(|| retain::Docs::over(Arc::clone(kept_docs)));
+        d.set(o, (!now.is_empty()).then(|| (cells.rows(&now.concat()).into_iter().fold(0u64, u64::wrapping_add), now.len() as u64)));
         changed.push((o, now));
     }
-    let digest = docs.as_ref().map_or(kept.digest, retain::digest_of_docs);
+    let digest = docs.as_ref().map_or(kept.digest, retain::Docs::digest);
     Ok(OwnerPatch { changed, plus, minus, docs, digest, read })
 }
 

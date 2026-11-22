@@ -196,7 +196,7 @@ impl KeptStrata for Kept<'_> {
         self.strata = Some((evaluated, of));
     }
 
-    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Vec<i64>, usize, Vec<(String, u64)>)>) {
+    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, crate::code_rule_dsl::logic::plan::RanRows, usize, Vec<(String, u64)>)>) {
         let Some(frame) = self.rels.get(rel).cloned() else { return };
         match got {
             Some((digest, types, rows, n, reads)) => {
@@ -204,9 +204,13 @@ impl KeptStrata for Kept<'_> {
                     return;
                 }
                 let types = self.types.get(rel).filter(|t| t.len() == types.len()).cloned().unwrap_or(types);
-                self.values += rows.len();
+                self.values += n * types.len();
                 self.written_rows += n;
-                self.puts.push(flat_put(&frame, digest, reads, types, rows, n));
+                self.puts.push(match rows {
+                    crate::code_rule_dsl::logic::plan::RanRows::Flat(rows) => flat_put(&frame, digest, reads, types, rows, n),
+                    // The engine's relation, lent where its rows lie (decision 0353 step 8).
+                    crate::code_rule_dsl::logic::plan::RanRows::Held(held) => super::retain::kept_put(&frame, digest, reads, types, &held),
+                });
                 if self.values >= FLUSH_VALUES {
                     self.flush();
                 }
@@ -404,19 +408,10 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
         let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
         let n = source.len();
-        // copy: not block data: an input's rows gathered for its entry's copy (a source the run did not hold as a
-        // relation of a block), a batch at a time.
-        let mut rows: Vec<i64> = Vec::with_capacity(n * w);
-        if crate::code_rule_dsl::logic::native::component::each_held_batch(source.as_ref(), w, &mut |b: &[i64]| rows.extend_from_slice(b)).is_none() {
-            let all: Vec<usize> = (0..w).collect();
-            let mut row = vec![0i64; w];
-            for i in 0..n {
-                source.row_at(i, &all, &mut row);
-                rows.extend_from_slice(&row);
-            }
-        }
+        // Its rows read where they lie as the writer packs them (decision 0353 step 8).
         written += n;
-        puts.push(flat_put(f, digest, Vec::new(), types, rows, n));
+        let what = KeptWhat::Read { rows: super::retain::source_rows(source, w), levels: None, given: false };
+        puts.push(KeptPut { rel: f.name.clone(), ident: f.ident, part: 0, digest, reads: Vec::new(), what, types });
     }
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };
