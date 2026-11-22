@@ -1732,12 +1732,19 @@ HIP's language.
   header for HIP at 32 and 64 lanes, as clang does.
 - **The engine's tests on HIP reset the host.** Four slab tests (`residency::slabs::tests`) under `RERAIL_GPU=hip`
   lost the connection 26 s in. The host had rebooted from bugcheck 0x133 (DPC_WATCHDOG_VIOLATION, one DPC past its
-  limit): a kernel driver, the GPU's by every sign, held a DPC. The host has no debugger to read the minidump.
-  - The library's tests, which ran right, use buffers from `hipHostMalloc` alone.
-  - The slab tests also register the host's pages (`hipHostRegister`, `register_runs`) and wait on a host-written
-    word (`hipStreamWaitValue64`). Those are where to look first.
-  - A reset 20 minutes earlier (no dump) came before any HIP run of the engine's reached the host.
-  - No more of the engine's GPU tests run there under HIP until the call that hangs the driver is found.
+  limit).
+  - The minidump, read with cdb (the Windows SDK's debuggers, installed for it), puts the DPC in Hyper-V's root
+    scheduler, not in AMD's driver: `winhvr!WinHvpXSchedulerDpcRoutine` → `WinHvpProcessDispatchSignal` →
+    `nt!KeSetEvent`. `amdkmdag` is loaded, and is on no frame.
+  - The host's Linux guest VM had started 90 s before, after the reset before (no dump, which came before any HIP
+    run of the engine's reached the host). The farm ran nothing on the guest then.
+  - So the stall is the hypervisor's, under the host's load with a guest running. That matches the host's earlier
+    resets under load while its guest ran. Whether HIP's load differs from OpenCL's there is not settled: these slab
+    tests ran under OpenCL, with the guest up, without a reset.
+  - The library's tests, which ran right, use buffers from `hipHostMalloc` alone. The slab tests also register the
+    host's pages (`hipHostRegister`, `register_runs`) and wait on a host-written word (`hipStreamWaitValue64`).
+  - The test that settles it is the same four tests under HIP with the guest stopped. Until then, no more of the
+    engine's GPU tests run there under HIP.
 
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
