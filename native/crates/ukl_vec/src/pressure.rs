@@ -58,6 +58,9 @@ pub struct FuncPressure {
     pub other: u32,
     /// Its exchanges with the SIMD group's other chunks below 32 lanes (cross-lane operations, the group's decisions).
     pub exchanges: u32,
+    /// Its calls: the function called, and at each width the vector registers its values live across the call
+    /// take (what the caller keeps, its result apart).
+    pub across: Vec<(u32, [u32; 6])>,
 }
 
 /// The registers value `x` of `f` takes at width `w`: vector, integer, float.
@@ -227,6 +230,9 @@ pub fn of_func(ssa: &Ssa, f: &Func) -> FuncPressure {
             note(&sum, &mut fp);
             live.clear(x);
             add(&mut sum, x, -1);
+            if f.inst(x).op == O::Call {
+                fp.across.push((f.inst(x).a, std::array::from_fn(|k| sum[k].0 + sum[k].2)));
+            }
             for u in reads(f, x) {
                 if !live.has(u) {
                     live.set(u);
@@ -263,6 +269,20 @@ pub fn lane_cost(ps: &[FuncPressure], k: usize, files: Files) -> f64 {
             lanes + each + exchanges + (f64::from(p.other) / 6.0 + 2.0 * spilled / 3.0) / w
         })
         .sum()
+}
+
+/// Whether each function keeps its callers' registers (`CallConv::PreserveAll`) at width `WIDTHS[k]`:
+/// where its callers keep more vector registers live across a call of it than it takes itself, so saving in it the
+/// registers it writes costs less than its callers saving theirs. The kernel's function (the entry's) never.
+pub fn keeps_callers(ps: &[FuncPressure], k: usize) -> Vec<bool> {
+    let mut most = vec![0u32; ps.len()];
+    for p in ps {
+        for &(callee, regs) in &p.across {
+            let m = &mut most[callee as usize];
+            *m = (*m).max(regs[k]);
+        }
+    }
+    ps.iter().enumerate().map(|(f, p)| f != 0 && most[f] > p.at[k].vec + p.at[k].float).collect()
 }
 
 /// The width a kernel runs at on a target of `files`: the least cost a lane.

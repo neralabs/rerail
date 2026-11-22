@@ -201,7 +201,16 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
     let chunked = ssa.funcs[0].cross && w < 32;
     let mut module = module()?;
     let cc = module.isa().default_call_conv();
-    let sigs: Vec<Signature> = ssa.funcs.iter().enumerate().map(|(k, f)| signature(f, k == 0, w, cc)).collect();
+    // Each function's convention: the platform's (its callers save what they keep), or one that keeps its callers'
+    // registers (it saves what it writes), whichever saves fewer (`pressure::keeps_callers`).
+    let wk = crate::pressure::WIDTHS.iter().position(|&x| x == w).expect("a width");
+    let keeps = crate::pressure::keeps_callers(&crate::pressure::of(ssa), wk);
+    let sigs: Vec<Signature> = ssa
+        .funcs
+        .iter()
+        .enumerate()
+        .map(|(k, f)| signature(f, k == 0, w, if keeps[k] { cranelift_codegen::isa::CallConv::PreserveAll } else { cc }))
+        .collect();
     let ids: Vec<FuncId> = sigs.iter().enumerate().map(|(k, s)| module.declare_function(&format!("f{k}"), Linkage::Local, s)).collect::<Result<_, _>>().map_err(|e| Error(format!("{name}: {e}")))?;
     let mut fbc = FunctionBuilderContext::new();
     let mut ctx = module.make_context();

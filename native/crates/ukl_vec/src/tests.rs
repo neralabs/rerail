@@ -606,3 +606,30 @@ fn a_cross_lane_kernel_runs_as_chunks_of_its_lanes() {
     });
     assert_eq!(out[0], s ^ acc.wrapping_mul(3) ^ b, "lane 0");
 }
+
+/// A call keeps the caller's registers where the callee takes fewer than the caller keeps across it: a small function
+/// called while twelve lanes values live in its caller keeps its callers' registers (`CallConv::PreserveAll`), and the kernel runs as the interpreter does at every width.
+#[test]
+fn a_small_callee_keeps_its_callers_registers() {
+    let prelude = "static uint32_t mix(uint32_t x) { return (x ^ (x >> 3)) * 2654435761u; }\n";
+    let names: Vec<String> = (0..12).map(|j| format!("a{j}")).collect();
+    let mut body = String::new();
+    for (j, n) in names.iter().enumerate() {
+        body += &format!("    uint32_t {n} = out[(lid + {j}u) % 64u] * {}u + lid;\n", 2 * j + 3);
+    }
+    body += "    uint32_t m = mix(lid);\n";
+    body += &format!("    out[lid] = m ^ {};", names.join(" ^ "));
+    let text = format!(
+        "#include <ukl/memory.h>\n#include <ukl/group.h>\n{prelude}\nDEFINE_KERNEL2(rule, t_rule,\n               RWBUFFER, uint32_t, out, \"[64]\",\n               LID0,     uint32_t, lid, ,\n               LANE,     uint16_t, lane, )\n{{\n{body}\n}}\n"
+    );
+    let src = super::source("/<kernels>/rule.uglykl", &text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap();
+    let k = super::vector::vectorize(&p, p.kernel("t_rule").unwrap()).unwrap();
+    let ssa = ssa_of(&p, &k);
+    let ps = super::pressure::of(&ssa);
+    let mix = ssa.funcs.iter().position(|f| f.name.contains("mix")).expect("mix, a function of its own");
+    let keeps = super::pressure::keeps_callers(&ps, 3);
+    assert!(keeps[mix], "mix at width 8 keeps its callers' registers: {:?}", ps.iter().map(|f| (&f.across, f.at[3])).collect::<Vec<_>>());
+    ran_with(prelude, &body);
+}
