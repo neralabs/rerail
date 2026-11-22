@@ -290,9 +290,23 @@ fn rr_aot_against_jit() {
     let aot = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::parse(b, t.len()).map_or(0, |c| c.keys.len())).sum::<usize>();
     let jit = || files.iter().map(|t| c.parser.image(t.as_bytes()).map_or(0, |i| i.len())).sum::<usize>();
     let engine = || files.iter().map(|t| crate::engine_tape(t).len()).sum::<usize>();
-    let mut best = [std::time::Duration::MAX; 4];
+    // The JIT's tier 1 alone: its batch made and called, as `image` makes it.
+    let jit_lex = || {
+        files
+            .iter()
+            .map(|t| {
+                let mut batch = rerail_cpu_block::native_cpu_block::Batch::new(&c.parser.tier1, &[t.as_bytes()]);
+                batch.call(&c.parser.tier1);
+                batch.counts.len()
+            })
+            .sum::<usize>()
+    };
+    // What step 4 of 0619 adds to tier 2: each record's last byte read from the bytes.
+    let lexed: Vec<_> = bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len())).collect();
+    let ends = || bufs.iter().zip(&files).zip(&lexed).map(|((b, t), l)| l.starts.iter().map(|&s| rerail_rr_aot::token_last(b, t.len(), s as usize)).sum::<usize>()).sum::<usize>();
+    let mut best = [std::time::Duration::MAX; 6];
     for _ in 0..rounds {
-        for (k, f) in [&lex as &dyn Fn() -> usize, &aot, &jit, &engine].into_iter().enumerate() {
+        for (k, f) in [&lex as &dyn Fn() -> usize, &aot, &jit, &engine, &jit_lex, &ends].into_iter().enumerate() {
             best[k] = best[k].min(time(f));
         }
     }
@@ -304,6 +318,9 @@ fn rr_aot_against_jit() {
     row("the parser as Rust, tier 1 (lex)", best[0]);
     row("the parser as Rust, tier 2 (parse - lex)", best[1].saturating_sub(best[0]));
     row("the parser as Rust, whole (parse)", best[1]);
+    row("the parser as Rust, every token's last byte (token_last)", best[5]);
+    row("the JIT, tier 1 (the batch)", best[4]);
+    row("the JIT, tier 2 (image - batch)", best[2].saturating_sub(best[4]));
     row("the JIT, whole (image)", best[2]);
     row("the engine's hand-written reader", best[3]);
     let load = std::process::Command::new("uptime").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
