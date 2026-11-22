@@ -195,7 +195,7 @@ fn the_wave_dumps_as_rir_and_assembles_back() {
     }
     let tables = wave.dump(false, false).unwrap();
     assert!(!tables.contains("\nplan\n") && !tables.contains("\ngroup ") && !tables.contains("\nsetplan") && tables.contains("\nprogram "));
-    let golden = crate::source_tree::native().join("src/code_rule_dsl/waves/matches/wave.rir");
+    let golden = crate::source_tree::native().join("crates/boot/src/code_rule_dsl/waves/matches/wave.rir");
     if std::env::var_os("RERAIL_BLESS").is_some() {
         std::fs::write(&golden, &dump).unwrap();
     }

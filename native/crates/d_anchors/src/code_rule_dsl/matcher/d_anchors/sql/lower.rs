@@ -1092,7 +1092,7 @@ fn batch_scope(
             ),
             (
                 "vocabulary_fill",
-                include_str!("vocabulary-fill.sql").to_owned(),
+                include_str!("../../../../../../../src/code_rule_dsl/matcher/d_anchors/sql/vocabulary-fill.sql").to_owned(),
             ),
             (
                 "vocabulary_complete",

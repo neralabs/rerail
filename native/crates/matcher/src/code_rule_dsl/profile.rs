@@ -1,6 +1,7 @@
 //! Benchmark-only attribution for the existing workspace evaluator.
 //! Disabled in production builds. Reports worker CPU separately from wall time.
 
+#[path = "../../../facts_base/src/code_rule_dsl/profile/clock.rs"]
 pub mod clock;
 pub mod memory;
 pub use clock::thread_cpu_ns;

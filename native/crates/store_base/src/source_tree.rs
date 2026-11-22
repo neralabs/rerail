@@ -1,6 +1,6 @@
 //! The checkout this engine runs from: where it reads its own `.rerail` files as it runs (the builtin
 //! typing programs under `native/src/code_rule_dsl/typing/programs`, the rule library under
-//! `docs/rule-syntax/lib`).
+//! `docs/rule-syntax/lib`), and where the tests that read the engine's sources find them (`source_paths`).
 //!
 //! It is found as the program runs, not written into the build (decision 0224). A crate that wrote
 //! its checkout's path in (`env!("CARGO_MANIFEST_DIR")`) was a different crate in every checkout, and
@@ -33,6 +33,33 @@ pub fn native() -> PathBuf {
         return native;
     }
     root().map_or_else(|| PathBuf::from("native"), |root| root.join("native"))
+}
+
+/// Where `path` of the engine's module tree is (a path under a crate's `src/`, as `code_rule_dsl/prefilter`): the
+/// engine's own (`native/src/<path>`), then each crate's (`native/crates/*/src/<path>`, by the crate's directory),
+/// those that are there. Each crate's sources are in its own `src/`, so a directory of the module tree can be in
+/// several crates, and a file is in one.
+pub fn source_paths(path: &str) -> Vec<PathBuf> {
+    let native = native();
+    let mut crates: Vec<PathBuf> = std::fs::read_dir(native.join("crates")).map_or_else(|_| Vec::new(), |dirs| dirs.flatten().map(|d| d.path().join("src").join(path)).collect());
+    crates.sort();
+    std::iter::once(native.join("src").join(path)).chain(crates).filter(|p| p.exists()).collect()
+}
+
+/// A source file's path in the engine's module tree (`code_rule_dsl/logic/run.rs`): its path under its crate's
+/// `src/` (or the engine's own `native/src/`), the name `source_paths` finds it by.
+pub fn module_path(file: &Path) -> String {
+    let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+    let (path, native) = (real(file), real(&native()));
+    let under = path.strip_prefix(&native).map_or(path.as_str(), |p| p.trim_start_matches('/'));
+    let under = under.strip_prefix("crates/").and_then(|c| c.split_once("/src/")).map_or(under, |(_, rest)| rest);
+    under.strip_prefix("src/").unwrap_or(under).to_owned()
+}
+
+/// The file `path` of the engine's module tree (`source_paths`), wherever its crate keeps it; the engine's own place
+/// for it when no crate has it.
+pub fn source_file(path: &str) -> PathBuf {
+    source_paths(path).into_iter().find(|p| p.is_file()).unwrap_or_else(|| native().join("src").join(path))
 }
 
 /// The `.rerail` library from a source checkout or from the package that contains the addon.

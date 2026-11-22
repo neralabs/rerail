@@ -249,10 +249,10 @@ fn r2_a_new_process_reads_its_kept_rows_in_place() {
 /// (`maintain::shape::MAINTENANCE_SUFFIXES`, the run's `run::shape`), which this reads.
 #[test]
 fn r1_the_engine_source_names_no_maintenance_relation() {
-    let root = crate::source_tree::native().join("src/code_rule_dsl/logic");
-    let root = if root.exists() { root } else { crate::source_tree::native().join("../../src/code_rule_dsl/logic") };
     let mut found = Vec::new();
-    let mut stack = vec![root];
+    // The logic's sources, in whichever crates keep them.
+    let mut stack = crate::source_tree::source_paths("code_rule_dsl/logic");
+    assert!(!stack.is_empty(), "the logic's sources");
     while let Some(d) = stack.pop() {
         for e in std::fs::read_dir(&d).unwrap().flatten() {
             let p = e.path();

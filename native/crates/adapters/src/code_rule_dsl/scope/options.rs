@@ -11,7 +11,8 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 
 /// ESLint's globals per `ecmaVersion` and for `commonjs`, generated offline from a pinned ESLint
 /// (`scripts/generate/scope/es-globals.mjs`).
-const ES_GLOBALS_JSON: &str = include_str!("data/es_globals.generated.json");
+const ES_GLOBALS_JSON: &str =
+    include_str!("../../../../../src/code_rule_dsl/scope/data/es_globals.generated.json");
 
 #[derive(Deserialize)]
 struct EsGlobalsFile {

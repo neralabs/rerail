@@ -4333,10 +4333,10 @@ fn dropping_unreached_clauses_prunes_to_the_same_program_other_packs() {
 /// name (the scope code reads the same table, `scope::options::EsGlobals`).
 #[test]
 fn es_globals_match_the_engines_table() {
-    let table: serde_json::Value = serde_json::from_str(include_str!("../../scope/data/es_globals.generated.json")).unwrap();
+    let table: serde_json::Value = serde_json::from_str(include_str!("../../../../../../src/code_rule_dsl/scope/data/es_globals.generated.json")).unwrap();
     let latest = table["latest"].as_u64().unwrap().to_string();
     let want: std::collections::BTreeSet<String> = table["versions"][&latest].as_object().unwrap().keys().cloned().collect();
-    let rows = include_str!("../../../../../docs/rule-syntax/lib/tsx/es-globals.rerail");
+    let rows = include_str!("../../../../../../../docs/rule-syntax/lib/tsx/es-globals.rerail");
     let got: std::collections::BTreeSet<String> = rows
         .lines()
         .filter_map(|l| l.strip_prefix("es_global(\"")?.strip_suffix("\").").map(str::to_owned))

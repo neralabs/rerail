@@ -13,7 +13,7 @@ use rerail_rir::rir_asm as rir;
 use rerail_cpu_stream::native_cpu_stream;
 
 /// The grammar: JSONC.
-const GRAMMAR: &str = include_str!("../../../../crates/json_parser/jsonc.bitlex");
+const GRAMMAR: &str = include_str!("../../../../../json_parser/jsonc.bitlex");
 
 /// The compiled parser.
 struct Compiled {

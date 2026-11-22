@@ -4,7 +4,7 @@
     /// with a one-witness allowance.
     fn evaluate_bounded(clause: Value, source: &str) -> Value {
         let mut capabilities: Value =
-            serde_json::from_str(include_str!("../capabilities.json")).expect("capabilities");
+            serde_json::from_str(include_str!("../../../../../src/code_rule_dsl/capabilities.json")).expect("capabilities");
         capabilities["limits"]["maxWitnesses"] = json!(1);
         let compiled = crate::code_rule_dsl::rule_api::compile(&json!({
                 "format": "rerail.policy/v1",

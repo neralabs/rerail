@@ -4,7 +4,7 @@ Upstream: [npm/node-semver](https://github.com/npm/node-semver/tree/6e05b7637396
 
 Both files below are under ISC, as `REUSE.toml` annotates them. The recorder that writes the cases, `scripts/generate/semver/semver-subset-cases.mjs`, is Rerail's (Apache-2.0).
 
-Paths are relative to this directory, `native/src/code_rule_dsl/semver/`.
+Paths are relative to this directory, `native/crates/run/src/code_rule_dsl/semver/`.
 
 | File | Upstream path | Copy |
 |---|---|---|

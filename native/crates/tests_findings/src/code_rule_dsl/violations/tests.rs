@@ -1,7 +1,7 @@
     use super::super::{CompiledCodeRuleDsl};
     use super::*;
 
-    const CAPABILITIES: &str = include_str!("../capabilities.json");
+    const CAPABILITIES: &str = include_str!("../../../../../src/code_rule_dsl/capabilities.json");
 
     fn compile(forbid: Value, violation: Value) -> Result<CompiledCodeRuleDsl> {
         compile_clause(json!({ "id": "c", "forbid": forbid, "violation": violation }))

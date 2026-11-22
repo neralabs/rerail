@@ -202,8 +202,10 @@
     #[test]
     fn every_switch_a_profile_reads_is_left_out_of_the_runs_key() {
         let root = crate::source_tree::native();
-        let dirs = [root.join("src/code_rule_dsl/logic/profile"), root.join("crates/prof/src")];
-        let mut files = vec![root.join("src/code_rule_dsl/logic/profile.rs")];
+        // The profile's sources (`logic/profile.rs` and its directory, in whichever crates keep them) and the heap
+        // sampler's (rerail-prof's `lib.rs`; the crate's other files are the engine's, moved there).
+        let dirs = crate::source_tree::source_paths("code_rule_dsl/logic/profile");
+        let mut files = vec![crate::source_tree::source_file("code_rule_dsl/logic/profile.rs"), root.join("crates/prof/src/lib.rs")];
         for d in dirs {
             let mut stack = vec![d];
             while let Some(d) = stack.pop() {

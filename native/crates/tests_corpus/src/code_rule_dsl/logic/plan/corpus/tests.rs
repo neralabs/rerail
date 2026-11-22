@@ -2040,16 +2040,17 @@ fn every_switch_lowering_reads_is_classified() {
         // A measurement aid (decision 0173): each version written out, the program unchanged.
         "RERAIL_VERSION_TRACE",
     ];
-    let root = crate::source_tree::native().join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
     let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
     // A file's own test module (`#[cfg(test)]`, `#[cfg(all(test, …))]`), which ends it.
     let test_module = regex::Regex::new(r"\n#\[cfg\([^\]]*\btest\b[^\]]*\)\]\n(?:pub(?:\([^)]*\))? )?mod tests\b").unwrap();
     let sources = |places: &[&str]| -> Vec<(String, String)> {
         let mut files = Vec::new();
-        let mut pending: Vec<std::path::PathBuf> = places.iter().map(|p| root.join(p)).collect();
-        let missing: Vec<&std::path::PathBuf> = pending.iter().filter(|p| !p.exists()).collect();
+        // Each place in every crate that keeps a part of it.
+        let found = |p: &&str| crate::source_tree::source_paths(&if *p == "." { "code_rule_dsl".to_owned() } else { format!("code_rule_dsl/{p}") });
+        let missing: Vec<&&str> = places.iter().filter(|p| found(p).is_empty()).collect();
         assert!(missing.is_empty(), "places that are gone: {missing:?}");
+        let mut pending: Vec<std::path::PathBuf> = places.iter().flat_map(found).collect();
         while let Some(p) = pending.pop() {
             if p.is_dir() {
                 pending.extend(std::fs::read_dir(&p).unwrap().map(|e| e.unwrap().path()));
@@ -2060,7 +2061,9 @@ fn every_switch_lowering_reads_is_classified() {
                 if let Some(m) = test_module.find(&text) {
                     text.truncate(m.start());
                 }
-                files.push((p.strip_prefix(&root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"), text));
+                // Named by its path under `code_rule_dsl`, whichever crate keeps it.
+                let name = p.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+                files.push((name.rsplit_once("/src/code_rule_dsl/").map_or(name.clone(), |(_, under)| under.to_owned()), text));
             }
         }
         files
@@ -2099,8 +2102,8 @@ fn every_switch_lowering_reads_is_classified() {
     };
     // `corpus.rs` itself: its preparation (`run_observed` up to the prepared program); and the corpus's base
     // (`corpus/base.rs`, rerail-rr-root's), whose `combine_tail` combines the texts.
-    let corpus = std::fs::read_to_string(root.join("logic/plan/corpus.rs")).unwrap();
-    let base = std::fs::read_to_string(root.join("logic/plan/corpus/base.rs")).unwrap();
+    let corpus = std::fs::read_to_string(crate::source_tree::source_file("code_rule_dsl/logic/plan/corpus.rs")).unwrap();
+    let base = std::fs::read_to_string(crate::source_tree::source_file("code_rule_dsl/logic/plan/corpus/base.rs")).unwrap();
     let region_of = |file: &str, text: &str, from: &str, to: &str| -> String {
         let a = text.find(from).unwrap_or_else(|| panic!("{file} has no {from:?}"));
         let b = a + text[a..].find(to).unwrap_or_else(|| panic!("{file} has no {to:?} after {from:?}"));

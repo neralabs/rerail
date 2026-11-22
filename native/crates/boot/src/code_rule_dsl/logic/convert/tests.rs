@@ -1784,7 +1784,7 @@ struct Baseline {
 
 impl Baseline {
     fn path() -> PathBuf {
-        crate::source_tree::native().join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
+        crate::source_tree::native().join("crates/boot/src/code_rule_dsl/logic/convert/replay_baseline.txt")
     }
 
     /// The recorded baseline, or why it does not read.

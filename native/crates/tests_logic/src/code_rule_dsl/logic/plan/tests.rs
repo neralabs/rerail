@@ -886,7 +886,7 @@ fn own_ingestion_derives_what_t_facts_do() {
         return;
     }
     use crate::code_rule_dsl::typing::file_local::Binding;
-    let raw = zstd::decode_all(std::fs::File::open(root().join("../facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
+    let raw = zstd::decode_all(std::fs::File::open(crate::source_tree::source_file("code_rule_dsl/facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
     let corpus: Vec<(String, String)> = serde_json::from_slice(&raw).unwrap();
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("corpus");
     for (path, source) in &corpus {

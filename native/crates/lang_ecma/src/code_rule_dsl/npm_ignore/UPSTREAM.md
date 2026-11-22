@@ -10,7 +10,7 @@ The licence text is [`LICENSES/MIT.txt`](../../../../LICENSES/MIT.txt); the copy
 
 Both files below are under MIT, as `REUSE.toml` annotates them. The tests (`tests.rs`) and the recorder that writes the cases, `scripts/generate/npm-ignore/npm-ignore-cases.mjs`, are Rerail's (Apache-2.0).
 
-Paths are relative to this directory, `native/src/code_rule_dsl/npm_ignore/`.
+Paths are relative to this directory, `native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/`.
 
 | File | Upstream path | Copy |
 |---|---|---|

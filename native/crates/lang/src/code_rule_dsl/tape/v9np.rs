@@ -1,4 +1,4 @@
-//! Tape v8 spike: v7 baseline (copied from rerail native/src/code_rule_dsl/tape.rs and tape/wire.rs)
+//! Tape v8 spike: v7 baseline (copied from rerail native/crates/lang/src/code_rule_dsl/tape.rs and tape/wire.rs)
 //! against regular column variants. Modes:
 //!   measure <corpus> <lang> <dir>...   storage, encode, Rust decode, invariant statistics (one JSON line)
 //!   sql <lang> <db> <maxfiles> <dir>... pure-SQL decoding (SQL index prototype technique) on bundled SQLite

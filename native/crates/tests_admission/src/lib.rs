@@ -33,11 +33,12 @@ mod test_load {
     static LOAD: extern "C" fn() = load;
 }
 
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_boot::code_rule_dsl::*;
     pub use rerail_boot::code_rule_dsl::rule_api::CodeRuleDslEditor;
     #[cfg(test)]
+    #[path = "../../../../src/code_rule_dsl/test_support.rs"]
     mod test_support;
     #[cfg_attr(test, path = "transducer")]
     mod transducer {
@@ -137,7 +138,7 @@ pub mod code_rule_dsl {
             // The admission spike's tests parse Python, which the engine registers: they run here, and the transducer
             // keeps the spike only for its test hooks (`metal_frontier_conformance` reads a program of it).
             #[cfg(test)]
-            #[path = "admission_spike.rs"]
+            #[path = "../../../../../transducer_cpu/src/code_rule_dsl/transducer/packed/admission_spike.rs"]
             pub mod admission_spike;
         }
         #[allow(unused_imports)]

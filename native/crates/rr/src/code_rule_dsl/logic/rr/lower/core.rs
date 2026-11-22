@@ -31,7 +31,7 @@ use super::{Lowerer, ty};
 use super::Tm;
 use crate::code_rule_dsl::logic::front::{Error, is_axis};
 
-const CORE: &str = include_str!("../../../../../../docs/rule-syntax/lib/core.rerail");
+const CORE: &str = include_str!("../../../../../../../../docs/rule-syntax/lib/core.rerail");
 
 /// core.rerail's declarations, in the engine's column types.
 pub(super) static DECLS: LazyLock<BTreeMap<String, Vec<(String, String)>>> = LazyLock::new(|| {

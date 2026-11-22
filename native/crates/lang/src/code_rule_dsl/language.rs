@@ -1585,7 +1585,7 @@ pub mod tests {
     #[test]
     fn the_host_registry_module_matches_the_engine_tables() {
         let module =
-            include_str!("../../../src/engine/code-rule/code-rule-language-registry.generated.ts");
+            include_str!("../../../../../src/engine/code-rule/code-rule-language-registry.generated.ts");
         let start = module.find("/* registry */").expect("registry start") + 14;
         let end = module.find("/* end registry */").expect("registry end");
         let entries: Vec<serde_json::Value> =

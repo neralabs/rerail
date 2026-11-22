@@ -276,7 +276,7 @@ impl Drop for MetalWorkspaceLease {
     }
 }
 
-const BATCH_ENTRY: &str = include_str!("batch_runtime.uglykl");
+const BATCH_ENTRY: &str = include_str!("../../../../../../src/code_rule_dsl/transducer/packed/batch_runtime.uglykl");
 /// The interpreter of resident label batches (tasks from roots, not records: decision 0033), over a batch of tapes in
 /// `format` (0: mixed) as the label kernels read it ([`tape_view`]): the format told once, at the compile (decision
 /// 0576). A run places its tapes in format 15 or 16 (a 16z tape as 16), so its interpreter and sweep hold one
@@ -303,7 +303,7 @@ pub(super) static VIEW_PIECES: std::sync::LazyLock<[String; 2]> = std::sync::Laz
             crate::code_rule_dsl::residency::slabs::ukl(),
             std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
             reads,
-            include_str!("device_tape.h")
+            include_str!("../../../../../../src/code_rule_dsl/transducer/packed/device_tape.h")
         )
     })
 });

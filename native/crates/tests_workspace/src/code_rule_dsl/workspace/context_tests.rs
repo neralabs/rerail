@@ -4246,7 +4246,7 @@ fn derived_documents_code_rule(id: &str) -> CompiledCodeRuleDsl {
                 clause("python", json!({ "language": "python", "rule": { "kind": "call" } })),
             ],
         })
-        .to_string(), "json", include_str!("../capabilities.json"))
+        .to_string(), "json", include_str!("../../../../../src/code_rule_dsl/capabilities.json"))
     .unwrap()
 }
 

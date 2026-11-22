@@ -274,6 +274,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
+    // The width census's counts by relation and by span (`RERAIL_WIDTH_CENSUS`), printed at the run's end: a
+    // measurement's records, no reusable results.
+    ("code_rule_dsl/logic/profile/memory.rs", "BY_NAME"),
+    ("code_rule_dsl/logic/profile/memory.rs", "BY_SPAN"),
     // The world's rows (`rr::lower::World`), made once the languages are installed: a registry of what is
     // installed, as `FUNCTORS`.
     ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
@@ -344,10 +348,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
 /// programs' pointers became kept facts, the map their in-memory copy (t33 step 2).
 const NOT_YET_MAPS_PIN: usize = 6;
 
-fn src() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("src")
-}
-
 /// The crate's source files, tests left out: a test may make what it likes.
 fn files(under: &Path, out: &mut Vec<PathBuf>) {
     let Ok(dir) = std::fs::read_dir(under) else { return };
@@ -365,7 +365,14 @@ fn files(under: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn rel(p: &Path) -> String {
-    p.strip_prefix(src()).unwrap().to_string_lossy().into_owned()
+    rerail_store::source_tree::module_path(p)
+}
+
+/// The files of `path` in the engine's module tree (a file, or a directory's), in whichever crates keep them.
+fn tree(path: &str, out: &mut Vec<PathBuf>) {
+    for p in rerail_store::source_tree::source_paths(path) {
+        if p.is_file() { out.push(p) } else { files(&p, out) }
+    }
 }
 
 /// The source a run's kept state can live in: the content store (every table of the store a run opens) and the
@@ -377,12 +384,7 @@ const KEPT_IN: &[&str] = &["content_store", "code_rule_dsl/logic", "code_rule_ds
 fn tables() -> BTreeMap<String, BTreeSet<String>> {
     let mut fs = Vec::new();
     for d in KEPT_IN {
-        let p = src().join(d);
-        if p.is_file() {
-            fs.push(p);
-        } else {
-            files(&p, &mut fs);
-        }
+        tree(d, &mut fs);
     }
     let re = regex::Regex::new(r"CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[a-z_]+\.)?([A-Za-z_{][A-Za-z_0-9{}:]*)").unwrap();
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -402,10 +404,9 @@ fn tables() -> BTreeMap<String, BTreeSet<String>> {
 /// decision 0442): (file, name).
 fn maps() -> BTreeSet<(String, String)> {
     let mut fs = Vec::new();
-    for d in ["code_rule_dsl/logic", "content_store"] {
-        files(&src().join(d), &mut fs);
+    for d in ["code_rule_dsl/logic", "content_store", "code_rule_dsl/text.rs"] {
+        tree(d, &mut fs);
     }
-    fs.push(src().join("code_rule_dsl/text.rs"));
     let head = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+([A-Z_][A-Z_0-9]*)\s*:").unwrap();
     let held = regex::Regex::new(r"(Mutex|RwLock|RefCell|OnceLock|LazyLock|Cell)\s*<").unwrap();
     // A plain number, flag or instant holds no result.

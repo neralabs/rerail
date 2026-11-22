@@ -15,7 +15,7 @@ use std::sync::Arc;
 pub static FRONTIER_AUDIT: std::sync::OnceLock<fn(&CompiledCodeRule) -> Value> = std::sync::OnceLock::new();
 
 /// The capabilities this build grants a rule (`capabilities.json`): what the CLI and the engine's glue compile with.
-pub const CAPABILITIES: &str = include_str!("capabilities.json");
+pub const CAPABILITIES: &str = include_str!("../../../../src/code_rule_dsl/capabilities.json");
 
 /// A rule's document compiled against `capabilities_json`, for the host and the engine's glue (`compile_rule`).
 pub fn compile(source: &str, format: &str, capabilities_json: &str) -> Result<CompiledCodeRuleDsl> {

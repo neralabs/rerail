@@ -1546,7 +1546,7 @@ pub mod tests {
     fn unchanged_gated_programs_reuse_only_complete_retained_results() {
         use crate::code_rule_dsl::logic::plan::corpus::preparation::{magic::ProgramDemand, prune::Prune};
         use crate::code_rule_dsl::logic::program_image::{fields::ProgramFields, manager::Pipeline};
-        let p = crate::code_rule_dsl::logic::rr::parse_version(include_str!("../golden/programs/workload.rerail")).unwrap();
+        let p = crate::code_rule_dsl::logic::rr::parse_version(include_str!("../../../../../../../src/code_rule_dsl/logic/plan/golden/programs/workload.rerail")).unwrap();
         let mut pipeline = Pipeline::new("gated demand", p);
         pipeline.program(&mut Prune::default());
         let mut demand = ProgramDemand { every: true, gate: true, ..ProgramDemand::default() };

@@ -205,7 +205,7 @@ fn one_hundred_edits_retire_facts_rows_and_predicates() {
             .unwrap();
         store
             .db
-            .execute(include_str!("vocabulary-fill.sql"), [])
+            .execute(include_str!("../../../../../../../src/code_rule_dsl/matcher/p_anchors/sql/vocabulary-fill.sql"), [])
             .unwrap();
         store
             .db

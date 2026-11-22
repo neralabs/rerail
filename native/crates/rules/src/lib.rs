@@ -6,7 +6,7 @@
 //! them P's and D's test-only engines (`matcher::p_anchors`, `matcher::d_anchors`, `waves::relational`:
 //! rerail-p-anchors, rerail-d-relational, rerail-d-anchors).
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -17,7 +17,7 @@
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub use rerail_rules_base::{content_store, git_access, git_workspace};
 extern crate self as rerail_rules;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_rules_base::code_rule_dsl::*;
     /// The matcher, with P's and D's SQL anchor engines (test-only copies: rerail-p-anchors, rerail-d-anchors).

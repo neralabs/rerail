@@ -411,14 +411,14 @@ type SourceChecks = (std::collections::HashMap<String, SourceObservation>, std::
 // module's include, is read twice.
 /// The selected sources' blobs checked against the pinned inventory (`source_checks`).
 pub const SOURCE_CHECKS: &str =
-    concat!("#include \"core.rerail\"\n#include \"git.rerail\"\n", include_str!("../../../typing/programs/git-source-objects.rerail"));
+    concat!("#include \"core.rerail\"\n#include \"git.rerail\"\n", include_str!("../../../../../../../src/code_rule_dsl/typing/programs/git-source-objects.rerail"));
 /// A root's pinned tree, its settings and ignore files read from it (`prime_root`).
 pub const ROOT_TREE: &str =
-    concat!("#include \"core.rerail\"\n#include \"git.rerail\"\n", include_str!("../../../typing/programs/git-root-tree.rerail"));
+    concat!("#include \"core.rerail\"\n#include \"git.rerail\"\n", include_str!("../../../../../../../src/code_rule_dsl/typing/programs/git-root-tree.rerail"));
 /// The filtered tree walk and each file's language (`inventory`).
 pub const INVENTORY: &str = concat!(
     "#include \"core.rerail\"\n#include \"git.rerail\"\n#include \"source-language.rerail\"\n#include \"git/selected-tree.rerail\"\n",
-    include_str!("../../../typing/programs/git-inventory.rerail"),
+    include_str!("../../../../../../../src/code_rule_dsl/typing/programs/git-inventory.rerail"),
 );
 
 fn source_checks(root: &Path, paths: &[String]) -> super::Result<SourceChecks> {

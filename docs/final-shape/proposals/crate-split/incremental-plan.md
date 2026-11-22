@@ -6,7 +6,7 @@ landed. Nothing here is built yet.
 The user's choices (2026-11-21):
 
 - **Keep mounting.** Each new crate mounts its files in place from `native/src`, as the first split did. The
-  files move into the crates later, as a separate step.
+  files move into the crates later, as a separate step. (Done in step 9, right after a hub merge.)
 - **Split the larger crates**, not only the engine. Logic, W and the compiler are cut to crates of about 20k
   production lines or fewer (§3, steps 4–7).
 
@@ -263,14 +263,8 @@ These are independent and small, one commit each:
 
 ## 4. Measuring it
 
-One `cargo build --timings` on one farm host, before step 1 and after each step. Each is a warm rebuild after a
-one-line edit in each layer (compiler, lang, facts, W, logic, the engine), for:
-
-- the CLI (`--bin rerail-engine --features test-hooks`);
-- the test crate a targeted run of that layer's tests builds.
-
-The numbers: wall time, CPU time, and the longest serial chain in the timings. They are recorded in each step's
-decision record. There are no A/B triples. One run per state, with the host's load noted.
+Each step is measured by its crates' sizes (production lines, less inline tests), not by build timings: the user
+dropped the `--timings` runs (2026-11-22).
 
 ## 5. Guards
 
@@ -286,8 +280,7 @@ decision record. There are no A/B triples. One run per state, with the host's lo
 - **Test crate granularity:** the six in step 2, or one per crate below (`rerail-logic-tests`, …). As the
   library crates split in steps 4–7, the test crates follow them, one per library crate where its tests need the
   providers.
-- **Moving the files** into the crates (after this plan): one step for the whole tree, at a quiet point for the
-  other branches.
+- **Moving the files** into the crates: settled, done in step 9 (below), right after a hub merge.
 
 ## Log
 
@@ -1276,3 +1269,30 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     - So a further cut would turn store methods into traits across crates, for about 0.2k.
   - Tests (Linux): rerail-node-space 5 of 5, rerail-transducer-base 60 of 60. The workspace check with `--tests` and
     clippy on both crates are clean.
+- **Step 9** (2026-11-22): each crate's sources are in its own `src/`. The move came right after the hub merge
+  (09e8ac2f96), so the other branches meet it as renames.
+  - **9a** (ff01fd8d4a) is the moves alone, every file `R100`. `tools/cratify/move_sources.py plan` reads the module
+    trees as rustc resolves them and writes `tools/cratify/source-moves.tsv` (1,679 files). A file at `native/src/P`
+    goes to `<crate>/src/P`, so module paths, and the paths between two files of one crate, are unchanged.
+    - A file two crates compile goes to the lower one (`crate-order.tsv`). A file the engine compiles stays.
+    - A file that is not Rust goes with the one crate that includes or names it. One no source names goes with its
+      directory's files.
+    - The directories read whole stay where they are (`WHOLE`): the typing programs, which the package ships as a
+      directory, and the planner's goldens.
+  - **9b**: the paths. `move_sources.py repath` rewrote each `#[path]` and `include*!` the move changed (174 in 108
+    files) and added a `#[path]` where a module's file is now in another crate. A hand edit fixed the three that
+    climbed through a directory that no longer exists. Runtime paths were fixed the same way:
+    - the build script's names table and view sources;
+    - the pack rules' scopes (each rule's scope is unchanged for every case and every moved file);
+    - the check scripts' directory lists;
+    - REUSE, the notices, generators and docs.
+    - The tests that read the engine's sources now find them through `source_tree::source_paths` (a module-tree
+      path, in every crate that keeps a part of it). Each scanner reads what it read before.
+    - `check-node-structures.mjs` walks every crate's module tree. It had read only `native/src/lib.rs`'s since the
+      first split.
+  - Found on the way, from the hub: the width census's two maps went unlisted in `facts_only`'s `STATE`, and
+    `run_state` still listed the removed `crates/clif/src/rust.rs`. Both are fixed.
+  - `metal_host_guard_tests.rs` stays in `native/src`, uncompiled. 1b9c360dcf (RER-131) unmounted it when pattern
+    leaves moved to the host on the Metal path, and it fails as it stands.
+  - Checks: the workspace with `--tests` is clean on Linux and macOS. The guards pass. Tests (Linux): the source
+    scanners and the plan and schedule tests, 125. On a Mac: the Metal launch guard.

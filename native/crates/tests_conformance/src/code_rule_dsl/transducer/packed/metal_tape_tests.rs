@@ -11,7 +11,7 @@ use sha2::{Digest as _, Sha256};
 use rerail_gpu::device::{ComputeFunctionLibrary, ComputeQueue};
 use rerail_gpu::kernels::{buffer_of, launch, read};
 
-const TAPE: &str = concat!("#include <ukl/reads/tape_z.h>\n", include_str!("device_tape.h"));
+const TAPE: &str = concat!("#include <ukl/reads/tape_z.h>\n", include_str!("../../../../../../src/code_rule_dsl/transducer/packed/device_tape.h"));
 const FIELDS: usize = 12;
 
 const KERNEL: &str = r#"

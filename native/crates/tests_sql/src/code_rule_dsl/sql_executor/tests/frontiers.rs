@@ -94,7 +94,7 @@ fn opaque_producer_gates_merges_and_widening_match_independent_sql_frontiers() {
 #[test]
 fn opaque_producers_keep_generated_projections_native_across_document_edits() {
     let (_d, mut e) = executor();
-    let program = include_str!("../../logic/plan/golden/programs/workload.rerail").to_owned()
+    let program = include_str!("../../../../../../src/code_rule_dsl/logic/plan/golden/programs/workload.rerail").to_owned()
         + "\n.decl gate(n:number)\n.input gate(IO=sql, query=\"SELECT 1\")\n.output gate\n";
     let snapshot=json!({"files":[{"path":"a.py","language":"python","source":"def f():\n    x = 1\n    return x\n"}]}).to_string();
     e.bind_snapshot(snapshot.clone()).unwrap();

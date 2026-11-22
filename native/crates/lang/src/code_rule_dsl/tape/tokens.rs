@@ -480,7 +480,7 @@ pub fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
     // Relative to this file (`native/grammars`), so that no checkout's directory is part of the crate.
     macro_rules! grammar {
         ($path:literal) => {
-            include_str!(concat!("../../../grammars/", $path, "/grammar.json"))
+            include_str!(concat!("../../../../../grammars/", $path, "/grammar.json"))
         };
     }
     Some(match lang {

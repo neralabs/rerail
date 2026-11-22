@@ -1009,7 +1009,7 @@ jobs:
           cargo clippy --manifest-path scripts/profiling/preparation/Cargo.toml --locked --all-targets --target-dir target/sql-preparation-lab -- -D warnings
           cargo test --manifest-path scripts/profiling/preparation/Cargo.toml --locked --target-dir target/sql-preparation-lab
 
-  # The tree watch's FSEvents adapter (native/src/tree_watch/fsevents.rs) is compiled out everywhere but macOS, so its
+  # The tree watch's FSEvents adapter (native/crates/tree_watch/src/tree_watch/fsevents.rs) is compiled out everywhere but macOS, so its
   # tests and the tree watch's shared tests run here, when the change reaches its crate (rerail-tree-watch, which builds
   # without the engine: a minute or two cold, where the engine's test target took 16). They read no pack test data. A
   # debug build, as in the rust job.

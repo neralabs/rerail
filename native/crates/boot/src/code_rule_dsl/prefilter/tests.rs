@@ -160,8 +160,8 @@ fn kind_positions_are_every_preorder_of_the_kind_and_feed_kind_frequencies() {
 fn no_relation_stores_a_row_per_node() {
     let store = open(&temp());
     let mut nodes = 0_usize;
-    let here = crate::source_tree::native().join("src/code_rule_dsl/prefilter");
-    let mut files = std::fs::read_dir(&here).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|e| e == "rs")).collect::<Vec<_>>();
+    // The prefilter's own sources, in whichever crates keep them.
+    let mut files = crate::source_tree::source_paths("code_rule_dsl/prefilter").into_iter().flat_map(|here| std::fs::read_dir(here).unwrap().map(|entry| entry.unwrap().path())).filter(|path| path.extension().is_some_and(|e| e == "rs")).collect::<Vec<_>>();
     files.sort();
     for path in &files {
         let (_, doc) = put(&store, &std::fs::read_to_string(path).unwrap(), GrammarDialect::Rust);

@@ -1561,7 +1561,7 @@ fn rejected_inline_staging_does_not_retain_new_scope_or_grammar_candidates() {
     }
 }
 
-const CAPABILITIES: &str = include_str!("../capabilities.json");
+const CAPABILITIES: &str = include_str!("../../../../../src/code_rule_dsl/capabilities.json");
 
 fn clause(id: &str, rule: Value) -> Value {
     json!({

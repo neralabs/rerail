@@ -52,9 +52,9 @@ pub fn classify(
     }
     let _store = ThreadStore::select(store, owner.map(|owner| (root.to_owned(), owner)));
     let program = concat!(
-        include_str!("../../../../../../docs/rule-syntax/lib/core.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/source-language.rerail"), "\n",
-        include_str!("../../../typing/programs/workspace-source-languages.rerail"),
+        include_str!("../../../../../../../../docs/rule-syntax/lib/core.rerail"), "\n",
+        include_str!("../../../../../../../../docs/rule-syntax/lib/source-language.rerail"), "\n",
+        include_str!("../../../../../../../src/code_rule_dsl/typing/programs/workspace-source-languages.rerail"),
     );
     let basename = |path: &str| path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
     let names: std::collections::BTreeSet<_> = paths.iter().map(|path| basename(path)).collect();

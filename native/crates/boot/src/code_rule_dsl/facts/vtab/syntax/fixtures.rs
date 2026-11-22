@@ -11,7 +11,7 @@ pub fn root() -> PathBuf {
 }
 /// CPython 3.13's `fnmatch`, `ftplib`, `glob`, `json/` and `shlex`: the planner fixture's corpus, in its `doc` order.
 pub fn corpus() -> Vec<(String, String)> {
-    let raw = zstd::decode_all(std::fs::File::open(root().join("facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
+    let raw = zstd::decode_all(std::fs::File::open(crate::source_tree::source_file("code_rule_dsl/facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
     serde_json::from_slice(&raw).unwrap()
 }
 pub fn facts(path: &str, source: &str) -> Arc<Facts> {

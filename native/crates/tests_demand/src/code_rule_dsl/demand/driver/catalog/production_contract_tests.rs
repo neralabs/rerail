@@ -131,7 +131,7 @@ struct ExpectedOracle {
 
 #[test]
 fn implementation_catalog_fixture_has_one_meaning() {
-    let fixture: Value = serde_json::from_str(include_str!("../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.json"
+    let fixture: Value = serde_json::from_str(include_str!("../../../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.json"
     ))
     .expect("the implementation catalog fixture is JSON");
     for case in fixture["cases"]
@@ -180,7 +180,7 @@ struct ExpectedTerminal {
 }
 
 fn authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
-    let source = include_str!("../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.sql"
+    let source = include_str!("../../../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.sql"
     );
     source
         .split("-- fixture: ")
@@ -201,7 +201,7 @@ fn authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
 
 fn phase_five_authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
     let source =
-        include_str!("../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_5.sql");
+        include_str!("../../../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_5.sql");
     source
         .split("-- fixture: ")
         .skip(1)
@@ -221,7 +221,7 @@ fn phase_five_authored_sql_goldens() -> std::collections::BTreeMap<String, Strin
 }
 
 fn phase_six_authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
-    include_str!("../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_6.sql")
+    include_str!("../../../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_6.sql")
         .split("-- fixture: ")
         .skip(1)
         .map(|section| {
@@ -238,7 +238,7 @@ fn phase_six_authored_sql_goldens() -> std::collections::BTreeMap<String, String
 }
 
 fn phase_seven_authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
-    include_str!("../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_7.sql")
+    include_str!("../../../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_7.sql")
         .split("-- fixture: ")
         .skip(1)
         .map(|section| {
@@ -255,25 +255,25 @@ fn phase_seven_authored_sql_goldens() -> std::collections::BTreeMap<String, Stri
 }
 
 fn phase_seven_implementation_goldens() -> ImplementationGoldenFile {
-    serde_json::from_str(include_str!("../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_7.json"
+    serde_json::from_str(include_str!("../../../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_7.json"
     ))
     .expect("the Phase 7 implementation goldens have the strict schema")
 }
 
 fn phase_six_implementation_goldens() -> ImplementationGoldenFile {
-    serde_json::from_str(include_str!("../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_6.json"
+    serde_json::from_str(include_str!("../../../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_6.json"
     ))
     .expect("the Phase 6 implementation goldens have the strict schema")
 }
 
 fn phase_five_implementation_goldens() -> ImplementationGoldenFile {
-    serde_json::from_str(include_str!("../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_5.json"
+    serde_json::from_str(include_str!("../../../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_5.json"
     ))
     .expect("the Phase 5 implementation goldens have the strict schema")
 }
 
 fn implementation_goldens() -> ImplementationGoldenFile {
-    serde_json::from_str(include_str!("../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.json"
+    serde_json::from_str(include_str!("../../../../../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.json"
     ))
     .expect("the implementation goldens have the strict schema")
 }
@@ -449,11 +449,11 @@ fn authored_cases(source: &str) -> Vec<ContractCase> {
 fn cases() -> Vec<ContractCase> {
     let mut cases = Vec::with_capacity(108);
     for fixture in [
-        include_str!("../../../../../../fixtures/code-rule-dsl/query/production_contracts_001_020.json"),
-        include_str!("../../../../../../fixtures/code-rule-dsl/query/production_contracts_021_040.json"),
-        include_str!("../../../../../../fixtures/code-rule-dsl/query/production_contracts_041_060.json"),
-        include_str!("../../../../../../fixtures/code-rule-dsl/query/production_contracts_061_080.json"),
-        include_str!("../../../../../../fixtures/code-rule-dsl/query/production_contracts_081_108.json"),
+        include_str!("../../../../../../../../fixtures/code-rule-dsl/query/production_contracts_001_020.json"),
+        include_str!("../../../../../../../../fixtures/code-rule-dsl/query/production_contracts_021_040.json"),
+        include_str!("../../../../../../../../fixtures/code-rule-dsl/query/production_contracts_041_060.json"),
+        include_str!("../../../../../../../../fixtures/code-rule-dsl/query/production_contracts_061_080.json"),
+        include_str!("../../../../../../../../fixtures/code-rule-dsl/query/production_contracts_081_108.json"),
     ] {
         cases.extend(authored_cases(fixture));
     }
@@ -3839,7 +3839,7 @@ fn utility_ctes_are_shared_across_clauses_and_parameter_frames() {
             }}}, "violation": { "anchor": "capture.Y", "code": "SQL", "message": "$Y" }}
         ]
     });
-    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../capabilities.json"))
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../../../../../src/code_rule_dsl/capabilities.json"))
     .expect("shared utility policy");
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("shared utility SQL");
     let sql = plan.structural_sql();
@@ -3890,7 +3890,7 @@ fn independently_compiled_equal_utilities_share_one_semantic_body() {
         })
     };
     let compile = |policy: serde_json::Value| {
-        crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../capabilities.json"))
+        crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../../../../../src/code_rule_dsl/capabilities.json"))
         .expect("utility policy")
     };
     let first = compile(policy("semantic-utility-first", "first"));
@@ -3927,7 +3927,7 @@ fn repeated_policy_clauses_keep_one_bounded_utility_body() {
         "mode": "block",
         "clauses": clauses
     });
-    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../capabilities.json"))
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../../../../../src/code_rule_dsl/capabilities.json"))
     .expect("repeated utility policy");
     let plan =
         SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("bounded utility SQL");
@@ -4014,7 +4014,7 @@ fn shared_utility_choices_stay_in_one_physical_region() {
             }
         ]
     });
-    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../capabilities.json"))
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../../../../../src/code_rule_dsl/capabilities.json"))
     .expect("shared choice policy");
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("shared choice SQL");
     assert!(

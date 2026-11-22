@@ -10,16 +10,16 @@ extern crate rerail_store_base as rerail_store;
 
 pub use rerail_store_base::{Canonical, probes, source_tree};
 
-#[path = "../../../src/content_store"]
+#[path = "content_store"]
 pub mod content_store {
     pub use rerail_store_base::content_store::*;
     pub mod observe;
 }
 /// Every in-process Git read: the one opener, its setup and its pool (`native/src/git_access`). Its Node-API
 /// owner (`owner.rs`) is the engine's, which installs the setup.
-#[path = "../../../src/git_access/mod.rs"]
+#[path = "git_access/mod.rs"]
 pub mod git_access;
-#[path = "../../../src/git_workspace.rs"]
+#[path = "git_workspace.rs"]
 pub mod git_workspace;
 
 /// This crate's own test binary, which boot does not load: the store its tests keep the observer's answers in is

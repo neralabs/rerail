@@ -6,7 +6,8 @@
         // The engine's Metal files, and every file of the Metal crate (its runtime is the old
         // `metal_backend.rs`, its launch layer `launch.rs`).
         let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
-        let engine = std::fs::read_dir(root.join("src/code_rule_dsl/transducer/packed")).unwrap();
+        // The packed directory's files, in whichever crates keep them.
+        let engine = rerail_store::source_tree::source_paths("code_rule_dsl/transducer/packed").into_iter().flat_map(|dir| std::fs::read_dir(dir).unwrap());
         let crate_files = std::fs::read_dir(root.join("crates/metal/src")).unwrap();
         for (in_crate, entry) in engine.map(|e| (false, e)).chain(crate_files.map(|e| (true, e))) {
             let path = entry.unwrap().path();

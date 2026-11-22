@@ -203,7 +203,7 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
 fn the_device_reads_every_format_as_the_document_does() {
     use crate::code_rule_dsl::tape::formats::Format;
     use rerail_metal::lane;
-    let tape = format!("{}{}{}", ukl(), "#include <ukl/reads/tape_z.h>\n", include_str!("../../transducer/packed/device_tape.h"));
+    let tape = format!("{}{}{}", ukl(), "#include <ukl/reads/tape_z.h>\n", include_str!("../../../../../../src/code_rule_dsl/transducer/packed/device_tape.h"));
     const FIELDS: usize = 14;
     // UKL, on the process's device through the lane (decision 0440 step C).
     const KERNEL: &str = r#"

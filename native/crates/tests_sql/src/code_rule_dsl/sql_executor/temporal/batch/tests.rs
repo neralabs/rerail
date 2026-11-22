@@ -252,8 +252,8 @@ fn signed_cpython_replays_match_full_batches_within_the_session_cap() {
     let original =
         json!({"upsert":[{"path":path,"source":source,"language":"python"}]}).to_string();
     for (program, vm_allowance) in [
-        (include_str!("../../../logic/plan/golden/programs/workload.rerail"), 20_000_000),
-        (include_str!("../../../logic/plan/golden/programs/calls.rerail"), 100_000_000),
+        (include_str!("../../../../../../../src/code_rule_dsl/logic/plan/golden/programs/workload.rerail"), 20_000_000),
+        (include_str!("../../../../../../../src/code_rule_dsl/logic/plan/golden/programs/calls.rerail"), 100_000_000),
     ] {
         let (_dir, mut sparse) = executor();
         let (_dir, mut full) = executor();
@@ -320,7 +320,7 @@ fn cpython_calls_returns_match_parent_walk_after_edit() {
         .unwrap();
     e.bind_snapshot(snapshot).unwrap();
     e.run(
-        include_str!("../../../logic/plan/golden/programs/calls.rerail").into(),
+        include_str!("../../../../../../../src/code_rule_dsl/logic/plan/golden/programs/calls.rerail").into(),
         "python".into(),
         None,
     )

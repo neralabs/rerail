@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 /// tree-sitter-python's grammar (`grammar.json`), parsed once.
 fn python_grammar() -> Option<&'static serde_json::Value> {
-    static GRAMMAR: std::sync::LazyLock<Option<serde_json::Value>> = std::sync::LazyLock::new(|| serde_json::from_str(include_str!("../../../grammars/tree-sitter-python/src/grammar.json")).ok());
+    static GRAMMAR: std::sync::LazyLock<Option<serde_json::Value>> = std::sync::LazyLock::new(|| serde_json::from_str(include_str!("../../../../../grammars/tree-sitter-python/src/grammar.json")).ok());
     GRAMMAR.as_ref()
 }
 
@@ -91,7 +91,7 @@ pub fn leaf_kind(kind: &str) -> bool {
 /// node to, or a rule that reads itself, is taken to hold several (so its parts stay joins).
 pub fn single_field(kind: &str, field: &str) -> bool {
     use serde_json::Value;
-    static GRAMMAR: std::sync::LazyLock<Option<Value>> = std::sync::LazyLock::new(|| serde_json::from_str(include_str!("../../../grammars/tree-sitter-python/src/grammar.json")).ok());
+    static GRAMMAR: std::sync::LazyLock<Option<Value>> = std::sync::LazyLock::new(|| serde_json::from_str(include_str!("../../../../../grammars/tree-sitter-python/src/grammar.json")).ok());
     static KEPT: std::sync::LazyLock<Mutex<HashMap<(String, String), bool>>> = std::sync::LazyLock::new(Default::default);
     let Some(grammar) = GRAMMAR.as_ref() else { return false };
     if let Some(&kept) = KEPT.lock().unwrap_or_else(|p| p.into_inner()).get(&(kind.to_owned(), field.to_owned())) {

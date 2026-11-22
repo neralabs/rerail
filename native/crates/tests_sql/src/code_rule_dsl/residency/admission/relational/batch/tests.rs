@@ -12,7 +12,7 @@ fn rule() -> CompiledCodeRuleDsl {
         "syntax":{"name":"nodes","gate":"gate"},
         "stages":[{"name":"descendants","reachability":{"syntax":"nodes","roots":"SELECT __path,id FROM nodes WHERE kind='function_definition'"}}],
         "query":"SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.id FROM nodes n JOIN descendants d ON d.__path=n.__path AND d.node=n.id AND d.root=n.id WHERE n.kind='function_definition'","key":["id"]},
-        "violation":{"code":"CAPACITY","message":"Capacity","anchor":"witness.span"}}]}).to_string(), "json", include_str!("../../../../capabilities.json")).unwrap()
+        "violation":{"code":"CAPACITY","message":"Capacity","anchor":"witness.span"}}]}).to_string(), "json", include_str!("../../../../../../../../src/code_rule_dsl/capabilities.json")).unwrap()
 }
 fn files(count: usize) -> Vec<FileInput> {
     (0..count)
@@ -170,7 +170,7 @@ fn projection_demand_includes_nested_predicates_and_wildcards_but_not_counted_ro
     use crate::code_rule_dsl::model::ClauseKind;
     fn compile(query: &str, stages: serde_json::Value) -> Vec<String> {
         let document = json!({"format":"rerail.policy/v1","id":"columns","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"partitionBy":"file","inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"kind":"module"}}},"project":{"used":"file.path","unused":"file.name"}}}},"stages":stages,"query":query},"violation":{"code":"COLUMNS","message":"columns","anchor":"witness.span"}}]});
-        let rule = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", include_str!("../../../../capabilities.json"))
+        let rule = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", include_str!("../../../../../../../../src/code_rule_dsl/capabilities.json"))
         .unwrap();
         let ClauseKind::Relational(plan) = &rule.inner.clauses[0].kind else {
             panic!("relational");
@@ -249,7 +249,7 @@ fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
         model::{Anchor, ClauseKind, Metrics},
         violations::anchored_span,
     };
-    let rule=crate::code_rule_dsl::rule_api::compile(&json!({"format":"rerail.policy/v1","id":"input-payload","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"partitionBy":"file","inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"all":[{"kind":"function_definition"},{"has":{"field":"name","pattern":"$NAME"}},{"has":{"field":"parameters","pattern":"$PARAMS"}}]}}},"project":{"name":"capture.NAME"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name FROM facts"},"violation":{"code":"INPUT","message":"unused input message","anchor":"witness.span"}}]}).to_string(), "json", include_str!("../../../../capabilities.json")).unwrap();
+    let rule=crate::code_rule_dsl::rule_api::compile(&json!({"format":"rerail.policy/v1","id":"input-payload","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"partitionBy":"file","inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"all":[{"kind":"function_definition"},{"has":{"field":"name","pattern":"$NAME"}},{"has":{"field":"parameters","pattern":"$PARAMS"}}]}}},"project":{"name":"capture.NAME"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name FROM facts"},"violation":{"code":"INPUT","message":"unused input message","anchor":"witness.span"}}]}).to_string(), "json", include_str!("../../../../../../../../src/code_rule_dsl/capabilities.json")).unwrap();
     let code_rule = &rule.inner;
     let clause = &code_rule.clauses[0];
     let ClauseKind::Relational(plan) = &clause.kind else {

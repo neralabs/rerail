@@ -94,9 +94,9 @@ base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 # Relational kernels on every lane and the executor that batches their launches (decision 0098).
 rerail-accel = { path = "../../../accel" }
-# The tree watch, built apart (`crates/tree_watch`) so its tests build without the engine; its sources stay in `src/`.
+# The tree watch, built apart (`crates/tree_watch`) so its tests build without the engine; its sources are in its `src/`.
 rerail-tree-watch = { path = "../tree_watch" }
-# The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
+# The content store and the git workspace, built apart (`crates/store`): their sources are in its `src/`.
 rerail-store = { path = "../store", features = ["test-hooks"] }
 ast-grep-core = "=0.51.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched

@@ -9,8 +9,11 @@
 
 use std::path::{Path, PathBuf};
 
-fn src() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("src")
+/// The engine's sources: its own `native/src` and each crate's `src/`.
+fn every_source(out: &mut Vec<PathBuf>) {
+    for dir in rerail_store::source_tree::source_paths("") {
+        sources(&dir, out);
+    }
 }
 
 /// The non-test Rust files under `dir`.
@@ -29,7 +32,7 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn relative(path: &Path) -> String {
-    path.strip_prefix(src()).unwrap().to_string_lossy().into_owned()
+    rerail_store::source_tree::module_path(path)
 }
 
 /// The stores' tables that are not caches: sources, names and the store's bookkeeping, collection, and a run's
@@ -73,8 +76,11 @@ const NOT_YET_MOVED: &[&str] = &[
 #[test]
 fn every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved() {
     let mut files = Vec::new();
+    // In whichever crates keep them.
     for dir in ["content_store", "code_rule_dsl/logic/plan"] {
-        sources(&src().join(dir), &mut files);
+        for dir in rerail_store::source_tree::source_paths(dir) {
+            sources(&dir, &mut files);
+        }
     }
     let create = regex::Regex::new(r"CREATE TABLE (?:IF NOT EXISTS )?([a-z_][a-z_0-9.]*)").unwrap();
     let mut unknown = Vec::new();
@@ -107,7 +113,7 @@ const FRESHNESS_CALLS: &[(&str, &str, usize)] = &[
 #[test]
 fn no_cache_tests_its_own_freshness_but_those_not_yet_moved() {
     let mut files = Vec::new();
-    sources(&src(), &mut files);
+    every_source(&mut files);
     let needles: Vec<&str> = FRESHNESS_CALLS.iter().map(|(_, n, _)| *n).collect();
     let mut found: Vec<(String, &str)> = Vec::new();
     for file in &files {
@@ -142,7 +148,7 @@ const CACHE_MACHINERY: &[&str] = &["CacheStore", "cache_hits", "queue_cache_rows
 #[test]
 fn a_cache_is_rules_only_with_no_store_hook_or_lookup_of_its_own() {
     let mut files = Vec::new();
-    sources(&src(), &mut files);
+    every_source(&mut files);
     let word = |name: &str| regex::Regex::new(&format!(r"\b{name}\b")).unwrap();
     let machinery: Vec<(String, regex::Regex)> = CACHE_MACHINERY.iter().map(|n| ((*n).to_owned(), word(n))).collect();
     let knows = regex::Regex::new(r"\bfront::caches\b|\bsuper::caches::").unwrap();

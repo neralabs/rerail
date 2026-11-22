@@ -601,7 +601,8 @@ fn ops_of(file: &std::sync::Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFi
 fn shipped() -> Vec<PathBuf> {
     let root = crate::source_tree::native();
     let mut out = Vec::new();
-    let mut walk = vec![root.join("../docs/rule-syntax"), root.join("src/code_rule_dsl")];
+    let mut walk = vec![root.join("../docs/rule-syntax")];
+    walk.extend(crate::source_tree::source_paths("code_rule_dsl"));
     while let Some(d) = walk.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else { continue };
         for e in entries.flatten() {

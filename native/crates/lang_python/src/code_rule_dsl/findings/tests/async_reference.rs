@@ -30,16 +30,16 @@ use std::{
 
 pub const POLICIES: [&str; 4] = [
     include_str!(
-        "../../../../../packs/python/rules/ruff-async210-blocking-http-call-in-async-function.json"
+        "../../../../../../../packs/python/rules/ruff-async210-blocking-http-call-in-async-function.json"
     ),
     include_str!(
-        "../../../../../packs/python/rules/ruff-async221-run-process-in-async-function.json"
+        "../../../../../../../packs/python/rules/ruff-async221-run-process-in-async-function.json"
     ),
     include_str!(
-        "../../../../../packs/python/rules/ruff-async222-wait-for-process-in-async-function.json"
+        "../../../../../../../packs/python/rules/ruff-async222-wait-for-process-in-async-function.json"
     ),
     include_str!(
-        "../../../../../packs/python/rules/ruff-async230-blocking-open-call-in-async-function.json"
+        "../../../../../../../packs/python/rules/ruff-async230-blocking-open-call-in-async-function.json"
     ),
 ];
 pub const SELECT_TARGETS: &str = r#"

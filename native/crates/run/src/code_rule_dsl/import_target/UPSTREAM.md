@@ -10,7 +10,7 @@ The licence text is [`LICENSES/MIT.txt`](../../../../LICENSES/MIT.txt); the copy
 
 The files below are under MIT, as `REUSE.toml` annotates them. The rest of this directory is Rerail's (Apache-2.0): `fs.rs` (the files a resolution reads), `json.rs` (JSON as `JSON.parse` orders keys), `path.rs` (Node's POSIX `path` functions, written to their documented behaviour) and the tests (`tests.rs`).
 
-Paths are relative to this directory, `native/src/code_rule_dsl/import_target/`.
+Paths are relative to this directory, `native/crates/run/src/code_rule_dsl/import_target/`.
 
 | File | Upstream path | Copy |
 |---|---|---|

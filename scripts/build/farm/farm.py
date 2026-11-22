@@ -63,7 +63,7 @@ COPY_SECONDS = 120
 COMPILE_SECONDS = 900
 # What a crate's build reads as a path must be hashed as it is, not with its checkout stripped. Not
 # RERAIL_FIXTURES_DIR: the tests read it as they run, and as they compile only to embed a fixture's
-# text (`oracle!`, native/src/code_rule_dsl/fixtures.rs), which the key holds; hashed as it is, it made
+# text (`oracle!`, native/crates/lang/src/code_rule_dsl/fixtures.rs), which the key holds; hashed as it is, it made
 # every test binary of every checkout its own (scripts/check/ci/path-free-builds.mjs keeps it so). A
 # hit from another checkout names this checkout's fixtures in its dep-info: sccache writes the
 # dep-info from its own `--emit=dep-info` run of this compile, never from the cache (upstream 81c2834,

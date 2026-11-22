@@ -9,7 +9,7 @@ behind every rule that was considered.
 | Rule | Why it waits |
 |---|---|
 | `rerail-cli-entry-no-decisions` | It catches none of its six recorded breaks, which were all written inline, and about half its matches are code it should leave alone |
-| `rerail-tape-parse-once` | The compiler enforces it better: route `encode_tape` (`native/src/code_rule_dsl/workspace/evaluate.rs`) through `TapeImage::parse` and make the encoders private |
+| `rerail-tape-parse-once` | The compiler enforces it better: route `encode_tape` (`native/crates/workspace/src/code_rule_dsl/workspace/evaluate.rs`) through `TapeImage::parse` and make the encoders private |
 
 ## Rule details
 

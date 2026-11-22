@@ -1,4 +1,4 @@
-"""Writes native/src/code_rule_dsl/value/names/names.bin, the Unicode character names `\\N{...}` reads, as CPython 3.13
+"""Writes native/crates/adapters/src/code_rule_dsl/value/names/names.bin, the Unicode character names `\\N{...}` reads, as CPython 3.13
 (Unicode 15.1.0) reads them.
 
 Stored names are every name unicodedata.name gives (except the CJK unified ideographs and Hangul syllables, whose
@@ -21,7 +21,7 @@ import struct
 import sys
 import unicodedata
 
-TARGET: pathlib.Path = pathlib.Path(__file__).parents[3] / "native/src/code_rule_dsl/value/names/names.bin"
+TARGET: pathlib.Path = pathlib.Path(__file__).parents[3] / "native/crates/adapters/src/code_rule_dsl/value/names/names.bin"
 BUCKET: int = 16
 CJK: str = "CJK UNIFIED IDEOGRAPH-"
 HANGUL: str = "HANGUL SYLLABLE "

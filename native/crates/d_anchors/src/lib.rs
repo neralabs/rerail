@@ -2,7 +2,7 @@
 //! D's plan-input statistics). Over D's relational waves (rerail-d-relational), whose database and pools its stores
 //! keep; below the admission (rerail-rules), which re-exports it. A build without `test-hooks` mounts nothing.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -13,7 +13,7 @@
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub use rerail_d_relational::{content_store, git_access, git_workspace};
 extern crate self as rerail_d_anchors;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_d_relational::code_rule_dsl::*;
     pub mod matcher {

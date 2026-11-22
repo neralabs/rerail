@@ -954,13 +954,13 @@ fn only_the_compiler_reads_tier2s_states() {
     // The compiler crate's `grammar` and `bitlex_tier2`, its Bitlex compiler (`bitlex_masks`, which
     // hands the table to them), and this file, which names them.
     const ALLOWED: [&str; 4] = ["grammar.rs", "bitlex_masks.rs", "bitlex_tier2.rs", "compile_tests.rs"];
-    // The engine's transducer and every crate beside it.
+    // Every crate: the engine's transducer is in its crates too.
     let native = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
     // The table's types and its arms (`.states` is a common name; a state row is read through
     // its type).
     let needles = [".arms", "ArmRow", "StateRow", "grammar::Act", "Act::Open", "Act::Close", "Act::Leaf"];
     let mut readers = Vec::new();
-    let mut dirs = vec![native.join("src/code_rule_dsl/transducer"), native.join("crates")];
+    let mut dirs = vec![native.join("crates")];
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(&dir).expect("reads the source") {
             let path = entry.expect("an entry").path();
