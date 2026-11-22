@@ -730,6 +730,33 @@ Tier 1 against `index`:
 | The structurals | `(op \| scalar & ~follows) & ~string_tail` | `((q \| op) \| nonquote_scalar & ~follows) & ~string_tail`: the quote outside `~follows`, as the grammar refuses `1"a"` in tier 2's tree, not in a number's end |
 | UTF-8's end | `is_incomplete`: one compare against `max_value` | the same (`gt_bits`, `MAX_VALUE`) |
 
+### The generated Rust in the lean parser's shape: done (decision 0604, 2026-11-22)
+
+The same reading, after 0604. Each row was a difference after 0602.
+
+Tier 2 against `walk`:
+
+| | `walk` | `tier2.rs` |
+|---|---|---|
+| The `\u` pair | a high one's low one read as four digits; that escape's checks skipped (`low_checked`) | the same: `n7` four digits, a range of it; `if after2 != y { … }`; a low one reached otherwise lone (`if m3`) |
+| A node's bounds | none: the walk's order is its contract | the same: `Cursor::begin`'s contract, checked in a debug build |
+| A run of closers | `ScopeEnd`'s loop, `object[d]` deciding | the places returned to one arm, `'ret: loop { match st { … } }`, a closer `continue 'ret` |
+| A separator, an opener, a `:` | `take!()` | `i += 1` alone; a closer's end kept, its node's |
+
+Tier 1 against `index`:
+
+| | `index` | `tier1.rs` |
+|---|---|---|
+| The records | `structural_start = (op \| scalar & ~follows) & ~string_tail` | the same expression (`v_m_structural_start`); a quote after a scalar refused by the grammar's error in tier 1, where simdjson refuses it in stage 2 |
+| The file's bits | none: the last block padded with spaces | none (no record or error holds at a space, proved) |
+| The byte order mark | the blocks start after it | the same (`off`) |
+| The string mask's name | `in_string` | the same |
+| A string open at the end | `prev_in_string != 0` (`finish`) | `c_m_in_string != 0` |
+| The records' write | `bit_indexer::write`, the block before's at each block, the last after the loop | the same (`write_indexes`, `prev_structurals`) |
+
+What still differs is format 16's: tier 2 writes blocks of nodes, with the state's op at a block's first node and at
+a close of a node in a block before; `walk` writes simdjson's columns.
+
 ## Step 58, done: the benchmark on the generated Rust, `rust_stream`'s tests gone (decision 0555)
 
 `simdjson_form_against_simdjson` now times `rerail-json-aot` (tier 1 and tier 2 from the grammar) against simdjson.
