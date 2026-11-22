@@ -1481,17 +1481,38 @@ pub mod tests {
     }
     use super::*;
 
-    /// A semi-join's rows at the held nodes read back as kept: the nodes walked, a node with no row among them, and
-    /// each row; a width of 0 or rows that are not whole are not read as kept.
+    /// A semi-join's rows at the held nodes read back as kept: the exports' digest they were taken of (or none), the
+    /// nodes walked, a node with no row among them, and each row; a width of 0, an unknown flag or rows that are not
+    /// whole are not read as kept.
     #[test]
     fn a_semijoins_kept_rows_read_back_as_written() {
         let node = |d: i64, i: i64| d << 32 | i;
-        let kept = SemijoinRows { width: 3, held: vec![node(1, 0), node(1, 1), node(2, 4)], rows: vec![1 << 32, node(1, 0), 7, 1 << 32, node(1, 1), 9] };
+        let kept = SemijoinRows { exports: None, width: 3, held: vec![node(1, 0), node(1, 1), node(2, 4)], rows: vec![1 << 32, node(1, 0), 7, 1 << 32, node(1, 1), 9] };
         assert_eq!(SemijoinRows::decode(&kept.encode()), Some(kept.clone()));
+        let known = SemijoinRows { exports: Some(u64::MAX - 3), ..kept.clone() };
+        assert_eq!(SemijoinRows::decode(&known.encode()), Some(known.clone()));
         let mut words = kept.encode();
         words.pop();
         assert_eq!(SemijoinRows::decode(&words), None);
-        assert_eq!(SemijoinRows::decode(&[0, 0]), None);
+        let mut flag = known.encode();
+        flag[0] = 2;
+        assert_eq!(SemijoinRows::decode(&flag), None);
+        assert_eq!(SemijoinRows::decode(&[0, 0, 0, 0]), None);
+    }
+
+    /// The exports' digest is of each export's digest in the exports' order, and none when one has no digest.
+    #[test]
+    fn the_exports_digest_is_of_every_exports_digest() {
+        let exports = vec!["a".to_owned(), "b".to_owned()];
+        let digests: HashMap<String, u64> = [("a".to_owned(), 1), ("b".to_owned(), 2)].into_iter().collect();
+        let d = exports_digest(&exports, &digests).expect("both digested");
+        let mut other = digests.clone();
+        other.insert("b".to_owned(), 3);
+        assert_ne!(exports_digest(&exports, &other), Some(d));
+        let swapped: HashMap<String, u64> = [("a".to_owned(), 2), ("b".to_owned(), 1)].into_iter().collect();
+        assert_ne!(exports_digest(&exports, &swapped), Some(d));
+        other.remove("b");
+        assert_eq!(exports_digest(&exports, &other), None);
     }
 
     /// A kept input with its delta reads as its rows now: the changed owners' kept rows gone, their new rows after
@@ -2203,37 +2224,58 @@ pub(in crate::code_rule_dsl) fn put_base_stats(store: &ContentStore, was: &InKep
 }
 
 fn semijoin_rows_name(rel: &str) -> String {
-    format!("#semijoin-rows/{rel}")
+    format!("#semijoin-held-rows/{rel}")
+}
+
+/// The digest of the exports `exports` as `digests` gives them (each its kept input's, decision 0117 step 1), in
+/// their order: the held nodes are their values, so exports of the same digest hold the same nodes. None when one
+/// has no digest.
+pub(in crate::code_rule_dsl) fn exports_digest(exports: &[String], digests: &HashMap<String, u64>) -> Option<u64> {
+    let mut words = Vec::with_capacity(2 * exports.len());
+    for rel in exports {
+        words.push(crate::code_rule_dsl::logic::plan::row_digest(&rel.bytes().map(i64::from).collect::<Vec<_>>()) as i64);
+        words.push(*digests.get(rel)? as i64);
+    }
+    Some(crate::code_rule_dsl::logic::plan::row_digest(&words))
 }
 
 /// A semi-join relation's rows at the nodes the exports held (Q396), kept beside the documents' table as the base
 /// relations' statistics are (`base_stats`), with the digest of the documents they were read of: the nodes walked
 /// (`held`, sorted), and each one's row (`rows`, `width` values a row, in `input_columns` order). A next run takes the
 /// rows of its held nodes from them and walks only the nodes they do not answer for, where reading every held node's
-/// document again made all of them (ep2's edit: 300 documents, 1.1 s).
+/// document again made all of them (ep2's edit: 300 documents, 1.1 s). With the digest of the exports the nodes were
+/// taken of (`exports_digest`): a next run whose exports have it takes its held nodes from `held`, where visiting
+/// every export's rows for them took 1.6 s of ep2's edit.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct SemijoinRows {
+    pub(in crate::code_rule_dsl) exports: Option<u64>,
     pub(in crate::code_rule_dsl) width: usize,
     pub(in crate::code_rule_dsl) held: Vec<i64>,
     pub(in crate::code_rule_dsl) rows: Vec<i64>,
 }
 
 impl SemijoinRows {
-    /// As words: the width, the held nodes' number and the nodes, then the rows.
+    /// As words: whether the exports' digest is known and the digest, the width, the held nodes' number and the
+    /// nodes, then the rows.
     fn encode(&self) -> Vec<i64> {
-        let mut words = Vec::with_capacity(2 + self.held.len() + self.rows.len());
-        words.extend([self.width as i64, self.held.len() as i64]);
+        let mut words = Vec::with_capacity(4 + self.held.len() + self.rows.len());
+        words.extend([i64::from(self.exports.is_some()), self.exports.unwrap_or(0) as i64, self.width as i64, self.held.len() as i64]);
         words.extend_from_slice(&self.held);
         words.extend_from_slice(&self.rows);
         words
     }
 
     fn decode(words: &[i64]) -> Option<Self> {
-        let [width, n, ..] = *words else { return None };
+        let [known, exports, width, n, ..] = *words else { return None };
+        let exports = match known {
+            0 => None,
+            1 => Some(exports as u64),
+            _ => return None,
+        };
         let (width, n) = (usize::try_from(width).ok().filter(|&w| w > 0)?, usize::try_from(n).ok()?);
-        let held = words.get(2..2 + n)?.to_vec();
-        let rows = words[2 + n..].to_vec();
-        (rows.len() % width == 0).then_some(SemijoinRows { width, held, rows })
+        let held = words.get(4..4 + n)?.to_vec();
+        let rows = words[4 + n..].to_vec();
+        (rows.len() % width == 0).then_some(SemijoinRows { exports, width, held, rows })
     }
 }
 

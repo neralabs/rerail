@@ -8755,7 +8755,11 @@ fn run_observed_within(
     let mut base_stats_out: Vec<(String, u64, super::statkeep::RelStats)> = Vec::new();
     // The semi-joins' rows at the held nodes read this run, with their documents' digest: kept beside the base
     // relations' statistics (`retain::put_semijoin_rows`).
-    let mut semijoin_out: Vec<(String, u64, retain::SemijoinRows)> = Vec::new();
+    // Each with the exports' digest its kept rows have, when they are of these documents and nodes (none: kept again).
+    let mut semijoin_out: Vec<(String, u64, retain::SemijoinRows, Option<Option<u64>>)> = Vec::new();
+    // The exports' digest as the cross part's kept inputs are written with it (`digests`, each a kept input's on the
+    // kept route, else its rows'): the one a next run's kept route finds them by (`exports_now`).
+    let mut exports_bound: Option<u64> = None;
     // The changed files' documents' keys, old and new, where their versions were made: a semi-join's kept rows of the
     // table's documents answer for the other documents' nodes.
     let mut changed_document_keys: Option<BTreeSet<i64>> = None;
@@ -9269,17 +9273,6 @@ fn run_observed_within(
         // held nodes as the batch's are, not measured whole, which made every document (r7's run after an edit).
         let layered_counted: BTreeSet<String> = base_rows.keys().filter(|r| semijoin.contains(*r) && base_layered.contains_key(*r) && kept_input_stats.get(*r).is_none_or(|(d, _)| input_digests.get(*r) != Some(d))).cloned().collect();
         let at_held = |r: &str| semijoin.contains(r) && (!base_layered.contains_key(r) || layered_counted.contains(r));
-        let held_nodes: rustc_hash::FxHashSet<i64> = if base_rows.keys().any(|r| at_held(r)) {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "the nodes the exports hold".into());
-            let mut held = rustc_hash::FxHashSet::default();
-            let exports = exports.borrow();
-            for rel in &split.exports {
-                exports.visit(rel, pf.width(rel), |row| held.extend(row.iter().copied()));
-            }
-            held
-        } else {
-            rustc_hash::FxHashSet::default()
-        };
         // A semi-join's rows at the held nodes, kept beside the documents' table (`retain::semijoin_rows`): of these
         // documents, they answer for every node they walked; of the table's, for those of the documents no edit
         // changed. Only the nodes they do not answer for are walked, so an edit makes only their documents.
@@ -9287,6 +9280,28 @@ fn run_observed_within(
         let semijoin_kept: HashMap<String, (u64, retain::SemijoinRows)> = match base_binds {
             Some(binds) if !semijoin_rels.is_empty() => retain::semijoin_rows(store, kept_strata::space(root), binds, &semijoin_rels)?,
             _ => HashMap::new(),
+        };
+        // The exports' digest, their kept inputs' (decision 0117 step 1); none off the kept route, where they are
+        // digested only when bound, after this.
+        let exports_now = retain::exports_digest(&split.exports, &input_digests);
+        // The held nodes are the exports' values: of exports of the digest kept rows were taken of, those rows' held
+        // nodes, where visiting every export's rows took 1.6 s of ep2's edit (every node held).
+        let held_kept = exports_now.and_then(|e| semijoin_rels.iter().find_map(|r| semijoin_kept.get(*r).map(|(_, k)| k).filter(|k| k.exports == Some(e))));
+        let held_nodes: rustc_hash::FxHashSet<i64> = match held_kept {
+            _ if semijoin_rels.is_empty() => rustc_hash::FxHashSet::default(),
+            Some(k) => {
+                crate::code_rule_dsl::logic::profile::decision("the nodes the exports hold", || format!("{} nodes, kept with the semi-joins' rows of exports of this digest", k.held.len()));
+                k.held.iter().copied().collect()
+            }
+            None => {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "the nodes the exports hold".into());
+                let mut held = rustc_hash::FxHashSet::default();
+                let exports = exports.borrow();
+                for rel in &split.exports {
+                    exports.visit(rel, pf.width(rel), |row| held.extend(row.iter().copied()));
+                }
+                held
+            }
         };
         // The kept rows of `rel` that may answer, and the documents whose nodes they may not (none: every one).
         let semijoin_given = |rel: &str| -> Option<(&retain::SemijoinRows, Option<&BTreeSet<i64>>)> {
@@ -9414,7 +9429,7 @@ fn run_observed_within(
                     let st = counts.statistics(input, &c.columns)?;
                     let mut held: Vec<i64> = held_nodes.iter().copied().collect();
                     held.sort_unstable();
-                    Some(Counted::Looked(st.first().map_or(0, |s| s.1 as usize), st, retain::SemijoinRows { width: at.len(), held, rows }, answered))
+                    Some(Counted::Looked(st.first().map_or(0, |s| s.1 as usize), st, retain::SemijoinRows { exports: None, width: at.len(), held, rows }, answered))
                 })();
                 looked.unwrap_or_else(|| {
                     let held: BTreeSet<&str> = c.held.iter().map(String::as_str).collect();
@@ -9467,9 +9482,10 @@ fn run_observed_within(
                     // (`semijoin_kept`).
                     crate::code_rule_dsl::logic::profile::decision("a semi-join's rows at the held nodes", || format!("{rel}: {answered} of {} nodes answered by kept rows, the rest walked", held_nodes.len()));
                     semijoin_stats.insert(rel.clone(), st.clone());
-                    if answered < held_nodes.len() || semijoin_kept.get(&rel).is_none_or(|(d, k)| *d != base_digest(&rel) || k.held != kept.held) {
-                        semijoin_out.push((rel.clone(), base_digest(&rel), kept));
-                    }
+                    // Kept again when walked, or of other documents or nodes; else when of other exports, which off the
+                    // kept route are digested only when bound (`exports_now` none), so they are compared as written.
+                    let was = semijoin_kept.get(&rel).filter(|(d, k)| answered == held_nodes.len() && *d == base_digest(&rel) && k.held == kept.held).map(|(_, k)| k.exports);
+                    semijoin_out.push((rel.clone(), base_digest(&rel), kept, was));
                     (rows, st)
                 }
                 Counted::Measured(st, how, keep) => {
@@ -9768,6 +9784,7 @@ fn run_observed_within(
                         .iter()
                         .map(|(rel, source)| (rel.clone(), input_digests.get(rel).copied().unwrap_or_else(|| retain::digest(source.as_ref(), &retain::cells_of(&store.atoms_handle(), &cross_placed, &cross.domains, rel, source.columns().len())))))
                         .collect();
+                    exports_bound = retain::exports_digest(&split.exports, &digests);
                     drop(s);
                     let (ckey, binds) = retain::keys(&prepared_key, cross.digest()?);
                     part_keys.lock().expect("the parts' keys").push(ckey);
@@ -10432,8 +10449,13 @@ fn run_observed_within(
                             for (rel, digest, stats) in &base_stats_out {
                                 retain::put_base_stats(store, was, binds, rel, *digest, stats);
                             }
-                            for (rel, digest, rows) in &semijoin_out {
-                                retain::put_semijoin_rows(store, was, binds, rel, *digest, rows);
+                            // With the exports' digest: a next run of exports of it holds these nodes.
+                            let exports = exports_bound;
+                            for (rel, digest, rows, kept) in &mut semijoin_out {
+                                if *kept != Some(exports) {
+                                    rows.exports = exports;
+                                    retain::put_semijoin_rows(store, was, binds, rel, *digest, rows);
+                                }
                             }
                         }
                         // The corpus batch's documents' views' counts (decision 0494), when one was not kept: a cold
