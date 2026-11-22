@@ -787,6 +787,16 @@ impl Gen<'_> {
             }
         }
         let ring = (most as usize + 2).next_power_of_two();
+        if most == 0 && self.index.is_some() {
+            // simdjson's `bit_indexer::write`: four, then two at a time while the count goes past them, each test in
+            // the one before, to 24, then one at a time.
+            let mut stepped = String::new();
+            for i in (4..24).step_by(2).rev() {
+                let inner = std::mem::take(&mut stepped);
+                stepped = format!("one(*count + {i});\none(*count + {});\n{}", i + 1, if inner.is_empty() { String::new() } else { format!("if {} < cnt {{\n{}}}\n", i + 2, indent(&inner, "    ")) });
+            }
+            let _ = write!(out, "/// Block bits `bits` from `base` as indexes at `si[*count..]` (simdjson's `bit_indexer::write`).\n///\n/// # Safety\n/// `si` has room for `*count` and 64 more.\n#[inline(always)]\nunsafe fn write_indexes(si: *mut u32, count: &mut usize, base: u32, mut bits: u64) {{\n    if bits == 0 {{\n        return;\n    }}\n    let cnt = bits.count_ones() as usize;\n    // SAFETY: the caller's: each write within `*count + 64`.\n    let mut one = |k: usize| unsafe {{\n        *si.add(k) = base.wrapping_add(bits.trailing_zeros());\n        bits &= bits.wrapping_sub(1);\n    }};\n    for k in 0..4 {{\n        one(*count + k);\n    }}\n    if 4 < cnt {{\n{}    }}\n    if 24 < cnt {{\n        for k in 24..cnt {{\n            one(*count + k);\n        }}\n    }}\n    *count += cnt;\n}}\n\n", indent(&stepped, "        "));
+        }
         let off = |q: &str| if bare && self.prefix.is_some() { format!("off + 64 * {q}") } else { format!("64 * {q}") };
         let _ = writeln!(
             out,
@@ -852,6 +862,9 @@ impl Gen<'_> {
         }
         if !self.sinks.is_empty() {
             out.push_str("    // The errors' bits in the blocks so far, ORed.\n    let mut errors = 0u64;\n");
+        }
+        if most == 0 && self.index.is_some() {
+            out.push_str("    // The block before's records, written at the next block (simdjson's `prev_structurals`).\n    let mut prev_structurals = 0u64;\n");
         }
         let _ = writeln!(out, "    let mut refused = false;\n    for t in 0..{} {{", if most == 0 { "nw".to_owned() } else { format!("nw + {most}") });
         if !bare {
@@ -925,10 +938,13 @@ impl Gen<'_> {
                     let write = "let (base, cnt, mut bits) = ({B}, {W}.count_ones() as usize, {W});\n// SAFETY: `count + cnt` is at most `n`; the room is `n + 64 + 3`.\nunsafe {\n    for k in 0..4 {\n        *si.add(count + k) = base + bits.trailing_zeros();\n        bits &= bits.wrapping_sub(1);\n    }\n    if cnt > 4 {\n        for k in 4..8 {\n            *si.add(count + k) = base + bits.trailing_zeros();\n            bits &= bits.wrapping_sub(1);\n        }\n    }\n    let mut k = 8;\n    while k < cnt {\n        *si.add(count + k) = base + bits.trailing_zeros();\n        bits &= bits.wrapping_sub(1);\n        k += 1;\n    }\n}\ncount += cnt;\n";
                     let write = write.replace("{W}", &w).replace("{B}", &if bare && self.prefix.is_some() { "(off + 64 * q) as u32".to_owned() } else { "64 * q as u32".to_owned() });
                     let write = write.as_str();
-                    out.push_str("            // The records: the block's bits as indexes (simdjson's `bit_indexer::write`).\n");
                     if most == 0 {
-                        out.push_str(&indent(write, "            "));
+                        // As `index`: the block before's records written at this block (`indexer.write(idx - 64,
+                        // prev_structurals)`), the last block's after the pass, through one `write`.
+                        let base = if bare && self.prefix.is_some() { "((off + 64 * q) as u32).wrapping_sub(64)" } else { "(64 * q as u32).wrapping_sub(64)" };
+                        let _ = writeln!(out, "            // The block before's records (simdjson's `indexer.write(idx - 64, prev_structurals)`).\n            unsafe {{ write_indexes(si, &mut count, {base}, prev_structurals) }};\n            prev_structurals = {w};");
                     } else {
+                        out.push_str("            // The records: the block's bits as indexes (simdjson's `bit_indexer::write`).\n");
                         let _ = write!(out, "            if q < nw {{\n{}            }}\n", indent(write, "                "));
                     }
                 }
@@ -943,6 +959,10 @@ impl Gen<'_> {
             out.push_str("        lv_1 = lv_0;\n");
         }
         out.push_str("    }\n");
+        if most == 0 && self.index.is_some() {
+            let base = if bare && self.prefix.is_some() { "((off + 64 * nw) as u32).wrapping_sub(64)" } else { "(64 * nw as u32).wrapping_sub(64)" };
+            let _ = writeln!(out, "    // The last block's records (simdjson's `finish`).\n    unsafe {{ write_indexes(si, &mut count, {base}, prev_structurals) }};");
+        }
         if !self.sinks.is_empty() {
             out.push_str("    // The errors, once.\n    refused |= errors != 0;\n");
         }

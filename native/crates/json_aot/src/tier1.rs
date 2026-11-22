@@ -33,6 +33,72 @@ struct Stage1 {
     refused: bool,
 }
 
+/// Block bits `bits` from `base` as indexes at `si[*count..]` (simdjson's `bit_indexer::write`).
+///
+/// # Safety
+/// `si` has room for `*count` and 64 more.
+#[inline(always)]
+unsafe fn write_indexes(si: *mut u32, count: &mut usize, base: u32, mut bits: u64) {
+    if bits == 0 {
+        return;
+    }
+    let cnt = bits.count_ones() as usize;
+    // SAFETY: the caller's: each write within `*count + 64`.
+    let mut one = |k: usize| unsafe {
+        *si.add(k) = base.wrapping_add(bits.trailing_zeros());
+        bits &= bits.wrapping_sub(1);
+    };
+    for k in 0..4 {
+        one(*count + k);
+    }
+    if 4 < cnt {
+        one(*count + 4);
+        one(*count + 5);
+        if 6 < cnt {
+            one(*count + 6);
+            one(*count + 7);
+            if 8 < cnt {
+                one(*count + 8);
+                one(*count + 9);
+                if 10 < cnt {
+                    one(*count + 10);
+                    one(*count + 11);
+                    if 12 < cnt {
+                        one(*count + 12);
+                        one(*count + 13);
+                        if 14 < cnt {
+                            one(*count + 14);
+                            one(*count + 15);
+                            if 16 < cnt {
+                                one(*count + 16);
+                                one(*count + 17);
+                                if 18 < cnt {
+                                    one(*count + 18);
+                                    one(*count + 19);
+                                    if 20 < cnt {
+                                        one(*count + 20);
+                                        one(*count + 21);
+                                        if 22 < cnt {
+                                            one(*count + 22);
+                                            one(*count + 23);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if 24 < cnt {
+        for k in 24..cnt {
+            one(*count + k);
+        }
+    }
+    *count += cnt;
+}
+
 /// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`, each mask a local of its block and the block before's where it is read.
 #[inline(always)]
 unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
@@ -54,6 +120,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
     let max_value = unsafe { S::load(&MAX_VALUE) };
     // The errors' bits in the blocks so far, ORed.
     let mut errors = 0u64;
+    // The block before's records, written at the next block (simdjson's `prev_structurals`).
+    let mut prev_structurals = 0u64;
     let mut refused = false;
     for t in 0..nw {
         // The classes, and the masks no blocks behind the classes.
@@ -124,28 +192,9 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
             let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63);
             // mask structural_start = (op | (scalar & ~follows)) & ~string_tail
             let v_m_structural_start = (v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail;
-            // The records: the block's bits as indexes (simdjson's `bit_indexer::write`).
-            let (base, cnt, mut bits) = ((off + 64 * q) as u32, v_m_structural_start.count_ones() as usize, v_m_structural_start);
-            // SAFETY: `count + cnt` is at most `n`; the room is `n + 64 + 3`.
-            unsafe {
-                for k in 0..4 {
-                    *si.add(count + k) = base + bits.trailing_zeros();
-                    bits &= bits.wrapping_sub(1);
-                }
-                if cnt > 4 {
-                    for k in 4..8 {
-                        *si.add(count + k) = base + bits.trailing_zeros();
-                        bits &= bits.wrapping_sub(1);
-                    }
-                }
-                let mut k = 8;
-                while k < cnt {
-                    *si.add(count + k) = base + bits.trailing_zeros();
-                    bits &= bits.wrapping_sub(1);
-                    k += 1;
-                }
-            }
-            count += cnt;
+            // The block before's records (simdjson's `indexer.write(idx - 64, prev_structurals)`).
+            unsafe { write_indexes(si, &mut count, ((off + 64 * q) as u32).wrapping_sub(64), prev_structurals) };
+            prev_structurals = v_m_structural_start;
             // in_string & control
             let v_t2 = v_m_in_string & v_m_control;
             // a control byte in a string
@@ -156,6 +205,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
             errors |= v_t3;
         }
     }
+    // The last block's records (simdjson's `finish`).
+    unsafe { write_indexes(si, &mut count, ((off + 64 * nw) as u32).wrapping_sub(64), prev_structurals) };
     // The errors, once.
     refused |= errors != 0;
     // a string open at the end of the file: the toggle carried out of the file's last block, once (simdjson's `finish`).

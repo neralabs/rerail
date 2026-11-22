@@ -1358,7 +1358,9 @@ fn json_tier1_masks_are_block_locals() {
         "let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63);",
         "let v_m_string_tail = (v_m_in_string ^ v_m_q);",
         "let v_m_structural_start = (v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail;",
-        "let (base, cnt, mut bits) = ((off + 64 * q) as u32, v_m_structural_start.count_ones() as usize, v_m_structural_start);",
+        // The block before's records written at this block, the last after the pass, through one `write` (simdjson's
+        // `bit_indexer::write`, `indexer.write(idx - 64, prev_structurals)` and `finish`).
+        "unsafe { write_indexes(si, &mut count, ((off + 64 * q) as u32).wrapping_sub(64), prev_structurals) };\n            prev_structurals = v_m_structural_start;",
         // A string right after a scalar, refused: simdjson's stage 2 refuses it at the number's or the atom's end.
         "let v_t3 = v_m_q & v_m_follows & !v_m_string_tail;\n            // a string right after a scalar\n            errors |= v_t3;",
     ] {
@@ -1372,4 +1374,9 @@ fn json_tier1_masks_are_block_locals() {
     assert!(!stage1.contains("last_byte"), "no mask of the last byte");
     // The errors' bits ORed into one word, tested once after the pass (`index`'s `unescaped_chars_error`).
     assert!(stage1.contains("            errors |= v_t2;\n") && after.contains("    refused |= errors != 0;\n"), "the errors tested once");
+    assert!(after.contains("    unsafe { write_indexes(si, &mut count, ((off + 64 * nw) as u32).wrapping_sub(64), prev_structurals) };"), "the last block's records after the pass");
+    assert_eq!(tier1.matches("fn write_indexes(").count(), 1, "one write");
+    for part in ["    if bits == 0 {\n        return;\n    }", "        if 6 < cnt {\n            one(*count + 6);"] {
+        assert!(tier1.contains(part), "the write's `{part}`");
+    }
 }
