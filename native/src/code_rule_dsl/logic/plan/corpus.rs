@@ -126,6 +126,7 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_SHOWN_COPIES",
     "RERAIL_NARROW_DIFF",
     "RERAIL_UNNARROW",
+    "RERAIL_MIXED_FOLDED",
 ];
 
 pub mod phase0;

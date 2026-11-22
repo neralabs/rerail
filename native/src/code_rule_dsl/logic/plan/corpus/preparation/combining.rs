@@ -590,9 +590,6 @@ impl ProgramPass for FoldOwn<'_> {
         // An original holds its copies' rows: the bounds of an annotation's take the annotations in (`RUN_VALUE_KEYS`
         // to `HIDDEN_KEYS`), as its copies' seeded columns did. A copy for a code guest of the run's language holds rows
         // under the narrow bound already. A rule that does not reach an annotation keeps the bound.
-        let originals = annotated(&folded);
-        let narrowing = Narrowing { widened: &originals, asking: asking(v) };
-        let read = narrowing.reads(v, &folded);
         let (narrow, wide) = (i64::from(RUN_VALUE_KEYS), i64::from(HIDDEN_KEYS));
         let plain = format!("{label}:");
         // The guests' requests (`guests::REQUESTS`; their answers are written later), and any a run answers by its
@@ -603,7 +600,34 @@ impl ProgramPass for FoldOwn<'_> {
             .map(|q| (*q).to_owned())
             .chain(f.answers().iter().filter(|&&(_, by)| f.is_input(v.rel_name(by))).map(|&(q, _)| v.rel_name(q).to_owned()))
             .collect();
-        let diffed = Diffed::new(v, &folded, &read, &narrowing, &requests, narrow);
+        // A component whose wide and narrow relations are one recursion (`Diffed::mixed`) keeps its guests' copies
+        // apart, as when they were not folded (decision 0575): each is the annotations' rows alone, and the original
+        // stays narrow, so no copy of it is derived again. Leaving one unfolded can make another mixed; until none is.
+        let asks = asking(v);
+        let mut unfolded: BTreeSet<String> = BTreeSet::new();
+        let (originals, read, diffed) = loop {
+            let originals = annotated(&folded);
+            let narrowing = Narrowing { widened: &originals, asking: asks.clone(), apart: unfolded.clone() };
+            let read = narrowing.reads(v, &folded);
+            let diffed = Diffed::new(v, &folded, &read, &narrowing, &requests, narrow);
+            let mixed: BTreeSet<String> = diffed.mixed.iter().filter(|x| folded.values().any(|o| o == *x)).cloned().collect();
+            if mixed.is_empty() || std::env::var("RERAIL_MIXED_FOLDED").is_ok_and(|x| x == "on") {
+                break (originals, read, diffed);
+            }
+            folded.retain(|copy, orig| {
+                let keep = !mixed.contains(orig);
+                if !keep {
+                    unfolded.insert(copy.clone());
+                }
+                keep
+            });
+        };
+        if !unfolded.is_empty() {
+            crate::code_rule_dsl::logic::profile::decision("guests' copies kept apart: their component's wide and narrow relations are one recursion (decision 0575)", || {
+                format!("{} copies: {}", unfolded.len(), unfolded.iter().cloned().collect::<Vec<_>>().join(", "))
+            });
+        }
+        let narrowing = Narrowing { widened: &originals, asking: asks, apart: unfolded.clone() };
         let twins = twins(v, &folded);
         let mut rules = Folding { twins: &twins, folded: &folded, axes: &axes, sets: &sets, originals: &originals, narrowing: &narrowing, read: &read, diffed: &diffed, narrow, wide, plain: &plain };
         w.derive()?;
@@ -1261,8 +1285,10 @@ fn rename_rels(text: &str, name: &dyn Fn(&str) -> String) -> String {
 }
 
 /// The name of `orig` as hiding left it, for the rules that read it and are not its own (`Narrowing`).
+const NARROW_PREFIX: &str = "rr_narrow_";
+
 fn narrow_name(orig: &str) -> String {
-    format!("rr_narrow_{orig}")
+    format!("{NARROW_PREFIX}{orig}")
 }
 
 /// The originals of copies made for an annotation (`rr_in_…annotation_<c>_…<orig>`). A copy for a code guest of the
@@ -1309,13 +1335,15 @@ struct Narrowing<'w> {
     widened: &'w BTreeSet<String>,
     /// The guest demand and the contexts only it reads (`asking`).
     asking: BTreeSet<String>,
+    /// The guests' copies kept apart (`Diffed::mixed`): an annotation's rows, which read what the annotations see.
+    apart: BTreeSet<String>,
 }
 
 impl Narrowing<'_> {
     /// Whether the rules of `head` read the originals narrow: not a widened original's own, and not asking for what
     /// every reader is answered from.
     fn sees(&self, head: &str) -> bool {
-        !self.widened.contains(head) && !self.asks(head)
+        !self.widened.contains(head) && !self.apart.contains(head) && !self.asks(head)
     }
 
     /// Whether `rel` is kept narrow for the rules that read it narrow.
@@ -1557,6 +1585,11 @@ pub(super) struct Diffed {
     scc: HashMap<String, BTreeSet<String>>,
     /// The program as written, each copy a node: who reads whom.
     edges: HashMap<String, BTreeSet<String>>,
+    /// The originals of a component one of which reaches a copy of one (`pt_vopen` reads `rr_narrow_pt_bopen`, and
+    /// the wide `pt_base_open` reads `pt_vopen`): a copy there cannot be its original less a change, and was its
+    /// rules again, the wide and narrow relations one recursive component. `FoldOwn` leaves their guests' copies
+    /// unfolded.
+    mixed: BTreeSet<String>,
 }
 
 /// The most reads of its component a diffed rule may make: an addition's rule is one per way of reading each.
@@ -1644,7 +1677,7 @@ impl Diffed {
     fn new(v: &Version, folded: &HashMap<String, String>, read: &BTreeSet<String>, narrowing: &Narrowing<'_>, requests: &BTreeSet<String>, narrow: i64) -> Diffed {
         let node = v.columns_of("kind").and_then(|c| c.first().cloned());
         let doc = v.columns_of("docof").and_then(|c| c.get(1).cloned());
-        let mut out = Diffed { of: BTreeSet::new(), read: read.clone(), cols: HashMap::new(), node, doc, scc: HashMap::new(), edges: HashMap::new() };
+        let mut out = Diffed { of: BTreeSet::new(), read: read.clone(), cols: HashMap::new(), node, doc, scc: HashMap::new(), edges: HashMap::new(), mixed: BTreeSet::new() };
         if std::env::var("RERAIL_NARROW_DIFF").is_ok_and(|x| x == "off") || out.node.is_none() || out.doc.is_none() || read.is_empty() {
             return out;
         }
@@ -1712,6 +1745,7 @@ impl Diffed {
         // No original of a component reaches a copy of it: a copy is its original's rows less the candidates. Its
         // members reach what each does.
         let mut forward: HashMap<String, bool> = HashMap::new();
+        let mut mixed: BTreeSet<String> = BTreeSet::new();
         of.retain(|x| {
             let c = &scc[x];
             let first = c.iter().next().expect("a member").clone();
@@ -1719,11 +1753,15 @@ impl Diffed {
                 let r = reach(&first);
                 c.iter().all(|z| !r.contains(&narrow_name(z)))
             });
-            if debug && !ok {
-                eprintln!("NDIFF {x}: reads its copy");
+            if !ok {
+                mixed.extend(c.iter().filter(|z| !z.starts_with(NARROW_PREFIX)).cloned());
+                if debug {
+                    eprintln!("NDIFF {x}: reads its copy");
+                }
             }
             ok
         });
+        out.mixed = mixed;
         // A rule reads its component positively, outside aggregates, at most `SCC_READS` times.
         of.retain(|x| {
             let c = &scc[x];
