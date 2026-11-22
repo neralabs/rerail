@@ -1308,6 +1308,12 @@ impl Gen<'_> {
             }
             return Ok(Some(format!("any_in(&{}, at, s - 1)", self.val(e)?)));
         }
+        // `prev(F) & prev(C) & R`, `F` a fill the loop keeps, `C` bytes none skipped, `R` of stage
+        // 1: the byte before is a record's, so the byte is the gap's first, and `F` there is its
+        // value at the record before's last byte (`fill_i`).
+        if let Some(code) = self.gap_after_record(e)? {
+            return Ok(Some(code));
+        }
         let Some(i) = (0..self.fills.len()).find(|&i| self.fills[i].xg.is_none() && self.fills[i].eg.is_none() && self.fills[i].within.is_none() && contains_fill(self, e, i)) else { return Ok(None) };
         let (one, none) = (simplify_all(subst_fill(self, e, i, &Expr::Not(Box::new(Expr::Empty)))), simplify_all(subst_fill(self, e, i, &Expr::Empty)));
         let (Some(a), Some(b)) = (self.gap_code(&one, used)?, self.gap_code(&none, used)?) else { return Ok(None) };
@@ -1315,6 +1321,47 @@ impl Gen<'_> {
         let f = Known::Test(format!("fgap_{i}"));
         let k = |c: String| if c == "false" { Known::No } else { Known::Test(c) };
         Ok(Some(f.clone().and(k(a)).or(f.not().and(k(b))).code()))
+    }
+
+    /// A gap mask `prev(F) & prev(C) & R` (`gap_code`) at the gap's first byte `at`, or `None`
+    /// where `e` is not one.
+    fn gap_after_record(&mut self, e: &Expr) -> Result<Option<String>, String> {
+        fn conjuncts<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
+            match e {
+                Expr::And(a, b) => {
+                    conjuncts(a, out);
+                    conjuncts(b, out);
+                }
+                _ => out.push(e),
+            }
+        }
+        let mut cs = Vec::new();
+        conjuncts(e, &mut cs);
+        let prev_of = |c: &Expr| match c {
+            Expr::Call(f, args) if f == "prev" && args.len() == 1 => match &args[0] {
+                Arg::E(a) => Some(a.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let (mut fill, mut class, mut rest) = (None, None, Vec::new());
+        for c in cs {
+            match prev_of(c) {
+                Some(a) if fill.is_none() && self.fill_of(&a).is_some() => fill = self.fill_of(&a),
+                Some(a) if class.is_none() && self.exact_bytes(&a).is_some_and(|b| (0..256).all(|i| !(b[i] && self.skipped[i]))) => class = Some(a),
+                _ => rest.push(c.clone()),
+            }
+        }
+        let (Some(i), Some(c)) = (fill, class) else { return Ok(None) };
+        let rest = rest.into_iter().reduce(|a, b| Expr::And(Box::new(a), Box::new(b)));
+        if rest.as_ref().is_some_and(|r| self.regional(r)) {
+            return Ok(None);
+        }
+        let r = match rest {
+            Some(r) => format!(" && bit(&{}, at)", self.val(&r)?),
+            None => String::new(),
+        };
+        Ok(Some(format!("(s > at && at > 0 && fill_{i} && bit(&{}, at - 1){r})", self.val(&c)?)))
     }
 
     /// The bytes `e` holds at exactly (a class, or masks of classes), where it is so.
@@ -4090,6 +4137,12 @@ impl Gen<'_> {
             let mask = match at {
                 Expr::Empty => None,
                 _ if acc.is_some() => None,
+                // A mask of the regions is made only by the regions' walk, which only a test build
+                // makes (`gate_walk`): the loop must keep it, or the product build reads a name
+                // it never makes.
+                e if self.regional(e) && self.opens.is_some() => {
+                    return Err(format!("tier 1 as Rust: mark {kind}'s mask `{}` is of the regions, and the loop does not keep it", self.brief(e)));
+                }
                 e => Some(self.val(e)?),
             };
             let unless = unless
@@ -4391,7 +4444,9 @@ impl Gen<'_> {
                 }
                 _ => None,
             };
-            row_arms.push(RowArm { resume, row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n            //~passed\n{hits}            (l, {k}, {extra}, "), bits });
+            // A region token's bytes are none of `code_l` (`code_escape`), where one is read.
+            let code_l = if matches!(rule, Some(TokenRule::Read(_) | TokenRule::ReadParts(..))) { "            //~code_l\n" } else { "" };
+            row_arms.push(RowArm { resume, row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{code_l}            //~passed\n{hits}            (l, {k}, {extra}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -4645,7 +4700,9 @@ impl Gen<'_> {
             }
             let at = arm.body.find("            //~spans\n").map_or(0, |k| k + "            //~spans\n".len());
             arm.body.insert_str(at, &code);
-            arm.body = arm.body.replace("            //~spans\n", "").replace("            //~passed\n", "");
+            // Fused, the row knows its region: it clears its own bytes of `code_l`.
+            let clear = if picks.fused && !self.code_after.is_empty() { "            clear(&mut code_l, s, l);\n" } else { "" };
+            arm.body = arm.body.replace("            //~spans\n", "").replace("            //~passed\n", "").replace("            //~code_l\n", clear);
             if picks.fused && uses(&arm.body, "open") {
                 return Err(format!("tier 1 as Rust: row {} reads the region opened, which the rows' pick does not make", arm.row));
             }
@@ -4696,7 +4753,9 @@ impl Gen<'_> {
         // The bytes outside the region tokens, for the escapes made of `code`.
         if !self.code_after.is_empty() {
             fw_decl.push_str("    // The bytes outside the region tokens (`code`), as the loop reads them.\n    let mut code_l = vec![!0u64; nw];\n");
-            let _ = write!(acc_after, "        if open != usize::MAX {{\n            clear(&mut code_l, s, l);\n        }}\n");
+            if !picks.fused {
+                let _ = write!(acc_after, "        if open != usize::MAX {{\n            clear(&mut code_l, s, l);\n        }}\n");
+            }
             let code = self.names.get("code").cloned().unwrap_or_default();
             let _ = write!(span_after, "    for (c, v) in code_l.iter_mut().zip(&lv) {{\n        *c &= v;\n    }}\n    #[cfg(feature = \"test-hooks\")]\n    if !refused {{\n        assert!(code_l == {code}, \"code_l is the regions' code\");\n    }}\n{}", self.code_after);
         }

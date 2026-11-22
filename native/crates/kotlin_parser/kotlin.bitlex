@@ -48,6 +48,7 @@ class dot       = '.'
 class at_sign   = '@'
 class semicolon = ';'
 class rbrace    = '}'
+class gt        = '>'
 # What a lambda's parameters are made of, up to their `->` (the lean parser's `lambda_params_end`).
 class dq        = '"'
 class sq        = '\''
@@ -228,12 +229,17 @@ escape "a `;` that ends the file" when last_byte & fill(code & semicolon, solid)
 # after a property's; not read yet.
 # A getter or setter on a line of its own: a mark a class body's member takes. Elsewhere (a
 # property's at the top level, a call to `get` starting a line in a function) it refuses.
-# The type after `as`: its names, dots and blanks on its line (`as_run`). A `<` after a dot in
-# it: the lean parser reads `x as a.b.C<D>` as a comparison over navigation where an
-# expression follows, else as a type. Not read.
-mask as_kw      = kw_start & text("as") & ~next(w, 2)
-mask as_run     = fill(prev(as_kw, 2), ~(code & (word | dot | text(" ") | text("?"))))
-escape "a dotted type after `as` before a `<`" when code & text("<") & prev(fill(as_run & dot, ~as_run))
+# The type after `as`, `as?` or `is`: its names, dots, angles and blanks on its line (`as_run`).
+# Where a `<` after a dot in it (`as_lt`) runs to a `>` that ends the line, the lean parser's
+# `split_type` reads `x as a.b.C<D>` as tree-sitter does: navigations over `x as a`, then a
+# call's type arguments where `(` or `{` starts the next line, or comparisons where an operand
+# does (`as_open`, `as_split`). A blank, a comment or a `\r` after that `>`, which the lean
+# parser reads past to the next line: not read.
+mask as_kw      = kw_start & (text("as") | text("is")) & ~next(w, 2)
+mask as_run     = fill(prev(as_kw, 2), ~(code & (word | dot | text(" ") | text("?") | text("<") | text(">"))))
+mask as_dot     = fill(as_run & dot, ~as_run)
+mask as_lt      = fill(as_dot & text("<"), ~as_dot)
+escape "a blank, a comment or a `\r` after a type the lean parser may split" when (text(" ") | slash | text("\r")) & prev(as_lt) & prev(gt)
 
 # --- Tokens ------------------------------------------------------------------------------------
 
@@ -386,6 +392,11 @@ mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".
   loses since ~";" multiline_comment with semi line_comment,
   refuses since ~";" multiline_comment with semi multiline_comment
 mark semi_close = close_at, before "}", settles, ends
+# The next line's first token after a type the lean parser may split (`as_lt`), but one no
+# operand starts: only the split's rules take it (`as_split`), so wherever the grammar reads
+# that type whole, or splits no type, the file is refused. After `semi`: a statement's end does
+# not pass it.
+mark as_open    = lf & code & prev(as_lt) & prev(gt), unless before "}" | ")" | "]" | "," | "." | "?:" | "&&" | "||" | "->" | ":" | "else" | "val" | "var"
 # Something between two tokens: a blank or a comment. A token without it touches the token
 # before, as the lean parser's `adjacent(0)` asks.
 mark apart      = ws & code | o_line | o_block
@@ -408,6 +419,16 @@ mark lab_lam    = tokens simple_identifier "@" without apart "{"
 # one leaf where the rule takes the mark (the lean parser's `adjacent(0)`).
 mark this_at    = tokens "this" "@" without apart
 mark jump_at    = tokens "return" | "break" | "continue" "@" without apart
+# `as` or `as?` (`is`: `is_split`) where the lean parser splits the type after it (`as_split`): a dotted name,
+# `<`, names and dots, `>` at the line's end, and the next line a call's `(` or `{` or an
+# operand's first token (a keyword no expression starts with is the lean parser's trial read's
+# failure: the type whole). A string or a character there is `as_open`'s but none of these (a
+# mark's quoted name is a word, and those tokens have none): refused. Before `as_q`, which
+# taking it would pass.
+mark as_split   = tokens "as" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" with as_open
+mark is_split   = tokens "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" with as_open
+mark is_split   = tokens "!" "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" with as_open
+mark as_split   = tokens "as" "?" without apart simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" with as_open
 mark as_q       = tokens "as" "?" without apart
 # A safe call's `?.`: lexed as its `?` and its `.`, as the lean parser reads a `?.` after a type
 # (`String?.f`, `x as T?.f`, `as?.`: `split_at`), and one leaf again where it is a safe call.
@@ -664,20 +685,26 @@ tree kotlin {
   # `expr_in` asks it at `min <= COMPARISON`.
   choice gen_op         = generic (wrap call_expression _ generic_suffix) (postfix_op | unless no_lambda lambda_call)*
   choice mul_op         = wrap multiplicative_expression _ ('*' | '/' | '%') as_operand
-  # The type after `as`: a dotted name, or one name with type arguments. With both, the lean
-  # parser reads a comparison where an expression follows on the next line: refused.
-  choice as_op          = wrap as_expression _ (as_q 'as' merge 'as?' '?' | 'as') as_type
+  # The type after `as`: a user type. Split (`as_split`):
+  # its first name, then the navigations over the `as` expression; the loop reads the rest (a
+  # generic call, or the comparisons), as the lean parser's `split_type`.
+  choice as_op          = as_split as_head (wrap navigation_expression _ navigation_suffix)+
+                        | wrap as_expression _ (as_q 'as' merge 'as?' '?' | 'as') as_type
+  choice as_head        = wrap as_expression _ (as_q 'as' merge 'as?' '?' | 'as') as_name
+  node as_name          = retag user_type type_name
   choice as_type        = [type_modifiers] as_core
   choice as_core        = fn_paren function_type | parenthesized_type [wrap nullable_type _ ('?' as quest)+]
                         | fn_recv recv_function_type | as_user_type [wrap nullable_type _ ('?' as quest)+]
-  node as_user_type     = retag user_type type_name (type_arguments | ('.' type_name)*)
+  node as_user_type     = retag user_type type_name [type_arguments] ('.' type_name [type_arguments])*
   choice as_operand nested = unary_tight (as_op)*
   choice add_op         = wrap additive_expression _ ('+' | '-') add_operand
   choice range_op       = wrap range_expression _ ('..' | '..<') range_operand
   choice infix_op       = wrap infix_expression _ name infix_operand
   choice elvis_op       = wrap elvis_expression _ '?:' elvis_operand
-  choice check_op       = wrap check_expression _ ['!'] ('in' check_operand | 'is' type)
-  choice cmp_op         = wrap comparison_expression _ ('<' | ge '>' merge '>=' '=' | '>' | '<=') cmp_operand
+  choice check_op       = is_split is_head (wrap navigation_expression _ navigation_suffix)+
+                        | wrap check_expression _ ['!'] ('in' check_operand | 'is' type)
+  choice is_head        = wrap check_expression _ ['!'] 'is' as_name
+  choice cmp_op         = wrap comparison_expression _ ('<' | ge '>' merge '>=' '=' | '>' [as_open] | '<=') cmp_operand
   choice eq_op          = wrap equality_expression _ ('==' | '!=' | '===' | '!==') eq_operand
   choice conj_op        = wrap conjunction_expression _ '&&' conj_operand
   choice disj_op        = wrap disjunction_expression _ '||' disj_operand
@@ -729,7 +756,7 @@ tree kotlin {
                         | lambda_literal | super_expression | collection_literal
   node collection_literal = '[' expression (',' expression)* (trail_bracket | ']')
   node callable_reference = [cref type_name] '::' ('class' | name)
-  node generic_suffix   = retag call_suffix type_arguments (value_arguments [unless no_lambda (blk annotated_lambda)] | unless no_lambda annotated_lambda)
+  node generic_suffix   = retag call_suffix type_arguments [as_open] (value_arguments [unless no_lambda (blk annotated_lambda)] | unless no_lambda annotated_lambda)
   node boolean_literal  = 'true' | 'false'
   node character_literal = "'" [character_escape_seq | uni_escape | char_content] "'"
   node uni_escape       = retag character_escape_seq "\\u" uni_digits
@@ -853,6 +880,6 @@ tree kotlin {
   # Every mark a rule takes is asked only where a rule takes it, as the lean parser asks each
   # question where it branches (decision 0492). Not hidden: `generic`, where a `<` that opens type
   # arguments no rule reads refuses the file.
-  hidden apart this_at jump_at as_q qdot ge sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod
+  hidden apart this_at jump_at as_q as_split is_split qdot ge sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod
   extra line_comment multiline_comment
 }

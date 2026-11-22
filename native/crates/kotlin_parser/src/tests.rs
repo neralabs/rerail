@@ -87,18 +87,22 @@ fn the_0x_escape_is_the_interpreters() {
     tier1_same(&["val a = 0x", "val a = 0x1F\n", "val a = 0b10\n", "val a = x0x\n", "val a = \"0x\"\n", "val a = 0\nval x = 1\n", "val a = 10x\n"]);
 }
 
-/// "A dotted type after `as` before a `<`", which the token loop keeps (decision 0586): after a
-/// token, over a gap, over a token's bytes after its first (`..<`), and never from an `as` in a
-/// region or across one.
+/// The masks of a type after `as` the lean parser may split (`as_run`, `as_lt`), as the
+/// interpreter's: after a token, over a gap, over a token's bytes after its first (`..<`), and
+/// never from an `as` in a region or across one.
 #[test]
-fn the_as_escape_is_the_interpreters() {
-    refused(&[
+fn the_as_split_masks_are_the_interpreters() {
+    tier1_same(&[
         "val a = b as java.util.List<Int>\n",
         "val a = b as  x.y<Int>\n",
         "val a = b as x?.y<Int>\n",
         "val r = x as a.B..<c\n",
-    ]);
-    tier1_same(&[
+        "val a = b as x.y<Int>\n  c()\n",
+        "val a = b is x.y<Int>\n  val c = 1\n",
+        "val a = b as x.y<Int>  \n  c()\n",
+        "val a = b as x.y<Int> // c\n  c()\n",
+        "val a = b as x.y<Int>\r\n  c()\n",
+        "val a = b as x.y // c\n  c()\n",
         "val a = b as List<Int>\n",
         "val a = b // as\nval c = d.e<Int>()\n",
         "val a = \"as\" + d.e<Int>()\n",
@@ -725,7 +729,6 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
         "val s = \"${f(\"${x}\")}\"\n",
         "val s = \"${if (a) { 1 } else 2}\"\n",
-        "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
         "val h = \"\"\"\"a\"\"\"\n",
         "val h = \"\"\"a\"\"\"\"\n",
         "val h = \"\"\"\\$a\"\"\"\n",
@@ -745,7 +748,6 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val x = 0x\n",
         "class A { val x = 1 }\n",
         "fun f(noinline: Int) {}\n",
-        "val a = b as java.util.List<Int>\n",
         // A comment lost before `catch`, `finally` or `else` (not `else ->`): not read yet.
         "fun f() {\n    try { a() }\n    /* c */ catch (e: E) {}\n}\n",
     ]);
@@ -862,6 +864,48 @@ fn templates_read_again_across_a_block_are_the_lean_parsers() {
     let texts: Vec<String> = (122..127).map(|at| format!("{head}{l1}//{}\nval b = \"${{C.D}}\"\n", "x".repeat(at - head.len() - l1.len() - 11))).collect();
     assert_eq!(texts[2].find("\"${C").expect("the second template"), 124);
     same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+}
+
+/// `x as a.b.C<D>` (`as?`, `is`) where `>` ends its line: tree-sitter's reading, as the lean
+/// parser's `split_type`: navigations over `x as a`, then a call's type arguments before `(`
+/// or `{` on the next line, or comparisons before an operand there; elsewhere the type whole.
+/// Where the lean parser's trial read decides it on what the grammar does not ask (an
+/// assignment on the next line), before a string there, or past a blank or a comment after
+/// the `>`, the file is refused.
+#[test]
+fn as_splits_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    (g)\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    { g }\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    val e = 1\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n}\n",
+        "val d = x as java.util.List<Int>\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    a.b()\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>; g(d)\n}\n",
+        "fun f() {\n    g(x as java.util.List<Int>)\n}\n",
+        "fun f() {\n    val d = x as? java.util.List<Int>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x as java.util.Map<Int, Int>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    assertFailsWith<E> { d.add(4) }\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    return d\n}\n",
+        "fun f() {\n    val d = x is a.B<C>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x is a.B<C>\n    val e = 1\n}\n",
+        "fun f() {\n    val d = x !is a.B<C>\n    val e = 1\n}\n",
+        "fun f() {\n    if (x is a.B<C>) g()\n}\n",
+        "fun f() {\n    val d = x !is a.B<C>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x ! is a.B<C>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x as a.b >\n    c\n}\n",
+        "fun f() {\n    g(\n        x as java.util.List<Int>\n    )\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n        .size\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    if (d) g()\n}\n",
+    ]);
+    refused(&[
+        "fun f() {\n    val d = x as java.util.List<Int>  \n    g(d)\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int> // c\n    g(d)\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\r\n    g(d)\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    a = b\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    \"s\".f()\n}\n",
+    ]);
 }
 
 /// A `?.` after a type is its `?` and a `.` (a nullable receiver, `x as T?.f`, `as?.`), and a
