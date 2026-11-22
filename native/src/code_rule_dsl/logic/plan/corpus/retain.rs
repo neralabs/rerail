@@ -2271,36 +2271,96 @@ impl SemijoinRows {
         words
     }
 
+    #[cfg(test)]
     fn decode(words: &[i64]) -> Option<Self> {
-        let [known, exports, n_stats, ..] = *words else { return None };
-        let exports = match known {
+        let l = SemijoinLayout::of(&|i| words[i], words.len())?;
+        Some(SemijoinRows { exports: l.exports, stats: l.stats, width: l.width, held: words[l.held].to_vec(), rows: words[l.rows].to_vec() })
+    }
+}
+
+/// Where `SemijoinRows::encode`'s parts lie among `len` words, `get` reading one: its header read, the held nodes' and
+/// the rows' places.
+struct SemijoinLayout {
+    exports: Option<u64>,
+    stats: Vec<[i64; 4]>,
+    width: usize,
+    held: std::ops::Range<usize>,
+    rows: std::ops::Range<usize>,
+}
+
+impl SemijoinLayout {
+    fn of(get: &dyn Fn(usize) -> i64, len: usize) -> Option<SemijoinLayout> {
+        if len < 3 {
+            return None;
+        }
+        let exports = match get(0) {
             0 => None,
-            1 => Some(exports as u64),
+            1 => Some(get(1) as u64),
             _ => return None,
         };
-        let at = 3 + 4 * usize::try_from(n_stats).ok()?;
-        let stats = words.get(3..at)?.chunks_exact(4).map(|s| [s[0], s[1], s[2], s[3]]).collect();
-        let [width, n] = *words.get(at..at + 2)? else { return None };
-        let (width, n) = (usize::try_from(width).ok().filter(|&w| w > 0)?, usize::try_from(n).ok()?);
-        let held = words.get(at + 2..at + 2 + n)?.to_vec();
-        let rows = words[at + 2 + n..].to_vec();
-        (rows.len() % width == 0).then_some(SemijoinRows { exports, stats, width, held, rows })
+        let at = usize::try_from(get(2)).ok()?.checked_mul(4)?.checked_add(3)?;
+        if at + 2 > len {
+            return None;
+        }
+        let stats = (3..at).step_by(4).map(|i| [get(i), get(i + 1), get(i + 2), get(i + 3)]).collect();
+        let width = usize::try_from(get(at)).ok().filter(|&w| w > 0)?;
+        let n = usize::try_from(get(at + 1)).ok()?;
+        let end = (at + 2).checked_add(n).filter(|&e| e <= len)?;
+        ((len - end) % width == 0).then_some(SemijoinLayout { exports, stats, width, held: at + 2..end, rows: end..len })
+    }
+}
+
+/// A semi-join relation's rows at the held nodes as kept (`semijoin_rows`): its header read, its held nodes and rows
+/// read where they lie when asked, where copying out both relations' entries (1.4 M words each, the held nodes in each)
+/// took 0.05 s of ep2's edit, which read only their statistics and one entry's held nodes.
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct KeptSemijoin {
+    pub(in crate::code_rule_dsl) exports: Option<u64>,
+    pub(in crate::code_rule_dsl) stats: Vec<[i64; 4]>,
+    pub(in crate::code_rule_dsl) width: usize,
+    held: std::ops::Range<usize>,
+    rows: std::ops::Range<usize>,
+    entry: kept_read::Entry,
+}
+
+impl KeptSemijoin {
+    /// The held nodes' number.
+    pub(in crate::code_rule_dsl) fn held_len(&self) -> usize {
+        self.held.len()
+    }
+    /// The held nodes, read where they lie.
+    pub(in crate::code_rule_dsl) fn held(&self) -> impl Iterator<Item = i64> + '_ {
+        let d = self.entry.packed().col(0).dec();
+        self.held.clone().map(move |i| d.get(i))
+    }
+    /// Each row, read where it lies.
+    pub(in crate::code_rule_dsl) fn each_row(&self, each: &mut dyn FnMut(&[i64])) {
+        let d = self.entry.packed().col(0).dec();
+        let mut row = vec![0; self.width];
+        for at in self.rows.clone().step_by(self.width) {
+            for (c, w) in row.iter_mut().enumerate() {
+                *w = d.get(at + c);
+            }
+            each(&row);
+        }
     }
 }
 
 /// Each semi-join relation `rels`' rows at the held nodes as kept beside the documents' table of `binds`
 /// (`put_semijoin_rows`), with the digest of the documents they were read of.
-pub(in crate::code_rule_dsl) fn semijoin_rows(store: &ContentStore, space: [u8; 32], binds: [u8; 32], rels: &[&str]) -> Result<HashMap<String, (u64, SemijoinRows)>> {
+pub(in crate::code_rule_dsl) fn semijoin_rows(store: &ContentStore, space: [u8; 32], binds: [u8; 32], rels: &[&str]) -> Result<HashMap<String, (u64, KeptSemijoin)>> {
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(HashMap::new()) };
     let ident = base_documents_ident(&binds);
     let mut out = HashMap::new();
     for rel in rels {
         let Some(entry) = bound.entry(&semijoin_rows_name(rel), &ident, DOCS_PART) else { continue };
-        let mut words: Vec<i64> = Vec::with_capacity(entry.len());
-        entry.each_rows(&mut |r| words.extend_from_slice(r));
-        if let Some(rows) = SemijoinRows::decode(&words) {
-            out.insert((*rel).to_owned(), (entry.digest(), rows));
+        if entry.width() != 1 {
+            continue;
         }
+        let d = entry.packed().col(0).dec();
+        let Some(l) = SemijoinLayout::of(&|i| d.get(i), entry.len()) else { continue };
+        let kept = KeptSemijoin { exports: l.exports, stats: l.stats, width: l.width, held: l.held, rows: l.rows, entry: entry.clone() };
+        out.insert((*rel).to_owned(), (entry.digest(), kept));
     }
     Ok(out)
 }

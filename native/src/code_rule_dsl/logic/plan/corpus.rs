@@ -8759,7 +8759,7 @@ fn run_observed_within(
     let mut semijoin_out: Vec<(String, u64, retain::SemijoinRows, Option<Option<u64>>)> = Vec::new();
     // The exports' digest as the cross part's kept inputs are written with it (`digests`, each a kept input's on the
     // kept route, else its rows'): the one a next run's kept route finds them by (`exports_now`).
-    let mut exports_bound: Option<u64> = None;
+    let exports_bound: Option<u64>;
     // The changed files' documents' keys, old and new, where their versions were made: a semi-join's kept rows of the
     // table's documents answer for the other documents' nodes.
     let mut changed_document_keys: Option<BTreeSet<i64>> = None;
@@ -9277,7 +9277,7 @@ fn run_observed_within(
         // documents, they answer for every node they walked; of the table's, for those of the documents no edit
         // changed. Only the nodes they do not answer for are walked, so an edit makes only their documents.
         let semijoin_rels: Vec<&str> = base_rows.keys().filter(|r| at_held(r)).map(String::as_str).collect();
-        let semijoin_kept: HashMap<String, (u64, retain::SemijoinRows)> = match base_binds {
+        let semijoin_kept: HashMap<String, (u64, retain::KeptSemijoin)> = match base_binds {
             Some(binds) if !semijoin_rels.is_empty() => retain::semijoin_rows(store, kept_strata::space(root), binds, &semijoin_rels)?,
             _ => HashMap::new(),
         };
@@ -9290,8 +9290,8 @@ fn run_observed_within(
         let held_nodes: rustc_hash::FxHashSet<i64> = match held_kept {
             _ if semijoin_rels.is_empty() => rustc_hash::FxHashSet::default(),
             Some(k) => {
-                crate::code_rule_dsl::logic::profile::decision("the nodes the exports hold", || format!("{} nodes, kept with the semi-joins' rows of exports of this digest", k.held.len()));
-                k.held.iter().copied().collect()
+                crate::code_rule_dsl::logic::profile::decision("the nodes the exports hold", || format!("{} nodes, kept with the semi-joins' rows of exports of this digest", k.held_len()));
+                k.held().collect()
             }
             None => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the nodes the exports hold".into());
@@ -9304,7 +9304,7 @@ fn run_observed_within(
             }
         };
         // The kept rows of `rel` that may answer, and the documents whose nodes they may not (none: every one).
-        let semijoin_given = |rel: &str| -> Option<(&retain::SemijoinRows, Option<&BTreeSet<i64>>)> {
+        let semijoin_given = |rel: &str| -> Option<(&retain::KeptSemijoin, Option<&BTreeSet<i64>>)> {
             let (d, k) = semijoin_kept.get(rel)?;
             if *d == base_digest(rel) {
                 Some((k, None))
@@ -9402,7 +9402,7 @@ fn run_observed_within(
                         && k.stats.len() == c.columns.len()
                         && k.exports.is_some()
                         && k.exports == exports_now
-                        && k.held.len() == held_nodes.len()
+                        && k.held_len() == held_nodes.len()
                     {
                         let st: Vec<Stat> = c.columns.iter().zip(&k.stats).map(|(n, s)| (n.clone(), s[0], s[1], s[2], s[3])).collect();
                         return Some(Counted::Looked(st.first().map_or(0, |s| s.1 as usize), st, None, held_nodes.len()));
@@ -9413,19 +9413,19 @@ fn run_observed_within(
                     // The held nodes the kept rows answer for, their rows counted; the others walked.
                     let mut walk = held_nodes.clone();
                     if let Some((k, changed)) = semijoin_given(&c.rel).filter(|(k, _)| k.width == at.len()) {
-                        let answered: rustc_hash::FxHashSet<i64> = k.held.iter().copied().filter(|n| held_nodes.contains(n) && changed.is_none_or(|ch| !ch.contains(&memo::document_of(*n)))).collect();
-                        for row in k.rows.chunks_exact(k.width).filter(|r| answered.contains(&r[n_at])) {
-                            if counts.row(row[n_at], n_at, row) {
+                        let answered: rustc_hash::FxHashSet<i64> = k.held().filter(|n| held_nodes.contains(n) && changed.is_none_or(|ch| !ch.contains(&memo::document_of(*n)))).collect();
+                        k.each_row(&mut |row| {
+                            if answered.contains(&row[n_at]) && counts.row(row[n_at], n_at, row) {
                                 rows.extend_from_slice(row);
                             }
-                        }
+                        });
                         walk.retain(|n| !answered.contains(n));
                     }
                     let answered = held_nodes.len() - walk.len();
                     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
                         let why = match semijoin_kept.get(&c.rel) {
                             None => "none kept".to_owned(),
-                            Some((d, k)) => format!("kept digest {d:x} (now {:x}, table {:?}), width {} (now {}), {} held, changed {:?}", base_digest(&c.rel), table_digest.map(|t| t ^ tag(&c.rel)), k.width, at.len(), k.held.len(), changed_document_keys.as_ref().map(BTreeSet::len)),
+                            Some((d, k)) => format!("kept digest {d:x} (now {:x}, table {:?}), width {} (now {}), {} held, changed {:?}", base_digest(&c.rel), table_digest.map(|t| t ^ tag(&c.rel)), k.width, at.len(), k.held_len(), changed_document_keys.as_ref().map(BTreeSet::len)),
                         };
                         eprintln!("rerail: semi-join {}: {answered} of {} held nodes answered by kept rows; {why}", c.rel, held_nodes.len());
                     }
@@ -9498,7 +9498,7 @@ fn run_observed_within(
                     // Kept again when walked, or of other documents or nodes; else when of other exports, which off the
                     // kept route are digested only when bound (`exports_now` none), so they are compared as written.
                     if let Some(kept) = kept {
-                        let was = semijoin_kept.get(&rel).filter(|(d, k)| answered == held_nodes.len() && *d == base_digest(&rel) && k.held == kept.held && k.stats == kept.stats).map(|(_, k)| k.exports);
+                        let was = semijoin_kept.get(&rel).filter(|(d, k)| answered == held_nodes.len() && *d == base_digest(&rel) && k.stats == kept.stats && k.held_len() == kept.held.len() && k.held().eq(kept.held.iter().copied())).map(|(_, k)| k.exports);
                         semijoin_out.push((rel.clone(), base_digest(&rel), kept, was));
                     }
                     (rows, st)
