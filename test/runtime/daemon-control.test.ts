@@ -913,14 +913,30 @@ describe("a state file Windows left behind", () => {
       expect(asked.map(([socketPath, accessToken]) => [socketPath, accessToken])).toEqual(Array(2).fill([PIPE, "capability"]));
     });
 
-    it("is sent nothing when no daemon.json of the home records a capability to prove", async () => {
-      const noCapability = `no daemon.json in ${home} records the capability that the engine on the pipe ${PIPE} must prove it holds`;
+    it("is sent nothing when there is no daemon.json to say which engine it must be", async () => {
       const ours = { pid: DEAD_PID, startedAt: STARTED - 1 };
-      await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", ours))).rejects.toThrow(noCapability);
-      await recordState({ kernelSocketPath: PIPE, startedAt: STARTED });
-      await expect(engineEndpointAt(PIPE, undefined, answering("refused", "win32", ours))).rejects.toThrow(noCapability);
+      await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", ours))).rejects.toThrow(`no daemon.json in ${home} says which engine the pipe ${PIPE} must be`);
       expect(asked).toEqual([]);
       expect(held).toEqual([]);
+    });
+
+    describe("named in a daemon.json that records no capability, as a daemon before Rerail 0.1.1 wrote it", () => {
+      beforeEach(async () => {
+        await recordState({ kernelSocketPath: PIPE, pid: DEAD_PID, startedAt: STARTED });
+      });
+
+      it("is sent the event, with no capability, when Windows names the daemon daemon.json records as its holder", async () => {
+        expect(await engineEndpointAt(PIPE, undefined, answering("refused", "win32", { pid: DEAD_PID, startedAt: STARTED - 1 }))).toEqual({ socketPath: PIPE });
+        expect(held).toEqual([[PIPE, ENGINE_ANSWER_WAIT_MS]]);
+        expect(asked).toEqual([]);
+      });
+
+      it("is sent nothing, and the hook says why, when Windows names another process or none", async () => {
+        const why = `the engine pipe ${PIPE} is not this Rerail home's daemon: Windows did not name the daemon ${join(home, DAEMON_STATE_FILE)} records as its holder, and that file records no capability for the engine to prove`;
+        await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", { pid: DEAD_PID + 1, startedAt: STARTED - 1 }))).rejects.toThrow(why);
+        await expect(engineEndpointAt(PIPE, undefined, answering("proved"))).rejects.toThrow(why);
+        expect(asked).toEqual([]);
+      });
     });
 
     describe("held, as Windows says, by the process daemon.json records", () => {

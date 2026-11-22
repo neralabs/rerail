@@ -154,38 +154,47 @@ const NOTHING_SENT = "so nothing was sent to it";
  * The endpoint for the Windows engine pipe `RERAIL_ENGINE_SOCKET` names. A hook sends its event there, with the
  * capability daemon.json records, only once the pipe shows it is the home's own daemon: Windows says the process
  * holding the pipe's server end is the daemon daemon.json records ({@link heldByRecordedDaemon}), which wrote that
- * capability there itself, as a daemon of any Rerail version is; or else the engine on the pipe proves it holds that
- * capability (`engineCapabilityProof`), whichever pipe daemon.json names. Another process holding the pipe's name gets
- * nothing, nor does any engine when daemon.json records no capability: the error says why ({@link notSentReason}). A
- * proof the pipe gave this process for the same capability since the event arrived ({@link provedSinceArrival})
- * answers for both. Windows' wait for a free instance of the pipe stands where the event's own wait to connect would,
- * so the event keeps its whole wait from its request; only a proof asked after Windows answered shares it
- * ({@link EngineEndpoint.proofTookMs}).
+ * capability there itself, as a daemon of any Rerail version is, one before 0.1.1 that records none included; or else
+ * the engine on the pipe proves it holds that capability ({@link provedEndpoint}). A proof the pipe gave this process
+ * for the same capability since the event arrived ({@link provedSinceArrival}) answers for both. Windows' wait for a
+ * free instance of the pipe stands where the event's own wait to connect would, so the event keeps its whole wait from
+ * its request.
  */
 async function provenEnginePipe(pipe: NamedPipe, deadline: number | undefined): Promise<EngineEndpoint> {
   const { socketPath, machine } = pipe;
-  const { state, accessToken } = capabilityToProve(pipe);
-  if (provedSinceArrival(pipe, accessToken, deadline)) return { socketPath, accessToken };
+  const state = recordedState(pipe);
+  const recorded = engineEndpointOf({ ...state, kernelSocketPath: socketPath });
+  if (provedSinceArrival(pipe, state.accessToken, deadline)) return recorded;
   const holder = await machine.pipeServer(socketPath, ENGINE_ANSWER_WAIT_MS);
-  if (heldByRecordedDaemon(holder, state)) return { socketPath, accessToken };
+  if (heldByRecordedDaemon(holder, state)) return recorded;
+  return await provedEndpoint(pipe, state, holder);
+}
+
+/**
+ * The endpoint for the Windows engine pipe `pipe` once Windows named another holder or none (`holder`): the engine on
+ * it must prove it holds the capability daemon.json (`state`) records, whichever pipe daemon.json names, and the event
+ * then waits what the proof left of {@link ENGINE_ANSWER_WAIT_MS} ({@link EngineEndpoint.proofTookMs}). Another process
+ * holding the pipe's name gets nothing, nor does any engine when daemon.json records no capability: the error says why
+ * ({@link notSentReason}).
+ */
+async function provedEndpoint(pipe: NamedPipe, state: DaemonState, holder: PipeServer | undefined): Promise<EngineEndpoint> {
+  const { socketPath, machine } = pipe;
+  const { accessToken } = state;
+  if (pipeStayedBusy(holder) || accessToken === undefined) throw new Error(notSentReason(pipe, undefined, holder));
   const asked = Date.now();
-  const answer = pipeStayedBusy(holder) ? "silent" : await machine.capabilityProof(socketPath, accessToken, ENGINE_ANSWER_WAIT_MS);
+  const answer = await machine.capabilityProof(socketPath, accessToken, ENGINE_ANSWER_WAIT_MS);
   if (answer === "proved") return { socketPath, accessToken, proofTookMs: Date.now() - asked };
   throw new Error(notSentReason(pipe, answer, holder));
 }
 
 /**
- * daemon.json and the capability it records, for the engine on `pipe` to prove it holds; throws where it records none,
- * saying the daemon is not running when nothing listens on the pipe either, as after `rerail daemon stop`, which
- * removes daemon.json.
+ * daemon.json, which says what the engine on `pipe` must be; throws where there is none, saying the daemon is not
+ * running when nothing listens on the pipe either, as after `rerail daemon stop`, which removes daemon.json.
  */
-function capabilityToProve({ socketPath, home, state, machine }: NamedPipe): { state: DaemonState; accessToken: string } {
-  const accessToken = state === undefined ? undefined : state.accessToken;
-  if (state === undefined || accessToken === undefined) {
-    if (!pipeListed(socketPath, () => machine.pipes())) throw new Error(nothingListens(socketPath));
-    throw new Error(`no daemon.json in ${home} records the capability that the engine on the pipe ${socketPath} must prove it holds, ${NOTHING_SENT}`);
-  }
-  return { state, accessToken };
+function recordedState({ socketPath, home, state, machine }: NamedPipe): DaemonState {
+  if (state !== undefined) return state;
+  if (!pipeListed(socketPath, () => machine.pipes())) throw new Error(nothingListens(socketPath));
+  throw new Error(`no daemon.json in ${home} says which engine the pipe ${socketPath} must be, ${NOTHING_SENT}`);
 }
 
 /** Why a hook sent nothing to the engine pipe `socketPath` when no pipe of that name exists. */
@@ -214,9 +223,10 @@ function noteProof(machine: DaemonMachine, socketPath: string, accessToken: stri
  * ({@link windowsRecordedDaemon}) before the hook looks up its endpoint, so a hook whose variable names that pipe asks
  * for one proof, as a hook asked before the named pipe was asked at all.
  */
-function provedSinceArrival({ socketPath, machine }: NamedPipe, accessToken: string, deadline: number | undefined): boolean {
+function provedSinceArrival({ socketPath, machine }: NamedPipe, accessToken: string | undefined, deadline: number | undefined): boolean {
+  if (accessToken === undefined || deadline === undefined) return false;
   const at = provedAt.get(machine)?.get(proofKey(socketPath, accessToken));
-  return deadline !== undefined && at !== undefined && at >= deadline - HOOK_DAEMON_WAIT_MS;
+  return at !== undefined && at >= deadline - HOOK_DAEMON_WAIT_MS;
 }
 
 /**
@@ -235,13 +245,15 @@ function pipeStayedBusy(holder: PipeServer | undefined): boolean {
 
 /**
  * Why the engine on the Windows pipe `RERAIL_ENGINE_SOCKET` names was sent nothing, once neither Windows nor a proof
- * (`answer`) showed it to be the home's own daemon: nothing listens on the pipe, other clients kept it busy past the
- * wait, its engine said nothing within the wait, or it is another process.
+ * (`answer`, undefined where none was asked) showed it to be the home's own daemon: nothing listens on the pipe, other
+ * clients kept it busy past the wait, daemon.json records no capability to prove, its engine said nothing within the
+ * wait, or it is another process.
  */
-function notSentReason({ socketPath, home, machine }: NamedPipe, answer: EngineProofAnswer, holder: PipeServer | undefined): string {
+function notSentReason({ socketPath, home, machine }: NamedPipe, answer: EngineProofAnswer | undefined, holder: PipeServer | undefined): string {
   if (!pipeListed(socketPath, () => machine.pipes())) return nothingListens(socketPath);
   const waited = `${ENGINE_ANSWER_WAIT_MS / 1_000} s`;
   if (pipeStayedBusy(holder)) return `other clients kept every instance of the engine pipe ${socketPath} taken for ${waited}, so Windows could not say whether this Rerail home's daemon holds it, ${NOTHING_SENT}`;
+  if (answer === undefined) return `the engine pipe ${socketPath} is not this Rerail home's daemon: Windows did not name the daemon ${join(home, DAEMON_STATE_FILE)} records as its holder, and that file records no capability for the engine to prove, ${NOTHING_SENT}`;
   if (answer === "silent") return `the engine on the pipe ${socketPath} did not prove within ${waited} that it is this Rerail home's daemon, ${NOTHING_SENT}`;
   return `the engine pipe ${socketPath} is not this Rerail home's daemon: it did not prove it holds the capability in ${join(home, DAEMON_STATE_FILE)}, ${NOTHING_SENT}`;
 }

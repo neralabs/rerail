@@ -290,6 +290,35 @@ describe("rerail events in a main build", () => {
     expect(routing.daemonEngineEndpoint).not.toHaveBeenCalled();
   });
 
+  it.runIf(process.platform === "win32")("sends the events, with no capability, to the daemon on the pipe RERAIL_ENGINE_SOCKET names when its daemon.json records none, as a daemon before Rerail 0.1.1 wrote it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-events-no-capability-"));
+    cleanups.push(async () => await removeFolder(root));
+    // This process holds the pipe as the daemon daemon.json records, which stamped its start after the process began.
+    const socketPath = testEngineEndpoint(root);
+    const received = await fakeEngineService(socketPath);
+    await writeFile(join(root, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "0.1.0",
+      databasePath: join(root, "rerail.sqlite"), kernelSocketPath: socketPath, ui: "bundled", startedAt: Date.now(), packageRoot: root }));
+    vi.stubEnv("RERAIL_HOME", root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", socketPath);
+    cleanups.push(async () => { vi.unstubAllEnvs(); });
+    routing.isMainRerailBuild.mockReturnValue(true);
+    startTestRepository(root, join(root, "rerail.sqlite"));
+
+    await runRerailEventStream({
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      input: Readable.from([
+        `${RERAIL_EVENT_PROTOCOL_PREFACE}\n`,
+        `${JSON.stringify({ event: { kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "s", cwd: root } } })}\n`,
+        `${JSON.stringify({ event: { kind: "user-prompt", eventId: "prompt", sessionId: "s", text: "go" } })}\n`,
+      ]),
+      output: new PassThrough(),
+    });
+
+    expect(received.map(({ event, access }) => [event.eventId, access])).toEqual([["start", undefined], ["prompt", undefined]]);
+  });
+
   it("never asks for the daemon, which would autostart it, while Rerail is off in the checkout", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-off-"));
     cleanups.push(async () => await removeFolder(root));
