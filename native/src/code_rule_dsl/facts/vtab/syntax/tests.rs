@@ -2519,6 +2519,25 @@ fn places_are_the_view_and_the_spans_rows_measured_in_a_block() {
     }
 }
 
+/// Decision 0494: a place relation measured before its spans' rows are made counts the view on the tape and the spans
+/// on a sample of their documents (`view_and_sampled`): its statistics are had with no whole read, its rows' count as
+/// its rows give it, once made.
+#[test]
+fn places_are_measured_before_their_spans_are_made() {
+    let store = ContentStore::open(&temp("places-sampled")).unwrap();
+    let docs: Vec<Document> = (1..=40).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x,\n      {k})\n"))).collect();
+    let reads = ["node", "line", "col", "src_line", "source", "comment"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let sources = shaped(&store, docs, &projection).unwrap();
+    let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name} bound")).1);
+    for name in ["line", "col"] {
+        let s = of(name);
+        let got = s.statistics().expect("the view's counted, the spans' sampled");
+        let want = measured(&*s);
+        assert_eq!(got[0].1, want[0].1, "{name}: the documents are alike, so the sample's rows scale to the batch's");
+    }
+}
+
 /// Decision 0353: `rr_long_text_node`'s statistics are counted on the tape, with no group made: the planner's measure
 /// of it made every document's rows of every relation before (a 158 MB block at the M3's 300-file peak). They are
 /// what its rows, once made, measure.
@@ -2558,6 +2577,32 @@ fn doc_is_measured_by_its_documents_with_no_row_made() {
     let want = measured(&*doc);
     assert_eq!(want[0].1, 5, "a row a file: {want:?}");
     assert_eq!(got, want, "its documents' counts, as the rows measure");
+}
+
+/// Decision 0494: a batch's relation no count gives is measured on a sample of its documents (one in 16, its first),
+/// those made and no other, its statistics scaled to the batch: the planner's measure made the whole batch to measure
+/// one. Made whole later, its rows are in the order of their ids.
+#[test]
+fn a_relation_with_no_counts_is_measured_on_a_sample_of_its_documents() {
+    let store = ContentStore::open(&temp("sampled-stats")).unwrap();
+    let docs: Vec<Document> = (1..=1024).map(|k| document(k, &format!("p{}/m{k}.py", k % 4), "python", &format!("def f{k}(x):\n    return g(x, {k}) + \"s{k}\"\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "pkg", "text"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _, _)| *n == name).unwrap().2);
+    let (pkg, text) = (of("pkg"), of("text"));
+    let got = [pkg.statistics().expect("sampled"), text.statistics().expect("sampled")];
+    let estimates = [pkg.estimated_len(), text.estimated_len()];
+    assert_eq!(batch.groups(), 1, "one group of the sample's documents");
+    assert_eq!(batch.documents_with_rows(), 64, "one document in 16 made");
+    for (rel, (got, estimate)) in [pkg, text].iter().zip(got.iter().zip(estimates)) {
+        let want = measured(&**rel);
+        assert_eq!(estimate, want[0].1 as usize, "the documents are alike: the sample's rows, scaled, are the batch's");
+        assert_eq!(got[0].1, want[0].1, "{got:?} against {want:?}");
+        // The sample is the batch's first documents, so the rest go on after them: the rows stay in their ids' order.
+        let ids: Vec<i64> = (0..rel.len()).map(|r| rel.value(r, 0)).collect();
+        assert!(ids.is_sorted(), "a made relation's rows in the order of their ids");
+    }
 }
 
 /// Decision 0494 (Q396): reads of a batch side by side make each document once. Each thread reads a relation whole;

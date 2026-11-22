@@ -7087,7 +7087,7 @@ fn run_observed_within(
             let key = (mix.clone(), rel.clone());
             let once = measured_once.lock().get(&key).filter(|o| once_seen(o.0)).map(|o| (o.1, o.2.clone()));
             let measured = match once {
-                Some((first, measured)) if first > 0 => scaled_statistics(&measured, first, source.estimated_len()),
+                Some((first, measured)) if first > 0 => syntax::scaled_statistics(&measured, first, source.estimated_len()),
                 _ => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
                     let measured = sampled_statistics_unanswered(&rel, source.as_ref(), &super::shapes::Shapes::for_run(std::sync::Arc::clone(&base_shapes)), stats.counts());
@@ -12334,30 +12334,6 @@ fn slashed_by(relative: &str, separator: char) -> String {
     relative.split(separator).collect::<Vec<_>>().join("/")
 }
 
-/// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to
-/// `rows`. A key column stays a key; a column with many values (over one row in 16 distinct: node ids, strings) gains
-/// values in proportion, one with few (kinds, field names) keeps them and its postings grow. `sq` keeps the postings'
-/// sizes against the values, and `sqd` grows with the documents, whose postings keep their sizes.
-fn scaled_statistics(measured: &[(String, i64, i64, i64, i64)], first: usize, rows: usize) -> Vec<(String, i64, i64, i64, i64)> {
-    let r = rows as f64 / first as f64;
-    let n = rows as i64;
-    measured
-        .iter()
-        .map(|(name, m_rows, ndv, sq, sqd)| {
-            if n == 0 {
-                return (name.clone(), 0, 0, 0, 0);
-            }
-            if ndv == m_rows {
-                return (name.clone(), n, n, n, n);
-            }
-            let ndv_scaled = if ndv * 16 > *m_rows { (*ndv as f64 * r).round() as i64 } else { *ndv }.clamp(1, n);
-            let sq_scaled = (*sq as f64 * r * r * (*ndv as f64 / ndv_scaled as f64)).round() as i64;
-            let sqd_scaled = (*sqd as f64 * r).round() as i64;
-            (name.clone(), n, ndv_scaled, sq_scaled.max(n), sqd_scaled.max(n))
-        })
-        .collect()
-}
-
 #[doc(hidden)]
 pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64, i64, i64)> {
     if let Some(known) = source.statistics() { return known; }
@@ -12379,7 +12355,7 @@ pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source
     let sample = Rows { columns: names, values };
     let measured = syntax::measured(&sample);
     crate::code_rule_dsl::logic::profile::decision("statistics sample", || format!("{count} of {rows} rows (limit {STAT_SAMPLE_ROWS})"));
-    if count == rows { measured } else { scaled_statistics(&measured, count, rows) }
+    if count == rows { measured } else { syntax::scaled_statistics(&measured, count, rows) }
 }
 
 /// `sampled_statistics` of `rel`'s columns its layout does not answer (decision 0361 item 5): an answered column's
@@ -12406,7 +12382,7 @@ pub fn sampled_statistics_unanswered(rel: &str, source: &dyn crate::code_rule_ds
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (count * open.len()) as u64);
         let sample = Rows { columns: open.iter().map(|&c| names[c].clone()).collect(), values };
         let measured = syntax::measured(&sample);
-        let measured = if count == rows { measured } else { scaled_statistics(&measured, count, rows) };
+        let measured = if count == rows { measured } else { syntax::scaled_statistics(&measured, count, rows) };
         counted = open.iter().copied().zip(measured).collect();
     }
     names

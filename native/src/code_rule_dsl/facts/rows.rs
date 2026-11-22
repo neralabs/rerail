@@ -126,7 +126,15 @@ impl Facts {
             let made = crate::code_rule_dsl::logic::profile::machine::<Made>();
             let mut m = made.0.lock().unwrap_or_else(|e| e.into_inner());
             m.retain(|(e, _, _, _)| e.strong_count() > 0);
-            let maker = (life == Life::Device).then(made_by);
+            // A device run's own is named by its maker; the open block of a run's life by what it holds: every
+            // run-life array (indexes, a join's and a sort's scratch) its chunk or run makes from when it opened, not
+            // the span that opened it (157 MB "made in measure line" at the M3's 300-file peak, ab175, none of it the
+            // measure's).
+            let maker = match life {
+                Life::Device => Some(made_by()),
+                Life::Run if shared => Some(Arc::from("the open block of run-life arrays (indexes, joins' and sorts' scratch) made from then on")),
+                _ => None,
+            };
             m.push((block.meter(), rerail_prof::heap::span(), life as u8, maker));
             let _ = crate::code_rule_dsl::logic::profile::machine::<crate::code_rule_dsl::logic::profile::memory::BlocksBySpan>().0.set(held_by_span);
         }
