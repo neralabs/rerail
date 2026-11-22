@@ -164,6 +164,7 @@ as its own rules again (781 G: the work moves into its readers).
 | 16, candidates seeded once a document | 676.9 G | 1.37 GB |
 | 17, a probe by a few documents | 674.2 G | 1.42 GB |
 | 18, no anti-join with an empty relation | 672.0 G | 1.41 GB |
+| merged with the hub: copies within one document, narrow reads by the columns shown | 570.1 G | 1.34 GB |
 
 Two runs of one binary differed by up to 8 G at loads of 20 to 30.
 
@@ -178,22 +179,16 @@ diffed. The rest are derived again, as before.
 
 ## What is left
 
-The baseline's own tree (its rules and typing programs, commit 8e14e2bb8c, exported whole) gives the measure that
-compares: the baseline engine runs it in 578.9 G and 33.1 s of user CPU; this engine (at step 15) in 694.1 G and
-39.4 s. Over today's rules it took 695.8 G, so the rules merged since cost nothing: the gap is the engine's.
+Measured after the hub's merge (2026-11-22): leg-083 in 570.1 G and 1.34 GB peak, findings 0, against the baseline's
+581 G and 1.36 GB. The hub reads an original narrow only where a rule's head shows what it reads (`Narrowing::redirect`,
+0165 "A pack's rules find what they find alone"), so 14 copies are read narrow, not 174: 12 within one document,
+filters of their originals, and 2 diffed (`calls`, `eager`). No component is mixed, so none is kept apart. The diffing
+still pays: `RERAIL_NARROW_DIFF=off` derives the two again, 577.6 G and the same findings. The engine's own strata
+(candidates, rechecks, rows gone and added, the annotations' keys) take 7.7 ms of CPU in 12 spans, where they took
+1.9 s in 1,765, and preparation 0.35 s where it took 1.41 s.
 
-The baseline has 41 strata of the engine's own (`rr_`), this engine 1,062 after step 16: four for each of the 168
-diffed copies (candidates, recheck, gone, added) and a stratum for each candidates' join pushed into the chunks.
-Of 677 copies (the pushed ones counted apart), 33 differ from their originals in this run: the rest are skipped
-where their inputs are empty (the gone, added and recheck of a copy whose candidates are none), and the candidates
-of 232 run each chunk and find none, each a stratum's fixed cost (planning, opening, the profile's record, about
-0.3 ms a chunk). The base inputs' indexes are built once a chunk (`child` on `(p, c)`: 31 builds, one a chunk), not
-by each stratum.
-
-The candidates and rechecks are 3,000 of the program's 8,900 rules, and preparation's passes read every rule:
-pushing the joins into the chunks takes 9 rounds, each a split of every relation (0.29 s against 0.05 s), cutting
-the exports to their demand 0.15 s, the measures' keys 0.14 s, reading copies in place 0.10 s; 1.27 s in all
-against the baseline's 0.25 s.
-
-The recursion of the open attributes (`pt_vopen`, `pt_base_open`, …) holds its annotations' copies apart (step 11)
-and reads its originals' narrow copies in place: 957 ms against 530 ms.
+Before the merge (at step 16), over the baseline's own tree (its rules and typing programs, commit 8e14e2bb8c,
+exported whole), the baseline engine ran in 578.9 G and this engine in 694.1 G; over today's rules it took 695.8 G, so
+the rules merged since cost nothing then. The strata of the engine's own were then 1,062: four for each of the 168
+diffed copies and one for each candidates' join pushed into the chunks, most of them run each chunk to find none. The
+base inputs' indexes are built once a chunk, not by each stratum.
