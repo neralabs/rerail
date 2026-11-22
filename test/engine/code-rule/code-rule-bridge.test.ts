@@ -5288,6 +5288,31 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(editModes(auditGeneratedEdits)).toContainEqual([named("src/added.py"), "log"]);
   });
 
+  // `git ls-files --modified` takes a file whose index entry carries either mark as the index holds it, whatever it
+  // holds. A sparse checkout marks every file outside its cone skip-worktree.
+  it.each(["--skip-worktree", "--assume-unchanged"])("records a file marked %s that a command changed in a worktree before its first walk", async mark => {
+    const { roots, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater();
+    git(worktree, "update-index", mark, "src/a.py");
+    await writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n");
+    roots.push(worktree);
+    await shellInWorktree(bridge, () => undefined);
+    expect(editModes(auditGeneratedEdits)).toContainEqual([named("src/a.py"), "log"]);
+  });
+
+  it("records a file marked assume-unchanged that a command changed in a worktree before its first walk whose listing of marked files failed", async () => {
+    const { roots, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater();
+    git(worktree, "update-index", "--assume-unchanged", "src/a.py");
+    await writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n");
+    roots.push(worktree);
+    asyncGitCalls.failing = "-v";
+    try {
+      await shellInWorktree(bridge, () => undefined);
+    } finally {
+      asyncGitCalls.failing = undefined;
+    }
+    expect(editModes(auditGeneratedEdits)).toContainEqual([named("src/a.py"), "log"]);
+  });
+
   // A binary file of no listed language is observed without a read: it has no read error, and no digest to judge it by.
   it("records nothing of a binary file of no listed language that a worktree Git added during the session holds as committed", async () => {
     const { roots, bridge, auditGeneratedEdits, worktree } = await worktreeAddedLater(async root => {
