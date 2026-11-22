@@ -451,7 +451,9 @@ describe("a walk's learn step of Git's list of the worktrees", () => {
     }
   });
 
-  it("has the router take the list its learn step read once, and read the registry again at its next ask", async () => {
+  // A started repository, a router opened in it and two worktrees Git adds: under half a second on a quiet machine, past
+  // the default 5 s on one busy with other runs.
+  it("has the router take the list its learn step read once, and read the registry again at its next ask", { timeout: 30_000 }, async () => {
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");
     const main = repository(join(root, "main"));
