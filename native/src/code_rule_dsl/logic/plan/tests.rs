@@ -2139,6 +2139,45 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }
 
+/// A relation whose rows are measured and its columns' distinct values are not holds no more distinct values than
+/// rows: a probe of it by a binding drawn from many values mostly misses. ep2's import edit: a finding of one row,
+/// `p49_ASYNC100($n, _)`, priced as keeping every binding, was probed after four old versions' reads of 4,672 moved
+/// nodes in each of 163 rules' lines (34.8 s of the maintain mode), where read after the delta it drops them.
+#[test]
+fn a_probe_of_a_relation_measured_by_rows_alone_prices_its_misses() {
+    let p = parse_version(
+        ".decl line(n:number, l:number)\n.decl col(n:number, c:number)\n.decl node(d:number, n:number)\n.decl doc(d:number, p:number)\n\
+         .decl finding(n:number, w:number)\n.decl violation(p:number, l:number, c:number)\n\
+         violation(p, l, c) :- finding(n, w), node(d, n), doc(d, p), line(n, l), col(n, c).\n.output violation\n",
+    )
+    .unwrap();
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    model.stats.nodes = 427_658.0;
+    for (rel, rows, ndv) in [
+        ("line", 556_028.0, vec![556_028.0, 7_379.0]),
+        ("col", 556_028.0, vec![556_028.0, 152.0]),
+        ("node", 427_658.0, vec![300.0, 427_658.0]),
+        ("doc", 300.0, vec![300.0, 273.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), rows / n);
+        }
+    }
+    // The finding: its rows counted, no column's.
+    model.stats.card.insert("finding", 1.0);
+    model.stats.solve(["violation"].into_iter().map(str::to_owned).collect());
+    model.stats.delta_rows.insert("line", 4_672.0);
+    let r = 0usize;
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), Some(3)).unwrap();
+    let order: Vec<String> = order.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
+    assert_eq!(order[..2], ["line", "finding"], "the moved nodes meet the finding before the old versions' reads: {order:?}, work {work}");
+    assert!(work < 10_000.0, "the misses priced: {work}");
+}
+
 /// A restrictive relation outside the fixpoint has the same containment property as one inside it.
 /// The delta's name domain is wider than the four names the restrictive input can match.
 #[test]

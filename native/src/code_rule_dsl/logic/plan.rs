@@ -4149,7 +4149,13 @@ impl Model {
                 for &c in &cols {
                     let TermRef::Var(v) = args[c] else { continue };
                     if c == first && misses_counted.get() >> c.min(63) & 1 != 0 { continue }
-                    let Some(here) = t.col(c, b, i, self).ndv else { continue };
+                    // A column holds no more distinct values than its relation's rows: where its own are not measured,
+                    // the rows measured bound them (a relation of the component being solved is still growing). Left
+                    // out, a one-row finding probed by a moved line's node kept every binding: ep2's import edit
+                    // ordered `p49_ASYNC100($v0, _)` after four old versions' probes of 4,672 rows, in each of 163
+                    // rules' lines (`violation` maintained: 34.8 s; read after the delta, under 0.02 s).
+                    let measured = || stats.card.get(rel).copied().filter(|_| !stats.solving.contains(rel)).map(|n| n.max(1.0));
+                    let Some(here) = t.col(c, b, i, self).ndv.or_else(measured) else { continue };
                     let (from, at) = binding_domains
                         .iter()
                         .filter_map(|(d, vars, domains)| {

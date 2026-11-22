@@ -547,6 +547,46 @@ ep2, M3, unprofiled, A and B on; outputs identical on every run:
 The append is unchanged (36.6 → 36.8 G). With B off, the append fell too (59.1 → 39.3 G): the screen's measure was
 much of what B cut there.
 
+### The import's cross part, profiled again (2026-11-22)
+
+After the two fixes the import's cross part is the dearest phase left of the three edits (1.04–1.10 s on the M3,
+0.51–0.62 s for the others). An import at a file's top moves every line of that file: `line`'s delta is 9,350 rows,
+`node_order`'s 8,675. Five strata are derived again for it, by 0090 §4's priced clause (`RERAIL_MODE_TRACE`); the
+dearest, `violation`, took a third of the cross part in the profile (0.57 s of 1.67 s on the mini). Derived again,
+its 163 rules that read a finding's place (`p49_ASYNC100($v0, _), node($d, $v0, …), doc($d, $p, _), line($v0, $l),
+col($v0, $c)`) probe `line` by each finding's node, and a probe makes the node's document (0494): 33 documents
+(`line column 0 ×33`), for an edit to one file.
+
+Maintaining it instead cost 34.8 s (`violation` alone forced into the mode; outputs identical). Each rule's removal
+and add lines led with `line`'s delta and read the finding last: `line → node → doc → !scope_drop → col →
+p49_ASYNC100`. The finding is one row, its rows measured, its columns' distinct values not; the containment share
+(the probes that hit) is skipped where a column's distinct values are not measured, so the probe was priced as
+keeping every binding. A column holds no more distinct values than its relation's rows, so where its own are not
+measured, the rows measured bound them (`plan.rs`, a relation of the component being solved excepted, its rows still
+growing). The lines now read `line → p49_ASYNC100 → …` (each priced 4,870, against 23,537), and `violation`
+maintained costs under 0.02 s of a 0.83 s cross part (profiled). Test:
+`plan::tests::a_probe_of_a_relation_measured_by_rows_alone_prices_its_misses`, which fails without it.
+
+ep2, M3, unprofiled, A and B on, every edit's outputs the rows of a fresh cold run of the same tree (all 661
+relations):
+
+| Edit | Instructions before | after |
+|---|---|---|
+| The append | 36.8 G | 36.6 G |
+| An import at a file's top | 50.2 G | 48.6 G |
+| A comprehension at another file's end | 39.0 G | 38.6 G |
+
+What stays: the priced clause still derives the five again, and maintaining them is cheaper. With the clause off
+(`RERAIL_AGAIN_PRICE=1e15`) the import's cross part is 0.75 s against 1.05 s, 43.9 G against 49.2 G, outputs
+identical; before this fix the same setting cost 40 s. The mode's price is its work (1.9 M: `line`'s 4,672 rows
+scanned on each side of 163 rules, under 0.02 s). The derive's (3,501) leaves out what it costs: the 33 documents
+its probes make, and its 359 rules' joins set up. A document's place read by a probe makes the document because,
+where a program reads spans, `Extra` makes `line`, `end_line`, `col` and `docof` as rows for every node and token
+beside the spans', and the batch binds those rows in place of the views (0353 step 3, Q216). Q216 (the spans' ranges
+written once into the batch's block, the view reading them past its own positions) leaves no node's place made,
+so the derive's probes cost what its plan prices and the clause compares like with like. ep2's program reads
+`comment`, `tape_line`, `src_line_lf` and `src_line`, whose spans the view does not cover yet.
+
 ### The order of work, amended
 
 1. **A1 and A2** as spiked:
