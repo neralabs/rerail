@@ -7592,6 +7592,8 @@ fn run_observed_within(
             let width = columns.len();
             let from: Vec<usize> = (0..width).filter(|&c| held.contains(columns[c].as_str())).collect();
             let names: Vec<String> = from.iter().map(|&c| columns[c].clone()).collect();
+            // Why kept statistics were not taken (none kept: a first count).
+            let mut why = if kept.is_some() { "counted: kept of other columns" } else { "counted" };
             let kept = kept.filter(|(_, k)| k.columns() == names.as_slice());
             // A text test is a test of a string (decision 0494): nothing of it changes with an edit, so its kept
             // statistics stand, read without its `len` (a scan of the batch's strings).
@@ -7611,21 +7613,35 @@ fn run_observed_within(
             // are checked against it.
             let counted = match kept {
                 Some((d, k)) if d == now => Some((k, "kept", session_binds.is_some())),
-                Some((d, mut k)) if Some(d) == table_digest.map(|t| t ^ tag(rel)) => base_wholes.get(rel).and_then(|(old, new)| {
-                    for (v, sign) in [(old, -1), (new, 1)] {
-                        if let Some(v) = v {
-                            k.documents_scanned(v.as_ref(), &from, sign);
+                Some((d, mut k)) if Some(d) == table_digest.map(|t| t ^ tag(rel)) => {
+                    why = "counted: no versions of the changed documents";
+                    base_wholes.get(rel).and_then(|(old, new)| {
+                        for (v, sign) in [(old, -1), (new, 1)] {
+                            if let Some(v) = v {
+                                k.documents_scanned(v.as_ref(), &from, sign);
+                            }
                         }
-                    }
-                    (k.rows() == source.len() as i64).then_some((k, "patched by the changed documents", true))
-                }),
-                _ => None,
+                        why = "counted: the patched rows are not the relation's";
+                        if k.rows() != source.len() as i64 && std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                            // The changed documents' rows in the corpus batch, against their new version's.
+                            let keys: BTreeSet<u32> = new.iter().chain(old.iter()).flat_map(|v| { let mut ks = BTreeSet::new(); v.documents_of(0, &mut |_, d| { ks.insert(d as u32); }); ks }).collect();
+                            let here = source.rows_of_documents(&keys).map(|r| r.len());
+                            eprintln!("rerail: {rel}'s patch refused: kept {} rows, old version {:?}, new {:?}, patched {}, the relation {}; the changed documents {keys:?}: {here:?} rows in the corpus batch", k.rows() + old.as_ref().map_or(0, |s| s.len() as i64) - new.as_ref().map_or(0, |s| s.len() as i64), old.as_ref().map(|s| s.len()), new.as_ref().map(|s| s.len()), k.rows(), source.len());
+                        }
+                        (k.rows() == source.len() as i64).then_some((k, "patched by the changed documents", true))
+                    })
+                }
+                Some(_) => {
+                    why = "counted: kept of other documents";
+                    None
+                }
+                None => None,
             };
             let (counted, how, keep) = counted.unwrap_or_else(|| {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}'s statistics off the corpus batch"));
                 let mut k = super::statkeep::RelStats::new(names.clone());
                 k.documents_scanned(source, &from, 1);
-                (k, "counted", true)
+                (k, why, true)
             });
             if rel == "node"
                 && let Some(kind) = names.iter().position(|c| c == "kind")
@@ -7713,8 +7729,8 @@ fn run_observed_within(
             // Kept of the table's documents (0096 §3's patch, at the held nodes): each changed document's old rows at
             // the nodes its old exports held counted out, its new rows at those its exports hold now counted in; an
             // unchanged document's rows, and the exports' values of its nodes, are as they were (a row of a file's
-            // entry names its own document's nodes, `input_delta`). Not where a version holds a guest: a value
-            // document's rows are each asker's, and an unchanged asker may hold its nodes still.
+            // entry names its own document's nodes, `input_delta`). A guest's (a value document's) are each asker's:
+            // not where an unchanged asker may hold its nodes still.
             let patched = (|| {
                 let (d, mut k) = kept?;
                 let (names, at, n_at) = input.as_ref()?;
@@ -7723,13 +7739,23 @@ fn run_observed_within(
                 }
                 let (change, (old, new)) = (held_change.as_ref()?, base_wholes.get(rel)?);
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{rel}'s statistics at the held nodes, patched"));
-                for (version, keys, sign) in [(old, &change.out, -1), (new, &change.r#in, 1)] {
-                    let Some(version) = version else { continue };
-                    let flat = at_keys(version.as_ref(), keys)?;
-                    if flat.chunks_exact(at.len()).any(|r| r[*n_at] >> 32 >= 1 << 30) {
-                        return None;
-                    }
-                    k.documents(&flat, at.len(), sign);
+                let mut flats = Vec::with_capacity(2);
+                for (version, keys) in [(old, &change.out), (new, &change.r#in)] {
+                    flats.push(match version {
+                        Some(version) => at_keys(version.as_ref(), keys)?,
+                        None => Vec::new(),
+                    });
+                }
+                // A guest's rows are each asker's (a value document): patched only where no file but its host holds
+                // them, after the edit (its host's new version) or not at all (only its old one).
+                let guests = |flat: &[i64]| -> BTreeSet<i64> { flat.chunks_exact(at.len()).map(|r| r[*n_at] >> 32).filter(|&d| d >= 1 << 30).collect() };
+                let (gone, now) = (guests(&flats[0]), guests(&flats[1]));
+                let held_by = |d: &i64| change.holders.get(d).copied().unwrap_or(0);
+                if now.iter().any(|d| held_by(d) > 1) || gone.difference(&now).any(|d| held_by(d) > 0) {
+                    return None;
+                }
+                for (flat, sign) in flats.iter().zip([-1, 1]) {
+                    k.documents(flat, at.len(), sign);
                 }
                 Some(k)
             })();

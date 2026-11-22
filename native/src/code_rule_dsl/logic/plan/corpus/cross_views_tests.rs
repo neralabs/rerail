@@ -397,3 +397,82 @@ fn a_semi_joins_estimates_scale_its_node_column_alone() {
     let node = super::held_distinct("node", &[stat("d", 300), stat("n", 1_000), stat("kind", 40), stat("start", 900), stat("end_", 900)], 50_000);
     assert_eq!(node, vec![Some(300), Some(50_000), Some(40), Some(900), Some(900)]);
 }
+
+/// The fixture's program, and a string annotation's tree read across files (a guest, decision 0055; the data
+/// layer's `parsed` annotations): `ann_kids` reads `child` at a guest's root, of the files a file imports from, and
+/// `below` walks a guest's tree in the cross part, so `child` is read at nodes it derives, a base relation whole.
+const GUESTS: &str = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl shape(f: node, k: symbol)
+shape(f, k) :- uses(_, f), child(f, b, _), kind(b, k).
+.decl ann(d: number, r: node)
+ann(d, r) :- string_annotation(s), parsed(s, "annotation", r), docof(s, d).
+.decl ann_kids(u: node, k: symbol)
+ann_kids(u, k) :- uses(u, f), docof(f, d), ann(d, r), child(r, c, _), kind(c, k).
+.decl below(u: node, c: node)
+below(u, c) :- uses(u, f), docof(f, d), ann(d, r), child(r, c, _).
+below(u, c) :- below(u, b), child(b, c, _).
+.decl deep(u: node, k: symbol)
+deep(u, k) :- below(u, c), kind(c, k).
+.output shape
+.output ann_kids
+.output deep
+"#;
+const GUESTS_OUTPUTS: &[&str] = &["shape", "ann_kids", "deep"];
+
+/// An edit of a file with guests (decision 0055: an f-string's tree, a string annotation's) patches every base
+/// relation's statistics by the changed documents, as a file without them does: a guest's rows are its host's
+/// document's. At the data layer's edits `child` was counted again off the corpus batch, its patched rows not the
+/// relation's (t43 step 21). In a session and in a new process.
+#[test]
+fn an_edit_of_a_file_with_guests_patches_every_base_relations_statistics() {
+    use crate::code_rule_dsl::logic::profile;
+    // Each patch counted again and compared (`held_counted`).
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment here.
+    unsafe { std::env::set_var("RERAIL_STATS_VERIFY", "1") };
+    let mut failed: Vec<String> = Vec::new();
+    for session in [false, true] {
+        let mut c = Corpus::with(if session { "guests-session" } else { "guests-kept" }, GUESTS, GUESTS_OUTPUTS);
+        // Annotated definitions imported by another file: their guests are read across files.
+        c.write("a.py", "def f(x: \"List[int]\"):\n    return x\n\ndef k(y: \"Dict[str, int]\"):\n    pass\n");
+        c.write("d.py", "from c import h\nfrom a import k\n\ndef i(a: \"A\"):\n    h()\n");
+        let handle = session.then(|| super::session::Handle::open(&c.dir.join("session")).unwrap());
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::set(true);
+        let run = |c: &mut Corpus| {
+            let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+            profile::take_decisions();
+            let (_, rows) = {
+                let _bound = handle.as_ref().map(|h| h.bind());
+                c.run()
+            };
+            let made = profile::take_decisions();
+            let of = |topic: &str| made.keys().filter(|(t, _)| t == topic).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
+            (of("the base relations' statistics (decision 0458)"), rows, of("the corpus batch (decision 0458)"))
+        };
+        let (_, _, batch) = run(&mut c);
+        // The files' guests are documents of the batch: more of them than files.
+        let made = |x: &String| x.split(' ').next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+        if !batch.iter().any(|x| made(x) > FILES.len()) {
+            failed.push(format!("{}: the corpus batch holds the files' guests: {batch:?}", if session { "a session" } else { "a new process" }));
+        }
+        run(&mut c);
+        c.write("a.py", "def f(x: \"Tuple[int, str]\", z: \"B\"):\n    return x\n\ndef k(y: \"Dict[str, int]\"):\n    pass\n");
+        let (edit, rows, _) = run(&mut c);
+        profile::set(false);
+        let route = if session { "a session" } else { "a new process" };
+        if edit.is_empty() || !edit.iter().all(|x| x.contains(": patched by the changed documents")) {
+            failed.push(format!("{route}: an edit patches every base relation's statistics: {edit:?}"));
+        }
+        every_output_has_rows(&rows);
+        if rows != c.fresh() {
+            failed.push(format!("{route}: the outputs after the edit are a fresh run's"));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}

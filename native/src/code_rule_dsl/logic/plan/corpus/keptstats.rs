@@ -82,6 +82,9 @@ pub struct Keeper {
 pub struct HeldChange {
     pub out: rustc_hash::FxHashSet<i64>,
     pub r#in: rustc_hash::FxHashSet<i64>,
+    /// Each value document's holders after the edit: how many files' entries hold its rows, the most of any export
+    /// (`holders`). A guest's nodes another file holds too are held whatever the edit did to its host.
+    pub holders: rustc_hash::FxHashMap<i64, i64>,
 }
 
 impl HeldChange {
@@ -194,7 +197,14 @@ impl Keeper {
 
     /// The held nodes this run's edit took and gave (`held`), once its files were all counted (`end`).
     pub fn take_held_change(&mut self) -> Option<HeldChange> {
-        self.held.take().filter(|_| self.failed.is_none())
+        let mut h = self.held.take().filter(|_| self.failed.is_none())?;
+        for by in self.holders.values() {
+            for (&d, &n) in by {
+                let at = h.holders.entry(d).or_default();
+                *at = (*at).max(n);
+            }
+        }
+        Some(h)
     }
 
     /// Whether this run has given the keeper up.
