@@ -235,10 +235,26 @@ a team is slower on the M3 (a group for each 4,096 of a unit's work: 13.7 ms for
       30 µs more.
     - Keeping the last entry written (`lp_put`), so a push doesn't read it back: 1.50 to 1.52 ms.
     - The loop's large functions as calls (`UKL_ONCE`): 1.7 ms, and 4.8 ms with the small ones too.
-  - **What is left: the thread's path.**
-    - Keep its state in registers between asks, not in threadgroup memory.
-    - Use fewer registers, so that state is not spilled. `Ux` and `Ar` hold about 60 pointers; they could be a
-      few bases and offsets.
+  - **The registers, read from the compiled kernel** (line info, `nvdisasm`). `lp_loop` is 39k instructions and
+    spills only 391 times, all on its setup's lines. A step's path has nearly no stack loads or stores. The 1.5
+    KB stack is the `#if` evaluator's arrays (`y->vb[k]`). So fewer registers would not change a step: `Ux` and
+    `Ar`'s pointers are not spilled on its path.
+  - **A plain step's parts** (the thread's clock, 111 steps): its checks 0.25 µs, its lex 0.33, its lookup 0.42,
+    deciding 0.17, emitting 0.23. Each part is 5 to 15 dependent accesses. Keeping the loop's state in registers
+    could save only part of the checks. Every frame access reads `sp`, then the frame (a walk over the frames by
+    depth: the calls, the painting, a list's end).
+  - **Built since:**
+    - Inside an argument, a list's plain entries are written as they are, each by its lane, in room the thread
+      makes. Before, the thread took each one through a frame and its tokens: 140 µs for 283 entries.
+    - A token's entry in the list's row comes from the bits of the entries' first places (one sum), not a binary
+      search of shuffles.
+
+    The slow piece is 1.36 ms (from 1.40), and the corpus's first round's run is 3.46 ms.
+  - **The single steps left inside macros** (82 in the slow piece) are names no macro. 59 are a frame's last
+    token (an ask needs two), and 23 come after an ask that took none.
+  - **The intermittent refusals of every unit** were the CUDA device failing to open:
+    `cuDevicePrimaryCtxRetain` out of memory on a loaded host. A process that asks for CUDA now says why it has
+    none, and the residency's refusals say why (`RERAIL_PP_WHY`).
 - **A unit's barriers.** P1's iterations each re-run the whole `#if` pass. Iterating only the lines whose inputs
   changed, and fusing the phases that do little work, cut the chain on every device, most on the M3.
 - **One serial line.** `a_line_past_its_room_runs_again_larger`'s `#if` line (131,071 tokens from one piece) is one
