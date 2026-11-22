@@ -160,9 +160,10 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
         let rest = admit_docs(&docs[1..]).unwrap();
         assert_ne!(first[0].slab.id, rest[0].slab.id, "the documents are in two slabs");
         let documents: Vec<Arc<Resident>> = first.iter().chain(&rest).cloned().collect();
-        // A 16z batch needs its cache's address in each view: refused where buffers have none (OpenCL 1.2).
-        if format == Format::F16Z && !rerail_metal::lane::device().unwrap().has_addresses() {
-            assert!(DocTable::new(documents).is_none(), "a 16z batch refused without device addresses");
+        // A batch over two slabs reaches the second by the slabs' device addresses (and a 16z batch its cache's):
+        // refused where buffers have none (OpenCL without host USM: Apple's, AMD's), and its caller splits it by slab.
+        if !rerail_metal::lane::device().unwrap().has_addresses() {
+            assert!(DocTable::new(documents).is_none(), "{format:?}: a batch over two slabs refused without device addresses");
             drop(held_big);
             continue;
         }

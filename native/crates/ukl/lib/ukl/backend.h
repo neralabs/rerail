@@ -411,14 +411,11 @@ UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
 UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return __ukl_amd_read(v, __UKL_CL_LANE ^ m); }
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return (ukl_mask_t)__builtin_amdgcn_ballot_w32(b); }
 UKL_INLINE void ukl_sg_barrier() { sub_group_barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
-// Native forms: the wave's reductions (`cl_khr_subgroups`). Not its scans: on a Radeon 680M (gfx1035, driver
-// 32.0.21030.2001) `sub_group_scan_inclusive_add` and `_exclusive_add` in the block interpreter's kernels scanned each
-// 16-lane row of the 32-lane wave apart (the second row's lanes without the first row's total), while a small kernel's
-// were right: so a scan's own form is the shuffles' (`ukl/simd.h`), `ds_bpermute` above.
-#define UKL_NATIVE_SG_REDUCE 1
-UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_add(v); }
-UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_min(v); }
-UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_max(v); }
+// No native forms: on a Radeon 680M (gfx1035, driver 32.0.21030.2001) `cl_khr_subgroups`' scans and reductions in
+// the engine's kernels worked on each 16-lane row of the 32-lane wave apart, while a small kernel's were right: the
+// block interpreter's `sub_group_scan_inclusive_add` scanned the second row without the first row's total, and the
+// device scan's `sub_group_reduce_add` gave a 1,024-value tile half its sum (a kind-set axis lost half its rows). So
+// both are the shuffles' (`ukl/simd.h`), `ds_bpermute` above.
 #elif defined(UKL_OPENCL_SUBGROUPS)
 // The device's sub-groups, `UKL_SIMD_WIDTH` lanes (the shim requires it of each kernel): OpenCL 3.0's functions. A lane outside
 // the group, or the group's own (`shuffle_up` below lane `d`, `shuffle_down` past the last lane), reads its own

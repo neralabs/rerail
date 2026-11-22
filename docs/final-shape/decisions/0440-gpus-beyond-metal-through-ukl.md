@@ -1633,23 +1633,42 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
 - **So the device layer has three kinds of groups (`Groups`):** emulated; required (Intel's: OpenCL 3.0's
   sub-groups at a width each kernel requires); and AMD's (`UKL_OPENCL_AMD`, with `UKL_OPENCL_SUBGROUPS`, built as
   OpenCL C 2.0): a device of 32-lane waves (`CL_DEVICE_WAVEFRONT_WIDTH_AMD`), its shuffles `ds_bpermute`, its ballot
-  `ballot_w32`, its reductions native, its kernels with no width attribute. With no attribute to require the width,
+  `ballot_w32`, its scans and reductions the shuffles', its kernels with no width attribute. With no attribute to require the width,
   the device's opening runs a kernel that checks it (`sub_groups_are`: each thread's sub-group size, maximum, lane,
   and a shuffle's read), and a device that fails it keeps the emulated groups.
-- **Its scans are the shuffles':** in the block interpreter's kernels the driver's `sub_group_scan_inclusive_add`
-  and `_exclusive_add` scanned each 16-lane row of the wave apart. The extract test's positions at 64-byte lanes
-  showed lane 16 at lane 0's offset, and at 16-byte lanes a quote in lane 29 at offset 0, without the quote in
-  lane 2. The kernels with the scans built from `ds_bpermute` (`ukl/simd.h`'s form) are right, and the small probe
-  kernels' native scans were right too. The reductions stay native: every test passes with them.
+- **Its scans and reductions are the shuffles':** in the engine's kernels the driver's `cl_khr_subgroups`
+  functions worked on each 16-lane row of the wave apart, while the small probe kernels' were right.
+  - In the block interpreter, `sub_group_scan_inclusive_add` and `_exclusive_add` scanned the second row without
+    the first row's total. The extract test's positions at 64-byte lanes showed lane 16 at lane 0's offset, and at
+    16-byte lanes a quote in lane 29 at offset 0, without the quote in lane 2.
+  - In the device scan (`ukl_grid_scan`), `sub_group_reduce_add` gave a 1,024-value tile half its sum: the
+    kind-set axis `Inside` counted 45,219 rows right, and the scan of the counts gave 22,347
+    (`the_kind_set_axes_hold_exactly_their_pairs`).
+  - So neither is native: both are built from `ds_bpermute` (`ukl/simd.h`'s forms), and those kernels are right.
 - **Tests on the Radeon:** the device layer's OpenCL tests, and every GPU test of the parser library (`block_tests`,
   `compile_tests` with the batch of files and programs, `json_tests`, `metal_tests`, `corpus_tests`), pass. The
   dumped kernels are OpenCL C 2.0 with `ds_bpermute` and none of the emulation's threadgroup words. AMD's compiler
   builds a `tempo_batch` in 0.3-0.6 s, the interpreter's `block_batch` in 0.5-0.8 s and the 12 serial kernels in
   1.4-1.5 s, with none of Intel's slowdown within a process (decision 0576).
+- **The engine's GPU tests on the Radeon:** the tape's (`tape::tests`, `tape::resident`), the residency's, the
+  tokens', the embeddings' and the virtual tables' pass. Of the transducer's and the residency's 231 quick-tier
+  tests, every one that ran passes, except four that read the packs' test data, which that host has not pulled.
+  Not yet run there: about twenty, mostly CPU tests and benchmarks that outran a run's minute. One CPU test,
+  `native_cpu::tests::nested_optional_types_keep_interpreter_candidate_ordinals`, ended its process with no
+  result there (the host went off the network soon after, but a compile was running on its Linux guest then,
+  which has reset it before). It passes on Linux.
+  - A batch over two slabs needs the slabs' device addresses, and AMD's OpenCL has no USM, so its buffers have none.
+    So `DocTable` refuses such a batch for every format, as it does on Apple's OpenCL, and its caller splits it by
+    slab. The residency test now expects that refusal wherever the device has no addresses, not for format 16z
+    alone. Addresses on AMD would come from OpenCL 2.0's SVM, which is still open (above).
 - **Found on the way, not the GPU's:** on x86-64 the stream JIT's clustered form (a cluster's word in another a tail
   call) needs Cranelift's frame pointers (`preserve_frame_pointers`, set there on x86-64 alone); the old Rust
   lowering's AOT test (`grammars_rust_tapes_are_the_jits`) writes `core::arch::aarch64` and cannot build on x86-64;
   and `rr_tests::a_reading_is_checked` takes over a minute on x86-64 Windows' debug build.
+- **Found on the way, the engine's:** reads side by side of one batch (`Batch::ensure`) found the documents they
+  needed under one lock and claimed them under another, so two reads could both make a document and one group be
+  set aside (`reads_side_by_side_make_each_document_once`, which the Windows host's scheduling showed). A read now
+  claims them in the lock that found them unclaimed.
 
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
