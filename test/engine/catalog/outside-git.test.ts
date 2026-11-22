@@ -6,7 +6,7 @@ import { join, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { repositoryIdentityLocation, repositoryIdentityLocationAsync } from "../../../src/engine/catalog/repository-identity.js";
 import { createCheckoutResolver, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
-import { gitText, runGit, runGitAsync } from "../../../src/engine/git.js";
+import { gitText, isRepositoryVariable, runGit, runGitAsync } from "../../../src/engine/git.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { startStateReader } from "../../../src/runtime/index.js";
 import { linkFolder } from "../../support/platform/links.js";
@@ -48,8 +48,10 @@ function git(cwd: string, ...args: string[]): void {
 }
 
 /** Git's own answer for `folder`, in this process's environment: its top level, or undefined outside a work tree. */
+/** Git's top level for `folder`, as Rerail's Git answers: with no repository variable of this process ({@link isRepositoryVariable}). */
 function gitTop(folder: string): string | undefined {
-  const result = spawnSync("git", ["-C", folder, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !isRepositoryVariable(name)));
+  const result = spawnSync("git", ["-C", folder, "rev-parse", "--show-toplevel"], { encoding: "utf8", env });
   return result.status === 0 ? resolve(result.stdout.trim()) : undefined;
 }
 
@@ -412,9 +414,9 @@ const askedShapes: readonly Shape[] = [
   { name: "a link into a checkout", asks: true, make: root => linkAt(folderAt(checkout(root, "main"), "src"), join(root, "link")) },
   { name: "a link inside a checkout to a folder outside one", asks: true, make: root => linkAt(folderAt(root, "outside"), join(checkout(root, "main"), "out")) },
   { name: "a link to a checkout's top folder", asks: true, make: root => linkAt(checkout(root, "main"), join(root, "link")) },
-  { name: "a plain folder while GIT_DIR names a repository", asks: true, make: root => notesWhile(root, "GIT_DIR", join(checkout(root, "main"), ".git")) },
-  { name: "a plain folder while GIT_DIR names no repository", asks: true, make: root => notesWhile(root, "GIT_DIR", folderAt(root, "empty")) },
-  { name: "a main-gone worktree under GIT_DIR", asks: true, make: root => ({ folder: goneMainWorktree(root), env: { GIT_DIR: join(checkout(root, "other"), ".git") } }) },
+  { name: "a plain folder while GIT_DIR names a repository, which Rerail's Git never gets", asks: false, make: root => notesWhile(root, "GIT_DIR", join(checkout(root, "main"), ".git")) },
+  { name: "a plain folder while GIT_DIR names no repository", asks: false, make: root => notesWhile(root, "GIT_DIR", folderAt(root, "empty")) },
+  { name: "a main-gone worktree under GIT_DIR, which Rerail's Git never gets", asks: false, make: root => ({ folder: goneMainWorktree(root), env: { GIT_DIR: join(checkout(root, "other"), ".git") } }) },
   { name: "a folder in a checkout past GIT_CEILING_DIRECTORIES", asks: true, make: root => ({ folder: folderAt(checkout(root, "main"), "src"), env: { GIT_CEILING_DIRECTORIES: join(root, "main") } }) },
   { name: "a checkout Git takes as another owner's", asks: true, make: root => ({ folder: checkout(root, "main"), env: { GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" } }) },
   { name: "a folder that is gone", asks: true, make: root => join(root, "gone") },
@@ -425,7 +427,7 @@ const askedShapes: readonly Shape[] = [
 
 const shapesHere = [...outsideShapes, ...askedShapes].filter(shape => process.platform === "win32" || shape.windowsOnly !== true);
 
-describe("each folder shape gets Git's answer, and Git is asked only where a .git, a HEAD or GIT_DIR can lead it to a repository", () => {
+describe("each folder shape gets Git's answer, and Git is asked only where a .git or a HEAD can lead it to a repository", () => {
   it.for(shapesHere)("$name", async (shape, context) => {
     const made = shape.make(await plainRoot());
     const { folder, env = {}, skip }: Exclude<Made, string> = typeof made === "string" ? { folder: made } : made;
@@ -446,7 +448,13 @@ describe("each folder shape gets Git's answer, and Git is asked only where a .gi
     try {
       expect(askedWhileAnswering(folder), "Rerail asked Git").toBe(true);
     } finally {
-      writer.kill();
+      // Gone before the folder is removed: a kill is only a signal, and the writer still blocked in the pipe's open
+      // holds the folder until it exits.
+      if (writer.exitCode === null && writer.signalCode === null) {
+        const exited = new Promise(done => writer.once("exit", done));
+        writer.kill();
+        await exited;
+      }
     }
   });
 

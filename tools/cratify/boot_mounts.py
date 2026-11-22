@@ -6,7 +6,7 @@ paths, through the same facades (incremental-plan.md, step 1). What it does not 
 keeps: each `mod x;` whose path is not in KEEP is dropped, with its attributes and doc comments. The test modules
 the engine hosts stay the engine's (step 2 moves them).
 
-Ran once, for step 1b. Since step 2 (test_crates.py) the engine's mod.rs is boot's glob and boot's lib.rs is
+Ran once, for step 1b. Since step 2 (split_test_crates.py) the engine's mod.rs is boot's glob and boot's lib.rs is
 source: this script no longer applies.
 
 Usage: boot_mounts.py NATIVE_DIR (writes native/crates/boot/src/lib.rs)."""

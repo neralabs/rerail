@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""maintain-report.py DIR: the O125 replay's measurement (maintain-measure.sh) as a table (t43 step 1, dev tool).
+"""maintain_report.py DIR: the O125 replay's measurement (maintain-measure.sh) as a table (t43 step 1, dev tool).
 
 DIR holds `kept/`, `session/` and `cold/`. Per step: each mode's instructions retired and peak footprint, the
 frames it queued and the kept part's bytes (RERAIL_KEPT_BYTES), and whether its findings are the cold run's (R10).

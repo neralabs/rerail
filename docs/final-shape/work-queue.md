@@ -3188,7 +3188,7 @@ submitted" now hold device memory at once.
   `bench-shapes.sh full` on Metal, three runs: in each one edit step read 0 components and the step after it read
   both edits. The bench edits within milliseconds of the previous step's end; every edit changes the file's size,
   so a stat would have seen it. Their done-when is kept: the bench's full shape shows every edit step's components.
-- **Cause, measured** (t46, `scripts/profiling/fsevents-history-probe.py` on the M3 at load 31–60): a change made
+- **Cause, measured** (t46, `scripts/profiling/fsevents_history_probe.py` on the M3 at load 31–60): a change made
   before a stream starts reaches it only through fseventsd's on-disk log, and the log is written late under load.
   In 12 of 40 trials a new stream from the last run's cursor named neither the edited file nor a new one, though
   the cookie and `HistoryDone` came (the sync answered "complete"). The missing events never came later on that
@@ -8975,7 +8975,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   The engine's verdict is right on all 1,680, but its line differs on 59 and its message on 105. On the fixtures
   (the replay's input) all 152 agree. The differences are where the first error Ruff reports is not the one CPython
   raises: a keyword-argument error inside a call whose bracket is never closed, where CPython reports the bracket.
-- **To do**: generate the mutants again (`scripts/dev/python-syntax-mutants.py`, seeded), run
+- **To do**: generate the mutants again (`scripts/dev/python_syntax_mutants.py`, seeded), run
   `cpython::parity::syntax_error_parity` with `RERAIL_PARITY_ROOTS=fixtures:<mutants>` on a box with CPython 3.13,
   and follow CPython's choice in each class of difference, as `syntax_error` already does for tokenizer errors and
   brackets left open.

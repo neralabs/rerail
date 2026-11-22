@@ -79,13 +79,7 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
     }
     let Ok(file) = RrFile::read(src) else { return Vec::new() };
     let statements = file.statements();
-    let policy = statements
-        .iter()
-        .find_map(|s| match s.what()? {
-            S::Setting { key: "policy", text } => text.split('"').nth(1).map(str::to_owned),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let policy = policy_settings(&statements).next().unwrap_or_default();
     statements
         .iter()
         .filter_map(|s| match s.what()? {
@@ -98,6 +92,22 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
         })
         .map(|(clause, template)| (policy.clone(), clause, template))
         .collect()
+}
+
+/// The `.policy` IDs a text's own statements declare, in order, read without its includes or its lowering: what a
+/// policy whose program does not load (a setting its lowering refuses) names in its failure. Empty when the text
+/// does not parse.
+pub fn declared_policies(src: &str) -> Vec<String> {
+    let Ok(file) = RrFile::read(src) else { return Vec::new() };
+    policy_settings(&file.statements()).collect()
+}
+
+/// The names the `.policy` settings among `statements` give, in order.
+fn policy_settings(statements: &[Stmt]) -> impl Iterator<Item = String> + '_ {
+    statements.iter().filter_map(|s| match s.what()? {
+        S::Setting { key: "policy", text } => text.split('"').nth(1).map(str::to_owned),
+        _ => None,
+    })
 }
 
 /// A `.message` setting's clause and template (`B101 "…"`).

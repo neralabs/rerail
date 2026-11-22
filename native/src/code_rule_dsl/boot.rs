@@ -228,6 +228,11 @@ pub fn install_languages(tests: bool) {
         logic::plan::corpus::source_languages::classify(root, store, owner, paths, registry)
             .map_err(|error| error.to_string())
     });
+    // A workspace index task's run (decision 0441) and what writes its profile (0442).
+    workspace::index::install_task_run(workspace::index::TaskRun {
+        scope: || Box::new(logic::run::scope(logic::native::width::Settings::from_env)),
+        report: logic::profile::report::write,
+    });
     // A snapshot's files, as an SQL session binds them.
     sql_executor::documents::install_snapshot_files(|json| {
         let (snapshot, _) = eval::parse_snapshot(json, false)?;

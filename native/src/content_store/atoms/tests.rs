@@ -605,7 +605,7 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
     };
     super::mapped(|| store.queue_kept(space, vec![put]));
     let row = store.kept_row(&space).unwrap().expect("written");
-    let kept = store.open_kept(&space, &row).unwrap();
+    let (_, kept) = store.open_kept(&space, row).unwrap().expect("kept");
     let view = kept.view();
     let entry = rerail_blocks::kept::KeptRead::get(&view, &rerail_blocks::kept::FactKey { rel: "r", ident: &[1; 32], part: 0 }).expect("the entry");
     // In canonical order (decision 0456 K3): by the store's ids.

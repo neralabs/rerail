@@ -135,7 +135,7 @@ run from a crate that depends on boot alone.
   | `rerail-tests-matcher` | `matcher`, `workspace`, `findings`, `suppress`, `violations` | 24.8k |
   | `rerail-tests-lang` | `tape`, `language`, `facts`, `tree`, `vue` | 15.6k |
 
-  (As built: `tools/cratify/test_crates.py` writes them from the engine's `code_rule_dsl/mod.rs`. A module goes with
+  (As built: `tools/cratify/split_test_crates.py` writes them from the engine's `code_rule_dsl/mod.rs`. A module goes with
   the crate of the tests it reads: `matcher::arguments` and `blade` read the value tests' PHP oracle.)
 
 - Each test crate depends on boot and on the crates its tests read. It does not depend on the engine. The ones that
@@ -339,7 +339,7 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   - Mounts in the engine's prefix that only boot's files read carry `#[allow(unused_imports)] // boot's mount`.
     They go when step 3 makes the engine's `code_rule_dsl` boot's, plus the engine's own items.
 - **Step 2** (2026-11-21): the engine's tests are six test crates above boot (`native/crates/tests_*`, the table in
-  step 2), written by `tools/cratify/test_crates.py` from the engine's `code_rule_dsl/mod.rs`. Each is
+  step 2), written by `tools/cratify/split_test_crates.py` from the engine's `code_rule_dsl/mod.rs`. Each is
   `#![cfg(test)]`. It mounts its test files in place under the engine's facades, globs boot's module at every
   facade's path, and is booted as it loads (`boot::install_for_tests`). The engine's `code_rule_dsl` is now
   boot's glob plus napi: its `mod.rs` items, `slice::napi`, and the CLI's entry points (`tools::napi`, which installs
@@ -380,7 +380,7 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   The six tests that read the napi items (the package facts a host reads, `module_path`, the server graph task)
   are the engine's `code_rule_dsl::napi_tests`. Their helpers moved to fixtures modules: `module_graph::fixtures`,
   and `workspace::fixtures` (`TempDir`, `package_repository`). The test crates' lib.rs files are source now
-  (`test_crates.py` ran once).
+  (`split_test_crates.py` ran once).
   - Tests: the 145 moved tests pass under cargo (a Linux host); one `cargo check --tests` over boot, the engine and the
     six test crates is clean.
 - **Step 4** (2026-11-21): the compiler is five crates. Their sources stay in `crates/compiler/src`; each crate above

@@ -208,11 +208,19 @@ pub struct KeptSpace {
 impl KeptSpace {
     /// The files `rows` name, mapped, each checked against its tag.
     pub fn open(store: &Path, space: &[u8; 32], rows: &ChainRows) -> StoreResult<KeptSpace> {
+        Self::mapped(store, space, rows).map_err(|(path, e)| StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display())))
+    }
+
+    /// `open`'s files, or the first that does not open, with why.
+    fn mapped(store: &Path, space: &[u8; 32], rows: &ChainRows) -> Result<KeptSpace, (PathBuf, std::io::Error)> {
         let dir = space_dir(store, space);
         let files = rows
             .iter()
-            .map(|(_, name, tag)| KeptFacts::open(&dir.join(name), *tag).map_err(|e| StoreError::Corrupt(format!("a space's kept facts: {e}"))))
-            .collect::<StoreResult<_>>()?;
+            .map(|(_, name, tag)| {
+                let path = dir.join(name);
+                KeptFacts::open(&path, *tag).map_err(|e| (path, e))
+            })
+            .collect::<Result<_, _>>()?;
         Ok(KeptSpace { files })
     }
 
@@ -729,16 +737,40 @@ impl super::ContentStore {
         Ok(done)
     }
 
-    /// `space`'s chain as `rows` name it, mapped.
-    pub fn open_kept(&self, space: &[u8; 32], rows: &ChainRows) -> StoreResult<KeptSpace> {
-        KeptSpace::open(&self.database_path, space, rows)
+    /// `space`'s chain as `rows` (`kept_row`'s) name it, mapped, with the rows it was opened by; `None` when it keeps
+    /// none. Where a file `rows` name is gone, they are rows a writer has since replaced: the rows this process holds
+    /// are kept current by its own writer alone, and another writes the store too (another shared object's writer in
+    /// this process, or another process), whose next write sweeps the files its commit replaced. The store's last
+    /// commit is then read, held in their place, and opened. A file its rows name that is gone is corruption.
+    pub fn open_kept(&self, space: &[u8; 32], rows: ChainRows) -> StoreResult<Option<(ChainRows, KeptSpace)>> {
+        match KeptSpace::mapped(&self.database_path, space, &rows) {
+            Ok(kept) => return Ok(Some((rows, kept))),
+            Err((path, e)) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display())));
+            }
+            Err(_) => {}
+        }
+        let now = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            chain_rows(&connection, space)?
+        };
+        super::held::snapshot_kept(&self.database_path, |kept| {
+            if let Some(kept) = kept {
+                kept.insert(*space, now.clone());
+            }
+        });
+        if now.is_empty() {
+            return Ok(None);
+        }
+        let kept = KeptSpace::open(&self.database_path, space, &now)?;
+        Ok(Some((now, kept)))
     }
 
-    /// The kept facts of `space` as this process holds its chain's rows (else the store's last commit), mapped;
-    /// `None` when it keeps none.
+    /// The kept facts of `space` as this process holds its chain's rows (else the store's last commit), mapped
+    /// (`open_kept`); `None` when it keeps none.
     pub fn kept_space(&self, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
         let Some(rows) = self.kept_row(space)? else { return Ok(None) };
-        KeptSpace::open(&self.database_path, space, &rows).map(Some)
+        Ok(self.open_kept(space, rows)?.map(|(_, kept)| kept))
     }
 }
 

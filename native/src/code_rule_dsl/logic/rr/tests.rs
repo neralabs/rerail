@@ -3870,7 +3870,7 @@ fn a_flattened_file_keeps_its_tests() {
 #[test]
 fn converted_cases_are_tests() {
     let rule = repo().join("packs/rerail/rules/rerail-fixed-value-lists.json");
-    let cases = repo().join("fixtures/rerail/rerail-fixed-value-lists.cases.json");
+    let cases = std::path::PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("rerail/rerail-fixed-value-lists.cases.json");
     let report = crate::code_rule_dsl::tools::convert_rr_with(&[(rule, Some(cases.clone()))]);
     let tests = report[0]["tests"].as_str().unwrap_or_else(|| panic!("{report}"));
     let n: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cases).unwrap()).unwrap();
@@ -5382,7 +5382,7 @@ fn a_host_files_own_nodes_are_not_shown() {
 
 /// Q324 (decision 0431 §4, "a program is named by its file and place"): where a program declares `docof` over nodes
 /// as T's programs do, it is `node`'s projection, and `node`'s document column is a program's file, so `docof` of a
-/// script's node is the HTML file that holds it, as core.rr's `docof` is.
+/// script's node is the HTML file that holds it, as core.rerail's `docof` is.
 #[test]
 fn a_t_programs_docof_of_a_programs_node_is_its_file() {
     let html = "<p>x</p>\n<script>f(1)</script>\n";
@@ -5448,4 +5448,15 @@ fn ended_within(mut child: std::process::Child, limit: std::time::Duration) -> O
     child.kill().unwrap();
     child.wait().unwrap();
     None
+}
+
+/// A policy whose program does not load names the policies its own text declares, read without its includes or
+/// its lowering: a setting its lowering refuses still leaves its `.policy` readable.
+#[test]
+fn a_texts_declared_policies_read_without_lowering() {
+    let src = "#include \"core.rerail\"\n.policy \"bad\" revision 1\n.language python\n.references {\"unknownParameter\":true}\n.violation V(at: node) \"edge\"\nV(n) :- kind(n, \"call\").\n";
+    assert_eq!(declared_policies(src), ["bad"]);
+    assert_eq!(declared_policies(".policy \"one\" revision 1\n.policy \"two\" revision 1\n"), ["one", "two"]);
+    assert!(declared_policies(".violation V(at: node) \"x\"\nV(n) :- kind(n, \"call\").\n").is_empty());
+    assert!(declared_policies(".policy \"unclosed").is_empty(), "a text that does not parse declares none");
 }

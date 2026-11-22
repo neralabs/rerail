@@ -475,3 +475,25 @@ fn collection_rewrites_without_dead_entries() {
     assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["l"]);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+/// Rows this process holds of a space are kept current by its own writer alone: another writer (another shared
+/// object's in this process, or another process; here a connection of its own) commits, and its next write sweeps the
+/// files the held rows name. Opened by those rows, the space is the store's last commit's, and the rows held are its.
+#[test]
+fn rows_another_writer_replaced_open_as_the_last_commit() {
+    let (path, c) = store("foreign-writer");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    write(&path, &c, vec![put("a", 0, 1, flat(&[1, 1]))]);
+    store.preload_kept_state().unwrap();
+    let held = store.kept_row(&SPACE).unwrap().expect("held");
+    write(&path, &c, vec![put("b", 0, 2, flat(&[2, 2]))]);
+    write(&path, &c, vec![put("c", 0, 3, flat(&[3, 3]))]);
+    let now = chain_rows(&c, &SPACE).unwrap();
+    assert!(held.iter().any(|(_, name, _)| !space_dir(&path, &SPACE).join(name).exists()), "the held rows name a file the foreign write swept: {held:?}");
+    assert_eq!(store.kept_row(&SPACE).unwrap().as_ref(), Some(&held), "the process still holds the rows it read");
+    let (opened, kept) = store.open_kept(&SPACE, held).unwrap().expect("kept");
+    assert_eq!(opened, now, "opened by the last commit's rows");
+    let rels: Vec<String> = kept.view().all().map(|k| k.key.rel.to_owned()).collect();
+    assert_eq!(rels, ["a", "b", "c"], "every entry the last commit keeps");
+    assert_eq!(store.kept_row(&SPACE).unwrap(), Some(now), "the rows held are the last commit's");
+}

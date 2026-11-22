@@ -37,7 +37,10 @@ impl Bound {
         {
             return Ok(Some(Arc::clone(bound)));
         }
-        let bound = Arc::new(Bound { space: store.open_kept(space, &rows)?, id: *space });
+        // Opened by the rows it was mapped by: the store's last commit's where a writer this process's rows do not
+        // follow had replaced them (`ContentStore::open_kept`).
+        let Some((rows, kept)) = store.open_kept(space, rows)? else { return Ok(None) };
+        let bound = Arc::new(Bound { space: kept, id: *space });
         chains.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (rows, Arc::clone(&bound)));
         Ok(Some(bound))
     }

@@ -1,6 +1,6 @@
 # The engine's tests of logic and the sessions: the planner, the .rr lowering, the program image, the native set kernels, typing, the SQL executor, the statistics and the residency (docs/final-shape/proposals/crate-split/incremental-plan.md, step 2).
 # A test crate: its library is its tests (`#![cfg(test)]`). Its manifest is boot's, with boot below it
-# (tools/cratify/test_crates.py), and kept by hand since.
+# (tools/cratify/split_test_crates.py), and kept by hand since.
 [package]
 name = "rerail-tests-logic"
 version = "0.1.0"
