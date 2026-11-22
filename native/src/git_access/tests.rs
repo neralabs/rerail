@@ -1214,3 +1214,166 @@ fn another_owners_linked_worktree_has_its_common_config_measured_before_the_open
     run_child(NAME, &env);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// A repository with one commit and a linked worktree `linked` of it on branch `wt`, in a folder of
+/// its own under the temporary folder as the system names it, as Git names the Git folders that
+/// `gitdir:` conditions test; returns the folder, the main checkout and the linked worktree.
+fn linked_fixture(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let root = std::env::temp_dir().join(format!(
+        "rerail-git-access-{name}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let main = repository_at(&root.join("main"), &[("a.py", b"a\n")]);
+    let linked = root.join("linked");
+    git(
+        &main,
+        &["worktree", "add", "--quiet", "-b", "wt", &linked.to_string_lossy()],
+    );
+    (root, main, linked)
+}
+
+/// The absolute Git folder of `checkout`, as Git names it.
+fn git_dir(checkout: &Path) -> String {
+    let output = git_output(checkout, &["rev-parse", "--absolute-git-dir"], &[]);
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// `path` as a config file names it, `/`-separated.
+fn config_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// Adds to the repository's own config an include of a file that sets `test.<key>`, under
+/// `condition` (`None` for a plain `include.path`).
+fn include_setting(main: &Path, condition: Option<&str>, key: &str) {
+    let file = main.parent().unwrap().join(format!("{key}.gitconfig"));
+    std::fs::write(&file, format!("[test]\n\t{key} = yes\n")).unwrap();
+    let section = condition.map_or_else(
+        || "include.path".to_owned(),
+        |condition| format!("includeIf.{condition}.path"),
+    );
+    git(main, &["config", "--add", &section, &config_path(&file)]);
+}
+
+/// `test.<key>` as the opener reads it for `root`, and as `git config` reads it there.
+fn setting(root: &Path, key: &str) -> (Option<String>, Option<String>) {
+    let repository = opener::discover(root).unwrap();
+    let ours = repository
+        .config_snapshot()
+        .string(format!("test.{key}").as_str())
+        .map(|value| value.to_string());
+    let output = git_output(root, &["config", "--get", &format!("test.{key}")], &[]);
+    let git = output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+    (ours, git)
+}
+
+/// A linked worktree reads the includes Git reads there: a `gitdir:` or `gitdir/i:` condition
+/// holds for the worktree's own Git folder, not the main checkout's, and `onbranch:` for its own
+/// branch. The main checkout reads what it read before.
+#[test]
+fn a_linked_worktree_reads_the_includes_git_reads_there() {
+    let (root, main, linked) = linked_fixture("linked-includes");
+    let main_git = git_dir(&main);
+    let linked_git = git_dir(&linked);
+    include_setting(&main, Some(&format!("gitdir:{main_git}")), "main");
+    include_setting(&main, Some(&format!("gitdir:{linked_git}")), "linked");
+    let folded = format!("gitdir/i:{}", linked_git.to_uppercase());
+    include_setting(&main, Some(&folded), "folded");
+    include_setting(&main, Some("onbranch:wt"), "branch");
+    include_setting(&main, None, "plain");
+
+    for (checkout, key, included) in [
+        (&main, "main", true),
+        (&main, "linked", false),
+        (&main, "folded", false),
+        (&main, "branch", false),
+        (&main, "plain", true),
+        (&linked, "main", false),
+        (&linked, "linked", true),
+        (&linked, "folded", true),
+        (&linked, "branch", true),
+        (&linked, "plain", true),
+    ] {
+        let (ours, git) = setting(checkout, key);
+        let place = checkout.display();
+        assert_eq!(ours, git, "test.{key} in {place}");
+        assert_eq!(ours.is_some(), included, "test.{key} in {place}");
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// The repository's config names an excludes file for each checkout by its Git folder: `la/` for
+/// the main checkout's, `lw/` for the linked worktree's.
+fn excludes_per_checkout(root: &Path, main: &Path, linked: &Path) {
+    for (checkout, pattern) in [(main, "la"), (linked, "lw")] {
+        let excludes = root.join(format!("{pattern}.exclude"));
+        std::fs::write(&excludes, format!("{pattern}/\n")).unwrap();
+        let included = root.join(format!("{pattern}.gitconfig"));
+        let text = format!("[core]\n\texcludesFile = {}\n", config_path(&excludes));
+        std::fs::write(&included, text).unwrap();
+        let key = format!("includeIf.gitdir:{}.path", git_dir(checkout));
+        git(main, &["config", &key, &config_path(&included)]);
+    }
+}
+
+/// In a linked worktree the matcher takes the excludes file Git takes there, not the one the
+/// repository's config names for the main checkout.
+#[test]
+fn a_linked_worktree_ignores_what_git_ignores_there() {
+    let (root, main, linked) = linked_fixture("linked-excludes");
+    excludes_per_checkout(&root, &main, &linked);
+    let paths = ["la/f.py", "lw/f.py"];
+    for (checkout, ignored) in [(&main, [true, false]), (&linked, [false, true])] {
+        let git = git_check_ignore(checkout, &paths);
+        assert_eq!(matcher_answers(checkout, &paths), git, "{}", checkout.display());
+        let answered = git.iter().map(Option::is_some).collect::<Vec<_>>();
+        assert_eq!(answered, ignored, "{}", checkout.display());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// In a linked worktree the workspace discovery lists as untracked a file Git shows there, which
+/// the excludes file the repository's config names for the main checkout leaves out.
+#[test]
+fn a_linked_worktree_lists_what_git_status_lists_there() {
+    use crate::git_workspace::{OverlayKind, WorkspaceOverlay};
+    let (root, main, linked) = linked_fixture("linked-listing");
+    excludes_per_checkout(&root, &main, &linked);
+    for checkout in [&main, &linked] {
+        write(checkout, &[("la/f.py", b"f\n")]);
+    }
+    let listed = |checkout: &Path| crate::git_workspace::discover(checkout).unwrap().overlays;
+    assert_eq!(listed(&main), []);
+    let untracked = WorkspaceOverlay {
+        path: "la/f.py".to_owned(),
+        kind: OverlayKind::Untracked,
+    };
+    assert_eq!(listed(&linked), [untracked]);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// An include loop under a condition only the linked worktree meets stops Git there, and the
+/// opener refuses that worktree as Git does; the main checkout, where Git reads no loop, opens.
+#[test]
+fn a_linked_worktree_include_loop_is_refused_as_git_refuses_it() {
+    let (root, main, linked) = linked_fixture("linked-loop");
+    let looped = root.join("loop.gitconfig");
+    let text = format!("[include]\n\tpath = {}\n", config_path(&looped));
+    std::fs::write(&looped, text).unwrap();
+    let key = format!("includeIf.gitdir:{}.path", git_dir(&linked));
+    git(&main, &["config", &key, &config_path(&looped)]);
+
+    let lists = |checkout: &Path| git_output(checkout, &["config", "--list"], &[]).status;
+    assert!(lists(&main).success());
+    assert!(!lists(&linked).success(), "Git reads the loop in the linked worktree");
+    assert!(opener::discover(&main).is_ok());
+    let Err(OpenError::Failed(message)) = opener::discover(&linked) else {
+        panic!("the opener opened a worktree whose includes Git refuses");
+    };
+    assert!(message.starts_with("cannot read the Git config's includes"), "{message}");
+    std::fs::remove_dir_all(root).unwrap();
+}

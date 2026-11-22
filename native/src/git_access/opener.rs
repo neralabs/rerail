@@ -10,6 +10,9 @@
 //!   for the system attributes (`git --exec-path`). It applies `GIT_CONFIG_SYSTEM` over the named
 //!   file and `GIT_CONFIG_NOSYSTEM` as Git does; gix applies `HOME`, `XDG_CONFIG_HOME` and
 //!   `GIT_CONFIG_GLOBAL` for the global files.
+//! - It reads the files those name by `include` and `includeIf` as Git does in the worktree it
+//!   opens: in a linked worktree a `gitdir:` condition holds for the worktree's own Git folder
+//!   ([`include_as_git_does`]), where gix alone tests the main checkout's.
 //! - It refuses a config, exclude or attribute file it can name before the read when the file is
 //!   larger than [`MAX_GIT_FILE_BYTES`], so a damaged or hostile repository cannot make the daemon
 //!   read a gigabyte into memory.
@@ -115,7 +118,7 @@ pub fn discover(root: &Path) -> Result<gix::Repository, OpenError> {
     {
         check_size(&file)?;
     }
-    let repository =
+    let mut repository =
         gix::discover_opts(root, upwards_options(), sources.options()).map_err(|error| {
             let message = format!("cannot open Git repository: {error}");
             if is_no_repository(&error) {
@@ -124,10 +127,65 @@ pub fn discover(root: &Path) -> Result<gix::Repository, OpenError> {
                 OpenError::Failed(message)
             }
         })?;
+    include_as_git_does(&mut repository)?;
     for file in after.into_iter().chain(global_files(&repository)) {
         check_size(&file)?;
     }
     Ok(repository)
+}
+
+/// Gives `repository` the config files Git reads for a command run in its worktree.
+///
+/// Git tests an `includeIf "gitdir:..."` (or `gitdir/i:`) condition against the Git folder of the
+/// worktree the command runs in: `<main>/.git` in the main checkout, `<main>/.git/worktrees/<name>`
+/// in a linked worktree. gix tests it against the common folder, `<main>/.git`, in both, so in a
+/// linked worktree it reads the files a condition on the main checkout names and skips those a
+/// condition on the worktree's own folder names: a `core.excludesFile` or `core.ignoreCase` set in
+/// such a file then differs from Git's. In a linked worktree this drops every section an include
+/// added and follows each include again, testing `gitdir:` against the worktree's own Git folder
+/// and `onbranch:` against its `HEAD`, as Git does. A main checkout keeps gix's reading: there the
+/// two folders are one.
+fn include_as_git_does(repository: &mut gix::Repository) -> Result<(), OpenError> {
+    if repository.git_dir() == repository.common_dir() {
+        return Ok(());
+    }
+    let git_dir = repository.git_dir().to_owned();
+    // An unreadable `HEAD` matches no `onbranch:` condition, as gix's own open leaves it.
+    let branch = repository.head_name().ok().flatten();
+    // `~/` and `%(prefix)/` in an include path name what they name in gix's own open.
+    let install_dir = repository.install_dir().ok();
+    let home = gix::path::env::home_dir();
+    let options = gix::config::file::init::Options {
+        includes: gix::config::file::includes::Options::follow(
+            gix::config::path::interpolate::Context {
+                git_install_dir: install_dir.as_deref(),
+                home_dir: home.as_deref(),
+                ..Default::default()
+            },
+            gix::config::file::includes::conditional::Context {
+                git_dir: Some(&git_dir),
+                branch_name: branch.as_ref().map(AsRef::as_ref),
+            },
+        ),
+        ..Default::default()
+    };
+    let mut config = repository.config_snapshot_mut();
+    // Sections an include read sit one level or more below the file that named them.
+    let included: Vec<_> = config
+        .sections_and_ids()
+        .filter(|(section, _)| section.meta().level > 0)
+        .map(|(_, id)| id)
+        .collect();
+    for id in included {
+        config.remove_section_by_id(id);
+    }
+    config.resolve_includes(options).map_err(includes_error)?;
+    config.commit().map_err(includes_error)?;
+    Ok(())
+}
+
+fn includes_error(error: impl std::fmt::Display) -> OpenError {
+    OpenError::Failed(format!("cannot read the Git config's includes: {error}"))
 }
 
 /// The longest `commondir` file read: it holds one path, and no system takes a path this long.
