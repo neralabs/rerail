@@ -1,4 +1,3 @@
-    use crate::code_rule_dsl::CodeRuleDslRuntime;
     use crate::code_rule_dsl::matcher::UtilLimit;
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
@@ -102,11 +101,7 @@
                 "violation": { "anchor": "capture.ARG", "code": "AST_MATCH", "message": "x" },
             }],
         });
-        let reason = rejection(CodeRuleDslRuntime::compile(
-            document.to_string(),
-            "json".to_owned(),
-            CAPABILITIES.to_owned(),
-        ));
+        let reason = rejection(crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES));
         assert!(reason.contains("capture.ARG"), "{reason}");
     }
 

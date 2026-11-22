@@ -349,12 +349,11 @@ fn metal<'a>(
 /// `RERAIL_FOOTPRINT`: the footprint now and its high-water mark at a point in a labelling.
 fn mark(at: &str) {
     if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
-        let _ = tikv_jemalloc_ctl::epoch::advance();
         eprintln!(
             "  FOOTPRINT {at}: {} MB (high-water {} MB); heap live {} MB",
             crate::code_rule_dsl::prof::footprint_mb(),
             crate::code_rule_dsl::prof::max_footprint_mb(),
-            tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20
+            crate::code_rule_dsl::prof::live_heap_mb()
         );
     }
 }
@@ -461,13 +460,12 @@ fn apart<'a>(
                 ran => ran?,
             };
             if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
-                let _ = tikv_jemalloc_ctl::epoch::advance();
                 eprintln!(
                     "FOOTPRINT run: {before} -> {} MB (high-water {} MB); heap live {} MB, resident {} MB; Metal {} MB",
                     crate::code_rule_dsl::prof::footprint_mb(),
                     crate::code_rule_dsl::prof::max_footprint_mb(),
-                    tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
-                    tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20,
+                    crate::code_rule_dsl::prof::live_heap_mb(),
+                    crate::code_rule_dsl::prof::resident_heap_mb(),
                     crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
                 );
                 if let Some(path) = std::env::var_os("RERAIL_HOLD_RUN") {

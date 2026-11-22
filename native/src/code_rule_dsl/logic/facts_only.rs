@@ -198,6 +198,7 @@ const NOT_YET_TABLES_PIN: usize = 54;
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
     // What a crate above registers at load, as the crate split made them (a function or a device, set once).
+    ("code_rule_dsl/logic/costs/join_steps.rs", "INSTALL"),
     ("code_rule_dsl/logic/device.rs", "SOLVER"),
     ("code_rule_dsl/logic/strings.rs", "FUNCTORS"),
     ("code_rule_dsl/logic/strings/functions.rs", "PY_REPR"),
@@ -207,9 +208,8 @@ const STATE: &[(&str, &str)] = &[
     // What registers at load: the world's files with the answerers installed, and the record's kinds' applies.
     ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
     ("content_store/record.rs", "KINDS"),
-    // A test's log.
     // This thread's run's binding (CPU or Metal).
-    ("code_rule_dsl/logic/plan/placement.rs", "Device"),
+    ("code_rule_dsl/logic/device/binding.rs", "Device"),
     // Profiling: the placements a recording run made, and the writer's jobs by kind.
     ("code_rule_dsl/logic/plan/placement.rs", "Recording"),
     // The coverage check's census of the shipped rule files, read once by a test process.

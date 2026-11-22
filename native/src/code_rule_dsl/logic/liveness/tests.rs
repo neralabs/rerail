@@ -27,7 +27,7 @@ out(a, b) :- path(a, b), a = 1.
         std::fs::create_dir_all(&root).unwrap();
         let out = dir.join("out");
         crate::code_rule_dsl::logic::plan::corpus::run(&text, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let counts = super::read_counts(&crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap());
+        let counts = crate::code_rule_dsl::logic::plan::output::read_counts(&crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap());
         let _ = std::fs::remove_dir_all(&dir);
         let get = |rel: &str, what: &str| counts.get(rel).and_then(|m| m.get(what)).copied().unwrap_or(0);
         // path is (1,2) (2,3) (7,8) (1,3); stop(3) blocks (3,4) and (1,4). fan reads every row of path.

@@ -50,7 +50,7 @@ fn answered_by(req: &str) -> (&'static [&'static str], &'static [&'static str]) 
 /// The requests program `v` derives that its fixpoint answers (decision 0431 §8, Q325): each of `DEMANDS` a rule
 /// derives, with what it answers (`answered`), where that is read. A relation is one request's answer (`answers::gate`):
 /// a producer's that two requests' rules read is the first's.
-pub(super) fn answering(v: &Version) -> BTreeMap<String, (Vec<String>, Vec<String>)> {
+pub fn answering(v: &Version) -> BTreeMap<String, (Vec<String>, Vec<String>)> {
     let mut claimed: BTreeSet<String> = BTreeSet::new();
     let mut out = BTreeMap::new();
     let read = |r: &str| v.inputs().any(|a| v.text(a) == r);
@@ -102,23 +102,23 @@ pub(super) fn answered(v: &Version, req: &str) -> (Vec<String>, Vec<String>) {
 }
 
 /// `embed`'s demand: a string made a tape value and parsed (decision 0431 §8), answered in the fixpoint.
-pub(in crate::code_rule_dsl::logic::plan::corpus) const DEMAND: &str = "rr_embed_req";
+pub const DEMAND: &str = DEMANDS[0];
 /// `@parse(g, x)`'s and `@splice(t, n, t2)`'s demands (decision 0058 §4, `rr::lower`).
-pub(super) const PARSE: &str = "rr_parse_req";
-pub(super) const SPLICE: &str = "rr_splice_req";
-/// The demands rules make.
-pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
+pub const PARSE: &str = DEMANDS[1];
+pub const SPLICE: &str = DEMANDS[2];
+/// The demands rules make (`rr::lower`'s, in its order).
+pub const DEMANDS: [&str; 3] = crate::code_rule_dsl::logic::rr::lower::DEMANDS;
 /// The relations a rule reads guests and values through (`rr::lower`'s guest relations): a program none of whose
 /// needed rules reads one makes no guest.
-pub(in crate::code_rule_dsl) const READS: [&str; 11] = ["parsed", "sub_tape", "rr_program", "doc_grammar", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
+pub const READS: [&str; 11] = ["parsed", "sub_tape", "rr_program", "doc_grammar", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
 /// Every relation a request is read from: a run with a rule deriving one makes guests.
-pub(in crate::code_rule_dsl) const REQUESTS: [&str; 3] = DEMANDS;
+pub const REQUESTS: [&str; 3] = DEMANDS;
 /// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's): the
 /// requests, which the runner reads by name, and the guest policy.
-pub(super) const SHARED: [&str; 4] = [DEMAND, PARSE, SPLICE, crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY];
+pub const SHARED: [&str; 4] = [DEMAND, PARSE, SPLICE, crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY];
 
 /// What a guest request gave (`Guests::guest`).
-pub(super) enum Got {
+pub enum Got {
     /// A document made.
     New(Box<Document>),
     /// A place more of tape value `key`, made before.
@@ -130,7 +130,7 @@ pub(super) enum Got {
 /// A value a rule makes (decision 0058 §4), asked inside the fixpoint (`Guests::admit_value`). A string a rule parses
 /// is asked as its place and grammar (`Guests::admit`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(super) enum Request {
+pub enum Request {
     /// `@parse(grammar, text)`, asked at location `at` (the asking document's).
     Parse { at: i64, grammar: String, text: String },
     /// `@splice(_, node, with)`: node's tape, with node's text replaced by tape `with`'s.
@@ -194,24 +194,30 @@ pub(super) fn hidden_file_key(keys: &GuestKeys, path: &str) -> u32 {
 /// it is to the run: the file, a text document under its own key (its `doc` row, its lines and their text, shown as
 /// any file's), and its tree, a guest of the file (`Made::File`) under a hidden key (`hidden_file_key`), standing at
 /// the file's whole text. Both read the one source and line table (`core::text_of`).
-pub(super) fn file_and_tree(parsed: Document, keys: &GuestKeys) -> [Document; 2] {
+pub fn file_and_tree(parsed: Document, keys: &GuestKeys) -> [Document; 2] {
     let text = Arc::new(core::text_of(&parsed.facts));
     let file = parsed.key;
-    let whole = Placement::Copied { delta: 0, within: [0, u32::try_from(parsed.facts.source.len()).unwrap_or(u32::MAX)] };
     let grammar = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&parsed.facts)).and_then(crate::code_rule_dsl::language::label).unwrap_or_default().to_owned();
     let text_doc = Document { key: file, path: parsed.path.clone(), core: parsed.core.clone(), digest: core::digest(&text), facts: text, tape: None, guest: None, module: parsed.module.clone(), unpackaged: parsed.unpackaged };
     let tree = Document {
         key: hidden_file_key(keys, &parsed.path),
         core: format!("{}#file:{grammar}", parsed.core),
-        // No row reads a file tree's `at` (`Made::File` has no `sub_tape` or `parsed` row): its file's first position.
-        guest: Some(Arc::new(Guest { host: file, file, at: i64::from(file) << 32, grammar, role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File })),
+        guest: Some(Arc::new(file_tree_guest(file, grammar, parsed.facts.source.len()))),
         ..parsed
     };
     [text_doc, tree]
 }
 
+/// The place of the tree of file `file` (`file_and_tree`), of `grammar` and `len` bytes: its file's guest standing at
+/// its whole text. No row reads a file tree's `at` (`Made::File` has no `sub_tape` or `parsed` row): its file's first
+/// position.
+pub(super) fn file_tree_guest(file: u32, grammar: String, len: usize) -> Guest {
+    let whole = Placement::Copied { delta: 0, within: [0, u32::try_from(len).unwrap_or(u32::MAX)] };
+    Guest { host: file, file, at: i64::from(file) << 32, grammar, role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File }
+}
+
 /// Whether `d` is a file the run reads for its programs, as parsed and not yet split (`file_and_tree`).
-pub(super) fn unsplit_host(d: &Document, host: &dyn Fn(&str) -> bool) -> bool {
+pub fn unsplit_host(d: &Document, host: &dyn Fn(&str) -> bool) -> bool {
     d.guest.is_none() && host(&d.path) && core::facts_tag(&d.facts) != core::TEXT
 }
 
@@ -283,7 +289,7 @@ fn host_text(host: &Document, ids: &syntax::Numbering, local: u32) -> Option<(St
 /// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and
 /// the run's guest keys (the store's, decision 0391).
 #[derive(Default)]
-pub(super) struct Guests {
+pub struct Guests {
     run: &'static str,
     /// The run's projection: its node ids are what requests name (`syntax::numbering`).
     shape: syntax::Shape,
@@ -292,7 +298,7 @@ pub(super) struct Guests {
     asked: HashSet<Request>,
     keys: Arc<GuestKeys>,
     /// Each guest's host file (`memo` attributes a guest's rows to it).
-    pub(super) host_of: HashMap<i64, i64>,
+    pub host_of: HashMap<i64, i64>,
     /// Each value made, by grammar and what made it: its key. A value is one per text in a chunk.
     values: HashMap<(String, String), i64>,
     /// Each value's files: those whose rules asked for it (O96). `memo` attributes its rows to each.
@@ -305,8 +311,8 @@ pub(super) struct Guests {
     pub(super) unseen: usize,
     /// The files' programs made this chunk (decision 0431 step 6, `Report::programs`): read off a file's record, and
     /// made by an embedder from a file whose record is not known.
-    pub(super) programs_read: usize,
-    pub(super) programs_made: usize,
+    pub programs_read: usize,
+    pub programs_made: usize,
 }
 
 /// A program to place in its file (`Guests::placed_program`): an embedder's, or one read off the file's record (decision
@@ -338,7 +344,7 @@ impl Held {
 /// Which guests a program can see (decision 0058 §1, `hiding`): a guest it cannot see adds no row any of its rules
 /// reads, so a chunk running it makes none. Ordered by range: each sees the ranges before it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Seen {
+pub enum Seen {
     /// Files and code in the run's language: a rule that names no guest.
     Code,
     /// And annotations: a relation whose copies for them were folded into it (`combining::FoldOwn` widens its bound).
@@ -361,7 +367,7 @@ impl Seen {
 
 /// The tape tags of the grammars `v`'s requests name (decision 0431 R6: the tags whose tapes a run reads before its
 /// first wave); `None` where a request's grammar is not a constant, so any grammar may be asked.
-pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Version) -> Option<std::collections::BTreeSet<i64>> {
+pub fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Version) -> Option<std::collections::BTreeSet<i64>> {
     use crate::code_rule_dsl::logic::program_image::TermRef;
     let mut tags = std::collections::BTreeSet::new();
     for r in v.rules() {
@@ -383,7 +389,7 @@ pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Versi
 
 /// Whether `t` is a document bound `combining::FoldOwn` widened to take the annotations in (above `RUN_VALUE_KEYS`):
 /// a rule compared with it reads the annotations' documents, which only their requests (`DEMAND`) make.
-pub(super) fn widened(t: crate::code_rule_dsl::logic::program_image::TermRef<'_>) -> bool {
+pub fn widened(t: crate::code_rule_dsl::logic::program_image::TermRef<'_>) -> bool {
     use crate::code_rule_dsl::facts::vtab::syntax::{RUN_VALUE_KEYS, HIDDEN_KEYS};
     matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Int(n) if n > i64::from(RUN_VALUE_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(RUN_VALUE_KEYS) << 32))
 }
@@ -392,7 +398,7 @@ pub(super) fn widened(t: crate::code_rule_dsl::logic::program_image::TermRef<'_>
 /// `hiding`): every other base read is bounded below `RUN_VALUE_KEYS`, or below `HIDDEN_KEYS` where an annotation's
 /// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
 /// against the widened bound, and the other guests (other grammars, values) never.
-pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
+pub fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
     use crate::code_rule_dsl::logic::program_image::Lit;
     let entry = |rel: &str| READS.contains(&rel) || super::hiding::ENTRIES.iter().any(|(r, ..)| *r == rel);
     let mut seen = Seen::Code;
@@ -412,12 +418,12 @@ pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Versio
 impl Guests {
     /// For a run over `run`'s files (a dialect label) in `shape`, whose guests' keys are `keys` (read before the
     /// first wave: `ContentStore::guest_keys`, or `GuestKeys::in_memory` without a store).
-    pub(super) fn new(run: &'static str, shape: syntax::Shape, keys: Arc<GuestKeys>) -> Self {
+    pub fn new(run: &'static str, shape: syntax::Shape, keys: Arc<GuestKeys>) -> Self {
         Self { run, shape, keys, ..Self::default() }
     }
 
     /// Makes only the guests a program that sees `seen` can see (a chunk of partial hits, whose cone is all it runs).
-    pub(super) fn seeing(mut self, seen: Seen) -> Self {
+    pub fn seeing(mut self, seen: Seen) -> Self {
         self.seen = seen;
         self
     }
@@ -430,7 +436,7 @@ impl Guests {
     }
 
     /// Each value document's files.
-    pub(super) fn askers(&self) -> HashMap<i64, Vec<i64>> {
+    pub fn askers(&self) -> HashMap<i64, Vec<i64>> {
         self.files.iter().map(|(k, f)| (*k, f.iter().copied().collect())).collect()
     }
 
@@ -457,7 +463,7 @@ impl Guests {
     /// A string a rule parses, asked inside the chunk's fixpoint (decision 0431 §8: `rr_embed_req(at, grammar)`'s
     /// answer): its tape value made (`Got::New`, added to `docs`), or a place more of one made before (`Got::Placed`,
     /// its document in `docs` given the place); `Got::Not` for a place asked before, or one with no tape.
-    pub(super) fn admit(&mut self, docs: &mut Vec<Document>, at: i64, grammar: &str, parses: &Parses<'_>) -> Result<Got, String> {
+    pub fn admit(&mut self, docs: &mut Vec<Document>, at: i64, grammar: &str, parses: &Parses<'_>) -> Result<Got, String> {
         if !self.made.insert((at, grammar.to_owned())) {
             return Ok(Got::Not);
         }
@@ -481,7 +487,7 @@ impl Guests {
 
     /// `@parse`'s or `@splice`'s value (`request`), asked inside the chunk's fixpoint (decision 0431 §8, Q325): made and
     /// added to `docs`, or `None` where it was asked before, made before (its askers then grow), or makes no value.
-    pub(super) fn admit_value(&mut self, docs: &mut Vec<Document>, request: Request, parses: &Parses<'_>) -> Result<Option<Document>, String> {
+    pub fn admit_value(&mut self, docs: &mut Vec<Document>, request: Request, parses: &Parses<'_>) -> Result<Option<Document>, String> {
         if !self.asked.insert(request.clone()) {
             return Ok(None);
         }
@@ -588,7 +594,7 @@ impl Guests {
 
     /// The files' programs among `docs` (made with the batch, `programs`), as made: their places, under their grammar
     /// and their embeddings' ids, and their files (`host_of`).
-    pub(super) fn seed(&mut self, docs: &[Document]) {
+    pub fn seed(&mut self, docs: &[Document]) {
         let by_key: HashMap<u32, &Document> = docs.iter().map(|d| (d.key, d)).collect();
         for d in docs {
             let Some(g) = d.guest.as_ref().filter(|g| g.made == Made::Host && g.file != 0 && g.file != d.key) else { continue };
@@ -608,7 +614,7 @@ impl Guests {
     /// each of its embeddings' embedders builds (`Embedder::build_all`) from the file's tape, read in place, at its
     /// load, before any rule runs. Each is at the innermost node of its file over its bytes, made once: a library's
     /// `embed` of the same place and grammar finds it made.
-    pub(super) fn programs(&mut self, docs: &[Document]) -> Result<Vec<Document>, String> {
+    pub fn programs(&mut self, docs: &[Document]) -> Result<Vec<Document>, String> {
         let mut out = Vec::new();
         // A file's own tree is a host of its programs (decision 0512), whose file is the file's.
         for host in docs.iter().filter(|d| d.guest.as_ref().is_none_or(|g| g.made == Made::File)) {
@@ -775,7 +781,7 @@ impl Guests {
 }
 
 /// Each program's file among `docs` (`Guests::host_of`'s, for a chunk that makes no guest of its own).
-pub(super) fn hosts_of(docs: &[Document]) -> HashMap<i64, i64> {
+pub fn hosts_of(docs: &[Document]) -> HashMap<i64, i64> {
     docs.iter().filter_map(|d| d.guest.as_ref().filter(|g| matches!(g.made, Made::Host | Made::File) && g.file != 0 && g.file != d.key).map(|g| (i64::from(d.key), i64::from(g.file)))).collect()
 }
 
@@ -800,7 +806,7 @@ type Parsed = (Arc<core::Facts>, u32, [u8; 32]);
 /// the tapes the last runs named, read before the first wave (decision 0104), or queued for the store behind the run,
 /// so a text a run parsed is not parsed again.
 #[derive(Default)]
-pub(super) struct Parses<'a> {
+pub struct Parses<'a> {
     kept: std::sync::Mutex<(usize, HashMap<(String, Option<core::Fragment>, String), Option<Parsed>>)>,
     /// The texts parsed, not found kept (`Report::guest_parses`): decision 0431 R6, a text a run parsed is not
     /// parsed again.
@@ -814,22 +820,22 @@ pub(super) struct Parses<'a> {
 /// among the tapes the root's last runs named (read before the first wave, decision 0104: the run's grammar's in
 /// `by_text`, the files' map, the others in `others`), else queued for the store behind the run and named in its
 /// manifest, so the next run finds them.
-pub(super) struct ValueStore<'a> {
-    pub(super) cache: &'a crate::content_store::ContentStore,
-    pub(super) run_tag: Option<i64>,
-    pub(super) by_text: &'a HashMap<crate::content_store::HashKey, (crate::content_store::SourceId, crate::content_store::TapeFrame)>,
-    pub(super) others: HashMap<(crate::content_store::HashKey, i64), (crate::content_store::SourceId, crate::content_store::TapeFrame)>,
-    pub(super) late: &'a super::Late,
+pub struct ValueStore<'a> {
+    pub cache: &'a crate::content_store::ContentStore,
+    pub run_tag: Option<i64>,
+    pub by_text: &'a HashMap<crate::content_store::HashKey, (crate::content_store::SourceId, crate::content_store::TapeFrame)>,
+    pub others: HashMap<(crate::content_store::HashKey, i64), (crate::content_store::SourceId, crate::content_store::TapeFrame)>,
+    pub late: &'a super::Late,
 }
 
 impl<'a> Parses<'a> {
     /// The parses of a run whose tapes are kept in `store`.
-    pub(super) fn new(store: Option<ValueStore<'a>>) -> Self {
+    pub fn new(store: Option<ValueStore<'a>>) -> Self {
         Self { store, ..Self::default() }
     }
 
     /// The texts this run parsed.
-    pub(super) fn parsed(&self) -> usize {
+    pub fn parsed(&self) -> usize {
         self.parsed.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
@@ -906,6 +912,9 @@ fn taped(path: &str, label: &str, text: Arc<String>, parse: crate::code_rule_dsl
 
 /// A document's tape in its file's context (`Document::tape`).
 type Tape = Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>)>;
+
+/// Sources a queued write stores (decision 0102), for the manifest queued after it.
+pub type Late = Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>;
 
 #[cfg(test)]
 mod tests {

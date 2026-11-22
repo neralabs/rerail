@@ -1,3 +1,5 @@
+//! **Deprecated** (decision 0550): Rust from an intermediate form. A grammar's Rust is the Bitlex compiler's own (`bitlex_lex_rust`, `bitlex_rust`); no new use. Kept until Go-C-and-C-support and Parser-generators-final-shape remove theirs.
+//!
 //! The `.rerail` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
 //! from Rust the build script writes: tier 1's the JIT's own functions (their Cranelift IR,
 //! `clif_rust`); tier 2's the structured backend of the native IR (`rust_stream`), a function a
@@ -32,7 +34,13 @@ mod tier2_16_aot {
 const _: () = assert!(tier1_aot::STRUCTURED.0 == tier1_aot::STRUCTURED.1, "a tier 1 function is irreducible: a loop over a match");
 
 #[cfg(feature = "generated")]
-use rerail_compiler::{clif_rust, native_cpu_block, native_cpu_stream, native_ir, rust_stream};
+use rerail_compiler::native_ir;
+#[cfg(feature = "generated")]
+use rerail_cpu_block::native_cpu_block;
+#[cfg(feature = "generated")]
+use rerail_cpu_stream::{clif_rust, native_cpu_stream};
+#[cfg(feature = "generated")]
+use rerail_rust_stream::rust_stream;
 
 /// Which tiers run the ahead-of-time build.
 #[derive(Clone, Copy, Debug)]
@@ -53,7 +61,7 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     // Compiled for Rust's NEON as the source was (`rr_aot_gen`): its bit tests (`bit_test`).
     // The same meaning either way; the flag back as it was for the JIT's compiles after.
     let bit_test = options.bit_test.swap(true, std::sync::atomic::Ordering::Relaxed);
-    let c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules);
+    let c = rerail_rr_parser::compile_with(rerail_bitlex::bitlex_masks::Shape::Rules);
     options.bit_test.store(bit_test, std::sync::atomic::Ordering::Relaxed);
     let mut c = c?;
     let one = clif_rust::rust_source(&c.parser)?;

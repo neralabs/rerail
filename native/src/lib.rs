@@ -7,6 +7,8 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
+// Canonical paths without Windows' verbatim prefix: the engine's every one (`rerail_store::Canonical`).
+use rerail_store::Canonical as _;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
@@ -44,10 +46,10 @@ pub mod git_access {
 pub mod git_start;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
-pub use rerail_w::git_ignore;
+pub use rerail_classic::git_ignore;
 mod main_instance;
 mod model;
-pub use rerail_w::panic_boundary;
+pub use rerail_classic::panic_boundary;
 mod path_owner;
 pub mod process;
 pub use rerail_logic::threads;
@@ -63,11 +65,15 @@ use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
 
-// jemalloc does not build for MSVC targets; Windows keeps the system allocator. The test build declares it too
+// jemalloc does not build for MSVC targets; Windows takes mimalloc (below). The test build declares it too
 // (`rust_allocations_reach_the_profile_allocator` checks it).
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: Sampled = Sampled;
+
+#[cfg(all(windows, not(feature = "system-allocator")))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
 /// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
@@ -147,15 +153,7 @@ pub(crate) fn install_store_functions() {
             .ok()
             .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
             .map_or(grammar, |id| Box::leak(id.into_boxed_str()));
-        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), grammar);
-        code_rule_dsl::install_devices();
-        code_rule_dsl::install_languages();
-        code_rule_dsl::logic::plan::corpus::install_git_inventory();
-        content_store::set_connection_functions(|db| {
-            code_rule_dsl::text::install(db)?;
-            code_rule_dsl::prefilter::tapes::install(db)
-        });
-        code_rule_dsl::sql_hazards::strict_on_every_connection();
+        code_rule_dsl::boot::install(code_rule_dsl::boot::BuildIds { engine: env!("RERAIL_ENGINE_BUILD_ID"), grammar });
     });
 }
 
@@ -302,7 +300,7 @@ fn on_revisions<'s, T>(snapshots: impl IntoIterator<Item = &'s git_workspace::sn
 
 #[cfg(not(feature = "headless"))]
 #[napi]
-pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+pub fn inspect_rr_policy(path: String, source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
     let snapshot = source.map(|source| source.pinned_snapshot());
     on_revisions(snapshot.as_deref(), || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(||
         LoadedRrPolicy::read(&path, snapshot.clone(), None)?.inspection()))
@@ -362,7 +360,7 @@ impl LoadedRrPolicies {
     }
 
     #[napi]
-    pub fn load(&self, path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+    pub fn load(&self, path: String, source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
         let key = policy_file_path(&path)?;
         let read = || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(|| {
             let inspected = if source.is_none() && self.store.is_some() {
@@ -399,7 +397,7 @@ fn policy_file_path(path: &str) -> Result<&Path> {
 fn rr_policy_path(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Result<std::path::PathBuf> {
     let path = policy_file_path(path)?;
     match snapshot {
-        None => path.canonicalize().map_err(|error| Error::from_reason(format!("{}: {error}", path.display()))),
+        None => path.canonical().map_err(|error| Error::from_reason(format!("{}: {error}", path.display()))),
         Some(snapshot) if path.is_relative() && path.components().all(|part| matches!(part, std::path::Component::Normal(_))) => Ok(snapshot.root().join(path)),
         Some(_) => Err(Error::from_reason("Expected a repository-relative policy path")),
     }
@@ -421,9 +419,9 @@ pub struct RrScanTarget {
 #[napi]
 pub fn scan_rr_policies_async(
     target: RrScanTarget,
-    analysis: Option<&rerail_w::code_rule_dsl::workspace::api::AnalysisScopeRun>,
-    source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
-    policy_source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
+    analysis: Option<&rerail_classic::code_rule_dsl::workspace::api::AnalysisScopeRun>,
+    source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>,
+    policy_source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>,
     loaded: Option<&LoadedRrPolicies>,
 ) -> Result<napi::bindgen_prelude::AsyncTask<ScanRrPolicies>> {
     let RrScanTarget { paths, root, store, output, source_paths } = target;
@@ -712,7 +710,7 @@ pub fn owning_directory_analysis_store(store_path: String, directory: String, ho
 #[napi]
 pub fn retire_upkeep_under(directory: String) {
     let path = Path::new(&directory);
-    let root = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    let root = path.canonical().unwrap_or_else(|_| path.to_owned());
     rerail_accel::upkeep::retire_files_under(&root);
 }
 

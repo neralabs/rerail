@@ -5650,8 +5650,9 @@ fn kind_set_name(kind: &str) -> String {
 
 /// The variables of literals, the relations passed to built-ins (`nearest(n, a, scope)`'s `scope`) left out.
 /// The relations of decision 0055's guests: a rule's request for a guest cannot wait on them.
-/// The relations a guest or value read asks through (`demand`).
-const DEMANDS: [&str; 3] = ["rr_embed_req", "rr_parse_req", "rr_splice_req"];
+/// The relations a guest or value read asks through (`demand`): `embed`'s, `@parse`'s and `@splice`'s (the corpus's
+/// guests answer them, `corpus::guests`).
+pub const DEMANDS: [&str; 3] = ["rr_embed_req", "rr_parse_req", "rr_splice_req"];
 
 /// The placeholder for a demand's location (`value_demand`).
 const LOCATED: &str = "rr_located";

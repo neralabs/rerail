@@ -1,4 +1,4 @@
-    use crate::code_rule_dsl::{CodeRuleDslRuntime, test_support::CAPABILITIES};
+    use crate::code_rule_dsl::{test_support::CAPABILITIES};
     use serde_json::{Value, json};
 
     fn evaluate(clause: Value, files: Value) -> Value {
@@ -9,11 +9,7 @@
             "mode": "steer",
             "clauses": [clause],
         });
-        let compiled = CodeRuleDslRuntime::compile(
-            code_rule.to_string(),
-            "json".to_owned(),
-            CAPABILITIES.to_owned(),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", CAPABILITIES)
         .expect("policy compiles");
         let output = compiled
             .evaluate(
@@ -237,11 +233,7 @@
                 }
             }],
         });
-        let compiled = CodeRuleDslRuntime::compile(
-            code_rule.to_string(),
-            "json".to_owned(),
-            CAPABILITIES.to_owned(),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", CAPABILITIES)
         .expect("policy compiles");
         let clause = &compiled.inner.clauses[0];
         let ClauseKind::Budget { query, .. } = &clause.kind else {

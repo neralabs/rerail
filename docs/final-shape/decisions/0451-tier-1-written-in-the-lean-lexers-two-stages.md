@@ -551,3 +551,95 @@ The changes:
   records tests pass. The corpus is 450 the same, 41 refused, 0 differ.
 - `tier1_records` over the corpus: the interpreter's and the CPU's records are equal on every
   file tier 1 keeps. On three refused files the CPU stops at the refusal, as it should.
+
+## Item 4, comments, step 5: the comment escapes become questions that refuse (2026-11-19)
+
+Three stage-1 escapes refused a file for a block comment the lean lexer's `asi` reads through
+where the grammar does not say yet:
+- before `catch`, `finally`, `else` or `else ->`;
+- before another comment;
+- before a class header's primary constructor, or its annotations or visibility modifier.
+
+They needed `asked_blk`, `after_asked` and eleven more masks: fills over bytes for what tier 2
+already knows at the token. Now each is a question tier 2 asks where the lean parser would ask
+`asi`, over the records, as `drops` and `loses` are.
+
+- **`refuses Q`** (a mark's clause). Asked where `loses` is: at each test of the mark, and at a
+  level's end under the mark's flag. Where `Q` holds, the file is refused. Tier 2 writes it
+  `SETTLE m=19` (`m=20+F` with flag `F`), the native IR `RefuseIf`. It is asked whether or not
+  the mark holds, since `semi` does not hold before `catch`.
+- **`refuses taken Q`**. Asked in each arm that takes the mark, so only where it holds.
+  `head_ctor` uses it: the old escape refused only where the run reaches `constructor`, and so
+  does `head_ctor`'s `before`. Asked at every test, a comment before any `@` in a header refused.
+- **`since A …`** (a question's form). The elements count from the grammar token before the
+  token (none before the file's first), and each lies before the token. Its second element is
+  the first comment after the line break, where `asi` decides, however many comments follow.
+  Counting back from the token missed `/* a */ // b // c`. Tier 2 finds that token by a short
+  loop back over the extras.
+- **At the file's end.** A question is asked with the token past the last record. `drops` and
+  `loses` need a token, so they keep an `!at_end` of their own. Bitlex's root asks for its
+  first marks before any token, as the machine's first state does.
+- **An element of several extra kinds** (`line_comment | multiline_comment`) is allowed where the
+  kinds' bits tell them apart from the others. Kotlin's comments share 0x80.
+- **Fixed on the way:** in Cranelift and `rust_stream`, an element with `end` past either end
+  answered the whole question as holding, without testing the elements after it. The
+  interpreter tests them. Nothing asked such a question before `refuses`.
+
+Kotlin's `semi` now ends:
+
+    refuses after ~";" multiline_comment with semi before "catch" | "finally" | "else",
+    refuses since ~";" multiline_comment with semi line_comment | multiline_comment
+
+`head_ctor` takes `refuses taken after ~";" multiline_comment with semi`.
+
+**Gone:** `asked_blk`, `after_asked`, `else_blk`, `else_next`, `ann_blk`, `ann_ctor`, `else_asked`,
+`arrow_asked`, `ctor_stop`, `vis_w`, `class_head`, `head_stop`, `class_kw`, and the keyword masks
+only they read (`else_w`, `as_w`, `where_w`, `catch_w`, `finally_w`, `by_w`, `ctor_w`).
+
+**Result:**
+- Stage 1 is 1,000 operations, from 1,332.
+- Tapes unchanged. The corpus is 450 the same, 41 refused, 0 differ: the same files as at step
+  4. The compiler's tests (133, with `a_mark_that_refuses` and
+  `a_mark_that_refuses_where_taken`), Kotlin's (52), `kotlin_aot`'s (4), Bitlex's (11) and the
+  Metal records tests pass.
+
+## Item 4, numbers: a suffix is the name touching the number, asked by its rule (2026-11-20)
+
+`L`, `u`, `U`, `uL` and `UL` were hard keywords, so tier 1 had to keep them from being read
+anywhere but after a number. Two escapes did it:
+- "a word touching a number, no suffix", over the mask `sfx_text` (the suffix's bytes, by text);
+- "a name `L`, `u`, `U`, `uL` or `UL`", which refused those names anywhere else.
+
+The lean lexer reads none of this. It ends the number where its digits end, and the suffix is
+the name token after it. The lean parser's `integer` peeks at that token: a name touching the
+number (`s.start == t.end`) is a suffix if its text is one, and refused if not. Now the
+grammar does the same:
+- the five words are soft keywords: a name elsewhere, `'L'` where the number's rule takes one;
+- a token mark, `sfx = tokens integer_literal | hex_literal | bin_literal simple_identifier
+  without apart`, holds at a number a name touches;
+- `number_literal` takes the suffix under it, `sfx (integer_literal | hex_literal |
+  bin_literal) (wrap long_literal _ 'L' | wrap unsigned_literal _ ('u' | …))`. Any other name
+  there takes no arm, so tier 2 refuses, as `integer` does.
+
+What tier 1 keeps is the suffix's first byte (`sfx_start`), where a name starts though it
+touches the number: a token start, as the lean lexer's switch starts the name there. A word
+touching a real number (`1.5x`) is still an escape, now by itself. The lean parser does not ask
+there, so the grammar has no rule to ask it in.
+
+Three changes in the compiler made room:
+- **An element's kinds are one set.** A token mark's element with several kinds
+  (`integer_literal | hex_literal | bin_literal`, which share `0`) was refused, because each
+  kind had to own its first bytes. Now the check is per element: a byte that starts a kind of
+  the set must start no kind outside it. The records' kind set was already the union.
+- **64 marks.** The grammar now has 33 marks. `MARK`'s mode byte held the order in 5 bits, with
+  the file's end at 32 and `MARK_KEEP` at 64. It now holds the order in 6 bits (`MARK_ORDER`),
+  `MARK_END` at 64 and `MARK_KEEP` at 128. The interpreter's `live` is a `u64`, as Cranelift's
+  and `rust_stream`'s already were. One mark for `this@` and `return@` (one `adjacent(0)` in the
+  lean parser) was tried first: the LL(1) check sees two ways on one mark where an expression
+  starts, so they stay two.
+- **Names `L` and `u`** are now read: `val L = 1`, `fun uL(UL: Int) = UL`, `L.b`
+  (`suffixes_are_the_names_touching_a_number`, which also checks that `1x`, `0xFFg`, `1Lx`,
+  `1.5x` and `1lu` are refused).
+
+**Result:** stage 1 is 979 operations, from 1,000. The corpus is 450 the same, 41 refused, 0
+differ. The compiler's tests (133), Kotlin's (53), `kotlin_aot`'s (4), Bitlex's (11) and the Metal records tests pass.

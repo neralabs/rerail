@@ -351,9 +351,9 @@ fn metal() -> bool {
     if std::env::var_os("RERAIL_COVERAGE_NO_DEVICE").is_some() {
         return false;
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     return crate::code_rule_dsl::transducer::packed::metal_join::available();
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     false
 }
 
@@ -422,7 +422,7 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
 
 /// The ledger's place.
 fn ledger() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
+    crate::source_tree::native().join("../gate/executor-coverage/matrix.tsv")
 }
 
 /// One cell, on one line: the explanation's own detail (rule numbers, slots; the rule a SQL error was in) left
@@ -603,7 +603,7 @@ fn ops_of(file: &std::sync::Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFi
 
 /// The shipped `.rerail` files: the packs and the engine's own programs.
 fn shipped() -> Vec<PathBuf> {
-    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let root = crate::source_tree::native();
     let mut out = Vec::new();
     let mut walk = vec![root.join("../docs/rule-syntax"), root.join("src/code_rule_dsl")];
     while let Some(d) = walk.pop() {
@@ -636,7 +636,8 @@ fn census() -> &'static (BTreeMap<String, BTreeSet<String>>, usize, usize) {
                     let text = std::fs::read_to_string(f).ok()?;
                     let file = crate::code_rule_dsl::logic::rr::from_tape::RrFile::read(text).ok()?;
                     let mut used = BTreeMap::new();
-                    ops_of(&file, &mut used, &f.display().to_string())?;
+                    // Spelled with `/` on every OS: `packs_ledger` names a file's pack by its path.
+                    ops_of(&file, &mut used, &f.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"))?;
                     Some(used)
                 })
                 .collect()

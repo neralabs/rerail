@@ -22,7 +22,7 @@ fn thread_cpu() -> f64 {
     t.tv_sec as f64 + t.tv_nsec as f64 / 1e9
 }
 
-/// Windows: the thread's CPU as the profile reads it (`GetThreadTimes`).
+/// The calling thread's CPU seconds (`GetThreadTimes`).
 #[cfg(windows)]
 fn thread_cpu() -> f64 {
     rerail_prof::thread_cpu().as_secs_f64()

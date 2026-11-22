@@ -32,6 +32,7 @@ fn no_rule_or_fact_is_read_from_text() {
     let mut bad = Vec::new();
     let mut seen = Vec::new();
     for f in sources() {
+        // With `/` on every OS, as the allowances name files.
         let rel = f.strip_prefix(&root).unwrap_or(&f).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
         let Ok(text) = std::fs::read_to_string(&f) else { continue };
         let at: Vec<usize> = product_lines(&text)

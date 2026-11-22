@@ -4,7 +4,7 @@
 //! backend is the Metal crate's (`rerail_metal::block_program`).
 
 use crate::json::{base, files_in, form};
-use rerail_compiler::ladder::*;
+use rerail_cpu_stream::ladder::*;
 use rerail_compiler::{block, block_native as native_ir};
 use rerail_metal::block_program;
 
@@ -15,6 +15,10 @@ use rerail_metal::block_program;
 /// is refused by that name and counted, not compared; most steps run.
 #[test]
 fn every_grammar_on_metal_equals_the_interpreter() {
+    // No device here: nothing of this test's to run (`executors::no_device`).
+    if crate::executors::no_device() {
+        return;
+    }
     use block_program::{ClassStrategy, Executor, LaneWidth, run_split};
     let steps = grammars();
     let compiled: Vec<Compiled> = steps.iter().map(|(n, s)| compile_step(n, s)).collect();
@@ -62,6 +66,10 @@ fn every_grammar_on_metal_equals_the_interpreter() {
 /// semi's bit, and the codes and positions equal the interpreter's over texts of line breaks between and inside its comments.
 #[test]
 fn an_extra_keeps_its_blank_marks_on_metal() {
+    // No device here: nothing of this test's to run (`executors::no_device`).
+    if crate::executors::no_device() {
+        return;
+    }
     use block_program::serial::{Segments, run_serial_split};
     let c = compile_step("blanks", BLANKS_STEP);
     let texts: [&[u8]; 8] = [b"a\nb\n", b"a /* x\ny */ b\n", b"a // x\nb\n", b"k(\"x\ny\")\nb", b"a /* x */\n/* y */ b\n", b"a\n\n// x\n\nb", b"k /* \n */ (b)\n", BLANKS_TEXT];
@@ -204,6 +212,10 @@ fn json_metal_bench() {
 /// lengths over the lanes' and blocks' edges.
 #[test]
 fn a_files_start_on_metal_is_the_interpreters() {
+    // No device here: nothing of this test's to run (`executors::no_device`).
+    if crate::executors::no_device() {
+        return;
+    }
     use block_program::serial::{Segments, run_serial};
     use block_program::{ClassStrategy, Executor, LaneWidth, run_split};
     // The BOM as masks (0330's form): its bytes, two bytes late, cut from a mask at delay 0

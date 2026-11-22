@@ -17,6 +17,13 @@
 //! `n` starts needs `per_token * (n + 2)`.
 
 use crate::Error;
+// The front end's: the calls' depth (`stream`), the region reads (`byte_needs`), the JIT's tables and switch trees
+// (`native_cpu_codegen`), under the names this tier's callers read.
+pub use crate::byte_needs::{Seq, sequential};
+pub use crate::native_cpu_codegen::{TABLES, TABLES_DATA, dispatch, table_address};
+pub use crate::stream::DEPTH;
+// The stream program's analyses (`stream_analysis`), the front end's.
+pub use crate::stream_analysis::*;
 
 use crate::native_cpu_shape::Step;
 use crate::native_ir::{FlagOp, On, Structure, StructuralOperation as Op};
@@ -107,6 +114,10 @@ pub struct Ctx {
     /// argument; each slot key's number in the language's table (`Numbers`). Null in a format 15 run.
     writer: *mut u8,
     numbers: *const u32,
+    /// Tier 1's feed (decision 0496, `native_cpu_block::Feed`): its `more` and the file's feed, which tier 2 asks
+    /// for the next records where it reaches `nstarts`. Zero where tier 1 made them all.
+    more: u64,
+    feed: u64,
 }
 
 const WRITER: i32 = std::mem::offset_of!(Ctx, writer) as i32;
@@ -225,35 +236,6 @@ impl NodeCol {
 pub type Entry = unsafe extern "C" fn(*const Ctx) -> u64;
 
 
-/// The most a program writes between two `TOKEN`s: nodes, supertypes and returns pushed.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Bounds {
-    pub nodes: u64,
-    pub supers: u64,
-    pub pushes: u64,
-    /// Returns chain: a cycle passes a `RETURN` and no `TOKEN`.
-    pub chains: bool,
-    /// Where returns chain, the most a call popped writes: a token's path writes at most the
-    /// bound above and this for each call still open (the bound is per token over a file, the
-    /// pops paid by the pushes; a path alone pops the calls open when it starts).
-    pub pop_nodes: u64,
-    pub pop_supers: u64,
-}
-
-/// The most nodes a token's path may write for a run's tape to be the bound's from the start
-/// (`unchecked`): the lean tape holds 1.5 a token, and the bound's capacity is reserved, not
-/// written, so pages a run does not reach are never touched.
-const UNCHECKED_NODES: u64 = 4;
-
-impl Bounds {
-    /// No room check a token: the run's tape is the bound's (`full_tape`) from the start, as
-    /// simdjson sizes its tape from the input once. Only where the bound holds for every run (no
-    /// returns chain) and is small (`UNCHECKED_NODES`), with `marks` the program's marks.
-    pub fn unchecked(&self, marks: u64) -> bool {
-        !self.chains && self.pop_nodes == 0 && self.pop_supers == 0 && self.nodes * (1 + marks) <= UNCHECKED_NODES
-    }
-}
-
 /// A format 16 run's document (`CompiledStream::write16`): its source, its language, the numbers of its codes, in 16z
 /// where `z`, and what writes its newline index (tier 1's bits, or a scan).
 #[derive(Clone, Copy)]
@@ -265,10 +247,6 @@ struct Doc16<'a> {
     lines: &'a dyn Fn(&mut Vec<u8>),
 }
 
-/// The marks `MARK` tests (`CompiledStream::marks`).
-pub(crate) fn marks_of(words: &[crate::native_ir::StructuralBlock]) -> u64 {
-    words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0)
-}
 /// A language's numbers by tier 2's slot keys (`native_cpu_tape::id_slots`, as `native_cpu_tape::commit` keys a
 /// node): what a format 16 run passes each node's number by (decision 0434 §6, R17). `u32::MAX` where the
 /// language's table has none for the key.
@@ -284,6 +262,9 @@ pub struct CompiledStream {
     entry: Entry,
     /// The log of the smallest rule function's frame (`Ctx::frame_shift`).
     frame_shift: u64,
+    /// Whether the code asks tier 1's feed for its records (`Ctx::more`, decision 0496): another backend's
+    /// (`set_entry`, the generated Rust). The JIT's reads the records made.
+    asks_feed: bool,
     bounds: Bounds,
     /// The extract `TOKEN` reads, and the output of the mask `SPAN m=1` reads.
     pub starts: Option<usize>,
@@ -333,9 +314,9 @@ pub struct CompiledStream {
     /// Of `own_calls`, the calls of a step on the working rows (`TableFns`' `blocks`, `commit`, `uncode`, `finish`, and a
     /// format 16 run's `pass` and `retag`): none in a direct format 16 run (`direct`).
     pub row_calls: usize,
-    /// A format 16 run whose nodes go to the writer's ops at their words, with no row (`rust_stream::direct_keys`).
+    /// A format 16 run whose nodes go to the writer's ops at their words, with no row (`stream_facts::direct_keys`).
     pub direct: bool,
-    /// Its most nodes open (`rust_stream::open_bound`): the writer's stack reserved for them up front, so the Rust's
+    /// Its most nodes open (`stream_facts::open_bound`): the writer's stack reserved for them up front, so the Rust's
     /// run checks the stack's room once, where it starts.
     pub open_bound: Option<u64>,
     /// Its functions of clusters (`compile_cut`: one, the token loop's alone), and their tail
@@ -356,249 +337,6 @@ pub struct CompiledStream {
     pub entry_id: u32,
 }
 
-/// Each word's phases (`stream::phases`), over the lowered words: `TAKEN` after a `SPAN`,
-/// `UNTAKEN` after a `TOKEN`; a return lands on its caller's `TOKEN` with the token taken
-/// (`RETURN m=0`) or past it (`m=1`). The verifier checked them on the program.
-pub(crate) fn phases(native: &Structure, pushes: &[u16]) -> Vec<u8> {
-    use crate::stream::{TAKEN, UNTAKEN};
-    let n = native.structural.len();
-    let mut phase = vec![0u8; n];
-    let mut work = vec![(0usize, TAKEN)];
-    while let Some((pc, ph)) = work.pop() {
-        if pc >= n || phase[pc] & ph != 0 {
-            continue;
-        }
-        phase[pc] |= ph;
-        let after = match native.structural[pc].operation {
-            Op::Span { .. } => TAKEN,
-            Op::Token { .. } => UNTAKEN,
-            _ => ph,
-        };
-        match native.structural[pc].operation {
-            Op::Return { again } => work.extend(pushes.iter().map(|&p| if again { (usize::from(p) + 1, UNTAKEN) } else { (usize::from(p), TAKEN) })),
-            Op::Token { .. } => work.push((pc + 1, after)),
-            _ => work.extend(successors(native, pushes, pc).into_iter().map(|q| (q, after))),
-        }
-    }
-    phase
-}
-
-/// Which tokens' words the words from `from` on read, before the next `TOKEN` (its code's word
-/// bits): `None`, every token's (`WORD`, a mark, a keyword's leaf or `REMEMBER`, `WORD_KIND`);
-/// else the kinds whose words a switch names (`word_kinds`: a word's kind is its first
-/// byte's). A `RETURN` goes on at every call's place. A token of another kind's word is dead,
-/// its code its kind alone, as a compiler drops a value no use reads.
-pub(crate) fn words_read(native: &Structure, pushes: &[u16], word_kinds: &[u8], from: usize) -> Option<Vec<u8>> {
-    let n = native.structural.len();
-    if from >= n {
-        return None;
-    }
-    let mut kinds: Vec<u8> = Vec::new();
-    let mut seen = vec![false; n];
-    let mut work = vec![from];
-    while let Some(q) = work.pop() {
-        if q >= n || std::mem::replace(&mut seen[q], true) {
-            continue;
-        }
-        match native.structural[q].operation {
-            Op::Token { .. } => continue,
-            Op::Switch { table } => {
-                for &(w, _) in &native.switches[usize::from(table)].words {
-                    kinds.push(*word_kinds.get(usize::from(w))?);
-                }
-            }
-            Op::Word { .. } | Op::Mark { .. } | Op::Leaf { kind: WORD_KIND, .. } | Op::Remember { kind: WORD_KIND } => return None,
-            _ => {}
-        }
-        work.extend(successors(native, pushes, q));
-    }
-    kinds.sort_unstable();
-    kinds.dedup();
-    Some(kinds)
-}
-
-/// The `TOKEN`s where a part of a region read as `parse_string` reads (`Fetch::seq_bytes`, its
-/// openers' bytes) may be pending: only they hold its scan (`split_next`), as simdjson's
-/// `parse_string` loop is only where a string is read. Over (place, a part pending), from the
-/// first word with none: a switch's edge of an opener's byte makes one pending (its record is
-/// the opener alone); under one, the token is a part or the closer, and the closer's kind (its
-/// bytes') ends it, every other kind keeps it. A switch with an offset keeps what it had.
-pub(crate) fn parts_pending(native: &Structure, pushes: &[u16], ft: &Fetch) -> Vec<bool> {
-    let seen = parts_pending_seen(native, pushes, ft);
-    (0..native.structural.len()).map(|pc| matches!(native.structural[pc].operation, Op::Token { .. }) && seen[pc][1]).collect()
-}
-
-/// As `parts_pending`, each word's two states: reached with no part pending, and with one.
-pub(crate) fn parts_pending_seen(native: &Structure, pushes: &[u16], ft: &Fetch) -> Vec<[bool; 2]> {
-    let n = native.structural.len();
-    let opener = |b: usize| ft.seq_bytes[b / 64] >> (b % 64) & 1 == 1;
-    let closing: Vec<bool> = (0..256).map(|b| (0..256).any(|x| opener(x) && ft.kinds[x] == ft.kinds[b])).collect();
-    let mut seen = vec![[false; 2]; n];
-    let mut work = vec![(0usize, false)];
-    while let Some((pc, p)) = work.pop() {
-        if pc >= n || std::mem::replace(&mut seen[pc][usize::from(p)], true) {
-            continue;
-        }
-        match native.structural[pc].operation {
-            Op::Token { .. } => work.push((pc + 1, p)),
-            Op::Switch { table } => {
-                let sw = &native.switches[usize::from(table)];
-                if sw.offset != 0 {
-                    work.extend(successors(native, pushes, pc).into_iter().map(|t| (t, p)));
-                    continue;
-                }
-                for (b, &t) in sw.targets.iter().enumerate() {
-                    if t != REFUSE {
-                        work.push((usize::from(t), if p { !closing[b] } else { opener(b) }));
-                    }
-                }
-                work.extend(sw.words.iter().filter(|&&(_, t)| t != REFUSE).map(|&(_, t)| (usize::from(t), p)));
-                if sw.end != REFUSE {
-                    work.push((usize::from(sw.end), false));
-                }
-            }
-            _ => work.extend(successors(native, pushes, pc).into_iter().map(|t| (t, p))),
-        }
-    }
-    seen
-}
-
-/// Each word's successors, as `stream::validate` reads them, `TOKEN`'s cut.
-pub(crate) fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<usize> {
-    match native.structural[pc].operation {
-        Op::Stop | Op::Accept | Op::Token { .. } => vec![],
-        Op::Goto { target } => vec![usize::from(target)],
-        Op::Switch { table } => {
-            let s = &native.switches[usize::from(table)];
-            let mut out: Vec<usize> = s.all_targets().filter(|&t| t != REFUSE).map(usize::from).collect();
-            out.sort_unstable();
-            out.dedup();
-            out
-        }
-        Op::Return { again } => pushes.iter().map(|&p| usize::from(p) + usize::from(again)).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
-        _ => vec![pc + 1],
-    }
-    .into_iter()
-    .filter(|&n| n < native.structural.len())
-    .collect()
-}
-
-/// Each word's successors within its rule (`Cut::calls`): a call (`PUSH`) goes on at its
-/// return's place and the one after (`RETURN m=1`), its callee called; `RETURN` leaves the
-/// rule; `TOKEN` goes on to the next word.
-pub fn rule_successors(native: &Structure, pc: usize) -> Vec<usize> {
-    match native.structural[pc].operation {
-        Op::Push { target, .. } => vec![usize::from(target), usize::from(target) + 1],
-        Op::Return { .. } => vec![],
-        Op::Token { .. } => vec![pc + 1],
-        _ => successors(native, &[], pc),
-    }
-    .into_iter()
-    .filter(|&n| n < native.structural.len())
-    .collect()
-}
-
-/// The word `pc` runs as, past `GOTO`s.
-pub fn past_gotos(native: &Structure, mut pc: usize) -> usize {
-    for _ in 0..native.structural.len() {
-        match native.structural.get(pc).map(|w| w.operation) {
-            Some(Op::Goto { target }) => pc = usize::from(target),
-            _ => break,
-        }
-    }
-    pc
-}
-
-/// A call's callee: the word after its `PUSH`, past `GOTO`s.
-pub fn callee(native: &Structure, pc: usize) -> usize {
-    past_gotos(native, pc + 1)
-}
-
-/// A rule's native return (`Cut::calls`): to its call's place, or (`RETURN m=1`) the one after:
-/// 0 or 1, one test each (`cbz`, a compare with 1), as a `Result`'s. Any other value a call gives
-/// back is the run's end (accepted, refused, out of room) with its top bit flipped (`ENDED`),
-/// passed on; the driver flips it back.
-pub const RETURNED: u64 = 0;
-/// The top bit, flipped in the run's end values inside the clusters' functions (`RETURNED`).
-pub const ENDED: u64 = 1 << 63;
-
-/// Why a run in Rust (`rust_stream`) refused a file: the value it returns is `MARK | why`, which no word's place is
-/// (the JIT's run returns one more than the word that refused). Each refusal in its source names its reason, as the
-/// lean parser's `Code`s do; `ROOM` is no refusal but the tape's room run out (`OVERFLOW`).
-pub mod refusal {
-    pub const MARK: u64 = 1 << 62;
-    /// Each reason, by its code.
-    pub const NAMES: [(&str, &str); 18] = [
-        ("ROOM", "out of the tape's room"),
-        ("BYTE", "no word takes the token's byte here"),
-        ("WORD", "the token's word is not one this place takes"),
-        ("SPAN", "the token's length is not the one this place takes"),
-        ("EMPTY", "a total of tier 1's that must be zero is not (`EMPTY`: in JSON, a region left open)"),
-        ("END", "the file ends where a token is wanted"),
-        ("STRING", "a region not closed, or an escape at the file's end"),
-        ("CHECK", "a local check of the token's bytes fails"),
-        ("TOKEN", "a token mark that refuses"),
-        ("DEPTH", "calls nested past the depth"),
-        ("RETURN", "a return to no call"),
-        ("COUNT", "a count past its most"),
-        ("STOP", "a word that refuses (`STOP`)"),
-        ("NUMBER", "no number in the language for the node"),
-        ("WRITER", "the format 16 writer's ops failed (the writer keeps why)"),
-        ("NODES", "a node word with no node it needs (a close, a retag, a fold, an accept)"),
-        ("WIDTH", "the tape's widths cannot hold the nodes"),
-        ("FIELD", "a provisional field at the end"),
-    ];
-
-    /// The reason of `r`, a run's value: `None` where it is no refusal of a run in Rust.
-    pub fn of(r: u64) -> Option<&'static str> {
-        (r & MARK != 0 && r != u64::MAX).then(|| NAMES.get((r & !MARK) as usize).map_or("an unknown reason", |n| n.1))
-    }
-
-    /// `r`, a refusal, said: its reason, or the word that refused.
-    pub fn text(r: u64) -> String {
-        of(r).map_or_else(|| format!("at word {}", r.wrapping_sub(1)), |why| format!("({why})"))
-    }
-}
-
-/// Native calls nested at most this deep (`Cut::calls`): past it, the file is refused (to the
-/// fallback), as the machine's stack is the calls'. A rule's frame is at most about 350 bytes
-/// on `.rerail`: some 360 KB at the most.
-pub const DEPTH: i64 = 1024;
-
-/// With the calls open counted by the machine's stack (`calls_on_stack`): the most of it a run
-/// takes, about `DEPTH` calls of `.rerail`'s largest frames. Past it, a rule function refuses the
-/// file where it is entered (to the fallback), as a stack check in a prologue does.
-pub const STACK_BYTES: i64 = 384 << 10;
-
-/// Whether the machine's stack can count the calls open (`Cut::calls`), as the lean parser's
-/// has no count: no `RETURN` runs with no call open, and no `ACCEPT` within a call. Each by the
-/// words reached at the same depth (`rule_successors`): from the start, no `RETURN`; from
-/// every callee's entry, no `ACCEPT`. So neither needs a check, and the count serves only the
-/// depth (a check where each rule function is entered) and the room for the nodes returns
-/// write (`TOKEN`'s, bounded by the stack's depth).
-pub fn calls_on_stack(native: &Structure) -> bool {
-    let n = native.structural.len();
-    let reach = |from: Vec<usize>| -> Vec<bool> {
-        let mut seen = vec![false; n];
-        let mut todo = from;
-        while let Some(pc) = todo.pop() {
-            if pc >= n || std::mem::replace(&mut seen[pc], true) {
-                continue;
-            }
-            todo.extend(rule_successors(native, pc));
-        }
-        seen
-    };
-    let top = reach(vec![0]);
-    if (0..n).any(|pc| top[pc] && matches!(native.structural[pc].operation, Op::Return { .. })) {
-        return false;
-    }
-    let callees: Vec<usize> = (0..n).filter(|&pc| matches!(native.structural[pc].operation, Op::Push { .. })).map(|pc| callee(native, pc)).collect();
-    let inner = reach(callees);
-    !(0..n).any(|pc| inner[pc] && matches!(native.structural[pc].operation, Op::Accept))
-}
-
 /// The calls open, at most (`calls_on_stack`): the stack's depth below the run's first call,
 /// shifted down by the log of the smallest rule frame (each call open has one such frame, or
 /// more).
@@ -609,195 +347,6 @@ fn calls_open_by_stack(f: &mut FunctionBuilder<'_>, ctx: Value) -> Value {
     let shift = f.ins().load(types::I64, flags, ctx, FRAME_SHIFT);
     let depth = f.ins().isub(base, sp);
     f.ins().ushr(depth, shift)
-}
-
-/// The program's `Bounds`: the most written between two `TOKEN`s, weighting `OPEN`, `LEAF` and
-/// `WRAP` (a node), `NODE_SUPER` and `PUSH`.
-///
-/// With `TOKEN`'s edges cut, the graph is acyclic unless returns chain (a level ends, and the
-/// one it returns to ends on the same token). Then it is the longest path from the entry or a
-/// `TOKEN` to the next `TOKEN`, each word's found once. Where returns chain, `RETURN`'s edges are
-/// cut too (the verifier's rule: then the graph is acyclic), and the words between two tokens
-/// are a segment from the entry or a `TOKEN`, segments from a return's landing to a `RETURN`,
-/// one per call popped, and a last segment. A file pops at most the calls it makes, so the
-/// chain's segments are counted once per call: the bound is per token, as the tape sizes it.
-pub fn bounds(native: &Structure) -> Bounds {
-    let n = native.structural.len();
-    let pushes = push_targets(native);
-    let token = |pc: usize| matches!(native.structural[pc].operation, Op::Token { .. });
-    let weight = |pc: usize| match native.structural[pc].operation {
-        Op::Open { .. } | Op::Leaf { .. } | Op::Wrap { .. } => Bounds { nodes: 1, ..Bounds::default() },
-        Op::NodeSuper { .. } => Bounds { supers: 1, ..Bounds::default() },
-        Op::Push { .. } => Bounds { pushes: 1, ..Bounds::default() },
-        _ => Bounds::default(),
-    };
-    let max = |a: Bounds, b: Bounds| Bounds { nodes: a.nodes.max(b.nodes), supers: a.supers.max(b.supers), pushes: a.pushes.max(b.pushes), ..Bounds::default() };
-    let add = |a: Bounds, b: Bounds| Bounds { nodes: a.nodes + b.nodes, supers: a.supers + b.supers, pushes: a.pushes + b.pushes, ..Bounds::default() };
-    let cut = |pc: usize, cut_return: bool| -> Vec<usize> {
-        if cut_return && matches!(native.structural[pc].operation, Op::Return { .. }) {
-            return vec![];
-        }
-        successors(native, &pushes, pc).into_iter().filter(|&s| !token(s)).collect()
-    };
-    // Whether the graph with `TOKEN`'s edges cut has a cycle: 1 on the path, 2 done.
-    let chains = {
-        let mut mark = vec![0u8; n];
-        let mut cyclic = false;
-        for root in 0..n {
-            if mark[root] != 0 || cyclic {
-                continue;
-            }
-            let mut stack: Vec<(usize, Vec<usize>)> = vec![(root, cut(root, false))];
-            mark[root] = 1;
-            while let Some((pc, next)) = stack.last_mut() {
-                match next.pop() {
-                    Some(q) if mark[q] == 1 => {
-                        cyclic = true;
-                        break;
-                    }
-                    Some(q) if mark[q] == 0 => {
-                        mark[q] = 1;
-                        let s = cut(q, false);
-                        stack.push((q, s));
-                    }
-                    Some(_) => {}
-                    None => {
-                        mark[*pc] = 2;
-                        stack.pop();
-                    }
-                }
-            }
-        }
-        cyclic
-    };
-    // Each word's longest path on (`.0`), and its longest on to a `RETURN` (`.1`), the graph
-    // acyclic: memoized, depth first, without recursion.
-    let longest = |cut_return: bool| -> Vec<(Bounds, Option<Bounds>)> {
-        let mut memo: Vec<Option<(Bounds, Option<Bounds>)>> = vec![None; n];
-        for root in 0..n {
-            let mut stack = vec![(root, false)];
-            while let Some((pc, expanded)) = stack.pop() {
-                if memo[pc].is_some() {
-                    continue;
-                }
-                let next = cut(pc, cut_return);
-                if !expanded {
-                    stack.push((pc, true));
-                    stack.extend(next.iter().filter(|&&q| memo[q].is_none()).map(|&q| (q, false)));
-                    continue;
-                }
-                let own = weight(pc);
-                let is_return = matches!(native.structural[pc].operation, Op::Return { .. });
-                let (mut any, mut to_return) = (Bounds::default(), is_return.then(Bounds::default));
-                for q in next {
-                    let (a, r) = memo[q].expect("a successor first");
-                    any = max(any, a);
-                    to_return = match (to_return, r) {
-                        (Some(x), Some(y)) => Some(max(x, y)),
-                        (x, y) => x.or(y),
-                    };
-                }
-                memo[pc] = Some((add(own, any), to_return.map(|r| add(own, r))));
-            }
-        }
-        memo.into_iter().map(|m| m.expect("every word")).collect()
-    };
-    // From the entry, and from the word after each `TOKEN` (whose own edges are cut).
-    let froms: Vec<usize> = (0..n).filter(|&pc| pc == 0 && !token(pc)).chain((0..n).filter(|&pc| token(pc) && pc + 1 < n).map(|pc| pc + 1)).filter(|&pc| !token(pc)).collect();
-    let paths = longest(chains);
-    let over = |at: &[usize], f: &dyn Fn(&(Bounds, Option<Bounds>)) -> Bounds| at.iter().fold(Bounds::default(), |b, &pc| max(b, f(&paths[pc])));
-    let first = over(&froms, &|p| p.0);
-    if !chains {
-        return first;
-    }
-    // Where a return lands: a state's `SWITCH` (`m=1`; `m=0` lands on its `TOKEN`).
-    let landings: Vec<usize> = pushes.iter().map(|&p| usize::from(p) + 1).filter(|&pc| pc < n && !token(pc)).collect();
-    let last = over(&landings, &|p| p.0);
-    let chain = over(&landings, &|p| p.1.unwrap_or_default());
-    let calls = first.pushes + last.pushes;
-    let times = |x: u64, k: u64| x * k;
-    Bounds { nodes: first.nodes + last.nodes + times(chain.nodes, calls), supers: first.supers + last.supers + times(chain.supers, calls), pushes: calls, chains: true, pop_nodes: chain.nodes, pop_supers: chain.supers }
-}
-
-/// The places `PUSH` names, sorted: where a `RETURN` can go.
-pub fn push_targets(native: &Structure) -> Vec<u16> {
-    let mut out: Vec<u16> = native
-        .structural
-        .iter()
-        .filter_map(|b| match b.operation {
-            Op::Push { target, .. } => Some(target),
-            _ => None,
-        })
-        .collect();
-    out.sort_unstable();
-    out.dedup();
-    out
-}
-
-/// The machine's state, as variables.
-/// Tier 2's state, each a slot of the function's stack frame: a word loads what it reads and
-/// stores what it writes. Not SSA variables, which every block where paths meet carries (as
-/// block parameters, moved and spilled at each join): the state in memory is a fifth less code
-/// and no slower (docs/parser-generators/27-tier-2-table-spike.md).
-#[derive(Clone, Copy)]
-enum Mem {
-    /// The supertypes written.
-    Supers,
-    /// The deferred extras' leaves at the table's end.
-    Pending,
-    /// While leaves are pending, the end of the token before them: a node closed then ends there.
-    Keep,
-    /// The node the last wrap moved.
-    Moved,
-    /// A shared arm's target, as an index into its body's (`shared_runs`).
-    Sel,
-    /// A shared arm's words' distance from its body's first place's, for a refusal there.
-    Shift,
-    /// With wraps: the last node made at the innermost open node's level, one more than its
-    /// row (0: none). Only the innermost level's is ever read, and each change of level writes
-    /// the new one's: a field, not a column by depth.
-    LastMade,
-    /// The level's word (`REMEMBER`) and flags (`FLAG`), kept beside each call's return.
-    Word,
-    Flags,
-    /// The next token's index into the extract.
-    Next,
-    /// The mask's word `lw`'s bits not yet taken; before the first word, `lw` is -1 (no bits).
-    Taken,
-    Lw,
-    /// The token's bytes, and the next token's start (or the file's end).
-    Start,
-    End,
-    Limit,
-    /// The end of the token before.
-    LastEnd,
-    /// The nodes made, the nodes open, the calls made and not returned.
-    Nodes,
-    Open,
-    Ret,
-    /// 1 once the token's bytes are taken (`SPAN`): `TOKEN` then takes the next.
-    Need,
-    /// The marks not yet taken or passed at this token, a bit each.
-    Live,
-    /// The count of tokens (`COUNT`).
-    Depth,
-    /// The tape: the last block's base; the nodes committed (their codes written) and the
-    /// codes; the flags of values that did not fit their widths (`native_cpu_tape::WIDE_OFF`).
-    BlockBase,
-    Coded,
-    Codes,
-    Wide,
-    /// A region tier 2 splits (`Split::Tier2`, decision 0323): the byte its next part starts at
-    /// (0: none), and its closer's last byte.
-    PartAt,
-    PartEnd,
-    /// An extra a mark lost (`SETTLE m=2`): its kind and field, plus one (0: none), made again
-    /// by the next `TOKEN` that takes a token, of no width at the token taken.
-    Lost,
-}
-
-impl Mem {
-    const COUNT: u32 = 29;
 }
 
 /// `TOKEN`, taking a token: the extra a mark lost at it (`Mem::Lost`), made again after its
@@ -814,185 +363,6 @@ fn lost_leaf(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, wrappin
     leaf_word(f, e, t, kind, LeafShape { deferred: true, extra: true, end: EndAt::Untaken }, wrapping);
     f.ins().jump(done, &[]);
     f.switch_to_block(done);
-}
-
-/// `Ctx::state`'s slots (`rust_stream` writes `Ctx` field for field).
-pub(crate) const STATE_SLOTS: usize = Mem::COUNT as usize;
-
-/// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
-/// back with their results (`Cut::pass`): none. The whole state stays in memory, read and
-/// written where used, as the lean parser's `&mut self` fields are: it reloads `self.i` and the
-/// token where it tests them, and keeps nothing live across a rule. Held and passed, the
-/// token's code, start, end and end flag were live through every block and spilled (15,133
-/// stack loads over `.rerail`'s tier 2, against 161 in the lean parser).
-pub const HELD_IN_RULES: [u32; 0] = [];
-
-/// The fields tier 2 holds as SSA values where it is one function (`Cut::one`): those every
-/// token reads and writes (the next token's index, its start, limit and code, the end of the
-/// token before, the nodes made and open, the tape block's base every leaf's start is coded
-/// from, a split region's cursor), as simdjson's stage 2
-/// keeps `next_structural` and `src` in registers. The loop's cold calls keep the caller's
-/// general registers (`preserve_most`), and the values from far away are made again where used
-/// (`remat_far`), so these stay in registers. The rest stays in the frame, read where used.
-pub const HELD_IN_ONE: [u32; 9] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::LastEnd as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::BlockBase as u32, Mem::PartAt as u32];
-
-/// A compare tree over a byte (or a place), as rustc lowers a `match` (LLVM's switch lowering):
-/// `runs` are runs of one target (the first from 0, the last on to `end`, past every value the
-/// switch reads: 256 for a byte). The target with the most runs is the default; the tree is over
-/// the other runs alone (the cases), split at the middle, each side knowing the range its value
-/// is in; a case is one test at its leaf (an equality, a bound, or a range), and a value in no
-/// case goes to the default. A switch that expects one kind is one compare, as `expect(kind)`.
-/// Cases of at most three targets within 64 values are bit tests, as LLVM's: one shift, then a
-/// mask a target.
-pub(crate) fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)], end: u64) {
-    let ends: Vec<u64> = runs.iter().skip(1).map(|r| u64::from(r.0)).chain([end]).collect();
-    let spans: Vec<(u64, u64, Block)> = runs.iter().zip(&ends).enumerate().map(|(i, (r, &e))| (if i == 0 { 0 } else { u64::from(r.0) }, e, r.1)).filter(|&(a, b, _)| a < b).collect();
-    // The default: the target with the most runs (the first such).
-    let mut count: Vec<(Block, usize)> = Vec::new();
-    for &(_, _, b) in &spans {
-        match count.iter_mut().find(|(x, _)| *x == b) {
-            Some(c) => c.1 += 1,
-            None => count.push((b, 1)),
-        }
-    }
-    let default = count.iter().max_by_key(|&&(_, n)| n).map(|&(b, _)| b).expect("a run");
-    let cases: Vec<(u64, u64, Block)> = spans.into_iter().filter(|&(_, _, b)| b != default).collect();
-    let clusters = clusters(&cases);
-    cases_tree(f, x, 0, end, &clusters, default);
-}
-
-/// A leaf of `dispatch`'s tree: the values `a..b`, to one target (`Range`), or tested by bits
-/// (`Bits`: each target with its mask over `x - a`; a value in none goes to the default).
-enum Cluster {
-    Range(u64, u64, Block),
-    Bits(u64, u64, Vec<(Block, u64)>),
-}
-
-impl Cluster {
-    fn start(&self) -> u64 {
-        match *self {
-            Cluster::Range(a, ..) | Cluster::Bits(a, ..) => a,
-        }
-    }
-}
-
-/// `cases` (rising, apart) as clusters: from each case on, the longest run of cases within 64
-/// values and of at most three targets, as bit tests where LLVM finds them worth it (one
-/// target and 3 compares saved, two and 5, three and 6: a range counting two), else the case.
-fn clusters(cases: &[(u64, u64, Block)]) -> Vec<Cluster> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < cases.len() {
-        let mut best = None;
-        let (mut dests, mut cmps): (Vec<Block>, usize) = (Vec::new(), 0);
-        for j in i..cases.len() {
-            let (a, b, t) = cases[j];
-            if b - cases[i].0 > 64 || b == u64::MAX {
-                break;
-            }
-            if !dests.contains(&t) {
-                if dests.len() == 3 {
-                    break;
-                }
-                dests.push(t);
-            }
-            cmps += if b == a + 1 { 1 } else { 2 };
-            let worth = match dests.len() {
-                1 => cmps >= 3,
-                2 => cmps >= 5,
-                _ => cmps >= 6,
-            };
-            if worth {
-                best = Some(j);
-            }
-        }
-        match best {
-            Some(j) => {
-                let base = cases[i].0;
-                let mut masks: Vec<(Block, u64)> = Vec::new();
-                for &(a, b, t) in &cases[i..=j] {
-                    let m = (a..b).fold(0u64, |m, v| m | 1 << (v - base));
-                    match masks.iter_mut().find(|(x, _)| *x == t) {
-                        Some(x) => x.1 |= m,
-                        None => masks.push((t, m)),
-                    }
-                }
-                // The target with the most values first, as LLVM orders them.
-                masks.sort_by_key(|&(_, m)| std::cmp::Reverse(m.count_ones()));
-                out.push(Cluster::Bits(base, cases[j].1, masks));
-                i = j + 1;
-            }
-            None => {
-                let (a, b, t) = cases[i];
-                out.push(Cluster::Range(a, b, t));
-                i += 1;
-            }
-        }
-    }
-    out
-}
-
-/// `dispatch`'s tree over `cases` for a value known to be in `lo..hi`.
-fn cases_tree(f: &mut FunctionBuilder<'_>, x: Value, lo: u64, hi: u64, cases: &[Cluster], default: Block) {
-    match cases {
-        [] => {
-            f.ins().jump(default, &[]);
-        }
-        [Cluster::Range(a, b, to)] => {
-            let (a, b, to) = (*a, *b, *to);
-            let inside = if a <= lo && b >= hi {
-                f.ins().jump(to, &[]);
-                return;
-            } else if a <= lo {
-                f.ins().icmp_imm(IntCC::UnsignedLessThan, x, b as i64)
-            } else if b >= hi {
-                f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, x, a as i64)
-            } else if b == a + 1 {
-                f.ins().icmp_imm(IntCC::Equal, x, a as i64)
-            } else {
-                let d = f.ins().iadd_imm(x, -(a as i64));
-                f.ins().icmp_imm(IntCC::UnsignedLessThan, d, (b - a) as i64)
-            };
-            f.ins().brif(inside, to, &[], default, &[]);
-        }
-        [Cluster::Bits(a, b, masks)] => {
-            let (a, b) = (*a, *b);
-            let d = if a == 0 { x } else { f.ins().iadd_imm(x, -(a as i64)) };
-            if a > lo || b < hi {
-                let tests = f.create_block();
-                let inside = f.ins().icmp_imm(IntCC::UnsignedLessThan, d, (b - a) as i64);
-                f.ins().brif(inside, tests, &[], default, &[]);
-                f.switch_to_block(tests);
-            }
-            let one = f.ins().iconst(types::I64, 1);
-            let bit = f.ins().ishl(one, d);
-            // Every value of the cluster some target's: the last target needs no test.
-            let full = (a.max(lo)..b.min(hi)).all(|v| masks.iter().any(|&(_, m)| m >> (v - a) & 1 != 0));
-            for (k, &(to, m)) in masks.iter().enumerate() {
-                if full && k + 1 == masks.len() {
-                    f.ins().jump(to, &[]);
-                    return;
-                }
-                let next = if k + 1 == masks.len() { default } else { f.create_block() };
-                let t = f.ins().band_imm(bit, m as i64);
-                f.ins().brif(t, to, &[], next, &[]);
-                if next != default {
-                    f.switch_to_block(next);
-                }
-            }
-        }
-        _ => {
-            let mid = cases.len() / 2;
-            let pivot = cases[mid].start();
-            let (low, high) = (f.create_block(), f.create_block());
-            let below = f.ins().icmp_imm(IntCC::UnsignedLessThan, x, pivot as i64);
-            f.ins().brif(below, low, &[], high, &[]);
-            f.switch_to_block(low);
-            cases_tree(f, x, lo, pivot, &cases[..mid], default);
-            f.switch_to_block(high);
-            cases_tree(f, x, pivot, hi, &cases[mid..], default);
-        }
-    }
 }
 
 /// `dispatch` weighted by a profile: a run with half the weight or more is tested first (one
@@ -1184,26 +554,6 @@ enum WordFn {
 
 /// What a word's body reads and writes, wherever it is made (`WordFn`): in its rule's function,
 /// or in a function of its own that each place of the word calls.
-/// The name of the symbol a table's address is read from (`table_address`): placed at address 0, so that its
-/// relocation, `0 + addend`, writes the table's address itself.
-const TABLES: &str = "rerail_tier2_tables";
-/// `TABLES`'s data, the first the module declares.
-const TABLES_DATA: u32 = 0;
-
-/// A table's address, as a symbol's (`TABLES`, the table's address its offset): one instruction of the same form
-/// wherever the table is. An address as a constant is moved in as many instructions as it has halfwords not zero, so
-/// the code, and regalloc2's choices round it, changed with where the heap put the table.
-pub(crate) fn table_address<T>(f: &mut FunctionBuilder<'_>, at: *const T) -> Value {
-    let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(1, TABLES_DATA));
-    let gv = f.create_global_value(cranelift_codegen::ir::GlobalValueData::Symbol {
-        name: cranelift_codegen::ir::ExternalName::user(name),
-        offset: cranelift_codegen::ir::immediates::Imm64::new(at as i64),
-        colocated: false,
-        tls: false,
-    });
-    f.ins().symbol_value(types::I64, gv)
-}
-
 struct WordEnv<'a> {
     get: &'a dyn Fn(&mut FunctionBuilder<'_>, Mem) -> Value,
     set: &'a dyn Fn(&mut FunctionBuilder<'_>, Mem, Value),
@@ -1359,7 +709,7 @@ fn lazy_mark(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cp
 /// at a bit, else 0. No loop over bits or bytes. The token's start and end are passed: the
 /// state may be the caller's variables.
 #[allow(clippy::too_many_arguments)]
-fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, output: usize, bytewise: Option<&crate::native_cpu_bytes::Bytewise<'_>>, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::stream_facts::WordForm, output: usize, bytewise: Option<&crate::native_cpu_bytes::Bytewise<'_>>, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     let (outputs_p, stride, lasts_stride) = ((e.ctx)(f, OUTPUTS), (e.ctx)(f, OUTPUT_STRIDE), (e.ctx)(f, LASTS_STRIDE));
     let (bytes, len) = ((e.ctx)(f, BYTES), (e.ctx)(f, LEN));
     let consts = crate::native_cpu_block::Consts::make(f);
@@ -1437,7 +787,7 @@ fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::
 /// token are cut from the test; they reach no earlier place. A token of 16 bytes or fewer is
 /// checked in its arm (`token_check_short`); this is the rest.
 #[allow(clippy::too_many_arguments)]
-fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, start: Value, limit: Value, next: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::stream_facts::WordForm, start: Value, limit: Value, next: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     use crate::program::LocalOp as L;
     let bytes = (e.ctx)(f, BYTES);
     let consts = crate::native_cpu_block::Consts::make(f);
@@ -1514,7 +864,7 @@ fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::pro
 /// A check that reads before its token (decision 0428) loads from `back` bytes before it, and
 /// takes the tokens' ends there (`ended`, `ended_word`).
 #[allow(clippy::too_many_arguments)]
-fn token_check_short(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, bytes: Value, len: Value, start: Value, n: Value, ended: Option<Value>) -> Value {
+fn token_check_short(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::stream_facts::WordForm, bytes: Value, len: Value, start: Value, n: Value, ended: Option<Value>) -> Value {
     let consts = crate::native_cpu_block::Consts::make(f);
     let (from, pre) = frame_begin(f, start, c.back);
     let at = f.ins().iadd(bytes, from);
@@ -1531,41 +881,6 @@ fn token_check_short(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck
     let shift = i64::from(c.delay) + i64::from(c.back);
     let valid = if shift == 0 { valid } else { f.ins().ishl_imm(valid, shift) };
     f.ins().band(v[c.ops.len() - 1], valid)
-}
-
-/// The token's last bytes at which a token's check can hold (decision 0428), where its test is
-/// at its last byte (`token_ops_past`: `Last` read `delay` back from the test, in a conjunct).
-/// A byte set read there in a conjunct of every way to 1 bounds it, as simdjson's stage 2
-/// switches on an escape's byte before its `\u` work. `None`: no bound (any byte, or the test
-/// not at the last byte).
-pub(crate) fn token_gate(c: &crate::program::LocalCheck) -> Option<[u64; 4]> {
-    use crate::program::LocalOp as L;
-    const ALL: [u64; 4] = [!0; 4];
-    // Op `k` read `t` bytes back from the test: the bytes at the last that it needs, and
-    // whether it needs the last byte there.
-    fn need(ops: &[L], k: usize, t: u32, d: u32, steps: &mut u32) -> ([u64; 4], bool) {
-        if *steps == 0 || t > 64 {
-            return (ALL, false);
-        }
-        *steps -= 1;
-        match ops[k] {
-            L::Bytes(s) if t == d => (s, false),
-            L::Last => (ALL, t == d),
-            L::And(a, b) => {
-                let ((x, p), (y, q)) = (need(ops, usize::from(a), t, d, steps), need(ops, usize::from(b), t, d, steps));
-                ([x[0] & y[0], x[1] & y[1], x[2] & y[2], x[3] & y[3]], p || q)
-            }
-            L::Or(a, b) => {
-                let ((x, p), (y, q)) = (need(ops, usize::from(a), t, d, steps), need(ops, usize::from(b), t, d, steps));
-                ([x[0] | y[0], x[1] | y[1], x[2] | y[2], x[3] | y[3]], p && q)
-            }
-            L::AndNot(a, _) => need(ops, usize::from(a), t, d, steps),
-            L::Prev(a, sh) => need(ops, usize::from(a), t + u32::from(sh), d, steps),
-            _ => (ALL, false),
-        }
-    }
-    let (set, at_last) = need(&c.ops, c.ops.len() - 1, 0, u32::from(c.delay), &mut 4096);
-    (at_last && set != ALL).then_some(set)
 }
 
 /// Whether byte `b` (a word) is in `set`: its word of the set, by the byte's top two bits.
@@ -1595,7 +910,7 @@ struct Back {
 }
 
 /// Op `k`'s byte set's bits over the window (`LocalOp::Bytes`), from its table's classes.
-fn token_bytes(f: &mut FunctionBuilder<'_>, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, k: usize) -> Value {
+fn token_bytes(f: &mut FunctionBuilder<'_>, form: &crate::stream_facts::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, k: usize) -> Value {
     match form.class_of[&k] {
         (_, 0) => f.ins().iconst(types::I64, 0),
         (ti, bits) => {
@@ -1662,7 +977,7 @@ fn ended_word(f: &mut FunctionBuilder<'_>, lasts: Value, stride: Value, next: Va
 }
 
 /// Table `ti`'s classes of the window's bytes, a vector each, made once.
-fn token_classes(f: &mut FunctionBuilder<'_>, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, ti: usize) -> Vec<Value> {
+fn token_classes(f: &mut FunctionBuilder<'_>, form: &crate::stream_facts::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, ti: usize) -> Vec<Value> {
     if let Some(t) = tables.get(&ti) {
         return t.clone();
     }
@@ -1710,7 +1025,7 @@ fn token_carried(c: &crate::program::LocalCheck) -> Vec<usize> {
 #[allow(clippy::too_many_arguments)]
 /// On one vector, the masks of a check's byte sets (`Bytes` ops, by op), made together
 /// (`bitmasks16`): one split of the bytes into nibbles, each table once, one tree of adds.
-fn token_sets(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vector: Value, tables: &mut std::collections::HashMap<usize, Vec<Value>>) -> std::collections::HashMap<usize, Value> {
+fn token_sets(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::stream_facts::WordForm, consts: &crate::native_cpu_block::Consts, vector: Value, tables: &mut std::collections::HashMap<usize, Vec<Value>>) -> std::collections::HashMap<usize, Value> {
     use crate::program::LocalOp as L;
     let sets: Vec<(usize, usize, u8)> = (0..c.ops.len()).filter(|&k| matches!(c.ops[k], L::Bytes(_))).map(|k| (k, form.class_of[&k].0, form.class_of[&k].1)).filter(|&(_, _, bits)| bits != 0).collect();
     let zero16 = {
@@ -1731,7 +1046,7 @@ fn token_sets(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form:
 
 /// `made_in`: the byte sets' masks (`token_sets`), where the caller made them.
 #[allow(clippy::too_many_arguments)]
-fn token_window(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], first: Option<Value>, left: Value, file_left: Value, before: Option<(&[usize], &[Value])>, cin: Option<(&[usize], &[Value])>, back: Option<Back>, made_in: Option<std::collections::HashMap<usize, Value>>) -> Vec<Value> {
+fn token_window(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::stream_facts::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], first: Option<Value>, left: Value, file_left: Value, before: Option<(&[usize], &[Value])>, cin: Option<(&[usize], &[Value])>, back: Option<Back>, made_in: Option<std::collections::HashMap<usize, Value>>) -> Vec<Value> {
     use crate::program::LocalOp as L;
     // Each table's classes of the window's bytes, made once.
     let mut tables: std::collections::HashMap<usize, Vec<Value>> = std::collections::HashMap::new();
@@ -1849,7 +1164,7 @@ fn token_window(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, for
 /// What `local_word` reads: the check's classes, the file, the mask's word `w`; each op's value
 /// at a word (by its distance from `w`), each word's classes and the tables, made once.
 struct LocalWords<'a> {
-    form: &'a crate::rust_stream::WordForm,
+    form: &'a crate::stream_facts::WordForm,
     bytes: Value,
     len: Value,
     w: Value,
@@ -2319,26 +1634,71 @@ fn token_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::
 /// each element the record at its offset, as the lexer wrote them, extras included; past either
 /// end, an element with `end` holds; its `starting`, the record's first byte, as the lean
 /// lexer's `asi` reads it. 1 or 0.
-fn gap_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark) -> Value {
+fn gap_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: Option<u8>, heads: &mut Vec<(Block, Step)>) -> Value {
     let flags = MemFlags::trusted();
     let (codes, starts, bytes, n) = ((e.ctx)(f, CODES), (e.ctx)(f, STARTS), (e.ctx)(f, BYTES), (e.ctx)(f, NSTARTS));
     let stride = (e.ctx)(f, RECORD_STRIDE);
+    // The token's record, the one before `Next` (at the stream's end, past the last, since the
+    // end's token sets `Next` one past the count: `refuses` asks there).
     let next = (e.get)(f, Mem::Next);
     let here = f.ins().iadd_imm(next, -1);
     let (no, yes, done) = (f.create_block(), f.create_block(), f.create_block());
     f.append_block_param(done, types::I64);
-    // At the stream's end no token: none holds (`Next` is one past the count once the end is
-    // taken).
-    let at_end = f.ins().icmp(IntCC::UnsignedGreaterThan, next, n);
-    let token = f.create_block();
-    f.ins().brif(at_end, no, &[], token, &[]);
-    f.switch_to_block(token);
+    // `since`: one past the grammar token before (0: none before the file's first), back over
+    // the extras from the token: a stated loop, a few records at most (the comments of a gap).
+    let since = match extra_bit.filter(|_| m.elems.iter().any(|el| el.since)) {
+        Some(b) => {
+            let (head, test, found) = (f.create_block(), f.create_block(), f.create_block());
+            f.append_block_param(head, types::I64);
+            f.append_block_param(found, types::I64);
+            f.ins().jump(head, &[BlockArg::from(here)]);
+            f.switch_to_block(head);
+            heads.push((head, Step::Token));
+            let g = f.block_params(head)[0];
+            let first = f.ins().icmp_imm(IntCC::Equal, g, 0);
+            f.ins().brif(first, found, &[BlockArg::from(g)], test, &[]);
+            f.switch_to_block(test);
+            let j = f.ins().iadd_imm(g, -1);
+            let off = f.ins().imul(j, stride);
+            let a = f.ins().iadd(codes, off);
+            let c = f.ins().uload32(flags, a, 0);
+            let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(b));
+            let x = f.ins().band_imm(x, 1);
+            f.ins().brif(x, head, &[BlockArg::from(j)], found, &[BlockArg::from(g)]);
+            f.switch_to_block(found);
+            Some(f.block_params(found)[0])
+        }
+        // No extras: the grammar token before is the record before.
+        None => m.elems.iter().any(|el| el.since).then_some(here),
+    };
     for el in &m.elems {
-        let j = f.ins().iadd_imm(here, i64::from(el.offset));
-        // Past either end (a negative index is past the last too, unsigned).
-        let inside = f.ins().icmp(IntCC::UnsignedLessThan, j, n);
-        let on = f.create_block();
-        f.ins().brif(inside, on, &[], if el.end { yes } else { no }, &[]);
+        let (on, past) = (f.create_block(), f.create_block());
+        let j = match since.filter(|_| el.since) {
+            Some(g) => {
+                // From the grammar token before, before the token; before the file's first,
+                // an element with `end` holds, and the next element is tested.
+                let j = f.ins().iadd_imm(g, i64::from(el.offset) - 1);
+                let inside = f.ins().icmp(IntCC::UnsignedLessThan, j, here);
+                let out = f.create_block();
+                f.ins().brif(inside, on, &[], out, &[]);
+                f.switch_to_block(out);
+                if el.end {
+                    let none = f.ins().icmp_imm(IntCC::Equal, j, -1);
+                    f.ins().brif(none, past, &[], no, &[]);
+                } else {
+                    f.ins().jump(no, &[]);
+                }
+                j
+            }
+            None => {
+                // Past either end (a negative index is past the last too, unsigned): an
+                // element with `end` holds there, and the next element is tested.
+                let j = f.ins().iadd_imm(here, i64::from(el.offset));
+                let inside = f.ins().icmp(IntCC::UnsignedLessThan, j, n);
+                f.ins().brif(inside, on, &[], if el.end { past } else { no }, &[]);
+                j
+            }
+        };
         f.switch_to_block(on);
         let off = f.ins().imul(j, stride);
         let a = f.ins().iadd(codes, off);
@@ -2364,6 +1724,8 @@ fn gap_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program:
             f.ins().brif(bit, on, &[], no, &[]);
             f.switch_to_block(on);
         }
+        f.ins().jump(past, &[]);
+        f.switch_to_block(past);
     }
     f.ins().jump(yes, &[]);
     f.switch_to_block(yes);
@@ -2378,11 +1740,11 @@ fn gap_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program:
 
 /// A gap pattern's entries together, from `first`: none of the `unless` ones and one of the
 /// others (`program::patterns_hold`).
-fn gap_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], first: usize) -> Value {
+fn gap_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], first: usize, extra_bit: Option<u8>, heads: &mut Vec<(Block, Step)>) -> Value {
     let order = marks[first].order;
     let (mut none_of, mut one_of): (Option<Value>, Option<Value>) = (None, None);
     for m in marks[first..].iter().take_while(|m| m.order == order) {
-        let v = gap_pattern(f, e, m);
+        let v = gap_pattern(f, e, m, extra_bit, heads);
         if m.unless {
             none_of = Some(none_of.map_or(v, |a| f.ins().bor(a, v)));
         } else {
@@ -2484,7 +1846,7 @@ fn word_kind(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, word_kinds: &[(u16, u
 }
 
 /// What the node words need to write the tape as it stands at the end (`TableFns`): whether
-/// rows carry marks (`head`, `rust_stream::marks`: a wrap, `WRAPPED`; a dropped row taken out
+/// rows carry marks (`head`, `stream_facts::marks`: a wrap, `WRAPPED`; a dropped row taken out
 /// from among its children, `DROPPED_IN`), the tape's widths, the functions.
 #[derive(Clone, Copy)]
 struct Table<'a> {
@@ -2495,242 +1857,9 @@ struct Table<'a> {
     split: Option<(&'a SplitParts, &'a crate::block_native::BlockNative)>,
     /// The records `TOKEN` makes from each token's start (`Fetch`, page 40).
     fetch: Option<&'a Fetch>,
-    /// A format 16 run whose every node's key is known at its word (`rust_stream::direct_keys`): each node word's key
+    /// A format 16 run whose every node's key is known at its word (`stream_facts::direct_keys`): each node word's key
     /// bits from the words after it, by its place. Each node then goes to the writer's ops at its word, with no row.
     direct: Option<&'a [(u32, u32)]>,
-}
-
-/// A region read in parts that tier 2's `TOKEN` splits (`Split::Tier2`, decision 0323): its
-/// reader's opener (an output) and its closer's offset (its record's last is the closer's), its parts (each its start's
-/// output and its bytes, the shortest first), and the record pass's tables for the parts' codes
-/// (`native_cpu_block::plain_code`), which the code reads by address.
-pub(crate) struct SplitParts {
-    pub(crate) opener: u16,
-    pub(crate) off: i8,
-    pub(crate) parts: Vec<(u16, u8)>,
-    pub(crate) tables: crate::native_cpu_block::RecordTables,
-    /// Where the region reads as simdjson's `parse_string` (`sequential`): its closer's byte
-    /// test and its part's (instructions of tier 1's block, read from the bytes in tier 2).
-    pub(crate) seq: Option<Seq>,
-}
-
-/// A region read in parts whose next token, from a clean place, is decided by the first byte of
-/// two classes (`sequential`): `x`, the closer's, and `e`, the part's first.
-#[derive(Clone)]
-pub(crate) struct Seq {
-    pub(crate) x: usize,
-    pub(crate) e: usize,
-    /// The bytes of `X` (the closer's), and of `X` or `E` (where the scan stops): a closer's
-    /// first byte is in the first, a content token's in neither.
-    pub(crate) xs: [u64; 4],
-    pub(crate) stops: [u64; 4],
-    /// Where `E` is one byte: a part's code by its second byte (`records::pass` of the two
-    /// bytes), as simdjson's `escape_map[escape_char]`.
-    pub(crate) codes2: Option<Box<[u32; 256]>>,
-}
-
-/// Whether a region read in parts needs no escape carry in tier 2, as simdjson's `parse_string`
-/// needs none: its closer `X &~ escaped(E)`, its one part `(E & R) &~ escaped(E)` of two bytes
-/// (`X`, `E` disjoint byte classes), its opener the closer's output, `R` the region's inside
-/// (`toggle(T) &~ (T &~ prev(toggle(T), 1))`, `T` the closer and the file's own bytes), no
-/// closer at the file's end refused. Then, from a clean place (after the opener, whose byte is
-/// not `E`, or after a part), no `E` lies before the first byte of `X` or `E`, so it is not
-/// escaped: an `X` there is the closer, an `E` a part, the bytes before it content. A part's
-/// two bytes end a run of `E` of even length (its first not escaped), so the place after it is
-/// clean again. `R` holds at every byte between the opener and the closer, as `T` holds at
-/// neither's inside.
-pub(crate) fn sequential(block: &crate::block_native::BlockNative, a: &crate::records::ReadArm, parts: &[(u16, u8)]) -> Option<Seq> {
-    use crate::block_native::BlockInst as I;
-    let class = |x: usize| crate::native_cpu_bytes::exact_at(block, x).filter(|n| n.lo == 0 && n.hi == 0).map(|n| n.set);
-    let at = |o: u16| usize::from(block.outputs[usize::from(o)]);
-    if a.opener != a.closer || a.off != 0 || a.none != crate::records::ReadNone::Refuse || block.output_delays[usize::from(a.closer)] != 0 {
-        return None;
-    }
-    let &[(part, 2)] = parts else { return None };
-    if block.output_delays[usize::from(part)] != 0 {
-        return None;
-    }
-    let c = at(a.closer);
-    let I::AndNot(x, esc) = block.insts[c] else { return None };
-    let I::Escaped(e) = block.insts[usize::from(esc)] else { return None };
-    let (x, e) = (usize::from(x), usize::from(e));
-    let (xs, es) = (class(x)?, class(e)?);
-    if xs.iter().zip(es).any(|(p, q)| p & q != 0) {
-        return None;
-    }
-    // The part: `(E & R) &~ escaped(E)`, `R` the region's inside.
-    let I::AndNot(pe, pesc) = block.insts[at(part)] else { return None };
-    let I::Escaped(e2) = block.insts[usize::from(pesc)] else { return None };
-    if class(usize::from(e2))? != es {
-        return None;
-    }
-    let I::And(u, v) = block.insts[usize::from(pe)] else { return None };
-    let (u, v) = (usize::from(u), usize::from(v));
-    let r = match (class(u), class(v)) {
-        (Some(s), _) if s == es => v,
-        (_, Some(s)) if s == es => u,
-        _ => return None,
-    };
-    // `R = toggle(T) &~ (T &~ prev(toggle(T), 1))`, `T` the closer and a mask that holds at
-    // every byte of the stream (`file_only`): `Within(0)`, an `&` of such, or one less a test
-    // that never holds in the stream (the prefix's bytes, before it; a zero).
-    fn file_only(b: &crate::block_native::BlockNative, x: usize) -> bool {
-        match b.insts[x] {
-            I::Within(0) => true,
-            I::And(a, c) => file_only(b, usize::from(a)) && file_only(b, usize::from(c)),
-            I::AndNot(a, c) => file_only(b, usize::from(a)) && matches!(b.insts[usize::from(c)], I::Prefix(..) | I::Const(0)),
-            _ => false,
-        }
-    }
-    let I::AndNot(tg, opener) = block.insts[r] else { return None };
-    let I::Toggle(t) = block.insts[usize::from(tg)] else { return None };
-    let t = usize::from(t);
-    let closer_and_file = t == c || matches!(block.insts[t], I::And(p, q) if (usize::from(p) == c && file_only(block, usize::from(q))) || (usize::from(q) == c && file_only(block, usize::from(p))));
-    let I::AndNot(t2, pt) = block.insts[usize::from(opener)] else { return None };
-    let I::Prev(tg2, 1) = block.insts[usize::from(pt)] else { return None };
-    let I::Toggle(t3) = block.insts[usize::from(tg2)] else { return None };
-    (closer_and_file && usize::from(t2) == t && usize::from(t3) == t).then_some(Seq { x, e, xs, stops: std::array::from_fn(|k| xs[k] | es[k]), codes2: None })
-}
-
-/// The region tier 2 splits (`SplitParts`), where a reader says so; refused where its parts'
-/// codes need what `plain_code` does not give (marks, retags, words past sixteen bytes) or the
-/// program has more than one such reader.
-pub(crate) fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error> {
-    let Some(block) = native.block_programs.first() else { return Ok(None) };
-    let Some(r) = &block.records else { return Ok(None) };
-    let late: Vec<&crate::records::Reader> = r.readers.iter().filter(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2).collect();
-    let [rd] = late[..] else {
-        return if late.is_empty() { Ok(None) } else { Err(Error::UnsupportedFeature("two regions tier 2 splits")) };
-    };
-    if rd.parts.iter().any(|p| p.last.is_some()) || rd.arms.iter().any(|a| a.last.is_some()) {
-        return Err(Error::UnsupportedFeature("a region tier 2 splits, with a part to a last"));
-    }
-    if rd.arms.len() != 1 || !r.marks.is_empty() || r.retags.iter().any(|t| !t.part) || rd.parts.iter().any(|p| p.kind.is_some()) || r.gaps != 0 {
-        return Err(Error::UnsupportedFeature("a region tier 2 splits, with marks or retags"));
-    }
-    let tables = crate::native_cpu_block::RecordTables::new(r, block)?;
-    if tables.rest == crate::native_cpu_block::WordRest::Tails {
-        return Err(Error::UnsupportedFeature("a region tier 2 splits, with words past sixteen bytes"));
-    }
-    let mut parts: Vec<(u16, u8)> = rd.parts.iter().map(|p| (p.start, p.bytes)).collect();
-    parts.sort_by_key(|&(o, n)| (n, o));
-    let a = &rd.arms[0];
-    // Sequential only where tier 2 makes the records: the region's record is then its opener.
-    let mut seq = if r.fetched_in_tier2() { sequential(block, a, &parts) } else { None };
-    if let Some(sq) = seq.as_mut() {
-        let set = crate::native_cpu_bytes::exact_at(block, sq.e).map(|n| n.set).unwrap_or_default();
-        let ones: Vec<u8> = (0..=255u8).filter(|&b| set[usize::from(b) / 64] >> (b % 64) & 1 == 1).collect();
-        if let (&[e0], Ok(wt)) = (&ones[..], crate::records::WordTable::new(&r.words)) {
-            let mut t = Box::new([0u32; 256]);
-            for (b, c) in t.iter_mut().enumerate() {
-                *c = crate::records::pass(r, &wt, &[e0, b as u8], &[0], &[1], &[]).0.first().copied().unwrap_or(0);
-            }
-            sq.codes2 = Some(t);
-        }
-    }
-    Ok(Some(Box::new(SplitParts { opener: a.opener, off: a.off, parts, tables, seq })))
-}
-
-/// Each token's record made by `TOKEN` from its start (`Records::fetched_in_tier2`, page 40), as
-/// simdjson's stage 2 takes a structural index: its first byte's end rule (`ends`, a byte each,
-/// its address read by the code), the rules, the readers, and the record pass's tables for its
-/// code (`native_cpu_block::plain_code`).
-pub(crate) struct Fetch {
-    pub(crate) ends: Box<[u8; 256]>,
-    pub(crate) rules: Vec<crate::records::EndRule>,
-    pub(crate) readers: Vec<crate::records::Reader>,
-    pub(crate) tables: crate::native_cpu_block::RecordTables,
-    /// Each pair table (`EndRule::Next`): its rows by first byte (256 bytes), then its sets by
-    /// row (4 words each, row 0 none), as `PairTable::holds` reads them.
-    pub(crate) nexts: Vec<(Box<[u8; 256]>, Vec<[u64; 4]>)>,
-    /// By first byte: its kind, whether a word begins with it, and the code of the token of that
-    /// byte alone (`records::pass`'s), for a `SWITCH` edge's record (page 40).
-    pub(crate) kinds: [u8; 256],
-    pub(crate) worded: [bool; 256],
-    pub(crate) codes1: Box<[u32; 256]>,
-    /// The words (`Records::words`), each with its code as a token of its bytes alone.
-    pub(crate) words: Vec<(Vec<u8>, u32)>,
-    /// By rule: where it is a run (`EndRule::Run`) whose output is a byte class (its bit at a
-    /// byte the byte's being in a set), that set as a table of 256 bytes (1: in it), as
-    /// simdjson's `structural_or_whitespace` table.
-    pub(crate) run_class: Vec<Option<Box<[u8; 256]>>>,
-    /// By reader: whether it reads as simdjson's `parse_string` (`sequential`): its token's
-    /// record is its opener alone, its parts split from there.
-    pub(crate) seq: Vec<bool>,
-    /// The first bytes whose rule is a sequential reader's, a bit each.
-    pub(crate) seq_bytes: [u64; 4],
-}
-
-/// The records tier 2 makes (`Fetch`), where the program says so; refused where a token's code
-/// or last needs what `plain_code` and the rules below do not give (marks, retags, gap marks,
-/// token tests, pair tables, a reader of more than one region, words past sixteen bytes).
-pub(crate) fn fetch_of(native: &Structure) -> Result<Option<Box<Fetch>>, Error> {
-    let Some(block) = native.block_programs.first() else { return Ok(None) };
-    let Some(r) = block.records.as_ref().filter(|r| r.fetched_in_tier2()) else { return Ok(None) };
-    if !r.marks.is_empty() || !r.retags.is_empty() || r.gaps != 0 || !r.checks.is_empty() || r.readers.iter().any(|rd| rd.arms.len() != 1) {
-        return Err(Error::UnsupportedFeature("records made in tier 2, with marks, retags, token tests or a reader of two regions"));
-    }
-    let tables = crate::native_cpu_block::RecordTables::new(r, block)?;
-    if tables.rest == crate::native_cpu_block::WordRest::Tails {
-        return Err(Error::UnsupportedFeature("records made in tier 2, with words past sixteen bytes"));
-    }
-    let mut ends = Box::new([crate::records::NO_RULE; 256]);
-    for (b, &k) in r.ends.iter().enumerate().take(256) {
-        ends[b] = k;
-    }
-    let nexts = r
-        .nexts
-        .iter()
-        .map(|t| {
-            let mut row = Box::new([0u8; 256]);
-            for (b, &x) in t.row.iter().enumerate().take(256) {
-                row[b] = x;
-            }
-            let most = row.iter().copied().max().unwrap_or(0) as usize;
-            let sets = (0..=most).map(|k| t.sets.get(k).copied().unwrap_or([0; 4])).collect();
-            (row, sets)
-        })
-        .collect();
-    let mut kinds = [0u8; 256];
-    let mut worded = [false; 256];
-    let mut codes1 = Box::new([0u32; 256]);
-    let wt = crate::records::WordTable::new(&r.words).map_err(|_| Error::UnsupportedFeature("records made in tier 2: the words fit no table"))?;
-    for b in 0..256usize {
-        kinds[b] = r.kinds.get(b).copied().unwrap_or(0);
-        worded[b] = r.words.iter().any(|w| w.first() == Some(&(b as u8)));
-        codes1[b] = crate::records::pass(r, &wt, &[b as u8], &[0], &[0], &[]).0.first().copied().unwrap_or(0);
-    }
-    let words = r.words.iter().map(|w| (w.clone(), crate::records::pass(r, &wt, w, &[0], &[w.len().saturating_sub(1) as u32], &[]).0.first().copied().unwrap_or(0))).collect();
-    let run_class = r
-        .rules
-        .iter()
-        .map(|rule| match *rule {
-            crate::records::EndRule::Run(o) => crate::native_cpu_bytes::exact(block, o).filter(|n| n.lo == 0 && n.hi == 0).map(|n| {
-                let mut t = Box::new([0u8; 256]);
-                for (b, x) in t.iter_mut().enumerate() {
-                    *x = u8::from(n.set[b / 64] >> (b % 64) & 1 == 1);
-                }
-                t
-            }),
-            _ => None,
-        })
-        .collect();
-    let seq: Vec<bool> = r
-        .readers
-        .iter()
-        .map(|rd| {
-            let mut parts: Vec<(u16, u8)> = rd.parts.iter().map(|p| (p.start, p.bytes)).collect();
-            parts.sort_by_key(|&(o, n)| (n, o));
-            rd.split == crate::records::Split::Tier2 && rd.arms.len() == 1 && sequential(block, &rd.arms[0], &parts).is_some()
-        })
-        .collect();
-    let mut seq_bytes = [0u64; 4];
-    for (x, &k) in ends.iter().enumerate() {
-        if matches!(r.rules.get(usize::from(k)), Some(crate::records::EndRule::Read(i)) if seq[usize::from(*i)]) {
-            seq_bytes[x / 64] |= 1 << (x % 64);
-        }
-    }
-    Ok(Some(Box::new(Fetch { ends, rules: r.rules.clone(), readers: r.readers.clone(), tables, nexts, kinds, worded, codes1, words, run_class, seq, seq_bytes })))
 }
 
 /// The first bit of output `o` at or after byte `from`, a word at a time (`records::first_bit`),
@@ -2921,12 +2050,6 @@ fn emit_rule(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, ft: &Fetch, bw: &crat
             f.ins().jump(join, &[l.into(), zero.into()]);
         }
     }
-}
-
-/// Whether rule `rule` ends every token at its first byte: a pair table with no pairs
-/// (`pair empty`).
-pub(crate) fn one_byte(ft: &Fetch, rule: &crate::records::EndRule) -> bool {
-    matches!(*rule, crate::records::EndRule::Next(i) if ft.nexts[usize::from(i)].1.iter().all(|s| s.iter().all(|&w| w == 0)))
 }
 
 /// A token's last byte from its first, `s`, by its first byte's end rule (`records::lasts`, the
@@ -3228,7 +2351,7 @@ fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     (e.set)(f, Mem::Nodes, n1);
 }
 
-/// A node's word in a direct format 16 run (`Table::direct`), as `rust_stream`'s `open16` and `leaf16`: its number by
+/// A node's word in a direct format 16 run (`Table::direct`): its number by
 /// its key `kf` (its kind, its field above it) and its supertypes' bits, then `w_open` at the token's start (and open
 /// on the stack of open nodes) or, a leaf's (`end`), `w_leaf` with the token's bytes; then `w_commit`. No row. A key
 /// with no number is the ops' failure (`fail::NUMBER`); an op's failure is the writer's, which the host reads.
@@ -3745,18 +2868,55 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
         f.switch_to_block(record);
         return;
     }
+    // Its reader's walk (`PartRd`), one where there is one.
+    let rdv = (e.get)(f, Mem::PartRd);
+    let n = sp.readers.len();
+    for (k, rd) in sp.readers.iter().enumerate() {
+        let this = f.create_block();
+        let other = (k + 1 < n).then(|| f.create_block());
+        match other {
+            Some(o) => {
+                let is = f.ins().icmp_imm(IntCC::Equal, rdv, k as i64);
+                f.ins().brif(is, this, &[], o, &[]);
+            }
+            None => {
+                f.ins().jump(this, &[]);
+            }
+        }
+        f.switch_to_block(this);
+        split_next_reader(f, e, sp, rd, bw, at, fetched, heads);
+        if let Some(o) = other {
+            f.switch_to_block(o);
+        }
+    }
+    f.switch_to_block(record);
+}
+
+/// A split region's next piece by its reader `rd`, as `records::read_parts` and the lean
+/// lexer's string arm read it: at the closer (`PartClose`), the closer to the record's last
+/// (`PartEnd`); else the nearest part's bit before the closer, a word at a time; a part there,
+/// its bytes or to its last; else the bytes before it (or the closer), the content. Each with its
+/// own kind. Then on to `fetched`.
+#[allow(clippy::too_many_arguments)]
+fn split_next_reader(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, rd: &SplitReader, bw: &crate::native_cpu_bytes::Bytewise<'_>, at: Value, fetched: Block, heads: &mut Vec<(Block, Step)>) {
     let pe = (e.get)(f, Mem::PartEnd);
-    let c0 = f.ins().iadd_imm(pe, -i64::from(sp.off));
+    let c0 = (e.get)(f, Mem::PartClose);
     let (closer, look) = (f.create_block(), f.create_block());
     let here = f.ins().icmp(IntCC::Equal, at, c0);
     f.ins().brif(here, closer, &[], look, &[]);
-    // The closer: the region's last token.
+    // The closer: the region's last token, its own kind by its byte.
     f.switch_to_block(closer);
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::PartAt, zero);
-    split_token(f, e, sp, (c0, pe), fetched, read_word, None);
-    // The nearest part's bit from `at`, below the closer's byte: a word at a time.
+    split_piece(f, e, sp, c0, pe, Piece::Closer(&rd.closers), fetched);
     f.switch_to_block(look);
+    if rd.parts.is_empty() {
+        (e.set)(f, Mem::PartAt, c0);
+        let l = f.ins().iadd_imm(c0, -1);
+        split_piece(f, e, sp, at, l, Piece::Kind(rd.content), fetched);
+        return;
+    }
+    // The nearest part's bit from `at`, below the closer's byte: a word at a time.
     let (scan, found) = (f.create_block(), f.create_block());
     f.append_block_param(scan, types::I64);
     f.append_block_param(scan, types::I64);
@@ -3769,7 +2929,7 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
     f.switch_to_block(scan);
     heads.push((scan, Step::Word));
     let (w, m) = (f.block_params(scan)[0], f.block_params(scan)[1]);
-    let words: Vec<Value> = sp.parts.iter().map(|&(o, _)| {
+    let words: Vec<Value> = rd.parts.iter().map(|&(o, ..)| {
         let x = output_word(f, e, bw, o, w, heads);
         f.ins().band(x, m)
     }).collect();
@@ -3803,16 +2963,16 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
     f.switch_to_block(content);
     (e.set)(f, Mem::PartAt, near);
     let l = f.ins().iadd_imm(near, -1);
-    split_token(f, e, sp, (at, l), fetched, read_word, None);
-    // A part at `at`: the shortest whose bit is there, its bytes.
+    split_piece(f, e, sp, at, l, Piece::Kind(rd.content), fetched);
+    // A part at `at`: the shortest whose bit is there, its bytes or to its last.
     f.switch_to_block(parted);
     let low = {
         let neg = f.ins().ineg(any);
         f.ins().band(any, neg)
     };
-    for (j, (&(_, n), &x)) in sp.parts.iter().zip(&words).enumerate() {
+    for (j, (&(_, n, to, kind), &x)) in rd.parts.iter().zip(&words).enumerate() {
         let this = f.create_block();
-        let other = (j + 1 < sp.parts.len()).then(|| f.create_block());
+        let other = (j + 1 < rd.parts.len()).then(|| f.create_block());
         match other {
             Some(o) => {
                 let is = f.ins().band(x, low);
@@ -3823,15 +2983,56 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
             }
         }
         f.switch_to_block(this);
-        let after = f.ins().iadd_imm(at, i64::from(n));
+        let l = match to {
+            Some(o) => first_bit_from(f, e, bw, o, at, heads).0,
+            None => f.ins().iadd_imm(at, i64::from(n) - 1),
+        };
+        let after = f.ins().iadd_imm(l, 1);
         (e.set)(f, Mem::PartAt, after);
-        let l = f.ins().iadd_imm(at, i64::from(n) - 1);
-        split_token(f, e, sp, (at, l), fetched, read_word, None);
+        split_piece(f, e, sp, at, l, Piece::Kind(kind), fetched);
         if let Some(o) = other {
             f.switch_to_block(o);
         }
     }
-    f.switch_to_block(record);
+}
+
+/// A split region's piece's kind: its own (none: its first byte's), or a closer's by its byte.
+enum Piece<'a> {
+    Kind(Option<u8>),
+    Closer(&'a [(u8, u8)]),
+}
+
+/// A split region's piece `s..=l` as the token: its code `plain_code`'s, its kind its own
+/// (`Piece`). Then on to `fetched`.
+fn split_piece(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, s: Value, l: Value, kind: Piece<'_>, fetched: Block) {
+    let bytes = (e.ctx)(f, BYTES);
+    let k = crate::native_cpu_block::tables_consts(f, &sp.tables);
+    let n = f.ins().isub(l, s);
+    let len = f.ins().iadd_imm(n, 1);
+    let mut code = crate::native_cpu_block::plain_code(f, &sp.tables, k, bytes, s, len);
+    let own = |f: &mut FunctionBuilder<'_>, code: Value, k: u8| {
+        let rest = f.ins().band_imm(code, !0xff);
+        f.ins().bor_imm(rest, i64::from(k))
+    };
+    match kind {
+        Piece::Kind(None) => {}
+        Piece::Kind(Some(k)) => code = own(f, code, k),
+        Piece::Closer(closers) if !closers.is_empty() => {
+            let a = f.ins().iadd(bytes, s);
+            let b = f.ins().uload8(types::I64, MemFlags::trusted(), a, 0);
+            for &(x, k) in closers {
+                let is = f.ins().icmp_imm(IntCC::Equal, b, i64::from(x));
+                let tagged = own(f, code, k);
+                code = f.ins().select(is, tagged, code);
+            }
+        }
+        Piece::Closer(_) => {}
+    }
+    let l1 = f.ins().iadd_imm(l, 1);
+    (e.set)(f, Mem::Start, s);
+    (e.set)(f, Mem::Limit, l1);
+    (e.set)(f, Mem::Taken, code);
+    f.ins().jump(fetched, &[]);
 }
 
 /// `split_next` where the region reads as simdjson's `parse_string` (`Seq`): from `at`, a clean
@@ -3951,21 +3152,50 @@ fn split_enter_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts
 /// last (`Mem::PartEnd`). Records split already (tier 1's, `Split::Tier1`; Metal's masks) are
 /// tokens as they are.
 fn split_enter(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw: &crate::native_cpu_bytes::Bytewise<'_>, (s, l): (Value, Value), words: Option<&[u8]>, heads: &mut Vec<(Block, Step)>) {
-    let q = f.ins().ushr_imm(s, 6);
-    let x = output_word(f, e, bw, sp.opener, q, heads);
-    let sh = f.ins().band_imm(s, 63);
-    let x = f.ins().ushr(x, sh);
-    let opens = f.ins().band_imm(x, 1);
+    let _ = words;
     let whole = f.ins().icmp(IntCC::UnsignedGreaterThan, l, s);
     let whole = f.ins().uextend(types::I64, whole);
-    let both = f.ins().band(opens, whole);
-    let (enter, on) = (f.create_block(), f.create_block());
-    f.ins().brif(both, enter, &[], on, &[]);
-    f.switch_to_block(enter);
-    let s1 = f.ins().iadd_imm(s, 1);
-    (e.set)(f, Mem::PartAt, s1);
-    (e.set)(f, Mem::PartEnd, l);
-    split_token(f, e, sp, (s, s), on, words, None);
+    let on = f.create_block();
+    for (k, rd) in sp.readers.iter().enumerate() {
+        let q = f.ins().ushr_imm(s, 6);
+        let x = output_word(f, e, bw, rd.opener, q, heads);
+        let sh = f.ins().band_imm(s, 63);
+        let x = f.ins().ushr(x, sh);
+        let opens = f.ins().band_imm(x, 1);
+        let both = f.ins().band(opens, whole);
+        let (enter, next) = (f.create_block(), f.create_block());
+        f.ins().brif(both, enter, &[], next, &[]);
+        f.switch_to_block(enter);
+        let s1 = f.ins().iadd_imm(s, 1);
+        (e.set)(f, Mem::PartAt, s1);
+        (e.set)(f, Mem::PartEnd, l);
+        let kv = f.ins().iconst(types::I64, k as i64);
+        (e.set)(f, Mem::PartRd, kv);
+        // Its closer's first byte, by the closer's bits past the opener, as the record's last
+        // was read (`records::read_last`).
+        let (c, _) = first_bit_from(f, e, bw, rd.closer, s1, heads);
+        (e.set)(f, Mem::PartClose, c);
+        // The opener's token: the record's code (its marks), its word its byte's alone where it
+        // has no tag.
+        let taken = (e.get)(f, Mem::Taken);
+        let code = if rd.tagged {
+            taken
+        } else {
+            let bytes = (e.ctx)(f, BYTES);
+            let kc = crate::native_cpu_block::tables_consts(f, &sp.tables);
+            let one = f.ins().iconst(types::I64, 1);
+            let plain = crate::native_cpu_block::plain_code(f, &sp.tables, kc, bytes, s, one);
+            let w = f.ins().band_imm(plain, 0xff00);
+            let rest = f.ins().band_imm(taken, !0xff00);
+            f.ins().bor(rest, w)
+        };
+        (e.set)(f, Mem::Start, s);
+        (e.set)(f, Mem::Limit, s1);
+        (e.set)(f, Mem::Taken, code);
+        f.ins().jump(on, &[]);
+        f.switch_to_block(next);
+    }
+    f.ins().jump(on, &[]);
     f.switch_to_block(on);
 }
 
@@ -4186,7 +3416,7 @@ pub(crate) fn call_own(f: &mut FunctionBuilder<'_>, id: cranelift_module::FuncId
 type OwnFn = (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function);
 
 /// The functions the node words call to keep the table as it stands at the end, as the lean
-/// parser keeps its tape (`rust_stream::node_words` has the same in Rust): each rare, each a
+/// parser keeps its tape: each rare, each a
 /// loop over the table's tail. `shift`: a wrap's (where it wraps more than a leaf, or a node a
 /// supertype names); `unpend`: a close the pending extras outlive; `drop`: a dropped node's.
 struct TableFns {
@@ -4208,18 +3438,6 @@ struct Sixteen {
     ops: crate::native_cpu_tape::Ops,
     pass: OwnFn,
     retag: OwnFn,
-}
-
-/// The supertypes a program's nodes are put in (`NODE_SUPER`'s kinds), ascending: each a bit of
-/// a code's key (`native_cpu_tape::commit`). Past `MAX_CLASSES`, refused.
-pub(crate) fn supertype_classes(native: &Structure) -> Result<Vec<u16>, Error> {
-    let mut c: Vec<u16> = native.structural.iter().filter_map(|b| if let Op::NodeSuper { kind } = b.operation { Some(kind) } else { None }).collect();
-    c.sort_unstable();
-    c.dedup();
-    if c.len() > crate::native_cpu_tape::MAX_CLASSES {
-        return Err(Error::UnsupportedBackend);
-    }
-    Ok(c)
 }
 
 impl TableFns {
@@ -4511,180 +3729,6 @@ fn drop_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, with_tails: 
 }
 
 
-/// A body of shared arms (`shared_runs`): its words, from `start` (its first place) to the
-/// `GOTO` that ends it, and the places its places go on to.
-pub struct SharedBody {
-    pub start: usize,
-    pub end: usize,
-    pub targets: Vec<u16>,
-}
-
-/// Runs of words lowered once for every place that has them (`shared_runs`).
-pub struct SharedRuns {
-    pub bodies: Vec<SharedBody>,
-    /// Each place a run starts at: its body, and its target's index in the body's `targets`.
-    pub at: std::collections::HashMap<usize, (usize, usize)>,
-    /// Each body's last word: its `GOTO`, at the body's first place.
-    pub ends: std::collections::HashMap<usize, usize>,
-    /// The words of a run that is not its body's first place: never lowered.
-    pub skipped: Vec<bool>,
-}
-
-/// A word that only goes on to the next, or refuses: an arm's span, keyword check and acts.
-fn plain(op: &Op) -> bool {
-    matches!(
-        op,
-        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. } | Op::Count { .. } | Op::Check { .. } | Op::SettleBefore { .. }
-    )
-}
-
-/// Arms that differ only in where they go on are one copy of code. A run is the plain words
-/// (`plain`) before a `GOTO`, none of them but the first entered from elsewhere; runs with the
-/// same words that go on to a `TOKEN` are one body, lowered at its first place. Each place enters the body with the
-/// index of its `GOTO`'s target, and the body's end jumps by it (a jump table): an indirect
-/// jump an arm, as simdjson's stage 2 takes one a token, for code the size of the distinct
-/// arms instead of every arm's.
-/// `alone_to`: the places a run going on to stays a body of its own, its `GOTO` a direct jump
-/// (a string loop's head, `parts_pending`: the loop's turn a part, as `parse_string`'s).
-/// `keys`: a direct format 16 run's key bits by place (`Table::direct`), which a word's body takes from its place: runs
-/// share only where theirs are the same too.
-pub fn shared_runs(native: &Structure, pushes: &[u16], alone_to: Option<&[bool]>, keys: Option<&[(u32, u32)]>) -> SharedRuns {
-    let words = &native.structural;
-    let n = words.len();
-    // Entered other than by falling from a plain word before it.
-    let mut entered = vec![false; n + 1];
-    entered[0] = true;
-    for (pc, word) in words.iter().enumerate() {
-        let mut next = successors(native, pushes, pc);
-        if matches!(word.operation, Op::Token { .. }) {
-            next.push(pc + 1);
-        }
-        for t in next {
-            if !(t == pc + 1 && plain(&word.operation)) {
-                entered[t] = true;
-            }
-        }
-    }
-    // Each run: its first place, its `GOTO`, the target, and its words.
-    let mut occ: Vec<(usize, usize, u16, Vec<Op>, Option<Vec<(u32, u32)>>)> = Vec::new();
-    for g in 0..n {
-        let Op::Goto { target } = words[g].operation else { continue };
-        if entered[g] {
-            continue;
-        }
-        let mut s = g;
-        while s > 0 && plain(&words[s - 1].operation) && !entered[s] {
-            s -= 1;
-        }
-        if s < g {
-            occ.push((s, g, target, words[s..g].iter().map(|w| w.operation).collect(), keys.map(|k| k[s..g].to_vec())));
-        }
-    }
-    // Runs alone: each its own body. Sharing makes a body's jump reach every place's target on
-    // the graph (not at run time: a place's index picks its own), and the shape check reads the
-    // graph: a cycle that passes no `TOKEN` there is refused. So runs share, and where a cycle
-    // appears that a shared jump closes, the run whose jump goes where its own does not is
-    // alone; again, until none is left.
-    let chains = bounds(native).chains;
-    let mut alone: Vec<bool> = occ.iter().map(|o| alone_to.is_some_and(|a| a.get(usize::from(o.2)).copied().unwrap_or(false))).collect();
-    let goto_of: std::collections::HashMap<usize, usize> = occ.iter().enumerate().map(|(i, o)| (o.1, i)).collect();
-    loop {
-        let mut keys: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        let mut body_of = vec![0usize; occ.len()];
-        let mut targets: Vec<Vec<u16>> = Vec::new();
-        for (i, (_, _, t, ops, bits)) in occ.iter().enumerate() {
-            let key = if alone[i] { format!("{ops:?} {bits:?} to {t}") } else { format!("{ops:?} {bits:?}") };
-            let b = *keys.entry(key).or_insert_with(|| {
-                targets.push(Vec::new());
-                targets.len() - 1
-            });
-            if !targets[b].contains(t) {
-                targets[b].push(*t);
-            }
-            body_of[i] = b;
-        }
-        // The graph: a word's ways on (`TOKEN` and, where returns chain, `RETURN` cut: the
-        // shape check's loop heads), a run's `GOTO` to each of its body's targets.
-        let next = |pc: usize| -> Vec<usize> {
-            if let Some(&i) = goto_of.get(&pc) {
-                return targets[body_of[i]].iter().map(|&t| usize::from(t)).filter(|&t| t < n).collect();
-            }
-            if chains && matches!(words[pc].operation, Op::Return { .. }) {
-                return Vec::new();
-            }
-            successors(native, pushes, pc)
-        };
-        // A depth-first search for a cycle: 1 on the path, 2 done.
-        let mut mark = vec![0u8; n];
-        let mut found: Option<Vec<usize>> = None;
-        'search: for root in 0..n {
-            if mark[root] != 0 {
-                continue;
-            }
-            let mut stack: Vec<(usize, Vec<usize>)> = vec![(root, next(root))];
-            mark[root] = 1;
-            while let Some((pc, rest)) = stack.last_mut() {
-                let pc = *pc;
-                match rest.pop() {
-                    Some(q) if mark[q] == 1 => {
-                        let from = stack.iter().position(|(w, _)| *w == q).unwrap_or(0);
-                        let mut cycle: Vec<usize> = stack[from..].iter().map(|(w, _)| *w).collect();
-                        cycle.push(q);
-                        found = Some(cycle);
-                        break 'search;
-                    }
-                    Some(q) if mark[q] == 0 => {
-                        mark[q] = 1;
-                        let nq = next(q);
-                        stack.push((q, nq));
-                    }
-                    Some(_) => {}
-                    None => {
-                        mark[pc] = 2;
-                        stack.pop();
-                    }
-                }
-            }
-        }
-        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() && found.is_none() {
-            let words_in: usize = occ.iter().map(|o| o.1 - o.0 + 1).sum();
-            let kept: usize = (0..targets.len()).map(|b| occ.iter().enumerate().find(|(i, _)| body_of[*i] == b).map_or(0, |(_, o)| o.1 - o.0 + 1)).sum();
-            eprintln!("shared runs: {} runs, {} alone, {} bodies; {words_in} words in runs, {kept} lowered", occ.len(), alone.iter().filter(|a| **a).count(), targets.len());
-        }
-        let Some(cycle) = found else {
-            let mut out = SharedRuns { bodies: Vec::new(), at: std::collections::HashMap::new(), ends: std::collections::HashMap::new(), skipped: vec![false; n] };
-            let mut first: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-            for (i, (s, g, t, _, _)) in occ.iter().enumerate() {
-                let b = body_of[i];
-                let body = *first.entry(b).or_insert_with(|| {
-                    out.bodies.push(SharedBody { start: *s, end: *g, targets: targets[b].clone() });
-                    out.ends.insert(*g, out.bodies.len() - 1);
-                    out.bodies.len() - 1
-                });
-                let ti = out.bodies[body].targets.iter().position(|x| x == t).expect("a target of its body");
-                out.at.insert(*s, (body, ti));
-                if out.bodies[body].start != *s {
-                    for k in s + 1..=*g {
-                        out.skipped[k] = true;
-                    }
-                }
-            }
-            return out;
-        };
-        // The runs on the cycle whose jump goes on where their own `GOTO` does not: alone.
-        let mut split = false;
-        for w in cycle.windows(2) {
-            if let Some(&i) = goto_of.get(&w[0])
-                && usize::from(occ[i].2) != w[1]
-            {
-                alone[i] = true;
-                split = true;
-            }
-        }
-        assert!(split, "a cycle on the words' own graph: the shape check refuses the program");
-    }
-}
-
 pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
     compile_cut(native, &one_cut(native))
 }
@@ -4873,8 +3917,8 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let split = split_parts(native)?;
     // The records `TOKEN` makes from each start (page 40).
     let fetch = fetch_of(native)?;
-    let direct = if sixteen { crate::rust_stream::direct_keys(native, widths_tag.0, widths_tag.1) } else { None };
-    let table = Table { inner: crate::rust_stream::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()), fetch: fetch.as_deref(), direct: direct.as_deref() };
+    let direct = if sixteen { crate::stream_facts::direct_keys(native, widths_tag.0, widths_tag.1) } else { None };
+    let table = Table { inner: crate::stream_facts::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()), fetch: fetch.as_deref(), direct: direct.as_deref() };
     let passes: Vec<u32> = table_fns.shift.iter().chain(&table_fns.drop).map(|f| f.0.as_u32()).collect();
     let row_fns: Vec<u32> = [&table_fns.blocks, &table_fns.commit, &table_fns.uncode, &table_fns.finish].into_iter().chain(table_fns.sixteen.iter().flat_map(|s| [&s.pass, &s.retag])).map(|f| f.0.as_u32()).collect();
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
@@ -6106,7 +5150,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                                     // classes of the bytes: the end's mask is the last op's.
                                     let mut both = c.clone();
                                     both.ops.push(crate::program::LocalOp::Bytes(*not_c));
-                                    let form = crate::rust_stream::word_form(&both.ops).map_err(|_| Error::UnsupportedBackend)?;
+                                    let form = crate::stream_facts::word_form(&both.ops).map_err(|_| Error::UnsupportedBackend)?;
                                     let len_v = (env.ctx)(&mut f, LEN);
                                     let at = f.ins().iadd(bytes, start);
                                     let v = f.ins().load(types::I8X16, MemFlags::trusted(), at, 0);
@@ -6430,7 +5474,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         }
                         // Kept: the callee its arm calls takes it.
                         if !keep {
-                            let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
+                            let rest = f.ins().band_imm(live, !(native.taken[usize::from(order)] as i64));
                             mset(&mut f, Mem::Live, rest);
                         }
                         f.ins().jump(fall, &[]);
@@ -6477,7 +5521,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     // calls takes it.
                     if !keep {
                         let live = mget(&mut f, Mem::Live);
-                        let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
+                        let rest = f.ins().band_imm(live, !(native.taken[usize::from(order)] as i64));
                         mset(&mut f, Mem::Live, rest);
                     }
                     f.ins().jump(fall, &[]);
@@ -6616,12 +5660,18 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     // `drops`: an extra pending, and the question holding at the token (the lean
                     // lexer's `asi`): the extra pending last dropped; the next node made takes
                     // its row and cells.
+                    // A token's question: none at the stream's end.
                     let start = mget(&mut f, Mem::Start);
                     let pending = mget(&mut f, Mem::Pending);
+                    let some = f.ins().icmp_imm(IntCC::NotEqual, pending, 0);
+                    let next = mget(&mut f, Mem::Next);
+                    let at_end = ended_now(&mut f, next);
+                    let not_end = f.ins().bxor_imm(at_end, 1);
+                    let some = f.ins().band(some, not_end);
                     let ask = f.create_block();
-                    f.ins().brif(pending, ask, &[], fall, &[]);
+                    f.ins().brif(some, ask, &[], fall, &[]);
                     f.switch_to_block(ask);
-                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern));
+                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern), native.extras.first().map(|e| e.0), &mut heads);
                     let drop = f.create_block();
                     f.ins().brif(holds, drop, &[], fall, &[]);
                     f.switch_to_block(drop);
@@ -6637,6 +5687,25 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     mset(&mut f, Mem::Nodes, n);
                     f.ins().jump(fall, &[]);
                 }
+                Op::RefuseIf { pattern, flag } => {
+                    // `refuses`: the question holding at the token, at the mark's level.
+                    let ask = f.create_block();
+                    match flag {
+                        Some(k) => {
+                            let fl = mget(&mut f, Mem::Flags);
+                            let fl = f.ins().ushr_imm(fl, i64::from(k));
+                            let fl = f.ins().band_imm(fl, 1);
+                            f.ins().brif(fl, ask, &[], fall, &[]);
+                        }
+                        None => {
+                            f.ins().jump(ask, &[]);
+                        }
+                    }
+                    f.switch_to_block(ask);
+                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern), native.extras.first().map(|e| e.0), &mut heads);
+                    let at = f.ins().iconst(types::I64, pc as i64 + 1);
+                    f.ins().brif(holds, refuse, &[BlockArg::from(at)], fall, &[]);
+                }
                 Op::LoseLast { pattern, flag } => {
                     // `loses`: an extra pending, and the question holding at the token (the lean
                     // lexer's `asi`): the extra pending last taken out, its kind kept: the
@@ -6648,6 +5717,11 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     let lost = mget(&mut f, Mem::Lost);
                     let none = f.ins().icmp_imm(IntCC::Equal, lost, 0);
                     let some = f.ins().band(some, none);
+                    // A token's question: none at the stream's end.
+                    let next = mget(&mut f, Mem::Next);
+                    let at_end = ended_now(&mut f, next);
+                    let not_end = f.ins().bxor_imm(at_end, 1);
+                    let some = f.ins().band(some, not_end);
                     let some = f.ins().uextend(types::I64, some);
                     // Where a caller's level is the mark's: its flag.
                     let some = match flag {
@@ -6662,7 +5736,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     let ask = f.create_block();
                     f.ins().brif(some, ask, &[], fall, &[]);
                     f.switch_to_block(ask);
-                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern));
+                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern), native.extras.first().map(|e| e.0), &mut heads);
                     let lose = f.create_block();
                     f.ins().brif(holds, lose, &[], fall, &[]);
                     f.switch_to_block(lose);
@@ -6699,7 +5773,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                 }
                 Op::Check { check } => {
                     let c = native.local_checks.get(usize::from(check)).cloned().ok_or(Error::UnsupportedBackend)?;
-                    let form = crate::rust_stream::word_form(&c.ops).map_err(|_| Error::UnsupportedBackend)?;
+                    let form = crate::stream_facts::word_form(&c.ops).map_err(|_| Error::UnsupportedBackend)?;
                     // A token's check reads no mask: its function at every token of the kind.
                     let output = if c.token { 0 } else { native.block_programs.first().and_then(|b| b.masks.get(usize::from(c.mask)).copied()).ok_or(Error::UnsupportedBackend)? };
                     // The mask from the bytes where they make it: the check's function reads it
@@ -7624,7 +6698,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let marks = marks_of(words);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, open_bound: if sixteen && direct { crate::rust_stream::open_bound(native, widths, tag) } else { None }, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, asks_feed: false, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, open_bound: if sixteen && direct { crate::stream_facts::open_bound(native, widths, tag) } else { None }, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -8159,6 +7233,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::SettleBefore { .. } => vec![CODES, RECORD_STRIDE, ROWS],
         Op::DropLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE],
         Op::LoseLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE, ROWS],
+        Op::RefuseIf { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE],
         Op::Open { .. } => vec![ROWS, OPEN],
         Op::Close { .. } => vec![OPEN, ROWS],
         Op::Leaf { .. } => vec![ROWS],
@@ -8215,6 +7290,14 @@ pub struct Tier1View {
     pub totals_mask: u64,
     /// The bytes from a token's record field to the next token's (`records::RecordLayout`).
     pub record_stride: usize,
+    /// Tier 1's feed (`Ctx::more`): zero where tier 1 made every record.
+    pub more: u64,
+    pub feed: u64,
+}
+
+/// The records a call reads at most: tier 1's count, or with a feed (decision 0496) a token a byte and the end.
+fn fed_bound(tier1: &Tier1View, len: usize) -> usize {
+    if tier1.feed != 0 { len + 1 } else { tier1.nstarts }
 }
 
 /// The buffers one call writes, sized from the stream and the program's `Bounds`.
@@ -8271,28 +7354,6 @@ impl Drop for Tape {
         }
         IDS.with(|t| *t.borrow_mut() = ids);
     }
-}
-
-/// `lang`'s numbers by a program's keys, `u32::MAX` where the table has none: each entry of its table that a key names
-/// (no alias, a kind and field within a key's bits, its flags the extra's where its kind is one of `extras`, its
-/// classes among `classes`, the program's supertype classes), at the key (`kind | field << KIND_BITS | class bits <<
-/// 16`). The JIT's run reads them at run time (`Ctx::numbers`); a generated direct run holds each as a literal at its
-/// word (`rust_stream::rust_source_16`, decision 0535).
-pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], extras: &[u16]) -> Vec<u32> {
-    use rerail_tape_format::{CODE_EXTRA, KIND_BITS};
-    let mut by = vec![u32::MAX; crate::native_cpu_tape::id_slots(classes.len())];
-    for e in lang.table().entries() {
-        let Some(n) = lang.number(e) else { continue };
-        let extra = if extras.contains(&e.kind) { CODE_EXTRA } else { 0 };
-        if e.alias.is_some() || e.kind >= 1 << KIND_BITS || e.field >= 1 << 6 || e.flags != extra {
-            continue;
-        }
-        let bits: Option<u32> = e.classes.iter().map(|c| classes.iter().position(|x| x == c).map(|j| 1u32 << j)).sum();
-        let Some(bits) = bits else { continue };
-        let slot = u32::from(e.kind) | u32::from(e.field) << KIND_BITS | bits << 16;
-        by[slot as usize] = n;
-    }
-    by
 }
 
 impl CompiledStream {
@@ -8395,7 +7456,7 @@ impl CompiledStream {
             code_first: room(nodes + 1, f15),
             super_node: room(supers, rowed),
             super_kind: room(supers, rowed),
-            // The stack of open nodes: the Rust's format 16 run keeps its own here (`rust_stream`'s `open16`).
+            // The stack of open nodes: the Rust's format 16 run keeps its own here.
             open: room(nodes, true),
             returns: room(returns, true),
             counts: [0; 3],
@@ -8414,11 +7475,12 @@ impl CompiledStream {
     /// address, holds for any).
     ///
     /// # Safety
-    /// `entry` must be this program's code (`clif_rust` of `ir`), reading and writing `Ctx` as the
+    /// `entry` must be this program's code , reading and writing `Ctx` as the
     /// JIT's does.
     pub unsafe fn set_entry(&mut self, entry: Entry, frame_shift: u64) {
         self.entry = entry;
         self.frame_shift = frame_shift;
+        self.asks_feed = true;
     }
 
     /// One call over a file. `bytes` is the file (`len` its length), with 64 readable bytes
@@ -8431,7 +7493,7 @@ impl CompiledStream {
         assert!(self._fetch.is_none() || tier1.record_stride == crate::records::RecordLayout::Columns.stride() as usize, "the starts as a column where tier 2 makes the records");
         // With no room check (`Bounds::unchecked`), a tape short of the bound's is replaced first.
         if self.bounds.unchecked(self.marks) {
-            let n = self.tokens(tier1.nstarts, len);
+            let n = self.tokens(fed_bound(&tier1, len), len);
             let paths = n as u64 + 2;
             let fits = tape.room[0] as u64 > self.bounds.nodes * paths && tape.room[1] as u64 > self.bounds.supers * paths && tape.room[2] as u64 > self.bounds.pushes * paths;
             if !fits {
@@ -8447,7 +7509,7 @@ impl CompiledStream {
             return r;
         }
         crate::native_cpu_codegen::options().room_retries.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        *tape = self.full_tape(self.tokens(tier1.nstarts, len));
+        *tape = self.full_tape(self.tokens(fed_bound(&tier1, len), len));
         // SAFETY: as above, on the bound's tape.
         let r = unsafe { self.call_once(bytes, len, tier1, tape) };
         unsafe { tape.written(r == 0) };
@@ -8509,6 +7571,8 @@ impl CompiledStream {
             record_stride: tier1.record_stride as u64,
             writer: tape.writer,
             numbers: tape.numbers,
+            more: tier1.more,
+            feed: tier1.feed,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers and the
         // state in `ctx`.
@@ -8623,6 +7687,8 @@ impl CompiledStream {
             totals: totals.as_ptr().cast(),
             totals_stride: 8,
             totals_mask: u64::MAX,
+            more: 0,
+            feed: 0,
         };
         unsafe { self.call(padded.as_ptr().wrapping_add(1), bytes.len(), view, tape) }
     }
@@ -8838,7 +7904,7 @@ impl Parser {
         match self.words(&batch, &mut tape) {
             Ok(()) => Ok(tape.image()),
             Err(narrow) => self.again(narrow, |t2| {
-                let mut tape = t2.tape(self.stream(&batch, t2.starts).1);
+                let mut tape = t2.tape(self.records_bound(&batch, t2.starts));
                 self.words_with(t2, &batch, &mut tape)?;
                 Ok(tape.image())
             }),
@@ -8856,11 +7922,17 @@ impl Parser {
             Ok(()) => Ok(tape.nodes()),
             Err(narrow) => {
                 let Some(wide) = self.wide() else { return Err(narrow) };
-                let mut tape = wide.tape(self.stream(&batch, wide.starts).1);
+                let mut tape = wide.tape(self.records_bound(&batch, wide.starts));
                 self.words_with(wide, &batch, &mut tape)?;
                 Ok(tape.nodes())
             }
         }
+    }
+
+    /// The records tier 2 reads in `batch` (its first file): tier 1's count; with a feed (decision 0496), which
+    /// makes them as tier 2 asks, the most a file of its bytes has (a token a byte, and the end).
+    fn records_bound(&self, batch: &crate::native_cpu_block::Batch, e: Option<usize>) -> usize {
+        if batch.feeds.is_empty() { self.stream(batch, e).1 } else { batch.rows[0].len as usize + 1 }
     }
 
     /// Tier 1's stream `e` in `batch` (its first file), as tier 1 wrote it: its positions (room
@@ -8878,7 +7950,7 @@ impl Parser {
 
     /// A tape for the stream tier 1 wrote in `batch`.
     pub fn tape(&self, batch: &crate::native_cpu_block::Batch) -> Tape {
-        self.tier2.tape(self.tier2.tokens(self.stream(batch, self.tier2.starts).1, batch.rows[0].len as usize))
+        self.tier2.tape(self.tier2.tokens(self.records_bound(batch, self.tier2.starts), batch.rows[0].len as usize))
     }
 
     /// Tier 2's function over tier 1's buffers in `batch` (one file), into `tape`; or the word
@@ -8899,6 +7971,12 @@ impl Parser {
     /// `words_with`'s call: 0, one more than the word that refused, or `OVERFLOW` (a format 16 run's).
     fn words_raw(&self, t2: &CompiledStream, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> u64 {
         let row = batch.rows[0];
+        // Tier 1's feed, where it made the file's (decision 0496): tier 2 asks it for the records.
+        // A tier 2 that reads the records made (the JIT's) has them all made first.
+        if !t2.asks_feed {
+            batch.fed_all();
+        }
+        let fed = self.tier1.feed.zip(batch.feeds.first()).filter(|_| t2.asks_feed).map(|(f, &state)| (f.more as usize as u64, state as u64));
         let extracts = self.tier1.extracts.len();
         let starts = self.stream(batch, t2.starts);
         let outputs = batch.out[row.out as usize..].as_ptr();
@@ -8933,6 +8011,8 @@ impl Parser {
             totals_stride: 8,
             totals_mask: u64::MAX,
             record_stride: layout.stride() as usize,
+            more: fed.map_or(0, |(more, _)| more),
+            feed: fed.map_or(0, |(_, feed)| feed),
         };
         unsafe { t2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) }
     }
@@ -8946,7 +8026,7 @@ impl Parser {
     }
 
     /// The format 16 tier 2 (`sixteen`), to set its entry (`CompiledStream::set_entry`): another backend's code of
-    /// the same program on its harness (`rerail_rr_aot`'s, a test's).
+    /// the same program on its harness (a test's).
     pub fn sixteen_mut(&mut self) -> Option<&mut CompiledStream> {
         self.sixteen()?;
         self.wide.as_mut()?.sixteen.get_mut()?.as_mut()
@@ -8968,7 +8048,7 @@ impl Parser {
         let t2 = self.sixteen().ok_or("no format 16 tier 2 for this parser")?;
         let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
-        let tokens = t2.tokens(self.stream(&batch, t2.starts).1, bytes.len());
+        let tokens = t2.tokens(self.records_bound(&batch, t2.starts), bytes.len());
         // The newline index from tier 1's newline bits (`CompiledBlock::newlines`), where it has them: no scan of the
         // source. Bit `p` of the output's words is byte `p` of the file: the host puts a stripped prefix's bytes back
         // (`Batch::call`), and a prefix holds no newline.

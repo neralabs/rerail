@@ -40,6 +40,7 @@ fn python_files(root: &Path) -> BTreeMap<String, String> {
             if path.is_dir() {
                 walk(root, &path, out);
             } else if path.extension().is_some_and(|e| e == "py") {
+                // Keyed as documents are named, with `/` on every OS.
                 out.insert(path.strip_prefix(root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"), std::fs::read_to_string(&path).unwrap());
             }
         }
@@ -169,7 +170,7 @@ fn the_combined_program_has_no_relation_twice_and_no_rule_twice() {
 }
 
 fn program(name: &str) -> String {
-    crate::code_rule_dsl::logic::settings::program_text(&std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rerail"))).unwrap()
+    crate::code_rule_dsl::logic::settings::program_text(&crate::source_tree::native().join(format!("src/code_rule_dsl/typing/programs/{name}.rerail"))).unwrap()
 }
 
 /// Where `calls.rerail` answers otherwise than CPython ran, and why (2026-11-06: 84 agree, these 9 depart, none
@@ -1247,7 +1248,7 @@ fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
 #[test]
 fn leg_083_typed_counts_resolve_by_the_receivers_type() {
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/leg083");
-    let rule_src = std::fs::read_to_string(std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/leg-083-typed.rerail")).unwrap();
+    let rule_src = std::fs::read_to_string(crate::source_tree::native().join("../docs/rule-syntax/data-layer/leg-083-typed.rerail")).unwrap();
     let spans = "
 .decl at(p: symbol, s: number, what: symbol)
 at(p, s, \"lazy\") :- lazy_terminal(c), node(d, c, _, s, _), doc(d, p, _).
@@ -1520,7 +1521,7 @@ fn spike_liveness_of_the_calls_program() {
     let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("{} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
-    let counts = liveness::read_counts(&Outputs::open(&out).unwrap());
+    let counts = crate::code_rule_dsl::logic::plan::output::read_counts(&Outputs::open(&out).unwrap());
     let _ = std::fs::remove_dir_all(&out);
     let get = |m: &BTreeMap<String, u64>, w: &str| m.get(w).copied().unwrap_or(0);
     let mut rows: Vec<(&String, &BTreeMap<String, u64>)> = counts.iter().collect();

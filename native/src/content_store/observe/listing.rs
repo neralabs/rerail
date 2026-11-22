@@ -1,7 +1,7 @@
 //! A directory's entries with their stats, read as a listing (decision 0400): on macOS by `getattrlistbulk`, which
 //! returns many entries' attributes a call; elsewhere on Unix by `readdir` and `fstatat` relative to the open
-//! directory; on Windows by `FindNextFile`, whose entries carry their attributes. The observer checks a small root's
-//! kept answers against these, with no `stat` of a path.
+//! directory; on Windows by `GetFileInformationByHandleEx(FileIdBothDirectoryInfo)`, many entries a call with their
+//! ids, sizes and times. The observer checks a small root's kept answers against these, with no `stat` of a path.
 
 use super::{Kind, Stat};
 use std::ffi::OsString;
@@ -110,9 +110,8 @@ fn i64_at(b: &[u8], at: usize) -> Option<i64> {
 }
 
 /// The entries of `dir`, by name: `readdir`, then each entry's `fstatat` relative to the open directory (no path
-/// walked again), a symbolic link left to be `stat`ed on its own. On Windows std's listing is `FindNextFile`'s, and
-/// an entry's metadata is what that call gave (Windows has no inode or change time: `Stat::of`).
-#[cfg(not(target_os = "macos"))]
+/// walked again), a symbolic link left to be `stat`ed on its own.
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(super) fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(dir)? {
@@ -136,6 +135,96 @@ pub(super) fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
         out.push((e.file_name(), listed));
     }
     Ok(out)
+}
+
+/// The entries of `dir` on Windows, by name: `FILE_ID_BOTH_DIR_INFO` records, a buffer of them a call, each with the
+/// entry's file id, size, last write and change time, and the directory's volume serial once: the stat
+/// `kind_and_stat` makes of a path. A reparse point (a symbolic link, a junction) is left to be `stat`ed on its own,
+/// its answer of what it names; a directory is asked of itself (its parent's record of it keeps its times from before
+/// its entries changed). NTFS writes a file's times and size into its directory as its last handle closes: a file
+/// still open for writing may list as it was, and is named once it is closed.
+#[cfg(windows)]
+pub(super) fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
+    use std::os::windows::{ffi::OsStringExt as _, fs::OpenOptionsExt as _, io::AsRawHandle as _};
+    use windows_sys::Win32::Foundation::ERROR_NO_MORE_FILES;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_BOTH_DIR_INFO, FILE_LIST_DIRECTORY,
+        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, GetFileInformationByHandle,
+        GetFileInformationByHandleEx,
+    };
+    let opened = std::fs::OpenOptions::new()
+        .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(dir)?;
+    let handle = opened.as_raw_handle();
+    // SAFETY: plain data, written whole by the call; the handle is open across it.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: as above.
+    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+        return Err(std::io::Error::from(std::io::ErrorKind::NotADirectory));
+    }
+    let dev = i64::from(info.dwVolumeSerialNumber);
+    let ns = |ticks: i64| ticks.saturating_sub(116_444_736_000_000_000).saturating_mul(100);
+    // 64 KiB, aligned for the records (each starts on an 8-byte boundary).
+    let mut buf = vec![0u64; 8 * 1024];
+    let bytes = (buf.len() * 8) as u32;
+    let mut class = FileIdBothDirectoryRestartInfo;
+    let mut out = Vec::new();
+    loop {
+        // SAFETY: `buf` is `bytes` long and lives across the call.
+        if unsafe { GetFileInformationByHandleEx(handle, class, buf.as_mut_ptr().cast(), bytes) } == 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) {
+                break;
+            }
+            return Err(error);
+        }
+        class = FileIdBothDirectoryInfo;
+        let base = buf.as_ptr().cast::<u8>();
+        let mut at = 0usize;
+        loop {
+            if at + std::mem::size_of::<FILE_ID_BOTH_DIR_INFO>() > bytes as usize {
+                return Err(std::io::Error::other("a directory listing's record runs past its buffer"));
+            }
+            // SAFETY: inside the buffer the call filled, at a record's start (8-aligned, by NextEntryOffset).
+            let entry = unsafe { &*base.add(at).cast::<FILE_ID_BOTH_DIR_INFO>() };
+            let chars = entry.FileNameLength as usize / 2;
+            let name_at = at + std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+            if name_at + chars * 2 > bytes as usize {
+                return Err(std::io::Error::other("a directory listing's name runs past its buffer"));
+            }
+            // SAFETY: the name's UTF-16 units, inside the buffer (checked above).
+            let name = OsString::from_wide(unsafe { std::slice::from_raw_parts(base.add(name_at).cast::<u16>(), chars) });
+            if name != "." && name != ".." {
+                let attributes = entry.FileAttributes;
+                let listed = if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                    None
+                } else if attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+                    // A directory's times in its parent's listing are not moved by its own entries changing (NTFS):
+                    // asked of the directory itself, a call each.
+                    super::kind_and_stat(&dir.join(&name)).map(|(kind, stat)| (kind, Stat { size: 0, ..stat }))
+                } else {
+                    Some((Kind::File, Stat { dev, ino: entry.FileId, size: entry.EndOfFile, mtime_ns: ns(entry.LastWriteTime), ctime_ns: ns(entry.ChangeTime) }))
+                };
+                out.push((name, listed));
+            }
+            if entry.NextEntryOffset == 0 {
+                break;
+            }
+            at += entry.NextEntryOffset as usize;
+        }
+    }
+    Ok(out)
+}
+
+/// No listing with stats here: a root is not checked by its listings (`supported`).
+#[cfg(not(any(unix, windows)))]
+pub(super) fn entries(_dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
+    Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
 }
 
 /// Whether a root may be checked by its listings on this system.

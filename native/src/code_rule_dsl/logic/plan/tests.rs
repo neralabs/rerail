@@ -339,7 +339,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
 }
 
 fn root() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
+    crate::source_tree::native().join("src/code_rule_dsl/logic")
 }
 
 /// T's expected rows of `rel` (its golden `<rel>.csv`, a fixture T wrote): its lines, as T shows its rows. A fixture
@@ -595,7 +595,7 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
     let store = ContentStore::open(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     let modules = Modules::default();
-    for (name, source) in syntax::sources(&store, syntax::tests::documents()).unwrap() {
+    for (name, source) in syntax::sources(&store, syntax::fixtures::documents()).unwrap() {
         modules.bind(&db, name, source).unwrap();
     }
     let t = Connection::open_in_memory().unwrap();
@@ -649,7 +649,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
     use crate::content_store::Binding;
     let path = crate::code_rule_dsl::fixtures::temp();
     let store = ContentStore::open(&path).unwrap();
-    let docs = syntax::tests::documents();
+    let docs = syntax::fixtures::documents();
     store.bind_names(&docs.iter().map(|d| Binding { name: d.core.clone(), digest: d.digest }).collect::<Vec<_>>()).unwrap();
     let db = Connection::open(&path).unwrap();
     let modules = Modules::default();
@@ -742,7 +742,7 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
             assert!(!sets.is_empty(), "{name} reads nearest");
             let placed = lowered.placed().unwrap();
             assert!(!placed.v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. })));
-            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
+            for (rel, source) in syntax::with_nearest(&store, syntax::fixtures::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
                 if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                     db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                     for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
@@ -786,7 +786,7 @@ fn t_programs_run_natively_over_atoms_like_t() {
     let mut ran = BTreeSet::new();
     for name in ["workload", "workload_demand", "calls"] {
         let (lowered, sets) = lowered_with_nearest(program(name), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())));
-        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
+        for (rel, source) in syntax::with_nearest(&store, syntax::fixtures::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
             if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                 db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                 for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
@@ -1041,7 +1041,7 @@ fn open_files() -> Vec<std::path::PathBuf> {
             })
             .collect()
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Vec::new()
     }
@@ -1436,6 +1436,40 @@ late(f, k) :- r(f, k), v = max x : { l(f, x) }, k >= v.
     assert_eq!(got["q"], [["1", "a.fi"], ["2", "b"]]);
     assert_eq!(got["early"], [["1", "2"], ["2", "1"]]);
     assert_eq!(got["late"], [["2", "9"]]);
+}
+
+/// A node's document compared with a bound (`d = @doc(n), d < B`: hiding's bound on a `doc` read, kept once the read
+/// itself is dropped, as in main's pack's ARG004) runs natively: `d` is a document key, an integer. The native engine
+/// declined it ("comparison <": `d` had no type), and a strict run stopped.
+#[test]
+fn a_documents_key_compared_with_a_bound_runs_natively() {
+    use crate::code_rule_dsl::logic::profile;
+    // `named` reads `total`, a count over every file: a cross-file stratum, which the native set engine plans.
+    let program = r#"
+.decl ids(n: node)
+ids(n) :- kind(n, "identifier").
+.decl total(c: number)
+total(c) :- c = count : { ids(_) }.
+.decl named(n: node, c: number)
+named(n, c) :- total(c), ids(n), d = @doc(n), d < 1342177280.
+.output named
+"#;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("doc_bound");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = y\n").unwrap();
+    std::fs::write(dir.join("b.py"), "z = 1\n").unwrap();
+    let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let ran = super::corpus::run(program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    let declined = profile::declined();
+    profile::set(false);
+    let rows = ran.as_ref().ok().map(|_| crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out"), "named").unwrap());
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap();
+    assert!(!declined.keys().any(|k| k.contains("named")), "{declined:?}");
+    let rows = rows.unwrap();
+    assert!(rows.len() == 3 && rows.iter().all(|r| r[1] == "3"), "x, y and z, each with the count: {rows:?}");
 }
 
 // ---- violations ----
@@ -2802,6 +2836,33 @@ fn a_probe_on_several_columns_reads_a_combinations_rows() {
     let (order, work) = priced_first_rule(&model, &p);
     assert_eq!(order, ["d($n, $x)", "w($n, $x, $s)"]);
     assert!((work - (100.0 + 100.0 * 1.0)).abs() < 1e-6, "work {work}");
+}
+
+/// Decision 0299's combination floor is for columns one reached from another: two columns bound by a cross
+/// product's atoms are independent pairs, and most are none of the relation's. `open_tuple(t) :- kind(t, tuple),
+/// child(t, c, _), unparen(c, m), …` was planned `kind`, a scan of `unparen`, then `child` by (t, c), priced a row a
+/// pair: past the head's binding the witness pricing (Q146) made the cross product nearly free (ep2: 61 M rows).
+#[test]
+fn a_cross_products_pairs_are_not_priced_a_combinations_rows() {
+    let p = parse_version(".decl k(t: number)\n.decl e(t: number, c: number, i: number)\n.decl u(c: number, m: number)\n.decl lit(m: number)\n.decl o(t: number)\no(t) :- k(t), e(t, c, _), !lit(c), u(c, m), !lit(m).\n.output o\n").unwrap();
+    let mut model = bare_model(&p);
+    for (rel, rows, cols) in [
+        ("k", 200.0, vec![(200.0, 1.0)]),
+        ("e", 70_000.0, vec![(20_000.0, 3.5), (70_000.0, 1.0), (40.0, 1_750.0)]),
+        ("u", 65_000.0, vec![(65_000.0, 1.0), (65_000.0, 1.0)]),
+        ("lit", 30_000.0, vec![(30_000.0, 1.0)]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 70_000.0;
+    let (order, work) = priced_first_rule(&model, &p);
+    let at = |name: &str| order.iter().position(|s| s.starts_with(name)).unwrap();
+    assert!(at("e(") < at("u("), "the tuple's children before `u`, not a scan of `u` per tuple: {order:?} at {work}");
+    assert!(work < 10_000.0, "a few rows a tuple: {work} {order:?}");
 }
 
 #[test]

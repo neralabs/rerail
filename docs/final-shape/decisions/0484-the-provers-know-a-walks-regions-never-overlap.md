@@ -43,8 +43,9 @@ also kept tier 2 bigger than it needs to be, because the fact went unproved.
    tier 2 grew past its 65,533 words. Read as dead, step 35's tier 2 is 15,424 words; it was
    23,146 before the lemmas.
 
-3. **The lowering and the provers hash with a fixed seed** (`foldhash::fast::FixedState`, in
-   `bitlex_masks`, `bitlex_prove`, `bitlex_tier2` and `grammar`). A proof's search order comes
+3. **The lowering and the provers hash with a fixed hasher** (`rustc_hash`'s `FxHashMap`, which
+   has no seed, in `bitlex_masks`, `bitlex_prove`, `bitlex_tier2` and `grammar`; it was
+   `foldhash::fast::FixedState` where it was written, and the hub's 0414 had brought `rustc_hash`). A proof's search order comes
    from map iteration. With std's random seed, one grammar compiled to programs of 15,420,
    15,422 or 15,424 words from run to run. Now one grammar compiles to one program.
 

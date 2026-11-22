@@ -1184,7 +1184,7 @@ fn live_threads() -> Vec<(u32, String)> {
     }
     #[cfg(windows)]
     {
-        rerail_prof::windows_threads()
+        rerail_prof::windows_threads().into_iter().map(|(id, name)| (id, if name.is_empty() { "unnamed".to_owned() } else { name })).collect()
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
@@ -1240,8 +1240,7 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
     // links against 2.17.
     let port = unsafe { libc::syscall(libc::SYS_gettid) } as u32;
     #[cfg(windows)]
-    // SAFETY: no arguments; the calling thread's id.
-    let port = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
+    let port = rerail_prof::windows_thread_id();
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     let port = 0;
     let me = std::sync::Arc::new(parking_lot::Mutex::new(Thread {
@@ -2763,7 +2762,7 @@ fn thread_cpu(port: u32) -> Option<f64> {
     }
     #[cfg(windows)]
     {
-        rerail_prof::windows_thread_cpu(port).map(|t| t.as_secs_f64())
+        rerail_prof::windows_thread_cpu(port)
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {

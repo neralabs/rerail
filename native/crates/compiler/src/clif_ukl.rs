@@ -25,7 +25,7 @@
 //! What it does not print is an error, never a fallback: vectors, stack slots, the stack pointer, traps, and more than
 //! one result.
 
-use crate::clif_rust::{Shape, absorbed, returned_call, successors};
+use rerail_clif::rust::{Shape, absorbed, returned_call, successors};
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use std::fmt::Write;
 

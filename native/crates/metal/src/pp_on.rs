@@ -202,7 +202,7 @@ fn laid_out(kernel: &Kernel, jobs: &[Job<'_>], workers: usize, size: usize) -> R
             // SAFETY: the context as the code left it, then the buffers it wrote, within their rooms.
             unsafe {
                 p.ctx_from(&column);
-                pp_words::complete(p, r, rerail_compiler::native_cpu_pp::REASONS)
+                pp_words::complete(p, r, rerail_compiler::pp_words::REASONS)
             }
         })
         .collect();

@@ -130,7 +130,7 @@ pub fn source() -> String {
     s
 }
 
-#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux", windows)))]
 mod tests {
     use super::*;
     use crate::block::{Block, kind};

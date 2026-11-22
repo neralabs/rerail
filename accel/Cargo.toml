@@ -30,7 +30,7 @@ rerail-blocks = { path = "../native/crates/blocks" }
 # (`gpu::kernels::msl`, decision 0440 §3.3).
 rerail-ukl = { path = "../native/crates/ukl" }
 
-# The device layer, where it is (macOS and Linux): the GPU lane's targets (`gpu_lane`, `build.rs`).
+# The device layer, where it is (macOS, Linux and Windows): the GPU lane's targets (`gpu_lane`, `build.rs`).
 [target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
 # The pool's buffers and the blocks' wraps: the device layer's (decision 0440 step B).
 rerail-device = { path = "../gpu/device" }

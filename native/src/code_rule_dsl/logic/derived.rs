@@ -46,7 +46,7 @@ pub(in crate::code_rule_dsl) fn share() -> Option<Shared> {
 
 /// Derived values kept for the run while held; for a session's run (`across`, the session's generation), the values
 /// its earlier runs kept, put back at the end (decision 0090 step 5).
-pub(in crate::code_rule_dsl) struct Keep(Option<u64>, Option<crate::code_rule_dsl::logic::profile::Bound>);
+pub struct Keep(Option<u64>, Option<crate::code_rule_dsl::logic::profile::Bound>);
 
 thread_local! {
     /// A session's derived values between its runs, with the session's generation.
@@ -54,7 +54,7 @@ thread_local! {
 }
 
 impl Keep {
-    pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
+    pub fn start(across: Option<u64>) -> Self {
         let kept = across.and_then(|g| SESSION_MEMO.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, m)| m)));
         let memo = crate::code_rule_dsl::logic::profile::bind(Memoized(Some(Arc::new(parking_lot::Mutex::new(kept.unwrap_or_else(|| Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() }))))));
         Keep(across, Some(memo))
@@ -75,7 +75,7 @@ impl Drop for Keep {
 
 /// The digest of a value's inputs, written one by one. Each piece is length- or tag-delimited, so two different
 /// input lists never write the same bytes.
-pub(in crate::code_rule_dsl) struct Inputs {
+pub struct Inputs {
     a: foldhash::quality::FoldHasher<'static>,
     b: foldhash::quality::FoldHasher<'static>,
     /// Bytes written: the inputs' size, charged as `Byte` work.
@@ -83,7 +83,7 @@ pub(in crate::code_rule_dsl) struct Inputs {
 }
 
 impl Inputs {
-    pub(in crate::code_rule_dsl) fn str(&mut self, s: &str) {
+    pub fn str(&mut self, s: &str) {
         self.bytes(s.as_bytes());
     }
 
@@ -94,7 +94,7 @@ impl Inputs {
         self.bytes += s.len() as u64;
     }
 
-    pub(in crate::code_rule_dsl) fn u64(&mut self, n: u64) {
+    pub fn u64(&mut self, n: u64) {
         self.a.write_u64(n);
         self.b.write_u64(n);
         self.bytes += 8;
@@ -117,14 +117,14 @@ impl Inputs {
 /// kept plans, and the plans the store keeps, `plan::PlanKey`, decision 0116 step 2). The engine's build is in
 /// whatever keeps it, so the hasher's own version cannot change under a kept key. Two different input lists
 /// collide with odds of about 2^-128.
-pub(in crate::code_rule_dsl) fn digest(inputs: impl FnOnce(&mut Inputs)) -> u128 {
+pub fn digest(inputs: impl FnOnce(&mut Inputs)) -> u128 {
     const KEYS: (foldhash::quality::FixedState, foldhash::quality::FixedState) = (foldhash::quality::FixedState::with_seed(0x7265_7261_696c_2d61), foldhash::quality::FixedState::with_seed(0x7265_7261_696c_2d62));
     Inputs::over(&KEYS, inputs)
 }
 
 /// The value `name` over the inputs `inputs` writes: kept from an earlier request with the same digest, or `make`'s.
 /// Counted per name as a hit or a miss in the profile's decisions ("derived values").
-pub(in crate::code_rule_dsl) fn value<V: Clone + Send + Sync + 'static>(name: &'static str, inputs: impl FnOnce(&mut Inputs), make: impl FnOnce() -> V) -> V {
+pub fn value<V: Clone + Send + Sync + 'static>(name: &'static str, inputs: impl FnOnce(&mut Inputs), make: impl FnOnce() -> V) -> V {
     let memo = share();
     let digest = memo.as_ref().map(|m| {
         let keys = m.lock().keys.clone();

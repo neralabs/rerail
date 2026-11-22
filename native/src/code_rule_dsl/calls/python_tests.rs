@@ -142,10 +142,13 @@ fn python_files(root: &Path, directory: &Path, out: &mut Vec<(String, String)>) 
             python_files(root, &path, out);
         } else if path.extension().is_some_and(|extension| extension == "py") {
             out.push((
+                // A document's path is spelled with `/` on every OS, as the oracle's are.
                 path.strip_prefix(root)
                     .expect("inside the project")
-                    .to_string_lossy()
-                    .replace(std::path::MAIN_SEPARATOR, "/"),
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/"),
                 std::fs::read_to_string(&path).expect("source"),
             ));
         }

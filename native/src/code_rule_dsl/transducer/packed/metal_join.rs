@@ -293,6 +293,26 @@ fn chunk_views_source() -> String {
     )
 }
 
+/// The joins' kernels (`SOURCE`) and the chunk views' (`chunk_views_source`), to compile ahead of their first use
+/// (`MatcherDevice::kernels_ahead`): each asked for as its use asks for it (`pipeline`), so its use finds it.
+pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhead> {
+    const JOIN: [&str; 21] = [
+        "ix_bucket", "ix_place", "stage_count", "stage_scatter", "stage_map", "scan_count", "scan_scatter", "witness_count", "row_text", "row_scatter", "rows_copy",
+        "dedup_claim", "dedup_clear", "dedup_mark", "dedup_scatter", "lat_best", "lat_claim", "lat_clear", "lat_hclear", "lat_merge", "lat_rehash",
+    ];
+    let made = |variant: &'static str, name: &'static str, source: fn() -> String| -> super::device::KernelAhead {
+        let make = move || {
+            let mut made = Ok(());
+            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = pipeline(variant, name, source).map(drop)))?;
+            made
+        };
+        (format!("{variant} {name}"), Box::new(make))
+    };
+    let mut v: Vec<_> = JOIN.into_iter().map(|name| made("join", name, || SOURCE.to_owned())).collect();
+    v.extend(["axis_count", "axis_write", "view_expand"].map(|name| made("chunk_views", name, chunk_views_source)));
+    v
+}
+
 /// Every join kernel's source (`join_stages.uglykl`): the relation's reads written once (`rerail_blocks::RELATION_READS`,
 /// decision 0325), which a stage reads a relation in its block with, and the views' reads (decision 0353 step 4d),
 /// which a stage reads a view in place with: the tape's, the numbering's and the views' own, each document's view read
@@ -827,7 +847,7 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     // A relation reads none: a stage bound before to a view reads its new relation, not the view.
     (stage.v_dir, stage.r_view) = rel.view.as_ref().map_or((0, 0), |v| (v.dir, v.kind));
     stage.v_parent = 0;
-    (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.device_address().unwrap_or(0), (set.len / 2) as u32, 0));
+    (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.device_address().expect("a has axis's set where views are read in place"), (set.len / 2) as u32, 0));
     if let Some(ix) = index {
         stage.r_index = ix.index;
         stage.v_parent = u32::from(ix.walk == 1);
@@ -1312,7 +1332,7 @@ impl Batch {
             let h = home.block.header();
             let origin = if rel.view.is_some() { "a view read in place" } else if rel.part.is_some() { "the device's own" } else { "a relation in its block" };
             panic!(
-                "an index of a full relation (Q265): {origin} of {} rows, {} columns, at {} of a block of kind {} (magic {:#x}, {} used of {}); its header: arity {}, base rows {} ({:#x}), {} indexes, {} order keys; when made: arity {}, base rows {}\n  descriptor {}",
+                "an index of a full relation, not a continuation (Q265): {origin} of {} rows, {} columns, at {} of a block of kind {} (magic {:#x}, {} used of {}); its header: arity {}, base rows {} ({:#x}), {} indexes, {} order keys; when made: arity {}, base rows {}\n  descriptor {}",
                 rel.rows, rel.cols, rel.at, h.kind, h.magic, home.block.used(), home.block.reserved(), r.arity, r.base_rows, r.base_rows, r.nindex.load(std::sync::atomic::Ordering::Relaxed), r.nokey, rel.made.0, rel.made.1,
                 Building::descriptor(std::ptr::from_ref(r)).as_chunks::<8>().0.iter().map(|w| format!("{:016x}", u64::from_le_bytes(*w))).collect::<Vec<_>>().join(" ")
             );
