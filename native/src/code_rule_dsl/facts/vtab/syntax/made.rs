@@ -915,8 +915,17 @@ impl MadeRows {
     /// The rows a read of `column` by `values` matches (each also passing `keep`), the documents they name made, in
     /// their groups' ranges: `None` for a column that names no document (by its key, or `doc`'s by its path).
     fn routed(&self, column: usize, values: &[i64], keep: impl Fn(&Relation, usize) -> bool) -> Option<(Arc<Relation>, Vec<usize>)> {
+        let Some(keys) = self.route(column, values) else {
+            profile::decision("a batch's every document made by a read of a relation no document routes (decision 0494)", || format!("{} column {column} (document column {:?})", self.batch.rows.names[self.rel], self.by().column()));
+            return None;
+        };
+        self.rows_at(keys, column, values, keep)
+    }
+    /// The documents whose rows a read of `column` by `values` can find, none made: `None` for a column that names
+    /// no document.
+    fn route(&self, column: usize, values: &[i64]) -> Option<Vec<u32>> {
         let by = self.by();
-        let keys: Vec<u32> = if by.column() == Some(column) && matches!(by, ByDocument::Host(_)) {
+        Some(if by.column() == Some(column) && matches!(by, ByDocument::Host(_)) {
             // A host's node: the guests of the documents named, which make the rows.
             let guests = self.batch.guests_of()?;
             values.iter().filter_map(|&v| by.document(v)).flat_map(|h| guests.get(&h).into_iter().flatten().copied()).collect()
@@ -933,9 +942,12 @@ impl MadeRows {
         } else if self.batch.rows.module_column[self.rel] == Some(column) {
             self.batch.keys_of_modules(values)?
         } else {
-            profile::decision("a batch's every document made by a read of a relation no document routes (decision 0494)", || format!("{} column {column} (document column {:?})", self.batch.rows.names[self.rel], by.column()));
             return None;
-        };
+        })
+    }
+    /// The rows of documents `keys` whose `column` is one of `values` (each also passing `keep`), those documents
+    /// made, through each group's index of the column.
+    fn rows_at(&self, keys: Vec<u32>, column: usize, values: &[i64], keep: impl Fn(&Relation, usize) -> bool) -> Option<(Arc<Relation>, Vec<usize>)> {
         let groups = self.batch.groups_of(keys);
         let r = self.batch.made_so_far(self.rel);
         let mut rows = Vec::new();
@@ -1272,6 +1284,26 @@ impl Source for MadeRows {
             return t.lookup(column, values);
         }
         self.routed(column, values, |_, _| true).map(|(_, rows)| rows).or_else(|| self.target().lookup(column, values))
+    }
+    fn lookup_columns(&self, columns: &[usize], values: &[i64]) -> Option<Vec<usize>> {
+        if self.done().is_some() || columns.len() != values.len() {
+            return None;
+        }
+        // The documents every bound column that routes names: a row of the probe is of each's documents.
+        let mut lead = None;
+        let mut keys: Option<BTreeSet<u32>> = None;
+        for (i, (&c, &v)) in columns.iter().zip(values).enumerate() {
+            let Some(at) = self.route(c, std::slice::from_ref(&v)) else { continue };
+            lead.get_or_insert(i);
+            let at: BTreeSet<u32> = at.into_iter().collect();
+            keys = Some(match keys {
+                Some(k) => k.intersection(&at).copied().collect(),
+                None => at,
+            });
+        }
+        let (lead, keys) = (lead?, keys?);
+        let (_, rows) = self.rows_at(keys.into_iter().collect(), columns[lead], &values[lead..=lead], |r, row| columns.iter().zip(values).all(|(&c, &v)| Source::value(r, row, c) == v))?;
+        Some(rows)
     }
     fn keys_rows(&self, _column: usize) -> bool {
         match self.done() {

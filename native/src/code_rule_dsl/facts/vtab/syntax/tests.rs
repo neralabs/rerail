@@ -2532,6 +2532,35 @@ fn a_probe_by_a_document_key_makes_that_document_alone() {
     assert_eq!(found, rows(&want, want.lookup(1, &[key]).unwrap()), "its rows are the eager batch's");
 }
 
+/// A probe of `docof(n, d)` with both bound (a join's membership step) makes the documents both columns name: none
+/// where `n` is a node of another document than `d`. Probed by `n` alone and checked for `d`, it made `n`'s document,
+/// 295 of the data layer's 518 at an edit's derive of one stratum (t43 step 21). Its rows are the eager batch's.
+#[test]
+fn a_probe_by_a_node_and_another_document_makes_no_document() {
+    let store = ContentStore::open(&temp("by-node-and-key")).unwrap();
+    let docs = || -> Vec<Document> {
+        (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y={k}):\n    return g(x)\n\nclass C{k}:\n    pass\n"))).collect()
+    };
+    let reads = ["node", "child", "docof", "src_line", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let eager = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let counts: HashMap<u32, made::ViewCounts> = eager.view_counts().into_iter().collect();
+    let totals: HashMap<String, usize> = made_sources(&eager).into_iter().map(|(n, _, s)| (n.to_owned(), s.len())).collect();
+    let lazy = Batch::new(&store, docs(), &projection, &[], &[], false, None, &counts).unwrap();
+    lazy.give_totals(&totals);
+    let of = |b: &Arc<Batch>| Arc::clone(&made_sources(b).into_iter().find(|(n, _, _)| *n == "docof").expect("docof made as rows").2);
+    let (want, got) = (of(&eager), of(&lazy));
+    let (home, other) = (i64::from(lazy.docs.key(1)), i64::from(lazy.docs.key(2)));
+    let node = want.lookup(1, &[home]).unwrap().into_iter().map(|r| want.value(r, 0)).min().expect("a node of the document");
+    let rows = |s: &Arc<dyn Source>, found: Vec<usize>| -> BTreeSet<(i64, i64)> { found.into_iter().map(|r| (s.value(r, 0), s.value(r, 1))).collect() };
+    let none = got.lookup_columns(&[0, 1], &[node, other]).expect("a probe the batch keeps to its documents");
+    assert!(none.is_empty(), "a node of another document: no row");
+    assert_eq!(lazy.docs.made_count(), 0, "and no document made");
+    let found = rows(&got, got.lookup_columns(&[0, 1], &[node, home]).unwrap());
+    assert_eq!(lazy.docs.made_count(), 1, "its own document's probe made that document alone");
+    assert_eq!(found, BTreeSet::from([(node, home)]), "its row");
+}
+
 /// A tape value admitted into the batch (decision 0431 §8) runs no `ast` matcher: the files the batch was started
 /// with are matched once, and are not matched again (a value alone is no file, `Grower::admit`). Each round of guests
 /// ran the wave over every file of the chunk again, 17 s of 131 s of CPU on `all` once the reference graph's rules

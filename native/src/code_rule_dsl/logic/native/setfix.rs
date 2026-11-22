@@ -4056,13 +4056,43 @@ impl View {
         {
             return rows.into_iter().map(|r| r as u32).collect();
         }
+        if let Some(rows) = self.find_columns(cols, key) {
+            return rows;
+        }
         self.find(cols[lead], key[lead])
+    }
+    /// The rows of a probe binding several key columns, where the source keeps it to the rows they name together
+    /// (`Source::lookup_columns`: a made relation's documents every column routes to, none made for the others).
+    fn find_columns(&self, cols: &[usize], key: &[i64]) -> Option<Vec<u32>> {
+        if cols.len() < 2 || !self.eqs.is_empty() {
+            return None;
+        }
+        let src: Vec<usize> = cols.iter().map(|&k| self.cols[k]).collect();
+        self.src.lookup_columns(&src, key).map(|rows| rows.into_iter().map(|r| r as u32).collect())
     }
     /// `find_keyed`'s rows, each with its values of view columns `need` (bit `c`: column `c`), read as the source's
     /// probe found them (`Source::lookup_read`); `None` where it has no such read, or the probe is not `find`'s.
     fn find_read(&self, cols: &[usize], key: &[i64], lead: usize, need: u64) -> Option<Vec<(u32, [i64; READ])>> {
         if !self.eqs.is_empty() || self.ids.is_some() || self.cols.len() > READ {
             return None;
+        }
+        // `find_keyed`'s probe of several columns goes first where the source keeps it to them.
+        if cols.len() > 1 {
+            let src: Vec<usize> = cols.iter().map(|&k| self.cols[k]).collect();
+            if let Some(rows) = self.src.lookup_columns(&src, key) {
+                let all: Vec<usize> = self.cols.clone();
+                let mut got = vec![0i64; all.len()];
+                return Some(rows.into_iter().map(|row| {
+                    self.src.row_at(row, &all, &mut got);
+                    let mut vals = [0i64; READ];
+                    for c in 0..all.len() {
+                        if need >> c & 1 != 0 {
+                            vals[c] = got[c];
+                        }
+                    }
+                    (row as u32, vals)
+                }).collect());
+            }
         }
         // `find_keyed`'s document-kept lookup goes first where it applies.
         if let Some(dc) = self.src.doc_column()

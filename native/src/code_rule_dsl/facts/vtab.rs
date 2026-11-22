@@ -243,6 +243,13 @@ pub trait Source: Send + Sync {
     fn holds(&self, _equal: &[(usize, i64)]) -> Option<bool> {
         None
     }
+    /// The rows whose every column `columns[i]` is `values[i]` (a probe binding several key columns), found where the
+    /// source can keep the probe to the rows the columns together name: a made relation's to the documents every
+    /// bound column routes to (`docof(n, d)` by both: none where `n`'s document is not `d`'s), none made for the
+    /// others. `None`: no such probe; the caller probes one column and checks the rest.
+    fn lookup_columns(&self, _columns: &[usize], _values: &[i64]) -> Option<Vec<usize>> {
+        None
+    }
     /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).
     fn doc_column(&self) -> Option<usize> {
         None
