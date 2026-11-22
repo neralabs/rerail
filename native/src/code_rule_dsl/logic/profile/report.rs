@@ -22,13 +22,9 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 reruns: u64::from(d.reruns),
                 gpu: d.gpu_seconds,
                 encode: d.encode_cpu,
-                upload: d.upload_cpu,
                 wait: d.wait_cpu,
                 wait_wall: d.wait_wall,
                 decode: d.decode_cpu,
-                uploads: u64::from(d.uploads),
-                upload_bytes: d.upload_bytes,
-                upload_by: d.upload_by,
                 in_place: u64::from(d.in_place),
                 sorts: u64::from(d.sorts),
                 sort_hits: u64::from(d.sort_hits),
@@ -289,15 +285,15 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
         let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}\t{}", work(steps), s.join(","), stepped.join(","));
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
-    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\tplanned_scanned\tsteps\tgpu_cpu_s\tgpu_encode_s\tgpu_upload_s\tgpu_wait_s\tgpu_decode_s\tgpu_submissions\tgpu_waved\tgpu_rules\tgpu_steps\tgpu_sorts\tgpu_values\tgpu_rows\tgpu_joins_s\tgpu_other_work\tgpu_sorts_made\tgpu_rows_made\tgpu_upload_values\trules\tgpu_views\n");
+    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\tplanned_scanned\tsteps\tgpu_cpu_s\tgpu_encode_s\tgpu_wait_s\tgpu_decode_s\tgpu_submissions\tgpu_waved\tgpu_rules\tgpu_steps\tgpu_sorts\tgpu_values\tgpu_rows\tgpu_joins_s\tgpu_other_work\tgpu_sorts_made\tgpu_rows_made\trules\tgpu_views\n");
     for (key, t) in &state.placements {
         let _ = writeln!(
             placement_tsv,
-            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{:.0}\t{}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{}\t{}\t{:.0}\t{:.0}\t{:.0}\t{:.0}\t{:.0}\t{:.6}\t{:.0}\t{}\t{}\t{}\t{}\t{:.0}",
+            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{:.0}\t{}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{}\t{}\t{:.0}\t{:.0}\t{:.0}\t{:.0}\t{:.0}\t{:.6}\t{:.0}\t{}\t{}\t{}\t{:.0}",
             t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(","), t.planned_scanned, t.steps,
-            t.gpu_cpu, t.gpu.encode, t.gpu.upload, t.gpu.wait, t.gpu.decode, t.gpu.submissions, t.gpu.waved,
+            t.gpu_cpu, t.gpu.encode, t.gpu.wait, t.gpu.decode, t.gpu.submissions, t.gpu.waved,
             t.gpu_terms[0], t.gpu_terms[1], t.gpu_terms[2], t.gpu_terms[3], t.gpu_terms[4], t.gpu_terms[5], t.gpu_terms[6],
-            t.gpu.sorts, t.gpu.rows, t.gpu.upload_bytes / 8, t.rules, t.gpu_terms[7]
+            t.gpu.sorts, t.gpu.rows, t.rules, t.gpu_terms[7]
         );
     }
     std::fs::write(dir.join("placement.tsv"), placement_tsv)?;

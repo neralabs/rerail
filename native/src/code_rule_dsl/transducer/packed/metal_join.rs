@@ -25,7 +25,8 @@
 //! **Keys.** A relation read by keys is sorted on the device by a hash of its key columns (`rel_hash`, then
 //! the GPU lane's radix sort (`rerail_accel::gpu::join`) of 16, 24 or 32 bits, as its rows need), and a binding finds its run of equal hashes by a
 //! bounded binary search; every candidate's keys are compared whole, so a collision costs a comparison, never a row.
-//! A relation's upload (`DevRel`) and each of its sorts (`DevIndex`) stay on the device while the engine holds them.
+//! A relation (`DevRel`, read where it lies: nothing is uploaded, decision 0353 step 6) and each of its sorts
+//! (`DevIndex`) stay on the device while the engine holds them.
 //!
 //! **One submission.** A `Batch` encodes every stage of every rule it is given into one submission of the device
 //! layer's queue (serial: each dispatch sees the last one's writes), and commits a new one only when the launch budget
@@ -483,9 +484,9 @@ pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nod
     };
     let mut runs = 0;
     runs_of(&mut |_, _| runs += 1);
-    // Alone in its block, with room for an index by each column: strata probe an axis by `n` and by `a`. Each column
+    // Alone in its block, with room for an index by every key of its columns (`Part::AXIS_INDEXES`). Each column
     // its ids' low bits, under the documents' keys.
-    let (out_rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, 2, runs);
+    let (out_rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, Part::AXIS_INDEXES, runs);
     let mut k = 0;
     runs_of(&mut |first, key| {
         keys.put(k, first, key);
@@ -527,7 +528,7 @@ pub(in crate::code_rule_dsl) struct DevRel {
     pub(in crate::code_rule_dsl) at: u64,
     /// Its dead rows' delta's offset in that block (`Stage::r_dead`); 0 when it has none.
     pub(in crate::code_rule_dsl) dead: u64,
-    /// The relation, when it is the device's own (`empty`, `upload`): what the host reads it by once the device
+    /// The relation, when it is the device's own (`empty`): what the host reads it by once the device
     /// wrote it.
     part: Option<crate::code_rule_dsl::facts::rows::Part>,
     /// The block its relation lies in (none for words): where its indexes go (decision 0325 step 5).
@@ -628,24 +629,16 @@ impl DevRel {
         }
     }
 
-    /// A relation of `cols` columns and `rows` rows, its values given by `fill` (column `c` at
-    /// `[c * rows .. (c + 1) * rows]`) and written by the host into a relation of the device's own.
-// copy (0353 step 6): an upload of rows from the host. It goes with its last caller (decision 0353).
-    pub(in crate::code_rule_dsl) fn upload(cols: usize, rows: usize, fill: impl FnOnce(&mut [i64])) -> Result<DevRel, Error> {
-        // copy (0353 step 6): its site (row 5).
-        const UPLOAD: rerail_prof::copies::Site = rerail_prof::copies::Site::new(5, "6", "rows uploaded from the host (DevRel::upload)");
-        UPLOAD.time(|| (Self::upload_in(cols, rows, fill), 8 * cols * rows))
-    }
-
-    fn upload_in(cols: usize, rows: usize, fill: impl FnOnce(&mut [i64])) -> Result<DevRel, Error> {
-        let mut values = vec![0i64; cols * rows];
-        fill(&mut values);
+    /// A test's relation of the device's own, `cols` columns and `rows` rows, each value `value(c, r)` written once
+    /// where it lies.
+    #[cfg(test)]
+    fn written(cols: usize, rows: usize, value: impl Fn(usize, usize) -> i64) -> Result<DevRel, Error> {
         let dev = DevRel::empty(cols, rows)?;
         let rel = dev.part.as_ref().expect("its own").rel();
         for c in 0..cols {
-            for (r, &v) in values[c * rows..(c + 1) * rows].iter().enumerate() {
+            for r in 0..rows {
                 // SAFETY: row `r` is claimed (`for_device`), and nothing else writes the relation yet.
-                unsafe { rel.rows.put(r as u32, c, v) };
+                unsafe { rel.rows.put(r as u32, c, value(c, r)) };
             }
         }
         Ok(dev)
@@ -1458,7 +1451,7 @@ impl Batch {
             }
 // copy (0353 step 6): a second key's index copies the relation. It goes: a relation is made with room for
 // the indexes its readers probe (decision 0353).
-            // By where the relation lies: the device's own (an upload, a fixpoint's delta) has room for its first key's
+            // By where the relation lies: the device's own (a fixpoint's delta) has room for its first key's
             // index alone; one in a block of the run's shares the block's room with the relations beside it.
             const MOVED_OWN: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a second key's index (DevIndex::moved): the device's own");
             const MOVED_IN_BLOCK: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a key's index (DevIndex::moved): in a block with no room left");
@@ -1872,7 +1865,7 @@ pub mod tests {
             return;
         }
         let n = 300;
-        let src = DevRel::upload(2, n, |v| for (i, x) in v.iter_mut().enumerate() { *x = i as i64 }).unwrap();
+        let src = DevRel::written(2, n, |c, r| (c * n + r) as i64).unwrap();
         let dst = DevRel::empty(2, n).unwrap();
         let (sb, db) = (src.home.clone().unwrap(), dst.home.clone().unwrap());
         let (s0, d0) = (rerail_blocks::region::whole(&sb.block).region().version(), rerail_blocks::region::whole(&db.block).region().version());
@@ -1898,7 +1891,7 @@ pub mod tests {
         }
         let n = 1000;
         let cols: Vec<Vec<i64>> = (0..4).map(|c| rows(n, 11 + c, 50)).collect();
-        let rel = DevRel::upload(4, n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap();
+        let rel = DevRel::written(4, n, |c, r| cols[c][r]).unwrap();
         let mut batch = Batch::new().unwrap();
         let keys: [&[usize]; 9] = [&[0], &[1], &[2], &[3], &[0, 1], &[0, 2], &[0, 3], &[1, 2], &[1, 3]];
         let mut moved = None;
@@ -1913,7 +1906,7 @@ pub mod tests {
         assert_eq!(std::rc::Rc::strong_count(&moved), 1, "no handle of the stage's is left but this one");
         drop(moved);
         // A relation made meanwhile takes the room a moved relation given back would have left.
-        let _after = DevRel::upload(4, n, |v| v.fill(-1)).unwrap();
+        let _after = DevRel::written(4, n, |_, _| -1).unwrap();
         batch.finish().expect("its index built into the relation it moved, still held");
     }
 
@@ -1931,7 +1924,7 @@ pub mod tests {
         let c0 = rows(nc, 5, 4000);
         let up = |cols: &[&Vec<i64>]| {
             let n = cols[0].len();
-            DevRel::upload(cols.len(), n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap()
+            DevRel::written(cols.len(), n, |c, r| cols[c][r]).unwrap()
         };
         let (ra, rb, rc) = (up(&[&a0, &a1]), up(&[&b0, &b1]), up(&[&c0]));
         let mut batch = Batch::new().unwrap();
@@ -2023,8 +2016,7 @@ pub mod tests {
         let c0 = rows(nc, 5, 4000);
         let up = |cols: &[&Vec<i64>]| {
             let n = cols[0].len();
-            // copy: not block data (a test's literal rows)
-            DevRel::upload(cols.len(), n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap()
+            DevRel::written(cols.len(), n, |c, r| cols[c][r]).unwrap()
         };
         let screen = |keys: &[i64], key: u32| {
             let f = crate::code_rule_dsl::facts::rows::FactsBloom::new(crate::code_rule_dsl::logic::bloom::kept_words_for(keys.len()));
@@ -2107,11 +2099,7 @@ pub mod tests {
         let (c0, c1) = (rows(n, 31, 97), rows(n, 32, 13));
         // A device relation's block has room for one index: one relation a key.
         let up = || {
-            DevRel::upload(2, n, |v| {
-                v[..n].copy_from_slice(&c0);
-                v[n..].copy_from_slice(&c1);
-            })
-            .unwrap()
+            DevRel::written(2, n, |c, r| if c == 0 { c0[r] } else { c1[r] }).unwrap()
         };
         let (dev0, dev1) = (up(), up());
         // A host relation in its block, bound before its index was added: a block without a slab of its own is bound

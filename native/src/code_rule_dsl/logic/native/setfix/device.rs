@@ -1248,12 +1248,6 @@ fn placed(rel: &Arc<InRel>) -> Option<(crate::code_rule_dsl::facts::rows::InBloc
     }
 }
 
-/// The device's handle to `rel`'s columns `need` and `cols`, its index by `cols` (none when it has no keys), and
-/// where each of its columns lies in the handle (`mj::NONE`: not held). Nothing is kept of it between strata
-/// (decision 0478 steps 1 and 3): rows in a block, and a view read in place, are read where they lie, their indexes
-/// found in their blocks (or built there by `batch`); a copy (rows uploaded, a view made on the device) is made for
-/// this stratum, holding only the columns it reads, and its index built with it. A stratum in flight holds its own.
-#[allow(clippy::type_complexity)]
 /// A filtered view's constants (`View::eqs`) as keys its stage adds (`with_consts`): each one's column where the
 /// device reads it, and its value.
 type Consts = Vec<(u32, i64)>;
@@ -1269,8 +1263,13 @@ fn with_consts(mut d: mj::Stage, consts: &[(u32, i64)]) -> mj::Stage {
     d
 }
 
-/// `rel` on the device, for a stage of mode `mode` that probes it by `cols` and reads `need`: its relation, its index
-/// or walk, where each of its columns lies, and the constants its stage adds as keys (a filtered view's).
+/// The device's handle to `rel`'s columns `need` and `cols` for a stage of mode `mode`, its index by `cols` (none
+/// when it has no keys), where each of its columns lies in the handle (`mj::NONE`: not held), and the constants its
+/// stage adds as keys (a filtered view's). Nothing is kept of it between strata (decision 0478 steps 1 and 3): rows
+/// in a block, and a view read in place, are read where they lie, their indexes found in their blocks (or built there
+/// by `batch`). Nothing is uploaded (decision 0353 step 6): rows read neither way refuse the stratum (`Err`), which
+/// runs on the CPU.
+#[allow(clippy::type_complexity)]
 fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vec<u32>, Consts), String> {
     // Rows in a block are read where they lie (decision 0325 step 3).
     if let Some((b, ncols)) = placed(rel) {
@@ -1324,11 +1323,8 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
         return Ok((dev, Some(ix), place, consts));
     }
-    let c0 = thread_cpu();
     let whole = matches!(&rel.view, Some(v) if v.whole() && rel.ndead == 0);
-    let n_all = rel.len();
-    let ids: Option<Vec<usize>> = (rel.ndead > 0).then(|| (0..n_all).filter(|&id| !is_dead(&rel.dead, id as u32)).collect());
-    let n = ids.as_ref().map_or(n_all, Vec::len);
+    let n = rel.len() - rel.ndead;
     // A whole view the device reads in place (decision 0353 step 4).
     let made = match &rel.view {
         Some(view) if whole => view.src.device_view().filter(|d| d.rows == n),
@@ -1345,77 +1341,31 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
             crate::code_rule_dsl::prof::count(["device.view_read.node", "device.view_read.child", "device.view_read.field", "device.view_read.core", "device.view_read.axis", "device.view_read.line", "device.view_read.end_line", "device.view_read.col", "device.view_read.docof", "device.view_read.tline", "device.view_read.tape", "device.view_read.depth", "device.view_read.order"].get(view as usize).copied().unwrap_or("device.view_read.other"), n);
             (dev, (0..ncols).collect())
         }
-        None => {
+        // No rows: an empty relation of the device's own, nothing read.
+        None if n == 0 => {
             let mut want: Vec<usize> = need.iter().chain(cols).map(|&c| owner_col(rel, c)).collect();
             want.sort_unstable();
             want.dedup();
-            let k = want.len();
-            // The process's device budget short (the syntax side's tapes hold most of it): the pool's free buffers
-            // give theirs back first.
-            if mj::device_bytes_left() < 8 * k * n + headroom() {
-                mj::give_back();
-            }
-            let dev = {
-                // What each upload read, and why it was not read where it lies: what step 6 removes, by view.
-                if let Some(view) = &rel.view {
-                    let why = if ids.is_some() {
-                        "dead rows"
-                    } else if !view.whole() {
-                        "filtered by constants"
-                    } else if let Some(b) = view.src.in_block() {
-                        if b.rows as usize == n { "in a block, not taken" } else { "in a block of other rows" }
-                    } else if view.src.device_view().is_some() {
-                        "read in place, of other rows"
-                    } else {
-                        "in no block, not read in place"
-                    };
-                    let cols: String = view.src.columns().join(",").chars().take(60).collect();
-                    crate::code_rule_dsl::prof::count_named(format!("device.upload ({why}): {cols}"), 8 * k * n);
-                }
-// copy (0353 step 6): rows uploaded from the host for a stratum (decision 0353).
-                let dev = mj::DevRel::upload(k, n, |v| {
-                    let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
-                    match &rel.view {
-                        Some(view) if whole => {
-                            // The source's rows in order, the columns held read at once per row (`Source::for_rows`).
-                            view.src.for_rows(&want, &mut |r, row| {
-                                if r >= n {
-                                    return;
-                                }
-                                for (c, &x) in row.iter().enumerate() {
-                                    v[c * n + r] = x;
-                                }
-                            });
-                        }
-                        None => {
-                            // Each wanted value read where it lies (`RowRef::Rows`), not the row copied whole.
-                            for r in 0..n {
-                                let row = rel.at(row_of(r));
-                                for (c, &w) in want.iter().enumerate() {
-                                    v[c * n + r] = row.at(w);
-                                }
-                            }
-                        }
-                        Some(_) => {
-                            for r in 0..n {
-                                let row = rel.at(row_of(r)).read();
-                                for (c, &w) in want.iter().enumerate() {
-                                    v[c * n + r] = row.at(w);
-                                }
-                            }
-                        }
-                    }
-                })
-                .map_err(|e| format!("{e:?}: an upload of {n} rows, {k} columns"))?;
-                rep.uploads += 1;
-                rep.upload_bytes += dev.bytes() as u64;
-                rep.upload_cpu += thread_cpu() - c0;
-                let by = &mut rep.upload_by[if rel.view.is_some() { profile::UPLOAD_VIEW } else { profile::UPLOAD_FLAT }];
-                by.0 += dev.bytes() as u64;
-                by.1 += thread_cpu() - c0;
-                dev
+            (mj::DevRel::empty(want.len(), 0).map_err(|e| format!("{e:?}: an empty relation"))?, want)
+        }
+        // Nothing is uploaded (decision 0353 step 6): rows neither in a block nor read in place refuse the stratum,
+        // which runs on the CPU, reading them where they lie. Counted by why and by the relation's columns or name.
+        None => {
+            let why = match &rel.view {
+                _ if rel.ndead > 0 => "dead rows",
+                Some(view) if !view.whole() => "filtered by constants",
+                Some(view) if view.src.in_block().is_some() => "in a block of other rows",
+                Some(view) if view.src.device_view().is_some() => "read in place, of other rows",
+                Some(_) => "in no block, not read in place",
+                None => "rows in no block",
             };
-            (dev, want)
+            let what: String = match &rel.view {
+                Some(view) => view.src.columns().join(","),
+                None => rel.table_name().unwrap_or("?").to_owned(),
+            };
+            let what: String = what.chars().take(60).collect();
+            crate::code_rule_dsl::prof::count_named(format!("device.not_in_place ({why}): {what}"), n);
+            return Err(format!("a relation not read in place ({why}: {what}) has no device form"));
         }
     };
     let dev = Rc::new(dev);
@@ -1817,7 +1767,7 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
             Err(e) => return Err(e),
         }
     }
-    rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu - rep.upload_cpu).max(0.0);
+    rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu).max(0.0);
     let rows: u64 = rep.rows;
     crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "head rows read back", rows);
     LAST.with_borrow_mut(|l| *l = Some(rep));
@@ -1966,7 +1916,7 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
         drop(runs);
         return Ok(None);
     }
-    rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;
+    rep.encode_cpu = thread_cpu() - c0;
     let t = TICKETS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     SUSPENDED.with_borrow_mut(|s| s.insert(t, (runs, wave, rep, live)));
     // Its stratum resumes on this thread, which holds its runs and its wave (`lanes::wave::kept_here`).
@@ -2905,7 +2855,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     }
     rep.decode_cpu += thread_cpu() - d0;
     rep.rounds = rounds as u32;
-    rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu - rep.upload_cpu).max(0.0);
+    rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu).max(0.0);
     LAST.with_borrow_mut(|l| *l = Some(rep));
     Ok(made)
 }

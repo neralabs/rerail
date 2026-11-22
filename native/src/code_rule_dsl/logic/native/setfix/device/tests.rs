@@ -1000,7 +1000,7 @@
                         assert!(r.made > 2000 && r.arena_reruns >= 1, "{case}: texts made in an arena that filled once: {r:?}");
                         // Symbols' texts read in place through the atoms directory (decision 0478 step 2e): no names
                         // uploaded, no per-symbol table made.
-                        assert_eq!((r.per_symbol, r.upload_by[super::profile::UPLOAD_NAMES].0), (0, 0), "{case}: symbols read in place: {r:?}");
+                        assert_eq!(r.per_symbol, 0, "{case}: symbols read in place: {r:?}");
                     }
                 }
                 let counts = super::super::step_counts(&db, "dev_fn").unwrap();
@@ -1046,7 +1046,7 @@
         let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         let (dev, _, place, _) = super::resident(&rel, &[1, 2], &[], crate::code_rule_dsl::transducer::packed::metal_join::JOIN, &mut batch, &mut rep).expect("resident");
-        assert_eq!((rep.in_place, rep.uploads, rep.upload_bytes), (1, 0, 0), "read in place: {rep:?}");
+        assert_eq!(rep.in_place, 1, "read in place: {rep:?}");
         assert_eq!((dev.rows, dev.cols), (n, 3));
         assert_eq!(place, [0, 1, 2], "each column at its own place");
         let cols = [StatColumn::Rel(&rel, 1), StatColumn::Rel(&rel, 2)];
@@ -1214,12 +1214,11 @@
         }
     }
 
-    /// Decision 0353 step 4: a view whose tapes the device does not read is not made on the device (no view is made
-    /// from the tape's answers); it is given to the device by the upload of step 6's row 5 alone. An upload into a
-    /// batch a refusal dropped uncommitted is not kept: the next stratum uploads it again and reads the host's rows,
-    /// not a relation nothing wrote (decision 0325 step 6; the lost findings of a refused `attr_of`, 2026-11-17).
+    /// Decision 0353 steps 4 and 6: a view whose tapes the device does not read is neither made on the device (no view
+    /// is made from the tape's answers) nor uploaded: its stratum is refused, named, and runs on the CPU, which reads
+    /// its rows where they lie. Nothing of it is encoded into the batch.
     #[test]
-    fn a_view_not_read_in_place_is_not_made_on_the_device() {
+    fn a_view_not_read_in_place_refuses_its_stratum() {
         use crate::code_rule_dsl::facts::core;
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
         use crate::code_rule_dsl::logic::native::setfix::InRel;
@@ -1247,29 +1246,17 @@
         let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
         assert!(src.device_view().is_none(), "not read in place, and not made");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
-        // Encoded into a batch a refusal drops uncommitted: nothing ran it, and nothing of it is kept (decision 0478
-        // step 3: a copy is made at each stratum, never cached).
-        let mut refused = mj::Batch::new().expect("the device");
-        let mut rep = super::Report::default();
-        super::resident(&rel, &[0, 1], &[], mj::JOIN, &mut refused, &mut rep).expect("resident");
-        assert_eq!(rep.uploads, 1, "uploaded: {rep:?}");
-        drop(refused);
         let mut batch = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
-        let (dev, _, place, _) = super::resident(&rel, &[0, 1], &[], mj::JOIN, &mut batch, &mut rep).expect("resident");
-        assert_eq!(rep.uploads, 1, "uploaded again: {rep:?}");
-        batch.finish().unwrap();
-        let n = src.len();
-        for c in [0, 1] {
-            let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
-            assert_eq!(dev.column(place[c] as usize), host, "column {c}");
-        }
+        let Err(why) = super::resident(&rel, &[0, 1], &[], mj::JOIN, &mut batch, &mut rep) else { panic!("a view not read in place has no device form") };
+        assert!(why.contains("not read in place") && why.contains("has no device form"), "{why}");
+        assert_eq!(rep.in_place, 0, "nothing bound: {rep:?}");
         let _ = std::fs::remove_file(&store_path);
     }
 
     /// Decision 0353 step 4: a view filtered by constants (`WHERE idx = 0`, `View::eqs`) is read in place whole, its
     /// constants keys its stage adds: probed by a column, its index is over that column and the filtered one, and
-    /// nothing of it is uploaded. A stage that checks no keys (a filter's) uploads it as before.
+    /// nothing of it is uploaded. A stage that checks no keys (a filter's) refuses it: nothing is uploaded (step 6).
     #[test]
     fn a_filtered_view_is_read_in_place_its_constants_keys() {
         use crate::code_rule_dsl::facts::core::{self, Built};
@@ -1302,7 +1289,7 @@
             // Probed by its parent (the view's column 1).
             let (dev, ix, place, consts) = super::resident(&rel, &[0, 1], &[1], mode, &mut batch, &mut rep).expect("resident");
             batch.finish().unwrap();
-            assert_eq!((rep.in_place, rep.uploads), (1, 0), "{mode}: read in place: {rep:?}");
+            assert_eq!(rep.in_place, 1, "{mode}: read in place: {rep:?}");
             assert!(dev.view.is_some() && ix.is_some(), "{mode}: the view, by an index");
             assert_eq!(dev.rows, src.len(), "{mode}: the whole view's rows");
             assert_eq!(place, [1, 0], "{mode}: each column at its source's place");
@@ -1310,13 +1297,11 @@
             let d = super::with_consts(mj::Stage::default(), &consts);
             assert_eq!((d.nkeys, d.key_kind[0], d.key_const[0], d.key_rcol[0]), (1, mj::CONST, 0, 2), "{mode}: a constant key");
         }
-        // A filter's stage checks no keys: uploaded, the filtered rows alone.
+        // A filter's stage checks no keys: refused, nothing uploaded.
         let mut batch = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
-        let (dev, _, _, consts) = super::resident(&rel, &[0, 1], &[], mj::FILTER, &mut batch, &mut rep).expect("resident");
-        batch.finish().unwrap();
-        let first: usize = (0..src.len()).filter(|&r| src.value(r, 2) == 0).count();
-        assert_eq!((rep.uploads, dev.rows, consts.len()), (1, first, 0), "a filter's: uploaded, its rows: {rep:?}");
+        let Err(why) = super::resident(&rel, &[0, 1], &[], mj::FILTER, &mut batch, &mut rep) else { panic!("a filter's filtered view has no device form") };
+        assert!(why.contains("filtered by constants"), "{why}");
         let _ = std::fs::remove_file(&store_path);
     }
 
@@ -1355,12 +1340,12 @@
             let (dev, ix, _, _) = super::resident(rel, &[], &[2], mj::JOIN, &mut batch, &mut rep).expect("resident");
             batch.finish().unwrap();
             assert!(dev.view.is_some() && ix.is_some(), "a view read in place, by its index");
-            (rep.sorts, rep.sort_hits, rep.uploads)
+            (rep.sorts, rep.sort_hits, rep.in_place)
         };
-        assert_eq!(probe(&rel), (1, 0, 0), "the first stratum builds the index");
+        assert_eq!(probe(&rel), (1, 0, 1), "the first stratum builds the index");
         let again = Arc::clone(&rel);
         let other = std::thread::spawn(move || probe(&again)).join().unwrap();
-        assert_eq!(other, (0, 1, 0), "another thread's stratum finds it in the view's block");
+        assert_eq!(other, (0, 1, 1), "another thread's stratum finds it in the view's block");
         let _ = std::fs::remove_file(&store_path);
     }
 
@@ -1662,7 +1647,7 @@
         let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
         let h = format!("r:{}", hex("has_t"));
         // h0(n, a) :- q(n), has(n, a): by the node. h0(n, a) :- q(a), has(n, a): by the ancestor.
-        // h0(n, a) :- has(n, a): whole, its rows uploaded (`None`).
+        // h0(n, a) :- has(n, a): whole, not read in place: refused, on the CPU (`None`; nothing is uploaded).
         for (col, rule) in [(Some(0), format!("pos {q} v0\npos {h} v0 v1\nhead v0 v1")), (Some(1), format!("pos {q} v1\npos {h} v0 v1\nhead v0 v1")), (None, format!("pos {h} v0 v1\nhead v0 v1"))] {
             let want = expect(col.unwrap_or(0));
             assert!(want.len() > 20, "by column {col:?}: {} rows", want.len());
@@ -1681,8 +1666,7 @@
                 super::super::close(&db, "has_test").unwrap();
                 if device {
                     let r = report.as_ref().expect("a device run");
-                    assert!(r.refused.is_none(), "by column {col:?}: {r:?}");
-                    assert_eq!(r.uploads == 0, col.is_some(), "by column {col:?}: uploaded only whole: {r:?}");
+                    assert_eq!(r.refused.is_none(), col.is_some(), "by column {col:?}: refused only whole: {r:?}");
                 }
                 let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
                 rows.sort_unstable();

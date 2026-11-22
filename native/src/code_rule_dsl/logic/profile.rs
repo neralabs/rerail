@@ -366,7 +366,7 @@ pub struct PlacedTotal {
     /// how many were estimated over it.
     pub joins: [(u64, f64, f64, u64); 3],
     /// Its runs on the device (decision 0095, step 4), summed: rules, stages, submissions, dispatches, the GPU's
-    /// time, this thread's CPU encoding, waiting and reading back, uploads, residency hits; and why the device
+    /// time, this thread's CPU encoding, waiting and reading back, residency hits; and why the device
     /// refused it, when it was placed there and did not run there.
     pub gpu: GpuTotal,
     pub refused: Option<String>,
@@ -385,15 +385,10 @@ pub struct GpuTotal {
     pub reruns: u64,
     pub gpu: f64,
     pub encode: f64,
-    pub upload: f64,
     pub wait: f64,
     pub wait_wall: f64,
     pub decode: f64,
-    pub uploads: u64,
-    pub upload_bytes: u64,
-    /// Uploads by what was read (`UPLOAD_KINDS`): bytes and the host's CPU.
-    pub upload_by: [(u64, f64); 3],
-    /// Relations read where they lie, in their block (decision 0325): nothing uploaded.
+    /// Relations read where they lie, in their block (decision 0325): nothing is uploaded (decision 0353 step 6).
     pub in_place: u64,
     pub sorts: u64,
     pub sort_hits: u64,
@@ -425,16 +420,9 @@ impl GpuTotal {
         self.reruns += o.reruns;
         self.gpu += o.gpu;
         self.encode += o.encode;
-        self.upload += o.upload;
         self.wait += o.wait;
         self.wait_wall += o.wait_wall;
         self.decode += o.decode;
-        self.uploads += o.uploads;
-        self.upload_bytes += o.upload_bytes;
-        for (a, b) in self.upload_by.iter_mut().zip(&o.upload_by) {
-            a.0 += b.0;
-            a.1 += b.1;
-        }
         self.in_place += o.in_place;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
@@ -450,9 +438,9 @@ impl GpuTotal {
         self.screened += o.screened;
     }
 
-    /// The host's CPU on the device's work: encoding, uploads, waiting, reading back.
+    /// The host's CPU on the device's work: encoding, waiting, reading back.
     fn host(&self) -> f64 {
-        self.encode + self.upload + self.wait + self.decode
+        self.encode + self.wait + self.decode
     }
 }
 
@@ -2229,12 +2217,10 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ran.len(), sum.runs, sum.rules, sum.stages, cpu, all_runs - sum.runs, elsewhere);
     let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave; {} stages' grids sized on the device; {} stages screened by their relation's kept filter",
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized, sum.screened);
-    let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
-        ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}; sorts made {}, found in their blocks {}, copied for a key past their blocks' room {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.sorts, sum.sort_hits, sum.moved, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
-    let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
-    let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
+    let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
+        ms(sum.host()), ms(sum.encode), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
+    let _ = writeln!(r, "  relations read in place {}; sorts made {}, found in their blocks {}, copied for a key past their blocks' room {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
+        sum.in_place, sum.sorts, sum.sort_hits, sum.moved, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
     let mut top = ran.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
     // A stratum runs once per chunk and may run some on each side: its GPU runs' CPU and work beside its CPU runs'.
@@ -3092,13 +3078,6 @@ pub mod tests {
 
 }
 
-/// What a device's uploads read (`Report::upload_by`): a flat relation's rows (the store's), a view's rows (a
-/// source's, a tape view's read row by row), and the names of symbols (text tests, `str_cmp`).
-pub const UPLOAD_KINDS: [&str; 3] = ["flat relations", "views", "names"];
-pub const UPLOAD_FLAT: usize = 0;
-pub const UPLOAD_VIEW: usize = 1;
-pub const UPLOAD_NAMES: usize = 2;
-
 /// What a stratum's device run did, for the profile.
 #[derive(Clone, Debug, Default)]
 pub struct Report {
@@ -3123,7 +3102,7 @@ pub struct Report {
     pub admit_waits: u32,
     pub admit_seconds: f64,
     pub gpu_seconds: f64,
-    /// This thread's CPU: encoding (uploads and sorts' encoding included), waiting, and reading the rows back into
+    /// This thread's CPU: encoding (sorts' encoding included), waiting, and reading the rows back into
     /// the store.
     pub encode_cpu: f64,
     pub wait_cpu: f64,
@@ -3134,12 +3113,6 @@ pub struct Report {
     /// Of those, rows the device wrote in place into their head's block, which the store takes as they lie
     /// (decision 0325 step 4): none read back.
     pub placed: u64,
-    pub upload_cpu: f64,
-    /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
-    pub uploads: u32,
-    pub upload_bytes: u64,
-    /// The uploads by what they read (`UPLOAD_KINDS`, in order): bytes and this thread's CPU.
-    pub upload_by: [(u64, f64); 3],
     /// Relations read where they lie, in their block (decision 0325).
     pub in_place: u32,
     pub sorts: u32,

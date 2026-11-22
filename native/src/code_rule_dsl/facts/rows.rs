@@ -1280,6 +1280,12 @@ impl Part {
         Part::try_new_with(life, k, rows, index_room(rows, indexes), false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
     }
 
+    /// The indexes an axis's relation has room for (`over_key_runs`): every key its two columns can be probed by, `n`,
+    /// `a`, and both either way (`!within(n, a)` probes both). Its room is address space, taken as an index is written,
+    /// so no reader's key copies the relation (decision 0353 step 6; with room for two, hogql's `(n, a)` probe copied
+    /// it).
+    pub const AXIS_INDEXES: usize = 4;
+
     /// `with_index_room` of `k` columns of ids under key runs (an axis's solve, decision 0494 step 7): each column 4
     /// bytes a row, its ids' low bits, their high bits (a document's key) the runs' of one table of `runs` runs in
     /// the relation's block (`rows::ColDir`'s `runs`), which every column reads. The writer sets each run (`KeyRuns::put`)

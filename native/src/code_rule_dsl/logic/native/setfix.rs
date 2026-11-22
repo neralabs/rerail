@@ -4637,6 +4637,10 @@ impl InRel {
         Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, rows, n), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None })
     }
     /// Its columns' value types (the engine's codes).
+    /// Its table's name, once the run holds it by name.
+    pub fn table_name(&self) -> Option<&str> {
+        self.name.get().map(String::as_str)
+    }
     pub fn types(&self) -> &[u8] {
         &self.types
     }
