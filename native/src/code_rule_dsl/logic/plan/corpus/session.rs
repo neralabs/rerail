@@ -170,8 +170,12 @@ pub(super) struct HeldCorpus {
     /// a document to count it.
     pub counts: std::collections::HashMap<u32, ([u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)>,
     /// The batch itself, its rows made: the next run's is renewed from it, taking its unchanged groups' rows where
-    /// they lie (decision 0613).
+    /// they lie (decision 0616).
     pub batch: Option<std::sync::Arc<crate::code_rule_dsl::facts::vtab::syntax::Batch>>,
+    /// Each semi-join relation's rows at the held nodes, with the digest of the documents they were read of, as the
+    /// documents' table keeps them for a new process (`retain::semijoin_rows`): an edit takes the unchanged
+    /// documents' and walks only the changed ones' nodes.
+    pub semijoin: std::collections::HashMap<String, (u64, super::retain::KeptSemijoin)>,
 }
 
 /// The session held for a run.

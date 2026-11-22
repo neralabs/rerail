@@ -293,11 +293,30 @@ fn rule_syntax_files_pass_check_rr() {
     // Phase 0 resolves every file's includes in one run of `bootstrap.rerail`, not one run each.
     let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonical().unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
-    for f in rr_files() {
+    let programs: Vec<(PathBuf, Vec<(PathBuf, Vec<from_tape::Stmt>)>)> = rr_files().into_iter().map(|f| {
+        let program = program(&f).unwrap().0;
+        (f, program)
+    }).collect();
+    // A library file another library file includes is a part of that file's program, as a run reads a directory of
+    // programs (`tools::logic_command`: "not a program of its own"): alone it has neither the declarations it reads
+    // nor the rules that fill its inputs (`git/messages.rerail`, which `git.rerail` includes before declaring
+    // `git_message`). It is checked in its includer's program, which reads it in.
+    // Canonical both: the files are named from the manifest's directory (`native/..`), the library as the engine finds it.
+    let lib_dir = library().canonical().unwrap();
+    let parts: BTreeSet<PathBuf> = programs
+        .iter()
+        .filter(|(f, _)| f.canonical().unwrap().starts_with(&lib_dir))
+        // A program's own file is its last (`rr::program`: includes first).
+        .flat_map(|(_, program)| program.iter().rev().skip(1).filter_map(|(p, _)| p.canonical().ok()).collect::<Vec<_>>())
+        .collect();
+    for (f, program) in programs {
         for (line, vars) in check::grounded(&read(&f).unwrap().0, &given) {
             problems.push(format!("{}:{line}: unbound {}", short(&f), vars.join(", ")));
         }
-        let mut program = program(&f).unwrap().0;
+        if parts.contains(&f.canonical().unwrap()) {
+            continue;
+        }
+        let mut program = program;
         let core = library().join("core.rerail").canonical().unwrap();
         if !program.iter().any(|(p, _)| *p == core) {
             program.push((core.clone(), read(&core).unwrap().0));
@@ -1503,34 +1522,53 @@ given(x) :- node(_, n, "call", x, _), !unset(n).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Source scanners use str.splitlines(), while AST positions use physical lines.
-/// Keep both contracts, including long lines, empty lines and CRLF as one separator.
+/// A file's lines are its language's (decision 0612), one definition for `src_line` and every place: Python's end at
+/// `\r\n`, `\r` and `\n` alone (CPython's tokenizer, Ruff), so a `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 or U+2029
+/// stays inside a line; ECMAScript's at U+2028 and U+2029 too (ESLint, TypeScript); Rust's at `\n` alone (rustc),
+/// a lone `\r` inside a line. Long and empty lines are whole, the empty line after a final terminator is one, and a
+/// node's `line` is the `src_line` holding it. Each document's lines are its own.
 #[test]
-fn python_split_lines_are_lossless_and_document_local() {
-    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("splitlines");
-    std::fs::create_dir_all(&dir).unwrap();
+fn a_files_lines_are_its_languages() {
     let long = "x".repeat(400);
-    let src = format!("{long}\u{000b}two\u{000c}\u{001c}four\u{001d}five\u{001e}six\u{0085}seven\u{2028}eight\u{2029}nine\r\nten\releven\n");
-    std::fs::write(dir.join("a.py"), src).unwrap();
-    std::fs::write(dir.join("b.py"), "short").unwrap();
-    std::fs::write(dir.join("empty.py"), "").unwrap();
-    let program = r#"
+    let tail = "\u{000b}two\u{000c}\u{001c}four\u{001d}five\u{001e}six\u{0085}seven\u{2028}eight\u{2029}nine";
+    let first = format!("{long}{tail}");
+    let a = format!("{first}\r\nten\releven\nf(x)\n");
+    // Each language's files, its lines (from 1), and the line its call is on.
+    type Case<'a> = (&'a str, Vec<(&'a str, &'a str, Vec<&'a str>)>, Vec<(&'a str, u32)>);
+    let cases: [Case<'_>; 3] = [
+        ("python", vec![("a.py", &a, vec![&first, "ten", "eleven", "f(x)", ""]), ("b.py", "short", vec!["short"]), ("empty.py", "", vec![""])], vec![("a.py", 4)]),
+        ("javascript", vec![("c.js", "a\u{2028}b\rc\r\nf(x)\n", vec!["a", "b", "c", "f(x)", ""])], vec![("c.js", 4)]),
+        ("rust", vec![("d.rs", "a\rb\r\nfn f() { g(x) }\n", vec!["a\rb", "fn f() { g(x) }", ""])], vec![("d.rs", 2)]),
+    ];
+    for (language, files, calls) in cases {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(format!("lines-{language}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (path, source, _) in &files {
+            std::fs::write(dir.join(path), source).unwrap();
+        }
+        let program = format!(r#"
+.language {language}
 .decl seen(p: symbol, l: number, t: symbol)
-seen(p, l, t) :- doc(d, p, _), split_line(d, l, t).
-.output seen
-"#;
-    let policy = dir.join("lines.rerail");
-    std::fs::write(&policy, program).unwrap();
-    let program = crate::code_rule_dsl::tools::read_rr(&policy).unwrap();
-    let out = dir.join("out");
-    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap();
-    let lines = [&long, "two", "", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"];
-    let mut expected: Vec<Vec<String>> = lines.iter().enumerate().map(|(i, t)| vec!["a.py".to_owned(), (i + 1).to_string(), (*t).to_owned()]).collect();
-    expected.push(vec!["b.py".to_owned(), "1".to_owned(), "short".to_owned()]);
-    expected.sort();
-    assert_eq!(rows, expected);
-    let _ = std::fs::remove_dir_all(&dir);
+seen(p, l, t) :- doc(d, p, _), src_line(d, l, sp), text(sp, t).
+.decl call_at(p: symbol, l: number)
+call_at(p, l) :- doc(d, p, _), node(d, n, k, _, _), (k = "call" ; k = "call_expression"), line(n, l), src_line(d, l, sp), text(sp, t), contains("(x)", t).
+.output seen, call_at
+"#);
+        let policy = dir.join("lines.rerail");
+        std::fs::write(&policy, program).unwrap();
+        let program = crate::code_rule_dsl::tools::read_rr(&policy).unwrap();
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap();
+        let mut expected: Vec<Vec<String>> = files.iter().flat_map(|(p, _, lines)| lines.iter().enumerate().map(move |(i, t)| vec![(*p).to_owned(), (i + 1).to_string(), (*t).to_owned()])).collect();
+        expected.sort();
+        assert_eq!(rows, expected, "{language}");
+        let got = crate::code_rule_dsl::logic::plan::output::shown(&out, "call_at").unwrap();
+        let want: Vec<Vec<String>> = calls.iter().map(|(p, l)| vec![(*p).to_owned(), l.to_string()]).collect();
+        assert_eq!(got, want, "{language}: a call's line is the src_line holding it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// Empty scopes still run global absence checks; they must not become a planning error or an early return.
@@ -1566,7 +1604,7 @@ fn explicit_input_files_preserve_the_callers_document_batch() {
 .policy "explicit-inputs" revision 1
 .language python
 .violation Seen(at: span, t: symbol) "{t}"
-Seen(@place(p, l), t) :- doc(d, p, _), split_line(d, l, t).
+Seen(@place(p, l), t) :- doc(d, p, _), src_line(d, l, sp), text(sp, t).
 "#).unwrap();
     let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join("out"),
         &serde_json::json!({"inputFiles": [".hidden/a.txt", "included.py"]})).unwrap();
@@ -1591,7 +1629,7 @@ fn a_policy_read_once_still_reads_the_roots_settings() {
 .policy "settings-read" revision 1
 .language python
 .violation Seen(at: span, m: symbol) "{m}"
-Seen(@place(p, l), m) :- doc(d, p, _), split_line(d, l, _), env("mark", m).
+Seen(@place(p, l), m) :- doc(d, p, _), src_line(d, l, _), env("mark", m).
 "#).unwrap();
     let marks = |out: &str| -> Vec<String> {
         let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).unwrap();
@@ -1622,30 +1660,6 @@ fn a_handed_program_run_again_finds_the_same() {
     crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(again.unwrap(), first);
-}
-
-/// async_executor uses str.split('\n'), not physical lines or Python splitlines.
-#[test]
-fn lf_lines_keep_other_separators_and_the_trailing_empty_line() {
-    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrlf");
-    let root = dir.join("corpus");
-    std::fs::create_dir_all(&root).unwrap();
-    let first = format!("{}\rtwo\u{2028}three\u{b}four", "x".repeat(400));
-    std::fs::write(root.join("a.py"), format!("{first}\nfive\n")).unwrap();
-    std::fs::write(root.join("empty.py"), "").unwrap();
-    let policy = dir.join("rule.rerail");
-    std::fs::write(&policy, r#"
-.policy "lf-lines" revision 1
-.language python
-.violation Seen(at: span, text: symbol) "{text}"
-Seen(@place(p, l), t) :- doc(d, p, _), lf_line(d, l, t).
-"#).unwrap();
-    let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join("out"), &serde_json::Value::Null).unwrap();
-    let mut actual: Vec<(String, u64, String)> = result["diagnostics"].as_array().unwrap().iter()
-        .map(|r| (r["path"].as_str().unwrap().to_owned(), r["line"].as_u64().unwrap(), r["parameters"]["text"].as_str().unwrap().to_owned())).collect();
-    actual.sort();
-    assert_eq!(actual, vec![("a.py".into(),1,first), ("a.py".into(),2,"five".into()),
-                           ("a.py".into(),3,"".into()), ("empty.py".into(),1,"".into())]);
 }
 
 /// Existing allowlist bytes must verify through the public reader and relational execution path.
@@ -2529,6 +2543,74 @@ Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), ki
     let found = found.unwrap_or_else(|| panic!("the run places the finding: {:?}", ran.err()));
     let at: Vec<(&str, &str)> = found.iter().map(|r| (r[3].as_str(), r[4].as_str())).collect();
     assert_eq!(at, [("a.py", "3")], "at the string's line in its file: {found:?}");
+}
+
+/// Decision 0431 R9: a tape value's node's place in a file (`guest_place` at a string, its document's path) is one
+/// relation a program's findings read, not a join each finding writes again: 346 diagnostics on corpus0 each made the
+/// same rows, every guest's placement.
+#[test]
+fn findings_placed_through_a_string_read_one_placement() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("tape-placed-once");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = r#"
+.policy "t:tape-placed-once" revision 1
+.language python
+.violation Inner(at: node) "a name inside an annotation"
+.violation Other(at: node) "an integer inside an annotation"
+Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, "List").
+Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "integer").
+"#;
+    let rule = dir.join("placed-once.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let rules: Vec<&str> = flat.lines().filter(|l| l.contains(":-")).collect();
+    let joins: Vec<&str> = rules.iter().copied().filter(|l| l.contains("guest_place(") && l.contains("doc(")).collect();
+    let placed: Vec<&&str> = joins.iter().filter(|l| l.starts_with(super::lower::findings::PLACED_LINE)).collect();
+    assert_eq!(placed.len(), 1, "one rule places a value's node in its file: {joins:#?}");
+    assert!(joins.iter().all(|l| l.starts_with(super::lower::findings::PLACED_AT) || l.starts_with(super::lower::findings::PLACED_LINE)), "no finding joins the placement again: {joins:#?}");
+    let readers = rules.iter().filter(|l| l.contains(&format!("{}(", super::lower::findings::PLACED_LINE)) && !l.starts_with(super::lower::findings::PLACED_LINE)).count();
+    assert!(readers >= 4, "each finding's diagnostic and violation read it: {rules:#?}");
+}
+
+/// Decision 0431 R9: a program refuses its unplaced findings in one rule, over its findings' nodes, not in a rule each:
+/// each finding's own rule, negated reads and all, was a negation split, a demand and a join of its own (three strata
+/// a finding, 470 of a pack's on corpus0). A finding writes its clause and node alone, a positive projection.
+#[test]
+fn a_program_refuses_its_unplaced_findings_in_one_rule() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unplaced-once");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let guests = r#"
+.policy "t:unplaced-once" revision 1
+.language python
+.violation Inner(at: node) "a name inside an annotation"
+.violation Other(at: node) "an integer inside an annotation"
+Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, "List").
+Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "integer").
+"#;
+    let plain = r#"
+.policy "t:unplaced-once-plain" revision 1
+.language python
+.violation Name(at: node) "a name"
+.violation Number(at: node) "an integer"
+Name(i) :- kind(i, "identifier").
+Number(i) :- kind(i, "integer").
+"#;
+    for (name, program, found) in [("guests", guests, super::lower::findings::FOUND_THROUGH), ("plain", plain, super::lower::findings::FOUND_NODE)] {
+        let rule = dir.join(format!("{name}.rerail"));
+        std::fs::write(&rule, program).unwrap();
+        let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+        let rules: Vec<&str> = flat.lines().filter(|l| l.contains(":-")).collect();
+        let unplaced: Vec<&&str> = rules.iter().filter(|l| l.starts_with(super::lower::findings::UNPLACED)).collect();
+        assert_eq!(unplaced.len(), 1, "{name}: one rule refuses the unplaced findings: {unplaced:#?}");
+        assert!(unplaced[0].contains(&format!("{found}(")), "{name}: it reads the findings' nodes: {unplaced:#?}");
+        let projections: Vec<&&str> = rules.iter().filter(|l| l.starts_with(&format!("{found}("))).collect();
+        assert_eq!(projections.len(), 2, "{name}: a projection a finding: {projections:#?}");
+        assert!(projections.iter().all(|l| !l.contains('!')), "{name}: each positive: {projections:#?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Decision 0431 R9: a finding at a node of a string inside another tape value (`'int'` in `"List['int']"`) has no
@@ -4587,6 +4669,8 @@ libs(m) :- sources__library(_, m, "c", _).
 "#;
     let files = [("a.c", "#include \"inc/h.h\"\nint a;\n"), ("inc/h.h", "#include \"d.h\"\n"), ("inc/d.h", "int d;\n"), ("unused.h", "int u;\n")];
     let [docs, libs] = <[Vec<String>; 2]>::try_from(joined(guests_run("cheaders", &files, rule, &["docs", "libs"]))).unwrap();
+    // A library document is named by its path as the engine has it: on Windows, with `\`.
+    let docs: Vec<String> = docs.iter().map(|p| p.replace(std::path::MAIN_SEPARATOR, "/")).collect();
     let mut docs: Vec<&str> = docs.iter().map(|p| p.rsplit(".cheaders/").next().unwrap()).collect();
     docs.sort();
     assert_eq!(docs, ["a.c", "inc/d.h", "inc/h.h"], "parsed, each a translation unit");
@@ -5459,4 +5543,67 @@ fn a_texts_declared_policies_read_without_lowering() {
     assert_eq!(declared_policies(".policy \"one\" revision 1\n.policy \"two\" revision 1\n"), ["one", "two"]);
     assert!(declared_policies(".violation V(at: node) \"x\"\nV(n) :- kind(n, \"call\").\n").is_empty());
     assert!(declared_policies(".policy \"unclosed").is_empty(), "a text that does not parse declares none");
+}
+
+/// Every native step's answer is declared in the library (`.answer`, t33 K3), and the library declares no other:
+/// the engine's registry (`rr::WORLD`, and `load`'s `loaded`) and the library's declarations are one list. Here, in
+/// the binary booted as the engine boots (its languages' answerers installed), since the crate split.
+#[test]
+fn every_native_answer_is_declared_in_the_library() {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut engine: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (rel, req) in super::WORLD.iter().copied().chain([("loaded", "load")]) {
+        engine.entry(req.to_owned()).or_default().insert(rel.to_owned());
+    }
+    let mut library: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut dirs = vec![super::library()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "rerail") {
+                for line in std::fs::read_to_string(&path).unwrap().lines() {
+                    let Some(text) = line.trim().strip_prefix(".answer ") else { continue };
+                    let answer = crate::code_rule_dsl::logic::front::answers::parse(text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                    library.entry(answer.req).or_default().extend(answer.produces);
+                }
+            }
+        }
+    }
+    assert_eq!(library, engine, "the library's `.answer`s and the engine's answerers");
+}
+
+/// A run's call opens the image store once and holds it until it returns (`held_image_store`, `HoldImages`): opened at
+/// each ask, its every close made SQLite delete and make again its write-ahead log. A call after it opens its own, and
+/// none holds it once returned; outside a call, each ask opens it.
+#[test]
+fn a_run_opens_the_image_store_once() {
+    let opened = std::sync::atomic::AtomicUsize::new(0);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("held-image-store");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let open = || {
+        opened.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::content_store::ContentStore::open_images(&dir.join("images.sqlite")).ok().map(std::sync::Arc::new)
+    };
+    let count = || opened.load(std::sync::atomic::Ordering::Relaxed);
+    super::held_image_store(open);
+    super::held_image_store(open);
+    assert_eq!(count(), 2, "outside a run, each ask opens it");
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    for call in 1..=2 {
+        {
+            let _call = super::HoldImages::enter();
+            let _inner = super::HoldImages::enter();
+            let a = super::held_image_store(open).expect("the store");
+            drop(_inner);
+            let b = super::held_image_store(open).expect("the store");
+            assert!(std::sync::Arc::ptr_eq(&a, &b), "call {call}: one store, past an inner call");
+            assert_eq!(count(), 2 + call, "call {call} opened it once");
+        }
+        // The call returned: nothing holds the store open (a test's store is checked so after its run).
+        assert_eq!(crate::content_store::holding(&dir.join("images.sqlite")), (0, 0), "call {call} let it go");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

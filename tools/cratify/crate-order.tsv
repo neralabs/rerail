@@ -13,6 +13,7 @@ rerail-simdjson	core
 rerail-clif	core
 rerail-json-lean	core
 rerail-tape-format	core
+rerail-json-aot	core
 rerail-compiler	core
 rerail-rir	core
 rerail-rr-syntax	core
@@ -38,7 +39,7 @@ rerail-cpu-block	core
 rerail-cpu-pp	core
 rerail-vue-lean	core
 rerail-ukl	core
-rerail-rust-stream	core
+rerail-ukl-vec	core
 rerail-gpu	core
 rerail-forest	core
 rerail-accel	core
@@ -51,7 +52,6 @@ rerail-lang	core
 rerail-parser-tests	test
 rerail-rr-parser	core
 rerail-kotlin-parser	core
-rerail-pp-aot	core
 rerail-facts	core
 rerail-rr-aot	core
 rerail-c-directives	core

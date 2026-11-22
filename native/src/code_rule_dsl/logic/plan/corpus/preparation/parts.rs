@@ -18,7 +18,8 @@ use crate::code_rule_dsl::logic::program_image::{Builder, Rewrite, Version, Atom
 use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields, Shown};
 use crate::code_rule_dsl::logic::program_text;
 use crate::code_rule_dsl::logic::strings::Vocabulary;
-use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreResult};
+use crate::code_rule_dsl::logic::plan::kept_entry::Entries;
+use crate::content_store::{ContentStore, FactsPlanSet, HashKey, SourceId, StoreResult};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -42,9 +43,6 @@ const SWITCHES: &[&str] = &[
     "RERAIL_NODE_SOURCES",
 ];
 
-/// The entry's schema: bumped when its encoding or meaning changes.
-const SCHEMA: u32 = crate::content_store::live_fact_schema(345);
-const PATH: &str = "rerail/part";
 
 /// The part a relation names by its prefix: `p<i>_` or `q<k>_`.
 /// A counter-numbered relation a pass makes, `<stem><k><tail>`: its stem, number and tail (`rr_ast_<k>_<m>`'s
@@ -543,7 +541,7 @@ impl Prepared {
             let listed = ordered(facts, "part_demand_listed").into_iter().map(|r| r[1].clone()).collect();
             let row = rows_of(facts, "part_demand").next().unwrap_or_default();
             let outcome = if row.first().map(String::as_str) == Some("ok") && row.len() >= 7 {
-                Ok(front::ast::Report { adornments: split(&row[1]), magic_rules: num(&row[2]), full: split(&row[3]), extras_kept: num(&row[4]), gates: num(&row[5]), full_for_negation: split(&row[6]) })
+                Ok(front::ast::Report { adornments: split(&row[1]), magic_rules: num(&row[2]), full: split(&row[3]), extras_kept: num(&row[4]), gates: num(&row[5]), full_for_negation: split(&row[6]), reasons: row.get(7).map_or_else(Vec::new, |r| r.split('\u{1e}').filter(|x| !x.is_empty()).map(str::to_owned).collect()) })
             } else {
                 Err(row.get(1).cloned().unwrap_or_default())
             };
@@ -627,7 +625,7 @@ fn facts_of(p: &Prepared, digest: &[u8; 32]) -> Facts {
     if let Some((listed, outcome)) = &p.demand {
         put("part_demand_listed", listed.iter().enumerate().map(|(i, r)| vec![n(i), r.clone()]).collect());
         let row = match outcome {
-            Ok(r) => vec!["ok".to_owned(), r.adornments.join("\u{1f}"), n(r.magic_rules), r.full.join("\u{1f}"), n(r.extras_kept), n(r.gates), r.full_for_negation.join("\u{1f}")],
+            Ok(r) => vec!["ok".to_owned(), r.adornments.join("\u{1f}"), n(r.magic_rules), r.full.join("\u{1f}"), n(r.extras_kept), n(r.gates), r.full_for_negation.join("\u{1f}"), r.reasons.join("\u{1e}")],
             Err(e) => vec!["err".to_owned(), e.clone()],
         };
         put("part_demand", vec![row]);
@@ -658,9 +656,7 @@ pub fn kept(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(Arc<Ver
 /// The facts kept under `key`, its image's digest and the entry's source: the image not read.
 fn kept_facts(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(Facts, [u8; 32], SourceId)>> {
     let Some(source) = store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(None) };
-    let set = plan();
-    let Some(result) = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?.results.remove(&set.plans[0]) else { return Ok(None) };
-    let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
+    let Some(facts) = ENTRIES.get(store, Entries::part(key)) else { return Ok(None) };
     let Some(digest) = rows_of(&facts, "part_program").next().and_then(|r| r.first().and_then(|d| unhex(d))) else { return Ok(None) };
     Ok(Some((facts, digest, source)))
 }
@@ -686,9 +682,7 @@ fn record(store: &ContentStore, key: &[u8; 32], p: &Prepared) {
 /// kept run reads.
 pub fn kept_facts_alone(store: &ContentStore, key: &[u8; 32]) -> Option<(Facts, SourceId)> {
     let source = store.source_by_hash(kept_facts_hash(key)).ok()??;
-    let set = plan();
-    let result = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }).ok()?.results.remove(&set.plans[0])?;
-    program_facts::decode(&result.entry).ok().map(|f| (f, source))
+    ENTRIES.get(store, Entries::part(key)).map(|f| (f, source))
 }
 
 /// The hash the facts kept under `key` (`keep_facts`) are stored by: a reader names them by it where it names by
@@ -697,32 +691,41 @@ pub fn kept_facts_hash(key: &[u8; 32]) -> HashKey {
     HashKey::sha256(source_text(key).as_bytes())
 }
 
-/// Keeps `facts` under `key`, no image beside them, written by the store's writer (`kept_facts_alone` reads them).
+/// Keeps `facts` under `key`, no image beside them (`kept_facts_alone` reads them): as kept facts behind the run,
+/// held by the small source the store's writer keeps for them.
 pub fn keep_facts(store: &ContentStore, key: &[u8; 32], facts: &Facts) {
-    let entry = program_facts::encode(facts);
+    put(store, key, facts);
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
-        let (key, entry): ([u8; 32], Vec<u8>) = crate::content_store::record::codec::from_body("kept facts", body)?;
+        let key: [u8; 32] = crate::content_store::record::codec::from_body("kept facts", body)?;
         let source = super::super::memo::source(cx.store, &source_text(&key))?;
         cx.name([source]);
-        let set = plan();
-        cx.store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[]).map(drop)
+        Ok(())
     }
-    store.record("kept facts", Vec::new(), &(*key, entry), None, apply);
+    store.record("kept facts", Vec::new(), key, None, apply);
+}
+
+/// The entries, kept facts of the store (t33 step 3, `plan::kept_entry`): a partition a key, held by its small
+/// source (`source_text`) and the plan, where a facts-memo row held each.
+const ENTRIES: Entries = Entries::new("rerail.part");
+
+/// `facts` as `key`'s entry, behind the run.
+fn put(store: &ContentStore, key: &[u8; 32], facts: &Facts) {
+    let holder = kept_facts_hash(key).sha256_bytes().expect("a sha256 key");
+    ENTRIES.put(store, Entries::part(key), holder, Some(plan().plans[0]), facts);
 }
 
 /// Keeps `version` and the facts `facts` makes of its image's digest under `key` (either stage's part).
 pub fn keep(store: &ContentStore, key: &[u8; 32], version: &Arc<Version>, facts: impl FnOnce(&[u8; 32]) -> Facts) {
     let Some(encoded) = program_text::encode_version(version) else { return };
-    let entry = program_facts::encode(&facts(&encoded.digest));
-    let (packed, pieces) = program_text::pack(vec![encoded], entry);
+    put(store, key, &facts(&encoded.digest));
+    let (packed, pieces) = program_text::pack(vec![encoded], Vec::new());
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
         let (key, packed): ([u8; 32], program_text::Packed) = crate::content_store::record::codec::from_body("a prepared part", body)?;
-        let (sources, entry) = program_text::store_packed(cx.store, &packed, cx.pieces)?;
+        let (sources, _) = program_text::store_packed(cx.store, &packed, cx.pieces)?;
         cx.name(sources);
         let source = super::super::memo::source(cx.store, &source_text(&key))?;
         cx.name([source]);
-        let set = plan();
-        cx.store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.to_vec() }], &[]).map(drop)
+        Ok(())
     }
     store.record_held("a prepared part", Vec::new(), &(*key, packed), pieces, apply);
 }
@@ -1334,6 +1337,7 @@ fn link(version: &Version, parts: &[Part], prepared: &[(Own, Prepared)]) -> Resu
                     a.adornments.extend(b.adornments.iter().cloned());
                     a.full.extend(b.full.iter().map(|r| rename(r)));
                     a.full_for_negation.extend(b.full_for_negation.iter().map(|r| rename(r)));
+                    a.reasons.extend(b.reasons.iter().cloned());
                     a.magic_rules += b.magic_rules;
                     a.extras_kept += b.extras_kept;
                     a.gates += b.gates;

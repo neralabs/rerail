@@ -45,8 +45,8 @@ fn a_lease_returns_empty_backing_and_empty_vtabs() {
     assert_eq!(count(&db, "SELECT count(*) FROM input"), 0);
     assert_eq!(count(&db, "SELECT count(*) FROM node"), 0);
     assert_eq!(db.plan_signature.get(), 0);
-    // The owner is on the store: its tables are `main`.
-    assert_eq!(count(&db, "SELECT count(*) FROM main.fact_stats"), 0);
+    // The owner is on the store: its tables are `main` (the read fails otherwise).
+    count(&db, "SELECT count(*) FROM main.atoms");
 }
 
 #[test]

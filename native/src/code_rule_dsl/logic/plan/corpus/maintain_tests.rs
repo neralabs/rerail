@@ -297,11 +297,14 @@ fn r3_a_reached_stratum_is_derived_again_only_on_its_first_run_or_past_the_thres
 #[test]
 fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
     // The test's relations are small: a floor under θ (0090 §4's is 1,024 rows) above a small edit's deltas and below
-    // the corpus's. nextest runs a test as a process of its own.
-    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
+    // the corpus's. Held as a switch while the test runs (`switches::set`): set on the process and left, it was every
+    // later test's floor (a_session_maintains_a_cross_file_aggregate derived a stratum again under `cargo test`).
     let files: Vec<(String, String)> = (0..40).map(|i| (format!("m{i}.py"), format!("import m{}\ndef f{i}():\n    pass\n", (i + 1) % 40))).collect();
     let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
     let mut s = Session::new("r4", KINDS, KIND_OUTPUTS, &refs);
+    // Taken after the session, which holds the maintain tests one at a time: taken before, it waited on a test
+    // whose runs waited on it.
+    let _floor = super::switches::set(&[("RERAIL_AGAIN_MIN", "50")]);
     s.run();
     s.write("m0.py", "import m1\nimport m7\ndef f0():\n    pass\n");
     let small = s.edit("one import added");
@@ -319,13 +322,15 @@ fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
 /// moved node was a change to it: ep2's one-line edit derived 391 strata again past the threshold, 66 over `kind`.
 #[test]
 fn r4_a_line_inserted_is_no_change_to_a_stratum_that_reads_no_offset() {
-    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
     // One file holds most nodes, so its nodes moved are most of `node`'s rows.
     let big: String = (0..60).map(|i| format!("def f{i}():\n    pass\n")).collect();
     // `used_kind` reads `kind` in the cross part, past a join of two files' rows, as `width` reads `child`.
     let program = format!("{KINDS}\n.decl used_kind(f: node, k: symbol)\nused_kind(f, k) :- uses(_, f), kind(f, k).\n.output used_kind\n");
     let outputs: Vec<&'static str> = KIND_OUTPUTS.iter().copied().chain(["used_kind"]).collect();
     let mut s = Session::new("r4-moved", &program, &outputs, &[("a.py", big.as_str()), ("b.py", "from a import f1\ndef g():\n    pass\n")]);
+    // Taken after the session, which holds the maintain tests one at a time: taken before, it waited on a test
+    // whose runs waited on it.
+    let _floor = super::switches::set(&[("RERAIL_AGAIN_MIN", "50")]);
     s.run();
     // A line inserted in the first function's body, as ep2's: every node after it moves, and no child's index but
     // the function's own.
@@ -335,8 +340,49 @@ fn r4_a_line_inserted_is_no_change_to_a_stratum_that_reads_no_offset() {
     assert!(moved.report.cross_maintained.0 > 0, "R4: the mode maintained strata: {:?}", moved.report.cross_again);
 }
 
-/// R4 at scale: a maintained line's work follows its changed read's delta, not the corpus. Each line is led by its
-/// driver's delta, a negated read's too: its delta read positively first, the body planned with its variables bound.
+/// R4: a line inserted at a file's top moves every place in it (`line`'s delta every row of the file's), and a
+/// stratum that reads findings' places is maintained: past the floor its lines start from the findings and probe
+/// the moved places by their nodes (`Stats::lead_free`), priced under the derive. Led by the moved places, the mode
+/// was priced over the derive and derived the stratum again: ep2's import edit derived `violation` again, and its
+/// findings' places made 33 documents. The append before it, past the floor too, adds fewer places than there are
+/// findings: its line is led by them, and kept. At the insert, re-priced under a search's saving (`REPLAN_ROWS`),
+/// that order is searched before the comparison.
+#[test]
+fn a_finding_s_places_moved_are_maintained() {
+    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
+    let program = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl used(f: node)
+used(f) :- imp(_, q), def(f, q).
+.decl placed(f: node, l: number)
+placed(f, l) :- used(f), line(f, l).
+.output placed
+"#;
+    // `used`: 200 functions of z.py that b.py imports, and a0.py's `g0`, and its `h0` once the append defines it
+    // (the append reaches `placed`). a0.py to a10.py hold the places an edit moves.
+    let z: String = (0..200).map(|i| format!("def f{i}():\n    pass\n")).collect();
+    let b: String = (0..200).map(|i| format!("from z import f{i}\n")).chain(["from a0 import g0\nfrom a0 import h0\n".to_owned()]).collect();
+    let big: String = (0..30).map(|i| format!("def g{i}():\n    pass\n")).collect();
+    let mut files: Vec<(String, String)> = vec![("z.py".into(), z), ("b.py".into(), b)];
+    files.extend((0..11).map(|i| (format!("a{i}.py"), big.clone())));
+    let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
+    let mut s = Session::new("r4-places", program, &["placed"], &refs);
+    s.run();
+    let more: String = (0..12).map(|i| format!("def h{i}():\n    pass\n")).collect();
+    s.write("a0.py", &format!("{big}{more}"));
+    s.edit("functions appended");
+    s.write("a0.py", &format!("import os\n{big}{more}"));
+    let moved = s.edit("an import inserted at the top");
+    assert!(!moved.report.cross_again.contains_key(maintain::THRESHOLD), "R4: the findings' places moved are maintained: {:?}", moved.report.cross_again);
+    assert!(moved.report.cross_maintained.0 > 0, "R4: the mode maintained strata: {:?}", moved.report.cross_again);
+}
+
+/// R4 at scale: a maintained line's work follows its changed read's delta, not the corpus. A negated read's line is
+/// led by its delta: read positively first, the body planned with its variables bound; a positive one's delta leads
+/// where it is the cheapest start (`a_finding_s_places_moved_are_maintained`).
 /// Left where the plan tested it, a negated read's line walked its other reads whole (the data layer's 2-file edit
 /// at 334 files: 113 removal joins, 10 s of 31).
 #[test]
@@ -376,10 +422,12 @@ first(n) :- a(_, _), n = min n2 : { a(n2, _) }.
 
 #[test]
 fn r4_a_stratum_derived_again_past_theta_feeds_maintained_readers() {
-    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
     let files: Vec<(String, String)> = (0..40).map(|i| (format!("m{i}.py"), format!("import m{}\ndef f{i}():\n    pass\n", (i + 1) % 40))).collect();
     let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
     let mut s = Session::new("r4-readers", AGAIN_THEN_MAINTAINED, &["c", "first"], &refs);
+    // Taken after the session, which holds the maintain tests one at a time: taken before, it waited on a test
+    // whose runs waited on it.
+    let _floor = super::switches::set(&[("RERAIL_AGAIN_MIN", "50")]);
     s.run();
     for i in 0..40 {
         s.write(&format!("m{i}.py"), &format!("import m{}\ndef g{i}():\n    pass\n", (i + 1) % 40));

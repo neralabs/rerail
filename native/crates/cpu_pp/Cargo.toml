@@ -13,7 +13,7 @@ test-hooks = ["rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-cli
 [dependencies]
 rerail-compiler = { path = "../compiler" }
 rerail-rir = { path = "../rir" }
-# The IR as Rust (`rerail_clif::rust`, decision 0310), the compiled words' fingerprint.
+# The host's flags for the words' JIT (`rerail_clif::jit::flags`).
 rerail-clif = { path = "../clif" }
 cranelift-codegen = "=0.125.4"
 cranelift-frontend = "=0.125.4"

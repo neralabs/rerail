@@ -264,7 +264,7 @@ fn prefetch_results(
             }
             storage
                 .store
-                .local_check_results_by_key(&keys, catalog)
+                .workspace_results(&keys, catalog)
                 .map_err(|error| invalid(error.to_string()))?
         }
         None => HashMap::new(),

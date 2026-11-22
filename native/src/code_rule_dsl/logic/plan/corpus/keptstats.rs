@@ -70,29 +70,6 @@ pub struct Keeper {
     fresh: HashSet<String>,
     /// This run's `RERAIL_KEPT_DOCS` trace (`Trace`): not kept in the blob.
     trace: Trace,
-    /// This run's: the values the export rows of the files counted out hold (an edited file's old entry, a gone
-    /// file's), and of those counted in (its new entry, a new file's): the held nodes an edit took and gave, which a
-    /// semi-join's statistics at the held nodes are patched by (decision 0458). `None` when the files were not counted
-    /// against a last run's (a first run, every file counted from scratch, or the keeper given up).
-    held: Option<HeldChange>,
-}
-
-/// The values an edit's files' export rows held before and hold now (`Keeper::held_change`).
-#[derive(Default)]
-pub struct HeldChange {
-    pub out: rustc_hash::FxHashSet<i64>,
-    pub r#in: rustc_hash::FxHashSet<i64>,
-    /// Each value document's holders after the edit: how many files' entries hold its rows, the most of any export
-    /// (`holders`). A guest's nodes another file holds too are held whatever the edit did to its host.
-    pub holders: rustc_hash::FxHashMap<i64, i64>,
-}
-
-impl HeldChange {
-    fn add(set: &mut rustc_hash::FxHashSet<i64>, entry: &memo::Entry) {
-        for (_, values) in entry.rows.values() {
-            set.extend(values.iter().copied());
-        }
-    }
 }
 
 /// What a session's keeper keeps of its files beyond their statistics (0096 step 3): the exports. (A base
@@ -134,8 +111,6 @@ impl Keeper {
                 }
             }
         }
-        // Counted against a last run's files: what this run counts out and in is the edit's.
-        self.held = (!self.docs.is_empty()).then(HeldChange::default);
         self.ids = rels.iter().filter_map(|(r, _)| ids.get(r).map(|id| (r.clone(), *id))).collect();
         for (rel, columns) in rels {
             if self.rels.get(rel).is_some_and(|s| s.columns() != columns.as_slice()) {
@@ -195,18 +170,6 @@ impl Keeper {
         !self.fresh.is_empty()
     }
 
-    /// The held nodes this run's edit took and gave (`held`), once its files were all counted (`end`).
-    pub fn take_held_change(&mut self) -> Option<HeldChange> {
-        let mut h = self.held.take().filter(|_| self.failed.is_none())?;
-        for by in self.holders.values() {
-            for (&d, &n) in by {
-                let at = h.holders.entry(d).or_default();
-                *at = (*at).max(n);
-            }
-        }
-        Some(h)
-    }
-
     /// Whether this run has given the keeper up.
     pub fn failed(&self) -> bool {
         self.failed.is_some()
@@ -214,7 +177,6 @@ impl Keeper {
 
     pub fn fail(&mut self, why: impl Into<String>) {
         self.failed.get_or_insert_with(|| why.into());
-        self.held = None;
         self.exports = None;
         self.building = false;
     }
@@ -257,10 +219,6 @@ impl Keeper {
                     // definition's) is counted out and in again to no effect: left as counted. Each relation's
                     // statistics are its own rows', so this is exact; within a relation the rows are counted out and
                     // in whole, as its per-document statistics need.
-                    if let Some(h) = &mut self.held {
-                        HeldChange::add(&mut h.out, &before);
-                        HeldChange::add(&mut h.r#in, entry);
-                    }
                     let (before, now_rows) = changed_only(&before, entry);
                     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
                         // What a row-level count would leave out: the rows the old and new share at either end.
@@ -313,9 +271,6 @@ impl Keeper {
                 }
             }
             None => {}
-        }
-        if let Some(h) = &mut self.held {
-            HeldChange::add(&mut h.r#in, entry);
         }
         self.count(entry, 1);
         self.patch_exports(path, entry, 1);
@@ -413,9 +368,6 @@ impl Keeper {
                 let (c, k) = self.docs.remove(&path).expect("listed");
                 match old(&path, c, k) {
                     Some(before) => {
-                        if let Some(h) = &mut self.held {
-                            HeldChange::add(&mut h.out, &before);
-                        }
                         let fresh = std::mem::take(&mut self.fresh);
                         self.count_where(&before, -1, &|r| !fresh.contains(r));
                         self.fresh = fresh;
@@ -514,7 +466,8 @@ impl Keeper {
     }
 
     pub fn map_symbols(&mut self, syms: &dyn Fn(&str, &[String]) -> Option<Vec<bool>>, strict: bool, f: impl FnOnce(&mut [i64]) -> crate::content_store::StoreResult<()>) -> crate::content_store::StoreResult<()> {
-        let mut taken: Vec<(String, usize, Vec<i64>)> = Vec::new();
+        // Each column's exact map and its watched values (`true`), their counts in order.
+        let mut taken: Vec<(String, usize, bool, Vec<i64>)> = Vec::new();
         let mut values: Vec<i64> = Vec::new();
         for (rel, stats) in self.rels.iter_mut() {
             let width = stats.columns().len();
@@ -522,6 +475,7 @@ impl Keeper {
                 if strict {
                     for c in 0..width {
                         stats.take_exact(c);
+                        stats.take_watched(c);
                     }
                 }
                 continue;
@@ -530,7 +484,13 @@ impl Keeper {
                 if let Some(pairs) = stats.take_exact(c) {
                     let (vs, ns): (Vec<i64>, Vec<i64>) = pairs.into_iter().unzip();
                     values.extend(vs);
-                    taken.push((rel.clone(), c, ns));
+                    taken.push((rel.clone(), c, false, ns));
+                }
+                let pairs = stats.take_watched(c);
+                if !pairs.is_empty() {
+                    let (vs, ns): (Vec<i64>, Vec<i64>) = pairs.into_iter().unzip();
+                    values.extend(vs);
+                    taken.push((rel.clone(), c, true, ns));
                 }
             }
         }
@@ -538,13 +498,21 @@ impl Keeper {
             f(&mut values)?;
         }
         let mut values = values.into_iter();
-        for (rel, c, ns) in taken {
-            let pairs = ns.into_iter().map(|n| (values.next().expect("one a count"), n)).collect();
+        for (rel, c, watched, ns) in taken {
+            let pairs: Vec<(i64, i64)> = ns.into_iter().map(|n| (values.next().expect("one a count"), n)).collect();
             if let Some(stats) = self.rels.get_mut(&rel) {
-                stats.put_exact(c, pairs);
+                if watched { stats.watch(c, pairs) } else { stats.put_exact(c, pairs) }
             }
         }
         Ok(())
+    }
+
+    /// Export `key`'s column `c` watches the values `counts` names, each with its count in the rows counted
+    /// (`RelStats::watch`): the constants the rules test there, kept with the statistics from this run on.
+    pub fn watch(&mut self, key: &str, c: usize, counts: Vec<(i64, i64)>) {
+        if let Some(stats) = self.rels.get_mut(key) {
+            stats.watch(c, counts);
+        }
     }
 
     /// Whether this run traces export `key` (`RERAIL_KEPT_DOCS`).
@@ -697,7 +665,7 @@ fn changed_only(before: &memo::Entry, now: &memo::Entry) -> (memo::Entry, memo::
 pub mod tests {
     use super::{Keeper, memo};
 
-    /// A semi-join's statistics at its held nodes (`corpus`' `held_counted`) are `measured`'s statistics of those rows,
+    /// A semi-join's statistics counted by document (`corpus`' `Counted::Measured`) are `measured`'s statistics of its rows,
     /// counted by document as every base relation's are (`statkeep::RelStats`), so the documents' table keeps and
     /// patches them as it does the others': every column, the node's a key.
     #[test]
@@ -790,3 +758,61 @@ pub mod tests {
     }
 }
 
+/// A semi-join's base relation's statistics, counted of its rows at the nodes the exports hold, the chunks' and the
+/// hits' (read off the corpus batch by a walk of their documents, `Source::for_rows_keyed`). They are the rows the
+/// cross part looks up (decision 0458 binds the whole view, but the cross part reads it only at those nodes), so the
+/// cross part's statistics of the relation are theirs, and the view's other rows are never computed to measure it.
+/// A node's row is counted once, though it is read twice. Exact: each value's count, and its count in each document
+/// (the first column's high half, as `syntax::measured` reads it).
+#[derive(Default)]
+pub struct SemijoinCounts {
+    nodes: rustc_hash::FxHashSet<i64>,
+    /// The node's column: every counted row's own node, so a key with no counts.
+    node: Option<usize>,
+    all: Vec<rustc_hash::FxHashMap<i64, i64>>,
+    by_doc: Vec<rustc_hash::FxHashMap<(i64, i64), i64>>,
+}
+
+impl SemijoinCounts {
+    /// Node `node`'s row, its columns in `input_columns` order with the node at `at`: counted unless counted already.
+    /// Whether it was counted now.
+    pub fn row(&mut self, node: i64, at: usize, row: &[i64]) -> bool {
+        if !self.nodes.insert(node) {
+            return false;
+        }
+        self.node = Some(at);
+        if self.all.len() < row.len() {
+            self.all.resize_with(row.len(), Default::default);
+            self.by_doc.resize_with(row.len(), Default::default);
+        }
+        let d = row[0] >> 32;
+        for (c, &v) in row.iter().enumerate().filter(|&(c, _)| c != at) {
+            *self.all[c].entry(v).or_default() += 1;
+            *self.by_doc[c].entry((v, d)).or_default() += 1;
+        }
+        true
+    }
+
+    /// The statistics (`syntax::statistics`' rows) of the columns `names`, each named in `input` (the rows' columns):
+    /// `None` if one is not, or the rows' document column is not `names`' first.
+    pub fn statistics(&self, input: &[&str], names: &[String]) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        if names.first().map(String::as_str) != input.first().copied() {
+            return None;
+        }
+        let rows = self.nodes.len() as i64;
+        names
+            .iter()
+            .map(|name| {
+                let c = input.iter().position(|i| i == name)?;
+                Some(match (self.all.get(c).filter(|_| self.node != Some(c)), self.by_doc.get(c)) {
+                    (Some(all), Some(by_doc)) => {
+                        let (ndv, sq, sqd) = (all.len() as i64, all.values().map(|n| n * n).sum(), by_doc.values().map(|n| n * n).sum());
+                        // A key column (every value once) reads as `measured`'s does.
+                        if ndv == rows { (name.clone(), rows, rows, rows, rows) } else { (name.clone(), rows, ndv, sq, sqd) }
+                    }
+                    _ => (name.clone(), rows, rows, rows, rows),
+                })
+            })
+            .collect()
+    }
+}

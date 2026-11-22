@@ -55,6 +55,13 @@ impl Prepared {
         if v.rules().next().is_none() {
             return Default::default();
         }
+        // Nor one of input views alone (Q37): a cross part whose every other stratum was kept, the views never kept
+        // (`retain::cut`). A run holds each in place (`Run::input_view`), with no join to plan; planned, the view's line
+        // was a version no cold run had planned, and every warm run wrote its plan.
+        let inputs = v.input_names();
+        if v.rules().all(|r| super::input_view_shape(v, r, |n| inputs.iter().any(|i| i == n)).is_some()) {
+            return Default::default();
+        }
         // The run's kept plans' entry holds the plans an earlier process made of a version the same as this one (Q228):
         // read, not made.
         let Some(id) = super::run_holds_plans().then(|| manager::identity(v)) else { return manager::analysis::<Prepared>(v).unwrap_or_default() };

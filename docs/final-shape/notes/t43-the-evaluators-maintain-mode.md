@@ -936,7 +936,7 @@ Two designs remove this, and each changes 0494:
   relation's producer from the program's reads (with no span read, `docof` is core.rerail's and has no spans). A
   narrower group needs a set of relations to make that is apart from the reads that fix their meaning.
 
-**Done** (2026-11-22, the first design, decision 0613):
+**Done** (2026-11-22, the first design, decision 0616):
 
 - A session holds its corpus batch, and the next run's is renewed from it: the held groups whose documents did not
   change are taken, their rows read where they lie (`rows::Part::range`, `Relation::of_runs`), in at most
@@ -952,7 +952,7 @@ and the same way, so the two can be compared directly:
 | Engine | Files | 00 (first) | 01 | 02 | 03 |
 |---|---|---|---|---|---|
 | b5a135e149 (2026-11-18), none profiled | 334 | 8.98 | 0.87-0.93 | 1.26 | 1.04 |
-| 0613 and the hash (dc324c0b05), none profiled | 334 | 16.9-17.0 | 0.80 | 1.72 | 1.41 |
+| 0616 and the hash (dc324c0b05), none profiled | 334 | 16.9-17.0 | 0.80 | 1.72 | 1.41 |
 
 Each step's findings equal a cold run's. The table's earlier 1.90 for step 02 was a profiled run.
 

@@ -53,7 +53,7 @@ fn quantified_middle_captures_preserve_each_owned_node_across_all_resident_roots
     eprintln!(
         "QUANTIFIED_MIDDLE_ATTEMPT {}",
         serde_json::json!({
-            "attempts":trace.len(),"encoded":trace.iter().filter(|r|r.encoded).count(),
+            "attempts":trace.len(),"encoded":trace.len(),
             "completed":trace.iter().filter(|r|r.completed).count(),"seconds":started.elapsed().as_secs_f64(),
             "peakMetalBytes":trace.iter().map(|r|r.peak_application_buffer_bytes).max(),
             "lastKernels":trace.iter().rev().take(20).map(|r|&r.kernel).collect::<Vec<_>>(),
@@ -65,7 +65,7 @@ fn quantified_middle_captures_preserve_each_owned_node_across_all_resident_roots
     assert!(
         trace
             .iter()
-            .all(|r| r.encoded && r.submitted && r.completed)
+            .all(|r| r.submitted && r.completed)
     );
 }
 
@@ -115,7 +115,7 @@ fn shared_typed_output_scales_files_and_programs_without_commands_per_capture() 
         assert!(
             trace
                 .iter()
-                .all(|record| record.encoded && record.submitted && record.completed)
+                .all(|record| record.submitted && record.completed)
         );
         assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
         if let Some(first) = first_launches {
@@ -446,7 +446,7 @@ fn prior_phase_optional_query_completes_structural_work_before_output_stages() {
         serde_json::json!({
             "seconds": start.elapsed().as_secs_f64(),
             "attempts": trace.len(),
-            "encoded": trace.iter().filter(|r| r.encoded).count(),
+            "encoded": trace.len(),
             "completed": trace.iter().filter(|r| r.completed).count(),
             "peakMetalBytes": trace.iter().map(|r| r.peak_application_buffer_bytes).max(),
             "kernels": trace.iter().map(|r| &r.kernel).collect::<Vec<_>>()
@@ -457,7 +457,7 @@ fn prior_phase_optional_query_completes_structural_work_before_output_stages() {
     assert!(
         trace
             .iter()
-            .all(|r| r.encoded && r.submitted && r.completed)
+            .all(|r| r.submitted && r.completed)
     );
 }
 

@@ -26,6 +26,9 @@ pub mod code_rule_dsl {
         /// The language's root (`rr.rs`), with its children.
         pub mod rr;
         pub mod settings;
+        /// Contexts: code inside code analysed as a pass of its own rules (decision 0597), which the root's reading
+        /// (`rr::parse_version`) runs.
+        pub mod contexts;
         pub use rerail_json_rules::code_rule_dsl::logic::json_rules;
         pub mod plan {
             pub use rerail_corpus_prep::code_rule_dsl::logic::plan::*;
@@ -76,6 +79,7 @@ pub mod code_rule_dsl {
                 pub mod import_closure;
                 pub mod inputs;
                 pub mod kept_link;
+                pub mod kept_texts;
                 pub mod link;
                 pub mod phase0;
                 pub mod phases;

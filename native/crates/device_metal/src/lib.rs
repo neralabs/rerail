@@ -638,3 +638,4 @@ pub(crate) fn test_languages() {
         crate::code_rule_dsl::embed::install_embedders(vec![(language::Via::CallArgument, &rerail_lang_python::code_rule_dsl::embed::call_argument::CallArgument)]);
     });
 }
+

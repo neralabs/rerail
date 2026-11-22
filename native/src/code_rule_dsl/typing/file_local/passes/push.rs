@@ -428,8 +428,8 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                     }
                 };
                 let args: Vec<NOwned<'v>> = iface.iter().map(|x| NOwned::V(x.clone())).collect();
-                // A helper of the same content (two files' parts of one join, `by_node_group`; a narrow copy and its
-                // original) is the one made: read again, not made again.
+                // A helper of the same content (two files' parts of one join, `by_node_group`; a narrow copy's and its
+                // original's join, decision 0575) is the one made: read again, not made again.
                 if !helpers.iter().any(|h| h.head.as_ref().is_some_and(|(name, _)| *name == helper)) {
                     decls.retain(|(r, _)| *r != helper);
                     decls.push((helper.clone(), typed));
@@ -473,7 +473,9 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
         }
         crate::code_rule_dsl::logic::profile::decision("a pushed join the split did not take: its rules held back a level", || {
             let gone: Vec<String> = made.reads().iter().filter(|(_, n)| !now.contains(n)).take(3).map(|(i, n)| format!("{n} of {}", v.show_rule(rules[*i]))).collect();
-            format!("{} rules ({}): {}", failed.len(), level.len(), gone.join("; "))
+            // The split's cause for the first helper it did not take.
+            let why = made.reads().iter().find(|(_, n)| !now.contains(n)).and_then(|(_, n)| split.causes.get(n)).map_or("", String::as_str);
+            format!("{} rules ({}): {}; the first's cause: {why}", failed.len(), level.len(), gone.join("; "))
         });
         for i in failed {
             *level.entry(i).or_default() += 1;

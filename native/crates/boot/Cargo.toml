@@ -82,7 +82,7 @@ test-hooks = ["rerail-c-pp/test-hooks", "rerail-clif/test-hooks", "rerail-tape-f
   "ast-grep-language/tree-sitter-kotlin", "ast-grep-language/tree-sitter-lua", "ast-grep-language/tree-sitter-php",
   "ast-grep-language/tree-sitter-ruby", "ast-grep-language/tree-sitter-rust", "ast-grep-language/tree-sitter-scala",
   "ast-grep-language/tree-sitter-swift",
-  "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-cpu-block/test-hooks", "rerail-metal/test-hooks", "rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-workspace/test-hooks", "rerail-store/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks"]
+  "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-cpu-block/test-hooks", "rerail-metal/test-hooks", "rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-workspace/test-hooks", "rerail-store/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks", "rerail-blocks/test-hooks"]
 
 [dependencies]
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
@@ -98,6 +98,8 @@ rerail-accel = { path = "../../../accel" }
 rerail-tree-watch = { path = "../tree_watch" }
 # The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
 rerail-store = { path = "../store", features = ["test-hooks"] }
+# The kept facts' reads (`rerail_blocks::kept`), as the slice reads its scope's (`slice/kept.rs`).
+rerail-blocks = { path = "../blocks" }
 ast-grep-core = "=0.51.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md).

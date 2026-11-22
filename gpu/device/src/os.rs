@@ -42,6 +42,17 @@ impl Lib {
     }
 }
 
+/// Asks NVIDIA's driver for `n` hardware queues (`CUDA_DEVICE_MAX_CONNECTIONS`), before it loads: the CUDA driver and
+/// NVIDIA's OpenCL, which is built on it, both read it. Each queue costs the context's creation about 18 ms, in every
+/// process (a GB10: CUDA's primary context 0.63 s at 32, 0.19 s at 8, 0.09 s at 2; OpenCL's context 0.65 s at 32,
+/// 0.17 s at its default, 0.09 s at 2). A value the environment sets is kept. Other drivers ignore it.
+pub fn nvidia_hardware_queues(n: usize) {
+    if std::env::var_os("CUDA_DEVICE_MAX_CONNECTIONS").is_none() {
+        // SAFETY: called before the driver loads, as the process's first use of the device.
+        unsafe { std::env::set_var("CUDA_DEVICE_MAX_CONNECTIONS", n.to_string()) };
+    }
+}
+
 /// The size of the system's pages.
 pub fn page_bytes() -> usize {
     sys::page_bytes().max(4096)

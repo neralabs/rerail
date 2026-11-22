@@ -4,6 +4,7 @@
 .decl git_content_read_request(content: symbol, offset: number, length: number) extensible
 .decl git_payload_request(repo: symbol, oid: symbol, offset: number, length: number)
 .decl git_payload_of(repo: symbol, oid: symbol, offset: number, length: number, kind: symbol, content: symbol, size: number, bytes: symbol, status: symbol, storage: symbol)
+.answer git_payload_request -> git_payload_of
 
 git_payload_request(r, id, 0, 0) :- git_content_request(r, id).
 .decl git_content_key(repo: symbol, oid: symbol, version: symbol)

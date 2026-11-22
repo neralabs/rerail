@@ -256,7 +256,7 @@ pub(super) fn evicted_file_states(
     let injected = false;
     // A store read that fails reports each file's clauses as unavailable, as `api.rs` does for a
     // resident file: the stored results remain, so a later read answers them (O22).
-    let results = match (!injected).then(|| storage.store.local_check_results_by_key(&keys, catalog)) {
+    let results = match (!injected).then(|| storage.store.workspace_results(&keys, catalog)) {
         Some(Ok(results)) => Some(results),
         Some(Err(error)) if state.scan_fingerprints.is_some() => return Err(super::api::store_unavailable(error)),
         _ => None,

@@ -177,3 +177,26 @@ rows at a cut there:
   run makes progress.
 
 Test: `a_cut_inside_a_fused_chunk_leaves_the_rows_it_did_not_run` (cut_tests.rs). It fails without the stop.
+
+## A closure's seeds are cut too (2026-11-21)
+
+A component run as its closure (decision 0098 §1) ran its seeds once, before its launches, with no limit. The driver
+set their budgets, and nothing read them. So a seed of a recursive relation was never cut, and decision 0203 never
+checked it against its price.
+
+On corpus0 (all 317 policies as one pack), `open_tuple`'s seed was a cross product. It read 41 M rows a stratum, in
+7 strata, against a price of 753 rows: 0.45 T of the run's 1.48 T instructions.
+
+**Now.** The closure's seeds run as every seed does (`Limited::of`, `Limited::cut`, shared with the waves' probes).
+A seed that spends its budget is cut. The run returns `5`, and the closure goes back in its place. The next run goes
+on from the rows the seed left, with its body as it is then, and then runs the closure.
+
+**Measured.** The same corpus0 run, one pack:
+
+- 1.484 T instructions before, 0.814 T after.
+- The same 463 findings.
+- The seed is cut at 100,144 rows of work, flagged slow, and planned again. Its replacement takes the 143 rows it left
+  and finishes in 1,535 rows.
+
+Test: `a_closures_seed_is_cut_at_its_budget_and_goes_on_from_its_rows_left` (cut_tests.rs). It fails without the change:
+0 cuts.

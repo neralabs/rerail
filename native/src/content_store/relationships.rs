@@ -1,44 +1,24 @@
 //! Overlay relationship rows written by publication, and their revalidation before commit.
 
-use super::publication::{
-    PublicationCandidateIdentity, PublicationInternCache, resolve_publication_identities,
-    stored_object_identities, stored_path_ids,
-};
-use super::rows::hash_params;
-use super::object_segments::Placing;
+use super::publication::{stored_object_identities, stored_path_ids};
 use super::{
     HashKey, OverlayFilePublication, SourceId, StoreError, StoreResult, TapeId, WorkspaceId,
 };
 use rusqlite::Connection;
-use rusqlite::types::{ToSqlOutput, ValueRef};
-use std::collections::BTreeSet;
 
 pub(super) struct PreparedSqlStatement {
     sql: String,
     values: Vec<rusqlite::types::Value>,
 }
 
-pub(super) struct PreparedRelationshipPass<'a> {
+pub(super) struct PreparedRelationshipPass {
     statements: Vec<PreparedSqlStatement>,
-    /// The distinct contexts of `results`, as the JSON array of their hash parameters.
-    contexts: Option<String>,
-    /// Each local result as its source, the index of its context in `contexts`, its clause, and
-    /// its bytes, which the pass places in a segment as they are (`result_bytes`).
-    results: Vec<(SourceId, usize, i64, &'a [u8])>,
-    results_per_statement: usize,
 }
 
-impl PreparedRelationshipPass<'_> {
-    /// The results' bytes, in the order `execute_relationship_pass` names their places: what the pass's segment
-    /// holds (decision 0450 step 2).
-    pub(super) fn result_bytes(&self) -> Vec<&[u8]> {
-        self.results.iter().map(|row| row.3).collect()
-    }
+impl PreparedRelationshipPass {
     /// The data statements `execute_relationship_pass` runs.
     pub(super) fn statement_count(&self) -> usize {
         self.statements.len()
-            + usize::from(self.contexts.is_some())
-            + self.results.len().div_ceil(self.results_per_statement)
     }
 }
 
@@ -51,9 +31,7 @@ pub(super) fn prepare_relationship_pass<'a>(
         Option<TapeId>,
         OverlayFilePublication<'a>,
     )],
-    interned: &PublicationInternCache,
-    variable_limit: usize,
-) -> StoreResult<PreparedRelationshipPass<'a>> {
+) -> StoreResult<PreparedRelationshipPass> {
     let mut statements = Vec::new();
     let mut overlay_sql = String::from(
         "INSERT INTO workspace_overlay(workspace_id,path_id,state_id,source_id,tape_id) VALUES ",
@@ -76,81 +54,7 @@ pub(super) fn prepare_relationship_pass<'a>(
         values: overlay_values,
     });
 
-    let mut local_results = Vec::<(SourceId, HashKey, i64, &[u8])>::new();
-    for (_, _, source_id, _, publication) in rows {
-        let catalog_key = publication.catalog.key();
-        let catalog_id = *interned
-            .catalogs
-            .get(&catalog_key)
-            .ok_or(StoreError::Vanished("candidate catalog"))?;
-        for result in publication.local_results {
-            let check_id = *interned
-                .clauses
-                .get(&(
-                    catalog_id,
-                    result.candidate.rule,
-                    result.candidate.clause.clone(),
-                ))
-                .ok_or(StoreError::Vanished("candidate check"))?;
-            local_results.push((*source_id, result.context, check_id, result.bytes.as_slice()));
-        }
-    }
-
-    // A result's context is interned by the object pass, which a publication of stored objects
-    // skips; a context new to the store (a `calls` stamp, a changed module) is interned here.
-    // The contexts' ids are then read once, so each result row names its context by id instead
-    // of joining its hash.
-    let contexts = local_results
-        .iter()
-        .map(|(_, context, ..)| *context)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let contexts_json = if contexts.is_empty() {
-        None
-    } else {
-        let contexts = serde_json::to_string(
-            &contexts
-                .iter()
-                .map(|context| hash_params(*context))
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|error| StoreError::Invalid(error.to_string()))?;
-        statements.push(PreparedSqlStatement {
-            sql: "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) algorithm,\
-                  CAST(json_extract(value,'$[1]') AS INTEGER) lane0,CAST(json_extract(value,'$[2]') AS INTEGER) lane1,\
-                  CAST(json_extract(value,'$[3]') AS INTEGER) lane2,CAST(json_extract(value,'$[4]') AS INTEGER) lane3 FROM json_each(?1)) \
-                  INSERT INTO hashes(algorithm_id,lane0,lane1,lane2,lane3) \
-                  SELECT i.algorithm,i.lane0,i.lane1,i.lane2,i.lane3 FROM input i \
-                  WHERE NOT EXISTS (SELECT 1 FROM hashes h INDEXED BY hashes_by_prefix \
-                  WHERE h.algorithm_id=i.algorithm AND h.lane0=i.lane0 AND h.lane1=i.lane1 \
-                  AND h.lane2=i.lane2 AND h.lane3=i.lane3)"
-                .to_owned(),
-            values: vec![rusqlite::types::Value::Text(contexts.clone())],
-        });
-        Some(contexts)
-    };
-    let results = local_results
-        .into_iter()
-        .map(|(source_id, context, check_id, bytes)| {
-            let context = contexts
-                .binary_search(&context)
-                .expect("every result context is collected");
-            (source_id, context, check_id, bytes)
-        })
-        .collect::<Vec<_>>();
-
-    let results_per_statement = Some(variable_limit / 6)
-        .filter(|&rows| rows > 0)
-        .ok_or_else(|| {
-            StoreError::Invalid("SQLite variable limit cannot hold a context result".to_owned())
-        })?;
-    let pass = PreparedRelationshipPass {
-        statements,
-        contexts: contexts_json,
-        results,
-        results_per_statement,
-    };
+    let pass = PreparedRelationshipPass { statements };
     if pass.statement_count() > 10 {
         return Err(StoreError::Invalid(format!(
             "relationship publication prepared {} statements; maximum is 10",
@@ -171,8 +75,6 @@ pub(super) fn relationship_references_current(
     )],
     path_hashes: &[(&str, HashKey)],
     hashes: &[(HashKey, Option<HashKey>)],
-    candidate_identities: &[PublicationCandidateIdentity],
-    interned: &PublicationInternCache,
 ) -> StoreResult<bool> {
     if hashes.len() != rows.len() || path_hashes.len() != rows.len() {
         return Err(StoreError::Corrupt(
@@ -201,74 +103,15 @@ pub(super) fn relationship_references_current(
     ) {
         return Ok(false);
     }
-    Ok(resolve_publication_identities(transaction, candidate_identities)? == *interned)
+    Ok(true)
 }
 
-/// Runs the pass in `transaction`; `placing` holds its results' bytes (`result_bytes`), in the segment numbered
-/// `seg`.
-pub(super) fn execute_relationship_pass(
-    transaction: &Connection,
-    pass: &PreparedRelationshipPass<'_>,
-    placing: &Placing,
-    seg: Option<i64>,
-) -> StoreResult<()> {
+/// Runs the pass in `transaction`.
+pub(super) fn execute_relationship_pass(transaction: &Connection, pass: &PreparedRelationshipPass) -> StoreResult<()> {
     for statement in &pass.statements {
         transaction
             .prepare_cached(&statement.sql)?
             .execute(rusqlite::params_from_iter(statement.values.iter()))?;
-    }
-    let Some(contexts) = &pass.contexts else {
-        return Ok(());
-    };
-    let mut context_ids = vec![None; pass.results.iter().map(|row| row.1 + 1).max().unwrap_or(0)];
-    {
-        let mut statement = transaction.prepare_cached(
-            "SELECT CAST(i.key AS INTEGER),h.hash_id FROM json_each(?1) i \
-             JOIN hashes h INDEXED BY hashes_by_prefix \
-             ON h.algorithm_id=CAST(json_extract(i.value,'$[0]') AS INTEGER) \
-             AND h.lane0=CAST(json_extract(i.value,'$[1]') AS INTEGER) \
-             AND h.lane1=CAST(json_extract(i.value,'$[2]') AS INTEGER) \
-             AND h.lane2=CAST(json_extract(i.value,'$[3]') AS INTEGER) \
-             AND h.lane3=CAST(json_extract(i.value,'$[4]') AS INTEGER)",
-        )?;
-        let mut rows = statement.query([contexts])?;
-        while let Some(row) = rows.next()? {
-            let index = usize::try_from(row.get::<_, i64>(0)?)
-                .map_err(|_| StoreError::Corrupt("context index is negative".to_owned()))?;
-            if let Some(id) = context_ids.get_mut(index) {
-                *id = Some(row.get::<_, i64>(1)?);
-            }
-        }
-    }
-    let seg = match (seg, pass.results.is_empty()) {
-        (_, true) => 0,
-        (Some(seg), false) => seg,
-        (None, false) => return Err(StoreError::Invalid("a relationship pass's results were not placed".to_owned())),
-    };
-    for (chunk_index, chunk) in pass.results.chunks(pass.results_per_statement).enumerate() {
-        let mut sql = String::with_capacity(120 + chunk.len() * 14);
-        sql.push_str(
-            "INSERT OR IGNORE INTO context_check_results(source_id,context_hash_id,check_id,\
-             seg,seg_at,seg_len) VALUES ",
-        );
-        let mut values = Vec::with_capacity(chunk.len() * 6);
-        for (index, (source_id, context, check_id, _)) in chunk.iter().enumerate() {
-            if index != 0 {
-                sql.push(',');
-            }
-            sql.push_str("(?,?,?,?,?,?)");
-            let context_id = context_ids[*context].ok_or_else(|| {
-                StoreError::Corrupt("a local result context was not interned".to_owned())
-            })?;
-            let place = placing.place(seg, chunk_index * pass.results_per_statement + index);
-            values.extend(
-                [source_id.0, context_id, *check_id, place.seg, place.at as i64, place.len as i64]
-                    .map(|value| ToSqlOutput::Borrowed(ValueRef::Integer(value))),
-            );
-        }
-        transaction
-            .prepare_cached(&sql)?
-            .execute(rusqlite::params_from_iter(values.iter()))?;
     }
     Ok(())
 }

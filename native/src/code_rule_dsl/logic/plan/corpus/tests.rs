@@ -1977,6 +1977,7 @@ fn every_switch_lowering_reads_is_classified() {
     /// and profiles, the store's and the cost model's paths, the session's binding.
     const NOT_PREPARING: &[&str] = &[
         "RERAIL_BLESS_CENSUS",
+        // Why a narrow copy is not diffed (decision 0575): a trace.
         "RERAIL_NARROW_DIFF_DEBUG",
         "RERAIL_IDEMPOTENCY_DUMP",
         "RERAIL_MAGIC_CHECK",
@@ -1985,6 +1986,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_SPLIT_DUMP",
         "RERAIL_DEMAND_DUMP",
         "RERAIL_PREPARED_TRACE",
+        // Prints each diffed copy's change points (decision 0575).
+        "RERAIL_NARROW_DIFF_DEBUG",
         // How the combine's link is made (decision 0373): spliced into the last one, linked whole, or both and compared;
         // the program is the same (`check` asserts it).
         "RERAIL_COMBINE_LINK",
@@ -2055,7 +2058,7 @@ fn every_switch_lowering_reads_is_classified() {
                 if let Some(m) = test_module.find(&text) {
                     text.truncate(m.start());
                 }
-                files.push((p.strip_prefix(&root).unwrap().display().to_string(), text));
+                files.push((p.strip_prefix(&root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"), text));
             }
         }
         files
@@ -2528,7 +2531,9 @@ fn a_finding_no_file_holds_is_refused_naming_its_clause() {
     let text = ".policy \"p\" revision 1\n.language python\n.violation Assert(at: node) \"an assert\"\nAssert(n) :- kind(n, \"assert_statement\").\n";
     let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
     let shown = v.show();
-    assert!(shown.contains("rr_unplaced(\"Assert\") :- Assert(") && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
+    // The finding's node by its clause, and the program's one rule refusing those of no file's document.
+    let found = crate::code_rule_dsl::logic::rr::FOUND_NODE;
+    assert!(shown.contains(&format!("{found}(\"Assert\", ")) && shown.contains(&format!("rr_unplaced($rr_clause) :- {found}(")) && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
     assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
     let out = dir.join("out");
     let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
@@ -2573,4 +2578,90 @@ v(n) :- kind(n, \"assert_statement\").
     let got: Vec<(String, usize)> = ["c1", "c2", "c3", "v"].iter().map(|r| (r.to_string(), crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap().len())).collect();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(got, [("c1".to_owned(), 1), ("c2".to_owned(), 1), ("c3".to_owned(), 1), ("v".to_owned(), 1)]);
+}
+
+/// The engine's Git programs (`git::SOURCE_CHECKS`, `ROOT_TREE`, `INVENTORY`) each read as one program, their library
+/// modules included by name and each read once: what each derives is declared, and so are the trailers `git.rerail`
+/// includes (`git/messages.rerail`, which includes `git.rerail` again).
+#[test]
+fn the_git_programs_read_their_library_once() {
+    for (name, text, derives) in [
+        ("source checks", super::git::SOURCE_CHECKS, "git_selected_source_blob"),
+        ("root tree", super::git::ROOT_TREE, "git_root_tree_error"),
+        ("inventory", super::git::INVENTORY, "inventory_error"),
+    ] {
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        for rel in [derives, "git_trailer", "git_tree_entry"] {
+            assert!(v.decl_of(rel).is_some(), "{name}: {rel} is not declared");
+        }
+    }
+}
+
+/// Decision 0597 (`logic::contexts`), through the library: an annotation context holds its own instance of the library's `unparen` (and what it reads),
+/// while the host keeps its own for its own rules; the roots are the annotations' trees the host parses.
+#[test]
+fn a_context_holds_the_librarys_rules_it_reaches_as_its_own() {
+    use crate::code_rule_dsl::logic::rr::parse_version;
+    let rules_of = |v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str| -> Vec<String> { v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).map(|r| v.show_rule(r)).collect() };
+    let text = "\
+.language python
+#include \"python/ast.rerail\"
+.decl ann_root(r: node)
+ann_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_inner(r: node, e: node)
+ann_inner(r, e) :- ann_root(r), unparen(r, e).
+.decl host_inner(e: node)
+host_inner(e) :- kind(n, \"parenthesized_expression\"), unparen(n, e).
+.decl seen(e: node)
+seen(e) :- quoted(_, e).
+seen(e) :- host_inner(e).
+.output seen
+.context annotation of python roots ann_root exports ann_inner
+.from python ann_root for annotation
+.from annotation ann_inner as quoted
+";
+    let v = parse_version(text).unwrap();
+    let all = v.show();
+    assert!(!rules_of(&v, "rr_cx_annotation_unparen").is_empty(), "the context's own unparen: {all}");
+    assert!(rules_of(&v, "rr_cx_annotation_ann_inner").iter().all(|r| r.contains("rr_cx_annotation_unparen(") && r.contains(" ann_root(")), "{all}");
+    assert!(!rules_of(&v, "unparen").is_empty() && rules_of(&v, "host_inner").iter().all(|r| r.contains(" unparen(")), "the host's own: {all}");
+    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_annotation_ann_inner(")), "{all}");
+}
+
+/// The texts the combine last read (`kept_texts`): a text's kept modules stand while the text and each library file
+/// they list are as kept, so the combine does not read it again. An edited text, or one whose library file changed,
+/// is read again.
+#[test]
+fn a_kept_texts_modules_stand_while_it_and_its_files_are_as_kept() {
+    use crate::code_rule_dsl::logic::rr::Modules;
+    use std::collections::BTreeSet;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("kept-texts");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (a, b) = (dir.join("a.rerail"), dir.join("b.rerail"));
+    std::fs::write(&a, ".decl x(n: number)\n").unwrap();
+    std::fs::write(&b, ".decl y(n: number)\n").unwrap();
+    let (a, b) = (a.canonicalize().unwrap(), b.canonicalize().unwrap());
+    let digest = |p: &std::path::Path| -> [u8; 32] {
+        use sha2::Digest as _;
+        sha2::Sha256::digest(std::fs::read(p).unwrap()).into()
+    };
+    let modules = |files: &[&std::path::Path], head: &str| Modules {
+        files: files.iter().map(|p| (p.to_path_buf(), digest(p), BTreeSet::from([p.file_stem().unwrap().to_string_lossy().into_owned()]))).collect(),
+        heads: BTreeSet::from([head.to_owned()]),
+        declared: BTreeSet::new(),
+    };
+    let store = crate::content_store::ContentStore::open(&dir.join("store.sqlite")).unwrap();
+    let programs = ["p(1) :- x(1).", "q(1) :- y(1).", "r(1)."];
+    let modular = vec![Some(modules(&[&a], "p")), Some(modules(&[&a, &b], "q")), None];
+    super::kept_texts::keep(&store, &programs, &modular);
+    store.written().unwrap();
+    let shown = |known: Vec<Option<Option<Modules>>>| known.into_iter().map(|k| k.map(|m| m.map(|m| format!("{m:?}")))).collect::<Vec<_>>();
+    let kept: Vec<_> = modular.iter().map(|m| Some(m.as_ref().map(|m| format!("{m:?}")))).collect();
+    assert_eq!(shown(super::kept_texts::known(&store, &programs)), kept, "every text as kept");
+    let edited = ["p(1) :- x(1).", "q(2) :- y(1).", "r(1)."];
+    assert_eq!(shown(super::kept_texts::known(&store, &edited)), [kept[0].clone(), None, kept[2].clone()], "the edited text is read again");
+    std::fs::write(&b, ".decl y(n: number)\n.decl z(n: number)\n").unwrap();
+    assert_eq!(shown(super::kept_texts::known(&store, &programs)), [kept[0].clone(), None, kept[2].clone()], "b.rerail changed: its includer is read again");
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
 }

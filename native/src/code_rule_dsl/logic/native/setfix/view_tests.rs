@@ -94,3 +94,37 @@ fn a_whole_views_estimate_is_its_sources() {
     assert_eq!((viewed.estimated_matches(0, false), viewed.estimated_matches(1, false)), (2, 1));
     assert_eq!(viewed.statistics().map(|s| s[0].2), Some(3), "the statistics given, not measured");
 }
+
+/// The memory profile counts the rows the run holds (`held_by_name`): a view over a source holds none of the run's,
+/// and its source is not asked its length, which a source made on lookup answers by making every row (the sampler's
+/// thread made `within`'s rows, 87 MB on the M3's 300 files, for this count alone).
+#[test]
+fn the_memory_profile_asks_no_view_its_length() {
+    use crate::code_rule_dsl::facts::vtab::Source;
+    struct Unasked;
+    impl Source for Unasked {
+        fn columns(&self) -> Vec<String> {
+            vec!["n".into(), "a".into()]
+        }
+        fn len(&self) -> usize {
+            panic!("a view's length asked for the memory profile")
+        }
+        fn estimated_matches(&self, _column: usize, _batch: bool) -> usize {
+            1
+        }
+        fn indexed(&self, _column: usize) -> bool {
+            true
+        }
+        fn lookup(&self, _column: usize, _values: &[i64]) -> Option<Vec<usize>> {
+            Some(Vec::new())
+        }
+        fn value(&self, _row: usize, _column: usize) -> i64 {
+            0
+        }
+        fn made_on_lookup(&self) -> bool {
+            true
+        }
+    }
+    let rel = InRel::over_source(Arc::new(Unasked), vec![b'i', b'i']);
+    assert_eq!(rows_held(&rel), 0, "a view holds no rows of the run's");
+}

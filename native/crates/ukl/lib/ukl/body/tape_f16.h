@@ -73,7 +73,7 @@ CLIF_16_RARE uint64_t CLIF_16(side)(CLIF_16_ARGS, uint32_t k, uint32_t i)
 }
 
 // Value `i` of array `a` (0 slots, 1 gaps, 2 lengths): one word's load, or (all ones: escaped) its side list's.
-UKL_INLINE uint64_t CLIF_16(get)(CLIF_16_ARGS, uint32_t a, uint32_t i)
+UKL_SHARED uint64_t CLIF_16(get)(CLIF_16_ARGS, uint32_t a, uint32_t i)
 {
     uint32_t w = CLIF_16(width)(CLIF_16_PASS, a);
     uint32_t array = CLIF_16(column)(CLIF_16_PASS, 1u + a, i >> 10);
@@ -105,7 +105,7 @@ UKL_INLINE uint32_t CLIF_16(number)(CLIF_16_ARGS, uint32_t i)
 }
 
 // The node's start as stated: its checkpoint, then the gaps of the nodes after it, to the node's own.
-UKL_INLINE uint32_t CLIF_16(start_stated)(CLIF_16_ARGS, uint32_t i)
+UKL_SHARED uint32_t CLIF_16(start_stated)(CLIF_16_ARGS, uint32_t i)
 {
     uint32_t c = i >> 3;
     uint64_t from = CLIF_16(checkpoint)(CLIF_16_PASS, c);

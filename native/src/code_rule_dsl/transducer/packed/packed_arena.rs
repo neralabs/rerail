@@ -103,9 +103,11 @@ impl<Tag> GlobalArenaCursor<Tag> {
     }
 }
 
+/// A lane's lazy block (`ensure_lazy_block` in `batch_runtime.uglykl`): taken from its global arena at the lane's
+/// first need. A lane is one thread's own, so nothing else takes it and nothing waits for it (decision 0540 step 7).
 pub(super) struct LazyArenaBlock<Tag> {
     limit: u32,
-    state: AtomicU32,
+    state: u32,
     marker: PhantomData<fn() -> Tag>,
 }
 
@@ -113,48 +115,34 @@ impl<Tag> LazyArenaBlock<Tag> {
     pub(super) const fn new(limit: u32) -> Self {
         Self {
             limit,
-            state: AtomicU32::new(0),
+            state: 0,
             marker: PhantomData,
         }
     }
 
     pub(super) fn ensure(
-        &self,
+        &mut self,
         global: &GlobalArenaCursor<Tag>,
     ) -> Result<ArenaRange<Tag>, SharedReservationError> {
-        loop {
-            match self.state.load(Ordering::Relaxed) {
-                0 => {
-                    if self
-                        .state
-                        .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
-                        .is_err()
-                    {
-                        continue;
-                    }
-                    match global.reserve_physical(self.limit) {
-                        Ok(start) if start.get() <= u32::MAX - 2 => {
-                            self.state.store(start.get() + 2, Ordering::Relaxed);
-                            return Ok(ArenaRange {
-                                start,
-                                capacity: self.limit,
-                            });
-                        }
-                        Ok(_) | Err(_) => {
-                            self.state.store(u32::MAX, Ordering::Relaxed);
-                            return Err(SharedReservationError::GlobalPlan);
-                        }
-                    }
-                }
-                1 => std::hint::spin_loop(),
-                u32::MAX => return Err(SharedReservationError::GlobalPlan),
-                ready => {
-                    return Ok(ArenaRange {
-                        start: ArenaOffset::new(ready - 2),
+        match self.state {
+            u32::MAX => Err(SharedReservationError::GlobalPlan),
+            0 => match global.reserve_physical(self.limit) {
+                Ok(start) if start.get() <= u32::MAX - 2 => {
+                    self.state = start.get() + 2;
+                    Ok(ArenaRange {
+                        start,
                         capacity: self.limit,
-                    });
+                    })
                 }
-            }
+                Ok(_) | Err(_) => {
+                    self.state = u32::MAX;
+                    Err(SharedReservationError::GlobalPlan)
+                }
+            },
+            ready => Ok(ArenaRange {
+                start: ArenaOffset::new(ready - 2),
+                capacity: self.limit,
+            }),
         }
     }
 }
@@ -267,28 +255,23 @@ pub mod tests {
         assert_eq!(global.used(), 8);
     }
 
+    /// A lane's block is taken once, at its first need, and every later need finds it; lanes beside it take their own.
     #[test]
-    fn lazy_block_is_allocated_once_for_concurrent_evaluation_tasks() {
-        use std::sync::Arc;
-
-        let global = Arc::new(GlobalArenaCursor::new(ArenaRange::<QueryStateTag> {
+    fn a_lanes_lazy_block_is_allocated_once() {
+        let global = GlobalArenaCursor::new(ArenaRange::<QueryStateTag> {
             start: ArenaOffset::new(20),
             capacity: 64,
-        }));
-        let block = Arc::new(LazyArenaBlock::new(32));
-        let threads = (0..8)
-            .map(|_| {
-                let global = Arc::clone(&global);
-                let block = Arc::clone(&block);
-                std::thread::spawn(move || block.ensure(&global).unwrap())
-            })
-            .collect::<Vec<_>>();
-        for thread in threads {
-            let range = thread.join().unwrap();
+        });
+        let mut block = LazyArenaBlock::new(32);
+        for _ in 0..8 {
+            let range = block.ensure(&global).unwrap();
             assert_eq!(range.start.get(), 20);
             assert_eq!(range.capacity, 32);
         }
         assert_eq!(global.used(), 32);
+        let mut other = LazyArenaBlock::new(32);
+        assert_eq!(other.ensure(&global).unwrap().start.get(), 52);
+        assert!(matches!(LazyArenaBlock::new(32).ensure(&global), Err(SharedReservationError::GlobalPlan)), "the arena is full");
     }
 
     #[test]

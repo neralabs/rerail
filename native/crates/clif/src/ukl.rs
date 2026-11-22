@@ -249,7 +249,9 @@ fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::
 fn pointers(family: Family) -> (&'static str, &'static str) {
     match family {
         Family::Tape => ("UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v", "t,v"),
-        Family::Relation | Family::Lines => ("UKL_GLOBAL const uint8_t* t,uint64_t a0", "t"),
+        // A relation's block's base in the space its kernel reads blocks in (`CLIF_BLOCK_SPACE`, decision 0603); a
+        // view's tape and directory, which no dispatch writes, as they are.
+        Family::Relation | Family::Lines => ("CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0", "t"),
         Family::View => ("UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll", "t"),
     }
 }
@@ -826,14 +828,15 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             }
             let readonly = data.memflags().is_some_and(|m| m.readonly());
             if aligned && family != Family::Tape {
-                // The block's own words, at their alignment.
+                // The block's own words, at their alignment, in the space its base is in (`CLIF_BLOCK_SPACE`:
+                // coherent where other groups of its kernel's dispatch write them, decision 0603).
                 let t = match size {
                     8 => "uint8_t",
                     16 => "uint16_t",
                     32 => "uint32_t",
                     _ => "uint64_t",
                 };
-                set(format!("(({u})(*(UKL_GLOBAL const {t}*)(t+{})))", addr(&args[0])))
+                set(format!("(({u})(*(CLIF_BLOCK_SPACE const {t}*)(t+{})))", addr(&args[0])))
             } else if aligned {
                 // The view: its u32 fields.
                 if size != 32 {

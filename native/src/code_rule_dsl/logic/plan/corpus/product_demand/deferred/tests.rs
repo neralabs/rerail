@@ -255,3 +255,36 @@ a(c) :- marked(c), exc_call(c, _).
             assert!(p.first(), "the rules as they were");
         }
     }
+
+    #[test]
+    fn requests_installed_in_rounds_are_those_installed_one_at_a_time() {
+        // `wide`'s one reader is `awide`'s producer, which names `wide`'s key only once `awide`'s install guards it: so
+        // `wide` waits for a round after `awide`'s, and planned in `awide`'s round it would install nothing. `wide2`'s
+        // plan nothing else's changes, and it joins `wide`'s round.
+        let v = parse(&format!(
+            "{SOURCE}
+            .decl awide(a: number, b: number)
+            .decl wide2(a: number, b: number)
+            .decl yes(a: number, b: number)
+            .decl yes2(a: number, b: number)
+            .output yes, yes2
+            awide(a,b) :- wide(a,b), enabled(a).
+            wide2(a,b) :- lhs(a,k), rhs(b,k).
+            yes(a,b) :- request(a,b), awide(a,b).
+            yes2(a,b) :- request(a,b), wide2(a,b).
+        "
+        ));
+        let both: &[usize] = &[0, 1];
+        let requests: Vec<(String, &[usize])> = ["awide", "wide", "wide2"].iter().map(|r| (r.to_string(), both)).collect();
+        let every = |_: &str, _: &[usize], _: &Version, _: &[upstream::Proof]| true;
+        let mut rounds = Program::of(&v);
+        let installed = upstream::install_requests(&mut rounds, &requests, DEFERRED_PAIRS, &every).unwrap();
+        let mut alone = Program::of(&v);
+        let one_at_a_time: Vec<bool> =
+            requests.iter().flat_map(|r| upstream::install_requests(&mut alone, std::slice::from_ref(r), DEFERRED_PAIRS, &every).unwrap()).collect();
+        assert_eq!(installed, one_at_a_time, "{:#?}", alone.shown(None));
+        assert_eq!(installed, [true, true, true]);
+        assert_eq!(rounds.shown(None), alone.shown(None));
+        let made = rounds.made.clone().unwrap();
+        assert_eq!(execute(&made, "deferred-rounds"), execute(&v, "deferred-rounds-control"));
+    }

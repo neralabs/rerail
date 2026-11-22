@@ -69,6 +69,14 @@ pub mod front {
         #[allow(unused_imports)]
         use std::collections::BTreeSet;
     }
+    // Its files are its test modules alone.
+    #[cfg_attr(any(test, feature = "test-hooks"), path = ".")]
+    pub mod answers {
+        pub use rerail_rr::code_rule_dsl::logic::front::answers::*;
+        #[cfg(any(test, feature = "test-hooks"))]
+        #[path = "answers_tests.rs"]
+        pub mod tests;
+    }
     #[cfg(test)]
     pub mod data_layer_tests;
     #[cfg(any(test, feature = "test-hooks"))]
@@ -206,11 +214,13 @@ pub mod plan {
         #[allow(unused_imports)]
         use super::super::front::Value;
         #[allow(unused_imports)]
-        use super::super::program_facts::{self, Facts};
+        use super::super::program_facts::Facts;
         #[allow(unused_imports)]
         use super::super::program_text;
         #[allow(unused_imports)]
-        use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
+        use super::kept_entry::Entries;
+        #[allow(unused_imports)]
+        use crate::content_store::{ContentStore, FactsPlanSet, HashKey, StoreResult};
         #[allow(unused_imports)]
         use sha2::{Digest as _, Sha256};
         #[allow(unused_imports)]
@@ -393,6 +403,8 @@ pub use rerail_json_rules::code_rule_dsl::logic::json_rules;
 // with the corpus's base they read (the corpus runner is behind its registered `plan::corpus::RUNNER`).
 pub use rerail_rr_root::code_rule_dsl::logic::rr;
 pub use rerail_rr_root::code_rule_dsl::logic::settings;
+/// Contexts: code inside code analysed as a pass of its own rules (decision 0597), read with the language's root.
+pub use rerail_rr_root::code_rule_dsl::logic::contexts;
 pub use rerail_logic_core::code_rule_dsl::logic::sql;
 /// The reach index's form found in a program (decision 0119).
 pub use rerail_logic_core::code_rule_dsl::logic::reach_form;

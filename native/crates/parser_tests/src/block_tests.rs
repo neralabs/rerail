@@ -1,6 +1,6 @@
 //! Block programs, built up one primitive at a time (`docs/parser-generators/12-what-is-wanted.md`).
 //! Each primitive is a tiny transducer program written in `rir`, checked on every executor (the
-//! CPU interpreter, Cranelift, and the Metal interpreter and generated MSL at every lane width)
+//! CPU interpreter, Cranelift, and Metal's forward carry)
 //! against a byte-by-byte reference that exists only here, and checked for what it lowers to:
 //! straight bit operations.
 
@@ -42,13 +42,26 @@ fn reference(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<u64> {
 
 /// Check a program's outputs against references on every input and every executor.
 fn check_all(rows: &str, want: impl Fn(&[u8]) -> Vec<Vec<u64>>) {
-    let p = program(rows);
-    let ex = Executors::new(&p);
-    for bytes in inputs() {
-        let want = want(&bytes);
-        // Every executor that disagrees, so one run shows where a lowering is wrong.
-        let wrong: Vec<String> = ex.every(&bytes).into_iter().filter(|(_, got)| *got != want).map(|(name, _)| name).collect();
-        assert!(wrong.is_empty(), "{} bytes: wrong on {wrong:?}, program:\n{rows}", bytes.len());
+    check_each(&[(rows.to_owned(), &want)]);
+}
+
+/// A program's rows and its references.
+type Check<'a> = (String, &'a dyn Fn(&[u8]) -> Vec<Vec<u64>>);
+
+/// [`check_all`] for several programs, run together: each device executor runs every program over every input in
+/// one batch (`Executors::every_of_all`), so the test builds each executor's kernel once.
+fn check_each(checks: &[Check<'_>]) {
+    let programs: Vec<Program> = checks.iter().map(|(rows, _)| program(rows)).collect();
+    let executors: Vec<Executors<'_>> = programs.iter().map(Executors::new).collect();
+    let cases = inputs();
+    let runs_of = Executors::every_of_all(&executors.iter().collect::<Vec<_>>(), &cases);
+    for ((rows, want), runs_of) in checks.iter().zip(runs_of) {
+        for (bytes, runs) in cases.iter().zip(runs_of) {
+            let want = want(bytes);
+            // Every executor that disagrees, so one run shows where a lowering is wrong.
+            let wrong: Vec<String> = runs.into_iter().filter(|(_, got)| *got != want).map(|(name, _)| name).collect();
+            assert!(wrong.is_empty(), "{} bytes: wrong on {wrong:?}, program:\n{rows}", bytes.len());
+        }
     }
 }
 
@@ -87,9 +100,10 @@ fn eq_equals_reference_on_every_executor() {
     for byte in [b'"', b'\\', 0x00, 0xff, b'a'] {
         let p = program(&format!("  block 0 %0 = eq {byte:#04x}\n  block 0 output %0\n"));
         let ex = Executors::new(&p);
-        for bytes in inputs() {
-            let want = reference(&bytes, |b| b == byte);
-            for (name, got) in ex.every(&bytes) {
+        let cases = inputs();
+        for (bytes, runs) in cases.iter().zip(ex.every_of(&cases)) {
+            let want = reference(bytes, |b| b == byte);
+            for (name, got) in runs {
                 assert_eq!(got, std::slice::from_ref(&want), "{name}, eq {byte:#04x}, {} bytes", bytes.len());
             }
         }
@@ -174,82 +188,26 @@ fn check_lowering(name: &str, p: &Program) {
 
     let instructions = compiled.disassembly.lines().filter(|l| l.starts_with("  ") && !l.contains("unwind")).count();
     println!("== {name}: {instructions} machine instructions in the function ==");
-    for width in [16usize, 32, 64] {
-        let carried = native.insts.iter().any(block_native::BlockInst::carried);
-        for (strategy, msl) in metal_program_backend_generate(&native, width) {
-            println!("== {name}: generated UKL, {width}-byte lanes, {strategy} ==\n{msl}");
-            // The lane code (the carry helpers and each program's function) is straight-line;
-            // only the look-backs loop, over predecessor groups, and the workers' loop takes
-            // groups. A program's only branches leave the group unfinished when a look-back has
-            // to wait for another launch: the same in every lane.
-            for (section, code) in lane_code(&msl) {
-                let code: String = code.lines().filter(|l| !CONTROL.iter().any(|c| l.trim_start().starts_with(c))).map(|l| format!("{l}\n")).collect();
-                for word in ["for (", "while", "switch", "goto", "?", "if (", "break"] {
-                    assert!(!code.contains(word), "{name}: generated UKL ({strategy}), {section}, has `{word}`");
-                }
-                // SIMD-group operations only combine carries: none without a carried instruction.
-                if !carried && section.starts_with("program_") {
-                    for op in SIMD_GROUP_OPERATIONS {
-                        assert!(!code.contains(op), "{name}: generated UKL ({strategy}) has a SIMD-group operation (`{op}`)");
-                    }
-                }
-            }
-            // The only memory a class formula reads is the bytes: no tables.
-            if strategy == "Planes" {
-                assert!(!msl.contains("UKL_TABLE uint8_t"), "{name}: the planes form reads a table");
-            }
+    for (form, ukl) in metal_program_backend_generate(&native) {
+        println!("== {name}: the forward carry's UKL ({form}) ==\n{ukl}");
+        assert!(ukl.contains("UKL_LARGE void lanes_0("), "{name}: the forward carry has no lane function (a large body, 0576 §24)");
+        // The look-back is gone: no group polls another (decision 0540 step 7).
+        for word in ["look_back(", "halo_exchange(", "exchange_word(", "poll("] {
+            assert!(!ukl.contains(word), "{name}: the forward carry's UKL has `{word}`");
         }
+        // The only memory a class formula reads is the bytes: no tables.
+        assert!(!ukl.contains("UKL_TABLE uint8_t"), "{name}: the planes form reads a table");
     }
 }
 
-/// A program function's control lines, each the same in every lane: those that leave the group
-/// unfinished, and the full group's bodies.
-const CONTROL: [&str; 6] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink(", "if (sg_any(", "if (g > 0u && (g + 1u) * ", "if (sg_all(ascii __UKL_ARGS))"];
-
-/// The SIMD-group operations of the generated code (`block_common.uglykl`'s and UKL's).
-const SIMD_GROUP_OPERATIONS: [&str; 8] = ["ukl_sg_", "sg_any(", "sg_all(", "sg_bcast", "sg_up64(", "sg_down64(", "SG_UP_BM(", "SG_BCAST_BM("];
-
-/// The functions of `block_common.uglykl` that loop: the look-backs and exchanges, over predecessor groups; the
-/// sinks that write positions, over a lane's set bits, and finish a count; the interpreter's byte tests, over a
-/// lane's chunks. (Metal's source declared them without `inline`.)
-const LOOPING: [&str; 9] = ["look_back", "halo_exchange", "exchange_word", "count_sink", "write_positions", "totals_or", "count_finish", "eq_file", "plane_file"];
-
-/// The generated UKL's lane code: every function (the carry helpers, `load16`,
-/// and each `program_P`). The functions that loop (`LOOPING`), and the workers' kernel, which loops over groups,
-/// are left out.
-fn lane_code(msl: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for marker in ["UKL_INLINE "] {
-        for (at, _) in msl.match_indices(marker) {
-            let code = &msl[at..];
-            // A function on one line ends with it; any other at its closing brace.
-            let line = code.find('\n').unwrap_or(code.len());
-            let end = if code[..line].trim_end().ends_with('}') { line } else { code.find("\n}\n").map_or(line, |e| e + 2) };
-            let code = &code[..end.min(code.len())];
-            let name = code[..code.find('(').unwrap_or(0)].rsplit(' ').next().unwrap_or("").to_owned();
-            if LOOPING.contains(&name.as_str()) {
-                continue;
-            }
-            out.push((name, code.to_owned()));
-        }
-    }
-    assert!(out.iter().any(|(name, _)| name == "program_0"), "no program_0");
-    out
-}
-
-/// The generated UKL of every class strategy, from its first line (helpers included).
+/// The forward carry's UKL of the program (its planes form, from its first line, the shared code included).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-fn metal_program_backend_generate(native: &block_native::BlockNative, width: usize) -> Vec<(String, String)> {
-    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
-    let width = LaneWidth::ALL.into_iter().find(|w| w.bytes() == width).expect("a width");
-    ClassStrategy::ALL
-        .into_iter()
-        .map(|s| (format!("{s:?}"), generate_with(native, width, s)))
-        .collect()
+fn metal_program_backend_generate(native: &block_native::BlockNative) -> Vec<(String, String)> {
+    vec![("Planes".to_owned(), metal_program_backend::block_program::serial::source(&[native]))]
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-fn metal_program_backend_generate(_native: &block_native::BlockNative, _width: usize) -> Vec<(String, String)> {
+fn metal_program_backend_generate(_native: &block_native::BlockNative) -> Vec<(String, String)> {
     vec![]
 }
 
@@ -258,9 +216,9 @@ fn eq_lowers_to_straight_bit_operations() {
     check_lowering("eq", &program(EQ_QUOTE));
 }
 
-/// The interpreters run the same bit operations as the generated code, one operation at a time:
-/// the CPU interpreter's kernel is a NEON compare and `to_bitmask`, the Metal interpreter's a
-/// compare and a ballot. Neither loops over bytes.
+/// The CPU interpreter runs the same bit operations as the generated code, one operation at a
+/// time: its kernel is a NEON compare and `to_bitmask`, with no loop over bytes. The device's
+/// carries' helpers are straight-line.
 #[test]
 fn interpreters_have_no_byte_loops() {
     let cpu = include_str!("../../compiler/src/block.rs");
@@ -269,32 +227,9 @@ fn interpreters_have_no_byte_loops() {
     for word in ["for ", "while ", "loop {", ".iter()", "[j]", "[i]"] {
         assert!(!kernel.contains(word), "the CPU eq kernel has `{word}`");
     }
-    // The device interpreter's `interpret_file`: one loop over operations, and loops over the
-    // program's outputs and extracts (sizes); a lane's chunks are a loop over `BW / 16`.
-    // Its only branches leave the group unfinished when a look-back has to wait.
-    let interpreter = include_str!("../../metal/src/block_program.uglykl");
     let common = include_str!("../../metal/src/block_common.uglykl");
-    let run = &interpreter[interpreter.find("UKL_INLINE bool interpret_file(").expect("interpret_file")..];
-    let run = &run[..run.find("\n}\n").expect("its end")];
-    let loops: Vec<&str> = run.lines().filter(|l| l.contains("for (")).map(str::trim).collect();
-    assert_eq!(loops.len(), 3, "{loops:?}");
-    assert!(loops[0].starts_with("for (uint32_t at = 0u; at < pr.steps; at++)"), "{loops:?}");
-    assert!(loops[1].starts_with("for (uint32_t k = 0u; k < pr.outs; k++)") && loops[2].starts_with("for (uint32_t c = 0u; c < pr.exts; c++)"), "{loops:?}");
-    for word in ["while", "ukl_sg_ballot"] {
-        assert!(!run.contains(word), "the device interpreter has `{word}`");
-    }
-    for line in run.lines().filter(|l| l.contains("if (")) {
-        let line = line.trim();
-        assert!(["if (!halo_exchange(", "if (!look_back(", "if (!count_sink("].iter().any(|c| line.starts_with(c)), "the device interpreter branches: `{line}`");
-    }
-    for helper in ["eq_file", "plane_file"] {
-        let code = &common[common.find(&format!("BM {helper}(")).expect("helper")..];
-        let code = &code[..code.find("\n}\n").expect("its end")];
-        let loops: Vec<&str> = code.lines().filter(|l| l.contains("for (")).map(str::trim).collect();
-        assert!(loops.len() == 1 && loops[0].starts_with("for (uint32_t c = 0u; c < (uint32_t)BW / 16u; c++)"), "{helper} loops over chunks only: {loops:?}");
-    }
-    // The carries: from the look-back states to the polls, straight-line.
-    let carry = &common[common.find("// A look-back state").expect("the carries")..common.find("#if BLOCK_POLL_RMW").expect("the polls")];
+    // The carries' helpers, straight-line.
+    let carry = &common[common.find("// `prev` by k").expect("the carries")..common.find("// The sinks' cut").expect("the sinks")];
     for word in ["for (", "while", "if (", "?"] {
         assert!(!carry.contains(word), "the carry helpers have `{word}`");
     }
@@ -325,11 +260,10 @@ fn zip(a: &[u64], b: &[u64], f: impl Fn(u64, u64) -> u64) -> Vec<u64> {
 
 #[test]
 fn const_equals_reference_on_every_executor() {
-    for c in [0xaaaa_aaaa_aaaa_aaaau64, 0x0123_4567_89ab_cdef, 0, u64::MAX, 1 << 63 | 1] {
-        check_all(&format!("  block 0 %0 = const {c:#018x}\n  block 0 output %0\n"), |bytes| {
-            vec![tail(vec![c; bytes.len().div_ceil(64)], bytes.len())]
-        });
-    }
+    let wants: Vec<_> = [0xaaaa_aaaa_aaaa_aaaau64, 0x0123_4567_89ab_cdef, 0, u64::MAX, 1 << 63 | 1]
+        .map(|c| (c, move |bytes: &[u8]| vec![tail(vec![c; bytes.len().div_ceil(64)], bytes.len())]))
+        .into();
+    check_each(&wants.iter().map(|(c, want)| (format!("  block 0 %0 = const {c:#018x}\n  block 0 output %0\n"), want as &dyn Fn(&[u8]) -> Vec<Vec<u64>>)).collect::<Vec<_>>());
 }
 
 #[test]
@@ -344,15 +278,16 @@ fn binary_operators_equal_reference_on_every_executor() {
     type Op = fn(u64, u64) -> u64;
     let cases: [(&str, Op); 4] =
         [("and", |x, y| x & y), ("or", |x, y| x | y), ("xor", |x, y| x ^ y), ("andnot", |x, y| x & !y)];
-    for (name, f) in cases {
-        // Each operator on the two masks, and on a mask with itself.
-        check_all(&format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %1\n  block 0 output %2\n"), |bytes| {
-            vec![zip(&quote(bytes), &backslash(bytes), f)]
-        });
-        check_all(&format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %0\n  block 0 output %2\n"), |bytes| {
-            vec![zip(&quote(bytes), &quote(bytes), f)]
-        });
-    }
+    // Each operator on the two masks, and on a mask with itself.
+    let wants: Vec<_> = cases
+        .iter()
+        .flat_map(|&(name, f)| {
+            let two: Box<dyn Fn(&[u8]) -> Vec<Vec<u64>>> = Box::new(move |bytes| vec![zip(&quote(bytes), &backslash(bytes), f)]);
+            let one: Box<dyn Fn(&[u8]) -> Vec<Vec<u64>>> = Box::new(move |bytes| vec![zip(&quote(bytes), &quote(bytes), f)]);
+            [(format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %1\n  block 0 output %2\n"), two), (format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %0\n  block 0 output %2\n"), one)]
+        })
+        .collect();
+    check_each(&wants.iter().map(|(rows, want)| (rows.clone(), want.as_ref())).collect::<Vec<_>>());
 }
 
 /// Combinations through operators, with several outputs: simdjson's first lines, in the small.
@@ -527,8 +462,7 @@ fn pair_equals_reference_on_every_executor() {
 }
 
 /// The planes form (`class` as formulas of bit-planes, which Metal runs) equals the reference on
-/// the CPU too, through Cranelift; it has no `class` left, and the device interpreter reads no
-/// table.
+/// the CPU too, through Cranelift; it has no `class` left.
 #[test]
 fn class_planes_form_equals_reference() {
     let p = program(&simdjson_classes());
@@ -539,48 +473,11 @@ fn class_planes_form_equals_reference() {
     for bytes in inputs() {
         assert_eq!(compiled.run(&bytes), simdjson_want(&bytes), "{} bytes", bytes.len());
     }
-    let interpreter = include_str!("../../metal/src/block_program.uglykl");
-    assert!(!interpreter.contains("UKL_TABLE") && !interpreter.contains("tables"), "the device interpreter reads a table");
 }
 
 #[test]
 fn class_lowers_to_straight_bit_operations() {
     check_lowering("class", &program(&simdjson_classes()));
-}
-
-/// Lookup against bit-planes for `class` on Metal: simdjson's five masks over 64 MiB of
-/// JSON-like bytes, per strategy and lane width, in GPU seconds (best of 5), with five `eq`s as
-/// the baseline. Run by name: it is a measurement, not a check.
-#[test]
-#[ignore = "a measurement; run by name"]
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
-fn class_strategies_gpu_time() {
-    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
-    let sample = br#"{"name": "rerail", "tags": ["a", "b\"c"], "n": 12345, "ok": true, "nested": {"x": [1, 2, 3]}}
-"#;
-    let bytes: Vec<u8> = sample.iter().copied().cycle().take(64 << 20).collect();
-    let p = program(&simdjson_classes());
-    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
-    let eqs = program(
-        "  block 0 %0 = eq 0x2c\n  block 0 %1 = eq 0x20\n  block 0 %2 = eq 0x5c\n  block 0 %3 = eq 0x22\n  block 0 %4 = eq 0x0a\n\
-         \x20 block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 output %3\n  block 0 output %4\n",
-    );
-    let eq_native = native_ir::lower(&eqs, 0, 0).expect("lowers").block_programs.remove(0);
-    let want = simdjson_want(&bytes);
-    let gib = bytes.len() as f64 / f64::from(1u32 << 30);
-    for width in LaneWidth::ALL {
-        let best = |native: &block_native::BlockNative, strategy| {
-            (0..5).map(|_| run_generated_with(native, &bytes, width, strategy).expect("runs").1).fold(f64::MAX, f64::min)
-        };
-        for strategy in ClassStrategy::ALL {
-            let (got, _) = run_generated_with(&native, &bytes, width, strategy).expect("runs");
-            assert!(got == want, "{strategy:?} at {} bytes differs", width.bytes());
-            let s = best(&native, strategy);
-            println!("class {strategy:?}, {:2}-byte lanes: {:.3} ms, {:.1} GiB/s", width.bytes(), s * 1e3, gib / s);
-        }
-        let s = best(&eq_native, ClassStrategy::Lookup);
-        println!("5 eqs (baseline), {:2}-byte lanes: {:.3} ms, {:.1} GiB/s", width.bytes(), s * 1e3, gib / s);
-    }
 }
 
 // --- Primitives 9-11: prev, toggle, escaped (carried) ---------------------------------
@@ -642,10 +539,10 @@ fn carried_round_trip_and_refusals() {
 
 #[test]
 fn prev_equals_reference_on_every_executor() {
-    for k in [1usize, 2, 7, 15, 16, 17, 31, 32, 33, 48, 63] {
-        let rows = format!("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, {k}\n  block 0 output %1\n");
-        check_all(&rows, |bytes| vec![words_of(&prev_reference(&bits(bytes, |b| b == b'\\'), k))]);
-    }
+    let wants: Vec<_> = [1usize, 2, 7, 15, 16, 17, 31, 32, 33, 48, 63]
+        .map(|k| (k, move |bytes: &[u8]| vec![words_of(&prev_reference(&bits(bytes, |b| b == b'\\'), k))]))
+        .into();
+    check_each(&wants.iter().map(|(k, want)| (format!("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, {k}\n  block 0 output %1\n"), want as &dyn Fn(&[u8]) -> Vec<Vec<u64>>)).collect::<Vec<_>>());
 }
 
 #[test]
@@ -801,7 +698,7 @@ fn back_fill_equals_reference_on_the_cpu_and_the_forward_carry() {
     let mut files = inputs();
     files.extend([b"".to_vec(), b"a\"".to_vec(), b"\\aa\"".to_vec(), [vec![b'a'; 130], b"\"".to_vec()].concat()]);
     for bytes in &files {
-        let (got, _) = Executors::new(&p).run(bytes, false);
+        let got = Executors::new(&p).run(bytes, false);
         for (name, got) in got {
             assert_eq!(got, want(bytes), "{name}, {} bytes", bytes.len());
         }
@@ -827,8 +724,8 @@ fn back_fill_equals_reference_on_the_cpu_and_the_forward_carry() {
     }
 }
 
-/// `back_fill` prints and reassembles; one in a fixed point is refused; Metal's look-back
-/// kernel refuses one (the forward carry runs it in passes).
+/// `back_fill` prints and reassembles; one in a fixed point is refused (the forward carry runs it
+/// in passes).
 #[test]
 fn back_fill_round_trips_and_refusals() {
     let p = program("  block 0 %0 = eq 0x22
@@ -849,13 +746,7 @@ fn back_fill_round_trips_and_refusals() {
 ";
     let text = format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n");
     assert!(rir::assemble(&text).is_err(), "a back_fill in a fixed point: accepted");
-    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    {
-        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
-        let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
-        let got = run_generated_with(&native, b"a\"b", LaneWidth::ALL[0], ClassStrategy::ALL[0]).map(|_| ());
-        assert!(matches!(got, Err(Error::UnsupportedBackend)), "Metal: {got:?}");
-    }
+
 }
 
 /// `position j`: bit `j` of each byte's place in its file, on every CPU executor and in a batch
@@ -892,7 +783,7 @@ fn position_planes_equal_the_positions_on_every_executor() {
     let mut files = inputs();
     files.extend([b"".to_vec(), b"a".to_vec(), vec![b'a'; 63], vec![b'a'; 64], vec![b'a'; 2100], [vec![b'b'; 700], vec![b'a'; 700]].concat()]);
     for bytes in &files {
-        let (got, _) = Executors::new(&p).run(bytes, true);
+        let got = Executors::new(&p).run(bytes, true);
         for (name, got) in got {
             assert_eq!(got, want(bytes), "{name}, {} bytes", bytes.len());
         }
@@ -912,59 +803,6 @@ fn carried_chain_equals_reference_on_every_executor() {
         let inside = toggle_reference(&quote);
         vec![words_of(&inside), words_of(&prev_reference(&inside, 1))]
     });
-}
-
-/// The look-back's fallback: polling once, a group whose predecessor has not published leaves
-/// unfinished and the launch is repeated, and the outputs are the same. The second program has a
-/// carried `prev` (a halo) between two scanned carries.
-#[test]
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
-fn lookback_fallback_equals_reference() {
-    if crate::executors::no_device() {
-        return;
-    }
-    use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
-    let one = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 output %4\n";
-    let two = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n";
-    for (rows, halo) in [(one, false), (two, true)] {
-        let p = program(rows);
-        let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
-        for bytes in runs() {
-            let escaped = escaped_reference(&bits(&bytes, |b| b == b'\\'));
-            let quote: Vec<bool> = bytes.iter().zip(&escaped).map(|(&b, &e)| b == b'"' && !e).collect();
-            let inside = toggle_reference(&quote);
-            let mut want = vec![words_of(&inside)];
-            if halo {
-                want.push(words_of(&toggle_reference(&prev_reference(&inside, 5))));
-            }
-            for width in LaneWidth::ALL {
-                for spins in [0, 64] {
-                    for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Planes)] {
-                        let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor, spins).expect("runs");
-                        assert_eq!(run.files[0].outputs, want, "{} bytes, {}-byte lanes, {spins} polls, {executor:?}", bytes.len(), width.bytes());
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Generated UKL is one kernel, each instruction three times at most (a full group's body, its
-/// ASCII twin and the general one): a few lines per instruction.
-#[test]
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
-fn generated_msl_is_one_kernel() {
-    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
-    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
-    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
-    for width in LaneWidth::ALL {
-        for strategy in ClassStrategy::ALL {
-            let msl = generate_with(&native, width, strategy);
-            assert_eq!(msl.matches("DEFINE_KERNEL2(").count(), 1, "{msl}");
-            let lines = msl.lines().filter(|l| l.starts_with("  const ") || l.starts_with("  if (!")).count();
-            assert!(lines < 36 * native.insts.len(), "{lines} lines for {} instructions", native.insts.len());
-        }
-    }
 }
 
 #[test]
@@ -1023,19 +861,19 @@ fn extract_executors(p: &Program, bytes: &[u8]) -> Vec<(String, BlockRun)> {
     out
 }
 
-/// The Metal executors' runs with the extract pass (`extract_executors`), each lane width's interpreter and
-/// generated MSL. None without a device (`executors::no_device`).
+/// The Metal executors' runs with the extract pass (`extract_executors`): the forward carry in segments of three
+/// blocks (a file of a few blocks speculates and runs again) and of tier 1's 29.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-fn metal_extract_runs(block: &block::BlockProgram, native: &block_native::BlockNative, bytes: &[u8]) -> Vec<(String, BlockRun)> {
-    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret_extract, run_generated_extract};
-    let mut out = Vec::new();
-    for width in LaneWidth::ALL.into_iter().filter(|_| !crate::executors::no_device()) {
-        let w = width.bytes();
-        out.push((format!("metal interpreter, {w}-byte lanes"), interpret_extract(block, bytes, width).expect("runs")));
-        let (got, _) = run_generated_extract(native, bytes, width, ClassStrategy::Planes).expect("runs");
-        out.push((format!("generated msl, {w}-byte lanes"), got));
+fn metal_extract_runs(_block: &block::BlockProgram, native: &block_native::BlockNative, bytes: &[u8]) -> Vec<(String, BlockRun)> {
+    use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+    if crate::executors::no_device() {
+        return Vec::new();
     }
-    out
+    let file = [block::BatchFile { bytes, program: 0 }];
+    [3, 29]
+        .into_iter()
+        .map(|blocks| (format!("metal forward carry, segments of {blocks}"), run_serial_split(&[native], &file, Segments { blocks, warm: 1 }).expect("runs").run.files.remove(0)))
+        .collect()
 }
 
 /// No Metal executors off the device layer's targets.
@@ -1044,15 +882,16 @@ fn metal_extract_runs(_: &block::BlockProgram, _: &block_native::BlockNative, _:
     Vec::new()
 }
 
-/// Generated MSL's run with the extract pass, 64-byte lanes (a large file's, `extract_executors` for the rest).
+/// The forward carry's run with the extract pass, tier 1's segments (a large file's, `extract_executors` for the
+/// rest).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn metal_extract_generated(native: &block_native::BlockNative, bytes: &[u8]) -> Vec<(String, BlockRun)> {
-    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_extract};
+    use metal_program_backend::block_program::serial::{Segments, run_serial_split};
     if crate::executors::no_device() {
         return Vec::new();
     }
-    let (got, _) = run_generated_extract(native, bytes, LaneWidth::W64, ClassStrategy::Planes).expect("runs");
-    vec![("generated msl".to_owned(), got)]
+    let file = [block::BatchFile { bytes, program: 0 }];
+    vec![("metal forward carry".to_owned(), run_serial_split(&[native], &file, Segments { blocks: 29, warm: 1 }).expect("runs").run.files.remove(0))]
 }
 
 /// No Metal executors off the device layer's targets.
@@ -1079,19 +918,6 @@ fn extract_equals_reference_on_every_executor() {
         let want = vec![ones.clone(), quotes.clone(), soh.clone()];
         for (name, got) in extract_executors(&p, &bytes) {
             assert_eq!(got.positions, want, "{name}, {} bytes", bytes.len());
-        }
-        // One poll: a group whose predecessor has not published its count leaves unfinished,
-        // and the launch is repeated.
-        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-        {
-            use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
-            let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
-            for width in LaneWidth::ALL.into_iter().filter(|_| !crate::executors::no_device()) {
-                for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Planes)] {
-                    let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor, 0).expect("runs");
-                    assert_eq!(run.files[0].positions, want, "no polls, {}-byte lanes, {executor:?}, {} bytes", width.bytes(), bytes.len());
-                }
-            }
         }
     }
 }
@@ -1176,13 +1002,14 @@ fn stage1_utf8_equals_std_on_every_executor() {
     let ex = Executors::new(&p);
     let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
-    for bytes in utf8_inputs() {
-        let want = std::str::from_utf8(&bytes).is_err();
+    let cases = utf8_inputs();
+    for (bytes, runs) in cases.iter().zip(ex.every_of(&cases)) {
+        let want = std::str::from_utf8(bytes).is_err();
         let tail = &bytes[bytes.len().saturating_sub(12)..];
         // The compiled code's flag; the others' rows (no totals in `every`).
-        assert_eq!(utf8_invalid(&compiled.extract(&bytes)), want, "cranelift's total: {tail:x?}");
-        assert_eq!(utf8_invalid(&p.block_programs[0].run(&bytes)), want, "the interpreter's total: {tail:x?}");
-        for (name, got) in ex.every(&bytes) {
+        assert_eq!(utf8_invalid(&compiled.extract(bytes)), want, "cranelift's total: {tail:x?}");
+        assert_eq!(utf8_invalid(&p.block_programs[0].run(bytes)), want, "the interpreter's total: {tail:x?}");
+        for (name, got) in runs {
             if name == "cranelift" {
                 continue;
             }
@@ -1203,7 +1030,7 @@ fn stage1_files() -> Vec<(String, usize, (usize, u64))> {
 }
 
 /// Every executor finds simdjson's structural indexes. Files up to 200 KB run on all of them;
-/// the 3.8 MB file on Cranelift and generated MSL.
+/// the 3.8 MB file on Cranelift and the forward carry.
 #[test]
 fn stage1_equals_simdjson_on_every_executor() {
     let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
@@ -1237,7 +1064,7 @@ fn stage1_lowers_to_straight_bit_operations() {
 }
 
 /// Stage 1's cost per 64-byte block: the JIT's CPU time and machine instructions per block, and
-/// generated MSL's GPU time per lane width, on the 3.8 MB file. simdjson's time on the same file
+/// the forward carry's GPU time, on the 3.8 MB file. simdjson's time on the same file
 /// comes from `stage1_indexes --time`. Run by name: a measurement, not a check.
 #[test]
 #[ignore = "a measurement; run by name"]
@@ -1258,32 +1085,18 @@ fn stage1_cost_per_block() {
     println!("cranelift: {:.3} ns per block (CPU time, best of 20)", s / blocks * 1e9);
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
-        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
-        // The mask passes alone, and with the extract pass (in the same launch unless a
-        // look-back runs out of polls; repeated launches are timed, and counted).
+        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        // The mask passes alone, and with the extract pass, in tier 1's segments: the forward carry's launches (the
+        // levels' passes, the runs again and the positions), timed together.
         let mut masks = native.clone();
         masks.extracts.clear();
-        use metal_program_backend::block_program::RepeatedLaunches;
-        // The count is the run's (decision 0442).
-        let _run = rerail_context::test_run();
-        let repeated = rerail_context::local::<RepeatedLaunches>();
-        let before = repeated.0.load(std::sync::atomic::Ordering::Relaxed);
+        let file = [block::BatchFile { bytes: &bytes, program: 0 }];
         for (what, program) in [("masks", &masks), ("masks + extract", &native)] {
-            for strategy in ClassStrategy::ALL {
-                for width in LaneWidth::ALL {
-                    let s = (0..5)
-                        .map(|_| run_generated_with(program, &bytes, width, strategy).expect("runs").1)
-                        .fold(f64::MAX, f64::min);
-                    println!(
-                        "generated msl, {what}, {strategy:?}, {:2}-byte lanes: {:.3} ns per block (GPU time, best of 5)",
-                        width.bytes(),
-                        s / blocks * 1e9
-                    );
-                }
-            }
+            let runs: Vec<_> = (0..5).map(|_| run_serial_split(&[program], &file, Segments { blocks: 29, warm: 1 }).expect("runs")).collect();
+            let s = runs.iter().map(|r| r.run.seconds).fold(f64::MAX, f64::min);
+            let launches = runs.last().map_or(0, |r| r.run.launches);
+            println!("metal forward carry, {what}: {:.3} ns per block (GPU time, best of 5), {launches} launches", s / blocks * 1e9);
         }
-        let repeats = repeated.0.load(std::sync::atomic::Ordering::Relaxed) - before;
-        println!("repeated launches: {repeats} over 60 runs");
     }
 }
 
@@ -1324,20 +1137,26 @@ fn within_and_delay_round_trip_and_refusals() {
 /// the padding's zero bytes, `within & eq 0x00` does not.
 #[test]
 fn within_and_delay_equal_reference_on_every_executor() {
-    check_all("  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 output %0\n  block 0 output %2\n", |bytes| {
-        vec![words_of(&vec![true; bytes.len()]), words_of(&bits(bytes, |b| b == 0))]
-    });
+    type Want = Box<dyn Fn(&[u8]) -> Vec<Vec<u64>>>;
+    let mut wants: Vec<(String, Want)> = vec![(
+        "  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 output %0\n  block 0 output %2\n".to_owned(),
+        Box::new(|bytes| vec![words_of(&vec![true; bytes.len()]), words_of(&bits(bytes, |b| b == 0))]),
+    )];
     for d in [1usize, 2, 3, 15, 16, 17, 33, 63] {
         let rows = format!(
             "  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 %3 = eq 0x22\n  block 0 %4 = toggle %3\n\
              \x20 block 0 %5 = and %4, %0\n  block 0 output %2\n  block 0 output %3\n  block 0 output %5\n  block 0 delay {d}\n"
         );
-        check_all(&rows, |bytes| {
-            let nul = bits(bytes, |b| b == 0);
-            let q = bits(bytes, |b| b == b'"');
-            vec![words_of(&next_reference(&nul, d)), words_of(&next_reference(&q, d)), words_of(&next_reference(&toggle_reference(&q), d))]
-        });
+        wants.push((
+            rows,
+            Box::new(move |bytes| {
+                let nul = bits(bytes, |b| b == 0);
+                let q = bits(bytes, |b| b == b'"');
+                vec![words_of(&next_reference(&nul, d)), words_of(&next_reference(&q, d)), words_of(&next_reference(&toggle_reference(&q), d))]
+            }),
+        ));
     }
+    check_each(&wants.iter().map(|(rows, want)| (rows.clone(), want.as_ref())).collect::<Vec<_>>());
 }
 
 #[test]

@@ -53,7 +53,7 @@ fn a_kept_relation_is_read_where_it_lies() {
 fn a_kept_inputs_granules_are_one_view_where_they_lie() {
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
-    let granule = |part: i64, rows: Vec<i64>| KeptPut { rel: "input".into(), ident: [3; 32], part, digest: 0, reads: Vec::new(), types: vec![b'i', b'i'], what: KeptWhat::Flat { widths: vec![8, 8], n: rows.len() / 2, rows, levels: None, given: true } };
+    let granule = |part: i64, rows: Vec<i64>| KeptPut { rel: "input".into(), ident: [3; 32], part, digest: 0, reads: Vec::new(), types: vec![b'i', b'i'], what: KeptWhat::Picked(Box::new(crate::content_store::kept_facts::BlockFlat::of_rows(&rows, 2, true))) };
     store.queue_kept(SPACE, vec![granule(1, vec![9, 1, 8, 1]), granule(2, vec![7, 2, 9, 2, 6, 2])]);
     let bound = Bound::of(&store, &SPACE).unwrap().unwrap();
     let parts: Vec<Entry> = [1, 2].iter().map(|&p| bound.entry("input", &[3; 32], p).expect("a granule")).collect();

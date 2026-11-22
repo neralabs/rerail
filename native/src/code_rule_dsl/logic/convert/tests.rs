@@ -421,8 +421,7 @@ fn log_codes(check: &str) -> Vec<String> {
 }
 
 /// Where the hand-written data-layer rules are: `docs/rule-syntax/data-layer` (More-ergonomic's drafts), or
-/// `RERAIL_HAND_DIR`. The data-layer pack's ports (`candidates/rr` under [`pack`]) read
-/// `core.rerail` relations the data-layer integration engine adds (`split_line`, `lf_line`), so they wait on that merge.
+/// `RERAIL_HAND_DIR`.
 fn hand_dir() -> PathBuf {
     std::env::var_os("RERAIL_HAND_DIR").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::logic::rr::library().join("../data-layer"))
 }
@@ -2207,7 +2206,7 @@ fn authored_match_built_ins_print_and_run() {
 violation("{TARGET_ID}", "executor-parameters", "SPTA006", p, l) :- in_scope(d), doc(d, p, _), source(d, sp),
     match_all("{re}", sp, m), match_group("{re}", sp, m, "arg", g), text(g, "step"), line(m, l), (col(m, c), c = 7 ; col(m, c), c > 10).
 violation("{TARGET_ID}", "executor-parameters", "SPTA006", p, l) :- in_scope(d), doc(d, p, _), node(d, call, "call", _, _),
-    line(call, l), col(call, c), tape_line(d, l, sp), match_all("{re}", sp, m), col(m, c), match_group("{re}", sp, m, "arg", g), text(g, "step").
+    line(call, l), col(call, c), src_line(d, l, sp), match_all("{re}", sp, m), col(m, c), match_group("{re}", sp, m, "arg", g), text(g, "step").
 violation("{TARGET_ID}", "required-contracts", "SPTA001", p, 1) :- in_scope(d), doc(d, p, _), node(d, _, "module", _, _).
 "#
     );

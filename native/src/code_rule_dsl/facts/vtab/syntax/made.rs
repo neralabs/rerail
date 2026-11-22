@@ -71,7 +71,7 @@ pub(super) struct Context {
     pub(super) host: HashMap<u32, u32>,
     /// The files' lines, by key, that their guests are placed by: shared with the batches it grows into and the tape
     /// values admitted to them (decision 0431 §6, §8), whose hosts may be no document of theirs.
-    pub(super) lines_of: Arc<parking_lot::RwLock<HashMap<u32, Arc<core_rr::Lines>>>>,
+    pub(super) lines_of: Arc<parking_lot::RwLock<HashMap<u32, Arc<crate::code_rule_dsl::lines::LineTable>>>>,
     /// The first failure making a document or a group (a verdict raised, too many positions): every source of the
     /// batch reports it (`Source::failure`), so the statement reading it fails rather than read the rows as absent.
     pub(super) failure: parking_lot::Mutex<Option<String>>,
@@ -114,7 +114,7 @@ impl Docs {
         (Self { slots, keys, tags, given, context, made: AtomicUsize::new(0) }, at)
     }
     /// `documents` (sorted by key, distinct), those `held` holds as they are (key, digest and path) sharing its slots,
-    /// as made there (decision 0613): their projections are not made again. Returned with each of `held`'s documents'
+    /// as made there (decision 0616): their projections are not made again. Returned with each of `held`'s documents'
     /// index here, where it is shared.
     pub(super) fn renewed(held: &Docs, documents: Vec<Input>, context: Context, given: &HashMap<u32, ViewCounts>) -> (Self, Vec<Option<usize>>) {
         let mut docs = Self::new(documents, context, given);
@@ -130,7 +130,7 @@ impl Docs {
         (docs, at)
     }
     /// The files' lines its guests are placed by (`Context::lines_of`), which a batch renewed from it shares.
-    pub(super) fn lines_of(&self) -> &Arc<parking_lot::RwLock<HashMap<u32, Arc<core_rr::Lines>>>> {
+    pub(super) fn lines_of(&self) -> &Arc<parking_lot::RwLock<HashMap<u32, Arc<crate::code_rule_dsl::lines::LineTable>>>> {
         &self.context.lines_of
     }
     /// Whether the documents' views' counts were given: the views' row space is known with none made but those
@@ -278,13 +278,10 @@ impl Docs {
             _ => None,
         };
         let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
-        let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
         // A guest's nodes have their places in its file: the file's lines, where the batch holds the file.
-        let placed = guest.map(|g| (g, self.file_lines(g.host).unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &self.context.block)))));
+        let placed = guest.map(|g| (g, self.file_lines(g.host).unwrap_or_else(|| Arc::clone(&d.facts.lines))));
         let new_span = profile::span(|| "projected".into());
-        // A guest's file is made before it (`file_lines`), so its own lines are never built ahead of it (decision 0470 step 2:
-        // the eager batch hands a file the lines a program of it built first).
-        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, None, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
+        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
         // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
         p.file = Guest::file_key(d.guest.as_deref().map(Guest::of), d.key);
         drop(new_span);
@@ -308,7 +305,7 @@ impl Docs {
     }
     /// The lines of the file a guest of `host` is in (through guests of guests), where the batch holds that file in
     /// core.rerail's shape.
-    fn file_lines(&self, host: u32) -> Option<Arc<core_rr::Lines>> {
+    fn file_lines(&self, host: u32) -> Option<Arc<crate::code_rule_dsl::lines::LineTable>> {
         let mut k = host;
         for _ in 0..=self.context.host.len() {
             match self.context.host.get(&k) {
@@ -394,7 +391,7 @@ pub(super) struct Made {
     /// value read those.
     pub(super) strings_from: usize,
     /// The strings its rows used, by index among the batch's, each once: kept where its batch keeps them
-    /// (`Batch::keeps_strings`, a session's corpus batch, decision 0613).
+    /// (`Batch::keeps_strings`, a session's corpus batch, decision 0616).
     pub(super) used: Option<Vec<u32>>,
 }
 
@@ -408,7 +405,7 @@ pub(super) struct Group {
     /// group's every row: a maintained join's probes of `docof`, one document's group each, were quadratic.
     index: parking_lot::Mutex<HashMap<(usize, usize), Arc<rustc_hash::FxHashMap<i64, Vec<u32>>>>>,
     /// The strings its rows used (`Made::used`), where its batch keeps them: a renewed batch's vocabulary is its
-    /// groups' (decision 0613).
+    /// groups' (decision 0616).
     strings: Option<Arc<[u32]>>,
 }
 
@@ -631,7 +628,7 @@ impl Rows {
         let also = names.iter().zip(&by).map(|(n, b)| node_columns.get(n).map_or_else(Vec::new, |cs| cs.iter().copied().filter(|&c| Some(c) != b.column()).collect())).collect();
         Self { state: parking_lot::Mutex::new(state), made: parking_lot::Condvar::new(), makes: Default::default(), names, template, by, also, path_column, module_column, key_column, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new(), distinct }
     }
-    /// The groups of `held` (the batch a session's last run made, decision 0613) every document of which this batch
+    /// The groups of `held` (the batch a session's last run made, decision 0616) every document of which this batch
     /// shares (`at`: each of `held`'s documents' index here), taken as made: each relation starts as the held
     /// relation's runs of their rows, read where they lie (`Relation::of_runs`), and the groups this batch makes go
     /// on after them. A run is a stretch of consecutive groups taken; at most `MAX_SEGMENTS - 1` parts a relation,
@@ -737,7 +734,7 @@ impl Batch {
     /// memory on 901 files). A thread making a group of this batch never waits: a read under it (a job it ran while
     /// it waited) makes what it reads, as before, so no two makers wait on each other.
     ///
-    /// A session's batch, which the next run renews from (decision 0613), is made in groups of at most
+    /// A session's batch, which the next run renews from (decision 0616), is made in groups of at most
     /// `RERAIL_SESSION_GROUP` documents, in their order, whether a probe or a whole read asks for them: an edit then
     /// makes again only its changed documents' groups. They go on in the same block relations.
     pub(super) fn ensure(&self, want: &[usize]) {
@@ -1003,7 +1000,7 @@ impl Batch {
         if !self.renewed {
             return (shared.strings.clone(), shared.atoms.clone());
         }
-        // Its strings are the held batches' too (decision 0613): those its live groups' rows used.
+        // Its strings are the held batches' too (decision 0616): those its live groups' rows used.
         let s = self.rows.state.lock();
         let mut used: Vec<u32> = Vec::new();
         for g in &s.groups {
@@ -1018,7 +1015,7 @@ impl Batch {
     }
 }
 
-/// The documents a group of a session's batch holds at most (decision 0613): `RERAIL_SESSION_GROUP`, default 4.
+/// The documents a group of a session's batch holds at most (decision 0616): `RERAIL_SESSION_GROUP`, default 4.
 fn session_group() -> usize {
     std::env::var("RERAIL_SESSION_GROUP").ok().and_then(|v| v.parse::<usize>().ok()).filter(|&n| n > 0).unwrap_or(4)
 }
@@ -1067,6 +1064,12 @@ impl MadeRows {
         };
         self.rows_at(keys, column, values, keep)
     }
+    /// Whether every read of `column` is routed (`route`): its document column (not a host's, whose guests may not
+    /// be known), a node of the row's own document, or its document's key.
+    fn routes(&self, column: usize) -> bool {
+        let by = self.by();
+        (by.column() == Some(column) && !matches!(by, ByDocument::Host(_))) || self.batch.rows.also[self.rel].contains(&column) || self.batch.rows.key_column[self.rel] == Some(column)
+    }
     /// The documents whose rows a read of `column` by `values` can find, none made: `None` for a column that names
     /// no document.
     fn route(&self, column: usize, values: &[i64]) -> Option<Vec<u32>> {
@@ -1094,7 +1097,11 @@ impl MadeRows {
     /// The rows of documents `keys` whose `column` is one of `values` (each also passing `keep`), those documents
     /// made, through each group's index of the column.
     fn rows_at(&self, keys: Vec<u32>, column: usize, values: &[i64], keep: impl Fn(&Relation, usize) -> bool) -> Option<(Arc<Relation>, Vec<usize>)> {
+        let before = self.batch.rows.groups();
         let groups = self.batch.groups_of(keys);
+        if self.batch.rows.groups() > before {
+            profile::decision("a batch's documents made by a probe (decision 0494)", || format!("{} column {column}", self.batch.rows.names[self.rel]));
+        }
         let r = self.batch.made_so_far(self.rel);
         let mut rows = Vec::new();
         for g in groups {
@@ -1385,10 +1392,13 @@ impl Source for MadeRows {
     fn failed(&self) -> Option<String> {
         self.batch.docs.failure().or_else(|| self.done().and_then(|t| t.failed()))
     }
+    /// Unmade, a column its documents route (`routes`) too: its lookup makes the documents a value names, each
+    /// group's index of the column read. Without it, a probe of a place relation's spans (`places::Places`) by a node
+    /// built an index of every row, which made every document.
     fn indexed(&self, column: usize) -> bool {
         match self.done() {
             Some(t) => t.indexed(column),
-            None => self.template().indexed(column),
+            None => self.routes(column) || self.template().indexed(column),
         }
     }
     fn range_upper_compatible(&self, _lower: usize, _upper: usize) -> bool {

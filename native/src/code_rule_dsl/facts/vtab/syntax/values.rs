@@ -33,13 +33,91 @@ struct Part {
     src: Arc<dyn Source>,
 }
 
+/// Parts in blocks of `BLOCK`, each block shared by the snapshots that hold it: a snapshot made from the last
+/// (`Values::add`) copies the last block alone, not every part before it.
+const BLOCK: usize = 64;
+
+#[derive(Clone, Default)]
+struct Blocks {
+    blocks: Vec<Arc<Vec<Part>>>,
+    len: usize,
+}
+
+impl Blocks {
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    fn iter(&self) -> impl Iterator<Item = &Part> {
+        self.blocks.iter().flat_map(|b| b.iter())
+    }
+    fn push(&mut self, part: Part) {
+        if self.len % BLOCK == 0 {
+            self.blocks.push(Arc::new(Vec::with_capacity(BLOCK)));
+        }
+        Arc::make_mut(self.blocks.last_mut().expect("a block")).push(part);
+        self.len += 1;
+    }
+    /// The first part for which `pred` is false, `pred` true of every part before it and false of every one after.
+    fn partition_point(&self, pred: impl Fn(&Part) -> bool) -> usize {
+        let b = self.blocks.partition_point(|b| b.last().is_some_and(&pred));
+        self.blocks.get(b).map_or(self.len, |block| b * BLOCK + block.partition_point(&pred))
+    }
+}
+
+impl<'a> IntoIterator for &'a Blocks {
+    type Item = &'a Part;
+    type IntoIter = std::iter::FlatMap<std::slice::Iter<'a, Arc<Vec<Part>>>, std::slice::Iter<'a, Part>, fn(&'a Arc<Vec<Part>>) -> std::slice::Iter<'a, Part>>;
+    fn into_iter(self) -> Self::IntoIter {
+        let parts: fn(&'a Arc<Vec<Part>>) -> std::slice::Iter<'a, Part> = |b| b.iter();
+        self.blocks.iter().flat_map(parts)
+    }
+}
+
+impl std::ops::Index<usize> for Blocks {
+    type Output = Part;
+    fn index(&self, i: usize) -> &Part {
+        &self.blocks[i / BLOCK][i % BLOCK]
+    }
+}
+
+/// The parts that hold each key's rows, in `SHARDS` maps by key, each shared by the snapshots that hold it: a snapshot
+/// made from the last copies the shards of the keys it adds alone.
+const SHARDS: usize = 256;
+
+#[derive(Clone, Default)]
+struct Keys {
+    shards: Vec<Arc<FxHashMap<u32, Vec<usize>>>>,
+}
+
+impl Keys {
+    fn shard(k: u32) -> usize {
+        (k.wrapping_mul(0x9E37_79B9) >> 24) as usize % SHARDS
+    }
+    fn get(&self, k: &u32) -> Option<&Vec<usize>> {
+        self.shards.get(Self::shard(*k))?.get(k)
+    }
+    /// Part `i` holds rows of key `k`.
+    fn add(&mut self, k: u32, i: usize) {
+        if self.shards.is_empty() {
+            self.shards = (0..SHARDS).map(|_| Arc::default()).collect();
+        }
+        if self.get(&k).is_some_and(|at| at.last() == Some(&i)) {
+            return;
+        }
+        Arc::make_mut(&mut self.shards[Self::shard(k)]).entry(k).or_default().push(i);
+    }
+}
+
 /// A relation's parts, in the order admitted, each found by the keys of the nodes it holds rows of. The index of the
-/// parts' sources, not their rows: an add makes the next one from it (`Values::add`).
+/// parts' sources, not their rows: an add makes the next one from it (`Values::add`), sharing what it does not change.
 #[derive(Clone, Default)]
 struct Parts {
-    list: Vec<Part>,
+    list: Blocks,
     total: usize,
-    by_key: FxHashMap<u32, Vec<usize>>,
+    by_key: Keys,
     /// The chunk's relation with every part's rows past its own, in one block relation, while every part is a
     /// [`Slice`] of it, each past the one before.
     whole: Option<Arc<super::Relation>>,
@@ -98,8 +176,8 @@ pub(super) struct Dir {
 impl Values {
     /// Value `keys[0]`'s sources: each relation's rows of it, a part of that relation from now on. `keys` are the
     /// keys of the nodes its rows hold: its own, and its places' hosts'.
-    /// The next `parts` is made from the last: a relation the value adds rows to is copied once (`Arc::make_mut`), the
-    /// others shared.
+    /// The next `parts` is made from the last: a relation the value adds rows to is made again from its last (its
+    /// last block of parts and the shards of the keys it adds copied, `Blocks`, `Keys`), the others shared.
     pub fn add(&self, keys: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
         let _adding = self.adding.lock();
         let mut parts: FxHashMap<String, Arc<Parts>> = (**self.parts.load()).clone();
@@ -120,10 +198,7 @@ impl Values {
             p.list.push(Part { start: p.total, src: Arc::clone(&src) });
             p.total += src.len();
             for &k in keys {
-                let at = p.by_key.entry(k).or_default();
-                if at.last() != Some(&i) {
-                    at.push(i);
-                }
+                p.by_key.add(k, i);
             }
         }
         self.parts.store(Arc::new(parts));
@@ -275,7 +350,7 @@ impl Layered {
         if (dv_ref.view == super::device_chunk::VIEW_LINE && !views.lines) || (loc && !views.locs) {
             return None;
         }
-        v.dir = views.dir;
+        v.dir = views.dir?;
         v.buffers = views.buffers.clone();
         v.cache = views.cache.clone();
         v.keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;
@@ -439,6 +514,45 @@ impl Source for Layered {
             }
         });
         Some(by.into_iter().collect())
+    }
+    /// The base's order over several columns (`within`'s pair): without it a chunk's probe of both columns took the
+    /// lead column's rows and filtered them, making every ancestor's row of each node it tested.
+    fn composite(&self) -> bool {
+        self.base.composite()
+    }
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        self.base.estimated_matches_all(columns)
+    }
+    /// The base's rows of the values; with values admitted, the lead column's rows (the base's and the parts', as
+    /// `lookup` gives them) that hold every value.
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        if !self.has_parts() {
+            return self.base.lookup_all(equal);
+        }
+        let &(c, v) = equal.first()?;
+        let rows = self.lookup(c, &[v])?;
+        Some(rows.into_iter().filter(|&r| equal.iter().all(|&(c, v)| self.value(r, c) == v)).collect())
+    }
+    /// The base's test (`within`'s interval, t50 step 4), else the test of each part that may hold the row's first
+    /// value's node: a value's nodes are its part's, never the batch's. Unforwarded, a chunk's every `within` test was
+    /// a lookup of the node's rows (`def_outside`: 1.56 M tests at 1.6 µs on 1,000 files).
+    fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
+        let base = self.base.holds(equal)?;
+        if base || !self.has_parts() {
+            return Some(base);
+        }
+        let &(_, v) = equal.iter().min_by_key(|e| e.0)?;
+        let mut held = Some(false);
+        self.parts(|p| {
+            p.of(v, &mut |part| {
+                held = match (held, part.src.holds(equal)) {
+                    (Some(true), _) | (_, Some(true)) => Some(true),
+                    (Some(false), Some(false)) => Some(false),
+                    _ => None,
+                };
+            })
+        });
+        held
     }
     fn for_rows_keyed(&self, column: usize, keys: &rustc_hash::FxHashSet<i64>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
         // The base's walk, then each part's rows of the keys (a value's rows are few: read whole where its source has
@@ -616,6 +730,35 @@ mod tests {
         fn made_on_lookup(&self) -> bool {
             self.1
         }
+    }
+
+    /// An add makes the next parts from the last without copying them (R7's snapshots, 0494 step 5): only the last
+    /// block of a relation's parts and the shard of the keys it adds are written again, the rest shared. Copied whole,
+    /// each add copied every part and key before it: on corpus0 × B-now, 7.6 s of the run's 90 s.
+    #[test]
+    fn an_add_copies_only_its_last_block_and_its_keys_shard() {
+        let values = Values::default();
+        let part = || vec![("r".to_owned(), Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>)];
+        for k in 1..=200u32 {
+            values.add(&[k], part());
+        }
+        let before = values.parts.load().get("r").cloned().expect("r's parts");
+        values.add(&[201], part());
+        let after = values.parts.load().get("r").cloned().expect("r's parts");
+        let shared = |a: &[Arc<Vec<Part>>], b: &[Arc<Vec<Part>>]| a.iter().zip(b).filter(|(x, y)| Arc::ptr_eq(x, y)).count();
+        assert_eq!(shared(&before.list.blocks, &after.list.blocks), before.list.blocks.len() - 1, "every block but the last shared");
+        let copied = before.by_key.shards.iter().zip(&after.by_key.shards).filter(|(x, y)| !Arc::ptr_eq(x, y)).count();
+        assert_eq!(copied, 1, "one key's shard written again");
+        // Each value's rows are found by its key, and each row in its part.
+        assert_eq!(after.list.len(), 201);
+        for k in 1..=201u32 {
+            assert!(values.source_of("r", i64::from(k) << 32).is_some(), "value {k}'s source");
+        }
+        let (p, row) = after.at(3 * 150 + 1).expect("row 451's part");
+        assert_eq!((p.start, row), (450, 1));
+        let (p, row) = after.at(3 * 200 + 2).expect("the last row's part");
+        assert_eq!((p.start, row), (600, 2));
+        assert!(after.at(3 * 201).is_none());
     }
 
     /// Every source a chunk binds is layered (decision 0431 §8), read or not: layering one counts none of its rows,

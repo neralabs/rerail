@@ -53,7 +53,7 @@ pub struct Rust;
 impl Adapter for Rust {
     const FAMILY: Family = Family::Rust;
     const LABEL: &'static str = "rust";
-    const TERMINATORS: Terminators = Terminators::Newlines;
+    const TERMINATORS: Terminators = Terminators::Lf;
     const PACKAGES: bool = false;
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;

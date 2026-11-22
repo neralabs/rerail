@@ -3,7 +3,6 @@
 # file function
 native/crates/blocks/src/alloc.rs install
 native/src/code_rule_dsl/boot.rs install_languages
-native/src/code_rule_dsl/budget.rs install
 native/src/code_rule_dsl/compile/resolve.rs install_flow_resolves
 native/src/code_rule_dsl/embed.rs install_embedders
 native/src/code_rule_dsl/eval/mod.rs install_snapshot_context
@@ -27,7 +26,6 @@ native/src/code_rule_dsl/language.rs install_answerers
 native/src/code_rule_dsl/language/adapter/project.rs install_project
 native/src/code_rule_dsl/language/adapter/project.rs install_repository_context
 native/src/code_rule_dsl/literal/mod.rs install
-native/src/code_rule_dsl/logic/plan/corpus/product_demand/upstream.rs install_named
 native/src/code_rule_dsl/logic/strings.rs install_functors
 native/src/code_rule_dsl/logic/strings/functions.rs install_py_repr
 native/src/code_rule_dsl/logic/strings/functions.rs install_to_precision

@@ -204,8 +204,8 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
         inside = made.keys().any(|(t, x)| t == "the base relations' old documents (decision 0458)" && x.contains("listed inside the waves"));
         made.into_keys().filter(|(t, _)| t == "the base relations' statistics (decision 0458)").map(|(_, x)| x).collect::<BTreeSet<String>>()
     };
-    // Each relation's statistics, as the run took them: all the same way, `how`; a semi-join's at its held nodes
-    // (`held_counted`), `held`.
+    // Each relation's statistics, as the run took them: all the same way, `how`. A semi-join's are its kept rows' at the
+    // held nodes (`retain::semijoin_rows`), a decision of their own.
     let all = |made: &BTreeSet<String>, how: &str, held: &str| !made.is_empty() && made.iter().all(|x| x.ends_with(&format!(": {how}")) || x.ends_with(&format!(": {held} at the held nodes")));
     let cold = how(&mut c);
     let warm = how(&mut c);
@@ -284,16 +284,13 @@ at_home(u, p) :- uses(u, f), docof(f, d), doc(d, p, _).
 "#;
 const AT_HELD_OUTPUTS: &[&str] = &["at_line", "at_col", "lines", "at_home"];
 
-/// An edit pays for the changed documents, not the corpus (t43 step 21): a semi-join input's statistics (its rows at
-/// the nodes the exports hold, Q396) are patched by the changed documents as a base relation's are, their old rows at
-/// their old held nodes counted out and their new rows at the held nodes now counted in; so no read of the corpus
-/// batch makes an unchanged document. `RERAIL_STATS_VERIFY` counts each patched relation again at the held nodes and
-/// fails the run where the two differ. In a session and in a new process over the kept store alike.
+/// An edit pays for the changed documents, not the corpus (t43 step 21): a semi-join input's rows at the nodes the
+/// exports hold (Q396) are kept beside the documents' table (`retain::semijoin_rows`), and an edit takes those of the
+/// documents it did not change, walking only the changed documents' nodes; so no read of the corpus batch makes an
+/// unchanged document. In a session and in a new process over the kept store alike.
 #[test]
-fn an_edit_patches_a_semi_join_inputs_statistics_and_makes_no_unchanged_document() {
+fn an_edit_takes_a_semi_join_inputs_kept_rows_and_makes_no_unchanged_document() {
     use crate::code_rule_dsl::logic::profile;
-    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment here.
-    unsafe { std::env::set_var("RERAIL_STATS_VERIFY", "1") };
     // Every case's failures, said together.
     let mut failed: Vec<String> = Vec::new();
     for (program, outputs, session) in [(PROGRAM, OUTPUTS, false), (PROGRAM, OUTPUTS, true), (AT_HELD, AT_HELD_OUTPUTS, false), (AT_HELD, AT_HELD_OUTPUTS, true)] {
@@ -312,7 +309,7 @@ fn an_edit_patches_a_semi_join_inputs_statistics_and_makes_no_unchanged_document
             let of = |topic: &str| made.keys().filter(|(t, _)| t == topic).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
             let space = of("the corpus batch's row space (decision 0494)");
             let kept = of("cross-file part kept (decision 0077)");
-            (of("the base relations' statistics (decision 0458)"), of("a batch's every document made by a whole read of a relation (decision 0494)"), rows, space, kept)
+            (of("a semi-join's rows at the held nodes"), of("a batch's every document made by a whole read of a relation (decision 0494)"), rows, space, kept)
         };
         let (cold, _, _, _, _) = run(&mut c);
         run(&mut c);
@@ -325,13 +322,15 @@ fn an_edit_patches_a_semi_join_inputs_statistics_and_makes_no_unchanged_document
             failed.push(format!("{route}: the edit maintains strata from deltas: {kept:?}"));
         }
         // The semi-join inputs: those the cold run counted at the held nodes.
-        let held: BTreeSet<&str> = cold.iter().filter(|x| x.contains("at the held nodes") || x.contains("keyed walk")).filter_map(|x| x.split(':').next()).collect();
+        let held: BTreeSet<&str> = cold.iter().filter_map(|x| x.split(':').next()).collect();
         if held.is_empty() {
             failed.push(format!("{route}: the program has semi-join inputs: {cold:?}"));
         }
+        // Each one's edit: some of its held nodes answered by its kept rows ("N of M nodes answered", N > 0).
+        let answered = |x: &String| x.split_once(": ").and_then(|(_, t)| t.split(' ').next()?.parse::<usize>().ok()).unwrap_or(0);
         for rel in &held {
-            if !edit.contains(&format!("{rel}: patched by the changed documents at the held nodes")) {
-                failed.push(format!("{route}: an edit patches {rel}'s held statistics: {edit:?}"));
+            if !edit.iter().any(|x| x.split(':').next() == Some(*rel) && answered(x) > 0) {
+                failed.push(format!("{route}: an edit takes {rel}'s kept rows at the held nodes: {edit:?}"));
             }
         }
         // A whole read makes at most the changed file's document (1 of the batch's).
@@ -438,9 +437,6 @@ const GUESTS_OUTPUTS: &[&str] = &["shape", "ann_kids", "deep"];
 #[test]
 fn an_edit_of_a_file_with_guests_patches_every_base_relations_statistics() {
     use crate::code_rule_dsl::logic::profile;
-    // Each patch counted again and compared (`held_counted`).
-    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment here.
-    unsafe { std::env::set_var("RERAIL_STATS_VERIFY", "1") };
     let mut failed: Vec<String> = Vec::new();
     for session in [false, true] {
         let mut c = Corpus::with(if session { "guests-session" } else { "guests-kept" }, GUESTS, GUESTS_OUTPUTS);
@@ -488,7 +484,7 @@ fn an_edit_of_a_file_with_guests_patches_every_base_relations_statistics() {
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
-/// A session's corpus batch is renewed from its last run's (decision 0613, R5): an edit takes the held groups whose
+/// A session's corpus batch is renewed from its last run's (decision 0616, R5): an edit takes the held groups whose
 /// documents did not change, and its outputs are a fresh run's, at each of three edits, of a program without guests
 /// and one whose string annotations' guests are read across files (their producer's knowledge carried over).
 #[test]
@@ -513,7 +509,7 @@ fn a_sessions_edit_takes_its_unchanged_groups_from_the_last_run() {
             };
             let made = profile::take_decisions();
             let of = |topic: &str| made.keys().filter(|(t, _)| t == topic).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
-            (of("a session's corpus batch renewed (decision 0613)"), rows)
+            (of("a session's corpus batch renewed (decision 0616)"), rows)
         };
         run(&mut c);
         run(&mut c);
