@@ -1,6 +1,26 @@
 use rerail_store::Canonical as _;
 use super::*;
 use crate::content_store::tests::store;
+use rerail_blocks::kept::KeptRead as _;
+
+/// The space the tests' memo entries are kept in.
+const MEMO_SPACE: [u8; 32] = [0x6d; 32];
+
+/// A memo entry kept under `plan`, held by the source of bytes `source` and by the plan (`HOLDER`): its partition the
+/// plan's first byte.
+fn keep_entry(store: &ContentStore, source: &[u8], plan: [u8; 32]) {
+    use crate::content_store::kept_facts::{KeptPut, KeptWhat, holder_put};
+    let part = i64::from(plan[0]);
+    let held = crate::content_store::HashKey::sha256(source).sha256_bytes().unwrap();
+    let entry = KeptPut { rel: "entry".into(), ident: [1; 32], part, digest: part as u64, reads: Vec::new(), types: b"i".to_vec(), what: KeptWhat::Flat { widths: vec![8], rows: vec![part], n: 1, levels: None, given: true } };
+    store.queue_kept(MEMO_SPACE, vec![entry, holder_put(part, held, Some(plan))]);
+    store.written().unwrap();
+}
+
+/// The memo entries kept under `plan` (`keep_entry`).
+fn kept_entries(store: &ContentStore, plan: [u8; 32]) -> i64 {
+    store.kept_space(&MEMO_SPACE).unwrap().map_or(0, |k| k.view().of("entry").filter(|e| e.key.part == i64::from(plan[0])).count() as i64)
+}
 
 fn manifest(id: i64, root: i64, last_time: i64, sources: &[i64]) -> Manifest {
     Manifest { id, root, last_time, grammar_version: 1, tape_format: 1, plan: vec![id as u8; 32], lane: None, policy: None, sources: sources.to_vec() }
@@ -1020,7 +1040,7 @@ fn a_runs_lease_keeps_its_sources_and_plan_from_collection_without_holds() {
         }
     };
     let plan = [41u8; 32];
-    let rows = || -> i64 { store.connection.lock().unwrap().query_row("SELECT count(*) FROM facts_results WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).unwrap() };
+    let rows = || kept_entries(&store, plan);
     // An earlier run's manifest, under another plan: what a collector decides from.
     let earlier = store.put_source(&noise(20, 256), &[]).unwrap();
     assert!(store.record_corpus_run_naming("/repo", &[earlier], 7, 9, [40u8; 32], &[], 1_000).unwrap());
@@ -1028,40 +1048,32 @@ fn a_runs_lease_keeps_its_sources_and_plan_from_collection_without_holds() {
     let (named, unnamed) = (noise(21, 256), noise(22, 256));
     let named_id = store.put_source(&named, &[]).unwrap();
     store.put_source(&unnamed, &[]).unwrap();
-    let set = crate::content_store::FactsPlanSet::new(vec![plan]);
-    let result = crate::content_store::FactsResult { plan, path_dependent: true, entry: vec![1, 2, 3] };
-    store.put_facts_memo(crate::content_store::FactsMemoKey { source: named_id, fact_schema: live_fact_schema(150), path: "a.py" }, &set, &[result], &[]).unwrap();
+    keep_entry(&store, &named, plan);
     passes(2_000);
     let found = |bytes: &[u8]| store.source_by_hash(crate::content_store::HashKey::sha256(bytes)).unwrap();
     assert!(found(&named).is_some() && found(&unnamed).is_some(), "the run's sources, neither held nor named, are kept while it runs");
-    assert_eq!(rows(), 1, "and its plan's rows");
+    assert_eq!(rows(), 1, "and its plan's entries");
     // The run's record: its manifest names the one source and the plan; then the lease goes.
     assert!(store.record_corpus_run_naming("/repo", &[named_id], 7, 9, plan, &[], 3_000).unwrap());
     drop(lease);
     passes(4_000);
     assert_eq!(found(&named), Some(named_id), "named by the manifest, kept");
-    assert_eq!(rows(), 1, "the plan's rows, named, kept");
+    assert_eq!(rows(), 1, "the plan's entries, named, kept");
     assert_eq!(found(&unnamed), None, "named by nothing, collected once the run is done");
 }
 
-/// Old memo rows of every writer go, while their source lives on: a prepared program's plans a later build replaced
-/// (named by the manifests, `record_corpus_run_naming`), a held plan whose hold lapsed (the slice's memo), and rows
-/// of the corpus memo's retired schemas. A plan still named, a hold still running and other schemas' rows stay.
+/// Old memo entries of every writer go, while their source lives on: a prepared program's plans a later build
+/// replaced (named by the manifests, `record_corpus_run_naming`) and a held plan whose hold lapsed (the slice's
+/// memo). A plan still named, a hold still running and a plan nothing recorded stay.
 #[test]
-fn old_memo_rows_are_collected_while_their_source_lives() {
+fn old_memo_entries_are_collected_while_their_source_lives() {
     let (_path, store) = store("corpus-old-memo");
     let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, decide_every_secs: 1 << 40, ..CorpusPolicy::default() };
-    let source = store.put_source(&noise(1, 256), &[]).unwrap();
+    let bytes = noise(1, 256);
+    let source = store.put_source(&bytes, &[]).unwrap();
     store.put_tape(source, 1, 7, 9, &noise(2, 256)).unwrap();
-    let put = |schema: u32, path: &str, plan: [u8; 32]| {
-        let set = crate::content_store::FactsPlanSet::new(vec![plan]);
-        // The corpus memo's rows are under their path; the others read none.
-        let result = crate::content_store::FactsResult { plan, path_dependent: schema == 2, entry: vec![1, 2, 3] };
-        store.put_facts_memo(crate::content_store::FactsMemoKey { source, fact_schema: schema, path }, &set, &[result], &[]).unwrap();
-    };
-    let rows = |plan: [u8; 32]| -> i64 {
-        store.connection.lock().unwrap().query_row("SELECT count(*) FROM facts_results WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).unwrap()
-    };
+    let put = |plan: [u8; 32]| keep_entry(&store, &bytes, plan);
+    let rows = |plan: [u8; 32]| kept_entries(&store, plan);
     let passes = |now: i64| {
         for _ in 0..4 {
             if !store.corpus_pass_wanted(&policy, now).unwrap() {
@@ -1072,26 +1084,24 @@ fn old_memo_rows_are_collected_while_their_source_lives() {
     };
     // Two builds' runs, each naming its memo plan and its prepared program's plan, over the same source.
     let (old_pointer, new_pointer) = ([11u8; 32], [12u8; 32]);
-    put(101, "rerail/prepared", old_pointer);
+    put(old_pointer);
     assert!(store.record_corpus_run_naming("/repo", &[source], 7, 9, [1u8; 32], &[old_pointer], 1_000).unwrap());
-    put(101, "rerail/prepared", new_pointer);
+    put(new_pointer);
     assert!(store.record_corpus_run_naming("/repo", &[source], 7, 9, [2u8; 32], &[new_pointer], 1_000).unwrap());
     // A writer that holds its plans: one hold lapses at 1,500, one runs to 9,000.
     let (lapsed, running) = ([21u8; 32], [22u8; 32]);
     store.hold_corpus_plan(lapsed, "slice-memo", 1_500).unwrap();
     store.hold_corpus_plan(running, "slice-memo", 9_000).unwrap();
-    put(1, "a.py", lapsed);
-    put(1, "a.py", running);
-    // Rows of a retired corpus memo schema, and of the slice's schema under a plan nothing ever recorded.
-    let (retired, unrecorded) = ([31u8; 32], [32u8; 32]);
-    put(2, "a.py", retired);
-    put(1, "b.py", unrecorded);
+    put(lapsed);
+    put(running);
+    // An entry under a plan nothing ever recorded.
+    let unrecorded = [32u8; 32];
+    put(unrecorded);
     passes(1_000);
     assert_eq!((rows(old_pointer), rows(new_pointer)), (0, 1), "the replaced build's program plan goes; the kept one stays");
-    assert_eq!(rows(retired), 0, "a retired schema's rows are swept");
     assert_eq!((rows(lapsed), rows(running), rows(unrecorded)), (1, 1, 1), "holds still running at 1,000");
     passes(2_000);
-    assert_eq!((rows(lapsed), rows(running), rows(unrecorded)), (0, 1, 1), "the lapsed hold's rows go, with no new run to prompt it");
+    assert_eq!((rows(lapsed), rows(running), rows(unrecorded)), (0, 1, 1), "the lapsed hold's entries go, with no new run to prompt it");
     assert!(store.get_source(source).is_ok(), "the source lives on");
 }
 

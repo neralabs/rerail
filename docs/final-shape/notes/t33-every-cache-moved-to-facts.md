@@ -159,13 +159,13 @@ removed with nothing in its place but K1–K4.
 | `rr.rs` `PARSED`, `LIBRARIES`, `PROGRAMS` | a file's path and digest; the files' digests | a rule file is a document loaded by `load(path, _, "rr")` (phase 0 already does); its statements are 0074's program facts, stored in K1 under the file's `file` row |
 | `phase0.rs` `KEPT` | the seed; held while every module is as it was | `bootstrap.rr`'s output relations (the include graph), stored in K1 |
 | `corpus.rs` `COMBINED`, `PREPARED`, `prepared.rs`'s memo entries | the texts' digest; the texts, additions, stage, dialect, build | `prepared(p, …) :- program(p, digest), engine(b), …` answered by preparing; its rows are the `prepared_*` program facts 0074 already writes. **Pointer built** (2026-11-21, `prepared.rs` `pointer`): the `prepared_*` and `prepared_program` rows are kept facts of the store's prepared programs' space, a partition a program (its pointer plan: build, grammar, key); `PREPARED` is their in-memory copy (state). The programs' texts stay sources |
-| `choices.rs` `KEPT` | a digest of the program, the build and three switches, "a scale at most GROWTH times theirs" | an answer keyed by the program's facts and the statistics it read (with step 6) |
+| `choices.rs` `KEPT` | a digest of the program, the build and three switches, "a scale at most GROWTH times theirs" | an answer keyed by the program's facts and the statistics it read (with step 6). **Entries moved** (2026-11-22): the store's choices and kept plans are kept facts of the prepared program's spaces (step 3); `KEPT` is their in-memory copy |
 
 ### Step 3: a document's facts
 
 | Today | Key and check today | Becomes |
 |---|---|---|
-| `facts_results`, `facts_plan_sets`, `facts_completions` (the per-file memo, 0052) | content, path, plan digest (build, grammar, node-id scheme, program, options, facts) | the per-file part's relations in K1, partitioned by document. A document whose base relations have no delta is not run (K4 over a per-document partition). `plan_digest`, `with_options` and `with_rows` go; `doc_keys` stays (it is identity). **Started** (2026-11-22). The tables are a store of opaque entries with six users, not one cache. A kept partition can now be held by a source and a plan (`kept_facts::HOLDER`), so it dies when the memo row it replaces would have; `plan::kept_entry` keeps an entry of program facts that way. Moved: the prepared pointer (which had lost its collection when step 2 moved it) and the slice's content memo (`slice/memo.rs`). Left: `combined.rs`, `preparation/parts.rs` and `choices.rs`, whose entries are read inside the store writer's record steps (`name_program`, `apply_plans`), where a kept read would wait on the writer itself: they need the entry carried in the record's body, or a read of the wave's gathered puts. `facts/memo.rs` is the workspace pipeline's (step 8). The tables go with the last of them |
+| `facts_results`, `facts_plan_sets`, `facts_completions` (the per-file memo, 0052) | content, path, plan digest (build, grammar, node-id scheme, program, options, facts) | the per-file part's relations in K1, partitioned by document. A document whose base relations have no delta is not run (K4 over a per-document partition). `plan_digest`, `with_options` and `with_rows` go; `doc_keys` stays (it is identity). **Done** (2026-11-22). The tables were a store of opaque entries with six users, not one cache. A kept partition is held by a source and a plan (`kept_facts::HOLDER`), so it dies when the memo row it replaced would have; `plan::kept_entry` keeps an entry of program facts that way, a relation's rows of one shape a kept relation. A held partition is put whole: the store's writer drops what else it kept, so a run writes an entry inside its waves with no read of the store. Moved: the prepared pointer (which had lost its collection when step 2 moved it), the slice's content memo (`slice/memo.rs`), and `combined.rs`, `preparation/parts.rs` and `choices.rs`. Their entries are read on the run's side, never in the writer's record steps (where a kept read would wait on the writer itself): `name_program` reads the entry before it records, and its record carries the digests its step names; the other steps only make the holder's source. `facts/memo.rs`, the workspace pipeline's per-file memo, had no caller outside its tests and went. The three tables went, with the sweep of the corpus memo's retired schemas (`corpus_swept`) |
 | the projection spike (a075764a3) | (tape, relation) | the base relations as derived relations of `doc_tape`, in K1 per document. After RER-131 renumbers the nodes |
 | tapes: `source_objects`, `tape_objects` (kept: they are objects) | (content, tag, grammar version, format) | `doc_key` and `doc_tape` as in the Intro; the object tables hold the bytes the answer's value names |
 | `guests.rs` `KEPT` | (text, grammar) | `parse_of`'s answer rows (K3) |
@@ -214,8 +214,10 @@ rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.ph
 
 ### Step 8: the workspace pipeline
 
-`tree_pages`, `tree_result_segments`, `completed_*`, `candidate_*`, `local_check_results`,
-`context_check_results`: moved with that pipeline by its owner, or retired with it. Not planned here.
+`completed_workspace_revisions`, `completed_directory_reuse`, `candidate_*`, `context_check_results`: moved with
+that pipeline by its owner, or retired with it. Not planned here. **Removed** (2026-11-22): the per-directory result
+pages (`facts/pages.rs`, `tree_pages`, `tree_pages_pending`) and the predecessor's tree result segments
+(`tree_result_segments`, `completed_snapshot_trees`), which nothing called outside their own tests.
 
 ## Order of work
 

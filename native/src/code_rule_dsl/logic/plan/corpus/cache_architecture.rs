@@ -41,13 +41,13 @@ const NOT_CACHES: &[&str] = &[
     "guest_keys", "observed_changes",
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
-    "push_pending", "snapshots", "snapshot_files", "workspaces", "store_sessions", "tree_pages_pending", "object_archive", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
+    "push_pending", "snapshots", "snapshot_files", "workspaces", "store_sessions", "object_archive", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     // Analysis claims, release receipts, and collection work. Their rows reference results held elsewhere.
     "analysis_scope_snapshot", "analysis_scope_workspace_snapshot", "analysis_scope_manifest",
     "analysis_history_scope", "analysis_history_ancestor", "analysis_scope_run", "analysis_run_workspace_snapshot",
     "analysis_scope_generation", "analysis_directory_acquisition", "analysis_scope_release", "analysis_scope_collect", "analysis_scope_pending",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
-    "corpus_decided", "corpus_swept", "corpus_state",
+    "corpus_decided", "corpus_state",
     "x", "rows", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 
@@ -61,15 +61,13 @@ const NOT_YET_MOVED: &[&str] = &[
     // Tapes, documents and their indexes.
     "tape_objects", "file_documents", "prefilter_sets", "tape_kind_counts", "term_postings", "term_freq", "term_kind_freq",
     "term_node_freq", "term_coverage", "edge_freq", "text_matcher", "text_pending", "text_term", "vocabulary_literal",
-    "vocabulary_pending", "vocabulary_predicate", "vocabulary_term", "tree_pages", "kind_size", "search_index_sets",
-    // The per-file memo and its plans.
-    "facts_results", "facts_plan_sets", "facts_completions",
+    "vocabulary_pending", "vocabulary_predicate", "vocabulary_term", "kind_size", "search_index_sets",
     // The whole run's record.
     "run_record",
     // The cross part's statistics, checks, completed trees.
     "stat_blob", "fact_stats", "fact_value_stats",
     "context_check_results", "candidate_catalogs", "candidate_checks", "completed_directory_reuse",
-    "completed_workspace_revisions", "tree_result_segments", "completed_snapshot_trees",
+    "completed_workspace_revisions",
     // The derivation graph: what it records is the keys of §7.
     "name_bindings", "derivations", "derivation_inputs",
 ];

@@ -16,9 +16,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 pub mod image;
 
 /// The memo's fact schema: bumped when an entry's meaning changes.
-/// When it changes, the old number joins `RETIRED_CORPUS_MEMO_SCHEMAS` only if its rows could outlive their plans
-/// (they cannot since decision 0053: the plan names the engine build, and dead plans are collected).
-const SCHEMA: u32 = crate::content_store::live_fact_schema(8);
+/// Its entries cannot outlive their plans (decision 0053: the plan names the engine build, and dead plans are
+/// collected).
+const SCHEMA: u32 = 8;
 
 
 /// The entry's key for the identities of the relations it holds (decision 0225 §2): two words of each export's and

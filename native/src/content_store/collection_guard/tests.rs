@@ -1,6 +1,8 @@
 use super::*;
 use crate::content_store::tests::store;
-use crate::content_store::{CorpusPolicy, FactsMemoKey, FactsPlanSet, FactsResult, HashKey};
+use crate::content_store::kept_facts::{KeptPut, KeptWhat, holder_put};
+use crate::content_store::{CorpusPolicy, HashKey};
+use rerail_blocks::kept::KeptRead as _;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 
@@ -43,23 +45,12 @@ fn readers_publish_memos_and_roots_before_collection_resumes() {
         collector.corpus_collection_due().unwrap(),
         "a deferred pass must remain due"
     );
-    let key = FactsMemoKey {
-        source,
-        fact_schema: 1,
-        path: "a.py",
-    };
-    writer
-        .put_facts_memo(
-            key,
-            &FactsPlanSet::new(vec![plan]),
-            &[FactsResult {
-                plan,
-                path_dependent: false,
-                entry: b"result".to_vec(),
-            }],
-            &[],
-        )
-        .unwrap();
+    // A memo entry the reader keeps, held by its source (`HOLDER`).
+    let space = [7u8; 32];
+    let held = HashKey::sha256(b"in-flight source").sha256_bytes().unwrap();
+    let entry = KeptPut { rel: "result".into(), ident: [1; 32], part: 1, digest: 1, reads: Vec::new(), types: b"i".to_vec(), what: KeptWhat::Flat { widths: vec![8], rows: vec![5], n: 1, levels: None, given: true } };
+    writer.queue_kept(space, vec![entry, holder_put(1, held, None)]);
+    writer.written().unwrap();
     writer
         .record_corpus_run("/repo", &[source], 7, 9, plan, 100)
         .unwrap();
@@ -73,10 +64,8 @@ fn readers_publish_memos_and_roots_before_collection_resumes() {
         collector.collect_corpus_pass(&policy, 100).unwrap();
     }
     assert!(!collector.corpus_collection_due().unwrap());
-    assert_eq!(
-        writer.facts_memo(key).unwrap().results[&plan].entry,
-        b"result"
-    );
+    let kept = writer.kept_space(&space).unwrap().expect("the reader's entries kept");
+    assert_eq!(kept.view().of("result").map(|e| e.row(0).to_vec()).collect::<Vec<_>>(), [vec![5]]);
     assert!(writer.tape_by_source(source, 1, 7, 9).unwrap().is_some());
     assert_eq!(
         writer

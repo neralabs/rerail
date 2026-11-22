@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 /// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155; 106: the
 /// decisions preparing made, decision 0269). It names the shipped pointer (`shipped_key`).
-const POINTER: u32 = crate::content_store::live_fact_schema(106);
+const POINTER: u32 = 106;
 
 /// The pointer's plan: the engine build, the grammar version and `key` (the program's texts, the dialect and the
 /// run's additions).

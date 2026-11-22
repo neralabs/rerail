@@ -906,10 +906,10 @@ fn local_results_are_scoped_by_context_hash() {
     );
 }
 
-/// Decision 0450 step 2: a result and a tree page are stored as they are, in a segment, and read there in place;
-/// compaction carries them into its one segment; a segment gone makes them a miss, not an error.
+/// Decision 0450 step 2: a result is stored as it is, in a segment, and read there in place; compaction carries it into
+/// its one segment; a segment gone makes it a miss, not an error.
 #[test]
-fn results_and_pages_are_read_in_place_and_survive_compaction() {
+fn results_are_read_in_place_and_survive_compaction() {
     let (_path, store) = store("results-in-segments");
     let (workspace, catalog) = local_result_workspace(&store, "results-in-segments");
     let candidate = CandidateClause { rule: HashKey::sha256(b"policy"), clause: "check".to_owned() };
@@ -934,30 +934,26 @@ fn results_and_pages_are_read_in_place_and_survive_compaction() {
             .unwrap()
     };
     let stored = publish(b"result", 1);
-    let page_key = TreePageKey { tree: [3; 32], prefix: "src", context: [0; 32], plan: [4; 32] };
-    store.put_tree_pages(&page_key, &[TreePage::new(1, b"page".to_vec())]).unwrap();
     let read = |store: &ContentStore| {
         let results = store.local_check_results(stored.source, context, catalog).unwrap();
-        let pages = store.tree_pages(&page_key).unwrap();
-        (results.first().map(|r| (r.bytes.in_place(), r.bytes.to_vec())), pages.map(|(_, p)| (p[0].bytes.in_place(), p[0].bytes.to_vec())))
+        results.first().map(|r| (r.bytes.in_place(), r.bytes.to_vec()))
     };
-    assert_eq!(read(&store), (Some((true, b"result".to_vec())), Some((true, b"page".to_vec()))));
-    let rows: i64 = store.connection.lock().unwrap().query_row(
-        "SELECT (SELECT count(*) FROM context_check_results WHERE seg > 0) + (SELECT count(*) FROM tree_pages WHERE seg > 0)", [], |r| r.get(0)).unwrap();
-    assert_eq!(rows, 2, "each row names a segment's range");
-    // The same pages stored again leave copies no row names; compaction keeps the named ones, in its one segment.
-    for _ in 0..3 {
-        store.put_tree_pages(&page_key, &[TreePage::new(1, b"page".to_vec())]).unwrap();
+    assert_eq!(read(&store), Some((true, b"result".to_vec())));
+    let rows: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM context_check_results WHERE seg > 0", [], |r| r.get(0)).unwrap();
+    assert_eq!(rows, 1, "the row names a segment's range");
+    // The result published again leaves copies no row names; compaction keeps the named one, in its one segment.
+    for state in 2..5 {
+        publish(b"result", state);
     }
     assert!(store.compact_object_segments(0).unwrap() > 0);
     let dir = super::object_segments::object_dir(&store.database_path);
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "one segment left");
-    assert_eq!(read(&store), (Some((true, b"result".to_vec())), Some((true, b"page".to_vec()))));
-    // Their segment gone: a miss.
+    assert_eq!(read(&store), Some((true, b"result".to_vec())));
+    // Its segment gone: a miss.
     for entry in std::fs::read_dir(&dir).unwrap() {
         std::fs::remove_file(entry.unwrap().path()).unwrap();
     }
-    assert_eq!(read(&store), (None, None));
+    assert_eq!(read(&store), None);
 }
 
 #[test]

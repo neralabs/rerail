@@ -18,7 +18,7 @@ mod connection;
 pub use connection::set_connection_functions;
 mod corpus_runs;
 pub use corpus_runs::process_gone;
-pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, live_fact_schema, stat_blob_key};
+pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
 pub use connection::{flush_of, store_flush};
@@ -31,7 +31,7 @@ pub mod kept_facts;
 pub mod guest_keys;
 mod object_segments;
 mod segments;
-mod facts_memo;
+mod plan_set;
 mod objects;
 pub mod journal;
 pub mod observe;
@@ -65,12 +65,7 @@ mod schema;
 mod search_index;
 mod snapshots;
 mod tree_diff;
-mod tree_pages;
 pub mod upkeep;
-/// G's tree result segments as copied, beside `tree_pages` (O19).
-#[cfg(any(test, feature = "test-hooks"))]
-#[allow(dead_code)]
-mod tree_result_segments;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
@@ -89,10 +84,9 @@ pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::{ProcessIds, StoreIds, Sym};
 pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation};
-pub use facts_memo::{FactsCompletion, FactsFrame, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
+pub use plan_set::FactsPlanSet;
 pub use schema::STORE_FILE_NAME;
 pub use tree_diff::{TreeChange, TreeDiff};
-pub use tree_pages::{TREE_PAGE_FILES, TreePage, TreePageKey, tree_pages_digest};
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub use connection::{
@@ -116,9 +110,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 const HASH_SHA256: i64 = 1;
 const HASH_GIT_SHA1: i64 = 2;
 const HASH_GIT_SHA256: i64 = 3;
-/// The facts engine's content key (blake3), stored only as a source alias.
-const HASH_BLAKE3: i64 = 4;
-const CODEC_ZSTD: i64 = 1;
+// Hash kind 4 was the facts memo's content key (blake3, a source alias): taken, never reused.
 const STRING_PATH: i64 = 1;
 const STRING_REPOSITORY: i64 = 2;
 const STRING_OWNER: i64 = 3;
@@ -715,16 +707,11 @@ pub struct StoreCapacity {
     pub state: CapacityState,
 }
 
-/// Facts plan sets, each its plans' digests, by the set's digest.
-type PlanSets = HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>;
-
 pub struct ContentStore {
     database_path: PathBuf,
     connection: ThreadConnection,
     compression_level: i32,
     local_result_cache: Mutex<LocalResultCache>,
-    /// Facts plan sets by digest (immutable once written: `facts_memo`).
-    facts_plan_sets: parking_lot::Mutex<PlanSets>,
     /// This process's atoms of the store (atoms.rs, decision 0049), shared with the planner's symbols.
     atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
@@ -793,7 +780,6 @@ impl ContentStore {
             connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity(), self.connection.flush()),
             compression_level: self.compression_level,
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
-            facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms: std::sync::Arc::clone(&self.atoms),
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
@@ -869,7 +855,6 @@ impl ContentStore {
             connection,
             compression_level: DEFAULT_COMPRESSION_LEVEL,
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
-            facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms,
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),

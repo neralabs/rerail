@@ -644,12 +644,11 @@ struct PlacedTable {
 }
 
 /// Every table whose rows name a place in the object segments: sources and tapes (decision 0295 step 5), check
-/// results with call summaries, and tree pages (decision 0450 step 2).
-const PLACED: [PlacedTable; 4] = [
+/// results with call summaries (decision 0450 step 2).
+const PLACED: [PlacedTable; 3] = [
     PlacedTable { table: "tape_objects", key: &["tape_id"], missing: Missing::Mark },
     PlacedTable { table: "source_objects", key: &["source_id"], missing: Missing::Mark },
     PlacedTable { table: "context_check_results", key: &["source_id", "context_hash_id", "check_id"], missing: Missing::Drop },
-    PlacedTable { table: "tree_pages", key: &["page_key", "page_index"], missing: Missing::Drop },
 ];
 
 /// `k1 = ?n AND k2 = ?n+1 …` over `key`, its parameters from `first`.

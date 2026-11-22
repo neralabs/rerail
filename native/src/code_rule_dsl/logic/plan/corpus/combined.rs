@@ -30,7 +30,7 @@ use sha2::{Digest as _, Sha256};
 use std::path::PathBuf;
 
 /// The entry's schema: bumped when its encoding or meaning changes (105: the program as its text, decision 0155).
-const SCHEMA: u32 = crate::content_store::live_fact_schema(105);
+const SCHEMA: u32 = 105;
 
 /// The entries, kept facts of the store.
 const ENTRIES: Entries = Entries::new("rerail.combined");
