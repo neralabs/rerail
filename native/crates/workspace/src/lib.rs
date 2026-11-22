@@ -1,5 +1,6 @@
-//! Classic: the matcher, scopes, values, suppressions, demand and the workspace's model. This is the engine main ran
-//! before the final-shape work, which the plans call "W" (`docs/final-shape/05-implementation-plan.md`, wolfeel 5cf4246e).
+//! The workspace of W, the engine main ran before the final-shape work (`docs/final-shape/05-implementation-plan.md`,
+//! wolfeel 5cf4246e): its files, requests, cross-file state, storage and results, over the code rules
+//! (`rerail-rules`), the matcher (`rerail-matcher`) and the adapters (`rerail-adapters`).
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
@@ -17,16 +18,16 @@ extern crate cranelift_jit_wasm as cranelift_jit;
 pub use rerail_store::content_store;
 pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
-extern crate self as rerail_classic;
+extern crate self as rerail_workspace;
 #[path = "../../../src/code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
-    pub mod calls;
-    pub mod compile;
-    pub mod crypto;
+    pub use rerail_adapters::code_rule_dsl::calls;
+    pub use rerail_rules::code_rule_dsl::compile;
+    pub use rerail_rules::code_rule_dsl::crypto;
     pub use rerail_lang::code_rule_dsl::embed;
-    pub mod eval;
+    pub use rerail_rules::code_rule_dsl::eval;
     #[path = "facts"]
     pub mod facts {
         pub use rerail_facts::code_rule_dsl::facts::*;
@@ -63,40 +64,15 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, StoreResult};
     }
-    pub mod findings;
+    pub use rerail_adapters::code_rule_dsl::file_input;
+    pub use rerail_rules::code_rule_dsl::findings;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
-    pub mod hooks;
-    pub mod identifier;
+    pub use rerail_rules::code_rule_dsl::hooks;
+    pub use rerail_adapters::code_rule_dsl::identifier;
     pub use rerail_lang::code_rule_dsl::json;
     pub use rerail_lang::code_rule_dsl::regexes;
-    #[path = "language"]
-    pub mod language {
-        pub use rerail_lang::code_rule_dsl::language::*;
-        pub mod adapter;
-        #[allow(unused_imports)]
-        #[cfg(any(test, feature = "test-hooks"))]
-        use crate::code_rule_dsl::tree::Tree;
-        #[allow(unused_imports)]
-        use rerail_rr_syntax::tape as rr_tree;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::module_path::ModulePath;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::semver::Range;
-        #[allow(unused_imports)]
-        use ast_grep_core::{
-            AstGrep,
-            language::Language,
-            matcher::{Pattern, PatternBuilder, PatternError},
-            tree_sitter::{StrDoc, TSLanguage},
-        };
-        #[allow(unused_imports)]
-        use ast_grep_language::{LanguageExt, SupportLang};
-        #[allow(unused_imports)]
-        use std::borrow::Cow;
-        #[allow(unused_imports)]
-        use std::sync::LazyLock;
-    }
+    pub use rerail_adapters::code_rule_dsl::language;
     pub mod lines {
         pub use rerail_lang::code_rule_dsl::lines::*;
         // eslint: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
@@ -107,7 +83,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use serde::{Deserialize, Serialize};
     }
-    pub mod literal;
+    pub use rerail_adapters::code_rule_dsl::literal;
     pub mod logic {
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
@@ -145,33 +121,28 @@ pub mod code_rule_dsl {
         pub use rerail_prof::code_rule_dsl::logic::profile;
         pub use rerail_facts::code_rule_dsl::logic::strings;
     }
-    pub mod matcher;
-    pub mod model;
+    pub use rerail_rules::code_rule_dsl::matcher;
+    pub use rerail_rules::code_rule_dsl::model;
     pub use rerail_lang::code_rule_dsl::module_path;
-    pub mod origin;
+    pub use rerail_adapters::code_rule_dsl::origin;
     pub use rerail_prof::code_rule_dsl::phase_clock;
     pub mod placement;
     pub use rerail_facts::code_rule_dsl::producers;
     pub use rerail_prof::code_rule_dsl::prof;
     #[cfg(feature="code-rule-profile")]
-    pub mod profile;
-    pub mod query;
-    #[path = "residency"]
-    pub mod residency {
-        pub mod admission;
-        #[allow(unused_imports)]
-        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::residency::admission::relational::ast_stage::install_ast_producer;
-    }
-    pub mod resolution;
+    pub use rerail_matcher::code_rule_dsl::profile;
+    pub use rerail_rules::code_rule_dsl::query;
+    pub use rerail_rules::code_rule_dsl::residency;
+    pub use rerail_rules::code_rule_dsl::resolution;
     pub mod rule_api;
-    pub mod scope;
+    pub use rerail_adapters::code_rule_dsl::scope;
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    pub mod soundness;
+    pub use rerail_matcher::code_rule_dsl::soundness;
     pub use rerail_facts::code_rule_dsl::sql_profile;
     pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats;
-    pub mod suppress;
+    pub use rerail_adapters::code_rule_dsl::suppress;
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[cfg(test)]
@@ -210,41 +181,13 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::tape::wire::{CHECKPOINT_STRIDE, WIDTH};
     }
     pub use rerail_facts::code_rule_dsl::text;
-    #[path = "transducer"]
-    pub mod transducer {
-        pub mod semantic_facts;
-        #[allow(unused_imports)]
-        #[cfg(any(test, feature = "test-hooks"))]
-        use crate::code_rule_dsl::tape::TapeDoc;
-        #[allow(unused_imports)]
-        #[cfg(any(test, feature = "test-hooks"))]
-        use ast_grep_core::MatchStrictness;
-        #[allow(unused_imports)]
-        #[cfg(any(test, feature = "test-hooks"))]
-        use ast_grep_core::matcher::{Pattern, PatternNode};
-        #[allow(unused_imports)]
-        #[cfg(any(test, feature = "test-hooks"))]
-        use regex::Regex;
-        #[allow(unused_imports)]
-        #[cfg(any(test, feature = "test-hooks"))]
-        use std::collections::{BTreeMap, BTreeSet};
-        #[allow(unused_imports)]
-        #[cfg(any(test, feature = "test-hooks"))]
-        use std::ops::Range;
-        #[allow(unused_imports)]
-        #[cfg(any(test, feature = "test-hooks"))]
-        use crate::code_rule_dsl::search_index::persist_search_index_batch;
-    }
+    pub use rerail_matcher::code_rule_dsl::transducer;
     pub use rerail_lang::code_rule_dsl::tree;
-    pub mod value;
-    pub mod violations;
+    pub use rerail_adapters::code_rule_dsl::value;
+    pub use rerail_rules::code_rule_dsl::violations;
     #[cfg(any(test, feature = "test-hooks"))]
-    pub mod walks;
-    #[cfg_attr(any(test, feature = "test-hooks"), path = "waves")]
-    pub mod waves {
-        #[cfg(any(test, feature = "test-hooks"))]
-        pub mod relational;
-    }
+    pub use rerail_matcher::code_rule_dsl::walks;
+    pub use rerail_rules::code_rule_dsl::waves;
     pub mod workspace;
     #[allow(unused_imports)]
     use crate::code_rule_dsl::residency::admission::relational;

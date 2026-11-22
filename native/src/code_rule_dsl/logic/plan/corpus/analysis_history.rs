@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 type FactRows = BTreeMap<String, Vec<Vec<Value>>>;
 
 // The inputs' names are the planner's (`plan::phased`), which typing reads.
-pub(super) use crate::code_rule_dsl::logic::plan::phased::analysis_history::{INPUT, SCOPE, is_input};
-pub(super) const REQUEST: &str = "analysis_history_lookup";
-pub(super) const ANSWER: &str = "analysis_history_of";
+pub use crate::code_rule_dsl::logic::plan::phased::analysis_history::{INPUT, SCOPE, is_input};
+pub const REQUEST: &str = "analysis_history_lookup";
+pub const ANSWER: &str = "analysis_history_of";
 
 
 fn run_fields(id: i64, record: crate::content_store::analysis_scope::CompletedRun) -> [String; 10] {
@@ -22,7 +22,7 @@ fn run_fields(id: i64, record: crate::content_store::analysis_scope::CompletedRu
     ]
 }
 
-pub(super) fn requested(kind: &str, key: &str) -> Result<(Vec<[String; 10]>, String)> {
+pub fn requested(kind: &str, key: &str) -> Result<(Vec<[String; 10]>, String)> {
     use sha2::{Digest, Sha256};
     let store = super::tape_cache()?.ok_or_else(|| super::Error::Plan("analysis run history requires a readable content store".into()))?;
     let id = store.identity();
@@ -49,7 +49,7 @@ pub(super) fn requested(kind: &str, key: &str) -> Result<(Vec<[String; 10]>, Str
 }
 
 /// A retained answer may have a different row order. Compare each stored row with its current fields.
-pub(super) fn kept(kind: &str, key: &str, previous: &[&Vec<i64>], text: impl Fn(i64) -> Option<String>) -> Option<String> {
+pub fn kept(kind: &str, key: &str, previous: &[&Vec<i64>], text: impl Fn(i64) -> Option<String>) -> Option<String> {
     let (rows, digest) = requested(kind, key).ok()?;
     if rows.len() != previous.len() { return None; }
     let mut current: std::collections::HashSet<_> = rows.into_iter().collect();
@@ -62,10 +62,10 @@ pub(super) fn kept(kind: &str, key: &str, previous: &[&Vec<i64>], text: impl Fn(
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum Read { Runs, Scopes, Both }
+pub enum Read { Runs, Scopes, Both }
 
 impl Read {
-    pub(super) fn needed(program: &Version) -> Option<Self> {
+    pub fn needed(program: &Version) -> Option<Self> {
         if !program.input_names().iter().any(|name| is_input(name)) { return None; }
         let needed = super::world::needed(program);
         let reads = |relation: &str| needed.contains(relation) && program.has_input(relation);
@@ -77,7 +77,7 @@ impl Read {
         }
     }
 
-    pub(super) fn key(self) -> &'static str {
+    pub fn key(self) -> &'static str {
         match self { Self::Runs => "", Self::Scopes => "scopes", Self::Both => "scopes+runs" }
     }
 
@@ -85,7 +85,7 @@ impl Read {
         match key { "" => Some(Self::Runs), "scopes" => Some(Self::Scopes), "scopes+runs" => Some(Self::Both), _ => None }
     }
 
-    pub(super) fn records(self) -> Result<(FactRows, String)> {
+    pub fn records(self) -> Result<(FactRows, String)> {
         let scopes = matches!(self, Self::Scopes | Self::Both);
         let runs = matches!(self, Self::Runs | Self::Both);
         let store = super::tape_cache()?.ok_or_else(|| super::Error::Plan("analysis run history requires a readable content store".to_owned()))?;

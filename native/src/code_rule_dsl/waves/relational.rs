@@ -75,9 +75,9 @@ pub(in crate::code_rule_dsl) const REFERENCE_FIELDS: &[&str] = &[
 
 #[derive(Clone)]
 pub struct Plan {
-    pub(in crate::code_rule_dsl) require_nonempty: Option<usize>,
-    pub(in crate::code_rule_dsl) syntax: Option<Arc<syntax::Spec>>,
-    pub(in crate::code_rule_dsl) per_file: bool,
+    pub require_nonempty: Option<usize>,
+    pub syntax: Option<Arc<syntax::Spec>>,
+    pub per_file: bool,
     pub(in crate::code_rule_dsl) references: Option<References>,
     pub(in crate::code_rule_dsl) locations: BTreeSet<String>,
     pub inputs: Vec<(String, FactQuery)>,
@@ -88,7 +88,7 @@ pub struct Plan {
     pub(in crate::code_rule_dsl) code: Option<String>,
     pub(in crate::code_rule_dsl) message: Option<String>,
     pub(in crate::code_rule_dsl) last_uses: BTreeMap<String, usize>,
-    pub(in crate::code_rule_dsl) reads_source: bool,
+    pub reads_source: bool,
 }
 
 pub(in crate::code_rule_dsl) fn identifier(value: &str) -> bool {

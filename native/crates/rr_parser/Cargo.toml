@@ -7,10 +7,11 @@ description = "The .rerail parser: its Bitlex grammar compiled to tier 1 and tie
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-tape-format/test-hooks", "rerail-compiler/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks"]
+test-hooks = ["rerail-tape-format/test-hooks", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }
+rerail-rir = { path = "../rir" }
 rerail-bitlex = { path = "../bitlex" }
 rerail-cpu-block = { path = "../cpu_block" }
 rerail-cpu-stream = { path = "../cpu_stream" }
@@ -23,6 +24,7 @@ rerail-context = { path = "../context", features = ["test-hooks"] }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-rr-parser = { path = ".", features = ["test-hooks"] }
 rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
+rerail-rir = { path = "../rir" }
 # The measurements' CPU clocks (`tests`), on every platform.
 rerail-prof = { path = "../prof" }
 # The files' digests a benchmark gives the Metal run, as the engine would (`rr_throughput`).

@@ -1,5 +1,4 @@
 use super::config::Options;
-use super::resolve::{MAX_RESOLVE_NAME_BYTES, is_identifier};
 use crate::code_rule_dsl::json::bounded_text;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::adapter::QueryWhen;
@@ -13,6 +12,18 @@ use crate::code_rule_dsl::scope::options::{
 use crate::code_rule_dsl::semver::Range;
 use napi::Result;
 use serde_json::{Map, Value};
+
+/// Bytes one name a `resolves` names may hold.
+pub const MAX_RESOLVE_NAME_BYTES: usize = 256;
+
+/// An identifier: ASCII letters, digits, `_` and `$`, not starting with a digit.
+pub fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_' || first == '$')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
 
 const LANGUAGE_OPTIONS_KEYS: &[&str] = &[
     "ecmaVersion",
@@ -43,7 +54,7 @@ fn jsx_name(value: Option<&Value>, key: &str, path: &str) -> Result<Option<Optio
 
 /// Globals one `languageOptions` may configure: room for real environment unions (ESLint's browser,
 /// node and worker sets together hold a few thousand), still bounded.
-pub(super) const MAX_LANGUAGE_GLOBALS: usize = 16_384;
+pub const MAX_LANGUAGE_GLOBALS: usize = 16_384;
 
 /// ESLint's `normalizeEcmaVersionForLanguageOptions` over the versions the table has: `"latest"`,
 /// 3, 5, 6 to 17 (2015 to 2026) or a year.
@@ -482,15 +493,15 @@ fn when_source_types(value: &Value, path: &str) -> Result<Vec<SourceType>> {
 
 /// Which of an ast query's `file` keys its language's family reads (`Adapter::PACKAGES`,
 /// `Adapter::DECLARATION_FILES`, `Adapter::PACKAGE_MANIFESTS`, `Adapter::JSX_RUNTIMES`).
-pub(super) struct FileKeys {
+pub struct FileKeys {
     /// The module path keys: `module`, `moduleName`, `package`, `inPackage`.
-    pub(super) packages: bool,
+    pub packages: bool,
     /// `declaration`.
-    pub(super) declarations: bool,
+    pub declarations: bool,
     /// `package` as conditions on the nearest `package.json`.
-    pub(super) manifests: bool,
+    pub manifests: bool,
     /// `jsxRuntime`.
-    pub(super) jsx_runtimes: bool,
+    pub jsx_runtimes: bool,
 }
 
 /// An ast query's `file`: conditions on the file. Every language has `path`, a `regex` that must
@@ -503,7 +514,7 @@ pub(super) struct FileKeys {
 /// or the stem fallback: `module`, `moduleName` and `package` hold text conditions over the dotted
 /// names, the last one and the first one (in a package), and `inPackage` whether the host sent
 /// the path.
-pub(super) fn compile_file_condition(
+pub fn compile_file_condition(
     value: &Value,
     path: &str,
     language: &str,
@@ -610,7 +621,7 @@ pub(super) fn compile_file_condition(
 }
 
 /// A `regex`, `notRegex` or both.
-pub(super) fn text_condition(
+pub fn text_condition(
     value: Option<&Value>,
     at: &str,
     max_regex_bytes: usize,

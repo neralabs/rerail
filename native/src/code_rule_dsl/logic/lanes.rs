@@ -54,7 +54,7 @@ fn all() -> Arc<Executor> {
         // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
         super::costs::start();
         // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
-        if let Some(dev) = crate::code_rule_dsl::logic::device::solver() {
+        if let Some(dev) = crate::code_rule_dsl::logic::device::device() {
             dev.install_launch_guard();
         }
         Arc::new(Executor::new())

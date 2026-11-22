@@ -1,3 +1,4 @@
+pub use super::options::{MAX_RESOLVE_NAME_BYTES, is_identifier};
 use super::binds::{FILTER_KEYS, compile_filter, validate_filter};
 use super::utils::UtilScope;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
@@ -16,8 +17,6 @@ use std::sync::Arc;
 
 /// Names one `resolves` list may hold.
 pub(super) const MAX_RESOLVE_NAMES: usize = 1024;
-/// Bytes one name may hold.
-pub(super) const MAX_RESOLVE_NAME_BYTES: usize = 256;
 
 const RESOLVES_KEYS: &[&str] = &[
     "global",
@@ -48,14 +47,6 @@ const BINDING_FLAGS: &[&str] = &["stopAtGlobal", "only", "destructuredValue"];
 /// The sub-rule over a TypeScript variable's definition names and references.
 pub const OCCURRENCE_KEY: &str = "occurrence";
 
-/// An identifier: ASCII letters, digits, `_` and `$`, not starting with a digit.
-pub fn is_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_' || first == '$')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
-}
 
 /// A PHP class, function or constant name: labels joined by `\`, with an optional leading `\`.
 fn is_php_name(name: &str) -> bool {

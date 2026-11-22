@@ -1,5 +1,4 @@
-use super::GrammarMatcher;
-use super::util::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
+use super::steps::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::identifier::{name_in, python_identifier};
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
@@ -9,7 +8,7 @@ use crate::code_rule_dsl::language::{
 };
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::literal::{Grammar, SubTree};
-use crate::code_rule_dsl::model::FileInput;
+use crate::code_rule_dsl::file_input::FileInput;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{DEFAULT_PYTHON_MINOR, LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::usage::Usage;
@@ -449,7 +448,7 @@ impl Resolves {
     }
 
     /// Whether this predicate asks about every name, not listed ones: it has no text probe.
-    pub(crate) fn name_less(&self) -> bool {
+    pub fn name_less(&self) -> bool {
         self.global_any || self.import_any || self.unresolved.is_some() || self.before_local
     }
 
@@ -667,7 +666,7 @@ impl Resolves {
     /// Whether the predicate reads only the import statement around its node: `imported` alone,
     /// which builds no scope table and ignores the module path (`relative: "text"` included). As
     /// sound under syntax errors as a pattern, when positive.
-    pub(crate) fn witness_only(&self) -> bool {
+    pub fn witness_only(&self) -> bool {
         // `imported` reads dotted names alone (`dotted_kinds`: Python's, without `seenBefore`).
         !self.dotted_kinds.is_empty()
             && self.globals.is_empty()
@@ -704,14 +703,14 @@ impl Resolves {
 }
 
 /// The expression inside any parentheses (of `paren_kinds`) around `node`.
-pub(super) fn unparenthesized<'r, D: Doc>(
+pub fn unparenthesized<'r, D: Doc>(
     paren_kinds: &BTreeSet<u16>,
     mut node: Node<'r, D>,
 ) -> Node<'r, D> {
     while paren_kinds.contains(&node.kind_id()) {
         let mut inner = node
             .children()
-            .filter(|child| child.is_named() && !super::util::is_comment_kind(&child.kind()));
+            .filter(|child| child.is_named() && !crate::code_rule_dsl::language::adapter::is_comment_kind(&child.kind()));
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
@@ -775,7 +774,7 @@ thread_local! {
     static FILE_SCOPES: RefCell<Option<FileScopes>> = const { RefCell::new(None) };
     /// The clause whose root is being matched (`GrammarMatcher` address), which pays for a table
     /// once per file.
-    pub(super) static CURRENT_CLAUSE: Cell<usize> = const { Cell::new(0) };
+    pub static CURRENT_CLAUSE: Cell<usize> = const { Cell::new(0) };
     #[cfg(any(test, feature = "test-hooks"))]
     pub static TABLE_BUILDS: Cell<usize> = const { Cell::new(0) };
     /// How many times a file's module system was read off its syntax (`syntax_source_type`).
@@ -790,10 +789,10 @@ thread_local! {
 }
 
 /// Keeps a file's table readable from the nodes of its parsed annotations while they are matched.
-pub(super) struct SubTables;
+pub struct SubTables;
 
 impl SubTables {
-    pub(super) fn enter(table: Arc<ScopeTable>) -> Self {
+    pub fn enter(table: Arc<ScopeTable>) -> Self {
         SUB_TABLES.with_borrow_mut(|tables| tables.push(table));
         Self
     }
@@ -932,7 +931,7 @@ impl FileScopeSlot {
     }
 
     /// The tables built or reused so far.
-    pub(crate) fn tables(&self) -> Vec<Arc<ScopeTable>> {
+    pub fn tables(&self) -> Vec<Arc<ScopeTable>> {
         FILE_SCOPES.with_borrow(|slot| {
             slot.as_ref()
                 .map(|slot| slot.tables.clone())
@@ -966,7 +965,7 @@ pub fn matched_file_path() -> Option<Arc<str>> {
 /// The module system of the file being matched, for queries that leave `sourceType` to it: its
 /// path's and package's, else Node's reading of `root`'s syntax (`has_module_syntax`), read once.
 /// ESLint's `module` outside a file evaluation.
-pub(super) fn decide_file_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
+pub fn decide_file_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
     if let Some(source_type) = FILE_SCOPES.with_borrow(|slot| match slot {
         Some(slot) => slot.source_type,
         None => Some(SourceType::Module),
@@ -1025,37 +1024,29 @@ impl<'a, 'r, D: Doc> FileGates<'a, 'r, D> {
         }
     }
 
-    /// Whether `matcher`'s file gates (its `when.sourceType`, its `file.jsxRuntime`) admit the
-    /// file, as `run_clause` reads them. A file they exclude matches nothing, so its syntax errors
-    /// cannot leave the clause's result incomplete.
-    pub fn admit(&self, matcher: &GrammarMatcher) -> bool {
+    /// The file's module system as a query's `when.sourceType` reads it: by its package type alone where the query
+    /// gates on the package (`package_type_gate`), else by its extension and package type, else by its syntax.
+    /// Derived once (`GrammarMatcher::admits`).
+    pub fn source_type(&self, package_type_gate: bool) -> SourceType {
         let file = self.file;
-        let source_type = matcher.source_types.as_ref().map(|_| {
-            if matcher.package_type_gate {
-                return SourceType::by_package_type(&file.path, file.package_type());
-            }
-            *self.source_type.get_or_init(|| {
-                SourceType::of_file(&file.language, &file.path, file.package_type())
-                    .unwrap_or_else(|| syntax_source_type(&self.root))
-            })
-        });
-        matcher.may_apply_to(source_type)
-            && matcher
-                .file
-                .as_ref()
-                .and_then(|condition| condition.jsx_runtime.as_ref())
-                .is_none_or(|runtimes| {
-                    runtimes.contains(
-                        self.jsx_runtime
-                            .get_or_init(|| jsx_runtime_of(&self.root, file.package.as_deref())),
-                    )
-                })
+        if package_type_gate {
+            return SourceType::by_package_type(&file.path, file.package_type());
+        }
+        *self.source_type.get_or_init(|| {
+            SourceType::of_file(&file.language, &file.path, file.package_type())
+                .unwrap_or_else(|| syntax_source_type(&self.root))
+        })
+    }
+
+    /// The file's JSX runtime, as a query's `file.jsxRuntime` reads it. Derived once.
+    pub fn jsx_runtime(&self) -> &JsxRuntime {
+        self.jsx_runtime.get_or_init(|| jsx_runtime_of(&self.root, self.file.package.as_deref()))
     }
 }
 
 /// The module system the file being matched has by its extension and package type
 /// (`SourceType::by_package_type`); ESLint's `module` outside a file evaluation.
-pub(super) fn file_package_type_source_type() -> SourceType {
+pub fn file_package_type_source_type() -> SourceType {
     FILE_SCOPES.with_borrow(|slot| {
         slot.as_ref()
             .map_or(SourceType::Module, |slot| slot.package_type_source_type)
@@ -1083,7 +1074,7 @@ pub fn file_source_type_for(options: &LanguageOptions) -> SourceType {
 /// The JSX runtime of the file being matched (`file.jsxRuntime`): the one its text names
 /// (`jsx_runtime_in_source`), else its manifest's, read once. Without a manifest, or outside a
 /// file evaluation, a text that names none is `Unknown`.
-pub(super) fn decide_file_jsx_runtime<D: Doc>(root: &Node<'_, D>) -> JsxRuntime {
+pub fn decide_file_jsx_runtime<D: Doc>(root: &Node<'_, D>) -> JsxRuntime {
     if let Some(runtime) =
         FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.jsx_runtime))
     {
@@ -1193,11 +1184,11 @@ pub fn file_rerail_ignores(read: impl FnOnce() -> RerailIgnores) -> Rc<RerailIgn
 }
 
 /// A literal parsed earlier in this file: `Some(None)` when its value is not known.
-pub(super) fn memoized_parse(key: &(usize, Grammar, String)) -> Option<Option<Arc<SubTree>>> {
+pub fn memoized_parse(key: &(usize, Grammar, String)) -> Option<Option<Arc<SubTree>>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.parses.get(key).cloned()))
 }
 
-pub(super) fn memoize_parse(key: (usize, Grammar, String), tree: Option<Arc<SubTree>>) {
+pub fn memoize_parse(key: (usize, Grammar, String), tree: Option<Arc<SubTree>>) {
     FILE_SCOPES.with_borrow_mut(|slot| {
         if let Some(slot) = slot {
             slot.parses.insert(key, tree);
@@ -1206,14 +1197,14 @@ pub(super) fn memoize_parse(key: (usize, Grammar, String), tree: Option<Arc<SubT
 }
 
 /// A string value parsed earlier in this file: `Some(None)` when it is not known.
-pub(super) fn memoized_value_parse(key: &(ValueKey, Grammar)) -> Option<Option<Arc<SubTree>>> {
+pub fn memoized_value_parse(key: &(ValueKey, Grammar)) -> Option<Option<Arc<SubTree>>> {
     FILE_SCOPES.with_borrow(|slot| {
         slot.as_ref()
             .and_then(|slot| slot.value_parses.get(key).cloned())
     })
 }
 
-pub(super) fn memoize_value_parse(key: (ValueKey, Grammar), tree: Option<Arc<SubTree>>) {
+pub fn memoize_value_parse(key: (ValueKey, Grammar), tree: Option<Arc<SubTree>>) {
     FILE_SCOPES.with_borrow_mut(|slot| {
         if let Some(slot) = slot {
             slot.value_parses.insert(key, tree);
@@ -1329,14 +1320,14 @@ pub fn table_reading(options: Option<&LanguageOptions>, python: Option<&PythonOp
 /// The usage index of `table`, `node`'s file's, built on first use and charged to the current
 /// clause's `maxVisitedNodes` once per file. `None` means the clause failed for the file
 /// (`UTIL_EXCEEDED` is set): a missing index must not read as "unused".
-pub(super) fn file_usage<D: Doc>(
+pub fn file_usage<D: Doc>(
     node: &Node<'_, D>,
     table: &Arc<ScopeTable>,
 ) -> Option<Arc<Usage>> {
     file_binding_index(node, table, false)
 }
 
-pub(super) fn file_declaration_sites<D: Doc>(
+pub fn file_declaration_sites<D: Doc>(
     node: &Node<'_, D>,
     table: &Arc<ScopeTable>,
 ) -> Option<Arc<Usage>> {
@@ -1388,7 +1379,7 @@ fn file_binding_index<D: Doc>(
             return false;
         };
         // Charged to each clause once: what this one spends depends on whether it was.
-        super::read_clause_state();
+        super::steps::read_clause_state();
         !slot.usage_charged.insert(key)
     });
     if !charged || built {
@@ -1396,7 +1387,7 @@ fn file_binding_index<D: Doc>(
             return exceed();
         };
         UTIL_STEPS_LEFT.set(left);
-        super::filled(usage.cost);
+        super::steps::filled(usage.cost);
     }
     Some(usage)
 }
@@ -1447,7 +1438,7 @@ pub fn file_names<D: Doc>(
     });
     if installed.is_some() {
         // Charged to each clause once (`php_names_charged`).
-        super::read_clause_state();
+        super::steps::read_clause_state();
     }
     let (names, charged) = match installed {
         Some((Some(names), _, charged)) => (names, charged),
@@ -1593,7 +1584,7 @@ pub fn file_table<D: Doc>(
     });
     if installed.is_some() {
         // Charged to each clause once (`charged`).
-        super::read_clause_state();
+        super::steps::read_clause_state();
     }
     let steps = UTIL_STEPS_LEFT.get();
     let (table, charged) = match installed {
@@ -1640,7 +1631,7 @@ pub fn file_table<D: Doc>(
             return exceed();
         };
         UTIL_STEPS_LEFT.set(left);
-        super::filled(table.cost);
+        super::steps::filled(table.cost);
         FILE_SCOPES.with_borrow_mut(|slot| {
             if let Some(slot) = slot {
                 slot.charged.insert(clause);

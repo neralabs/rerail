@@ -10,9 +10,9 @@ pub mod layout;
 const MAX_STAGES: usize = 100;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
 thread_local! { static READERS: Cell<usize> = const { Cell::new(0) }; }
-pub(in crate::code_rule_dsl) struct ReadOnly;
+pub struct ReadOnly;
 impl ReadOnly {
-    pub(in crate::code_rule_dsl) fn enter() -> Self {
+    pub fn enter() -> Self {
         READERS.set(READERS.get() + 1);
         Self
     }

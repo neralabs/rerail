@@ -7,13 +7,13 @@ pub struct Database {
     profiler: Option<Box<crate::code_rule_dsl::profile::sql::Profiler>>,
     connection: Connection,
     /// The progress handler and authorizer a pool connection's holders set (`register_hooks`).
-    pub(in crate::code_rule_dsl) hooks: crate::code_rule_dsl::hooks::Hooks,
+    pub hooks: crate::code_rule_dsl::hooks::Hooks,
     pub storage: std::cell::RefCell<super::storage::Storage>,
 }
 
 impl Database {
     /// SQLite-owned storage held by a suspended consumer, without scanning rows.
-    pub(in crate::code_rule_dsl) fn resident_bytes(&self) -> rusqlite::Result<usize> {
+    pub fn resident_bytes(&self) -> rusqlite::Result<usize> {
         let mut total = 0usize;
         for kind in [
             rusqlite::ffi::SQLITE_DBSTATUS_CACHE_USED,
@@ -41,7 +41,7 @@ impl Database {
         }
         Ok(total)
     }
-    pub(in crate::code_rule_dsl) fn open() -> rusqlite::Result<Self> {
+    pub fn open() -> rusqlite::Result<Self> {
         Self::from_connection(Connection::open_in_memory()?)
     }
 
@@ -62,21 +62,21 @@ impl Database {
     }
 
     #[cfg(feature = "code-rule-profile")]
-    pub(in crate::code_rule_dsl) fn context(&self, value: serde_json::Value) {
+    pub fn context(&self, value: serde_json::Value) {
         if let Some(profiler) = &self.profiler {
             profiler.context(value);
         }
     }
 
     #[cfg(feature = "code-rule-profile")]
-    pub(in crate::code_rule_dsl) fn stage(&self, name: &str) {
+    pub fn stage(&self, name: &str) {
         if let Some(profiler) = &self.profiler {
             profiler.stage(name);
         }
     }
 
     #[cfg(feature = "code-rule-profile")]
-    pub(in crate::code_rule_dsl) fn operation(
+    pub fn operation(
         &self,
         name: &str,
         index: usize,
@@ -87,14 +87,14 @@ impl Database {
     }
 
     #[cfg(feature = "code-rule-profile")]
-    pub(in crate::code_rule_dsl) fn explain_pending(&self) {
+    pub fn explain_pending(&self) {
         if let Some(profiler) = &self.profiler {
             profiler.explain_pending(&self.connection);
         }
     }
 
     #[cfg(feature = "code-rule-profile")]
-    pub(in crate::code_rule_dsl) fn checkpoint(&self) -> rusqlite::Result<()> {
+    pub fn checkpoint(&self) -> rusqlite::Result<()> {
         if let Some(profiler) = &self.profiler {
             profiler.checkpoint(&self.connection)?;
         }
@@ -104,7 +104,7 @@ impl Database {
 
 impl Database {
     /// Registers the hook dispatchers (`hooks`) while the connection is still owned.
-    pub(in crate::code_rule_dsl) fn register_hooks(&mut self) -> rusqlite::Result<()> {
+    pub fn register_hooks(&mut self) -> rusqlite::Result<()> {
         self.hooks = crate::code_rule_dsl::hooks::Hooks::register(&mut self.connection)?;
         Ok(())
     }

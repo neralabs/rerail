@@ -4,82 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-/// `matches` recursion deeper than this fails the clause for the file instead of risking the stack.
-/// Utilities recurse only through relations, so real rules recurse as deep as the syntax they walk.
-pub const MAX_UTIL_DEPTH: u32 = 256;
-
-/// Stack a root's `matches` recursion may use, measured from `begin_clause`. A level's frames grow
-/// with how much rule it nests and with the build (a small recursive rule takes about 2 KiB per
-/// level in release, 15 KiB in debug), so bytes back up the level count. Every thread matching runs
-/// on has room for this on top of its callers: Node's main thread and libuv workers (8 MiB) and
-/// Rust test threads (2 MiB).
-pub const MAX_UTIL_STACK_BYTES: usize = 1 << 20;
-
-thread_local! {
-    pub static UTIL_DEPTH: Cell<u32> = const { Cell::new(0) };
-    /// The stack address `begin_clause` started at; 0 outside one (no stack limit applies).
-    pub static UTIL_STACK_BASE: Cell<usize> = const { Cell::new(0) };
-    pub static UTIL_STEPS_LEFT: Cell<usize> = const { Cell::new(usize::MAX) };
-    pub static UTIL_EXCEEDED: Cell<Option<UtilLimit>> = const { Cell::new(None) };
-    /// The matcher's Unknown flag: set when a rule failed because a verdict it read was unknown
-    /// rather than false (a value it could not decide). A matcher that returns a match leaves it
-    /// as it found it; one that fails leaves it set if it was set on entry or its own failure is
-    /// unknown. Readers (`not`, relations, `count`) clear it before the sub-rule they read and
-    /// restore it after.
-    pub static UNKNOWN: Cell<bool> = const { Cell::new(false) };
-    /// Whether the root being matched can reach an unknown verdict (it reads values). Without one,
-    /// no matcher touches `UNKNOWN`, so rules that read no values match exactly as they did.
-    pub static THREE_VALUED: Cell<bool> = const { Cell::new(false) };
-}
+/// A clause's limits, its budget and the matcher's Unknown flag are the clause's steps (`steps`), below the matcher:
+/// the file context it resolves names in (`resolve`) and the argument slots (`arguments`) spend them too.
+pub use super::steps::*;
 
 pub use crate::code_rule_dsl::language::adapter::{is_comment_kind, is_paren_kind};
-
-/// An address in the current stack frame.
-#[inline(always)]
-pub fn stack_address() -> usize {
-    let marker = 0u8;
-    std::hint::black_box(&marker) as *const u8 as usize
-}
-
-/// A limit `matches` recursion hit. The root's verdict is then unknown (a `not` above the cut-off
-/// reference would read its failure as a non-match), so the clause fails for the file.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum UtilLimit {
-    /// `MAX_UTIL_DEPTH` or `MAX_UTIL_STACK_BYTES`.
-    Depth,
-    /// More utility evaluations and counted nodes than the query's `maxVisitedNodes` in one file.
-    Work,
-    /// The file's scope table (`resolves`) could not be built within `maxVisitedNodes`, the time
-    /// budget, or its nesting limit.
-    Scope,
-    /// Decoding values (`value`, `compare` over values) spent the rest of `maxVisitedNodes`.
-    Value,
-    /// The parser stopped at a limit (Forte's nesting depth or step budget) before it read the
-    /// file: no clause reads it.
-    Parse,
-}
-
-impl UtilLimit {
-    pub fn message(self) -> &'static str {
-        match self {
-            Self::Depth => {
-                "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)"
-            }
-            Self::Work => {
-                "`matches` and `count` exceeded their work budget (maxVisitedNodes utility evaluations and counted nodes per file)"
-            }
-            Self::Scope => {
-                "`resolves` could not build the file's scope table within its budget (maxVisitedNodes nodes, the time budget, or 2,000 nesting levels)"
-            }
-            Self::Value => {
-                "decoding values exceeded the work budget (maxVisitedNodes decoded nodes, with utility evaluations and counted nodes, per file)"
-            }
-            Self::Parse => {
-                "the parser stopped at a limit (its nesting depth or step budget) before it read the file"
-            }
-        }
-    }
-}
 
 /// Distinct parameterized calls (a utility and a mapping of its parameters) one query may make per
 /// grammar. Each is compiled once, as a frame plan over the utility's one compiled rule.
@@ -96,7 +25,7 @@ pub(super) type Scope = Arc<[Arc<str>]>;
 /// of the query shapes them (`context_free`): their verdicts are one (`UtilRef::memo_term`).
 #[derive(Clone, Copy, Debug)]
 pub struct UtilOrigin {
-    pub(crate) digest: [u8; 32],
+    pub digest: [u8; 32],
 }
 
 /// The `utils` of one ast query, or a document's shared utilities (`define`), compiled for one
@@ -139,7 +68,7 @@ struct Slot {
 }
 
 impl UtilTable {
-    pub(crate) fn new(
+    pub fn new(
         names: Arc<[String]>,
         framed: Arc<[bool]>,
         origins: Vec<Option<UtilOrigin>>,
@@ -149,7 +78,7 @@ impl UtilTable {
 
     /// A table that shares its names, parameter flags and origins with the other shared tables
     /// of its define (`compile::shared`).
-    pub(crate) fn sharing(
+    pub fn sharing(
         names: Arc<[String]>,
         framed: Arc<[bool]>,
         origins: Arc<[Option<UtilOrigin>]>,
@@ -180,7 +109,7 @@ impl UtilTable {
     }
 
     /// Fills utility `index` with its compiled rule.
-    pub(crate) fn fill(&self, index: usize, rule: AstMatcher) {
+    pub fn fill(&self, index: usize, rule: AstMatcher) {
         let slot = self
             .slot_or_new(index)
             .expect("a filled utility is the table's");
@@ -190,14 +119,14 @@ impl UtilTable {
     }
 
     /// Fills every utility, in index order.
-    pub(crate) fn fill_all(&self, rules: Vec<AstMatcher>) {
+    pub fn fill_all(&self, rules: Vec<AstMatcher>) {
         for (index, rule) in rules.into_iter().enumerate() {
             self.fill(index, rule);
         }
     }
 
     /// Drafts utility `index` with a first compilation of its rule.
-    pub(crate) fn draft(&self, index: usize, rule: AstMatcher) {
+    pub fn draft(&self, index: usize, rule: AstMatcher) {
         let slot = self
             .slot_or_new(index)
             .expect("a drafted utility is the table's");
@@ -207,7 +136,7 @@ impl UtilTable {
     }
 
     /// Drafts every utility, in index order.
-    pub(crate) fn draft_all(&self, rules: Vec<AstMatcher>) {
+    pub fn draft_all(&self, rules: Vec<AstMatcher>) {
         for (index, rule) in rules.into_iter().enumerate() {
             self.draft(index, rule);
         }
@@ -215,18 +144,18 @@ impl UtilTable {
 
     /// Begins compiling utilities of the table: `was_unfilled` then tells whether this
     /// compilation's walks met one they could not read yet.
-    pub(crate) fn begin_compilation(&self) {
+    pub fn begin_compilation(&self) {
         self.unfilled.store(false, Ordering::Relaxed);
     }
 
     /// Whether a walk met a utility it could not read yet.
-    pub(crate) fn was_unfilled(&self) -> bool {
+    pub fn was_unfilled(&self) -> bool {
         self.unfilled.load(Ordering::Relaxed)
     }
 
     /// The compiled utilities among `indices` that run in their caller's environment (no
     /// parameters).
-    pub(crate) fn shared_rules<'t>(
+    pub fn shared_rules<'t>(
         &'t self,
         indices: &'t [usize],
     ) -> impl Iterator<Item = &'t AstMatcher> {
@@ -237,7 +166,7 @@ impl UtilTable {
     }
 
     /// Records a call; false once more than `MAX_UTIL_INSTANCES` distinct ones were recorded.
-    pub(crate) fn record_instance(&self, index: usize, args: &[(String, String)]) -> bool {
+    pub fn record_instance(&self, index: usize, args: &[(String, String)]) -> bool {
         let mut instances = self
             .instances
             .lock()
@@ -263,7 +192,7 @@ pub struct UtilCall {
 impl UtilCall {
     /// The caller's names for the parameters among `names` (the utility's own): what the call binds
     /// or reads, seen from its caller.
-    pub(crate) fn outward<S: AsRef<str>>(
+    pub fn outward<S: AsRef<str>>(
         &self,
         names: impl IntoIterator<Item = S>,
     ) -> BTreeSet<&str> {
@@ -336,7 +265,7 @@ impl<K: Ord + Clone, T: Clone + PartialEq> UtilitySummary<K, T> {
     }
 
     /// The summary of `key`, which `walk` computes from the summaries it asks of `self`.
-    pub(crate) fn summarize(
+    pub fn summarize(
         &mut self,
         key: K,
         initial: T,

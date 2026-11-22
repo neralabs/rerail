@@ -14,11 +14,11 @@ DAG = {
     'rerail-rr': ['rerail-facts', 'rerail-rr-syntax', 'rerail-program-image'],
     'rerail-logic': ['rerail-rr', 'rerail-facts', 'rerail-program-image'],
     'rerail-sessions': ['rerail-logic'],
-    'rerail-transducer': ['rerail-classic'],
-    'rerail-classic': ['rerail-facts'],
+    'rerail-transducer': ['rerail-workspace'],
+    'rerail-workspace': ['rerail-facts'],
     'rerail-device-metal': ['rerail-transducer', 'rerail-logic'],
-    'rerail-lang-python': ['rerail-classic'], 'rerail-lang-ecma': ['rerail-classic'], 'rerail-lang-php': ['rerail-classic'],
-    'rerail-lang-rust': ['rerail-classic'], 'rerail-lang-sql': ['rerail-classic'], 'rerail-lang-json': ['rerail-classic', 'rerail-transducer'],
+    'rerail-lang-python': ['rerail-workspace'], 'rerail-lang-ecma': ['rerail-workspace'], 'rerail-lang-php': ['rerail-workspace'],
+    'rerail-lang-rust': ['rerail-workspace'], 'rerail-lang-sql': ['rerail-workspace'], 'rerail-lang-json': ['rerail-workspace', 'rerail-transducer'],
 }
 for e in filter(None, os.environ.get('EXTRA_DAG', '').split(',')):
     a, b = e.split('>'); DAG[a].append(b)
