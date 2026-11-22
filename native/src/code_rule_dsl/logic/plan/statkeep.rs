@@ -160,6 +160,9 @@ struct Column {
     sketch: Sketch,
     /// `paired`: the 0096 sketch of each (document, value) pair's count, whose `sq` is the column's `sqd`.
     pairs: Option<Sketch>,
+    /// The values watched (`watch`): the constants the rules test in the column, each counted exactly whatever the
+    /// column's values (a count may be 0), so an edit's run takes them as kept rather than counting the rows held.
+    watched: FxHashMap<i64, i64>,
 }
 
 /// One relation's statistics, kept by delta.
@@ -516,6 +519,13 @@ impl RelStats {
                         p.add(pair(group(row[0]), row[c]), sign);
                     }
                 });
+                if !col.watched.is_empty() {
+                    each(sign, &mut |row| {
+                        if let Some(w) = col.watched.get_mut(&row[c]) {
+                            *w += sign;
+                        }
+                    });
+                }
                 if let Some(exact) = &mut col.exact {
                     let mut over = false;
                     each(sign, &mut |row| {
@@ -571,6 +581,13 @@ impl RelStats {
     fn values(col: &mut Column, values: &[(i64, i64)], sign: i64) {
         for &(v, k) in values {
             col.sketch.add(v, sign * k);
+        }
+        if !col.watched.is_empty() {
+            for &(v, k) in values {
+                if let Some(w) = col.watched.get_mut(&v) {
+                    *w += sign * k;
+                }
+            }
         }
         // Counted in, the map would hold every one of these values at least: past `EXACT`, it is given up unread.
         if sign > 0 && values.len() > EXACT {
@@ -636,13 +653,31 @@ impl RelStats {
         self.cols.get(c)?.exact.as_ref().map(Exact::iter)
     }
 
+    /// Column `c`'s count of `v`, where `v` is watched (`watch`).
+    pub fn watched(&self, c: usize, v: i64) -> Option<i64> {
+        self.cols.get(c)?.watched.get(&v).copied()
+    }
+
+    /// Column `c` watches exactly the values `counts` names, each with its count in the rows counted: from then on
+    /// each is counted in and out with the rows. A value no longer named is no longer watched.
+    pub fn watch(&mut self, c: usize, counts: impl IntoIterator<Item = (i64, i64)>) {
+        if let Some(col) = self.cols.get_mut(c) {
+            col.watched = counts.into_iter().collect();
+        }
+    }
+
+    /// Column `c`'s watched values taken out as (value, count) pairs, to be mapped and put back (`watch`).
+    pub fn take_watched(&mut self, c: usize) -> Vec<(i64, i64)> {
+        self.cols.get_mut(c).map(|col| std::mem::take(&mut col.watched).into_iter().collect()).unwrap_or_default()
+    }
+
     /// Bytes `encode` takes, near enough (the exact maps and sketches dominate).
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        self.cols.iter().map(|c| 32 + [&c.exact, &c.zero].iter().map(|e| e.as_ref().map_or(0, |e| 16 * e.len())).sum::<usize>() + c.sketch.bytes() + c.pairs.as_ref().map_or(0, Sketch::bytes)).sum::<usize>() + self.columns.iter().map(|c| c.len() + 4).sum::<usize>()
+        self.cols.iter().map(|c| 32 + [&c.exact, &c.zero].iter().map(|e| e.as_ref().map_or(0, |e| 16 * e.len())).sum::<usize>() + 16 * c.watched.len() + c.sketch.bytes() + c.pairs.as_ref().map_or(0, Sketch::bytes)).sum::<usize>() + self.columns.iter().map(|c| c.len() + 4).sum::<usize>()
     }
 
     /// As stored in the wave's blob (0096 §2): a format byte, the columns, the rows, then per column its sums, its
-    /// exact map (or none) and its sketch. Integers little-endian.
+    /// exact map (or none), its sketches and its watched values. Integers little-endian.
     pub fn encode(&self, out: &mut Vec<u8>) {
         let int = |out: &mut Vec<u8>, v: i64| out.extend_from_slice(&v.to_le_bytes());
         let exact = |out: &mut Vec<u8>, e: Option<&Exact>| match e {
@@ -657,7 +692,7 @@ impl RelStats {
                 }
             }
         };
-        out.push(3);
+        out.push(4);
         int(out, self.columns.len() as i64);
         for c in &self.columns {
             int(out, c.len() as i64);
@@ -683,6 +718,13 @@ impl RelStats {
                     out.extend_from_slice(&s);
                 }
             }
+            let mut watched: Vec<(i64, i64)> = col.watched.iter().map(|(v, n)| (*v, *n)).collect();
+            watched.sort_unstable();
+            int(out, watched.len() as i64);
+            for (v, n) in watched {
+                int(out, v);
+                int(out, n);
+            }
         }
     }
 
@@ -695,6 +737,7 @@ impl RelStats {
         }
         let int = |at: &mut usize| -> Option<i64> { Some(i64::from_le_bytes(take(bytes, at, 8)?.try_into().ok()?)) };
         // Format 3: format 2's `sqd` held the document-key rows' part, summed by document (not to be patched).
+        // Format 4: format 3 with each column's watched values; a format 3 column watches none.
         let exact = |at: &mut usize| -> Option<Option<Exact>> {
             let e = int(at)?;
             if e < 0 {
@@ -707,7 +750,8 @@ impl RelStats {
             }
             Some(Some(m))
         };
-        if take(bytes, at, 1)? != [3] {
+        let format = take(bytes, at, 1)?[0];
+        if format != 3 && format != 4 {
             return None;
         }
         let k = usize::try_from(int(at)?).ok()?;
@@ -730,7 +774,14 @@ impl RelStats {
                 l if l < 0 => None,
                 l => Some(Sketch::decode(take(bytes, at, usize::try_from(l).ok()?)?)?),
             };
-            cols.push(Column { sqd, zero, zero_sq, local_ndv, crossing, exact, sketch, pairs });
+            let mut watched = FxHashMap::default();
+            if format == 4 {
+                for _ in 0..int(at)? {
+                    let v = int(at)?;
+                    watched.insert(v, int(at)?);
+                }
+            }
+            cols.push(Column { sqd, zero, zero_sq, local_ndv, crossing, exact, sketch, pairs, watched });
         }
         Some(RelStats { columns, rows, partial, cols })
     }
@@ -791,6 +842,40 @@ pub mod tests {
             }
         }
         syntax::measured(columns_source(vec!["n".into(), "kind".into(), "name".into()], cols.into_iter().map(Some).collect()).as_ref())
+    }
+
+    /// A column's watched values (the constants the rules test) are counted exactly as documents come and go and as
+    /// rows are patched, past the column's exact map, and read back from the blob: an edit's run takes them as kept.
+    #[test]
+    fn watched_values_are_counted_exactly_past_the_exact_map() {
+        let names = vec!["n".to_owned(), "kind".into(), "name".into()];
+        let docs: Vec<Vec<i64>> = (1..=40).map(|d| doc(d, 50 + d * 13, d % 3)).collect();
+        let mut s = RelStats::new(names);
+        s.documents(&docs.concat(), 3, 1);
+        assert!(s.exact(2).is_none(), "the name column is many-valued");
+        let watch = [0i64, 5, 12, 99_999];
+        let count = |rows: &[Vec<i64>], v: i64| rows.iter().flat_map(|d| d.as_chunks::<3>().0).filter(|r| r[2] == v).count() as i64;
+        s.watch(2, watch.iter().map(|&v| (v, count(&docs, v))));
+        // Documents out and in, and a delta of rows that are not whole documents.
+        s.documents(&docs[7], 3, -1);
+        let new = doc(41, 400, 2);
+        s.documents(&new, 3, 1);
+        let added = doc(42, 30, 1);
+        let removed: Vec<i64> = docs[3][..3 * 20].to_vec();
+        s.delta(&added, &removed, 3);
+        let mut now = docs.clone();
+        now[7].clear();
+        now[3].drain(..3 * 20);
+        now.push(new);
+        now.push(added);
+        let mut bytes = Vec::new();
+        s.encode(&mut bytes);
+        let back = RelStats::decode(&bytes, &mut 0).expect("reads back");
+        for v in watch {
+            assert_eq!(s.watched(2, v), Some(count(&now, v)), "value {v}");
+            assert_eq!(back.watched(2, v), Some(count(&now, v)), "value {v}, read back");
+        }
+        assert_eq!(s.watched(2, 7), None, "a value not watched");
     }
 
     /// Kept by delta, the statistics are those of the documents counted in, whatever came and went before: node
