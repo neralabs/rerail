@@ -779,6 +779,28 @@ impl CoreRows {
         }
     }
 
+    /// The per-node relations the walk makes, as the profile names them (`node rows`' spans).
+    pub(super) fn making(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool, long_texts: bool) -> String {
+        let s = &self.skip;
+        let named = [
+            (!s.ops, "op"),
+            (!s.comment, "comment"),
+            (!s.spread, "spread"),
+            (!s.name, "name"),
+            (!s.literal, "literal"),
+            (!s.literal_rows, "literal rows"),
+            (!s.literal_value, "literal values"),
+            (!s.structural, "structural"),
+            (wants_text, "text"),
+            (wants_parts, "parts"),
+            (wants_part_starts, "part starts"),
+            (wants_words, "words"),
+            (long_texts, "rr_long_text_node"),
+        ];
+        let made: Vec<&str> = named.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
+        if made.is_empty() { "none".into() } else { made.join(", ") }
+    }
+
     /// Whether `visits` takes node `local` of `p`.
     pub(super) fn visited(&self, visits: Visits, p: &Projected, dialect: &Dialect, id: u32) -> bool {
         match visits {

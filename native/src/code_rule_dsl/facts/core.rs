@@ -1111,6 +1111,20 @@ pub fn install_core_names(names: fn() -> &'static std::collections::BTreeSet<Str
     let _ = CORE_NAMES.set(names);
 }
 
+/// Each relation `core.rerail` declares with columns of type `node`, and those columns (a node's alone, never a span's
+/// or another location's); registered at load (`install_core_node_columns`). Empty without one.
+pub fn core_node_columns() -> &'static std::collections::HashMap<String, Vec<usize>> {
+    static EMPTY: std::sync::LazyLock<std::collections::HashMap<String, Vec<usize>>> = std::sync::LazyLock::new(std::collections::HashMap::new);
+    CORE_NODE_COLUMNS.get().map_or(&*EMPTY, |columns| columns())
+}
+
+static CORE_NODE_COLUMNS: std::sync::OnceLock<fn() -> &'static std::collections::HashMap<String, Vec<usize>>> = std::sync::OnceLock::new();
+
+/// Registers what reads `core.rerail`'s node columns (once, at load).
+pub fn install_core_node_columns(columns: fn() -> &'static std::collections::HashMap<String, Vec<usize>>) {
+    let _ = CORE_NODE_COLUMNS.set(columns);
+}
+
 /// A column's name as the planner and SQL read it: a positional name (`c1`, as the engine names a derived
 /// relation's rows) of a relation named like a base one (`input_columns`) is that column's base name. Such a
 /// relation is derived where an attribute is answered on request (`value`, `node_text`: decision 0174), and handed

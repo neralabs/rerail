@@ -107,8 +107,10 @@ impl Values {
             self.batches.write().push(b);
         }
         for (name, src) in sources {
-            // A relation made on lookup (containment, an axis) has its rows only once a lookup asks.
-            if src.len() == 0 && !src.made_on_lookup() {
+            // A relation made on lookup (containment, an axis) has its rows only once a lookup asks. The long-text
+            // nodes' source holds the value's batch, which every node read of the value goes through
+            // (`LongTexts::of`): kept with no rows too.
+            if src.len() == 0 && !src.made_on_lookup() && name != super::LONG_TEXT_NODES {
                 continue;
             }
             let p = Arc::make_mut(parts.entry(name).or_default());
@@ -250,6 +252,15 @@ impl Layered {
     /// The source that holds node `n`'s document's rows: an admitted value's, else the batch's.
     pub fn source_of(&self, n: i64) -> Arc<dyn Source> {
         self.values.source_of(&self.name, n).unwrap_or_else(|| Arc::clone(&self.base))
+    }
+    /// The sources that may hold node `n`'s document: the chunk's batch's, then each admitted value's that names its
+    /// key (a value's rows are keyed by its places' hosts too, so a host file's key names its guests' parts).
+    pub fn sources_of(&self, n: i64) -> Vec<Arc<dyn Source>> {
+        let mut out = vec![Arc::clone(&self.base)];
+        if let Some(p) = self.values.parts.load().get(&self.name) {
+            out.extend(p.by_key.get(&((n >> 32) as u32)).into_iter().flatten().map(|&i| Arc::clone(&p.list[i].src)));
+        }
+        out
     }
     fn parts<T>(&self, f: impl FnOnce(&Parts) -> T) -> Option<T> {
         self.values.parts.load().get(&self.name).filter(|p| !p.list.is_empty()).map(|p| f(p))

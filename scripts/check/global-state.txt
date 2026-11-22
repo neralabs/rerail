@@ -85,6 +85,7 @@ native/src/code_rule_dsl/device_metal.rs::METAL	stays	code registered at load
 native/src/code_rule_dsl/embed.rs::EMBEDDERS	stays	code registered at load
 native/src/code_rule_dsl/eval/mod.rs::SNAPSHOT_CONTEXT	stays	computed once from the engine's constants
 native/src/code_rule_dsl/facts/core.rs::CORE_NAMES	stays	code a crate above registers at load
+native/src/code_rule_dsl/facts/core.rs::CORE_NODE_COLUMNS	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/core.rs::EMPTY	stays	a constant
 native/src/code_rule_dsl/facts/core.rs::EXECUTORS	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/core.rs::VALUE_READER	stays	code a crate above registers at load
@@ -164,6 +165,7 @@ native/src/code_rule_dsl/logic/profile/memory.rs::START	stays	the process's foot
 native/src/code_rule_dsl/logic/profile/memory.rs::STARTED	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
 native/src/code_rule_dsl/logic/profile/memory.rs::TOLD	stays	the process's footprint sampler's refusal reporter (Q203 (c)): it tells the first few device leases the process refuses, with the heap sampler's holdings
 native/src/code_rule_dsl/logic/rr.rs::CORE	stays	computed once from the engine's own files
+native/src/code_rule_dsl/logic/rr.rs::NODES	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr.rs::SHAPE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr/images.rs::SHIPPED	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr/lower.rs::ALL	stays	code a crate above registers at load

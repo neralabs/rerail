@@ -210,8 +210,10 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
     assert!(all(&cold, "counted", "counted"), "a cold run counts them: {cold:?}");
     assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
     assert!(edit.iter().any(patched), "an edit patches them: {edit:?}");
-    // A semi-join's held rows are counted again after an edit, over the documents the run holds (`held_counted`).
-    assert!(edit.iter().all(|x| patched(x) || x.ends_with(": counted at the held nodes")) || inside, "counted again after an edit only inside another run's waves: {edit:?}");
+    assert!(edit.iter().any(|x| x.ends_with(": patched at the held nodes by the changed documents")) || inside, "an edit patches a semi-join's kept statistics at the held nodes: {edit:?}");
+    // A semi-join's held rows are patched by the changed documents at the nodes the exports held and hold
+    // (`held_counted`), or counted again over the documents the run holds where none were kept.
+    assert!(edit.iter().all(|x| patched(x) || x.ends_with(": patched at the held nodes by the changed documents") || x.ends_with(": counted at the held nodes")) || inside, "counted again after an edit only inside another run's waves: {edit:?}");
 }
 
 /// A session (0077) holds its corpus batch from run to run, its changed files' documents replaced (decision 0458), and

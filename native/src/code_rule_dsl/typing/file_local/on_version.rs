@@ -639,11 +639,38 @@ pub(super) struct Crossing {
     pub(super) projected: BTreeSet<String>,
 }
 
+/// Whether rule `r` reads a node's text or value by a function (`syntax::NODE_READS`, `t = @rr_node_text_any(v)`):
+/// a read of the long-text nodes' binding (`syntax::LONG_TEXT_NODES`), which holds the batch the node is read from.
+pub fn reads_a_node(v: &Version, r: RuleRef<'_>) -> bool {
+    fn calls(v: &Version, t: TermRef<'_>) -> bool {
+        match t {
+            TermRef::Call(f, mut args) => crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&v.text(f)) || args.any(|a| calls(v, a)),
+            _ => false,
+        }
+    }
+    r.body().any(|l| match l.view() {
+        L::Cmp { l, r, .. } => calls(v, l) || calls(v, r),
+        _ => false,
+    })
+}
+
 pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> Crossing {
     let is_local = |rel: &str| local.contains(rel);
     let head = |r: &RuleRef<'_>| v.rel_name(r.head().rel());
+    // A rule's reads: its atoms', and the long-text nodes' binding where it reads a node's text or value
+    // (`syntax::NODE_READS`: the binding holds the batch every node read goes through, the corpus batch's in the
+    // cross-file part).
     let read = |keep: &dyn Fn(&str) -> bool| -> BTreeSet<String> {
-        v.rules().filter(|r| keep(head(r))).flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect()
+        v.rules()
+            .filter(|r| keep(head(r)))
+            .flat_map(|r| {
+                let mut reads: Vec<String> = r.reads().map(|a| v.rel_name(a.rel()).to_owned()).collect();
+                if reads_a_node(v, r) {
+                    reads.push(crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES.to_owned());
+                }
+                reads
+            })
+            .collect()
     };
     let cross_reads = read(&|h| !is_local(h));
     let projection = |rel: &str| {

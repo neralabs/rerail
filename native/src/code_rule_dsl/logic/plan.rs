@@ -12750,8 +12750,15 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     // apart. (Measured against the stratum's own kept rows, a selective stratum over the whole tree,
                     // `rr_cover41` with 644 rows over `child`, `docof`, `col`, was derived again at every 2-file edit
                     // of the data layer: the edit cost the first run's 500 s at 2,410 files.)
+                    // An input's rows read are those its statistics planned the run with (`model.stats.card`): a
+                    // semi-join's at the nodes the exports hold, which is all its strata read, where its source's `len`
+                    // made every document's rows to count them, the unchanged ones too (Q332).
+                    let read_rows = |r: &str, now: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| match run.model.stats.card.get(r) {
+                        Some(&n) if f0.is_input(r) => n as usize,
+                        _ => now.len(),
+                    };
                     let sizes: BTreeMap<String, (usize, usize)> = moved.iter().map(|r| (r.clone(), match ins.get(r) {
-                        Some((srcs, _)) => (srcs[1].len() + srcs[2].len(), srcs[3].len()),
+                        Some((srcs, _)) => (srcs[1].len() + srcs[2].len(), read_rows(r, &srcs[3])),
                         None => super::native::component::held(db, r).map_or((0, 0), |x| {
                             ([super::native::component::Ver::Minus, super::native::component::Ver::Plus].into_iter().filter_map(|v| x.version_view(v)).map(|v| v.rows()).sum(), x.rows())
                         }),

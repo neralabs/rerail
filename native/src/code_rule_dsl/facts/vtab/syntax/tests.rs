@@ -1426,6 +1426,33 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
     }
 }
 
+/// Decision 0353 step 3: a `text` atom of a node a base or file-local relation binds reads the node's text
+/// (`@rr_node_text_any`), so no rule asks for `text`'s rows of it. Kept as rows: a node only a cross-file relation
+/// binds (read in the cross part, where a warm edit's retraction would read the edited file's document), a lookup by
+/// text (`text(n, "x")` binding `n`), a span's text, and any `text` outside `core.rerail`'s shape.
+#[test]
+fn text_of_a_bound_node_is_read_in_place() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    for (rules, read) in [
+        ("out(t) :- kind(n, \"call\"), text(n, t).", 1),
+        ("out(t) :- field(_, \"attribute\", n), text(n, t), text(n, \"x\").", 2),
+        (".decl t_call(n: node)\nt_call(n) :- kind(n, \"call\").\nout(t) :- t_call(n), text(n, t).", 1),
+        (".decl t_name(x: symbol)\nt_name(x) :- kind(n, \"identifier\"), text(n, x).\n.decl t_used(n: node)\nt_used(n) :- kind(n, \"call\"), field(n, \"function\", f), text(f, x), t_name(x).\nout(t) :- t_used(n), text(n, t).", 2),
+        ("out(\"x\") :- text(n, \"x\"), kind(n, \"identifier\").", 1),
+        ("out(t) :- text(n, t).", 0),
+        ("out(t) :- src_line(_, _, s), text(s, t).", 0),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
+        let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(program, Default::default()).unwrap();
+        assert_eq!(made, read, "{rules}");
+        let printed = crate::code_rule_dsl::logic::rr::print_version(&program).unwrap();
+        assert_eq!(printed.matches("@rr_node_text_any(").count(), read, "{rules}: {printed}");
+    }
+    // Outside `core.rerail`'s shape (T's, whose `text` holds some nodes' alone): no atom is read so.
+    let t_shape = crate::code_rule_dsl::logic::rr::parse_version(".decl kind(n: node, k: symbol)\n.input kind\n.decl text(n: node, t: symbol)\n.input text\n.decl out(t: symbol)\nout(t) :- kind(n, \"call\"), text(n, t).\n.output out\n").unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(t_shape, Default::default()).unwrap().1, 0, "T's shape");
+}
+
 /// The nodes given `text` are the ones the rules read (decision 0110): a fixed kind, a node's field, or a matcher
 /// capture's kind or field; a node nothing narrows widens it to every node. An `inside`'s `field` is the inner
 /// node's place, not the capture's.

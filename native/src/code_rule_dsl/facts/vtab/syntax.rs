@@ -416,9 +416,15 @@ impl LongTexts {
     /// Node `n`'s text or value as function `name` reads it (`NODE_READS`) through `source`, a binding of
     /// `rr_long_text_node`; none for another source or function.
     pub fn of(source: &dyn Source, name: &str, n: i64) -> Option<String> {
-        // A chunk's layered binding (decision 0431 §8): a tape value's node is read through its own batch.
+        // A chunk's layered binding (decision 0431 §8): a node is read through the batch that holds its document, the
+        // chunk's or a tape value's.
         if let Some(layered) = source.as_any()?.downcast_ref::<values::Layered>() {
-            return Self::of(&*layered.source_of(n), name, n);
+            let key = (n >> 32) as u32;
+            return layered
+                .sources_of(n)
+                .into_iter()
+                .find(|s| s.as_any().and_then(|a| a.downcast_ref::<Self>()).is_some_and(|t| t.docs.contains_key(&key)))
+                .and_then(|s| Self::of(&*s, name, n));
         }
         let texts = source.as_any()?.downcast_ref::<Self>()?;
         match name {
@@ -3608,6 +3614,7 @@ impl Batch {
             if let Some(dialect) = dialect {
                 // In core.rerail's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).
                 if scalar_nodes && (!core || projection.wants("intval") || projection.wants("op_t")) {
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| "scalar rows (intval, op_t)".into());
                     visited += p.len() as usize;
                     rows.document(p, dialect, core, &mut string);
                 }
@@ -3617,6 +3624,8 @@ impl Batch {
                         (c.skip.literal_rows, c.skip.literal_value) = (true, true);
                     }
                     let visits = c.visits(wants_text, wants_parts, wants_part_starts, wants_words);
+                    // Which of core's per-node relations the walk makes, by the skips: the profile's span names them.
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| format!("core per-node rows ({})", c.making(wants_text, wants_parts, wants_part_starts, wants_words, wants_long_text_nodes)));
                     for (local, id, n) in p.node_ids() {
                         if wants_long_text_nodes && (p.facts.end(id) - p.facts.start(id)) as usize > core_rr::TEXT_INLINE {
                             long_text_nodes.push(n);

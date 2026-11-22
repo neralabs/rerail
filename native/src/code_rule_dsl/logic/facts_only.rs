@@ -291,6 +291,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
+    // `core.rerail`'s columns declared `node` (`core_node_columns`): read off its text once, as `CORE`, the same for every run.
+    ("code_rule_dsl/logic/rr.rs", "NODES"),
     // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
     ("code_rule_dsl/logic/rr.rs", "SHAPE"),
     // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rerail, no result.

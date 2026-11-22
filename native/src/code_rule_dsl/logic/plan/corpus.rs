@@ -5014,7 +5014,9 @@ fn run_observed_within(
         // A relation read with every column a wildcard (`text(_, _)` in a negated conjunction) is read for whether it
         // has rows: its first column is held, so the cross-file part reads every chunk's rows and measures them (not
         // the last chunk's binding, or none where the files came from the per-file memo).
-        if named.is_empty() && atoms().next().is_some() {
+        // The long-text nodes' binding holds the batch a cross-file rule's node read (`syntax::NODE_READS`) reads
+        // through: no atom names it, and the split lists it only for such a read (`file_local::crossing`).
+        if named.is_empty() && (atoms().next().is_some() || rel == crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES) {
             named.push(cols[0]);
         }
         if named.is_empty() {
@@ -9555,6 +9557,16 @@ fn run_observed_within(
         // of: no warm run walks a document for them (Q332, theirs' d4aa849d18). Else counted at the held nodes, read
         // by a walk of their documents (`for_rows_keyed`); else, the walk refused, every row is counted. Its
         // statistics, its rows, how they were had, and what to keep for the next run.
+        // The nodes the changed files' old entries' exports held: where their old rows were counted (`held_counted`).
+        let old_held: rustc_hash::FxHashSet<i64> = old_base
+            .as_ref()
+            .map(|(_, olds)| {
+                olds.values()
+                    .filter_map(|o| o.entry.as_ref())
+                    .flat_map(|e| split.exports.iter().filter_map(|r| e.rows.get(r)).flat_map(|(_, flat)| flat.iter().copied()))
+                    .collect()
+            })
+            .unwrap_or_default();
         let held_counted = |rel: &str, columns: &[String], source: &dyn crate::code_rule_dsl::facts::vtab::Source, kept: Option<(u64, super::statkeep::RelStats)>| -> (Vec<Stat>, usize, &'static str, Option<super::statkeep::RelStats>) {
             let keeps = base_binds.is_some() || session_binds.is_some();
             let of = |k: &super::statkeep::RelStats| -> Vec<Stat> {
@@ -9563,11 +9575,42 @@ fn run_observed_within(
                 columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), rows, rows, rows, rows))).collect()
             };
             let rows = |k: &super::statkeep::RelStats| usize::try_from(k.rows()).unwrap_or(0);
-            if let Some((d, k)) = kept
-                && d == base_digest(rel)
+            if let Some((d, k)) = &kept
+                && *d == base_digest(rel)
             {
                 // The session holds every one it was given, the kept ones too.
-                return (of(&k), rows(&k), "kept at the held nodes", session_binds.is_some().then_some(k));
+                return (of(k), rows(k), "kept at the held nodes", session_binds.is_some().then(|| k.clone()));
+            }
+            // Kept of the documents' table, patched by the changed documents, as `base_counted` patches a base
+            // relation's (Q332): their old rows at the nodes their old entries' exports held out (`old_held`), their
+            // new rows at the nodes the exports hold now in. No unchanged document is walked for them.
+            if let Some((d, mut k)) = kept
+                && old_base.is_some()
+                && Some(d) == table_digest.map(|t| t ^ tag(rel))
+            {
+                let patched = (|| {
+                    let (old, new) = base_wholes.get(rel)?;
+                    let input = super::super::sql::select::input_columns(rel)?;
+                    let n_at = input.iter().position(|n| *n == "n")?;
+                    for (version, sign, nodes) in [(old, -1, &old_held), (new, 1, &held_nodes)] {
+                        let Some(version) = version else { continue };
+                        let columns = version.columns();
+                        let at: Vec<usize> = input.iter().map(|n| columns.iter().position(|h| h == n)).collect::<Option<_>>()?;
+                        // A node's row once, as the held nodes' count takes it.
+                        let (mut flat, mut seen): (Vec<i64>, rustc_hash::FxHashSet<i64>) = Default::default();
+                        for r in 0..version.len() {
+                            let n = version.value(r, at[n_at]);
+                            if nodes.contains(&n) && seen.insert(n) {
+                                flat.extend(at.iter().map(|&c| version.value(r, c)));
+                            }
+                        }
+                        k.documents(&flat, at.len(), sign);
+                    }
+                    Some(())
+                })();
+                if patched.is_some() {
+                    return (of(&k), rows(&k), "patched at the held nodes by the changed documents", keeps.then_some(k));
+                }
             }
             let looked = (|| {
                 let input = super::super::sql::select::input_columns(rel)?;
