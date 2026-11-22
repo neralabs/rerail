@@ -2084,8 +2084,10 @@ async function endOlderDaemon(home: string, state: DaemonState, machine: DaemonM
   const end = machine.endProcessStartedBy(state.pid, state.startedAt, KILL_TIMEOUT_MS);
   if (end === "running") throw new Error(stillRunningMessage(state.pid, machine.platform));
   if (end === "later") return (await forgetRecordOf(home, state.pid)) ? "not-daemon" : "record-changed";
-  if (end === "unread" && processAlive(state.pid, machine.kill)) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
-  return end === "ended" ? "asked" : "exited";
+  if (end === "ended") return "asked";
+  // Not opened, or its start not read: a pid that still runs is let alone, and a free one had exited by itself.
+  if (processAlive(state.pid, machine.kill)) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
+  return "exited";
 }
 
 /**
