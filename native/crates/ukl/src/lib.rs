@@ -4,7 +4,7 @@
 //! A UKL kernel is C (a C++20 subset) whose GPU-specific parts are macros: address spaces (`ROBUFFER(T)`),
 //! kernel signatures (`DEFINE_KERNEL2`'s rows of access, type, name and bounds), barriers, atomics and SIMD-group
 //! operations. A backend's shim header turns the macros into that backend's language: MSL for Metal, CUDA C++
-//! for NVRTC. The shims live at their upstream paths under `forest/src/mldb/` (MLDB's layout, as REUSE.toml
+//! for NVRTC. The shims live at their upstream paths under this crate's `mldb/` (MLDB's layout, as REUSE.toml
 //! records) and are carried in the binary here, so that a kernel, written by hand or generated, is preprocessed
 //! at run time with no C compiler on the machine.
 //!
@@ -326,6 +326,8 @@ impl Preprocess {
         Ok((out.text, out.paths))
     }
 }
+
+pub mod split;
 
 #[cfg(test)]
 mod tests;

@@ -12,7 +12,7 @@ pub mod contexts;
 pub struct Storage {
     contexts: contexts::Contexts,
     objects: BTreeMap<String, Object>,
-    pub(super) owner: Option<usize>,
+    pub owner: Option<usize>,
     pins: BTreeMap<String, usize>,
 }
 struct Object {

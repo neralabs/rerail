@@ -295,7 +295,7 @@ impl Builtin {
             "get_num_groups" => Builtin::NumGroups,
             "get_sub_group_local_id" => Builtin::SubGroupLocalId,
             "barrier" => Builtin::Barrier,
-            "mem_fence" | "read_mem_fence" | "write_mem_fence" => Builtin::MemFence,
+            "mem_fence" | "read_mem_fence" | "write_mem_fence" | "atomic_work_item_fence" => Builtin::MemFence,
             "__ukl_vec_yield" => Builtin::Yield,
             "sub_group_barrier" => Builtin::SubGroupBarrier,
             "sub_group_ballot" => Builtin::SubGroupBallot,

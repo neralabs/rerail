@@ -3,8 +3,8 @@ use super::{git, Late, Result};
 use crate::content_store::{ContentStore, HashKey, SourceId};
 use std::collections::HashMap;
 
-pub(super) const REQUEST: &str = "git_payload_request";
-pub(super) const ANSWER: &str = "git_payload_of";
+pub const REQUEST: &str = "git_payload_request";
+pub const ANSWER: &str = "git_payload_of";
 
 struct Payload {
     kind: String,
@@ -14,7 +14,7 @@ struct Payload {
     storage: String,
 }
 
-pub(super) struct Answer {
+pub struct Answer {
     pub kind: String,
     pub handle: String,
     pub size: i64,
@@ -23,7 +23,7 @@ pub(super) struct Answer {
     pub storage: String,
 }
 
-pub(super) fn source(store: &ContentStore, handle: &str) -> Result<Option<SourceId>> {
+pub fn source(store: &ContentStore, handle: &str) -> Result<Option<SourceId>> {
     let Some(gix::ObjectId::Sha256(hash)) = handle.strip_prefix("sha256:").and_then(|h| gix::ObjectId::from_hex(h.as_bytes()).ok()) else {
         return Ok(None);
     };
@@ -31,10 +31,10 @@ pub(super) fn source(store: &ContentStore, handle: &str) -> Result<Option<Source
 }
 
 #[derive(Default)]
-pub(super) struct Reader(HashMap<(String, String), Payload>);
+pub struct Reader(HashMap<(String, String), Payload>);
 
 impl Reader {
-    pub(super) fn read(&mut self, git: &git::Git, store: &ContentStore, late: &Late, repo: &str, oid: &str, offset: i64, length: i64) -> Result<Answer> {
+    pub fn read(&mut self, git: &git::Git, store: &ContentStore, late: &Late, repo: &str, oid: &str, offset: i64, length: i64) -> Result<Answer> {
         let error = |reason| Answer {
             kind: String::new(), handle: String::new(), size: 0, bytes: String::new(), status: reason, storage: reason.to_owned(),
         };

@@ -1,4 +1,3 @@
-use super::super::CodeRuleDslRuntime;
 use super::super::compile::compile_scope;
 use super::api::{CodeRuleDslWorkspace, StateLease, WorkspaceApplyTask};
 use super::ingest::{
@@ -10,6 +9,7 @@ use super::results::{
 };
 use super::storage::{ContentStores, StorageContext, index_stored_tapes, shared_content_store};
 use super::*;
+use super::fixtures::{WORKSPACE_TEST_SLOT, git, request_result_page, result_page};
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::content_store::{ContentStore, GitTree, HashKey};
 use napi::Task;
@@ -17,26 +17,6 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 use std::sync::Arc as StdArc;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-/// Serializes the tests that share process-wide state. A parking_lot mutex never poisons, so a
-/// failing test cannot fail every test that takes the slot after it.
-pub(super) static WORKSPACE_TEST_SLOT: Mutex<()> = Mutex::new(());
-
-#[cfg(test)]
-/// Build a Git fixture repository. Tests only: production discovery reads Git through gix.
-pub(super) fn git(root: &std::path::Path, arguments: &[&str]) {
-    let status = std::process::Command::new("git")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .arg("-C")
-        .arg(root)
-        .args(arguments)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", root)
-        .status()
-        .unwrap();
-    assert!(status.success(), "git {arguments:?} failed");
-}
 
 #[test]
 fn content_store_registry_shares_one_store_per_shared_object() {
@@ -231,8 +211,7 @@ fn close_clears_poisoned_scope_metadata() {
 #[test]
 fn poisoned_state_rejections_and_close_release_resident_sources() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
-    let compiled = CodeRuleDslRuntime::compile(
-        json!({
+    let compiled = crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": "poisoned-workspace", "revision": 1,
             "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
@@ -242,17 +221,14 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
                 "forbid": { "regex": { "pattern": "probe", "source": "file.content" } }
             }]
         })
-        .to_string(),
-        "json".into(),
-        json!({
+        .to_string(), "json", &json!({
             "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
                 "languages": { "python": "tree-sitter-python@0.23" } },
             "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
                 "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
                 "maxVisitedNodes": 100000, "maxWitnesses": 10000 }
         })
-        .to_string(),
-    )
+        .to_string())
     .unwrap();
     let request = json!({ "revision": 1, "files": [], "removed": [] }).to_string();
     for _ in 0..128 {
@@ -401,11 +377,7 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
                 "rule": { "pattern": "print($ARG)" } } }
         }]
     });
-    let compiled = CodeRuleDslRuntime::compile(
-        code_rule.to_string(),
-        "json".into(),
-        capabilities.to_string(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", &capabilities.to_string())
     .unwrap();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.add_code_rule(&compiled, None).unwrap();
@@ -625,11 +597,7 @@ fn deferred_global_flush_uses_complete_taped_evidence() {
             } }
         }]
     });
-    let compiled = CodeRuleDslRuntime::compile(
-        code_rule.to_string(),
-        "json".into(),
-        capabilities.to_string(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", &capabilities.to_string())
     .unwrap();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.add_code_rule(&compiled, None).unwrap();
@@ -674,8 +642,7 @@ fn deferred_global_flush_uses_complete_taped_evidence() {
 }
 
 fn tape_test_code_rule() -> CompiledCodeRuleDsl {
-    CodeRuleDslRuntime::compile(
-        json!({
+    crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": "tape-lifecycle", "revision": 1,
             "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
@@ -694,9 +661,7 @@ fn tape_test_code_rule() -> CompiledCodeRuleDsl {
                 "rule": { "kind": "echo" } } } }
             ]
         })
-        .to_string(),
-        "json".into(),
-        json!({
+        .to_string(), "json", &json!({
             "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
                 "languages": { "python": "tree-sitter-python@0.23",
                     "typescript": "tree-sitter-typescript@0.23", "blade": "forte@1.1.0" } },
@@ -704,8 +669,7 @@ fn tape_test_code_rule() -> CompiledCodeRuleDsl {
                 "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
                 "maxVisitedNodes": 100000, "maxWitnesses": 10000 }
         })
-        .to_string(),
-    )
+        .to_string())
     .unwrap()
 }
 
@@ -1024,25 +988,6 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
     for suffix in ["", "-shm", "-wal"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", database.display()));
     }
-}
-
-/// Issues a result page request the way the JS thread does (`resultPageAsync` returns its task);
-/// the returned closure is the work the request leaves for a libuv pool thread.
-fn request_result_page(
-    workspace: &CodeRuleDslWorkspace,
-    cursor: u32,
-    maximum_bytes: u32,
-) -> impl FnOnce() -> napi::Result<String> {
-    let mut task = workspace.result_page_task(cursor, maximum_bytes);
-    move || task.compute()
-}
-
-pub(super) fn result_page(
-    workspace: &CodeRuleDslWorkspace,
-    cursor: u32,
-    maximum_bytes: u32,
-) -> napi::Result<String> {
-    request_result_page(workspace, cursor, maximum_bytes)()
 }
 
 /// Every violation of the workspace's current revision, paged; and the number of pages.
@@ -1413,8 +1358,7 @@ fn workspace(scopes: &[&str], ast: bool) -> CodeRuleDslWorkspace {
         } else {
             json!({"regex": {"source": "file.content", "pattern": "forbidden"}})
         };
-        let code_rule = CodeRuleDslRuntime::compile(
-            json!({
+        let code_rule = crate::code_rule_dsl::rule_api::compile(&json!({
                 "format": "rerail.policy/v1",
                 "id": format!("lifecycle-{index}"),
                 "revision": 1,
@@ -1429,9 +1373,7 @@ fn workspace(scopes: &[&str], ast: bool) -> CodeRuleDslWorkspace {
                     }
                 }]
             })
-            .to_string(),
-            "json".to_owned(),
-            json!({
+            .to_string(), "json", &json!({
                 "format": "rerail.policy-capabilities/v1",
                 "ast": {
                     "engine": "ast-grep-core", "engineVersion": "0.45",
@@ -1444,8 +1386,7 @@ fn workspace(scopes: &[&str], ast: bool) -> CodeRuleDslWorkspace {
                     "maxVisitedNodes": 100000, "maxWitnesses": 10000
                 }
             })
-            .to_string(),
-        )
+            .to_string())
         .unwrap();
         workspace.add_code_rule(&code_rule, None).unwrap();
     }
@@ -1635,11 +1576,7 @@ fn clause(id: &str, rule: Value) -> Value {
 
 fn compile_clauses(clauses: Vec<Value>) -> CompiledCodeRuleDsl {
     let document = json!({ "format": "rerail.policy/v1", "id": "tolerant", "revision": 1, "mode": "steer", "clauses": clauses });
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        CAPABILITIES.to_owned(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES)
     .unwrap_or_else(|error| panic!("policy compiles: {}", error.reason))
 }
 
@@ -2074,11 +2011,7 @@ fn sibling_selection_matches_the_matcher_around_zero_width_nodes() {
             let files = json!([{ "language": "typescript", "path": "zero.ts", "source": source }]);
             let indexed = apply_clauses(vec![clause("sibling", rule.clone())], files.clone());
             let document = json!({ "format": "rerail.policy/v1", "id": "tolerant", "revision": 1, "mode": "steer", "clauses": [clause("sibling", rule.clone())] });
-            let compiled = CodeRuleDslRuntime::compile(
-                document.to_string(),
-                "json".to_owned(),
-                CAPABILITIES.to_owned(),
-            )
+            let compiled = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES)
             .unwrap_or_else(|error| panic!("policy compiles: {}", error.reason));
             let snapshot = json!({ "format": "rerail.repository-snapshot/v1", "revision": 0, "facts": [], "files": files });
             let stateless: Value = serde_json::from_str(
@@ -2384,11 +2317,7 @@ fn regex_group_transform_limit_is_local_to_its_clause_in_native_and_workspace_ev
             }
         ]
     });
-    let compiled = CodeRuleDslRuntime::compile(
-        code_rule.to_string(),
-        "json".into(),
-        capabilities.to_string(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", &capabilities.to_string())
     .unwrap();
     let file = json!({ "path": "a.py", "language": "python", "source": "x\n" });
     let snapshot = json!({
@@ -2449,11 +2378,7 @@ fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
                 "rule": { "pattern": "print($ARG)" } } }
         }]
     });
-    let compiled = CodeRuleDslRuntime::compile(
-        code_rule.to_string(),
-        "json".into(),
-        capabilities.to_string(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", &capabilities.to_string())
     .unwrap();
     let file = json!({
         "path": "sample.py", "language": "python",
@@ -2520,11 +2445,7 @@ fn suppressible_each_stops_at_the_witness_overflow_in_native_and_workspace() {
                 "rule": { "kind": "comment", "regex": "(?<X>a)" } } }
         }]
     });
-    let compiled = CodeRuleDslRuntime::compile(
-        code_rule.to_string(),
-        "json".into(),
-        capabilities.to_string(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", &capabilities.to_string())
     .unwrap();
     let file = json!({
         "path": "a.ts", "language": "typescript",
@@ -2593,11 +2514,7 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
                 "rule": { "pattern": "print($ARG)" } } }
         }]
     });
-    let compiled = CodeRuleDslRuntime::compile(
-        code_rule.to_string(),
-        "json".into(),
-        capabilities.to_string(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", &capabilities.to_string())
     .unwrap();
     // 2,000 calls of seven nodes each: only the first ~140 lie within the node bound, and none
     // past it may be matched, including the `print` at the end.
@@ -2684,7 +2601,7 @@ fn a_clause_whose_root_kinds_the_presence_lacks_does_not_run() {
             "format": "rerail.policy/v1", "id": "presence", "revision": 1, "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] }, "clauses": clauses
         });
-        let compiled = CodeRuleDslRuntime::compile(code_rule.to_string(), "json".into(), capabilities.to_string()).unwrap();
+        let compiled = crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", &capabilities.to_string()).unwrap();
         let file = json!({ "path": "sample.py", "language": "python", "source": "x = f(1)\n" });
         let mut workspace = CodeRuleDslWorkspace::new();
         workspace.add_code_rule(&compiled, None).unwrap();
@@ -2731,11 +2648,7 @@ fn workspace_visits_grow_with_the_file_by_max_visits_per_node() {
                 "rule": { "pattern": "print($ARG)" } } }
         }]
     });
-    let compiled = CodeRuleDslRuntime::compile(
-        code_rule.to_string(),
-        "json".into(),
-        capabilities.to_string(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", &capabilities.to_string())
     .unwrap();
     let file = json!({
         "path": "sample.py", "language": "python",
@@ -2796,11 +2709,7 @@ fn select_when_exists_leaf_decides_at_first_witness_in_native_and_workspace() {
         json!({ "ast": { "language": "python", "rule": { "pattern": "print($ARG)" } } }),
         json!({ "regex": { "source": "file.content", "pattern": "print" } }),
     ] {
-        let compiled = CodeRuleDslRuntime::compile(
-            gate(exists.clone()).to_string(),
-            "json".into(),
-            capabilities.to_string(),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&gate(exists.clone()).to_string(), "json", &capabilities.to_string())
         .unwrap();
         let snapshot = json!({
             "format": "rerail.repository-snapshot/v1", "revision": 1, "facts": [],
@@ -3240,11 +3149,7 @@ fn noqa_reads_the_statement_around_an_exported_capture() {
 /// Compiles `clauses`, returning the refusal's reason.
 fn refused(clauses: Vec<Value>) -> String {
     let document = json!({ "format": "rerail.policy/v1", "id": "strict", "revision": 1, "mode": "steer", "clauses": clauses });
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        CAPABILITIES.to_owned(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES)
     .err()
     .expect("compile is refused")
     .reason
@@ -3711,11 +3616,7 @@ fn reads_package_manifests_only_with_an_ast_clause_in_a_manifest_family() {
                 "forbid": { "ast": { "language": language, "rule": { "kind": kind } } }
             }]
         });
-        CodeRuleDslRuntime::compile(
-            code_rule.to_string(),
-            "json".into(),
-            capabilities.to_string(),
-        )
+        crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", &capabilities.to_string())
         .unwrap()
     };
     assert!(!CodeRuleDslWorkspace::new().reads_package_manifests());

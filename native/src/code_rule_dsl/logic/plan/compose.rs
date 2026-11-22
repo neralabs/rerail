@@ -14,7 +14,7 @@ thread_local! {static CACHE:RefCell<HashMap<[u8;32],Compiled>>=RefCell::new(Hash
 /// Whether a run may be one composed query: only when asked (`RERAIL_COMPOSE=1`). The integration branch runs its
 /// strata natively, with SQL only where SQL reads a relation (decision 0104). Composition retains ordinary facts
 /// for sessions and persistence; it stays opt-in for comparison (async-family-integration).
-pub(super) fn enabled() -> bool {
+pub fn enabled() -> bool {
     #[cfg(any(test, feature = "test-hooks"))]
     if experiments::native_only() {
         return false;
@@ -28,7 +28,7 @@ pub(super) fn enabled() -> bool {
 
 // A test of the composed form asks for it on its own thread (`RERAIL_COMPOSE` would ask for every test's runs).
 #[cfg(any(test, feature = "test-hooks"))]
-thread_local! {pub(super) static ASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };}
+thread_local! {pub static ASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };}
 
 pub(super) fn clear() {
     CACHE.with(|c| c.borrow_mut().clear());
@@ -61,7 +61,7 @@ pub(super) fn planned(p: &Placed, db: &Connection, inputs: &mut Inputs) -> Resul
 }
 
 #[derive(Clone)]
-pub(super) struct Compiled {
+pub struct Compiled {
     pub sql: String,
     outputs: Vec<String>,
     kept: BTreeSet<String>,
@@ -129,7 +129,7 @@ fn head(p: &Placed, k: usize) -> &str {
 
 /// `p`'s composed query: its rules read by their handles, its fields from its version (`Placed::whole`, or an
 /// edit of one).
-pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
+pub fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
     let pf = p.fields()?;
     let decls: Vec<&str> = pf.decls_by_name().into_iter().map(|(r, _)| r).collect();
     // SQLite folds identifier case, whereas rule relations are case-sensitive.
@@ -452,7 +452,7 @@ impl Compiled {
 
     /// Expanded-read counts identify risky graphs; SQLite determines whether they fit.
     /// Cache structural refusal so subsequent chunks do not repeat a failed preparation.
-    fn prepares(&self, db: &Connection) -> Result<bool> {
+    pub fn prepares(&self, db: &Connection) -> Result<bool> {
         if let Some(fits)=self.prepares.get() { return Ok(*fits); }
         self.bind_aliases(db)?;
         let _span=super::super::profile::span(|| "composed query limit check".into());
@@ -469,7 +469,7 @@ impl Compiled {
         Ok(fits)
     }
 
-    pub(super) fn execute(
+    pub fn execute(
         &self,
         db: &Connection,
         f: Fields<'_>,
@@ -635,8 +635,7 @@ impl Compiled {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus)
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod experiments;

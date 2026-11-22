@@ -12,8 +12,10 @@
 //! corpus that is a file the engine refuses too, or a pathological one the grammar leaves to it
 //! on purpose: a run of four backticks or more, braces nested past 127.
 
-use rerail_compiler::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_cpu_stream, native_ir, rir_asm as rir};
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+use rerail_compiler::native_ir;
+use rerail_rir::rir_asm as rir;
+use rerail_cpu_stream::native_cpu_stream;
 use rerail_rr_syntax as rr;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -69,6 +71,11 @@ pub struct Compiled {
     pub machine: String,
     /// The program as assembled: the interpreter's input, for the analyses.
     pub program: rerail_compiler::program::Words,
+    /// Tier 1 as Rust, written by the Bitlex compiler from the grammar in this compile (`bitlex_lex_rust`), so its
+    /// codes are the JIT's, or why it is not written (`rerail-rr-aot` holds it).
+    pub lexer_rust: Result<String, String>,
+    /// Tier 2 as Rust, from the tree rules in this compile (`bitlex_rust`), or why it is not written.
+    pub rust: Result<String, String>,
 }
 
 // SAFETY: nothing changes a compiled parser once it is made. Its JIT module holds finished code
@@ -99,7 +106,7 @@ pub fn compile_with(shape: bitlex_compile::Shape) -> Result<Compiled, String> {
 
 /// `compile_with` of a grammar's text (a test's variant of the `.rerail` grammar).
 pub fn compile_text(grammar: &str, shape: bitlex_compile::Shape) -> Result<Compiled, String> {
-    compile_padded(grammar, shape, rerail_compiler::native_cpu_block::BACK as u16)
+    compile_padded(grammar, shape, rerail_cpu_block::native_cpu_block::BACK as u16)
 }
 
 /// `compile_text`, the code counting on `pad` zero bytes after every file (`BlockNative::pad`,
@@ -130,14 +137,14 @@ pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> 
     // its return a native return; the optimizer on. Its entries and arms weighted by the
     // samples' traffic. `RR_CUT=traffic`: the clusters cut by traffic instead, as before.
     let samples: Vec<&[u8]> = SAMPLES.iter().map(|s| s.as_bytes()).collect();
-    let traffic = rerail_compiler::native_cpu_clusters::traffic(&program, &samples);
+    let traffic = rerail_cpu_stream::native_cpu_clusters::traffic(&program, &samples);
     let cut = if std::env::var("RR_CUT").as_deref() == Ok("traffic") {
-        rerail_compiler::native_cpu_clusters::by_traffic(&native, &traffic, CLUSTER_CAP)
+        rerail_cpu_stream::native_cpu_clusters::by_traffic(&native, &traffic, CLUSTER_CAP)
     } else {
-        rerail_compiler::native_cpu_clusters::Cut { pick_traffic: traffic.clone(), near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(&native) }
+        rerail_cpu_stream::native_cpu_clusters::Cut { pick_traffic: traffic.clone(), near: true, unsigned: true, speed: true, ..rerail_cpu_stream::native_cpu_clusters::by_rules(&native) }
     };
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program, lexer_rust: compiled.lexer_rust.clone().unwrap_or_else(|| Err("no tree section".into())), rust: compiled.rust.clone().unwrap_or_else(|| Err("no tree section".into())) })
 }
 
 /// `src`'s tape, the engine's bytes (decision 0140): from the compiled grammar, or, for a file
@@ -158,7 +165,7 @@ pub fn compiled_tape(src: &str) -> Option<Vec<u8>> {
 /// the device left them; without a device, `tape` file by file.
 pub fn tapes(files: &[&str]) -> Vec<Vec<u8>> {
     let mut out = Vec::with_capacity(files.len());
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if let Ok(c) = compiled() {
         if metal_tapes(c, files, &mut out) {
             return out;
@@ -172,12 +179,12 @@ pub fn tapes(files: &[&str]) -> Vec<Vec<u8>> {
 }
 
 /// Tier 1's segments on the device: 29 blocks and a warm-up block each side, a SIMD group.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 const SEGMENTS: rerail_metal::block_program::serial::Segments = rerail_metal::block_program::serial::Segments { blocks: 29, warm: 1 };
 
 /// `tapes` on Metal: halves while the device refuses the batch for capacity; `false` when it
 /// cannot run it at all.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Vec<u8>>) -> bool {
     use rerail_metal::block_program::serial::run_resident;
     let mut batch = Vec::with_capacity(files.len());
@@ -190,7 +197,7 @@ fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Vec<u8>>) -> bool {
             let first = out.len();
             for file in files {
                 let i = out.len() - first;
-                out.push(rerail_metal::tier2_on::image_on(&c.parser, &run, i).unwrap_or_else(|_| engine_tape(file)));
+                out.push(rerail_cpu_stream::tier2_on::image_on(&c.parser, &run, i).unwrap_or_else(|_| engine_tape(file)));
             }
             true
         }
@@ -216,10 +223,19 @@ pub fn compile_error() -> Option<String> {
 #[cfg(test)]
 mod gating_tests;
 #[cfg(test)]
+mod rust_tests;
+#[cfg(test)]
 mod token_local_tests;
 
 #[cfg(test)]
 pub mod tests {
+    /// No device here that runs a block program (none at all, or SIMD groups not of 32 lanes:
+    /// `block_program::ready`): a test's device half is left out, as the executors' are.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn no_device() -> bool {
+        rerail_metal::block_program::ready().is_err()
+    }
+
     /// The compiled grammar's tape is the engine's, node for node (extras and parents too), on
     /// documents it parses; the ones it leaves to the engine come back from there.
     /// Tier 2's grammar calls are the machine's (`by_rules`): nested past `DEPTH`, a file is
@@ -242,7 +258,8 @@ pub mod tests {
     /// (`Shape::Machine`): no rules. Both write the engine's tapes.
     #[test]
     fn tier2_is_a_function_a_grammar_rule() {
-        use rerail_compiler::{native_cpu_clusters, native_ir, stream};
+        use rerail_compiler::{native_ir, stream};
+        use rerail_cpu_stream::native_cpu_clusters;
         let c = crate::compiled().expect("compiles");
         let rules = &c.program.rules;
         assert!(rules.len() > 20, "a rule a level: {}", rules.len());
@@ -280,7 +297,7 @@ pub mod tests {
         assert_eq!(c.parser.tier2.clusters, rules.len(), "as compiled");
         // The calls open counted by the machine's stack, as the lean parser's: no `RETURN` runs
         // with no call open, and no `ACCEPT` within one, so neither is checked.
-        assert!(rerail_compiler::native_cpu_stream::calls_on_stack(&native), "the calls open on the stack");
+        assert!(rerail_cpu_stream::native_cpu_stream::calls_on_stack(&native), "the calls open on the stack");
         // A jump from one rule into another, not a call's: refused, into a later rule or an
         // earlier one. A function is entered by calls alone, as the lean parser's methods are.
         use rerail_compiler::program::{GOTO, PUSH, split, word};
@@ -299,7 +316,7 @@ pub mod tests {
             assert!(stream::validate_rules(&bad).is_err(), "a jump across rules, into {into}");
         }
         // The machine: no rules. Each shape writes the engine's tape on the samples.
-        let m = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let m = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         assert!(m.program.rules.is_empty());
         for (i, s) in crate::SAMPLES.iter().enumerate() {
             let engine = Some(crate::engine_tape(s));
@@ -350,7 +367,7 @@ pub mod tests {
     /// The rule files that carry tests (decision 0130): the grammar takes each, and its tape is the engine's.
     #[test]
     fn rule_files_with_tests_are_the_engines() {
-        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         for src in [
             include_str!("../../../../docs/rule-syntax/packs/python/bandit-b101-assert-used.rerail"),
             include_str!("../../../../docs/rule-syntax/spikes/rr-tests/print-calls.rerail"),
@@ -363,7 +380,7 @@ pub mod tests {
         }
     }
 
-    /// Tier 2 writes the table as it stands at the end (`rust_stream::node_words`): a wrap
+    /// Tier 2 writes the table as it stands at the end (the JIT's, `native_cpu_stream`): a wrap
     /// placed at once, before the node it wraps (a leaf's swap, or a larger node's rows moved,
     /// their parents with them); a dropped node taken out where it is dropped. Chains of wraps,
     /// wraps over large operands and inside them, and comments among them, as the engine's.
@@ -398,7 +415,7 @@ pub mod tests {
     /// own (`tier2_is_a_function_a_grammar_rule`).
     #[test]
     fn the_state_machine_shares_its_rules() {
-        let c = super::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles");
+        let c = super::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
         assert!(states <= 271, "{states} states");
@@ -426,7 +443,7 @@ pub mod tests {
             ("../../compiler/src/native_cpu_stream.rs", "pub fn words(&self, batch"),
             ("../../compiler/src/native_cpu_stream.rs", "fn stream<'b>(&self"),
             ("../../compiler/src/native_cpu_stream.rs", "pub unsafe fn call(&self, bytes"),
-            ("../../metal/src/tier2_on.rs", "pub fn image_on(parser: &Parser"),
+            ("../../cpu_stream/src/tier2_on.rs", "pub fn image_on(parser: &Parser"),
             ("../../compiler/src/native_cpu_stream.rs", "unsafe fn call_once(&self"),
             ("../../compiler/src/native_cpu_stream.rs", "fn full_tape(&self"),
             ("../../compiler/src/native_cpu_stream.rs", "fn sized(&self"),
@@ -478,7 +495,7 @@ pub mod tests {
     /// mask the CPU does not make (its lasts are by the end rules, decision 0177: the contract
     /// between the tiers is the records). Prints the GPU time.
     #[test]
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[ignore = "the corpus on Metal: run by hand"]
     fn tier1_on_metal_equals_cranelift() {
         use rerail_compiler::block;
@@ -530,8 +547,11 @@ pub mod tests {
     /// token refused (decision 0177, "A refusal leaves the loop"), as the CPU's loop does. Its
     /// codes end there and are the CPU's; the same tokens without the refusal are all coded.
     #[test]
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn a_refused_files_records_stop_on_metal() {
+        if no_device() {
+            return;
+        }
         use rerail_compiler::block;
         use rerail_metal::block_program::serial::{Segments, run_serial_split};
         let c = super::compiled().expect("compiles");
@@ -586,11 +606,11 @@ pub mod tests {
         let long = "r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n".repeat(200);
         let files = ["r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n", "r(x) :- ````a````.", ".policy {\"a\": [1, {\"b\": null}]}\n/* d */ r(x) :- x ~ `a`, y = \"s\".", deep.as_str(), "", long.as_str()];
         let got = super::tapes(&files);
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             let mut on = Vec::new();
-            assert!(super::metal_tapes(super::compiled().expect("compiles"), &files, &mut on), "Metal runs the batch");
-            assert_eq!(on, got);
+            assert!(no_device() || super::metal_tapes(super::compiled().expect("compiles"), &files, &mut on), "Metal runs the batch");
+            assert!(no_device() || on == got, "Metal's tapes, the CPU's");
         }
         for (src, g) in files.iter().zip(&got) {
             assert_eq!(*g, super::tape(src), "{src:?}");
@@ -603,7 +623,8 @@ pub mod tests {
     #[test]
     #[ignore = "a probe: run by hand, --test-threads=1"]
     fn rr_tier1_split() {
-        use rerail_compiler::{native_cpu_block, native_cpu_codegen::retired};
+        use rerail_compiler::native_cpu_codegen::retired;
+        use rerail_cpu_block::native_cpu_block;
         let c = crate::compiled().expect("compiles");
         let corpus = corpus();
         let files: Vec<&[u8]> = corpus.iter().map(|f| f.as_bytes()).collect();
@@ -726,7 +747,7 @@ pub mod tests {
     fn corpus_tapes_are_the_engines() {
         let files = corpus();
         let rules = crate::compiled().expect("compiles");
-        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         let mut taken = [0usize; 2];
         let mut differ = Vec::new();
         for (i, f) in files.iter().enumerate() {
@@ -753,8 +774,8 @@ pub mod tests {
     #[ignore = "the corpus: run by name"]
     fn an_unpadded_programs_tapes_are_the_padded() {
         let padded = crate::compiled().expect("compiles");
-        let bare = crate::compile_padded(crate::GRAMMAR, rerail_compiler::bitlex_masks::Shape::Rules, 0).expect("compiles unpadded");
-        assert_eq!((padded.parser.tier1.pad, bare.parser.tier1.pad), (rerail_compiler::native_cpu_block::BACK, 0));
+        let bare = crate::compile_padded(crate::GRAMMAR, rerail_bitlex::bitlex_masks::Shape::Rules, 0).expect("compiles unpadded");
+        assert_eq!((padded.parser.tier1.pad, bare.parser.tier1.pad), (rerail_cpu_block::native_cpu_block::BACK, 0));
         let mut differ = Vec::new();
         for (i, f) in corpus().iter().enumerate() {
             if padded.parser.image(f.as_bytes()).ok() != bare.parser.image(f.as_bytes()).ok() {
@@ -801,17 +822,17 @@ pub mod tests {
     /// PR #508's 0d1f9497e (t47).
     #[test]
     fn a_lazy_marks_token_is_its_callers() {
-        use rerail_compiler::native_cpu_clusters as cl;
+        use rerail_cpu_stream::native_cpu_clusters as cl;
         let c = crate::compiled().expect("compiles");
         let mut native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
         native.tag = rerail_tape_format::RR_TAG;
         let n = native.structural.len();
         for (shape, cut) in [("one function", cl::Cut::one(n)), ("by rules", cl::by_rules(&native))] {
-            let parser = rerail_compiler::native_cpu_stream::Parser::with_cut(&native, &cut).expect("compiles");
+            let parser = rerail_cpu_stream::native_cpu_stream::Parser::with_cut(&native, &cut).expect("compiles");
             for src in [".policy\nmust().", ".mode\nr(x).", ".policy // c\n\nmust().", ".mode a\n.policy must().", ".policy must()."] {
                 let run = c.program.block_programs[0].run(src.as_bytes());
-                let want = rerail_compiler::stream::run(&c.program, src.as_bytes(), &run).map(rerail_compiler::ladder::as_ids).expect("the interpreter parses it");
-                let got = parser.parse(src.as_bytes()).map(rerail_compiler::ladder::as_ids).ok();
+                let want = rerail_compiler::stream::run(&c.program, src.as_bytes(), &run).map(rerail_cpu_stream::ladder::as_ids).expect("the interpreter parses it");
+                let got = parser.parse(src.as_bytes()).map(rerail_cpu_stream::ladder::as_ids).ok();
                 assert_eq!(got.as_ref(), Some(&want), "{shape}: {src:?}");
             }
         }
@@ -849,11 +870,11 @@ pub mod tests {
         // Cranelift's share: tier 1 and tier 2 made again from the lowered program.
         let native = rerail_compiler::native_ir::lower(program, 0, 0).expect("lowers");
         let t = thread_cpu();
-        let _t1 = rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("tier 1");
+        let _t1 = rerail_cpu_block::native_cpu_block::compile(&native.block_programs[0]).expect("tier 1");
         let t1 = thread_cpu() - t;
         let t = thread_cpu();
         let _ = cranelift_codegen::timing::take_current();
-        let _t2 = rerail_compiler::native_cpu_stream::compile(&native).expect("tier 2");
+        let _t2 = rerail_cpu_stream::native_cpu_stream::compile(&native).expect("tier 2");
         eprintln!("Cranelift: tier 1 {t1:.2?} CPU, tier 2 {:.2?} CPU", thread_cpu() - t);
         // Where tier 2's compile goes, by Cranelift's passes (the register allocator's share
         // is what grows faster than the function).
@@ -1057,7 +1078,7 @@ pub mod tests {
 
     /// Where a Metal run's wall time goes: two runs in a row over the corpus's first files.
     #[test]
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[ignore = "a probe: run by hand"]
     fn rr_metal_probe() {
         use rerail_metal::block_program::serial::run_resident;
@@ -1145,9 +1166,9 @@ pub mod tests {
     /// (`compiles`). Each run: the corpus (`RR_REPEAT` times) as batches under the device's
     /// budget, halved where refused; its GPU seconds by kind (the first pass, the runs again,
     /// the positions), its launches and rounds, and the host's CPU and wall.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[test]
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[ignore = "a benchmark: run by hand"]
     fn rr_metal_bench() {
         use rerail_metal::block_program::serial::{compiles, prewarm, run_resident_digested, SerialRun};
@@ -1219,7 +1240,7 @@ pub mod tests {
         let ours: Vec<&String> = files.iter().filter(|f| crate::compiled_tape(f).is_some()).collect();
         let bytes: usize = ours.iter().map(|f| f.len()).sum();
         let p = &c.parser;
-        let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
+        let mut batches: Vec<_> = ours.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
         for b in &mut batches {
             b.call(&p.tier1);
         }
@@ -1275,7 +1296,7 @@ pub mod tests {
         // corpus runs it (the interpreter's steps), by the word's operation, a token.
         let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
         let all: Vec<&[u8]> = ours.iter().map(|f| f.as_bytes()).collect();
-        let traffic = rerail_compiler::native_cpu_clusters::traffic(&c.program, &all);
+        let traffic = rerail_cpu_stream::native_cpu_clusters::traffic(&c.program, &all);
         let mut runs = vec![0u64; native.structural.len()];
         for (&(_, b), &w) in &traffic {
             runs[b as usize] += w;
@@ -1292,7 +1313,7 @@ pub mod tests {
         let mut v: Vec<_> = by.into_iter().collect();
         v.sort_by_key(|b| std::cmp::Reverse(b.1.1));
         let total: u64 = v.iter().map(|x| x.1.1).sum();
-        let pushes = rerail_compiler::native_cpu_stream::push_targets(&native);
+        let pushes = rerail_cpu_stream::native_cpu_stream::push_targets(&native);
         // The switches as run: their runs of bytes, weighted by how often each switch runs.
         let (mut sw_runs, mut sw_n) = (0u64, 0u64);
         for (pc, &r) in runs.iter().enumerate() {
@@ -1389,7 +1410,7 @@ pub mod tests {
         // Each token mark's bit in the record is its first word's alone: no mask read.
         let alone = c.block.records.as_ref().expect("records").marks.iter().filter(|m| m.0 == rerail_compiler::records::WORD_ALONE).count();
         assert_eq!(alone, c.program.token_marks.len(), "the token marks' bits by their words");
-        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         let head = ".decl a(n: number, j: number)\n.decl d(n: number, k: number)\n";
         let rule = |agg: &str| format!("{head}d(n, k) :- a(n, _), k = {agg} : {{ a(n, j) }}.\n");
         for (agg, taken) in [("max j", true), ("max (j)", true), ("max ()", false), ("min /* c */ ( /* d */ )", false), ("join ()", false), ("count", true)] {
@@ -1420,7 +1441,7 @@ pub mod tests {
         assert_eq!(refusing, 3, "`no_value`, `fn_uncalled`, `io_bare`");
         let words = c.program.words.iter().filter(|&&w| rerail_compiler::program::split(w).0 == rerail_compiler::program::MARK);
         assert!(words.clone().all(|&w| !c.program.token_marks.iter().any(|m| m.refuses && m.order == rerail_compiler::program::split(w).1 % 32)), "no state tests a refusing mark");
-        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         let head = ".decl a(x: number)\n";
         let cases = [
             (format!("{head}a(x) :- a(y), x = @f(y).\n"), true),
@@ -1458,7 +1479,7 @@ pub mod tests {
     fn long_numbers_go_to_the_engine() {
         let c = crate::compiled().expect("compiles");
         assert!(c.values.iter().all(|v| !["sig", "sig16", "long_int"].contains(&v.name.as_str())), "no mask counts digits");
-        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         let d18 = "123456789012345678";
         let d19 = "1234567890123456789";
         let mut cases = Vec::new();
@@ -1513,7 +1534,7 @@ pub mod tests {
             .map(|l| format!("{l}\n"))
             .collect::<String>();
         assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ") && !l.contains(" read ")), "every rule written back as its mask");
-        let (a, b) = (crate::compiled().expect("compiles"), crate::compile_text(&old, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles"));
+        let (a, b) = (crate::compiled().expect("compiles"), crate::compile_text(&old, rerail_bitlex::bitlex_masks::Shape::Rules).expect("the old form compiles"));
         let files = corpus();
         let mut inputs: Vec<&[u8]> = files.iter().step_by(7).map(|f| f.as_bytes()).collect();
         inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes()));
@@ -1567,7 +1588,7 @@ pub mod tests {
     fn the_loop_reads_no_record_back() {
         let c = crate::compiled().expect("compiles");
         let r = c.native.records.as_ref().expect("records");
-        assert!(rerail_compiler::native_cpu_block::lazy_coded(r) != 0, "a gap mark with token tests (`json_bad`)");
+        assert!(rerail_cpu_block::native_cpu_block::lazy_coded(r) != 0, "a gap mark with token tests (`json_bad`)");
         let shape = c.parser.tier1.passes.last().expect("a pass");
         assert_eq!(shape.reads_back, 0, "the token loop reads a record back");
     }
@@ -1701,7 +1722,7 @@ pub mod tests {
     fn a_tests_first_byte_filters_it() {
         let c = crate::compiled().expect("compiles");
         let r = c.native.records.as_ref().expect("records");
-        let filtered: Vec<Vec<u8>> = r.checks.iter().filter_map(|k| rerail_compiler::native_cpu_block::test_filter(&c.native, k)).map(|n| (0..=255u8).filter(|&b| n.has(b)).collect()).collect();
+        let filtered: Vec<Vec<u8>> = r.checks.iter().filter_map(|k| rerail_cpu_block::native_cpu_block::test_filter(&c.native, k)).map(|n| (0..=255u8).filter(|&b| n.has(b)).collect()).collect();
         assert_eq!(filtered, vec![b"-".to_vec(), b"0".to_vec()]);
     }
 
@@ -1713,7 +1734,7 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let r = c.native.records.as_ref().expect("records");
         let found: Vec<usize> = r.rules.iter().enumerate().filter_map(|(k, e)| match *e {
-            rerail_compiler::records::EndRule::Next(i) => rerail_compiler::native_cpu_block::pair_nibbles(r, &r.nexts[usize::from(i)], k).map(|n| n[0].iter().fold(0u8, |a, &x| a | x).count_ones() as usize),
+            rerail_compiler::records::EndRule::Next(i) => rerail_cpu_block::native_cpu_block::pair_nibbles(r, &r.nexts[usize::from(i)], k).map(|n| n[0].iter().fold(0u8, |a, &x| a | x).count_ones() as usize),
             _ => None,
         }).collect();
         // `:` `=` `!` `<` `>` `-`: six first bytes, six bits; and `pair empty`'s table of none,
@@ -1728,7 +1749,7 @@ pub mod tests {
     #[test]
     fn a_within_goes_where_a_zero_byte_refuses() {
         use rerail_compiler::block_native::BlockInst::{And, EqByte, Not, Prev, Within};
-        use rerail_compiler::native_cpu_lanes::{unguarded, zero_kills};
+        use rerail_cpu_block::native_cpu_lanes::{unguarded, zero_kills};
         let c = crate::compiled().expect("compiles");
         let mut n = c.native.clone();
         n.insts = vec![EqByte(b'.'), Prev(0, 1), Within(1), And(1, 2), Not(0), And(4, 2), EqByte(0), And(6, 2), And(3, 0)];
@@ -1749,11 +1770,11 @@ pub mod tests {
     #[test]
     fn a_prevs_bound_goes_where_the_zeros_say_it() {
         use rerail_compiler::block_native::BlockInst::{EqByte, Not};
-        use rerail_compiler::native_cpu_bytes::zeros_bound;
+        use rerail_cpu_block::native_cpu_bytes::zeros_bound;
         let c = crate::compiled().expect("compiles");
         let mut n = c.native.clone();
         n.insts = vec![EqByte(b'.'), Not(0), EqByte(0)];
-        let front = rerail_compiler::native_cpu_block::FRONT as i64;
+        let front = rerail_cpu_block::native_cpu_block::FRONT as i64;
         assert!(zeros_bound(&n, 0, 1));
         assert!(zeros_bound(&n, 0, front));
         assert!(!zeros_bound(&n, 0, front + 1));
@@ -1766,7 +1787,7 @@ pub mod tests {
     /// byte alone is one, a compare.
     #[test]
     fn a_digit_is_a_range() {
-        use rerail_compiler::native_cpu_lanes::set_range;
+        use rerail_cpu_block::native_cpu_lanes::set_range;
         let set = |bytes: &[u8]| {
             let mut s = [0u64; 4];
             for &b in bytes {
@@ -1791,7 +1812,7 @@ pub mod tests {
         let cpu = &c.native;
         let r = c.program.block_programs[0].records.as_ref().expect("records");
         let counts: Vec<_> = r.checks.iter().filter(|t| t.count && !t.always()).collect();
-        let exact: Vec<_> = counts.iter().filter_map(|t| rerail_compiler::native_cpu_bytes::exact(cpu, t.o).map(|n| (t, n))).collect();
+        let exact: Vec<_> = counts.iter().filter_map(|t| rerail_cpu_block::native_cpu_bytes::exact(cpu, t.o).map(|n| (t, n))).collect();
         assert!(exact.len() >= 2, "{counts:?}");
         for (t, n) in &exact {
             assert_eq!((n.lo, n.hi, n.ranges()), (0, 0, vec![(b'.', b'.')]), "{t:?}");
@@ -1867,7 +1888,7 @@ pub mod tests {
         // own start alone. Its pairs chain (`=>=`), read left to right. `#` (`#include`), whose
         // run starts after it, takes the general tail.
         let (kn, kr) = t.fused.expect("the fused rules");
-        assert_eq!(rerail_compiler::native_cpu_block::lean_starts(r, &c.native, r.skip.expect("starts by the loop"), kn, kr), Some(true));
+        assert_eq!(rerail_cpu_block::native_cpu_block::lean_starts(r, &c.native, r.skip.expect("starts by the loop"), kn, kr), Some(true));
         assert_eq!(t.lean, Some(true));
         let src = ".decl a(x: number)\na(1). // c\na(\"s\").\n";
         let lean = crate::rr::lean::tape(src);
@@ -1881,9 +1902,9 @@ pub mod tests {
     fn a_strings_tests_need_a_control_byte_or_a_backslash() {
         let c = crate::compiled().expect("compiles");
         let r = c.native.records.as_ref().expect("records");
-        let mut by_rule: std::collections::BTreeMap<u8, Option<rerail_compiler::native_cpu_bytes::Needs>> = Default::default();
+        let mut by_rule: std::collections::BTreeMap<u8, Option<rerail_cpu_block::native_cpu_bytes::Needs>> = Default::default();
         for k in r.checks.iter().filter(|k| k.count) {
-            let n = rerail_compiler::native_cpu_bytes::needs(&c.native, k.o);
+            let n = rerail_cpu_block::native_cpu_bytes::needs(&c.native, k.o);
             let e = by_rule.entry(k.rule).or_insert(n);
             *e = e.zip(n).map(|(a, b)| a.union(b));
         }
@@ -1895,14 +1916,14 @@ pub mod tests {
     /// (`native_cpu_block::lazy_marks`): the CPU's tier 1 sets none of them.
     fn lazy_bits(block: &rerail_compiler::block_native::BlockNative) -> u32 {
         assert!(block.records.is_some(), "records");
-        rerail_compiler::native_cpu_block::lazy_code_bits(block)
+        rerail_cpu_block::native_cpu_block::lazy_code_bits(block)
     }
 
     /// Of those, the code bits of the marks with token tests too (`native_cpu_block::lazy_coded`):
     /// the CPU's tier 1 sets their tests' hits, tier 2 tests their gaps.
     fn lazy_coded_bits(block: &rerail_compiler::block_native::BlockNative) -> u32 {
         let r = block.records.as_ref().expect("records");
-        let coded = rerail_compiler::native_cpu_block::lazy_coded(r);
+        let coded = rerail_cpu_block::native_cpu_block::lazy_coded(r);
         lazy_bits(block) & coded.checked_shl(rerail_compiler::records::MARK_SHIFT).unwrap_or(0)
     }
 
@@ -1929,7 +1950,7 @@ pub mod tests {
 
     /// Each of `short`'s position lists a prefix of `long`'s: a refused file's records, cut at
     /// the token that refused. Metal's check against the CPU's reads it.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn prefix_of(short: &[Vec<u32>], long: &[Vec<u32>]) -> bool {
         short.len() == long.len() && short.iter().zip(long).all(|(s, l)| l.starts_with(s))
     }
@@ -1943,19 +1964,19 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let t = c.parser.tier1.records.as_ref().expect("the record pass");
         for b in *b"\"`/" {
-            assert_eq!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Plain, "{:?} ends plainly", b as char);
+            assert_eq!(t.end_at(b), rerail_cpu_block::native_cpu_block::TokenEnd::Plain, "{:?} ends plainly", b as char);
         }
         for b in *b"07#a(" {
-            assert_ne!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Plain, "{:?} does not", b as char);
+            assert_ne!(t.end_at(b), rerail_cpu_block::native_cpu_block::TokenEnd::Plain, "{:?} does not", b as char);
         }
         // A number's and `#include`'s last byte is no pair's first (`12.5`'s dot is no run's
         // last): the byte after is put back where it is a run byte alone, as the lean lexer's
         // number arm reads the word after it. A punctuation's can be a pair's first.
         for b in *b"07#" {
-            assert_eq!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Word, "{:?} ends with no pair's first byte", b as char);
+            assert_eq!(t.end_at(b), rerail_cpu_block::native_cpu_block::TokenEnd::Word, "{:?} ends with no pair's first byte", b as char);
         }
         for b in *b"\"/(" {
-            assert_ne!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Word, "{:?} is not of the class", b as char);
+            assert_ne!(t.end_at(b), rerail_cpu_block::native_cpu_block::TokenEnd::Word, "{:?} is not of the class", b as char);
         }
     }
 
@@ -2283,7 +2304,7 @@ pub mod tests {
         }
         // The device's tier 1 over the cases, a fifth of the corpus and every file refused at a token: on the
         // device layer's CPU backend it reads some 25 KB a second (Q383).
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             let files: Vec<usize> = (0..refs.len()).filter(|&k| k < cased || (k - cased).is_multiple_of(5) || at_token.contains(&k)).collect();
             forms.check_metal(&refs, &cpu, &files);
@@ -2371,12 +2392,12 @@ pub mod tests {
             let new = crate::compiled().expect("compiles");
             let old_text = old_marks_grammar();
             assert!(!old_text.contains(" after string when"), "the old form has the masks alone");
-            let old = crate::compile_text(&old_text, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles");
+            let old = crate::compile_text(&old_text, rerail_bitlex::bitlex_masks::Shape::Rules).expect("the old form compiles");
             // `json_bad`'s tests alone, no gap (`ff`): the bits the CPU's tier 1 sets of it, its
             // gap tier 2's (`lazy_coded`).
             let checks_text = crate::GRAMMAR.replace("mark json_bad    = ff,\n", "mark json_bad    = empty,\n");
             assert!(checks_text != crate::GRAMMAR, "json_bad's gap is a form feed");
-            let checks = crate::compile_text(&checks_text, rerail_compiler::bitlex_masks::Shape::Rules).expect("the tests alone compile");
+            let checks = crate::compile_text(&checks_text, rerail_bitlex::bitlex_masks::Shape::Rules).expect("the tests alone compile");
             let r = new.program.block_programs[0].records.as_ref().expect("records");
             assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::After(_))), "a mark after its token");
             assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::At(_))), "a mark at its token");
@@ -2423,8 +2444,12 @@ pub mod tests {
 
         /// The device's tier 1 of the files `files` of `refs`: it sets the gap marks tier 2 on the CPU tests
         /// itself, so its codes are the interpreter's whole, up to a refusal (`codes_agree`), as the CPU's (`cpu`).
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         fn check_metal(&self, refs: &[&[u8]], cpu: &[rerail_compiler::block::BlockRun], files: &[usize]) {
+            // No device here: no device run to hold to the CPU's.
+            if no_device() {
+                return;
+            }
             use rerail_metal::block_program::serial::{Segments, run_serial_split};
             let batch: Vec<rerail_compiler::block::BatchFile<'_>> = files.iter().map(|&k| rerail_compiler::block::BatchFile { bytes: refs[k], program: 0 }).collect();
             let got = run_serial_split(&[&self.new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
@@ -2476,7 +2501,7 @@ pub mod tests {
             cases.push((format!("{head}a(1.{}.5).\n", "7".repeat(80)), false));
             cases.push((format!("{head}a(1.2.3).\n"), false));
         }
-        #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(unused_variables))]
+        #[cfg_attr(not(any(target_os = "macos", target_os = "linux", windows)), allow(unused_variables))]
         let refs: Vec<&[u8]> = cases.iter().map(|(s, _)| s.as_bytes()).collect();
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
@@ -2487,8 +2512,11 @@ pub mod tests {
     }
 
     /// Metal's tier 1 refuses each of `cases` where the CPU's does (`a_numbers_checks_are_at_its_token`).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn metal_refuses_as_the_cpu(c: &crate::Compiled, refs: &[&[u8]], cases: &[(String, bool)]) {
+        if no_device() {
+            return;
+        }
         use rerail_compiler::block;
         use rerail_metal::block_program::serial::{Segments, run_serial_split};
         let want = c.parser.tier1.run_files(refs);
@@ -2499,8 +2527,8 @@ pub mod tests {
         }
     }
 
-    /// No device lane off macOS and Linux.
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    /// No device lane off macOS, Linux and Windows.
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     fn metal_refuses_as_the_cpu(_: &crate::Compiled, _: &[&[u8]], _: &[(String, bool)]) {}
 
     /// A line break after a `,` is none (`mark newline = lf unless after ","`): a list goes on
@@ -2538,7 +2566,7 @@ pub mod tests {
     #[test]
     fn chained_floats_read_as_the_engine() {
         let c = crate::compiled().expect("compiles");
-        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         let mut cases = Vec::new();
         for pad in [0usize, 40, 50, 55, 58, 60] {
             let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
@@ -2598,7 +2626,7 @@ pub mod tests {
             std::fs::write(format!("{dir}/tier2.ranges"), ranges).expect("writes");
             std::fs::write(format!("{dir}/tier2.machine"), &c.machine).expect("writes");
         }
-        let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
+        let mut batches: Vec<_> = ours.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
         for b in &mut batches {
             b.call(&p.tier1);
         }
@@ -2634,16 +2662,16 @@ pub mod tests {
         // The compiles' options are the run's (decision 0442).
         let _run = rerail_context::test_run();
         let options = rerail_compiler::native_cpu_codegen::options();
-        let tier1: Vec<(&str, rerail_compiler::native_cpu_block::CompiledBlock)> = [("off", false), ("on", true)]
+        let tier1: Vec<(&str, rerail_cpu_block::native_cpu_block::CompiledBlock)> = [("off", false), ("on", true)]
             .into_iter()
             .map(|(label, on)| {
                 options.optimize_tier1.store(on, Relaxed);
-                (label, rerail_compiler::native_cpu_block::compile(&c.native).expect("tier 1"))
+                (label, rerail_cpu_block::native_cpu_block::compile(&c.native).expect("tier 1"))
             })
             .collect();
         options.optimize_tier1.store(false, Relaxed);
         let files = corpus();
-        let mut batches: Vec<Vec<_>> = tier1.iter().map(|(_, t)| files.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(t, &[f.as_bytes()])).collect()).collect();
+        let mut batches: Vec<Vec<_>> = tier1.iter().map(|(_, t)| files.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(t, &[f.as_bytes()])).collect()).collect();
         let mut best = vec![(std::time::Duration::MAX, u64::MAX, u64::MAX); tier1.len()];
         for _ in 0..rounds {
             for (k, (_, t)) in tier1.iter().enumerate() {
@@ -2666,8 +2694,8 @@ pub mod tests {
     #[test]
     #[ignore = "a benchmark: run by hand"]
     fn rr_tier2_clusters() {
-        use rerail_compiler::native_cpu_clusters::{by_traffic, crossings, traffic, Cut};
-        use rerail_compiler::native_cpu_stream::Parser;
+        use rerail_cpu_stream::native_cpu_clusters::{by_traffic, crossings, traffic, Cut};
+        use rerail_cpu_stream::native_cpu_stream::Parser;
         let c = super::compiled().expect("compiles");
         let mut native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
         native.tag = rerail_tape_format::RR_TAG;
@@ -2695,14 +2723,14 @@ pub mod tests {
         // `RR_ONLY=form`: that form alone, its crossings over the sample only (a profile of its
         // run, `xctrace`'s counters, with little else in the trace).
         let only = std::env::var("RR_ONLY").ok();
-        let whole = if only.is_some() { traffic.clone() } else { rerail_compiler::native_cpu_clusters::traffic(&c.program, &all) };
+        let whole = if only.is_some() { traffic.clone() } else { rerail_cpu_stream::native_cpu_clusters::traffic(&c.program, &all) };
         let caps: Vec<usize> = std::env::var("RR_CAPS").ok().map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or_else(|| vec![600, 1200, 2500]);
         // By the traffic, and by the program alone (no profile: its own edges, in order of place).
         let none = std::collections::HashMap::new();
         let mut shapes: Vec<(String, Cut)> = std::iter::once(("one".to_owned(), Cut::one(native.structural.len()))).chain(caps.iter().map(|&cap| (format!("cap {cap}"), by_traffic(&native, &traffic, cap)))).collect();
-        shapes.push(("rules".to_owned(), Cut { speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(&native) }));
+        shapes.push(("rules".to_owned(), Cut { speed: true, ..rerail_cpu_stream::native_cpu_clusters::by_rules(&native) }));
         if std::env::var_os("RR_STATES").is_some() {
-            shapes.push(("states".to_owned(), rerail_compiler::native_cpu_clusters::by_states(&native)));
+            shapes.push(("states".to_owned(), rerail_cpu_stream::native_cpu_clusters::by_states(&native)));
         }
         if std::env::var_os("RR_STATIC").is_some() {
             shapes.extend(caps.iter().map(|&cap| (format!("static {cap}"), by_traffic(&native, &none, cap))));
@@ -2755,8 +2783,8 @@ pub mod tests {
             })
             // `Cut::pick`: the switches weighted by the profile, or by a table.
             .flat_map(|(name, cut)| {
-                let weighted = (name.clone(), Cut { pick: rerail_compiler::native_cpu_clusters::Pick::Weighted, pick_traffic: traffic.clone(), ..cut.clone() });
-                let table = (name.clone(), Cut { pick: rerail_compiler::native_cpu_clusters::Pick::Table, ..cut.clone() });
+                let weighted = (name.clone(), Cut { pick: rerail_cpu_stream::native_cpu_clusters::Pick::Weighted, pick_traffic: traffic.clone(), ..cut.clone() });
+                let table = (name.clone(), Cut { pick: rerail_cpu_stream::native_cpu_clusters::Pick::Table, ..cut.clone() });
                 let more = std::env::var_os("RR_ARMS").is_some();
                 std::iter::once((name.clone(), cut)).chain(more.then(|| (format!("{}+weighted", weighted.0), weighted.1))).chain(more.then(|| (format!("{}+table", table.0), table.1)))
             })
@@ -2767,7 +2795,7 @@ pub mod tests {
         let batches: Vec<_> = files
             .iter()
             .map(|f| {
-                let mut b = rerail_compiler::native_cpu_block::Batch::new(&one.tier1, &[f.as_bytes()]);
+                let mut b = rerail_cpu_block::native_cpu_block::Batch::new(&one.tier1, &[f.as_bytes()]);
                 b.call(&one.tier1);
                 b
             })
@@ -2787,12 +2815,12 @@ pub mod tests {
             // Its CPU over every thread (the process's: run alone), and its wall time.
             let _ = rerail_compiler::native_cpu_codegen::parallel_pass_times();
             let (t, w) = (cpu(), std::time::Instant::now());
-            let tier2 = rerail_compiler::native_cpu_stream::compile_cut(&native, cut).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            let tier2 = rerail_cpu_stream::native_cpu_stream::compile_cut(&native, cut).unwrap_or_else(|e| panic!("{name}: {e:?}"));
             let (compile, compile_wall) = (cpu() - t, w.elapsed());
             let mut times = cranelift_codegen::timing::take_current();
             times.add(&rerail_compiler::native_cpu_codegen::parallel_pass_times());
             let timing = times.to_string();
-            let p = Parser::from_parts(rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("tier 1"), tier2);
+            let p = Parser::from_parts(rerail_cpu_block::native_cpu_block::compile(&native.block_programs[0]).expect("tier 1"), tier2);
             if std::env::var_os("RR_TIMING").is_some() {
                 eprintln!("{name}:\n{timing}");
             }
@@ -2851,7 +2879,7 @@ pub mod tests {
     #[test]
     #[ignore = "a benchmark: run by hand"]
     fn rr_throughput() {
-        use rerail_compiler::native_cpu_block::Batch;
+        use rerail_cpu_block::native_cpu_block::Batch;
         const REPEAT: u32 = 3;
         let c = super::compiled().expect("compiles");
         let p = &c.parser;
@@ -2886,7 +2914,7 @@ pub mod tests {
         };
         eprintln!("{} files, {mb:.2} MB, {} reader nodes", files.len(), tokens);
         eprintln!("  {:<44} {:>10} {:>10} {:>8}", "", "CPU/pass", "wall/pass", "MB/s CPU");
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             use rerail_metal::block_program::serial::Resident;
             // Tier 1 on Metal over `files`, halved while the device refuses it for capacity (as
@@ -2936,7 +2964,7 @@ pub mod tests {
                     let t = thread_cpu();
                     for i in 0..n {
                         out[at + i] = Some(match res {
-                            Some(res) => rerail_metal::tier2_on::image_on(p, res, i).unwrap_or_else(|_| want[at + i].clone()),
+                            Some(res) => rerail_cpu_stream::tier2_on::image_on(p, res, i).unwrap_or_else(|_| want[at + i].clone()),
                             None => {
                                 oc += 1;
                                 super::tape(&files[at + i])
@@ -3057,7 +3085,7 @@ pub mod tests {
     fn rr_parser_profile() {
         // Its counts are the run's (decision 0442).
         let _run = rerail_context::test_run();
-        use rerail_compiler::native_cpu_block::Batch;
+        use rerail_cpu_block::native_cpu_block::Batch;
         const REPEAT: u32 = 5;
         let c = super::compiled().expect("compiles");
         let p = &c.parser;
@@ -3282,9 +3310,9 @@ mod json_probe {
         };
         let kind = |n: &str| Some(if n == "ERROR" { u16::MAX } else { id(n) });
         let field = |n: &str| Some(id(n.trim_start_matches("field ")));
-        let symbols = rerail_compiler::bitlex_masks::Symbols { kind: &kind, field: &field };
-        let compiled = rerail_compiler::bitlex_masks::compile_shaped(&stmts, &[rerail_compiler::bitlex_masks::FALLBACK], Some(&symbols), rerail_compiler::bitlex_masks::Shape::Rules)?;
-        rerail_compiler::rir_asm::assemble(&compiled.text())
+        let symbols = rerail_bitlex::bitlex_masks::Symbols { kind: &kind, field: &field };
+        let compiled = rerail_bitlex::bitlex_masks::compile_shaped(&stmts, &[rerail_bitlex::bitlex_masks::FALLBACK], Some(&symbols), rerail_bitlex::bitlex_masks::Shape::Rules)?;
+        rerail_rir::rir_asm::assemble(&compiled.text())
     }
 
     /// A probe (JSON step 1): the token-loop JSON (`json_parser/json.bitlex`) against the ladder's
@@ -3363,9 +3391,9 @@ mod json_probe {
     }
 
     /// JSON's parser with tier 2 a function a grammar rule, as rr's (`by_rules`, optimized).
-    fn json_parser(n: &rerail_compiler::native_ir::Structure) -> rerail_compiler::native_cpu_stream::Parser {
-        let cut = rerail_compiler::native_cpu_clusters::Cut { near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(n) };
-        rerail_compiler::native_cpu_stream::Parser::with_cut(n, &cut).expect("JSON's parser")
+    fn json_parser(n: &rerail_compiler::native_ir::Structure) -> rerail_cpu_stream::native_cpu_stream::Parser {
+        let cut = rerail_cpu_stream::native_cpu_clusters::Cut { near: true, unsigned: true, speed: true, ..rerail_cpu_stream::native_cpu_clusters::by_rules(n) };
+        rerail_cpu_stream::native_cpu_stream::Parser::with_cut(n, &cut).expect("JSON's parser")
     }
 
     /// Lowering A against B (decision 0323): tier 1 and tier 2 over JSON's corpus
@@ -3379,7 +3407,7 @@ mod json_probe {
         let lower = |at: Split| {
             let mut n = rerail_compiler::native_ir::lower(&json_split(at), 0, 0).expect("lowers");
             for p in &mut n.block_programs {
-                p.pad = rerail_compiler::native_cpu_block::BACK as u16;
+                p.pad = rerail_cpu_block::native_cpu_block::BACK as u16;
             }
             n
         };
@@ -3388,7 +3416,7 @@ mod json_probe {
         let bytes: usize = files.iter().map(Vec::len).sum();
         let mut rows = Vec::new();
         for (name, p) in [("A (tier 1 splits)", &pa), ("B (tier 2 splits)", &pb)] {
-            let mut batches: Vec<_> = files.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
+            let mut batches: Vec<_> = files.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
             for b in &mut batches {
                 b.call(&p.tier1);
             }
@@ -3438,35 +3466,10 @@ mod json_probe {
         eprintln!("{} outputs; stored a block: {stored:?}; totals {:?}", p.outputs.len(), p.totals);
     }
 
-    /// JSON's tier 1 is structured control (0363): its passes' graphs are reducible, every loop
-    /// entered at its head alone, so its Rust form (`clif_rust`) is nested loops, as the lean
-    /// lexer's, with no loop over a label switch (a `goto`'s translation, which rustc compiles to
-    /// a jump table every transition passes). The Rust form is NEON's (`clif_rust`'s target), so
-    /// the test is aarch64's: x86-64's tier 1 has its own vector forms (a movemask, `vhigh_bits`).
-    #[test]
-    #[cfg(target_arch = "aarch64")]
-    fn json_tier1_has_no_label_switch() {
-        use rerail_compiler::records::Split;
-        let mut n = rerail_compiler::native_ir::lower(&json_split(Split::Tier2), 0, 0).expect("lowers");
-        for p in &mut n.block_programs {
-            p.pad = rerail_compiler::native_cpu_block::BACK as u16;
-        }
-        // The compile's options are the run's (decision 0442).
-        let _run = rerail_context::test_run();
-        rerail_compiler::native_cpu_codegen::options().keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);
-        let kept = json_parser(&n);
-        let src = rerail_compiler::clif_rust::rust_source(&kept).expect("to Rust");
-        let switches = src.matches("a dispatch's label is one of its entries").count();
-        assert_eq!(switches, 0, "tier 1 has {switches} loops over a label switch: a loop entered past its head");
-    }
-
     /// JSON's tier 1 by pass (decision 0323's next measure): over JSON's corpus
     /// (`RERAIL_JSON_CORPUS`) under B, each pass's instructions and cycles a byte, the least of
-    /// `RR_ROUNDS`, against simdjson's stage 1 on the same files. `RERAIL_JSON_RUST=<path>`:
-    /// tier 1 written as Rust there (`clif_rust`, the ahead-of-time form), to read its shape;
-    /// `RERAIL_JSON_ASM=<path>`, its machine code.
-    // simdjson's kernels are not built with MSVC (rerail-simdjson-native).
-    #[cfg(not(all(windows, target_env = "msvc")))]
+    /// `RR_ROUNDS`, against simdjson's stage 1 on the same files. `RERAIL_JSON_ASM=<path>`: its
+    /// machine code. Tier 1 as Rust is `rerail-json-aot`'s `tier1.rs`, written from the grammar (decision 0551).
     #[test]
     #[ignore = "a benchmark: run by hand"]
     fn json_tier1_by_pass() {
@@ -3475,7 +3478,7 @@ mod json_probe {
         let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(9);
         let mut n = rerail_compiler::native_ir::lower(&json_split(Split::Tier2), 0, 0).expect("lowers");
         for p in &mut n.block_programs {
-            p.pad = rerail_compiler::native_cpu_block::BACK as u16;
+            p.pad = rerail_cpu_block::native_cpu_block::BACK as u16;
         }
         let p = json_parser(&n);
         // `RERAIL_JSON_PROGRAM=<path>`: the block program as text (its operations, outputs and
@@ -3493,22 +3496,12 @@ mod json_probe {
         if let Ok(path) = std::env::var("RERAIL_JSON_CLIF") {
             std::fs::write(&path, p.tier1.passes.iter().map(|x| x.clif.as_str()).collect::<Vec<_>>().join("\n")).expect("writes");
         }
-        if let Ok(path) = std::env::var("RERAIL_JSON_RUST") {
-            let options = rerail_compiler::native_cpu_codegen::options();
-            options.keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);
-            let bit = options.bit_test.swap(true, std::sync::atomic::Ordering::Relaxed);
-            let kept = json_parser(&n);
-            options.bit_test.store(bit, std::sync::atomic::Ordering::Relaxed);
-            let src = rerail_compiler::clif_rust::rust_source(&kept).unwrap_or_else(|e| panic!("to Rust: {e}"));
-            std::fs::write(&path, &src).expect("writes");
-            eprintln!("tier 1 as Rust: {path}, {} bytes", src.len());
-        }
         // `RERAIL_JSON_ONLY=<name>`: that made input alone, no corpus (to trace one input's path).
         let only = std::env::var("RERAIL_JSON_ONLY").ok();
         let files: Vec<Vec<u8>> = if only.is_some() { Vec::new() } else { json_files().into_iter().filter(|f| p.image(f).is_ok()).collect() };
         let bytes: usize = files.iter().map(Vec::len).sum::<usize>().max(1);
         let passes = p.tier1.pass_count();
-        let mut batches: Vec<_> = files.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
+        let mut batches: Vec<_> = files.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
         for b in &mut batches {
             b.call(&p.tier1);
         }
@@ -3554,7 +3547,7 @@ mod json_probe {
         ];
         for (name, f) in synth.iter().filter(|(name, _)| only.as_deref().is_none_or(|o| o == *name)) {
             p.image(f).unwrap_or_else(|e| panic!("{name}: {e:?}"));
-            let mut bs: Vec<_> = (0..16).map(|_| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
+            let mut bs: Vec<_> = (0..16).map(|_| rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
             for b in &mut bs {
                 b.call(&p.tier1);
             }
@@ -3600,14 +3593,14 @@ mod json_probe {
         let lower = |w: &rerail_compiler::program::Words| {
             let mut n = rerail_compiler::native_ir::lower(w, 0, 0).expect("lowers");
             for p in &mut n.block_programs {
-                p.pad = rerail_compiler::native_cpu_block::BACK as u16;
+                p.pad = rerail_cpu_block::native_cpu_block::BACK as u16;
             }
             n
         };
         let (na, nb) = (lower(&a), lower(&b));
-        let (t1a, t1b) = (rerail_compiler::native_cpu_block::compile(&na.block_programs[0]).expect("A's tier 1"), rerail_compiler::native_cpu_block::compile(&nb.block_programs[0]).expect("B's tier 1"));
-        let t2b = rerail_compiler::native_cpu_stream::compile(&nb).expect("B's tier 2");
-        let t2a = rerail_compiler::native_cpu_stream::compile(&na).expect("A's tier 2");
+        let (t1a, t1b) = (rerail_cpu_block::native_cpu_block::compile(&na.block_programs[0]).expect("A's tier 1"), rerail_cpu_block::native_cpu_block::compile(&nb.block_programs[0]).expect("B's tier 1"));
+        let t2b = rerail_cpu_stream::native_cpu_stream::compile(&nb).expect("B's tier 2");
+        let t2a = rerail_cpu_stream::native_cpu_stream::compile(&na).expect("A's tier 2");
         // And tier 2 a function a grammar rule (`by_rules`, rr's), its `TOKEN` a function of
         // its own (`take_token`): the tapes, A's and B's.
         let (pa, pb) = (json_parser(&na), json_parser(&nb));
@@ -3672,9 +3665,9 @@ mod json_probe {
         assert!(r.readers.iter().any(|rd| !rd.parts.is_empty()), "a reader in parts");
         let mut native = rerail_compiler::native_ir::lower(&program, 0, 0).expect("lowers");
         for b in &mut native.block_programs {
-            b.pad = rerail_compiler::native_cpu_block::BACK as u16;
+            b.pad = rerail_cpu_block::native_cpu_block::BACK as u16;
         }
-        let cpu = rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("the token loop compiles");
+        let cpu = rerail_cpu_block::native_cpu_block::compile(&native.block_programs[0]).expect("the token loop compiles");
         let mut inputs: Vec<Vec<u8>> = [
             &br#"{"a": [1, -2.5e3, true, null], "b\n": {"c": "dAx"}}"#[..],
             br#""""#,

@@ -85,7 +85,7 @@ pub fn placement<'a>(
             }
             t
         });
-        let count = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
+        let count = |n: usize| u32::try_from(n).map_err(|_| crate::pp_arena::capacity(concat!(file!(), ":", line!())));
         let view = DocView {
             at: count(offset)?,
             nodes: count(p.n)?,
@@ -133,7 +133,7 @@ impl Unit {
             let mut view = d.view;
             if block.as_ref().is_some_and(|b| b.id != d.slab.id) {
                 let (Some(Some(base)), Some(at)) = (base, d.slab.device_buffer().device_address()) else {
-                    return Err(Error::BackendCapacity);
+                    return Err(crate::pp_arena::capacity(concat!(file!(), ":", line!())));
                 };
                 view.set_offset((at as i64).wrapping_sub(base as i64).wrapping_add(i64::from(d.view.at)));
                 if !slabs.iter().any(|s| s.id == d.slab.id) {
@@ -284,7 +284,7 @@ impl Front {
             n,
             nodes,
             files: arena.from_slice(&unit.views)?,
-            grid: arena.zeroed::<u32>(8)?,
+            grid: arena.zeroed::<u32>(8 + 3 * TRACE_N)?,
             sums: arena.zeroed::<u32>(4 * groups as usize + 4)?,
             lay: arena.zeroed::<u32>(crate::pp_arena::SLOTS.len())?,
             bases: arena.from_slice(&bases)?,
@@ -342,6 +342,9 @@ impl Front {
         l.at("DIR_GROUPS", &self.groups).at("GUARDED", &self.guarded).at("GUARDS", &self.guards).at("BAD", &self.bad).at("KEYS", &self.keys);
         l.at("NODES_OUT", &self.out).at("ROWS", &self.rows).at("DIR_KEYS", &self.dir_keys).at("DIR_ACTS", &self.dir_acts);
         l.word("N_FILES", self.n as u32).word("NODES_FLAG", u32::from(self.nodes)).word("LAST", last);
+        if std::env::var_os("RERAIL_PP_TRACE").is_some() {
+            l.word("STOP", u32::MAX);
+        }
     }
 
     /// The slab of the unit's documents, as a pass binds it (the views' store where the unit
@@ -366,7 +369,20 @@ impl Front {
     /// Whether the run's grid failed a barrier (after it).
     pub fn barrier_failed(&self) -> bool {
         // SAFETY: the device finished writing the grid's words.
-        unsafe { *self.grid.host().cast::<u32>().add(2) != 0 }
+        unsafe { *self.grid.host().cast::<u32>().add(2) & 1 != 0 }
+    }
+
+    /// The trace a run at `STOP` = `PP_TRACE_ON` wrote (after it): each phase's source line and device clock (ns).
+    pub fn trace(&self) -> Vec<(u32, u64)> {
+        // SAFETY: the device finished writing the grid's words.
+        let w = unsafe { std::slice::from_raw_parts(self.grid.host().cast::<u32>().add(8), 3 * TRACE_N) };
+        w.chunks(3).take_while(|c| c[0] != 0).map(|c| (c[0], u64::from(c[1]) | (u64::from(c[2]) << 32))).collect()
+    }
+
+    /// The grid barriers the run passed (after it): `GRID[1]`, the generation, is twice them, with the failure bit.
+    pub fn barriers(&self) -> u32 {
+        // SAFETY: the device finished writing the grid's words.
+        unsafe { *self.grid.host().cast::<u32>().add(1) >> 1 }
     }
 
     /// The groups that joined the run's grid (after it): the join's count, `GRID[3]` less its
@@ -435,7 +451,10 @@ pub fn run_timed_over<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnc
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
 pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
-    let groups = crate::pp_arena::groups();
+    at_resident(crate::pp_arena::groups_for(unit.node_bound), |groups| evaluate_at(unit, nodes, groups))
+}
+
+fn evaluate_at(unit: &Unit, nodes: bool, groups: u64) -> Result<Evaluated, Error> {
     let arena = Arena::new();
     let front = Front::new(&arena, unit, nodes, groups)?;
     arena.lease()?;
@@ -450,7 +469,8 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
 /// decision 0485), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and
 /// its GPU time in seconds. The grid is the groups that joined it (`ukl_grid_join`, decision 0540
 /// §3), so a barrier waits only for groups that run: one that fails ran out of its bound, and is
-/// `BackendFailure`, not a guess of residency to halve.
+/// `BackendFailure`, and the grid kernel's residency is halved for the machine (`pp_arena::halved`,
+/// decision 0568): `at_resident` runs it again there.
 pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<(usize, f64), Error> {
     l.write(&front.lay);
     let all = l.get("LAST") == TO_ALL;
@@ -461,7 +481,59 @@ pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) 
         }
         Ok(())
     })?;
-    if front.barrier_failed() { Err(Error::BackendFailure) } else { Ok(ran) }
+    if std::env::var_os("RERAIL_PP_BARRIERS").is_some() {
+        eprintln!("BARRIERS {} groups {} joined {} gpu {:.1} us nodes {}", front.barriers(), groups, front.joined(), ran.1 * 1e6, unit.node_bound);
+    }
+    if std::env::var_os("RERAIL_PP_TRACE").is_some() && l.get("STOP") == u32::MAX {
+        report_trace(&front.trace(), ran.1, front.barriers());
+    }
+    if front.barrier_failed() {
+        crate::pp_arena::halved(groups);
+        return Err(Error::BackendFailure);
+    }
+    Ok(ran)
+}
+
+/// The trace's words past the grid's (`pp_grid.uglykl`'s `PP_TRACE_N`).
+const TRACE_N: usize = 2048;
+
+/// A trace's report: the phases' time by source line (where the device has a clock), most first, and the lines'
+/// text in the evaluator's source.
+fn report_trace(t: &[(u32, u64)], gpu: f64, barriers: u32) {
+    let lines: Vec<&str> = crate::pp_arena::source().lines().collect();
+    let text = |l: u32| lines.get(l as usize - 1).map_or("", |s| s.trim()).chars().take(110).collect::<String>();
+    let mut by: std::collections::BTreeMap<u32, (u64, u32)> = Default::default();
+    for w in t.windows(2) {
+        let e = by.entry(w[0].0).or_default();
+        e.0 += w[1].1.saturating_sub(w[0].1);
+        e.1 += 1;
+    }
+    let span = t.last().map_or(0, |l| l.1).saturating_sub(t.first().map_or(0, |f| f.1));
+    eprintln!("TRACE {} phases, {barriers} barriers, gpu {:.1} us, traced span {:.1} us", t.len(), gpu * 1e6, span as f64 / 1e3);
+    let mut v: Vec<_> = by.into_iter().collect();
+    v.sort_by_key(|(_, (ns, _))| std::cmp::Reverse(*ns));
+    for (line, (ns, n)) in v.iter().take(40) {
+        eprintln!("TRACE {:8.1} us {:5.1}% x{n:<4} L{line}: {}", *ns as f64 / 1e3, 100.0 * *ns as f64 / span.max(1) as f64, text(*line));
+    }
+    if std::env::var_os("RERAIL_PP_TRACE_ALL").is_some() {
+        for w in t.windows(2) {
+            eprintln!("TRACESEQ L{} {:.2} us", w[0].0, (w[1].1.saturating_sub(w[0].1)) as f64 / 1e3);
+        }
+    }
+}
+
+/// `run` at `groups` groups (decision 0568): refused past the grid kernel's residency
+/// (`pp_arena::refuse_past`), and run again at the halved residency while a failed barrier lowers
+/// it (`on_grid`). Any other failure is the caller's.
+pub fn at_resident<T>(groups: u64, mut run: impl FnMut(u64) -> Result<T, Error>) -> Result<T, Error> {
+    crate::pp_arena::refuse_past(groups)?;
+    let mut groups = groups;
+    loop {
+        match run(groups) {
+            Err(Error::BackendFailure) if crate::pp_arena::residency().groups < groups => groups = crate::pp_arena::residency().groups,
+            r => return r,
+        }
+    }
 }
 
 /// A name's key, as `pp_eval.uglykl`'s `name_key` makes it: its bytes 8 at a time, line splices

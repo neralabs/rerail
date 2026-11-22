@@ -67,13 +67,11 @@ const NOT_YET_MOVED: &[&str] = &[
     // The whole run's record.
     "run_record",
     // The cross part's statistics, checks, completed trees.
-    "stat_blob", "fact_stats", "fact_value_stats", "corpus_stats",
+    "stat_blob", "fact_stats", "fact_value_stats",
     "context_check_results", "candidate_catalogs", "candidate_checks", "completed_directory_reuse",
-    "completed_workspace_revisions", "tree_result_segments", "completed_snapshot_trees", "accel_models",
+    "completed_workspace_revisions", "tree_result_segments", "completed_snapshot_trees",
     // The derivation graph: what it records is the keys of §7.
     "name_bindings", "derivations", "derivation_inputs",
-    // Phase 0's observations (what each read is now).
-    "observed", "observer_meta",
 ];
 
 #[test]
@@ -103,8 +101,7 @@ fn every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved() {
 
 /// The tests of freshness written outside the form, and the most call sites each may still have.
 const FRESHNESS_CALLS: &[(&str, &str, usize)] = &[
-    ("code_rule_dsl/logic/plan/corpus.rs", "inputs::still(", 1),
-    ("code_rule_dsl/logic/plan/corpus.rs", ".still(", 2),
+    ("code_rule_dsl/logic/plan/corpus/base.rs", "inputs::still(", 1),
     ("code_rule_dsl/logic/plan/corpus/reuse.rs", "unchanged(programs", 1),
     ("code_rule_dsl/logic/plan/corpus/combined.rs", "file.unchanged(", 1),
     ("code_rule_dsl/facts.rs", "derivation_valid(", 1),

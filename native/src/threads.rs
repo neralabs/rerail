@@ -63,10 +63,12 @@ where
     F: for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's,
 {
     s.spawn(move |s| {
+        // In the caller's run first: `declines` reads the job's expected wall, the machine's (decision 0442).
+        let in_run = carry.enter();
         if rerail_accel::exec::declines(name, 0.0) {
+            drop(in_run);
             return spawn_in(s, name, carry, f);
         }
-        let _in = carry.enter();
         let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         rerail_accel::exec::as_job(name, || f(&Jobs(s)))
     });
@@ -91,19 +93,19 @@ pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
 /// its waits for the caller's answers held a thread the caller's chunks needed, and with 2 threads every run with a
 /// cone of requests stalled (the caller waited for chunks no thread was free to build). Its own parallel work still
 /// runs on the pool.
-pub(crate) struct Beside<T> {
+pub struct Beside<T> {
     name: &'static str,
     slot: std::sync::Arc<parking_lot::Mutex<Option<std::thread::Result<T>>>>,
 }
 
 /// Frees `value` on the pool, off the caller's thread: freeing a large structure (a program analysis's results for
 /// every rule) is work the caller does not need done before it goes on. It reads no run context, so it carries none.
-pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
+pub fn drop_behind<T: Send + 'static>(value: T) {
     crate::code_rule_dsl::logic::profile::cores_spawn(move || drop(value));
 }
 
 /// Starts `f` beside the caller ([`Beside`]), on a stack the size of a pool thread's.
-pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
+pub fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
     beside_on(name, rerail_accel::exec::POOL_STACK, f)
 }
 
@@ -129,12 +131,12 @@ fn beside_on<T: Send + 'static>(name: &'static str, stack: usize, f: impl FnOnce
 impl<T> Beside<T> {
     /// Waits until `poll` gives a value, the wait recorded under `site`, running the pool's other jobs meanwhile: the
     /// job is on a thread of its own, so the wait never takes it.
-    pub(crate) fn wait_for<V>(&self, site: &'static str, poll: impl FnMut() -> Option<V>) -> V {
+    pub fn wait_for<V>(&self, site: &'static str, poll: impl FnMut() -> Option<V>) -> V {
         rerail_accel::exec::help_until_as(site, poll)
     }
 
     /// Its result, once it ends (a panic as `Err`).
-    pub(crate) fn join(self) -> std::thread::Result<T> {
+    pub fn join(self) -> std::thread::Result<T> {
         self.wait_for(self.name, || self.slot.lock().take())
     }
 }

@@ -17,6 +17,11 @@
 //!   node put over the one just made (`wrap`) by `Writer::insert`.
 
 use ::bitlex::syntax::{Gram, Stmt, TokenElem};
+
+// Mounted by `rerail-bitlex` from the compiler's folder (`#[path]`): its submodule is found beside it.
+#[path = "bitlex_rust/one_loop.rs"]
+mod one_loop;
+pub use one_loop::tier2_loop;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -93,6 +98,18 @@ struct G<'a> {
     order: Vec<&'a str>,
     flags: Vec<String>,
     readings: HashMap<&'a str, &'a ::bitlex::syntax::Reading>,
+    /// The `remember` choices: a token one takes is its level's word (`P::word`), the kind a wrap's, relabel's or
+    /// reading's `as C` names.
+    remember: Vec<String>,
+    /// The `provisional` fields: a node that holds one at the file's end refuses it.
+    provisional: Vec<String>,
+    /// `refuse M in L …`: each level's refused marks, their bits in a record's code: a token the level takes with one
+    /// refuses the file (`P::refusing`).
+    refusing: HashMap<String, u32>,
+    /// The field ids past a key's 6 bits, each given the slot `63 - its place` (`field_id`).
+    own_fields: std::cell::RefCell<Vec<u16>>,
+    /// The largest field id under 64 named: the slots must be above it.
+    most_field: std::cell::Cell<u16>,
     firsts: std::cell::RefCell<HashMap<String, (Vec<First>, bool)>>,
     busy: std::cell::RefCell<HashSet<String>>,
     /// The kinds the code names, by their constant's name; the fields; the words.
@@ -188,6 +205,8 @@ impl<'a> G<'a> {
         let mut order = Vec::new();
         let mut flags = Vec::new();
         let mut readings = HashMap::new();
+        let (mut remember, mut provisional) = (Vec::new(), Vec::new());
+        let mut refusing: HashMap<String, u32> = HashMap::new();
         for s in x.tree {
             match s {
                 Stmt::Node { kind, .. } => {
@@ -202,10 +221,19 @@ impl<'a> G<'a> {
                 Stmt::Reading { name, reading } => {
                     readings.insert(name.as_str(), reading);
                 }
+                Stmt::Remember(n) => remember.extend(n.iter().cloned()),
+                Stmt::Provisional(f) => provisional.extend(f.iter().cloned()),
+                // A mark tier 1 gives no bit is refused nowhere here: `source` refuses the grammar.
+                Stmt::Refuse { mark, levels } => {
+                    let bit = x.marks.iter().find(|m| &m.name == mark).and_then(|m| m.bit).map_or(0, |b| 1u32 << b);
+                    for l in levels {
+                        *refusing.entry(l.clone()).or_default() |= if bit == 0 { u32::MAX } else { bit };
+                    }
+                }
                 _ => {}
             }
         }
-        G { x, rules, order, flags, readings, firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default() }
+        G { x, rules, order, flags, readings, remember, provisional, refusing, own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -214,6 +242,16 @@ impl<'a> G<'a> {
 
     fn word_of(&self, text: &str) -> Option<u8> {
         self.x.words.iter().position(|w| w.as_slice() == text.as_bytes()).map(|i| (i + 1) as u8)
+    }
+
+    /// A keyword's kind of one word (`keywords number { "true" -> true }`): that word, a rule's test of the kind.
+    fn keyword_word(&self, kind: &str) -> Option<u8> {
+        let mut words = self.x.keywords.iter().flat_map(|r| r.1.iter()).filter(|(_, k)| k.as_deref() == Some(kind));
+        let (w, _) = words.next()?;
+        if words.next().is_some() {
+            return None;
+        }
+        self.word_of(&String::from_utf8_lossy(w))
     }
 
     fn is_token_kind(&self, name: &str) -> bool {
@@ -238,8 +276,25 @@ impl<'a> G<'a> {
         Ok(format!("k::{c}"))
     }
 
-    fn field_const(&self, name: &str) -> Result<String, String> {
+    /// Field `name`'s id in a node's key, which holds 6 bits: the grammar's id, or for one past them (a field the
+    /// tape names not, which a reading renames or `provisional` refuses before the file's end: `rr_parser`'s own ids)
+    /// a slot from the top of the 6 bits down, the same wherever it is named.
+    fn field_id(&self, name: &str) -> Result<u16, String> {
         let id = (self.x.field)(name).ok_or_else(|| format!("no field `{name}`"))?;
+        if id < 64 {
+            self.most_field.set(self.most_field.get().max(id));
+            return Ok(id);
+        }
+        let mut own = self.own_fields.borrow_mut();
+        let k = own.iter().position(|&o| o == id).unwrap_or_else(|| {
+            own.push(id);
+            own.len() - 1
+        });
+        Ok(63 - k as u16)
+    }
+
+    fn field_const(&self, name: &str) -> Result<String, String> {
+        let id = self.field_id(name)?;
         let c = upper(name);
         self.fields.borrow_mut().insert(c.clone(), id);
         Ok(format!("f::{c}"))
@@ -260,6 +315,9 @@ impl<'a> G<'a> {
                     self.rule_first(n)?
                 } else if self.is_token_kind(n) {
                     (vec![(Test::Kind(n.clone()), None)], false)
+                } else if let Some(w) = self.keyword_word(n).or_else(|| self.word_of(n)) {
+                    // A keyword named by its word (`any`'s tokens, as the build names them): that word.
+                    (vec![(Test::Word(w), None)], false)
                 } else {
                     return Err(format!("`{n}`: no rule, mark or token of that name"));
                 }
@@ -287,7 +345,7 @@ impl<'a> G<'a> {
             }
             Gram::Opt(a) | Gram::Star(a) => (self.first(a)?.0, true),
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first(a)?,
-            Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } => self.first(body)?,
+            Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.first(body)?,
             Gram::Unless { flag, body } => {
                 let (f, e) = self.first(body)?;
                 (f.into_iter().map(|(t, _)| (t, Some(flag.clone()))).collect(), e)
@@ -456,8 +514,8 @@ impl<'a> G<'a> {
         }
         let mut out = format!("{pad}let arm: usize;\n{sel}{pad}match arm {{\n");
         let (q, r) = (format!("{pad}    "), format!("{pad}        "));
-        for t in 0..=n {
-            if uses[t] > 0 {
+        for (t, &u) in uses.iter().enumerate().take(n + 1) {
+            if u > 0 {
                 let _ = write!(out, "{q}{t} => {{\n{}{q}}}\n", indent(&body_of(t), &r));
             }
         }
@@ -532,10 +590,10 @@ impl<'a> G<'a> {
         let mut asked: Vec<(usize, bool)> = Vec::new();
         for (fs, _) in arms {
             for (t, _) in fs {
-                if let Test::Mark(m) = t {
-                    if !asked.iter().any(|a| a.0 == *m) {
-                        asked.push((*m, false));
-                    }
+                if let Test::Mark(m) = t
+                    && !asked.iter().any(|a| a.0 == *m)
+                {
+                    asked.push((*m, false));
                 }
             }
         }
@@ -653,10 +711,15 @@ impl<'a> G<'a> {
                 let (test, _) = self.token_of(a).ok_or_else(|| format!("rule {rule}: an implied token that is no token"))?;
                 self.take_token(&test, None, pad)?
             }
+            Gram::As(k, a) if self.token_of(a).is_none() && matches!(&**a, Gram::Sym(n) if self.rules.contains_key(n.as_str()) && !self.nested(n)) => {
+                let Gram::Sym(n) = &**a else { unreachable!() };
+                self.token_choice(n, Some(k), rule, pad)?
+            }
             Gram::As(k, a) => {
                 let (test, _) = self.token_of(a).ok_or_else(|| format!("rule {rule}: `as {k}` of no token"))?;
                 self.take_token(&test, Some(k), pad)?
             }
+            Gram::Sym(n) if self.remember.contains(n) => self.token_choice(n, None, rule, pad)?,
             Gram::Sym(n) if self.mark_of(n).is_some() => {
                 let m = &self.x.marks[self.mark_of(n).expect("a mark")];
                 format!("{pad}self.mark_{}()?;\n", ident(&m.name))
@@ -678,11 +741,15 @@ impl<'a> G<'a> {
                     }
                 }
                 let all: u64 = (0..self.x.marks.len()).filter(|&m| self.asks(m)).fold(0, |a, m| a | 1 << self.mark_of(&self.x.marks[m].name).unwrap_or(m));
-                if all == 0 {
+                let call = if all == 0 {
                     format!("{pad}self.{}()?;\n", rule_fn(n))
                 } else {
                     format!("{pad}let asks = self.asks;\n{pad}self.asks = asks & {keep:#x} | {set:#x};\n{pad}self.{}()?;\n{pad}self.asks = asks;\n", rule_fn(n))
-                }
+                };
+                // The level's word is the caller's again where the call returns (the machine's `PUSH`).
+                let call = if self.remember.is_empty() { call } else { format!("{pad}let word = self.word;\n{call}{pad}self.word = word;\n") };
+                // The marks the callee refuses (`refuse M in L`), the caller's again where it returns.
+                if self.refusing.is_empty() { call } else { format!("{pad}let refusing = self.refusing;\n{pad}self.refusing = {:#x};\n{call}{pad}self.refusing = refusing;\n", self.refusing.get(n.as_str()).copied().unwrap_or(0)) }
             }
             Gram::Sym(n) if self.rules.contains_key(n.as_str()) => format!("{pad}self.{}()?;\n", rule_fn(n)),
             Gram::Sym(n) => return Err(format!("rule {rule}: `{n}`, no rule, mark or token")),
@@ -745,10 +812,33 @@ impl<'a> G<'a> {
                 };
                 let mut out = format!("{pad}self.wrap({}, {f})?;\n", self.kind_const(kind)?);
                 if let Some(m) = moved {
-                    let _ = writeln!(out, "{pad}self.retype_moved({});", self.kind_const(m)?);
+                    let _ = writeln!(out, "{pad}self.retype_moved({});", self.moved_kind(m)?);
                 }
                 out.push_str(&self.code(body, rest, rule, pad)?);
                 let _ = writeln!(out, "{pad}self.close()?;");
+                out
+            }
+            // The node made last at this level relabelled, as the machine's `NODE_FIELD` and `RETAG` on it (modes 2 and
+            // 3): the field of the node its wrap holds first, then its own field, then its kind; `drop` (kind `GONE`) takes
+            // the node out, the nodes inside it in its place.
+            Gram::Relabel { field, moved, inner, body } => {
+                let mut out = String::new();
+                if let Some(g) = inner.as_deref().filter(|g| *g != "_") {
+                    let _ = writeln!(out, "{pad}self.relabel_inner({})?;", self.field_const(g)?);
+                }
+                if let Some(f) = field.as_deref().filter(|f| *f != "_") {
+                    let _ = writeln!(out, "{pad}self.relabel_field({})?;", self.field_const(f)?);
+                }
+                match moved.as_deref() {
+                    Some(::bitlex::syntax::GONE) => {
+                        let _ = writeln!(out, "{pad}self.drop_made()?;");
+                    }
+                    Some(m) => {
+                        let _ = writeln!(out, "{pad}self.relabel_kind({})?;", self.moved_kind(m)?);
+                    }
+                    None => {}
+                }
+                out.push_str(&self.code(body, rest, rule, pad)?);
                 out
             }
             Gram::Merge(k, a) => {
@@ -771,6 +861,31 @@ impl<'a> G<'a> {
         })
     }
 
+    /// A kind a wrap or relabel gives its node: a `remember` choice's name is its level's word.
+    fn moved_kind(&self, name: &str) -> Result<String, String> {
+        if self.remember.iter().any(|r| r == name) { Ok("self.word".to_owned()) } else { self.kind_const(name) }
+    }
+
+    /// A choice of tokens `n` taken: one decision, an arm a token, each a leaf of kind `kind` (none: its own); in a
+    /// `remember` choice each also its level's word, as the machine's `REMEMBER`.
+    fn token_choice(&self, n: &str, kind: Option<&str>, rule: &str, pad: &str) -> Result<String, String> {
+        let Some(Stmt::Choice { body, .. }) = self.rules.get(n) else { return Err(format!("rule {rule}: `{n}`, no choice of tokens")) };
+        let mut alts = Vec::new();
+        Self::alts(body, &mut alts);
+        let remembered = self.remember.iter().any(|r| r == n);
+        let mut arms = Vec::new();
+        for a in alts {
+            let (test, own) = self.token_of(a).ok_or_else(|| format!("rule {rule}: choice `{n}` holds more than tokens"))?;
+            let mut body = self.take_token(&test, Some(kind.unwrap_or(&own)), "")?;
+            if remembered {
+                let _ = writeln!(body, "self.word = {};", self.kind_const(&own)?);
+            }
+            arms.push((self.first(a)?.0, body));
+        }
+        let none = "return self.refuse();\n";
+        Ok(self.asking(&arms, &[], pad) + &self.decide(&arms, &[], &[], none, none, pad))
+    }
+
     /// A token element: its test and its leaf's kind.
     fn token_of(&self, g: &Gram) -> Option<(Test, String)> {
         match g {
@@ -780,6 +895,7 @@ impl<'a> G<'a> {
                 None => None,
             },
             Gram::Sym(n) if self.mark_of(n).is_none() && !self.rules.contains_key(n.as_str()) && self.is_token_kind(n) => Some((Test::Kind(n.clone()), n.clone())),
+            Gram::Sym(n) if self.mark_of(n).is_none() && !self.rules.contains_key(n.as_str()) => self.keyword_word(n).or_else(|| self.word_of(n)).map(|w| (Test::Word(w), n.clone())),
             _ => None,
         }
     }
@@ -1055,10 +1171,10 @@ impl<'a> G<'a> {
                 let t = self.gap_test(&refuses_taken, &format!("refuses_taken_{n}"), true, &mut fns)?;
                 let _ = write!(take, "        if {t} {{\n            return self.refuse();\n        }}\n");
             }
-            if m.settles {
-                if let Some(b) = m.bit {
-                    let _ = writeln!(take, "        self.settle({b});");
-                }
+            if m.settles
+                && let Some(b) = m.bit
+            {
+                let _ = writeln!(take, "        self.settle({b});");
             }
             let drops = qs(|d| d.drops);
             if !drops.is_empty() {
@@ -1118,7 +1234,7 @@ impl<'a> G<'a> {
                     Some(f) => format!("match first_bit(&m.{f}, e) {{\n                            Some(l) => l,\n                            None => return self.refuse(),\n                        }}"),
                     None => format!("e + {}", usize::from(bytes).saturating_sub(1)),
                 };
-                let _ = write!(lasts, "                        {i} => ({l}, {}),\n", kind_or(piece(name, false), "e"));
+                let _ = writeln!(lasts, "                        {i} => ({l}, {}),", kind_or(piece(name, false), "e"));
             }
             // The closer: one of a kind of its own (`closes`), else its region's own, its bytes.
             let own = kind_or(piece(&rd.kind, true), "c");
@@ -1160,7 +1276,7 @@ impl<'a> G<'a> {
             for w in words {
                 if let Some(id) = self.word_of(&String::from_utf8_lossy(w)) {
                     let lit: String = w.iter().map(|&c| if c.is_ascii_alphanumeric() || c == b'_' { (c as char).to_string() } else { format!("\\x{c:02x}") }).collect();
-                    let _ = write!(pats, "            b\"{lit}\" => w::{},\n", self.word_const(id));
+                    let _ = writeln!(pats, "            b\"{lit}\" => w::{},", self.word_const(id));
                 }
             }
             if !pats.is_empty() {
@@ -1198,20 +1314,22 @@ impl<'a> G<'a> {
             for (k, what) in &r.kinds {
                 let id = (self.x.kind)(k).ok_or_else(|| format!("reading {name}: no kind `{k}`"))?;
                 let to = match what {
+                    // A `remember` choice's name: its level's word (`REMEMBERED`, `reread_node`).
+                    ::bitlex::syntax::ReadKind::As(m) if self.remember.contains(m) => "Some(Some(REMEMBERED))".to_owned(),
                     ::bitlex::syntax::ReadKind::As(m) => format!("Some(Some({}))", (self.x.kind)(m).ok_or_else(|| format!("reading {name}: no kind `{m}`"))?),
                     ::bitlex::syntax::ReadKind::Gone => "Some(None)".to_owned(),
                     ::bitlex::syntax::ReadKind::Keep => "None".to_owned(),
                 };
-                let _ = write!(arms, "            {id} => {to},\n");
+                let _ = writeln!(arms, "            {id} => {to},");
             }
             for e in self.x.extras {
                 let id = (self.x.kind)(e).ok_or_else(|| format!("no kind `{e}`"))?;
-                let _ = write!(arms, "            {id} => None,\n");
+                let _ = writeln!(arms, "            {id} => None,");
             }
             let mut fields = String::new();
             for (a, b) in &r.fields {
-                let (fa, fb) = ((self.x.field)(a).ok_or_else(|| format!("reading {name}: no field `{a}`"))?, (self.x.field)(b).ok_or_else(|| format!("reading {name}: no field `{b}`"))?);
-                let _ = write!(fields, "            {fa} => {fb},\n");
+                let (fa, fb) = (self.field_id(a).map_err(|e| format!("reading {name}: {e}"))?, self.field_id(b).map_err(|e| format!("reading {name}: {e}"))?);
+                let _ = writeln!(fields, "            {fa} => {fb},");
             }
             let root = match &r.root {
                 Some(::bitlex::syntax::ReadKind::As(m)) => format!("Some(Some({}))", (self.x.kind)(m).ok_or_else(|| format!("no kind `{m}`"))?),
@@ -1257,7 +1375,7 @@ impl<'a> G<'a> {
         };
         let _ = writeln!(extras, "/// An extra's node kind: a later extra kind's by its bit, else the first's.\nfn extra_kind(code: u32) -> u16 {{\n{kind}    {first}\n}}\n");
         let mut out = String::new();
-        out.push_str("// Generated by the Bitlex compiler (`rerail_compiler::bitlex_rust`) from the grammar's tree rules. Do not edit.\n\n");
+        out.push_str("// Generated by native/crates/compiler/src/bitlex_rust.rs; do not edit. The Bitlex compiler's Rust from the grammar's tree rules.\n\n");
         out.push_str("use rerail_tape_format::{Widths, Writer};\n\n");
         out.push_str("/// The tape's kinds, by the grammar's names.\n#[allow(dead_code)]\npub mod k {\n");
         for (c, id) in self.kinds.borrow().iter() {
@@ -1288,10 +1406,120 @@ impl<'a> G<'a> {
         out.push_str(&readings);
         out.push_str(&split);
         out.push_str("}\n");
+        // A field's slot past the grammar's ids (`field_id`) must be no field's id the tape names.
+        let own = self.own_fields.borrow().len() as u16;
+        if own > 0 && self.most_field.get() >= 64 - own {
+            return Err(format!("tier 2 as Rust: {own} fields past a key's 6 bits, and field {} among their slots", self.most_field.get()));
+        }
+        // A grammar's `remember`: each level's word (`REMEMBER`), the kind a reading's `as C` reads its node as.
+        if !self.remember.is_empty() {
+            for (a, b) in [
+                ("    flags: u32,\n    depth: u32,\n", "    flags: u32,\n    /// The level's word (`remember`): the kind of the token of a `remember` choice it took last; a call's is its caller's\n    /// again where it returns.\n    word: u16,\n    depth: u32,\n"),
+                ("flags: 0, depth: 0,", "flags: 0, word: 0, depth: 0,"),
+                ("            Some(Some(k)) => {\n                let at = self.w.push(key & !0x3ff | u32::from(k), s);", "            Some(Some(k)) => {\n                let k = if k == REMEMBERED { self.word } else { k };\n                let at = self.w.push(key & !0x3ff | u32::from(k), s);"),
+            ] {
+                if out.matches(a).count() != 1 {
+                    return Err(format!("tier 2 as Rust: `remember`'s place in the runtime: {a:?}"));
+                }
+                out = out.replace(a, b);
+            }
+            out.push_str("\n/// A reading's way to the level's word (`remember`).\nconst REMEMBERED: u16 = u16::MAX - 2;\n");
+        }
+        // A grammar's `refuse M in L`: the marks the level open refuses, tested at each token it takes.
+        if !self.refusing.is_empty() {
+            if self.refusing.values().any(|&b| b == u32::MAX) {
+                return Err("tier 2 as Rust: `refuse` of a mark tier 1 gives no bit".into());
+            }
+            for (a, b) in [
+                ("    asks: u64,\n", "    asks: u64,\n    /// The marks the level open refuses (`refuse M in L`), their bits in a record's code: a token it takes with one\n    /// refuses the file. A call's are its own, the caller's again where it returns.\n    refusing: u32,\n"),
+                ("marked: false, asks: 0,", "marked: false, asks: 0, refusing: 0,"),
+                ("        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n", "        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n        // A mark the level refuses, at the token it takes (`refuse M in L`).\n        if self.k == 0 && self.codes[self.i] >> 16 & self.refusing != 0 {\n            return self.refuse();\n        }\n"),
+            ] {
+                if out.matches(a).count() != 1 {
+                    return Err(format!("tier 2 as Rust: `refuse`'s place in the runtime: {a:?}"));
+                }
+                out = out.replace(a, b);
+            }
+        }
+        // A grammar's `provisional` fields: the root closed, a node that holds one refuses the file.
+        if !self.provisional.is_empty() {
+            let fields: Vec<String> = self.provisional.iter().map(|f| self.field_id(f).map(|id| id.to_string())).collect::<Result<_, _>>()?;
+            let a = "        self.w.set_start(0, first);\n";
+            if out.matches(a).count() != 1 {
+                return Err("tier 2 as Rust: `provisional`'s place in the runtime".into());
+            }
+            out = out.replace(a, &format!("        // A field that a later token decides (`provisional`), held still at the file's end: refused.\n        if (0..self.w.len()).any(|i| matches!((self.w.key(i) >> 10 & 0x3f) as u16, {})) {{\n            return self.refuse();\n        }}\n{a}", fields.join(" | ")));
+        }
+        // The helpers only some grammars' rules call, each written where it is called.
+        let used: Vec<&str> = MORE.iter().filter(|(name, _)| rules.contains(&format!("self.{name}("))).map(|(_, code)| *code).collect();
+        if !used.is_empty() {
+            out.push_str("\n#[allow(clippy::all, dead_code)]\nimpl P<'_> {\n");
+            out.push_str(&used.join("\n"));
+            out.push_str("}\n");
+        }
         let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), or the byte it was refused at.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        let mut p = P::new(src, lx, widths)?;\n        p.{}()?;\n        match p.w.finish_columns() {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}", rule_fn(self.order.first().ok_or("no rule")?));
         Ok(out)
     }
 }
+
+/// The parser's helpers that only some grammars' rules call (`relabel`, `drop`), by name: each written into a parser
+/// whose rules call it.
+const MORE: &[(&str, &str)] = &[
+    (
+        "relabel_inner",
+        r#"    /// `relabel … inner G`: the node the node made last at this level, a wrap, holds first takes field `G`.
+    fn relabel_inner(&mut self, field: u16) -> R {
+        let at = *self.made.last().unwrap_or(&NONE);
+        if at == NONE || self.w.size(at as usize) < 2 {
+            return self.refuse();
+        }
+        let at = at as usize + 1;
+        let k = self.w.key(at);
+        self.w.set_key(at, k & !(0x3f << 10) | u32::from(field) << 10);
+        Ok(())
+    }
+"#,
+    ),
+    (
+        "relabel_field",
+        r#"    /// `relabel F`: the node made last at this level takes field `F`.
+    fn relabel_field(&mut self, field: u16) -> R {
+        let at = *self.made.last().unwrap_or(&NONE);
+        if at == NONE {
+            return self.refuse();
+        }
+        let k = self.w.key(at as usize);
+        self.w.set_key(at as usize, k & !(0x3f << 10) | u32::from(field) << 10);
+        Ok(())
+    }
+"#,
+    ),
+    (
+        "relabel_kind",
+        r#"    /// `relabel … as M`: the node made last at this level a `kind` now.
+    fn relabel_kind(&mut self, kind: u16) -> R {
+        let at = *self.made.last().unwrap_or(&NONE);
+        if at == NONE {
+            return self.refuse();
+        }
+        let k = self.w.key(at as usize);
+        self.w.set_key(at as usize, k & !0x3ff | u32::from(kind));
+        Ok(())
+    }
+"#,
+    ),
+    (
+        "drop_made",
+        r#"    /// `drop`: the node made last at this level goes, the nodes inside it in its place; none is made last at this
+    /// level until the next.
+    fn drop_made(&mut self) -> R {
+        self.reread(Some(None), |_| None, |f| f)?;
+        self.set_made(NONE);
+        Ok(())
+    }
+"#,
+    ),
+];
 
 /// The parser's own code: the tokens, the tree, the comments.
 const RUNTIME: &str = r#"
@@ -1641,14 +1869,15 @@ impl<'a> P<'a> {
         self.made.push(NONE);
     }
 
-    /// The root closed at the end of the file: from its first token or comment, or the file's start (`whole`).
+    /// The root closed at the end of the file: the whole file (`whole`, from byte 0, as the machine opens it), or
+    /// from its first token or comment to its last token's end.
     fn close_root(&mut self, whole: bool) -> R {
         if self.i < self.n {
             return self.refuse();
         }
         self.flush();
-        // From its first token or comment (none: the file's end), to the file's end (`whole`) or its last token's.
-        let first = if self.w.len() > 1 { self.w.start(1) } else { self.src.len() as u32 };
+        // From byte 0 (`whole`), else its first token or comment (none: the file's end).
+        let first = if whole { 0 } else if self.w.len() > 1 { self.w.start(1) } else { self.src.len() as u32 };
         let end = if whole { self.src.len() as u32 } else { self.last_end };
         self.w.set_start(0, first);
         self.w.close(0, end);

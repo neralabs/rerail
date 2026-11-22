@@ -137,7 +137,7 @@ pub enum Digits {
 
 impl Trans {
     /// The kinds a transformation is written as: the key of its one entry.
-    pub(crate) const KINDS: [&'static str; 7] = [
+    pub const KINDS: [&'static str; 7] = [
         "replace",
         "substring",
         "convert",
@@ -167,7 +167,7 @@ impl Trans {
 
     /// The names of every variable the transformation reads, `$` sigils aside: its source, and
     /// `toPrecision`'s digits where a variable gives them.
-    pub(crate) fn source_names(&self) -> impl Iterator<Item = &str> {
+    pub fn source_names(&self) -> impl Iterator<Item = &str> {
         let digits = match self {
             Self::ToPrecision {
                 digits: Digits::Variable(variable),
@@ -183,17 +183,17 @@ impl Trans {
     }
 
     /// Whether the transformation reads its source's value (`value`).
-    pub(crate) fn reads_value(&self) -> bool {
+    pub fn reads_value(&self) -> bool {
         self.source_spec().value.is_some()
     }
 
     /// The source's name, `$` sigils aside.
-    pub(crate) fn source_name(&self) -> &str {
+    pub fn source_name(&self) -> &str {
         variable_name(self.source())
     }
 
     /// Whether the transformation reads the capture's node rather than its text.
-    pub(crate) fn reads_node(&self) -> bool {
+    pub fn reads_node(&self) -> bool {
         matches!(
             self,
             Self::Line { .. } | Self::Lines { .. } | Self::Count { .. }
@@ -450,8 +450,8 @@ fn resolve_char(index: Option<i32>, default: i32, len: i32) -> usize {
 /// The query's transforms, in an order where each source is computed before it is read.
 #[derive(Clone, Default)]
 pub struct Transform {
-    pub(crate) steps: Vec<(String, Trans)>,
-    pub(crate) max_output_bytes: usize,
+    pub steps: Vec<(String, Trans)>,
+    pub max_output_bytes: usize,
 }
 
 impl Transform {
@@ -481,13 +481,13 @@ impl Transform {
     }
 
     /// Whether a step reads the variable `name`: its source, or `toPrecision`'s digits.
-    pub(crate) fn reads(&self, name: &str) -> bool {
+    pub fn reads(&self, name: &str) -> bool {
         self.steps
             .iter()
             .any(|(_, trans)| trans.source_names().any(|source| source == name))
     }
 
-    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
+    pub fn names(&self) -> impl Iterator<Item = &str> {
         self.steps.iter().map(|(key, _)| key.as_str())
     }
 
@@ -498,7 +498,7 @@ impl Transform {
     }
 
     /// Runs, in order, the steps whose index `run` selects.
-    pub(crate) fn apply_steps<D: Doc>(
+    pub fn apply_steps<D: Doc>(
         &self,
         env: &mut MetaVarEnv<'_, D>,
         mut run: impl FnMut(usize) -> bool,

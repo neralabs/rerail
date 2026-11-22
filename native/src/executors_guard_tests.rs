@@ -42,7 +42,7 @@ const EXCEPTIONS: [(&str, &str, usize, &str); 10] = [
 const TEST_FILES: [&str; 1] = ["parity.rs"];
 
 pub(crate) fn repo() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("..")
+    crate::source_tree::native().join("..")
 }
 
 pub(crate) fn sources() -> Vec<PathBuf> {

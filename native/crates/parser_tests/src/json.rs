@@ -1,7 +1,7 @@
 //! The JSON suite's helpers, shared with the engine's Metal measurements: a JSON step compiled
 //! (`form`), the files a variable names (`files_in`), a file's short name (`base`).
 
-use rerail_compiler::ladder::{Compiled, compile_step, dir};
+use rerail_cpu_stream::ladder::{Compiled, compile_step, dir};
 use std::path::{Path, PathBuf};
 
 pub fn form(name: &str) -> Compiled {

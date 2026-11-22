@@ -1,7 +1,6 @@
 //! The owners of corpus manifests and audit snapshots. Their rows are roots for collection.
 
-#[allow(unused_imports)]
-use crate::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use super::{CollectionLease, ContentStore, SnapshotId, StoreResult};
 use super::connection::Cached as _;
 use std::path::Path;
@@ -275,6 +274,10 @@ impl AnalysisRun {
     /// acquisition is written by its first write, which the store's writer applies behind the run (its manifest's,
     /// then its publication's, `finish`).
     pub fn begin_at(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
+        super::hazards::around_the_run(|| Self::begin_now(store, scope, id, acquired_at))
+    }
+
+    fn begin_now(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
         let lease = store.hold_collection()?;
         let identity = store.identity();
         let read = |f: &dyn Fn(&rusqlite::Connection) -> StoreResult<i64>| -> StoreResult<i64> {
@@ -309,6 +312,10 @@ impl AnalysisRun {
     /// staged memberships), as an item of its own (decision 0547). This waits for the writer: the outcome is the
     /// caller's answer. A failed publication leaves the run open, to be finished again.
     pub fn finish(&mut self, succeeded: bool) -> StoreResult<()> {
+        super::hazards::around_the_run(|| self.finish_now(succeeded))
+    }
+
+    fn finish_now(&mut self, succeeded: bool) -> StoreResult<()> {
         if self.lease.is_none() {
             return Ok(());
         }
@@ -334,6 +341,13 @@ impl AnalysisRun {
         self.publication = Some(outcome);
         self.scope_lease.take();
         self.lease.take();
+        // The collection its lease held off while it ran (its runs leave it to their owner, `record_run`): due once
+        // the run's manifests are written, which a pass needs no lease of a reader to keep. A failed pass leaves the
+        // store as it was, collected by a later one.
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        if let Err(e) = self.store.collect_after(now) {
+            eprintln!("rerail: the store's collection after the run stopped: {e}");
+        }
         Ok(())
     }
 }

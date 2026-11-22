@@ -41,6 +41,8 @@ pub struct Lang {
     revision: u8,
     /// Each number's kind and field: what a presence's bits are (decision 0434 §4).
     kind_field: Vec<(u16, u16)>,
+    /// `presence_words`, counted once: a tape's reader checks its presence against it at every read.
+    presence_words: (usize, usize),
 }
 
 impl Lang {
@@ -56,14 +58,15 @@ impl Lang {
         let cut = if n <= 256 { 256 } else { 255 };
         let per = if cut >= 256 { 1 } else { n - cut };
         let index = table.entries().iter().enumerate().map(|(k, e)| (e.clone(), k as u32)).collect();
-        let kind_field = table.entries().iter().map(|e| (e.kind, e.field)).collect();
-        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field })
+        let kind_field: Vec<(u16, u16)> = table.entries().iter().map(|e| (e.kind, e.field)).collect();
+        let kinds = kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
+        let fields = kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
+        let presence_words = (kinds.div_ceil(64), fields.div_ceil(64));
+        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field, presence_words })
     }
     /// The words of a presence's kinds' and fields' bitmaps: one bit a kind and a field the table names.
     pub fn presence_words(&self) -> (usize, usize) {
-        let kinds = self.kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
-        let fields = self.kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
-        (kinds.div_ceil(64), fields.div_ceil(64))
+        self.presence_words
     }
     pub fn table(&self) -> &CodeTable {
         &self.table
@@ -574,6 +577,109 @@ fn mask(w: usize) -> u64 {
 
 // ---- the writer ------------------------------------------------------------------------------------------
 
+/// The device's kernel: every read of node `i` (`DEVICE_READS` of them) into its slots, from the reads as UKL
+/// (`READS_HEADER`: `<ukl/reads/tape.h>`, or `tape_z.h`, which reads 16z too), the view read where its buffer holds
+/// it. `parentEnd[i]` is the end of `i`'s parent's subtree (`tape_next_in`'s bound).
+#[cfg(any(test, feature = "test-hooks"))]
+pub const DEVICE_KERNEL: &str = r#"
+#define CLIF_VIEW_SPACE UKL_GLOBAL
+#include READS_HEADER
+
+typedef struct ReadArgs {
+    uint32_t n;
+    uint32_t pad;
+} ReadArgs;
+UKL_REFLECT_STRUCT(ReadArgs, n, pad)
+
+DEFINE_KERNEL2(tests, t_reads,
+               ARGS,     ReadArgs, args,      ,
+               RWBUFFER, uint8_t,  tape,      "[bytes]",
+               ROBUFFER, uint32_t, view,      "[29]",
+               ROBUFFER, uint32_t, parentEnd, "[n]",
+               RWBUFFER, uint32_t, out,       "[n * 23]",
+               GID0,     uint32_t, i,         )
+{
+    if (i >= args.n)
+        return;
+    RWBUFFER(uint32_t) o = out + i * 23u;
+    o[0] = clif_tape_size(tape, view, i);
+    o[1] = clif_tape_end_of(tape, view, i);
+    o[2] = clif_tape_number(tape, view, i);
+    o[3] = clif_tape_start(tape, view, i);
+    o[4] = clif_tape_end(tape, view, i);
+    o[5] = clif_tape_parent(tape, view, i);
+    o[6] = clif_tape_next(tape, view, i);
+    o[7] = clif_tape_next_in(tape, view, i, parentEnd[i]);
+    o[8] = clif_tape_first_child(tape, view, i);
+    o[9] = clif_tape_child_count(tape, view, i);
+    for (uint32_t k = 0u; k <= 12u; k++)
+        o[10u + k] = clif_tape_child(tape, view, i, k);
+}
+
+typedef struct RandomArgs {
+    uint32_t n;
+    uint32_t threads;
+    uint32_t rounds;
+    uint32_t cache;
+} RandomArgs;
+UKL_REFLECT_STRUCT(RandomArgs, n, threads, rounds, cache)
+
+// Each thread's reads of `rounds` nodes at random (its code, start, end and parent, against `want`'s): how many were
+// wrong, and how many of those were wrong with no failure yet counted by the cache (at `cache` in the tape), in its
+// own two words (no counter shared by every thread).
+DEFINE_KERNEL2(tests, t_random,
+               ARGS,     RandomArgs, args,  ,
+               RWBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[29]",
+               ROBUFFER, uint32_t,   want,  "[n * 4]",
+               RWBUFFER, uint32_t,   out,   "[threads * 2]",
+               GID0,     uint32_t,   i,     )
+{
+    if (i >= args.threads)
+        return;
+    uint32_t x = i * 0x9E3779B9u + 1u, wrong = 0u, silent = 0u;
+    for (uint32_t r = 0u; r < args.rounds; r++) {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        uint32_t node = x % args.n;
+        ROBUFFER(uint32_t) w = want + node * 4u;
+        uint32_t bad = 0u;
+        bad += clif_tape_number(tape, view, node) != w[0] ? 1u : 0u;
+        bad += clif_tape_start(tape, view, node) != w[1] ? 1u : 0u;
+        bad += clif_tape_end(tape, view, node) != w[2] ? 1u : 0u;
+        bad += clif_tape_parent(tape, view, node) != w[3] ? 1u : 0u;
+        wrong += bad;
+        if (bad != 0u && ukl_atomic_load_at(tape, (uint64_t)args.cache + CLIF_T_C_FAILED) == 0u)
+            silent += bad;
+    }
+    out[2u * i] = wrong;
+    out[2u * i + 1u] = silent;
+}
+"#;
+
+/// The reads' program over `header` (`tape.h`, or `tape_z.h`): its name and its text, as the device layer compiles it
+/// (`rerail_gpu::kernels::program`; this crate is below the device layer, so its callers compile it).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn device_reads_kernel(header: &str) -> (String, String) {
+    // Formats 15's and 16's reads use no SIMD group; 16z's block decode is a SIMD group's (`UKL_SIMD_GROUP_FREE`,
+    // ukl/backend.h).
+    let free = if header == "tape.h" { SIMD_GROUP_FREE } else { "" };
+    (format!("tape_reads_{header}"), format!("{free}{}", DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>"))))
+}
+
+/// What a source says first when its kernels use no SIMD group (ukl/backend.h, decision 0576 §14): on OpenCL they
+/// then require no sub-group size, and a kernel that reaches a SIMD-group operation is refused at its build.
+#[cfg(any(test, feature = "test-hooks"))]
+const SIMD_GROUP_FREE: &str = "#define UKL_SIMD_GROUP_FREE 1\n";
+
+/// The tape format's kernels, by name and text (`rerail_gpu::kernels::program` compiles each): its tests' (the
+/// writer's replay, the reads' two programs), which the engine's `kernels compile` compiles ahead of them.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn kernels() -> Vec<(String, String)> {
+    vec![(ops::REPLAY_NAME.to_owned(), ops::REPLAY.to_owned()), device_reads_kernel("tape.h"), device_reads_kernel("tape_z.h")]
+}
+
 /// The writer whose ops are the CLIF ones (decision 0434 §6).
 pub mod ops;
 #[cfg(any(test, feature = "reference"))]
@@ -797,10 +903,6 @@ pub(crate) trait WriterOps: Sized {
     #[cfg_attr(not(test), allow(dead_code))]
     fn set_start(&mut self, i: usize, start: u64);
     fn finish(self) -> Result<Finished, String>;
-    /// Whether its writers are finished together (`finish_all`, the device's in one launch), not each as it is made:
-    /// a writer used again (`ops::Writer::begin`) is finished before the next is asked for.
-    #[cfg_attr(not(test), allow(dead_code))]
-    const TOGETHER: bool = false;
     /// Each writer's `finish`, in order (the device's run in one launch, a thread a writer).
     #[cfg_attr(not(test), allow(dead_code))]
     fn finish_all(ws: Vec<Self>) -> Vec<Result<Finished, String>> {
@@ -816,11 +918,11 @@ macro_rules! writer_ops {
     ($t:ty, again) => {
         writer_ops!($t, |mut w: $t| <$t>::finish(&mut w));
     };
-    // Its writers finished together by `$all` (`WriterOps::finish_all`: the device's in one launch).
-    ($t:ty, all = $all:ident) => {
-        writer_ops!($t, |w: $t| <$t>::finish(w), $all);
+    // Every writer's `finish` at once too (`DeviceOps::finish_all`: one launch).
+    ($t:ty, all) => {
+        writer_ops!($t, |w: $t| <$t>::finish(w), <$t>::finish_all);
     };
-    ($t:ty, $finish:expr $(, $all:ident)?) => {
+    ($t:ty, $finish:expr $(, $all:expr)?) => {
         impl WriterOps for $t {
             fn open(&mut self, number: u32, start: u64) -> usize {
                 <$t>::open(self, number, start)
@@ -844,9 +946,8 @@ macro_rules! writer_ops {
                 ($finish)(self)
             }
             $(
-                const TOGETHER: bool = { let _ = stringify!($all); true };
-                fn $all(ws: Vec<Self>) -> Vec<Result<Finished, String>> {
-                    <$t>::$all(ws)
+                fn finish_all(ws: Vec<Self>) -> Vec<Result<Finished, String>> {
+                    ($all)(ws)
                 }
             )?
         }
@@ -856,7 +957,7 @@ writer_ops!(Writer, again);
 #[cfg(any(test, feature = "reference"))]
 writer_ops!(reference::Writer<'_>);
 #[cfg(test)]
-writer_ops!(ops::device::DeviceOps, all = finish_all);
+writer_ops!(ops::device::DeviceOps, all);
 
 pub fn write(lang: &Lang, n: usize, source: &[u8], tag: u8, z: bool, node: impl FnMut(usize) -> Node) -> Result<Written, String> {
     write_with(Writer::new(lang, source, tag, z, false, n), n, node).map(|f| f.tape)
@@ -2004,6 +2105,60 @@ mod tests {
         same_reads(&reads, &f15, &image, &v);
     }
 
+    /// The Rust reads (`crate::reads`, written directly, decision 0534) read every node, byte and line as the CLIF
+    /// reads do through the JIT: format 16 with every side list in use, and format 15.
+    #[test]
+    fn the_rust_reads_are_the_jits() {
+        use crate::reads::{f15, f16};
+        let jit = rerail_clif::jit::Reads::new();
+        // SAFETY: the read's signature: the tape's base, its view, a node; a u64.
+        let slot: extern "C" fn(*const u8, *const TapeView, u32) -> u64 = unsafe { std::mem::transmute(jit.function("tape_slot")) };
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let t = sixteen(&lang, &Plain(&nodes, &table), &(0..600).collect::<Vec<_>>(), pos + 2);
+        let (b, v) = (t.as_bytes(), placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap());
+        let mut prev = 0;
+        for i in 0..v.nodes {
+            let n = i as usize;
+            assert_eq!(f16::size(b, &v, i), jit.one("tape_size", b, &v, n), "size of {i}");
+            assert_eq!(f16::number(b, &v, i), jit.one("tape_number", b, &v, n), "number of {i}");
+            assert_eq!(f16::start_stated(b, &v, i), jit.one("tape_start_stated", b, &v, n), "stated start of {i}");
+            assert_eq!(f16::start(b, &v, i), jit.one("tape_start", b, &v, n), "start of {i}");
+            assert_eq!(f16::end(b, &v, i), jit.one("tape_end", b, &v, n), "end of {i}");
+            assert_eq!(f16::length(b, &v, i), jit.one("tape_length", b, &v, n), "length of {i}");
+            assert_eq!(f16::parent(b, &v, i), jit.one("tape_parent", b, &v, n), "parent of {i}");
+            assert_eq!(f16::slot(b, &v, i), slot(b.as_ptr(), &v, i), "slot of {i}");
+            assert_eq!(f16::start_next(b, &v, i, prev), jit.two("tape_start_next", b, &v, n, prev), "next start of {i}");
+            prev = f16::start(b, &v, i);
+        }
+        for x in 0..=v.source_len {
+            assert_eq!(f16::line(b, &v, x), jit.one("tape_line", b, &v, x as usize), "line of byte {x}");
+        }
+        for k in 0..v.line_count {
+            assert_eq!(f16::line_start(b, &v, k), jit.one("tape_line_start", b, &v, k as usize), "line {k}'s start");
+        }
+        for block in (0..v.nodes.div_ceil(Z as u32)).chain([u32::MAX]) {
+            for kind in 0..640 {
+                assert_eq!(f16::has_kind(b, &v, block, kind), jit.two("tape_has_kind", b, &v, block as usize, kind), "kind {kind} in block {block}");
+            }
+        }
+        // Format 15.
+        let (image, _) = crate::tape::tests::sample();
+        let v = crate::tape::f15_view(&image, 0).unwrap();
+        for i in 0..v.nodes {
+            let n = i as usize;
+            assert_eq!(f15::size(&image, &v, i), jit.one("tape_size", &image, &v, n), "size of {i}");
+            assert_eq!(f15::number(&image, &v, i), jit.one("tape_number", &image, &v, n), "number of {i}");
+            assert_eq!(f15::start_stated(&image, &v, i), jit.one("tape_start_stated", &image, &v, n), "stated start of {i}");
+            assert_eq!(f15::end_stated(&image, &v, i), jit.one("tape_end_stated", &image, &v, n), "stated end of {i}");
+            assert_eq!(f15::start(&image, &v, i), jit.one("tape_start", &image, &v, n), "start of {i}");
+            assert_eq!(f15::end(&image, &v, i), jit.one("tape_end", &image, &v, n), "end of {i}");
+            assert_eq!(f15::parent(&image, &v, i), jit.one("tape_parent", &image, &v, n), "parent of {i}");
+        }
+    }
+
     /// Decision 0463: every walk ends, whatever it is asked of whatever view. A node at or past the view's count, a
     /// view whose count is short of its tape's, a byte past the source and a line past the last ask each walking read
     /// (sizes' hops, a parent's descent, the newline index's selects) to step past what the tape holds: each step must
@@ -2067,65 +2222,40 @@ mod tests {
                     ask(format!("{format}: tape_line_start({k}) of {} lines", lines + 1));
                     reads.one("tape_line_start", bytes, view, k as usize);
                 }
+                // The same walks by the reads written directly in Rust (decision 0534), on the same views and nodes.
+                let f16_tape = *format == "format 16";
+                for (v, nodes) in &short {
+                    for &i in nodes {
+                        ask(format!("{format}: the direct reads of {i} of a view of {} nodes", v.nodes));
+                        if f16_tape {
+                            use crate::reads::f16;
+                            let _ = (f16::size(bytes, v, i), f16::parent(bytes, v, i), f16::start(bytes, v, i), f16::end(bytes, v, i));
+                        } else {
+                            use crate::reads::f15;
+                            let _ = (f15::size(bytes, v, i), f15::parent(bytes, v, i), f15::start(bytes, v, i), f15::end(bytes, v, i));
+                        }
+                    }
+                }
+                if f16_tape {
+                    use crate::reads::f16;
+                    for x in [view.source_len, view.source_len + 1, view.source_len + 4096] {
+                        ask(format!("{format}: the direct line({x}) of a source of {} bytes", view.source_len));
+                        let _ = f16::line(bytes, view, x);
+                    }
+                    let lines = f16::line(bytes, view, view.source_len.saturating_sub(1));
+                    for k in [lines + 1, lines + 2, lines + 1000] {
+                        ask(format!("{format}: the direct line_start({k}) of {} lines", lines + 1));
+                        let _ = f16::line_start(bytes, view, k);
+                    }
+                }
             }
             let _ = done.send(());
         });
-        if finished.recv_timeout(std::time::Duration::from_secs(20)).is_err() {
-            panic!("a walk that does not end: {}", asked.lock().unwrap());
-        }
-    }
-
-    /// The Rust reads (`crate::reads`, written directly, decision 0534) read every node, byte and line as the CLIF
-    /// reads do through the JIT: format 16 with every side list in use, and format 15.
-    #[test]
-    fn the_rust_reads_are_the_jits() {
-        use crate::reads::{f15, f16};
-        let jit = rerail_clif::jit::Reads::new();
-        // SAFETY: the read's signature: the tape's base, its view, a node; a u64.
-        let slot: extern "C" fn(*const u8, *const TapeView, u32) -> u64 = unsafe { std::mem::transmute(jit.function("tape_slot")) };
-        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
-        let table = CodeTable::new(entries);
-        let lang = lang_of(&table);
-        let (nodes, pos) = escaped_nodes();
-        let t = sixteen(&lang, &Plain(&nodes, &table), &(0..600).collect::<Vec<_>>(), pos + 2);
-        let (b, v) = (t.as_bytes(), placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap());
-        let mut prev = 0;
-        for i in 0..v.nodes {
-            let n = i as usize;
-            assert_eq!(f16::size(b, &v, i), jit.one("tape_size", b, &v, n), "size of {i}");
-            assert_eq!(f16::number(b, &v, i), jit.one("tape_number", b, &v, n), "number of {i}");
-            assert_eq!(f16::start_stated(b, &v, i), jit.one("tape_start_stated", b, &v, n), "stated start of {i}");
-            assert_eq!(f16::start(b, &v, i), jit.one("tape_start", b, &v, n), "start of {i}");
-            assert_eq!(f16::end(b, &v, i), jit.one("tape_end", b, &v, n), "end of {i}");
-            assert_eq!(f16::length(b, &v, i), jit.one("tape_length", b, &v, n), "length of {i}");
-            assert_eq!(f16::parent(b, &v, i), jit.one("tape_parent", b, &v, n), "parent of {i}");
-            assert_eq!(f16::slot(b, &v, i), slot(b.as_ptr(), &v, i), "slot of {i}");
-            assert_eq!(f16::start_next(b, &v, i, prev), jit.two("tape_start_next", b, &v, n, prev), "next start of {i}");
-            prev = f16::start(b, &v, i);
-        }
-        for x in 0..=v.source_len {
-            assert_eq!(f16::line(b, &v, x), jit.one("tape_line", b, &v, x as usize), "line of byte {x}");
-        }
-        for k in 0..v.line_count {
-            assert_eq!(f16::line_start(b, &v, k), jit.one("tape_line_start", b, &v, k as usize), "line {k}'s start");
-        }
-        for block in (0..v.nodes.div_ceil(Z as u32)).chain([u32::MAX]) {
-            for kind in 0..640 {
-                assert_eq!(f16::has_kind(b, &v, block, kind), jit.two("tape_has_kind", b, &v, block as usize, kind), "kind {kind} in block {block}");
-            }
-        }
-        // Format 15.
-        let (image, _) = crate::tape::tests::sample();
-        let v = crate::tape::f15_view(&image, 0).unwrap();
-        for i in 0..v.nodes {
-            let n = i as usize;
-            assert_eq!(f15::size(&image, &v, i), jit.one("tape_size", &image, &v, n), "size of {i}");
-            assert_eq!(f15::number(&image, &v, i), jit.one("tape_number", &image, &v, n), "number of {i}");
-            assert_eq!(f15::start_stated(&image, &v, i), jit.one("tape_start_stated", &image, &v, n), "stated start of {i}");
-            assert_eq!(f15::end_stated(&image, &v, i), jit.one("tape_end_stated", &image, &v, n), "stated end of {i}");
-            assert_eq!(f15::start(&image, &v, i), jit.one("tape_start", &image, &v, n), "start of {i}");
-            assert_eq!(f15::end(&image, &v, i), jit.one("tape_end", &image, &v, n), "end of {i}");
-            assert_eq!(f15::parent(&image, &v, i), jit.one("tape_parent", &image, &v, n), "parent of {i}");
+        // A direct read past its slice panics (the walk's thread ends without its message): said apart from a hang.
+        match finished.recv_timeout(std::time::Duration::from_secs(20)) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => panic!("a read that panicked: {}", asked.lock().unwrap_or_else(|e| e.into_inner())),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("a walk that does not end: {}", asked.lock().unwrap_or_else(|e| e.into_inner())),
         }
     }
 
@@ -2325,85 +2455,6 @@ mod tests {
         check(z.as_bytes().as_ptr(), reader.view(), z.len());
     }
 
-    /// The device's kernel: every read of node `i` (`DEVICE_READS` of them) into its slots, from the reads as UKL
-    /// (`READS_HEADER`: `<ukl/reads/tape.h>`, or `tape_z.h`, which reads 16z too), the view read where its buffer holds
-    /// it. `parentEnd[i]` is the end of `i`'s parent's subtree (`tape_next_in`'s bound).
-    const DEVICE_KERNEL: &str = r#"
-#define CLIF_VIEW_SPACE UKL_GLOBAL
-#include READS_HEADER
-
-typedef struct ReadArgs {
-    uint32_t n;
-    uint32_t pad;
-} ReadArgs;
-UKL_REFLECT_STRUCT(ReadArgs, n, pad)
-
-DEFINE_KERNEL2(tests, t_reads,
-               ARGS,     ReadArgs, args,      ,
-               RWBUFFER, uint8_t,  tape,      "[bytes]",
-               ROBUFFER, uint32_t, view,      "[29]",
-               ROBUFFER, uint32_t, parentEnd, "[n]",
-               RWBUFFER, uint32_t, out,       "[n * 23]",
-               GID0,     uint32_t, i,         )
-{
-    if (i >= args.n)
-        return;
-    RWBUFFER(uint32_t) o = out + i * 23u;
-    o[0] = clif_tape_size(tape, view, i);
-    o[1] = clif_tape_end_of(tape, view, i);
-    o[2] = clif_tape_number(tape, view, i);
-    o[3] = clif_tape_start(tape, view, i);
-    o[4] = clif_tape_end(tape, view, i);
-    o[5] = clif_tape_parent(tape, view, i);
-    o[6] = clif_tape_next(tape, view, i);
-    o[7] = clif_tape_next_in(tape, view, i, parentEnd[i]);
-    o[8] = clif_tape_first_child(tape, view, i);
-    o[9] = clif_tape_child_count(tape, view, i);
-    for (uint32_t k = 0u; k <= 12u; k++)
-        o[10u + k] = clif_tape_child(tape, view, i, k);
-}
-
-typedef struct RandomArgs {
-    uint32_t n;
-    uint32_t threads;
-    uint32_t rounds;
-    uint32_t cache;
-} RandomArgs;
-UKL_REFLECT_STRUCT(RandomArgs, n, threads, rounds, cache)
-
-// Each thread's reads of `rounds` nodes at random (its code, start, end and parent, against `want`'s): how many were
-// wrong, and how many of those were wrong with no failure yet counted by the cache (at `cache` in the tape), in its
-// own two words (no counter shared by every thread).
-DEFINE_KERNEL2(tests, t_random,
-               ARGS,     RandomArgs, args,  ,
-               RWBUFFER, uint8_t,    tape,  "[bytes]",
-               ROBUFFER, uint32_t,   view,  "[29]",
-               ROBUFFER, uint32_t,   want,  "[n * 4]",
-               RWBUFFER, uint32_t,   out,   "[threads * 2]",
-               GID0,     uint32_t,   i,     )
-{
-    if (i >= args.threads)
-        return;
-    uint32_t x = i * 0x9E3779B9u + 1u, wrong = 0u, silent = 0u;
-    for (uint32_t r = 0u; r < args.rounds; r++) {
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        uint32_t node = x % args.n;
-        ROBUFFER(uint32_t) w = want + node * 4u;
-        uint32_t bad = 0u;
-        bad += clif_tape_number(tape, view, node) != w[0] ? 1u : 0u;
-        bad += clif_tape_start(tape, view, node) != w[1] ? 1u : 0u;
-        bad += clif_tape_end(tape, view, node) != w[2] ? 1u : 0u;
-        bad += clif_tape_parent(tape, view, node) != w[3] ? 1u : 0u;
-        wrong += bad;
-        if (bad != 0u && ukl_atomic_load_at(tape, (uint64_t)args.cache + CLIF_T_C_FAILED) == 0u)
-            silent += bad;
-    }
-    out[2u * i] = wrong;
-    out[2u * i + 1u] = silent;
-}
-"#;
     const DEVICE_READS: usize = 23;
 
     #[repr(C)]
@@ -2505,10 +2556,9 @@ DEFINE_KERNEL2(tests, t_random,
             return;
         }
         let program = |header: &str| {
-            let text: &'static str = Box::leak(DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>")).into_boxed_str());
-            let name: &'static str = Box::leak(format!("tape_reads_{header}").into_boxed_str());
             let started = std::time::Instant::now();
-            let p = rerail_gpu::kernels::program(name, text).unwrap_or_else(|e| panic!("{}: {header}: {e}", rerail_gpu::device::backend()));
+            let (name, text) = super::device_reads_kernel(header);
+            let p = rerail_gpu::kernels::program(&name, &text).unwrap_or_else(|e| panic!("{}: {header}: {e}", rerail_gpu::device::backend()));
             eprintln!("{}: {header} compiled in {:.2} s", rerail_gpu::device::backend(), started.elapsed().as_secs_f64());
             p
         };
@@ -2625,8 +2675,9 @@ DEFINE_KERNEL2(tests, t_random,
             eprintln!("no device: the reads as UKL did not run");
             return;
         };
-        let text: &'static str = Box::leak(DEVICE_KERNEL.replace("READS_HEADER", "<ukl/reads/tape_z.h>").into_boxed_str());
-        let program = rerail_gpu::kernels::program("tape_reads_turning", text).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+        // The reads' 16z program, as compiled ahead (`kernels`): it holds `t_random` too.
+        let (name, text) = device_reads_kernel("tape_z.h");
+        let program = rerail_gpu::kernels::program(&name, &text).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
         let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
         let table = CodeTable::new(entries);
         let lang = lang_of(&table);
@@ -3104,11 +3155,24 @@ DEFINE_KERNEL2(tests, t_random,
             eprintln!("no device: the writer's ops in UKL did not run");
             return;
         }
-        writes_the_references_tape(|lang, source, z, blocks, nodes| ops::device::DeviceOps::new(lang, source, 3, z, blocks, nodes / 3));
+        writes_the_references_tape_together(|lang, source, z, blocks, nodes| ops::device::DeviceOps::new(lang, source, 3, z, blocks, nodes / 3));
     }
 
-    /// R13's cases: `make(lang, source, z, blocks, nodes)`'s writer and the reference, from the same ops.
+    /// R13's cases: `make(lang, source, z, blocks, nodes)`'s writer and the reference, from the same ops, each case's
+    /// finished before the next is made.
     fn writes_the_references_tape<W: WriterOps>(make: impl Fn(&Lang, &[u8], bool, bool, usize) -> W) {
+        references_tape(make, false);
+    }
+
+    /// `writes_the_references_tape`, every case's writer finished together (`WriterOps::finish_all`: the device's in
+    /// one launch, a group a writer).
+    fn writes_the_references_tape_together<W: WriterOps>(make: impl Fn(&Lang, &[u8], bool, bool, usize) -> W) {
+        references_tape(make, true);
+    }
+
+    /// R13's cases: `make`'s writer and the reference, from the same ops; each case's finished before the next is made
+    /// (a writer used again is the one the case before gave back), or all at once (`together`).
+    fn references_tape<W: WriterOps>(make: impl Fn(&Lang, &[u8], bool, bool, usize) -> W, together: bool) {
         let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
         let table = CodeTable::new(entries);
         let lang = lang_of(&table);
@@ -3150,9 +3214,7 @@ DEFINE_KERNEL2(tests, t_random,
         type Case<'a> = (&'a str, &'a [(u32, u64, u64, usize)], &'a Vec<u8>);
         let mut cases: Vec<Case> = vec![("escaped", &nodes[..], &source), ("repeating", &rep[..], &rep_source), ("one node", &small[..], &source), ("none", &[][..], &source)];
         cases.extend(randoms.iter().map(|(t, src)| ("random", &t[..], src)));
-        // Each case's writer finished as it is made, or every one together (`WriterOps::TOGETHER`: the device's in
-        // one launch).
-        let (mut whats, mut refs, mut made, mut finished) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut whats, mut refs, mut made, mut done) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (label, nodes, source) in cases {
             for (z, every, late, blocks) in [(false, 1, false, true), (false, 1_000_000, false, false), (false, 97, false, true), (false, 1, true, false), (false, 13, true, true), (true, 1, false, true), (true, 1_000_000, false, false), (true, 13, true, true)] {
                 if late && nodes.len() < 2 {
@@ -3164,15 +3226,15 @@ DEFINE_KERNEL2(tests, t_random,
                 by_ops_of(&mut c, nodes, every, late);
                 whats.push((format!("{label}: 16z {z}, commit every {every}, late {late}, blocks {blocks}"), nodes.is_empty()));
                 refs.push(r.finish());
-                if W::TOGETHER {
+                if together {
                     made.push(c);
                 } else {
-                    finished.push(c.finish());
+                    done.push(c.finish());
                 }
             }
         }
-        finished.extend(W::finish_all(made));
-        for (((what, empty), r), c) in whats.into_iter().zip(refs).zip(finished) {
+        done.extend(W::finish_all(made));
+        for (((what, empty), r), c) in whats.into_iter().zip(refs).zip(done) {
             match (r, c) {
                 (Ok(r), Ok(c)) => {
                     match (&r.tape, &c.tape) {
@@ -3380,5 +3442,99 @@ DEFINE_KERNEL2(tests, t_random,
             assert!(n < raw.len(), "case {case}: a piece cut short decodes less");
             assert_eq!(jits(&buf[..cut], 5, cut, raw.len()), dst[..n], "case {case}: the JIT's decode of the piece cut short");
         }
+    }
+
+    /// The ops at constant widths (`writer16::Fixed`) write the bytes the state's widths do (`Run`, the methods), in
+    /// format 16 and 16z: values past each width (escapes and side lists), codes past the cut, many blocks.
+    #[test]
+    fn the_ops_at_constant_widths_write_the_state_widths_bytes() {
+        use crate::tape::Entry;
+        use crate::writer16::{CellWidths, Fixed, w_close_with, w_commit, w_leaf_with, w_open_with};
+        #[derive(Clone, Copy)]
+        enum Op {
+            Open(u32, u64),
+            Leaf(u32, u64, u64),
+            Close(u64),
+        }
+        // A tree over `len` bytes: gaps and lengths of every size, numbers up to `kinds`.
+        fn tree(len: u64, kinds: u32, seed: u64) -> Vec<Op> {
+            let mut x = seed;
+            let mut next = move || {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x
+            };
+            let (mut ops, mut at, mut open) = (vec![Op::Open(0, 0)], 0u64, 1usize);
+            while at < len {
+                let r = next();
+                let step = match r % 7 {
+                    0 => r >> 8 & 0x3ff,
+                    1 => r >> 8 & 0x1_ffff,
+                    _ => r >> 8 & 3,
+                };
+                at = (at + step).min(len);
+                let number = (r >> 40) as u32 % kinds;
+                match r >> 4 & 3 {
+                    0 if open < 40 => {
+                        ops.push(Op::Open(number, at));
+                        open += 1;
+                    }
+                    1 if open > 1 => {
+                        ops.push(Op::Close(at));
+                        open -= 1;
+                    }
+                    _ => {
+                        let end = (at + (r >> 20 & if r & 1 == 0 { 7 } else { 0x1_ffff })).min(len);
+                        ops.push(Op::Leaf(number, at, end));
+                        at = end;
+                    }
+                }
+            }
+            ops.extend(std::iter::repeat_n(Op::Close(len), open));
+            ops
+        }
+        fn both<X: CellWidths>(widths: [usize; 3]) {
+            let entries = (0..300).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+            let lang = Lang::new(CodeTable::new(entries), widths, 1).unwrap();
+            let source = source_of(300_000);
+            for seed in [1, 2, 3] {
+                let ops = tree(source.len() as u64, 300, seed);
+                for z in [false, true] {
+                    let mut a = Writer::new(&lang, &source, 0, z, true, ops.len());
+                    for &op in &ops {
+                        match op {
+                            Op::Open(n, s) => _ = a.open(n, s),
+                            Op::Leaf(n, s, e) => _ = a.leaf(n, s, e),
+                            Op::Close(e) => a.close(e),
+                        }
+                        a.commit();
+                    }
+                    let mut b = Writer::new(&lang, &source, 0, z, true, ops.len());
+                    b.reserve_run(ops.len(), 41);
+                    let d = b.state_address();
+                    for &op in &ops {
+                        // SAFETY: `d` is `b`'s state, its room reserved for every node and level.
+                        let r = unsafe {
+                            match op {
+                                Op::Open(n, s) => w_open_with::<X>(d, n, s),
+                                Op::Leaf(n, s, e) => w_leaf_with::<X>(d, n, s, e),
+                                Op::Close(e) => w_close_with::<X>(d, e),
+                            }
+                        };
+                        assert_eq!(r, 0, "widths {widths:?}: the op, its room reserved");
+                        // SAFETY: as the op's.
+                        assert_eq!(unsafe { w_commit(d) }, 0);
+                    }
+                    let (a, b) = (a.finish().unwrap(), b.finish().unwrap());
+                    assert!(a.tape.extent() == b.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the constant widths' bytes");
+                }
+            }
+        }
+        both::<Fixed<1, 1, 1>>([1, 1, 1]);
+        both::<Fixed<2, 1, 4>>([2, 1, 4]);
+        both::<Fixed<1, 2, 2>>([1, 2, 2]);
+        both::<Fixed<4, 4, 8>>([4, 4, 8]);
+        both::<Fixed<3, 1, 1>>([3, 1, 1]);
     }
 }

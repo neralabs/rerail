@@ -71,35 +71,35 @@ transducer::packed::compile_matcher::matcher_metal	rerail-device-metal
 
 # W: the language-neutral evaluator
 blade	rerail-lang-php
-calls	rerail-w
-compile	rerail-w
-eval	rerail-w
-findings	rerail-w
-literal	rerail-w
-matcher	rerail-w
-model	rerail-w
-origin	rerail-w
-placement	rerail-w
-query	rerail-w
-scope	rerail-w
-soundness	rerail-w
-stats	rerail-w
-suppress	rerail-w
-value	rerail-w
-violations	rerail-w
-workspace	rerail-w
-hooks	rerail-w
-crypto	rerail-w
-profile	rerail-w
-test_support	rerail-w
-residency::admission	rerail-w
-transducer::semantic_facts	rerail-w
-language::adapter	rerail-w
-facts::facts_a	rerail-w
+calls	rerail-workspace
+compile	rerail-workspace
+eval	rerail-workspace
+findings	rerail-workspace
+literal	rerail-workspace
+matcher	rerail-workspace
+model	rerail-workspace
+origin	rerail-workspace
+placement	rerail-workspace
+query	rerail-workspace
+scope	rerail-workspace
+soundness	rerail-workspace
+stats	rerail-workspace
+suppress	rerail-workspace
+value	rerail-workspace
+violations	rerail-workspace
+workspace	rerail-workspace
+hooks	rerail-workspace
+crypto	rerail-workspace
+profile	rerail-workspace
+test_support	rerail-workspace
+residency::admission	rerail-workspace
+transducer::semantic_facts	rerail-workspace
+language::adapter	rerail-workspace
+facts::facts_a	rerail-workspace
 
 # Language packs
 cpython	rerail-lang-python
-identifier	rerail-w
+identifier	rerail-workspace
 module_path	rerail-lang-python
 calls::python	rerail-lang-python
 facts::producers::python	rerail-lang-python
@@ -127,7 +127,7 @@ compile::import_target	rerail-lang-ecma
 module_graph	rerail-lang-ecma
 npm_ignore	rerail-lang-ecma
 package_manifest	rerail-lang-ecma
-semver	rerail-w
+semver	rerail-workspace
 scope::ecma	rerail-lang-ecma
 scope::usage::ecma	rerail-lang-ecma
 value::ecma	rerail-lang-ecma
@@ -175,19 +175,43 @@ language::adapter::sql	rerail-lang-sql
 language::adapter::json	rerail-lang-json
 transducer::packed::json_parser	rerail-lang-json
 
-# Java reads syntax alone (no semantic concern yet): its adapter is the engine's until a capability needs a crate
-language::adapter::java	rerail-engine
-
-# The engine: napi, CLI, boot and the composition glue
+# The engine: napi (its code_rule_dsl/mod.rs items, the slice's object, the CLI's entry points) and the tests that
+# read them. Every other test is a test crate's (native/crates/tests_*, tools/cratify/split_test_crates.py).
 crate	rerail-engine
 dsl_root	rerail-engine
-slice	rerail-engine
-tools	rerail-engine
-prefilter	rerail-engine
-waves	rerail-engine
-logic::convert	rerail-engine
-logic::plan::corpus::references	rerail-engine
+slice::napi	rerail-engine
+slice::napi_tests	rerail-engine
+tools::napi	rerail-engine
+napi_tests	rerail-engine
 transducer::packed::compile_matcher	rerail-transducer
+
+# Boot: the composition root (incremental-plan.md, step 1b) and what only it and the engine read. Boot's mounts are
+# generated from the engine's code_rule_dsl/mod.rs (tools/cratify/boot_mounts.py, boot_manifest.py).
+boot	rerail-boot
+tools	rerail-boot
+logic::convert	rerail-boot
+logic::rr::testing	rerail-boot
+slice	rerail-boot
+prefilter	rerail-boot
+functors	rerail-boot
+test_support	rerail-boot
+waves::matches	rerail-boot
+waves::findings	rerail-boot
+waves::policies	rerail-boot
+waves::schedule::batches	rerail-boot
+facts::vtab::syntax::ast_wave	rerail-boot
+language::adapter::c	rerail-boot
+language::adapter::c_pp	rerail-boot
+language::adapter::csharp	rerail-boot
+language::adapter::css	rerail-boot
+language::adapter::go	rerail-boot
+language::adapter::html	rerail-boot
+# Java reads syntax alone (no semantic concern yet): boot keeps its adapter until a capability needs a crate
+language::adapter::java	rerail-boot
+language::adapter::kotlin	rerail-boot
+language::adapter::markdown	rerail-boot
+language::adapter::scala	rerail-boot
+language::adapter::swift	rerail-boot
 
 # Generic concepts every language reads (one canonical module path; embedded segments)
 module_path	rerail-lang
@@ -262,14 +286,14 @@ scope::usage::lang_rust	rerail-lang-rust
 scope::usage::lang_php	rerail-lang-php
 scope::usage::lang_sql	rerail-lang-sql
 scope::usage::lang_python	rerail-lang-python
-residency::admission::relational::ast_stage	rerail-w
+residency::admission::relational::ast_stage	rerail-workspace
 literal::semantic	rerail-lang-python
-crate::git_ignore	rerail-w
-crate::panic_boundary	rerail-w
+crate::git_ignore	rerail-workspace
+crate::panic_boundary	rerail-workspace
 crate::content_store	rerail-store
 crate::git_workspace	rerail-store
-resolution	rerail-w
-matcher::term	rerail-w
+resolution	rerail-workspace
+matcher::term	rerail-workspace
 matcher::arguments::lang_python	rerail-lang-python
 matcher::arguments::lang_php	rerail-lang-php
 matcher::format_args::python	rerail-lang-python
@@ -278,15 +302,15 @@ matcher::format_args::scanf	rerail-lang-php
 compile::resolve::php	rerail-lang-php
 search_index	rerail-facts
 facts::nearest	rerail-facts
-walks	rerail-w
+walks	rerail-workspace
 semver	rerail-lang
 matcher::arguments_sql	rerail-lang-sql
 functors	rerail-engine
 stats::identity	rerail-facts
 waves::schedule::batches	rerail-engine
-waves::relational	rerail-w
+waves::relational	rerail-workspace
 waves::relational::execution	rerail-engine
-rule_api	rerail-w
+rule_api	rerail-workspace
 logic::front::name	rerail-rr-syntax
 compile::format_args::php	rerail-engine
 compile::binds::eslint	rerail-engine

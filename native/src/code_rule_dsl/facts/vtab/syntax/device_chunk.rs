@@ -103,7 +103,7 @@ pub const VIEW_DEPTH: u32 = 11;
 pub const VIEW_ORDER: u32 = 12;
 
 /// The views' reads' views (`rerail_clif::view_reads::VIEWS`): a directory's document has its first row in each.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 const NVIEWS: usize = rerail_clif::view_reads::VIEWS.len();
 
 /// A view's number in the views' reads (`vread`'s `kind`: 1 + its place in `rerail_clif::view_reads::VIEWS`), of its
@@ -156,14 +156,14 @@ pub struct Chunk {
     lines: std::sync::OnceLock<bool>,
     /// The views' directory (`views_in_place`), once asked; `None` when a document's tape is not where the device
     /// reads it.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     views: std::sync::OnceLock<Option<ViewsInPlace>>,
 }
 
 /// A batch's documents as the views' reads find them on the device (decision 0353 step 4d, `ViewDir`): each one's
 /// entry, beside its projection's numbering in the batch's block, and its tape where it lies in its slab. A stage
 /// reads a view through them; nothing makes the view's rows.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub struct ViewsInPlace {
     /// The directory's offset in the batch's block (`ViewDir::at`): every executor's reads take it there, the host's at
     /// the block's host address, the device's at its device address.
@@ -184,12 +184,15 @@ pub struct ViewsInPlace {
     /// block, which every reader of the batch's views shares, on the host and on the device: none where no tape is
     /// 16z.
     pub cache: Option<crate::code_rule_dsl::facts::vtab::ZCache>,
+    /// The tape format of every document read off its tape (15, 16, `F16Z_FORMAT`), or 0 for a batch of several: the
+    /// stages that read its views are compiled for it (decision 0576).
+    pub format: u32,
     _entries: Vec<super::view_docs::ViewEntry>,
 }
 
 
 /// The batch's cache's counts in the profile when its directory goes (the statistics mode's too, where it is on).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl Drop for ViewsInPlace {
     fn drop(&mut self) {
         if let Some(cache) = &self.cache {
@@ -203,18 +206,18 @@ impl Drop for ViewsInPlace {
 
 /// The batch's views' directory (`ViewsInPlace`), made on its first ask, with or without a device: `None` when a
 /// document is in another block or has no tape read in place. Where the device reads it is `ViewsInPlace::dir`.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsInPlace> {
     chunk.views.get_or_init(|| build_views(batch, chunk)).as_ref()
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     build_dir(&chunk.block, &docs_of(batch, [0; NVIEWS]))
 }
 
 /// One document of a views' directory: its projection, its dialect, and its first row in each view (`VIEWS`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct DirDoc<'a> {
     p: &'a super::Projected,
     dialect: &'a super::Dialect,
@@ -222,7 +225,7 @@ struct DirDoc<'a> {
 }
 
 /// `batch`'s documents in a directory, each view's rows past `past` of that view.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn docs_of(batch: &Batch, past: [u32; NVIEWS]) -> Vec<DirDoc<'_>> {
     let (nodes, children, fields, locs) = (batch.offsets(View::Node), batch.offsets(View::Child), batch.offsets(View::Field), batch.offsets(View::Loc(Place::Line)));
     batch
@@ -238,7 +241,7 @@ fn docs_of(batch: &Batch, past: [u32; NVIEWS]) -> Vec<DirDoc<'_>> {
 }
 
 /// Each view's rows of `batch` (`VIEWS`' order).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn rows_of(batch: &Batch) -> [u32; NVIEWS] {
     let last = |v: View| batch.offsets(v).last().map_or(0, |&r| r as u32);
     let (n, loc) = (last(View::Node), last(View::Loc(Place::Line)));
@@ -249,7 +252,7 @@ fn rows_of(batch: &Batch) -> [u32; NVIEWS] {
 /// `values::Layered`): the batch's documents, then each value's batch's, each view's rows of a value past those
 /// before it, as a layered source numbers them. Every document is in the batch's block: `None` where one is not, or
 /// a tape is not where the device reads it.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> {
     let mut docs = docs_of(batch, [0; NVIEWS]);
     let mut past = rows_of(batch);
@@ -262,7 +265,7 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
 }
 
 /// The directory of `docs`, made in `b` (`ViewsInPlace`): each one's entry, tape and lines where the device reads them.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     use crate::code_rule_dsl::tape::placed;
     use rerail_clif::view_reads::{ViewDir, ViewHome, ViewRow};
@@ -290,6 +293,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     // The 16z documents' rows, their blocks and their largest block's entry: their cache made after the rows.
     let (mut zrows, mut zblocks, mut zentry) = (Vec::new(), 0usize, 0usize);
     let mut locs = docs.iter().all(|d| d.p.extra.is_some());
+    let mut format: Option<u32> = None;
     for (i, &DirDoc { p, dialect, rows: first_rows }) in docs.iter().enumerate() {
         // Each refusal counted by why: what step 4b (16z laid out apart) and the loads not yet placed leave.
         let refused = |why: &'static str| {
@@ -321,7 +325,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
                 let (bytes, view) = tape.in_place().map_err(|_| "views.refused.not_in_place")?;
                 Ok((placed::home_of(tape.image().room(), bytes), view, tape.image().format()))
             };
-            let (at, view, format) = match tape_in_place() {
+            let (at, view, tape_format) = match tape_in_place() {
                 Ok(t) => t,
                 Err(why) if !only_locs => return refused(why),
                 Err(why) => {
@@ -335,7 +339,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
             let (tape_home, tape_at, tape_on_device) = home(at);
             if !tape_on_device && device.is_some() {
                 // The device's refusal, by why: the host reads it all the same.
-                let why = if format == crate::code_rule_dsl::tape::formats::Format::F16Z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" };
+                let why = if tape_format == crate::code_rule_dsl::tape::formats::Format::F16Z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" };
                 crate::code_rule_dsl::prof::count(why, 1);
                 if only_locs { locs = false } else { on_device = false }
             }
@@ -353,6 +357,11 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
             row.entry = b.offset_of(entry.desc()) as u64;
             (row.tape, row.lines, row.homes) = (tape_at, lines_at, [tape_home, lines_home]);
             row.view = view;
+            format = match format {
+                None => Some(view.format),
+                Some(f) if f == view.format => Some(f),
+                Some(_) => Some(0),
+            };
             if view.format == rerail_clif::view::F16Z_FORMAT {
                 zrows.push(i);
                 zblocks += (view.nodes as usize).div_ceil(rerail_clif::view::F16Z_BLOCK as usize);
@@ -428,7 +437,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     }
     let lines = lines && dir_on_device.is_some();
     let locs = locs && dir_on_device.is_some();
-    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, cache, _entries: entries })
+    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, cache, format: format.unwrap_or(0), _entries: entries })
 }
 
 /// Copies `src` into the block and points `span` at it.
@@ -573,7 +582,7 @@ fn build_in(batch: &Batch) -> Chunk {
         root: at,
         locs: std::sync::OnceLock::new(),
         lines: std::sync::OnceLock::new(),
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         views: std::sync::OnceLock::new(),
     }
 }

@@ -988,7 +988,7 @@ fn the_shipped_answers_answer_the_grammar() {
     if std::env::var_os("RERAIL_BLESS_KOTLIN_ANSWERS").is_some() {
         let cold = compile_text(GRAMMAR).expect("the grammar compiles");
         let path = &format!("{}/kotlin.answers", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-        std::fs::write(path, rerail_compiler::bitlex_prove::encode(&cold.proofs)).expect("kotlin.answers written");
+        std::fs::write(path, rerail_bitlex::bitlex_prove::encode(&cold.proofs)).expect("kotlin.answers written");
         return;
     }
     let c = crate::compile_timed(GRAMMAR, crate::shipped_answers(), &mut |_, _| {}).expect("the grammar compiles");
@@ -1062,7 +1062,7 @@ fn tier1_records() {
 #[test]
 #[ignore = "a tool: run by name"]
 fn tier1_cones() {
-    use rerail_compiler::bitlex_masks as bitlex_compile;
+    use rerail_bitlex::bitlex_masks as bitlex_compile;
     let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
     let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
     let kind = |name: &str| {
@@ -1168,7 +1168,7 @@ fn tier1_cones() {
 #[ignore = "a probe: prints"]
 fn token_level_probe() {
     use ::bitlex::syntax::{Arg, Expr, Stmt};
-    use rerail_compiler::bitlex_masks as bitlex_compile;
+    use rerail_bitlex::bitlex_masks as bitlex_compile;
     use std::collections::{HashMap, HashSet};
     // The crate's grammar, or `RERAIL_KOTLIN_GRAMMAR`'s file (a variant measured without a build).
     let text = std::env::var("RERAIL_KOTLIN_GRAMMAR").map_or_else(|_| crate::GRAMMAR.to_owned(), |p| std::fs::read_to_string(p).expect("the grammar file"));
@@ -1407,9 +1407,9 @@ fn lazy_probe() {
     let b = &c.program.block_programs[0];
     let r = b.records.as_ref().expect("records");
     let native = rerail_compiler::block_native::BlockNative::lower(b);
-    let bw = rerail_compiler::native_cpu_bytes::Bytewise::of(&native);
-    let lazy = rerail_compiler::native_cpu_block::lazy_marks(r, &|o| bw.can(o));
-    let coded = rerail_compiler::native_cpu_block::lazy_coded(r);
+    let bw = rerail_cpu_block::native_cpu_bytes::Bytewise::of(&native);
+    let lazy = rerail_cpu_block::native_cpu_block::lazy_marks(r, &|o| bw.can(o));
+    let coded = rerail_cpu_block::native_cpu_block::lazy_coded(r);
     for (k, &(o, w)) in r.marks.iter().enumerate() {
         let bit = |x: u32| x >> k & 1;
         eprintln!(
@@ -1422,7 +1422,7 @@ fn lazy_probe() {
         eprintln!("check: {ch:?}");
     }
     eprintln!("blanks: {:?} gap {:?} skip {:?} gaps {:b}", r.blanks, r.gap, r.skip, r.gaps);
-    let blank_bits = rerail_compiler::native_cpu_block::blank_bits(r, &|o| bw.can(o));
+    let blank_bits = rerail_cpu_block::native_cpu_block::blank_bits(r, &|o| bw.can(o));
     eprintln!("blank marks read by the CPU loop: {blank_bits:b}; records_made {:?}", native.records_made());
 }
 

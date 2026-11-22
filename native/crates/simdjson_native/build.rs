@@ -6,9 +6,9 @@ use std::ffi::OsString;
 use std::process::Stdio;
 
 fn main() {
-    let vendor = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/simdjson-5.0.5");
-    let shim = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shim.cpp");
-    let kernel = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/kernel.inc");
+    let vendor = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../vendor/simdjson-5.0.5");
+    let shim = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/shim.cpp");
+    let kernel = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/kernel.inc");
     for file in [vendor.join("simdjson.cpp"), vendor.join("simdjson.h"), shim.clone(), kernel] {
         println!("cargo:rerun-if-changed={}", file.display());
     }

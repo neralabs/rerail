@@ -1,6 +1,5 @@
 //! Clone identity for history and worktree identity for ref and index requests.
-#[allow(unused_imports)]
-use crate::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use sha2::{Digest as _, Sha256};
 use std::fs;
 use std::io::{self, Read as _};

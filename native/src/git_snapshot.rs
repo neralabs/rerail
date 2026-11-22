@@ -1,8 +1,7 @@
 //! Read-only source views of Git trees. Paths identify objects; they never name an extracted checkout.
-//! Like nera-data-layer's library Git importer, tree walks retain blob IDs and bytes are read on demand.
+//! Like the internal data layer's library Git importer, tree walks retain blob IDs and bytes are read on demand.
 
-#[allow(unused_imports)]
-use crate::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use std::cell::RefCell;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -114,6 +113,22 @@ pub struct Inventory {
     pub tree_failures: Vec<SourceFailure>,
     pub tree_observations: std::collections::BTreeMap<gix::ObjectId, String>,
     pub selection: String,
+    /// The memo plans the runs that made it recorded manifests of, under `manifest_root`: a run that reuses it owns
+    /// them again for its scope (`own_recorded_manifests`), as it would by running them.
+    pub plans: Vec<[u8; 32]>,
+    pub manifest_root: String,
+}
+
+/// Whether a run reusing `inventory` holds what its runs recorded: under an owner, their manifests owned again for its
+/// scope. False when they are gone (collected): the inventory runs again, and records them.
+fn owned_again(inventory: &Inventory, store: Option<&Path>, owner: Option<&AnalysisOwner>) -> Result<bool, InventoryError> {
+    let (Some(store), Some(owner)) = (store, owner) else { return Ok(true) };
+    if inventory.plans.is_empty() {
+        return Ok(true);
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let store = crate::content_store::ContentStore::open(store).map_err(InventoryError::Cache)?;
+    Ok(store.own_recorded_manifests(&inventory.manifest_root, &inventory.plans, owner, now).map_err(InventoryError::Cache)? > 0)
 }
 
 #[derive(Clone, Debug)]
@@ -268,8 +283,60 @@ pub fn install_source_checker(check: SourceChecker) {
     CHECK_SOURCES.get_or_init(|| check);
 }
 
-static VIEWS: Mutex<Vec<Arc<View>>> = Mutex::new(Vec::new());
-static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+/// The pinned revisions a read under their roots goes to (`view`): the shared object's (decision 0442), shared by design
+/// by the runs of the workspace or entry point that pinned them (`Snapshot::pin`), each with the count of its pins.
+/// Another workspace's object holds its own, so its runs over the same root read the root's own files.
+#[derive(Default)]
+struct Views {
+    pinned: Mutex<Vec<(Arc<View>, usize)>>,
+    /// How many are pinned: a read finds none without the lock.
+    active: AtomicUsize,
+}
+
+impl Views {
+    fn find(&self, path: &Path) -> Option<Arc<View>> {
+        if self.active.load(Ordering::Acquire) == 0 {
+            return None;
+        }
+        self.pinned.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(v, _)| path.starts_with(&v.root)).map(|(v, _)| Arc::clone(v))
+    }
+    fn pin(&self, view: &Arc<View>) {
+        let mut pinned = self.pinned.lock().unwrap_or_else(|e| e.into_inner());
+        match pinned.iter_mut().find(|(v, _)| v.id == view.id) {
+            Some((_, n)) => *n += 1,
+            None => pinned.push((Arc::clone(view), 1)),
+        }
+        self.active.store(pinned.len(), Ordering::Release);
+    }
+    fn unpin(&self, id: u64) {
+        let mut pinned = self.pinned.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = pinned.iter().position(|(v, _)| v.id == id) {
+            pinned[at].1 -= 1;
+            if pinned[at].1 == 0 {
+                pinned.remove(at);
+            }
+        }
+        self.active.store(pinned.len(), Ordering::Release);
+    }
+}
+
+/// A snapshot pinned in a shared object (`Snapshot::pin`): its runs' reads under its root go to it until this drops.
+pub struct Pinned {
+    views: Arc<Views>,
+    id: u64,
+}
+
+impl std::fmt::Debug for Pinned {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Pinned").field("id", &self.id).finish()
+    }
+}
+
+impl Drop for Pinned {
+    fn drop(&mut self) {
+        self.views.unpin(self.id);
+    }
+}
 /// The storage batch under way (`StorageBatch`): its view and epoch, in the run's context (decision 0442), so its
 /// jobs read through it too.
 #[derive(Clone, Copy, Default)]
@@ -459,6 +526,7 @@ impl View {
         if let Some((_, value)) = saved
             && inventory_selection(&self.root).as_ref() == Some(&value.selection)
             && self.inventory.lock().unwrap_or_else(|e| e.into_inner()).generation == generation
+            && owned_again(&value, store, owner)?
         {
             return Ok(value);
         }
@@ -549,16 +617,14 @@ impl View {
     }
 }
 
+/// The revision pinned on a root `path` is under, in the run's shared object (`Views`): none with no run. On a test's
+/// thread with no run, the tests' object (`starter_object`), where a test's snapshot pins itself.
 fn view(path: &Path) -> Option<Arc<View>> {
-    if ACTIVE.load(Ordering::Acquire) == 0 {
-        return None;
+    use rerail_prof::code_rule_dsl::logic::profile;
+    if profile::run_own().is_some() {
+        return profile::with_shared::<Views, _>(|views| views.find(path));
     }
-    VIEWS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .find(|v| path.starts_with(&v.root))
-        .cloned()
+    profile::starter_object()?.get::<Views>().find(path)
 }
 
 pub fn contains(path: &Path) -> bool {
@@ -575,6 +641,9 @@ pub fn view_root(path: &Path) -> Option<PathBuf> {
 #[derive(Debug)]
 pub struct Snapshot {
     view: Arc<View>,
+    /// Its pin in the object of the run it was made in (a test's, `starter_object`), held for its drop; none when made
+    /// outside any run (the host's `GitRevisionSource`), whose taker pins it (`pin`).
+    _made_in: Option<Pinned>,
 }
 
 /// A repository, selected object and directory within it, shared by equivalent source views.
@@ -878,19 +947,21 @@ impl Snapshot {
                 Ok::<(), String>(())
             }).map_err(|error| error.to_string())??;
         }
-        let mut views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
-        views.push(Arc::clone(&view));
-        ACTIVE.store(views.len(), Ordering::Release);
-        Ok(Self { view })
+        let made_in = rerail_prof::code_rule_dsl::logic::profile::starter_object().map(|shared| pin_view(&view, &shared));
+        Ok(Self { view, _made_in: made_in })
+    }
+
+    /// Pins this revision in `shared` (decision 0442): the runs on that object (a workspace's, an entry point's) read
+    /// the paths under its root from it until the guard drops. Runs on any other object read the root's files.
+    pub fn pin(&self, shared: &Arc<rerail_prof::code_rule_dsl::logic::profile::Shared>) -> Pinned {
+        pin_view(&self.view, shared)
     }
 }
 
-impl Drop for Snapshot {
-    fn drop(&mut self) {
-        let mut views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
-        views.retain(|v| v.id != self.view.id);
-        ACTIVE.store(views.len(), Ordering::Release);
-    }
+fn pin_view(view: &Arc<View>, shared: &rerail_prof::code_rule_dsl::logic::profile::Shared) -> Pinned {
+    let views = shared.get::<Views>();
+    views.pin(view);
+    Pinned { views, id: view.id }
 }
 
 /// The actual repository and repository-relative prefix behind a source root.
@@ -1269,6 +1340,37 @@ pub fn file_stat(path: impl AsRef<Path>) -> Option<crate::content_store::FileSta
 mod tests {
     use super::*;
     use gix::objs::tree::{Entry as TreeEntry, EntryKind};
+
+    /// Q455 (decision 0442): a pinned revision is its shared object's. Two workspaces' objects in one process: the
+    /// runs of the one that pinned the revision read the paths under its root from it, the other's see no revision
+    /// there, and once the pin drops neither does. A read with no run sees none.
+    #[test]
+    fn a_revision_pinned_in_one_shared_object_is_read_by_its_runs_alone() {
+        use rerail_prof::code_rule_dsl::logic::profile::{Shared, engine_thread, within};
+        let dir = tempfile::tempdir().unwrap();
+        let repo = gix::init_bare(dir.path().join("repo.git")).unwrap();
+        let blob = repo.write_blob(b"pinned\n").unwrap().detach();
+        let entries = vec![TreeEntry { mode: EntryKind::Blob.into(), filename: "a.py".into(), oid: blob }];
+        let tree = repo.write_object(&gix::objs::Tree { entries }).unwrap().detach();
+        // A thread that is no test's and holds no run (`engine_thread`): a host's, as Node's is.
+        let off_any_run = |f: &(dyn Fn() -> bool + Sync)| std::thread::scope(|s| s.spawn(|| { engine_thread(); f() }).join().unwrap());
+        // Made off any run (a host's `GitRevisionSource`): pinned nowhere until taken.
+        let (git_dir, tree) = (repo.git_dir().to_owned(), tree.to_string());
+        let snapshot = std::thread::scope(|s| s.spawn(|| { engine_thread(); Snapshot::new(&git_dir, &tree).unwrap() }).join().unwrap());
+        assert!(snapshot._made_in.is_none());
+        let file = snapshot.root().join("a.py");
+        let (pinning, other) = (Shared::new(), Shared::new());
+        let pinned = snapshot.pin(&pinning);
+        let reads = |shared: &Arc<Shared>| {
+            let _in = within(Arc::clone(shared));
+            (contains(&file), read(&file).ok())
+        };
+        assert_eq!(reads(&pinning), (true, Some(b"pinned\n".to_vec())), "the pinning workspace's runs read the revision");
+        assert_eq!(reads(&other), (false, None), "another workspace's runs read the root's own files (there are none)");
+        assert!(!off_any_run(&|| contains(&file)), "a read with no run sees no revision");
+        drop(pinned);
+        assert!(!reads(&pinning).0, "unpinned, its runs see it no more");
+    }
 
     #[test]
     fn bare_tree_sources_are_lazy_case_sensitive_and_never_materialized() {

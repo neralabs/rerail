@@ -5,20 +5,8 @@
 //! It is found as the program runs, not written into the build (decision 0224). A crate that wrote
 //! its checkout's path in (`env!("CARGO_MANIFEST_DIR")`) was a different crate in every checkout, and
 //! so was every crate above it: a compiler cache shared by the checkouts could reuse none of them.
+use rerail_store::Canonical as _;
 use std::path::{Path, PathBuf};
-
-/// A path's canonical name: absolute, its links resolved, and the one name the engine gives it on every system. On
-/// Windows that is the drive's name (`C:\\a\\b`), not the verbatim one std's `canonicalize` returns (`\\?\\C:\\a\\b`), in
-/// which `/` is no separator and which compares unequal to the drive's (`dunce`). Elsewhere it is std's.
-pub trait Canonical {
-    fn canonical(&self) -> std::io::Result<PathBuf>;
-}
-
-impl<P: AsRef<Path> + ?Sized> Canonical for P {
-    fn canonical(&self) -> std::io::Result<PathBuf> {
-        dunce::canonicalize(self)
-    }
-}
 
 /// The checkout's root: the directory that holds `native/Cargo.toml` and `docs/rule-syntax`. The first
 /// found of:

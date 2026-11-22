@@ -289,8 +289,9 @@ pub mod f16 {
     }
 
     /// The position in the index's high bits of its `j`-th one (`ones`) or zero: from the sample before it, a word
-    /// at a time, within the index's words (its field 4). Past them (a `j` the index does not hold: a line past the
-    /// last), the position past its last word: the walk ends there (decision 0463).
+    /// at a time, within the index's words. Past them (a `j` the index does not hold: a line past the last), the
+    /// position past its last word: unbounded, a word of none was a step of zero, and past the index lies the rest of
+    /// the slab, zeroed (decision 0463).
     #[cold]
     #[inline(never)]
     fn select(t: &[u8], v: &TapeView, ones: bool, j: u32) -> u32 {
@@ -401,8 +402,9 @@ pub mod f15 {
         end_stated(t, v, i).max(start(t, v, i)).min(v.source_len)
     }
 
-    /// `c + size`, no further than the tape's nodes, and always past `c` however `size` wraps (decision 0463): a walk
-    /// at or past the view's last node still steps on.
+    /// `c + size`, no further than the tape's nodes, and always past `c` however `size` wraps (decision 0463): from
+    /// the view's last node (a short count, a node asked past it) a hop clamped to the nodes was a step of zero, and a
+    /// walk stopped only past its end never stopped.
     #[inline(always)]
     fn hop(v: &TapeView, c: u32, size: u32) -> u32 {
         let past = c.wrapping_add(1);

@@ -4,6 +4,7 @@
 pub use crate::code_rule_dsl::facts::rows::*;
 
 use super::runs::RowData;
+use std::sync::Arc;
 
 impl RowData for Rows {
     #[inline(always)]
@@ -17,6 +18,9 @@ impl RowData for Rows {
     }
     fn home(&self) -> Option<Home> {
         Rows::home(self)
+    }
+    fn lies_in(&self, facts: &Arc<Facts>) -> bool {
+        Rows::home_is(self, facts)
     }
 }
 
@@ -63,7 +67,7 @@ mod tests {
     /// the rows' storage (`facts::rows`) asks through the hook installed here as at start-up.
     #[test]
     fn a_cpu_run_takes_anonymous_blocks() {
-        use crate::code_rule_dsl::logic::plan::placement;
+        use crate::code_rule_dsl::logic::device::binding as placement;
         install_block_device(placement::block_device);
         let cpu = placement::set_binding(placement::Binding::Cpu);
         let r = in_chunk(|| {

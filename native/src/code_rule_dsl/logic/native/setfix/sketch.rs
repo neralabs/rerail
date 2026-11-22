@@ -128,8 +128,7 @@ impl Default for Sketch {
 }
 
 /// A clone shares the filter until it adds to it (`own_keys`): a kept relation reopened to be maintained copies its
-/// columns' filters only where its rows change them. It shares the counts too (`sharing`): whichever of them adds
-/// first while they are shared takes counts of its own, so the other's few values are never ended in place under it.
+/// columns' filters only where its rows change them.
 impl Clone for Sketch {
     fn clone(&self) -> Sketch {
         Sketch { registers: self.registers.clone(), counts: Arc::clone(&self.counts), sharing: Arc::clone(&self.sharing), rows: self.rows, dense: self.dense.clone(),
@@ -338,6 +337,7 @@ pub mod tests {
         let mut c = s.clone();
         assert!(Arc::ptr_eq(&c.counts, &s.counts) && Arc::strong_count(&s.sharing) == 2, "a clone reads them");
         c.add(10);
+        assert!(!Arc::ptr_eq(&c.counts, &s.counts), "a clone writes its own once it adds");
         assert_eq!((counts.join(&ten).rows, c.counts().join(&ten).rows), (1.0, 2.0));
         // Past its few values, the counters, still the sketch's own.
         for v in 11..1_000 {
@@ -351,9 +351,8 @@ pub mod tests {
         assert!(!Arc::ptr_eq(&d.counts, &s.counts), "a clone writes its own once it adds");
     }
 
-    /// A clone taken while the sketch keeps its few values still has keys after the sketch passes them: the sketch,
-    /// adding while they are shared, takes counts of its own, and ends those few values (`Counts::end_few`), not the
-    /// clone's.
+    /// A clone taken while the sketch keeps its few values still has keys after the sketch passes them: the sketch's
+    /// counts, which end their few values in place (`Counts::end_few`), are not the clone's.
     #[test]
     fn a_clone_of_few_values_keeps_its_keys_when_the_sketch_passes_them() {
         let mut s = Sketch::default();

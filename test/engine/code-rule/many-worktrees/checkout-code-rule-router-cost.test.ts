@@ -86,7 +86,7 @@ async function sessionWithWorktrees(count: number, lanes = true) {
     worktrees.push(await realpath(worktree));
   }
   const catalogs = new CheckoutCatalogs(databasePath);
-  const owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion());
+  const owners = new CheckoutOwners(undefined, () => catalogs.recordedCheckoutsVersion());
   const auditor = await openRouter(main, { owners, catalogs }, "session");
   cleanups.push(async () => {
     await auditor.close();

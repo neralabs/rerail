@@ -238,7 +238,7 @@ fn pack_patterns_keep_no_token_under_an_error() {
             _ => {}
         }
     }
-    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs");
+    let root = crate::source_tree::native().join("../packs");
     let mut found = Vec::new();
     for pack in std::fs::read_dir(&root).unwrap() {
         let Ok(rules) = std::fs::read_dir(pack.unwrap().path().join("rules")) else { continue };

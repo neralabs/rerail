@@ -55,7 +55,7 @@ From the `FSEvents.h` header and the File System Events Programming Guide (archi
 
 ## Measured on the M3 (2026-11-18, load 31–60)
 
-`scripts/profiling/fsevents-history-probe.py <dir> <trials>` (ctypes, no build; run it on the volume to test) runs, in a fresh directory each trial: write X; take a cursor from a
+`scripts/profiling/fsevents_history_probe.py <dir> <trials>` (ctypes, no build; run it on the volume to test) runs, in a fresh directory each trial: write X; take a cursor from a
 cookie seen on a live stream, then stop it (one process's run); change X and create Y (a new file, the control);
 start a new stream since the cursor, as the next process does; write a second cookie and wait for it and
 `HistoryDone`. Then it listens 2 s more, and replays from the same cursor 2.5 s later.

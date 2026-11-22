@@ -40,7 +40,7 @@ impl Adapter for Python {
     }
 
     fn suppresses<D: Doc>(
-        _: &ViolationSpec,
+        _: &str,
         suppress: &Suppress,
         node: &Node<'_, D>,
         source: &str,

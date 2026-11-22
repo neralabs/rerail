@@ -1,5 +1,11 @@
 // ukl/grid.h: a persistent grid's device-wide barrier, and the primitives written as its phases (decision 0468 §4).
 //
+// Not for new code (decision 0540 step 7): no thread waits at a barrier for others. On the M3 Max, groups that had
+// joined a grid were kept from reaching its barrier (0540 step 6), and how many groups run at once is no kernel's to
+// rely on. A step that needs other groups' results is a continuation that the group finishing them pushes onto a
+// work queue (`<ukl/workqueue.h>`; `label_phase` in label_passes.uglykl). The engine's kernels include this header no
+// more.
+//
 // A persistent grid is G threadgroups resident together, each walking its own share of the work. Between two of its
 // phases, every group waits for every other at `ukl_grid_barrier`: the writes of every group before it are seen by
 // every group after it. So a primitive that took a dispatch a level (a scan's tile sums, their scan, the tiles from
@@ -15,7 +21,8 @@
 //
 // `UklGrid.ctl`: four words, zero before the dispatch: 0 the groups' arrivals at every barrier so far, never reset
 // (barrier `n`, counting from 0, is complete when it reaches `G * (n + 1)`, modulo 2^32); 1 the generation, twice
-// the barriers passed, with the failure bit (bit 0); 2 the failure word, for a phase's quick test; 3 the tickets
+// the barriers passed, with the failure bit (bit 0); 2 the failure word, for a phase's quick test (bit 0; the bits
+// above it are the beats, `ukl_grid_beat`); 3 the tickets
 // taken, with `UKL_GRID_CLOSED` once the count is closed (`ukl_grid_join`). The arrivals are never reset: a reset is
 // a second write of the last arrival's besides the generation's step, and a GPU that showed the step first would let
 // a group pass, arrive at the next barrier, and have its arrival wiped, so that barrier never fills. A barrier's
@@ -23,6 +30,10 @@
 // failure bit, and a group past its bound sets the bit only by a compare-and-swap that finds the generation it waited
 // on. So either every group passes a barrier or none does. One form on every backend (CUDA's too, until the device
 // layer makes cooperative launches).
+//
+// A wait's bound counts the polls since the grid last showed progress: a group that runs a long phase (one thread's
+// loop over a large piece of work) beats (`ukl_grid_beat`), and a group waiting for it starts its count again at each
+// beat. Every group of the grid is running (the join), so only a wait with no progress is a failure.
 //
 // The grid's control words are read by polls (`ukl_atomic_poll`): a relaxed load in a loop may never see another
 // group's store on Apple's GPUs (Q123; the reason the barrier failed at 8 groups, Q367).
@@ -38,10 +49,10 @@
 #define UKL_GRID_SPINS 1000000u
 #endif
 // The first group's polls for others to join, after the last that did (a window, not a wait: a group that has not
-// started by its end is not the grid's). A dispatch whose groups all start ends it when the last joins. The join
-// yields nowhere, so on the CPU backend (its groups taking turns at a yield) the grid is the first group alone. A
-// longer window costs a dispatch past residency its time: at 65,536 polls, 843 ms on a GB10 (48 groups polling one
-// word), against 30 ms.
+// started by its end is not the grid's). A dispatch whose groups all start ends it when the last joins. A longer
+// window costs a dispatch past residency its time: at 65,536 polls, 843 ms on a GB10 (48 groups polling one word),
+// against 30 ms. A backend that knows its resident count (`UKL_GRID_RESIDENT`, the CPU's: its groups take turns at a
+// yield) has no window: the count closes when that many have joined, and the polls yield.
 #ifndef UKL_GRID_WINDOW
 #define UKL_GRID_WINDOW 2048u
 #endif
@@ -54,7 +65,12 @@ typedef struct UklGrid {
 } UklGrid;
 
 // Whether the grid has failed a barrier (in every thread alike after a barrier).
-UKL_INLINE bool ukl_grid_failed(UklGrid g) { return ukl_atomic_poll(&g.ctl[2]) != 0u; }
+UKL_INLINE bool ukl_grid_failed(UklGrid g) { return (ukl_atomic_poll(&g.ctl[2]) & 1u) != 0u; }
+
+// Progress, from a thread in a long phase: a barrier's waiting groups start their bound's count again. `ctl` is the
+// grid's (`UklGrid.ctl`, or the same words through a coherent pointer: a macro, so either's atomic is the one); a beat
+// now and then (every few thousand steps) is enough.
+#define ukl_grid_beat(ctl) ((void)ukl_atomic_add(&(ctl)[2], 2u))
 
 // The grid of the groups that are running (decision 0540 §3): a group of a dispatch of `dispatched` groups takes a
 // ticket, and is the grid's (true: `g.group` its ticket, `g.groups` the grid's count) if it took it before the count
@@ -62,7 +78,8 @@ UKL_INLINE bool ukl_grid_failed(UklGrid g) { return ukl_atomic_poll(&g.ctl[2]) !
 // once, before any barrier; `words` is two words of threadgroup memory.
 //
 // The first group (ticket 0) closes the count once no group has joined for `UKL_GRID_WINDOW` of its polls, or all
-// `dispatched` have. Every other one waits for that: for a group that is running (it took the first ticket) and waits
+// `dispatched` have; where the resident count is known (`UKL_GRID_RESIDENT`), once that many have, its polls
+// yielding to them. Every other one waits for that: for a group that is running (it took the first ticket) and waits
 // for nothing but its window, so the wait ends. Bounded still: past `UKL_GRID_SPINS` polls, the grid fails.
 UKL_INLINE bool ukl_grid_join(UKL_PRIVATE UklGrid* g, uint32_t dispatched, UKL_LOCAL uint32_t* words)
 {
@@ -82,12 +99,21 @@ UKL_INLINE bool ukl_grid_join(UKL_PRIVATE UklGrid* g, uint32_t dispatched, UKL_L
         if (ticket == 0u) {
             // The window: polled until all have joined, or none has for `UKL_GRID_WINDOW` polls; then closed, by a
             // compare-and-swap that finds the count it closes.
-            uint32_t last = 1u, quiet = 0u;
+            uint32_t last = 1u;
+#ifdef UKL_GRID_RESIDENT
+            uint32_t want = UKL_GRID_RESIDENT() < dispatched ? UKL_GRID_RESIDENT() : dispatched;
+            for (uint32_t spins = 0u; last < want && spins < UKL_GRID_SPINS; spins++) {
+                ukl_poll_yield();
+                last = ukl_atomic_poll(&g->ctl[3]);
+            }
+#else
+            uint32_t quiet = 0u;
             while (quiet < UKL_GRID_WINDOW && last < dispatched) {
                 uint32_t now = ukl_atomic_poll(&g->ctl[3]);
                 quiet = now == last ? quiet + 1u : 0u;
                 last = now;
             }
+#endif
             uint32_t at = ukl_atomic_poll(&g->ctl[3]);
             for (uint32_t tries = 0u; tries <= dispatched; tries++) {
                 uint32_t seen = ukl_atomic_cas(&g->ctl[3], at, at | UKL_GRID_CLOSED);
@@ -100,13 +126,16 @@ UKL_INLINE bool ukl_grid_join(UKL_PRIVATE UklGrid* g, uint32_t dispatched, UKL_L
             }
         } else if (ticket != UKL_GRID_CLOSED) {
             uint32_t now = ukl_atomic_poll(&g->ctl[3]);
-            for (uint32_t spins = 0u; (now & UKL_GRID_CLOSED) == 0u && spins < UKL_GRID_SPINS; spins++)
+            for (uint32_t spins = 0u; (now & UKL_GRID_CLOSED) == 0u && spins < UKL_GRID_SPINS; spins++) {
+                // On the CPU, the first group closes the count only when it runs.
+                ukl_poll_yield();
                 now = ukl_atomic_poll(&g->ctl[3]);
+            }
             count = now & ~UKL_GRID_CLOSED;
         }
         // Not closed (the first's closing lost every race, or the wait ran out): the grid fails, its barriers false.
         if (ticket != UKL_GRID_CLOSED && count == 0u) {
-            ukl_atomic_store(&g->ctl[2], 1u);
+            ukl_atomic_or(&g->ctl[2], 1u);
             ukl_atomic_or(&g->ctl[1], 1u);
             count = ticket + 1u;
         }
@@ -123,8 +152,14 @@ UKL_INLINE bool ukl_grid_join(UKL_PRIVATE UklGrid* g, uint32_t dispatched, UKL_L
 // Waits for every group of the grid: true when all arrived, false when the bound was reached (here or in another
 // group) or the grid failed before; the same answer in every group. Every thread of every group calls it, the same
 // number of times. `flag` is a word of threadgroup memory.
-UKL_CALLED bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
+UKL_ONCE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
 {
+    // A grid of one group: its threadgroup's barrier, device-scoped, is the grid's. It waits for no other group, so it
+    // cannot fail, and it touches no control word.
+    if (g.groups == 1u) {
+        ukl_tg_barrier_device();
+        return true;
+    }
     // The group's writes, done.
     ukl_tg_barrier_device();
     if (g.lid == 0u) {
@@ -138,11 +173,16 @@ UKL_CALLED bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
                 ukl_fence_device();
                 failed = ukl_atomic_cas(&g.ctl[1], gen, gen + 2u) == gen ? 0u : 1u;
             } else {
-                uint32_t now = gen, spins = 0u;
+                uint32_t now = gen, spins = 0u, beat = ukl_atomic_poll(&g.ctl[2]);
                 while (now == gen && spins < UKL_GRID_SPINS) {
                     ukl_poll_yield();
                     now = ukl_atomic_poll(&g.ctl[1]);
                     spins++;
+                    // A beat since the last look: the grid progresses, and the count starts again.
+                    if ((spins & 1023u) == 0u) {
+                        uint32_t b = ukl_atomic_poll(&g.ctl[2]);
+                        if ((b & ~1u) != (beat & ~1u)) { beat = b; spins = 0u; }
+                    }
                 }
                 if (now == gen) {
                     // The bound: fail the barrier, unless it stepped meanwhile.
@@ -152,7 +192,7 @@ UKL_CALLED bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
                 failed = now & 1u;
             }
             if (failed != 0u)
-                ukl_atomic_store(&g.ctl[2], 1u);
+                ukl_atomic_or(&g.ctl[2], 1u);
             ukl_fence_device();
         }
         *flag = failed;
@@ -242,7 +282,7 @@ UKL_INLINE uint32_t ukl_grid_scan_tiles(UklGrid g, uint32_t first, uint32_t end,
 // group sums its share of each job; group 0 scans each job's sums (`sums[groups]` its total); each group scans its
 // shares from their offsets. False when a barrier failed (the outputs are then partial). Ends with a barrier: every
 // output is seen by every group.
-UKL_CALLED bool ukl_grid_scans(UklGrid g, UKL_PRIVATE const UklScanJob* jobs, uint32_t k, UKL_COHERENT uint32_t* sums,
+UKL_ONCE bool ukl_grid_scans(UklGrid g, UKL_PRIVATE const UklScanJob* jobs, uint32_t k, UKL_COHERENT uint32_t* sums,
                                UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
 {
     bool small = true;
@@ -290,7 +330,7 @@ UKL_CALLED bool ukl_grid_scans(UklGrid g, UKL_PRIVATE const UklScanJob* jobs, ui
 
 // The exclusive scan of `in`'s first `n` values into `out`, its total into `*total` (`out + n` for an offsets
 // array): `ukl_grid_scans` of one job. `sums` is `groups + 1` words.
-UKL_CALLED bool ukl_grid_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT uint32_t* out,
+UKL_ONCE bool ukl_grid_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT uint32_t* out,
                                 UKL_COHERENT uint32_t* total, UKL_COHERENT uint32_t* sums, UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
 {
     UklScanJob job;
@@ -313,7 +353,7 @@ UKL_INLINE bool ukl_grid_scan_exclusive_u32(UklGrid g, UKL_GLOBAL const uint32_t
 // `ukl_grid_scan_n` by one group alone (its threads, `g.lid` of `g.lsz`; the other groups call nothing): its tiles in
 // order, the total into `*total`, then the group's barrier (device memory). For phases whose elements a group holds
 // (decision 0527): no grid barrier.
-UKL_CALLED void ukl_group_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT uint32_t* out,
+UKL_ONCE void ukl_group_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT uint32_t* out,
                                  UKL_COHERENT uint32_t* total, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
 {
     uint32_t run = ukl_grid_scan_tiles(g, 0u, n, 0u, in, out, scratch __UKL_ARGS);
@@ -468,7 +508,7 @@ UKL_INLINE void ukl_seg_tile(UklGrid g, uint32_t op, uint32_t base, uint32_t end
 
 // `ukl_grid_seg_scan_n` by one group alone (as `ukl_group_scan_n`): its tiles in order, each from the carry of
 // those before it, then the group's barrier (device memory).
-UKL_CALLED void ukl_group_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT const uint32_t* heads,
+UKL_ONCE void ukl_group_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT const uint32_t* heads,
                                      UKL_COHERENT uint32_t* out, UKL_LOCAL uint32_t* sv, UKL_LOCAL uint32_t* sf __UKL_PARAMS)
 {
     uint32_t cv = 0u, cf = 0u;
@@ -481,7 +521,7 @@ UKL_CALLED void ukl_group_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COH
 // segment starting at each nonzero `heads` word, as phases of the grid; `in` may be `out`. `sums` is `2 * groups`
 // words of device memory (each group's aggregate: value, then whether it holds a head); `sv`, `sf` are `lsz` words
 // each of threadgroup memory. Three phases, as the scan's. Ends with a barrier.
-UKL_CALLED bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT const uint32_t* heads,
+UKL_ONCE bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT const uint32_t* heads,
                                     UKL_COHERENT uint32_t* out, UKL_COHERENT uint32_t* sums, UKL_LOCAL uint32_t* sv,
                                     UKL_LOCAL uint32_t* sf, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
 {
@@ -572,7 +612,7 @@ UKL_INLINE bool ukl_sort_before(uint32_t ah, uint32_t al, uint32_t ai, uint32_t 
 //   threadgroup memory; each thread of the grid ranks its row among them all;
 //   the rows go to their places after a barrier where they are sorted in place;
 // - more: the digits that vary among the rows (a reduction), and only those passed, three barriers each.
-UKL_CALLED bool ukl_grid_sort_u64_from(UklGrid g, uint32_t n, uint32_t low, uint32_t bits, bool iota, UKL_COHERENT uint64_t* keys,
+UKL_ONCE bool ukl_grid_sort_u64_from(UklGrid g, uint32_t n, uint32_t low, uint32_t bits, bool iota, UKL_COHERENT uint64_t* keys,
                                        UKL_COHERENT uint32_t* values, UKL_COHERENT uint64_t* keys2, UKL_COHERENT uint32_t* values2,
                                        UKL_COHERENT uint32_t* hist, UKL_COHERENT uint32_t* sums, UklGridSortLocal l,
                                        UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)

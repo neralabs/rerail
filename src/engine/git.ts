@@ -986,7 +986,7 @@ function gitEnvironment(executable: string, overrides: RunGitOptions["env"] = {}
   // which would override -C, in batch reads too: this process's are left out ({@link repositoryEnvironment}).
   const inherited: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (!repositoryEnvironment.has(process.platform === "win32" ? key.toUpperCase() : key)) inherited[key] = value;
+    if (!isRepositoryVariable(key)) inherited[key] = value;
   }
   return { ...processGit.startEnvironment(executable, { ...inherited, ...overrides }), GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
 }
@@ -1007,6 +1007,26 @@ const repositoryEnvironment = new Set([
   "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_SHALLOW_FILE",
   "GIT_GRAFT_FILE", "GIT_REPLACE_REF_BASE",
 ]);
+
+/**
+ * Whether `name` is one of the variables a Git hook names a repository by ({@link repositoryEnvironment}): never handed
+ * to a Git Rerail starts, so it moves no answer Git gives Rerail.
+ */
+export function isRepositoryVariable(name: string): boolean {
+  return repositoryEnvironment.has(process.platform === "win32" ? name.toUpperCase() : name);
+}
+
+/**
+ * Drops this process's repository variables ({@link repositoryEnvironment}): for a command whose arguments name the
+ * checkout it reads, run in a process of its own (a headless scan, from a Git hook too), so every Git it starts, and
+ * every placement it asks of Git or of the engine's reads, is of that checkout. A process serving other checkouts
+ * keeps them.
+ */
+export function leaveInheritedRepository(): void {
+  for (const key of Object.keys(process.env)) {
+    if (isRepositoryVariable(key)) delete process.env[key];
+  }
+}
 
 /**
  * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch

@@ -1,8 +1,7 @@
 //! The N-API surface: the `CodeRuleDslWorkspace` class, the lease that guards its state, and the
 //! storage, apply, completion and result page async tasks.
 
-#[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
 use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
@@ -325,18 +324,15 @@ fn check_store_identity(store: &crate::content_store::ContentStore, expected: Op
 
 /// The Node environment's machine (decision 0442). The addon's caller is the environment: it makes one machine and
 /// keeps it in its instance data, so every workspace it makes shares its pool, its CPU slot and its learned model,
-/// each workspace on a shared object of its own. Another environment (a worker thread) has its own. The main
-/// environment's lives as long as the process, on its main thread: that thread is one of its pool's
-/// (`Machine::here`), so its own work and its waits are the pool's.
+/// each workspace on a shared object of its own. Another environment (a worker thread) has its own. Its pool's
+/// threads are all its own, the loading thread none of them: JavaScript may park that thread waiting on a background
+/// call, so even a pool of one thread has its own worker (98c76de865; the CLI's `main` alone takes its thread,
+/// `Machine::here`).
 fn environment_machine(env: &napi::Env) -> Result<Arc<crate::code_rule_dsl::logic::profile::Machine>> {
     if let Some(machine) = env.get_instance_data::<Arc<crate::code_rule_dsl::logic::profile::Machine>>()? {
         return Ok(Arc::clone(machine));
     }
-    let machine = if crate::code_rule_dsl::logic::profile::is_main_thread() {
-        crate::code_rule_dsl::logic::profile::Machine::here()
-    } else {
-        crate::code_rule_dsl::logic::profile::Machine::new()
-    };
+    let machine = crate::code_rule_dsl::logic::profile::Machine::new();
     env.set_instance_data(Arc::clone(&machine), (), |_| {})?;
     Ok(machine)
 }
@@ -1180,6 +1176,9 @@ impl Task for WorkspaceStorageTask {
             // The task's run, on the workspace's shared object (decision 0442).
             let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             check_closed(&self.closed)?;
+            // Every write of the attach waits on other writers for one deadline in all: the store's open, the
+            // analysis scope's acquisition and the snapshot's publication (which joins this one).
+            let _deadline = OperationDeadline::enter();
             // A workspace Git cannot describe (no repository, an unreadable untracked directory, a
             // corrupt index) attaches no store: the host walks it, reporting what it cannot read,
             // and interactive edits evaluate without reuse. Only a root outside any repository is
@@ -1192,6 +1191,9 @@ impl Task for WorkspaceStorageTask {
                 discovery_milliseconds: discovery_started.elapsed().as_secs_f64() * 1000.0,
                 publication_milliseconds: 0.0,
             };
+            // The revision is the workspace's from here (decision 0442): this task's reads under its root go to it,
+            // and the workspace's state keeps the pin once storage is attached.
+            let pinned = self.snapshot.as_ref().map(|snapshot| snapshot.pin(&self.shared));
             let deferred = self.snapshot.is_some() || self.analysis_owner.is_some();
             let (scope_root, scope_home) = (self.root.clone(), self.analysis_home.clone());
             let scope = || crate::git_workspace::snapshot::analysis_scope(Path::new(&scope_root))
@@ -1251,17 +1253,16 @@ impl Task for WorkspaceStorageTask {
                 deferred,
             )?;
             let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
+            let unavailable = |reason: String| StorageAttachment {
+                attached: false,
+                reason: Some(reason),
+                cache_unavailable: true,
+                discovery_milliseconds,
+                publication_milliseconds,
+            };
             let context = match attached {
                 Attached::Storage(context) => context,
-                Attached::Unavailable(reason) => {
-                    return Ok(StorageAttachment {
-                        attached: false,
-                        reason: Some(reason),
-                        cache_unavailable: true,
-                        discovery_milliseconds,
-                        publication_milliseconds,
-                    });
-                }
+                Attached::Unavailable(reason) => return Ok(unavailable(reason)),
             };
             let owner = if scoped_after {
                 if let Err(error) = check_store_identity(&context.store, self.expected_store.as_deref()) { return Ok(cache_failed(error)); }
@@ -1297,6 +1298,7 @@ impl Task for WorkspaceStorageTask {
             if self.snapshot.is_some() {
                 state.import_root = Some(PathBuf::from(&self.root));
                 state.import_generation += 1;
+                state.git_source = pinned;
             }
             if let Some(owner) = owner {
                 if deferred {

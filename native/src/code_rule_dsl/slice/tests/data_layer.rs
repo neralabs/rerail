@@ -90,7 +90,7 @@ fn split(path: &Path) -> Result<((String, CompiledCodeRuleDsl), Vec<(String, Str
             clause.get("define").is_some() || (listed("RERAIL_DL_ONLY") != Some(false) && listed("RERAIL_DL_SKIP") != Some(true))
         }
     });
-    let compiled = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).map_err(|e| e.reason)?;
+    let compiled = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES).map_err(|e| e.reason)?;
     // Matchers that do not lower are left out of the wave by `policies::lower`; name them here.
     for clause in &compiled.inner.clauses {
         let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
@@ -129,7 +129,7 @@ fn data_layer_bench() {
         policies.push(policy);
     }
     let backend = match std::env::var("RERAIL_DL_BACKEND").as_deref() {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Ok("metal") => ExecutionBackend::MetalBackground,
         _ => ExecutionBackend::CpuBackground,
     };
@@ -255,7 +255,7 @@ fn data_layer_fixtures() {
         let program = authored(&options);
         let mut rules = Rules::lower_with(&policies, &program, backend).unwrap();
         // W runs every clause of the policy (relational ones included, as test builds compile them).
-        let full = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|e| panic!("{}", e.reason));
+        let full = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES).unwrap_or_else(|e| panic!("{}", e.reason));
         let mut good = 0;
         let mut w_agree = 0;
         for event in events {

@@ -337,7 +337,7 @@ fn answer(g: &Graph, p: &Prep, roots: &[u32], share: bool) -> Vec<Found> {
 /// `dfs_first(r, hit, first, edge, target)` over the rows of `edge` (src, dst, ord) and `target`: a row per root
 /// with an answer. With `roots` (`dfs_first_memo`), its roots in that order sharing one memo; else every node with
 /// an edge, each searched afresh. Values are the relations' own (node ids, numbers or atoms).
-pub(in crate::code_rule_dsl) fn dfs_first(edges: &[(i64, i64, i64)], targets: &[i64], roots: Option<&[i64]>) -> Vec<(i64, i64, i64)> {
+pub fn dfs_first(edges: &[(i64, i64, i64)], targets: &[i64], roots: Option<&[i64]>) -> Vec<(i64, i64, i64)> {
     let mut ids: HashMap<i64, u32> = HashMap::new();
     let mut values: Vec<i64> = Vec::new();
     let mut id = |v: i64, values: &mut Vec<i64>| {

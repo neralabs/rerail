@@ -1131,7 +1131,7 @@ impl L<'_> {
             "string_literal" => Ty::Array(Box::new(Ty::Int { bits: 8, signed: true }), self.string(e)?.len() as u64 + 1),
             "identifier" => match self.lookup(self.c.text(e)) {
                 Some(v) => v.ty.clone(),
-                None if self.c.text(e).starts_with("CLK_") => U32,
+                None if fence_flag(self.c.text(e)) => U32,
                 None => return self.err(e, "an unknown name"),
             },
             "parenthesized_expression" => {
@@ -1228,7 +1228,9 @@ impl L<'_> {
         let (ret, params) = match b {
             Builtin::LocalId | Builtin::LocalSize | Builtin::GlobalId | Builtin::GlobalSize | Builtin::GroupId | Builtin::NumGroups => (U64, vec![U32]),
             Builtin::SubGroupLocalId => (U32, vec![]),
-            Builtin::Barrier | Builtin::MemFence | Builtin::SubGroupBarrier => (Ty::Void, vec![U32]),
+            Builtin::Barrier | Builtin::SubGroupBarrier => (Ty::Void, vec![U32]),
+            // `mem_fence(flags)`, or OpenCL C 3.0's `atomic_work_item_fence(flags, order, scope)`: flags all.
+            Builtin::MemFence => (Ty::Void, vec![U32; tys.len().max(1)]),
             Builtin::Yield => (Ty::Void, vec![]),
             Builtin::SubGroupBallot => (Ty::Uint4, vec![I32]),
             Builtin::SubGroupShuffle | Builtin::SubGroupShuffleUp | Builtin::SubGroupShuffleDown | Builtin::SubGroupShuffleXor => {
@@ -1420,8 +1422,8 @@ impl L<'_> {
             }
             "true" => self.konst(&I32, 1),
             "false" => self.konst(&I32, 0),
-            "identifier" if self.lookup(self.c.text(e)).is_none() => {
-                // OpenCL's fence flags: no fence on the CPU's coherent memory.
+            "identifier" if self.lookup(self.c.text(e)).is_none() && fence_flag(self.c.text(e)) => {
+                // OpenCL's fence flags, orders and scopes: no fence on the CPU's coherent memory.
                 let v = match self.c.text(e) {
                     "CLK_LOCAL_MEM_FENCE" => 1,
                     "CLK_GLOBAL_MEM_FENCE" => 2,
@@ -1701,4 +1703,10 @@ impl L<'_> {
 enum Callee {
     Func(u32),
     Builtin(Builtin, Vec<Ty>),
+}
+
+/// A name OpenCL gives a fence's argument: its flags (`CLK_GLOBAL_MEM_FENCE`), and OpenCL C 3.0's orders and scopes
+/// (`memory_order_seq_cst`, `memory_scope_device`).
+fn fence_flag(name: &str) -> bool {
+    name.starts_with("CLK_") || name.starts_with("memory_order_") || name.starts_with("memory_scope_")
 }

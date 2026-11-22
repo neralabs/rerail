@@ -14,23 +14,24 @@ fn st(p: &V) -> Vec<BTreeSet<String>> {
     s.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r).to_owned()).collect()).collect()
 }
 
-/// An entry of `rows`, flat, of `types`' columns, at partition `part`: a relation's (part 0) in canonical order, a
-/// granule's or statistics' words as given (`retain::kept_flat`).
-fn put(rel: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>) -> KeptPut {
-    let n = if types.is_empty() { 0 } else { rows.len() / types.len() };
-    KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest, reads, what: crate::content_store::kept_facts::KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: None, given: part != DOCS_PART }, types }
-}
-fn gone(rel: &KeptRel, part: i64) -> KeptPut {
-    KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest: 0, reads: vec![], types: vec![], what: crate::content_store::kept_facts::KeptWhat::Gone }
-}
-
-/// The text of `count` inputs, each copied to its result.
+/// The text of `count` inputs, each filtered into its result: a relation of rows, not a view of its input (a bare copy
+/// is one, Q37, and is never kept, Q421).
 fn fixture_text(count: usize) -> String {
     let mut text = String::new();
     for i in 0..count {
-        text += &format!(".decl input{i}(x:number)\n.input input{i}\n.decl result{i}(x:number)\nresult{i}(x) :- input{i}(x).\n");
+        text += &format!(".decl input{i}(x:number)\n.input input{i}\n.decl result{i}(x:number)\nresult{i}(x) :- input{i}(x), x >= 0.\n");
     }
     text
+}
+
+/// An entry of `rows`, flat, of `types`' columns, at partition `part`: a relation's (part 0) in canonical order, a
+/// granule's or statistics' words as given (`retain::kept_flat`).
+fn put(rel: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>) -> KeptPut {
+    let rows = crate::content_store::kept_facts::BlockFlat::of_rows(&rows, types.len(), part != DOCS_PART);
+    KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest, reads, what: crate::content_store::kept_facts::KeptWhat::Picked(Box::new(rows)), types }
+}
+fn gone(rel: &KeptRel, part: i64) -> KeptPut {
+    KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest: 0, reads: vec![], types: vec![], what: crate::content_store::kept_facts::KeptWhat::Gone }
 }
 
 fn fixture(store: &ContentStore, count: usize) -> (V, HashMap<String, u64>, InKept) {
@@ -102,7 +103,7 @@ fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
     let span=profile::span(||"bulk output admission".into());
     let mut kept=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     assert!(prog.output_names().iter().all(|r|kept.holds(r,&pl(&prog))),"raw output facts are sufficient to keep a derivation");
-    let cut=Cut{clean:prog.output_names().into_iter().collect(),strata:(0,130),changed:vec![]};
+    let cut=Cut{clean:prog.output_names().into_iter().collect(),strata:(0,130),changed:vec![],views:Default::default()};
     assert_eq!(kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap(),Some((130,390)));
     for i in 0..130 {
         let rel=&kept.rels[&format!("result{i}")];
@@ -203,7 +204,7 @@ fn failed_k4_admission_makes_a_clean_consumer_run_again() {
     let mut kept = Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     let changed = now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut = cut(Some(&kept),KEY,&pl(&prog),&st(&prog),&changed).unwrap();
-    assert!(kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap().is_none());
+    assert!(kept.load(&store, &cut, &pl(&prog), &Locations::new(), false, None).unwrap().is_none());
     assert!(kept.input_srcs.is_empty() && kept.rels.is_empty());
     let rerun = cut_again(&kept, &prog, &now);
     assert!(rerun.clean.is_empty());

@@ -2113,9 +2113,7 @@ fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// The repository's `.rerail` files (outside `.git`, `target` and `node_modules`), with their text.
 fn rr_files() -> Vec<(String, String)> {
-    let root = std::path::PathBuf::from(
-        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-    )
+    let root = crate::source_tree::native()
     .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
@@ -2330,9 +2328,7 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     // A trailing comma is passed over (JSONC, as TypeScript reads it): tree-sitter-json's tape of the text
     // without it, which is as long.
     let text =
-        crate::code_rule_dsl::transducer::packed::json_parser::fallback::without_trailing_commas(
-            source,
-        );
+        crate::code_rule_dsl::transducer::packed::json_parser::fallback::without_trailing_commas(source);
     let tree = parser.parse(&text, None).unwrap();
     let theirs = TapeImage::encode(tree.root_node(), &grammar, &text, &|| false)
         .unwrap()
@@ -2548,9 +2544,7 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
             "refused {source:?}"
         );
     }
-    let root = std::path::PathBuf::from(
-        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-    )
+    let root = crate::source_tree::native()
     .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
@@ -2906,9 +2900,7 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_parse_costs() {
     use crate::code_rule_dsl::transducer::packed::json_parser as jp;
-    let root = std::path::PathBuf::from(
-        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-    )
+    let root = crate::source_tree::native()
     .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
@@ -3090,9 +3082,7 @@ fn lean_rr_tape_is_the_engines_image() {
         rerail_tape_format::CHECKPOINT_STRIDE
     );
     let grammar = Grammar::new(GrammarDialect::Rr).expect("grammar");
-    let root = std::path::PathBuf::from(
-        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-    )
+    let root = crate::source_tree::native()
     .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
@@ -7513,7 +7503,6 @@ fn every_tape_format_reads_the_document_as_restored() {
 /// there answers every node question as the same tape read from a buffer of its own, in each format.
 #[test]
 fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
-    format_15();
     use super::formats::Format;
     use rerail_tape_format::tape::{Tape, children};
     let source: String = (0..400).map(|i| format!("x{i} = f(a, {i})\n")).collect();
@@ -7535,7 +7524,7 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         // `in_format` keeps a tape held in another format as it is (a document's tape is format 16 now): the
         // placed tape is in the format its bytes were stored in.
         assert_eq!(placed.format(), own.format(), "held as stored");
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         assert_eq!(placed.placed(), crate::code_rule_dsl::tape::placed::device().is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
         let text = Arc::new(source.clone());
@@ -7685,7 +7674,7 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
 #[test]
 fn the_lean_parsers_write_each_format_directly() {
     use super::formats::{Format, as_run};
-    use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
+        use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
     use rerail_tape_format::tape::Tape;
     type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
     fn lean<R: std::fmt::Debug>(
@@ -7698,6 +7687,7 @@ fn the_lean_parsers_write_each_format_directly() {
     // Each language's file: a few hundred top-level items, so that the writer commits many times and its window
     // (decision 0434 §2) holds a small part of the tape. `{i}` is the item's number.
     let many = |item: &str| -> String { (0..200).map(|i| item.replace("{i}", &i.to_string())).collect() };
+    #[allow(unused_mut)]
     let cases: Vec<(GrammarDialect, String, Encode)> = vec![
         (GrammarDialect::Python, python, |g, s| lean(super::python_lean::encode(g, s, &|| false))),
         (GrammarDialect::JavaScript, js, |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::JavaScript, g, s, &|| false))),

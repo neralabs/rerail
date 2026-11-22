@@ -92,6 +92,17 @@ impl AstWave for Wave {
     ) -> StoreResult<Vec<(String, Relation)>> {
         matched(tapes, at, self, binding, atoms)
     }
+    /// A capture's column holds nodes of the matched document (`captured_rows`' `global`), unless the atom's rule
+    /// `transform`s it into text (a symbol).
+    fn node_columns(&self) -> Vec<(String, Vec<usize>)> {
+        self.list
+            .iter()
+            .map(|m| {
+                let transformed = |name: &str| m.captor.grammar.transform.as_ref().is_some_and(|t| t.contains(name));
+                (m.rel.clone(), m.captures.iter().enumerate().filter(|(_, c)| !transformed(c)).map(|(i, _)| i + 1).collect())
+            })
+            .collect()
+    }
 }
 
 /// A chunk's matcher wave as one launch of the executor (decision 0107), as every other dispatch: priced by its tape
@@ -154,7 +165,7 @@ impl rerail_accel::kernel::Program for MatcherWave {
 
     fn run(&self, lane: rerail_accel::Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
         use crate::code_rule_dsl::transducer::packed::MatcherBackend;
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         if lane == rerail_accel::Lane::Gpu {
             // A Metal run that fails stops the run (decision 0382 §6): no CPU wave in its place. What does not fit is
             // split, and work past its budget replanned, inside the run (0334).
@@ -216,7 +227,7 @@ fn matched(
             let first = docs.first().map_or(0, of);
             if docs.iter().all(|d| of(d) == first) { first } else { 0 }
         };
-        let gpu = cfg!(any(target_os = "macos", target_os = "linux")) && metal && wave.metal_ready(format());
+        let gpu = cfg!(any(target_os = "macos", target_os = "linux", windows)) && metal && wave.metal_ready(format());
         let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu };
         let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
         let ex = crate::code_rule_dsl::logic::lanes::executor_for(metal);

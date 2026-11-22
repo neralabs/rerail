@@ -7,36 +7,11 @@ use crate::content_store::Binding;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-fn root() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl")
-}
+use super::fixtures::{corpus, documents, facts, root};
+
 fn temp(what: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     std::env::temp_dir().join(format!("rerail-vtab-{what}-{}-{nonce}.sqlite", std::process::id()))
-}
-
-/// CPython 3.13's `fnmatch`, `ftplib`, `glob`, `json/` and `shlex`: the planner fixture's corpus, in its `doc` order.
-fn corpus() -> Vec<(String, String)> {
-    let raw = zstd::decode_all(std::fs::File::open(root().join("facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
-    serde_json::from_slice(&raw).unwrap()
-}
-fn facts(path: &str, source: &str) -> Arc<Facts> {
-    let file = FileInput::new(path.to_owned(), "python".to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
-    match core::build(&file).unwrap() {
-        Built::Facts(f) => Arc::new(f),
-        Built::Unparsed => panic!("{path} did not parse"),
-    }
-}
-/// The corpus as a batch, document `d` keyed `d`.
-pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
-    corpus()
-        .into_iter()
-        .enumerate()
-        .map(|(d, (path, source))| {
-            let facts = facts(&path, &source);
-            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
-        })
-        .collect()
 }
 
 /// How a column's integers decode to T's text.
@@ -690,6 +665,24 @@ fn within_with_both_given_is_an_interval_test() {
             assert_eq!(within.lookup_all(&eq).unwrap().len(), usize::from(within.holds(&eq).unwrap()), "{format:?}: {n} below {a}");
         }
     }
+    // As a chunk binds it (`values::Layered`, every source of a chunk's run): the same test, no row made.
+    {
+        let within = Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree));
+        let layered = super::values::Layered::new("within", Arc::clone(&within) as Arc<dyn Source>, Default::default());
+        for n in (0..nodes).step_by(97) {
+            for a in (0..nodes).step_by(13) {
+                let eq = [(0, batch.id(n)), (1, batch.id(a))];
+                assert_eq!(layered.holds(&eq), within.holds(&eq), "layered: node rows {n} below {a}");
+            }
+        }
+        assert!(within.made_rows() == 0, "layered: the test made no row");
+        // Probed by both columns at once, as the base is: the step's index is composite, which asks the test.
+        assert!(layered.composite(), "layered: both columns at once");
+        for (n, a) in [(nodes - 1, 0), (1, 0), (0, 1)] {
+            let eq = [(0, batch.id(n)), (1, batch.id(a))];
+            assert_eq!(layered.lookup_all(&eq), within.lookup_all(&eq), "layered: {n} below {a}");
+        }
+    }
 }
 
 /// `within` and `span_within` (decision 0050) hold exactly the pairs that comparing every pair of one document's
@@ -1117,7 +1110,7 @@ fn definition_slots_stay_below_the_span_bit() {
 fn span_ids_census() {
     use granules::ExtraSpan;
     // The data-layer pack's converted programs: pack test data (`npm run fixtures:pull`), not in git.
-    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
+    let pack = crate::source_tree::native().join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
     assert!(pack.exists(), "{} is missing: pack test data is not in git: run `npm run fixtures:pull`", pack.display());
     let literal = regex::Regex::new(r#"(?:match_all|match_group|rx_span)\("((?:[^"\\]|\\.)*)""#).unwrap();
     let mut patterns: BTreeSet<String> = BTreeSet::new();
@@ -1710,7 +1703,7 @@ fn definition_ids_are_pinned() {
         return;
     }
     use sha2::{Digest, Sha256};
-    let ruff = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let ruff = crate::source_tree::native().join("../packs/python/upstream/ruff/fixtures");
     let mut files: Vec<(&str, String, String)> = [
         ("python", "a.py", "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n"),
         ("tsx", "a.tsx", "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1>{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\n"),
@@ -1950,6 +1943,120 @@ fn an_axis_counts_its_rows_without_its_solve() {
     }
 }
 
+/// A solved axis probed by `n` reads each row's values off its solve as it finds them (`lookup_read`): the rows and
+/// values `lookup` and `value` give, for every node, with no list of rows made. Unsolved, it gives nothing, and the
+/// probe takes `lookup`'s rows made per lookup.
+#[test]
+fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-read")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes().last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    for (name, axis) in [("nearest", within::Axis::Nearest), ("inside", within::Axis::Inside)] {
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, Binding::Cpu);
+        let id = batch.id(nodes / 2);
+        assert!(!source.lookup_read(0, id, &[0, 1], &mut |_, _| panic!("{name}: read before its solve")), "{name}: unsolved, nothing read");
+        let _ = (0..source.len()).count();
+        let _ = source.value(0, 0);
+        assert!(source.is_solved(), "{name}");
+        let mut read_rows = 0;
+        for r in 0..nodes {
+            let n = batch.id(r);
+            let want: Vec<(usize, i64, i64)> = source.lookup(0, &[n]).unwrap().into_iter().map(|row| (row, source.value(row, 0), source.value(row, 1))).collect();
+            let mut got = Vec::new();
+            assert!(source.lookup_read(0, n, &[1, 0], &mut |row, v| got.push((row, v[1], v[0]))), "{name}");
+            assert_eq!(got, want, "{name}: node row {r}");
+            read_rows += got.len();
+        }
+        assert!(read_rows > 0, "{name}: some node has a member ancestor");
+        assert!(!source.lookup_read(1, id, &[0], &mut |_, _| ()), "{name}: by `a`, the solve's rows are searched as before");
+    }
+}
+
+/// A measurement (t50, `wstart`'s nearest step at ~375 ns a probe): ns per call of a solved axis's probe by `n`, by
+/// its parts, over every node of a few documents.
+#[test]
+#[ignore]
+fn an_axis_probes_cost() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-cost")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(8).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes().last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    let source = within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu);
+    let _ = source.value(0, 0);
+    let ids: Vec<i64> = (0..nodes).map(|r| batch.id(r)).collect();
+    let reps = (2_000_000 / nodes.max(1)).max(1);
+    let time = |what: &str, f: &mut dyn FnMut(i64) -> i64| {
+        let t = std::time::Instant::now();
+        let mut sum = 0i64;
+        for _ in 0..reps {
+            for &n in &ids {
+                sum = sum.wrapping_add(f(n));
+            }
+        }
+        let ns = t.elapsed().as_nanos() as f64 / (reps * ids.len()) as f64;
+        eprintln!("{what:<40} {ns:7.1} ns a probe ({} probes, sum {sum})", reps * ids.len());
+    };
+    time("Batch::node", &mut |n| batch.node(n).map_or(0, |(d, l)| d as i64 + i64::from(l)));
+    time("Within::lookup, then value", &mut |n| source.lookup(0, &[n]).unwrap().into_iter().map(|r| source.value(r, 1)).sum());
+    time("Within::lookup_read", &mut |n| {
+        let mut s = 0;
+        source.lookup_read(0, n, &[1], &mut |_, v| s += v[0]);
+        s
+    });
+    // The same probes through the set engine's join: a table of (node, repetition) probing the axis held as an input,
+    // against the same join without the axis.
+    use crate::code_rule_dsl::logic::native::{self as native, component as c};
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let path = crate::code_rule_dsl::fixtures::temp();
+    drop(crate::code_rule_dsl::fixtures::open(&path));
+    let db = rusqlite::Connection::open(path).unwrap();
+    native::register(&db).unwrap();
+    c::hold_source(&db, "ax", Arc::new(source), b"ii".to_vec());
+    db.execute_batch("CREATE TABLE probes(c0, c1); BEGIN").unwrap();
+    {
+        let mut ins = db.prepare("INSERT INTO probes VALUES (?1, ?2)").unwrap();
+        for k in 0..reps as i64 {
+            for &n in &ids {
+                ins.execute([n, k]).unwrap();
+            }
+        }
+    }
+    db.execute_batch("COMMIT").unwrap();
+    let probes = format!("t:b:{}:{}:ii", hex("probes"), hex("c0, c1"));
+    let joined = |name: &str, body: &str| {
+        c::open_spec(&db, &c::spec::ComponentSpec::parse(&format!("name {name}\nrel {name}_out i empty\nnowrite\nseed 0 {}", hex(body))).unwrap()).unwrap();
+        let _ = c::run(&db, name, 0).unwrap();
+        c::close(&db, name).unwrap();
+        c::open_spec(&db, &c::spec::ComponentSpec::parse(&format!("name {name}\nrel {name}_out i empty\nnowrite\nseed 0 {}", hex(body))).unwrap()).unwrap();
+        let t = std::time::Instant::now();
+        let report = c::run(&db, name, 0).unwrap();
+        let s = t.elapsed().as_secs_f64();
+        c::close(&db, name).unwrap();
+        (s, report)
+    };
+    let (plain, _) = joined("plain", &format!("pos {probes} v0 v2\nhead v0"));
+    let (axis, report) = joined("axis", &format!("pos {probes} v0 v2\npos r:{} v0 v1\nhead v1", hex("ax")));
+    let n = (reps * ids.len()) as f64;
+    eprintln!("join: scan alone {:.1} ns a row, with the axis's probe {:.1} ns a row: the probe {:.1} ns ({report})", plain * 1e9 / n, axis * 1e9 / n, (axis - plain) * 1e9 / n);
+}
+
 /// Decision 0353 step 5: a solvable axis's answer is one relation of ids in a block, written once: each row's two
 /// ids, as `value` reads them, in its order, every column at its place, which the device reads where it lies
 /// (`Source::in_block`), with room for an index on each column. Asked again, it is the same relation. Span
@@ -2083,7 +2190,7 @@ fn the_jits_id_reads_are_the_hosts() {
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
 /// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds. The
 /// kernel is UKL, on the process's device (decision 0440 step C).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_kernels_id_reads_are_the_hosts() {
     use rerail_gpu::device::ComputeQueue;
@@ -2158,7 +2265,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
 /// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
 /// start and end; each child's parent, id and place; each fielded node's parent, field and id; each node's tape node;
 /// each node's line, by its lines where they lie (step 4d). In all three formats, whole and narrowed.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_view_reads_are_the_hosts_rows() {
     use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -2428,6 +2535,25 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert_eq!(batch.docs.made_count(), 1, "only the probed document is made");
     assert_eq!(batch.groups(), 1);
     assert!(text.failure().is_none());
+}
+
+/// Decision 0494, R2 for `doc`'s other keys: a probe of it by a module (a file's import of another) makes that
+/// module's document alone, as one by its path does: the batch knows each file's module from its path and the
+/// corpus's name for it, none made.
+#[test]
+fn a_probe_of_doc_by_a_module_makes_that_document_alone() {
+    let store = ContentStore::open(&temp("probe-module")).unwrap();
+    let docs: Vec<Document> = (1..=5).map(|k| document(k, &format!("pkg/m{k}.py"), "python", &format!("x{k} = y({k})\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["doc".to_owned()].into()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let doc = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "doc").unwrap().2);
+    let module = i64::from(store.atoms_handle().intern("pkg.m4").unwrap());
+    let found = doc.lookup(2, &[module]).unwrap();
+    assert_eq!(found.iter().map(|&r| doc.value(r, 0)).collect::<Vec<_>>(), vec![4], "pkg/m4.py's row");
+    assert_eq!(batch.docs.made_count(), 1, "only the module's document is made");
+    assert_eq!(doc.lookup(2, &[i64::from(store.atoms_handle().intern("pkg.none").unwrap())]).unwrap(), Vec::<usize>::new(), "no file is that module");
+    assert_eq!(batch.docs.made_count(), 1, "a module no file is makes none");
 }
 
 /// Decision 0494, R5: a batch given its documents' views' counts and its relations' rows knows every view's and

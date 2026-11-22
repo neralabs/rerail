@@ -10,8 +10,11 @@
 // - a slot is handed over by exchange, never awaited: a taker that finds a slot not yet written marks it TAKEN and
 //   moves on; the pusher, seeing TAKEN, takes another slot;
 // - every loop is bounded (`UKL_WQ_TURNS`); a bound reached ends the worker, as an idle one does;
-// - an idle worker polls a bounded number of times, then exits. A worker that pushed is still running, so a queued
-//   item has a live worker; the host launches the dispatch again while any remain at its end (`control[2]`).
+// - a worker that finds nothing to take ends at once; it never polls for others' pushes (decision 0540 step 7, the
+//   user's: a worker does the work there is, and work that needs another's result is a continuation its finisher
+//   pushes). A worker that pushed is still running and takes on, so a queued item has a live worker; a dispatch of
+//   more workers than run at once has later ones start as earlier ones end, and take what is queued then. The host
+//   launches the dispatch again while any remain at its end (`control[2]`), where a budget ended workers.
 // - a worker takes at most `budget` items in a launch (decision 0540), more than an even share where it finishes its
 //   items sooner, then ends, as an idle one does (`ukl_wq_spent`): a launch's GPU time is so bounded by its workers'
 //   budgets, not by the work. The host launches again while items are left. A launch that leaves any had a worker
@@ -28,8 +31,8 @@
 // then reuses held a position below the head, taken and exchanged before the pause, so no taker sees another
 // position's item. The queue's room is then the most items queued between two pauses, not all items ever pushed.
 //
-// Two ways to take: a thread at a time (`ukl_wq_take`, `ukl_wq_idle`), or a SIMD group at a time (`ukl_wq_take_sg`,
-// `ukl_wq_idle_sg`), where one lane claims up to a group's worth of items with one compare-and-swap and hands them
+// Two ways to take: a thread at a time (`ukl_wq_take`), or a SIMD group at a time (`ukl_wq_take_sg`, the group's lanes
+// ending together when none took any: `ukl_sg_count`), where one lane claims up to a group's worth of items with one compare-and-swap and hands them
 // out. Every taker contends for the head: a thread at a time, thousands of workers make each item cost thousands of
 // failed swaps where atomics are slow (measured on a GB10, whose blocks are pinned host memory: 1.5 ms an item with
 // 4,096 workers). A group at a time, the contenders and the swaps are `UKL_SIMD_WIDTH` times fewer.
@@ -138,29 +141,6 @@ UKL_INLINE bool ukl_wq_spent(UklWorkQueue q, uint32_t taken) { return q.budget !
 
 // An item's work is done (after the items it pushed).
 UKL_INLINE void ukl_wq_done(UklWorkQueue q) { ukl_atomic_sub(&q.control[2], 1u); }
-
-// Whether a worker that found nothing should stop: nothing is active, or it has polled `limit` times.
-UKL_INLINE bool ukl_wq_idle(UklWorkQueue q, UKL_PRIVATE uint32_t* polls, uint32_t limit)
-{
-    if (ukl_atomic_poll(&q.control[2]) == 0u)
-        return true;
-    ukl_poll_yield();
-    return ++*polls >= limit;
-}
-
-// A SIMD group's idle test, after a take in which `got` says whether this lane took an item: the same answer in every
-// lane (a group's worker loop stays uniform). Convergent.
-UKL_INLINE bool ukl_wq_idle_sg(UklWorkQueue q, bool got, UKL_PRIVATE uint32_t* polls, uint32_t limit __UKL_PARAMS)
-{
-    if (ukl_sg_count(got __UKL_ARGS) != 0u) {
-        *polls = 0u;
-        return false;
-    }
-    if (ukl_sg_broadcast(ukl_atomic_poll(&q.control[2]), 0u __UKL_ARGS) == 0u)
-        return true;
-    ukl_poll_yield();
-    return ++*polls >= limit;
-}
 
 // A ring's pause, first step (every thread, `k` from 0 below `ukl_wq_taken(q)`): the slot of the `k`th position taken
 // since the base emptied.

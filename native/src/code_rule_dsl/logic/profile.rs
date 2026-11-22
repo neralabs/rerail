@@ -1870,6 +1870,17 @@ pub fn behind<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// Runs `f`, the command's own store bookkeeping around its run (an analysis scope's begin before the run, its
+/// publication after it: `AnalysisRun`), as the store's writer does its work: outside the waves it writes as a writer
+/// may (decision 0104: a run reads once before its first wave and writes behind it, and this is neither the run's read
+/// nor its write). Inside the waves it is the run's own write, which the strict mode refuses.
+pub fn around_the_run<T>(f: impl FnOnce() -> T) -> T {
+    if strict() && waves_here() && !is_behind() {
+        violation("inside the waves", "the command's own bookkeeping (`around_the_run`)");
+    }
+    behind(f)
+}
+
 /// Whether this thread works behind the run (`behind`, `behind_the_run`).
 pub fn is_behind() -> bool {
     BEHIND.with(std::cell::Cell::get)
@@ -2718,8 +2729,8 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     memory::sampled_report(r);
 }
 
-/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux, Windows) `port`, read from another thread;
-/// `None` for a thread that has ended, and elsewhere.
+/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux, Windows) `port`, read from another
+/// thread; `None` for a thread that has ended, and elsewhere.
 fn thread_cpu(port: u32) -> Option<f64> {
     #[cfg(target_os = "macos")]
     {

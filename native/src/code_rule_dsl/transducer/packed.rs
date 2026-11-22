@@ -47,14 +47,14 @@ pub mod metal_batch_abi;
 pub mod device;
 pub use device::{RootJobs, RootsFound};
 
-#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
 pub fn reset_metal_execution_metrics() {
     if let Some(device) = device::matcher() {
         device.reset_execution_metrics();
     }
 }
 
-#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
 pub fn metal_execution_metrics() -> (usize, usize) {
     device::matcher().map_or((0, 0), |device| device.execution_metrics())
 }
@@ -111,7 +111,7 @@ pub mod native_cpu_tape;
 pub mod native_cpu_value;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
 #[allow(unused_imports)]
-pub use rerail_compiler::native_cpu_rows;
+pub use rerail_cpu_block::native_cpu_rows;
 // Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
 pub mod rows_sort;
 pub mod native_ir;
@@ -2382,7 +2382,7 @@ impl Program {
     }
 
     pub fn label_name(&self, label: u16) -> Option<&str> {
-        rerail_compiler::rir_asm::label_name(self, label)
+        rerail_rir::rir_asm::label_name(self, label)
     }
 
     pub fn string_value(&self, string: u16) -> Option<&str> {
@@ -3451,7 +3451,7 @@ impl Program {
         self.execute_roots_from_with_work_limit(tape, roots, initial_pc, stats, MAX_STEPS_PER_PATH)
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
     pub fn execute_terminal_reference_with_work_limit(
         &self,
         tape: &TapeDoc,

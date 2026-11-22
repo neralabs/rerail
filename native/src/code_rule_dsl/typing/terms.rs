@@ -41,7 +41,7 @@ pub(crate) const DEPTH: usize = 4;
 pub(crate) const NO_NAME: Sym = Sym::MAX;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Ord, PartialOrd)]
-pub(crate) enum Ctor {
+pub enum Ctor {
     Named = 0,
     Union = 1,
     OpenUnion = 2,
@@ -54,10 +54,10 @@ pub(crate) enum Ctor {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct Term {
-    pub(crate) ctor: Ctor,
-    pub(crate) name: Sym,
-    pub(crate) args: Vec<Tid>,
+pub struct Term {
+    pub ctor: Ctor,
+    pub name: Sym,
+    pub args: Vec<Tid>,
 }
 
 /// Three-valued: a check through unknown is neither true nor false.
@@ -86,7 +86,7 @@ impl Truth {
     }
 }
 
-pub(crate) struct Terms {
+pub struct Terms {
     terms: Vec<Term>,
     index: HashMap<Term, Tid>,
     /// Declared traits of named and literal terms, by (ctor, name): (must, may).
@@ -136,16 +136,16 @@ impl Terms {
         }
     }
 
-    pub(crate) fn get(&self, t: Tid) -> &Term {
+    pub fn get(&self, t: Tid) -> &Term {
         &self.terms[t as usize]
     }
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.terms.len()
     }
     pub(crate) fn top(&self) -> Tid {
         self.top
     }
-    pub(crate) fn named(&mut self, name: Sym, args: &[Tid]) -> Tid {
+    pub fn named(&mut self, name: Sym, args: &[Tid]) -> Tid {
         self.make(Ctor::Named, name, args.to_vec())
     }
     pub(crate) fn var(&mut self, name: Sym, bound: Option<Tid>) -> Tid {
@@ -169,7 +169,7 @@ impl Terms {
 
     /// The union of `members`: nested unions flattened (an open one opens it), ⊤ absorbing, sorted and
     /// deduplicated; one closed member is itself; past `MEMBERS` members, ⊤.
-    pub(crate) fn union(&mut self, members: &[Tid], open: bool) -> Tid {
+    pub fn union(&mut self, members: &[Tid], open: bool) -> Tid {
         self.union_of(members.to_vec(), open)
     }
     fn union_of(&mut self, members: Vec<Tid>, mut open: bool) -> Tid {
@@ -246,7 +246,7 @@ impl Terms {
     }
 
     /// `t`'s members: a union's, or `t` alone; and whether more may exist (an open union, ⊤).
-    pub(crate) fn members(&self, t: Tid) -> (Vec<Tid>, bool) {
+    pub fn members(&self, t: Tid) -> (Vec<Tid>, bool) {
         let term = &self.terms[t as usize];
         match term.ctor {
             Ctor::Union => (term.args.clone(), false),
@@ -366,7 +366,7 @@ impl Terms {
     }
 
     /// Writes every term as `type_term(tid, ctor, name_atom, arity)` and `type_arg(tid, i, arg)` in `schema`.
-    pub(crate) fn write(&self, db: &rusqlite::Connection, schema: &str) -> rusqlite::Result<()> {
+    pub fn write(&self, db: &rusqlite::Connection, schema: &str) -> rusqlite::Result<()> {
         db.execute_batch(&format!(
             "CREATE TABLE IF NOT EXISTS {schema}.type_term(tid INTEGER PRIMARY KEY, ctor INTEGER, name_atom INTEGER, arity INTEGER);
              CREATE TABLE IF NOT EXISTS {schema}.type_arg(tid INTEGER, i INTEGER, arg INTEGER, PRIMARY KEY (tid, i)) WITHOUT ROWID;"

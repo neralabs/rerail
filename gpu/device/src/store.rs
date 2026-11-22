@@ -62,22 +62,69 @@ pub fn key(parts: &[&[u8]]) -> String {
     format!("{:016x}{:016x}", h[0], h[1])
 }
 
+/// The kernels shipped with the engine (`rerail-engine kernels ship`, decision 0395's middle tier): read-only, each
+/// backend's forms under `<dir>/<backend>/` by the store's own keys, so a shipped form is used only where every
+/// part of its key is this machine's (its device, compiler and driver). `RERAIL_SHIPPED_KERNELS=<dir>|off`, else
+/// `rerail-kernels/` beside the program, as Metal's (`rerail_accel::gpu::kernels`).
+pub fn shipped_dir() -> Option<&'static Path> {
+    static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    DIR.get_or_init(|| match std::env::var_os("RERAIL_SHIPPED_KERNELS") {
+        Some(v) if v == "off" => None,
+        Some(v) if !v.is_empty() => Some(PathBuf::from(v)),
+        _ => std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join("rerail-kernels"))).filter(|p| p.is_dir()),
+    })
+    .as_deref()
+}
+
+/// The shipped form of `backend`'s `key`, when there is one.
+pub fn shipped(backend: &str, key: &str, ext: &str) -> Option<PathBuf> {
+    let p = shipped_dir()?.join(backend).join(format!("{key}.{ext}"));
+    if !p.is_file() {
+        return None;
+    }
+    touch(&p);
+    Some(p)
+}
+
 /// Where `backend`'s form of `key` is kept (`ext` its extension), its directory made: none without a store.
 pub fn path(backend: &str, key: &str, ext: &str) -> Option<PathBuf> {
     let d = dir()?.join(backend);
     std::fs::create_dir_all(&d).ok()?;
     let p = d.join(format!("{key}.{ext}"));
-    LAST.with(|l| *l.borrow_mut() = Some(p.clone()));
+    touch(&p);
     Some(p)
 }
 
-/// The last entry this thread's compiles looked up (a test damages it).
-pub fn last_here() -> Option<PathBuf> {
-    LAST.with(|l| l.borrow().clone())
+/// `p` among the entries this thread's compiles looked up, while it records them (`recording`).
+fn touch(p: &Path) {
+    TOUCHED.with(|t| {
+        if let Some(t) = t.borrow_mut().as_mut() {
+            t.push(p.to_path_buf());
+        }
+    });
 }
 
-/// The bytes kept for `backend`'s `key`, if any: a use, so the entry is touched (`prune` keeps the recently used).
+/// The entries `f`'s compiles looked up on this thread, shipped and in the store: what a kernel's compile ahead used,
+/// which `kernels ship` copies.
+pub fn recording<T>(f: impl FnOnce() -> T) -> (T, Vec<PathBuf>) {
+    let outer = TOUCHED.with(|t| t.borrow_mut().replace(Vec::new()));
+    let r = f();
+    let got = TOUCHED.with(|t| std::mem::replace(&mut *t.borrow_mut(), outer)).unwrap_or_default();
+    // A recording around this one has them too.
+    TOUCHED.with(|t| {
+        if let Some(o) = t.borrow_mut().as_mut() {
+            o.extend(got.iter().cloned());
+        }
+    });
+    (r, got)
+}
+
+/// The bytes kept for `backend`'s `key`, if any: the shipped form, else the store's (a use, so the entry is touched:
+/// `prune` keeps the recently used).
 pub fn load(backend: &str, key: &str, ext: &str) -> Option<Vec<u8>> {
+    if let Some(bytes) = shipped(backend, key, ext).and_then(|p| std::fs::read(p).ok()).filter(|b| !b.is_empty()) {
+        return Some(bytes);
+    }
     let p = path(backend, key, ext)?;
     let bytes = std::fs::read(&p).ok().filter(|b| !b.is_empty())?;
     used(&p);
@@ -147,6 +194,16 @@ pub fn save(backend: &str, key: &str, ext: &str, bytes: &[u8]) {
     }
 }
 
+/// `RERAIL_GPU_DUMP=<dir>`, a measurement aid: each source a backend's compiler is given, as `<label>.<ext>` in
+/// `<dir>` with its options in a first comment line, to compile again outside the engine (decision 0395 §6).
+pub fn dump(label: &str, ext: &str, options: &str, source: &str) {
+    let Some(dir) = std::env::var_os("RERAIL_GPU_DUMP") else { return };
+    let dir = Path::new(&dir);
+    let _ = std::fs::create_dir_all(dir);
+    let name: String = label.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '_' { c } else { '_' }).collect();
+    let _ = std::fs::write(dir.join(format!("{name}.{ext}")), format!("// options: {options}\n{source}"));
+}
+
 /// A number no other call in this process gives: a temporary file's own name.
 pub fn unique() -> u64 {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -155,7 +212,7 @@ pub fn unique() -> u64 {
 
 thread_local! {
     static HERE: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
-    static LAST: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+    static TOUCHED: std::cell::RefCell<Option<Vec<PathBuf>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Counted on this thread: a library loaded from the store (`true`) or compiled.

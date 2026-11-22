@@ -1,6 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::{
-    CodeRuleDslRuntime, CompiledCodeRuleDsl,
+    CompiledCodeRuleDsl,
     model::{FileInput, Snapshot},
 };
 use serde_json::json;
@@ -8,12 +8,12 @@ use std::ops::Deref;
 use std::sync::{Arc, atomic::AtomicBool};
 
 fn rule() -> CompiledCodeRuleDsl {
-    CodeRuleDslRuntime::compile(json!({"format":"rerail.policy/v1","id":"capacity","revision":1,"mode":"log","clauses":[{
+    crate::code_rule_dsl::rule_api::compile(&json!({"format":"rerail.policy/v1","id":"capacity","revision":1,"mode":"log","clauses":[{
         "id":"nodes","relational":{"partitionBy":"file","inputs":{"gate":{"evidence":{"as":"n","query":{"ast":{"language":"python","syntax":"valid","rule":{"kind":"module"}}},"project":{"path":"file.path"}}}},
         "syntax":{"name":"nodes","gate":"gate"},
         "stages":[{"name":"descendants","reachability":{"syntax":"nodes","roots":"SELECT __path,id FROM nodes WHERE kind='function_definition'"}}],
         "query":"SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.id FROM nodes n JOIN descendants d ON d.__path=n.__path AND d.node=n.id AND d.root=n.id WHERE n.kind='function_definition'","key":["id"]},
-        "violation":{"code":"CAPACITY","message":"Capacity","anchor":"witness.span"}}]}).to_string(), "json".into(), include_str!("../../../capabilities.json").into()).unwrap()
+        "violation":{"code":"CAPACITY","message":"Capacity","anchor":"witness.span"}}]}).to_string(), "json", include_str!("../../../capabilities.json")).unwrap()
 }
 fn files(count: usize) -> Vec<FileInput> {
     (0..count)
@@ -146,11 +146,7 @@ fn dependent_consumer_still_stops_at_100_passes_without_rejecting_peers() {
         .replace("descendants d", "next_33 d")
         .into();
     relational["stages"] = stages.into();
-    let deep = CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".into(),
-        include_str!("../../../capabilities.json").into(),
-    )
+    let deep = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", include_str!("../../../capabilities.json"))
     .unwrap();
     let shallow = rule();
     let mut pending = jobs(&deep, files(1));
@@ -210,11 +206,7 @@ fn pending_consumers_do_not_construct_any_inputs_and_failed_preparation_is_local
 fn projection_demand_includes_nested_predicates_and_wildcards_but_not_counted_row_values() {
     fn compile(query: &str, stages: serde_json::Value) -> Vec<String> {
         let document = json!({"format":"rerail.policy/v1","id":"columns","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"partitionBy":"file","inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"kind":"module"}}},"project":{"used":"file.path","unused":"file.name"}}}},"stages":stages,"query":query},"violation":{"code":"COLUMNS","message":"columns","anchor":"witness.span"}}]});
-        let rule = CodeRuleDslRuntime::compile(
-            document.to_string(),
-            "json".into(),
-            include_str!("../../../capabilities.json").into(),
-        )
+        let rule = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", include_str!("../../../capabilities.json"))
         .unwrap();
         let Some(plan) = rule.inner.clauses[0].data_layer.as_deref() else {
             panic!("relational");
@@ -293,7 +285,7 @@ fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
         model::{Anchor, Metrics},
         violations::anchored_span,
     };
-    let rule=CodeRuleDslRuntime::compile(json!({"format":"rerail.policy/v1","id":"input-payload","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"partitionBy":"file","inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"all":[{"kind":"function_definition"},{"has":{"field":"name","pattern":"$NAME"}},{"has":{"field":"parameters","pattern":"$PARAMS"}}]}}},"project":{"name":"capture.NAME"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name FROM facts"},"violation":{"code":"INPUT","message":"unused input message","anchor":"witness.span"}}]}).to_string(),"json".into(),include_str!("../../../capabilities.json").into()).unwrap();
+    let rule=crate::code_rule_dsl::rule_api::compile(&json!({"format":"rerail.policy/v1","id":"input-payload","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"partitionBy":"file","inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"all":[{"kind":"function_definition"},{"has":{"field":"name","pattern":"$NAME"}},{"has":{"field":"parameters","pattern":"$PARAMS"}}]}}},"project":{"name":"capture.NAME"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name FROM facts"},"violation":{"code":"INPUT","message":"unused input message","anchor":"witness.span"}}]}).to_string(), "json", include_str!("../../../capabilities.json")).unwrap();
     let code_rule = &rule.inner;
     let clause = &code_rule.clauses[0];
     let Some(plan) = clause.data_layer.as_deref() else {

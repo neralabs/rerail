@@ -50,7 +50,7 @@ impl Retained {
                 let folded = match &lattice.aggregate {
                     Some(aggregate) => format!("{aggregate}({v})"),
                     None => {
-                        crate::code_rule_dsl::logic::sql::lattices::flat_aggregate(&v, lattice.top)
+                        crate::code_rule_dsl::logic::native::lattices::flat_aggregate(&v, lattice.top)
                     }
                 };
                 format!("SELECT {key},{folded} FROM {heads} WHERE {count}>0 GROUP BY {key}")

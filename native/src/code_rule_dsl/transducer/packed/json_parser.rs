@@ -7,8 +7,10 @@
 //! JSON's tape tag; supertype memberships are in its codes. A file the grammar refuses (invalid JSON,
 //! an empty file, a comment holding a quote) goes to tree-sitter-json.
 
-use rerail_compiler::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_cpu_stream, native_ir, rir_asm as rir};
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+use rerail_compiler::native_ir;
+use rerail_rir::rir_asm as rir;
+use rerail_cpu_stream::native_cpu_stream;
 
 /// The grammar: JSONC.
 const GRAMMAR: &str = include_str!("../../../../crates/json_parser/jsonc.bitlex");
@@ -62,8 +64,8 @@ pub mod tape;
 // writes the tape in place (0134). On MSVC its C++ is compiled by clang-cl (`rerail-simdjson-native`).
 #[cfg(not(target_family = "wasm"))]
 pub mod simdjson;
-// The route of a file simdjson refuses (the Bitlex parser, then tree-sitter-json past trailing commas, then
-// tree-sitter-json); compiled everywhere, and compared with simdjson's route by the tape tests.
+// What simdjson refuses: the Bitlex parser, then tree-sitter-json past trailing commas.
+#[cfg(not(target_family = "wasm"))]
 pub mod fallback;
 
 pub fn image(src: &str) -> Option<Vec<u8>> {

@@ -1,26 +1,12 @@
-//! JSON's parser where simdjson does not build: MSVC, which compiles none of `rerail-simdjson-native`'s C++ (its
-//! kernels are GCC and Clang code, target regions and attributes). It reads a file as simdjson's route does
-//! (`json_parser::simdjson`): the Bitlex parser (`json_parser::tape::Bitlex`, the ladder's JSONC grammar: comments, and
-//! an exponent's `+`, which tree-sitter-json refuses), then tree-sitter-json over the text with each trailing comma
-//! blanked (as simdjson's JSONC read passes over one, decision 0158), and a file both refuse goes to tree-sitter-json
-//! as it is, as one simdjson refuses does. The tapes are simdjson's route's, byte for byte, on the inputs its tests
-//! read (`tape::tests::the_msvc_json_fallback_reads_as_simdjson_does`, run where simdjson builds).
+//! JSON's parser for a file simdjson refuses (`json_parser::simdjson`): the Bitlex parser (`json_parser::tape::Bitlex`,
+//! the ladder's JSONC grammar: comments, and an exponent's `+`, which tree-sitter-json refuses), then tree-sitter-json
+//! over the text with each trailing comma blanked (as simdjson's JSONC read passes over one, decision 0158); a file
+//! both refuse goes to tree-sitter-json as it is. simdjson is JSON's route on every target, MSVC's included (clang-cl
+//! compiles its C++ there).
 use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};
 
-/// JSON's tree parser without simdjson.
+/// JSON's tree parser for what simdjson refuses.
 pub struct Fallback;
-
-/// The router's entry for it (MSVC builds, `install_languages`).
-#[cfg(all(windows, target_env = "msvc"))]
-pub fn registration() -> crate::code_rule_dsl::tape::ParserImpl {
-    crate::code_rule_dsl::tape::ParserImpl {
-        dialect: crate::code_rule_dsl::language::GrammarDialect::Json,
-        name: "Bitlex, then tree-sitter-json past trailing commas (no simdjson on MSVC)",
-        rank: 0,
-        runs: true,
-        parser: &Fallback,
-    }
-}
 
 impl TreeParser for Fallback {
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {

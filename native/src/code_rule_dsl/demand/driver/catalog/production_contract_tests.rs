@@ -5,7 +5,6 @@
 //! form frontend. Compact forms are immutable descriptions only.
 
 use super::relational::SqlCatalogPlan;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::language::{GrammarDialect, label};
 use crate::code_rule_dsl::transducer::packed::Program;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
@@ -374,11 +373,7 @@ fn result_schema(kind: super::relational::TerminalKind) -> Vec<String> {
 }
 
 fn compiled_case(case: &ContractCase) -> Arc<crate::code_rule_dsl::model::CompiledCodeRule> {
-    CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(case),
-    )
+    crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(case))
     .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason))
     .inner
 }
@@ -548,11 +543,7 @@ fn contract_capabilities(case: &ContractCase) -> String {
 }
 
 fn oracle_result(case: &ContractCase) -> Value {
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(case))
     .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
     let files = case
         .workspace
@@ -712,11 +703,7 @@ fn production_contract_phase_two_comparison_value_and_truth_lower_completely() {
         .into_iter()
         .filter(|case| PHASE_TWO_CASES.contains(&case.name.as_str()))
     {
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         match SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]) {
             Ok(plan) => {
@@ -752,11 +739,7 @@ fn production_contract_phase_two_sql_rows_equal_committed_oracle_rows() {
         .filter(|case| PHASE_TWO_CASES.contains(&case.name.as_str()))
     {
         assert_eq!(case.workspace.files.len(), 1, "{}", case.name);
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         let mut expected = case
             .expected
@@ -888,11 +871,7 @@ fn production_contract_phase_four_every_redefinition_rejects_non_true_candidates
         .into_iter()
         .find(|case| case.name == "semantic-redefines-every")
         .expect("the every-redefinition contract exists");
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .expect("the every-redefinition policy compiles");
     let statements = authored_sql_goldens();
     let sql = &statements[&case.name];
@@ -971,11 +950,7 @@ fn production_contract_phase_four_incomplete_format_analysis_cannot_match() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the format contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the format policy compiles");
         let original = "fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6)";
         let columns = format!(
@@ -1057,11 +1032,7 @@ fn production_contract_phase_two_authored_disabled_query_is_empty() {
         .into_iter()
         .find(|case| case.name == name)
         .expect("the disabled query contract exists");
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .expect("the disabled query policy compiles");
     let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
         &compiled,
@@ -1100,11 +1071,7 @@ fn production_contract_phase_two_authored_nested_truth_equals_oracle() {
         .into_iter()
         .find(|case| case.name == name)
         .expect("the nested truth contract exists");
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .expect("the nested truth policy compiles");
     let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
         &compiled,
@@ -1154,11 +1121,7 @@ fn production_contract_phase_two_authored_not_relations_equal_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the negation contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the negation policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
             &compiled,
@@ -1217,11 +1180,7 @@ fn production_contract_phase_two_authored_any_relations_equal_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the ordered alternative contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the ordered alternative policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
             &compiled,
@@ -1282,11 +1241,7 @@ fn production_contract_phase_two_authored_all_relations_equal_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the ordered conjunction contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the ordered conjunction policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
             &compiled,
@@ -1337,11 +1292,7 @@ fn production_contract_phase_two_authored_node_values_equal_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the node-value contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the node-value policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
             &compiled,
@@ -1667,11 +1618,7 @@ fn production_contract_phase_four_semantic_facts_lower_completely() {
         .into_iter()
         .filter(|case| PHASE_FOUR_CASES.contains(&case.name.as_str()))
     {
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         match SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]) {
             Ok(plan) => {
@@ -1799,11 +1746,7 @@ fn production_contract_phase_four_authored_sql_has_common_clause_output() {
         .into_iter()
         .filter(|case| PHASE_FOUR_CASES.contains(&case.name.as_str()))
     {
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         let dialect = match case.workspace.files[0].language.as_str() {
             "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
@@ -1896,11 +1839,7 @@ fn production_contract_phase_four_authored_sql_results_equal_semantic_oracles() 
             && case.name != "semantic-fact-producer-failure"
     }) {
         assert_eq!(case.workspace.files.len(), 1, "{}", case.name);
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         let file = &case.workspace.files[0];
         let dialect = match file.language.as_str() {
@@ -1939,11 +1878,7 @@ fn production_contract_phase_four_sql_results_equal_semantic_oracles() {
             && case.name != "semantic-fact-producer-failure"
     }) {
         assert_eq!(case.workspace.files.len(), 1, "{}", case.name);
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         let file = &case.workspace.files[0];
         let dialect = match file.language.as_str() {
@@ -2041,11 +1976,7 @@ fn production_contract_phase_seven_compact_lowering_uses_semantics_not_fixture_i
     case.policy["mode"] = "steer".into();
     case.policy["clauses"][0]["id"] = "renamed-output-clause".into();
     case.policy["clauses"][0]["violation"]["code"] = "RENAMED".into();
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .expect("renamed output contract compiles");
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("renamed output contract lowers");
@@ -2068,11 +1999,7 @@ fn production_contract_phase_seven_compact_output_preserves_typed_failures() {
     let file = &case.workspace.files[0];
     let dialect = crate::code_rule_dsl::language::dialect_by_label(&file.language)
         .expect("registered dialect");
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .expect("capture-anchor contract compiles");
     let outcome = super::policy_lowering_tests::sql_outcome_with_producer_failure(
         &compiled,
@@ -2212,11 +2139,7 @@ fn production_contract_phase_seven_authored_sql_equals_typed_oracles() {
         let file = &case.workspace.files[0];
         let dialect = crate::code_rule_dsl::language::dialect_by_label(&file.language)
             .expect("registered dialect");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{name}: {}", error.reason));
         let actual = super::policy_lowering_tests::sql_violation_values_for_statement(
             &compiled,
@@ -2240,11 +2163,7 @@ fn production_contract_phase_seven_output_spans_and_multiplicity_equal_oracles()
             .find(|case| case.name == name)
             .expect("Phase 7 contract");
         assert_eq!(case.workspace.files.len(), 1, "{name}");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{name}: {}", error.reason));
         let outcome =
             super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
@@ -2276,11 +2195,7 @@ fn production_contract_phase_seven_typed_violation_rows_equal_oracles() {
         let file = &case.workspace.files[0];
         let dialect = crate::code_rule_dsl::language::dialect_by_label(&file.language)
             .expect("registered dialect");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{name}: {}", error.reason));
         let actual = super::policy_lowering_tests::sql_violation_values(
             &compiled,
@@ -2298,11 +2213,7 @@ fn production_contract_phase_seven_suppression_removes_the_output_row() {
         .into_iter()
         .find(|case| case.name == "output-fix-and-suppression")
         .expect("suppression contract");
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .expect("suppression policy compiles");
     let violations = super::policy_lowering_tests::sql_violation_values(
         &compiled,
@@ -2442,11 +2353,7 @@ fn production_contract_phase_six_authored_sql_equals_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("Phase 6 contract");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("Phase 6 policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
             &compiled,
@@ -2469,11 +2376,7 @@ fn production_contract_phase_six_authored_sql_equals_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("Phase 6 contract");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("Phase 6 policy compiles");
         let files = case
             .workspace
@@ -2520,11 +2423,7 @@ fn production_contract_phase_six_file_and_select_clauses_equal_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the Phase 6 contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("Phase 6 policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome(&compiled, source);
         assert_eq!(outcome.ranges, ranges, "{name}: SQL ranges");
@@ -2564,11 +2463,7 @@ fn production_contract_phase_six_cross_file_clauses_equal_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the Phase 6 contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("Phase 6 policy compiles");
         let files = files
             .into_iter()
@@ -2590,11 +2485,7 @@ fn production_contract_phase_six_rejects_files_before_terminal_demand() {
         .into_iter()
         .find(|case| case.name == "clause-file-condition")
         .expect("file-condition contract");
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .expect("file-condition policy compiles");
     let files = case
         .workspace
@@ -2630,11 +2521,7 @@ fn production_contract_phase_six_failed_dependency_does_not_suppress_independent
             "forbid": {"ast": {"language": "python", "rule": {"pattern": "x = 1"}}},
             "violation": {"anchor": "witness.span", "code": "SQL", "message": "independent"}
         }));
-    let compiled = CodeRuleDslRuntime::compile(
-        policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", &contract_capabilities(&case))
     .expect("independent-clause policy compiles");
     let outcome = super::policy_lowering_tests::sql_outcome_with_fact_failure(
         &compiled,
@@ -2657,11 +2544,7 @@ fn production_contract_phase_six_preserves_syntax_error_unknown() {
         .into_iter()
         .find(|case| case.name == "clause-syntax-error-unknown")
         .expect("syntax-error contract");
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .expect("syntax-error policy compiles");
     let files = case
         .workspace
@@ -2712,11 +2595,7 @@ fn production_contract_phase_five_authored_sql_equals_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the parsed-document contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the parsed-document policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
             &compiled,
@@ -2742,11 +2621,7 @@ fn production_contract_phase_five_authored_sql_equals_oracles() {
         .into_iter()
         .find(|case| case.name == "semantic-generated-document-map")
         .expect("the generated-document contract exists");
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .expect("the generated-document policy compiles");
     let map = &case.workspace.document_maps[0].spans[0];
     let outcome = super::policy_lowering_tests::sql_outcome_for_statement_with_document_maps(
@@ -2983,11 +2858,7 @@ fn production_contract_phase_five_parse_capacity_is_atomic() {
     let mut capabilities: Value =
         serde_json::from_str(CAPABILITIES).expect("default capabilities are JSON");
     capabilities["limits"]["maxVisitedNodes"] = 1.into();
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        capabilities.to_string(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &capabilities.to_string())
     .expect("the capacity-limited parse policy compiles");
     let outcome =
         super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
@@ -3004,11 +2875,7 @@ fn production_contract_phase_five_generated_document_maps_are_required() {
         .into_iter()
         .find(|case| case.name == "semantic-generated-document-map")
         .expect("the generated-document contract exists");
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .expect("the generated-document policy compiles");
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("the generated-document policy lowers");
@@ -3096,11 +2963,7 @@ fn production_contract_phase_five_parsed_documents_equal_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the parsed-document contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the parsed-document policy compiles");
         let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
             .unwrap_or_else(|error| panic!("{name}: {}", error.unsupported().join("; ")));
@@ -3178,11 +3041,7 @@ fn production_contract_phase_four_unknown_fact_never_becomes_true() {
         oracle["failures"].as_array().is_some_and(Vec::is_empty),
         "semantic unknown is not an execution failure"
     );
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
     let outcome = super::policy_lowering_tests::sql_outcome_for_dialect(
         &compiled,
@@ -3235,11 +3094,7 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
                 | "semantic-calls-through"
         )
     }) {
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         let dialect = match case.workspace.files[0].language.as_str() {
             "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
@@ -3348,11 +3203,7 @@ fn production_contract_phase_four_fact_producers_have_exact_completion_states() 
         PHASE_FOUR_CASES.contains(&case.name.as_str())
             && case.name != "semantic-fact-producer-failure"
     }) {
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
             .unwrap_or_else(|error| panic!("{} lowering: {:?}", case.name, error.unsupported()));
@@ -3403,11 +3254,7 @@ fn production_contract_phase_four_real_fact_capacity_is_atomic() {
         .find(|case| case.name == "semantic-binding-site")
         .expect("the binding-site contract exists");
     case.workspace.capabilities = "work-limit-one".to_owned();
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
     let outcome = super::policy_lowering_tests::sql_outcome_for_dialect(
         &compiled,
@@ -3443,11 +3290,7 @@ fn production_contract_phase_four_authored_failure_sql_projects_every_incomplete
         .into_iter()
         .find(|case| case.name == "semantic-fact-producer-failure")
         .expect("the semantic fact failure contract exists");
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
     let statements = authored_sql_goldens();
     for code in ["capacity-failure", "semantic-fact-capacity"] {
@@ -3477,11 +3320,7 @@ fn production_contract_phase_four_fact_failure_is_incomplete_and_has_no_partial_
         .into_iter()
         .find(|case| case.name == "semantic-fact-producer-failure")
         .expect("the semantic fact failure contract exists");
-    let compiled = CodeRuleDslRuntime::compile(
-        case.policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
     .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
     let outcome = super::policy_lowering_tests::sql_outcome_with_fact_failure(
         &compiled,
@@ -3554,11 +3393,7 @@ fn production_contract_phase_three_authored_limit_utilities_are_atomic() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the utility limit contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the utility limit policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
             &compiled,
@@ -3598,11 +3433,7 @@ fn production_contract_phase_three_authored_parameter_utilities_equal_oracles() 
             .into_iter()
             .find(|case| case.name == name)
             .expect("the parameter utility contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the parameter utility policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
             &compiled,
@@ -3656,11 +3487,7 @@ fn production_contract_phase_three_authored_recursive_utilities_equal_oracles() 
             .into_iter()
             .find(|case| case.name == name)
             .expect("the recursive utility contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the recursive utility policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
             &compiled,
@@ -3713,11 +3540,7 @@ fn production_contract_phase_three_authored_capture_utilities_equal_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the capture utility contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the capture utility policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
             &compiled,
@@ -3771,11 +3594,7 @@ fn production_contract_phase_three_authored_leaf_utilities_equal_oracles() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the leaf utility contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .expect("the leaf utility policy compiles");
         let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
             &compiled,
@@ -3886,11 +3705,7 @@ fn production_contract_phase_three_utilities_lower_to_named_sql_components() {
             .into_iter()
             .find(|case| case.name == name)
             .expect("the utility contract exists");
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
             .unwrap_or_else(|error| panic!("{}: {}", case.name, error.unsupported().join("; ")));
@@ -4024,11 +3839,7 @@ fn utility_ctes_are_shared_across_clauses_and_parameter_frames() {
             }}}, "violation": { "anchor": "capture.Y", "code": "SQL", "message": "$Y" }}
         ]
     });
-    let compiled = CodeRuleDslRuntime::compile(
-        policy.to_string(),
-        "json".to_owned(),
-        include_str!("../../../capabilities.json").to_owned(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../capabilities.json"))
     .expect("shared utility policy");
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("shared utility SQL");
     let sql = plan.structural_sql();
@@ -4079,11 +3890,7 @@ fn independently_compiled_equal_utilities_share_one_semantic_body() {
         })
     };
     let compile = |policy: serde_json::Value| {
-        CodeRuleDslRuntime::compile(
-            policy.to_string(),
-            "json".to_owned(),
-            include_str!("../../../capabilities.json").to_owned(),
-        )
+        crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../capabilities.json"))
         .expect("utility policy")
     };
     let first = compile(policy("semantic-utility-first", "first"));
@@ -4120,11 +3927,7 @@ fn repeated_policy_clauses_keep_one_bounded_utility_body() {
         "mode": "block",
         "clauses": clauses
     });
-    let compiled = CodeRuleDslRuntime::compile(
-        policy.to_string(),
-        "json".to_owned(),
-        include_str!("../../../capabilities.json").to_owned(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../capabilities.json"))
     .expect("repeated utility policy");
     let plan =
         SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("bounded utility SQL");
@@ -4153,11 +3956,7 @@ fn repeated_policy_clauses_keep_one_bounded_utility_body() {
     let mut duplicate = clauses.last().expect("reporting clause").clone();
     duplicate["id"] = serde_json::json!("second-recursive-call");
     clauses.push(duplicate);
-    let compiled = CodeRuleDslRuntime::compile(
-        recursive_policy.to_string(),
-        "json".to_owned(),
-        contract_capabilities(&recursive_case),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&recursive_policy.to_string(), "json", &contract_capabilities(&recursive_case))
     .expect("repeated recursive utility policy");
     let plan =
         SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("recursive utility SQL");
@@ -4215,11 +4014,7 @@ fn shared_utility_choices_stay_in_one_physical_region() {
             }
         ]
     });
-    let compiled = CodeRuleDslRuntime::compile(
-        policy.to_string(),
-        "json".to_owned(),
-        include_str!("../../../capabilities.json").to_owned(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_string(), "json", include_str!("../../../capabilities.json"))
     .expect("shared choice policy");
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("shared choice SQL");
     assert!(
@@ -4244,11 +4039,7 @@ fn production_contract_phase_three_sql_rows_equal_committed_utility_oracles() {
         .filter(|case| PHASE_THREE_CASES.contains(&case.name.as_str()))
     {
         assert_eq!(case.workspace.files.len(), 1, "{}", case.name);
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         let outcome =
             super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
@@ -4283,11 +4074,7 @@ fn production_contract_cross_term_structure_comparisons_equal_oracles() {
             "capture-cross-term-equality" | "capture-cross-term-inequality"
         )
     }) {
-        let compiled = CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        )
+        let compiled = crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case))
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         let outcome =
             super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
@@ -4314,11 +4101,7 @@ fn all_108_contracts_are_real_production_inputs_and_lower_to_sql() {
     let cases = cases();
     let mut failures = Vec::new();
     for case in cases {
-        let compiled = match CodeRuleDslRuntime::compile(
-            case.policy.to_string(),
-            "json".to_owned(),
-            contract_capabilities(&case),
-        ) {
+        let compiled = match crate::code_rule_dsl::rule_api::compile(&case.policy.to_string(), "json", &contract_capabilities(&case)) {
             Ok(compiled) => compiled,
             Err(error) => {
                 failures.push(format!(

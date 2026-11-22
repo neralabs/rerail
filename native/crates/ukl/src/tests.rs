@@ -164,19 +164,6 @@ fn a_metal_kernel_takes_the_tapes_reads() {
     assert!(crate::metal_source("both.metal", both).is_err(), "one set of the tape's reads");
 }
 
-/// The fingerprint computed when the crate is compiled is the hash it was computed as at each call: FNV-1a over each
-/// carried file's name and text, each followed by a 0. A changed value would key every stored kernel anew.
-#[test]
-fn the_fingerprint_is_fnv_over_the_carried_files() {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for (name, text) in HEADERS.iter().chain(LIBRARY) {
-        for b in name.bytes().chain([0]).chain(text.bytes()).chain([0]) {
-            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-    assert_eq!(fingerprint(), h);
-}
-
 /// Windows' LLP64: an integer literal's `long` suffix is written `long long`, so `(1ul << 39) - 1` and `~0ul` are the
 /// 64-bit values UKL means; other literals are as written.
 #[test]
@@ -189,4 +176,17 @@ fn a_long_literal_is_long_long_where_long_is_32_bits() {
     for same in ["1ull", "2ll", "5u", "9", "1.0", "1e5", "0x1p3", "x1ul", "2.5l"] {
         assert_eq!(w(same), None, "{same}");
     }
+}
+
+/// The fingerprint computed when the crate is compiled is the hash it was computed as at each call: FNV-1a over each
+/// carried file's name and text, each followed by a 0. A changed value would key every stored kernel anew.
+#[test]
+fn the_fingerprint_is_fnv_over_the_carried_files() {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for (name, text) in HEADERS.iter().chain(LIBRARY) {
+        for b in name.bytes().chain([0]).chain(text.bytes()).chain([0]) {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    assert_eq!(fingerprint(), h);
 }

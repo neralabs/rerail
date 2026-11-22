@@ -36,7 +36,7 @@ use crate::code_rule_dsl::logic::program_image::Version;
 use crate::code_rule_dsl::typing::file_local::option_input;
 
 /// The option that marks a run as the constants' own (it folds nothing).
-pub(super) const OWN: &str = "constants_run";
+pub const OWN: &str = "constants_run";
 
 /// The relations made from no document that a rule outside them reads, or that the program outputs: from facts,
 /// settings and file-system reads, through other such relations and negations of them. Those the split already
@@ -99,7 +99,7 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
 
 /// The constants' run's program: its outputs are a copy of each wanted relation, made by a rule of its own. The copy
 /// reads the relation as any rule outside the requests' cone does, so the cone hands it on wherever it is made.
-pub(super) fn as_outputs_of(v: &std::sync::Arc<Version>, wanted: &[String]) -> Result<std::sync::Arc<Version>> {
+pub fn as_outputs_of(v: &std::sync::Arc<Version>, wanted: &[String]) -> Result<std::sync::Arc<Version>> {
     use crate::code_rule_dsl::logic::program_image::{Builder, build::T};
     let mut b = Builder::on(v);
     let mut outputs = Vec::new();
@@ -137,7 +137,7 @@ fn copy(rel: &str) -> String {
 /// Derives the version's foldable relations (`foldable_of`) by a run over no documents, and puts their rows in as facts,
 /// their rules (and those of the relations only they read) dropped. The run's consulted reads, for the record.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn fold(
+pub fn fold(
     v: &mut std::sync::Arc<Version>,
     programs: &[&str],
     read: Option<&std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,

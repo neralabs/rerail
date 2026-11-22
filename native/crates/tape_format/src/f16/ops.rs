@@ -324,7 +324,9 @@ impl Writer {
         let (laid, free) = (self.len_of(part::LAID), self.len_of(part::FREE));
         self.reserve(part::LAID, laid + blocks * LAID_MAX);
         self.reserve(part::FREE, free + 4 * blocks);
-        let count = self.state.blocks as usize;
+        // Each block's entry by its number: the blocks made, and the `blocks` more a run (`reserve_run`) may make
+        // before it lays them.
+        let count = self.state.blocks as usize + blocks;
         self.reserve(part::LAID_AT, count * LAID_AT as usize);
         if self.z {
             let (out, rooms) = (self.len_of(part::OUT), self.len_of(part::ROOM_FREE));
@@ -376,6 +378,12 @@ impl Writer {
             self.reserve(part::PRESENCE, (count + 1) * words);
         }
         self.reserve_final(count);
+    }
+
+    /// Each node final as it is written: no commit is needed, and no node is changed after (`w::FINAL_AS_WRITTEN`).
+    /// The blocks settle as they would with a commit after each node, so the tape is the same.
+    pub fn final_as_written(&mut self) {
+        self.state.flags |= w::FINAL_AS_WRITTEN;
     }
 
     /// The state's address: what code that calls the ops itself passes them (`reserve_run` first).
@@ -578,19 +586,13 @@ impl Lz {
     }
 }
 
-/// The ops in UKL on the device (decisions 0434 §6 R15, 0440), a test's: the calls are recorded, then replayed by one
-/// thread of a kernel over the region in one buffer, the state at its start and each part at its offset from it, as
-/// the host names them. The device's region does not grow: each part gets the room the host's run of the same calls
-/// reserved (sizing it from bounds is tier 2's, R17). On the process's device, whatever its backend.
-#[cfg(test)]
-pub(super) mod device {
-    use super::{FRESH, Writer, State, Z, finished, part};
-    use crate::f16::{Finished, Lang};
-
-    /// The kernel: thread `id` replays writer `id` of `args.n`: its calls (an op and up to three arguments each, at
-    /// `jobs[id].calls` in `c`) through the ops (`<ukl/writer.h>`) on its region (at `jobs[id].region` in `r`), then
-    /// `finish`. A writer's ops are one thread's, in a group of its own; the writers are many groups.
-    const REPLAY: &str = r#"
+/// The kernel: thread `id` replays writer `id` of `args.n`: its calls (an op and up to three arguments each, at
+/// `jobs[id].calls` in `c`) through the ops (`<ukl/writer.h>`) on its region (at `jobs[id].region` in `r`), then
+/// `finish`. A writer's ops are one thread's, in a group of its own; the writers are many groups.
+#[cfg(any(test, feature = "test-hooks"))]
+pub const REPLAY: &str = r#"
+// Its kernel uses no SIMD group (ukl/backend.h, decision 0576 §14).
+#define UKL_SIMD_GROUP_FREE 1
 #include <ukl/writer.h>
 
 typedef struct ReplayArgs {
@@ -626,6 +628,20 @@ DEFINE_KERNEL2(writer, replay,
     out[id] = clif_w_finish(t, 0ul);
 }
 "#;
+
+/// The replay's program's name (`REPLAY` its text: `f16::kernels`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub const REPLAY_NAME: &str = "tape_writer_replay";
+
+/// The ops in UKL on the device (decisions 0434 §6 R15, 0440), a test's: the calls are recorded, then replayed by one
+/// thread of a kernel over the region in one buffer, the state at its start and each part at its offset from it, as
+/// the host names them. The device's region does not grow: each part gets the room the host's run of the same calls
+/// reserved (sizing it from bounds is tier 2's, R17). On the process's device, whatever its backend.
+#[cfg(test)]
+pub(super) mod device {
+    use super::{FRESH, Writer, State, Z, finished, part};
+    use crate::f16::{Finished, Lang};
+
 
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -732,7 +748,7 @@ DEFINE_KERNEL2(writer, replay,
                     return Ok((Vec::new(), Vec::new()));
                 }
                 let shared = rerail_gpu::shared::get().ok_or("no device")?;
-                let program = rerail_gpu::kernels::program("tape_writer_replay", REPLAY).unwrap_or_else(|e| panic!("{}: the writer's ops in UKL: {e}", rerail_gpu::device::backend()));
+                let program = rerail_gpu::kernels::program(super::REPLAY_NAME, super::REPLAY).unwrap_or_else(|e| panic!("{}: the writer's ops in UKL: {e}", rerail_gpu::device::backend()));
                 // At least one call's room: a buffer is never empty.
                 calls.extend([0; 4]);
                 let (region, calls, jobs, result) = (buffer_of(&bytes)?, buffer_of(&calls)?, buffer_of(&jobs)?, buffer_of(&vec![0u32; n])?);

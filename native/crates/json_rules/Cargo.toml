@@ -1,0 +1,22 @@
+# Written by the crate split (step 5g) and kept by hand: its sources are where they were, mounted in place (src/lib.rs).
+[package]
+name = "rerail-json-rules"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Main's JSON rules (rerail.policy/v1): the translator of a JSON policy to .rerail text."
+
+[features]
+default = ["rerail-rr/default"]
+test-hooks = ["rerail-rr/test-hooks"]
+
+[dependencies]
+fancy-regex = "=0.17.0"
+indexmap = "=2.14.2"
+regex = "=1.13.1"
+serde_json = "1.0"
+rerail-rr = { path = "../rr", default-features = false }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-json-rules = { path = ".", features = ["test-hooks"] }

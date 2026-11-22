@@ -13,6 +13,8 @@
 //! `native_cpu_shape` refuses any other loop, and any call.
 
 use crate::Error;
+// The refusals' reasons, the words' (`pp_words`), under the name this tier's callers read.
+pub use crate::pp_words::REASONS;
 use crate::native_cpu_shape::Step;
 use crate::pp_expr::Value as Val;
 use crate::pp_words::{self, DIGITS, EmC, Asked, B_BASE_FILE, B_COUNTER, B_DATE, B_FILE, B_FILE_NAME, B_HAS_EMBED, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_INCLUDE_LEVEL, B_LINE, B_PRAGMA, B_TIME, B_TIMESTAMP, BUILTINS, Bi, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, FeatureC, Inc, MAX_INCLUDE_DEPTH, NamedC, OPS, Want, op_index, BOL, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
@@ -38,44 +40,6 @@ macro_rules! em {
     };
 }
 
-/// Why the compiled words refuse a TU: the index the code returns above bit 32 (`run_native`),
-/// each the interpreter's reason.
-pub const REASONS: &[&str] = &[
-    "the compiled words refuse",
-    "the program stopped",
-    "past the calls' bound",
-    "a return with no call",
-    "past the output's bound",
-    "a directive with no file",
-    "a directive's line not in a file",
-    "past the arena's bound",
-    "past the macro table's bound",
-    "past the frames' bound",
-    "an argument with no frame",
-    "past the sources' bound",
-    "no level open",
-    "a level's source not on top",
-    "a level with no frame",
-    "an expansion with no frame",
-    "past the parameters' bound",
-    "past the definitions' bound",
-    "a __VA_OPT__ inside a __VA_OPT__",
-    "past the scratch bytes' bound",
-    "a substitution with no frame",
-    "past the expansions' bound",
-    "an argument substituted before its expansion",
-    "a raw string's prefix pasted",
-    "past the conditionals' bound",
-    "a line's source not on top",
-    "past the expression's bound",
-    "no value",
-    "no operator",
-    "no precedence",
-    "past the wanted files' bound",
-    "past push_macro's bound",
-    "past the unanswered features' bound",
-    "a _Pragma's text the token grammar refuses",
-];
 const R_STOPPED: u64 = 1;
 const R_CALLS: u64 = 2;
 const R_NO_CALL: u64 = 3;
@@ -6710,55 +6674,13 @@ pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
     compile_kept(program, false)
 }
 
-/// **Deprecated** (decision 0550): `rerail-pp-aot`'s source, through `clif_rust`.
-/// The compiled words' IR as Rust (`clif_rust`): the same functions, compiled by
-/// rustc and LLVM ahead of time. Its entry is `pp_run`, run by `run_aot`; it ends with its
-/// fingerprint, `SOURCE`, so a build runs it only where the words translate to it again.
-pub fn rust_source(program: &Words) -> Result<String, String> {
-    let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
-    let one = crate::clif_rust::translate(&c.ir, &[(c.run_id, "pp_run")], &[])?;
-    let h = crate::clif_rust::fingerprint(&one);
-    Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
-}
-
 /// The words' compiled code as UKL (`clif_ukl`, decisions 0348 stage 5, 0440 step D): the JIT's functions, the
 /// run's entry the kernel `pp_batch` over a batch of contexts, and its fingerprint.
 pub fn ukl_source(program: &Words) -> Result<String, String> {
     let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
     let one = crate::clif_ukl::translate(&c.ir, &[(c.run_id, "pp_batch")])?;
-    let h = crate::clif_rust::fingerprint(&one);
-    Ok(format!("{one}\n// This source's fingerprint (`clif_rust::fingerprint` of what comes before): {h:#x}.\n"))
-}
-
-/// The interface an ahead-of-time build shares with the harness that runs it (`run_aot`): the
-/// sizes of the context and of the records it points at, and the refusal reasons. A build
-/// records it, and the host runs a build only where it is the compiler's now, so a build left
-/// stale by a change of the compiler is never handed a context of another layout.
-pub const ABI: u64 = {
-    use std::mem::size_of;
-    let parts = [
-        size_of::<Ctx>(), size_of::<Tok>(), size_of::<Inc>(), size_of::<Want>(), size_of::<EmC>(), size_of::<Bi>(), size_of::<Asked>(),
-        size_of::<FeatureC>(), size_of::<NamedC>(), size_of::<Src>(), size_of::<Def>(), size_of::<Slot>(), size_of::<Frame>(),
-        size_of::<Ex>(), size_of::<DefState>(), size_of::<Sub>(), size_of::<FileC>(), REASONS.len(),
-    ];
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    let mut i = 0;
-    while i < parts.len() {
-        h = (h ^ parts[i] as u64).wrapping_mul(0x100_0000_01b3);
-        i += 1;
-    }
-    h
-};
-
-/// `pp_words::run`'s work, by an ahead-of-time build of the words (`rust_source`'s `pp_run`).
-///
-/// # Safety
-/// `entry` must be `rust_source`'s `pp_run` for `program`.
-pub unsafe fn run_aot(entry: unsafe extern "C" fn(u64) -> u64, program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Result<Expanded, Refused> {
-    // SAFETY: the same ABI: one pointer-sized argument, a 64-bit result.
-    let code = unsafe { std::mem::transmute::<unsafe extern "C" fn(u64) -> u64, unsafe extern "C" fn(*mut Ctx) -> u64>(entry) };
-    // SAFETY: as `CompiledPp::run`'s; the caller vouches the code is the words'.
-    unsafe { pp_words::run_native(program, files, env, bounds, code, REASONS) }
+    let h = crate::clif_ukl::fingerprint(&one);
+    Ok(format!("{one}\n// This source's fingerprint (`clif_ukl::fingerprint` of what comes before): {h:#x}.\n"))
 }
 
 /// The compiled words, their IR and machine code kept (`ir`, `disasm`): to read

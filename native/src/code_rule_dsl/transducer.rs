@@ -16,7 +16,7 @@ use std::ops::Range;
 #[allow(dead_code)]
 pub mod packed;
 // N's semantic fact rows, which the matcher's families emit for N's catalog backend (tests).
-pub use rerail_w::code_rule_dsl::transducer::semantic_facts;
+pub use rerail_rules::code_rule_dsl::transducer::semantic_facts;
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub const STOP: u8 = 0x00;

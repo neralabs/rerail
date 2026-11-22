@@ -27,7 +27,7 @@
 //!   error, never an empty document.
 //! - **A resident source** is a file's bytes alone, keyed by their SHA-256: a parser's input,
 //!   which has no tape yet (decision 0067). Block programs read it in place
-//!   (`metal_block_program::run_batch`); it shares the slabs, the budget, retirement and the drop
+//!   (`metal_block_program::serial`); it shares the slabs, the budget, retirement and the drop
 //!   with the documents.
 //! - **Leases** are the `Arc`s a batch holds: a retired slab's memory goes when the last batch
 //!   reading it lets go.
@@ -102,8 +102,15 @@ impl Slab {
         let device = crate::lane::device()?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
-        let block = rerail_blocks::alloc::block(&need).map_err(|_| Error::BackendCapacity)?;
-        let buffer = block.device_buffer(device).map_err(|_| Error::BackendCapacity)?;
+        // `RERAIL_POOL_DEBUG` prints why a lease is refused, as the pool's does.
+        let refused = |what: &str, e: String| {
+            if std::env::var_os("RERAIL_POOL_DEBUG").is_some() {
+                eprintln!("slab of {bytes} bytes: {what}: {e}");
+            }
+            Error::BackendCapacity
+        };
+        let block = rerail_blocks::alloc::block(&need).map_err(|e| refused("block", format!("{e:?}")))?;
+        let buffer = block.device_buffer(device).map_err(|e| refused("device buffer", e))?;
         Ok(Slab { id, block, buffer, tables: Mutex::default() })
     }
 
@@ -454,13 +461,22 @@ impl State {
                         rerail_prof::count("residency.slabs", 1);
                         return Ok((self.slabs.len() - 1, offset));
                     }
-                    Err(Error::BackendCapacity) => rerail_prof::count("capacity.residency_slab", 1),
-                    // No device (`UnsupportedBackend`) or another failure: no retiring makes room for it, and a
-                    // caller that took it for capacity split its batch down to one file before failing.
+                    // Over the budget: an older slab retired makes room. No device (or a failed one) is no room
+                    // to make: the caller's, as it is (a block program skips a machine without one); a caller that
+                    // took it for capacity split its batch down to one file before failing.
+                    Err(Error::BackendCapacity) => {
+                        if std::env::var_os("RERAIL_POOL_DEBUG").is_some() {
+                            eprintln!("residency: a slab of {length} bytes refused");
+                        }
+                        rerail_prof::count("capacity.residency_slab", 1)
+                    }
                     Err(e) => return Err(e),
                 }
             }
             if !self.retire(keep) {
+                if std::env::var_os("RERAIL_POOL_DEBUG").is_some() {
+                    eprintln!("residency: no room for {bytes} bytes: {held} held of {} with {length} more", limit());
+                }
                 return Err(Error::BackendCapacity);
             }
         }
@@ -513,8 +529,8 @@ fn source_room(len: usize) -> usize {
 
 /// Zero bytes past each source in its slab (a slab is mapped zeroed, and nothing else is written
 /// there): tier 2 reads its words in place, a window past the file's end reading zeros, as the
-/// batch's layout (`native_cpu_block::BACK`).
-pub const SOURCE_MARGIN: usize = rerail_compiler::native_cpu_block::BACK;
+/// batch's layout (`block_native::BACK`).
+pub const SOURCE_MARGIN: usize = rerail_compiler::block_native::BACK;
 
 /// Files' bytes resident as sources, in order: hits by SHA-256 from the residency, misses copied
 /// into slabs once (the one copy a file's bytes take on their way to the device). The slabs of

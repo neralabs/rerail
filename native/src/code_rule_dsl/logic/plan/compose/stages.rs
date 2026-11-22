@@ -12,7 +12,7 @@ use crate::code_rule_dsl::{facts::vtab, logic::native::component};
 const REFERENCES: usize = 8192;
 const STAGES: usize = 32;
 
-pub(super) fn bind(p: &Placed, db: &Connection, inputs: &mut Inputs, rel: &str, source: Arc<dyn vtab::Source>) -> Result<()> {
+pub fn bind(p: &Placed, db: &Connection, inputs: &mut Inputs, rel: &str, source: Arc<dyn vtab::Source>) -> Result<()> {
     if inputs.given.is_none() { inputs.given = Some(Stats::read(db,p,inputs,false)?); }
     let stats = inputs.given.as_mut().unwrap();
     stats.measured(rel,vtab::syntax::statistics(source.as_ref()).into_iter().map(|(c,r,n,s,d)|(c,[r,n,s,d])),[]);
@@ -95,7 +95,7 @@ fn simplify(p: &mut Placed, db: &Connection) -> Result<()> {
 impl Compiled {
     /// A topological prefix whose expanded definitions and output reads fit the budget.
     /// Export only values used after the cut, together in one statement.
-    pub(super) fn boundary(&self) -> Option<BTreeSet<String>> {
+    pub fn boundary(&self) -> Option<BTreeSet<String>> {
         let mut costs = HashMap::<String,usize>::new();
         let mut used=0usize;
         let mut prefix=BTreeSet::new();
@@ -114,7 +114,7 @@ impl Compiled {
     }
 }
 
-pub(super) fn run(p: &Placed, db: &Connection, inputs: Inputs, lowered: Option<lower::Lowering<'_>>, hooks: &mut Hooks<'_>) -> Result<Outcome> {
+pub fn run(p: &Placed, db: &Connection, inputs: Inputs, lowered: Option<lower::Lowering<'_>>, hooks: &mut Hooks<'_>) -> Result<Outcome> {
     run_with(p,db,inputs,lowered,hooks,BTreeSet::new())
 }
 

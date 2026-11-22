@@ -290,8 +290,7 @@ fn hash_stat(digest: &mut Sha256, metadata: Option<&StorageMetadata>) -> Option<
 
 #[cfg(test)]
 mod tests {
-    #[allow(unused_imports)]
-    use rerail_store::source_tree::Canonical as _;
+    use rerail_store::Canonical as _;
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};

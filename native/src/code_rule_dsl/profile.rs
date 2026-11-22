@@ -113,7 +113,7 @@ fn describe_matcher(matcher: &AstMatcher, language: GrammarDialect) -> Value {
     }
 }
 
-pub(super) fn record_query(
+pub fn record_query(
     rule_id: &str,
     check_id: &str,
     language: GrammarDialect,
@@ -222,7 +222,7 @@ fn with_profile(f: impl FnOnce(&mut Profile)) {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Phase {
+pub enum Phase {
     Regex,
     Parse,
     TapeEncode,
@@ -267,12 +267,12 @@ fn pause_active(now: u128) {
     });
 }
 
-pub(super) struct PhaseTimer {
+pub struct PhaseTimer {
     phase: Phase,
 }
 
 impl PhaseTimer {
-    pub(super) fn start(phase: Phase) -> Self {
+    pub fn start(phase: Phase) -> Self {
         let now = thread_cpu_ns().unwrap_or_default();
         pause_active(now);
         PHASE_STACK.with(|stack| stack.borrow_mut().push((phase, now)));
@@ -299,10 +299,10 @@ impl Drop for PhaseTimer {
 
 /// Associates one Rayon worker with the active apply profile. Nested timers then
 /// suspend candidate lookup and rule-evaluation preparation, so each CPU interval has one owner.
-pub(super) struct WorkerProfile(bool);
+pub struct WorkerProfile(bool);
 
 impl WorkerProfile {
-    pub(super) fn start() -> Self {
+    pub fn start() -> Self {
         // Rayon can run a small iterator on the apply thread itself. Keep that
         // thread's session and timers; clearing them loses the rest of the apply.
         if PROFILE.with(|profile| profile.borrow().is_some()) {
@@ -341,11 +341,11 @@ impl Drop for WorkerProfile {
     }
 }
 
-pub(super) fn record_nodes(count: usize) {
+pub fn record_nodes(count: usize) {
     with_profile(|profile| profile.visited_nodes += count);
 }
 
-pub(super) fn record_anchor_batch(files: usize, plans: usize, materializations: usize) {
+pub fn record_anchor_batch(files: usize, plans: usize, materializations: usize) {
     with_profile(|profile| {
         profile.anchor_batches += 1;
         profile.anchor_sql_data_statements += materializations + 1;
@@ -355,23 +355,23 @@ pub(super) fn record_anchor_batch(files: usize, plans: usize, materializations: 
     });
 }
 
-pub(super) fn record_anchor_batch_failure() {
+pub fn record_anchor_batch_failure() {
     with_profile(|p| p.anchor_batch_failures += 1);
 }
 
-pub(super) fn record_anchor_statements(statements: usize) {
+pub fn record_anchor_statements(statements: usize) {
     with_profile(|p| p.anchor_sql_data_statements += statements);
 }
 
-pub(super) fn record_anchor_cache_miss() {
+pub fn record_anchor_cache_miss() {
     with_profile(|p| p.anchor_cache_misses += 1);
 }
 
-pub(super) fn record_candidate_bytes(bytes: usize) {
+pub fn record_candidate_bytes(bytes: usize) {
     with_profile(|p| p.peak_candidate_bytes = p.peak_candidate_bytes.max(bytes));
 }
 
-pub(super) fn record_sql_index_write(nodes: usize) {
+pub fn record_sql_index_write(nodes: usize) {
     with_profile(|profile| {
         profile.sql_index_writes += 1;
         profile.sql_index_written_nodes += nodes;
@@ -380,11 +380,11 @@ pub(super) fn record_sql_index_write(nodes: usize) {
     });
 }
 
-pub(super) fn record_sql_index_reuse() {
+pub fn record_sql_index_reuse() {
     with_profile(|profile| profile.sql_index_reuses += 1);
 }
 
-pub(super) fn record_index(nodes: usize, bytes: usize, complete: bool) {
+pub fn record_index(nodes: usize, bytes: usize, complete: bool) {
     with_profile(|profile| {
         profile.anchor_index_views += 1;
         profile.anchor_index_view_nodes += nodes;
@@ -395,7 +395,7 @@ pub(super) fn record_index(nodes: usize, bytes: usize, complete: bool) {
     });
 }
 
-pub(super) fn record_selection(roots: usize, fallback: bool) {
+pub fn record_selection(roots: usize, fallback: bool) {
     with_profile(|profile| {
         profile.rule_files += 1;
         profile.rejected_rule_files += usize::from(roots == 0);
@@ -404,13 +404,13 @@ pub(super) fn record_selection(roots: usize, fallback: bool) {
     });
 }
 
-pub(super) fn record_anchor_plan_broadening() {
+pub fn record_anchor_plan_broadening() {
     with_profile(|profile| profile.anchor_plan_broadenings += 1);
 }
 
-pub(super) struct LineOwner;
+pub struct LineOwner;
 impl LineOwner {
-    pub(super) fn start(bytes: usize) -> Self {
+    pub fn start(bytes: usize) -> Self {
         with_profile(|profile| {
             profile.active_line_bytes = bytes;
             profile.active_navigation_line_bytes = bytes;
@@ -429,7 +429,7 @@ impl Drop for LineOwner {
     }
 }
 
-pub(super) fn record_transient(navigation_bytes: usize) {
+pub fn record_transient(navigation_bytes: usize) {
     with_profile(|profile| {
         let bytes = navigation_bytes + profile.active_line_bytes;
         profile.active_navigation_line_bytes = bytes;
@@ -454,9 +454,9 @@ pub(super) fn record_retained(
     });
 }
 
-pub(super) struct NativeOwner(Instant);
+pub struct NativeOwner(Instant);
 impl NativeOwner {
-    pub(super) fn start() -> Self {
+    pub fn start() -> Self {
         with_profile(|profile| {
             profile.native_acquisitions += 1;
             profile.native_active += 1;
@@ -474,9 +474,9 @@ impl Drop for NativeOwner {
     }
 }
 
-pub(super) struct DocOwner(Instant);
+pub struct DocOwner(Instant);
 impl DocOwner {
-    pub(super) fn start() -> Self {
+    pub fn start() -> Self {
         with_profile(|profile| {
             profile.doc_acquisitions += 1;
             profile.native_doc_overlap += usize::from(profile.native_active != 0);
@@ -496,13 +496,13 @@ impl Drop for DocOwner {
     }
 }
 
-pub(super) struct ApplyProfile {
+pub struct ApplyProfile {
     started: Instant,
     cpu_started: Option<u128>,
 }
 
 impl ApplyProfile {
-    pub(super) fn start(revision: u32, cpu_started: Option<u128>) -> Self {
+    pub fn start(revision: u32, cpu_started: Option<u128>) -> Self {
         navigation::reset();
         let _ = Phase::Other;
         let session = Arc::new(Mutex::new(Profile {
