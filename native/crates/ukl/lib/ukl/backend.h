@@ -13,6 +13,12 @@
 
 #include <ukl>
 
+// A source written for one SIMD width says so before its includes (`UKL_SIMD_WIDTH_NEEDED`); compiled at another, it
+// is refused here, not run wrong.
+#if defined(UKL_SIMD_WIDTH_NEEDED) && UKL_SIMD_WIDTH != UKL_SIMD_WIDTH_NEEDED
+#error "this source is written for UKL_SIMD_WIDTH_NEEDED lanes, and the device's SIMD groups have another width"
+#endif
+
 // A SIMD group's lanes as bits, lane `l` at bit `l` (a ballot's, a match's): 32 bits, or 64 where the group is wider
 // (AMD's 64 lanes; the CPU at `RERAIL_CPU_SIMD_WIDTH=64`). `ukl_mask_*` below read it whatever its width.
 #if UKL_SIMD_WIDTH > 32
@@ -420,6 +426,26 @@ UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
 UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return sub_group_shuffle_xor(v, m & (UKL_SIMD_WIDTH - 1u)); }
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return sub_group_ballot(b ? 1 : 0).x; }
 UKL_INLINE void ukl_sg_barrier() { sub_group_barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
+#if defined(UKL_SIMD_GROUP_FREE)
+// A program whose source says its kernels use no SIMD group (`UKL_SIMD_GROUP_FREE`, defined before its includes,
+// decision 0576 §14) requires no sub-group size: the driver chooses its width. Intel's compiles a kernel required to
+// run 32 lanes wide 2-5x slower than at its own 16 (on an Arc 140V the interpreter 10.4 s against 5.5 s,
+// `stage_scatter` 11.1 s against 2.4 s). What it says is checked: every SIMD-group operation, and the lane, call a
+// function nothing defines, so a kernel that reaches one is refused at its build ("unresolved external symbol"); the
+// library's functions that no kernel reaches are not built. (16z's block decode is a SIMD group's: a kernel that
+// reads 16z uses one.) Nothing on the other backends.
+uint32_t __ukl_simd_group_in_a_kernel_declared_without_one(void);
+#undef __UKL_SG_ATTR
+#define __UKL_SG_ATTR
+#undef __UKL_CL_LANE
+#define __UKL_CL_LANE __ukl_simd_group_in_a_kernel_declared_without_one()
+#define ukl_sg_shuffle(...) __ukl_simd_group_in_a_kernel_declared_without_one()
+#define ukl_sg_shuffle_up(...) __ukl_simd_group_in_a_kernel_declared_without_one()
+#define ukl_sg_shuffle_down(...) __ukl_simd_group_in_a_kernel_declared_without_one()
+#define ukl_sg_shuffle_xor(...) __ukl_simd_group_in_a_kernel_declared_without_one()
+#define ukl_sg_ballot(...) ((ukl_mask_t)__ukl_simd_group_in_a_kernel_declared_without_one())
+#define ukl_sg_barrier(...) ((void)__ukl_simd_group_in_a_kernel_declared_without_one())
+#endif
 #elif UKL_SIMD_WIDTH == 1
 // A group of one lane: every lane reads its own value.
 UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return v; }
@@ -429,7 +455,7 @@ UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { re
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return b ? 1u : 0u; }
 UKL_INLINE void ukl_sg_barrier() { mem_fence(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
 #else
-#  error "ukl/backend.h: OpenCL's SIMD groups are 32 lanes (native or emulated) or 1"
+#  error "ukl/backend.h: OpenCL's emulated SIMD groups are 32 lanes or 1"
 #endif
 
 // Relaxed atomics on a device word (OpenCL 1.2's are relaxed), and a fence. OpenCL 1.2 has no coherent memory but
@@ -470,7 +496,15 @@ UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { re
 UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_min((volatile __global uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_max((volatile __global uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomic_cmpxchg((volatile __global uint32_t*)p, e, n); }
+// A fence between this thread's device accesses as other threads see them. OpenCL 1.2's `mem_fence` orders a
+// work-item's own accesses alone; OpenCL C 3.0 (the device's sub-groups, `UKL_OPENCL_SUBGROUPS`) has a fence of device
+// scope. Without it, on an Arc 140V a pool's taker read a pushed block's link from before its push, and a block was
+// handed out twice (`ukl/pool.h`).
+#if defined(UKL_OPENCL_SUBGROUPS)
+UKL_INLINE void ukl_fence_device() { atomic_work_item_fence(CLK_GLOBAL_MEM_FENCE, memory_order_seq_cst, memory_scope_device); }
+#else
 UKL_INLINE void ukl_fence_device() { mem_fence(CLK_GLOBAL_MEM_FENCE); }
+#endif
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_add((volatile __local uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile __local uint32_t*)p; }
 UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { atomic_xchg((volatile __local uint32_t*)p, v); }
