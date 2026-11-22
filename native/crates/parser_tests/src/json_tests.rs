@@ -1268,6 +1268,12 @@ fn json_tier2_is_walks_shape() {
     // Each primitive's arm a call of code written once (`token`, `number_end`, `string`), as `walk` calls `primitive`.
     assert_eq!(tier2.matches("fn number_end(").count(), 1, "a number's end written once");
     assert!(!tier2.contains("i += 1;\ne = end;\nleaf("), "a token's leaf written out at a place");
+    // The nodes stored through the walk's hold on the tape, a local of `run` (`Cursor`, the lean parser's `Walk`), not
+    // the writer's ops on its state.
+    assert_eq!(tier2.matches("let mut cursor = unsafe { Cursor::<Cells>::begin(state) };").count(), 1, "one cursor, the walk's");
+    for op in ["w_open_with", "w_leaf_with", "w_close_with", "w_leaf_in_with", "d: *mut u8"] {
+        assert!(!tier2.contains(op), "tier 2 still has `{op}`");
+    }
     // A string read 32 bytes at a time on the backend chosen once (`run_best`), as `backslash_quote`.
     assert!(tier2.contains("x += 32;") && tier2.contains("S::marks32(") && tier2.contains("fn run_best("), "32 bytes a step, one dispatch");
     // A string with no escape: the node and its content at once.
