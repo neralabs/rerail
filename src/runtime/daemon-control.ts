@@ -1042,11 +1042,15 @@ export function homeDaemonInStart(home: string, machine: DaemonMachine = THIS_MA
  * The daemon of `home` still in its start, found by a start that did not launch it: waited for as long as a start waits
  * for its own launch, from now, and gone once its pid is. One that daemon.json names and that answers is running,
  * whatever its record says: a record a daemon could not rewrite at the end of its start must not keep a start waiting.
+ * Its failure shows what the log gets from now on, as for a daemon the start launched: what the log holds already is
+ * earlier runs' and other starts'.
  */
 async function foundStarting(home: string, machine: DaemonMachine): Promise<ComingUp | DaemonLookup | undefined> {
   const pid = daemonComingUp(home, machine);
   if (pid === undefined) return undefined;
-  const records = { home, stateFile: join(home, DAEMON_STATE_FILE), logFile: join(home, DAEMON_LOG_FILE), logOffset: 0 };
+  const logFile = join(home, DAEMON_LOG_FILE);
+  const logOffset = await stat(logFile).then(info => info.size, () => 0);
+  const records = { home, stateFile: join(home, DAEMON_STATE_FILE), logFile, logOffset };
   const answering = await answeringDaemon(records.stateFile, pid, machine.platform);
   if (answering !== undefined) return { status: "running", ...answering };
   const exitReason = (): string | undefined => (processAlive(pid, machine.kill) ? undefined : `(pid ${pid}) exited`);
