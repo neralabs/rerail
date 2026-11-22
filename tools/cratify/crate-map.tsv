@@ -176,7 +176,7 @@ language::adapter::json	rerail-lang-json
 transducer::packed::json_parser	rerail-lang-json
 
 # The engine: napi (its code_rule_dsl/mod.rs items, the slice's object, the CLI's entry points) and the tests that
-# read them. Every other test is a test crate's (native/crates/tests_*, tools/cratify/test_crates.py).
+# read them. Every other test is a test crate's (native/crates/tests_*, tools/cratify/split_test_crates.py).
 crate	rerail-engine
 dsl_root	rerail-engine
 slice::napi	rerail-engine

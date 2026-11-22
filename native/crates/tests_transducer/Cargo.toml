@@ -1,6 +1,6 @@
 # The engine's tests of the transducer: the packed programs, their backends and the Bitlex lowering (docs/final-shape/proposals/crate-split/incremental-plan.md, step 2).
 # A test crate: its library is its tests (`#![cfg(test)]`). Its manifest is boot's, with boot below it
-# (tools/cratify/test_crates.py), and kept by hand since.
+# (tools/cratify/split_test_crates.py), and kept by hand since.
 [package]
 name = "rerail-tests-transducer"
 version = "0.1.0"

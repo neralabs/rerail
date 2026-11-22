@@ -3870,7 +3870,7 @@ fn a_flattened_file_keeps_its_tests() {
 #[test]
 fn converted_cases_are_tests() {
     let rule = repo().join("packs/rerail/rules/rerail-fixed-value-lists.json");
-    let cases = repo().join("fixtures/rerail/rerail-fixed-value-lists.cases.json");
+    let cases = std::path::PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("rerail/rerail-fixed-value-lists.cases.json");
     let report = crate::code_rule_dsl::tools::convert_rr_with(&[(rule, Some(cases.clone()))]);
     let tests = report[0]["tests"].as_str().unwrap_or_else(|| panic!("{report}"));
     let n: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cases).unwrap()).unwrap();

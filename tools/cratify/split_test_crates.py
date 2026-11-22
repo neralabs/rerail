@@ -15,7 +15,7 @@ modules' tests. Its facade section becomes the same shape: boot's glob and the f
 
 After it runs, boot's `lib.rs` is source, no longer written from the engine's (boot_mounts.py ran before it).
 
-Usage: test_crates.py NATIVE_DIR [--dry-run]"""
+Usage: split_test_crates.py NATIVE_DIR [--dry-run]"""
 import os, re, sys
 
 native = sys.argv[1]
@@ -288,7 +288,7 @@ HEAD = '''//! The engine's tests of {about} (docs/final-shape/proposals/crate-sp
 //!
 //! A test crate above boot: it mounts the test files in place, under the facades the engine hosted them through,
 //! and reads every other module through boot. Its test binary is booted as it loads (`boot::install_for_tests`), as
-//! the engine's is. Written by tools/cratify/test_crates.py, and kept by hand since.
+//! the engine's is. Written by tools/cratify/split_test_crates.py, and kept by hand since.
 #![cfg(test)]
 #![allow(dead_code, unused_imports, hidden_glob_reexports, ambiguous_glob_reexports, private_interfaces, private_bounds)]
 #![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
@@ -355,7 +355,7 @@ def manifest(name, about):
                         'rerail-gpu = { path = "../../../gpu" }\n', 1)
     return (f'''# The engine's tests of {about} (docs/final-shape/proposals/crate-split/incremental-plan.md, step 2).
 # A test crate: its library is its tests (`#![cfg(test)]`). Its manifest is boot's, with boot below it
-# (tools/cratify/test_crates.py), and kept by hand since.
+# (tools/cratify/split_test_crates.py), and kept by hand since.
 [package]
 name = "rerail-tests-{name}"
 version = "0.1.0"
@@ -393,7 +393,7 @@ if not dry:
             '// the same names: the glob\'s name and the private one are one item.',
             '#![allow(hidden_glob_reexports)]',
             '// Every module is boot\'s (rerail-boot). The engine adds napi (the items below, `slice::napi`, the CLI\'s',
-            '// entry points in `tools`) and the facades of the tests that read them (tools/cratify/test_crates.py).',
+            '// entry points in `tools`) and the facades of the tests that read them (tools/cratify/split_test_crates.py).',
             'pub use rerail_boot::code_rule_dsl::*;']
     # The editor's re-export served the engine's tests of it, which are the test crates' now.
     rest = '\n'.join(lines[end:]).replace(lines[end], "// The engine's own items: napi.", 1).replace('#[cfg(test)]\npub(crate) use rule_api::CodeRuleDslEditor;\n', '')

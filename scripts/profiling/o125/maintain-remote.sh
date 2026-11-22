@@ -14,4 +14,4 @@ SRC=${MM_IN:-tmp/mm-in}; R=${TMPDIR:-/tmp}/rerail-mm-${MM_TAG:-o125}; mkdir -p $
 cp "$E" $R/engine; E=$R/engine
 "$E" --help >/dev/null 2>&1 || true
 for m in "$@"; do IN=$R/in MM_ROOT=$R/out CAP_S=${CAP_S:-$([ $m = session ] && echo 420 || echo 110)} ENGINE=$E nice -n 19 zsh scripts/profiling/o125/maintain-measure.sh $m ${LAST:-08}; done
-python3 scripts/profiling/o125/maintain-report.py $R/out
+python3 scripts/profiling/o125/maintain_report.py $R/out
