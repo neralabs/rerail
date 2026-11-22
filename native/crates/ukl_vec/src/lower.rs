@@ -183,6 +183,20 @@ fn stacks(b: &Builder, funcs: &[Func]) -> R<Vec<u32>> {
 
 /// A C integer or floating constant's type and value.
 fn literal(text: &str) -> Option<(Ty, u64)> {
+    // A sign the grammar reads as the number's (`(-8)`): the number's value negated, in its type, as `-` would.
+    if let Some(rest) = text.strip_prefix('-') {
+        let (ty, v) = literal(rest)?;
+        let v = match ty {
+            Ty::Float(32) => v ^ 1 << 31,
+            Ty::Float(_) => v ^ 1 << 63,
+            Ty::Int { bits: 32, signed: false } => v.wrapping_neg() & 0xffff_ffff,
+            _ => v.wrapping_neg(),
+        };
+        return Some((ty, v));
+    }
+    if let Some(rest) = text.strip_prefix('+') {
+        return literal(rest);
+    }
     let t = text.to_ascii_lowercase();
     let hex = t.starts_with("0x");
     let float = !hex && (t.contains('.') || t.contains('e') || t.ends_with('f'));
@@ -491,8 +505,25 @@ impl L<'_> {
             "type_definition" => self.typedef(d),
             "struct_specifier" | "union_specifier" => self.record(d).map(|_| ()),
             ";" | "comment" => Ok(()),
+            "expression_statement" if self.static_assert(d)? => Ok(()),
             k => self.err(d, format!("a declaration at the file's scope ({k})")),
         }
+    }
+
+    /// Whether statement `s` is a `_Static_assert`: its condition folded, and the kernel refused with its message
+    /// if it is false.
+    fn static_assert(&mut self, s: usize) -> R<bool> {
+        let [call] = self.named(s)[..] else { return Ok(false) };
+        if self.c.kind(call) != "call_expression" || self.c.child(call, "function").is_none_or(|f| self.c.text(f) != "_Static_assert") {
+            return Ok(false);
+        }
+        let args = self.named(self.c.child(call, "arguments").expect("arguments"));
+        let Some(&cond) = args.first() else { return self.err(s, "a static assertion with no condition") };
+        if self.constant(cond)? == 0 {
+            let why = args.get(1).map_or("", |&m| self.c.text(m)).to_string();
+            return self.err(s, format!("a static assertion that fails: {why}"));
+        }
+        Ok(true)
     }
 
     fn typedef(&mut self, d: usize) -> R<()> {
@@ -646,6 +677,7 @@ impl L<'_> {
                 Ok((to.clone(), crate::ops::cast(self.m(&t), self.m(&to), v)))
             }
             "sizeof_expression" => Ok((U64, self.sizeof(e)?)),
+            "call_expression" if self.c.child(e, "function").is_some_and(|f| matches!(self.c.text(f), "__builtin_offsetof" | "offsetof")) => Ok((U64, self.offsetof(e)?)),
             "unary_expression" => {
                 let op = self.c.text(self.c.child(e, "operator").expect("an operator"));
                 let (t, v) = self.constant_typed(self.c.child(e, "argument").expect("an operand"))?;
@@ -680,6 +712,35 @@ impl L<'_> {
             }
             _ => self.err(e, "a constant expression"),
         }
+    }
+
+    /// `offsetof(type, field.field...)`: the field's offset in the structure.
+    fn offsetof(&mut self, e: usize) -> R<u64> {
+        let args = self.named(self.c.child(e, "arguments").expect("arguments"));
+        let [t, f] = args[..] else { return self.err(e, "an offsetof of two arguments") };
+        let mut ty = match self.c.kind(t) {
+            "type_descriptor" => self.descriptor(t)?,
+            _ => {
+                let name = self.c.text(t).trim();
+                let name = name.strip_prefix("struct ").unwrap_or(name).trim();
+                match primitive(name).or_else(|| self.typedefs.get(name).cloned()).or_else(|| self.tags.get(name).map(|&k| Ty::Struct(k))) {
+                    Some(ty) => ty,
+                    None => return self.err(t, "an unknown type"),
+                }
+            }
+        };
+        let mut at = 0;
+        for name in self.c.text(f).split('.').map(str::trim) {
+            let Ty::Struct(k) = ty else { return self.err(f, format!("a field of a {ty:?}")) };
+            match self.structs[k as usize].fields.iter().find(|x| x.0 == name) {
+                Some(x) => {
+                    at += x.2;
+                    ty = x.1.clone();
+                }
+                None => return self.err(f, format!("no field {name}")),
+            }
+        }
+        Ok(at)
     }
 
     fn char_literal(&self, e: usize) -> R<u64> {
@@ -801,6 +862,7 @@ impl L<'_> {
             }
             "declaration" => self.local(s)?,
             "type_definition" => self.typedef(s)?,
+            "expression_statement" if self.static_assert(s)? => {}
             "expression_statement" => match self.named(s).as_slice() {
                 [] => {
                     self.b.leaf(Kind::Empty, &[]);
@@ -891,6 +953,43 @@ impl L<'_> {
                 }
                 _ => return self.err(s, "a return"),
             },
+            "switch_statement" => {
+                let site = self.site(s, "switch");
+                let c = self.c.child(s, "condition").expect("a condition");
+                let c = if self.c.kind(c) == "parenthesized_expression" { self.inner(c)? } else { c };
+                let t = decay(self.ty(c)?).promoted();
+                let m = self.m(&t);
+                let n = self.b.open(Kind::Switch, &[site, m.0]);
+                self.rv_as(c, &t)?;
+                let body = self.c.child(s, "body").expect("a body");
+                // The cases share the body's scope, as C's do.
+                self.scoped(|l| {
+                    for case in l.named(body) {
+                        match l.c.kind(case) {
+                            "case_statement" => {}
+                            "comment" => continue,
+                            _ => return l.err(case, "a statement of a switch before its first case"),
+                        }
+                        let value = l.c.child(case, "value");
+                        let label = match value {
+                            Some(v) => {
+                                let (vt, x) = l.constant_typed(v)?;
+                                crate::ops::cast(l.m(&vt), m, x)
+                            }
+                            None => 0,
+                        };
+                        let k = l.b.open(Kind::Case, &[u32::from(value.is_none()), label as u32, (label >> 32) as u32]);
+                        let block = l.b.open(Kind::Block, &[]);
+                        for st in l.named(case).into_iter().filter(|&x| Some(x) != value) {
+                            l.stmt(st)?;
+                        }
+                        l.b.close(block);
+                        l.b.close(k);
+                    }
+                    Ok(())
+                })?;
+                self.b.close(n);
+            }
             "break_statement" => {
                 let site = self.site(s, "break");
                 self.b.leaf(Kind::Break, &[site]);
@@ -1117,10 +1216,15 @@ impl L<'_> {
             Builtin::LocalId | Builtin::LocalSize | Builtin::GlobalId | Builtin::GlobalSize | Builtin::GroupId | Builtin::NumGroups => (U64, vec![U32]),
             Builtin::SubGroupLocalId => (U32, vec![]),
             Builtin::Barrier | Builtin::MemFence | Builtin::SubGroupBarrier => (Ty::Void, vec![U32]),
+            Builtin::Yield => (Ty::Void, vec![]),
             Builtin::SubGroupBallot => (Ty::Uint4, vec![I32]),
             Builtin::SubGroupShuffle | Builtin::SubGroupShuffleUp | Builtin::SubGroupShuffleDown | Builtin::SubGroupShuffleXor => {
                 let t = arg(0).promoted();
                 (t.clone(), vec![t, U32])
+            }
+            Builtin::SubGroupReduceAdd | Builtin::SubGroupReduceMin | Builtin::SubGroupReduceMax => {
+                let t = arg(0).promoted();
+                (t.clone(), vec![t])
             }
             Builtin::AtomicCmpxchg => {
                 let t = arg(0).pointee().cloned().unwrap_or(U32);

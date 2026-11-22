@@ -46,15 +46,16 @@ slow". The answers below are the user's, given to the questions of the design pa
       - a kernel's rows and a structure's fields are constants (`Name__ukl_params`, `Type__ukl_fields`), not the
         reflection kernels OpenCL's host runs.
    2. **Lower:** the C tape becomes a typed kernel tape, its control flow structured (`if`, the loops and `switch` as
-      nodes: the kernels have no `goto`), its variables numbered. `UKL_CALLED` functions are inlined, structs split
-      into fields, overloads resolved.
+      nodes: the kernels have no `goto`), its variables numbered, structs split into fields, overloads resolved,
+      `offsetof` and `_Static_assert` folded. `UKL_CALLED` functions were to be inlined. As built (step 2) they are
+      called: one body per context a function is called in (below, "A body per context").
    3. **Cut at sync points:** barriers, grid barriers, SIMD-group operations and `SYNC_FUNCTION` calls end a region.
       A value live across a cut is kept per lane, as a struct of arrays: the coroutine stack's replacement. A
       barrier then costs nothing; it is the boundary between two regions.
    4. **Uniformity:** each value is uniform (the same for every thread) or varying. A uniform value stays scalar.
       Each memory access is sorted by its index: uniform, consecutive in the thread id, strided, or gathered and
-      scattered. As built (step 2), there are four levels: uniform, agreed, the same in each SIMD group, and
-      varying. The sorting of memory accesses is step 3's, where the code generator uses it.
+      scattered. As built (step 2), there are six levels: uniform, agreed, the same in each SIMD group, a lane's,
+      the thread's id in its group, and varying. The sorting of memory accesses is step 3's, where the code generator uses it.
    5. **Vectorize** (whole-function vectorization, as POCL's and Intel's OpenCL CPU runtimes do it): a varying
       operation becomes a W-wide one. A varying `if` is masked execution, and a varying loop runs until its mask is
       empty. Atomics:
@@ -109,33 +110,76 @@ slow". The answers below are the user's, given to the questions of the design pa
 
 ## Step 2, as built
 
-- **The vector tape** (`rerail-ukl-vec`'s `vector`) is one per kernel, made on its first launch. It is the kernel
-  tape with every call inlined. A call is an `Inline` node over its parameters' stores and its callee's body, and
-  the callee's `return`s store into the call's slot. A callee's frame follows its caller's, and sibling calls
-  share it. Each node's field holds:
+- **The vector tape** (`rerail-ukl-vec`'s `vector`) is one per kernel, made on its first launch. Its root is the
+  kernel's body, then one `Body` per function in each context it is called in, and a call is a `Call` node naming
+  its body. Calls are not inlined: step 3's gate kernels inlined are hundreds of millions of nodes. A lane's frame
+  holds the deepest chain of calls' frames, and a call that recurses is refused. Each node's field holds:
   - its value's level;
   - whether its subtree reaches a sync point, or a threadgroup barrier (the cut: such a node runs for the whole
     group at once);
   - whether it has an effect;
   - whether its condition is checked as it runs.
+- **A body per context.** A function's levels depend on its arguments', so it gets a body for each context it is
+  called in: the levels of its arguments (an aggregate's, its most varying byte's). The control it is called under
+  is not part of the context. A body's levels are relative to its entry, the lanes that call it, and what its
+  caller's control makes of its result and writes is the caller's. Each function also has a fallback body, with no
+  context, that is right for any call. The bodies are found in rounds:
+  - a round makes the bodies wanted so far, and the analysis puts each call in the body of its context if there is
+    one, else in the fallback;
+  - a call wants the context it has at its last visit (the levels' fixed point), not the ones it passes on the way;
+  - each call site keeps the contexts it has wanted, and a round makes only those at the sites it reaches. The sets
+    only grow, so the rounds end (at most 16; then the fallbacks stand);
+  - then the bodies the calls were put in, alone, are the kernel's, analysed once more and checked.
+
+  The gate's largest kernel, `pp_setup`, ends at 158 K nodes in its bodies; the join kernels at 30–80 K.
 - **The levels**, as a fixed point over the kernel:
   - **Uniform:** constants, sizes, group ids, and loads at uniform addresses (the kernel's memory is race-free).
   - **Agreed:** an atomic that leaves its word as it is (a poll), at a uniform address. It is the same in a SIMD
     group, and across the group as far as the kernel's own synchronization makes it.
-  - **The same in a SIMD group:** a ballot, or a shuffle from a uniform lane.
-  - **Varying:** the thread's ids, the other atomics, and a SIMD group's lanes.
+  - **The same in a SIMD group:** a ballot, a reduction (`sub_group_reduce_add`, `_min`, `_max`), or a shuffle from
+    a uniform lane.
+  - **A lane's** (`Lane`): the lane's number in its SIMD group, and what is made of it alone. A reduction of a
+    lane's value is the SIMD group's, and agreed if what it reduces is the same in every SIMD group.
+  - **The thread's id in its group** (`Lid`): its remainder by a power of two up to 32 (or its low bits) is a
+    lane's; its quotient by a multiple of 32 (or its high bits) is the SIMD group's. That holds only if the group's
+    lanes are laid out so: a kernel with a `Lid` level is refused a launch whose group is not 1-D and whose first
+    dimension is not a multiple of 32.
+  - **Varying:** everything else a thread computes from its ids, and the other atomics.
 
-  A variable's level is the most varying of its stores' values and of the control they run under. Three refinements
-  keep legal kernels from being refused:
+  The library's SIMD-group reductions are native on this path (`UKL_NATIVE_SG_REDUCE`, `backend.h`): their
+  butterfly of shuffles is every lane's sum too, but that the result is the same in every lane is not something the
+  shuffles show. `ukl_tg_sum`, whose SIMD groups each reduce the same partials, is so found the same across the
+  group.
+
+  A variable's level is the join of its stores' values and of the control they run under. These refinements keep
+  legal kernels from being refused:
   - Levels are kept by byte range, so a structure's fields are apart: `UklGrid`'s `group` is uniform and its `lid`
     is not.
   - A pointer into a lane's own variables is followed to them, offset and all. OpenCL's private memory is no
     other lane's, so `&ip` passed to a helper does not make `ip` varying.
   - Each declaration has its own number (the kernel tape's `Local`), even where scopes share a frame offset.
+  - **A body's own variables are flow-sensitive:** a store at a uniform address replaces what the variable held.
+    Where control rejoins (a branch's end, a loop's top, a `switch`'s end), what was written since it split is
+    raised by the level that split it. That includes the lanes that come back from a `continue` (at the iteration's
+    end) and from a `break` out of a case. Without the `continue`'s rejoin, `pp`'s `if_number` was wrong: a
+    variable stored only by the lanes that did not continue kept its uniform level, so a lane read another's
+    (`a_continue_that_varies_leaves_the_rest_of_the_body`).
+  - **A call's effects are its own:** the caller's state goes into the callee for what its arguments reach, and
+    what the callee writes there comes back after the call, as it leaves it.
 
-  Lanes that returned from an inlined call never read its variables again. So their return raises only the writes
-  its caller sees: the call's result, the caller's variables, and what pointers reach. A `break` or `continue`
-  raises every later write in its loop.
+  Lanes that returned from a call never read its variables again. So their return raises only the writes its
+  caller sees: the call's result, the caller's variables, and what pointers reach.
+- **The analysis's cost** is what the rounds are made of. It is a worklist of bodies: a body is walked again only
+  when something its walk read changed (a variable of another body, its entry state, a callee's effects). A whole
+  pass then checks that nothing changes; in the gate's kernels it never does. A body's state is a list of its
+  variables, each one's cells shared until written, so a branch's copy of it is the list, not the cells. Together
+  with the per-site contexts, `stage_count` went from 5.8 s to 1.4 s, and `pp_setup` from 15 s to 11 s (a test
+  build, `rerail-ukl-vec` at opt-level 3). That time is in the analysis's maps and the allocator, which an optimized
+  build does not change.
+- **The device keeps the code tape in its store** of compiled kernels (`rerail_device::store`, as every backend
+  keeps its compiled form there): `vec/<key>.tape`, keyed by the vectorizer's build (a hash of its sources and the
+  C parser's, `build.rs`), the preprocessed source and the kernel's name. So a process loads a kernel another
+  vectorized.
 - **The barrier rule is proven statically** (decision 3), or the kernel is refused with both places, as
   `path:line:column`:
   - A threadgroup barrier must run under control that is agreed or uniform, and a SIMD-group operation under
@@ -175,7 +219,12 @@ slow". The answers below are the user's, given to the questions of the design pa
   - **x86:** the same loop compiled again with AVX2, chosen at run time (`is_x86_feature_detected`). The gate was
     run on two x86 Linux hosts with AVX2, the library's 19 tests on each, against the coroutine backend back to
     back: 4.3 s against 6.6 s on one, and 6.2 s against 7.7 s on the other (the test harness's times).
-  - Still to lower: `switch`, which the library's tests do not reach. Step 3's gate kernels need it.
+  - **`switch`** runs each case under the lanes whose value is its label and those that fell through the case before.
+  - **A poll of another group's progress** (`ukl_poll_yield`, a grid barrier's: `Yield`) ends a SIMD group's turn,
+    and once every SIMD group of its group waits, the group's. Up to the coroutine backend's resident count of groups
+    run together, each in a slot of its own, taking turns in order. So a persistent grid of up to that many groups
+    meets its barriers, and a larger one fails their bound (1000 rounds, as the CPU backend's). Run one after
+    another, `pb_pool`'s 8 groups failed their first barrier.
 - **A scan's tile is 16 values a thread** on this path (`UKL_SCAN_VT`), as on the CPU backend (decision 0527 §3).
   A group operation costs hundreds of the tape's nodes, against a few for a thread's fold of one value. At 1 value
   a thread, the grid scan of 1,000,000 values took 3 s; at 16, the whole test takes 2.7 s.
@@ -190,3 +239,12 @@ slow". The answers below are the user's, given to the questions of the design pa
   | Step 1's one-lane interpreter | 223 s | |
 
   In a sample of the suite, the interpreter's loop is nearly all of the running thread's time.
+- **Step 3's gate kernels, on the interpreter** (2026-11-21). Every kernel of `join_stages`, `pp_grid` and the pp
+  probes (35) vectorizes (`the_written_sources_lower_and_vectorize`, reading the sources the device writes with
+  `RERAIL_UKL_VEC_SOURCES`). With `RERAIL_GPU=cpu RERAIL_CPU_EXEC=vec`:
+  - `rerail-gpu`'s 25 tests pass, as on the coroutine backend.
+  - pp's arena tests (`pp_arena::`, `pp_grid`'s kernels): the 9 pass, as on the coroutine backend.
+  - The join and setfix device tests (`metal_join::`, `setfix::device`, in `rerail-device-metal`): the 44 pass, as
+    on the coroutine backend. On a Mac (M3 Max, idle), 82 s against the coroutine backend's 16 s, warm store. Most
+    of it is the text functions' kernel (`row_text`) run by the interpreter: `parity_random_texts` 66 s against
+    11 s, `text_functions_on_the_device_are_the_cpus` 31 s against 2.8 s. Compiling that is step 3's.

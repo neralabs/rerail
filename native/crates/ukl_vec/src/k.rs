@@ -146,13 +146,24 @@ pub enum Kind {
     Inline,
     /// A code tape's one node (`code`): `[header, parameters, instructions]`.
     Code,
+    /// `[site, type]`: a `switch`, its first child its value (of `type`), then its cases in order. A `break` in it
+    /// leaves it; a `continue` goes on to the loop it is in.
+    Switch,
+    /// A vector tape's function in a context it is called in (decision 0567 §2.2): `[body, function, frame, slot,
+    /// type, result, parameters, (offset, type) a parameter]`, its child its body. Its locals are at its frame's
+    /// offsets, its result at `slot` (past its frame: the bytes its callers read), the variable `result`. A vector
+    /// tape's `Call` is `[function, type, temp, body]`.
+    Body,
+    /// `[default, low, high]`: a `switch`'s case, its label the value `low | high << 32` (none for `default`); its
+    /// child its statements, which the lanes that took the case before fall through into.
+    Case,
 }
 
 /// A `Return`'s slot when it ends the thread (the kernel's own body's).
 pub const NO_SLOT: u32 = u32::MAX;
 
 impl Kind {
-    pub const LAST: u16 = Kind::Code as u16;
+    pub const LAST: u16 = Kind::Case as u16;
 
     pub fn of(k: u16) -> Kind {
         assert!((1..=Self::LAST).contains(&k), "a kernel tape's kind: {k}");
@@ -216,6 +227,9 @@ pub enum Builtin {
     Barrier,
     /// A fence: nothing on the CPU, whose memory is coherent.
     MemFence,
+    /// A poll of another group's progress (`ukl_poll_yield`, a grid barrier's): the group yields to the groups that
+    /// run with it (`run`'s resident groups), as the CPU's coroutines do. Not a sync point.
+    Yield,
     /// The SIMD group's: sync points.
     SubGroupBarrier,
     SubGroupBallot,
@@ -223,6 +237,10 @@ pub enum Builtin {
     SubGroupShuffleUp,
     SubGroupShuffleDown,
     SubGroupShuffleXor,
+    /// The SIMD group's sum, minimum or maximum of its argument: every lane's the same (sync points too).
+    SubGroupReduceAdd,
+    SubGroupReduceMin,
+    SubGroupReduceMax,
     /// Relaxed atomics on a 32-bit word: `(pointer, value)`, `(pointer, expected, new)` for `cmpxchg`.
     AtomicAdd,
     AtomicSub,
@@ -258,6 +276,9 @@ impl Builtin {
         matches!(
             self,
             Builtin::Barrier | Builtin::SubGroupBarrier | Builtin::SubGroupBallot | Builtin::SubGroupShuffle | Builtin::SubGroupShuffleUp | Builtin::SubGroupShuffleDown | Builtin::SubGroupShuffleXor
+                | Builtin::SubGroupReduceAdd
+                | Builtin::SubGroupReduceMin
+                | Builtin::SubGroupReduceMax
         )
     }
 
@@ -273,12 +294,16 @@ impl Builtin {
             "get_sub_group_local_id" => Builtin::SubGroupLocalId,
             "barrier" => Builtin::Barrier,
             "mem_fence" | "read_mem_fence" | "write_mem_fence" => Builtin::MemFence,
+            "__ukl_vec_yield" => Builtin::Yield,
             "sub_group_barrier" => Builtin::SubGroupBarrier,
             "sub_group_ballot" => Builtin::SubGroupBallot,
             "sub_group_shuffle" => Builtin::SubGroupShuffle,
             "sub_group_shuffle_up" => Builtin::SubGroupShuffleUp,
             "sub_group_shuffle_down" => Builtin::SubGroupShuffleDown,
             "sub_group_shuffle_xor" => Builtin::SubGroupShuffleXor,
+            "sub_group_reduce_add" => Builtin::SubGroupReduceAdd,
+            "sub_group_reduce_min" => Builtin::SubGroupReduceMin,
+            "sub_group_reduce_max" => Builtin::SubGroupReduceMax,
             "atomic_add" | "atom_add" => Builtin::AtomicAdd,
             "atomic_sub" | "atom_sub" => Builtin::AtomicSub,
             "atomic_and" | "atom_and" => Builtin::AtomicAnd,
@@ -306,29 +331,53 @@ impl Builtin {
 /// runs for the whole group at once, the cut), whether its condition's uniformity is checked as it runs (`CHECK`), and
 /// whether its subtree has an effect (`EFFECT`).
 /// A kernel tape's nodes have no field.
-pub const LEVEL: u16 = 3;
-pub const SYNC: u16 = 4;
-pub const GSYNC: u16 = 8;
-pub const CHECK: u16 = 16;
+pub const LEVEL: u16 = 7;
+pub const SYNC: u16 = 8;
+pub const GSYNC: u16 = 16;
+pub const CHECK: u16 = 32;
 /// Its subtree has an effect or reads its lanes as a whole (a store, an atomic, a SIMD-group operation, an inlined
 /// call): a uniform value of one without is computed once for its SIMD group.
-pub const EFFECT: u16 = 32;
+pub const EFFECT: u16 = 64;
 
 /// A value's uniformity (decision 0567 §2.4), in order: the same in every thread of the group; the same by the
 /// kernel's protocol (an atomic that leaves its word as it is, at a uniform address: the same in a SIMD group, and
 /// across the group as the kernel's synchronization makes it, checked where control turns on it); the same in each
-/// SIMD group; varying from lane to lane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// SIMD group; a function of the lane's index in its SIMD group and of uniform values (the same at a lane in each
+/// SIMD group: what every SIMD group computes alike from memory the group shares, `lid % 32`); the thread's own id in
+/// its group (`get_local_id(0)`, a 1-D group's: its SIMD group's and its lane's, apart); varying from lane to lane.
+///
+/// Not a chain: `SimdGroup` and `Lane` differ in what they share, and join as `Varying`; `Lid` joins with anything
+/// but itself and `Uniform` as `Varying` (an operation on it is the caller's to tell, `vector`). Each threshold
+/// (`<= Agreed`: the same in the whole group; `<= SimdGroup`: in the SIMD group) keeps its sense in this order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Level {
     Uniform,
     Agreed,
     SimdGroup,
+    Lane,
+    Lid,
     Varying,
 }
 
 impl Level {
     pub fn of(bits: u16) -> Level {
-        [Level::Uniform, Level::Agreed, Level::SimdGroup, Level::Varying][usize::from(bits & LEVEL)]
+        [Level::Uniform, Level::Agreed, Level::SimdGroup, Level::Lane, Level::Lid, Level::Varying, Level::Varying, Level::Varying][usize::from(bits & LEVEL)]
+    }
+
+    /// The level of a value made of values of levels `self` and `o`.
+    pub fn join(self, o: Level) -> Level {
+        match (self, o) {
+            (x, Level::Uniform) | (Level::Uniform, x) => x,
+            (x, y) if x == y => x,
+            (Level::Lid, _) | (_, Level::Lid) => Level::Varying,
+            (Level::SimdGroup, Level::Lane) | (Level::Lane, Level::SimdGroup) => Level::Varying,
+            (x, y) => x.max(y),
+        }
+    }
+
+    /// The join of `ls`.
+    pub fn all(ls: impl IntoIterator<Item = Level>) -> Level {
+        ls.into_iter().fold(Level::Uniform, Level::join)
     }
 }
 

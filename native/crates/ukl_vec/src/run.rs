@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::Error;
-use crate::code::{CUR, HEADER, I, WORDS};
+use crate::code::{CUR, HEADER, I, TABLE, WORDS};
 use crate::k::{Builtin, M, Op, View};
 use crate::lower::Program;
 use crate::ops;
@@ -34,10 +34,31 @@ pub enum Arg {
 
 type R<T> = Result<T, Error>;
 
-/// Why a SIMD group's turn ended: its end, or a threadgroup barrier (its site).
+/// Why a SIMD group's turn ended: its end, a threadgroup barrier (its site), or a poll of another group's progress.
 enum Stop {
     Halt,
     Bar(u32),
+    Yield,
+}
+
+/// What a SIMD group that has not ended waits for: nothing (it runs on its group's next round), its group at a
+/// barrier (the site), or the other groups' turns (a poll).
+#[derive(Clone, Copy, PartialEq)]
+enum Wait {
+    Run,
+    Bar(u32),
+    Yield,
+}
+
+/// A resident group's slot: its SIMD groups, their frames, its threadgroup memory and its checked decisions, and
+/// the group it runs.
+struct Slot {
+    frames: Vec<u128>,
+    shared: Vec<u128>,
+    g: Vec<Sg>,
+    agreed: HashMap<u32, Decisions>,
+    group: [u32; 3],
+    busy: bool,
 }
 
 /// A SIMD group: where it is, its frame (its lanes' variables, struct of arrays) and its registers.
@@ -45,6 +66,7 @@ struct Sg {
     index: u32,
     pc: usize,
     done: bool,
+    wait: Wait,
     frame: u64,
     s: Vec<u64>,
     v32: Vec<V32>,
@@ -52,16 +74,23 @@ struct Sg {
     m: Vec<u32>,
     /// Each lane's id in its group, by dimension.
     lid: [V32; 3],
+    /// The running function's frame, and its windows of the scalar, 32-bit, 64-bit and mask files.
+    fp: u64,
+    win: [usize; 4],
+    /// The calls it is in: each caller's instruction to go back to, frame and windows.
+    calls: Vec<(usize, u64, [usize; 4])>,
 }
 
 /// A checked branch's decisions in the group, in order, and how many each SIMD group has made.
-type Decisions = (Vec<bool>, Vec<usize>);
+type Decisions = (Vec<u64>, Vec<usize>);
 
 /// One dispatch's state.
 struct Cx<'p> {
     p: &'p Program,
     kernel: &'p str,
     code: &'p [u32],
+    /// Each function's advances (`code::TABLE`).
+    table: &'p [u32],
     data: u64,
     shared: u64,
     grid: [u32; 3],
@@ -145,22 +174,32 @@ fn wide(m: M, x: u32) -> u64 {
 }
 
 /// Runs `k` (a kernel of `p`) over `grid` groups of `block` threads, with `args` for its parameters. `local` is
-/// the threadgroup memory a group has past the kernel's own (its `Arg::Local` arguments').
-pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3], local: u64) -> R<()> {
+/// the threadgroup memory a group has past the kernel's own (its `Arg::Local` arguments'). Up to `resident` groups
+/// run together, as the CPU's coroutines do (`ukl_cpu_shim.h`): each in a slot of its own that takes the launch's
+/// next group when its own ends, the slots taking turns in order, a group's turn ending when all its SIMD groups
+/// poll another's progress (`Yield`). So a persistent grid of up to `resident` groups meets its barriers, and a
+/// larger one fails their bound, as on a GPU that holds fewer; a run is the same every time.
+pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3], local: u64, resident: usize) -> R<()> {
     let cv = View::new(&k.code);
     let words = cv.p(0);
     let (frame_bytes, own, n_params) = (words[0] as usize, u64::from(words[1]).next_multiple_of(16), words[2] as usize);
     let (ns, n32, n64, nm, ncode) = (words[3] as usize, words[4] as usize, words[5] as usize, words[6] as usize, words[7] as usize);
     let params = &words[HEADER..HEADER + 2 * n_params];
     let code = &words[HEADER + 2 * n_params..HEADER + 2 * n_params + ncode];
+    let table = &words[HEADER + 2 * n_params + ncode..][..words[8] as usize * TABLE];
     if args.len() != n_params {
         return Err(Error(format!("{} takes {n_params} arguments, given {}", k.name, args.len())));
+    }
+    if k.lid && !(block[1] == 1 && block[2] == 1) && !(block[0] as usize).is_multiple_of(W) {
+        return Err(Error(format!("{} takes a thread's id in its group as its SIMD group's and lane's: a group of {block:?} is not one", k.name)));
     }
     let threads = block.iter().map(|&b| b as usize).product::<usize>();
     let nsg = threads.div_ceil(W);
     let frame = frame_bytes.next_multiple_of(16) * W;
-    let mut frames = vec![0u128; (nsg * frame).div_ceil(16).max(1)];
-    let mut shared = vec![0u128; (own + local).div_ceil(16) as usize + 1];
+    let groups = grid.iter().map(|&g| g as usize).product::<usize>();
+    if groups == 0 {
+        return Ok(());
+    }
     let pv = View::new(&p.tape);
     let data_node = pv.children(0).last().expect("the program's data");
     let data = pv.ws(data_node, 1, 0).as_ptr() as u64;
@@ -168,8 +207,9 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3
         p,
         kernel: &k.name,
         code,
+        table,
         data,
-        shared: shared.as_mut_ptr() as u64,
+        shared: 0,
         grid,
         block,
         group: [0; 3],
@@ -177,60 +217,98 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3
         #[cfg(target_arch = "x86_64")]
         avx2: std::arch::is_x86_feature_detected!("avx2"),
     };
-    let base = frames.as_mut_ptr() as u64;
     let (bx, by) = (block[0].max(1), block[1].max(1));
-    let mut g: Vec<Sg> = (0..nsg as u32)
-        .map(|s| {
-            let lin = |l: usize| s * W as u32 + l as u32;
-            let lid = [std::array::from_fn(|l| lin(l) % bx), std::array::from_fn(|l| lin(l) / bx % by), std::array::from_fn(|l| lin(l) / (bx * by))];
-            Sg {
-                index: s,
-                pc: 0,
-                done: false,
-                frame: base + u64::from(s) * frame as u64,
-                s: vec![0; ns.max(1)],
-                v32: vec![[0; W]; n32.max(1)],
-                v64: vec![[0; W]; n64.max(1)],
-                m: vec![0; nm.max(8)],
-                lid,
-            }
+    let mut slots: Vec<Slot> = (0..resident.clamp(1, groups))
+        .map(|_| {
+            let mut frames = vec![0u128; (nsg * frame).div_ceil(16).max(1)];
+            let base = frames.as_mut_ptr() as u64;
+            let g = (0..nsg as u32)
+                .map(|s| {
+                    let lin = |l: usize| s * W as u32 + l as u32;
+                    let lid = [std::array::from_fn(|l| lin(l) % bx), std::array::from_fn(|l| lin(l) / bx % by), std::array::from_fn(|l| lin(l) / (bx * by))];
+                    Sg {
+                        index: s,
+                        pc: 0,
+                        done: false,
+                        wait: Wait::Run,
+                        frame: base + u64::from(s) * frame as u64,
+                        fp: 0,
+                        win: [0; 4],
+                        calls: Vec::new(),
+                        s: vec![0; ns.max(1)],
+                        v32: vec![[0; W]; n32.max(1)],
+                        v64: vec![[0; W]; n64.max(1)],
+                        m: vec![0; nm.max(8)],
+                        lid,
+                    }
+                })
+                .collect();
+            Slot { frames, shared: vec![0u128; (own + local).div_ceil(16) as usize + 1], g, agreed: HashMap::new(), group: [0; 3], busy: false }
         })
         .collect();
     let live = |s: usize| {
         let n = (threads - s * W).min(W);
         if n == W { u32::MAX } else { (1u32 << n) - 1 }
     };
-    for gz in 0..grid[2] {
-        for gy in 0..grid[1] {
-            for gx in 0..grid[0] {
-                cx.group = [gx, gy, gz];
-                cx.agreed.borrow_mut().clear();
-                shared.fill(0);
-                frames.fill(0);
-                for (s, sg) in g.iter_mut().enumerate() {
-                    let mask = live(s);
-                    sg.m.fill(0);
-                    sg.m[CUR as usize] = mask;
-                    sg.pc = 0;
-                    sg.done = false;
-                    for (k, a) in args.iter().enumerate() {
-                        let (off, m) = (u64::from(params[2 * k]), M(params[2 * k + 1]));
-                        for l in lanes(mask) {
-                            let at = sg.frame + off * W as u64 + l as u64 * u64::from(m.bytes());
-                            match a {
-                                // SAFETY: the parameter's place in the lane's frame, its type's bytes.
-                                Arg::Bytes(b) => unsafe { std::ptr::copy_nonoverlapping(b.as_ptr(), at as usize as *mut u8, b.len().min(m.bytes() as usize)) },
-                                // SAFETY: the same, a pointer's.
-                                Arg::Local(o) => unsafe { ops::store(M::PTR, at, cx.shared + own + o) },
-                            }
-                        }
+    // A slot's next group: its memory cleared, each SIMD group at the entry with its lanes and its arguments.
+    let start = |sl: &mut Slot, at: usize| {
+        let (gx, gy) = (grid[0] as usize, grid[1] as usize);
+        sl.group = [(at % gx) as u32, (at / gx % gy) as u32, (at / (gx * gy)) as u32];
+        sl.agreed.clear();
+        sl.shared.fill(0);
+        sl.frames.fill(0);
+        let sh = sl.shared.as_mut_ptr() as u64;
+        for (s, sg) in sl.g.iter_mut().enumerate() {
+            let mask = live(s);
+            sg.m.fill(0);
+            sg.m[CUR as usize] = mask;
+            sg.pc = 0;
+            (sg.fp, sg.win) = (sg.frame, [0; 4]);
+            sg.calls.clear();
+            (sg.done, sg.wait) = (false, Wait::Run);
+            for (k, a) in args.iter().enumerate() {
+                let (off, m) = (u64::from(params[2 * k]), M(params[2 * k + 1]));
+                for l in lanes(mask) {
+                    let at = sg.frame + off * W as u64 + l as u64 * u64::from(m.bytes());
+                    match a {
+                        // SAFETY: the parameter's place in the lane's frame, its type's bytes.
+                        Arg::Bytes(b) => unsafe { std::ptr::copy_nonoverlapping(b.as_ptr(), at as usize as *mut u8, b.len().min(m.bytes() as usize)) },
+                        // SAFETY: the same, a pointer's.
+                        Arg::Local(o) => unsafe { ops::store(M::PTR, at, sh + own + o) },
                     }
                 }
-                cx.group_run(&mut g)?;
             }
         }
+        sl.busy = true;
+    };
+    let mut next = 0usize;
+    loop {
+        let mut any = false;
+        for sl in &mut slots {
+            // The slot's turn: its group's, until all its SIMD groups poll; a group that ends gives way to the next.
+            loop {
+                if !sl.busy {
+                    if next == groups {
+                        break;
+                    }
+                    start(sl, next);
+                    next += 1;
+                }
+                any = true;
+                (cx.shared, cx.group) = (sl.shared.as_mut_ptr() as u64, sl.group);
+                std::mem::swap(cx.agreed.get_mut(), &mut sl.agreed);
+                let ended = cx.group_run(&mut sl.g);
+                std::mem::swap(cx.agreed.get_mut(), &mut sl.agreed);
+                if !ended? {
+                    break;
+                }
+                sl.busy = false;
+            }
+        }
+        if !any {
+            return Ok(());
+        }
     }
-    Ok(())
 }
 
 impl Cx<'_> {
@@ -242,35 +320,58 @@ impl Cx<'_> {
         Error(format!("{}: {e}", self.kernel))
     }
 
-    /// The group's SIMD groups, each to its next barrier or its end, in turns, until all have ended.
-    fn group_run(&self, g: &mut [Sg]) -> R<()> {
+    /// The group's SIMD groups, each to its next barrier, poll or end, in turns: whether the group has ended (else
+    /// all its SIMD groups that have not wait for the other groups' turns, or some do and the rest wait at a barrier).
+    fn group_run(&self, g: &mut [Sg]) -> R<bool> {
         loop {
-            let mut at: Option<(usize, u32)> = None;
-            for sg in g.iter_mut().filter(|sg| !sg.done) {
+            for sg in g.iter_mut().filter(|sg| !sg.done && sg.wait == Wait::Run) {
                 match self.exec(sg)? {
                     Stop::Halt => sg.done = true,
-                    Stop::Bar(site) => match at {
-                        Some((pc, other)) if pc != sg.pc => {
-                            return Err(Error(format!(
-                                "{}: SIMD group {} waits at {} while another waits at {}: the group's threads meet different barriers (decision 0567 §3)",
-                                self.kernel,
-                                sg.index,
-                                self.site(site),
-                                self.site(other)
-                            )));
-                        }
-                        _ => at = Some((sg.pc, site)),
-                    },
+                    Stop::Bar(site) => sg.wait = Wait::Bar(site),
+                    Stop::Yield => sg.wait = Wait::Yield,
                 }
             }
-            if at.is_none() {
-                return Ok(());
+            let mut at: Option<(usize, u32)> = None;
+            let (mut polls, mut waits) = (false, false);
+            for sg in g.iter().filter(|sg| !sg.done) {
+                match sg.wait {
+                    Wait::Yield => polls = true,
+                    Wait::Bar(site) => {
+                        waits = true;
+                        match at {
+                            Some((pc, other)) if pc != sg.pc && !polls => {
+                                return Err(Error(format!(
+                                    "{}: SIMD group {} waits at {} while another waits at {}: the group's threads meet different barriers (decision 0567 §3)",
+                                    self.kernel,
+                                    sg.index,
+                                    self.site(site),
+                                    self.site(other)
+                                )));
+                            }
+                            _ => at = Some((sg.pc, site)),
+                        }
+                    }
+                    Wait::Run => unreachable!("a SIMD group that ran stopped"),
+                }
+            }
+            if polls {
+                // Those that poll go on at the group's next turn; those at a barrier wait there for them.
+                for sg in g.iter_mut().filter(|sg| sg.wait == Wait::Yield) {
+                    sg.wait = Wait::Run;
+                }
+                return Ok(false);
+            }
+            if !waits {
+                return Ok(true);
+            }
+            for sg in g.iter_mut().filter(|sg| !sg.done) {
+                sg.wait = Wait::Run;
             }
         }
     }
 
     /// A checked branch's decision `d`, by SIMD group `sg`: the same as the first SIMD group's, or the kernel fails.
-    fn agree(&self, node: u32, sg: u32, d: bool, site: u32) -> R<()> {
+    fn agree(&self, node: u32, sg: u32, d: u64, site: u32) -> R<()> {
         let mut a = self.agreed.borrow_mut();
         let (ds, at) = a.entry(node).or_default();
         let s = sg as usize;
@@ -383,11 +484,10 @@ unsafe fn exec_avx2(cx: &Cx, sg: &mut Sg) -> R<Stop> {
 #[inline(always)]
 unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
     let code = cx.code.as_ptr();
-    let s = sg.s.as_mut_ptr();
-    let v32 = sg.v32.as_mut_ptr();
-    let v64 = sg.v64.as_mut_ptr();
-    let mk = sg.m.as_mut_ptr();
-    let frame = sg.frame;
+    let (s0, v320, v640, mk0) = (sg.s.as_mut_ptr(), sg.v32.as_mut_ptr(), sg.v64.as_mut_ptr(), sg.m.as_mut_ptr());
+    let (mut fp, mut win) = (sg.fp, sg.win);
+    // SAFETY: the windows are within the files (`compile`'s counts, the deepest chain of calls').
+    let (mut s, mut v32, mut v64, mut mk) = unsafe { (s0.add(win[0]), v320.add(win[1]), v640.add(win[2]), mk0.add(win[3])) };
     let mut pc = sg.pc * WORDS;
     // SAFETY: the function's (`compile`'s registers, jumps and addresses).
     unsafe {
@@ -450,8 +550,28 @@ unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
             let cur = m!(CUR as usize);
             match I::of(w0) {
                 I::Halt => {
-                    sg.pc = pc / WORDS;
+                    (sg.pc, sg.fp, sg.win) = (pc / WORDS, fp, win);
                     return Ok(Stop::Halt);
+                }
+                I::Call => {
+                    sg.calls.push((pc, fp, win));
+                    let r = &cx.table[b * TABLE..][..TABLE];
+                    fp += u64::from(r[0]);
+                    for (w, &k) in win.iter_mut().zip(&r[1..]) {
+                        *w += k as usize;
+                    }
+                    let caller = mk;
+                    (s, v32, v64, mk) = (s0.add(win[0]), v320.add(win[1]), v640.add(win[2]), mk0.add(win[3]));
+                    // The five masks go with the lanes into the callee.
+                    std::ptr::copy_nonoverlapping(caller, mk, 5);
+                    pc = a * WORDS;
+                }
+                I::Ret => {
+                    let (back, f, w) = sg.calls.pop().expect("a call to return from");
+                    let callee = mk;
+                    (pc, fp, win) = (back, f, w);
+                    (s, v32, v64, mk) = (s0.add(win[0]), v320.add(win[1]), v640.add(win[2]), mk0.add(win[3]));
+                    std::ptr::copy_nonoverlapping(callee, mk, 5);
                 }
                 I::Jmp => pc = a * WORDS,
                 I::Jzm => {
@@ -478,11 +598,17 @@ unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
                 I::MRejoin => m!(0) = m!(a) & !(m!(1) | m!(3) | m!(4)),
                 I::MExit => m!(0) = m!(a) & !(m!(3) | m!(4)),
                 I::MResume => m!(0) = m!(a) & !m!(4),
-                I::Agree => cx.agree(a as u32, sg.index, s!(c) != 0, b as u32)?,
-                I::AgreeM => cx.agree(a as u32, sg.index, m!(c) != 0, b as u32)?,
+                I::MAndNM => m!(a) = m!(b) & !m!(c),
+                I::MSwEnd => m!(0) = m!(a) & !(m!(2) | m!(3) | m!(4)),
+                I::Agree => cx.agree(a as u32, sg.index, s!(c), b as u32)?,
+                I::AgreeM => cx.agree(a as u32, sg.index, u64::from(m!(c) != 0), b as u32)?,
                 I::Bar => {
-                    sg.pc = pc / WORDS;
+                    (sg.pc, sg.fp, sg.win) = (pc / WORDS, fp, win);
                     return Ok(Stop::Bar(a as u32));
+                }
+                I::Yield => {
+                    (sg.pc, sg.fp, sg.win) = (pc / WORDS, fp, win);
+                    return Ok(Stop::Yield);
                 }
 
                 I::SConst => s!(a) = b as u64 | (c as u64) << 32,
@@ -496,7 +622,7 @@ unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
                 I::SLoad => s!(a) = ops::load(M(f1), s!(b)),
                 I::SStore => ops::store(M(f1), s!(a), s!(b)),
                 I::SAtomic => s!(a) = Cx::atomic(Builtin::of(f1), M(f2), s!(b), s!(c), s!(d)),
-                I::LdLS => s!(a) = ops::load(M(f1), frame + b as u64 + (first(cur) * c) as u64),
+                I::LdLS => s!(a) = ops::load(M(f1), fp + b as u64 + (first(cur) * c) as u64),
                 I::Extract32 => s!(a) = wide(M(f1), r32!(b)[first(cur)]),
                 I::Extract64 => s!(a) = r64!(b)[first(cur)],
 
@@ -506,7 +632,7 @@ unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
                 I::VMovM64 => blend64(w64!(a), r64!(b), cur),
 
                 I::LdL => {
-                    let (m, at) = (M(f1), frame + b as u64);
+                    let (m, at) = (M(f1), fp + b as u64);
                     if m.bytes() == 8 {
                         let o = w64!(a);
                         if c == 8 {
@@ -528,7 +654,7 @@ unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
                     }
                 }
                 I::StL => {
-                    let (m, at) = (M(f1), frame + a as u64);
+                    let (m, at) = (M(f1), fp + a as u64);
                     if m.bytes() == 8 && b == 8 {
                         blend64(&mut *(at as usize as *mut V64), r64!(c), cur);
                     } else if m.bytes() == 4 && b == 4 {
@@ -546,7 +672,7 @@ unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
                     }
                 }
                 I::LAddr => {
-                    let (o, at) = (w64!(a), frame + b as u64);
+                    let (o, at) = (w64!(a), fp + b as u64);
                     for (l, o) in o.iter_mut().enumerate() {
                         *o = at + (l * c) as u64;
                     }
@@ -652,6 +778,11 @@ unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
                 I::Ballot => s!(a) = u64::from(tomask(r32!(b)) & cur),
                 I::Shuf32 => shuffle(Builtin::of(f1), cur, r32!(b), r32!(c), w32!(a)),
                 I::Shuf64 => shuffle(Builtin::of(f1), cur, r64!(b), r32!(c), w64!(a)),
+                I::Reduce32 => {
+                    let m = M(f2);
+                    s!(a) = reduce(Builtin::of(f1), m, lanes(cur).map(|l| wide(m, r32!(b)[l])));
+                }
+                I::Reduce64 => s!(a) = reduce(Builtin::of(f1), M(f2), lanes(cur).map(|l| r64!(b)[l])),
                 I::VAtomic => {
                     let (op, m) = (Builtin::of(f1), M(f2));
                     let ad = *r64!(b);
@@ -797,6 +928,22 @@ unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
             }
         }
     }
+}
+
+/// A SIMD-group reduction (`b`) of type `m` over the running lanes' values `xs`.
+fn reduce(b: Builtin, m: M, xs: impl Iterator<Item = u64>) -> u64 {
+    let mut out: Option<u64> = None;
+    for x in xs {
+        out = Some(match out {
+            None => x,
+            Some(a) if b == Builtin::SubGroupReduceAdd => ops::bin(Op::Add, m, a, x).unwrap_or(0),
+            Some(a) => {
+                let less = ops::bin(Op::Lt, m, x, a).unwrap_or(0) != 0;
+                if less == (b == Builtin::SubGroupReduceMin) { x } else { a }
+            }
+        });
+    }
+    out.unwrap_or(0)
 }
 
 /// A SIMD-group shuffle (`b`) of `x` by `idx` over the running lanes `cur`: a lane from a lane that is not running

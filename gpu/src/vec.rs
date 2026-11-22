@@ -20,18 +20,41 @@ pub fn on(device: &Device) -> bool {
 
 /// The program `text` at `path`, specialized by `defines`, as an interpreted library named `name`.
 pub fn library(name: &str, path: &str, text: &str, defines: &[(&str, &str)]) -> Result<ComputeFunctionLibrary, String> {
+    // A development hook: each library's text, its defines first, written to the directory `RERAIL_UKL_VEC_SOURCES`
+    // names, for `rerail-ukl-vec`'s `the_written_sources_lower_and_vectorize` to lower and vectorize apart.
+    if let Ok(dir) = std::env::var("RERAIL_UKL_VEC_SOURCES") {
+        let defs: String = defines.iter().map(|(n, v)| format!("#define {n} {v}\n")).collect();
+        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.uglykl")), format!("{defs}{text}"));
+    }
     let mut p = rerail_ukl_vec::preprocess().file(path, text);
     for (n, v) in defines {
         p = p.define(n, Some(v));
     }
-    let program = rerail_ukl_vec::program(&p, path).map_err(|e| format!("{name}: {e}"))?;
-    Ok(ComputeFunctionLibrary::Cpu(CpuComputeFunctionLibrary::interpreted(Arc::new(Interpreted { program, kernels: Mutex::default() }), name)))
+    let (program, text) = rerail_ukl_vec::program_and_text(&p, path).map_err(|e| format!("{name}: {e}"))?;
+    let key = rerail_device::store::key(&[b"vec", rerail_ukl_vec::BUILD.as_bytes(), text.as_bytes()]);
+    Ok(ComputeFunctionLibrary::Cpu(CpuComputeFunctionLibrary::interpreted(Arc::new(Interpreted { program, key, kernels: Mutex::default() }), name)))
 }
 
 struct Interpreted {
     program: Program,
+    /// The store's key of its source (`crate::store`): with a kernel's name, its code tape's.
+    key: String,
     /// Each kernel's vector tape, made on its first launch, or why it is refused.
     kernels: Mutex<HashMap<String, Result<Arc<Kernel>, String>>>,
+}
+
+impl Interpreted {
+    /// Kernel `k`'s code tape: the store's (`crate::store`, as every backend keeps its compiled form there), else
+    /// vectorized, and kept there. A refusal is not kept: it is found again.
+    fn vectorized(&self, name: &str, k: u32) -> Result<Arc<Kernel>, String> {
+        let key = rerail_device::store::key(&[self.key.as_bytes(), name.as_bytes()]);
+        if let Some(vk) = rerail_device::store::load("vec", &key, "tape").and_then(|b| Kernel::from_bytes(&b)).filter(|vk| vk.name == name) {
+            return Ok(Arc::new(vk));
+        }
+        let vk = rerail_ukl_vec::vector::vectorize(&self.program, k).map_err(|e| e.0)?;
+        rerail_device::store::save("vec", &key, "tape", &vk.to_bytes());
+        Ok(Arc::new(vk))
+    }
 }
 
 /// A type's size, alignment and code (`ukl_type_code`: `u`, `i`, `f`, `d`, `b`; another for a structure).
@@ -102,7 +125,9 @@ impl CpuInterpreter for Interpreted {
         // The entry's indirect counts (`__ukl_groups`, `__ukl_groups_at`): none, the device read them (`launch_indirect`).
         args.push(Arg::Bytes(vec![0; 8]));
         args.push(Arg::Bytes(vec![0; 4]));
-        let vk = self.kernels.lock().map_err(|_| "a kernel's vectorizing panicked".to_string())?.entry(kernel.to_string()).or_insert_with(|| rerail_ukl_vec::vector::vectorize(&self.program, k).map(Arc::new).map_err(|e| e.0)).clone()?;
-        rerail_ukl_vec::run::run(&self.program, &vk, &args, grid, block, shared).map_err(|e| e.0)
+        let vk = self.kernels.lock().map_err(|_| "a kernel's vectorizing panicked".to_string())?.entry(kernel.to_string()).or_insert_with(|| self.vectorized(kernel, k)).clone()?;
+        // The groups that run together: the coroutines' count (`compute_kernel_cpu::resident_groups`).
+        let resident = crate::compute_kernel_cpu::resident_groups(block.iter().map(|&b| b as usize).product());
+        rerail_ukl_vec::run::run(&self.program, &vk, &args, grid, block, shared, resident).map_err(|e| e.0)
     }
 }

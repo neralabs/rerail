@@ -120,6 +120,17 @@ pub fn source_of(p: &rerail_ukl::Preprocess, main: &str) -> Result<Source, Error
     Ok(Source { expanded, paths, lines })
 }
 
+/// The vectorizer's build: a hash of the code that makes a kernel's code tape (`build.rs`). A store that keeps code
+/// tapes keys them by it.
+pub const BUILD: &str = env!("UKL_VEC_BUILD");
+
+/// The program of `main` preprocessed by `p`, and its preprocessed text (what a store of its kernels keys them by).
+pub fn program_and_text(p: &rerail_ukl::Preprocess, main: &str) -> Result<(lower::Program, String), Error> {
+    let s = source_of(p, main)?;
+    let tape = c_tape(&s)?;
+    Ok((lower::lower(&s, &tape)?, s.text().to_string()))
+}
+
 /// The program of `main` preprocessed by `p`: its source, C tape and kernel tape.
 pub fn program(p: &rerail_ukl::Preprocess, main: &str) -> Result<lower::Program, Error> {
     let s = source_of(p, main)?;

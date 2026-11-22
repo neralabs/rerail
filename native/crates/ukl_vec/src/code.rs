@@ -17,7 +17,12 @@
 //! - **A lane's own variables** are in its SIMD group's frame, struct of arrays: lane `l` of the variable at frame
 //!   offset `off`, `size` bytes, its byte `inner`, is at `off * W + l * size + inner`. A direct read or write of one
 //!   (`LdL`, `StL`) is 32 consecutive values when it is a whole scalar variable.
-//! - **A threadgroup barrier** (`Bar`) ends a SIMD group's turn: each SIMD group runs to it, then all go on.
+//! - **Functions** are called, not inlined (a kernel's calls inlined would be hundreds of millions of nodes): each
+//!   is a section of the code, run under the lanes that call it. A call advances the frame (by the caller's region:
+//!   its frame and its result's slot) and the register and mask files (by the caller's counts), so the callee's
+//!   registers are its own; the five masks go with it. The table after the code holds each function's advances.
+//! - **A threadgroup barrier** (`Bar`) ends a SIMD group's turn: each SIMD group runs to it, then all go on. A poll
+//!   of another group's progress (`Yield`) ends it too, and once every SIMD group of its group waits, the group's.
 
 use crate::Error;
 use crate::k::{Builder, Builtin, CHECK, EFFECT, Kind, Level, M, NO_SLOT, Op, Tape, View};
@@ -27,8 +32,12 @@ use crate::run::W;
 pub const WORDS: usize = 5;
 
 /// The header's words: frame bytes a lane, threadgroup bytes, parameters, scalar registers, 32-bit registers,
-/// 64-bit registers, masks, the code's words.
-pub const HEADER: usize = 8;
+/// 64-bit registers, masks (each the deepest chain of calls'), the code's words, the functions.
+pub const HEADER: usize = 9;
+
+/// A function's words in the table after the code: its region's bytes in a SIMD group's frame (`W` lanes'), its
+/// scalar, 32-bit, 64-bit registers and masks: what a call from it advances by.
+pub const TABLE: usize = 5;
 
 /// The masks: the lanes running, those that took a `break`, a `continue`, a `return`, and those that ended.
 pub const CUR: u32 = 0;
@@ -71,12 +80,23 @@ pub enum I {
     MExit,
     /// `[m]`: `CUR = m & !END` (past an inlined call).
     MResume,
-    /// `[node, site, s]`: the group decides an agreed branch alike (`s != 0`).
+    /// `[m, m', m'']`: `m = m' & !m''`.
+    MAndNM,
+    /// `[m]`: `CUR = m & !(CONT | RET | END)` (past a `switch`: its breaks' lanes go on).
+    MSwEnd,
+    /// `[node, site, s]`: the group decides an agreed branch alike (`s`'s value: a condition's truth, a `switch`'s
+    /// value).
     Agree,
     /// `[node, site, m]`: the same, the decision `m != 0`.
     AgreeM,
     /// `[site]`: a threadgroup barrier.
     Bar,
+    /// A poll of another group's progress: the SIMD group's turn ends, and once its group's have, the group yields.
+    Yield,
+    /// `[t, f]`: a call of the function at instruction `t` from function `f` (its table's row: what to advance by).
+    Call,
+    /// A function's end: back to its caller.
+    Ret,
 
     /// `[s, low, high]`.
     SConst,
@@ -139,6 +159,9 @@ pub enum I {
     /// `[v, value, lane]`, field the shuffle (`Builtin`).
     Shuf32,
     Shuf64,
+    /// `[s, v]`, fields the reduction (`Builtin`), `type`: the running lanes' sum, minimum or maximum.
+    Reduce32,
+    Reduce64,
     /// `[v, address, x, y]`, fields `builtin`, `type`: each running lane's atomic, in order.
     VAtomic,
 
@@ -298,6 +321,13 @@ struct Gen<'t> {
     mn: u32,
     /// Whether a node's subtree may take an exit that leaves it (`break`, `continue`, `return`).
     exits: Vec<bool>,
+    /// Each function's `Body`, its row in the table, by its id.
+    bodies: std::collections::HashMap<u32, (usize, u32)>,
+    /// The function being compiled: its row, and its region's bytes a lane.
+    row: u32,
+    region: u32,
+    /// The calls to patch with their callees' first instructions: the instruction's index, the callee's id.
+    calls: Vec<(usize, u32)>,
 }
 
 /// The code tape of vector tape `vt` (a `Func` at its root).
@@ -309,19 +339,67 @@ pub fn compile(vt: &Tape) -> R<Tape> {
         exits[i] = match v.kind(i) {
             Kind::Break | Kind::Continue | Kind::Return => true,
             // A call's returns end in it.
-            Kind::Inline => false,
+            Kind::Call => false,
             _ => v.children(i).any(|c| exits[c]),
         };
     }
-    let mut g = Gen { v: &v, code: Vec::new(), s: File::default(), v32: File::default(), v64: File::default(), mtop: FIRST_SLOT, mn: FIRST_SLOT, exits };
-    let body = g.v.child(0, 0);
-    g.stmt(body)?;
-    g.emit(I::Halt, 0, [0; 4]);
-    let root = g.v.p(0);
+    let kids: Vec<usize> = v.children(0).collect();
+    let bodies = kids[1..].iter().enumerate().map(|(k, &b)| (v.w(b, 0), (b, k as u32 + 1))).collect();
+    let root = v.p(0);
+    let mut g = Gen {
+        v: &v,
+        code: Vec::new(),
+        s: File::default(),
+        v32: File::default(),
+        v64: File::default(),
+        mtop: FIRST_SLOT,
+        mn: FIRST_SLOT,
+        exits,
+        bodies,
+        row: 0,
+        region: 0,
+        calls: Vec::new(),
+    };
+    // Each function's section: the kernel's, then each body's. A row: [start, region, scalars, 32-bit, 64-bit,
+    // masks], and the rows it calls.
+    let mut rows: Vec<[u32; 6]> = Vec::new();
+    let mut callees: Vec<Vec<u32>> = Vec::new();
+    let mut starts = std::collections::HashMap::new();
+    for (k, &body) in kids.iter().enumerate() {
+        let (node, region) = if k == 0 { (body, crate::vector::kernel_frame(&v)) } else { (v.child(body, 0), crate::vector::region(v.w(body, 2), M(v.w(body, 4)))) };
+        (g.s, g.v32, g.v64, g.mtop, g.mn) = (File::default(), File::default(), File::default(), FIRST_SLOT, FIRST_SLOT);
+        (g.row, g.region) = (k as u32, region);
+        let first = g.calls.len();
+        let start = g.here();
+        if k > 0 {
+            starts.insert(v.w(body, 0), start);
+        }
+        g.stmt(node)?;
+        g.emit(if k == 0 { I::Halt } else { I::Ret }, 0, [0; 4]);
+        rows.push([start, region, g.s.n, g.v32.n, g.v64.n, g.mn]);
+        callees.push(g.calls[first..].iter().map(|&(_, id)| g.bodies[&id].1).collect());
+    }
+    for &(at, id) in &g.calls {
+        g.code[at + 1] = starts[&id];
+    }
+    // The files a SIMD group needs: the deepest chain of calls' counts.
+    fn most(r: usize, rows: &[[u32; 6]], callees: &[Vec<u32>], k: usize, memo: &mut Vec<Option<u32>>) -> u32 {
+        if let Some(x) = memo[r] {
+            return x;
+        }
+        let below = callees[r].iter().map(|&c| most(c as usize, rows, callees, k, memo)).max().unwrap_or(0);
+        let x = rows[r][k] + below;
+        memo[r] = Some(x);
+        x
+    }
+    let total = |k: usize| most(0, &rows, &callees, k, &mut vec![None; rows.len()]);
     let params = root[4] as usize;
-    let mut words = vec![root[1], root[2], params as u32, g.s.n, g.v32.n, g.v64.n, g.mn, g.code.len() as u32];
+    let mut words = vec![total(1), root[2], params as u32, total(2), total(3), total(4), total(5), g.code.len() as u32, rows.len() as u32];
     words.extend_from_slice(&root[5..5 + 2 * params]);
     words.extend_from_slice(&g.code);
+    for r in &rows {
+        words.extend_from_slice(&[r[1] * W as u32, r[2], r[3], r[4], r[5]]);
+    }
     let mut b = Builder::default();
     b.leaf(Kind::Code, &words);
     Ok(b.finish())
@@ -566,6 +644,7 @@ impl Gen<'_> {
             Kind::Empty => {}
             Kind::If => self.branch(n)?,
             Kind::While | Kind::For | Kind::Do => self.loop_(n)?,
+            Kind::Switch => self.switch(n)?,
             Kind::Return => {
                 let p = v.p(n);
                 let (has, slot, m) = (p[0] != 0, p[2], M(p[3]));
@@ -667,6 +746,72 @@ impl Gen<'_> {
             self.emit(I::MLive, 0, [0; 4]);
         }
         self.mtop -= 3;
+        Ok(())
+    }
+
+    /// A `switch`: each case under the lanes whose value is its label and those that fell through the case before
+    /// (a `default` the lanes no label is); past it, the lanes that came in, less those that took a `continue` or a
+    /// `return` (its breaks' lanes go on).
+    fn switch(&mut self, n: usize) -> R<()> {
+        let v = self.v;
+        let (site, m) = (v.w(n, 0), M(v.w(n, 1)));
+        let check = v.field(n) & CHECK != 0;
+        let kids: Vec<usize> = v.children(n).collect();
+        let c = self.value(kids[0])?;
+        let c = self.fit(c, m);
+        let c = if check {
+            let c = self.scalar(c);
+            self.emit(I::Agree, 0, [n as u32, site, c.r, 0]);
+            c
+        } else {
+            c
+        };
+        let c = self.vector(c);
+        let (s0, sb, e) = (self.slot(), self.slot(), self.slot());
+        self.emit(I::MSet, 0, [s0, CUR, 0, 0]);
+        self.emit(I::MSet, 0, [sb, BRK, 0, 0]);
+        self.emit(I::MClr, 0, [BRK, 0, 0, 0]);
+        let cases = &kids[1..];
+        let label = |k: usize| u64::from(v.w(k, 1)) | u64::from(v.w(k, 2)) << 32;
+        // The lanes of label `x` (of those that came in) into mask `to`.
+        let lanes_of_label = |g: &mut Self, x: u64, to: u32| {
+            let k = g.konst(m, x);
+            let k = g.vector(k);
+            let t = g.alloc(Class::V32, M::B);
+            g.emit(if c.c == Class::V64 { I::Eq64 } else { I::Eq32 }, 0, [t.r, c.r, k.r, 0]);
+            g.emit(I::MAnd, 0, [to, s0, t.r, 0]);
+            g.free(t);
+            g.free(k);
+        };
+        // A `default`'s lanes: those no label is.
+        let any = if cases.iter().any(|&k| v.w(k, 0) != 0) {
+            let any = self.slot();
+            self.emit(I::MClr, 0, [any, 0, 0, 0]);
+            for &k in cases.iter().filter(|&&k| v.w(k, 0) == 0) {
+                lanes_of_label(self, label(k), e);
+                self.emit(I::MOr, 0, [any, e, 0, 0]);
+            }
+            Some(any)
+        } else {
+            None
+        };
+        self.emit(I::MClr, 0, [CUR, 0, 0, 0]);
+        for &k in cases {
+            match any {
+                Some(any) if v.w(k, 0) != 0 => {
+                    self.emit(I::MAndNM, 0, [e, s0, any, 0]);
+                }
+                _ => lanes_of_label(self, label(k), e),
+            }
+            self.emit(I::MOr, 0, [CUR, e, 0, 0]);
+            let j = self.jzm(CUR);
+            self.stmt(v.child(k, 0))?;
+            self.patch(j, 2);
+        }
+        self.free(c);
+        self.emit(I::MSwEnd, 0, [s0, 0, 0, 0]);
+        self.emit(I::MSet, 0, [BRK, sb, 0, 0]);
+        self.mtop -= if any.is_some() { 4 } else { 3 };
         Ok(())
     }
 
@@ -965,7 +1110,7 @@ impl Gen<'_> {
             }
             Kind::Cond | Kind::Logic => return self.choose(n, once).map(Some),
             Kind::Builtin => return self.builtin(n, once),
-            Kind::Inline => return self.inline(n, once),
+            Kind::Call => return self.call(n),
             Kind::Block | Kind::Expr => {
                 self.stmt(n)?;
                 return Ok(None);
@@ -1128,12 +1273,25 @@ impl Gen<'_> {
                 free_all(self, args);
                 return Ok(None);
             }
+            Builtin::Yield => {
+                self.emit(I::Yield, 0, [0; 4]);
+                return Ok(None);
+            }
             Builtin::SubGroupBallot => {
                 let x = args[0];
                 let x = if x.c == Class::V64 { self.cast(x, x.m, M::B) } else { x };
                 let x = self.vector(x);
                 let d = self.alloc(Class::S, m);
                 self.emit(I::Ballot, 0, [d.r, x.r, 0, 0]);
+                self.free(x);
+                d
+            }
+            Builtin::SubGroupReduceAdd | Builtin::SubGroupReduceMin | Builtin::SubGroupReduceMax => {
+                let x = self.fit(args[0], m);
+                let x = self.vector(x);
+                let d = self.alloc(Class::S, m);
+                let i = if x.c == Class::V32 { I::Reduce32 } else { I::Reduce64 };
+                self.emit(i, fields(b as u32, m.0, 0), [d.r, x.r, 0, 0]);
                 self.free(x);
                 d
             }
@@ -1211,30 +1369,49 @@ impl Gen<'_> {
         }))
     }
 
-    /// An inlined call: its parameters' stores and its body, under its lanes; its returned lanes back; its result.
-    fn inline(&mut self, n: usize, once: bool) -> R<Option<Val>> {
+    /// A call: its arguments' values, then each stored in its callee's parameter (past this function's region, where
+    /// the callee's frame is), then the callee run under the lanes that call it; its returned lanes back; its result
+    /// read from its slot.
+    fn call(&mut self, n: usize) -> R<Option<Val>> {
         let v = self.v;
         let p = v.p(n);
-        let (m, slot, temp) = (M(p[0]), p[1], p[2]);
+        let (m, temp, id) = (M(p[1]), p[2], p[3]);
+        let (body, _) = self.bodies[&id];
+        let bp = v.p(body);
+        let slot = bp[3];
+        let kids: Vec<usize> = v.children(n).collect();
+        // Every argument first: one with a call in it runs that call in the same place.
+        let mut vals = Vec::with_capacity(kids.len());
+        for (k, &a) in kids.iter().enumerate() {
+            let pm = M(bp[8 + 2 * k]);
+            let x = self.value(a)?;
+            let x = if pm.is_agg() { x } else { self.fit(x, pm) };
+            vals.push(self.vector(x));
+        }
+        let adv = self.region;
+        for (k, x) in vals.into_iter().enumerate() {
+            let (off, pm) = (bp[7 + 2 * k], M(bp[8 + 2 * k]));
+            let base = (adv + off) * W as u32;
+            if pm.is_agg() {
+                let to = self.alloc(Class::V64, M::PTR);
+                self.emit(I::LAddr, 0, [to.r, base, pm.bytes(), 0]);
+                self.emit(I::VCopy, 0, [to.r, x.r, pm.bytes(), 0]);
+                self.free(to);
+            } else {
+                self.emit(I::StL, pm.0, [base, pm.bytes(), x.r, 0]);
+            }
+            self.free(x);
+        }
         let (sa, sr) = (self.slot(), self.slot());
         self.emit(I::MSet, 0, [sa, CUR, 0, 0]);
         self.emit(I::MSet, 0, [sr, RET, 0, 0]);
         self.emit(I::MClr, 0, [RET, 0, 0, 0]);
-        let kids: Vec<usize> = v.children(n).collect();
-        let mut skips = Vec::new();
-        for (k, &c) in kids.iter().enumerate() {
-            self.stmt(c)?;
-            if self.exits[c] && k + 1 < kids.len() {
-                skips.push(self.jzm(CUR));
-            }
-        }
-        for s in skips {
-            self.patch(s, 2);
-        }
+        let at = self.emit(I::Call, 0, [0, self.row, 0, 0]);
+        self.calls.push((at, id));
         self.emit(I::MResume, 0, [sa, 0, 0, 0]);
         self.emit(I::MSet, 0, [RET, sr, 0, 0]);
         self.mtop -= 2;
-        let base = slot * W as u32;
+        let base = (adv + slot) * W as u32;
         Ok(if m == M::VOID {
             None
         } else if m.is_agg() {
@@ -1246,8 +1423,8 @@ impl Gen<'_> {
             self.free(from);
             Some(to)
         } else {
-            let d = self.alloc(if once { Class::S } else { lanes_of(m) }, m);
-            self.emit(if once { I::LdLS } else { I::LdL }, m.0, [d.r, base, m.bytes(), 0]);
+            let d = self.alloc(lanes_of(m), m);
+            self.emit(I::LdL, m.0, [d.r, base, m.bytes(), 0]);
             Some(d)
         })
     }
