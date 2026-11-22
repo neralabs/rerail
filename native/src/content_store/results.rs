@@ -8,7 +8,7 @@ use super::{
     SourceId, StoreError, StoreResult, StoredLocalResult, WorkspaceCompletion, WorkspaceId,
 };
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use rusqlite::{OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

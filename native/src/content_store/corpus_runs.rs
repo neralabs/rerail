@@ -14,7 +14,7 @@
 //! can be churned whole many times a day.
 
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::{CollectionReport, ContentStore, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId, StoreError, StoreResult};
 use super::rows::intern_string;
 use super::bounded_insert;
@@ -247,33 +247,8 @@ impl<'m> Protection<'m> {
     }
 }
 
-/// A file's stat when its source was read: what the stat index keeps of it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct FileStat {
-    pub size: i64,
-    pub mtime_ns: i64,
-    pub inode: i64,
-}
-
-impl FileStat {
-    /// The stat of `metadata`.
-    #[cfg(unix)]
-    pub fn of(metadata: &std::fs::Metadata) -> FileStat {
-        use std::os::unix::fs::MetadataExt as _;
-        FileStat { size: metadata.len() as i64, mtime_ns: metadata.mtime().saturating_mul(1_000_000_000).saturating_add(metadata.mtime_nsec()), inode: metadata.ino() as i64 }
-    }
-
-    /// The stat of `metadata` where there are no inode numbers (Windows, wasm32): size and modification time.
-    #[cfg(not(unix))]
-    pub fn of(metadata: &std::fs::Metadata) -> FileStat {
-        let mtime_ns = metadata.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as i64);
-        FileStat { size: metadata.len() as i64, mtime_ns, inode: 0 }
-    }
-}
-
-/// How long before its recording an entry's mtime must be for the entry to be trusted (git's racy rule, with margin
-/// for file systems whose mtime is coarse).
-pub const RACY_NS: i64 = 2_000_000_000;
+// `FileStat` and `RACY_NS` are the store base's (`base.rs`): the observer and git read them.
+pub use super::{FileStat, RACY_NS};
 
 /// A root's stat index as loaded: by path, the stat recorded and its source, for entries a run may trust.
 #[derive(Debug, Default)]

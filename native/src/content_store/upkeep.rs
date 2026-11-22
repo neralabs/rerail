@@ -3,7 +3,7 @@
 //! `rerail_accel::upkeep::Job`.
 
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::{CapacityState, ContentStore, CorpusPolicy};
 use rerail_accel::upkeep::{Due, Job, Qos, Slice, Step};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};

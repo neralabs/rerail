@@ -6,7 +6,7 @@ use std::ops::Deref;
 
 impl CachedBytes {
     /// Bytes read where they are in a segment.
-    pub(super) fn mapped(bytes: super::SegmentBytes) -> Self {
+    pub fn mapped(bytes: super::SegmentBytes) -> Self {
         Self { bytes }
     }
 }

@@ -120,12 +120,6 @@ impl FactsMemo {
     }
 }
 
-impl HashKey {
-    /// A blake3 content hash (the facts engine's content key), stored as a source alias.
-    pub fn blake3(bytes: [u8; 32]) -> Self {
-        Self::from_padded(super::HASH_BLAKE3, bytes)
-    }
-}
 
 impl ContentStore {
     /// The stored source whose blake3 content hash is `content`.

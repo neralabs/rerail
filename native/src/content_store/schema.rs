@@ -3,7 +3,7 @@
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::HashSet;
 use std::sync::LazyLock;

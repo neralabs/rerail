@@ -6,7 +6,7 @@
 //! read and written a few times a run.
 
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use rerail_accel::ane::ModelStore;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};

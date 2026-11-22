@@ -7,7 +7,7 @@
 //! (decision 0306). A claim another process wrote first loses: its host's memo entries go, so its next run makes the
 //! guest again under the store's key (0052 §3: a key a collision moved only misses).
 
-use super::connection::Cached as _;
+use super::Cached as _;
 use super::record::{codec, Apply};
 use super::{ContentStore, StoreResult};
 use parking_lot::Mutex;

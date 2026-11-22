@@ -29,7 +29,7 @@
 //! the next run misses and recomputes, as when the write never happened. Its error is reported at
 //! `written`.
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::{ContentStore, StoreError, StoreResult};
 use std::any::Any;
 use std::collections::HashMap;

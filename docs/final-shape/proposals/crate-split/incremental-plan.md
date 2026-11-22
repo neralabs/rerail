@@ -952,3 +952,30 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     clean; clippy clean on the seven crates). On a Linux host:
     - rerail-rir, the compiler, `cpu_pp`, `cpu_stream` and `c_directives` in full: 129 of 129.
     - The transducer's RIR and regex-block tests and the `.rerail` parser's RIR and token-local tests: 13 of 13.
+- **Step 7b** (2026-11-22): the store, 36.1k production lines, is now three crates.
+  - **rerail-store-base** (`native/crates/store_base`, 4.6k) holds the store's reads that take no `ContentStore`:
+    - `content_store/base.rs`: the root's types, moved from `mod.rs`. They are the hash key, the Git trees, the error,
+      the ids, the payloads, the cached bytes, the capacity, the test hooks, `flush_of` and the `Cached` trait (moved
+      from `connection.rs`), and `FileStat` (moved from `corpus_runs.rs`).
+    - The modules that read nothing above them: `bounded_insert`, `compression`, `hazards`, `journal`, `postings`,
+      `private_files`, `read_cache`, `rows`, `scope_lease`, `segments`, `vocabulary` and `working_set`.
+    - `analysis_scope/base.rs`: the analysis owner, run sources and warnings, and the directory reads.
+    - `source_tree`, `probes` and `Canonical`.
+    - The `HashKey` and `TapeId` impls the upper modules had (`blake3`, `for_benchmark`) moved here with their types.
+    - The id newtypes' fields and the moved structs' fields are `pub`.
+  - **rerail-observe** (`native/crates/observe`, 9.7k): `content_store::observe`, `git_access` and `git_workspace`,
+    over the base.
+    - `GitWorkspace::publish_snapshot` and `store_source` named the `ContentStore`. The one production caller
+      (`workspace/storage.rs`) now calls `ContentStore::publish_snapshot` with the workspace's trees.
+    - `git_workspace`'s tests publish to a store, so they moved to `src/git_workspace_tests.rs`. rerail-store mounts
+      that file, and it has the two methods as a test trait.
+  - **rerail-store** (20.8k) keeps `ContentStore` and the 29 modules that `impl` it.
+    - It keeps `atoms`, which reads the guest keys, the kept facts and the write-back.
+    - It keeps `WorkspaceRegistration`, whose `register` reads the reclamation.
+    - Its `mod.rs` re-exports the observer's `content_store` by glob, so every path is as it was.
+  - `tools/cratify/crate-order.tsv` has the base and the observer before the store.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on a Mac; clippy is clean on the three crates and the engine,
+      with and without tests.
+    - On a Linux host, the three crates in full: 293 of 293 (4 ignored child-process and measurement tests).
+    - The engine's and rerail-workspace's `git_access`, `git_ignore`, `workspace` and `content_store` tests: 54 of 54.

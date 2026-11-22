@@ -8,7 +8,7 @@ use super::{
     SourceId, StoreCapacity, StoreError, StoreResult, TapeId,
 };
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use rusqlite::{Connection, OptionalExtension, Params, TransactionBehavior, params};
 use std::fs;
 

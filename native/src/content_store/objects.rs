@@ -2,7 +2,7 @@
 //! segment of the store's objects, as they are (`object_segments`).
 
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::rows::{generation, hash_params, intern_hash};
 use super::object_segments::{ObjectFrame, Placing, object_dir, row_frame};
 use super::reclamation::{OBJECT_SOURCE, OBJECT_TAPE};
@@ -14,7 +14,7 @@ use super::{
     TapePayload,
 };
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use rusqlite::Connection;
 use rusqlite::{OptionalExtension, params};
 use std::collections::{BTreeSet, HashMap};

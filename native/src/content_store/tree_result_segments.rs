@@ -7,7 +7,7 @@
 // l.265-279 (SCHEMA_V10), l.523-542 (segment structs), l.2962-3071 (complete_snapshot_trees),
 // l.3161-3252 (tree_result_segments), l.3439-3446 (collection).
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::{
     CandidateCatalogIdentity, ContentStore, HashKey, SnapshotId, StoreError, StoreResult,
     WorkspaceCompletion, rows::intern_hash,
