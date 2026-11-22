@@ -1101,7 +1101,8 @@ describe("a state file Windows left behind", () => {
   // the record, and the stop says so: a later stop finds the daemon again.
   it.each([
     ["is still running after the stop's kill wait", "running", /still running 5s after/u],
-    ["cannot open it while its pid runs", "unread", /could not prove that pid/u],
+    // The wait for the exit fails only after the end was asked, so the stop says the process may have been ended.
+    ["cannot open it while its pid runs", "unread", /could not prove that pid \d+, which .* names, is this home's daemon, or that it ended: Rerail could not open the process, read its start, or wait for its exit once it asked Windows to end it\./u],
   ] as const)("keeps the record of a daemon whose engine has no proof when its end %s", async (_how, end, said) => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: OLDER_STARTED_AT });

@@ -1994,12 +1994,12 @@ function lockOfAnother(home: string, pid: number, machine: DaemonMachine): boole
 }
 
 /**
- * What to tell the person when a stop cannot prove that the live process daemon.json names is the home's daemon, and so
- * ends nothing ({@link RecordedProcess}): how to see what it is, and what to do either way.
+ * What to tell the person when a stop cannot prove that the live process daemon.json names is the home's daemon
+ * ({@link RecordedProcess}), with what came of it (`outcome`): how to see what it is, and what to do either way.
  */
-function unprovenDaemonMessage(home: string, pid: number, platform: NodeJS.Platform = process.platform): string {
+function unprovenDaemonMessage(home: string, pid: number, platform: NodeJS.Platform = process.platform, outcome = "so it ended nothing"): string {
   const record = join(home, DAEMON_STATE_FILE);
-  return `Rerail could not prove that pid ${pid}, which ${record} names, is this home's daemon, so it ended nothing. `
+  return `Rerail could not prove that pid ${pid}, which ${record} names, is this home's daemon, ${outcome}. `
     + `See its command line with ${commandLineCheck(pid, platform)}: if it runs Rerail's daemon-entry.js for this home, `
     + `end it; if not, delete ${record}. Then run rerail daemon start.`;
 }
@@ -2076,21 +2076,25 @@ async function endFoundDaemon(home: string, found: FoundDaemon, machine: DaemonM
   return asked;
 }
 
+/** What came of an end of a daemon of a release before the proof that answered `unread` while its pid runs. */
+const UNREAD_END = "or that it ended: Rerail could not open the process, read its start, or wait for its exit once it asked Windows to end it";
+
 /**
  * Ends a daemon of a release before the engine's proof ({@link OlderDaemon}), which is sent nothing, through its
  * process, never by its pid's number: one call opens the process, reads its start and ends it through that handle, so
  * the process ended is the one whose start shows it wrote the record, and waits up to {@link KILL_TIMEOUT_MS} on that
- * handle for it to exit. A process that took the pid since, started later, is let alone and the record naming it goes;
- * one whose start cannot be read while its pid runs is let alone with every record, and the stop says so. One that is
- * gone when it cannot be read had exited by itself (`exited`).
+ * handle for it to exit. A process that took the pid since, started later, is let alone and the record naming it goes.
+ * An end that is `unread` while its pid runs keeps every record, and the stop says the process may still run and may
+ * have been ended. One whose pid is free by then had exited (`exited`).
  */
 async function endOlderDaemon(home: string, state: DaemonState, machine: DaemonMachine): Promise<StopAsk> {
   const end = machine.endProcessStartedBy(state.pid, state.startedAt, KILL_TIMEOUT_MS);
   if (end === "running") throw new Error(stillRunningMessage(state.pid, machine.platform));
   if (end === "later") return (await forgetRecordOf(home, state.pid)) ? "not-daemon" : "record-changed";
   if (end === "ended") return "asked";
-  // Not opened, or its start not read: a pid that still runs is let alone, and a free one had exited by itself.
-  if (processAlive(state.pid, machine.kill)) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
+  // Not opened, its start not read, or its exit not waited on once the end was asked, so it may have been ended: a pid
+  // that still runs is let alone, and a free one had exited, by itself or by that end.
+  if (processAlive(state.pid, machine.kill)) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform, UNREAD_END));
   return "exited";
 }
 
