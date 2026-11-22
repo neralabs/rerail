@@ -1621,8 +1621,8 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
             let (left, done) = exp.loop_runs();
             // SAFETY: the device finished; `trn` holds 16 words, 14 the reasons' bits (`LP_*` in `pp_loop.uglykl`).
             let why = unsafe { *exp.trn.host().cast::<u32>().add(14) };
-            let names = ["", "room", "paste", "#", "va_opt", "built-in", "overrun", "deep"];
-            let why: Vec<&str> = (1..8).filter(|b| why >> b & 1 != 0).map(|b| names[b]).collect();
+            let names = ["", "room", "paste", "#", "va_opt", "built-in", "overrun", "deep", "refused"];
+            let why: Vec<&str> = (1..9).filter(|b| why >> b & 1 != 0).map(|b| names[b]).collect();
             eprintln!("pp loop: {done} pieces looped, {left} left to the rounds ({why:?})");
         }
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };

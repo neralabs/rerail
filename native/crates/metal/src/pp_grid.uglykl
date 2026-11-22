@@ -790,15 +790,17 @@
 
 // `__COUNTER__`'s uses of the top just expanded placed, then counted (decision 0485 §3): `part`
 // 0 the text, 1 the lines.
-#define PX_COUNTERS(u, part)                                                                           \
+#define PX_COUNTERS(u, part, lp_)                                                                         \
     if (ukl_min(AT(const uint32_t, CNT)[1], W(CNT_CAP)) != 0u) {                                       \
         PP_GLOBAL uint32_t* cc_ = AT(uint32_t, CTL);                                                  \
         uint32_t cn_ = ukl_min(ukl_atomic_poll(&cc_[1]), W(LIST_CAP)), cs_ = W(SC_CAP);                \
-        if (2u * cn_ > cs_ || 2u * W(CNT_CAP) > cs_) {                                                 \
+        if ((!(lp_) && 2u * cn_ > cs_) || 2u * W(CNT_CAP) > cs_) {                                     \
             ONE(x) { cc_[24] = ukl_max(cc_[24], ukl_max(2u * cn_, 2u * W(CNT_CAP))); px_refuse(cc_, X_ROOM); } \
             BARRIER();                                                                                 \
         } else {                                                                                       \
-            /* The lists' tree, its tour, and each arc's sums to its end (`px_ct_*`). */               \
+            /* The lists' tree, its tour, and each arc's sums to its end (`px_ct_*`); the loop's uses \
+               wrote their places themselves (`lp_counter`). */                                       \
+            if (lp_) { ONE(x) AT(uint32_t, TRN)[2u + (part)] = ukl_min(AT(const uint32_t, CNT)[1], W(CNT_CAP)); BARRIER(); } else { \
             Ct ct_;                                                                                    \
             ct_.keys = AT(uint64_t, SC_CKEYS); ct_.perm = AT(uint32_t, SC_VA); ct_.n = cn_;           \
             ct_.first = AT(uint32_t, SC_M); ct_.next = AT(uint32_t, SC_K); ct_.use = AT(uint32_t, SC_E); \
@@ -832,6 +834,7 @@
             }                                                                                          \
             EACH(i, W(CNT_CAP)) px_counter_place(u, AT(const PxList, LISTS), AT(const uint32_t, CNT), W(CNT_CAP), TFACTS, (part), cc_, ct_, s0_, i); \
             BARRIER();                                                                                 \
+            }                                                                                          \
             /* The uses of both passes ranked (`px_cv_*`). */                                          \
             Tf tf_ = TFACTS;                                                                           \
             uint32_t m0_ = ukl_min(tf_.n[2], tf_.cap), cm_ = m0_ + ukl_min(tf_.n[3], tf_.cap);        \
@@ -1001,7 +1004,7 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
     PP_GLOBAL const uint32_t* toks = is_if ? AT(const uint32_t, IF_TOTAL) : AT(const uint32_t, GTOTAL);
     uint32_t nt = toks[0];
     *looped = false;
-    ONE(x) AT(uint32_t, TRN)[12] = 0u;
+    ONE(x) { AT(uint32_t, TRN)[12] = 0u; AT(uint32_t, TRN)[15] = 0u; }
     BARRIER();
     // The pieces (`lp_marks`, `lp_starts`): the depth, each token's marks, the starts.
     {
@@ -1017,9 +1020,18 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
     for (uint32_t pass = 0u; pass < 2u; pass++) {
         if (pass == 1u) {
             if (AT(const uint32_t, TRN)[12] != 0u) break;
+            // The pieces a piece read past its end took (`lp_swallow`): rare, one thread walks those pieces.
+            if (AT(const uint32_t, TRN)[15] != 0u) {
+                SCAN(nt, OFLAG, XAT, XTOTAL);
+                EACH(s, nt) lp_overruns(AT(const uint32_t, OFLAG), AT(const uint32_t, XAT), toks, AT(uint32_t, XPOS), s);
+                BARRIER();
+                ONE(x) lp_swallow(AT(const uint32_t, XPOS), AT(const uint32_t, XTOTAL), AT(const uint32_t, DELTA), AT(uint32_t, XFLAG), AT(uint32_t, V), AT(uint32_t, OPV));
+                BARRIER();
+            }
             // The tokens' store again from its front for the second pass (its first's use is the room's: `CTL` 8).
             // The scratch's too: the second pass makes the same tokens again.
-            ONE(x) { PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL); c_[8] = ukl_max(c_[8], c_[0]); c_[0] = 0u; c_[4] = c_[6]; c_[5] = c_[7]; }
+            // The `__COUNTER__` uses' table too: the second pass makes them again.
+            ONE(x) { PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL); c_[8] = ukl_max(c_[8], c_[0]); c_[0] = 0u; c_[4] = c_[6]; c_[5] = c_[7]; AT(uint32_t, CNT)[1] = 0u; }
             // The pieces' joins (`lp_join`): the first pass's ends and join words, in the stores the marks no longer need.
             EACH(s, nt) lp_join(toks, AT(const uint32_t, XFLAG), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, OPV), s);
             BARRIER();
@@ -1036,7 +1048,7 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
             PX_UA(DR, closes);
             EACH(s, nt) lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),
                                AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, OBASE), AT(const uint32_t, OPBASE),
-                               AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), g.ctl, pass == 1u, s);
+                               AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, pass == 1u, s);
         }
         BARRIER();
         if (pass == 1u) *looped = true;
@@ -1279,7 +1291,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
             }
             {
                 IF_UX(u);
-                PX_COUNTERS(u, 1u);
+                PX_COUNTERS(u, 1u, ilooped);
             }
             // A refused expansion's output is not all written (past the room that ran out its items
             // read what never was): the tests, the `#line` rows and the include names read refs
@@ -1418,7 +1430,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         }
         {
             TEXT_UX(u);
-            PX_COUNTERS(u, 0u);
+            PX_COUNTERS(u, 0u, looped);
         }
         // The facts' key against the last text pass's: the same ends the iterations.
         EACH(k, 3u * W(CNT_CAP)) tf_key(TFACTS, AT(uint32_t, CTL), k);
