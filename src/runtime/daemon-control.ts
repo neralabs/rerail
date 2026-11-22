@@ -1171,10 +1171,11 @@ async function replacedOlderDaemon(
   older: OlderDaemon & { status: "running" },
   machine: DaemonMachine,
 ): Promise<StartDaemonResult> {
-  const ended = await stopFoundDaemon(control.home, older, machine);
+  const ended = await stopFound(control.home, older, machine);
   const started = await spawnDaemon(control, options, machine);
-  // A pid that passed to a later process since the lookup was let alone: no daemon was ended.
-  if (ended !== "stopped") return started;
+  // A pid that passed to a later process since the lookup was let alone, and a daemon that had exited by itself was
+  // not ended here: the start names only a daemon its end ended.
+  if (ended !== "asked") return started;
   const { pid, version } = older.state;
   return { ...started, replaced: { pid, version } };
 }
@@ -1866,10 +1867,11 @@ function namesLockHolder(home: string, machine: DaemonMachine): boolean {
 
 /**
  * What asking a daemon to stop came to ({@link askDaemonToStop}): it was asked, or let alone as already ending (`asked`);
+ * a daemon of a release before the engine's proof had exited by itself before its end ({@link endOlderDaemon}: `exited`);
  * its pid was proven not the home's daemon and the record naming it is removed (`not-daemon`); or it was proven not the
  * home's daemon once daemon.json named it no longer, and that record is left as it is (`record-changed`).
  */
-type StopAsk = "asked" | Extract<StopDaemonResult, "not-daemon" | "record-changed">;
+type StopAsk = "asked" | "exited" | Extract<StopDaemonResult, "not-daemon" | "record-changed">;
 
 /**
  * Asks the daemon `state` records in `home` to shut down: SIGTERM, or on Windows a shutdown request, SIGTERM only if it
@@ -2038,9 +2040,15 @@ async function endWhenStopped(home: string, pid: number, check: () => SignalVerd
  * proves it either way while it runs.
  */
 export async function stopFoundDaemon(home: string, found: FoundDaemon, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
+  const asked = await stopFound(home, found, machine);
+  return asked === "asked" || asked === "exited" ? "stopped" : asked;
+}
+
+/** {@link stopFoundDaemon}, with what its end came to: `exited` for a daemon of a release before the proof that had exited. */
+async function stopFound(home: string, found: FoundDaemon, machine: DaemonMachine): Promise<StopAsk> {
   const pid = found.state.pid;
   const asked = await endFoundDaemon(home, found, machine);
-  if (asked !== "asked") return asked;
+  if (asked !== "asked" && asked !== "exited") return asked;
   // The daemon removes its own state file, main-instance record and home lock record on a clean shutdown; one killed, as
   // Windows always does, leaves them behind. A record naming a pid Windows reuses would keep the uninstall from the
   // cache, or have a later stop ask the home's lock.
@@ -2049,7 +2057,7 @@ export async function stopFoundDaemon(home: string, found: FoundDaemon, machine:
     machine.forgetMainInstanceHolder(pid);
     forgetHomeDaemonHolder(home, pid);
   }
-  return "stopped";
+  return asked;
 }
 
 /**
@@ -2069,14 +2077,15 @@ async function endFoundDaemon(home: string, found: FoundDaemon, machine: DaemonM
  * process, never by its pid's number: one call opens the process, reads its start and ends it through that handle, so
  * the process ended is the one whose start shows it wrote the record, and waits up to {@link KILL_TIMEOUT_MS} on that
  * handle for it to exit. A process that took the pid since, started later, is let alone and the record naming it goes;
- * one whose start cannot be read while its pid runs is let alone with every record, and the stop says so.
+ * one whose start cannot be read while its pid runs is let alone with every record, and the stop says so. One that is
+ * gone when it cannot be read had exited by itself (`exited`).
  */
 async function endOlderDaemon(home: string, state: DaemonState, machine: DaemonMachine): Promise<StopAsk> {
   const end = machine.endProcessStartedBy(state.pid, state.startedAt, KILL_TIMEOUT_MS);
   if (end === "running") throw new Error(stillRunningMessage(state.pid, machine.platform));
   if (end === "later") return (await forgetRecordOf(home, state.pid)) ? "not-daemon" : "record-changed";
   if (end === "unread" && processAlive(state.pid, machine.kill)) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
-  return "asked";
+  return end === "ended" ? "asked" : "exited";
 }
 
 /**

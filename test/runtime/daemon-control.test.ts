@@ -1142,10 +1142,12 @@ describe("a state file Windows left behind", () => {
   });
 
   // The start names the daemon it ended only when the end answered that it ended it: a pid that passed to a later
-  // process since the lookup was let alone, and the start says nothing of it.
+  // process since the lookup was let alone, or a daemon that had exited by itself before its end, and the start says
+  // nothing of it.
   it.each([
     ["ended", { pid: DEAD_PID, version: "0.1.4" }],
     ["later", undefined],
+    ["unread", undefined],
   ] as const)("names the daemon whose engine has no proof that `rerail daemon start` ended when its end answers %s", async (end, replaced) => {
     const older = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, []);
     const launched = DEAD_PID - 1;
