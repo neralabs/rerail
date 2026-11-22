@@ -230,6 +230,31 @@ fn a_waves_puts_are_one_file_a_space() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// A program's puts queued in one wave each name their identities in its reader record; the wave's file holds one
+/// record of them all (decision 0401 step 8). The wave's last record, alone, was the program's, and its next run asked
+/// the others' entries again and wrote its record: a warm run's write.
+#[test]
+fn a_waves_reader_records_of_one_program_are_one() {
+    let (path, c) = store("wave-readers");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let program = [0x33u8; 32];
+    let (first, second, third) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+    let entry = |rel: &str, ident: [u8; 32], v: i64| KeptPut { ident, ..put(rel, 0, v as u64, flat(&[v, v])) };
+    {
+        let log = std::sync::Arc::new(ReaderLog::new(program));
+        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptReader(Some(std::sync::Arc::clone(&log))));
+        let _waves = crate::content_store::write_back::run_waves();
+        store.queue_kept(SPACE, vec![entry("a", first, 1)]);
+        store.queue_kept(SPACE, vec![entry("b", second, 2), entry("c", third, 3)]);
+    }
+    store.written().unwrap();
+    let rows = chain_rows(&c, &SPACE).unwrap();
+    let kept = KeptSpace::open(&path, &SPACE, &rows).unwrap();
+    let records: Vec<([u8; 32], Vec<[u8; 32]>)> = kept.view().of(READERS).map(|k| (*k.key.ident, record_idents(&k).collect())).collect();
+    assert_eq!(records, [(program, vec![first, second, third])], "one record, naming every put of the wave");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// F-R5 (decisions 0401 F5, 0439): the kept relations read through SQL are their entries. `kept_entries` gives each
 /// entry's key, digest, types, reads and rows' count; `kept_facts` each entry's rows, a row the run killed not kept;
 /// an entry not kept has no rows.

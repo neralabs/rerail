@@ -102,6 +102,21 @@ pub fn record_idents<'a>(record: &'a rerail_blocks::kept::Kept<'_>) -> impl Iter
     })
 }
 
+/// The identities a reader record's put (`readers_put`) names.
+fn put_idents(p: &KeptPut) -> impl Iterator<Item = [u8; 32]> + '_ {
+    let rows: &[i64] = match &p.what {
+        KeptWhat::Flat { rows, n, .. } => &rows[..(4 * n).min(rows.len())],
+        _ => &[],
+    };
+    rows.chunks_exact(4).map(|r| {
+        let mut id = [0u8; 32];
+        for (w, v) in id.chunks_exact_mut(8).zip(r) {
+            w.copy_from_slice(&v.to_le_bytes());
+        }
+        id
+    })
+}
+
 /// What a run's program asked or put of each space's entries (decision 0401 step 8), bound in the run's context
 /// (`KeptReader`) by a run whose program the store keeps: recorded in the space as the program's reader record, in
 /// the file of the puts that name them or, for what it only asked, at the run's end (`flush`), before its manifest.
@@ -366,15 +381,7 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
     for p in puts.iter_mut().filter(|p| p.rel == READERS) {
         let Some(was) = chain.get(&p.key()) else { continue };
         let mut all: BTreeSet<[u8; 32]> = record_idents(&was).collect();
-        if let KeptWhat::Flat { rows, n, .. } = &p.what {
-            for r in rows.chunks_exact(4).take(*n) {
-                let mut id = [0u8; 32];
-                for (w, v) in id.chunks_exact_mut(8).zip(r) {
-                    w.copy_from_slice(&v.to_le_bytes());
-                }
-                all.insert(id);
-            }
-        }
+        all.extend(put_idents(p));
         *p = readers_put(p.ident, &all);
     }
     // Collection's: the whole chain rewritten without what `keep` drops, when it drops any.
@@ -535,7 +542,10 @@ impl KeptGather {
     /// `space`'s puts, each key once: a later put replaces an earlier one of its key, but a retag (`Reads`) keeps the
     /// rows an earlier put of this wave gave it, and their digest, with its reads. A retag has no digest of its own
     /// (its rows are the entry's): taken over, it gave a relation handed off with its rows (its digest known then) and
-    /// retagged at the run's end digest 0, and every reader of it ran again in the next run.
+    /// retagged at the run's end digest 0, and every reader of it ran again in the next run. A program's reader record
+    /// joins its earlier one, as the space's record only grows (decision 0401 step 8): each names what its own puts
+    /// did, and replaced, the wave's last record was the program's, so the next run asked the others' entries again,
+    /// and wrote its record (a warm run's write).
     fn add(&mut self, space: [u8; 32], puts: Vec<KeptPut>) {
         let (list, at) = self.spaces.entry(space).or_default();
         for p in puts {
@@ -544,7 +554,10 @@ impl KeptGather {
             match at.get(&key) {
                 Some(&i) => {
                     let was = &mut list[i];
-                    if matches!(p.what, KeptWhat::Reads) && !matches!(was.what, KeptWhat::Reads | KeptWhat::Gone) {
+                    if p.rel == READERS {
+                        let all: BTreeSet<[u8; 32]> = put_idents(was).chain(put_idents(&p)).collect();
+                        *was = readers_put(p.ident, &all);
+                    } else if matches!(p.what, KeptWhat::Reads) && !matches!(was.what, KeptWhat::Reads | KeptWhat::Gone) {
                         was.reads = p.reads;
                     } else {
                         *was = p;
