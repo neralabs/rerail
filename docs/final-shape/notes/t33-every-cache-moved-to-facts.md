@@ -214,8 +214,17 @@ rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.ph
 
 ### Step 8: the workspace pipeline
 
-`completed_workspace_revisions`, `completed_directory_reuse`, `candidate_*`, `context_check_results`: moved with
-that pipeline by its owner, or retired with it. Not planned here. **Removed** (2026-11-22): the per-directory result
+`completed_workspace_revisions`, `completed_directory_reuse`, `candidate_*`, `context_check_results`: **Moved**
+(user, 2026-11-22: "Move to kept facts"). The product reads two of them: a warm scan restores a clean file's results
+(`prefetch_results`, the repository index's restore under `reusable_directory_prefixes`), and a file evicted by
+`evictInactive()` is paged back from them. A file's results under one context and one catalog are now one entry of
+the store's per-file memo (`content_store/results.rs`, `held::memo_pack`), written whole after the file's
+publication, read in place; a completed directory is one entry too. Blocks hold words and a result is text, so the
+memo's form holds them, not a relation's. Collection drops a content's entries once no source of it is kept, and a
+catalog's directories once none of its results are. `completed_workspace_revisions` was written and never read
+outside tests: it went with no successor. The five tables, their writers (the publication's catalog, clause and
+result statements, `LocalResultCache`) and their collection are gone; the schema drops them. **Removed**
+(2026-11-22): the per-directory result
 pages (`facts/pages.rs`, `tree_pages`, `tree_pages_pending`) and the predecessor's tree result segments
 (`tree_result_segments`, `completed_snapshot_trees`), which nothing called outside their own tests.
 

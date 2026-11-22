@@ -390,57 +390,13 @@ CREATE TABLE IF NOT EXISTS store_identity (
 ) STRICT;
 INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random());
 
-CREATE TABLE IF NOT EXISTS candidate_catalogs (
-    catalog_id INTEGER PRIMARY KEY,
-    identity_hash_id INTEGER NOT NULL UNIQUE REFERENCES hashes(hash_id)
-) STRICT;
-CREATE TABLE IF NOT EXISTS candidate_checks (
-    check_id INTEGER PRIMARY KEY,
-    catalog_id INTEGER NOT NULL REFERENCES candidate_catalogs(catalog_id),
-    policy_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    check_string_id INTEGER NOT NULL REFERENCES strings(string_id),
-    UNIQUE (catalog_id, policy_hash_id, check_string_id)
-) STRICT;
-CREATE INDEX IF NOT EXISTS candidate_checks_by_catalog ON candidate_checks(catalog_id, check_id);
-CREATE INDEX IF NOT EXISTS candidate_checks_by_policy ON candidate_checks(policy_hash_id);
-CREATE INDEX IF NOT EXISTS candidate_checks_by_string ON candidate_checks(check_string_id);
-CREATE TABLE IF NOT EXISTS completed_workspace_revisions (
-    workspace_id INTEGER PRIMARY KEY REFERENCES workspaces(workspace_id),
-    revision INTEGER NOT NULL,
-    catalog_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    completed_at INTEGER NOT NULL
-) STRICT;
-CREATE INDEX IF NOT EXISTS completed_workspace_revisions_by_catalog
-ON completed_workspace_revisions(catalog_hash_id);
--- A file's result of a check (a call summary among them) under a context: its bytes as they are, in a segment of
--- `<store>.objects/`, read there in place (decision 0450 step 2: floor 8); the row names their range.
-CREATE TABLE IF NOT EXISTS context_check_results (
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
-    context_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id) ON DELETE CASCADE,
-    check_id INTEGER NOT NULL REFERENCES candidate_checks(check_id) ON DELETE CASCADE,
-    seg INTEGER NOT NULL,
-    seg_at INTEGER NOT NULL,
-    seg_len INTEGER NOT NULL,
-    PRIMARY KEY(source_id, context_hash_id, check_id)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS context_check_results_by_check
-ON context_check_results(check_id, source_id);
-CREATE INDEX IF NOT EXISTS context_check_results_by_context
-ON context_check_results(context_hash_id);
-
--- A directory can be restored only when both its Git tree and the package-marker chain that
--- determines Python module contexts agree.
-CREATE TABLE IF NOT EXISTS completed_directory_reuse (
-    tree_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    prefix TEXT NOT NULL,
-    package_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    catalog_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    PRIMARY KEY (tree_hash_id, prefix, package_hash_id, catalog_hash_id)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS completed_directory_reuse_by_catalog
-ON completed_directory_reuse(catalog_hash_id, prefix, tree_hash_id, package_hash_id);
-CREATE INDEX IF NOT EXISTS completed_directory_reuse_by_package
-ON completed_directory_reuse(package_hash_id);
+-- A workspace's results, their catalogs and checks, its completed directories and revisions are entries of the
+-- store's per-file memo (`results.rs`, t33 step 8): a store made before loses the tables.
+DROP TABLE IF EXISTS context_check_results;
+DROP TABLE IF EXISTS candidate_checks;
+DROP TABLE IF EXISTS candidate_catalogs;
+DROP TABLE IF EXISTS completed_directory_reuse;
+DROP TABLE IF EXISTS completed_workspace_revisions;
 
 -- A query-independent search index. The kind stream contains one token per preorder node, so an
 -- FTS5 instance offset is the preorder ordinal; terminal transducers confirm its candidates.

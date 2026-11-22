@@ -514,11 +514,6 @@ pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
 #[cfg(test)]
 pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("atom_blocks", &["seq", "tag"]),
-    ("candidate_catalogs", &["catalog_id", "identity_hash_id"]),
-    ("candidate_checks", &["check_id", "catalog_id", "policy_hash_id", "check_string_id"]),
-    ("completed_directory_reuse", &["tree_hash_id", "package_hash_id", "catalog_hash_id"]),
-    ("completed_workspace_revisions", &["workspace_id", "revision", "catalog_hash_id", "completed_at"]),
-    ("context_check_results", &["source_id", "context_hash_id", "check_id", "seg", "seg_at", "seg_len"]),
     ("corpus_decided", &["singleton", "run", "time", "swept"]),
     ("corpus_live", &["source_id", "grammar_version", "tape_format"]),
     ("corpus_manifest_plans", &["manifest_id", "plan_digest"]),

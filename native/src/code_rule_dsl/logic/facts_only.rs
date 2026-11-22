@@ -166,11 +166,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("vocabulary_literal", "7"),
     ("vocabulary_pending", "7"),
     ("search_index_sets", "7"),
-    ("completed_workspace_revisions", "8"),
-    ("completed_directory_reuse", "8"),
-    ("candidate_catalogs", "8"),
-    ("candidate_checks", "8"),
-    ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
 /// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
@@ -181,8 +176,9 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// the run's scratch; 48 when the Neural Engine's compiled models became kept facts, their archives sources (t33 step 6); 45 when
 /// the compiled plans, the statistics they read and their feedback became kept facts (t33 step 6); 39 when the facts
 /// memo's last users became kept facts and its three tables went (and the sweep of its retired schemas), with the workspace pipeline's result pages and the
-/// predecessor's tree result segments, which nothing called outside their tests (t33 step 3).
-const NOT_YET_TABLES_PIN: usize = 38;
+/// predecessor's tree result segments, which nothing called outside their tests (t33 step 3); 33 when the workspace's
+/// results, their catalogs and checks and its completed directories became entries of the per-file memo (t33 step 8).
+const NOT_YET_TABLES_PIN: usize = 33;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.

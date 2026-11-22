@@ -6,7 +6,6 @@ use super::rows::hash_params;
 use super::schema::SCHEMA_VERSION;
 use super::test_support::TemporaryDatabase;
 use super::*;
-use rusqlite::limits::Limit;
 use rusqlite::params;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -472,7 +471,6 @@ fn release_memory_drops_process_local_read_caches() {
     assert_eq!(&*store.get_source(source).unwrap(), b"source");
     assert_eq!(&**store.get_tape(tape).unwrap(), b"tape");
     store.release_memory().unwrap();
-    assert!(store.local_result_cache.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -568,10 +566,6 @@ fn snapshot_publication_is_atomic() {
             1,
         )
         .unwrap();
-    let candidate = CandidateClause {
-        rule: HashKey::sha256(b"policy"),
-        clause: "check".to_owned(),
-    };
     let stored = store
         .publish_snapshot_file(
             snapshot,
@@ -586,8 +580,6 @@ fn snapshot_publication_is_atomic() {
                     bytes: b"persisted tape",
                     documents: &[],
                 }),
-                catalog: candidate_catalog("atomic"),
-                candidates: std::slice::from_ref(&candidate),
             },
         )
         .unwrap();
@@ -604,8 +596,6 @@ fn snapshot_publication_is_atomic() {
             source: b"must roll back",
             aliases: &[],
             tape: None,
-            catalog: candidate_catalog("failed"),
-            candidates: &[],
         },
     );
     assert!(failed.is_err());
@@ -624,8 +614,6 @@ fn snapshot_publication_is_atomic() {
         source: b"x = 2\n",
         aliases: &[],
         tape: None,
-        catalog: candidate_catalog("bounded"),
-        candidates: &[],
     };
     assert!(matches!(
         store.publish_snapshot_files(snapshot, &vec![publication; MAX_PUBLICATION_BATCH + 1]),
@@ -634,7 +622,7 @@ fn snapshot_publication_is_atomic() {
 }
 
 #[test]
-fn overlay_publication_replaces_payload_and_candidates_atomically() {
+fn overlay_publication_replaces_payload_atomically() {
     let (_path, store) = store("atomic-overlay");
     let snapshot = store
         .put_snapshot(
@@ -651,10 +639,6 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
     let workspace = store
         .open_workspace("/atomic", "repo", "owner", snapshot, 1, 100)
         .unwrap();
-    let candidate = CandidateClause {
-        rule: HashKey::sha256(b"policy"),
-        clause: "changed".to_owned(),
-    };
     let tape_bytes = b"compressed tape payload";
     let publications = [
         OverlayFilePublication {
@@ -669,10 +653,6 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
                 bytes: tape_bytes,
                 documents: &[],
             }),
-            catalog: candidate_catalog("overlay-atomic"),
-            candidates: std::slice::from_ref(&candidate),
-            local_results: &[],
-            candidates_current: false,
         },
         OverlayFilePublication {
             path: "src/b.py",
@@ -680,10 +660,6 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
             source: b"y = 3\n",
             aliases: &[],
             tape: None,
-            catalog: candidate_catalog("overlay-atomic"),
-            candidates: &[],
-            local_results: &[],
-            candidates_current: false,
         },
     ];
     let result = store
@@ -732,83 +708,102 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
     assert!(seg > 0);
 }
 
+/// One file's results under one context, as a workspace keeps them (`results.rs`).
+fn file_results(source: &[u8], context: &[u8], results: &[(&str, &[u8])]) -> WorkspaceResults {
+    WorkspaceResults {
+        source: HashKey::sha256(source),
+        context: HashKey::sha256(context),
+        results: results
+            .iter()
+            .map(|(clause, bytes)| (CandidateClause { rule: HashKey::sha256(b"policy"), clause: (*clause).to_owned() }, bytes.to_vec()))
+            .collect(),
+    }
+}
+
+/// The clauses and bytes kept for `source` under `context`, sorted; `None` when none are.
+fn kept_results(store: &ContentStore, catalog: CandidateCatalogIdentity, source: &[u8], context: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
+    let key = (HashKey::sha256(source), HashKey::sha256(context));
+    let found = store.workspace_results(&[key], catalog).unwrap();
+    let mut got: Vec<_> = found.get(&key)?.iter().map(|r| (r.candidate.clause.clone(), r.bytes.to_vec())).collect();
+    got.sort();
+    Some(got)
+}
+
+/// t33 step 8: a file's results under each context are one entry, read where it lies; the entry of another context or
+/// another catalog is never taken.
 #[test]
-fn local_results_publish_across_sqlite_variable_limit_chunks() {
-    let (_path, store) = store("bulk-local-results");
+fn workspace_results_are_one_entry_per_content_and_context() {
+    let (_path, store) = store("workspace-results");
+    let catalog = candidate_catalog("workspace-results");
     store
-        .connection
-        .lock()
-        .unwrap()
-        .set_limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER, 40)
-        .unwrap();
-    let snapshot = store
-        .put_snapshot(
-            published_tree(&store, HashKey::git_sha1([3; 20])),
-            1,
-            HashKey::sha256(b"grammar"),
-            1,
+        .put_workspace_results(
+            catalog,
+            &[
+                file_results(b"pass\n", b"alpha/x.py", &[("check", b"alpha"), ("other", b"one")]),
+                file_results(b"pass\n", b"beta/x.py", &[("check", b"beta")]),
+            ],
         )
         .unwrap();
-    let workspace = store
-        .open_workspace("/bulk-results", "repo", "owner", snapshot, 1, 100)
+    assert_eq!(
+        kept_results(&store, catalog, b"pass\n", b"alpha/x.py"),
+        Some(vec![("check".to_owned(), b"alpha".to_vec()), ("other".to_owned(), b"one".to_vec())])
+    );
+    assert_eq!(kept_results(&store, catalog, b"pass\n", b"beta/x.py"), Some(vec![("check".to_owned(), b"beta".to_vec())]));
+    assert_eq!(kept_results(&store, catalog, b"pass\n", b"gamma/x.py"), None);
+    assert_eq!(kept_results(&store, candidate_catalog("another"), b"pass\n", b"alpha/x.py"), None);
+    let key = (HashKey::sha256(b"pass\n"), HashKey::sha256(b"alpha/x.py"));
+    assert!(store.workspace_results(&[key], catalog).unwrap()[&key].iter().all(|r| r.bytes.in_place()), "read in place");
+
+    // An entry is written whole: a later put replaces it, and leaves the other context's alone.
+    store.put_workspace_results(catalog, &[file_results(b"pass\n", b"alpha/x.py", &[("check", b"again")])]).unwrap();
+    assert_eq!(kept_results(&store, catalog, b"pass\n", b"alpha/x.py"), Some(vec![("check".to_owned(), b"again".to_vec())]));
+    assert_eq!(kept_results(&store, catalog, b"pass\n", b"beta/x.py"), Some(vec![("check".to_owned(), b"beta".to_vec())]));
+    // A reopened store reads them too.
+    let reopened = ContentStore::open(&_path).unwrap();
+    assert_eq!(kept_results(&reopened, catalog, b"pass\n", b"beta/x.py"), Some(vec![("check".to_owned(), b"beta".to_vec())]));
+}
+
+/// Collection drops a content's results once the store keeps no source of it, and a catalog's completed directories
+/// once none of its results are kept.
+#[test]
+fn workspace_results_go_with_their_source() {
+    let (path, store) = store("workspace-results-collected");
+    let (workspace, catalog) = local_result_workspace(&store, "workspace-results-collected");
+    store
+        .publish_overlay_file(
+            workspace,
+            OverlayFilePublication { path: "x.py", state_id: 1, source: b"kept\n", aliases: &[], tape: None },
+        )
         .unwrap();
-    let catalog = candidate_catalog("bulk-results");
-    let results = (0..12)
-        .map(|index| {
-            let bytes = format!("result-{index}").into_bytes();
-            LocalResultPublication {
-                candidate: CandidateClause {
-                    rule: HashKey::sha256(format!("policy-{index}").as_bytes()),
-                    clause: format!("check-{index}"),
-                },
-                context: HashKey::sha256(format!("bulk-context-{}", index % 2).as_bytes()),
-                bytes: bytes.to_vec(),
-            }
-        })
-        .collect::<Vec<_>>();
-    let publication = OverlayFilePublication {
-        path: "src/results.py",
-        state_id: 1,
-        source: b"pass\n",
-        aliases: &[],
-        tape: None,
-        catalog,
-        candidates: &[],
-        local_results: &results,
-        candidates_current: false,
-    };
-    let stored = store.publish_overlay_file(workspace, publication).unwrap();
-    // Six results a statement at 40 variables: two statements, each naming both contexts.
-    for context in 0..2 {
-        let mut restored = store
-            .local_check_results(
-                stored.source,
-                HashKey::sha256(format!("bulk-context-{context}").as_bytes()),
-                catalog,
-            )
-            .unwrap()
-            .into_iter()
-            .map(|result| (result.candidate.clause, result.bytes.to_vec()))
-            .collect::<Vec<_>>();
-        restored.sort();
-        let mut expected = (0..12)
-            .filter(|index| index % 2 == context)
-            .map(|index| {
-                (
-                    format!("check-{index}"),
-                    format!("result-{index}").into_bytes(),
-                )
-            })
-            .collect::<Vec<_>>();
-        expected.sort();
-        assert_eq!(restored, expected, "context {context}");
-    }
+    store
+        .put_workspace_results(
+            catalog,
+            &[file_results(b"kept\n", b"x.py", &[("check", b"kept")]), file_results(b"gone\n", b"y.py", &[("check", b"gone")])],
+        )
+        .unwrap();
+    let other = candidate_catalog("only-gone");
+    store.put_workspace_results(other, &[file_results(b"gone\n", b"y.py", &[("check", b"gone")])]).unwrap();
+    let tree = HashKey::git_sha1([17; 20]);
+    let directory = DirectoryReuse { prefix: "src".to_owned(), tree, package_markers: HashKey::sha256(b"markers") };
+    store.complete_directories(catalog, std::slice::from_ref(&directory)).unwrap();
+    store.complete_directories(other, std::slice::from_ref(&directory)).unwrap();
+    assert_eq!(store.completed_directory_count().unwrap(), 2);
+
+    ContentStore::open(&path).unwrap().collect(0, 100).unwrap();
+    assert_eq!(kept_results(&store, catalog, b"kept\n", b"x.py"), Some(vec![("check".to_owned(), b"kept".to_vec())]));
+    assert_eq!(kept_results(&store, catalog, b"gone\n", b"y.py"), None);
+    assert_eq!(kept_results(&store, other, b"gone\n", b"y.py"), None);
+    assert_eq!(
+        store.reusable_directory_prefixes(catalog, std::slice::from_ref(&directory)).unwrap(),
+        HashSet::from(["src".to_owned()])
+    );
+    assert!(store.reusable_directory_prefixes(other, std::slice::from_ref(&directory)).unwrap().is_empty());
 }
 
 #[test]
 fn relationship_revalidation_does_not_hash_payloads_under_write_lock() {
     let (_path, store) = store("relationship-prepared-hashes");
-    let (workspace, catalog) = local_result_workspace(&store, "relationship-prepared-hashes");
+    let (workspace, _) = local_result_workspace(&store, "relationship-prepared-hashes");
     take_write_lock_hash_counts();
     store
         .publish_overlay_file(
@@ -819,10 +814,6 @@ fn relationship_revalidation_does_not_hash_payloads_under_write_lock() {
                 source: b"pass\n",
                 aliases: &[],
                 tape: None,
-                catalog,
-                candidates: &[],
-                local_results: &[],
-                candidates_current: false,
             },
         )
         .unwrap();
@@ -836,236 +827,13 @@ fn relationship_revalidation_does_not_hash_payloads_under_write_lock() {
         "SHA-256 was computed while publication held the write lock"
     );
 }
-#[test]
-fn local_results_are_scoped_by_context_hash() {
-    let (_path, store) = store("local-result-contexts");
-    let (workspace, catalog) = local_result_workspace(&store, "local-result-contexts");
-    let candidate = CandidateClause {
-        rule: HashKey::sha256(b"policy"),
-        clause: "check".to_owned(),
-    };
-    let first_context = HashKey::sha256(b"alpha/x.py");
-    let second_context = HashKey::sha256(b"beta/x.py");
-    let first = LocalResultPublication {
-        candidate: candidate.clone(),
-        context: first_context,
-        bytes: b"alpha".to_vec(),
-    };
-    let second = LocalResultPublication {
-        candidate,
-        context: second_context,
-        bytes: b"beta".to_vec(),
-    };
-    let stored = store
-        .publish_overlay_file(
-            workspace,
-            OverlayFilePublication {
-                path: "x.py",
-                state_id: 1,
-                source: b"pass\n",
-                aliases: &[],
-                tape: None,
-                catalog,
-                candidates: &[],
-                local_results: &[first, second],
-                candidates_current: false,
-            },
-        )
-        .unwrap();
-
-    assert_eq!(
-        store
-            .local_check_results(stored.source, first_context, catalog)
-            .unwrap()[0]
-            .bytes[..],
-        b"alpha"[..]
-    );
-    assert_eq!(
-        store
-            .local_check_results(stored.source, second_context, catalog)
-            .unwrap()[0]
-            .bytes[..],
-        b"beta"[..]
-    );
-    let by_key = store
-        .local_check_results_by_key(
-            &[
-                (HashKey::sha256(b"pass\n"), first_context),
-                (HashKey::sha256(b"pass\n"), second_context),
-            ],
-            catalog,
-        )
-        .unwrap();
-    assert_eq!(
-        by_key[&(HashKey::sha256(b"pass\n"), first_context)][0].bytes[..],
-        b"alpha"[..]
-    );
-    assert_eq!(
-        by_key[&(HashKey::sha256(b"pass\n"), second_context)][0].bytes[..],
-        b"beta"[..]
-    );
-}
-
-/// Decision 0450 step 2: a result is stored as it is, in a segment, and read there in place; compaction carries it into
-/// its one segment; a segment gone makes it a miss, not an error.
-#[test]
-fn results_are_read_in_place_and_survive_compaction() {
-    let (_path, store) = store("results-in-segments");
-    let (workspace, catalog) = local_result_workspace(&store, "results-in-segments");
-    let candidate = CandidateClause { rule: HashKey::sha256(b"policy"), clause: "check".to_owned() };
-    let context = HashKey::sha256(b"x.py");
-    let publish = |bytes: &[u8], state_id: i64| {
-        let result = LocalResultPublication { candidate: candidate.clone(), context, bytes: bytes.to_vec() };
-        store
-            .publish_overlay_file(
-                workspace,
-                OverlayFilePublication {
-                    path: "x.py",
-                    state_id,
-                    source: b"pass\n",
-                    aliases: &[],
-                    tape: None,
-                    catalog,
-                    candidates: &[],
-                    local_results: &[result],
-                    candidates_current: false,
-                },
-            )
-            .unwrap()
-    };
-    let stored = publish(b"result", 1);
-    let read = |store: &ContentStore| {
-        let results = store.local_check_results(stored.source, context, catalog).unwrap();
-        results.first().map(|r| (r.bytes.in_place(), r.bytes.to_vec()))
-    };
-    assert_eq!(read(&store), Some((true, b"result".to_vec())));
-    let rows: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM context_check_results WHERE seg > 0", [], |r| r.get(0)).unwrap();
-    assert_eq!(rows, 1, "the row names a segment's range");
-    // The result published again leaves copies no row names; compaction keeps the named one, in its one segment.
-    for state in 2..5 {
-        publish(b"result", state);
-    }
-    assert!(store.compact_object_segments(0).unwrap() > 0);
-    let dir = super::object_segments::object_dir(&store.database_path);
-    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "one segment left");
-    assert_eq!(read(&store), Some((true, b"result".to_vec())));
-    // Its segment gone: a miss.
-    for entry in std::fs::read_dir(&dir).unwrap() {
-        std::fs::remove_file(entry.unwrap().path()).unwrap();
-    }
-    assert_eq!(read(&store), None);
-}
-
-#[test]
-fn a_result_under_a_new_context_of_stored_objects_is_kept() {
-    let (_path, store) = store("local-result-new-context");
-    let (workspace, catalog) = local_result_workspace(&store, "local-result-new-context");
-    let result = |context: &[u8], bytes: &'static [u8]| LocalResultPublication {
-        candidate: CandidateClause {
-            rule: HashKey::sha256(b"policy"),
-            clause: "check".to_owned(),
-        },
-        context: HashKey::sha256(context),
-        bytes: bytes.to_vec(),
-    };
-    let publish = |results: &[LocalResultPublication]| {
-        store
-            .publish_overlay_file(
-                workspace,
-                OverlayFilePublication {
-                    path: "x.py",
-                    state_id: 1,
-                    source: b"pass\n",
-                    aliases: &[],
-                    tape: None,
-                    catalog,
-                    candidates: &[],
-                    local_results: results,
-                    candidates_current: false,
-                },
-            )
-            .unwrap()
-    };
-    publish(&[result(b"first", b"alpha")]);
-    // Source, path, catalog and clause are all stored now: only the context is new.
-    let stored = publish(&[result(b"second", b"beta")]);
-    let restored = store
-        .local_check_results(stored.source, HashKey::sha256(b"second"), catalog)
-        .unwrap();
-    assert_eq!(restored.len(), 1);
-    assert_eq!(&restored[0].bytes[..], b"beta");
-}
-
-#[test]
-fn context_results_cascade_when_sources_and_clauses_are_deleted() {
-    for delete_source in [true, false] {
-        let (_path, store) = store(if delete_source {
-            "context-result-source-cascade"
-        } else {
-            "context-result-check-cascade"
-        });
-        let (workspace, catalog) = local_result_workspace(&store, "context-result-cascade");
-        let result = LocalResultPublication {
-            candidate: CandidateClause {
-                rule: HashKey::sha256(b"policy"),
-                clause: "check".to_owned(),
-            },
-            context: HashKey::sha256(b"context"),
-            bytes: b"result".to_vec(),
-        };
-        let stored = store
-            .publish_overlay_file(
-                workspace,
-                OverlayFilePublication {
-                    path: "x.py",
-                    state_id: 1,
-                    source: b"pass\n",
-                    aliases: &[],
-                    tape: None,
-                    catalog,
-                    candidates: &[],
-                    local_results: &[result],
-                    candidates_current: false,
-                },
-            )
-            .unwrap();
-        let connection = store.connection.lock().unwrap();
-        if delete_source {
-            connection
-                .execute(
-                    "DELETE FROM workspace_overlay WHERE workspace_id=?1",
-                    [workspace.0],
-                )
-                .unwrap();
-            connection
-                .execute(
-                    "DELETE FROM source_objects WHERE source_id=?1",
-                    [stored.source.0],
-                )
-                .unwrap();
-        } else {
-            connection
-                .execute(
-                    "DELETE FROM candidate_checks WHERE check_id=(SELECT check_id FROM context_check_results LIMIT 1)",
-                    [],
-                )
-                .unwrap();
-        }
-        let count: i64 = connection
-            .query_row("SELECT count(*) FROM context_check_results", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(count, 0);
-    }
-}
 
 #[test]
 fn reconciliation_reprepares_source_collected_after_the_read() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let (path, store) = store("publication-reprepare");
-    let (workspace, catalog) = local_result_workspace(&store, "publication-reprepare");
+    let (workspace, _) = local_result_workspace(&store, "publication-reprepare");
     store.put_source(b"pass\n", &[]).unwrap();
     ContentStore::open(&path).unwrap().collect(0, 100).unwrap();
     let copy = path.to_path_buf();
@@ -1081,10 +849,6 @@ fn reconciliation_reprepares_source_collected_after_the_read() {
             source: b"pass\n",
             aliases: &[],
             tape: None,
-            catalog,
-            candidates: &[],
-            local_results: &[],
-            candidates_current: false,
         }],
         &|| polls.fetch_add(1, Ordering::SeqCst) >= 5,
     );
@@ -1095,53 +859,9 @@ fn reconciliation_reprepares_source_collected_after_the_read() {
 }
 
 #[test]
-fn reconciliation_revalidates_clause_collected_before_relationship_write() {
-    let (path, store) = store("publication-revalidate-check");
-    let (workspace, catalog) = local_result_workspace(&store, "publication-revalidate-check");
-    let candidate = CandidateClause {
-        rule: HashKey::sha256(b"policy"),
-        clause: "check".to_owned(),
-    };
-    let result = LocalResultPublication {
-        candidate: candidate.clone(),
-        context: HashKey::sha256(b"context"),
-        bytes: b"result".to_vec(),
-    };
-    let copy = path.to_path_buf();
-    BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
-        ContentStore::open(&copy).unwrap().collect(0, 100).unwrap();
-    })));
-    let stored = store
-        .publish_overlay_file(
-            workspace,
-            OverlayFilePublication {
-                path: "src/revalidate.py",
-                state_id: 1,
-                source: b"pass\n",
-                aliases: &[],
-                tape: None,
-                catalog,
-                candidates: &[],
-                local_results: &[result],
-                candidates_current: false,
-            },
-        )
-        .unwrap();
-    assert_eq!(
-        store
-            .local_check_results(stored.source, HashKey::sha256(b"context"), catalog)
-            .unwrap()
-            .into_iter()
-            .map(|result| result.candidate)
-            .collect::<Vec<_>>(),
-        vec![candidate]
-    );
-}
-
-#[test]
 fn reconciliation_revalidates_path_collected_before_relationship_write() {
     let (path, store) = store("publication-revalidate-path");
-    let (workspace, catalog) = local_result_workspace(&store, "publication-revalidate-path");
+    let (workspace, _) = local_result_workspace(&store, "publication-revalidate-path");
     let copy = path.to_path_buf();
     BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
         let connection = Connection::open(copy).unwrap();
@@ -1162,10 +882,6 @@ fn reconciliation_revalidates_path_collected_before_relationship_write() {
                 source: b"pass\n",
                 aliases: &[],
                 tape: None,
-                catalog,
-                candidates: &[],
-                local_results: &[],
-                candidates_current: false,
             },
         )
         .unwrap();
@@ -1180,17 +896,13 @@ fn reconciliation_revalidates_path_collected_before_relationship_write() {
 #[test]
 fn warm_overlay_publication_stores_new_git_aliases() {
     let (_path, store) = store("warm-publication-alias");
-    let (workspace, catalog) = local_result_workspace(&store, "warm-publication-alias");
+    let (workspace, _) = local_result_workspace(&store, "warm-publication-alias");
     let publication = |aliases| OverlayFilePublication {
         path: "src/alias.py",
         state_id: 1,
         source: b"pass\n",
         aliases,
         tape: None,
-        catalog,
-        candidates: &[],
-        local_results: &[],
-        candidates_current: false,
     };
     let stored = store
         .publish_overlay_file(workspace, publication(&[]))
@@ -1225,10 +937,6 @@ fn cancelled_overlay_publication_rolls_back_before_commit() {
         source: b"x = 1\n",
         aliases: &[],
         tape: None,
-        catalog: candidate_catalog("cancelled"),
-        candidates: &[],
-        local_results: &[],
-        candidates_current: false,
     };
     let result = store.publish_overlay_files_cancellable(workspace, &[publication], &|| {
         polls.fetch_add(1, Ordering::SeqCst) >= 2
@@ -1285,10 +993,6 @@ fn overlay_publication_reports_busy_retries() {
                 source: b"x = 1\n",
                 aliases: &[],
                 tape: None,
-                catalog: candidate_catalog("retry"),
-                candidates: &[],
-                local_results: &[],
-                candidates_current: false,
             }],
         )
         .unwrap();
@@ -1387,10 +1091,6 @@ fn one_operation_deadline_bounds_the_wait_across_publication_passes() {
             source: b"x = 1\n",
             aliases: &[],
             tape: None,
-            catalog: candidate_catalog("deadline"),
-            candidates: &[],
-            local_results: &[],
-            candidates_current: false,
         }],
         &|| false,
         &mut busy,
@@ -1578,12 +1278,6 @@ fn snapshot_publication_waits_one_deadline_across_its_transactions() {
 fn completed_directories_require_matching_package_markers() {
     let (_path, store) = store("directory-reuse");
     let tree = published_tree(&store, HashKey::git_sha1([31; 20]));
-    let snapshot = store
-        .put_snapshot(tree, 1, HashKey::sha256(b"grammar"), 1)
-        .unwrap();
-    let workspace = store
-        .open_workspace("/repo/directory-reuse", "repo", "owner", snapshot, 1, 100)
-        .unwrap();
     let catalog = candidate_catalog("directory-reuse");
     let completed = DirectoryReuse {
         prefix: "src".to_owned(),
@@ -1591,20 +1285,8 @@ fn completed_directories_require_matching_package_markers() {
         package_markers: HashKey::sha256(b"without-marker"),
     };
     store
-        .complete_directories(
-            WorkspaceCompletion {
-                workspace_id: workspace,
-                revision: 2,
-                completed_at: 200,
-            },
-            catalog,
-            std::slice::from_ref(&completed),
-        )
+        .complete_directories(catalog, std::slice::from_ref(&completed))
         .unwrap();
-    assert_eq!(
-        store.completed_workspace_revision(workspace).unwrap(),
-        Some(2)
-    );
     assert_eq!(
         store
             .reusable_directory_prefixes(catalog, std::slice::from_ref(&completed))
@@ -1825,10 +1507,6 @@ fn multiprocess_publish_helper() {
                 source: b"shared source\n",
                 aliases: &[],
                 tape: None,
-                catalog: candidate_catalog("multiprocess"),
-                candidates: &[],
-                local_results: &[],
-                candidates_current: false,
             }],
         )
         .unwrap();
@@ -2434,11 +2112,17 @@ fn collection_reclaims_unreachable_auxiliary_metadata() {
     let workspace = store
         .open_workspace("/collect-metadata", "repository", "owner", snapshot, 1, 100)
         .unwrap();
+    let catalog = candidate_catalog("collect-metadata");
+    store.put_workspace_results(catalog, &[file_results(b"source", b"source.py", &[("check", b"result")])]).unwrap();
+    let directory = DirectoryReuse { prefix: String::new(), tree, package_markers: HashKey::sha256(b"markers") };
+    store.complete_directories(catalog, &[directory]).unwrap();
     store.retire_workspace(workspace).unwrap();
     for _ in 0..8 {
         store.collect(101, 100).unwrap();
     }
 
+    assert_eq!(kept_results(&store, catalog, b"source", b"source.py"), None, "the source's results remain");
+    assert_eq!(store.completed_directory_count().unwrap(), 0, "the catalog's completed directories remain");
     let connection = store.connection.lock().unwrap();
     for table in [
         "paths",
@@ -2446,7 +2130,6 @@ fn collection_reclaims_unreachable_auxiliary_metadata() {
         "hashes",
         "git_tree_entries",
         "git_trees",
-        "completed_directory_reuse",
     ] {
         let count: i64 = connection
             .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
@@ -2823,10 +2506,6 @@ fn derived_documents_live_and_die_with_their_primary_tape() {
                     bytes: b"primary tape",
                     documents: std::slice::from_ref(&document),
                 }),
-                catalog: candidate_catalog("derived-documents"),
-                candidates: &[],
-                local_results: &[],
-                candidates_current: false,
             },
         )
         .unwrap();
@@ -2912,10 +2591,6 @@ fn a_single_language_tape_writes_no_document_rows() {
                     bytes: b"python tape",
                     documents: &[],
                 }),
-                catalog: candidate_catalog("single-language"),
-                candidates: &[],
-                local_results: &[],
-                candidates_current: false,
             },
         )
         .unwrap();

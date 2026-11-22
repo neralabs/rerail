@@ -251,10 +251,6 @@ impl ContentStore {
             Ok(()) | Err(StoreError::Busy) => {}
             Err(error) => return Err(error),
         }
-        self.local_result_cache
-            .lock()
-            .expect("local result cache mutex poisoned")
-            .clear();
         Ok(report)
     }
 
@@ -350,13 +346,6 @@ impl ContentStore {
              WHERE w.state_id=3 ORDER BY o.workspace_id,o.path_id LIMIT ?1)",
             [limit],
         )?;
-        execute_collect(
-            &transaction,
-            "DELETE FROM completed_workspace_revisions WHERE workspace_id IN (SELECT w.workspace_id FROM workspaces w \
-             WHERE w.state_id=3 AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.workspace_id=w.workspace_id) \
-             ORDER BY w.workspace_id LIMIT ?1)",
-            [limit],
-        )?;
         report.retired_workspaces = execute_collect(
             &transaction,
             "DELETE FROM workspaces WHERE workspace_id IN (SELECT w.workspace_id FROM workspaces w \
@@ -420,18 +409,6 @@ impl ContentStore {
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
-        execute_collect(
-            &transaction,
-            "DELETE FROM context_check_results WHERE source_id IN (SELECT s.source_id FROM source_objects s \
-             WHERE s.created_generation < ?1 \
-             AND NOT EXISTS (SELECT 1 FROM tape_objects t WHERE t.source_id=s.source_id) \
-             AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
-             AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
-             AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
-             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
-             ORDER BY s.source_id LIMIT ?3)",
-            params![current_generation, OBJECT_SOURCE, limit],
-        )?;
         report.sources = execute_collect(
             &transaction,
             "DELETE FROM source_objects WHERE source_id IN (SELECT s.source_id FROM source_objects s \
@@ -444,29 +421,9 @@ impl ContentStore {
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
-        report.candidate_checks = execute_collect(
-            &transaction,
-            "DELETE FROM candidate_checks WHERE check_id IN (SELECT c.check_id FROM candidate_checks c \
-             WHERE NOT EXISTS (SELECT 1 FROM context_check_results r WHERE r.check_id=c.check_id) \
-             ORDER BY c.check_id LIMIT ?1)",
-            [limit],
-        )?;
-        report.candidate_catalogs = execute_collect(
-            &transaction,
-            "DELETE FROM candidate_catalogs WHERE catalog_id IN (SELECT c.catalog_id FROM candidate_catalogs c \
-             WHERE NOT EXISTS (SELECT 1 FROM candidate_checks k WHERE k.catalog_id=c.catalog_id) \
-             ORDER BY c.catalog_id LIMIT ?1)",
-            [limit],
-        )?;
-        execute_collect(
-            &transaction,
-            "DELETE FROM completed_directory_reuse WHERE (tree_hash_id,prefix,package_hash_id,catalog_hash_id) IN (\
-             SELECT d.tree_hash_id,d.prefix,d.package_hash_id,d.catalog_hash_id FROM completed_directory_reuse d \
-             WHERE NOT EXISTS (SELECT 1 FROM candidate_catalogs c JOIN hashes h ON h.hash_id=c.identity_hash_id \
-                               WHERE h.hash_id=d.catalog_hash_id) \
-             ORDER BY d.tree_hash_id,d.prefix,d.package_hash_id,d.catalog_hash_id LIMIT ?1)",
-            [limit],
-        )?;
+        // A workspace's results whose content went with the sources above, and its completed directories of a
+        // catalog with no result left (`results.rs`).
+        super::results::collect_workspace_results(&transaction)?;
         // The live set is materialized once (NOT IN), not rescanned per candidate tree. Whole
         // trees are taken in tree order until their entries would exceed the publication budget,
         // and always at least one, so a pass holds the write lock over a bounded number of rows.
@@ -519,7 +476,6 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM git_tree_entries e WHERE e.name_string_id=s.string_id) \
              AND NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.repository_string_id=s.string_id OR w.owner_string_id=s.string_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.owner_string_id=s.string_id) \
-             AND NOT EXISTS (SELECT 1 FROM candidate_checks c WHERE c.check_string_id=s.string_id) \
              ORDER BY s.string_id LIMIT ?1)",
             [limit],
         )?;
@@ -533,11 +489,6 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM git_trees t WHERE t.tree_hash_id=h.hash_id) \
              AND NOT EXISTS (SELECT 1 FROM git_tree_entries e WHERE e.target_hash_id=h.hash_id) \
              AND NOT EXISTS (SELECT 1 FROM snapshots s WHERE s.grammar_set_hash_id=h.hash_id) \
-             AND NOT EXISTS (SELECT 1 FROM candidate_catalogs c WHERE c.identity_hash_id=h.hash_id) \
-             AND NOT EXISTS (SELECT 1 FROM candidate_checks c WHERE c.policy_hash_id=h.hash_id) \
-             AND NOT EXISTS (SELECT 1 FROM completed_workspace_revisions r WHERE r.catalog_hash_id=h.hash_id) \
-             AND NOT EXISTS (SELECT 1 FROM completed_directory_reuse d WHERE d.tree_hash_id=h.hash_id OR d.package_hash_id=h.hash_id OR d.catalog_hash_id=h.hash_id) \
-             AND NOT EXISTS (SELECT 1 FROM context_check_results r WHERE r.context_hash_id=h.hash_id) \
              ORDER BY h.hash_id LIMIT ?1)",
             [limit],
         )?;

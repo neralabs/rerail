@@ -97,13 +97,12 @@ pub use connection::{
 pub use snapshots::AFTER_GIT_TREE_TRANSACTION;
 
 use connection::{ThreadConnection, retry_busy};
-use results::LocalResultCache;
+pub use results::WorkspaceResults;
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -115,13 +114,12 @@ const STRING_PATH: i64 = 1;
 const STRING_REPOSITORY: i64 = 2;
 const STRING_OWNER: i64 = 3;
 const STRING_PATH_COMPONENT: i64 = 4;
-const STRING_CLAUSE_KEY: i64 = 5;
+// String domain 5 was a candidate check's clause key (`candidate_checks`): taken, never reused.
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 const MAX_PUBLICATION_BATCH: usize = 64;
 /// Largest `collect` batch: the per-statement row limit of one collection transaction.
 pub const MAX_COLLECTION_BATCH: usize = 256;
-const DEFAULT_READ_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -276,6 +274,12 @@ impl HashKey {
             *chunk = lane.to_be_bytes();
         }
         out
+    }
+
+    /// The key `key_bytes` wrote.
+    pub fn from_key_bytes(bytes: [u8; 40]) -> Option<Self> {
+        let words: Vec<i64> = bytes.as_chunks::<8>().0.iter().map(|w| i64::from_be_bytes(*w)).collect();
+        Some(Self { algorithm: words[0], lanes: [words[1], words[2], words[3], words[4]] })
     }
 
     pub fn git_sha256(bytes: [u8; 32]) -> Self {
@@ -617,30 +621,13 @@ pub struct SnapshotFilePublication<'a> {
     pub source: &'a [u8],
     pub aliases: &'a [HashKey],
     pub tape: Option<TapePayload<'a>>,
-    pub catalog: CandidateCatalogIdentity,
-    pub candidates: &'a [CandidateClause],
-}
-
-#[derive(Clone, Debug)]
-pub struct LocalResultPublication {
-    pub candidate: CandidateClause,
-    pub context: HashKey,
-    /// The result's bytes, stored as they are, in a segment (decision 0450 step 2).
-    pub bytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
 pub struct StoredLocalResult {
     pub candidate: CandidateClause,
-    /// The result's bytes where its segment holds them, mapped (decision 0450 step 2).
+    /// The result's bytes where its entry holds them, mapped (`results.rs`).
     pub bytes: ObjectBytes,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct WorkspaceCompletion {
-    pub workspace_id: WorkspaceId,
-    pub revision: i64,
-    pub completed_at: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -669,10 +656,6 @@ pub struct OverlayFilePublication<'a> {
     pub source: &'a [u8],
     pub aliases: &'a [HashKey],
     pub tape: Option<TapePayload<'a>>,
-    pub catalog: CandidateCatalogIdentity,
-    pub candidates: &'a [CandidateClause],
-    pub local_results: &'a [LocalResultPublication],
-    pub candidates_current: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -681,9 +664,6 @@ pub struct CollectionReport {
     pub retired_workspaces: usize,
     pub snapshot_files: usize,
     pub snapshots: usize,
-    pub candidate_rows: usize,
-    pub candidate_checks: usize,
-    pub candidate_catalogs: usize,
     pub tapes: usize,
     pub sources: usize,
 }
@@ -711,7 +691,6 @@ pub struct ContentStore {
     database_path: PathBuf,
     connection: ThreadConnection,
     compression_level: i32,
-    local_result_cache: Mutex<LocalResultCache>,
     /// This process's atoms of the store (atoms.rs, decision 0049), shared with the planner's symbols.
     atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
@@ -779,7 +758,6 @@ impl ContentStore {
             database_path: self.database_path.clone(),
             connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity(), self.connection.flush()),
             compression_level: self.compression_level,
-            local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             atoms: std::sync::Arc::clone(&self.atoms),
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
@@ -854,7 +832,6 @@ impl ContentStore {
             database_path,
             connection,
             compression_level: DEFAULT_COMPRESSION_LEVEL,
-            local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             atoms,
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
@@ -876,10 +853,6 @@ impl ContentStore {
     /// resident documents: an active apply benefits from the caches, while an inactive one should
     /// not retain an arena or SQLite page cache. Connections reopen on the next read.
     pub fn release_memory(&self) -> StoreResult<()> {
-        self.local_result_cache
-            .lock()
-            .expect("local result cache mutex poisoned")
-            .clear();
         self.connection.release_all();
         Ok(())
     }
