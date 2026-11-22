@@ -75,14 +75,34 @@ or read `guest_of` (784 to 809 G) were unsound, and are not counted.
 
 ## Then: no copy built where its readers allow
 
-6. **A diffed copy is read in place** (`combining::Unnarrow`). It is its original less its candidates, and the
-   candidates its recheck finds (`rr_recheck_X`, the narrow rule over the candidates). A rule reading it reads, for
-   each read, the original less the candidates, or the recheck; negated, neither the original nor the recheck, or a
-   candidate the recheck does not hold. Its rows gone and added are read off the recheck. The copy stays built where
-   a read cannot be so written: an aggregate's, a gated one, a term not a variable or a constant (a negated `_` has
-   no such form), a native operator's rule, more than 3 in one rule (each rule is one per way), or where the program
-   lists it. 87 of the 174 are read in place. Writing a positive read's `_` as a variable, and allowing 5 reads a
-   rule, built fewer copies but cost more (764 G, 768 G): not done.
+6. **A diffed copy is read in place** (`combining::Unnarrow`): `N = X \ G ∪ A`, its original less its rows gone,
+   and its rows added. `A` is known empty where the copy can only lose rows (`adds`: nothing it reads is a copy read
+   negated, in an aggregate, or one that may gain rows). A read is written:
+   - positive, its terms named: `X(t), !G(t)`, and `A(t)` where it may gain rows;
+   - positive with `_` (a test that a row is there): `X(t, _), !G_s(t_s)`, and the few keys with rows gone checked
+     row by row (`G_s`: the rows gone on the read's named columns);
+   - negated: `!X(t)` or `G(t)`; with `_`, `!X(t, _)` or `G_s(t_s), !M_s(t_s)` (`M_s`: the keys with a row gone and
+     one left); each with `!A` where it may gain rows;
+   - inside the recheck's recursion, where a read of `G` would close a cycle through a negation, the original less
+     the candidates, or the recheck's rows.
+
+   A rule is written once a way, the product of its reads' ways, at most 16. The limit of 3 reads an earlier form
+   had was that form's own (each read two ways, 2^k rules), not the engine's. The copy stays where a read cannot be
+   so written: an aggregate's, a gated one, a native operator's rule, or where the program lists it. 154 of 174 are
+   read in place. The candidates, recheck and deltas are `no_inline` and `no_magic`: inlined, a candidate's filter
+   rule made the deltas' joins start from the whole original.
+9. **A copy kept is its original's rows, read where they are** (`plan::based_rule`). A rule `n(xs) :- x(xs),
+   !g(xs)` (distinct variables, one order, both held by the engine, `g` at most an eighth of `x`) opens `n` as `x`'s
+   rows and orders, shared (`Rel::based`, which a maintained stratum's survivors used), `g`'s rows marked dead in
+   place; its other rules add to it. A copy kept (`n :- x, !rr_cand_x`, and the recheck's rows) is so: one literal for
+   its readers, no row of `x` copied or derived again. The recognition is on the rule's shape.
+10. **A rule over an input bound with no rows is not run**, as one over a held empty relation was not: a copy's rows
+    added, which the per-file part hands on and most runs have none of. Each such way of a recursive rule ran from the
+    recursive delta before finding none.
+11. **A mixed component keeps its guests' copies apart** (`Diffed::mixed`). Where an original of a component reaches a
+    copy of a member (§3's mixed points-to components), its guests' copies are not folded: each holds the
+    annotations' rows alone, reading what the annotations see (`Narrowing::apart`), and the originals stay narrow, so
+    no copy of them is derived. 44 copies. Every copy unfolded instead costs 857 G.
 7. **A rule beside its annotation twin reads only the copies' deltas** (`Folding::beside_twin`). Since #923 a rule
    that reads an original (narrow, so its copy) sits beside a twin of the same head that reads an annotation's copy
    (folded, so the whole original) and is the rule otherwise: each derivation was made twice (`pt_vopen`). The rule is
@@ -99,9 +119,18 @@ as its own rules again (781 G: the work moves into its readers).
 | step 1 (above) | 794 G | 1.52 GB |
 | 7, twins | 781 G | 1.51 GB |
 | 8, bounds handed on | 775 G | 1.53 GB |
-| 6, read in place | 761 G | 1.52 GB |
+| 6, read in place (candidates' form) | 761 G | 1.52 GB |
+| 6, rows gone and added | 762-770 G | 1.44-1.49 GB |
+| 10, inputs bound empty | 741.6 G | 1.49 GB |
+| 9, copies kept read in place | 737.7 G | 1.49 GB |
+| 11, mixed copies apart | 730.2 G | 1.48 GB |
 
-## Not done
+Two runs of one binary differed by up to 8 G at loads of 20 to 30.
 
-The mixed components (decision 0165 §3's cross-file part) need another design: the wide and narrow relations are one
-recursive component there.
+## What is left
+
+Against the profiled baseline, the run has 3 times the strata (2,151 against 690; 1,023 held empty) and twice the
+rules. Joins are 2.1 s of the 8.4 s of CPU over it; the rest is per stratum (planning, statistics, opening) and in
+preparation (pushing the file-local joins, the well-founded components, cutting the exports). The candidates' rules
+also take readers past the inliner's limit (`pt_nameref`: 12 reader copies, stored where it was inlined).
+`rr_ann_node` reads every row of `kind` for the 2,454 in the annotations' range.
