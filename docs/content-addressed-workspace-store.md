@@ -53,7 +53,7 @@ applies the DDL; a new store also gets `auto_vacuum=INCREMENTAL`.
 `PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (7). A build refuses a store
 whose floor is newer than its own. Additive changes such as indexes never raise it.
 
-The renamed file is `STORE_FILE_NAME`, now `content-v9.sqlite`. The old file is neither migrated nor
+The renamed file is `STORE_FILE_NAME`, now `content-v10.sqlite`. The old file is neither migrated nor
 deleted.
 
 Tests: `newer_compatibility_floor_is_refused`,
@@ -136,7 +136,7 @@ signed 64-bit lanes, each eight digest bytes read with `i64::from_be_bytes`. SHA
 
 ## Objects
 
-Each source and tape is stored once, uncompressed, in segment files beside the store (`content-v9.sqlite.objects/`),
+Each source and tape is stored once, uncompressed, in segment files beside the store (`content-v10.sqlite.objects/`),
 and read in place; the row points at its range and holds no bytes. Check results, call summaries and tree pages are
 kept the same way (floor 8). A scan gathers its files into a few large
 segments; any other write (a publication, a snapshot, a single put) writes one segment of its own objects before its

@@ -23,11 +23,12 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 9;
+pub(super) const SCHEMA_VERSION: i64 = 10;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v9.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 9: a space's kept facts are a chain of packed files (decision 0456),
+pub const STORE_FILE_NAME: &str = "content-v10.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 10: a kept entry records the greatest atom its rows hold
+/// (`KeptEntry::atoms_max`, decision 0401), which an older binary would read as its other fields shifted; 9: a space's kept facts are a chain of packed files (decision 0456),
 /// and there are no frames (decision 0439), which an older binary would read as a store that keeps nothing, and a
 /// kept column may be a node id split at its granule, which it would read as wrong values (7 on
 /// final-rerail-shape-rr-align, joined with 8 and 7 below on sync-integration-hub-tape); 8: every check result, call
@@ -39,7 +40,7 @@ pub const STORE_FILE_NAME: &str = "content-v9.sqlite";
 /// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
 /// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 9;
+const STORE_FILE_FLOOR: i64 = 10;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
