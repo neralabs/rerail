@@ -2195,8 +2195,13 @@ impl<'a, 't> Fb<'a, 't> {
         for (a, &x) in vals.iter().enumerate() {
             let (off, pm) = (bp[7 + 2 * a], M(bp[8 + 2 * a]));
             if self.promoted.contains(&(at + off, pm.bytes())) {
+                // A parameter begins at its call: its argument in every lane (no lane's earlier value kept).
                 let var = local(at + off, pm.bytes());
-                self.write_var(var, pm, x);
+                self.var_m.entry(var).or_insert(pm);
+                let vm = self.var_type(var);
+                let x = self.fit(x, pm);
+                let x = if vm == pm { x } else { self.cast(x, pm, vm) };
+                self.write(var, x);
             } else if pm.is_agg() && !self.written.contains(&(at + off, pm.bytes(), n)) && self.read_only.contains(&x) {
                 // Read only, of read-only bytes: read where they are, as by value.
                 self.bytes_at.insert((at + off, pm.bytes()), x);

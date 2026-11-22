@@ -1237,6 +1237,10 @@ fn the_nearest_kernels_atomics_are_loads_stores_and_one_maximum() {
     }
     let fields: Vec<super::ssa::V> = (0..f.insts.len() as super::ssa::V).filter(|&x| f.inst(x).op == super::ssa::O::Load && of_args.contains(&f.inst(x).a)).collect();
     assert!(!fields.is_empty() && fields.iter().all(|x| f.blocks[0].insts.contains(x)), "the struct's fields {fields:?} read past the entry:\n{}", ssa.listing());
+    // An inlined function's parameter is its call's argument in every lane: no address is chosen by lanes (the
+    // source chooses none), so `stats`' address is uniform.
+    let chosen: Vec<_> = (0..f.insts.len() as super::ssa::V).filter(|&x| f.inst(x).op == super::ssa::O::Select && f.inst(x).m == super::k::M::PTR).collect();
+    assert!(chosen.is_empty(), "addresses chosen by lanes {chosen:?}:\n{}", ssa.listing());
     for w in [1u32, 2, 4, 8, 16, 32] {
         let (c, _) = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap();
         let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
