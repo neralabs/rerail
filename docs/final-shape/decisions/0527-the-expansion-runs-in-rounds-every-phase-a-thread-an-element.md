@@ -329,6 +329,47 @@ SIMD-group operation switches each thread of the group.
        scan or a walk looks up) climbed up to `MAX_CHAIN` parents; it reads `TRIE_LV` words.
      - The test: making `px_disabled` answer no fails 5 eval tests (the recursion's), and making
        `px_top_call` the list itself fails 2 (`__LINE__` in a call's arguments).
+   - **A chain of exits is summed by doubling, not walked.** A call whose exit is a call of the
+     same parent claims that one's span too, to the chain's last. Six places walked the chain
+     one list at a time (up to 2^20): the walk's claims (`px_claim`), their tokens and pieces
+     (`px_claim_pieces`), the placement of a live child's chain (a loop in `px_wk_write`), the
+     top level's claims, sizes, pieces and places, and the pause's spans (`px_claim_last`).
+     - Each exit's call is put in a table by its parent and its `)` there when it is made
+       (`HX`, open addressing, twice the lists' room; `F_EXIT`), emptied at each top and
+       rebuilt in each pause without the dead ones (their ids are given back).
+     - Where a parent's calls are read (its walk; the top level's places), a thread a position
+       of the parent: its children at their `)`, the table's exits at theirs, each one's next
+       (its exit's `)`, when that is the parent's), and the sums to the chain's last by pointer
+       doubling (`px_ch_*`, `CH` nine stores a scanned token, `TCH` nine a top token; the
+       rounds stop past the nexts' count). A claim's end, the exit it goes on by, its tokens and
+       pieces are reads at its `)`. A chain is placed from its first call's place, written at
+       the chain's last; each call places itself there less its own sums (`px_wk_member`,
+       `px_top_member`). No two chains meet: an exit's call is one list's of each parent.
+     - The pause: each list's exits' last position in its parent, and whether they go past it,
+       by doubling over the lists (`px_gv_xseed`, `px_gv_xjump`).
+     - The test: `a_done_calls_exits_are_given_back_to_their_last` (a done call beside each
+       level's pending one, whose exits chain two deep: 64 tokens a level, 96 if the pause
+       stops at the first exit). Skipping the walks' doubling fails 5 eval tests, the top's 3,
+       the table's rebuild 2.
+   - **`__COUNTER__`'s uses are ranked by a tour and a sort, not compared in pairs.**
+     `px_counter_place` built each use's chain (up to `MAX_CHAIN` lists, four 1,024-word arrays a
+     thread) and compared it with every other use's, and `px_counter_value` counted every use
+     before each one: both quadratic.
+     - Place: the lists are a tree, each under the list it is read in (an argument's under its
+       call, any other under its parent), its siblings in the serial reading's order (the keys
+       the chains compared). A 64-bit sort of the lists by (the list above, that order) gives
+       each one's first child and next sibling, and so the tree's tour (an arc into a list, its
+       children's, an arc out). Its sums from each arc to the end come by pointer doubling over
+       the arcs, twice: each rolled back list counted in and out (a use under one is no use),
+       then the uses under none. A use's rank is the uses from its top call's arc in to its own.
+     - Value: the uses of both passes sorted by their place, then stably by their unit and slot;
+       a use's value is the uses before its run of equals in its unit's (two max scans).
+     - The stores are the round's scan's and the chains' (`SC_*`, `CH`), free once the top's
+       rounds are done; past their room (twice the lists, or twice the uses) the unit is
+       refused for room. A chain past `MAX_CHAIN` lists is no longer refused (`X_DEPTH`).
+     - The test: a use's rank made 0 fails `the_refused_cases_are_the_serial_passes`, the
+       values' 0 fails it and `counters_in_directives_are_the_serial_passes`, and the rolled back
+       ones counted fails the first.
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.
    Done: all 31 eval tests pass under the `second` profile's 1 s on a farm Mac (CPU backend),
    the longest 0.68 s.

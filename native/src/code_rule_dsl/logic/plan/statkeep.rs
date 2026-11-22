@@ -164,7 +164,7 @@ struct Column {
 
 /// One relation's statistics, kept by delta.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct RelStats {
+pub struct RelStats {
     columns: Vec<String>,
     rows: i64,
     /// Patched by rows that are not whole documents (`delta`): the per-document sums no longer hold.
@@ -241,7 +241,7 @@ fn summed(pairs: &mut Vec<(i64, i64)>) {
 
 impl RelStats {
     /// No rows yet, of these columns.
-    pub(in crate::code_rule_dsl) fn new(columns: Vec<String>) -> Self {
+    pub fn new(columns: Vec<String>) -> Self {
         let cols = columns.iter().map(|_| Column { exact: Some(Exact::default()), zero: Some(Exact::default()), ..Column::default() }).collect();
         RelStats { columns, rows: 0, partial: false, cols, shape: None }
     }
@@ -249,7 +249,7 @@ impl RelStats {
     /// The statistics a source answers from its structure (`Source::statistics`: `within`'s, from the tree), with no
     /// row made, kept as they are: of the same documents they stand, and a warm run reads no document for them (Q332).
     /// Not patched by documents' rows (`patchable`): of other documents, they are answered from the structure again.
-    pub(in crate::code_rule_dsl) fn of_structure(columns: Vec<String>, stats: &[(String, i64, i64, i64, i64)]) -> Self {
+    pub fn of_structure(columns: Vec<String>, stats: &[(String, i64, i64, i64, i64)]) -> Self {
         let by_name: std::collections::HashMap<&str, [i64; 4]> = stats.iter().map(|m| (m.0.as_str(), [m.1, m.2, m.3, m.4])).collect();
         let rows = stats.first().map_or(0, |m| m.1);
         let shape = columns.iter().map(|c| by_name.get(c.as_str()).copied().unwrap_or([rows; 4])).collect();
@@ -260,7 +260,7 @@ impl RelStats {
     }
 
     /// Whether documents' rows patch these statistics: not those of a source's structure (`of_structure`).
-    pub(in crate::code_rule_dsl) fn patchable(&self) -> bool {
+    pub fn patchable(&self) -> bool {
         self.shape.is_none()
     }
 
@@ -274,7 +274,7 @@ impl RelStats {
         s
     }
 
-    pub(in crate::code_rule_dsl) fn columns(&self) -> &[String] {
+    pub fn columns(&self) -> &[String] {
         &self.columns
     }
 
@@ -284,13 +284,13 @@ impl RelStats {
         RelStats { columns, ..self.clone() }
     }
 
-    pub(in crate::code_rule_dsl) fn rows(&self) -> i64 {
+    pub fn rows(&self) -> i64 {
         self.rows
     }
 
     /// Whole documents' rows in (`sign` 1) or out (−1): `flat` row-major, `width` values a row (columns past it, in
     /// a row narrower than the relation, are not counted). Every row of each document they name must be in `flat`.
-    pub(in crate::code_rule_dsl) fn documents(&mut self, flat: &[i64], width: usize, sign: i64) {
+    pub fn documents(&mut self, flat: &[i64], width: usize, sign: i64) {
         self.rows_of(flat, width, sign, None, None)
     }
 
@@ -305,7 +305,7 @@ impl RelStats {
     /// Rows in or out, as `documents`, where a row's document is the one its column `at` names (a node,
     /// `key << 32 | index`), or one document for all when `at` is `None`: as the chunks' totals read an export's
     /// rows (its first node column), whose first column may hold a value many documents share.
-    pub(in crate::code_rule_dsl) fn rows_by(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<usize>) {
+    pub fn rows_by(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<usize>) {
         self.rows_of(flat, width, sign, Some(at), None)
     }
 
@@ -319,7 +319,7 @@ impl RelStats {
     /// `documents_read` of a source's rows, each column read by the source's walk (`Source::for_rows`: a view's,
     /// document by document) rather than a row at a time, which a view answers by a rank and a select (Q183): a
     /// base relation counted off the corpus batch, cold (decision 0458).
-    pub(in crate::code_rule_dsl) fn documents_scanned(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, from: &[usize], sign: i64) {
+    pub fn documents_scanned(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, from: &[usize], sign: i64) {
         self.documents_scanned_in(source, from, sign, WINDOW);
     }
 
@@ -567,7 +567,7 @@ impl RelStats {
     }
 
     /// Rows in and out that are not whole documents (a phase export's delta), `plus` then `minus`, each row-major.
-    pub(in crate::code_rule_dsl) fn delta(&mut self, plus: &[i64], minus: &[i64], width: usize) {
+    pub fn delta(&mut self, plus: &[i64], minus: &[i64], width: usize) {
         if width == 0 {
             return;
         }
@@ -667,7 +667,7 @@ impl RelStats {
 
     /// The statistics, as `syntax::measured` gives them. A column not `held` (no rule reads it; it reads as 0) is
     /// stated as a key, as `columns_source`'s own measure states it.
-    pub(in crate::code_rule_dsl) fn statistics(&self, held: &dyn Fn(&str) -> bool) -> Vec<(String, i64, i64, i64, i64)> {
+    pub fn statistics(&self, held: &dyn Fn(&str) -> bool) -> Vec<(String, i64, i64, i64, i64)> {
         let n = self.rows.max(0);
         if let Some(shape) = &self.shape {
             return self.columns.iter().zip(shape).map(|(name, m)| if held(name) { (name.clone(), m[0], m[1], m[2], m[3]) } else { (name.clone(), n, n, n, n) }).collect();
@@ -703,18 +703,18 @@ impl RelStats {
 
     /// Column `c`'s count of each value, while it has few enough to keep them exactly (`EXACT`).
     /// Column `c`'s exact map taken out as (value, count) pairs, to be mapped and put back (`put_exact`).
-    pub(in crate::code_rule_dsl) fn take_exact(&mut self, c: usize) -> Option<Vec<(i64, i64)>> {
+    pub fn take_exact(&mut self, c: usize) -> Option<Vec<(i64, i64)>> {
         self.cols.get_mut(c)?.exact.take().map(|e| e.iter().collect())
     }
 
     /// Column `c`'s exact map from (value, count) pairs.
-    pub(in crate::code_rule_dsl) fn put_exact(&mut self, c: usize, pairs: Vec<(i64, i64)>) {
+    pub fn put_exact(&mut self, c: usize, pairs: Vec<(i64, i64)>) {
         if let Some(col) = self.cols.get_mut(c) {
             col.exact = Some(pairs.into_iter().collect());
         }
     }
 
-    pub(in crate::code_rule_dsl) fn exact(&self, c: usize) -> Option<impl Iterator<Item = (i64, i64)> + '_> {
+    pub fn exact(&self, c: usize) -> Option<impl Iterator<Item = (i64, i64)> + '_> {
         self.cols.get(c)?.exact.as_ref().map(Exact::iter)
     }
 
@@ -725,7 +725,7 @@ impl RelStats {
 
     /// As stored in the wave's blob (0096 §2): a format byte, the columns, the rows, then per column its sums, its
     /// exact map (or none) and its sketch. Integers little-endian.
-    pub(in crate::code_rule_dsl) fn encode(&self, out: &mut Vec<u8>) {
+    pub fn encode(&self, out: &mut Vec<u8>) {
         let int = |out: &mut Vec<u8>, v: i64| out.extend_from_slice(&v.to_le_bytes());
         let exact = |out: &mut Vec<u8>, e: Option<&Exact>| match e {
             None => int(out, -1),
@@ -779,7 +779,7 @@ impl RelStats {
     }
 
     /// `encode`'s statistics back from `bytes` at `*at`, which moves past them; `None` if they are not.
-    pub(in crate::code_rule_dsl) fn decode(bytes: &[u8], at: &mut usize) -> Option<RelStats> {
+    pub fn decode(bytes: &[u8], at: &mut usize) -> Option<RelStats> {
         fn take<'a>(bytes: &'a [u8], at: &mut usize, n: usize) -> Option<&'a [u8]> {
             let b = bytes.get(*at..*at + n)?;
             *at += n;

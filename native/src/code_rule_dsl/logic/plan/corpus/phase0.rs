@@ -18,8 +18,7 @@
 //! they were a check of their `stat`s; within a process, the graph is kept while every module and every absent
 //! candidate is as it was.
 
-#[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use super::{Error as PlanError, Result};
 use crate::code_rule_dsl::logic::front::Error;
 use std::collections::{BTreeMap, HashMap};

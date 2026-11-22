@@ -62,9 +62,9 @@ pub fn run(p: &Placed, db: &Connection, mut inputs: Inputs, lowered: Option<lowe
         // Its rows where they lie in its block, digested there and lent to the keep (`SourceRows`).
         let got=component::kept_source(db,root).zip(provenance.remove(root).flatten())
             .map(|((types,source),reads)|{
-                let digest=crate::code_rule_dsl::logic::plan::corpus::retain::digest(source.as_ref(),&crate::code_rule_dsl::logic::plan::Cells::new(&crate::content_store::atoms::Atoms::for_connection(db),&crate::code_rule_dsl::logic::plan::stored_types(f,root,types.clone())));
+                let digest=crate::code_rule_dsl::logic::plan::digest(source.as_ref(),&crate::code_rule_dsl::logic::plan::Cells::new(&crate::content_store::atoms::Atoms::for_connection(db),&crate::code_rule_dsl::logic::plan::stored_types(f,root,types.clone())));
                 let n=source.len();
-                (digest,types,Box::new(crate::code_rule_dsl::logic::plan::corpus::retain::SourceRows{source}) as Box<dyn crate::content_store::kept_facts::KeptPicked>,n,reads)
+                (digest,types,Box::new(crate::code_rule_dsl::logic::plan::SourceRows{source}) as Box<dyn crate::content_store::kept_facts::KeptPicked>,n,reads)
             });
         ks.ran(root,got);
     }

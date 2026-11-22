@@ -9,7 +9,7 @@
         s.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r).to_owned()).collect()).collect()
     }
     /// An entry of one integer row.
-    fn one(rel: &KeptRel, digest: u64, reads: Vec<(String, u64)>, v: i64) -> KeptPut { flat_put(rel, digest, reads, vec![b'i'], vec![v], 1) }
+    fn one(rel: &KeptRel, digest: u64, reads: Vec<(String, u64)>, v: i64) -> KeptPut { flat_put(rel, digest, reads, vec![b'i'], Box::new(crate::content_store::kept_facts::BlockFlat::of_rows(&[v], 1, true))) }
     fn gone(rel: &KeptRel) -> KeptPut { KeptPut { rel: rel.name.clone(), ident: rel.ident, part: 0, digest: 0, reads: vec![], types: vec![], what: KeptWhat::Gone } }
 
     #[test]

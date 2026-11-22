@@ -19,6 +19,7 @@
 //! relation's rows are read back only when a stratum that runs reads it, or the run's end keeps it (an output): on
 //! the pack, 68 k rows of 695 relations, against 3.0 M rows derived. A run writes the relations whose rows changed.
 
+use rerail_store::Canonical as _;
 use crate::code_rule_dsl::logic::native::component::LIVE_BATCH;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::plan::KeptStrata;
@@ -49,7 +50,7 @@ pub(in crate::code_rule_dsl) fn space(root: &Path) -> [u8; 32] {
 /// The fact space of a part of the run over `root` (`cross`, `cone`: the cone of requests answered in the fixpoint).
 pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] {
     let root = crate::git_workspace::snapshot::fact_root(root)
-        .or_else(|| dunce::canonicalize(root).ok()).unwrap_or_else(|| root.to_path_buf());
+        .or_else(|| root.canonical().ok()).unwrap_or_else(|| root.to_path_buf());
     let mut h = Sha256::new();
     h.update(format!("rerail.space/v1\0{part}\0").as_bytes());
     h.update(root.to_string_lossy().as_bytes());

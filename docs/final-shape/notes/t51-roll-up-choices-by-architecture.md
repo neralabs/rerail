@@ -313,6 +313,63 @@ is the divergence the user asks to keep small.
   every platform. Run it on a Windows host too.
 - The next main merge's conflicts in these files are the measure: there should be none past ours' bodies.
 
+**Done** (the main thread: e7dc15faf5; the decompositions: this item's commit).
+
+- The main thread. `rerail_context::MainThread`, the machine's `OnceLock<ThreadId>`, is set in `Machine::here`.
+  `is_main_thread` is true on the run's machine's main thread on every platform. libc's `pthread_main_np` and
+  `gettid` are gone, and so is the crate's libc dependency. `the_machines_main_thread_sleeps_on_its_bell` passed on
+  Linux and on win1, and rerail-accel passed 88 of 88.
+- `block_program.rs`. `run_batch` is main's sequence: `check_supported`, `BatchForms::new`, the slabs, then
+  `FileTable::new` and `dispatch`. `dispatch` calls `BatchBlocks::new` (`lanes_and_states`, `sinks_and_tickets`),
+  `executor_pipeline` (`interpreter_blocks`, `InterpreterTables::new`, `program_row`, `push_steps`,
+  `push_outputs`), `bindings`, `launch_until_done` and `read_back`. `fit` and `FileRow::fitted` are main's too.
+  Ours' bodies are kept:
+  - `check_supported` is `missing_form` and `ready()`, not `METAL_DEVICE`;
+  - the kernel is UKL, `lane::kernel` / `lane::kernel_fixed`;
+  - `bindings` binds by name (`Pass::buffers`), not by index;
+  - the repeated-launch count is the run's (`with_local::<RepeatedLaunches>`).
+
+  `BatchBlocks` declares its blocks in reverse lease order, so they go back to the pool in the order the old locals
+  did. Main's `bytes_of`, `command_error`, `objc_msg`, `sel_register` and `batch_helpers` are Metal's Objective-C
+  calls, which UKL replaced (0440). They stay gone.
+- `runtime.rs`. `BufferReservation::acquire` calls `reserve` and `trace_large`, as main's does. `reserve` keeps
+  ours' one account (Q203): the bytes bound to admissions (`bound_bytes`), and a draw from this thread's admission
+  (`draw_reserved`). Main's counts the leases alone.
+
+  `count_driver_refusal` is main's profile of a driver refusal: `capacity.metal_pool_driver`, the driver's,
+  pool's and accelerator's MB at the refusal. Ours had lost it. It is back at ours' one refusal site,
+  `HostMapped::over`. Main's two call sites were `MappedBuffer`'s, which ours removed.
+
+  Main's other names here are `MappedBuffer`, the private uploads, Metal pipelines and `metal_execution_guard`.
+  Ours replaced them with `HostMapped`, the pool's blocks, the kernel store (0395) and `evaluation_scope`, and they
+  stay gone.
+- `metal_program_backend.rs`. Ours' body is in `execute_packed_once`, run by 0334's `restarting`. It is split under
+  main's names:
+  - `pack_batch`, `print_batch_error`, `assign_batch_workspace`, `lease_workspace`, `execute_on_device`;
+  - `upload_batch`, `resident_doc_table`, `upload_documents`, `copy_scheduler_state`, `print_workspace_profile`;
+  - `dispatch_batch`, `collect_results`, and `MetalWorkspace::count_buffer_sizes`.
+
+  Ours' differences are kept:
+  - `assign_batch_workspace` takes the lanes;
+  - `lease_workspace` holds 0334 §9's halving of the lanes on a refused workspace, which main does not have;
+  - `resident_doc_table` is `DocTable::new` (the slabs and the 16z cache), not main's `one_block`;
+  - `dispatch_batch` is a `lane::Command` that binds by name and uses the other slabs and the cache.
+
+  Main's `device_and_queue`, `pipeline` and `untouched_path_buffers` / `untouched_result_buffers` /
+  `untouched_results` have no counterpart: ours has no queue (`lane::device`) and zeroes `HostMapped` blocks.
+- Fixed on the way: under test builds, `DeviceState`'s `pool` and `peak` were dead on macOS, because a test's
+  ledgers are `test_pool`'s. They now carry their readers' cfg. The relocation tests' `FAR_*` constants are now
+  `#[cfg(test)]`, as their only reader is.
+- Tests (the M3, `RERAIL_GPU=cpu RERAIL_DEVICE=cpu`, no Metal):
+  - clippy over rerail-metal, rerail-engine and rerail-compiler, all targets, is clean;
+  - rerail-metal: 25 of 25;
+  - the engine's packed and block-program tests: 182 of 182;
+  - `extract_equals_reference_on_every_executor` and `lookback_fallback_equals_reference` (`run_batch`, both
+    executors, against the reference): 2 of 2.
+- `a_run_on_two_threads_ends` takes 20 s, against about 1 s on main. The time is the library's cold phase 0 under
+  `RERAIL_TAPE_CACHE=off`: 2.45 s with a warm store. Starting from the template copy still took 16 s, so that is
+  not the cause.
+
 ## 7. Roll-up 34: the radix sort's rank groups and virtual threads
 
 These are two axes, not two mechanisms:
@@ -379,6 +436,57 @@ guests when the batch is built.
 - 0512's tests (a file shown as a file, its tree a guest).
 - The partial-hit tests.
 - `a_warm_edit_makes_the_changed_documents_rows_alone` over a corpus with a `.rerail` host file.
+
+**Done.** The tests showed the two paths had made different documents, not only made them at different times. Three
+faults, all fixed:
+
+1. **The cold corpus batch held host files unsplit.** A chunk split a host file into text and tree for its own
+   projection. It handed the corpus batch `kept_docs`, a clone taken before that split, plus the programs, whose host
+   is the tree's key. So the batch held each file under its own key with the tree's nodes, and no host for its
+   programs. The split now happens once, where `Builder::take` files a document into its chunk (`Builder::split`). The
+   chunk, its projection and the corpus batch hold the same text and tree, and the projection's second split is gone.
+   Visible in the rows: a fresh run reported a script's call at the script's line (`foo` at 1), not the file's (3).
+   0512 says the file's.
+2. **A warm run made no host file's programs.** Theirs' `hit_document` and ours' `doc_of` both made the text and
+   tree. Nothing made the programs, so a warm run's rows lost every call in a host file. This failed on HEAD too.
+   `hit_document` now makes a host file's whole set: the text, the tree, and the tree's programs (`Guests::programs`,
+   seeing what the chunk sees). It is the one maker for the eager hits, the pending hits and an edit's old documents.
+   `doc_of` is one call of it, and its host branch is gone.
+3. **A host file was never pending.** It is now pending as its text, its tree and its programs, each its own
+   `syntax::Pending`, all made by one shared make on the first read of any. The batch knows each guest's host, file
+   and kind before any is made. `GuestOf`, what the batch reads of a guest, is a made one's `Guest` or a pending one's
+   `Hosted` (`Pending::with_guest`). Its place is read only from the made document.
+
+   Those three come from the documents' table, not the memo entry, which this item's plan named. The table already
+   keeps every document's digest and size by key. Its row now keeps, for a host file's guest, the host, the file,
+   whether it is the tree, and its tape tag (`retain::KeptGuest`, the content word 3). A table without them (an older
+   store) leaves the host file eager.
+
+Fixed on the way: `Batch::ensure` found the documents a read needs under one lock and claimed them under a second. Two
+reads side by side could both find a document unclaimed, and the second made it again and set its group aside.
+`reads_side_by_side_make_each_document_once` failed 13 times in 30. It now claims under the lock it found them
+under, and passes 30 of 30.
+
+Tests (spark2, `RERAIL_GPU=cpu`):
+
+- New: `a_warm_run_builds_no_unchanged_host_files_documents`. A JavaScript run over three HTML hosts and a script: the
+  warm run builds and parses none, and its rows are a fresh run's, at the files' lines.
+- New: `a_warm_edit_of_a_host_file_reads_as_a_cold_run`. The edit's rows are a fresh run's, the edit's call at its
+  file's line.
+- The warm tier: 18 of 18.
+- 0512's, the guests' and the partial hits' tests: 50 of 50.
+- `plan::corpus`, `vtab::syntax` and `rr::tests`: 422 of 422.
+- Clippy over the engine is clean.
+
+Found, then fixed: the warm edit of a host file made every document of the run's batch, 10 of 10, to plan with the
+statistics of `kind`, a view of `node` held in place (`InPlaceView`). `view_stats_held` takes `kind`'s values from
+the tree's kind counts and needs them to sum to `node`'s rows. `node`'s rows are exact, kept and patched by the edit
+(0458). The kind counts were `Own`'s, a sample of a chunk scaled up, then each document's share of it scaled by its
+nodes and rounded into its memo entry. The shares summed to 67 nodes and 11 documents where the batch has 71 and 10.
+The cross part's kind counts are now `node`'s kind column's own value counts (`Stats::kinds_counted`), had with
+`node`'s statistics, so the two agree by construction. `Own` keeps what only it measures: subtree sizes, edges and
+fields. `a_warm_edit_of_a_host_file_reads_as_a_cold_run` now checks it: no document built from its tape, and the
+changed file's three documents (its text, its tree, its script's) the only ones made.
 
 **The identity file** (`repository-identity.ts`) is theirs' whole now (0497: "a bare repository is a folder"). Ours
 had no decision against it, and theirs' tests are the catalog's. Its one call of `runGit(..., { output: "bytes" })`

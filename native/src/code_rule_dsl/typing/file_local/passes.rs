@@ -16,6 +16,8 @@ mod requests;
 pub use factorize::{FactorCaches, FactorizeExports, factorize_intermediates};
 pub use requests::RequestsFileLocal;
 pub use push::PushLocalJoins;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use push::Readers;
 
 /// A term of `v`'s rule as a builder's term: a variable by the atom naming it (a derivation's ids are its input's).
 pub(super) fn t_of<'a>(v: &'a Version, rule: RuleRef<'a>, t: TermRef<'a>) -> T<'a> {

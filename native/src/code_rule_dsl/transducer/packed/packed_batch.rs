@@ -2020,7 +2020,7 @@ impl PackedExecution {
         self.program_count
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
     pub fn host_arena_counts(&self) -> [usize; 4] {
         self.pages.iter().fold([0; 4], |mut counts, page| {
             for (count, length) in counts.iter_mut().zip([
@@ -2035,7 +2035,7 @@ impl PackedExecution {
         })
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
     pub fn physical_file_count(&self) -> usize {
         self.batch.files.len()
     }

@@ -1,5 +1,6 @@
 //! Explicit Git requests in the corpus fixpoint. The handle belongs to this run.
 
+use rerail_store::Canonical as _;
 use super::front::Value;
 use crate::code_rule_dsl::logic::program_image::{Version, fields::ProgramFields};
 use crate::git_workspace::snapshot::{self, RawTreeEntry, storage};
@@ -11,16 +12,9 @@ pub(super) const REPO_REVISION: &str = "git_revision_request";
 pub(super) const OBJECT: &str = "git_object_request";
 pub(super) const INVENTORY_CHILD: &str = "git_inventory_child_request";
 
-const ROOT: &str = "git_root_repo";
-const VIEW: &str = "git_root_view";
-const REPOSITORY: &str = "git_repository";
-const LOCATION: &str = "git_location_of";
-const TREE: &str = "git_source_tree";
-const COMMIT: &str = "git_source_commit";
-const SELECTION: &str = "git_inventory_selection";
-const SOURCE_BLOB: &str = "git_selected_source_blob";
-pub(super) const SELECTED_DIRECTORY: &str = "git_selected_directory";
-pub(super) const INPUTS: [&str; 9] = [ROOT, VIEW, REPOSITORY, LOCATION, TREE, COMMIT, SELECTION, SOURCE_BLOB, SELECTED_DIRECTORY];
+// The inputs' names are the planner's (`plan::phased`), which typing reads.
+use crate::code_rule_dsl::logic::plan::phased::git::{COMMIT, LOCATION, REPOSITORY, ROOT, SELECTION, SOURCE_BLOB, TREE, VIEW};
+pub(super) use crate::code_rule_dsl::logic::plan::phased::git::{INPUTS, SELECTED_DIRECTORY};
 
 #[derive(Default)]
 pub(super) struct Git {
@@ -266,7 +260,7 @@ fn location_rows(repo: &gix::Repository) -> Vec<(&'static str, &'static str, Str
     let paths = std::iter::once(("common-dir", repo.common_dir()))
         .chain(repo.workdir().map(|path| ("worktree", path)));
     paths.map(|(role, path)| {
-        let (encoding, value) = match path.canonicalize() {
+        let (encoding, value) = match path.canonical() {
             Ok(path) => location_value(&path),
             Err(error) => ("error", error.to_string()),
         };

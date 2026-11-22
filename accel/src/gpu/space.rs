@@ -77,6 +77,10 @@ impl Space {
     /// The kept entry of `id`, if its row count is `rows`; an error when the id names other rows.
     fn get(&mut self, id: u64, by: JoinBy, rows: usize) -> Result<Option<Entry>, String> {
         let batch = self.batch;
+        // A sort whose submission the device failed is partly written: forgotten, made again.
+        if self.kept.get(&(id, by)).is_some_and(|k| matches!(&k.entry, Entry::Sorted(s) if s.failed())) {
+            self.forget_one(id, by);
+        }
         match self.kept.get_mut(&(id, by)) {
             Some(k) if k.rows != rows => Err(format!("join: id {id} was kept with {} rows, now names {rows}", k.rows)),
             Some(k) => {
@@ -310,7 +314,11 @@ impl Started {
 
     fn finish_on_set(self) -> Result<Vec<Output>, String> {
         let Started { command, held, committed, reads, tables, arena, jobs, .. } = self;
-        command.wait();
+        // A submission the device failed wrote its pairs in part: none is read (the stratum runs on the CPU), and the
+        // sorts it made are forgotten where they are kept (`Space::get`).
+        if !command.wait_ok().1 {
+            return Err("a submission the device failed: its joins' pairs".into());
+        }
         // How long the host filled the staged columns after the commit: the delay the early commit hid.
         for g in &held {
             if let Some(at) = g.opened_at() {

@@ -24,6 +24,8 @@ pub mod width;
 pub use setfix::Derivations;
 pub use setfix::{forget_engine, forget_scope};
 pub mod aggregation;
+/// The native lattices' algebra as SQL functions, for the SQL lattice folds.
+pub mod lattices;
 /// `dfs_first` and `dfs_first_memo` (`core.rerail`): a relation the evaluator makes from its inputs' rows.
 pub mod dfs_first;
 /// `components` (`core.rerail`, decision 0063): each document's import component and its Merkle key.
@@ -179,7 +181,7 @@ pub fn declare(name: &str, lattice: Arc<dyn Lattice>) {
 }
 
 /// The lattice named `name`: a built-in (`flat`, `max`, `min`), else one the run under way declared.
-pub(in crate::code_rule_dsl) fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
+pub fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
     let built_in: Option<Arc<dyn Lattice>> = match name {
         "flat" => Some(Arc::new(Flat)),
         "max" => Some(Arc::new(Max)),

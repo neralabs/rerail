@@ -83,8 +83,8 @@ mod cut_tests;
 mod key_tests;
 #[cfg(test)]
 mod index_order_tests;
-#[cfg(test)]
-mod bounded_tests;
+// `bounded_tests` reads the language (`rr::parse_version`), and `retain_tests` the planner's retention: `rerail-logic`'s
+// facade of this module mounts them.
 #[cfg(test)]
 mod view_tests;
 #[cfg(test)]
@@ -279,11 +279,55 @@ pub struct OnConn {
     changing: parking_lot::Mutex<Option<std::collections::BTreeSet<String>>>,
     /// The given versions of a run's changed reads (`give_versions`), by table: `Old`, `Minus`, `Plus`, `New`.
     given: parking_lot::Mutex<HashMap<String, [Arc<InRel>; 4]>>,
+    /// Told to the machine's `Held` (heap sampling on): the profile reads its relations at the footprint's peak.
+    noted: std::sync::atomic::AtomicBool,
+    /// The histograms `step_histograms` counted off its runs' input relations, by the relation's id, the step's
+    /// constants, the columns and the sample's cap: an input's rows do not change while it lives, and a rule split
+    /// by constants into many lines (one per pair of kinds) asks the same of each.
+    histograms: parking_lot::Mutex<HashMap<(u64, Vec<(usize, i64)>, Vec<usize>, usize), Histogram>>,
 }
 
 /// What the evaluator keeps for `conn` (`OnConn`).
 fn on(conn: impl Scoped) -> Arc<OnConn> {
-    conn.db().data().get::<OnConn>()
+    let on = conn.db().data().get::<OnConn>();
+    if rerail_prof::heap::on() && !on.noted.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        let held = crate::code_rule_dsl::logic::profile::machine::<Held>();
+        let mut h = held.0.lock();
+        h.retain(|w| w.strong_count() > 0);
+        h.push(Arc::downgrade(&on));
+        let _ = crate::code_rule_dsl::logic::profile::machine::<crate::code_rule_dsl::logic::profile::memory::RelationsByName>().0.set(held_by_name);
+    }
+    on
+}
+
+/// The connections' evaluator state, while each lives (heap sampling on): what `held_by_name` reads.
+#[derive(Default)]
+struct Held(parking_lot::Mutex<Vec<std::sync::Weak<OnConn>>>);
+
+/// The runs' relations held now, by name: their rows, columns, values' bytes (allocated), and the runs holding one
+/// of that name; most bytes first. A run's derived relations, and its loaded inputs as `input: <spec>`.
+pub fn held_by_name() -> Vec<(String, usize, usize, usize, usize)> {
+    let held = crate::code_rule_dsl::logic::profile::machine::<Held>();
+    let conns: Vec<Arc<OnConn>> = held.0.lock().iter().filter_map(std::sync::Weak::upgrade).collect();
+    let mut by: HashMap<String, (usize, usize, usize, usize)> = HashMap::default();
+    let mut add = |name: String, r: &InRel| {
+        let e = by.entry(name).or_default();
+        e.0 += r.len();
+        e.1 = r.k;
+        e.2 += r.held_bytes().0;
+        e.3 += 1;
+    };
+    for c in &conns {
+        for (name, r) in c.derived.lock().iter() {
+            add(name.clone(), r);
+        }
+        for (key, r) in c.inputs.lock().iter() {
+            add(format!("input: {}", key.sql.chars().take(80).collect::<String>()), r);
+        }
+    }
+    let mut out: Vec<(String, usize, usize, usize, usize)> = by.into_iter().map(|(n, (rows, k, b, runs))| (n, rows, k, b, runs)).collect();
+    out.sort_by_key(|o| std::cmp::Reverse(o.3));
+    out
 }
 fn symbols_by_path(conn: impl Scoped) -> Result<Arc<Symbols>> {
     let conn = conn.db();
@@ -413,7 +457,7 @@ pub mod probed {
     #[derive(Default)]
     struct Probes(std::sync::Mutex<HashMap<(String, Vec<usize>), u64>>);
     #[inline]
-    pub(crate) fn on() -> bool {
+    pub fn on() -> bool {
         rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_INDEX_REPORT").is_some())
     }
     #[inline]
@@ -429,7 +473,7 @@ pub mod probed {
         crate::code_rule_dsl::logic::run::with_local(|p: &Probes| *p.0.lock().unwrap_or_else(|e| e.into_inner()).entry((rel.to_owned(), cols)).or_insert(0) += 1);
     }
     /// The probes since the last `take`.
-    pub(crate) fn take() -> HashMap<(String, Vec<usize>), u64> {
+    pub fn take() -> HashMap<(String, Vec<usize>), u64> {
         crate::code_rule_dsl::logic::run::local_if_any::<Probes>().map(|p| std::mem::take(&mut *p.0.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default()
     }
 }
@@ -595,7 +639,7 @@ enum Origin {
     Compacted { at: usize, old_n: usize, kept: usize, removed: Vec<i64> },
 }
 impl Rel {
-    fn new(table: &str, types: &[u8]) -> Rel {
+    pub fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         assert!(k <= MAX_KEY, "{table}: {k} columns, past the {MAX_KEY} an order is probed with");
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::new(k), stored: 0, lo: 0, hi: 0, wave: 0,
@@ -708,7 +752,7 @@ impl Rel {
     /// spec says `KeptOld` (the default, decision 0122 §2) stamps them no wave's. `None` when `old` has no orders to start from,
     /// or when too many of its rows would be dead (then it is made from its rows, compacted). No `gone`: all of
     /// `old`'s rows.
-    fn based(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Option<Rel> {
+    pub fn based(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Option<Rel> {
         let none = InRel::empty(old.k);
         let gone = gone.unwrap_or(&none);
         let k = old.k;
@@ -938,7 +982,7 @@ impl Rel {
         }
     }
     /// Adds a row (of the next wave, its delta) unless it is there.
-    fn push(&mut self, row: &[i64]) -> bool {
+    pub fn push(&mut self, row: &[i64]) -> bool {
         let from = self.n;
         let new = self.push_row(row);
         if new && !self.keyed.is_empty() {
@@ -1989,6 +2033,33 @@ struct Spent { work: u64, left: Option<Option<Rows0>>, done: u64, led: bool }
 /// did under it, handed back.
 struct Limited { limit: Option<Limit>, spent: Option<Spent> }
 
+impl Limited {
+    /// Decision 0206: probe `p`'s limit for a run of its join `j`: its budget, and where the run goes on from a cut,
+    /// the rows the cut left (`left`, with the step it named), read at the step of `j` that reads them now
+    /// (`restricted`). `None` where neither holds.
+    fn of(p: &ProbeRule, j: &JoinRule, left: Option<(Option<usize>, Rows0)>) -> Option<Limited> {
+        let only = left.and_then(|(named, l)| match restricted(j, l.of, named) {
+            Some(i) => { run_counts().cuts[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed); Some((i, l)) }
+            // At a step no longer known: the run reads all its rows.
+            None => { run_counts().cuts[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed); None }
+        });
+        let budget = p.budget.get();
+        (budget.is_some() || only.is_some()).then(|| Limited { limit: Some(Limit { budget: budget.unwrap_or(u64::MAX), only }), spent: None })
+    }
+
+    /// After probe `pi`'s run under `limited` (`of`): its budget less the work it spent, and where it spent it all,
+    /// its cut: the rows of its first step it left, and the cut's report (`left` is filled in by the caller).
+    fn cut(limited: Option<Limited>, p: &ProbeRule, pi: usize, whole: bool) -> Option<(Option<Rows0>, CutReport)> {
+        let b = p.budget.get()?;
+        let spent = limited?.spent?;
+        p.budget.set(Some(b.saturating_sub(spent.work)));
+        let left = spent.left?;
+        p.budget.set(None);
+        run_counts().cuts[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some((left, CutReport { probe: pi, work: spent.work, done: spent.done, left: 0, led: spent.led, whole }))
+    }
+}
+
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
 struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
 
@@ -2509,17 +2580,41 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         closure_ran = Some(closure::finish(&cl, prep, outs, &mut guard));
         drop(guard);
         comp.closure = Some(cl);
-    } else if !seeded && comp.cut.is_none() && let Some(cl) = comp.closure.take() {
+    } else if !seeded && let Some(cl) = comp.closure.take() {
+        // Its seeds first, each under its budget as any seed is (decision 0206): one that spends it is cut, and the
+        // run returns `5`; the next goes on from the rows it left, then runs the closure. Run unlimited, a seed that
+        // read 41 M rows a stratum (corpus0's `open_tuple`, 2026-11-21) was never checked against its price.
+        let resume = comp.cut.take();
+        let start = resume.as_ref().map_or(0, |c| c.next);
+        let mut resume_left = resume.as_ref().and_then(|c| c.left.clone().map(|l| (c.step, l)));
+        let mut fresh: Vec<Fresh> = match resume { Some(c) => c.fresh, None => vec![Fresh::default(); nrels] };
         let mut guard = comp.store.write().unwrap();
         let store = &mut *guard;
         let syms = &mut cursor;
-        let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
+        let mut cut_at: Option<(usize, Option<Rows0>, CutReport)> = None;
         for (pi, p) in comp.probes.iter().enumerate() {
             let (Body::Join(j), SEED) = (&p.body, p.delta) else { continue };
+            if pi < start { continue; }
             runs += 1;
-            let n = run_seed(j, p.head, store, syms, &mut fresh, None)?;
+            let mut limited = Limited::of(p, j, if pi == start { resume_left.take() } else { None });
+            let n = run_seed(j, p.head, store, syms, &mut fresh, limited.as_mut())?;
             visits += n;
             per[pi].1 += n;
+            if let Some((left, report)) = Limited::cut(limited, p, pi, false) {
+                cut_at = Some((pi, left, report));
+                break;
+            }
+        }
+        if let Some((next, left, mut report)) = cut_at {
+            report.left = left.as_ref().map_or(0, |l| l.n);
+            drop(guard);
+            comp.cut = Some(Cut { fresh, next, left, step: Some(0), on_device: false, whole: false });
+            comp.last_cut = Some(report);
+            comp.trial_rows = None;
+            comp.closure = Some(cl);
+            let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
+            let ms = t0.elapsed().as_secs_f64() * 1e3;
+            return Ok(format!("0 0 {visits} {runs} {skips} {ms:.1} {ms:.1} {} 5", per.join(",")));
         }
         // The seeds' rows, into their relation (the walk's; a reader has none, decision 0561).
         for (r, f) in fresh.iter().enumerate() {
@@ -2786,13 +2881,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             let c0 = cpu_now();
             // Decision 0206: a probe's budget (a seed's, a delta probe's or its whole plan's, O168), and the rows it
             // has left after a cut.
-            let budget = p.budget.get();
-            let only = if pi == start { resume_left.take().and_then(|(named, l)| match restricted(j, l.of, named) {
-                Some(i) => { run_counts().cuts[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed); Some((i, l)) }
-                // At a step no longer known: the run reads all its rows.
-                None => { run_counts().cuts[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed); None }
-            }) } else { None };
-            let mut limited = (budget.is_some() || only.is_some()).then(|| Limited { limit: Some(Limit { budget: budget.unwrap_or(u64::MAX), only }), spent: None });
+            let mut limited = Limited::of(p, j, if pi == start { resume_left.take() } else { None });
             let ran = if p.delta == SEED { run_seed(j, p.head, store, syms, &mut fresh, limited.as_mut()) } else { run_join_limited(j, p.head, store, syms, &mut fresh, limited.as_mut()) };
             // Decision 0462: a head at the width cap. Cut, the probe keeps what it made and derives no more; else the
             // run stops, its error naming the relation and the probe (the driver adds its rule).
@@ -2806,13 +2895,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 }
                 Err(e) => return Err(e),
             };
-            if let Some(b) = budget && let Some(spent) = limited.and_then(|l| l.spent) {
-                p.budget.set(Some(b.saturating_sub(spent.work)));
-                if let Some(left) = spent.left {
-                    p.budget.set(None);
-                    run_counts().cuts[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    cut_at = Some((pi, left, CutReport { probe: pi, work: spent.work, done: spent.done, left: 0, led: spent.led, whole }));
-                }
+            if let Some((left, report)) = Limited::cut(limited, p, pi, whole) {
+                cut_at = Some((pi, left, report));
             }
             visits += n;
             per[pi].0 += tp.elapsed().as_secs_f64();
@@ -2949,7 +3033,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         if planning_counts.iter().any(|(r, before)| {
             let rel = &store.rels[*r];
             std::iter::once(rel.n).chain(rel.sketches.iter().map(Sketch::ndv)).zip(before)
-                .any(|(now,then)| (*then == 0 && now > 0) || now as f64 > (*then).max(1) as f64 * crate::code_rule_dsl::logic::plan::PRICE_DRIFT)
+                .any(|(now,then)| (*then == 0 && now > 0) || now as f64 > (*then).max(1) as f64 * crate::code_rule_dsl::logic::costs::PRICE_DRIFT)
         }) {
             if wave_trace { eprintln!("      {name}: return for planning after {waves} waves; delta statistics grew"); }
             break;
@@ -3342,6 +3426,7 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
         (false, _) => None,
     });
     let Some(j) = j else { return Ok(vec![None; wanted.len()]) };
+    let on = on(conn);
     Ok(wanted.iter().map(|(at, cols)| {
         // `at` is the plan's step: the atom is the step made first for it.
         let Some(Step::Atom { src, neg: false, keys, .. }) = j.step_of(*at).and_then(|s| j.steps.get(s)) else { return None };
@@ -3370,7 +3455,20 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
             // `within`'s chains on 3,089 files, 2.6 GB, for one histogram). Their counts are the structure's, not a
             // histogram's: no histogram, as for a step that is not a positive atom.
             Src::In(rel, _) if rel.view.as_ref().is_some_and(|v| v.src.made_on_lookup()) => return None,
-            Src::In(rel, _) => count(rel.len(), &|i, c| (!is_dead(&rel.dead, i)).then(|| rel.at(i as usize).read().at(c))),
+            Src::In(rel, _) => {
+                // Counted once per input, constants and columns (`OnConn::histograms`).
+                let key = (rel.uid.0, consts.clone(), cols.clone(), cap);
+                if let Some(h) = on.histograms.lock().get(&key) {
+                    return Some(h.clone());
+                }
+                let stride = count(rel.len(), &|i, c| (!is_dead(&rel.dead, i)).then(|| rel.at(i as usize).read().at(c)));
+                if stride > 1 {
+                    counts.values_mut().for_each(|n| *n *= stride);
+                }
+                let h = (passed * stride, counts);
+                on.histograms.lock().insert(key, h.clone());
+                return Some(h);
+            }
         };
         if stride > 1 {
             counts.values_mut().for_each(|n| *n *= stride);
@@ -4064,6 +4162,14 @@ impl View {
     pub fn whole(&self) -> bool {
         self.ids.is_none()
     }
+    /// Whether constants chose its rows (a statement's `WHERE c = v`), not a version's or a pick's ids.
+    pub fn by_constants(&self) -> bool {
+        !self.eqs.is_empty()
+    }
+    /// The constants that chose its rows: each a source's column and its value.
+    pub fn eqs(&self) -> &[(usize, i64)] {
+        &self.eqs
+    }
     /// The source's column that view column `c` reads.
     pub fn column(&self, c: usize) -> usize {
         self.cols[c]
@@ -4401,7 +4507,9 @@ pub fn forget_inputs_of(conn: &Connection, tables: &[String]) {
 
 /// Drops every native relation of `conn`'s runs: a chunk's, once its exports are written to the cross-file part.
 pub fn forget_derived(conn: &Connection) {
-    on(conn).derived.lock().clear();
+    let on = on(conn);
+    on.derived.lock().clear();
+    on.histograms.lock().clear();
 }
 
 /// A native relation of `conn`'s run, for a caller that keeps it past the run with the indexes it has (a session's
@@ -4499,7 +4607,7 @@ pub fn finding_rows(conn: &Connection) -> Result<Option<Vec<(String, String, i64
 /// with the indexes it has (`r:` sources), not copied into a source and indexed again. The run's planner takes the
 /// names (`adopted`).
 pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
-    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
+    crate::code_rule_dsl::logic::run::shape::held(table);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
     let on = on(conn);
@@ -4517,7 +4625,7 @@ pub fn hold_as(conn: impl Scoped, table: &str, rel: Arc<InRel>) {
 /// Holds `table` in `conn`'s run as `rel`, its kept relation, for a component that maintains it from its deltas: the
 /// rows an earlier snapshot left, which the profile does not count as this run's (the component's close does).
 pub fn hold_maintained(conn: impl Scoped, table: &str, rel: Arc<InRel>) {
-    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
+    crate::code_rule_dsl::logic::run::shape::held(table);
     let conn = conn.db();
     forgotten_on_close();
     on(conn).derived.lock().insert(table.to_owned(), rel);
@@ -4544,7 +4652,7 @@ pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vec<i64>>, types: Ve
 /// `Source::sorted_rows`, a field by child off the tape), else an index of its rows in its block. The caller gives
 /// its statistics (`plan`'s `hold_view_in_place`: its base's, or counted when first planned with).
 pub fn hold_view_in_place(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, types: Vec<u8>) {
-    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
+    crate::code_rule_dsl::logic::run::shape::held(table);
     let conn = conn.db();
     let rel = InRel::viewed(src, cols, types);
     let _ = rel.name.set(table.to_owned());
@@ -4615,7 +4723,7 @@ pub fn hold_empty(conn: impl Scoped, table: &str, types: Vec<u8>) {
 /// Holds `table` in `conn`'s run as a relation of `rows` (flat, `types.len()` values each): one a run kept from an
 /// earlier run of the same stratum over the same inputs (decision 0077 §4), read as if this run had derived it.
 pub fn hold_rows(conn: &Connection, table: &str, types: Vec<u8>, rows: Vec<i64>, n: usize) {
-    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
+    crate::code_rule_dsl::logic::run::shape::held(table);
     let rel = InRel::kept(types, rows, n);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
@@ -4625,7 +4733,7 @@ pub fn hold_rows(conn: &Connection, table: &str, types: Vec<u8>, rows: Vec<i64>,
 
 /// `rel`, an earlier run's kept relation bound where it lies (decision 0401 F3), held as `conn`'s run's `table`.
 pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
-    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
+    crate::code_rule_dsl::logic::run::shape::held(table);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
     // Not observed (`author_joins::observe`): an earlier run's set, which this run's maintenance changes, not its own.
@@ -5483,17 +5591,17 @@ impl InRel {
     /// Its statistics as measured of its rows before (a kept relation's, by an earlier run: decision 0120 §3), each
     /// column's rows, distinct values, sum of squared postings and that sum by document: what its source answers
     /// (`Derived::statistics`) without reading its rows. Ignored once it has some, or if they are of another width.
-    pub(in crate::code_rule_dsl) fn give_measured(&self, measured: &[(String, i64, i64, i64, i64)]) {
+    pub fn give_measured(&self, measured: &[(String, i64, i64, i64, i64)]) {
         if measured.len() == self.k && self.measured.get().is_none() {
             let _ = self.measured.set(BlockVec::from_iter_in(self.rows.home().as_ref(), measured.iter().map(|&(_, a, b, c, d)| [a, b, c, d])));
         }
     }
-    pub(in crate::code_rule_dsl) fn kept_stats(&self, names: Vec<String>) -> Option<crate::code_rule_dsl::logic::plan::statkeep::RelStats> {
+    pub fn kept_stats(&self, names: Vec<String>) -> Option<crate::code_rule_dsl::logic::plan::statkeep::RelStats> {
         let s = self.stats.as_ref()?;
         (s.0.rows() == (self.n - self.ndead) as i64 && names.len() == self.k).then(|| s.0.renamed(names))
     }
     /// A component's relation at its fixpoint, its rows and indexes moved.
-    fn moved(mut rel: Rel) -> InRel {
+    pub fn moved(mut rel: Rel) -> InRel {
         rel.index_rest();
         rel.count_dead();
         // Declared sorted (decision 0456 K7): laid out in canonical order, unless its rows are numbered as the kept
@@ -5806,12 +5914,12 @@ impl InRel {
     fn delta_from(&self, at: usize, n: usize) -> Option<(Vec<i64>, Vec<i64>)> {
         match &self.from {
             Some(Origin::Based { at: a, n: n0, .. }) if *a == at && *n0 == n => {
-                let rows_of = |ids: Vec<u32>| { crate::code_rule_dsl::logic::plan::corpus::maintain::shape::rows_copied(ids.len()); ids.into_iter().fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id as usize)); v }) };
+                let rows_of = |ids: Vec<u32>| { crate::code_rule_dsl::logic::run::shape::rows_copied(ids.len()); ids.into_iter().fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id as usize)); v }) };
                 Some((rows_of(self.version_ids(Ver::Plus)?), rows_of(self.version_ids(Ver::Minus)?)))
             }
             Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == at && *old_n == n => {
                 let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id)); v });
-                crate::code_rule_dsl::logic::plan::corpus::maintain::shape::rows_copied(added.len() / self.k.max(1) + removed.len() / self.k.max(1));
+                crate::code_rule_dsl::logic::run::shape::rows_copied(added.len() / self.k.max(1) + removed.len() / self.k.max(1));
                 Some((added, removed.clone()))
             }
             _ => None,
@@ -6863,7 +6971,7 @@ struct WalksWhole(bool);
 
 /// Enters a scope of the run's chunk in a job of the run (`rows::enter_chunk`, Q203 item 3): what the job holds is
 /// the chunk's. The chunk itself is the run's context's, which the job carries.
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+pub fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     c.part(&["TOP"], crate::code_rule_dsl::logic::run_state::Shared(crate::code_rule_dsl::facts::rows::current_chunk(), crate::code_rule_dsl::facts::rows::enter_chunk));
 }
 
@@ -7349,13 +7457,19 @@ fn run_join_limited(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
 
 /// Runs a seed join: from its pairs when a level's batch made them (`level`), else by the host's walk.
 fn run_seed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], limited: Option<&mut Limited>) -> Result<u64> {
-    match level::take(j)? {
-        Some(p) => {
+    match level::take(j) {
+        Ok(Some(p)) => {
             level::run_counts().used.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             // From a level's pairs: unlimited.
             run_join_in(j, head, store, syms, fresh, &[], None, Some(&p))
         }
-        None => run_join_limited(j, head, store, syms, fresh, limited),
+        Ok(None) => run_join_limited(j, head, store, syms, fresh, limited),
+        // The level's batch failed (a submission the device failed: its pairs partly written, none read): the
+        // seed's own walk, as when no batch made them.
+        Err(_) => {
+            crate::code_rule_dsl::prof::count("level joins: a batch failed, its seeds walked on the host", 1);
+            run_join_limited(j, head, store, syms, fresh, limited)
+        }
     }
 }
 
@@ -8948,39 +9062,6 @@ pub mod posted_tests {
         assert!(InRel::over_source(src, b"ii".to_vec()).sorted.within_key(2, None, &[0], 0, 4).is_empty(), "a source with no order");
     }
 
-    /// A relation over a source (a kept relation bound in place, decision 0456 step 6b) has no rows of its own: its
-    /// values, its live rows and their batches are read through it, as a held relation's are (a value of it once
-    /// panicked, "row 0 of a relation of 0 rows", and its live rows were none, so a kept stratum's put held no rows).
-    #[test]
-    fn a_relation_over_a_source_reads_its_rows_through_it() {
-        let src = super::columns_source(vec!["a".into(), "b".into()], vec![Some(vec![1, 2, 5]), Some(vec![3, 4, 0])]);
-        let r = InRel::over_source(src, b"ii".to_vec());
-        assert_eq!((r.len(), r.rows()), (3, 3));
-        assert_eq!((0..3).map(|i| [r.value(i, 0), r.value(i, 1)]).collect::<Vec<_>>(), [[1, 3], [2, 4], [5, 0]], "its values");
-        assert_eq!(r.live_rows().as_deref(), Some(&[1, 3, 2, 4, 5, 0][..]), "its live rows");
-        let mut batches = Vec::new();
-        assert!(r.each_live_batch(1, 9, |b| batches.push(b.to_vec())).is_some());
-        assert_eq!(batches, [vec![2, 4, 5, 0]], "rows 1.. in one batch, bounded by its rows");
-        let cells = crate::code_rule_dsl::logic::plan::Cells::plain(2);
-        // Its digest is its rows', as the same rows held flat have (a sum, blind to their order): a kept relation
-        // bound in place and passed on unchanged is its entry, not re-kept. Re-kept (its rows changed), every row is
-        // put, read through it: rr-align's 4e3d12466 re-kept views by a frame and `kept_rows`, which take a relation
-        // in a block, and lost their rows (7d8103eed's warm-run losses, which it met by naming a view by its reads).
-        use crate::code_rule_dsl::logic::plan::corpus::retain;
-        let flat = InRel::from_flat(vec![5, 0, 1, 3, 2, 4], 3, b"ii".to_vec());
-        let d = retain::held_digest(&cells, &r);
-        assert!(d.is_some() && d == retain::held_digest(&cells, &flat), "a view's digest is its rows'");
-        let put = retain::kept_put(&crate::content_store::KeptRel { name: "r".into(), ident: [1; 32] }, 0, Vec::new(), b"ii".to_vec(), &r);
-        match put.what {
-            crate::content_store::kept_facts::KeptWhat::Picked(p) => {
-                use crate::content_store::kept_facts::KeptPicked as _;
-                let mut cols = vec![0i64; p.rows() * p.width()];
-                p.fill(&mut cols, None);
-                assert_eq!((cols, p.rows(), p.given()), (vec![1, 2, 5, 3, 4, 0], 3, false), "every row of the view kept, read through it");
-            }
-            _ => panic!("a view is kept as its rows"),
-        }
-    }
 
     /// Statistics read from a kept relation's postings are those measured from its rows, with dead rows left out.
     #[test]
@@ -9010,32 +9091,8 @@ pub mod posted_tests {
         }
     }
 
-    /// Statistics counted from a relation's postings are those counted from its live rows.
-    /// A relation's digest taken from its rows where they lie (`retain::held_digest`) is the digest of a copy of its
-    /// live rows (`rows_digest`), dead rows and batch edges included.
-    #[test]
-    fn a_digest_read_in_place_is_the_digest_of_the_copied_rows() {
-        use crate::code_rule_dsl::logic::plan::{Cells, rows_digest};
-        use crate::code_rule_dsl::logic::plan::corpus::retain::held_digest;
-        let n = 3 * LIVE_BATCH + 17;
-        let mut rel = Rel::new("t", b"iii");
-        for i in 0..n as i64 {
-            rel.push(&[i * 3 - 7, (i * 7919) % 1001 - 500, -i]);
-        }
-        let old = InRel::moved(rel);
-        let mut gone = Rel::new("g", b"iii");
-        for id in [0usize, 5, LIVE_BATCH - 1, LIVE_BATCH, 2 * LIVE_BATCH + 3, n - 1] {
-            let r = old.row(id).to_vec();
-            gone.push(&r);
-        }
-        let dead = InRel::moved(Rel::based("t", b"iii", &old, Some(&InRel::moved(gone))).expect("few dead"));
-        for held in [&old, &dead] {
-            let live = held.live_rows().expect("flat");
-            let cells = Cells::plain(3);
-            assert_eq!(held_digest(&cells, held), Some(rows_digest(&cells, &live, held.rows())), "{} dead", held.ndead);
-        }
-    }
 
+    /// Statistics counted from a relation's postings are those counted from its live rows.
     #[test]
     fn statistics_counted_from_postings_are_those_of_the_rows() {
         use crate::code_rule_dsl::logic::plan::statkeep::RelStats;

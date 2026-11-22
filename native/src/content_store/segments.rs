@@ -277,18 +277,18 @@ pub struct SegmentWriter {
 
 /// A segment being written: a deferrable lease of the pool, or (no mapping, WASI) a block in memory.
 enum Open {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Mapped(rerail_blocks::deferrable::Deferrable),
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     Memory(rerail_blocks::block::Block, PathBuf),
 }
 
 /// A segment sealed, on its way to the writer, then written back; its file under its writer's name until the
 /// batch's rows name it.
 enum Done {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Mapped(rerail_blocks::deferrable::Sealed, Frozen),
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     Memory(Frozen, PathBuf),
     /// Written back: its block, read in place, and its file.
     Written(Frozen, PathBuf),
@@ -297,21 +297,21 @@ enum Done {
 impl Open {
     fn block(&self) -> &rerail_blocks::block::Block {
         match self {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Open::Mapped(d) => d.block(),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Open::Memory(b, _) => b,
         }
     }
     fn seal(self) -> Done {
         match self {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Open::Mapped(d) => {
                 let sealed = d.seal();
                 let reader = sealed.reader();
                 Done::Mapped(sealed, reader)
             }
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Open::Memory(b, path) => Done::Memory(b.freeze(), path),
         }
     }
@@ -320,18 +320,18 @@ impl Open {
 impl Done {
     fn reader(&self) -> &Frozen {
         match self {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Done::Mapped(_, r) => r,
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Done::Memory(r, _) => r,
             Done::Written(r, _) => r,
         }
     }
     fn file(&self) -> &Path {
         match self {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Done::Mapped(s, _) => s.path(),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Done::Memory(_, f) => f,
             Done::Written(_, f) => f,
         }
@@ -340,14 +340,14 @@ impl Done {
     /// wrapped stays mapped, its readers reading on), or (no mapping) its bytes written as one file. Once.
     fn write_back(self, flush: rerail_blocks::block::Flush) -> StoreResult<Done> {
         match self {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Done::Mapped(sealed, reader) => {
                 let path = sealed.path().to_owned();
                 let frozen = sealed.write_back(flush)?;
                 drop(reader);
                 Ok(Done::Written(frozen, path))
             }
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Done::Memory(frozen, path) => {
                 let _ = flush;
                 std::fs::write(&path, frozen.bytes(0, frozen.used()))?;
@@ -392,11 +392,11 @@ impl SegmentWriter {
         super::prepare_cache_directory(&self.dir)?;
         let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let file = self.dir.join(format!("w-{}-{n}.seg", std::process::id()));
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let open = Open::Mapped(rerail_accel::gpu::shared::lease_deferrable_host(kind::JOURNAL, bytes, &file).map_err(StoreError::Invalid)?);
         #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
         let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true)?);
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let open = Open::Memory(rerail_blocks::alloc::host(kind::JOURNAL, bytes.next_multiple_of(rerail_blocks::block::PAGE)), file);
         rerail_blocks::journal::init(open.block(), self.slots());
         Ok(open)

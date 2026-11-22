@@ -7,10 +7,8 @@
 #![cfg(any(target_os = "macos", target_os = "linux", windows))]
 
 // The device layer, below the preprocessor (`rerail-device`): its paths are this crate's too.
-pub use rerail_device::{
-    compute_kernel, compute_kernel_cpu, compute_kernel_grid, compute_kernel_opencl, device, monotonic_seconds, page_size, process_cpu_seconds, shared, thread_cpu_seconds, Pod,
-};
-#[cfg(target_os = "linux")]
+pub use rerail_device::{compute_kernel, compute_kernel_cpu, compute_kernel_grid, compute_kernel_opencl, device, os, shared, store, Pod};
+#[cfg(not(target_os = "macos"))]
 pub use rerail_device::compute_kernel_cuda;
 #[cfg(target_os = "macos")]
 pub use rerail_device::compute_kernel_metal;
@@ -37,11 +35,8 @@ impl Preprocessing for device::Device {
             device::Device::OpenCl(_) => rerail_ukl::Backend::OpenCl,
             #[cfg(target_os = "macos")]
             device::Device::Native(_) => rerail_ukl::Backend::Metal { version: 310 },
-            #[cfg(target_os = "linux")]
+            #[cfg(not(target_os = "macos"))]
             device::Device::Native(d) => rerail_ukl::Backend::Cuda { sm: d.sm },
-            // Windows' native variant is OpenCL's, never made (`device`'s Windows `native`).
-            #[cfg(windows)]
-            device::Device::Native(_) => rerail_ukl::Backend::OpenCl,
         }
     }
 

@@ -363,9 +363,9 @@ pub struct Outcome {
     pub findings: Vec<String>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Outcome {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn passed(&self) -> bool {
         self.failures.is_empty()
     }
@@ -628,10 +628,10 @@ fn sample(rows: &[crate::code_rule_dsl::logic::plan::output::Row<'_>]) -> String
 
 // ---------------------------------------------------------------- printing
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 /// The text of each `.test` and `.fixtures` block of `src`, as written, in order: what a printer of the file's
 /// program (`flatten`) adds after it, so the file's tests go with it.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn blocks(src: &str) -> Vec<String> {
     use super::tape::Kind;
     let mut parser = syntax::Parser::taped(src);
@@ -775,7 +775,7 @@ fn test_row(file: &Path, test: &Test, store: Option<&Path>) -> serde_json::Value
 }
 
 /// Runs `f` in `test`'s directory of `file` (`$TMPDIR/rerail-test-rr-work/<work_name>`), removed after.
-pub(super) fn in_work<T>(store: Option<&Path>, file: &Path, test: &str, f: impl FnOnce(&Path) -> T) -> Result<T, String> {
+pub fn in_work<T>(store: Option<&Path>, file: &Path, test: &str, f: impl FnOnce(&Path) -> T) -> Result<T, String> {
     let work = work_base()?.join(work_name(store, file, test)?);
     let out = f(&work);
     let _ = std::fs::remove_dir_all(&work);

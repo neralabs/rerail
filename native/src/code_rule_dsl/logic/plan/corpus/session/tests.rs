@@ -5,7 +5,7 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 /// The Python rule packs: `docs/rule-syntax/packs/python` above the crate that compiles these tests (the engine hosts
 /// them, `tools/cratify/test-hosts.tsv`; the logic crate's manifest sits two levels lower).
 fn packs() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).ancestors().map(|d| d.join("docs/rule-syntax/packs/python")).find(|d| d.is_dir()).expect("the rule packs")
+    crate::source_tree::native().ancestors().map(|d| d.join("docs/rule-syntax/packs/python")).find(|d| d.is_dir()).expect("the rule packs")
 }
 
 
@@ -322,6 +322,77 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
     // Each relation held as kept is planned with its columns' statistics, not its rows' count alone (t39: a probe of
     // one was priced as all its rows, and a 3-row delta was read after a scan of it).
     assert_eq!(unmeasured, 0, "quiet relations held with no column measured");
+    drop(session);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A stratum a changed read reaches, none of whose rules sees a row the read's delta gained or lost, is passed on as
+/// kept (decision 0563 B): an edit adds an assignment to a file. `wh` reads `kind` only for `while` statements, which
+/// the edit's nodes are none of (the delta's own rows); `pair` joins `node`'s new rows to `wh`, which holds none of
+/// their nodes (a derived witness, read through its index), and so does `rr_unplaced` (decision 0431 R9), which joins
+/// `node` to the findings `W` (`rr_found_node`). A second edit adds a `while` loop, which both see; a third moves a.py's
+/// loop a line down, which `rr_unplaced` does not read (`Net`). Each run's findings are a full run's.
+#[test]
+fn a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-unseen");
+    let (src, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    let rule = base.join("unseen.rerail");
+    std::fs::write(
+        &rule,
+        r#".policy "test-unseen" revision 1
+.description "A while loop in a file, where another file has one too."
+.language python
+.mode steer
+.scope include "**/*.py"
+.decl wh(n: number)
+wh(n) :- kind(n, "while_statement").
+.decl pair(n: number, m: number)
+pair(n, m) :- wh(n), node(a, n, _, _, _), wh(m), node(b, m, _, _, _), a != b.
+.violation W(at: node) code "W" "A while loop in a file, where another file has one too."
+W(n) :- pair(n, _).
+"#,
+    )
+    .unwrap();
+    for (path, text) in [("a.py", "while a:\n    pass\n"), ("b.py", "while b:\n    pass\n"), ("c.py", "x = 1\n")] {
+        std::fs::write(src.join(path), text).unwrap();
+    }
+    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let findings = || {
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
+        rows.sort();
+        rows
+    };
+    let full = || {
+        full(run);
+        findings()
+    };
+    let session = start(&base.join("session")).unwrap();
+    run();
+    assert_eq!(findings().len(), 2, "a.py's and b.py's loops: {:?}", findings());
+    std::fs::write(src.join("c.py"), "x = 1\ny = x + 2\n").unwrap();
+    let report = run();
+    let got = findings();
+    assert_eq!(got, full(), "the session's findings are a full run's");
+    assert!(report.cross_unseen.iter().any(|k| k == crate::code_rule_dsl::logic::rr::lower::findings::UNPLACED), "`W` holds none of the edit's nodes: {:?} unseen", report.cross_unseen);
+    std::fs::write(src.join("c.py"), "x = 1\nwhile x:\n    x = 0\n").unwrap();
+    run();
+    let got = findings();
+    assert_eq!(got, full(), "the session's findings are a full run's");
+    assert_eq!(got.len(), 3, "c.py's loop pairs too: {got:?}");
+    // A line put at a.py's top moves its loop down and keeps its id (`granules`): `node`'s rows past it change only
+    // in their places. `rr_unplaced(c) :- rr_found_node(c, n), node(d, n, _, _, _), !doc(d, _, _)` reads none of
+    // them, so it sees no change, though
+    // `W` holds the loop; `violation` reads its line, which moved, so it is reached. The finding moves with the loop.
+    let was = findings();
+    std::fs::write(src.join("a.py"), "import os\nwhile a:\n    pass\n").unwrap();
+    let report = run();
+    let got = findings();
+    assert_eq!(got, full(), "the session's findings are a full run's");
+    assert_ne!(got, was, "a.py's finding is a line lower");
+    assert!(report.cross_unseen.iter().any(|k| k == crate::code_rule_dsl::logic::rr::lower::findings::UNPLACED), "`rr_unplaced` reads no place of a.py's moved nodes: {:?} unseen", report.cross_unseen);
+    assert!(!report.cross_unseen.iter().any(|k| k == "violation"), "`violation` reads the moved loop's line: {:?} unseen", report.cross_unseen);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -890,4 +961,66 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
             assert_eq!(*rows, expected);
         }
     }
+}
+
+/// 0597 rung 2.11: a pass runs only on what changed in its inputs (rule 7, 0563 B). In a session, an edit that changes
+/// no root and no relation the context reads `.from` (b.py's own line) changes no input of the context, so none of its
+/// cross strata runs. Renaming the class the annotation names (a.py's `Foo`, the annotation's text unchanged) changes
+/// what the context reads `.from` its host (`defined`, a cross-file relation, so the context's `resolved` is the cross
+/// part's), and the row goes. Each run's rows are a full run's.
+#[test]
+fn a_contexts_strata_run_only_on_changes_to_its_roots_and_reads() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-context");
+    let (src, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    let rule = base.join("context.rerail");
+    std::fs::write(
+        &rule,
+        r#".policy "test-context" revision 1
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/ast.rerail"
+.decl defined(x: symbol)
+defined(x) :- kind(c, "class_definition"), field(c, "name", n), text(n, x).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, "annotation", r).
+.decl resolved(x: symbol)
+resolved(x) :- kind(i, "identifier"), text(i, x), defined(x).
+.decl quoted_resolved(x: symbol)
+quoted_resolved(x) :- res(x).
+.output quoted_resolved
+.context quoted of python roots quoted_root exports resolved
+.from python defined for quoted
+.from quoted resolved as res
+"#,
+    )
+    .unwrap();
+    std::fs::write(src.join("a.py"), "class Foo: ...\nx: \"Foo\" = 1\n").unwrap();
+    std::fs::write(src.join("b.py"), "y = 1\n").unwrap();
+    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let rows = || {
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "quoted_resolved").unwrap_or_default();
+        rows.sort();
+        rows
+    };
+    let full = || {
+        full(run);
+        rows()
+    };
+    let session = start(&base.join("session")).unwrap();
+    run();
+    assert_eq!(rows(), [["Foo"]]);
+    std::fs::write(src.join("b.py"), "y = 2\n").unwrap();
+    let report = run();
+    assert_eq!(rows(), full(), "the session's rows are a full run's");
+    assert!(!report.cross_changed.iter().any(|c| c.contains("rr_cx_quoted") || c == "defined_at"), "no input of the context changed: {:?}", report.cross_changed);
+    std::fs::write(src.join("a.py"), "class Bar: ...\nx: \"Foo\" = 1\n").unwrap();
+    let report = run();
+    assert_eq!(rows(), full(), "the session's rows are a full run's");
+    assert!(rows().is_empty(), "Foo names no class now: {:?}", rows());
+    assert!(report.cross_changed.iter().any(|c| c == "defined_at"), "what the context reads .from changed: {:?}", report.cross_changed);
+    drop(session);
+    let _ = std::fs::remove_dir_all(&base);
 }

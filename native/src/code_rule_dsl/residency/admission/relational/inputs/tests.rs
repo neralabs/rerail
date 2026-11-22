@@ -1,6 +1,5 @@
 use super::*;
 use crate::code_rule_dsl::{
-    CodeRuleDslRuntime,
     model::ClauseKind,
     violations::{
         Captures, Span,
@@ -11,7 +10,7 @@ use serde_json::json;
 use std::sync::atomic::Ordering;
 
 fn rule() -> crate::code_rule_dsl::CompiledCodeRuleDsl {
-    CodeRuleDslRuntime::compile(json!({"format":"rerail.policy/v1","id":"stream","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"kind":"identifier","pattern":"$NAME"}}},"project":{"name":"capture.NAME","pos":"capture.NAME.startByte"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name,pos FROM facts"},"violation":{"code":"STREAM","message":"Stream","anchor":"witness.span"}}]}).to_string(),"json".into(),include_str!("../../../../capabilities.json").into()).unwrap()
+    crate::code_rule_dsl::rule_api::compile(&json!({"format":"rerail.policy/v1","id":"stream","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"kind":"identifier","pattern":"$NAME"}}},"project":{"name":"capture.NAME","pos":"capture.NAME.startByte"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name,pos FROM facts"},"violation":{"code":"STREAM","message":"Stream","anchor":"witness.span"}}]}).to_string(), "json", include_str!("../../../../capabilities.json")).unwrap()
 }
 fn fill(sink: &mut Sink<'_>, count: usize, source: &Arc<String>) {
     let _scope = projection::Scope::enter();

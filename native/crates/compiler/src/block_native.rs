@@ -172,7 +172,7 @@ impl BlockNative {
             groups: crate::block::groups(&program.ops, &program.rounds).expect("a verified program"),
             records: program.records.clone(),
             walks: program.walks.clone(),
-            pad: crate::native_cpu_block::BACK as u16,
+            pad: BACK as u16,
         }
     }
 
@@ -368,8 +368,8 @@ impl BlockNative {
         let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
             return Vec::new();
         };
-        let bytes = crate::native_cpu_bytes::Bytewise::of(self);
-        let blank = crate::native_cpu_block::blank_bits(r, &|o| bytes.can(o));
+        let bytes = crate::byte_needs::MadeFromBytes::of(self);
+        let blank = crate::records::blank_bits(r, &|o| bytes.can(o));
         let kept: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| blank >> k & 1 == 0).map(|(_, m)| m.0).collect();
         let mut v: Vec<usize> = r.marks.iter().enumerate().filter(|&(k, m)| blank >> k & 1 == 1 && !kept.contains(&m.0)).map(|(_, m)| usize::from(m.0)).collect();
         v.sort_unstable();
@@ -382,9 +382,9 @@ impl BlockNative {
         let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
             return Vec::new();
         };
-        let bytes = crate::native_cpu_bytes::Bytewise::of(self);
-        let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
-        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k) | crate::native_cpu_block::blank_bits(r, &|o| bytes.can(o));
+        let bytes = crate::byte_needs::MadeFromBytes::of(self);
+        let (lift, at) = crate::records::loop_marks(r, &|o| bytes.can(o));
+        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k) | crate::records::blank_bits(r, &|o| bytes.can(o));
         r.marks.iter().enumerate().filter(|&(k, m)| looped >> k & 1 == 0 && m.0 != crate::records::WORD_ALONE).map(|(_, m)| usize::from(m.0)).collect()
     }
 
@@ -408,7 +408,7 @@ impl BlockNative {
         let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some() || r.fetched_in_tier2()) else {
             return Vec::new();
         };
-        let bytes = crate::native_cpu_bytes::Bytewise::of(self);
+        let bytes = crate::byte_needs::MadeFromBytes::of(self);
         let mut read: Vec<u16> = Vec::new();
         read.extend(r.skip);
         read.extend(r.rules.iter().filter_map(|x| match *x {
@@ -420,8 +420,8 @@ impl BlockNative {
         read.extend(r.checks.iter().map(|c| c.o));
         // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
         // still reads from its row stays stored.
-        let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
-        let blanks = crate::native_cpu_block::blank_marks(r, &|o| bytes.can(o));
+        let (lift, at) = crate::records::loop_marks(r, &|o| bytes.can(o));
+        let blanks = crate::records::blank_marks(r, &|o| bytes.can(o));
         let looped: u32 = lift.iter().chain(&at).chain(&blanks).fold(0, |a, &(k, _)| a | 1 << k);
         // An output another mask names too (a `ROW`'s, the row's start a token mark's kind is
         // told by, `TokenElem::rows`) stays stored: tier 2 reads it from its row.
@@ -441,14 +441,21 @@ impl BlockNative {
                 .filter(|rd| {
                     let mut parts: Vec<(u16, u8)> = rd.parts.iter().map(|p| (p.start, p.bytes)).collect();
                     parts.sort_by_key(|&(o, n)| (n, o));
-                    crate::native_cpu_stream::sequential(self, &rd.arms[0], &parts).is_some()
+                    crate::byte_needs::sequential(self, &rd.arms[0], &parts).is_some()
                 })
                 .flat_map(|rd| rd.parts.iter().map(|p| p.start))
                 .collect()
         } else {
             Vec::new()
         };
-        let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o)).map(usize::from).collect();
+        // A region tier 2 splits otherwise (`Split::Tier2`): tier 2 reads its masks too, stored.
+        let split_read: Vec<u16> = r
+            .readers
+            .iter()
+            .filter(|rd| rd.split == crate::records::Split::Tier2 && !rd.parts.is_empty() && !rd.parts.iter().any(|p| unread.contains(&p.start)))
+            .flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last)).chain(rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))))
+            .collect();
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o) && !split_read.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
         v.dedup();
         v
@@ -478,9 +485,10 @@ impl BlockNative {
     }
 
     /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
-    /// its token loop runs, a reader gives its token's kind and marks, so it makes none of them.
+    /// its token loop runs, a reader gives its token's kind and marks, and the walk a part's, so it
+    /// makes none of them. A token's own kind no reader gives (a `0x`, decision 0509) it reads.
     pub fn readers_tags(&self) -> Vec<usize> {
-        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.retags.iter().map(|t| usize::from(t.o)).collect())
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.retags.iter().filter(|t| !crate::records::own_retag(r, t)).map(|t| usize::from(t.o)).collect())
     }
 
     /// The outputs of the errors the CPU's token loop checks (`Records::untaken`), where it finds
@@ -614,7 +622,7 @@ impl BlockNative {
     /// stored (`native_cpu_lanes::remade`): simdjson keeps nothing between its phases that it
     /// can cheaply remake from the input, and a later pass's gate can then skip it.
     pub fn passes(&self) -> Passes {
-        self.passes_with(&crate::native_cpu_lanes::remade(self))
+        self.passes_with(&crate::lane_plan::remade(self))
     }
 
     /// The values made from the bytes and positions alone: byte tests, classes, constants,
@@ -952,3 +960,22 @@ impl PlaneFormulas {
         }
     }
 }
+
+/// The running counts, as output indexes: each extract's, then one for all the totals (the first
+/// total's index stands for them: `BlockProgram::totals`, one flag). A file's counts are laid out
+/// in this order, so tier 2 reads its totals' flag from the count after the extracts'.
+pub fn counted(native: &BlockNative) -> Vec<usize> {
+    native.extracts.iter().chain(native.totals.first()).copied().collect()
+}
+
+/// Zero bytes before the first block: `pair` and `plane_before` load each block one byte back,
+/// and the byte before the stream is 0x00.
+pub const FRONT: usize = 16;
+
+/// The default padding (`BlockNative::pad`): zero bytes after every file's last byte, at least,
+/// wherever a compiled function reads it (`Batch`, a resident source's slab). As simdjson's
+/// padded input, a window that reads past the end reads zeros, so an output false on a zero
+/// byte has no bits there and needs no cut (`Bytewise::padded`). The widest window: 64 bits a
+/// lane times 32 lanes (Metal's), 256 bytes; a CPU window reaches less (`pad_reach`). An
+/// application may ask for less, its windows cut on a rare branch.
+pub const BACK: usize = 256;

@@ -1,0 +1,169 @@
+#!/usr/bin/python3
+"""The farm's compile benchmark: how fast each host compiles, against this Mac (README.md, "How fast
+each host compiles").
+
+    scripts/build/farm/bench [HOST...] [--jobs 1,4,8]
+    scripts/build/farm/bench --table      # the saved results only, nothing run
+
+The task: a clean debug build of the workspace's `gix` (121 crates, the same Cargo.lock everywhere),
+with no compile cache (`build.rustc-wrapper=''`), from an empty target directory, at each job count.
+On a host it runs through `test-remote --host HOST --remote-only` (so as a Linux or Windows build on
+those hosts), on this Mac at nice 19. With no HOST: every enabled test host and this Mac (`local`).
+One machine's hosts (a Mac and its VMs, a PC's Windows and Linux sides) run one after another;
+machines run at once. A cloud guest runs only when named: it is billed while it runs.
+
+Each result goes to the farm's state, outside the tree (`bench/HOST.json`: the latest run of each
+job count, with the host's load before it), and `status` shows it. A run that started on a host
+more than 25% busy with other work is marked contended: its time says little about the host.
+Run from the checkout's root; prints a line per result as it lands, and a table at the end.
+"""
+import concurrent.futures
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import farm  # noqa: E402
+import guest  # noqa: E402
+
+TASK = "a clean debug build of gix (121 crates), no compile cache"
+BUILD = ["cargo", "build", "--offline", "-p", "gix", "--config", "build.rustc-wrapper=''", "--target-dir", "../tmp/farm-bench"]
+CLEAN = ["cargo", "clean", "--offline", "--target-dir", "../tmp/farm-bench"]
+TIMEOUT = 30 * 60      # one build, the wait for a test slot included
+CONTENDED_BUSY = 25    # % of the host's CPU busy with other work before a run
+LOCAL = "local"
+CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../../.."))
+printing = threading.Lock()
+
+
+def record_path(name):
+    return farm.state("bench", name + ".json")
+
+
+def records():
+    """{host name: its record} for every host benchmarked (and `local`, this Mac)."""
+    out = {}
+    for name in [LOCAL] + [h["name"] for h in farm.hosts()]:
+        r = farm.read_json(record_path(name), None)
+        if r:
+            out[name] = r
+    return out
+
+
+def machine(host):
+    """One physical machine's key: a Mac and its VMs, a PC's Windows and Linux sides share one."""
+    base = farm.shared_base(host)
+    g = base.get("guest")
+    if g and not guest.is_cloud(g):
+        return g["on"]
+    return base["name"]
+
+
+def run(name, argv):
+    if name == LOCAL:
+        cmd, cwd = ["nice", "-n", "19"] + argv, os.path.join(CHECKOUT, "native")
+    else:
+        cmd, cwd = [os.path.join(CHECKOUT, "scripts/dev/test-remote"), "--host", name, "--remote-only", "--"] + argv, CHECKOUT
+    try:
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=TIMEOUT)
+        return p.returncode, p.stdout + p.stderr
+    except subprocess.TimeoutExpired:
+        return "timeout", ""
+
+
+def seconds(text):
+    m = re.findall(r"Finished .* in (?:(\d+)m )?([\d.]+)s", text)
+    return int(m[-1][0] or 0) * 60 + float(m[-1][1]) if m else None
+
+
+def load(name):
+    if name == LOCAL:
+        return {"load": round(os.getloadavg()[0], 2)}
+    h = farm.read_json(farm.state("health", name), {})
+    return {k: h.get(k) for k in ("load", "busy") if h.get(k) is not None}
+
+
+def save(name, jobs, result):
+    path = record_path(name)
+    r = farm.read_json(path, {"task": TASK, "runs": {}})
+    r["task"] = TASK
+    r["runs"][str(jobs)] = result
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    farm.write_json(path, r)
+
+
+def bench(names, jobs):
+    for name in names:
+        for j in jobs:
+            # Each job count builds from nothing: without this, the second count found the first's
+            # build and timed a no-op (0.1 s, 2026-11-21).
+            code, text = run(name, CLEAN)
+            if code != 0:
+                with printing:
+                    print(f"{name}: not run: {text.strip().splitlines()[-1] if text.strip() else code}", flush=True)
+                break
+            before = load(name)
+            started = time.time()
+            code, text = run(name, BUILD + ["-j", str(j)])
+            s = seconds(text) if code == 0 else None
+            result = {"s": s, "at": round(started), "before": before,
+                      "contended": (before.get("busy") or 0) > CONTENDED_BUSY}
+            if s is None:
+                result["failed"] = (text.strip().splitlines() or [str(code)])[-1][:300]
+            save(name, j, result)
+            with printing:
+                what = f"{s:.1f} s" if s is not None else f"failed: {result['failed']}"
+                print(f"{name} -j{j}: {what}{' (contended: ' + str(before.get('busy')) + '% busy)' if result['contended'] else ''}", flush=True)
+        run(name, CLEAN)
+
+
+def table(jobs):
+    rs = records()
+    base = (rs.get(LOCAL, {}).get("runs", {}).get(str(max(jobs))) or {}).get("s")
+    rows = []
+    for name, r in rs.items():
+        cells = []
+        for j in jobs:
+            x = r.get("runs", {}).get(str(j)) or {}
+            cells.append("-" if x.get("s") is None else f"{x['s']:.1f}{'*' if x.get('contended') else ''}")
+        last = (r.get("runs", {}).get(str(max(jobs))) or {}).get("s")
+        rows.append((last if last is not None else 1e9, name, cells, f"{last / base:.2f}" if last and base else "-"))
+    print("\n" + " ".join(f"{h:>12}" for h in ["host"] + [f"-j{j} s" for j in jobs] + [f"vs this Mac"]))
+    for _, name, cells, rel in sorted(rows):
+        print(" ".join(f"{c:>12}" for c in [name] + cells + [rel]))
+    print("(* contended: the host was busy with other work; vs this Mac: its -j" + str(max(jobs)) + " time over this Mac's)")
+
+
+def main(argv):
+    jobs = [1, 4, 8]
+    if "--jobs" in argv:
+        i = argv.index("--jobs")
+        jobs = [int(x) for x in argv[i + 1].split(",")]
+        argv = argv[:i] + argv[i + 2:]
+    if argv == ["--table"]:
+        return table(jobs)
+    if any(a.startswith("-") for a in argv):
+        sys.exit(__doc__)
+    if argv:
+        names = argv
+        unknown = [n for n in names if n != LOCAL and farm.entry(n) is None]
+        if unknown:
+            sys.exit(f"bench: not in the farm's configuration: {', '.join(unknown)}")
+    else:
+        names = [LOCAL] + [h["name"] for h in farm.hosts() if h.get("enabled", True) and h.get("tests", True)
+                           and not guest.is_cloud(farm.shared_base(h).get("guest") or {})]
+    groups = {}
+    for n in names:
+        groups.setdefault(LOCAL if n == LOCAL else machine(farm.entry(n)), []).append(n)
+    with concurrent.futures.ThreadPoolExecutor(len(groups)) as pool:
+        for f in [pool.submit(bench, g, jobs) for g in groups.values()]:
+            f.result()
+    table(jobs)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

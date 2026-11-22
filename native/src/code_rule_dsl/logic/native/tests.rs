@@ -250,7 +250,7 @@ fn symbols_are_the_stores_atoms() {
 /// The device work queue's file-local FIX (list step 17) solves the CPU's system: many components (as
 /// files), with chains, cycles, transfers and conflicting seeds, and one long counting chain,
 /// give the same values on both.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn the_device_fix_waves_reach_the_cpus_fixpoint() {
     let db = connection();
@@ -427,12 +427,16 @@ fn a_closure_over_many_components_runs_in_pieces_like_semi_naive() {
     let rows = |semi_naive: bool, wave: bool| -> Vec<(i64, i64)> {
         let db = connection();
         db.execute_batch("CREATE TABLE s(c0, c1); CREATE TABLE e(c0, c1); CREATE TABLE r(c0, c1);").unwrap();
+        // The rows in one transaction: the store is a file, and a commit a row (35,000 of them) waits on the disk's
+        // journal each time (minutes on an ext4 host).
+        db.execute_batch("BEGIN").unwrap();
         for (a, b) in &seeds {
             db.execute("INSERT INTO s VALUES (?1, ?2)", [a, b]).unwrap();
         }
         for (a, b) in &edges {
             db.execute("INSERT INTO e VALUES (?1, ?2)", [a, b]).unwrap();
         }
+        db.execute_batch("COMMIT").unwrap();
         let src = |t: &str| format!("t:b:{}:{}:ii", hex(t), hex("c0, c1"));
         let seed = format!("pos {} v0 v1\nhead v0 v1", src("s"));
         let walk = format!("pos d0 v0 v1\npos {} v0 v2\nhead v2 v1", src("e"));

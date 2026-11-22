@@ -633,7 +633,10 @@ impl KeptW {
             use std::io::Write as _;
             let frozen = self.block.freeze();
             let mut f = std::fs::File::create(&self.path)?;
-            f.write_all(frozen.bytes(0, frozen.header().length as usize))?;
+            let bytes = frozen.bytes(0, frozen.header().length as usize);
+            // The kernel reads and writes a reservation's pages without faulting them in (Windows: `crate::windows`).
+            crate::mem::commit(bytes.as_ptr().cast_mut(), bytes.len())?;
+            f.write_all(bytes)?;
             if flush.waits() {
                 f.sync_data()?;
             }

@@ -71,6 +71,43 @@ enum Pipe {
 
 const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_level", "cl_gather"];
 
+/// `f`, a compile that is fatal where it fails (decision 0382), as a result: what compiling ahead reports (its use
+/// still stops the run, naming the kernel).
+pub fn caught(f: impl FnOnce()) -> Result<(), String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|p| {
+        p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "a panic".into())
+    })
+}
+
+/// The lane's kernels, to compile ahead of their first use (`rerail_gpu::kernels::compile_ahead`): the UKL library,
+/// the joins' fixed kernels and each width's sort and gather (as `join::prewarm` makes them), and the relational
+/// kernels (`relational.uglykl`). Each is made as its use makes it, so its use then finds it.
+pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
+    let mut v = vec![ahead("ukl library", || released(rerail_gpu::library::ready))];
+    // The fused sorts and probes only where the device can run them (`Fused::can`), as `join::prewarm`.
+    let fused: &[&'static str] = if join::Fused::can() { &["sort_all", "probe_all"] } else { &[] };
+    for &name in ["pair_keys", "col_span", "col_base", "col_narrow"].iter().chain(fused) {
+        v.push(ahead(format!("join {name}"), move || released(|| join::fixed(name).map(drop))));
+    }
+    for w in [join::Width::W64, join::Width::W32, join::Width::W16] {
+        v.push(ahead(format!("join sort {w:?}"), move || released(|| join::sort_and_gather(w))));
+    }
+    for name in PIPES {
+        v.push(ahead(format!("relational {name}"), move || released(|| caught(|| _ = kernels::function_fixed(SOURCE, name, None)))));
+    }
+    v
+}
+
+/// A kernel to compile ahead (`rerail_gpu::kernels::Ahead`), made in its caller's run (decision 0442): its compile
+/// runs on a thread of its own, and what it makes is the caller's machine's, as its use's is.
+pub fn ahead(name: impl Into<String>, make: impl Fn() -> Result<(), String> + Send + Sync + 'static) -> rerail_gpu::kernels::Ahead {
+    let run = rerail_context::job_run();
+    rerail_gpu::kernels::Ahead::new(name, move || {
+        let _run = rerail_context::enter(run.clone());
+        make()
+    })
+}
+
 /// The process's device in the device layer and the compiled kernels: once per process, on any backend.
 struct Gpu {
     layer: shared::Layer,
@@ -88,7 +125,7 @@ impl Gpu {
         }
         // Through the store of compiled kernels (decision 0395); one that does not compile is fatal.
         let functions = PIPES.iter().map(|name| kernels::function_fixed(SOURCE, name, None)).collect();
-        let page = rerail_device::page_size();
+        let page = rerail_device::os::page_bytes();
         Ok(Gpu { layer, functions, page, max_buffer: layer.max_buffer })
     }
 }

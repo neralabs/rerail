@@ -210,9 +210,9 @@ fn nearest_costs(cap: usize) {
     // Both timed results held (the device's runs, macOS only, are compared with `cpu`).
     std::hint::black_box((&cpu, &one));
     println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     use crate::code_rule_dsl::transducer::packed::metal_nearest;
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     for how in [metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks, metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks] {
         let target: Vec<u32> = parent.clone();
         let done: Vec<u8> = parent.iter().map(|&p| u8::from(p == NONE || sets[0].contains(&kind[p as usize]))).collect();
@@ -235,7 +235,7 @@ fn nearest_costs(cap: usize) {
             assert_eq!(solved.targets, one);
         }
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     for round in 0..3 {
         use crate::code_rule_dsl::transducer::packed::metal_lattice;
         let device = metal_lattice::System { seeds: &sys.seeds, copies: &sys.copies, bins: &[] };
@@ -252,6 +252,39 @@ fn nearest_costs(cap: usize) {
         );
         assert_eq!(solved.values, cpu);
     }
+}
+
+/// A helper several rules read, of one content and so one name, that the split leaves outside the chunks undoes
+/// every reader's push at once. Undone at its first reader only, it was made again by the next and failed again:
+/// ep2's `option(k, v), @rx(v, …)` helper, read by 352 `violation` rules, took 91 rounds of the pass, each a split of
+/// half the program (4 s of a cold run's prepare).
+#[test]
+fn a_helper_the_split_leaves_outside_undoes_all_its_readers_at_once() {
+    let mut text = String::from(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl option(k: symbol, v: symbol)
+.input node, text, option
+// Any file's names: no location column, so cross-file, and so is each rule that negates it.
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl finding(n: node, v: symbol)
+.output finding
+"#);
+    let kinds = ["call", "name", "attribute", "subscript", "lambda", "tuple"];
+    for k in kinds {
+        text.push_str(&format!("finding(n, v) :- node(_, n, \"{k}\", _, _), option(\"target\", v), v != \"none\", !defined(v).\n"));
+    }
+    let v = read(&text);
+    let mut pass = PushLocalJoins::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let v = p.finish().unwrap().0;
+    let split = split_of(&v);
+    assert!(pass.made.iter().all(|m| split.local.contains(m)), "what is left made is file-local: {:?}", pass.made);
+    assert!(!pass.made.iter().any(|m| rules_of(&v, m).iter().any(|r| reads(&v, *r).iter().any(|x| x == "option"))), "no helper over `option` is left");
+    // Each push: a round with the helper, and one with it a level less, whatever its readers; the pass pushes twice.
+    assert!(pass.rounds <= 2 * 2, "{} rounds for {} readers", pass.rounds, kinds.len());
 }
 
 /// A cross-file rule's file-local part is made per chunk: the rule reads one exported join, not its base relations.
@@ -709,6 +742,43 @@ fn exports_are_cut_on_a_version() {
     }
 }
 
+/// A demand whose location only a `top` superset cuts is `top` itself when what is left of its chain names every node
+/// (`unwrap(n, n) :- kind(n, k), k != "paren"`, as `unparen` is): no superset of it is made and stored. The export is
+/// still cut by its reader's own key (`xk_text_0`). Left with an atom that names some nodes only (`called`), the
+/// superset is made.
+#[test]
+fn a_demand_cut_only_by_a_top_superset_is_top() {
+    let program = |unwrap: &str| {
+        format!(
+            ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
+             .decl kind(n: node, k: symbol)\n.decl calls(n: node, c: node)\n\
+             .decl within(c: node, n: node)\n.input node, text, kind, calls, within\n\
+             .decl fl_later(n: node, c: node)\nfl_later(n, c) :- within(c, n), node(_, c, \"call\", _, _).\n\
+             .decl named(n: node, s: symbol)\nnamed(n, s) :- text(n, s).\n\
+             .decl unwrap(n: node, m: node)\n{unwrap}\n\
+             .decl pair(n: node, m: node)\npair(n, m) :- named(n, s), named(m, s), n != m.\n\
+             .decl demand(n: node, m: node)\ndemand(n, m) :- unwrap(n, x), pair(x, m).\n\
+             .decl later(n: node, c: node)\nlater(n, c) :- demand(n, _), fl_later(n, c), text(c, _).\n.output later\n"
+        )
+    };
+    let cut = |unwrap: &str| {
+        let mut pass = DemandExports::default();
+        let mut p = Pipeline::new("test", read(&program(unwrap)));
+        p.program(&mut pass);
+        let (out, _) = p.finish().unwrap();
+        (out.show(), pass.lines)
+    };
+    let (shown, lines) = cut("unwrap(n, n) :- kind(n, k), k != \"paren\".");
+    assert!(lines[0].contains("through 0 supersets (2 top of 2 explored"), "{lines:?}");
+    for not in ["dm_demand_0(", "dm_pair_0("] {
+        assert!(!shown.contains(not), "{not} in\n{shown}\n{lines:?}");
+    }
+    assert!(shown.contains("xd_fl_later($n, $c) :- fl_later($n, $c), xk_text_0($c)."), "{shown}");
+    let (shown, lines) = cut("unwrap(n, n) :- calls(n, _).");
+    assert!(lines[0].contains("through 1 supersets (1 top of 2 explored"), "{lines:?}");
+    assert!(shown.contains("dm_demand_0("), "{shown}");
+}
+
 /// An export joining two parts at a key its head projects away is handed on as its parts on a version: one line, the
 /// product gone, and the parts and their keys named from the part's content.
 #[test]
@@ -814,12 +884,13 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
     "#;
     // The version pass alone (0276 step 6: the tree twin it was compared with is gone). `push_equal_columns`'s
     // switch, read as it reads it (the test is compiled in crates that see only `rerail-logic`'s public items).
+    let equal_columns = push_equal_columns();
     let (result, made) = pushed(read(text));
     for m in &made {
         assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
     }
     let helpers: Vec<_> = made.iter().filter(|name| name.ends_with("_observed")).collect();
-    assert_eq!(helpers.len(), usize::from(push_equal_columns()), "{}", result.show());
+    assert_eq!(helpers.len(), usize::from(equal_columns), "{}", result.show());
     if let [helper] = helpers.as_slice() {
         assert!(result.show().contains(&format!("observed($answer) :- {helper}(")));
     }
@@ -875,4 +946,23 @@ fn the_split_of_a_version_reads_an_undeclared_axis() {
     let split = split_of(&v);
     assert!(!split.local.contains("out"), "{:?}", split.local);
     assert!(axes.iter().any(|a| split.causes.get("out").is_some_and(|why| why.contains(a.as_str()))), "{:?}", split.causes);
+}
+
+/// A pushed join the split does not take holds back every rule that reads it in one round, not one reader a round
+/// (`passes::push::Readers`). Held against its first reader only, each other reader made it again the next round: on
+/// main's Python pack the two pushes (14,361 and 17,289 helpers) never ended; held against all, 3 rounds each.
+#[test]
+fn a_refused_join_holds_back_all_its_readers_in_one_round() {
+    let mut made = Readers::default();
+    // Six rules read one helper (one component's content); rule 9 reads another, taken; rule 2 reads both.
+    for rule in 0..6 {
+        made.read(rule, "fl1_violation".to_owned());
+    }
+    made.read(9, "fl2_violation".to_owned());
+    made.read(2, "fl2_violation".to_owned());
+    made.read(2, "fl1_violation".to_owned());
+    let taken = std::collections::BTreeSet::from(["fl2_violation".to_owned()]);
+    assert_eq!(made.refused(&taken), (0..6).collect(), "every reader of the refused helper, each once");
+    assert!(made.refused(&std::collections::BTreeSet::from(["fl1_violation".to_owned(), "fl2_violation".to_owned()])).is_empty());
+    assert_eq!(made.names(), ["fl1_violation", "fl2_violation"], "each helper once, in the order made");
 }

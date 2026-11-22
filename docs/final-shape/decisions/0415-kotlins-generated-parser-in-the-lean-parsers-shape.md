@@ -5,7 +5,7 @@ the bitlex program can generate Rust, I want you to work on getting the generate
 structurally close to the lean parser. Start with the broad structure"). Follows 0177 (tier 1 on
 the CPU is a token loop), which brought `.rr` to that shape; this record does the same for
 Kotlin, whose grammar uses what `.rr`'s does not.
-Numbered 0403 where it was written.
+Numbered 0403 where it was written, then 0405.
 
 ## Intro
 

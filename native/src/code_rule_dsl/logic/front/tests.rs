@@ -480,7 +480,7 @@ fn no_tree_program_comes_back() {
     let mut found = Vec::new();
     for path in &all {
         let text = std::fs::read_to_string(path).unwrap();
-        let rel = path.strip_prefix(&native).unwrap_or(path).display().to_string();
+        let rel = path.strip_prefix(&native).unwrap_or(path).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
         let home = rel.ends_with("logic/front/ast.rs") || rel.ends_with("logic/front.rs");
         let lowering = rel.contains("logic/rr/lower");
         let image = rel.contains("logic/program_image");

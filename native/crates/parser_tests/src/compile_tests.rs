@@ -5,10 +5,12 @@
 use crate::block_tests::{Executors, inputs, runs};
 #[allow(unused_imports)]
 use rerail_compiler::*;
+use rerail_cpu_block::*;
+use rerail_cpu_stream::*;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
-use rerail_compiler::bitlex_masks as bitlex_compile;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use rerail_metal as metal_program_backend;
 
 /// The masks the compiler handles so far: classes, logic, `prev`, `starts`, `after`, `span`,
@@ -196,11 +198,15 @@ fn every_total_is_one_flag_on_every_executor() {
     }
 }
 
-/// The Metal executors' runs of a batch: generated MSL, and the forward carry in segments of three blocks.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+/// The Metal executors' runs of a batch: generated MSL, and the forward carry in segments of three blocks. None
+/// without a device (`executors::no_device`).
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn metal_batch_runs(native: &block_native::BlockNative, batch: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+    if crate::executors::no_device() {
+        return Vec::new();
+    }
     vec![
         ("metal generated".into(), run_split(&[native], batch, LaneWidth::ALL[0], Executor::Generated(ClassStrategy::ALL[0]), 64).expect("runs").files),
         ("metal forward carry".into(), run_serial_split(&[native], batch, Segments { blocks: 3, warm: 1 }).expect("runs").run.files),
@@ -208,7 +214,7 @@ fn metal_batch_runs(native: &block_native::BlockNative, batch: &[block::BatchFil
 }
 
 /// No Metal executors off the device layer's targets.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn metal_batch_runs(_: &block_native::BlockNative, _: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
     Vec::new()
 }
@@ -335,12 +341,12 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
             // interpreter or generated kernels.
             #[allow(unused_mut)]
             let mut got = Executors::new(&p).run(&bytes, false).0;
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             {
                 use metal_program_backend::block_program::serial::{Segments, run_serial_split};
                 let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
                 let file = [block::BatchFile { bytes: &bytes, program: 0 }];
-                for blocks in [3, 29] {
+                for blocks in [3, 29].into_iter().filter(|_| !crate::executors::no_device()) {
                     let run = run_serial_split(&[&native], &file, Segments { blocks, warm: 1 }).unwrap_or_else(|e| panic!("the forward carry runs: {e:?}"));
                     got.push((format!("metal forward carry, segments of {blocks}"), run.run.files[0].outputs.clone()));
                 }
@@ -357,7 +363,7 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
 /// The payoff on Metal of remaking values made from the position (doc 26 §1.10), run by hand:
 /// the row's slots and the forward carry's GPU seconds, best of 5, over 8 MB (1 MB for the
 /// numbers, whose stored row is over the device's capacity at 8).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 #[ignore = "a measurement: run by hand"]
 fn positions_after_a_backward_pass_metal_payoff() {
@@ -449,7 +455,7 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
 /// counted are those generated for the program, after the head every source shares
 /// (`block_program::head`: the carries, the sinks and the interpreter's helpers, 0440 step C).
 #[test]
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn json_ukl_is_one_kernel() {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
     let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
@@ -488,7 +494,7 @@ fn json_ukl_is_one_kernel() {
 /// default polls it is one launch; with one poll per predecessor and none after it, groups leave unfinished and the launch is repeated; the
 /// results are the same.
 #[test]
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn a_batch_of_files_and_programs_is_one_launch() {
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_batch};
     let programs = batch_programs();
@@ -498,7 +504,7 @@ fn a_batch_of_files_and_programs_is_one_launch() {
     let bytes = batch_bytes();
     let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
-    for width in LaneWidth::ALL {
+    for width in LaneWidth::ALL.into_iter().filter(|_| !crate::executors::no_device()) {
         for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes)] {
             for spins in [SPINS, 0] {
                 let run = run_batch(&natives, &files, width, executor, spins).unwrap_or_else(|e| panic!("{executor:?}: {e:?}"));
@@ -618,7 +624,7 @@ fn json_batch_cost_per_block() {
     println!("files to the fallback: {fallback}");
     let s = compiled.batch_cpu_seconds(&slices, 3);
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
         use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, RepeatedLaunches, run_split};
         // The count is the run's (decision 0442).
