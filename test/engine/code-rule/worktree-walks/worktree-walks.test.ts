@@ -68,9 +68,9 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof Git>();
   return {
     ...actual,
-    gitModifiedOrUntrackedPaths: async (...args: Parameters<typeof actual.gitModifiedOrUntrackedPaths>) => {
+    gitFirstSightListing: async (...args: Parameters<typeof actual.gitFirstSightListing>) => {
       counted.listings.set(args[0], (counted.listings.get(args[0]) ?? 0) + 1);
-      return await actual.gitModifiedOrUntrackedPaths(...args);
+      return await actual.gitFirstSightListing(...args);
     },
     // Each question of `HEAD` that starts Git: `gitHead`, or a `rev-parse` naming `HEAD`.
     gitHead: async (...args: Parameters<typeof actual.gitHead>) => {

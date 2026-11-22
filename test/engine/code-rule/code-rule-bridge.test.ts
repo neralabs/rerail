@@ -69,8 +69,8 @@ const asyncGitCalls = vi.hoisted(() => ({
   before: undefined as ((args: readonly string[]) => void) | undefined,
 }));
 /**
- * The listings of a checkout's changed files a test makes late: the next walk listing (`gitModifiedOrUntrackedPaths`) of
- * each checkout in `late`, and the next listing asked again (`gitModifiedOrUntrackedListing`) of each in `lateAgain`,
+ * The listings of a checkout's changed files a test makes late: the next walk listing (`gitModifiedOrUntrackedPaths`, or
+ * `gitFirstSightListing` in the walk of the other worktrees) of each checkout in `late`, and the next listing asked again (`gitModifiedOrUntrackedListing`) of each in `lateAgain`,
  * once per entry, answer as a Git still at work at its time limit does, and start no Git. While `held` is set, each
  * listing asked again waits for it first; each of the next ones asked again takes the first hold left in `next`, names
  * its checkout to it and waits for its release; each then waits `delayMs` before it asks Git. `calls` names each
@@ -263,6 +263,10 @@ vi.mock("../../../src/engine/git.js", async importOriginal => {
     gitModifiedOrUntrackedPaths: async (checkout: string, options?: Git.GitReadOptions) => {
       listings.calls.push(`walk ${checkout}`);
       return taken(listings.late, checkout) ? undefined : await actual.gitModifiedOrUntrackedPaths(checkout, options);
+    },
+    gitFirstSightListing: async (checkout: string, head: string | undefined, options?: Git.GitReadOptions): Promise<Git.FirstSightListing> => {
+      listings.calls.push(`walk ${checkout}`);
+      return taken(listings.late, checkout) ? { changed: undefined, notAtHead: undefined } : await actual.gitFirstSightListing(checkout, head, options);
     },
     gitModifiedOrUntrackedListing: async (checkout: string, options?: Git.GitReadOptions): Promise<Git.ChangedPathsListing> => {
       listings.calls.push(`again ${checkout}`);
