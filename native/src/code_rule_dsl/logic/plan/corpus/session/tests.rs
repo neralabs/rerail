@@ -193,6 +193,8 @@ struct Ran {
     third: usize,
     /// Strata derived again past 0090 §4's threshold (0364 R4).
     past_theta: usize,
+    /// Why each edit's strata were derived again (`cross_again`), as said.
+    again: Vec<String>,
 }
 
 impl Ran {
@@ -201,6 +203,9 @@ impl Ran {
         self.recursive += report.cross_maintained.1;
         self.third += report.cross_maintained.2;
         self.past_theta += report.cross_again.get(crate::code_rule_dsl::logic::plan::corpus::maintain::reason_class(crate::code_rule_dsl::logic::plan::corpus::maintain::THRESHOLD)).copied().unwrap_or(0);
+        if !report.cross_again.is_empty() {
+            self.again.push(format!("{:?}", report.cross_again));
+        }
     }
 }
 
@@ -430,7 +435,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
 #[test]
 fn a_session_maintains_a_cross_file_aggregate() {
     let ran = cross_file_aggregate();
-    assert_eq!(ran.third, 0, "no stratum is derived again");
+    assert_eq!(ran.third, 0, "no stratum is derived again: {:?}", ran.again);
     assert!(ran.mode > 0);
 }
 
