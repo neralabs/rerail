@@ -10334,3 +10334,14 @@ Each choice is read by both sides' invariants in `notes/roll-up-58-uglykl-simd.m
 
 Main's #985 (a session lets go of removed worktrees) is taken whole, beside roll-up 43's `refreshOwners()`
 (`notes/roll-up-59-main.md`).
+
+### Q481. Roll-up 60 (CUDA-support 78f75cdb07 onto Pulling-it-all-together): what the merge chose
+
+0576 §17 and §22-§25 on ours' forward carry, the device's only block executor (`notes/roll-up-60-cuda-support.md`):
+- **Inlining per backend**: theirs' `UKL_SHARED`, `UKL_LARGE` and `UKL_RARE` sit beside ours' `UKL_ONCE` (called on
+  every backend). `UKL_SIMD_GROUP_FREE` is gone. `rget` is `UKL_SHARED`, and keeps its memo.
+- **Block programs at the device's width** (16 or 32): on the forward carry. The look-back's hunks have no code left
+  in ours.
+- **One batch per test, one build of the kernels**: `every_of_all` drives the forward carry. Its kernels are made
+  together from `serial_kernels()`.
+- **The JIT's table over the batch's format**: `programs` is passed down ours' split of the packed run.

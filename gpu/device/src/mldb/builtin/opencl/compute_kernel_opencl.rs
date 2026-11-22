@@ -263,18 +263,16 @@ fn device_info_string(a: &Api, d: Ptr, param: ClUint) -> String {
 /// 32 lanes compiles 2-3 times slower than at 16). `RERAIL_OPENCL_SIMD_WIDTH` (1, 16 or 32) asks for a width: 1 is one
 /// lane, no group; 16 or 32 the device's sub-groups of it where it has them. Otherwise, or with
 /// `RERAIL_OPENCL_SUBGROUPS=0` (to measure one against the other), the shim emulates 32 lanes in threadgroup memory.
-/// With the device's sub-groups, also the sizes they come in (a source written for one, `UKL_SIMD_WIDTH_NEEDED`,
-/// takes it: the block programs' 32).
-fn lanes(a: &Api, device: Ptr) -> (u32, bool, Vec<u32>) {
+fn lanes(a: &Api, device: Ptr) -> (u32, bool) {
     let asked = match std::env::var("RERAIL_OPENCL_SIMD_WIDTH") {
         Err(_) => None,
         Ok(w) => match w.parse::<u32>() {
-            Ok(1) => return (1, false, Vec::new()),
+            Ok(1) => return (1, false),
             Ok(n @ (16 | 32)) => Some(n),
             _ => panic!("RERAIL_OPENCL_SIMD_WIDTH={w}: 1, 16 or 32"),
         },
     };
-    let emulated = || (32, false, Vec::new());
+    let emulated = || (32, false);
     if std::env::var("RERAIL_OPENCL_SUBGROUPS").is_ok_and(|v| v == "0") {
         return emulated();
     }
@@ -291,7 +289,7 @@ fn lanes(a: &Api, device: Ptr) -> (u32, bool, Vec<u32>) {
         None => [16, 32].into_iter().find(|n| sizes.contains(n)),
     };
     match width {
-        Some(w) => (w, true, sizes),
+        Some(w) => (w, true),
         None => emulated(),
     }
 }
@@ -337,8 +335,6 @@ struct DeviceInner {
     subgroups: bool,
     /// Their lanes (`UKL_SIMD_WIDTH`).
     width: u32,
-    /// The sizes its sub-groups come in (none when emulated).
-    sizes: Vec<u32>,
     /// The alignment of a sub-buffer's origin, in bytes (`CL_DEVICE_MEM_BASE_ADDR_ALIGN`, given in bits).
     base_align: u64,
     /// The largest buffer (`CL_DEVICE_MAX_MEM_ALLOC_SIZE`).
@@ -396,20 +392,20 @@ impl ClDevice {
         let base_align = (u32::from_ne_bytes(ba[..4].try_into().unwrap()) as u64 / 8).max(1);
         let ma = device_info_bytes(a, device, CL_DEVICE_MAX_MEM_ALLOC_SIZE);
         let max_alloc = u64::from_ne_bytes(ma[..8].try_into().unwrap());
-        let (width, subgroups, sizes) = lanes(a, device);
+        let (width, subgroups) = lanes(a, device);
         // Heap buffers first: memory wrapped in place (a block, a mapped tape) is read through one.
-        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, width, sizes: sizes.clone(), base_align, max_alloc, usm: None, synced: false }));
+        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, width, base_align, max_alloc, usm: None, synced: false }));
         // A driver whose kernels' writes reach the host's pages only through a map is made current at each
         // submission's edges (`synced`); a device's own memory holding a buffer while it computes is not a copy (0353).
         // `RERAIL_OPENCL_SYNCED=1` takes this path on any device (its tests on a driver that needs no map).
         let synced = !unified || std::env::var_os("RERAIL_OPENCL_SYNCED").is_some() || probe.reads_host_pages_in_place().is_err();
         drop(probe);
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, width, sizes: sizes.clone(), base_align, max_alloc, usm: None, synced }));
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, width, base_align, max_alloc, usm: None, synced }));
         if synced {
             return Ok(d);
         }
         let Some(usm) = usm(a, platform, device) else { return Ok(d) };
-        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, width, sizes, base_align, max_alloc, usm: Some(usm), synced }));
+        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, width, base_align, max_alloc, usm: Some(usm), synced }));
         // Without the check's pass its buffers stay the heap's, with no address (one context; nothing releases it).
         if let Err(e) = with.follows_addresses() {
             eprintln!("rerail-device: {e}: OpenCL buffers without addresses");
@@ -534,12 +530,6 @@ impl ClDevice {
     /// Its SIMD groups' lanes (`lanes`).
     pub fn simd_width(&self) -> u32 {
         self.0.width
-    }
-
-    /// Whether a source written for `w` lanes (`UKL_SIMD_WIDTH_NEEDED`) runs here: the width, or a size of its
-    /// sub-groups.
-    pub fn offers_simd_width(&self, w: u32) -> bool {
-        self.0.width == w || self.0.sizes.contains(&w)
     }
 
     pub fn new_shared_event(&self) -> ClSharedEvent {

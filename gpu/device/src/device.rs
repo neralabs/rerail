@@ -146,15 +146,6 @@ impl Device {
         }
     }
 
-    /// Whether a source written for `w` lanes (`UKL_SIMD_WIDTH_NEEDED`) runs here: its own width, or (OpenCL) one of
-    /// its sub-groups' sizes.
-    pub fn offers_simd_width(&self, w: u32) -> bool {
-        match self {
-            Device::OpenCl(d) => d.offers_simd_width(w),
-            _ => self.simd_width() == w,
-        }
-    }
-
     /// The memory domain its kernels read (decisions 0440 §7.2, 0491 step 4): 0 for the host's memory, read in place
     /// (Apple's unified memory, the CPU, an OpenCL device sharing the host's memory, a CUDA device reading the host's
     /// pages, as a GB10 does); 1 for a discrete card's own memory, whose copy of a region a mirror holds

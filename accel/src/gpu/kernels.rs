@@ -305,7 +305,7 @@ pub fn function(source: &str, name: &str, constant: Option<u32>) -> Arc<Function
     if super::shared::get().is_some() {
         return on_metal(source, name, constant);
     }
-    elsewhere(source, name, constant).unwrap_or_else(|e| panic!("the kernel {name}: {e}"))
+    elsewhere(source, &[name], constant).map(|mut f| f.remove(0)).unwrap_or_else(|e| panic!("the kernel {name}: {e}"))
 }
 
 /// [`function`] through Metal's tier: this process's pipeline, else an archive's, else the compile.
@@ -327,38 +327,64 @@ fn on_metal(source: &str, name: &str, constant: Option<u32>) -> Arc<Function> {
     p
 }
 
-/// A kernel on a device other than Metal: compiled by the device layer (`rerail_gpu::kernels`, its store keeping
-/// the backend's compiled form).
-fn elsewhere(source: &str, name: &str, constant: Option<u32>) -> Result<Arc<Function>, String> {
-    let k = Key::of(source, name, constant);
-    let key = (k.pipeline, constant);
+/// The kernels `names` of `source` (UKL), as [`function`] makes each: kernels a caller uses together. On OpenCL they
+/// are one program, built once (`UKL_ONE_KERNEL` with each name selected): a program a kernel built the source again
+/// for each, and the serial block executor's 11 kernels of one source took twice as long so.
+pub fn functions(source: &str, names: &[&str], constant: Option<u32>) -> Vec<Arc<Function>> {
+    #[cfg(target_os = "macos")]
+    if super::shared::get().is_some() {
+        return names.iter().map(|name| on_metal(source, name, constant)).collect();
+    }
+    elsewhere(source, names, constant).unwrap_or_else(|e| panic!("the kernels {names:?}: {e}"))
+}
+
+/// Kernels on a device other than Metal: compiled by the device layer (`rerail_gpu::kernels`, its store keeping
+/// the backend's compiled form), those of `names` this process does not hold in one program.
+fn elsewhere(source: &str, names: &[&str], constant: Option<u32>) -> Result<Vec<Arc<Function>>, String> {
     let held = made();
-    if let Some(f) = held.0.lock().unwrap_or_else(|p| p.into_inner()).elsewhere.get(&key) {
-        count(|c| c.from_memory += 1);
-        return Ok(Arc::clone(f));
+    let keys: Vec<Key> = names.iter().map(|name| Key::of(source, name, constant)).collect();
+    let missing: Vec<(&str, Key)> = {
+        let m = held.0.lock().unwrap_or_else(|p| p.into_inner());
+        names.iter().copied().zip(keys.iter().copied()).filter(|(_, k)| !m.elsewhere.contains_key(&(k.pipeline, constant))).collect()
+    };
+    let held_already = names.len() - missing.len();
+    if held_already > 0 {
+        count(|c| c.from_memory += held_already as u64);
     }
-    let value = constant.map(|c| format!("{c}u"));
-    let mut defines: Vec<(&str, &str)> = value.as_deref().map(|v| ("UKL_CONSTANT_0", v)).into_iter().collect();
-    // One program a source (its library's key), whichever of its kernels is asked for first: keyed by
-    // the kernel's name, each kernel of one source was preprocessed and loaded again (130 ms each on
-    // the CPU, three for the preprocessor's first evaluation). On OpenCL, one program a kernel: a driver builds
-    // every kernel of a program, and Intel's took 436 s over the 21 join stages of one source
-    // (`UKL_ONE_KERNEL`, the OpenCL shim).
-    let only = format!("__UKL_ONLY_{name}");
-    let one = rerail_gpu::device::backend() == "OpenCL";
-    if one {
-        defines.extend([("UKL_ONE_KERNEL", "1"), (only.as_str(), "__UKL_PROBE")]);
+    if let Some(&(_, first)) = missing.first() {
+        let library = first.library;
+        let value = constant.map(|c| format!("{c}u"));
+        let mut defines: Vec<(&str, &str)> = value.as_deref().map(|v| ("UKL_CONSTANT_0", v)).into_iter().collect();
+        // One program a source (its library's key), whichever of its kernels is asked for first: keyed by
+        // the kernel's name, each kernel of one source was preprocessed and loaded again (130 ms each on
+        // the CPU, three for the preprocessor's first evaluation). On OpenCL, one program of the kernels asked for
+        // together: a driver builds every kernel of a program, and Intel's took 436 s over the 21 join stages of
+        // one source (`UKL_ONE_KERNEL`, the OpenCL shim).
+        let only: Vec<String> = missing.iter().map(|(name, _)| format!("__UKL_ONLY_{name}")).collect();
+        let one = rerail_gpu::device::backend() == "OpenCL";
+        if one {
+            defines.push(("UKL_ONE_KERNEL", "1"));
+            defines.extend(only.iter().map(|o| (o.as_str(), "__UKL_PROBE")));
+        }
+        let label = if one { format!("{}.{}.ukl", &hex(&library)[..16], missing.iter().map(|(name, _)| *name).collect::<Vec<_>>().join("+")) } else { format!("{}.ukl", &hex(&library)[..16]) };
+        let program = rerail_gpu::kernels::program_with(&label, source, &defines)?;
+        let shared = rerail_gpu::shared::get().ok_or("no device")?;
+        for (name, k) in &missing {
+            let started = std::time::Instant::now();
+            let f = Arc::new(program.library().get_function(&shared.device, name)?);
+            // `RERAIL_GPU_TIMES` (rerail_gpu::kernels): the function's build or load, on stderr.
+            if std::env::var_os("RERAIL_GPU_TIMES").is_some() {
+                eprintln!("gpu function {label} {name}: {:.3} s", started.elapsed().as_secs_f64());
+            }
+            // Compiled, or loaded from the device layer's store: either way made, not this process's memory's.
+            count(|c| c.compiled += 1);
+            // Made here, not found in this process's memory: as Metal's kernels are counted (`made_here`).
+            MADE_HERE.set(MADE_HERE.get() + 1);
+            held.0.lock().unwrap_or_else(|p| p.into_inner()).elsewhere.insert((k.pipeline, constant), f);
+        }
     }
-    let label = if one { format!("{}.{name}.ukl", &hex(&k.library)[..16]) } else { format!("{}.ukl", &hex(&k.library)[..16]) };
-    let program = rerail_gpu::kernels::program_with(&label, source, &defines)?;
-    let shared = rerail_gpu::shared::get().ok_or("no device")?;
-    let f = Arc::new(program.library().get_function(&shared.device, name)?);
-    // Compiled, or loaded from the device layer's store: either way made, not this process's memory's.
-    count(|c| c.compiled += 1);
-    // Made here, not found in this process's memory: as Metal's kernels are counted (`made_here`).
-    MADE_HERE.set(MADE_HERE.get() + 1);
-    held.0.lock().unwrap_or_else(|p| p.into_inner()).elsewhere.insert(key, Arc::clone(&f));
-    Ok(f)
+    let m = held.0.lock().unwrap_or_else(|p| p.into_inner());
+    names.iter().zip(&keys).map(|(name, k)| m.elsewhere.get(&(k.pipeline, constant)).map(Arc::clone).ok_or_else(|| format!("{name}: not made"))).collect()
 }
 
 /// [`function`] of a fixed source: an interpreter's or a relational kernel's, the same for every rule set. Recorded
