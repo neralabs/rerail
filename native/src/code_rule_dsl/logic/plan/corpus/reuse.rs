@@ -39,6 +39,9 @@ const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_RE
     // A profile's and the heap sampler's (`profile::memory`, `rerail_prof`): a measurement's cold runs sample the heap
     // and its warm runs do not, so with these in the key no warm run found the cold run's record (decision 0376).
     "RERAIL_PROF", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
+    // The memory profile's census of the run's columns as they are released (`profile::memory`): what it measures, not what
+    // the run outputs.
+    "RERAIL_WIDTH_CENSUS",
     // The stores a measurement keeps apart (the cost model's, the rule images'): a plan's costs and a program's stored
     // form, never the run's outputs.
     "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_EXPORT_IMAGES",
@@ -88,7 +91,12 @@ fn key(given: &super::Texts<'_>, added: &super::added::Added, root: &Path, optio
     added.hash(&mut h);
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    // A Git snapshot's root by what it is of (its repository's facts and the selected object), not by its view's path,
+    // which a named analysis makes again each run (`snapshot::run_identity`).
+    match crate::git_workspace::snapshot::run_identity(root) {
+        Some(identity) => h.update(identity.as_bytes()),
+        None => h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes()),
+    }
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
@@ -277,9 +285,6 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 /// The kept outputs written into `out`, when every read of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
 pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
-    if crate::git_workspace::snapshot::contains(root) {
-        return Ok(None);
-    }
     // A run an analysis run owns (decision 0547) publishes what it recorded as the owner finishes: a hit re-owns the
     // manifests the recorded run wrote (`own_recorded_manifests`), below. Skipped instead, every `logic` command's
     // warm run evaluated again (each begins an analysis run).
@@ -393,9 +398,6 @@ fn miss(why: &str) {
 }
 
 pub fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report, captured: Option<&[u8]>) -> Result<()> {
-    if crate::git_workspace::snapshot::contains(root) {
-        return Ok(());
-    }
     let programs = given.programs;
     // Every phase's program is among the rule files (`rule_files`), and what each phase consulted is the record's
     // too: a phase's exports are a function of its program and what it consulted, so a run whose every read, its

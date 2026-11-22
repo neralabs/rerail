@@ -1091,3 +1091,54 @@ quoted_resolved(x) :- res(x).
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A session's run with nothing changed derives no stratum again, nor does one whose edit reaches only some: a stratum
+/// no changed read reaches is placed as it was, kept or not (a view's, a fact relation's), and made only for a
+/// stratum that runs and reads it. Before, every such stratum whose rows were not kept was derived again on every run
+/// (`NOT_KEPT`), warm or not.
+#[test]
+fn a_session_derives_nothing_again_that_no_change_reaches() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-not-kept");
+    let _ = std::fs::remove_dir_all(&base);
+    let (src, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    let rule = base.join("cycle.rerail");
+    std::fs::write(
+        &rule,
+        r#".policy "test-import-cycle-quiet" revision 1
+.description "An import that closes a cycle of imports."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rerail"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl reach(a: number, b: number) no_reach
+reach(a, b) :- dep(a, b).
+reach(a, c) :- reach(a, b), dep(b, c).
+.violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
+CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+.decl defines(d: number)
+defines(d) :- kind(n, "function_definition"), docof(n, d).
+.violation SHADOW(at: node) code "SHADOW" "A module that defines a function imports one that does too."
+SHADOW(i) :- impmod(i, m), docof(i, a), defines(a), doc(b, _, m), defines(b).
+"#,
+    )
+    .unwrap();
+    for (path, text) in [("a.py", "from b import x\ndef f():\n    pass\n"), ("b.py", "from c import y\ndef g():\n    pass\n"), ("c.py", "from a import z\n"), ("d.py", "x = 1\n")] {
+        std::fs::write(src.join(path), text).unwrap();
+    }
+    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let session = start(&base.join("session")).unwrap();
+    let first = run();
+    let findings = |r: &super::super::Report| (r.rows.get("CYC").copied(), r.rows.get("SHADOW").copied());
+    let unchanged = run();
+    std::fs::write(src.join("d.py"), "x = 2\n").unwrap();
+    let edited = run();
+    drop(session);
+    let _ = std::fs::remove_dir_all(&base);
+    assert_eq!((findings(&unchanged), findings(&edited)), (findings(&first), findings(&first)), "a full run's findings");
+    assert!(unchanged.cross_again.is_empty(), "nothing changed, nothing derived again: {:?}", unchanged.cross_again);
+    assert!(edited.cross_again.is_empty(), "an edit that reaches no import derives nothing again: {:?}", edited.cross_again);
+}
