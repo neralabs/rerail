@@ -3,6 +3,7 @@
 //! transducer registers what compiles and launches one at load (`install_span_prefilter`). Without one, no pattern
 //! is prefiltered and every span is the regex's.
 
+use rerail_blocks::vector::Vector;
 use std::any::Any;
 use std::sync::{Arc, OnceLock};
 
@@ -16,7 +17,7 @@ pub enum RanOn {
 /// A compiled pattern's prefilter.
 pub trait SpanEnds: Send + Sync + 'static {
     /// Bit `i` of the words: a match can end after byte `i` of `bytes`.
-    fn ends(&self, bytes: &[u8]) -> Vec<u64>;
+    fn ends(&self, bytes: &[u8]) -> Vector<u64>;
     /// The prefilter as its own type (the launcher reads it).
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
@@ -25,7 +26,7 @@ pub trait SpanEnds: Send + Sync + 'static {
 pub type Compile = fn(&str, bool) -> Option<Arc<dyn SpanEnds>>;
 /// Ends over each of `sources` (`files`: (source, the pattern's index in the prefilters)), placed by price on the
 /// cores or, when `device` and the executor has one, the GPU.
-pub type Launch = fn(&rerail_accel::Executor, &[Arc<dyn SpanEnds>], &[Arc<String>], &[(usize, usize)], bool) -> Result<(Vec<Vec<u64>>, RanOn), String>;
+pub type Launch = fn(&rerail_accel::Executor, &[Arc<dyn SpanEnds>], &[Arc<String>], &[(usize, usize)], bool) -> Result<(Vec<Vector<u64>>, RanOn), String>;
 
 static SPAN_PREFILTER: OnceLock<(Compile, Launch)> = OnceLock::new();
 
@@ -89,7 +90,7 @@ pub fn compile(re: &str, lines: bool) -> Option<Arc<dyn SpanEnds>> {
 }
 
 /// The prefilters' ends over the sources (see `Launch`); none registered, none compiled, so none to launch.
-pub fn launch(ex: &rerail_accel::Executor, filters: &[Arc<dyn SpanEnds>], sources: &[Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vec<u64>>, RanOn), String> {
+pub fn launch(ex: &rerail_accel::Executor, filters: &[Arc<dyn SpanEnds>], sources: &[Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vector<u64>>, RanOn), String> {
     match SPAN_PREFILTER.get() {
         Some((_, l)) => l(ex, filters, sources, files, device),
         None if files.is_empty() => Ok((Vec::new(), RanOn::Cpu)),

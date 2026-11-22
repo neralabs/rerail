@@ -20,16 +20,16 @@ impl CandidateSpike for Batch {
         let mut output = Vec::new();
         let mut total = candidate_spike::Work::default();
         for p in self.docs.iter().filter(|p| p.tag == py.grammar.tag()) {
-            let (rows, work) = candidate_spike::experiment(&py.grammar, &p.facts, 2, &members, collector_mode, |n| {
+            let (rows, work) = candidate_spike::experiment(&py.grammar, p.f(), 2, &members, collector_mode, |n| {
                 let imports = py.imports(self, p);
                 if mode=="typed_ranges" {
                     use crate::code_rule_dsl::facts::producers::python::python_facts::Fact;
-                    match candidate_spike::eligibility(&py.grammar,&p.facts,n) {
+                    match candidate_spike::eligibility(&py.grammar,p.f(),n) {
                         Fact::Known(chain)=>imports.may_qualify_parts(chain.head,chain.attributes,&wanted,&globals,p.module.as_ref()),
                         Fact::NotApplicable(_)=>false,
                         Fact::Unknown(_)|Fact::Unsupported(_)=>true,
                     }
-                }else {py::qualification_chain(&py.grammar, &p.facts, n).is_none_or(|(head, tail)| imports.may_qualify_parts(head, tail, &wanted, &globals, p.module.as_ref()))}
+                }else {py::qualification_chain(&py.grammar, p.f(), n).is_none_or(|(head, tail)| imports.may_qualify_parts(head, tail, &wanted, &globals, p.module.as_ref()))}
             });
             total.posting_calls += work.posting_calls; total.context_ranges += work.context_ranges; total.calls += work.calls; total.contexts += work.contexts; total.screens += work.screens;
             for [call, report, reference, receiver, flags, owner] in rows {

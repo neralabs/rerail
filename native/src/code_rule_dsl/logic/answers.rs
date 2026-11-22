@@ -20,6 +20,7 @@
 //! Both passes are made on the program's version (decision 0241's form), reading its rules by their handles and its
 //! fields, never a tree.
 
+use rerail_blocks::vector::Vector;
 use super::front::{Edges, tarjan};
 use super::front::ast::Gate;
 use super::plan::body::Placed;
@@ -68,7 +69,7 @@ impl Rewrite for Gated<'_> {
 enum Out {
     Copy(usize),
     DoneAll(String),
-    Done(String, Vec<usize>, usize),
+    Done(String, Vector<usize>, usize),
     Gated(usize),
 }
 
@@ -187,7 +188,7 @@ impl RulePass for GateRules<'_> {
             let rel = name(a.rel());
             // The key: a negated atom's columns that are not wild, all bound by the literals before it; an
             // aggregate's that they bind (a constant's too), its group.
-            let at: Vec<usize> = a
+            let at: Vector<usize> = a
                 .args()
                 .enumerate()
                 .filter(|(_, t)| match t {
@@ -498,7 +499,7 @@ pub mod tests {
         // Each gated aggregate is read gated, and the rule's `done`s come before them.
         let few = gated.rules().find(|r| gated.rel_name(r.head().rel()) == "few").unwrap();
         let lits: Vec<LitRef<'_>> = few.body().collect();
-        let aggs: Vec<usize> = (0..lits.len()).filter(|&i| matches!(lits[i].view(), Lit::Agg { .. })).collect();
+        let aggs: Vector<usize> = (0..lits.len()).filter(|&i| matches!(lits[i].view(), Lit::Agg { .. })).collect();
         assert_eq!(aggs.len(), 2);
         for &i in &aggs {
             assert!(lits[i].atom().unwrap().gated(), "the aggregate at {i} is gated");

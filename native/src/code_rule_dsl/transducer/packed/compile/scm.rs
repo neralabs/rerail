@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 use std::collections::BTreeMap;
 
@@ -453,10 +454,10 @@ pub(super) fn parse(source: &str) -> Result<Vec<QueryPattern>, Error> {
 
 struct Compiler<'a> {
     grammar: &'a tree_sitter::Language,
-    words: Vec<u32>,
+    words: Vector<u32>,
     strings: Vec<Vec<u8>>,
     string_indexes: BTreeMap<Vec<u8>, u16>,
-    labels: Vec<u16>,
+    labels: Vector<u16>,
     label_indexes: BTreeMap<String, u16>,
     predicates: Vec<TextPredicate>,
     capture_predicates: Vec<CapturePredicate>,
@@ -471,10 +472,10 @@ impl<'a> Compiler<'a> {
     fn new(grammar: &'a tree_sitter::Language) -> Self {
         Self {
             grammar,
-            words: Vec::new(),
+            words: rerail_blocks::vector::Vector::new(),
             strings: Vec::new(),
             string_indexes: BTreeMap::new(),
-            labels: Vec::new(),
+            labels: rerail_blocks::vector::Vector::new(),
             label_indexes: BTreeMap::new(),
             predicates: Vec::new(),
             capture_predicates: Vec::new(),
@@ -1095,7 +1096,7 @@ impl<'a> Compiler<'a> {
                             Argument::Text(text) => self.string(text.as_bytes()),
                             Argument::Capture(_) => Err(Error::UnsupportedPattern),
                         })
-                        .collect::<Result<Vec<_>, _>>()?,
+                        .collect::<Result<Vector<_>, _>>()?,
                     negated,
                     any: false,
                 },
@@ -1113,7 +1114,7 @@ impl<'a> Compiler<'a> {
                                 Argument::Text(text) => self.string(text.as_bytes()),
                                 Argument::Capture(_) => Err(Error::UnsupportedPattern),
                             })
-                            .collect::<Result<Vec<_>, _>>()?,
+                            .collect::<Result<Vector<_>, _>>()?,
                         negated,
                         any,
                     }
@@ -1219,7 +1220,7 @@ impl<'a> Compiler<'a> {
             self.predicates,
             self.capture_predicates,
             self.labels,
-            Vec::new(),
+            rerail_blocks::vector::Vector::new(),
         )?
         .with_directives(self.directives)?
         .with_tree_sitter_query_semantics()

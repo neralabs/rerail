@@ -8,6 +8,7 @@
 //! Components come from an iterative Tarjan pass, which finishes a component only after every
 //! component it reaches, so keys are made bottom up in one pass: linear in the edges. A document
 //! named only by an edge has the empty digest.
+use rerail_blocks::vector::Vector;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,9 +25,9 @@ pub(in crate::code_rule_dsl) fn components(edges: &[(i64, i64)], own: &[(i64, St
         digests.entry(*a).or_default();
         digests.entry(*b).or_default();
     }
-    let docs: Vec<i64> = digests.keys().copied().collect();
+    let docs: Vector<i64> = digests.keys().copied().collect();
     let index: BTreeMap<i64, usize> = docs.iter().enumerate().map(|(i, d)| (*d, i)).collect();
-    let mut out: Vec<Vec<usize>> = vec![Vec::new(); docs.len()];
+    let mut out: Vec<Vector<usize>> = vec![rerail_blocks::vector::Vector::new(); docs.len()];
     for (a, b) in edges {
         if a != b {
             out[index[a]].push(index[b]);
@@ -72,7 +73,7 @@ pub(in crate::code_rule_dsl) fn components(edges: &[(i64, i64)], own: &[(i64, St
 }
 
 /// The strongly connected components of `out`, each finished after every component it reaches.
-fn tarjan(out: &[Vec<usize>]) -> Vec<Vec<usize>> {
+fn tarjan(out: &[Vector<usize>]) -> Vec<Vector<usize>> {
     const NONE: usize = usize::MAX;
     let n = out.len();
     let (mut order, mut low, mut on) = (vec![NONE; n], vec![0; n], vec![false; n]);
@@ -108,7 +109,7 @@ fn tarjan(out: &[Vec<usize>]) -> Vec<Vec<usize>> {
                 low[parent] = low[parent].min(low[v]);
             }
             if low[v] == order[v] {
-                let mut scc = Vec::new();
+                let mut scc = Vector::new();
                 loop {
                     let w = stack.pop().expect("v is on the stack");
                     on[w] = false;

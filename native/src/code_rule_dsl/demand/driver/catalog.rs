@@ -368,7 +368,7 @@ impl SqlPlans {
                     .filter_map(|clause| file.tasks.get(clause))
                     .flatten()
                     .copied()
-                    .collect::<Vec<_>>();
+                    .collect::<rerail_blocks::vector::Vector<_>>();
                 roots.sort_unstable();
                 roots.dedup();
                 let demanded = (terminal.producer_kind() == ProducerKind::FileFact

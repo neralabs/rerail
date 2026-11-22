@@ -22,6 +22,7 @@
 //! lies whole in one segment. Segments past `MAX_SEGMENTS` are merged from the newest (the small ones a session's
 //! edits add), so a row's segment is found among a few.
 
+use rerail_blocks::vector::Vector;
 use std::sync::{Arc, Mutex};
 
 use rerail_blocks::block::{Block, kind};
@@ -389,6 +390,15 @@ fn lease(bytes: usize, life: Life) -> Result<Block, String> {
 /// above this crate, installed by `install_block_device`); `May` until one is installed.
 static BLOCK_DEVICE: std::sync::OnceLock<fn() -> rerail_blocks::alloc::Device> = std::sync::OnceLock::new();
 
+/// A code table's words (`rerail_tape_format::tape::CodeTable`, decision 0569 §2) in a block: what the tape crate,
+/// below the blocks, places a table it makes in (`place_tables_with`).
+pub fn place_table(words: &[u32]) -> rerail_tape_format::tape::Words {
+    let mut v = rerail_blocks::vector::Vector::with_capacity_in(rerail_blocks::maps::default_room(), words.len());
+    // copy: derived: a code table's words, encoded once, placed in a block
+    v.extend_from_slice(words);
+    Arc::new(v)
+}
+
 /// Installs what a block of relations asks about the device (`placement::block_device`); the first one stays.
 pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
     let _ = BLOCK_DEVICE.set(device);
@@ -427,6 +437,31 @@ fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usi
     *open = Some(f.clone());
     let c = f.block.try_alloc_chunk_fit(need, align).ok_or_else(|| format!("a new open block holds no chunk of {need} bytes"))?;
     Ok((f, c))
+}
+
+/// The room of a `Life`'s open blocks (`open_chunk`) for the block structures (`rerail_blocks::maps`): a run's maps,
+/// sets, string tables and records lie in its blocks, beside its relations, and go with them.
+#[derive(Clone, Copy, Debug)]
+pub struct LifeRoom(pub Life);
+
+impl rerail_blocks::maps::Room for LifeRoom {
+    fn region(&self, bytes: usize, align: usize, name: &'static str) -> rerail_blocks::maps::Region {
+        let life = if self.0 == Life::Device { Life::Run } else { self.0 };
+        let (facts, (at, kept)) = open_chunk(life, bytes, align.max(8)).unwrap_or_else(|e| panic!("a block for {bytes} bytes of {name}: {e}"));
+        // SAFETY: the chunk was just taken for this region: `kept` bytes from `at`.
+        let region = unsafe { rerail_blocks::region::Mutable::adopt(&facts.block, at, bytes, kept, name) };
+        rerail_blocks::maps::region_of(region, Some(facts as Arc<dyn std::any::Any + Send + Sync>))
+    }
+}
+
+/// The run's room (`LifeRoom(Life::Run)`): it holds nothing but the life, so each structure takes its own.
+pub fn run_room() -> Arc<dyn rerail_blocks::maps::Room> {
+    Arc::new(LifeRoom(Life::Run))
+}
+
+/// A source's room (`LifeRoom(Life::Source)`): a batch's structures, dropped with the batch.
+pub fn source_room() -> Arc<dyn rerail_blocks::maps::Room> {
+    Arc::new(LifeRoom(Life::Source))
 }
 
 /// Where the structures derived from a relation's rows go (its indexes' arrays, `BlockVec`, decision 0384 step 4):
@@ -664,6 +699,162 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         self.len += src.len();
     }
 
+    /// Empty, with room for `n` `T`s in a run's open block (`Vec::with_capacity`'s place).
+    pub fn with_capacity(n: usize) -> Self {
+        BlockVec::with_capacity_in(None, n)
+    }
+
+    /// Its last `T`, taken off.
+    pub fn pop(&mut self) -> Option<T>
+    where
+        T: Copy,
+    {
+        if self.len == 0 {
+            return None;
+        }
+        let v = self[self.len - 1];
+        self.truncate(self.len - 1);
+        Some(v)
+    }
+
+    /// Its first `n` `T`s kept.
+    pub fn truncate(&mut self, n: usize) {
+        if n < self.len {
+            if self.owner.is_some() {
+                let near = self.facts.clone();
+                self.realloc(near.as_ref().map(|f| (f, 0)), self.len);
+            }
+            self.len = n;
+        }
+    }
+
+    /// Empty again, its chunk kept.
+    pub fn clear(&mut self) {
+        self.truncate(0);
+    }
+
+    /// `v` put at `i`, the `T`s from `i` moved up one.
+    pub fn insert(&mut self, i: usize, v: T)
+    where
+        T: Copy,
+    {
+        assert!(i <= self.len, "insert at {i} of {}", self.len);
+        self.push(v);
+        self[i..].rotate_right(1);
+    }
+
+    /// The `T` at `i` taken out, those after it moved down one.
+    pub fn remove(&mut self, i: usize) -> T
+    where
+        T: Copy,
+    {
+        let v = self[i];
+        self[i..].rotate_left(1);
+        self.truncate(self.len - 1);
+        v
+    }
+
+    /// The `T` at `i` taken out, the last put in its place.
+    pub fn swap_remove(&mut self, i: usize) -> T
+    where
+        T: Copy,
+    {
+        let last = self.len - 1;
+        self.swap(i, last);
+        self.pop().expect("an item")
+    }
+
+    /// The `T`s `keep` holds for, in order.
+    pub fn retain(&mut self, mut keep: impl FnMut(&T) -> bool)
+    where
+        T: Copy,
+    {
+        let mut w = 0;
+        for r in 0..self.len {
+            let v = self[r];
+            if keep(&v) {
+                self[w] = v;
+                w += 1;
+            }
+        }
+        self.truncate(w);
+    }
+
+    /// Runs of equal `T`s, one of each kept.
+    pub fn dedup(&mut self)
+    where
+        T: Copy + PartialEq,
+    {
+        self.dedup_by_key(|v| *v);
+    }
+
+    pub fn dedup_by_key<K: PartialEq>(&mut self, mut key: impl FnMut(&T) -> K)
+    where
+        T: Copy,
+    {
+        if self.len < 2 {
+            return;
+        }
+        let mut w = 1;
+        for r in 1..self.len {
+            if key(&self[r]) != key(&self[w - 1]) {
+                self[w] = self[r];
+                w += 1;
+            }
+        }
+        self.truncate(w);
+    }
+
+    /// The `T`s from `at` on, taken off into a vector of their own.
+    pub fn split_off(&mut self, at: usize) -> BlockVec<T>
+    where
+        T: Copy,
+    {
+        let tail = BlockVec::from(&self[at..]);
+        self.truncate(at);
+        tail
+    }
+
+    /// The `T`s of `range` taken out, in order, those after them moved down.
+    pub fn drain(&mut self, range: impl std::ops::RangeBounds<usize>) -> BlockVecIter<T>
+    where
+        T: Copy,
+    {
+        use std::ops::Bound::*;
+        let a = match range.start_bound() {
+            Included(&a) => a,
+            Excluded(&a) => a + 1,
+            Unbounded => 0,
+        };
+        let b = match range.end_bound() {
+            Included(&b) => b + 1,
+            Excluded(&b) => b,
+            Unbounded => self.len,
+        };
+        let out = BlockVec::from(&self[a..b]);
+        self[a..].rotate_left(b - a);
+        self.truncate(self.len - (b - a));
+        out.into_iter()
+    }
+
+    /// The `T`s of `other` appended, `other` emptied.
+    pub fn append(&mut self, other: &mut BlockVec<T>)
+    where
+        T: Copy,
+    {
+        // copy: growth: `append` moves the other vector's values to its end
+        self.extend_from_slice(other);
+        other.clear();
+    }
+
+    pub fn as_slice(&self) -> &[T] {
+        self
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        self
+    }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.len
@@ -800,6 +991,141 @@ impl<'a, T: rerail_blocks::Pod> IntoIterator for &'a BlockVec<T> {
     type IntoIter = std::slice::Iter<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+impl<T: rerail_blocks::Pod> FromIterator<T> for BlockVec<T> {
+    /// In the open block of a run (`with_capacity_in(None, ..)`).
+    fn from_iter<I: IntoIterator<Item = T>>(items: I) -> Self {
+        BlockVec::from_iter_in(None, items)
+    }
+}
+
+impl<T: rerail_blocks::Pod + Copy> IntoIterator for BlockVec<T> {
+    type Item = T;
+    type IntoIter = BlockVecIter<T>;
+    fn into_iter(self) -> BlockVecIter<T> {
+        BlockVecIter { v: self, at: 0 }
+    }
+}
+
+/// A `BlockVec`'s `T`s by value, its chunk kept until the last.
+pub struct BlockVecIter<T: rerail_blocks::Pod> {
+    v: BlockVec<T>,
+    at: usize,
+}
+
+impl<T: rerail_blocks::Pod + Copy> Iterator for BlockVecIter<T> {
+    type Item = T;
+    #[inline]
+    fn next(&mut self) -> Option<T> {
+        let v = self.v.get(self.at).copied();
+        self.at += usize::from(v.is_some());
+        v
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.v.len() - self.at;
+        (n, Some(n))
+    }
+}
+
+impl<T: rerail_blocks::Pod + Copy> ExactSizeIterator for BlockVecIter<T> {}
+
+impl<T: rerail_blocks::Pod + Copy> DoubleEndedIterator for BlockVecIter<T> {
+    fn next_back(&mut self) -> Option<T> {
+        if self.v.len() > self.at {
+            self.v.pop()
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: rerail_blocks::Pod + Eq> Eq for BlockVec<T> {}
+
+impl<T: rerail_blocks::Pod + std::hash::Hash> std::hash::Hash for BlockVec<T> {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        (**self).hash(h)
+    }
+}
+
+impl<T: rerail_blocks::Pod + PartialOrd> PartialOrd for BlockVec<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        (**self).partial_cmp(&**other)
+    }
+}
+
+impl<T: rerail_blocks::Pod + Ord> Ord for BlockVec<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (**self).cmp(&**other)
+    }
+}
+
+impl<T: rerail_blocks::Pod + Copy> From<&[T]> for BlockVec<T> {
+    fn from(items: &[T]) -> Self {
+        let mut v = BlockVec::with_capacity_in(None, items.len());
+        // copy: derived: a vector made from values its caller computed
+        v.extend_from_slice(items);
+        v
+    }
+}
+
+impl<T: rerail_blocks::Pod + Copy, const N: usize> From<[T; N]> for BlockVec<T> {
+    fn from(items: [T; N]) -> Self {
+        BlockVec::from(&items[..])
+    }
+}
+
+impl<T: rerail_blocks::Pod + serde::Serialize> serde::Serialize for BlockVec<T> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(self.iter())
+    }
+}
+
+impl<'de, T: rerail_blocks::Pod + serde::Deserialize<'de>> serde::Deserialize<'de> for BlockVec<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct Seq<T>(std::marker::PhantomData<T>);
+        impl<'de, T: rerail_blocks::Pod + serde::Deserialize<'de>> serde::de::Visitor<'de> for Seq<T> {
+            type Value = BlockVec<T>;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a sequence")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<BlockVec<T>, A::Error> {
+                let mut v = BlockVec::with_capacity(seq.size_hint().unwrap_or(0));
+                while let Some(x) = seq.next_element()? {
+                    v.push(x);
+                }
+                Ok(v)
+            }
+        }
+        d.deserialize_seq(Seq(std::marker::PhantomData))
+    }
+}
+
+impl<T: rerail_blocks::Pod + Copy> rayon::iter::FromParallelIterator<T> for BlockVec<T>
+where
+    T: Send,
+{
+    /// Each thread's run of items, then the runs in order (rayon's `Vec` collects so too).
+    fn from_par_iter<I: rayon::iter::IntoParallelIterator<Item = T>>(items: I) -> Self {
+        use rayon::iter::ParallelIterator;
+        // The caller's parallel loop, in the caller's pool (its `on_cores`): a collect starts no work of its own.
+        let runs: std::collections::LinkedList<BlockVec<T>> = rayon::iter::IntoParallelIterator::into_par_iter(items)
+            .fold(BlockVec::new, |mut v, x| {
+                v.push(x);
+                v
+            })
+            .map(|v| std::collections::LinkedList::from([v]))
+            .reduce(std::collections::LinkedList::new, |mut a, mut b| {
+                a.append(&mut b);
+                a
+            });
+        let mut out = BlockVec::with_capacity(runs.iter().map(|r| r.len()).sum());
+        for r in &runs {
+            // copy: derived: each thread's run of a parallel collect, written once in order (as rayon's `Vec`'s)
+            out.extend_from_slice(r);
+        }
+        out
     }
 }
 
@@ -1680,7 +2006,7 @@ impl Rows {
     /// `n` rows of `k` values of a relation that does not grow (an `InRel` made of them): one frozen segment, shared
     /// by a relation started from it without a copy. `k` is given, not read off the rows: with none, a relation started
     /// from them (kept empty, grown in a later run) had no width, and its tail took no row.
-    pub fn frozen(k: usize, rows: Vec<i64>, n: usize) -> Rows {
+    pub fn frozen(k: usize, rows: Vector<i64>, n: usize) -> Rows {
         debug_assert_eq!(rows.len(), k * n, "{n} rows of {k} values");
         let mut r = Rows::new(k);
         if n > 0 && !rows.is_empty() {
@@ -1810,8 +2136,8 @@ impl Rows {
     }
 
     /// The values of rows `lo..hi`, copied into one vector.
-    pub fn to_vec(&self, lo: usize, hi: usize, k: usize) -> Vec<i64> {
-        let mut out = Vec::with_capacity((hi - lo) * k);
+    pub fn to_vec(&self, lo: usize, hi: usize, k: usize) -> Vector<i64> {
+        let mut out = rerail_blocks::vector::Vector::with_capacity((hi - lo) * k);
         for id in lo..hi {
             out.extend_from_slice(&self.row(id as u32, k));
         }
@@ -2207,7 +2533,7 @@ const INLINE: usize = 16;
 #[derive(Clone)]
 pub enum Row {
     Inline { k: u8, v: [std::mem::MaybeUninit<i64>; INLINE] },
-    Wide(Box<[i64]>),
+    Wide(Vector<i64>),
 }
 
 impl Row {
@@ -2358,7 +2684,7 @@ mod tests {
     /// the width came from the rows, none for no rows).
     #[test]
     fn a_relation_started_from_an_empty_one_keeps_its_rows() {
-        let kept = Rows::frozen(3, Vec::new(), 0);
+        let kept = Rows::frozen(3, rerail_blocks::vector::Vector::new(), 0);
         let mut next = kept.shared(0);
         next.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
         assert_eq!(next.rows(), 2);
@@ -2417,7 +2743,7 @@ mod tests {
         assert_eq!(*rows.row(3, k), [7, 8]);
         // `shared` takes the tail as it is now, as `clone` does.
         let next = rows.shared(4);
-        assert_eq!((next.rows(), next.to_vec(0, 4, k)), (4, vec![1, 2, 3, 4, 5, 6, 7, 8]));
+        assert_eq!((next.rows(), next.to_vec(0, 4, k)), (4, rerail_blocks::vector![1, 2, 3, 4, 5, 6, 7, 8]));
         // A shared prefix is not bound as its relation: one relation of its rows is made for a reader that binds one.
         let one = copy.in_block().expect("rows");
         assert_eq!(one.rows, 4);
@@ -2428,7 +2754,7 @@ mod tests {
     #[test]
     fn rows_started_from_an_empty_kept_relation_take_their_pushes() {
         let k = 3;
-        let kept = Rows::frozen(k, Vec::new(), 0);
+        let kept = Rows::frozen(k, rerail_blocks::vector::Vector::new(), 0);
         let mut next = kept.shared(0);
         next.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
         assert_eq!(next.len(), 2 * k);
@@ -2459,7 +2785,8 @@ mod tests {
     #[test]
     fn a_dead_rows_delta_replaced_goes_back_to_its_block() {
         let mut rows = Rows::new(1);
-        rows.extend_from_slice(&(0..256).collect::<Vec<i64>>());
+        // copy: not block data: a test's rows
+        rows.extend_from_slice(&(0..256).collect::<Vector<i64>>());
         let words = |i: u64| [i, !i, i << 1, i >> 1];
         let mut at = std::collections::BTreeSet::new();
         for i in 1..200 {
@@ -2565,7 +2892,7 @@ mod tests {
         let b = fork.in_block().expect("bound");
         assert_eq!(b.rows, 4, "the base's 2 and its own 2");
         let rel = b.relation();
-        let got: Vec<i64> = (0..4).flat_map(|id| [rel.get(id, 0), rel.get(id, 1)]).collect();
+        let got: Vector<i64> = (0..4).flat_map(|id| [rel.get(id, 0), rel.get(id, 1)]).collect();
         assert_eq!(got, [1, 2, 3, 4, 7, 8, 9, 10], "each row where it lies, by the read written once");
         assert_eq!(super::merged().0, merged, "nothing merged");
         assert_eq!(first.in_block().expect("bound").rows, 3);
@@ -2605,7 +2932,7 @@ mod tests {
         let k = 1;
         let merged = || super::merged().0;
         let before = merged();
-        let read = |r: &Rows| -> Vec<i64> {
+        let read = |r: &Rows| -> Vector<i64> {
             let b = r.in_block().expect("bound");
             assert_eq!(b.rows as usize, r.rows(), "bound whole");
             (0..b.rows).map(|id| b.relation().get(id, 0)).collect()
@@ -2879,7 +3206,7 @@ mod tests {
     #[test]
     fn a_relation_started_from_an_empty_kept_one_holds_its_rows() {
         let k = 3;
-        let kept = Rows::frozen(k, Vec::new(), 0);
+        let kept = Rows::frozen(k, rerail_blocks::vector::Vector::new(), 0);
         let mut next = kept.shared(0);
         next.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
         assert_eq!(next.len(), 6);
@@ -2926,7 +3253,7 @@ mod tests {
         let fill = |n: i64| {
             let mut r = Rows::new(2);
             // copy: not block data (a test's literal rows)
-            r.extend_from_slice(&(0..2 * n).collect::<Vec<i64>>());
+            r.extend_from_slice(&(0..2 * n).collect::<Vector<i64>>());
             r
         };
         let run = || in_chunk_measured(|| {
@@ -2957,7 +3284,7 @@ mod tests {
             let before = moved().0;
             let mut r = Rows::new(1);
             // copy: not block data (a test's literal rows)
-            let lot: Vec<i64> = (0..1 << 20).collect();
+            let lot: Vector<i64> = (0..1 << 20).collect();
             r.extend_from_slice(&lot);
             let facts = block_of(&r);
             for _ in 1..10 {
@@ -2987,7 +3314,7 @@ mod tests {
             let fill = |base: i64| {
                 let mut r = Rows::new(3);
                 // copy: not block data (a test's literal rows)
-                r.extend_from_slice(&(0..90_000).map(|v| base + v).collect::<Vec<i64>>());
+                r.extend_from_slice(&(0..90_000).map(|v| base + v).collect::<Vector<i64>>());
                 r
             };
             let first = fill(0);

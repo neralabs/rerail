@@ -68,6 +68,8 @@ native/crates/swift_lean/src/lex.rs::OCT	stays	a byte class of a literal
 native/crates/swift_lean/src/lex.rs::TICK_BODY	stays	a byte class of a literal
 native/crates/tape_format/src/f16.rs::LANGS	stays	languages registered at load
 native/crates/tape_format/src/f16.rs::NEXT	stays	an id counter: append-only
+native/crates/tape_format/src/tape.rs::PLACE	stays	the engine's placement of code tables in blocks, registered at load
+native/crates/vector/src/lib.rs::DEFAULT_ROOM	stays	the blocks' room, registered at load
 native/src/code_rule_dsl/blade/forte/directives/mod.rs::DEFAULTS	stays	computed once from the engine's constants
 native/src/code_rule_dsl/build_ids.rs::ENGINE	stays	computed once from the engine's own build
 native/src/code_rule_dsl/build_ids.rs::GRAMMAR	stays	computed once from the engine's own build
@@ -134,7 +136,6 @@ native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counte
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/logic/native/setfix/runs.rs::READS	stays	a test's counter
 native/src/code_rule_dsl/logic/plan.rs::RUNS	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid (RERAIL_REL_ROWS's dumps)
-native/src/code_rule_dsl/logic/plan/corpus.rs::CROSS_FILE	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/plan/corpus.rs::OFF	stays	a hook registered once
 native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	stays	the default store's path, from the process's working directory (itself the process's), or a test process's tape cache
 native/src/code_rule_dsl/logic/plan/corpus/owner.rs::CLAIMS	stays	the process's claims of its stores' lock files: a lock file is held by a process, as the OS keeps it

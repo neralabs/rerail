@@ -40,6 +40,7 @@
 //! A parameter block past a launch's own (a stage's, a copy's, a dedup's, an index's: their arrays and a view's
 //! address) lies in a buffer of its own (`Batch::block`), which the batch keeps until its work completes.
 
+use rerail_blocks::vector::Vector;
 use super::Error;
 use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, encode_sort, groups, pipeline, scratch, simd_group};
 use rerail_device::device::Buffer;
@@ -597,7 +598,7 @@ impl DevRel {
 
     /// Column `c`'s values, once the command buffer that wrote them completed: a relation of the device's own, read
     /// where it lies.
-    pub(in crate::code_rule_dsl) fn column(&self, c: usize) -> Vec<i64> {
+    pub(in crate::code_rule_dsl) fn column(&self, c: usize) -> Vector<i64> {
         let rel = self.part.as_ref().expect("a relation of the device's own").rel();
         (0..self.rows as u32).map(|r| rel.rows.get(r, c)).collect()
     }
@@ -631,7 +632,7 @@ impl DevAtoms {
             }
         }
         let reads: Vec<Buffer> = blocks.iter().map(|b| b.device_buffer(device)).collect::<Result<_, _>>().map_err(|_| Error::BackendCapacity)?;
-        let addresses: Vec<u64> = reads.iter().map(Buffer::device_address).collect::<Option<_>>().ok_or(Error::BackendCapacity)?;
+        let addresses: Vector<u64> = reads.iter().map(Buffer::device_address).collect::<Option<_>>().ok_or(Error::BackendCapacity)?;
         // A host address in a block, as the device's: its buffer's device address plus its offset.
         let at = |p: *const u8| {
             let k = blocks.iter().position(|b| (b.base_ptr() as usize..b.base_ptr() as usize + b.reserved()).contains(&(p as usize))).expect("an address in an atoms block");
@@ -856,7 +857,7 @@ impl Building {
             return;
         }
         let words = |b: &[u8]| b.as_chunks::<8>().0.iter().map(|w| format!("{:016x}", u64::from_le_bytes(*w))).collect::<Vec<_>>().join(" ");
-        let changed: Vec<usize> = (0..now.len() / 8).filter(|&k| now[8 * k..8 * k + 8] != self.before[8 * k..8 * k + 8]).map(|k| 8 * k).collect();
+        let changed: Vector<usize> = (0..now.len() / 8).filter(|&k| now[8 * k..8 * k + 8] != self.before[8 * k..8 * k + 8]).map(|k| 8 * k).collect();
         let h = self.home.block.header();
         panic!(
             "a relation's descriptor overwritten while its index was built (Q265): {origin}, at {} of a block of kind {} ({} used of {}), index {} (buckets at {}, rows at {}, {} rows); bytes changed at {changed:?}\n  before {}\n  now    {}",
@@ -1288,7 +1289,7 @@ impl Batch {
                 Building::descriptor(std::ptr::from_ref(r)).as_chunks::<8>().0.iter().map(|w| format!("{:016x}", u64::from_le_bytes(*w))).collect::<Vec<_>>().join(" ")
             );
         }
-        let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+        let key: Vector<u16> = cols.iter().map(|&c| c as u16).collect();
         let room = {
             let _g = home.ix.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(i) = r.find_index(&key, rel.rows as u32) {
@@ -1710,7 +1711,7 @@ impl Drop for Batch {
 pub mod tests {
     use super::*;
 
-    fn rows(n: usize, seed: u64, modulus: i64) -> Vec<i64> {
+    fn rows(n: usize, seed: u64, modulus: i64) -> Vector<i64> {
         let mut x = seed;
         (0..n)
             .map(|_| {
@@ -1754,7 +1755,7 @@ pub mod tests {
             return;
         }
         let n = 1000;
-        let cols: Vec<Vec<i64>> = (0..4).map(|c| rows(n, 11 + c, 50)).collect();
+        let cols: Vec<Vector<i64>> = (0..4).map(|c| rows(n, 11 + c, 50)).collect();
         let rel = DevRel::upload(4, n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap();
         let mut batch = Batch::new().unwrap();
         let keys: [&[usize]; 9] = [&[0], &[1], &[2], &[3], &[0, 1], &[0, 2], &[0, 3], &[1, 2], &[1, 3]];
@@ -1786,7 +1787,7 @@ pub mod tests {
         let (a0, a1) = (rows(na, 1, 4000), rows(na, 2, 300));
         let (b0, b1) = (rows(nb, 3, 300), rows(nb, 4, 4000));
         let c0 = rows(nc, 5, 4000);
-        let up = |cols: &[&Vec<i64>]| {
+        let up = |cols: &[&Vector<i64>]| {
             let n = cols[0].len();
             DevRel::upload(cols.len(), n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap()
         };
@@ -1825,7 +1826,7 @@ pub mod tests {
         batch.stage(join, &t1, Some((&rb, Some(&ib))), None, 1, 2, &totals, &counters, Some(0), &t2).unwrap();
         batch.finish().unwrap();
         // The nested loops.
-        let mut want2: Vec<[i64; 3]> = Vec::new();
+        let mut want2: Vector<[i64; 3]> = rerail_blocks::vector::Vector::new();
         let mut p0 = 0;
         for i in 0..na {
             for j in 0..nb {
@@ -1860,8 +1861,8 @@ pub mod tests {
         assert_eq!(got(&t2, totals.get(2) as usize), want2, "the join's rows, in the bindings' order");
         let cset: std::collections::HashSet<i64> = c0.iter().copied().collect();
         let bset: std::collections::HashSet<i64> = b1.iter().copied().collect();
-        let want3: Vec<[i64; 3]> = want2.iter().copied().filter(|r| !cset.contains(&r[2])).collect();
-        let want4: Vec<[i64; 3]> = want3.iter().copied().filter(|r| bset.contains(&r[0])).collect();
+        let want3: Vector<[i64; 3]> = want2.iter().copied().filter(|r| !cset.contains(&r[2])).collect();
+        let want4: Vector<[i64; 3]> = want3.iter().copied().filter(|r| bset.contains(&r[0])).collect();
         assert_eq!(got(&t3, totals.get(3) as usize), want3);
         assert_eq!(got(&t4, totals.get(4) as usize), want4);
         assert!(!want4.is_empty() && want4.len() < want3.len() && want3.len() < want2.len());
@@ -1878,7 +1879,7 @@ pub mod tests {
         let (a0, a1) = (rows(na, 1, 4000), rows(na, 2, 3000));
         let (b0, b1) = (rows(nb, 3, 300), rows(nb, 4, 4000));
         let c0 = rows(nc, 5, 4000);
-        let up = |cols: &[&Vec<i64>]| {
+        let up = |cols: &[&Vector<i64>]| {
             let n = cols[0].len();
             // copy: not block data (a test's literal rows)
             DevRel::upload(cols.len(), n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap()
@@ -1973,7 +1974,7 @@ pub mod tests {
         let (dev0, dev1) = (up(), up());
         // A host relation in its block, bound before its index was added: a block without a slab of its own is bound
         // by a wrap of its used extent, which the index's room lies past. And the host's own builder's, the reference.
-        let vals: Vec<i64> = (0..n).flat_map(|i| [c0[i], c1[i]]).collect();
+        let vals: Vector<i64> = (0..n).flat_map(|i| [c0[i], c1[i]]).collect();
         let host_rows = || DevRel::in_block(&crate::code_rule_dsl::facts::rows::anon_in_block(2, &vals), 2).unwrap();
         let (placed, host) = (host_rows(), host_rows());
         for (dev, cols) in [(&dev0, vec![0usize]), (&dev1, vec![1, 0]), (&placed, vec![0]), (&placed, vec![1, 0])] {
@@ -1983,7 +1984,7 @@ pub mod tests {
             let again = batch.index(dev, &cols).unwrap();
             assert!(!again.built && again.index == ix.index, "one build a batch");
             batch.finish().unwrap();
-            let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+            let key: Vector<u16> = cols.iter().map(|&c| c as u16).collect();
             let (r, h) = (dev.relation(), host.relation());
             assert_eq!(r.find_index(&key, n as u32), Some(ix.index as usize), "marked built once the batch is done");
             let hosts = if let Some(i) = h.find_index(&key, n as u32) {
@@ -2024,7 +2025,7 @@ pub mod tests {
         }
         let n = 5_000;
         let (c0, c1) = (rows(n, 31, 97), rows(n, 32, 13));
-        let vals = |lo: usize, hi: usize| -> Vec<i64> { (lo..hi).flat_map(|i| [c0[i], c1[i]]).collect() };
+        let vals = |lo: usize, hi: usize| -> Vector<i64> { (lo..hi).flat_map(|i| [c0[i], c1[i]]).collect() };
         let mut start = FactRows::new(2);
         // copy: not block data: a test's rows
         start.extend_from_slice(&vals(0, 3_000));
@@ -2056,7 +2057,7 @@ pub mod tests {
             let ix = batch.index(&dev, &cols).unwrap();
             assert!(ix.built && ix.moved.is_none(), "built in the fork's own block");
             batch.finish().unwrap();
-            let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+            let key: Vector<u16> = cols.iter().map(|&c| c as u16).collect();
             let (r, h) = (dev.relation(), host.relation());
             let hosts = {
                 let home = host.home.as_ref().unwrap();
@@ -2096,7 +2097,7 @@ pub mod tests {
         };
         let is_dead = |w: &[u64], i: usize| w[i >> 6] >> (i & 63) & 1 == 1;
         let (da, db, dc) = (dead(na, 3), dead(nb, 5), dead(nc, 2));
-        let placed = |cols: &[&Vec<i64>], d: &[u64]| {
+        let placed = |cols: &[&Vector<i64>], d: &[u64]| {
             let (n, k) = (cols[0].len(), cols.len());
             let mut r = Rows::new(k);
             r.extend_from_slice(&(0..n).flat_map(|i| cols.iter().map(move |c| c[i])).collect::<Vec<_>>());
@@ -2120,9 +2121,9 @@ pub mod tests {
         scan.bind_idx[..2].copy_from_slice(&[0, 1]);
         batch.stage(scan, &t0, Some((&ra, None)), None, 0, 1, &totals, &counters, None, &t1).unwrap();
         batch.finish().unwrap();
-        let live_a: Vec<usize> = (0..na).filter(|&i| !is_dead(&da, i)).collect();
+        let live_a: Vector<usize> = (0..na).filter(|&i| !is_dead(&da, i)).collect();
         assert_eq!(totals.get(1) as usize, live_a.len(), "the scan's rows are the live ones");
-        let mut want2: Vec<[i64; 3]> = Vec::new();
+        let mut want2: Vector<[i64; 3]> = rerail_blocks::vector::Vector::new();
         for &i in &live_a {
             for j in (0..nb).filter(|&j| !is_dead(&db, j)) {
                 if b0[j] == a1[i] {
@@ -2148,7 +2149,7 @@ pub mod tests {
         let got = |t: &Table, n: usize| (0..n).map(|r| [t.column(0, n)[r], t.column(1, n)[r], t.column(2, n)[r]]).collect::<Vec<_>>();
         assert_eq!(got(&t2, totals.get(2) as usize), want2, "the join's rows: live rows of both");
         let live_c: std::collections::HashSet<i64> = (0..nc).filter(|&i| !is_dead(&dc, i)).map(|i| c0[i]).collect();
-        let want3: Vec<[i64; 3]> = want2.iter().copied().filter(|r| !live_c.contains(&r[2])).collect();
+        let want3: Vector<[i64; 3]> = want2.iter().copied().filter(|r| !live_c.contains(&r[2])).collect();
         assert_eq!(got(&t3, totals.get(3) as usize), want3, "a dead row of `c` does not hold a binding back");
         let all_c: std::collections::HashSet<i64> = c0.iter().copied().collect();
         assert!(want2.iter().filter(|r| !all_c.contains(&r[2])).count() < want3.len(), "the test reaches a dead row of `c`");

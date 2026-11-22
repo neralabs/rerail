@@ -16,6 +16,7 @@
 //! text (`program_text`, decision 0155). The run's manifest names the source and the plan (`named`), so collection
 //! keeps the entry while it keeps the run.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::front::Value;
 use crate::code_rule_dsl::logic::program_facts::{self, Facts};
 use crate::code_rule_dsl::logic::program_text;
@@ -150,7 +151,7 @@ fn entry_read(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<([u8; 
 thread_local! {
     /// The rule files' entries read on this thread before its run (`rr::read_file`, decision 0275): the outermost
     /// run names them in its manifest (`take_read_before`), as it names its combined program's.
-    static READ_BEFORE: std::cell::RefCell<Vec<[u8; 32]>> = const { std::cell::RefCell::new(Vec::new()) };
+    static READ_BEFORE: std::cell::RefCell<Vector<[u8; 32]>> = const { std::cell::RefCell::new(rerail_blocks::vector::Vector::new()) };
 }
 
 /// Notes that a run on this thread reads the rule file entry `key` (found, or queued to be written).
@@ -163,7 +164,7 @@ pub(in crate::code_rule_dsl) fn read_before_the_run(key: [u8; 32]) {
 }
 
 /// The rule file entries this thread read since the last outermost run took them.
-pub(super) fn take_read_before() -> Vec<[u8; 32]> {
+pub(super) fn take_read_before() -> Vector<[u8; 32]> {
     READ_BEFORE.with_borrow_mut(std::mem::take)
 }
 

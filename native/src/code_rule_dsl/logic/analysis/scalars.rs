@@ -1,4 +1,5 @@
 //! Compatibility of retained scalar summaries, independent of their storage and evaluator.
+use rerail_blocks::vector::Vector;
 use super::Decision;
 
 pub fn unused_sum(bound: bool, observed: bool) -> Decision {
@@ -148,7 +149,7 @@ pub struct Layout {
 }
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Family {
-    pub members: Vec<usize>,
+    pub members: Vector<usize>,
     pub witness: usize,
     pub layout: Layout,
     pub lookup: Decision,
@@ -207,7 +208,7 @@ fn analyze_mode(inputs: Vec<Scalar>, lookup: bool) -> Analysis {
         }
         let f = selected.unwrap_or_else(|| {
             result.families.push(Family {
-                members: vec![],
+                members: rerail_blocks::vector![],
                 witness: i,
                 layout: Layout::default(),
                 lookup: Decision::new(can_share, if can_share {

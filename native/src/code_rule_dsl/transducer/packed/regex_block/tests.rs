@@ -1,10 +1,11 @@
+use rerail_blocks::vector::Vector;
     use super::*;
 
     /// Every byte after which some substring ending there matches the pattern whole: the exact set Parabix marks.
-    fn brute(re: &str, text: &str) -> Vec<usize> {
+    fn brute(re: &str, text: &str) -> Vector<usize> {
         let whole = regex::Regex::new(&format!("^(?:{re})$")).unwrap();
         let b = text.as_bytes();
-        let mut out = Vec::new();
+        let mut out = rerail_blocks::vector::Vector::new();
         for e in 1..=b.len() {
             if !text.is_char_boundary(e) {
                 continue;
@@ -17,11 +18,11 @@
     }
 
     /// The ends of the matches the host finds (`find_iter`), as marks.
-    fn found(re: &str, text: &str) -> Vec<usize> {
+    fn found(re: &str, text: &str) -> Vector<usize> {
         regex::Regex::new(re).unwrap().find_iter(text).filter(|m| m.end() > m.start()).map(|m| m.end() - 1).collect()
     }
 
-    fn marks(p: &SpanPrefilter, text: &str) -> Vec<usize> {
+    fn marks(p: &SpanPrefilter, text: &str) -> Vector<usize> {
         let ends = p.ends(text.as_bytes());
         (0..text.len()).filter(|&i| ends.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)).collect()
     }

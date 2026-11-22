@@ -42,8 +42,8 @@ fn language_of(c: &Compiled, files: &[&[u8]]) -> rerail_tape_format::f16::Lang {
         let Ok(image) = c.parser.image(f) else { continue };
         let (_, table) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
         for e in table.entries() {
-            if !keys.contains(e) {
-                keys.push(e.clone());
+            if !keys.iter().any(|k| k.as_ref() == e) {
+                keys.push(e.to_owned());
             }
         }
     }

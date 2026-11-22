@@ -1,6 +1,7 @@
 //! One wave across every lane: the executor places a batch's launches, submits each lane's share once, runs the
 //! lanes together, and every output is the reference's.
 
+use rerail_blocks::vector::Vector;
 use rerail_accel::{Batch, Bits, Executor, Kernel, Lane, Launch, cpu};
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ impl Rng {
 
 fn bits(rng: &mut Rng, rows: usize, width: usize, density: u64) -> Bits {
     let words = width.div_ceil(64);
-    let mut data = vec![0u64; rows * words];
+    let mut data = rerail_blocks::vector![0u64; rows * words];
     for r in 0..rows {
         for c in 0..width {
             if rng.below(16) < density {
@@ -30,8 +31,8 @@ fn bits(rng: &mut Rng, rows: usize, width: usize, density: u64) -> Bits {
     Bits::new(rows, words, data)
 }
 
-fn parts(rng: &mut Rng, n: usize, max: u64, codes: u64) -> (Arc<[u32]>, Arc<[u16]>) {
-    let (mut off, mut col) = (vec![0u32], Vec::new());
+fn parts(rng: &mut Rng, n: usize, max: u64, codes: u64) -> (Arc<rerail_blocks::vector::Vector<u32>>, Arc<rerail_blocks::vector::Vector<u16>>) {
+    let (mut off, mut col) = (rerail_blocks::vector![0u32], rerail_blocks::vector::Vector::new());
     for _ in 0..n {
         for _ in 0..rng.below(max + 1) {
             col.push(rng.below(codes) as u16);
@@ -45,7 +46,7 @@ fn wave(rng: &mut Rng) -> Vec<(Kernel, Lane)> {
     let (loff, left) = parts(rng, 50, 40, 300);
     let (roff, right) = parts(rng, 50, 30, 300);
     let (hoff, codes) = parts(rng, 80, 200, 115);
-    let (mut off, mut dst) = (vec![0u32], Vec::new());
+    let (mut off, mut dst) = (rerail_blocks::vector![0u32], rerail_blocks::vector::Vector::new());
     for _ in 0..500 {
         for _ in 0..rng.below(3) {
             dst.push(rng.below(500) as u32);
@@ -54,14 +55,14 @@ fn wave(rng: &mut Rng) -> Vec<(Kernel, Lane)> {
     }
     // Large enough for the Neural Engine (Core ML keeps smaller products on the CPU), the constant fixed.
     let (a, b) = (bits(rng, 2048, 4096, 2), bits(rng, 256, 4096, 2).fixed());
-    let min: Arc<[u32]> = (0..256).map(|j| 30 + (j % 5) as u32).collect();
+    let min: Arc<rerail_blocks::vector::Vector<u32>> = Arc::new((0..256).map(|j| 30 + (j % 5) as u32).collect());
     vec![
         (Kernel::BitProduct { a: a.clone(), b: b.clone(), min: None }, Lane::Ane),
         (Kernel::BitProduct { a: a.clone(), b: b.clone(), min: Some(min) }, Lane::Sme),
         (Kernel::CountTable { loff: loff.clone(), left: left.clone(), roff: roff.clone(), right: right.clone(), emit: false }, Lane::Gpu),
         (Kernel::CountTable { loff, left, roff, right, emit: true }, Lane::Cpu),
         (Kernel::Histogram { off: hoff, codes, width: 115 }, Lane::Gpu),
-        (Kernel::Closure { n: 500, off: off.into(), dst: dst.into() }, Lane::Cpu),
+        (Kernel::Closure { n: 500, off: Arc::new(off), dst: Arc::new(dst) }, Lane::Cpu),
     ]
 }
 
@@ -113,8 +114,8 @@ fn begun_batches_run_while_the_caller_works_and_match_the_reference() {
 
 /// A relation of `n` rows: key 0 a node (a document `d` in the high bits, its node below 2^16), key 1 small.
 fn nodes(rng: &mut Rng, n: usize, docs: u64, per_doc: u64, small: u64) -> rerail_accel::kernel::Keys {
-    let k0: Vec<i64> = (0..n).map(|_| ((rng.below(docs) as i64) << 16) | rng.below(per_doc) as i64).collect();
-    let k1: Vec<i64> = (0..n).map(|_| rng.below(small) as i64 - 2).collect();
+    let k0: Vector<i64> = (0..n).map(|_| ((rng.below(docs) as i64) << 16) | rng.below(per_doc) as i64).collect();
+    let k1: Vector<i64> = (0..n).map(|_| rng.below(small) as i64 - 2).collect();
     vec![rerail_accel::Col::from(k0), rerail_accel::Col::from(k1)].into()
 }
 
@@ -245,13 +246,13 @@ fn small_joins_and_staged_columns_match_the_reference() {
     use rerail_accel::kernel::{JoinBy, Keys};
     let ex = Executor::new();
     let mut rng = Rng(0x5eed);
-    let mut col = |n: usize, m: u64| -> Vec<i64> { (0..n).map(|_| rng.below(m) as i64 - (m as i64) / 2).collect() };
-    type Sides = (Vec<Vec<i64>>, Vec<Vec<i64>>);
+    let mut col = |n: usize, m: u64| -> Vector<i64> { (0..n).map(|_| rng.below(m) as i64 - (m as i64) / 2).collect() };
+    type Sides = (Vec<Vector<i64>>, Vec<Vector<i64>>);
     let mut cases: Vec<Sides> = Vec::new();
     for (nl, nr, k, m) in [(1500, 2048, 1, 700), (3000, 1000, 2, 40), (10, 1, 3, 3), (0, 50, 1, 9), (40, 0, 2, 9), (5000, 1999, 3, 6), (6000, 5000, 1, 50), (4000, 9000, 2, 30)] {
         cases.push(((0..k).map(|_| col(nl, m)).collect(), (0..k).map(|_| col(nr, m)).collect()));
     }
-    let host = |cols: &[Vec<i64>]| -> Keys { cols.iter().map(|c| rerail_accel::Col::from(c.clone())).collect::<Vec<_>>().into() };
+    let host = |cols: &[Vector<i64>]| -> Keys { cols.iter().map(|c| rerail_accel::Col::from(c.clone())).collect::<Vec<_>>().into() };
     for lane in ex.lanes() {
         if !matches!(lane, Lane::Cpu | Lane::Gpu) {
             continue;
@@ -266,7 +267,7 @@ fn small_joins_and_staged_columns_match_the_reference() {
         // Staged: begun before the values are written; the gate opened after.
         let (gate, opener) = rerail_accel::Gate::new();
         let mut writers = Vec::new();
-        let mut stage = |cols: &[Vec<i64>]| -> Keys {
+        let mut stage = |cols: &[Vector<i64>]| -> Keys {
             cols.iter()
                 .map(|c| {
                     let (col, w) = gate.column(c.len()).unwrap();
@@ -302,7 +303,7 @@ fn warm_small_gpu_jobs() {
         return;
     }
     let mut rng = Rng(7);
-    let keys = |rng: &mut Rng, n: usize| -> Keys { vec![rerail_accel::Col::from((0..n).map(|_| rng.below(300) as i64).collect::<Vec<_>>())].into() };
+    let keys = |rng: &mut Rng, n: usize| -> Keys { vec![rerail_accel::Col::from((0..n).map(|_| rng.below(300) as i64).collect::<rerail_blocks::vector::Vector<_>>())].into() };
     let (l, r) = (keys(&mut rng, 600), keys(&mut rng, 400));
     // `RERAIL_WARM_STAGED=1`: the columns staged behind a gate, opened after the batch is begun (the engine's way).
     let staged = std::env::var("RERAIL_WARM_STAGED").is_ok_and(|v| v == "1");
@@ -365,7 +366,7 @@ fn launches_planned_on_a_lane_behind_its_plan_are_claimed_by_the_others() {
     ex.prices.host[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
     let mut rng = Rng(0xc1a1);
     let mut join = |n: usize| {
-        let col = |rng: &mut Rng| -> rerail_accel::Col { (0..n).map(|_| rng.below(50) as i64).collect::<Vec<_>>().into() };
+        let col = |rng: &mut Rng| -> rerail_accel::Col { (0..n).map(|_| rng.below(50) as i64).collect::<rerail_blocks::vector::Vector<_>>().into() };
         let (l, r) = (col(&mut rng), col(&mut rng));
         Kernel::Join { left: vec![l].into(), right: vec![r].into(), right_id: None, by: JoinBy::Probe }
     };
@@ -422,7 +423,7 @@ impl rerail_accel::exec::Backend for Fake {
 }
 
 fn probe(rng: &mut Rng, n: usize) -> Kernel {
-    let col = |rng: &mut Rng| -> rerail_accel::Col { (0..n).map(|_| rng.below(50) as i64).collect::<Vec<_>>().into() };
+    let col = |rng: &mut Rng| -> rerail_accel::Col { (0..n).map(|_| rng.below(50) as i64).collect::<rerail_blocks::vector::Vector<_>>().into() };
     let (l, r) = (col(rng), col(rng));
     Kernel::Join { left: vec![l].into(), right: vec![r].into(), right_id: None, by: rerail_accel::kernel::JoinBy::Probe }
 }
@@ -599,7 +600,7 @@ fn a_program_is_placed_by_its_own_prices_and_runs_the_lanes_form() {
 fn polling_a_batch_preserves_its_outputs_and_scoreboard_completion() {
     use rerail_accel::exec::CpuBackend;
     let executor=Executor::with(vec![Arc::new(CpuBackend::default())]);
-    let kernel=Kernel::Histogram {off:vec![0,3].into(),codes:vec![0,1,1].into(),width:2};
+    let kernel=Kernel::Histogram {off:rerail_blocks::vector![0,3].into(),codes:rerail_blocks::vector![0,1,1].into(),width:2};
     let expected=cpu::run(&kernel);
     let mut running=executor.begin(Batch(vec![Launch::on(kernel.clone(),Lane::Cpu),Launch::on(kernel,Lane::Cpu)])).unwrap();
     let started=std::time::Instant::now();

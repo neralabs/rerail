@@ -609,11 +609,11 @@ pub fn token_count(src: &str) -> usize {
 }
 
 /// `src`'s tape: the engine's (`code_rule_dsl::tape`'s image of `crate::tape(src)`), its bytes.
-pub fn tape(src: &str) -> Vec<u8> {
+pub fn tape(src: &str) -> rerail_tape_format::Vector<u8> {
     struct Image<'s>(&'s str);
     impl Finish for Image<'_> {
-        type Out = Vec<u8>;
-        fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<Vec<u8>, Redo> {
+        type Out = rerail_tape_format::Vector<u8>;
+        fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<rerail_tape_format::Vector<u8>, Redo> {
             w.finish(self.0.as_bytes())
         }
     }

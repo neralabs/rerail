@@ -1,4 +1,5 @@
 //! The query compiler's supported greedy repetition boundary, checked at construction.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use ast_grep_core::tree_sitter::StrDoc;
@@ -6,12 +7,12 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_language::LanguageExt;
 use tree_sitter::StreamingIterator;
 
-fn program(words: Vec<u32>) -> Program {
-    Program::new(words, vec![b"value".to_vec()], vec![], vec![0], vec![]).unwrap()
+fn program(words: Vector<u32>) -> Program {
+    Program::new(words, vec![b"value".to_vec()], vec![], rerail_blocks::vector![0], rerail_blocks::vector![]).unwrap()
 }
 
-fn repetition() -> Vec<u32> {
-    vec![
+fn repetition() -> Vector<u32> {
+    rerail_blocks::vector![
         word(SAVE_CURSOR, 0, 0),
         word(REPEAT_BEGIN, 0, 0),
         word(CHILD, NAMED, 0),
@@ -48,7 +49,7 @@ fn greedy_contract_rejects_observable_and_reentered_query_continuations() {
         (wrong_repeat, 5),
         (reentered, 5),
         (
-            vec![word(FORK, GREEDY, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(FORK, GREEDY, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)],
             0,
         ),
     ];
@@ -60,7 +61,7 @@ fn greedy_contract_rejects_observable_and_reentered_query_continuations() {
     }
     // Tempo's `admission_spike::advancing_greedy_reconvergence` program (the spike is placed
     // test-only as `packed::admission_spike`, `f5de8998`).
-    let counterexample = program(vec![
+    let counterexample = program(rerail_blocks::vector![
         word(REPEAT_BEGIN, 0, 0),
         word(SAVE_CURSOR, 0, 0),
         word(FORK, 0, 8),
@@ -88,7 +89,7 @@ fn greedy_contract_keeps_nonquery_branch_multiplicity() {
     let tree = StrDoc::new(source, GrammarDialect::Python);
     let image = TapeImage::encode(tree.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-    let program = program(vec![
+    let program = program(rerail_blocks::vector![
         word(FORK, GREEDY, 2),
         word(EMIT, 0, 0),
         word(EMIT, 0, 0),

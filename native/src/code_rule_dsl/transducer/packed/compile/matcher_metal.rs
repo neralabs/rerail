@@ -1,5 +1,6 @@
 //! Moved from `matcher.rs` by the crate split (tools/cratify/moves.tsv).
 
+use rerail_blocks::vector::Vector;
 use super::*;
 
 use crate::code_rule_dsl::transducer::packed::device::{ClauseRoots, Outcome, RootJobs};
@@ -10,7 +11,7 @@ pub(in crate::code_rule_dsl) fn matcher_roots(this: &LoweredMatcher, tapes: &[Ta
     let no_labels = empty_sets(tapes, this.labels.defs.len());
     // A label domain is not known before the passes run: its kinds' nodes.
     let listed = match &this.domain {
-        Domain::Label(_) | Domain::Within(..) => this.labels.bound(&this.domain, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())),
+        Domain::Label(_) | Domain::Within(..) => this.labels.bound(&this.domain, &mut rerail_blocks::vector::Vector::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())),
         other => other.clone(),
     };
     let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&listed, tape, sets).collect()).collect();
@@ -121,7 +122,7 @@ fn metal<'a>(
             let kinds = match starts {
                 Domain::All => None,
                 Domain::Kinds(kinds) => Some(kinds.clone()),
-                Domain::Label(_) | Domain::Within(..) => clause.labels.bound(starts, &mut Vec::new()).map(|kinds| kinds.into_iter().collect()),
+                Domain::Label(_) | Domain::Within(..) => clause.labels.bound(starts, &mut rerail_blocks::vector::Vector::new()).map(|kinds| kinds.into_iter().collect()),
             };
             Arc::new(Roots::Codes { kinds, entry: entry.map(|entry| entry.0).unwrap_or_default(), active, anchor: None })
         }));
@@ -366,7 +367,7 @@ fn apart<'a>(
     counts: usize,
     patterns: Vec<&'a PackedPattern>,
     steps: Vec<(bool, Vec<Vec<metal_program_backend::label_passes::Pass<'a>>>)>,
-    chains: Vec<(Option<Vec<u16>>, bool)>,
+    chains: Vec<(Option<Vector<u16>>, bool)>,
     tapes: &[TapeDoc],
     active: &[Vec<bool>],
     roots: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
@@ -379,7 +380,7 @@ fn apart<'a>(
     }
     let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
-    let mut outcome = Outcome { labels: Vec::new(), words, ..Outcome::default() };
+    let mut outcome = Outcome { labels: rerail_blocks::vector::Vector::new(), words, ..Outcome::default() };
     let mut segment = (Vec::new(), Vec::new());
     // The runs label the same tapes, so a text row evaluated by one serves the rest (and the
     // sweeps between them, each a file's slice of it).
@@ -545,7 +546,7 @@ fn apart<'a>(
         mark(&format!(
             "swept ({} levels, {} passes, {} complements)",
             levels.len(),
-            levels.iter().map(Vec::len).sum::<usize>(),
+            levels.iter().map(|v| v.len()).sum::<usize>(),
             levels.iter().flatten().filter(|&&(clause, id)| matches!(clause.labels.def(id), Label::Complement(_))).count()
         ));
         outcome.labels = crate::code_rule_dsl::prof::time("labels.to_words", || to_words(&sets, labels, words, tapes));

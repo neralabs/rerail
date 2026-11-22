@@ -23,6 +23,7 @@
 //! A segment's words of the outputs depend only on its start and its bytes, so a run again
 //! rewrites them all with plain stores. The body of a block is the same UKL the lanes kernel
 //! uses (`emit`), at 64 bits; a carried instruction reads the thread's state.
+use rerail_blocks::vector::Vector;
 use super::*;
 
 /// How a batch runs in segments: the blocks a segment holds, and the blocks before it it warms
@@ -127,7 +128,7 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
             out.push_str(&format!("  uint64_t s{at} = 0ul;\n"));
         }
     }
-    let delayed: Vec<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
+    let delayed: Vector<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
     for &k in &delayed {
         assert!(native.output_delays[k] < 64, "an output's delay is below a block");
         out.push_str(&format!("  uint64_t q{k} = 0ul;\n"));
@@ -187,7 +188,7 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
         }
     }
     let body = |values: &BlockNative| {
-        let all: Vec<usize> = (0..values.insts.len()).collect();
+        let all: Vector<usize> = (0..values.insts.len()).collect();
         let mut text = emit(p, values, LaneWidth::W64, &all, Word { base: "", offset: "b * 64u", lanes: false }, carried_serial);
         text.push_str(&tail);
         text.lines().map(|l| format!("    {l}\n")).collect::<String>()
@@ -297,7 +298,7 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
         state.pack(native, "rec"),
         state.pack(native, &format!("(rec + {}u)", state.words))
     ));
-    let all: Vec<usize> = (0..native.insts.len()).collect();
+    let all: Vector<usize> = (0..native.insts.len()).collect();
     out.push_str(&lane_bodies(p, native, &all, &carried, &tail));
     out.push_str("}\n\n");
     out
@@ -555,7 +556,7 @@ impl Halos {
 
 /// The values `seeds` read, through anything, themselves included: a fixed point's members all
 /// once any is (it runs as one step, `schedule`).
-fn cone_of(native: &BlockNative, mut inside: Vec<bool>) -> Vec<usize> {
+fn cone_of(native: &BlockNative, mut inside: Vec<bool>) -> Vector<usize> {
     loop {
         for at in (0..native.insts.len()).rev() {
             if inside[at] {
@@ -599,7 +600,7 @@ fn lanes_group_function(p: usize, native: &BlockNative, levels: &Levels, lv: usi
          \x20 const uint32_t b = start + l;\n\
          \x20 const uint32_t len = f.len;\n"
     );
-    let own_ids: Vec<usize> = own.iter().map(|(gi, _)| *gi).collect();
+    let own_ids: Vector<usize> = own.iter().map(|(gi, _)| *gi).collect();
     let h = halos(native, levels, "from", lv, &own_ids);
     out.push_str(&h.decls);
     let carried = |at: usize, inst: &BlockInst, out: &mut String| match *inst {
@@ -683,9 +684,9 @@ fn group_prefix(p: usize, gi: usize, g: &Leveled, levels: &Levels, stride: usize
 /// warm-ups.
 struct Levels {
     /// The scans in order: scan `i` is bit `i` of a segment's carries.
-    scans: Vec<usize>,
+    scans: Vector<usize>,
     /// Each scan's level, from 1; 0 for a scan left to the warm-ups (`exact_scans`).
-    level: Vec<usize>,
+    level: Vector<usize>,
     depth: usize,
     /// The fixed points (`rounds until settled`) with a level of their own (`Leveled`).
     groups: Vec<Leveled>,
@@ -702,7 +703,7 @@ struct Leveled {
     group: usize,
     level: usize,
     /// The group's scans, in order: state `k + 1` is scan `k`'s carry set.
-    scans: Vec<usize>,
+    scans: Vector<usize>,
 }
 
 /// The states a fixed point's table maps (`table_helpers(3)`: 3-bit entries): its scans' one-hot
@@ -715,15 +716,15 @@ const NONE: usize = GROUP_STATES - 1;
 /// toggles. The others start from zero at each warm-up, as the `prev`s do: right when they
 /// forget their start within a warm-up. A toggle never forgets (its carry is a parity), so it
 /// is exact from the first run.
-fn exact_scans(native: &BlockNative) -> Vec<usize> {
+fn exact_scans(native: &BlockNative) -> Vector<usize> {
     let scans = native.insts.iter().enumerate().filter(|(_, i)| matches!(i, BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..)));
     match std::env::var("RERAIL_SERIAL_EXACT").ok().as_deref() {
         Some("all") => scans.map(|(at, _)| at).collect(),
-        Some(v) => v.split(',').filter_map(|x| x.trim().parse().ok()).collect(),
+        Some(v) => v.split(',').filter_map(|x| x.trim().parse::<usize>().ok()).collect(),
         None => {
             let st_ = kept_programs();
             let learned = st_.learned.lock().ok().and_then(|m| m.get(&fingerprint(native)).cloned()).unwrap_or_default();
-            let mut exact: Vec<usize> = scans.filter(|(_, i)| matches!(i, BlockInst::Toggle(_))).map(|(at, _)| at).collect();
+            let mut exact: Vector<usize> = scans.filter(|(_, i)| matches!(i, BlockInst::Toggle(_))).map(|(at, _)| at).collect();
             exact.extend(learned);
             exact.sort_unstable();
             exact.dedup();
@@ -757,7 +758,7 @@ impl Levels {
         let mut group_of: Vec<Option<usize>> = vec![None; native.insts.len()];
         let mut leveled = Vec::new();
         for (g, group) in native.groups.iter().enumerate() {
-            let scans: Vec<usize> = group.members.iter().copied().filter(|&m| is_scan(&native.insts[m])).collect();
+            let scans: Vector<usize> = group.members.iter().copied().filter(|&m| is_scan(&native.insts[m])).collect();
             if lanes_on() && (1..GROUP_STATES - 1).contains(&scans.len()) {
                 for &m in &group.members {
                     group_of[m] = Some(leveled.len());
@@ -800,7 +801,7 @@ impl Levels {
                 break;
             }
         }
-        let mut levels = Levels { scans: Vec::new(), level: Vec::new(), depth: 0, groups: Vec::new() };
+        let mut levels = Levels { scans: rerail_blocks::vector::Vector::new(), level: rerail_blocks::vector::Vector::new(), depth: 0, groups: Vec::new() };
         for (at, inst) in native.insts.iter().enumerate() {
             if is_scan(inst) {
                 let level = if group_of[at].is_some() || exact[at] { lv[at] } else { 0 };
@@ -944,7 +945,7 @@ type Serial = (std::sync::Arc<String>, usize, usize);
 /// each program's generated sources, what its runs learned, the sources that learn nothing more, its shapes and passes.
 #[derive(Default)]
 struct Programs {
-    learned: std::sync::Mutex<std::collections::HashMap<u64, Vec<usize>>>,
+    learned: std::sync::Mutex<std::collections::HashMap<u64, Vector<usize>>>,
     sources: std::sync::Mutex<std::collections::HashMap<u64, Serial>>,
     settled: std::sync::Mutex<std::collections::HashSet<u64>>,
     shapes: std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<Shape>>>,
@@ -1598,7 +1599,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
     for (p, n) in programs.iter().enumerate() {
         let Some(r) = &n.records else { continue };
         let t = rerail_compiler::records::WordTable::new(&r.words).expect("verified: the words fit a table");
-        let tails: Vec<u64> = if t.tails.is_empty() { vec![0; 7] } else { t.tails.iter().flatten().copied().collect() };
+        let tails: Vector<u64> = if t.tails.is_empty() { rerail_blocks::vector![0; 7] } else { t.tails.iter().flatten().copied().collect() };
         let (se, le, e, x) = (r.starts, r.lasts, n.extracts.len(), n.extracts.len());
         let tested = r.checks.iter().any(|c| c.then.marks());
         // The tests, each once whatever rules it is at (a bit of `record_tests`).
@@ -1836,7 +1837,7 @@ fn group_levels(programs: &[&BlockNative]) -> std::collections::BTreeSet<usize> 
 }
 
 /// The outputs counted per segment: the extracts', then one for all the totals (one flag).
-fn counted_outputs(native: &BlockNative) -> Vec<usize> {
+fn counted_outputs(native: &BlockNative) -> Vector<usize> {
     rerail_compiler::native_cpu_block::counted(native)
 }
 
@@ -1868,7 +1869,7 @@ fn learn(key: u64, forms: &[BlockNative], rows: &[FileRow], segs: &[[u32; 4]], r
                 }
             }
         }
-        let promoted: Vec<usize> = state.parts.iter().zip(&wrong).filter(|&(_, &n)| n * PROMOTE > seen).map(|(&(at, ..), _)| at).collect();
+        let promoted: Vector<usize> = state.parts.iter().zip(&wrong).filter(|&(_, &n)| n * PROMOTE > seen).map(|(&(at, ..), _)| at).collect();
         if !promoted.is_empty() {
             let st_ = kept_programs();
             if let Ok(mut m) = st_.learned.lock() {
@@ -2122,7 +2123,7 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std
     let passes = passes_of(program);
     let passes: &rerail_compiler::block_native::Passes = &passes;
     let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
-    let blocks: Vec<usize> = files.iter().map(|f| blocks_of(f.bytes.len(), program.delay)).collect();
+    let blocks: Vector<usize> = files.iter().map(|f| blocks_of(f.bytes.len(), program.delay)).collect();
     let total_blocks: usize = blocks.iter().sum();
     let mut slot_base = Vec::with_capacity(files.len());
     let mut at = 0usize;
@@ -2144,7 +2145,7 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std
     fit(offset + widest * total_blocks)?;
     // The segments, as `run_serial_io` cuts them: (file, first block, end, index in the file).
     let mut rows = Vec::with_capacity(files.len());
-    let mut segs: Vec<[u32; 4]> = Vec::new();
+    let mut segs: Vector<[u32; 4]> = rerail_blocks::vector::Vector::new();
     for (i, &b) in blocks.iter().enumerate() {
         let count = b.div_ceil(segments.blocks);
         rows.push(FileRow { group0: fit(segs.len())?, groups: fit(b)?, halo_base: fit(count)?, slot_base: slot_base[i], len: fit(files[i].bytes.len())?, ..FileRow::default() });
@@ -2543,10 +2544,10 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         let n = &forms[row.program as usize];
         let len = row.len as usize;
         let blocks = row.groups as usize;
-        let outputs: Vec<Vec<u64>> = (0..n.outputs.len())
+        let outputs: Vec<Vector<u64>> = (0..n.outputs.len())
             .map(|k| {
                 let at = row.out_base as usize + k * blocks;
-                words[at..at + len.div_ceil(64)].to_vec()
+                Vector::from(&words[at..at + len.div_ceil(64)])
             })
             .collect();
         let capacity = len.max(1);
@@ -2554,19 +2555,19 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         let file_positions = (0..n.extracts.len())
             .map(|e| {
                 let from = row.pos_base as usize + e * capacity;
-                positions[from..from + (count(e) as usize).min(capacity)].to_vec()
+                Vector::from(&positions[from..from + (count(e) as usize).min(capacity)])
             })
             .collect();
-        let totals = if n.totals.is_empty() { Vec::new() } else { vec![u64::from(count(n.extracts.len()) != 0)] };
+        let totals = if n.totals.is_empty() { rerail_blocks::vector::Vector::new() } else { rerail_blocks::vector![u64::from(count(n.extracts.len()) != 0)] };
         let codes = match &n.records {
             Some(r) => {
                 let from = row.pos_base as usize + n.extracts.len() * capacity;
                 // A refused file's codes to its first token refused (the record pass stops there).
                 let stop = refused[i * 6 + 5];
                 let k = count(usize::from(r.starts)).min(count(usize::from(r.lasts))).min(if stop == 0 { u32::MAX } else { !stop }) as usize;
-                positions[from..from + k.min(capacity)].to_vec()
+                rerail_blocks::vector::Vector::from(&positions[from..from + k.min(capacity)])
             }
-            None => Vec::new(),
+            None => rerail_blocks::vector::Vector::new(),
         };
         results.push(BlockRun { outputs, positions: file_positions, totals, codes });
     }

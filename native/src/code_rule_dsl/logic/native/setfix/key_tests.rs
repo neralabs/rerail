@@ -7,8 +7,8 @@ use super::*;
 #[test]
 fn a_second_row_of_a_declared_key_breaks_it() {
     let mut rel = Rel::new("t", b"iii");
-    rel.set_key(vec![1]).unwrap();
-    rel.set_key(vec![0, 2]).unwrap();
+    rel.set_key(rerail_blocks::vector![1]).unwrap();
+    rel.set_key(rerail_blocks::vector![0, 2]).unwrap();
     assert!(rel.push(&[1, 10, 0]) && rel.push(&[2, 20, 0]) && rel.push(&[3, 30, 1]));
     assert!(!rel.push(&[1, 10, 0]), "a row repeated is no new row");
     assert!(rel.broke.is_empty() && rel.keyed.len() == 2, "every key held");
@@ -24,9 +24,9 @@ fn a_second_row_of_a_declared_key_breaks_it() {
     assert_eq!(rel.broke, vec![vec![1], vec![0, 2]]);
     assert!(rel.keyed.is_empty());
     // Declared again, a broken key is not checked again; a key of a column the relation lacks is refused.
-    rel.set_key(vec![1]).unwrap();
+    rel.set_key(rerail_blocks::vector![1]).unwrap();
     assert!(rel.keyed.is_empty());
-    assert!(rel.set_key(vec![3]).is_err());
+    assert!(rel.set_key(rerail_blocks::vector![3]).is_err());
 }
 
 /// A key of no columns (layouts' fact for a rule whose constants fix its one row, Q409's `cpl_policy_doc`) holds
@@ -34,7 +34,7 @@ fn a_second_row_of_a_declared_key_breaks_it() {
 #[test]
 fn a_key_of_no_columns_is_one_row_at_most() {
     let mut rel = Rel::new("t", b"i");
-    rel.set_key(Vec::new()).unwrap();
+    rel.set_key(rerail_blocks::vector::Vector::new()).unwrap();
     assert!(rel.push(&[7]) && !rel.push(&[7]));
     assert!(rel.broke.is_empty() && rel.keyed.len() == 1, "one row keeps it");
     assert!(rel.push(&[8]));
@@ -47,10 +47,10 @@ fn a_key_of_no_columns_is_one_row_at_most() {
 fn a_declared_key_checks_the_rows_held_and_a_dead_rows_key_is_free() {
     let mut rel = Rel::new("t", b"ii");
     assert!(rel.push(&[1, 10]) && rel.push(&[2, 10]));
-    rel.set_key(vec![1]).unwrap();
+    rel.set_key(rerail_blocks::vector![1]).unwrap();
     assert_eq!(rel.broke, vec![vec![1]], "the rows held break it as it is declared");
     let mut rel = Rel::new("t", b"ii");
-    rel.set_key(vec![1]).unwrap();
+    rel.set_key(rerail_blocks::vector![1]).unwrap();
     assert!(rel.push(&[1, 10]));
     rel.dead = rows::BlockVec::from_iter_in(None, [1u64]);
     rel.ndead = 1;

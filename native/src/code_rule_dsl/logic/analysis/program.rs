@@ -1,4 +1,5 @@
 //! Adapt the logical language to executor-independent key and scalar proofs.
+use rerail_blocks::vector::Vector;
 use super::{bags, keys, scalars};
 pub mod storage;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
@@ -24,7 +25,7 @@ pub struct ProgramAnalysis {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct KeyInference {
     pub relation: String,
-    pub columns: Vec<usize>,
+    pub columns: Vector<usize>,
     pub reason: String,
     pub proof: Option<keys::Proof>,
 }

@@ -1,5 +1,6 @@
 //! An input's index is kept by its set of key columns (`InRel::index`), in the column order of the first to ask for
 //! it: a join that probes those columns in another order reads its key in the index's order.
+use rerail_blocks::vector::Vector;
 use super::spec::hex;
 use super::*;
 
@@ -37,7 +38,7 @@ fn a_join_probes_an_input_through_an_index_made_for_its_columns_in_another_order
     run(&db, "ixo_hit", 0).unwrap();
     close(&db, "ixo_hit").unwrap();
     let hit = held(&db, "ixo_hit").expect("the derived relation");
-    let mut got: Vec<i64> = (0..hit.len()).filter(|&i| !is_dead(&hit.dead, i as u32)).map(|i| hit.at(i).at(0)).collect();
+    let mut got: Vector<i64> = (0..hit.len()).filter(|&i| !is_dead(&hit.dead, i as u32)).map(|i| hit.at(i).at(0)).collect();
     got.sort_unstable();
     assert_eq!(got, vec![1, 3], "the rows of `want` that `pair` holds");
 }

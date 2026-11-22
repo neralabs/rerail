@@ -22,14 +22,14 @@ pub const SAMPLE: usize = 1 << SAMPLE_SHIFT;
 pub const HEAD: usize = 20;
 
 /// The index of `source`'s newlines: its bytes, without the room a region keeps after them.
-pub fn index(source: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
+pub fn index(source: &[u8]) -> crate::Vector<u8> {
+    let mut out = crate::Vector::new();
     index_into(&mut out, source);
     out
 }
 
 /// `index`, into `out` (its bytes replaced): a scan of the source for its newlines.
-pub fn index_into(out: &mut Vec<u8>, source: &[u8]) {
+pub fn index_into(out: &mut crate::Vector<u8>, source: &[u8]) {
     let m = memchr::memchr_iter(b'\n', source).count() as u64;
     index_of(out, source.len() as u64, m, memchr::memchr_iter(b'\n', source).map(|at| at as u64));
 }
@@ -37,7 +37,7 @@ pub fn index_into(out: &mut Vec<u8>, source: &[u8]) {
 /// The index of `m` newlines at `offsets` (ascending) in a source of `u` bytes, into `out` (its bytes replaced, its
 /// room kept): made in place, one pass over the offsets, so a producer that has the newlines (tier 1's bits) needs no
 /// scan of the source.
-pub fn index_of(out: &mut Vec<u8>, u: u64, m: u64, offsets: impl Iterator<Item = u64>) {
+pub fn index_of(out: &mut crate::Vector<u8>, u: u64, m: u64, offsets: impl Iterator<Item = u64>) {
     let l = if m == 0 || u <= m { 0 } else { 63 - (u / m).leading_zeros() };
     let buckets = (u >> l) + 1;
     let bits = m + buckets;
@@ -199,7 +199,7 @@ pub(crate) mod tests {
                     bits[0] |= 1;
                 }
                 let (m, offsets) = bits_of(s.len() as u64, delay, words, |w| bits[w]);
-                let mut got = vec![0xa5; 3];
+                let mut got = crate::Vector::from([0xa5u8; 3]);
                 index_of(&mut got, s.len() as u64, m, offsets);
                 assert_eq!(got, want, "{} bytes, delay {delay}", s.len());
             }

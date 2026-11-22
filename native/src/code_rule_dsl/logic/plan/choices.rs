@@ -26,6 +26,7 @@
 //! 0155) named by its digest. The run's manifest names that source and the entry's plan (`named`), so collection keeps
 //! the entry while it keeps the run.
 
+use rerail_blocks::vector::Vector;
 use super::super::front::Value;
 use super::super::program_facts::{self, Facts};
 use super::super::program_text;
@@ -130,7 +131,7 @@ impl Durable {
         let side = store.map(|s| -> Arc<Held> {
             let stored = read_all(&s, &prepared).unwrap_or_default();
             // The rewritten programs' images too, in one read: opened when looked up (`decode_chosen`).
-            let digests: Vec<[u8; 32]> = stored.values().filter_map(|entry| rewritten(entry)).collect();
+            let digests: Vector<[u8; 32]> = stored.values().filter_map(|entry| rewritten(entry)).collect();
             let images = program_text::stored(&s, &digests).unwrap_or_default();
             late.lock().expect("the late sources").extend(images.values().flat_map(|(_, ids)| ids.iter().copied()));
             let images = images.into_iter().map(|(d, (bytes, _))| (d, bytes)).collect();
@@ -362,8 +363,10 @@ fn take_notes(facts: &Facts) {
 /// The memo's rows for the entry.
 pub(super) type NoteRows = (Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>);
 
-fn note_rows((notes, exact, raised): super::joins::Stored) -> NoteRows {
-    let notes = notes.iter().map(|(k, n)| super::joins::note_row(*k, n).into_iter().map(Value::Int).collect()).collect();
+fn note_rows(stored: super::joins::Stored) -> NoteRows {
+    let notes = stored.iter().map(|(k, n)| super::joins::note_row(*k, n.get()).into_iter().map(Value::Int).collect()).collect();
+    let exact: Vec<_> = stored.iter().flat_map(|(k, n)| super::joins::exact_of(*k, n.get())).collect();
+    let raised: Vec<_> = stored.iter().flat_map(|(k, n)| super::joins::raised_of(*k, n.get()).map(|(k, r, c)| (k, r.to_owned(), c)).collect::<Vec<_>>()).collect();
     let exact = exact
         .iter()
         .map(|(k, rule, sig, c)| {

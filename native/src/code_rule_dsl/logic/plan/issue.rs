@@ -17,6 +17,7 @@
 //! - **Retire** (§4): in program order, on the loop's thread. A member that declined runs as it would have (its
 //!   SQL), one after it on the loop's thread.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use rerail_accel::stream::{Handle, Stream};
 use std::time::Instant;
@@ -31,7 +32,7 @@ fn level_wave() -> bool {
 }
 
 /// A component's members.
-type Members = Vec<(BTreeSet<String>, Vec<RuleKey>)>;
+type Members = Vec<(crate::code_rule_dsl::logic::front::CompAt, Vec<RuleKey>)>;
 
 /// What a component's job leaves waiting on the run's wave (decision 0123 §6): its members still waiting on their
 /// device wave, the launches they queued on the job's thread, and its members' rules (to resume them).
@@ -48,7 +49,7 @@ unsafe impl Send for Parked {}
 /// A component whose members wait on the run's wave: its job ended, it is not absorbed yet.
 struct Waiting<'a> {
     /// Its waiting members' launches (their outputs go to the job that resumes them).
-    tickets: Vec<u64>,
+    tickets: Vector<u64>,
     strand: Strand<'a>,
     n: usize,
     stop: Option<Result<(Option<String>, Option<String>)>>,
@@ -72,9 +73,9 @@ enum State<'a> {
 }
 
 struct Component<'a> {
-    members: Vec<usize>,
-    own: BTreeSet<String>,
-    digests: Vec<u64>,
+    members: Vector<usize>,
+    own: crate::code_rule_dsl::logic::front::Components,
+    digests: Vector<u64>,
     estimate: f64,
     /// Decision 0282: the longest chain of estimates from its members to the program's end (`Board::level`).
     rank: f64,
@@ -106,17 +107,17 @@ pub(super) struct Counts {
 }
 
 pub(super) struct Board<'a> {
-    pending: Vec<u32>,
-    readers: Vec<Vec<usize>>,
+    pending: Vector<u32>,
+    readers: Vec<Vector<usize>>,
     retired: Vec<bool>,
     ready: BTreeSet<usize>,
     /// Strata below it were looked at for retiring; those then waiting on their wave are `held`.
     to: usize,
-    held: Vec<usize>,
+    held: Vector<usize>,
     member_of: Vec<Option<usize>>,
     comps: Vec<Component<'a>>,
     /// The components submitted whose jobs are not collected yet.
-    flying: Vec<usize>,
+    flying: Vector<usize>,
     in_flight: usize,
     k: f64,
     fixed: f64,
@@ -125,10 +126,10 @@ pub(super) struct Board<'a> {
     /// How many `issue`s made components (`Component::group`).
     groups: usize,
     /// Each stratum's producers (`deps`), for the trace.
-    from: Vec<Vec<usize>>,
+    from: Vec<Vector<usize>>,
     /// Decision 0282: each stratum's bottom level, its estimate and the longest chain of its readers' to the
     /// program's end; made at the first `issue` (`levels`).
-    level: Vec<f64>,
+    level: Vector<f64>,
     /// `RERAIL_STRATA_TRACE`: the run's start, the stratum the loop is at (since when, and whether its component
     /// ran it), and each stratum's start, end and where it ran (0 the loop's thread, 1 a job, 2 a component run at
     /// its retire).
@@ -141,7 +142,7 @@ struct Trace {
     by_component: bool,
     rows: Vec<Option<(f64, f64, u8)>>,
     /// When each stratum's component was submitted to the stream (`RERAIL_STRATA_TRACE`'s last column), or -1.
-    submitted: Vec<f64>,
+    submitted: Vector<f64>,
     /// Why a stratum ran on the loop's thread, if it was looked at.
     why: std::cell::RefCell<Vec<&'static str>>,
     /// The loop thread's seconds by what it did (`SPENT`), for the trace's `loop` lines.
@@ -160,11 +161,11 @@ pub(super) fn on() -> bool {
 }
 
 impl<'a> Board<'a> {
-    pub(super) fn new(sccs: &[BTreeSet<String>], deps: &super::super::front::Edges) -> Self {
-        let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
-        let mut pending = vec![0u32; sccs.len()];
-        let mut readers = vec![Vec::new(); sccs.len()];
-        let mut producers: Vec<Vec<usize>> = Vec::with_capacity(sccs.len());
+    pub(super) fn new(sccs: &crate::code_rule_dsl::logic::front::Components, deps: &super::super::front::Edges) -> Self {
+        let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r, j))).collect();
+        let mut pending = rerail_blocks::vector![0u32; sccs.len()];
+        let mut readers = vec![Vector::new(); sccs.len()];
+        let mut producers: Vec<Vector<usize>> = Vec::with_capacity(sccs.len());
         for (j, scc) in sccs.iter().enumerate() {
             let from: BTreeSet<usize> = scc.iter().flat_map(|r| deps.get(r).into_iter().flatten()).filter_map(|(d, _)| of.get(d.as_str()).copied()).filter(|&p| p != j).collect();
             pending[j] = from.len() as u32;
@@ -181,10 +182,10 @@ impl<'a> Board<'a> {
             retired: vec![false; sccs.len()],
             ready,
             to: 0,
-            held: Vec::new(),
+            held: rerail_blocks::vector::Vector::new(),
             member_of: vec![None; sccs.len()],
             comps: Vec::new(),
-            flying: Vec::new(),
+            flying: rerail_blocks::vector::Vector::new(),
             in_flight: 0,
             k: if merge { env_f("RERAIL_STRATA_K", 8.0) } else { 0.0 },
             fixed: env_f("RERAIL_STRATA_FIXED", 136e-6),
@@ -192,10 +193,10 @@ impl<'a> Board<'a> {
             counts: Counts::default(),
             groups: 0,
             from: producers,
-            level: Vec::new(),
+            level: rerail_blocks::vector::Vector::new(),
             // Always kept (a few words a stratum): the run's measured critical path reads it (decision 0208), and
             // `RERAIL_STRATA_TRACE` writes it.
-            trace: Some(Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()], submitted: vec![-1.0; sccs.len()], why: std::cell::RefCell::new(vec![""; sccs.len()]), spent: Default::default() }),
+            trace: Some(Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()], submitted: rerail_blocks::vector![-1.0; sccs.len()], why: std::cell::RefCell::new(vec![""; sccs.len()]), spent: Default::default() }),
         }
     }
 
@@ -234,7 +235,7 @@ impl<'a> Board<'a> {
 
     /// Appends the run's trace to `RERAIL_STRATA_TRACE`: per stratum its level, start, end, where it ran, its
     /// component, its producers, its name, why it ran on the loop's thread, and when its component was submitted.
-    pub(super) fn dump(&self, level_of: &[usize], sccs: &[BTreeSet<String>]) {
+    pub(super) fn dump(&self, level_of: &[usize], sccs: &crate::code_rule_dsl::logic::front::Components) {
         use std::io::Write as _;
         let Some(t) = &self.trace else { return };
         let Some(path) = std::env::var_os("RERAIL_STRATA_TRACE") else { return };
@@ -246,7 +247,7 @@ impl<'a> Board<'a> {
             let from: Vec<String> = self.from[j].iter().map(usize::to_string).collect();
             let why = t.why.borrow()[j];
             let why = if why.is_empty() && comp < 0 { "not offered" } else { why };
-            out.push_str(&format!("s\t{j}\t{}\t{a:.7}\t{b:.7}\t{w}\t{comp}\t{}\t{}\t{why}\t{:.7}\n", level_of[j], from.join(","), sccs[j].iter().next().map_or("", String::as_str), t.submitted[j]));
+            out.push_str(&format!("s\t{j}\t{}\t{a:.7}\t{b:.7}\t{w}\t{comp}\t{}\t{}\t{why}\t{:.7}\n", level_of[j], from.join(","), sccs[j].first().unwrap_or(""), t.submitted[j]));
         }
         for (k, s) in t.spent.borrow().iter().enumerate() {
             out.push_str(&format!("loop\t{}\t{s:.7}\n", SPENT[k]));
@@ -291,8 +292,8 @@ impl<'a> Board<'a> {
     /// claimed by the stream, before larger strata off the path (the stream claimed the largest first, and the issue
     /// took program order).
     /// `RERAIL_STRATA_RANK=off` (a measurement aid): every stratum ranks 0, and the stream claims the largest first.
-    fn levels(&self, run: &Run<'a, '_>, rules_of: &dyn Fn(usize) -> Vec<RuleKey>) -> Vec<f64> {
-        let mut level = vec![0.0f64; self.readers.len()];
+    fn levels(&self, run: &Run<'a, '_>, rules_of: &dyn Fn(usize) -> Vec<RuleKey>) -> Vector<f64> {
+        let mut level = rerail_blocks::vector![0.0f64; self.readers.len()];
         if matches!(std::env::var("RERAIL_STRATA_RANK").as_deref(), Ok("off")) {
             return level;
         }
@@ -321,9 +322,9 @@ impl<'a> Board<'a> {
         &mut self,
         at: usize,
         run: &mut Run<'a, '_>,
-        sccs: &[BTreeSet<String>],
+        sccs: &std::sync::Arc<crate::code_rule_dsl::logic::front::Components>,
         rules_of: &dyn Fn(usize) -> Vec<RuleKey>,
-        wants_of: &[BTreeSet<(String, Vec<usize>)>],
+        wants_of: &[BTreeSet<(String, Vector<usize>)>],
         waved: &mut [bool],
         load: &mut dyn FnMut(usize) -> Result<()>,
         stream: &Stream<'s, '_>,
@@ -341,10 +342,10 @@ impl<'a> Board<'a> {
             return Ok(());
         }
         let mut t = Instant::now();
-        let mut issued: Vec<usize> = Vec::new();
+        let mut issued: Vector<usize> = rerail_blocks::vector::Vector::new();
         // Decision 0282: the ready strata are issued by rank, the stratum at `at` first, so the members in flight are
         // the ones the run's end waits on longest; in program order, the cap filled with strata off the path.
-        let mut order: Vec<usize> = self.ready.range(at..).copied().collect();
+        let mut order: Vector<usize> = self.ready.range(at..).copied().collect();
         order.sort_by(|&a, &b| (b == at).cmp(&(a == at)).then(self.level[b].total_cmp(&self.level[a])).then(a.cmp(&b)));
         let mut order = order.into_iter();
         while self.in_flight < IN_FLIGHT {
@@ -352,8 +353,8 @@ impl<'a> Board<'a> {
             self.ready.remove(&j);
             let none = BTreeSet::new();
             let Some(first) = self.eligible(j, run, sccs, rules_of, load, &none)? else { continue };
-            let mut members = vec![j];
-            let mut held: BTreeSet<String> = sccs[j].clone();
+            let mut members = rerail_blocks::vector![j];
+            let mut held: BTreeSet<String> = sccs[j].names();
             let mut reads = first;
             let mut est = self.estimate(run, &rules_of(j));
             let mut local: HashMap<usize, u32> = HashMap::new();
@@ -381,13 +382,13 @@ impl<'a> Board<'a> {
                 let Some(more) = self.eligible(next, run, sccs, rules_of, load, &held)? else { continue };
                 est += self.estimate(run, &rules_of(next));
                 members.push(next);
-                held.extend(sccs[next].iter().cloned());
+                held.extend(sccs[next].iter().map(str::to_owned));
                 reads.extend(more);
                 grow(next, &mut local, &mut chain, self);
             }
             members.sort_unstable();
             let rules: Vec<Vec<RuleKey>> = members.iter().map(|&m| rules_of(m)).collect();
-            let digests: Vec<u64> = rules.iter().flatten().map(|&r| run.versions.at(r).observed_key()).collect();
+            let digests: Vector<u64> = rules.iter().flatten().map(|&r| run.versions.at(r).observed_key()).collect();
             // Its statistics are not made here: the components issued together request theirs, made in one batch
             // below (decision 0123). A component whose strand cannot be made runs on the loop's thread, as it would.
             let Ok(strand) = run.strand(&reads, &digests, &[]) else {
@@ -404,10 +405,10 @@ impl<'a> Board<'a> {
             self.counts.components += 1;
             self.counts.members += members.len();
             self.counts.largest = self.counts.largest.max(members.len());
-            let data: Members = members.iter().map(|&m| sccs[m].clone()).zip(rules).collect();
+            let data: Members = members.iter().map(|&m| crate::code_rule_dsl::logic::front::CompAt::of(sccs, m)).zip(rules).collect();
             issued.push(c);
             let rank = members.iter().map(|&m| self.level[m]).fold(0.0, f64::max);
-            self.comps.push(Component { members, own: held, digests, estimate: est, rank, state: State::Inline(strand, data), group: self.groups });
+            self.comps.push(Component { members, own: crate::code_rule_dsl::logic::front::Components::of_names([held.iter().map(String::as_str)]), digests, estimate: est, rank, state: State::Inline(strand, data), group: self.groups });
         }
         t = self.spend(0, t);
         if issued.is_empty() {
@@ -419,15 +420,15 @@ impl<'a> Board<'a> {
         // takes them as made; what a stratum's own rounds find still to make is made there.
         if run.model.has_deferred() {
             let mut wanted = BTreeSet::new();
-            let strata: Vec<usize> = issued.iter().flat_map(|&c| self.comps[c].members.clone()).collect();
-            let strata: Vec<(&BTreeSet<String>, Vec<RuleKey>)> = strata.iter().map(|&m| (&sccs[m], run.runnable(&sccs[m], &rules_of(m)))).collect();
+            let strata: Vector<usize> = issued.iter().flat_map(|&c| self.comps[c].members.clone()).collect();
+            let strata: Vec<(&crate::code_rule_dsl::logic::front::Comp, Vec<RuleKey>)> = strata.iter().map(|&m| (&sccs[m], run.runnable(&sccs[m], &rules_of(m)))).collect();
             let vs = Arc::clone(&run.versions);
             run.model.wants_strata(&vs, strata, &mut wanted)?;
             run.model.make_statistics(vs.whole(run.version), &wanted)?;
         }
         t = self.spend(1, t);
         // The issued components' count tables and seed joins, as one device batch (§3, step 6).
-        let mut wants: BTreeSet<(String, Vec<usize>)> = BTreeSet::new();
+        let mut wants: BTreeSet<(String, Vector<usize>)> = BTreeSet::new();
         let mut specs = Vec::new();
         for &c in &issued {
             for k in 0..self.comps[c].members.len() {
@@ -487,7 +488,7 @@ impl<'a> Board<'a> {
     /// Whether `j` may be issued with the relations `held` (its component's earlier members') taken as held: the
     /// relations its strand holds (`Run::strand_reads_with`).
     #[allow(clippy::too_many_arguments)]
-    fn eligible(&self, j: usize, run: &Run<'a, '_>, sccs: &[BTreeSet<String>], rules_of: &dyn Fn(usize) -> Vec<RuleKey>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
+    fn eligible(&self, j: usize, run: &Run<'a, '_>, sccs: &crate::code_rule_dsl::logic::front::Components, rules_of: &dyn Fn(usize) -> Vec<RuleKey>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
         if sccs[j].iter().all(|r| run.views.contains(r)) {
             if let Some(t) = &self.trace {
                 t.why.borrow_mut()[j] = "views only";
@@ -545,7 +546,7 @@ impl<'a> Board<'a> {
                 let mut waiting = Vec::new();
                 let (n, stop) = strand.run_members(&data, &mut times, &mut reserved, level_wave().then_some(&mut waiting));
                 if !waiting.is_empty() {
-                    comp.state = State::Parked(Box::new(Waiting { tickets: Vec::new(), strand, n, stop, times, reserved, inline: true, waiting, data }));
+                    comp.state = State::Parked(Box::new(Waiting { tickets: rerail_blocks::vector::Vector::new(), strand, n, stop, times, reserved, inline: true, waiting, data }));
                     return Ok(());
                 }
                 (strand, n, stop, times, reserved, true)
@@ -561,7 +562,7 @@ impl<'a> Board<'a> {
     fn taken(&mut self, c: usize, run: &mut Run<'a, '_>, strand: Strand<'a>, n: usize, stop: Option<Result<(Option<String>, Option<String>)>>, times: Vec<(Instant, Instant)>, reserved: crate::content_store::atoms::Reserved, inline: bool) {
         let comp = &mut self.comps[c];
         // Its strand's relations are those its members that ran made: the others' are not held.
-        run.absorb(strand, &comp.own, &comp.digests);
+        run.absorb(strand, &comp.own[0], &comp.digests);
         // Its relations are published: so are its atoms (decision 0114 §4).
         self.counts.atoms += reserved.len();
         drop(reserved);
@@ -574,7 +575,7 @@ impl<'a> Board<'a> {
             }
         }
         comp.state = State::Done(n, stop);
-        let ran: Vec<usize> = self.comps[c].members[..n].to_vec();
+        let ran: Vector<usize> = self.comps[c].members[..n].iter().copied().collect::<rerail_blocks::vector::Vector<_>>();
         ran.into_iter().for_each(|m| self.retire(m));
     }
 
@@ -587,7 +588,7 @@ impl<'a> Board<'a> {
         'a: 's,
     {
         let group = self.comps[c].group;
-        let mates: Vec<usize> = (0..self.comps.len()).filter(|&x| self.comps[x].group == group).collect();
+        let mates: Vector<usize> = (0..self.comps.len()).filter(|&x| self.comps[x].group == group).collect();
         for &x in &mates {
             if matches!(self.comps[x].state, State::Job(_) | State::Inline(..)) {
                 self.flying.retain(|&y| y != x);

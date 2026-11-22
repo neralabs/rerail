@@ -9,28 +9,55 @@ use std::collections::BTreeSet;
 
 /// Dependency edges, head → dependency, with whether each is negative (an aggregate's is, a gated negation's is
 /// not): sorted by head and dependency, each once.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Edges {
+/// A section (decision 0569 §4), shared by a count.
+#[derive(Clone)]
+pub struct Edges(std::sync::Arc<rerail_section::Section<EdgeList>>);
+
+/// The edges' section: each one as it lies.
+#[derive(rerail_section::Archive, Default)]
+pub struct EdgeList {
+    #[archive(flat)]
     edges: Vec<(RelId, RelId, bool)>,
+}
+
+impl Default for Edges {
+    fn default() -> Edges {
+        Edges::of(Vec::new())
+    }
+}
+
+impl PartialEq for Edges {
+    fn eq(&self, o: &Edges) -> bool {
+        self.as_slice() == o.as_slice()
+    }
+}
+
+impl Eq for Edges {}
+
+impl std::fmt::Debug for Edges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.as_slice()).finish()
+    }
 }
 
 impl Edges {
     pub fn of(mut edges: Vec<(RelId, RelId, bool)>) -> Edges {
         edges.sort_unstable();
         edges.dedup();
-        Edges { edges }
+        Edges(std::sync::Arc::new(rerail_section::Section::of(&EdgeList { edges })))
     }
     /// What `head` depends on, and whether negatively.
     pub fn of_head(&self, head: RelId) -> impl Iterator<Item = (RelId, bool)> + '_ {
-        let s = self.edges.partition_point(|e| e.0 < head);
-        self.edges[s..].iter().take_while(move |e| e.0 == head).map(|e| (e.1, e.2))
+        let edges = self.as_slice();
+        let s = edges.partition_point(|e| e.0 < head);
+        edges[s..].iter().take_while(move |e| e.0 == head).map(|e| (e.1, e.2))
     }
     /// The edges, sorted by head and dependency.
     pub fn as_slice(&self) -> &[(RelId, RelId, bool)] {
-        &self.edges
+        &self.0.edges
     }
     pub fn iter(&self) -> impl Iterator<Item = (RelId, RelId, bool)> + '_ {
-        self.edges.iter().copied()
+        self.as_slice().iter().copied()
     }
 }
 
@@ -92,7 +119,7 @@ pub fn edges_by_name(v: &Version, about: &About) -> crate::code_rule_dsl::logic:
 /// The components by name, dependencies first (`analyses::strata` without its edges), in the tree's order: the relations numbered in the order of their
 /// names, and the tree's error where a negation closes a cycle. For a reader whose output follows the components' order (the
 /// composed query lists its definitions in it); `strata` gives them in an order of ids.
-pub fn components_by_name(v: &Version, about: &About) -> Result<Vec<BTreeSet<String>>, Error> {
+pub fn components_by_name(v: &Version, about: &About) -> Result<crate::code_rule_dsl::logic::front::Components, Error> {
     let (mut by_name, edges, aggs) = components(v, about);
     by_name.sort_unstable_by(|a, b| v.rel_name(*a).cmp(v.rel_name(*b)));
     const NONE: u32 = u32::MAX;

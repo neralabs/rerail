@@ -8,9 +8,10 @@
 //! export per chunk, read back from `x` when the cross-file part started. On the Python pack that copy was 5.6 s of
 //! about 89 s of CPU (166M SQLite VM steps, about 30 ns each).
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::facts::rows::{Life, Rows};
 use crate::code_rule_dsl::facts::vtab::Source;
-use hashbrown::HashTable;
+use rerail_blocks::maps::IdTable as HashTable;
 use rustc_hash::FxHasher;
 use std::collections::BTreeMap;
 use std::hash::Hasher;
@@ -24,7 +25,7 @@ use std::sync::Arc;
 struct Held {
     rows: Rows,
     /// Rows not among the export's (bit `id`): a row given again, or dead in the relation it came from.
-    dead: Vec<u64>,
+    dead: Vector<u64>,
     set: HashTable<u32>,
     /// Its columns' types, as the relations it holds give them (the engine's codes).
     types: Option<Vec<u8>>,
@@ -32,16 +33,16 @@ struct Held {
     source: Option<Arc<dyn Source>>,
     /// Rows appended unchecked (`append_own`), not in `set`: each a document's own, which no other file's entry
     /// holds. Their ids, the location column that names their document, and the documents.
-    unset: Vec<std::ops::Range<u32>>,
+    unset: Vector<[u32; 2]>,
     at: Option<usize>,
-    unset_docs: rustc_hash::FxHashSet<i64>,
+    unset_docs: rerail_blocks::maps::BlockHash<i64, ()>,
     /// Let go after its last reader (`release`).
     released: bool,
 }
 
 impl Held {
     fn new(width: usize) -> Self {
-        Held { rows: Rows::living(width, Life::Kept), dead: Vec::new(), set: HashTable::new(), types: None, source: None, unset: Vec::new(), at: None, unset_docs: Default::default(), released: false }
+        Held { rows: Rows::living(width, Life::Kept), dead: rerail_blocks::vector::Vector::new(), set: HashTable::new(), types: None, source: None, unset: Vector::new(), at: None, unset_docs: Default::default(), released: false }
     }
 
     fn width(&self) -> usize {
@@ -98,8 +99,8 @@ impl Held {
 
     /// The rows appended unchecked put in the set: a row may now come again.
     fn set_all(&mut self) {
-        for range in std::mem::take(&mut self.unset) {
-            for id in range {
+        for [lo, hi] in std::mem::take(&mut self.unset) {
+            for id in lo..hi {
                 let h = self.row_hash(id);
                 let (rows, width) = (&self.rows, self.width());
                 self.set.insert_unique(h, id, |&i| Held::hash((0..width).map(|c| rows.get(i, c))));
@@ -148,13 +149,13 @@ impl Exports {
         let start = held.len() as u32;
         let in_place = crate::code_rule_dsl::logic::native::component::held_rows(rows)
             .filter(|(r, n, ..)| r.width() == width && r.rows() == *n);
-        let given: Vec<bool> = match in_place {
+        let given: usize = match in_place {
             Some((r, n, dead, types)) => {
                 held.types.get_or_insert_with(|| types.to_vec());
                 // Room for every row at once: the tail grows once, not row by row, and pages no row reaches are
                 // never touched.
                 held.rows.reserve(n * width);
-                let mut row = vec![0i64; width];
+                let mut row = rerail_blocks::vector![0i64; width];
                 let mut added = 0;
                 r.each_run(0, n as u32, |p, lo, hi, first| {
                     for i in lo..hi {
@@ -167,7 +168,7 @@ impl Exports {
                         }
                         // A row of a document whose own rows were appended unchecked may be one of them: they are set
                         // first.
-                        if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains(&super::memo::document_of(row[at]))) {
+                        if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains_key(&super::memo::document_of(row[at]))) {
                             held.set_all();
                         }
                         if held.insert(&row) {
@@ -178,25 +179,21 @@ impl Exports {
                 return added;
             }
             None => {
-                let mut row = vec![0i64; width];
+                let mut row = rerail_blocks::vector![0i64; width];
                 for r in 0..rows.len() {
                     for (c, v) in row.iter_mut().enumerate() {
                         *v = rows.value(r, c);
                     }
                     held.rows.extend_from_slice(&row);
                 }
-                vec![false; rows.len()]
+                rows.len()
             }
         };
         let mut added = 0;
-        for (i, dead) in given.into_iter().enumerate() {
+        for i in 0..given {
             let id = start + i as u32;
-            if dead {
-                held.kill(id);
-                continue;
-            }
             // A row of a document whose own rows were appended unchecked may be one of them: they are set first.
-            if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains(&super::memo::document_of(held.get(id, at)))) {
+            if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains_key(&super::memo::document_of(held.get(id, at)))) {
                 held.set_all();
             }
             if held.keep_once(id) {
@@ -211,10 +208,10 @@ impl Exports {
     /// its own file), which no other file's rows hold, and no row is given twice. Rows that may be another file's
     /// too (a value document's, kept by each file that asked for it) go through `add`. A later `add` of a row of one
     /// of `documents` puts these in the set first, so a document that comes again is still kept once.
-    pub(super) fn append_own(&mut self, rel: &str, width: usize, at: usize, columns: Vec<Vec<i64>>, documents: impl IntoIterator<Item = i64>) -> usize {
+    pub(super) fn append_own(&mut self, rel: &str, width: usize, at: usize, columns: Vec<Vector<i64>>, documents: impl IntoIterator<Item = i64>) -> usize {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
         debug_assert!(held.source.is_none(), "export {rel} added to after the cross-file part read it");
-        let n = columns.first().map_or(0, Vec::len);
+        let n = columns.first().map_or(0, |v| v.len());
         if n == 0 {
             return 0;
         }
@@ -224,15 +221,17 @@ impl Exports {
         held.at = Some(at);
         let start = held.len() as u32;
         held.rows.reserve(n * width);
-        let mut row = vec![0i64; width];
+        let mut row = rerail_blocks::vector![0i64; width];
         for r in 0..n {
             for (v, column) in row.iter_mut().zip(&columns) {
                 *v = column[r];
             }
             held.rows.extend_from_slice(&row);
         }
-        held.unset.push(start..start + n as u32);
-        held.unset_docs.extend(documents);
+        held.unset.push([start, start + n as u32]);
+        for d in documents {
+            held.unset_docs.put(d);
+        }
         n
     }
 
@@ -248,7 +247,7 @@ impl Exports {
         let values = match self.rels.get(rel) {
             Some(Held { source: Some(s), .. }) => return Arc::clone(s),
             Some(held) if held.width() >= width => {
-                let mut cols = vec![Vec::with_capacity(held.live()); width];
+                let mut cols = vec![Vector::with_capacity(held.live()); width];
                 for id in held.live_ids() {
                     for (c, col) in cols.iter_mut().enumerate() {
                         col.push(held.get(id, c));
@@ -256,24 +255,24 @@ impl Exports {
                 }
                 cols.into_iter().map(Some).collect()
             }
-            _ => vec![Some(Vec::new()); width],
+            _ => vec![Some(Vector::new()); width],
         };
         crate::code_rule_dsl::logic::native::component::columns_source(names, values)
     }
 
     /// Each of export `rel`'s rows held so far, read where it is held (`width` columns).
-    pub(super) fn each_row(&self, rel: &str, width: usize, mut f: impl FnMut(Vec<i64>)) {
-        self.visit(rel, width, |row| f(row.to_vec()));
+    pub(super) fn each_row(&self, rel: &str, width: usize, mut f: impl FnMut(Vector<i64>)) {
+        self.visit(rel, width, |row| f(row.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()));
     }
 
     /// Export `rel`'s rows held so far whose column `at` is a node of one of `documents` (`memo::document_of`):
     /// a load's new documents' rows, for the cone of requests that asked for them.
-    pub(super) fn rows_of(&self, rel: &str, width: usize, at: usize, documents: &std::collections::HashSet<i64>) -> Vec<Vec<i64>> {
+    pub(super) fn rows_of(&self, rel: &str, width: usize, at: usize, documents: &std::collections::HashSet<i64>) -> Vec<Vector<i64>> {
         let mut out = Vec::new();
         if at < width {
             self.visit(rel, width, |row| {
                 if documents.contains(&super::memo::document_of(row[at])) {
-                    out.push(row.to_vec());
+                    out.push(Vector::from(row));
                 }
             });
         }
@@ -317,7 +316,7 @@ impl Exports {
         held.unset_docs.clear();
         let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
         let source = if n == 0 || rows.width() != width {
-            crate::code_rule_dsl::logic::native::component::columns_source(names, vec![Some(Vec::new()); width])
+            crate::code_rule_dsl::logic::native::component::columns_source(names, vec![Some(rerail_blocks::vector::Vector::new()); width])
         } else {
             let types = held.types.clone().unwrap_or_else(|| vec![b'i'; width]);
             crate::code_rule_dsl::logic::native::component::InRel::held(rows, n, types, dead).source(names)
@@ -359,22 +358,92 @@ pub(super) struct Counted {
 
 struct CountedRel {
     /// The rows that may be more than one file's (`patch`): each once, with how many files hold it, found by hash.
-    columns: Vec<Vec<i64>>,
-    counts: Vec<u32>,
+    columns: Vec<Vector<i64>>,
+    counts: Vector<u32>,
     set: HashTable<u32>,
     /// The rows naming each document (`patch_own`), as one file's entry gave them: its own document's, or a guest's,
     /// which every file holding that guest gives alike. Counted in and out as one, compared, not hashed a row at a
     /// time; `times` the files that gave them.
-    own: BTreeMap<i64, OwnRows>,
+    own: Own,
     /// The column naming a row's document, where the rows have one (an export's): `source` keeps a row once that
     /// is both a document's own and a shared row naming it.
     at: Option<usize>,
 }
 
-/// The rows of a relation naming one document, row-major, and how many times they were counted in.
-struct OwnRows {
-    rows: Vec<i64>,
-    times: u32,
+/// The rows of a relation naming each document, in blocks (decision 0569 §4): one arena of rows, row-major, each
+/// document's span of it with how many times they were counted in, and the spans by document. A span counted out
+/// for the last time is a hole, taken back when the holes pass the rows held (`compact`).
+#[derive(Default)]
+struct Own {
+    rows: Vector<i64>,
+    /// Each span: `[document, start, len, times]`; `times` 0, gone.
+    spans: Vector<[i64; 4]>,
+    at: rerail_blocks::maps::BlockHash<i64, u32>,
+    /// The rows' values the gone spans hold.
+    holes: usize,
+}
+
+impl Own {
+    fn is_empty(&self) -> bool {
+        self.at.is_empty()
+    }
+    fn contains_key(&self, doc: &i64) -> bool {
+        self.at.contains_key(doc)
+    }
+    fn span(&self, s: u32) -> &[i64] {
+        let [_, start, len, _] = self.spans[s as usize];
+        &self.rows[start as usize..(start + len) as usize]
+    }
+    /// `doc`'s span, its rows and the times they were counted in.
+    fn get(&self, doc: i64) -> Option<(u32, &[i64], u32)> {
+        let s = *self.at.get(&doc)?;
+        Some((s, self.span(s), self.spans[s as usize][3] as u32))
+    }
+    fn insert(&mut self, doc: i64, rows: &[i64]) {
+        let start = self.rows.len() as i64;
+        self.rows.extend_from_slice(rows);
+        self.spans.push([doc, start, rows.len() as i64, 1]);
+        self.at.insert(doc, (self.spans.len() - 1) as u32);
+    }
+    /// Span `s` counted in once more (`up`) or out.
+    fn count(&mut self, s: u32, up: bool) {
+        let sp = &mut self.spans[s as usize];
+        sp[3] += if up { 1 } else { -1 };
+        if sp[3] == 0 {
+            let (doc, len) = (sp[0], sp[2] as usize);
+            self.at.remove(&doc);
+            self.holes += len;
+            if self.holes > self.rows.len() - self.holes {
+                self.compact();
+            }
+        }
+    }
+    /// The live spans laid out again, the holes left out.
+    fn compact(&mut self) {
+        let mut rows = Vector::new();
+        let mut spans = Vector::new();
+        let mut at = rerail_blocks::maps::BlockHash::default();
+        for [doc, start, len, times] in self.spans.iter().copied().filter(|sp| sp[3] > 0) {
+            let s = rows.len() as i64;
+            rows.extend_from_slice(&self.rows[start as usize..(start + len) as usize]);
+            spans.push([doc, s, len, times]);
+            at.insert(doc, (spans.len() - 1) as u32);
+        }
+        (self.rows, self.spans, self.at, self.holes) = (rows, spans, at, 0);
+    }
+    /// Each live document, its rows and their times, by document.
+    fn iter(&self) -> impl Iterator<Item = (i64, &[i64], u32)> + '_ {
+        let mut live: Vector<[i64; 2]> = self.at.iter().map(|(d, s)| [d, i64::from(s)]).collect();
+        live.sort_unstable();
+        (0..live.len()).map(move |i| {
+            let s = live[i][1] as u32;
+            (live[i][0], self.span(s), self.spans[s as usize][3] as u32)
+        })
+    }
+    /// Each live document's rows and their times, by document.
+    fn values(&self) -> impl Iterator<Item = (&[i64], u32)> + '_ {
+        self.iter().map(|(_, rows, times)| (rows, times))
+    }
 }
 
 impl Counted {
@@ -397,20 +466,13 @@ impl Counted {
         }
         let Some(held) = self.rel(rel, width) else { return false };
         held.at = at;
-        match (held.own.get_mut(&doc), sign > 0) {
+        match (held.own.get(doc).map(|(s, rows, _)| (s, rows == flat)), sign > 0) {
             (None, true) => {
-                held.own.insert(doc, OwnRows { rows: flat.to_vec(), times: 1 });
+                held.own.insert(doc, flat);
                 true
             }
-            (Some(own), true) if own.rows == flat => {
-                own.times += 1;
-                true
-            }
-            (Some(own), false) if own.rows == flat => {
-                own.times -= 1;
-                if own.times == 0 {
-                    held.own.remove(&doc);
-                }
+            (Some((s, true)), up) => {
+                held.own.count(s, up);
                 true
             }
             _ => held.patch(flat, sign),
@@ -426,7 +488,7 @@ impl Counted {
 
 impl CountedRel {
     fn new(width: usize) -> Self {
-        CountedRel { columns: vec![Vec::new(); width], counts: Vec::new(), set: HashTable::new(), own: BTreeMap::new(), at: None }
+        CountedRel { columns: vec![rerail_blocks::vector::Vector::new(); width], counts: rerail_blocks::vector::Vector::new(), set: HashTable::new(), own: Own::default(), at: None }
     }
 
     /// Shared rows in or out, one at a time, by hash.
@@ -457,17 +519,17 @@ impl CountedRel {
 
     /// Every row held, each once with how many files hold it: the documents' own rows put in the set too.
     fn materialized(&self) -> CountedRel {
-        let mut all = CountedRel { columns: self.columns.clone(), counts: self.counts.clone(), set: self.set.clone(), own: BTreeMap::new(), at: self.at };
-        for own in self.own.values() {
-            for _ in 0..own.times {
-                all.patch(&own.rows, 1);
+        let mut all = CountedRel { columns: self.columns.clone(), counts: self.counts.clone(), set: self.set.clone(), own: Own::default(), at: self.at };
+        for (rows, times) in self.own.values() {
+            for _ in 0..times {
+                all.patch(rows, 1);
             }
         }
         all
     }
 
     /// Rows held, each once: the shared rows, less those that are also a document's own, then the documents' own.
-    fn rows_once(&self) -> Vec<Vec<i64>> {
+    fn rows_once(&self) -> Vec<Vector<i64>> {
         let width = self.columns.len();
         let mut out = self.columns.clone();
         if self.own.is_empty() {
@@ -477,12 +539,12 @@ impl CountedRel {
         // A shared row naming a document whose own rows are held may be one of them (or any shared row, when the
         // rows name no document).
         let of = |id: usize| self.at.map(|at| super::memo::document_of(self.columns[at][id]));
-        let maybe: Vec<usize> = (0..shared).filter(|&id| of(id).is_none_or(|d| self.own.contains_key(&d))).collect();
+        let maybe: Vector<usize> = (0..shared).filter(|&id| of(id).is_none_or(|d| self.own.contains_key(&d))).collect();
         if !maybe.is_empty() {
             let mut own: rustc_hash::FxHashSet<&[i64]> = Default::default();
-            for (d, rows) in &self.own {
-                if maybe.iter().any(|&id| of(id).is_none_or(|x| x == *d)) {
-                    own.extend(rows.rows.chunks_exact(width));
+            for (d, rows, _) in self.own.iter() {
+                if maybe.iter().any(|&id| of(id).is_none_or(|x| x == d)) {
+                    own.extend(rows.chunks_exact(width));
                 }
             }
             let gone: rustc_hash::FxHashSet<usize> = maybe.into_iter().filter(|&id| own.contains(self.columns.iter().map(|c| c[id]).collect::<Vec<_>>().as_slice())).collect();
@@ -492,8 +554,8 @@ impl CountedRel {
                 }
             }
         }
-        for own in self.own.values() {
-            for row in own.rows.chunks_exact(width) {
+        for (rows, _) in self.own.values() {
+            for row in rows.chunks_exact(width) {
                 for (col, v) in out.iter_mut().zip(row) {
                     col.push(*v);
                 }
@@ -510,7 +572,7 @@ impl Counted {
         let names = (0..width).map(|c| format!("c{c}")).collect();
         let values = match self.rels.get(rel) {
             Some(held) if held.columns.len() == width => held.rows_once().into_iter().map(Some).collect(),
-            _ => vec![Some(Vec::new()); width],
+            _ => vec![Some(Vector::new()); width],
         };
         crate::code_rule_dsl::logic::native::component::columns_source(names, values)
     }
@@ -520,7 +582,7 @@ impl Counted {
         let (Some(held), Some(less)) = (self.rels.get(rel), minus.rels.get(rel)) else { return self.source(rel, width) };
         // Rare (a cone of requests over files not seen yet): every row by hash.
         let (held, less) = (&held.materialized(), &less.materialized());
-        let mut values: Vec<Vec<i64>> = vec![Vec::new(); width];
+        let mut values: Vec<Vector<i64>> = vec![rerail_blocks::vector::Vector::new(); width];
         if held.columns.len() == width {
             for id in 0..held.counts.len() {
                 let row = held.columns.iter().map(|col| col[id]);
@@ -539,8 +601,8 @@ impl Counted {
 
     /// Export `rel`'s rows as columns, each row as many times as files hold it (a base relation's rows, which are
     /// not kept once as an export's are).
-    pub(super) fn columns_each(&self, rel: &str, width: usize) -> Vec<Vec<i64>> {
-        let mut out = vec![Vec::new(); width];
+    pub(super) fn columns_each(&self, rel: &str, width: usize) -> Vec<Vector<i64>> {
+        let mut out = vec![Vector::new(); width];
         if let Some(held) = self.rels.get(rel).filter(|h| h.columns.len() == width) {
             // Mostly each row once: the columns as they are.
             if held.counts.iter().all(|&n| n == 1) {
@@ -554,9 +616,9 @@ impl Counted {
                     }
                 }
             }
-            for own in held.own.values() {
-                for _ in 0..own.times {
-                    for row in own.rows.chunks_exact(width) {
+            for (rows, times) in held.own.values() {
+                for _ in 0..times {
+                    for row in rows.chunks_exact(width) {
                         for (col, v) in out.iter_mut().zip(row) {
                             col.push(*v);
                         }
@@ -569,7 +631,7 @@ impl Counted {
 
     /// Rows held, over every export.
     pub(super) fn rows(&self) -> usize {
-        self.rels.values().map(|r| r.counts.len() + r.own.values().map(|o| o.rows.len() / r.columns.len().max(1)).sum::<usize>()).sum()
+        self.rels.values().map(|r| r.counts.len() + r.own.values().map(|(rows, _)| rows.len() / r.columns.len().max(1)).sum::<usize>()).sum()
     }
 }
 
@@ -577,13 +639,12 @@ impl CountedRel {
     /// Row `id` (hashed `h`) no longer held: the last row moves into its place.
     fn forget(&mut self, id: u32, h: u64) {
         let last = (self.counts.len() - 1) as u32;
-        if let Ok(entry) = self.set.find_entry(h, |&i| i == id) {
-            entry.remove();
-        }
+        let columns = &self.columns;
+        self.set.remove(h, |&i| i == id, |&i| Held::hash(columns.iter().map(|col| col[i as usize])));
         if id != last {
             let moved = Held::hash(self.columns.iter().map(|col| col[last as usize]));
-            if let Ok(mut entry) = self.set.find_entry(moved, |&i| i == last) {
-                *entry.get_mut() = id;
+            if let Some(at) = self.set.find_mut(moved, |&i| i == last) {
+                *at = id;
             }
             for col in &mut self.columns {
                 col[id as usize] = col[last as usize];
@@ -603,13 +664,13 @@ pub mod tests {
 
     #[test]
     fn an_export_keeps_each_row_once_across_chunks() {
-        let chunk = |rows: Vec<[i64; 2]>| {
+        let chunk = |rows: Vector<[i64; 2]>| {
             let names = vec!["c0".to_owned(), "c1".to_owned()];
             crate::code_rule_dsl::logic::native::component::columns_source(names, (0..2).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect())
         };
         let mut exports = Exports::default();
-        assert_eq!(exports.add("e", 2, chunk(vec![[1, 2], [3, 4], [1, 2]]).as_ref()), 2);
-        assert_eq!(exports.add("e", 2, chunk(vec![[3, 4], [5, 6]]).as_ref()), 1);
+        assert_eq!(exports.add("e", 2, chunk(rerail_blocks::vector![[1, 2], [3, 4], [1, 2]]).as_ref()), 2);
+        assert_eq!(exports.add("e", 2, chunk(rerail_blocks::vector![[3, 4], [5, 6]]).as_ref()), 1);
         let s = exports.source("e", 2);
         let rows: Vec<(i64, i64)> = (0..s.len()).map(|r| (s.value(r, 0), s.value(r, 1))).collect();
         assert_eq!(rows, vec![(1, 2), (3, 4), (5, 6)]);
@@ -624,11 +685,11 @@ pub mod tests {
     fn an_export_is_one_relation_of_the_chunks_new_rows() {
         use crate::code_rule_dsl::logic::native::component::{InRel, held_rows};
         let names = || vec!["c0".to_owned(), "c1".to_owned()];
-        let a = InRel::from_flat(vec![1, 2, 3, 4, 7, 8], 3, vec![b'i', b'i']).source(names());
-        let mut dead = vec![0u64];
+        let a = InRel::from_flat(rerail_blocks::vector![1, 2, 3, 4, 7, 8], 3, vec![b'i', b'i']).source(names());
+        let mut dead = rerail_blocks::vector![0u64];
         dead[0] |= 1 << 2;
         // Rows [3, 4] (given by `a` too), [5, 6], and [9, 9], dead in its relation.
-        let b = InRel::held(Rows::frozen(2, vec![3, 4, 5, 6, 9, 9], 3), 3, vec![b'i', b'i'], dead).source(names());
+        let b = InRel::held(Rows::frozen(2, rerail_blocks::vector![3, 4, 5, 6, 9, 9], 3), 3, vec![b'i', b'i'], dead).source(names());
         let mut exports = Exports::default();
         assert_eq!(exports.add("e", 2, a.as_ref()), 3);
         assert_eq!(exports.add("e", 2, b.as_ref()), 1);
@@ -677,7 +738,7 @@ pub mod tests {
     #[test]
     fn a_files_own_rows_count_as_one_and_answer_as_rows() {
         let node = |doc: i64, i: i64| (doc << 32) | i;
-        let sorted = |cols: Vec<Vec<i64>>| {
+        let sorted = |cols: Vec<Vector<i64>>| {
             let mut v: Vec<(i64, i64)> = (0..cols[0].len()).map(|r| (cols[0][r], cols[1][r])).collect();
             v.sort();
             v
@@ -725,19 +786,19 @@ pub mod tests {
 
     #[test]
     fn a_documents_own_rows_are_appended_unchecked_and_still_kept_once() {
-        let chunk = |rows: Vec<[i64; 2]>| {
+        let chunk = |rows: Vector<[i64; 2]>| {
             let names = vec!["c0".to_owned(), "c1".to_owned()];
             crate::code_rule_dsl::logic::native::component::columns_source(names, (0..2).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect())
         };
         let node = |doc: i64, i: i64| (doc << 32) | i;
         let mut exports = Exports::default();
         // Document 1's own rows, then document 2's, appended unchecked.
-        assert_eq!(exports.append_own("e", 2, 0, vec![vec![node(1, 0), node(1, 1)], vec![7, 8]], [1]), 2);
-        assert_eq!(exports.append_own("e", 2, 0, vec![vec![node(2, 0)], vec![9]], [2]), 1);
+        assert_eq!(exports.append_own("e", 2, 0, vec![rerail_blocks::vector![node(1, 0), node(1, 1)], rerail_blocks::vector![7, 8]], [1]), 2);
+        assert_eq!(exports.append_own("e", 2, 0, vec![rerail_blocks::vector![node(2, 0)], rerail_blocks::vector![9]], [2]), 1);
         // Another document's rows are checked against the set alone; a shared row is kept once.
-        assert_eq!(exports.add("e", 2, chunk(vec![[node(3, 0), 1], [node(3, 0), 1]]).as_ref()), 1);
+        assert_eq!(exports.add("e", 2, chunk(rerail_blocks::vector![[node(3, 0), 1], [node(3, 0), 1]]).as_ref()), 1);
         // A row of document 1 again: the unchecked rows are set first, so it is found.
-        assert_eq!(exports.add("e", 2, chunk(vec![[node(1, 1), 8], [node(1, 2), 8]]).as_ref()), 1);
+        assert_eq!(exports.add("e", 2, chunk(rerail_blocks::vector![[node(1, 1), 8], [node(1, 2), 8]]).as_ref()), 1);
         let s = exports.source("e", 2);
         let mut rows: Vec<(i64, i64)> = (0..s.len()).map(|r| (s.value(r, 0), s.value(r, 1))).collect();
         rows.sort();
@@ -746,18 +807,18 @@ pub mod tests {
 
     #[test]
     fn a_documents_own_rows_and_others_given_again_are_kept_once() {
-        let chunk = |rows: Vec<[i64; 2]>| {
+        let chunk = |rows: Vector<[i64; 2]>| {
             let names = vec!["c0".to_owned(), "c1".to_owned()];
             crate::code_rule_dsl::logic::native::component::columns_source(names, (0..2).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect())
         };
         let node = |doc: i64, i: i64| (doc << 32) | i;
         let mut exports = Exports::default();
         // Document 1's own rows, then document 2's.
-        exports.add("e", 2, chunk(vec![[node(1, 0), 7], [node(1, 1), 8]]).as_ref());
-        exports.add("e", 2, chunk(vec![[node(2, 0), 9]]).as_ref());
+        exports.add("e", 2, chunk(rerail_blocks::vector![[node(1, 0), 7], [node(1, 1), 8]]).as_ref());
+        exports.add("e", 2, chunk(rerail_blocks::vector![[node(2, 0), 9]]).as_ref());
         // Another document's row twice, and a row of document 1 again.
-        exports.add("e", 2, chunk(vec![[node(3, 0), 1], [node(3, 0), 1]]).as_ref());
-        exports.add("e", 2, chunk(vec![[node(1, 1), 8], [node(1, 2), 8]]).as_ref());
+        exports.add("e", 2, chunk(rerail_blocks::vector![[node(3, 0), 1], [node(3, 0), 1]]).as_ref());
+        exports.add("e", 2, chunk(rerail_blocks::vector![[node(1, 1), 8], [node(1, 2), 8]]).as_ref());
         let mut docs = std::collections::HashSet::new();
         docs.insert(1);
         assert_eq!(exports.rows_of("e", 2, 0, &docs), vec![vec![node(1, 0), 7], vec![node(1, 1), 8], vec![node(1, 2), 8]]);

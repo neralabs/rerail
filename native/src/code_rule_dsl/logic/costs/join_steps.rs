@@ -5,6 +5,7 @@
 //! them with its samples and writes them in its transaction (`take`, `insert`). The queue holds at most
 //! [`QUEUE_LIMIT`] steps: past it a line's are dropped, measurements and not results.
 
+use rerail_blocks::vector::Vector;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 
@@ -157,7 +158,7 @@ struct ModelPricer(rerail_accel::join_model::JoinModel);
 impl crate::code_rule_dsl::logic::plan::joins::Pricer for ModelPricer {
     /// Every step of every candidate of the round in one prediction (on the device, past a few steps), then each
     /// candidate's price from its steps' targets.
-    fn price(&self, round: &[crate::code_rule_dsl::logic::plan::joins::Choice]) -> Option<Vec<Vec<f64>>> {
+    fn price(&self, round: &[crate::code_rule_dsl::logic::plan::joins::Choice]) -> Option<Vec<Vector<f64>>> {
         let steps: Vec<&StepSample> = round.iter().flat_map(|c| c.candidates.iter().flat_map(|k| &k.steps)).collect();
         if steps.is_empty() {
             return None;

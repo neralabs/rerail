@@ -256,10 +256,10 @@ impl Sketch {
     }
 
     /// Each value's rows, while they are exact: read from the sketch's arrays.
-    pub(super) fn exact_counts(&self) -> Option<Vec<(i64,u32)>> {
-        if let Some(s)=self.counts.few() {return Some(s.map(|e|(e[0],e[1] as u32)).collect());}
-        if let Some(s)=&self.sparse {return Some(s.counts().collect());}
-        self.dense.as_ref().map(|d|d.counts.iter().enumerate().filter(|(_,n)| **n>0).map(|(i,&n)|(d.base+i as i64,n)).collect())
+    pub(super) fn exact_counts(&self) -> Option<rerail_blocks::vector::Vector<[i64; 2]>> {
+        if let Some(s)=self.counts.few() {return Some(s.map(|e|[e[0],e[1] as u32 as i64]).collect());}
+        if let Some(s)=&self.sparse {return Some(s.counts().map(|(v,n)|[v,i64::from(n)]).collect());}
+        self.dense.as_ref().map(|d|d.counts.iter().enumerate().filter(|(_,n)| **n>0).map(|(i,&n)|[d.base+i as i64,i64::from(n)]).collect())
     }
 
     /// Its filter made again at twice its keys where they outgrew it (`Kept::outgrown`), from `all`: every value it
@@ -434,7 +434,7 @@ pub mod tests {
         for value in 0..200 { for _ in 0..value+1 { s.add(value); } sq+=(value as u64+1).pow(2); }
         assert_eq!(s.ndv(),200,"bounded labels must retain exact cardinality");
         assert_eq!(s.sq(),sq,"bounded labels must retain exact posting counts");
-        assert_eq!(s.exact_counts().unwrap().iter().copied().collect::<std::collections::HashMap<_,_>>()[&137],138);
+        assert_eq!(s.exact_counts().unwrap().iter().map(|&[v,n]|(v,n)).collect::<std::collections::HashMap<_,_>>()[&137],138);
         assert!(s.bytes()<20_000,"histogram memory must be bounded");
         s.add(1_i64<<40);
         assert!(s.exact_counts().is_none(),"an escaped domain must fall back, not claim a complete histogram");

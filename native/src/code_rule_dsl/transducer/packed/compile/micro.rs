@@ -17,6 +17,7 @@
 //! (`text::scan`, decision 0042), never a regex run per node. A walk that needs more frames, captures or steps than it has
 //! fails, and its pass runs on the interpreter instead. Its steps scale with the file (`steps`).
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use std::collections::BTreeSet;
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
@@ -134,7 +135,7 @@ pub struct Overflow(pub(in crate::code_rule_dsl) &'static str);
 #[derive(Clone, Debug)]
 pub struct Micro {
     /// The program's words, each `TEXT`'s operand its slot in `texts`.
-    pub words: Vec<u32>,
+    pub words: Vector<u32>,
     /// Each text test's value (an index into the program's values) and the kind its node has, where
     /// the test follows a kind test that no jump skips (its domain).
     pub texts: Vec<(u16, Option<u16>)>,
@@ -280,7 +281,7 @@ impl Micro {
                 _ => None,
             })
             .collect::<BTreeSet<_>>();
-        let (mut words, mut texts) = (program.words.clone(), Vec::<(u16, Option<u16>)>::new());
+        let (mut words, mut texts) = (rerail_blocks::vector::Vector::from(&program.words[..]), Vec::<(u16, Option<u16>)>::new());
         for pc in 0..words.len() {
             let (op, mode, value) = split(words[pc]);
             if op != TEXT {
@@ -346,13 +347,13 @@ impl Micro {
     /// Each text slot's bits on `tape` (bit `n` of slot `s`: node `n` passes text test `s`), by the
     /// program's own value programs; `None` where one fails (its work limit), so the program runs
     /// on the interpreter.
-    pub fn texts(&self, program: &Program, tape: &TapeDoc) -> Option<Vec<Vec<u64>>> {
+    pub fn texts(&self, program: &Program, tape: &TapeDoc) -> Option<Vec<Vector<u64>>> {
         (0..self.texts.len()).map(|slot| self.slot(program, slot, tape)).collect()
     }
 
     /// Slot `slot`'s bits on `tape` (`texts`): the term index's row where the tape has it
     /// (`R[tid]`, `prefilter::terms`), else each node's text tested.
-    pub fn slot(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
+    pub fn slot(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vector<u64>> {
         if let Some(row) = tape.transducer_text_row(&self.slot_key(program, slot)) {
             crate::code_rule_dsl::prof::count("texts.indexed", 1);
             // `RERAIL_TEXTS_CHECK`: the index's row against the text's.
@@ -365,7 +366,7 @@ impl Micro {
                     crate::code_rule_dsl::prof::count("texts.check_same", 1);
                 }
             }
-            return Some(row.to_vec());
+            return Some(Vector::from(&row[..]));
         }
         crate::code_rule_dsl::prof::count("texts.scanned", 1);
         self.scan(program, slot, tape)
@@ -399,7 +400,7 @@ impl Micro {
     /// Slot `slot`'s bits on `tape`, from one pass over the file's text (`text::scan`), not each
     /// node's; a Lua pattern on each node's text. A lowered test's bits cover every node, whatever
     /// the slot's kind: they are keyed by plan alone (`slot_key`).
-    fn scan(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
+    fn scan(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vector<u64>> {
         let (value, kind) = self.texts[slot];
         let len = tape.transducer_len();
         if let Some(lowered) = self.lowered(program, slot) {
@@ -409,7 +410,7 @@ impl Micro {
             return crate::code_rule_dsl::text::scan::bits(&lowered, &nodes);
         }
         let candidates = (0..len as u32).filter(|&node| kind.is_none_or(|kind| tape.transducer_kind(node) == kind));
-        let mut bits = vec![0_u64; len.div_ceil(64)];
+        let mut bits = rerail_blocks::vector![0_u64; len.div_ceil(64)];
         let value_program = &program.value_programs[usize::from(value)];
         for node in candidates {
             let mut work = 0;
@@ -445,8 +446,8 @@ impl Micro {
     pub fn run(
         &self,
         tape: &TapeDoc,
-        labels: &[Vec<u64>],
-        texts: &[Vec<u64>],
+        labels: &[Vector<u64>],
+        texts: &[Vector<u64>],
         start: u32,
         emit: Emit,
         frames: &mut Frames,
@@ -475,8 +476,8 @@ impl Micro {
     pub(in crate::code_rule_dsl) fn run_labelled(
         &self,
         tape: &TapeDoc,
-        labels: &[Vec<u64>],
-        texts: &[Vec<u64>],
+        labels: &[Vector<u64>],
+        texts: &[Vector<u64>],
         start: u32,
         emit: Emit,
         frames: &mut Frames,
@@ -496,7 +497,7 @@ impl Micro {
     pub fn records(
         &self,
         tape: &TapeDoc,
-        texts: &[Vec<u64>],
+        texts: &[Vector<u64>],
         start: u32,
         frames: &mut Frames,
         out: &mut Vec<RootRecord>,
@@ -517,8 +518,8 @@ impl Micro {
     fn walk(
         &self,
         tape: &TapeDoc,
-        labels: &[Vec<u64>],
-        texts: &[Vec<u64>],
+        labels: &[Vector<u64>],
+        texts: &[Vector<u64>],
         start: u32,
         most: usize,
         frames: &mut Frames,

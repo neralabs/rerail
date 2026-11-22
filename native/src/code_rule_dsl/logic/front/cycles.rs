@@ -63,6 +63,7 @@
 //! 2026-11-03 (open-items O11); the counters, sibling order, strings and recursive summaries 2026-11-06 (O77);
 //! comparisons, functions and counts alone with decision 0046.
 
+use rerail_blocks::vector::Vector;
 use super::{Error, LatticeDecl, is_axis};
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::logic::program_image::handles::{AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
@@ -224,8 +225,8 @@ struct Prog<'v> {
 
 impl Prog<'_> {
     /// The columns of `rel` of type `ty`, as declared.
-    fn columns(&self, rel: &str, ty: &str) -> Vec<usize> {
-        self.v.columns_of(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == ty).map(|(i, _)| i).collect())
+    fn columns(&self, rel: &str, ty: &str) -> Vector<usize> {
+        self.v.columns_of(rel).map_or_else(Vector::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == ty).map(|(i, _)| i).collect())
     }
     /// Whether `rel`'s rows are given, not derived: an input, or a relation with facts.
     fn given(&self, rel: &str) -> bool {
@@ -528,22 +529,22 @@ fn depth_summary(p: &Prog<'_>, rules: &[Rule<'_>], depths: &Depths) -> BTreeMap<
 /// input, or a relation with facts, guarantees nothing.
 /// A component that reads no member of itself (not `recursive`) is settled by its first round: its rules read only
 /// relations below it, so a second round gives the first's spans again.
-fn depth_summaries(p: &Prog<'_>, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<Rule<'_>>>, depths: &mut Depths, recursive: bool) {
-    let (rels, none): (Vec<&String>, Vec<&String>) =
-        component.iter().filter(|rel| p.columns(rel, "node").len() > 1).partition(|rel| !p.given(rel) && by_head.contains_key(rel.as_str()));
+fn depth_summaries(p: &Prog<'_>, component: &super::Comp, by_head: &BTreeMap<&str, Vec<Rule<'_>>>, depths: &mut Depths, recursive: bool) {
+    let (rels, none): (Vec<&str>, Vec<&str>) =
+        component.iter().filter(|rel| p.columns(rel, "node").len() > 1).partition(|rel| !p.given(rel) && by_head.contains_key(rel));
     for rel in none {
-        depths.remove(rel.as_str());
+        depths.remove(rel);
     }
     for rel in &rels {
         let nodes = p.columns(rel, "node");
         let empty = nodes.iter().flat_map(|&i| nodes.iter().filter(move |&&j| j != i).map(move |&j| ((i, j), EMPTY))).collect();
-        depths.insert((*rel).clone(), empty);
+        depths.insert(rel.to_string(), empty);
     }
     for round in 0..64 {
         let mut changed = false;
         for rel in &rels {
-            let next = depth_summary(p, &by_head[rel.as_str()], depths);
-            let old = &depths[rel.as_str()];
+            let next = depth_summary(p, &by_head[*rel], depths);
+            let old = &depths[*rel];
             // Joined with what held (a pair either lacks is unbounded), and widened past round 8.
             let joined: BTreeMap<(usize, usize), Span> = next
                 .into_iter()
@@ -562,7 +563,7 @@ fn depth_summaries(p: &Prog<'_>, component: &BTreeSet<String>, by_head: &BTreeMa
                 })
                 .collect();
             if &joined != old {
-                depths.insert((*rel).clone(), joined);
+                depths.insert(rel.to_string(), joined);
                 changed = true;
             }
         }
@@ -571,7 +572,7 @@ fn depth_summaries(p: &Prog<'_>, component: &BTreeSet<String>, by_head: &BTreeMa
         }
     }
     for rel in rels {
-        depths.remove(rel.as_str());
+        depths.remove(rel);
     }
 }
 
@@ -639,7 +640,7 @@ struct Bounds<'v> {
 }
 
 impl<'v> Bounds<'v> {
-    fn new(rule: Rule<'v>, component: &BTreeSet<String>) -> Self {
+    fn new(rule: Rule<'v>, component: &super::Comp) -> Self {
         let mut outside = BTreeSet::new();
         for l in rule.lits() {
             match l {
@@ -739,7 +740,7 @@ impl<'v> Bounds<'v> {
 }
 
 /// Whether a rule makes a value into its head: a head term that makes one, or reads a variable assigned one.
-fn creates(rule: Rule<'_>, component: &BTreeSet<String>) -> bool {
+fn creates(rule: Rule<'_>, component: &super::Comp) -> bool {
     let b = Bounds::new(rule, component);
     let bound = b.atoms();
     let mut made = BTreeSet::<&str>::new();
@@ -783,7 +784,7 @@ fn sources<'v>(b: &Bounds<'v>, t: TermRef<'v>, alias: Option<&str>, from: &BTree
 
 /// The flow of values in `rules` between the columns of `component`: `(from, to, made)`, where `made` is a
 /// builtin's new value from its arguments.
-fn flow(rules: &[Rule<'_>], component: &BTreeSet<String>) -> Vec<(Column, Column, bool)> {
+fn flow(rules: &[Rule<'_>], component: &super::Comp) -> Vec<(Column, Column, bool)> {
     let mut out = Vec::new();
     for &rule in rules {
         let b = Bounds::new(rule, component);
@@ -849,7 +850,7 @@ fn flow(rules: &[Rule<'_>], component: &BTreeSet<String>) -> Vec<(Column, Column
 }
 
 /// Whether a value made in `rules` flows back to the builtin that made it.
-fn value_cycle(p: &Prog<'_>, rules: &[Rule<'_>], component: &BTreeSet<String>) -> bool {
+fn value_cycle(p: &Prog<'_>, rules: &[Rule<'_>], component: &super::Comp) -> bool {
     let lattice_value = |(rel, col): &Column| p.lattice.get(rel).is_some_and(|d| d.keys == *col);
     let flow: Vec<_> = flow(rules, component)
         .into_iter()
@@ -883,8 +884,8 @@ fn value_cycle(p: &Prog<'_>, rules: &[Rule<'_>], component: &BTreeSet<String>) -
 /// greatest set of moves each rule gives, its recursive atoms assumed to give them (an input, or a relation
 /// with facts, guarantees nothing).
 /// As `depth_summaries`, a component that is not `recursive` is settled by its first round.
-fn summarize(p: &Prog<'_>, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<Rule<'_>>>, moves: &mut Moves, recursive: bool) {
-    let (rels, none): (Vec<&String>, Vec<&String>) = component.iter().partition(|r| !p.given(r) && by_head.contains_key(r.as_str()));
+fn summarize(p: &Prog<'_>, component: &super::Comp, by_head: &BTreeMap<&str, Vec<Rule<'_>>>, moves: &mut Moves, recursive: bool) {
+    let (rels, none): (Vec<&str>, Vec<&str>) = component.iter().partition(|r| !p.given(r) && by_head.contains_key(r));
     for rel in none {
         moves.remove(rel);
     }
@@ -892,7 +893,7 @@ fn summarize(p: &Prog<'_>, component: &BTreeSet<String>, by_head: &BTreeMap<&str
     // they give all that is left.
     let mut assumed = BTreeMap::<String, BTreeMap<(usize, usize), BTreeMap<Move, bool>>>::new();
     for rel in &rels {
-        let entry = assumed.entry((*rel).clone()).or_default();
+        let entry = assumed.entry(rel.to_string()).or_default();
         for way in ways().into_iter().chain([Move::Longer, Move::Shorter]) {
             let cols = p.columns(rel, way.ty());
             for &i in &cols {
@@ -908,9 +909,9 @@ fn summarize(p: &Prog<'_>, component: &BTreeSet<String>, by_head: &BTreeMap<&str
         }
         let mut next = assumed.clone();
         for rel in &rels {
-            let rules = &by_head[rel.as_str()];
+            let rules = &by_head[*rel];
             let all: Vec<Edges> = rules.iter().map(|&r| edges(r, moves)).collect();
-            let held = next.get_mut(rel.as_str()).expect("assumed");
+            let held = next.get_mut(*rel).expect("assumed");
             for (&(i, j), ways) in held.iter_mut() {
                 ways.retain(|&way, strict| match rules.iter().zip(&all).map(|(&r, e)| step(r, e, &head(i), &head(j), way)).collect::<Option<Vec<bool>>>() {
                     Some(got) => {
@@ -987,7 +988,7 @@ fn count_step<'v>(rule: Rule<'v>, bounds: &Bounds<'v>, edges: &Edges, head: Opti
 /// For a relation of `component` with no node column, its input columns when it is a function of them (rule 2's
 /// functions): an input is a column every rule binds by a positive atom or to a constant; no rule reads a
 /// relation of `keyless`, and each other column is made from the inputs and values bound outside the component.
-fn function(rules: &[Rule<'_>], component: &BTreeSet<String>, keyless: &BTreeSet<&str>) -> Option<BTreeSet<usize>> {
+fn function(rules: &[Rule<'_>], component: &super::Comp, keyless: &BTreeSet<&str>) -> Option<BTreeSet<usize>> {
     let arity = rules.first()?.arity();
     let bound_by_atom = |rule: Rule<'_>, v: &str| rule.lits().any(|l| matches!(l, Lit::Atom(a) if !a.neg() && a.args().any(|t| rule.is_var(t, v))));
     let inputs: BTreeSet<usize> = (0..arity)
@@ -1047,7 +1048,7 @@ fn function(rules: &[Rule<'_>], component: &BTreeSet<String>, keyless: &BTreeSet
 fn bounded(
     rules: &[Rule<'_>],
     creating: &[bool],
-    component: &BTreeSet<String>,
+    component: &super::Comp,
     key: &BTreeMap<&str, Key>,
     functions: &BTreeMap<&str, BTreeSet<usize>>,
     way: Move,
@@ -1124,7 +1125,7 @@ fn bounded(
             }
         }
     }
-    let cycles = super::tarjan(component, &same);
+    let cycles = super::tarjan(&component.names(), &same);
     match made.into_iter().find(|(h, a, _)| cycles.iter().any(|c| c.contains(*h) && c.contains(*a))) {
         Some((_, _, rule)) => Err(rule.shown()),
         None => Ok(()),
@@ -1154,7 +1155,7 @@ fn keys<'a, T: Copy>(choices: &[(&'a str, Vec<T>)], limit: usize) -> Vec<BTreeMa
 /// column that is a constant in every rule's head and in every atom of the component read, and the graph from a head's
 /// `(relation, constant)` to its atoms' is acyclic. Every derivation is then at most as deep as that graph, and makes
 /// finitely many values: `era001`'s `era_re` builds its statement grammar from `N` up to `STMT` this way.
-fn constant_keyed(rules: &[Rule<'_>], component: &BTreeSet<String>) -> bool {
+fn constant_keyed(rules: &[Rule<'_>], component: &super::Comp) -> bool {
     let key = |rule: Rule<'_>, t: TermRef<'_>| match t {
         TermRef::Str(s) => Some(format!("s{}", rule.text(s))),
         TermRef::Int(n) => Some(format!("i{n}")),
@@ -1164,16 +1165,16 @@ fn constant_keyed(rules: &[Rule<'_>], component: &BTreeSet<String>) -> bool {
     // Each relation's key column: the first that every head and every read in the component holds a constant at.
     let mut columns = BTreeMap::<&str, usize>::new();
     for rel in component {
-        let heads = rules.iter().filter(|r| r.head_rel() == rel.as_str()).map(|&r| (r, r.r.head()));
+        let heads = rules.iter().filter(|r| r.head_rel() == rel).map(|&r| (r, r.r.head()));
         let reads = rules.iter().flat_map(|&r| {
             r.lits().filter_map(move |l| match l {
-                Lit::Atom(a) | Lit::Agg { atom: a, .. } if r.rel(a) == rel.as_str() => Some((r, a)),
+                Lit::Atom(a) | Lit::Agg { atom: a, .. } if r.rel(a) == rel => Some((r, a)),
                 _ => None,
             })
         });
         let atoms: Vec<_> = heads.chain(reads).collect();
         let Some(c) = (0..arity(rel)).find(|&c| atoms.iter().all(|&(r, a)| a.args().nth(c).and_then(|t| key(r, t)).is_some())) else { return false };
-        columns.insert(rel.as_str(), c);
+        columns.insert(rel, c);
     }
     let node = |r: Rule<'_>, a: AtomRef<'_>| {
         let rel = r.rel(a);
@@ -1301,7 +1302,7 @@ fn checked(v: &Version, given: &Given) -> Result<Vec<BTreeSet<String>>, Error> {
             if !recursive {
                 return (false, None);
             }
-            let rules: Vec<Rule<'_>> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
+            let rules: Vec<Rule<'_>> = component.iter().flat_map(|rel| by_head.get(rel).into_iter().flatten().copied()).collect();
             (true, value_cycle(&p, &rules, component).then(|| !constant_keyed(&rules, component)))
         })
         .collect();
@@ -1317,18 +1318,18 @@ fn checked(v: &Version, given: &Given) -> Result<Vec<BTreeSet<String>>, Error> {
         match bound {
             None => continue,
             Some(false) => {
-                treed.push(component.clone());
+                treed.push(component.names());
                 continue;
             }
             Some(true) => {}
         }
-        let rules: Vec<Rule<'_>> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
+        let rules: Vec<Rule<'_>> = component.iter().flat_map(|rel| by_head.get(rel).into_iter().flatten().copied()).collect();
         let creating: Vec<bool> = rules.iter().map(|&r| creates(r, component)).collect();
         // The relations with no node column that are functions of their inputs, which need no key.
-        let keyless: BTreeSet<&str> = component.iter().map(String::as_str).filter(|rel| p.columns(rel, "node").is_empty()).collect();
+        let keyless: BTreeSet<&str> = component.iter().filter(|rel| p.columns(rel, "node").is_empty()).collect();
         let functions: BTreeMap<&str, BTreeSet<usize>> = keyless
             .iter()
-            .filter_map(|&rel| function(by_head.get(rel).map_or(&[][..], Vec::as_slice), component, &keyless).map(|inputs| (rel, inputs)))
+            .filter_map(|&rel| function(by_head.get(rel).map_or(&[][..], |v| v.as_slice()), component, &keyless).map(|inputs| (rel, inputs)))
             .collect();
         let mut first = None;
         // Strings get only shorter: a longer one is no bound. Keys without counts first, then with them.
@@ -1336,7 +1337,7 @@ fn checked(v: &Version, given: &Given) -> Result<Vec<BTreeSet<String>>, Error> {
             ways().into_iter().chain([Move::Longer, Move::Shallower, Move::Deeper]).any(|way| {
                 let choices: Vec<(&str, Vec<Key>)> = component
                     .iter()
-                    .filter(|rel| !functions.contains_key(rel.as_str()))
+                    .filter(|rel| !functions.contains_key(rel))
                     .map(|rel| {
                         let ints = p.columns(rel, "int");
                         let counts: Vec<Option<usize>> = if counted { ints.iter().copied().map(Some).chain([None]).collect() } else { vec![None] };
@@ -1347,7 +1348,7 @@ fn checked(v: &Version, given: &Given) -> Result<Vec<BTreeSet<String>>, Error> {
                         if counted && way == Move::Later && ks.is_empty() {
                             ks.extend(ints.into_iter().map(|n| (None, Some(n))));
                         }
-                        (rel.as_str(), ks)
+                        (rel, ks)
                     })
                     .collect();
                 !choices.is_empty()
@@ -1364,9 +1365,9 @@ fn checked(v: &Version, given: &Given) -> Result<Vec<BTreeSet<String>>, Error> {
         });
         if !ok {
             let rule = first.unwrap_or_else(|| rules.iter().zip(&creating).find(|(_, c)| **c).map(|(r, _)| r.shown()).unwrap_or_default());
-            return Err(Error::UnboundedValueCycle { component: component.clone(), rule });
+            return Err(Error::UnboundedValueCycle { component: component.names(), rule });
         }
-        treed.push(component.clone());
+        treed.push(component.names());
     }
     Ok(treed)
 }

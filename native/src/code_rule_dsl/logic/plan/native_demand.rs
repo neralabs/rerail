@@ -1,4 +1,5 @@
 //! One immutable demand snapshot per completed relation in a run.
+use rerail_blocks::vector::Vector;
 use super::{Error, Result};
 use crate::code_rule_dsl::{facts::vtab::Source, logic::profile};
 use rusqlite::Connection;
@@ -6,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 
 #[derive(Default)]
 pub(super) struct Demands {
-    rows: HashMap<String, Arc<Vec<i64>>>,
+    rows: HashMap<String, Arc<Vector<i64>>>,
 }
 impl Demands {
     pub(super) fn forget(&mut self, rel: &str) {
@@ -19,7 +20,7 @@ impl Demands {
         rel: &str,
         column: &str,
         source: Option<Arc<dyn Source>>,
-    ) -> Result<Arc<Vec<i64>>> {
+    ) -> Result<Arc<Vector<i64>>> {
         if let Some(rows) = self.rows.get(rel) {
             profile::decision("native demand read", || {
                 format!("{rel}: cache rows={}", rows.len())
@@ -28,7 +29,7 @@ impl Demands {
         }
         let _read = profile::span(|| format!("native demand snapshot {rel}"));
         let retained = source.is_some();
-        let mut rows: Vec<i64> = if let Some(source) = source {
+        let mut rows: Vector<i64> = if let Some(source) = source {
             let rows = (0..source.len()).map(|r| source.value(r, 0)).collect();
             if let Some(error) = source.failure() {
                 return Err(Error::Plan(error));
@@ -40,7 +41,7 @@ impl Demands {
                 super::super::sql::ident(rel)
             ))?;
             statement
-                .query_map([], |r| r.get(0))?
+                .query_map([], |r| r.get::<_, i64>(0))?
                 .collect::<rusqlite::Result<_>>()?
         };
         rows.sort_unstable();

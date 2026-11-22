@@ -13,6 +13,8 @@ test-hooks = ["rerail-clif/test-hooks"]
 reference = []
 
 [dependencies]
+# The writer's columns and state, in the run's blocks (decision 0569 §3).
+rerail-vector = { path = "../vector" }
 # As the engine's: sha2 0.11 runs SHA-256 on the CPU's SHA instructions by itself (0.10 needed `asm`, whose
 # `sha2-asm` builds neither with MSVC nor with every aarch64 cross C toolchain).
 sha2 = "0.11"

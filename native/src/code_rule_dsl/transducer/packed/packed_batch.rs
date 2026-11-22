@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::{
     metal_batch_abi::{
         ARENA_KIND_COUNT, FORMAT_VERSION, FinalCaptureRecord, GreedyEntryRecord, LinkRecord, LuaInstructionRecord,
@@ -81,32 +82,32 @@ enum Layout {
 pub struct PackedBatch {
     pub header: MetalBatchHeader,
     pub source: Vec<u8>,
-    pub line_starts: Vec<u32>,
+    pub line_starts: Vector<u32>,
     /// The batch's rows over its nodes, `derived_words` words of bits each: the files' derived classes
     /// (`TapeDoc::with_labels`, per class from `DERIVED_CLASS_BASE`, `derived_classes` rows), then each contains
     /// test's row (`contains_rows`).
-    pub(super) derived: Vec<u32>,
+    pub(super) derived: Vector<u32>,
     pub(super) derived_classes: u32,
     pub(super) derived_words: u32,
     /// Per program, the row of its first contains test's first string (past the derived classes), its tests' strings
     /// in turn (capture programs, then strings, in order: `contains_needles`).
-    pub(super) contains_starts: Vec<u32>,
+    pub(super) contains_starts: Vector<u32>,
     /// The contains tests' rows in `derived`.
     pub(super) contains_rows: u32,
     pub files: Vec<BatchFile>,
-    pub words: Vec<u32>,
-    pub longs: Vec<u64>,
+    pub words: Vector<u32>,
+    pub longs: Vector<u64>,
     pub string_bytes: Vec<u8>,
     pub strings: Vec<BatchString>,
     pub values: Vec<ValueRecord>,
     pub nfa_states: Vec<NfaStateRecord>,
-    pub nfa_data: Vec<u32>,
+    pub nfa_data: Vector<u32>,
     pub nfa_ranges: Vec<NfaRangeRecord>,
     pub lua_instructions: Vec<LuaInstructionRecord>,
     pub lua_members: Vec<LuaSetMemberRecord>,
     pub assertions: Vec<AssertionRecord>,
-    pub assertion_data: Vec<u32>,
-    pub labels: Vec<u16>,
+    pub assertion_data: Vector<u32>,
+    pub labels: Vector<u16>,
     pub programs: Vec<BatchProgram>,
     pub tasks: Vec<BatchTask>,
     pub evaluations: Vec<MetalEvaluation>,
@@ -114,7 +115,7 @@ pub struct PackedBatch {
     pub global_arenas: MetalGlobalArenas,
     /// A batch without node records' (`new_resident`, `new_in_place`): each task's root's source length, as the
     /// nodes a packed batch holds give it.
-    pub(super) root_spans: Vec<u32>,
+    pub(super) root_spans: Vector<u32>,
     /// A resident label batch's tasks (decision 0033), with no task records: lanes are sized
     /// from them (`assign_resident`).
     pub(super) resident_tasks: Option<u32>,
@@ -124,7 +125,7 @@ pub struct PackedBatch {
     pub state_cap: Option<u32>,
     /// Each program's result limit (`assign_workspace_with_result_limits`), empty for none: a selection of the
     /// evaluation's first results in their order, made as the page is compacted, never a capacity.
-    pub(super) result_limits: Vec<u32>,
+    pub(super) result_limits: Vector<u32>,
     /// Each task's size and predicted steps, and its states in the worst case (decision 0334), host-side: what its
     /// budgets are made from (`apply_budget`). Empty for a resident batch's.
     pub(super) sizing: Vec<TaskSizing>,
@@ -181,12 +182,12 @@ fn contains_rows(needles: &[&[u8]], files: &[&TapeDoc], starts: &[usize], words:
         })
         .collect::<Vec<_>>();
     let literals = scan::Batch::of(plans);
-    let per_file: Vec<Vec<Option<Vec<u64>>>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+    let per_file: Vec<Vec<Option<Vector<u64>>>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
         files
             .par_iter()
             .map(|tape| {
                 let len = tape.transducer_len();
-                let candidates: Vec<u32> = (0..len as u32).collect();
+                let candidates: Vector<u32> = (0..len as u32).collect();
                 let span = |node: u32| tape.transducer_span(node);
                 literals.bits(&scan::Nodes { text: tape.transducer_source(), len, candidates: &candidates, span: &span })
             })
@@ -282,7 +283,7 @@ impl PackedBatch {
     pub(super) fn new_published(
         programs: &[Program],
         files: &[TapeDoc],
-        anchors: &[Vec<Vec<u32>>],
+        anchors: &[Vec<Vector<u32>>],
     ) -> Result<Self, Error> {
         Self::build_tapes(programs, files, anchors, false, Layout::InPlace)
     }
@@ -292,7 +293,7 @@ impl PackedBatch {
     pub fn new_in_place(
         programs: &[Program],
         files: &[TapeDoc],
-        anchors: &[Vec<Vec<u32>>],
+        anchors: &[Vec<Vector<u32>>],
     ) -> Result<Self, Error> {
         Self::build_tapes(programs, files, anchors, true, Layout::InPlace)
     }
@@ -303,7 +304,7 @@ impl PackedBatch {
     pub fn new_resident(
         programs: &[Program],
         files: &[TapeDoc],
-        anchors: &[Vec<Vec<u32>>],
+        anchors: &[Vec<Vector<u32>>],
     ) -> Result<Self, Error> {
         Self::build_tapes(programs, files, anchors, true, Layout::Resident)
     }
@@ -349,7 +350,7 @@ impl PackedBatch {
     fn build_tapes(
         programs: &[Program],
         files: &[TapeDoc],
-        anchors: &[Vec<Vec<u32>>],
+        anchors: &[Vec<Vector<u32>>],
         materialize_tasks: bool,
         layout: Layout,
     ) -> Result<Self, Error> {
@@ -363,7 +364,7 @@ impl PackedBatch {
     fn build_tapes_in(
         programs: &[Program],
         files: &[TapeDoc],
-        anchors: &[Vec<Vec<u32>>],
+        anchors: &[Vec<Vector<u32>>],
         materialize_tasks: bool,
         layout: Layout,
     ) -> Result<Self, Error> {
@@ -371,6 +372,8 @@ impl PackedBatch {
         if anchors.len() != file_count || anchors.iter().any(|file| file.len() != programs.len()) {
             return Err(Error::InvalidAnchor);
         }
+        // Its 16z files read in a batch (`tape::formats::in_one_batch`): their own, else one made for them.
+        let files = &*crate::code_rule_dsl::tape::formats::in_one_batch(files);
         let mut batch = Self {
             nfa_data: super::value_packing::unicode_word_data(),
             ..Self::default()
@@ -379,7 +382,7 @@ impl PackedBatch {
         let mut navigation = [0usize; 4];
         // Per file, its first node and its derived classes' bits, copied as shifted words after
         // every file is placed (06 S7: bit by bit, 0.7 s of 1.3 s of roots).
-        let mut derived: Vec<(u32, Arc<Vec<Vec<u64>>>)> = Vec::new();
+        let mut derived: Vec<(u32, Arc<Vec<Vector<u64>>>)> = Vec::new();
         let stage = crate::code_rule_dsl::prof::Stage::start("batch.files");
         // A batch without node records keeps its documents for its tasks' sizes; a resident one also keeps its
         // source and line counters in place of the bytes.
@@ -447,7 +450,7 @@ impl PackedBatch {
         let classes = derived.iter().map(|(_, labels)| labels.len()).max().unwrap_or(0);
         let words = navigation[0].div_ceil(32).max(1);
         if classes > 0 {
-            batch.derived = vec![0; classes * words];
+            batch.derived = rerail_blocks::vector![0; classes * words];
             for (node_start, labels) in &derived {
                 for (class, bits) in labels.iter().enumerate() {
                     place_bits(&mut batch.derived[class * words..(class + 1) * words], *node_start as usize, bits);
@@ -695,7 +698,7 @@ impl PackedBatch {
         if !needles.is_empty() {
             let _stage = crate::code_rule_dsl::prof::Stage::start("batch.contains");
             batch.derived.resize((classes + needles.len()) * words, 0);
-            let starts: Vec<usize> = batch.files.iter().map(|file| file.node_start as usize).collect();
+            let starts: Vector<usize> = batch.files.iter().map(|file| file.node_start as usize).collect();
             contains_rows(&needles, &documents, &starts, words, &mut batch.derived[classes * words..]);
             batch.derived_words = checked_u32(words)?;
             batch.contains_rows = checked_u32(needles.len())?;
@@ -898,7 +901,7 @@ impl PackedBatch {
     pub(super) fn workspace_fits(
         programs: &[Program],
         files: &[TapeDoc],
-        anchors: &[Vec<Vec<u32>>],
+        anchors: &[Vec<Vector<u32>>],
     ) -> Result<(), Error> {
         let mut batch = Self::new_in_place(programs, files, anchors)?;
         batch.assign_workspace(programs).map(|_| ())
@@ -1071,8 +1074,8 @@ impl PackedBatch {
 
     /// Each program's record counts over its tasks (`workspace_counts`' order, before arenas are
     /// shared or result limits applied): an upper bound that sums across programs and files.
-    pub(super) fn program_counts(&self, programs: &[Program]) -> Result<Vec<[u64; 15]>, Error> {
-        let mut counts = vec![[0_u64; 15]; programs.len()];
+    pub(super) fn program_counts(&self, programs: &[Program]) -> Result<Vector<[u64; 15]>, Error> {
+        let mut counts = rerail_blocks::vector![[0_u64; 15]; programs.len()];
         for (task, capacity) in self.tasks.iter().zip(self.task_capacities(programs)?) {
             let own = [
                 capacity.pending,
@@ -1179,7 +1182,7 @@ impl PackedBatch {
         // A result limit selects the evaluation's first results (`PackedResultPage::compact`), as the CPU
         // interpreter's: every result is still found, so a later failure of the evaluation is never hidden, and
         // the results' order (by root, then start and capture) is known only once all are. It sizes nothing.
-        self.result_limits = result_limits.map(<[u32]>::to_vec).unwrap_or_default();
+        self.result_limits = result_limits.map(Vector::from).unwrap_or_default();
         let transient_kinds = [
             ArenaKind::Pending,
             ArenaKind::Capture,
@@ -1611,7 +1614,7 @@ pub struct PackedExecution {
     pub batch: Arc<PackedBatch>,
     pages: Arc<Vec<PackedResultPage>>,
     evaluation_indexes: Arc<Vec<Option<usize>>>,
-    file_task_ordinal_bases: Arc<Vec<u32>>,
+    file_task_ordinal_bases: Arc<Vector<u32>>,
     grid_errors: Option<Arc<Vec<Option<Error>>>>,
     /// The evaluations restarted with twice the budget after a task of theirs stopped at it (decision 0334): their
     /// results and errors are the restart's, as if they had run here.
@@ -1730,7 +1733,7 @@ impl PackedExecution {
     pub(super) fn interpret_reference(
         programs: &[Program],
         file: &TapeDoc,
-        roots: &[Vec<u32>],
+        roots: &[Vector<u32>],
         limits: &[u32],
     ) -> Result<Self, Error> {
         Self::interpret(programs, std::slice::from_ref(file), &[roots.to_vec()], limits)
@@ -1741,7 +1744,7 @@ impl PackedExecution {
     pub(super) fn interpret(
         programs: &[Program],
         files: &[TapeDoc],
-        anchors: &[Vec<Vec<u32>>],
+        anchors: &[Vec<Vector<u32>>],
         limits: &[u32],
     ) -> Result<Self, Error> {
         fn append_bytes(arena: &mut Vec<u8>, bytes: &[u8]) -> Result<(u32, u32), Error> {
@@ -1881,7 +1884,7 @@ impl PackedExecution {
         let file_count = batch.files.len();
         let program_count = batch.programs.len();
         let mut evaluation_indexes = vec![None; file_count.saturating_mul(program_count)];
-        let mut file_task_ordinal_bases = vec![u32::MAX; file_count];
+        let mut file_task_ordinal_bases = rerail_blocks::vector![u32::MAX; file_count];
         for (evaluation_index, evaluation) in batch.evaluations.iter().enumerate() {
             let task = &batch.tasks[evaluation.task_start as usize];
             evaluation_indexes[task.file as usize * program_count + task.program as usize] =
@@ -2230,7 +2233,7 @@ impl<'a> PackedResultView<'a> {
 #[derive(Debug)]
 struct EvaluationRows {
     count: usize,
-    rows: BTreeMap<usize, Vec<u32>>,
+    rows: BTreeMap<usize, Vector<u32>>,
 }
 impl EvaluationRows {
     fn new(count: usize) -> Self {
@@ -2250,7 +2253,7 @@ impl EvaluationRows {
         if evaluation >= self.count {
             return Err(grid_result_failure());
         }
-        Ok(self.rows.get(&evaluation).map_or(&[], Vec::as_slice))
+        Ok(self.rows.get(&evaluation).map_or(&[], |v| v.as_slice()))
     }
 }
 /// One (file, program) evaluation with roots, as results published per evaluation are grouped: its roots'
@@ -2265,7 +2268,7 @@ pub struct EvaluationSpan {
 
 impl EvaluationSpan {
     /// The evaluations of `anchors` (per file, per program) that have roots.
-    fn of(anchors: &[Vec<Vec<u32>>]) -> Result<Vec<Self>, Error> {
+    fn of(anchors: &[Vec<Vector<u32>>]) -> Result<Vec<Self>, Error> {
         let mut spans = Vec::new();
         let mut semantic_start = 0_u32;
         for (file, programs) in anchors.iter().enumerate() {
@@ -2306,7 +2309,7 @@ impl GridPublication {
                 .checked_mul(program_count)
                 .ok_or(Error::BackendCapacity)?
         ];
-        let mut file_bases = vec![u32::MAX; file_count];
+        let mut file_bases = rerail_blocks::vector![u32::MAX; file_count];
         for (index, evaluation) in evaluations.iter().enumerate() {
             let slot = evaluation_indexes
                 .get_mut(evaluation.file as usize * program_count + evaluation.program as usize)
@@ -2577,7 +2580,7 @@ pub struct PackedResultPage {
     final_captures: Vec<FinalCaptureRecord>,
     properties: Vec<PropertyRecord>,
     output_storage: Vec<u8>,
-    result_order: Vec<u32>,
+    result_order: Vector<u32>,
     evaluation_results: EvaluationRows,
 }
 
@@ -2601,7 +2604,7 @@ impl PackedResultPage {
             final_captures: Vec::new(),
             properties: Vec::new(),
             output_storage: Vec::new(),
-            result_order: Vec::new(),
+            result_order: rerail_blocks::vector::Vector::new(),
             evaluation_results: EvaluationRows::new(0),
         }
     }
@@ -2667,7 +2670,7 @@ impl PackedResultPage {
             final_captures: Vec::new(),
             properties: Vec::new(),
             output_storage: Vec::new(),
-            result_order: Vec::new(),
+            result_order: rerail_blocks::vector::Vector::new(),
             evaluation_results: EvaluationRows::new(batch.evaluations.len()),
         };
         let mut result_evaluations = Vec::new();
@@ -3185,11 +3188,11 @@ pub mod tests {
     #[test]
     fn production_result_limit_selects_results_and_sizes_nothing() {
         let program = Program::new(
-            vec![word(STOP, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(STOP, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             vec![],
-            vec![0],
-            vec![],
+            rerail_blocks::vector![0],
+            rerail_blocks::vector![],
         )
         .unwrap();
         let programs = [program];
@@ -3212,11 +3215,11 @@ pub mod tests {
     #[test]
     fn capacity_facts_do_not_reserve_unused_mutable_arenas() {
         let linear = Program::new(
-            vec![word(STOP, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(STOP, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             vec![],
-            vec![0],
-            vec![],
+            rerail_blocks::vector![0],
+            rerail_blocks::vector![],
         )
         .unwrap();
         let facts = ProgramCapacityFacts::new(&linear).unwrap();
@@ -3244,11 +3247,11 @@ pub mod tests {
         assert_ne!(facts.emit_operations, 0);
 
         let greedy = Program::new(
-            vec![word(FORK, GREEDY, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(FORK, GREEDY, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             vec![],
-            vec![0],
-            vec![],
+            rerail_blocks::vector![0],
+            rerail_blocks::vector![],
         )
         .unwrap();
         assert_ne!(
@@ -3367,7 +3370,7 @@ pub mod tests {
         batch.evaluations[0].quotas[ArenaKind::Result as usize].limit = 3;
         batch.global_arenas.arenas[ArenaKind::Result as usize].capacity = 3;
         batch.global_arenas.arenas[ArenaKind::Result as usize].cursor = 3;
-        batch.result_limits = vec![1];
+        batch.result_limits = rerail_blocks::vector![1];
         let statuses = [TaskStatus {
             result_count: 2,
             ..TaskStatus::default()

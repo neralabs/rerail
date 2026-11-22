@@ -26,7 +26,7 @@ pub(super) fn view_counts(p: &Projected) -> ViewCounts {
 pub struct Docs {
     /// Shared with the batches it grows into (decision 0431 §6): a document is made once, whichever reads it first.
     slots: Vec<Arc<Slot>>,
-    keys: Vec<u32>,
+    keys: Vector<u32>,
     tags: Vec<u8>,
     /// Each document's views' counts, where given (the documents' table's).
     given: Vec<Option<ViewCounts>>,
@@ -49,6 +49,8 @@ pub(super) struct MadeDoc {
 
 /// What a document's projection is made with.
 pub(super) struct Context {
+    /// The cache the documents' 16z blocks are decoded into (`super::batch_cache`).
+    pub(super) cache: Option<Arc<rerail_tape_format::f16::ZCache>>,
     pub(super) dialects: Arc<Dialects>,
     pub(super) projection: Arc<Projection>,
     pub(super) block: Arc<Block>,
@@ -63,9 +65,14 @@ pub(super) struct Context {
 }
 
 impl Docs {
+    /// The cache their 16z blocks are decoded into (`super::batch_cache`): the batch's.
+    pub(super) fn cache(&self) -> Option<&Arc<rerail_tape_format::f16::ZCache>> {
+        self.context.cache.as_ref()
+    }
+
     /// `documents`, sorted by key and distinct, with the views' counts `given` of some, by key.
     pub(super) fn new(documents: Vec<Document>, context: Context, given: &HashMap<u32, ViewCounts>) -> Self {
-        let keys: Vec<u32> = documents.iter().map(|d| d.key).collect();
+        let keys: Vector<u32> = documents.iter().map(|d| d.key).collect();
         let tags = documents.iter().map(|d| crate::code_rule_dsl::facts::core::facts_tag(&d.facts)).collect();
         let given = keys.iter().map(|k| given.get(k).copied()).collect();
         let slots = documents.into_iter().map(|input| Arc::new(Slot { input, made: OnceLock::new() })).collect();
@@ -74,11 +81,11 @@ impl Docs {
     /// `prior`'s documents and `documents` (sorted by key, none of `prior`'s), in key order: `prior`'s shared, as
     /// made there (decision 0431 §6), `documents` unmade, with the views' counts `given` of some. Each one's index here
     /// is returned for `prior`'s, in its order.
-    pub(super) fn grown(prior: &Docs, documents: Vec<Document>, context: Context, given: &HashMap<u32, ViewCounts>) -> (Self, Vec<usize>) {
+    pub(super) fn grown(prior: &Docs, documents: Vec<Document>, context: Context, given: &HashMap<u32, ViewCounts>) -> (Self, Vector<usize>) {
         let added = Self::new(documents, context, given);
         let Self { slots: new_slots, keys: new_keys, tags: new_tags, given: new_given, context, .. } = added;
         let n = prior.slots.len() + new_slots.len();
-        let (mut slots, mut keys, mut tags, mut given, mut at) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(prior.slots.len()));
+        let (mut slots, mut keys, mut tags, mut given, mut at) = (Vec::with_capacity(n), Vector::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vector::with_capacity(prior.slots.len()));
         let (mut i, mut j) = (0, 0);
         while i < prior.slots.len() || j < new_slots.len() {
             if j == new_slots.len() || (i < prior.slots.len() && prior.keys[i] < new_keys[j]) {
@@ -196,7 +203,7 @@ impl Docs {
         let guest = d.guest.as_deref().filter(|_| core);
         let error = match dialect {
             Some(dialect) if (core && (projection.wants("syntax_error") || guest.is_some())) || (!core && projection.verdict) => {
-                core_rr::verdict(&d.facts, dialect).unwrap_or_else(|raised| {
+                core_rr::verdict(d.facts.read_in(self.context.cache.as_deref()), dialect).unwrap_or_else(|raised| {
                     self.fail(core_rr::failure(&d.path, &raised).to_string());
                     None
                 })
@@ -210,7 +217,7 @@ impl Docs {
         let new_span = profile::span(|| "projected".into());
         // A guest's file is made before it (`file_lines`), so its own lines are never built ahead of it (decision 0470 step 2:
         // the eager batch hands a file the lines a program of it built first).
-        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, None, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
+        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, None, projection.node_anchors.as_ref().filter(|_| core), &self.context.block, self.context.cache.clone());
         // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
         p.file = Guest::file_key(d.guest.as_deref(), d.key);
         drop(new_span);
@@ -299,11 +306,11 @@ impl ExactSizeIterator for DocsIter<'_> {}
 /// The views' row offsets by document: each made from the documents' counts on its first read.
 #[derive(Default)]
 pub(super) struct Offsets {
-    pub(super) nodes: OnceLock<Vec<usize>>,
-    pub(super) children: OnceLock<Vec<usize>>,
-    pub(super) fields: OnceLock<Vec<usize>>,
-    pub(super) siblings: OnceLock<Vec<usize>>,
-    pub(super) locs: OnceLock<Vec<usize>>,
+    pub(super) nodes: OnceLock<Vector<usize>>,
+    pub(super) children: OnceLock<Vector<usize>>,
+    pub(super) fields: OnceLock<Vector<usize>>,
+    pub(super) siblings: OnceLock<Vector<usize>>,
+    pub(super) locs: OnceLock<Vector<usize>>,
 }
 
 /// What a group made: the rows `Batch::make_rows` made for some documents, before they are bound, each relation's
@@ -323,7 +330,7 @@ pub(super) struct Made {
 
 /// A group: documents whose rows were made together, and each relation's rows of them, a range of its block relation.
 pub(super) struct Group {
-    pub(super) docs: Vec<usize>,
+    pub(super) docs: Vector<usize>,
     /// Each relation's rows of the group, in `Rows::names`' order.
     pub(super) ranges: Vec<Range<usize>>,
 }
@@ -374,7 +381,7 @@ struct State {
 struct Claim<'a> {
     rows: &'a Rows,
     me: std::thread::ThreadId,
-    docs: Vec<usize>,
+    docs: Vector<usize>,
 }
 
 impl Drop for Claim<'_> {
@@ -446,7 +453,7 @@ impl Rows {
     /// The rows of a batch of `documents`, a group making `names` (`template`'s). `prior`: the relations of the batch
     /// it grows from (decision 0431 §6), complete, by name, whose documents (`prior_docs`, indexes in this batch) are
     /// its first group: each relation goes on from that one's.
-    pub(super) fn new(documents: usize, names: Vec<String>, template: Vec<Arc<Relation>>, statics: Vec<&'static str>, prior: Option<(&HashMap<String, Arc<Relation>>, Vec<usize>)>) -> Self {
+    pub(super) fn new(documents: usize, names: Vec<String>, template: Vec<Arc<Relation>>, statics: Vec<&'static str>, prior: Option<(&HashMap<String, Arc<Relation>>, Vector<usize>)>) -> Self {
         let mut state = State { groups: Vec::new(), of: vec![None; documents], rels: template.clone(), claimed: vec![None; documents], makers: Vec::new() };
         if let Some((rels, docs)) = prior {
             let mut ranges = Vec::with_capacity(names.len());
@@ -500,7 +507,7 @@ impl Batch {
             let (need, waits) = {
                 let s = self.rows.state.lock();
                 let making = s.makers.contains(&me);
-                let mut need: Vec<usize> = Vec::new();
+                let mut need: Vector<usize> = rerail_blocks::vector::Vector::new();
                 let mut waits = false;
                 for &i in want {
                     if s.of[i].is_some() {
@@ -532,7 +539,7 @@ impl Batch {
             }
             let claim = {
                 let mut s = self.rows.state.lock();
-                let docs: Vec<usize> = need.iter().copied().filter(|&i| s.claimed[i].is_none()).collect();
+                let docs: Vector<usize> = need.iter().copied().filter(|&i| s.claimed[i].is_none()).collect();
                 for &i in &docs {
                     s.claimed[i] = Some(me);
                 }
@@ -625,20 +632,20 @@ impl Batch {
     /// The groups holding the documents `keys` name, made if they are not.
     fn groups_of(&self, keys: impl IntoIterator<Item = u32>) -> Vec<Arc<Group>> {
         let docs: BTreeSet<usize> = keys.into_iter().filter_map(|k| self.docs.position(k)).collect();
-        let docs: Vec<usize> = docs.into_iter().collect();
+        let docs: Vector<usize> = docs.into_iter().collect();
         self.ensure(&docs);
         let s = self.rows.state.lock();
-        let mut at: Vec<u32> = docs.iter().filter_map(|&i| s.of[i]).collect();
+        let mut at: Vector<u32> = docs.iter().filter_map(|&i| s.of[i]).collect();
         at.sort_unstable();
         at.dedup();
         at.into_iter().map(|g| Arc::clone(&s.groups[g as usize])).collect()
     }
 
     /// The batch's vocabulary, every document made: its strings and their symbols, each string once.
-    pub(super) fn vocabulary(&self) -> (Vec<String>, Vec<u32>) {
+    pub(super) fn vocabulary(&self) -> (rerail_blocks::maps::StringsView, rerail_blocks::maps::LogView<u32>) {
         self.complete();
         let shared = self.shared.lock();
-        (shared.strings.clone(), shared.atoms.clone())
+        (shared.strings.view(), shared.atoms.view())
     }
 }
 
@@ -668,14 +675,14 @@ impl MadeRows {
     }
     /// The rows a read of `column` by `values` matches (each also passing `keep`), the documents they name made, in
     /// their groups' ranges: `None` for a column that names no document.
-    fn routed(&self, column: usize, values: &[i64], keep: impl Fn(&Relation, usize) -> bool) -> Option<(Arc<Relation>, Vec<usize>)> {
+    fn routed(&self, column: usize, values: &[i64], keep: impl Fn(&Relation, usize) -> bool) -> Option<(Arc<Relation>, rerail_blocks::vector::Vector<usize>)> {
         let by = self.by();
         if by.column() != Some(column) {
             return None;
         }
         let groups = self.batch.groups_of(values.iter().filter_map(|&v| by.document(v)));
         let r = self.batch.made_so_far(self.rel);
-        let mut rows = Vec::new();
+        let mut rows = rerail_blocks::vector::Vector::new();
         for g in groups {
             rows.extend(g.ranges[self.rel].clone().filter(|&row| values.contains(&Source::value(r.as_ref(), row, column)) && keep(&r, row)));
         }
@@ -724,7 +731,7 @@ impl Source for MadeRows {
             None => self.template().primary_key_len(),
         }
     }
-    fn lookup_primary_batch(&self, _values:&[Vec<i64>])->Option<Vec<usize>> {
+    fn lookup_primary_batch(&self, _values:&[Vector<i64>])->Option<rerail_blocks::vector::Vector<usize>> {
         self.done().and_then(|t| t.lookup_primary_batch(_values))
     }
     fn frozen(&self) -> Option<Arc<dyn Source>> {
@@ -805,7 +812,7 @@ impl Source for MadeRows {
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
         self.target().documents_of(column, each)
     }
-    fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
+    fn rows_of(&self, columns: &[usize], out: &mut Vector<i64>) {
         self.target().rows_of(columns, out)
     }
     fn estimated_len(&self) -> usize {
@@ -814,7 +821,7 @@ impl Source for MadeRows {
             _ => self.target().estimated_len(),
         }
     }
-    fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+    fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.done().and_then(|t| t.rows_owned(_g, _owned))
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
@@ -835,17 +842,17 @@ impl Source for MadeRows {
             None => self.template().composite(),
         }
     }
-    fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+    fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.done().and_then(|t| t.lookup_all(_equal))
     }
     /// The documents' rows by group (decision 0494): a group of theirs alone holds theirs and no other; in a group
     /// with others, theirs are those its routing column names (none for a relation not routed).
-    fn rows_of_documents(&self, docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
+    fn rows_of_documents(&self, docs: &std::collections::BTreeSet<u32>) -> Option<rerail_blocks::vector::Vector<usize>> {
         let at: BTreeSet<usize> = docs.iter().filter_map(|&k| self.batch.docs.position(k)).collect();
         let by = self.by();
         let groups = self.batch.groups_of(docs.iter().copied());
         let r = self.batch.made_so_far(self.rel);
-        let mut rows = Vec::new();
+        let mut rows = rerail_blocks::vector::Vector::new();
         for g in groups {
             let range = g.ranges[self.rel].clone();
             if g.docs.iter().all(|i| at.contains(i)) {
@@ -864,7 +871,7 @@ impl Source for MadeRows {
             None => self.template().doc_column(),
         }
     }
-    fn lookup_in(&self, _column: usize, _values: &[i64], _doc: i64) -> Option<Vec<usize>> {
+    fn lookup_in(&self, _column: usize, _values: &[i64], _doc: i64) -> Option<rerail_blocks::vector::Vector<usize>> {
         if let Some(t) = self.done() {
             return t.lookup_in(_column, _values, _doc);
         }
@@ -872,7 +879,7 @@ impl Source for MadeRows {
         let groups = self.batch.groups_of(u32::try_from(_doc).ok());
         let r = self.batch.made_so_far(self.rel);
         let by = self.by();
-        let mut rows = Vec::new();
+        let mut rows = rerail_blocks::vector::Vector::new();
         for g in groups {
             rows.extend(g.ranges[self.rel].clone().filter(|&row| {
                 _values.contains(&Source::value(r.as_ref(), row, _column)) && by.column().is_none_or(|c| by.document(Source::value(r.as_ref(), row, c)) == u32::try_from(_doc).ok())
@@ -886,7 +893,7 @@ impl Source for MadeRows {
             None => self.template().kept_to_doc(_column),
         }
     }
-    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vector<u32> {
         self.target().filter_eq(eqs)
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -913,7 +920,7 @@ impl Source for MadeRows {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.done().and_then(|t| t.statistics())
     }
-    fn value_counts(&self, _wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
+    fn value_counts(&self, _wanted: &[(usize, i64)]) -> Option<Vector<i64>> {
         self.done().and_then(|t| t.value_counts(_wanted))
     }
     fn failure(&self) -> Option<String> {
@@ -940,7 +947,7 @@ impl Source for MadeRows {
             None => self.template().range_indexed(_column),
         }
     }
-    fn range_lookup(&self, _column: usize, _lower: Option<(i64, bool)>, _upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+    fn range_lookup(&self, _column: usize, _lower: Option<(i64, bool)>, _upper: Option<(i64, bool)>) -> Option<rerail_blocks::vector::Vector<usize>> {
         if let Some(t) = self.done() {
             return t.range_lookup(_column, _lower, _upper);
         }
@@ -953,7 +960,7 @@ impl Source for MadeRows {
             let groups = self.batch.groups_of(keys.collect::<Vec<_>>());
             let r = self.batch.made_so_far(self.rel);
             let within = |v: i64| _lower.is_none_or(|(lo, inc)| if inc { v >= lo } else { v > lo }) && _upper.is_none_or(|(hi, inc)| if inc { v <= hi } else { v < hi });
-            let mut rows = Vec::new();
+            let mut rows = rerail_blocks::vector::Vector::new();
             for g in groups {
                 rows.extend(g.ranges[self.rel].clone().filter(|&row| within(Source::value(r.as_ref(), row, _column))));
             }
@@ -962,7 +969,7 @@ impl Source for MadeRows {
         }
         self.target().range_lookup(_column, _lower, _upper)
     }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         if let Some(t) = self.done() {
             return t.lookup(column, values);
         }
@@ -983,7 +990,7 @@ impl Source for MadeRows {
             None => self.target().key_row(_column, _value),
         }
     }
-    fn lookup_eq(&self, _column: usize, _value: i64, _eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
+    fn lookup_eq(&self, _column: usize, _value: i64, _eqs: &[(usize, i64)]) -> Option<rerail_blocks::vector::Vector<usize>> {
         if let Some(t) = self.done() {
             return t.lookup_eq(_column, _value, _eqs);
         }
@@ -1010,7 +1017,7 @@ impl Source for MadeRows {
     fn sorts_rows(&self, column: usize) -> bool {
         self.done().is_some_and(|t| t.sorts_rows(column))
     }
-    fn order(&self) -> Option<Vec<usize>> {
+    fn order(&self) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.done().and_then(|t| t.order())
     }
     fn kept(&self) -> bool {
@@ -1043,41 +1050,47 @@ pub(super) struct Tested {
 
 /// Every string tested, and each test's passing strings in row order with each one's row.
 struct TestedState {
-    tested: HashSet<i64>,
+    tested: rerail_blocks::maps::BlockSet<i64>,
     passed: Vec<Passed>,
 }
 
 #[derive(Default)]
 struct Passed {
-    rows: Vec<i64>,
-    at: HashMap<i64, usize>,
+    rows: rerail_blocks::vector::Vector<i64>,
+    at: rerail_blocks::maps::BlockHash<i64, usize>,
 }
 
 impl Tested {
     pub(super) fn new(tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>, atoms: Arc<crate::content_store::atoms::Atoms>) -> Self {
         let passed = (0..tests.tests.len()).map(|_| Passed::default()).collect();
-        Self { tests: Arc::clone(tests), atoms, state: parking_lot::Mutex::new(TestedState { tested: HashSet::new(), passed }) }
+        Self { tests: Arc::clone(tests), atoms, state: parking_lot::Mutex::new(TestedState { tested: Default::default(), passed }) }
     }
     /// Whether these are the answers of `tests`.
     pub(super) fn of(&self, tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>) -> bool {
         Arc::ptr_eq(&self.tests, tests)
     }
     /// Test the strings not tested yet against every test, outside the lock, and keep each test's passing ones.
-    fn test(&self, strings: Vec<String>, symbols: Vec<u32>) {
-        let (strings, symbols): (Vec<String>, Vec<u32>) = {
+    /// `strings(i)`: the string of `symbols[i]`.
+    fn test<'s>(&self, strings: impl Fn(usize) -> &'s str, symbols: &[u32]) {
+        use rerail_blocks::vector::Vector;
+        let fresh: Vector<u32> = {
             let s = self.state.lock();
-            strings.into_iter().zip(symbols).filter(|(_, sym)| !s.tested.contains(&i64::from(*sym))).unzip()
+            (0..symbols.len() as u32).filter(|&i| !s.tested.contains_key(&i64::from(symbols[i as usize]))).collect()
         };
-        if strings.is_empty() {
+        if fresh.is_empty() {
             return;
         }
-        let passing = self.tests.rows(&strings, &symbols);
+        let syms: Vector<u32> = fresh.iter().map(|&i| symbols[i as usize]).collect();
+        let passing = self.tests.rows(|j| strings(fresh[j] as usize), &syms);
         let mut s = self.state.lock();
-        s.tested.extend(symbols.iter().map(|&sym| i64::from(sym)));
+        for &sym in syms.iter() {
+            s.tested.put(i64::from(sym));
+        }
         for (p, rows) in s.passed.iter_mut().zip(passing) {
             for v in rows {
                 if !p.at.contains_key(&v) {
-                    p.at.insert(v, p.rows.len());
+                    let n = p.rows.len();
+                    p.at.insert(v, n);
                     p.rows.push(v);
                 }
             }
@@ -1089,7 +1102,7 @@ impl Tested {
             return;
         }
         let (strings, symbols) = batch.vocabulary();
-        self.test(strings, symbols);
+        self.test(|i| strings.get(i), &symbols);
         scanned.store(true, Ordering::Release);
     }
 }
@@ -1111,32 +1124,35 @@ impl TextTest {
         }
         self.tested.scan(&self.batch, &self.scanned);
         let s = self.tested.state.lock();
-        let r = Relation::from_rows(&["s"], &mut s.passed[self.k].rows.iter().map(|&v| vec![v]));
+        let r = Relation::from_rows(&["s"], &mut s.passed[self.k].rows.iter().map(|&v| rerail_blocks::vector![v]));
         drop(s);
         self.whole.get_or_init(|| r)
     }
     /// The rows of the probed strings that pass, each tested once.
-    fn probe(&self, values: &[i64]) -> Vec<usize> {
-        let fresh: Vec<i64> = {
+    fn probe(&self, values: &[i64]) -> rerail_blocks::vector::Vector<usize> {
+        use rerail_blocks::vector::Vector;
+        let fresh: Vector<i64> = {
             let s = self.tested.state.lock();
-            let mut fresh: Vec<i64> = values.iter().copied().filter(|v| !s.tested.contains(v)).collect();
+            let mut fresh: Vector<i64> = values.iter().copied().filter(|v| !s.tested.contains_key(v)).collect();
             fresh.sort_unstable();
             fresh.dedup();
             fresh
         };
-        let (mut strings, mut symbols) = (Vec::new(), Vec::new());
-        for &v in &fresh {
+        let (mut strings, mut symbols) = (rerail_blocks::maps::BlockStrings::default(), Vector::<u32>::new());
+        for &v in fresh.iter() {
             if let Ok(sym) = u32::try_from(v)
                 && let Ok(Some(text)) = self.tested.atoms.value(sym)
             {
-                strings.push(text);
+                strings.push(&text);
                 symbols.push(sym);
             }
         }
-        self.tested.test(strings, symbols);
+        self.tested.test(|i| strings.get(i), &symbols);
         let mut s = self.tested.state.lock();
         // A value no atom names is tested too: it passes nothing.
-        s.tested.extend(fresh);
+        for &v in fresh.iter() {
+            s.tested.put(v);
+        }
         let at = &s.passed[self.k].at;
         values.iter().filter_map(|v| at.get(v).copied()).collect()
     }
@@ -1168,7 +1184,7 @@ impl Source for TextTest {
     fn estimated_matches(&self, _column: usize, batch: bool) -> usize {
         if batch { 8 } else { 1 }
     }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         if column != 0 {
             return None;
         }

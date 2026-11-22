@@ -9,6 +9,7 @@
 //! parser refuses (any syntax error, which tree-sitter recovers from; a construct it does not read)
 //! goes to tree-sitter-php.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::tape::{CODE_EXTRA, Code, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, TapeImage, TemplateError, TreeParser};
 
 /// tree-sitter-php's ids of the parser's kinds, fields and supertype sets (`None`: not in the
@@ -48,17 +49,18 @@ fn ids() -> &'static Ids {
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
     let view = crate::code_rule_dsl::language::parse_input(crate::code_rule_dsl::language::GrammarDialect::Php, source);
     debug_assert_eq!(view.len(), source.len());
-    encode_input(grammar, view.as_bytes(), source, budget)
+    encode_input(grammar, view.as_bytes(), source, Vector::new(), budget)
 }
 
 /// The tape of a program's text as it is (no view): a Blade template's compiled program, which
 /// tree-sitter-php reads with no `<?php` tag (`blade::view`).
-pub fn encode_program(grammar: &Grammar, text: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
-    encode_input(grammar, text.as_bytes(), text, budget)
+/// Its placeholders `omit` (`SegmentMap::omissions`) are left out as it is written (`Writer::omitting`).
+pub fn encode_program(grammar: &Grammar, text: &str, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
+    encode_input(grammar, text.as_bytes(), text, omit, budget)
 }
 
 /// The tape of `input`, which has `source`'s length and offsets, reading `source`.
-fn encode_input(grammar: &Grammar, input: &[u8], source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
+fn encode_input(grammar: &Grammar, input: &[u8], source: &str, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
     let ids = ids();
     let lacks = move |what: &str, i: usize| format!("tree-sitter-php lacks the lean parser's {what} {i}");
     let code_of = move |&key: &u32| -> Result<Code, String> {
@@ -72,7 +74,7 @@ fn encode_input(grammar: &Grammar, input: &[u8], source: &str, budget: &dyn Fn()
         }
         Ok(code)
     };
-    rerail_php_lean::tape_into(input, &mut super::formats::lean(grammar, source, budget, code_of))
+    rerail_php_lean::tape_into(input, &mut super::formats::lean(grammar, source, budget, code_of).omitting(omit))
 }
 
 /// PHP's tree parser: the lean parser, standing in for tree-sitter-php where it reads the file.

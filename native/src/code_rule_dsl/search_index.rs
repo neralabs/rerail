@@ -59,7 +59,7 @@ fn search_index_document(
         index_version: POSITIONAL_INDEX_VERSION,
         node_count: u32::try_from(file.transducer_len())
             .expect("tape node count is limited to u32"),
-        has_errors: !file.syntax_error_ranges().is_empty(),
+        has_errors: file.has_syntax_error(),
         kind_tokens: kinds,
     }
 }

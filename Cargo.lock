@@ -3177,6 +3177,8 @@ dependencies = [
  "rerail-context",
  "rerail-device",
  "rerail-gpu",
+ "rerail-vector",
+ "serde",
  "windows-sys 0.61.2",
 ]
 
@@ -3242,6 +3244,7 @@ dependencies = [
  "cranelift-native",
  "libc",
  "rayon",
+ "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
  "rerail-context",
@@ -3332,6 +3335,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-device",
  "rerail-device-metal",
@@ -3344,6 +3348,7 @@ dependencies = [
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-store",
  "rerail-transducer",
  "rerail-w",
@@ -3421,6 +3426,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-c-directives",
  "rerail-c-lean",
  "rerail-c-pp",
@@ -3456,6 +3462,7 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-rust-lean",
  "rerail-scala-lean",
+ "rerail-section",
  "rerail-sessions",
  "rerail-simdjson",
  "rerail-sql-lean",
@@ -3539,6 +3546,7 @@ dependencies = [
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-store",
  "rerail-tape-format",
  "ruff_python_ast",
@@ -3658,6 +3666,7 @@ name = "rerail-kotlin-parser"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
@@ -3705,6 +3714,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-c-lean",
  "rerail-clif",
  "rerail-compiler",
@@ -3726,6 +3736,7 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-rust-lean",
  "rerail-scala-lean",
+ "rerail-section",
  "rerail-sql-lean",
  "rerail-store",
  "rerail-swift-lean",
@@ -3794,6 +3805,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -3801,6 +3813,7 @@ dependencies = [
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-store",
  "rerail-w",
  "ruff_python_ast",
@@ -3864,6 +3877,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -3871,6 +3885,7 @@ dependencies = [
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-simdjson",
  "rerail-store",
  "rerail-transducer",
@@ -3936,6 +3951,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -3943,6 +3959,7 @@ dependencies = [
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-store",
  "rerail-w",
  "ruff_python_ast",
@@ -4006,6 +4023,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -4013,6 +4031,7 @@ dependencies = [
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-store",
  "rerail-w",
  "ruff_python_ast",
@@ -4076,6 +4095,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -4083,6 +4103,7 @@ dependencies = [
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-store",
  "rerail-w",
  "ruff_python_ast",
@@ -4146,6 +4167,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -4153,6 +4175,7 @@ dependencies = [
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-store",
  "rerail-w",
  "ruff_python_ast",
@@ -4229,6 +4252,7 @@ dependencies = [
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-store",
  "roaring",
  "ruff_python_ast",
@@ -4297,6 +4321,7 @@ version = "0.1.0"
 dependencies = [
  "bitlex",
  "libc",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-context",
  "rerail-metal",
@@ -4363,9 +4388,11 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-context",
  "rerail-prof",
  "rerail-rr-syntax",
+ "rerail-section",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -4392,9 +4419,11 @@ name = "rerail-program-image"
 version = "0.1.0"
 dependencies = [
  "foldhash",
+ "rerail-blocks",
  "rerail-prof",
  "rerail-program-image",
  "rerail-rr-syntax",
+ "rerail-section",
  "rustc-hash",
  "serde_json",
  "sha2 0.11.1",
@@ -4449,6 +4478,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -4457,6 +4487,7 @@ dependencies = [
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-store",
  "ruff_python_ast",
  "ruff_python_parser",
@@ -4499,6 +4530,7 @@ version = "0.1.0"
 dependencies = [
  "bitlex",
  "cranelift-codegen",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-context",
  "rerail-metal",
@@ -4548,8 +4580,10 @@ dependencies = [
  "regex",
  "regex-automata",
  "regex-syntax",
+ "rerail-blocks",
  "rerail-context",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-simd8",
  "rerail-tape-format",
  "ruff_python_ast",
@@ -4593,6 +4627,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-section"
+version = "0.1.0"
+dependencies = [
+ "rerail-section-derive",
+ "rerail-vector",
+]
+
+[[package]]
+name = "rerail-section-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "rerail-sessions"
 version = "0.1.0"
 dependencies = [
@@ -4632,6 +4683,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -4640,6 +4692,7 @@ dependencies = [
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-sessions",
  "rerail-store",
  "ruff_python_ast",
@@ -4675,6 +4728,7 @@ dependencies = [
  "libc",
  "memchr",
  "rerail-simdjson-native",
+ "rerail-vector",
  "sha2 0.11.1",
 ]
 
@@ -4711,6 +4765,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-clif",
  "rerail-prof",
+ "rerail-section",
  "rerail-store",
  "rusqlite",
  "serde",
@@ -4740,6 +4795,7 @@ dependencies = [
  "rerail-gpu",
  "rerail-simd8",
  "rerail-tape-format",
+ "rerail-vector",
  "sha2 0.11.1",
 ]
 
@@ -4791,6 +4847,7 @@ dependencies = [
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-store",
  "rerail-transducer",
  "rerail-w",
@@ -4823,6 +4880,14 @@ dependencies = [
  "rerail-c-lean",
  "rerail-c-pp",
  "rerail-ukl",
+]
+
+[[package]]
+name = "rerail-vector"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -4882,6 +4947,7 @@ dependencies = [
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-section",
  "rerail-store",
  "rerail-w",
  "ruff_python_ast",

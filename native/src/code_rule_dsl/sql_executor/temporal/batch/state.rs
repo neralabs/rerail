@@ -1,4 +1,5 @@
 //! Immutable wave roots and schedule cursors for the SQL dispatcher.
+use rerail_blocks::vector::Vector;
 use super::super::cold_loop::rows;
 use super::*;
 
@@ -31,8 +32,8 @@ pub struct Arena {
     limit: u32,
     handle: i64,
     pending: BTreeSet<usize>,
-    active: Vec<usize>,
-    schedule: Vec<usize>,
+    active: Vector<usize>,
+    schedule: Vector<usize>,
     cursor: usize,
     pub initial: Vec<Roots>,
     pub next_roots: Vec<Roots>,
@@ -78,8 +79,8 @@ impl Arena {
             changed,
             limit,
             handle: 0,
-            active: vec![],
-            schedule: vec![],
+            active: rerail_blocks::vector![],
+            schedule: rerail_blocks::vector![],
             cursor: 0,
             next_roots: initial.clone(),
             initial,

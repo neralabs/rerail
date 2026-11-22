@@ -59,7 +59,7 @@ impl Cell for u32 {
 /// The tape's buffers and codes (`kernel.inc`'s `rerail_v9np_sink`): the columns are the caller's
 /// vectors, grown once for the most nodes a file can have, then written through raw pointers.
 pub(crate) struct Sink {
-    pub(crate) col: [Vec<u8>; 5],
+    pub(crate) col: [rerail_simdjson::Vector<u8>; 5],
     pub(crate) width: [u8; 3],
     pub(crate) kind: [u16; SLOTS],
     pub(crate) key_field: u16,

@@ -22,6 +22,7 @@
 //! handed to the reader as input rows, and the reader's run takes their delta as it takes any input's. There is no
 //! store, record or version of a phase's own.
 
+use rerail_blocks::vector::Vector;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -237,7 +238,7 @@ type BatchRuns = std::collections::HashMap<[u8; 32], (PhaseOne, Vec<(String, usi
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct BatchState {
     runs: std::sync::Mutex<BatchRuns>,
-    plans: std::sync::Mutex<std::collections::HashMap<String, Vec<[u8; 32]>>>,
+    plans: std::sync::Mutex<std::collections::HashMap<String, Vector<[u8; 32]>>>,
 }
 
 /// The batch under way (`Batch`), in the run's context: its caller's, and its runs' jobs'.
@@ -325,11 +326,11 @@ pub(in crate::code_rule_dsl) fn reading_store() -> Option<std::sync::Arc<crate::
 /// root's last `protected_runs` (2): of a 44-policy batch, 42 plans were dead at the next decision, their memo spaces
 /// dropped, and the next batch found a hit's memo entry gone. The batch is one run of the root. `None` outside a
 /// batch.
-pub(super) fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Option<Vec<[u8; 32]>> {
+pub(super) fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Option<Vector<[u8; 32]>> {
     let state = Batch::state()?;
     let mut all = state.plans.lock().expect("the batch's plans");
     let plans = all.entry(root.to_owned()).or_default();
-    let earlier: Vec<[u8; 32]> = plans.iter().filter(|p| **p != plan && !also.contains(p)).copied().collect();
+    let earlier: Vector<[u8; 32]> = plans.iter().filter(|p| **p != plan && !also.contains(p)).copied().collect();
     for p in std::iter::once(&plan).chain(also) {
         if !plans.contains(p) {
             plans.push(*p);
@@ -433,7 +434,7 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::
         };
         let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &*program, &declared, &out)? };
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&reads, &rows, &mut facts); }
-        let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
+        let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();
         runs.push(PhaseRun { name, report, exports });
     }
     Ok((facts, runs))
@@ -551,7 +552,7 @@ pub(super) fn sources(
         .collect();
     libraries.sort();
     libraries.dedup_by(|a, b| a.0 == b.0);
-    let exports: Vec<(String, usize)> = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
+    let exports: Vec<(String, usize)> = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();
     let one = PhaseOne { root: root.to_path_buf(), label: label.to_owned(), documents, libraries, rows };
     if let Some(k) = key {
         Batch::put(k, (one.clone(), exports.clone()));

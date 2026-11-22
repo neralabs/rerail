@@ -143,7 +143,7 @@ fn bit_files(gates: &[Gate], term_files: &BTreeMap<&str, BTreeSet<i64>>, uncover
         let files: Vec<i64> = batch.iter().copied().collect();
         let row_of: BTreeMap<i64, usize> = files.iter().enumerate().map(|(i, &f)| (f, i)).collect();
         let words = terms.len().div_ceil(64);
-        let mut a = vec![0u64; files.len() * words];
+        let mut a = rerail_blocks::vector![0u64; files.len() * words];
         for (term, &col) in &terms {
             for file in term_files.get(term).into_iter().flatten() {
                 if let Some(&row) = row_of.get(file) {
@@ -151,14 +151,14 @@ fn bit_files(gates: &[Gate], term_files: &BTreeMap<&str, BTreeSet<i64>>, uncover
                 }
             }
         }
-        let mut b = vec![0u64; conjuncts.len() * words];
+        let mut b = rerail_blocks::vector![0u64; conjuncts.len() * words];
         for (j, (_, c)) in conjuncts.iter().enumerate() {
             for t in c {
                 let col = terms[t];
                 b[j * words + col / 64] |= 1 << (col % 64);
             }
         }
-        let min: Vec<u32> = conjuncts.iter().map(|(_, c)| c.len() as u32).collect();
+        let min: rerail_blocks::vector::Vector<u32> = conjuncts.iter().map(|(_, c)| c.len() as u32).collect();
         let k = rerail_accel::Kernel::BitProduct {
             a: rerail_accel::Bits::new(files.len(), words, a),
             b: rerail_accel::Bits::new(conjuncts.len(), words, b).fixed(),
@@ -173,7 +173,7 @@ fn bit_files(gates: &[Gate], term_files: &BTreeMap<&str, BTreeSet<i64>>, uncover
                 for (g, _) in &conjuncts {
                     by_bits[*g] = Some(uncovered.clone());
                 }
-                for (i, j) in pairs {
+                for [i, j] in pairs {
                     let g = conjuncts[j as usize].0;
                     by_bits[g].as_mut().expect("its gate's set").insert(files[i as usize]);
                 }

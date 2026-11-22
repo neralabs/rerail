@@ -28,10 +28,11 @@
 //! other strata of its level prepare theirs: the launches of a level then go to the executor as one batch (a device
 //! wave, decision 0095 §5, `lanes::wave`).
 
+use rerail_blocks::vector::Vector;
 use super::{Body, Component, JoinRule, Key, SEED, Src, Step, Store, Term, run_join_each};
 use crate::code_rule_dsl::logic::lanes::prof;
 use rerail_accel::{Bits, Kernel, Output};
-use rustc_hash::FxHashMap as HashMap;
+use rerail_blocks::maps::BlockHash;
 
 /// The most nodes of one launch's bit rows: 16,384² bits are 32 MB.
 pub const MAX_DENSE: usize = 16_384;
@@ -48,7 +49,7 @@ pub(super) struct Closure {
 }
 
 /// Every slot a step reads or binds.
-fn step_slots(s: &Step, out: &mut Vec<usize>) {
+fn step_slots(s: &Step, out: &mut Vector<usize>) {
     let mut keys: Vec<Key> = Vec::new();
     match s {
         Step::Atom { keys: ks, binds, .. } => {
@@ -156,9 +157,9 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     let (col, z) = col?;
     let y = slot_of[col];
     // The rest names no other column's slot, and reads `r` nowhere.
-    let others: Vec<usize> = (0..k).filter(|&c| c != col).map(|c| slot_of[c]).collect();
+    let others: Vector<usize> = (0..k).filter(|&c| c != col).map(|c| slot_of[c]).collect();
     let rest = &j.steps[1..];
-    let mut used = Vec::new();
+    let mut used = rerail_blocks::vector::Vector::new();
     for s in rest {
         if reads(s, 0) {
             return None;
@@ -168,25 +169,24 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     if used.iter().any(|s| others.contains(s)) || !used.contains(&z) {
         return None;
     }
-    let rest = JoinRule {
-        steps: rest.to_vec(),
+    // The rest's steps made again, its run's objects the same ones (`steps::Plan::decoded`'s), as a join of its own.
+    let names = j.names();
+    let mut plan = super::steps::Plan {
+        steps: rest.iter().map(|s| <super::steps::Step as rerail_section::Decode>::decode(s, &names)).collect(),
         out: vec![Term::Slot(z)],
         nslots: j.nslots,
         multi: Vec::new(),
-        counts: (0..rest.len()).map(|_| Default::default()).collect(),
-        fused: (0..rest.len()).map(|_| None).collect(),
-        forms: (0..rest.len()).map(|_| Default::default()).collect(),
-        spec: 0,
         probes: Vec::new(),
-        passed_over: Default::default(),
-        step_ns: (0..=rest.len()).map(|_| Default::default()).collect(),
+        fused: (0..rest.len()).map(|_| None).collect(),
+        spec: 0,
         from: (0..rest.len()).collect(),
         plan_steps: rest.len(),
         // The steps' ranges as they were: their ends are slots bound before them, the removed first step's too.
         ranges: j.ranges[1..].to_vec(),
-        est: Vec::new(),
     };
-    let rest = JoinRule { probes: super::probes(&rest.steps, &rest.out), ..rest };
+    let drafted = plan.encode();
+    plan.probes = super::probes(&drafted.steps, &drafted.out);
+    let rest = JoinRule::encoded(plan.encode());
     Some(Closure { col, rest, y })
 }
 
@@ -197,27 +197,71 @@ pub(super) struct Ran {
     pub(super) how: String,
 }
 
-/// Where a node's reach comes from.
-#[derive(Clone, Copy)]
-enum At {
-    /// Its component is a chain: walk it.
-    Chain,
-    /// Row `local` of piece `piece`'s bit rows.
-    Dense { piece: u32, local: u32 },
-    /// Its component is past the limits: a search on the host.
-    Host,
+/// Where a node's reach comes from: row `local` of piece `piece`'s bit rows, or its component walked as a chain
+/// (`CHAIN`) or searched on the host, past the limits (`HOST`). Plain words, a node's in its block.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+struct At {
+    piece: u32,
+    local: u32,
+}
+
+// SAFETY: `repr(C)`, two `u32`s.
+unsafe impl rerail_blocks::Pod for At {}
+
+impl At {
+    const CHAIN: At = At { piece: u32::MAX, local: 0 };
+    const HOST: At = At { piece: u32::MAX - 1, local: 0 };
+    fn dense(piece: u32, local: u32) -> At {
+        At { piece, local }
+    }
+    fn is_dense(self) -> bool {
+        self.piece < u32::MAX - 1
+    }
+}
+
+/// Lists of node ids in one array (a list's ids from `off[i]` to `off[i + 1]`): the reach graph's out-edges by node,
+/// a piece's nodes, a component's members, each in its block.
+#[derive(Default)]
+struct Lists {
+    off: Vector<u32>,
+    ids: Vector<u32>,
+}
+
+impl Lists {
+    fn new() -> Self {
+        let mut off = Vector::new();
+        off.push(0);
+        Lists { off, ids: Vector::new() }
+    }
+    fn len(&self) -> usize {
+        self.off.len().saturating_sub(1)
+    }
+    fn get(&self, i: usize) -> &[u32] {
+        &self.ids[self.off[i] as usize..self.off[i + 1] as usize]
+    }
+    /// The list being made, ended (`end`) once its ids are pushed.
+    fn push_id(&mut self, id: u32) {
+        self.ids.push(id);
+    }
+    fn end(&mut self) {
+        self.off.push(self.ids.len() as u32);
+    }
+    fn iter(&self) -> impl Iterator<Item = &[u32]> + '_ {
+        (0..self.len()).map(|i| self.get(i))
+    }
 }
 
 /// The closure's first half done: the reach graph, where each node's reach comes from, and the launches the second
 /// half needs (one per piece, in piece order).
 pub(super) struct Prepared {
-    nodes: Vec<i64>,
-    index: HashMap<i64, u32>,
-    adj: Vec<Vec<u32>>,
+    nodes: Vector<i64>,
+    index: BlockHash<i64, u32>,
+    adj: Lists,
     /// Per node; empty when every component is a chain.
-    at: Vec<At>,
+    at: Vector<At>,
     /// Each piece's nodes by local id.
-    pieces: Vec<Vec<u32>>,
+    pieces: Lists,
     pub(super) launches: Vec<Kernel>,
     /// The relation keeps levels (decision 0090): its rows are made by distance on the host (`by_distance`), with no
     /// launches.
@@ -230,8 +274,8 @@ pub(super) struct Prepared {
 pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<Prepared> {
     let h = prof::host("closure", "encode: the reach's edges (the rest, per node)");
     let rel = &store.rels[0];
-    let mut index: HashMap<i64, u32> = HashMap::default();
-    let mut nodes: Vec<i64> = Vec::new();
+    let mut index: BlockHash<i64, u32> = BlockHash::default();
+    let mut nodes: Vector<i64> = Vector::new();
     for id in 0..rel.n {
         if rel.dead(id as u32) {
             continue;
@@ -242,22 +286,21 @@ pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interne
             (nodes.len() - 1) as u32
         });
     }
-    let mut adj: Vec<Vec<u32>> = Vec::new();
+    let mut adj = Lists::new();
     let mut started = false;
-    run_join_each(&cl.rest, store, syms, cl.y, &mut |out: &mut Vec<i64>| {
+    run_join_each(&cl.rest, store, syms, cl.y, &mut |out: &mut Vector<i64>| {
         // `out`: the edges out of node `adj.len()`, once a node was searched.
         if started {
             out.sort_unstable();
             out.dedup();
-            let mut next = Vec::with_capacity(out.len());
             for &z in out.iter() {
                 let id = *index.entry(z).or_insert_with(|| {
                     nodes.push(z);
                     (nodes.len() - 1) as u32
                 });
-                next.push(id);
+                adj.push_id(id);
             }
-            adj.push(next);
+            adj.end();
         }
         started = true;
         nodes.get(adj.len()).copied()
@@ -274,7 +317,7 @@ pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interne
         if !levels {
             prof::count("closure", "closures by chains alone", 1);
         }
-        return Some(Prepared { nodes, index, adj, at: Vec::new(), pieces: Vec::new(), launches: Vec::new(), levels });
+        return Some(Prepared { nodes, index, adj, at: Vector::new(), pieces: Lists::new(), launches: Vec::new(), levels });
     }
     let _h = prof::host("closure", "encode: components, pieces, adjacency");
     let (at, pieces, launches) = partition(&adj);
@@ -283,7 +326,7 @@ pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interne
 
 /// The reach graph's weakly connected components, each a chain, a part of a dense piece, or walked on the host; and
 /// each piece's launch, its edges renumbered within it.
-fn partition(adj: &[Vec<u32>]) -> (Vec<At>, Vec<Vec<u32>>, Vec<Kernel>) {
+fn partition(adj: &Lists) -> (Vector<At>, Lists, Vec<Kernel>) {
     let n = adj.len();
     fn find(p: &mut [u32], mut x: u32) -> u32 {
         while p[x as usize] != x {
@@ -293,7 +336,7 @@ fn partition(adj: &[Vec<u32>]) -> (Vec<At>, Vec<Vec<u32>>, Vec<Kernel>) {
         }
         x
     }
-    let mut parent: Vec<u32> = (0..n as u32).collect();
+    let mut parent: Vector<u32> = (0..n as u32).collect();
     for (v, out) in adj.iter().enumerate() {
         for &w in out {
             let (a, b) = (find(&mut parent, v as u32), find(&mut parent, w));
@@ -302,76 +345,96 @@ fn partition(adj: &[Vec<u32>]) -> (Vec<At>, Vec<Vec<u32>>, Vec<Kernel>) {
             }
         }
     }
-    // Members of each component, ascending, components by their least node.
-    let mut comp_of = vec![u32::MAX; n];
-    let mut comps: Vec<Vec<u32>> = Vec::new();
+    // Members of each component, ascending, components by their least node: each node's component, then the
+    // components' members counted and placed.
+    let mut comp_of: Vector<u32> = rerail_blocks::vector![u32::MAX; n];
+    let mut of_node: Vector<u32> = rerail_blocks::vector![0; n];
+    let mut count = 0u32;
     for v in 0..n as u32 {
         let r = find(&mut parent, v) as usize;
         if comp_of[r] == u32::MAX {
-            comp_of[r] = comps.len() as u32;
-            comps.push(Vec::new());
+            comp_of[r] = count;
+            count += 1;
         }
-        comps[comp_of[r] as usize].push(v);
+        of_node[v as usize] = comp_of[r];
     }
-    let mut at = vec![At::Chain; n];
-    // Dense components packed into pieces, in order.
-    let mut pieces: Vec<Vec<u32>> = Vec::new();
-    let mut cur: Vec<u32> = Vec::new();
+    let mut comps = Lists { off: rerail_blocks::vector![0; count as usize + 1], ids: rerail_blocks::vector![0; n] };
+    for &c in of_node.iter() {
+        comps.off[c as usize + 1] += 1;
+    }
+    for c in 0..count as usize {
+        comps.off[c + 1] += comps.off[c];
+    }
+    let mut fill: Vector<u32> = Vector::from(&comps.off[..count as usize]);
+    for v in 0..n as u32 {
+        let c = of_node[v as usize] as usize;
+        comps.ids[fill[c] as usize] = v;
+        fill[c] += 1;
+    }
+    let mut at: Vector<At> = rerail_blocks::vector![At::CHAIN; n];
+    // Dense components packed into pieces, in order: a piece's nodes end where its next begins.
+    let mut packed = Lists::new();
     let (mut chains, mut host, mut host_nodes) = (0u64, 0u64, 0u64);
-    for c in &comps {
-        if c.iter().all(|&v| adj[v as usize].len() <= 1) {
+    let mut cur = 0usize;
+    for c in comps.iter() {
+        if c.iter().all(|&v| adj.get(v as usize).len() <= 1) {
             chains += 1;
             continue;
         }
         if c.len() > MAX_DENSE {
-            c.iter().for_each(|&v| at[v as usize] = At::Host);
+            c.iter().for_each(|&v| at[v as usize] = At::HOST);
             host += 1;
             host_nodes += c.len() as u64;
             continue;
         }
-        if !cur.is_empty() && cur.len() + c.len() > PACK {
-            pieces.push(std::mem::take(&mut cur));
+        if cur != 0 && cur + c.len() > PACK {
+            packed.end();
+            cur = 0;
         }
-        cur.extend_from_slice(c);
+        // copy: derived: a component's nodes (the closure's own answer), packed into its piece.
+        packed.ids.extend_from_slice(c);
+        cur += c.len();
     }
-    if !cur.is_empty() {
-        pieces.push(cur);
+    if cur != 0 {
+        packed.end();
     }
     // The bits budget: the largest pieces go to the host until the rest fit.
-    let bits = |p: &Vec<u32>| (p.len() as u64).pow(2);
-    let mut total: u64 = pieces.iter().map(bits).sum();
+    let bits = |p: &[u32]| (p.len() as u64).pow(2);
+    let mut total: u64 = packed.iter().map(bits).sum();
+    let mut gone: Vector<u8> = rerail_blocks::vector![0; packed.len()];
     if total > MAX_BITS {
-        let mut order: Vec<usize> = (0..pieces.len()).collect();
-        order.sort_by_key(|&i| std::cmp::Reverse(pieces[i].len()));
-        let mut gone = vec![false; pieces.len()];
+        let mut order: Vector<usize> = (0..packed.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(packed.get(i).len()));
         for i in order {
             if total <= MAX_BITS {
                 break;
             }
-            total -= bits(&pieces[i]);
-            gone[i] = true;
-            pieces[i].iter().for_each(|&v| at[v as usize] = At::Host);
+            total -= bits(packed.get(i));
+            gone[i] = 1;
+            packed.get(i).iter().for_each(|&v| at[v as usize] = At::HOST);
             host += 1;
-            host_nodes += pieces[i].len() as u64;
+            host_nodes += packed.get(i).len() as u64;
         }
-        let mut k = 0;
-        pieces.retain(|_| {
-            k += 1;
-            !gone[k - 1]
-        });
+    }
+    let mut pieces = Lists::new();
+    for i in (0..packed.len()).filter(|&i| gone[i] == 0) {
+        // copy: derived: the pieces kept for the device, of the components above.
+        pieces.ids.extend_from_slice(packed.get(i));
+        pieces.end();
     }
     let mut launches = Vec::with_capacity(pieces.len());
     for (pi, p) in pieces.iter().enumerate() {
         for (local, &v) in p.iter().enumerate() {
-            at[v as usize] = At::Dense { piece: pi as u32, local: local as u32 };
+            at[v as usize] = At::dense(pi as u32, local as u32);
         }
-        let mut off = Vec::with_capacity(p.len() + 1);
+        let mut off = Vector::with_capacity(p.len() + 1);
         off.push(0u32);
-        let mut dst = Vec::new();
+        let mut dst = Vector::new();
         for &v in p {
-            dst.extend(adj[v as usize].iter().map(|&w| match at[w as usize] {
-                At::Dense { local, .. } => local,
-                _ => unreachable!("an edge leaves its component"),
+            dst.extend(adj.get(v as usize).iter().map(|&w| {
+                let a = at[w as usize];
+                assert!(a.is_dense(), "an edge leaves its component");
+                a.local
             }));
             off.push(dst.len() as u32);
         }
@@ -396,17 +459,19 @@ pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut S
     }
     let n = p.nodes.len();
     let (mut dense, mut chain, mut host) = (false, false, false);
-    // A host search's reach, once per start.
-    let mut searched: HashMap<u32, Vec<u32>> = HashMap::default();
-    let mut seen: Vec<u32> = Vec::new();
-    let mut stack: Vec<u32> = Vec::new();
+    // A host search's reach, once per start: its nodes' place in `found` (start, length).
+    let mut searched: BlockHash<u32, [u32; 2]> = BlockHash::default();
+    let mut found: Vector<u32> = Vector::new();
+    let mut seen: Vector<u32> = Vector::new();
+    let mut stack: Vector<u32> = Vector::new();
     let mut epoch = 0u32;
-    let mut reach = |s: u32, into: &mut Vec<u32>| match p.at.get(s as usize).copied().unwrap_or(At::Chain) {
-        At::Chain => {
+    let mut reach = |s: u32, into: &mut Vector<u32>| {
+        let a = p.at.get(s as usize).copied().unwrap_or(At::CHAIN);
+        if a == At::CHAIN {
             chain = true;
             // Walk until the chain ends or comes back (a cycle: every node on it once).
             let mut v = s;
-            while let Some(&w) = p.adj[v as usize].first() {
+            while let Some(&w) = p.adj.get(v as usize).first() {
                 if into.contains(&w) {
                     break;
                 }
@@ -416,46 +481,45 @@ pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut S
                 }
                 v = w;
             }
-        }
-        At::Dense { piece, local } => {
+        } else if a.is_dense() {
             dense = true;
-            let nodes = &p.pieces[piece as usize];
-            for (w, word) in bits[piece as usize].row(local as usize).iter().enumerate() {
+            let nodes = p.pieces.get(a.piece as usize);
+            for (w, word) in bits[a.piece as usize].row(a.local as usize).iter().enumerate() {
                 let mut word = *word;
                 while word != 0 {
                     into.push(nodes[w * 64 + word.trailing_zeros() as usize]);
                     word &= word - 1;
                 }
             }
-        }
-        At::Host => {
+        } else {
             host = true;
-            let r = searched.entry(s).or_insert_with(|| {
+            let [from, len] = *searched.get_or_insert_with(s, || {
                 if seen.is_empty() {
-                    seen = vec![0; n];
+                    seen = rerail_blocks::vector![0; n];
                 }
                 epoch += 1;
-                let mut r = Vec::new();
+                let from = found.len();
                 stack.clear();
-                stack.extend(p.adj[s as usize].iter().copied());
+                stack.extend(p.adj.get(s as usize).iter().copied());
                 while let Some(w) = stack.pop() {
                     if seen[w as usize] == epoch {
                         continue;
                     }
                     seen[w as usize] = epoch;
-                    r.push(w);
-                    stack.extend(p.adj[w as usize].iter().copied().filter(|&x| seen[x as usize] != epoch));
+                    found.push(w);
+                    stack.extend(p.adj.get(w as usize).iter().copied().filter(|&x| seen[x as usize] != epoch));
                 }
-                r
+                [from as u32, (found.len() - from) as u32]
             });
-            into.extend_from_slice(r);
+            // copy: derived: a node's reach, found just above, written to its row of the answer.
+            into.extend_from_slice(&found[from as usize..(from + len) as usize]);
         }
     };
     let _h = prof::host("closure", if p.at.is_empty() { "decode: chain walks, rows into the relation" } else { "decode: reach bits and walks, rows into the relation" });
     let rel = &mut store.rels[0];
     let seeds = rel.n;
-    let mut row = vec![0i64; rel.k];
-    let mut into = Vec::new();
+    let mut row: Vector<i64> = rerail_blocks::vector![0; rel.k];
+    let mut into = Vector::new();
     // Each row pushed once (the relation's push is its set check): no buffer of fresh rows to hash first.
     let mut rows = 0;
     for id in 0..seeds {
@@ -464,7 +528,7 @@ pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut S
         }
         row.copy_from_slice(&rel.row(id));
         into.clear();
-        reach(p.index[&row[cl.col]], &mut into);
+        reach(*p.index.get(&row[cl.col]).expect("a seed's node"), &mut into);
         for &z in &into {
             row[cl.col] = p.nodes[z as usize];
             rows += rel.push(&row) as usize;
@@ -477,59 +541,76 @@ pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut S
 
 /// The closure's rows with their levels: from each seed row, a search along `adj` gives each node its distance, and a
 /// row's level is the least of its seeds' levels plus their distances.
-fn by_distance(cl: &Closure, rel: &mut super::Rel, index: &HashMap<i64, u32>, nodes: &[i64], adj: &[Vec<u32>]) -> Ran {
+fn by_distance(cl: &Closure, rel: &mut super::Rel, index: &BlockHash<i64, u32>, nodes: &[i64], adj: &Lists) -> Ran {
     let seeds = rel.n;
-    // A start node's reach with distances, searched once per distinct start.
-    let mut reach_of: HashMap<u32, Vec<(u32, u32)>> = HashMap::default();
-    let mut seen: Vec<u32> = vec![u32::MAX; nodes.len()];
+    let k = rel.k;
+    // A start node's reach with distances, searched once per distinct start: its (node, distance) pairs' place in
+    // `found` (start, length).
+    let mut reach_of: BlockHash<u32, [u32; 2]> = BlockHash::default();
+    let mut found: Vector<[u32; 2]> = Vector::new();
+    let mut seen: Vector<u32> = rerail_blocks::vector![u32::MAX; nodes.len()];
     let mut stamp = 0u32;
-    let mut search = |s: u32| -> Vec<(u32, u32)> {
+    let (mut frontier, mut next): (Vector<u32>, Vector<u32>) = (Vector::new(), Vector::new());
+    let mut search = |s: u32, found: &mut Vector<[u32; 2]>| -> [u32; 2] {
         stamp += 1;
-        let mut out: Vec<(u32, u32)> = Vec::new();
-        let mut frontier = vec![s];
+        let from = found.len();
+        frontier.clear();
+        frontier.push(s);
         let mut d = 0;
         while !frontier.is_empty() {
             d += 1;
-            let mut next = Vec::new();
-            for &v in &frontier {
-                for &w in &adj[v as usize] {
+            next.clear();
+            for &v in frontier.iter() {
+                for &w in adj.get(v as usize) {
                     if seen[w as usize] != stamp {
                         seen[w as usize] = stamp;
-                        out.push((w, d));
+                        found.push([w, d]);
                         next.push(w);
                     }
                 }
             }
-            frontier = next;
+            std::mem::swap(&mut frontier, &mut next);
         }
-        out
+        [from as u32, (found.len() - from) as u32]
     };
-    let mut at: HashMap<Vec<i64>, usize> = HashMap::default();
-    let mut made: Vec<(Vec<i64>, u32)> = Vec::new();
-    let mut row = vec![0i64; rel.k];
+    // The rows made, `k` values each, a set over them (`RowSet`), and each one's least level.
+    let mut made: Vector<i64> = Vector::new();
+    let mut levels: Vector<u32> = Vector::new();
+    let mut set = super::keys::RowSet::default();
+    let mut row: Vector<i64> = rerail_blocks::vector![0i64; k];
     for id in 0..seeds {
         if rel.dead(id as u32) {
             continue;
         }
         row.copy_from_slice(&rel.row(id));
         let base = rel.level[id];
-        let s = index[&row[cl.col]];
-        let reach = reach_of.entry(s).or_insert_with(|| search(s));
-        for &(z, d) in reach.iter() {
+        let s = *index.get(&row[cl.col]).expect("a seed's node");
+        let [from, len] = match reach_of.get(&s) {
+            Some(&r) => r,
+            None => {
+                let r = search(s, &mut found);
+                reach_of.insert(s, r);
+                r
+            }
+        };
+        for j in from as usize..(from + len) as usize {
+            let [z, d] = found[j];
             row[cl.col] = nodes[z as usize];
             let level = base + d;
-            match at.get(&row) {
-                Some(&i) => made[i].1 = made[i].1.min(level),
+            match set.find(&made, k, &row, |_| false) {
+                Some(i) => levels[i as usize] = levels[i as usize].min(level),
                 None => {
-                    at.insert(row.clone(), made.len());
-                    made.push((row.clone(), level));
+                    // copy: derived: a head row the closure makes, written once into its relation.
+                    made.extend_from_slice(&row);
+                    levels.push(level);
+                    set.insert(&made, k, (levels.len() - 1) as u32);
                 }
             }
         }
     }
     let mut rows = 0;
-    for (r, level) in &made {
-        if rel.push(r) {
+    for (i, level) in levels.iter().enumerate() {
+        if rel.push(&made[i * k..(i + 1) * k]) {
             *rel.level.last_mut().expect("a level pushed") = *level;
             rows += 1;
         }

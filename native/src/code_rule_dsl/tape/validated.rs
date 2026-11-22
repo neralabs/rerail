@@ -62,6 +62,16 @@ pub fn visit(
             return Err("invalid abstract node class entry".into());
         }
     }
+    // A 16z tape is not walked: its reads hold every offset to its tape, its block and its source, whatever its bytes
+    // state (decision 0463; `rerail_clif::reads`, and the host's reads written directly), so a malicious tape reads
+    // or writes no memory it should not, and a walk here would decode every block of it (the user, 2026-11-21: "The
+    // requirement is not that we validate every tape on every decompression, it's to stop a malicious tape from
+    // reading or writing memory it shouldn't"). Its header, regions, pieces and presence are checked where it is read
+    // in (`Tape16Z::from_bytes`); its codes are its language's table.
+    if image.format() == super::formats::Format::F16Z {
+        checked(budget)?;
+        return Ok((digest, Vec::new()));
+    }
     let aliases = rerail_tape_format::with_tape!(image.tape(), |t| visit_tape(&t, source, grammar, budget, sink))?;
     checked(budget)?;
     Ok((digest, aliases))
@@ -106,11 +116,11 @@ fn visit_tape<T: rerail_tape_format::tape::Tape>(
         {
             return Err("invalid abstract node class entry".into());
         }
-        let alias = match &code.alias {
+        let alias = match code.alias {
             None => SENTINEL,
             Some(alias) => {
-                let at = aliases.iter().position(|a| a == alias).unwrap_or_else(|| {
-                    aliases.push(alias.clone());
+                let at = aliases.iter().position(|a| (a.0.as_str(), a.1) == alias).unwrap_or_else(|| {
+                    aliases.push((alias.0.to_owned(), alias.1));
                     aliases.len() - 1
                 });
                 u16::try_from(at).ok().filter(|&at| at != SENTINEL).ok_or("too many contextual grammar aliases")?

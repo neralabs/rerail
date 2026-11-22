@@ -21,6 +21,7 @@
 //! Rows a relation's writer knows to be in an order already (`Sorted`, decision 0180: a wave's batch is written
 //! sorted by the first order) make runs in place: the rows `lo..hi` themselves, no ids listed and no sort.
 
+use rerail_blocks::vector::Vector;
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
@@ -111,7 +112,7 @@ impl Ids {
         self.part(0, self.len()).iter()
     }
     #[cfg(test)]
-    fn to_vec(&self) -> Vec<u32> {
+    fn to_vec(&self) -> Vector<u32> {
         self.iter().collect()
     }
     fn bytes(&self) -> usize {
@@ -311,7 +312,7 @@ impl Sorted {
         if self.own.is_empty() && self.base.is_none() {
             return true;
         }
-        let mut all: Vec<(u32, u32, Vec<u16>)> = Vec::new();
+        let mut all: Vec<(u32, u32, Vector<u16>)> = Vec::new();
         let mut wide = false;
         self.each(&mut |a, b, c| {
             wide |= c.len() > rerail_blocks::relation::MAX_KEY;
@@ -486,7 +487,7 @@ fn tag_span<T: Copy + Ord + Into<u64>>(tags: &[T], t: T, from: usize, place: boo
 
 /// An order on the columns `cols` (every key set it answers is a prefix of them).
 pub(super) struct Index {
-    pub(super) cols: Vec<usize>,
+    pub(super) cols: Vector<usize>,
     /// The runs, oldest first, each with the wave whose rows it holds (0: of no wave's delta).
     runs: Vec<(Arc<Run>, u32)>,
     /// Runs read past the first by probes since the last merge.
@@ -990,15 +991,45 @@ fn on_pool() -> bool {
 /// `a` may come before `b` (ties keep the left piece's first). Each item moves about log(pieces) times; one piece
 /// moves nothing (decision 0187: rows known sorted are merged, not sorted again). From `PAR_ROWS` items, on the pool
 /// (`merge_pieces_par`).
-pub(super) fn merge_pieces<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize>, le: impl Fn(T, T) -> bool + Sync) {
+/// The vectors a sort or a merge of pieces runs over and into: a block one (`Vector`) for plain items, a `Vec` for
+/// the packed keys no block holds yet (`u128`, tuples).
+pub(super) trait Buf<T: Copy>: std::ops::DerefMut<Target = [T]> + Sized {
+    fn empty() -> Self;
+    fn copy_of(v: &[T]) -> Self;
+    fn clear(&mut self);
+    fn reserve(&mut self, n: usize);
+    fn push(&mut self, t: T);
+    // copy: growth: a merge buffer appends a run, the merge's output
+    fn extend_from_slice(&mut self, s: &[T]);
+}
+impl<T: Copy> Buf<T> for Vec<T> {
+    fn empty() -> Self { Vec::new() }
+    fn copy_of(v: &[T]) -> Self { v.to_vec() }
+    fn clear(&mut self) { Vec::clear(self) }
+    fn reserve(&mut self, n: usize) { Vec::reserve(self, n) }
+    fn push(&mut self, t: T) { Vec::push(self, t) }
+    // copy: growth: a merge buffer appends its run (`Buf`)
+    fn extend_from_slice(&mut self, s: &[T]) { Vec::extend_from_slice(self, s) }
+}
+impl<T: rerail_blocks::Pod + Copy> Buf<T> for Vector<T> {
+    fn empty() -> Self { Vector::new() }
+    fn copy_of(v: &[T]) -> Self { v.iter().copied().collect() }
+    fn clear(&mut self) { Vector::clear(self) }
+    fn reserve(&mut self, n: usize) { Vector::reserve(self, n) }
+    fn push(&mut self, t: T) { Vector::push(self, t) }
+    // copy: growth: a merge buffer appends its run (`Buf`), in its own block
+    fn extend_from_slice(&mut self, s: &[T]) { Vector::extend_from_slice(self, s) }
+}
+
+pub(super) fn merge_pieces<T: Copy + Send + Sync, B: Buf<T>>(v: &mut B, mut bounds: Vector<usize>, le: impl Fn(T, T) -> bool + Sync) {
     if v.len() >= PAR_ROWS && on_pool() {
         return merge_pieces_par(v, bounds, le);
     }
-    let mut buf: Vec<T> = Vec::new();
+    let mut buf = B::empty();
     while bounds.len() > 2 {
         buf.clear();
         buf.reserve(v.len());
-        let mut next = vec![0];
+        let mut next = rerail_blocks::vector![0];
         let mut p = 0;
         while p + 1 < bounds.len() {
             let (a, b) = (bounds[p], bounds[p + 1]);
@@ -1042,14 +1073,14 @@ fn co_rank<T: Copy>(x: &[T], y: &[T], t: usize, le: &impl Fn(T, T) -> bool) -> u
 /// `merge_pieces` on the pool (decision 0294): each level's merges cut into parts by their outputs' places, each
 /// part's inputs found by where its first and last outputs come from (`co_rank`), so a level spreads over the
 /// threads whatever its pieces' sizes, its last one merge as well. The same order as one thread's.
-fn merge_pieces_par<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize>, le: impl Fn(T, T) -> bool + Sync) {
+fn merge_pieces_par<T: Copy + Send + Sync, B: Buf<T>>(v: &mut B, mut bounds: Vector<usize>, le: impl Fn(T, T) -> bool + Sync) {
     let n = v.len();
     let all = crate::threads::max() * PARTS_PER_THREAD;
-    let mut buf: Vec<T> = v.clone();
+    let mut buf = B::copy_of(v);
     while bounds.len() > 2 {
         // (a, b, c, t0, t1): pieces `a..b` and `b..c` merged, its outputs `t0..t1` (from `a`), in output order.
         let mut parts: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
-        let mut next = vec![0];
+        let mut next = rerail_blocks::vector![0];
         let mut p = 0;
         while p + 1 < bounds.len() {
             let (a, b) = (bounds[p], bounds[p + 1]);
@@ -1082,7 +1113,7 @@ fn merge_pieces_par<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize
 
 /// `v.sort_unstable()`, on the pool from `PAR_ROWS` items (decision 0294): parts sorted at once, then merged
 /// (`merge_pieces`). Distinct keys (the packed sorts' hold their id) come out as one thread sorts them.
-fn sort_unstable_par<T: Ord + Copy + Send + Sync>(v: &mut Vec<T>) {
+fn sort_unstable_par<T: Ord + Copy + Send + Sync, B: Buf<T>>(v: &mut B) {
     let n = v.len();
     let threads = crate::threads::max();
     if n < PAR_ROWS || !on_pool() {
@@ -1095,15 +1126,15 @@ fn sort_unstable_par<T: Ord + Copy + Send + Sync>(v: &mut Vec<T>) {
             jobs.spawn("a sort's part", move |_| part.sort_unstable());
         }
     });
-    let bounds: Vec<usize> = (0..n).step_by(size).chain(std::iter::once(n)).collect();
+    let bounds: Vector<usize> = (0..n).step_by(size).chain(std::iter::once(n)).collect();
     merge_pieces(v, bounds, |a, b| a <= b);
 }
 
 /// `v` sorted, where the pieces `known` (position ranges, in order) are sorted already: the stretches between them
 /// sorted by `sort` (each alone), then every piece merged (`merge_pieces`). The positions taken as known.
-pub(super) fn sort_pieces(v: &mut Vec<u32>, known: &[(usize, usize)], mut sort: impl FnMut(&mut [u32]), le: impl Fn(u32, u32) -> bool + Sync) -> usize {
+pub(super) fn sort_pieces(v: &mut Vector<u32>, known: &[(usize, usize)], mut sort: impl FnMut(&mut [u32]), le: impl Fn(u32, u32) -> bool + Sync) -> usize {
     let n = v.len();
-    let mut bounds = vec![0];
+    let mut bounds = rerail_blocks::vector![0];
     let (mut at, mut taken) = (0, 0);
     for &(a, b) in known {
         let (a, b) = (a.max(at), b.min(n));
@@ -1170,7 +1201,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
         return false;
     }
     let flip = |v: i64| (v as u64) ^ (1 << 63);
-    let mut f: Vec<u64> = Vec::with_capacity(n * nf);
+    let mut f: Vector<u64> = rerail_blocks::vector::Vector::with_capacity(n * nf);
     let mut top = 0u32;
     for &id in ids.iter() {
         top = top.max(id);
@@ -1236,7 +1267,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
     };
     let mask = (1u128 << wid) - 1;
     let keys: Vec<u128> = if total <= 64 {
-        let mut narrow: Vec<u64> = f.chunks_exact(nf).zip(ids.iter()).map(|(row, &id)| pack(row, id) as u64).collect();
+        let mut narrow: Vector<u64> = f.chunks_exact(nf).zip(ids.iter()).map(|(row, &id)| pack(row, id) as u64).collect();
         drop(f);
         sort_unstable_par(&mut narrow);
         for (slot, &k) in ids.iter_mut().zip(&narrow) {
@@ -1307,13 +1338,13 @@ fn sort_tupled(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, us
 }
 
 impl Index {
-    pub(super) fn new(cols: Vec<usize>) -> Index {
+    pub(super) fn new(cols: Vector<usize>) -> Index {
         Index { cols, runs: Vec::new(), rent: AtomicU64::new(0), printed: false }
     }
 
     /// Its runs as one run, merged where they are several (decision 0478 step 5b: a frozen relation's order is one
     /// sorted order in its block), with its columns and whether it is printed; `None` with no runs.
-    pub(super) fn into_one<D: RowData + ?Sized>(mut self, data: &D, k: usize) -> Option<(Vec<usize>, bool, Run)> {
+    pub(super) fn into_one<D: RowData + ?Sized>(mut self, data: &D, k: usize) -> Option<(Vector<usize>, bool, Run)> {
         let run = match self.runs.len() {
             0 => return None,
             1 => {
@@ -1326,7 +1357,7 @@ impl Index {
     }
 
     /// An order of one run, `run` (one read in its relation's block: `Run::in_block`).
-    pub(super) fn of_run(cols: Vec<usize>, printed: bool, run: Run) -> Index {
+    pub(super) fn of_run(cols: Vector<usize>, printed: bool, run: Run) -> Index {
         Index { cols, runs: vec![(Arc::new(run), 0)], rent: AtomicU64::new(0), printed }
     }
 
@@ -1346,7 +1377,7 @@ impl Index {
 
     /// An order its probes give whole keys to (a derived input's own index, decision 0112): a byte a row more, each
     /// id's key print, so a probe reads the prints of its window, not its rows (`print_span`).
-    pub(super) fn printed(cols: Vec<usize>) -> Index {
+    pub(super) fn printed(cols: Vector<usize>) -> Index {
         Index { printed: true, ..Index::new(cols) }
     }
 
@@ -1468,7 +1499,7 @@ impl Index {
     /// later, and a large run is left alone while the small ones grow to its size).
     pub(super) fn tier<D: RowData + ?Sized>(&mut self, data: &D, k: usize, max: usize) {
         while self.runs.len() > max.max(1) {
-            let mut by: Vec<usize> = (0..self.runs.len()).collect();
+            let mut by: Vector<usize> = (0..self.runs.len()).collect();
             by.sort_by_key(|&i| self.runs[i].0.ids.len());
             let (a, b) = (by[0].min(by[1]), by[0].max(by[1]));
             let merged = Run::merge(data, k, &self.cols, &self.runs[a].0, &self.runs[b].0);
@@ -1478,7 +1509,7 @@ impl Index {
     }
 
     /// The same rows ordered by `cols` instead, each run re-sorted (its wave kept).
-    pub(super) fn reorder<D: RowData + ?Sized>(&mut self, data: &D, k: usize, cols: Vec<usize>, sorted: &Sorted) {
+    pub(super) fn reorder<D: RowData + ?Sized>(&mut self, data: &D, k: usize, cols: Vector<usize>, sorted: &Sorted) {
         if cols == self.cols {
             return;
         }
@@ -1701,7 +1732,7 @@ pub mod presorted {
         let row = |i: usize| all.orders[i].iter().map(|a| a.load(Relaxed)).collect::<Vec<_>>();
         let (d, o) = (row(0), row(1));
         let sites = ["wave batches", "scans for the next probe", "orders sorted again"].iter().enumerate().map(|(i, name)| {
-            let v: Vec<u64> = all.sites[i].iter().map(|a| a.load(Relaxed)).collect();
+            let v: Vector<u64> = all.sites[i].iter().map(|a| a.load(Relaxed)).collect();
             format!("; {name}: {} sorts ({} wholly in order), {} rows, {} in order in stretches of 64+ ({:.0}%), {} known sorted", v[0], v[2], v[1], v[3], v[3] as f64 * 100.0 / v[1].max(1) as f64, v[4])
         }).collect::<String>();
         let f = |v: &[u64]| format!("{} runs ({} wholly in order), {} rows, {} in order in {} stretches of 64+ ({:.0}%); built in {:.1} ms; {} rows taken in place, known sorted", v[0], v[2], v[1], v[3], v[4], v[3] as f64 * 100.0 / v[1].max(1) as f64, v[5] as f64 / 1e6, v[6]);
@@ -1724,7 +1755,7 @@ pub mod tests {
             assert!(!on_pool());
             inline(|| assert!(!on_pool()));
             assert!(!on_pool());
-            let mut v: Vec<u64> = (0..PAR_ROWS as u64 * 2).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 20).collect();
+            let mut v: Vector<u64> = (0..PAR_ROWS as u64 * 2).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 20).collect();
             let mut want = v.clone();
             want.sort_unstable();
             sort_unstable_par(&mut v);
@@ -1744,10 +1775,10 @@ pub mod tests {
         let mut next = move || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
         // Ids whose key (`id / 3 % 1000`) ties often; pieces of very different sizes, each sorted by key.
         for sizes in [vec![200_000, 3, 70_000, 1], vec![1 << 17; 5], vec![90_000]] {
-            let mut v: Vec<u32> = Vec::new();
-            let mut bounds = vec![0];
+            let mut v: Vector<u32> = rerail_blocks::vector::Vector::new();
+            let mut bounds = rerail_blocks::vector![0];
             for &n in &sizes {
-                let mut piece: Vec<u32> = (0..n).map(|_| (next() % 4_000_000) as u32).collect();
+                let mut piece: Vector<u32> = (0..n).map(|_| (next() % 4_000_000) as u32).collect();
                 piece.sort_by_key(|&id| id / 3 % 1000);
                 v.extend(piece);
                 bounds.push(v.len());
@@ -1757,8 +1788,8 @@ pub mod tests {
             let mut b = bounds.clone();
             // One thread's merge: the loop `merge_pieces` runs below `PAR_ROWS`.
             while b.len() > 2 {
-                let mut buf = Vec::new();
-                let mut nb = vec![0];
+                let mut buf = rerail_blocks::vector::Vector::new();
+                let mut nb = rerail_blocks::vector![0];
                 for p in (0..b.len() - 1).step_by(2) {
                     let (lo, mid) = (b[p], b[p + 1]);
                     let hi = if p + 2 < b.len() { b[p + 2] } else { mid };
@@ -1774,7 +1805,7 @@ pub mod tests {
             merge_pieces_par(&mut v, bounds, le);
             assert_eq!(v, serial, "pieces {sizes:?}");
         }
-        let mut keys: Vec<u64> = (0..300_000).map(|_| next()).collect();
+        let mut keys: Vector<u64> = (0..300_000).map(|_| next()).collect();
         let mut one = keys.clone();
         one.sort_unstable();
         sort_unstable_par(&mut keys);
@@ -1787,12 +1818,12 @@ pub mod tests {
     fn a_relations_runs_lie_in_its_block() {
         let k = 2;
         let mut rows = super::super::rows::Rows::new(k);
-        let vals: Vec<i64> = (0..3000i64).flat_map(|i| [(i * 7919) % 101, i]).collect();
+        let vals: Vector<i64> = (0..3000i64).flat_map(|i| [(i * 7919) % 101, i]).collect();
         // copy: not block data: a test's rows
         rows.extend_from_slice(&vals);
         let home = rows.home().expect("a home").facts().clone();
         let block = |v: Option<&Arc<super::super::rows::Facts>>| v.is_some_and(|f| Arc::ptr_eq(f, &home));
-        for (ix, tagged) in [(Index::new(vec![0, 1]), true), (Index::printed(vec![0]), false)] {
+        for (ix, tagged) in [(Index::new(rerail_blocks::vector![0, 1]), true), (Index::printed(rerail_blocks::vector![0]), false)] {
             let mut ix = ix;
             ix.add_run(&rows, k, 0, 1000, 1);
             ix.add_run(&rows, k, 1000, 3000, 2);
@@ -1807,8 +1838,8 @@ pub mod tests {
             } else {
                 assert!(block(run.fences.facts()) && block(run.prints.facts()), "fences and prints in the relation's block");
             }
-            let want: Vec<u32> = (0..3000u32).filter(|&i| vals[i as usize * 2] == 5).collect();
-            let mut got: Vec<u32> = ix.find(&rows, k, &[5], None).ids().collect();
+            let want: Vector<u32> = (0..3000u32).filter(|&i| vals[i as usize * 2] == 5).collect();
+            let mut got: Vector<u32> = ix.find(&rows, k, &[5], None).ids().collect();
             got.sort_unstable();
             assert_eq!(got, want);
         }
@@ -1818,9 +1849,9 @@ pub mod tests {
     fn orders_find_prefixes_merge_and_delta() {
         let k = 3;
         // Rows (i % 10, i % 7, i) for i in 0..2000: three waves of rows.
-        let rows: Vec<i64> = (0..2000i64).flat_map(|i| [i % 10, i % 7, i]).collect();
-        let mut by = Index::new(vec![0, 1, 2]);
-        let mut by10 = Index::new(vec![1, 0, 2]);
+        let rows: Vector<i64> = (0..2000i64).flat_map(|i| [i % 10, i % 7, i]).collect();
+        let mut by = Index::new(rerail_blocks::vector![0, 1, 2]);
+        let mut by10 = Index::new(rerail_blocks::vector![1, 0, 2]);
         for (w, (lo, hi)) in [(0, 700), (700, 1500), (1500, 2000)].into_iter().enumerate() {
             by.add_run(&rows, k, lo, hi, w as u32 + 1);
             by10.add_run(&rows, k, lo, hi, w as u32 + 1);
@@ -1862,18 +1893,18 @@ pub mod tests {
     #[test]
     fn a_keys_rows_in_a_range_of_the_next_column_are_found_by_searching() {
         let k = 3;
-        let rows: Vec<i64> = (0..2000u32).flat_map(|i| [i64::from(i % 10), i64::from((i * 7) % 300), i64::from(i)]).collect();
-        let mut by = Index::new(vec![0, 1, 2]);
+        let rows: Vector<i64> = (0..2000u32).flat_map(|i| [i64::from(i % 10), i64::from((i * 7) % 300), i64::from(i)]).collect();
+        let mut by = Index::new(rerail_blocks::vector![0, 1, 2]);
         for (w, (lo, hi)) in [(0, 700), (700, 1500), (1500, 2000)].into_iter().enumerate() {
             by.add_run(&rows, k, lo, hi, w as u32 + 1);
         }
         let value = |id: u32, c: usize| rows[id as usize * k + c];
         for (lo, hi) in [(Some((40, false)), Some((90, false))), (Some((40, true)), Some((90, true))), (None, Some((5, false))), (Some((295, false)), None), (Some((90, false)), Some((40, false)))] {
             let found = by.find_at(&rows, k, &[3], None, &mut [0; HINTS]);
-            let mut got: Vec<u32> = found.within(&rows, k, 1, lo, hi).ids().collect();
+            let mut got: Vector<u32> = found.within(&rows, k, 1, lo, hi).ids().collect();
             got.sort_unstable();
             let inside = |v: i64| lo.is_none_or(|(x, eq)| v > x || eq && v == x) && hi.is_none_or(|(x, eq)| v < x || eq && v == x);
-            let mut want: Vec<u32> = found.ids().filter(|&id| inside(value(id, 1))).collect();
+            let mut want: Vector<u32> = found.ids().filter(|&id| inside(value(id, 1))).collect();
             want.sort_unstable();
             assert_eq!(got, want, "{lo:?} {hi:?}");
         }
@@ -1884,8 +1915,8 @@ pub mod tests {
     #[test]
     fn a_galloped_merge_is_the_walking_merge() {
         let k = 3;
-        let rows: Vec<i64> = (0..2100u32).flat_map(|i| [i64::from(i % 37), i64::from((i * 7) % 11), i64::from(i % 500)]).collect();
-        for (cols, printed) in [(vec![0, 1, 2], false), (vec![0], false), (vec![1, 0], true), (vec![2], false)] {
+        let rows: Vector<i64> = (0..2100u32).flat_map(|i| [i64::from(i % 37), i64::from((i * 7) % 11), i64::from(i % 500)]).collect();
+        for (cols, printed) in [(rerail_blocks::vector![0, 1, 2], false), (rerail_blocks::vector![0], false), (rerail_blocks::vector![1, 0], true), (rerail_blocks::vector![2], false)] {
             let mut ix = if printed { Index::printed(cols.clone()) } else { Index::new(cols.clone()) };
             ix.add_run_in(&rows[..], k, 0, 2000, 1, &[]);
             ix.add_run_in(&rows[..], k, 2000, 2100, 2, &[]);
@@ -1909,12 +1940,12 @@ pub mod tests {
         let n = 3000u32;
         // Three waves, each written sorted by the full-row order (tagged), as `Fresh::settle` writes them; a fourth
         // sorted by [0, 1] untagged.
-        let mut rows: Vec<i64> = Vec::new();
+        let mut rows: Vector<i64> = rerail_blocks::vector::Vector::new();
         let mut known = Sorted::default();
-        let full: Vec<usize> = vec![0, 1, 2];
+        let full: Vector<usize> = rerail_blocks::vector![0, 1, 2];
         let waves = [(0u32, 900u32), (900, 2000), (2000, 2600), (2600, n)];
         for (w, &(lo, hi)) in waves.iter().enumerate() {
-            let mut wave: Vec<[i64; 3]> = (lo..hi).map(|i| [i64::from(i % 37), i64::from((i * 7) % 11), i64::from(i)]).collect();
+            let mut wave: Vector<[i64; 3]> = (lo..hi).map(|i| [i64::from(i % 37), i64::from((i * 7) % 11), i64::from(i)]).collect();
             if w < 3 {
                 wave.sort_by(|a, b| cmp_vals(&full, true, a, b));
             } else {
@@ -1925,8 +1956,8 @@ pub mod tests {
         }
         assert_eq!(known.rows(), u64::from(n));
         assert!(known.within(&[0], k, 0, n).iter().all(|&(a, _)| a >= 2600), "a tagged range implies no prefix order");
-        let ids = |f: Found| { let mut v: Vec<u32> = f.ids().collect(); v.sort_unstable(); v };
-        for (cols, printed) in [(vec![0, 1, 2], false), (vec![0], false), (vec![0, 1], true), (vec![0], true)] {
+        let ids = |f: Found| { let mut v: Vector<u32> = f.ids().collect(); v.sort_unstable(); v };
+        for (cols, printed) in [(rerail_blocks::vector![0, 1, 2], false), (rerail_blocks::vector![0], false), (rerail_blocks::vector![0, 1], true), (rerail_blocks::vector![0], true)] {
             let make = |use_known: bool| {
                 let mut ix = if printed { Index::printed(cols.clone()) } else { Index::new(cols.clone()) };
                 for (w, &(lo, hi)) in waves.iter().enumerate() {
@@ -1949,21 +1980,21 @@ pub mod tests {
                 let (mut ha, mut hb) = ([0u32; HINTS], [0u32; HINTS]);
                 for a in 0..40i64 {
                     for b in [None, Some(3i64), Some(12)] {
-                        let key: Vec<i64> = std::iter::once(a).chain(b).take(cols.len()).collect();
+                        let key: Vector<i64> = std::iter::once(a).chain(b).take(cols.len()).collect();
                         for delta in [None, Some(2), Some(4)] {
                             assert_eq!(ids(ix_a.find(&rows[..], k, &key, delta)), ids(ix_b.find(&rows[..], k, &key, delta)), "{cols:?} {key:?} {delta:?}");
                         }
                         assert_eq!(ids(ix_a.find_at(&rows[..], k, &key, None, &mut ha)), ids(ix_b.find_at(&rows[..], k, &key, None, &mut hb)), "{cols:?} {key:?}");
                     }
                 }
-                let groups = |ix: &Index| { let mut g: Vec<Vec<u32>> = Vec::new(); ix.each_group(&rows[..], k, 1, |p| g.push(p.iter().collect())); g };
+                let groups = |ix: &Index| { let mut g: Vec<Vector<u32>> = Vec::new(); ix.each_group(&rows[..], k, 1, |p| g.push(p.iter().collect())); g };
                 assert_eq!(groups(ix_a), groups(ix_b), "{cols:?}: groups");
             };
             check(&plain, &placed);
             if cols.len() == k {
                 // The dedup test, over rows held and not.
-                let probe: Vec<i64> = (0..200i64).flat_map(|i| [i % 40, (i * 7) % 12, i * 15]).collect();
-                let mut order: Vec<u32> = (0..200).collect();
+                let probe: Vector<i64> = (0..200i64).flat_map(|i| [i % 40, (i * 7) % 12, i * 15]).collect();
+                let mut order: Vector<u32> = (0..200).collect();
                 order.sort_by(|&a, &b| cmp_vals(&cols, true, &probe[a as usize * k..][..k], &probe[b as usize * k..][..k]));
                 let (mut ha, mut hb) = (vec![false; 200], vec![false; 200]);
                 plain.held_sorted(&rows[..], k, &probe, &order, |_| true, &mut ha);
@@ -1979,7 +2010,7 @@ pub mod tests {
             check(&pm, &qm);
         }
         // Runs in place that meet in order merge in place.
-        let mut one = Index::new(vec![0, 1]);
+        let mut one = Index::new(rerail_blocks::vector![0, 1]);
         one.add_run_in(&rows[..], k, 2600, 2800, 1, &[(2600, 2800)]);
         one.add_run_in(&rows[..], k, 2800, n as usize, 1, &[(2800, n)]);
         one.tier(&rows[..], k, 1);
@@ -1995,9 +2026,9 @@ pub mod tests {
         let mut rand = move |m: u64| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x % m };
         for case in 0..40 {
             let n = [0usize, 1, 7, 300, 2000][case % 5];
-            let vals: Vec<u64> = (0..n).map(|_| rand(50)).collect();
+            let vals: Vector<u64> = (0..n).map(|_| rand(50)).collect();
             // Pieces: ranges sorted in place in `v` (positions), with unsorted stretches between.
-            let mut v: Vec<u32> = (0..n as u32).collect();
+            let mut v: Vector<u32> = (0..n as u32).collect();
             let mut known = Vec::new();
             let mut at = 0;
             while at < n {
@@ -2039,11 +2070,11 @@ pub mod tests {
         ];
         let mut packed_seen = [false; 2];
         for (name, f) in shapes {
-            let rows: Vec<i64> = (0..n).flat_map(|i| [f(i), f(i / 3), i % 5]).collect();
-            for (cols, tagged) in [(vec![0], false), (vec![0, 1], false), (vec![1, 0], false), (vec![0, 1, 2], true)] {
+            let rows: Vector<i64> = (0..n).flat_map(|i| [f(i), f(i / 3), i % 5]).collect();
+            for (cols, tagged) in [(rerail_blocks::vector![0], false), (rerail_blocks::vector![0, 1], false), (rerail_blocks::vector![1, 0], false), (rerail_blocks::vector![0, 1, 2], true)] {
                 let val = |id: u32, i: usize| rows[id as usize * k + cols[i]];
                 let cmp = |a: u32, b: u32| cmp_rows(&rows[..], k, &cols, a, b);
-                let start: Vec<u32> = (0..n as u32).rev().collect();
+                let start: Vector<u32> = (0..n as u32).rev().collect();
                 let (mut a, mut b) = (start.clone(), start);
                 let (mut ta, mut tb) = (Vec::new(), Vec::new());
                 let packed = sort_packed(&mut a, tagged, cols.len(), &val, &cmp, &mut ta);
@@ -2066,7 +2097,7 @@ pub mod tests {
         let mut x = 0x2545_F491_4F6C_DD1Du64;
         let mut rand = move || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
         for shape in ["clustered", "shuffled", "small"] {
-            let rows: Vec<i64> = (0..n as i64).flat_map(|i| {
+            let rows: Vector<i64> = (0..n as i64).flat_map(|i| {
                 let node = match shape { "clustered" => ((i / 600) << 32) | ((i % 600) * 3), "shuffled" => (((rand() % 9000) as i64) << 32) | (rand() % 4000) as i64, _ => (rand() % 40_000) as i64 };
                 [node, (rand() % 5000) as i64]
             }).collect();
@@ -2077,7 +2108,7 @@ pub mod tests {
                 let cost = |packed: bool| {
                     let (mut ins, mut cyc) = (u64::MAX, u64::MAX);
                     for _ in 0..5 {
-                        let mut ids: Vec<u32> = (0..n).collect();
+                        let mut ids: Vector<u32> = (0..n).collect();
                         let (i0, c0) = rerail_compiler::native_cpu_codegen::retired();
                         if packed { std::hint::black_box(sort_packed(&mut ids, false, cols.len(), &val, &cmp, &mut NoTags)); } else { sort_tupled(&mut ids, false, cols.len(), val, cmp, &mut NoTags); std::hint::black_box(&ids); }
                         let (i1, c1) = rerail_compiler::native_cpu_codegen::retired();
@@ -2101,18 +2132,18 @@ pub mod tests {
         let k = 3;
         // Half the rows lead with 0..3 (each value over many fences), half with a wide range; keys repeat.
         let n = 6000i64;
-        let rows: Vec<i64> = (0..n).flat_map(|i| [if i % 2 == 0 { i % 3 } else { (i * 7919) % 2003 }, (i * 31) % 97, i % 1009]).collect();
-        let ids = |f: Found| { let mut v: Vec<u32> = f.ids().collect(); v.sort_unstable(); v };
-        for cols in [vec![0], vec![0, 1], vec![0, 1, 2]] {
+        let rows: Vector<i64> = (0..n).flat_map(|i| [if i % 2 == 0 { i % 3 } else { (i * 7919) % 2003 }, (i * 31) % 97, i % 1009]).collect();
+        let ids = |f: Found| { let mut v: Vector<u32> = f.ids().collect(); v.sort_unstable(); v };
+        for cols in [rerail_blocks::vector![0], rerail_blocks::vector![0, 1], rerail_blocks::vector![0, 1, 2]] {
             let (mut plain, mut printed) = (Index::new(cols.clone()), Index::printed(cols.clone()));
             for (w, (lo, hi)) in [(0, 2500), (2500, 4000), (4000, 6000)].into_iter().enumerate() {
                 plain.add_run(&rows, k, lo, hi, w as u32 + 1);
                 printed.add_run(&rows, k, lo, hi, w as u32 + 1);
             }
             // Keys: every row's, and as many absent (values no row holds in some column).
-            let mut keys: Vec<Vec<i64>> = (0..n as usize).map(|r| cols.iter().map(|&c| rows[r * k + c]).collect()).collect();
+            let mut keys: Vec<Vector<i64>> = (0..n as usize).map(|r| cols.iter().map(|&c| rows[r * k + c]).collect()).collect();
             keys.extend((0..n).map(|i| cols.iter().enumerate().map(|(j, _)| if j + 1 == cols.len() { 5000 + i } else { i % 3 }).collect()));
-            let check = |plain: &Index, printed: &Index, keys: &[Vec<i64>]| {
+            let check = |plain: &Index, printed: &Index, keys: &[Vector<i64>]| {
                 let (mut h0, mut h1) = ([0u32; HINTS], [0u32; HINTS]);
                 for key in keys {
                     let want = ids(plain.find(&rows, k, key, None));
@@ -2145,8 +2176,8 @@ pub mod tests {
     #[test]
     fn a_tagged_order_finds_keys_in_long_spans_of_one_leading_value() {
         let k = 3;
-        let rows: Vec<i64> = (0..20_000i64).flat_map(|i| [i % 3, (i * 7919) % 500, i]).collect();
-        let mut ix = Index::new(vec![0, 1, 2]);
+        let rows: Vector<i64> = (0..20_000i64).flat_map(|i| [i % 3, (i * 7919) % 500, i]).collect();
+        let mut ix = Index::new(rerail_blocks::vector![0, 1, 2]);
         ix.add_run(&rows, k, 0, 12_000, 1);
         ix.add_run(&rows, k, 12_000, 20_000, 2);
         assert!(ix.runs.iter().all(|(r, _)| r.tags.len() == r.ids.len()), "the full-row order keeps a tag an id");
@@ -2160,8 +2191,8 @@ pub mod tests {
         assert_eq!(ix.find(&rows, k, &[1, (4 * 7919) % 500, 4], None).len(), 1);
         assert_eq!(ix.find(&rows, k, &[1, (4 * 7919) % 500, 5], None).len(), 0);
         // The dedup test, a sorted batch: rows held and not, sorted as the order sorts them.
-        let probe: Vec<i64> = [[1, (4 * 7919) % 500, 4], [1, (4 * 7919) % 500, 5], [2, (5 * 7919) % 500, 5], [0, 3, 20_001]].concat();
-        let mut order: Vec<u32> = (0..4).collect();
+        let probe: Vector<i64> = [[1, (4 * 7919) % 500, 4], [1, (4 * 7919) % 500, 5], [2, (5 * 7919) % 500, 5], [0, 3, 20_001]].concat().into_iter().collect();
+        let mut order: Vector<u32> = (0..4).collect();
         order.sort_by(|&a, &b| cmp_vals(&ix.cols, true, &probe[a as usize * k..][..k], &probe[b as usize * k..][..k]));
         let mut held = vec![false; 4];
         ix.held_sorted(&rows, k, &probe, &order, |_| true, &mut held);
@@ -2180,10 +2211,10 @@ pub mod tests {
     #[test]
     fn sorting_by_tag_is_the_orders_sort() {
         let k = 3;
-        let rows: Vec<i64> = (0..30_000i64).flat_map(|i| [(i * 37) % 1009, i % 5, (i * 7) % 11]).collect();
+        let rows: Vector<i64> = (0..30_000i64).flat_map(|i| [(i * 37) % 1009, i % 5, (i * 7) % 11]).collect();
         let cols = [0usize, 1, 2];
         let run = Run::of(&rows, k, &cols, 0..30_000u32);
-        let mut want: Vec<u32> = (0..30_000).collect();
+        let mut want: Vector<u32> = (0..30_000).collect();
         want.sort_unstable_by(|&a, &b| cmp_rows(&rows, k, &cols, a, b));
         assert_eq!(run.ids.to_vec(), want);
         assert!(run.ids.iter().zip(&run.tags).all(|(id, &t)| t == tag(rows[id as usize * k])));

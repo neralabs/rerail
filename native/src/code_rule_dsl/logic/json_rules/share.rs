@@ -2,6 +2,7 @@
 //! metavariable that crosses a helper's boundary), `passed_in_patterns`, `drop_dead_columns`,
 //! `stop_with_columns` and `inline_unsafe` (unfold a helper whose rule leaves a column unbound).
 
+use rerail_blocks::vector::Vector;
 use super::program::Program;
 use super::patterns::Patterns;
 use super::pyre::{captures, esc, findall, g, is_meta, re, sub};
@@ -59,8 +60,8 @@ struct Ctx<'a> {
     prog: &'a Program,
     helpers: &'a Set,
     rules: &'a [RInfo],
-    by_owner: &'a BTreeMap<String, Vec<usize>>,
-    callers: &'a BTreeMap<String, Vec<usize>>,
+    by_owner: &'a BTreeMap<String, Vector<usize>>,
+    callers: &'a BTreeMap<String, Vector<usize>>,
     forced: &'a BTreeMap<String, Set>,
     always: &'a BTreeMap<String, Set>,
 }
@@ -77,7 +78,7 @@ impl Ctx<'_> {
 
     fn param_bound(&self, owner: &str, x: &str, seen: &Set) -> bool {
         let px = self.px;
-        if seen.contains(owner) || self.callers.get(owner).is_none_or(Vec::is_empty) {
+        if seen.contains(owner) || self.callers.get(owner).is_none_or(|v| v.is_empty()) {
             return false;
         }
         let first = self.by_owner[owner][0];
@@ -160,11 +161,11 @@ pub fn share_metavariables(px: &Patterns, prog: &mut Program, entries: &[usize],
             }
         }
     }
-    let mut by_owner: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut by_owner: BTreeMap<String, Vector<usize>> = BTreeMap::new();
     for (i, r) in rules.iter().enumerate() {
         by_owner.entry(r.owner.clone()).or_default().push(i);
     }
-    let mut callers: BTreeMap<String, Vec<usize>> = helpers.iter().map(|h| (h.clone(), Vec::new())).collect();
+    let mut callers: BTreeMap<String, Vector<usize>> = helpers.iter().map(|h| (h.clone(), Vector::new())).collect();
     for (i, r) in rules.iter().enumerate() {
         for h in &r.calls {
             callers.get_mut(h).expect("a helper").push(i);
@@ -177,7 +178,7 @@ pub fn share_metavariables(px: &Patterns, prog: &mut Program, entries: &[usize],
         let old: Vec<(Set, Set, Set, Set)> = helpers.iter().map(|h| (provides[h].clone(), free_in[h].clone(), needed[h].clone(), forced[h].clone())).collect();
         let mut fresh = new_map();
         for h in helpers {
-            for &ri in by_owner.get(h).map(Vec::as_slice).unwrap_or(&[]) {
+            for &ri in by_owner.get(h).map(|v| v.as_slice()).unwrap_or(&[]) {
                 let r = &rules[ri];
                 let own_binds: Set = r.binds.difference(&forced[h]).cloned().collect();
                 let mut bound = own_binds.clone();
@@ -209,7 +210,7 @@ pub fn share_metavariables(px: &Patterns, prog: &mut Program, entries: &[usize],
             let prev = always.clone();
             for gname in helpers {
                 let mut acc: Option<Set> = None;
-                for &ri in by_owner.get(gname).map(Vec::as_slice).unwrap_or(&[]) {
+                for &ri in by_owner.get(gname).map(|v| v.as_slice()).unwrap_or(&[]) {
                     let r = &rules[ri];
                     let mut b: Set = r.tbinds.difference(&r.local).cloned().collect();
                     for c in &r.tcalls {
@@ -231,7 +232,7 @@ pub fn share_metavariables(px: &Patterns, prog: &mut Program, entries: &[usize],
                 continue;
             }
             let mut tprov = Set::new();
-            for &ri in by_owner.get(h).map(Vec::as_slice).unwrap_or(&[]) {
+            for &ri in by_owner.get(h).map(|v| v.as_slice()).unwrap_or(&[]) {
                 let r = &rules[ri];
                 tprov.extend(r.binds.difference(&r.local).cloned());
                 for gg in &r.top_calls {
@@ -288,7 +289,7 @@ pub fn share_metavariables(px: &Patterns, prog: &mut Program, entries: &[usize],
     let shared = Shared {
         order: order.clone(),
         inputs: helpers.iter().map(|h| (h.clone(), free_in[h].clone())).collect(),
-        params: helpers.iter().map(|h| (h.clone(), union_of(by_owner.get(h).map(Vec::as_slice).unwrap_or(&[]).iter().map(|&ri| &rules[ri].params)))).collect(),
+        params: helpers.iter().map(|h| (h.clone(), union_of(by_owner.get(h).map(|v| v.as_slice()).unwrap_or(&[]).iter().map(|&ri| &rules[ri].params)))).collect(),
     };
     for r in &rules {
         let e = r.e;
@@ -376,8 +377,8 @@ struct DInfo {
 
 /// A column passed in that no call feeds is removed from the declaration, the heads and every call.
 pub fn drop_dead_columns(px: &Patterns, prog: &mut Program, entries: &[usize], helpers: &Set, shared: &Shared) {
-    let live: Vec<usize> = entries.iter().copied().filter(|&e| !prog.arena[e].drop).collect();
-    let mut heads: IndexMap<String, Vec<usize>> = IndexMap::new();
+    let live: Vector<usize> = entries.iter().copied().filter(|&e| !prog.arena[e].drop).collect();
+    let mut heads: IndexMap<String, Vector<usize>> = IndexMap::new();
     for &e in &live {
         let h = prog.arena[e].name().to_owned();
         if helpers.contains(&h) {
@@ -391,7 +392,7 @@ pub fn drop_dead_columns(px: &Patterns, prog: &mut Program, entries: &[usize], h
     // a param the util's body captures (a pattern's `$X`, `X = …`, a regex group), or passes to a column of a rule
     // it calls that captures it: an output. One it only passes on to a column that reads it (a helper's input) is
     // read, not captured: the caller's value goes through.
-    fn binds_in(px: &Patterns, prog: &Program, heads: &IndexMap<String, Vec<usize>>, g: &str, x: &str, seen: &mut BTreeSet<(String, String)>) -> bool {
+    fn binds_in(px: &Patterns, prog: &Program, heads: &IndexMap<String, Vector<usize>>, g: &str, x: &str, seen: &mut BTreeSet<(String, String)>) -> bool {
         if !seen.insert((g.to_owned(), x.to_owned())) {
             return false;
         }
@@ -651,7 +652,7 @@ fn head_vars(head: &str) -> Vec<String> {
 /// them, so only a helper that got no demand is unfolded for them, and so is a column an unfolding in this pass left
 /// unbound.
 pub fn inline_unsafe(px: &Patterns, prog: &mut Program, entries: &[usize], helpers: &Set, passed: &BTreeMap<String, Set>, after_demand: bool) {
-    let mut by: IndexMap<String, Vec<usize>> = IndexMap::new();
+    let mut by: IndexMap<String, Vector<usize>> = IndexMap::new();
     for &e in entries {
         by.entry(prog.arena[e].name().to_owned()).or_default().push(e);
     }
@@ -679,7 +680,7 @@ pub fn inline_unsafe(px: &Patterns, prog: &mut Program, entries: &[usize], helpe
     };
     let calls_of = |prog: &Program, h: &str| -> Set {
         let mut out = Set::new();
-        for &e in by.get(h).map(Vec::as_slice).unwrap_or(&[]) {
+        for &e in by.get(h).map(|v| v.as_slice()).unwrap_or(&[]) {
             if prog.arena[e].drop {
                 continue;
             }
@@ -748,7 +749,7 @@ pub fn inline_unsafe(px: &Patterns, prog: &mut Program, entries: &[usize], helpe
 }
 
 /// The alternatives of h's rules at a call with args.
-fn expansion(px: &Patterns, prog: &Program, by: &IndexMap<String, Vec<usize>>, helpers: &Set, h: &str, args: &[String], known: &Set, counter: &mut usize) -> Vec<String> {
+fn expansion(px: &Patterns, prog: &Program, by: &IndexMap<String, Vector<usize>>, helpers: &Set, h: &str, args: &[String], known: &Set, counter: &mut usize) -> Vec<String> {
     let mut alts = Vec::new();
     let mut outputs = Set::new();
     for &e in &by[h] {

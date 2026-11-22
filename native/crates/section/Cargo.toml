@@ -1,0 +1,10 @@
+[package]
+name = "rerail-section"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Sections: a tree of plan or analysis values encoded once into words in a block, and read in place through its archived view (decision 0569 §4)."
+
+[dependencies]
+rerail-section-derive = { path = "../section_derive" }
+rerail-vector = { path = "../vector" }

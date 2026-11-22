@@ -11,6 +11,7 @@
 //! write (`sweep`): the transaction may still roll back when this one returns, and a process that mapped one keeps
 //! reading it.
 
+use rerail_blocks::vector::Vector;
 use super::atoms::stored::{clone_file, new_tag, private_dir, sync_dir};
 use super::{StoreError, StoreResult};
 use rerail_blocks::kept::{FactKey, KeptChain, KeptFacts, KeptRead, KeptW, Meta, Newest};
@@ -23,7 +24,7 @@ use std::path::{Path, PathBuf};
 type MapIds<'a> = &'a dyn Fn(&mut [i64]) -> StoreResult<()>;
 
 /// A put's rows as columns: the values (`n` rows of `a`, column-major), `n`, `a`, and each row's level.
-type Columns = (Vec<i64>, usize, usize, Option<Vec<u32>>);
+type Columns = (Vector<i64>, usize, usize, Option<Vector<u32>>);
 
 /// The bytes of replaced rows under which a chain is not rolled up for them: a roll-up then saves less than it costs.
 const ROLL_FLOOR: usize = 1 << 20;
@@ -43,11 +44,11 @@ pub enum KeptWhat {
     /// Rows not held as a relation (an input's granule): `n` rows of `widths.len()` columns, flat; each row's level
     /// (decision 0090) where its relation has them. `given`: kept in the order given, every row (an input's granule
     /// or documents' table, read by position); else in canonical order, as a relation's.
-    Flat { widths: Vec<u32>, rows: Vec<i64>, n: usize, levels: Option<Vec<u32>>, given: bool },
+    Flat { widths: Vector<u32>, rows: Vector<i64>, n: usize, levels: Option<Vector<u32>>, given: bool },
     /// A documents' table (`document_places`): `n` rows as the run gives them (`DOCUMENT_WORDS` each), kept in that
     /// order with each document's places, which the writer finds as it writes them (decision 0494 step 4 part 2).
     /// `tape`: the grammar its tapes are found in (grammar id, grammar version, tape format version).
-    Documents { rows: Vec<i64>, n: usize, tape: Option<[i64; 3]> },
+    Documents { rows: Vector<i64>, n: usize, tape: Option<[i64; 3]> },
     /// The kept entry's rows as they are, with these reads (a frame's retag).
     Reads,
     /// No longer kept.
@@ -139,7 +140,7 @@ fn columns(what: &KeptWhat, types: &[u8], map: Option<MapIds>) -> StoreResult<Co
             // A continuation (decision 0384 steps 7 and 8) is kept with every row it reads, its base's first: its
             // ids run down the chain, its base's dead bits read through its view (as `packed::pack_open` reads it).
             let (total, a) = (rel.len_all() as usize, rel.arity as usize);
-            let mut all = vec![0i64; total * a];
+            let mut all = rerail_blocks::vector![0i64; total * a];
             for c in 0..a {
                 let col = &mut all[c * total..(c + 1) * total];
                 if rel.continues() {
@@ -156,11 +157,11 @@ fn columns(what: &KeptWhat, types: &[u8], map: Option<MapIds>) -> StoreResult<Co
             let levels = r.levels();
             let levels = (levels.len() == total && total > 0).then_some(levels);
             if (0..total).all(live) {
-                (all, total, a, levels.map(<[u32]>::to_vec))
+                (all, total, a, levels.map(Vector::<u32>::from))
             } else {
-                let ids: Vec<usize> = (0..total).filter(|&id| live(id)).collect();
+                let ids: Vector<usize> = (0..total).filter(|&id| live(id)).collect();
                 let n = ids.len();
-                let mut cols = vec![0i64; n * a];
+                let mut cols = rerail_blocks::vector![0i64; n * a];
                 for c in 0..a {
                     for (o, &id) in cols[c * n..(c + 1) * n].iter_mut().zip(&ids) {
                         *o = all[c * total + id];
@@ -171,7 +172,7 @@ fn columns(what: &KeptWhat, types: &[u8], map: Option<MapIds>) -> StoreResult<Co
         }
         KeptWhat::Flat { widths, rows, n, levels, .. } => {
             let a = widths.len();
-            let mut cols = vec![0i64; n * a];
+            let mut cols = rerail_blocks::vector![0i64; n * a];
             for (r, row) in rows.chunks_exact(a.max(1)).take(*n).enumerate() {
                 for (c, &v) in row.iter().enumerate() {
                     cols[c * n + r] = v;
@@ -232,7 +233,7 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
         .map(|mut p| {
             if let KeptWhat::Documents { rows, n, tape } = &p.what {
                 let rows = super::document_places::resolve(t, rows, *n, *tape)?;
-                p.what = KeptWhat::Flat { widths: vec![8; super::PLACED_WORDS], rows, n: *n, levels: None, given: true };
+                p.what = KeptWhat::Flat { widths: rerail_blocks::vector![8; super::PLACED_WORDS], rows, n: *n, levels: None, given: true };
             }
             Ok(p)
         })

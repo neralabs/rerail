@@ -124,7 +124,7 @@ pub struct Row {
 
 impl Compiled {
     /// `src`'s tape image, or `None` where the grammar refuses the file.
-    pub fn image(&self, src: &[u8]) -> Option<Vec<u8>> {
+    pub fn image(&self, src: &[u8]) -> Option<rerail_tape_format::Vector<u8>> {
         self.parser.image(src).ok()
     }
 
@@ -145,7 +145,7 @@ impl Compiled {
     }
 
     /// `src`'s tape by the interpreter: its tier 1 and its tier 2, the program's meaning.
-    pub fn interpreter_image(&self, src: &[u8]) -> Option<Vec<u8>> {
+    pub fn interpreter_image(&self, src: &[u8]) -> Option<rerail_tape_format::Vector<u8>> {
         let run = self.program.block_programs[0].run(src);
         let nodes = rerail_compiler::stream::run(&self.program, src, &run).ok()?;
         Some(rerail_compiler::stream::image(&nodes, &self.program.readings.extras, 0, src))
@@ -161,7 +161,7 @@ impl Compiled {
     /// Each of `files`' tapes, tier 1 on Metal and tier 2 over its buffers; `None` for a file
     /// refused; the device's error where it cannot run the batch.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>, rerail_compiler::Error> {
+    pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<rerail_tape_format::Vector<u8>>>, rerail_compiler::Error> {
         use rerail_metal::block_program::serial::{Segments, run_resident};
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
         match run_resident(&[&self.native], &batch, Segments { blocks: 29, warm: 1 }) {

@@ -55,7 +55,7 @@ pub struct Bytewise<'a> {
     /// The refill's words the body stores in its rows (decision 0361, `native_cpu_block::
     /// refill_rows`): the outputs, and the row slot of the block's rare starts' word. The
     /// refill loads them where its block is made, as simdjson's stage 2 reads stage 1's index.
-    pub rows: Option<(Vec<u16>, Option<i32>)>,
+    pub rows: Option<(rerail_blocks::vector::Vector<u16>, Option<i32>)>,
     /// Whether the body stores those words in its rows. Not where it hands every block's to the
     /// token loop (0374): the refill's cold way classifies the block's bytes again.
     pub rows_stored: bool,
@@ -1851,10 +1851,10 @@ mod tests {
             tables: Vec::new(),
             // 0 `"`, 1 `'`, 2 either, 3 `"` one back, 4 `"` then `"` (`"` at p - 1 and p).
             insts: vec![BlockInst::EqByte(b'"'), BlockInst::EqByte(b'\''), BlockInst::Or(0, 1), BlockInst::Prev(0, 1), BlockInst::And(3, 0), BlockInst::Not(1), BlockInst::AndNot(0, 1)],
-            outputs: vec![2],
-            extracts: Vec::new(),
-            totals: Vec::new(),
-            masks: Vec::new(),
+            outputs: rerail_blocks::vector![2],
+            extracts: rerail_blocks::vector::Vector::new(),
+            totals: rerail_blocks::vector::Vector::new(),
+            masks: rerail_blocks::vector::Vector::new(),
             newlines: None,
             delay: 0,
             output_delays: vec![0],
@@ -1910,10 +1910,10 @@ mod tests {
         let native = BlockNative {
             tables: vec![t0, t1],
             insts: vec![BlockInst::Class { table: 0, bits: 0b11 }, BlockInst::Class { table: 1, bits: 0b1111 }],
-            outputs: vec![0, 1],
-            extracts: Vec::new(),
-            totals: Vec::new(),
-            masks: Vec::new(),
+            outputs: rerail_blocks::vector![0, 1],
+            extracts: rerail_blocks::vector::Vector::new(),
+            totals: rerail_blocks::vector::Vector::new(),
+            masks: rerail_blocks::vector::Vector::new(),
             newlines: None,
             delay: 0,
             output_delays: vec![0, 0],
@@ -2014,10 +2014,10 @@ mod tests {
                 BlockInst::Prev(9, 1),
                 BlockInst::And(10, 0),
             ],
-            outputs: vec![3, 4, 8, 11],
-            extracts: Vec::new(),
-            totals: Vec::new(),
-            masks: Vec::new(),
+            outputs: rerail_blocks::vector![3, 4, 8, 11],
+            extracts: rerail_blocks::vector::Vector::new(),
+            totals: rerail_blocks::vector::Vector::new(),
+            masks: rerail_blocks::vector::Vector::new(),
             newlines: None,
             delay: 0,
             output_delays: vec![0; 4],

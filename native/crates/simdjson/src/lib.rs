@@ -17,6 +17,7 @@
 
 pub use rerail_simdjson_native::{Error, Kernel, implementation, structurals};
 use rerail_simdjson_native::{KEEP, Sink, release_above};
+pub use rerail_vector::vector::Vector;
 
 /// `grow`: each buffer holds `need[i]` bytes, its first `len[i]` kept.
 unsafe extern "C" fn grow(sink: *mut Sink, need: *const usize) {
@@ -24,7 +25,7 @@ unsafe extern "C" fn grow(sink: *mut Sink, need: *const usize) {
     // `need` of 5; it has written the first `len[i]` bytes of each.
     unsafe {
         let sink = &mut *sink;
-        let columns = &mut *sink.ctx.cast::<[Vec<u8>; 5]>();
+        let columns = &mut *sink.ctx.cast::<[Vector<u8>; 5]>();
         for (i, v) in columns.iter_mut().enumerate() {
             v.set_len(sink.len[i]);
             let need = *need.add(i);
@@ -71,14 +72,14 @@ pub struct Kinds {
 #[derive(Clone, Debug, Default)]
 pub struct Tape {
     /// Each node's code, an index into `codes`, 2 bytes little-endian.
-    pub code: Vec<u8>,
-    /// The file's codes, in first-use order: kind, field, and whether the node is in a value's place
+    pub code: Vector<u8>,
+    /// The file's codes, in first-use order: kind, field, and whether the node is in a value's place, 1 or 0
     /// (tree-sitter-json's `_value` supertype: the document's child, an array element, a pair's value).
-    pub codes: Vec<(u16, u16, bool)>,
-    pub size: Vec<u8>,
-    pub base: Vec<u8>,
-    pub off: Vec<u8>,
-    pub tail: Vec<u8>,
+    pub codes: Vector<[u16; 3]>,
+    pub size: Vector<u8>,
+    pub base: Vector<u8>,
+    pub off: Vector<u8>,
+    pub tail: Vector<u8>,
     /// `size`, `off` and `tail`'s widths in bytes (2 or 4); every tail is from the last descendant's start.
     pub widths: [u8; 3],
     /// The source's SHA-256, where the pass that read it computed it (`tape`, not `tape_from_index`).
@@ -165,7 +166,7 @@ fn run_as(kernel: Kernel, src: &[u8], kinds: &Kinds, read: Read) -> Result<Tape,
     if src.len() >= u32::MAX as usize / 2 {
         return Err(Refusal::TooLarge);
     }
-    let mut columns: [Vec<u8>; 5] = Default::default();
+    let mut columns: [Vector<u8>; 5] = Default::default();
     let mut sink = sink(kinds, (&raw mut columns).cast());
     // SAFETY: the sink's buffers are `columns`, which `grow` grows; the shim writes them only within
     // what `grow` gave.
@@ -185,13 +186,8 @@ fn run_as(kernel: Kernel, src: &[u8], kinds: &Kinds, read: Read) -> Result<Tape,
             for (v, &len) in columns.iter_mut().zip(&sink.len) {
                 // SAFETY: the shim wrote `len` bytes of each, within its capacity.
                 unsafe { v.set_len(len) };
-                // The buffers were made for the most nodes a file of its length can have: what the
-                // tape does not use is given back.
-                if v.capacity() > len + len / 2 + 64 {
-                    v.shrink_to_fit();
-                }
             }
-            let codes = (0..sink.codes as usize).map(|i| (sink.code_kind[i], sink.code_field[i], sink.code_value[i] != 0)).collect();
+            let codes = (0..sink.codes as usize).map(|i| [sink.code_kind[i], sink.code_field[i], u16::from(sink.code_value[i] != 0)]).collect();
             let [code, size, off, tail, base] = columns;
             Ok(Tape { code, codes, size, base, off, tail, widths: sink.width, digest: Some(sink.digest) })
         }
@@ -340,9 +336,9 @@ struct Writer<'k> {
     /// A code's id in this file, by `slot * 3 + field`; `u16::MAX` until first used.
     ids: [u16; SLOTS * 3],
     tape: Tape,
-    size: Vec<u32>,
-    off: Vec<u32>,
-    tail: Vec<u32>,
+    size: Vector<u32>,
+    off: Vector<u32>,
+    tail: Vector<u32>,
     base: u32,
     /// The start of the last node written: an ending node's last descendant.
     last_start: u32,
@@ -364,7 +360,7 @@ impl Writer<'_> {
             let kind = [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null][slot];
             let field_id = [0, k.key_field, k.value_field][field];
             // A value's place: the kinds a value can be, unless keyed.
-            self.tape.codes.push((kind, field_id, slot >= OBJECT && field != KEY));
+            self.tape.codes.push([kind, field_id, u16::from(slot >= OBJECT && field != KEY)]);
         }
         self.tape.code.extend_from_slice(&id.to_le_bytes());
         if (ord as usize).is_multiple_of(STRIDE) {
@@ -397,7 +393,7 @@ impl Writer<'_> {
     }
 
     fn finish(mut self) -> Tape {
-        let narrow = |cells: &[u32], max: u32, out: &mut Vec<u8>| -> u8 {
+        let narrow = |cells: &[u32], max: u32, out: &mut Vector<u8>| -> u8 {
             if max <= 0xffff {
                 out.reserve(cells.len() * 2);
                 out.extend(cells.iter().flat_map(|&c| (c as u16).to_le_bytes()));
@@ -430,10 +426,10 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
     let mut w = Writer {
         kinds,
         ids: [u16::MAX; SLOTS * 3],
-        tape: Tape { code: Vec::with_capacity(guess * 2), base: Vec::with_capacity(guess / STRIDE * 4 + 4), ..Tape::default() },
-        size: Vec::with_capacity(guess),
-        off: Vec::with_capacity(guess),
-        tail: Vec::with_capacity(guess),
+        tape: Tape { code: Vector::with_capacity(guess * 2), base: Vector::with_capacity(guess / STRIDE * 4 + 4), ..Tape::default() },
+        size: Vector::with_capacity(guess),
+        off: Vector::with_capacity(guess),
+        tail: Vector::with_capacity(guess),
         base: 0,
         last_start: 0,
         max_off: 0,
@@ -788,7 +784,7 @@ mod tests {
                         // A node's end: its last descendant's start plus its tail.
                         let last = i + u16s(&t.size, i) as usize - 1;
                         let end = base(last) + u16s(&t.off, last) + u16s(&t.tail, i);
-                        (t.codes[u16s(&t.code, i) as usize].0, start, end)
+                        (t.codes[u16s(&t.code, i) as usize][0], start, end)
                     })
                     .collect()
             };

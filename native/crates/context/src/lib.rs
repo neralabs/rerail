@@ -41,6 +41,19 @@ pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
 
 pub type AnyArc = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 
+/// The value of type `T` in `values`, made the first time it is asked for. It is made with the lock let go: a value's
+/// default may ask for another of the same values (a map's room, `rerail_blocks::maps::default_room`), and the lock is
+/// not reentrant. Two threads that both find none may both make one: the first put in is kept, and the other dropped.
+fn made<T: Default + Send + Sync + 'static>(values: &parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, AnyArc>>) -> AnyArc {
+    let key = std::any::TypeId::of::<T>();
+    if let Some(v) = values.lock().get(&key) {
+        return std::sync::Arc::clone(v);
+    }
+    let fresh: AnyArc = std::sync::Arc::new(T::default());
+    std::sync::Arc::clone(values.lock().entry(key).or_insert(fresh))
+}
+
+
 /// The place a setting is read (its file, line and column) and the type it is read as.
 type SettingPlace = (&'static str, u32, u32, std::any::TypeId);
 
@@ -79,8 +92,7 @@ impl Machine {
     }
     /// Its value of type `T`, made the first time it is asked for.
     pub fn get<T: Default + Send + Sync + 'static>(&self) -> std::sync::Arc<T> {
-        let v = std::sync::Arc::clone(self.values.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
-        v.downcast::<T>().expect("a machine value's type is its key")
+        made::<T>(&self.values).downcast::<T>().expect("a machine value's type is its key")
     }
 }
 
@@ -99,8 +111,7 @@ impl Shared {
     }
     /// Its value of type `T`, made the first time it is asked for.
     pub fn get<T: Default + Send + Sync + 'static>(&self) -> std::sync::Arc<T> {
-        let v = std::sync::Arc::clone(self.values.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
-        v.downcast::<T>().expect("a shared value's type is its key")
+        made::<T>(&self.values).downcast::<T>().expect("a shared value's type is its key")
     }
     /// Its value of type `T`, if it was made.
     pub fn get_if_any<T: Send + Sync + 'static>(&self) -> Option<std::sync::Arc<T>> {
@@ -824,7 +835,7 @@ fn local_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
         missed(std::any::type_name::<T>());
         return std::sync::Arc::new(T::default());
     };
-    let v = std::sync::Arc::clone(run.values().locals.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
+    let v = made::<T>(&run.values().locals);
     let _ = SEEN.try_with(|seen| seen.borrow_mut().of(&run).locals.insert(std::any::TypeId::of::<T>(), v.clone()));
     v.downcast::<T>().expect("a local's type is its key")
 }
@@ -973,7 +984,9 @@ mod tests {
             let (says, run) = (Says(seen.clone()), job_run());
             std::thread::spawn(move || {
                 if carried {
-                    in_run(run, move || drop(&says));
+                    in_run(run, move || {
+                        let _ = &says;
+                    });
                 } else {
                     let _in = enter(run);
                     let _ = &says;

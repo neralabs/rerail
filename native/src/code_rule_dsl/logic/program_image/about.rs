@@ -3,6 +3,7 @@
 //!
 //! Every relation an about row names has an id (`RELATION_COLUMNS`, made so by the builder), as every relation a
 //! rule, a declaration, a fact or the inputs and outputs name has: so an analysis keys all of them by `RelId`.
+use rerail_blocks::vector::Vector;
 use super::build::Builder;
 use super::version::Version;
 use super::{AtomId, Cell, RelId};
@@ -43,6 +44,7 @@ pub fn relation_columns(rel: &str) -> &'static [usize] {
 
 /// A native relation's kind (`front::ast::Native`'s variants).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
 pub enum NativeKind {
     DfsFirst,
     MatchAll,
@@ -54,9 +56,11 @@ pub enum NativeKind {
     ReachThrough,
     Rank,
 }
+rerail_section::plain_archive!(NativeKind);
 
 /// A native relation: its kind, the relations it reads (`front::ast::Native::reads`, in its order) and its every field.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, rerail_section::Archive)]
+#[archive(derive(Debug, PartialEq))]
 pub struct NativeRef {
     pub rel: RelId,
     pub kind: NativeKind,
@@ -66,7 +70,8 @@ pub struct NativeRef {
 
 /// A native relation's fields (`front::ast::Native`'s, variant by variant): each relation by its id, each other name by
 /// its atom.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, rerail_section::Archive)]
+#[archive(derive(Debug, PartialEq))]
 pub enum NativeSpec {
     DfsFirst { edge: RelId, target: RelId, roots: Option<RelId> },
     /// Its groups in order.
@@ -95,33 +100,82 @@ pub struct LatticeRef {
     pub merge: Option<AtomId>,
     pub widen: Option<u32>,
 }
+rerail_section::plain_archive!(LatticeRef);
 
-/// A version's other fields, read once from its about rows.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct About {
+/// A version's other fields, read once from its about rows, as a section (decision 0569 §4): read in place
+/// (`ArchivedAboutData`), shared by a count.
+#[derive(Clone)]
+pub struct About(std::sync::Arc<rerail_section::Section<AboutData>>);
+
+impl About {
+    /// The about rows of `v`, read.
+    pub fn of(v: &Version) -> About {
+        About(std::sync::Arc::new(rerail_section::Section::of(&AboutData::of(v))))
+    }
+}
+
+impl std::ops::Deref for About {
+    type Target = ArchivedAboutData;
+    fn deref(&self) -> &ArchivedAboutData {
+        self.0.get()
+    }
+}
+
+impl Default for About {
+    fn default() -> About {
+        About(std::sync::Arc::new(rerail_section::Section::of(&AboutData::default())))
+    }
+}
+
+impl PartialEq for About {
+    fn eq(&self, o: &About) -> bool {
+        **self == **o
+    }
+}
+
+impl Eq for About {}
+
+impl std::fmt::Debug for About {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
+/// The fields `About` holds, as they are read from the about rows.
+#[derive(Default, rerail_section::Archive)]
+#[archive(derive(Debug, PartialEq))]
+pub struct AboutData {
     /// Each request and a relation it produces, by request then in order (`Program::answers`).
+    #[archive(flat)]
     pub answers: Vec<(RelId, RelId)>,
     /// Each native relation, by relation id.
     pub natives: Vec<NativeRef>,
     /// Each lattice relation, by relation id.
+    #[archive(flat)]
     pub lattice: Vec<LatticeRef>,
     /// How many gates the program has (`Program::gates`).
     pub gates: usize,
     /// The relations of no columns (`Program::nullary`), by relation id.
+    #[archive(flat)]
     pub nullary: Vec<RelId>,
     /// Each relation's qualifiers (`Program::qualifiers`): (the relation's name, the word), sorted.
+    #[archive(flat)]
     pub qualifiers: Vec<(AtomId, AtomId)>,
     /// The demanded relations (`Program::demand`), by name, sorted.
+    #[archive(flat)]
     pub demand: Vec<AtomId>,
     /// The demanded relations in the program's order (`Program::demand`, `*` among them).
+    #[archive(flat)]
     pub demand_list: Vec<AtomId>,
     /// The gates' relations (`Program::gates`' keys), by name, sorted.
+    #[archive(flat)]
     pub gate_keys: Vec<AtomId>,
     /// Each gate in the program's order (`Program::gates`).
     pub gate_list: Vec<GateRef>,
     /// Each kind set and its kinds, in order (`Program::kindsets`), by name.
     pub kindsets: Vec<(AtomId, Vec<AtomId>)>,
     /// Each relation's columns declared `tape` (`Program::tapes`), sorted.
+    #[archive(flat)]
     pub tapes: Vec<(RelId, usize)>,
     /// The join shape directives, in the program's order (`Program::shapes`).
     pub shapes: Vec<ShapeRef>,
@@ -131,7 +185,8 @@ pub struct About {
 
 /// A gate (`front::ast::Gate`): its key, its relation, its level, its source, and the relations it quiets and depends on,
 /// in order.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, rerail_section::Archive)]
+#[archive(derive(Debug, PartialEq))]
 pub struct GateRef {
     pub key: AtomId,
     pub rel: Option<RelId>,
@@ -142,7 +197,8 @@ pub struct GateRef {
 }
 
 /// A join shape directive (`front::ast::Shape`), each part by its atom.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, rerail_section::Archive)]
+#[archive(derive(Debug, PartialEq))]
 pub struct ShapeRef {
     pub head: AtomId,
     pub lit: AtomId,
@@ -151,16 +207,17 @@ pub struct ShapeRef {
 }
 
 /// When a shape's literal may join (`front::ast::ShapeWait`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, rerail_section::Archive)]
+#[archive(derive(Debug, PartialEq))]
 pub enum ShapeWaitRef {
     After(AtomId),
     Bound(Vec<AtomId>),
 }
 
-impl About {
+impl AboutData {
     /// The about rows of `v`, read.
-    pub fn of(v: &Version) -> About {
-        let mut about = About::default();
+    pub fn of(v: &Version) -> AboutData {
+        let mut about = AboutData::default();
         let rel = |c: Cell| match c {
             Cell::Str(a) => v.rel_of(a),
             Cell::Int(_) | Cell::Branded(_) => None,
@@ -393,8 +450,10 @@ impl About {
         about.gate_keys.sort_unstable();
         about
     }
+}
 
-    pub fn native(&self, rel: RelId) -> Option<&NativeRef> {
+impl ArchivedAboutData {
+    pub fn native(&self, rel: RelId) -> Option<&ArchivedNativeRef> {
         self.natives.binary_search_by_key(&rel, |n| n.rel).ok().map(|k| &self.natives[k])
     }
     pub fn lattice_of(&self, rel: RelId) -> Option<AtomId> {
@@ -411,6 +470,7 @@ impl About {
     pub fn produced(&self) -> impl Iterator<Item = (RelId, RelId)> + '_ {
         self.answers.iter().map(|&(req, p)| (p, req))
     }
+
 }
 
 /// The about rows' program name (`program_image::ABOUT`): each row's first cell.
@@ -456,7 +516,7 @@ impl Builder<'_> {
     pub(in crate::code_rule_dsl::logic::program_image) fn set_lattice_keys(&mut self, rel: &str, keys: usize) {
         let a = self.atom(rel);
         let mut rows = self.about_rows("lattice");
-        for row in &mut rows {
+        for row in rows.iter_mut() {
             if row.get(1) == Some(&Cell::Str(a)) {
                 row[2] = Cell::Int(keys as i64);
             }
@@ -472,15 +532,18 @@ impl Builder<'_> {
             return;
         }
         let mut seen = std::collections::HashSet::new();
-        let mut renamed = Vec::with_capacity(rows.len());
-        for mut row in rows {
+        let mut renamed = super::encoder::Rows::new();
+        let mut row: Vector<Cell> = Vector::new();
+        for r in rows.iter() {
+            row.clear();
+            row.extend_from_slice(r);
             if let Some(&Cell::Str(a)) = row.get(3)
                 && let Some(t) = rename(self.text(a))
             {
                 row[3] = Cell::Str(self.atom(&t));
             }
             if seen.insert(format!("{row:?}")) {
-                renamed.push(row);
+                renamed.push(&row[..]);
             }
         }
         self.set_about_rows("asked", renamed);
@@ -492,7 +555,7 @@ impl Builder<'_> {
         for &(name, _) in RELATION_COLUMNS.iter().filter(|(n, _)| n.starts_with("native_")) {
             let rows = self.about_rows(name);
             let n = rows.len();
-            let kept: Vec<Vec<Cell>> = rows.into_iter().filter(|r| r.get(1) != Some(&a)).collect();
+            let kept: super::encoder::Rows = rows.iter().filter(|r| r.get(1) != Some(&a)).collect();
             if kept.len() != n {
                 self.set_about_rows(name, kept);
             }
@@ -502,7 +565,8 @@ impl Builder<'_> {
     pub fn copy_about(&mut self, from: &Version, name: &str, mut keep: impl FnMut(&[Cell]) -> bool) {
         let Some(a) = from.find(name) else { return };
         let Some(f) = from.about_facts().into_iter().find(|f| f.name() == a) else { return };
-        let rows: Vec<Vec<Cell>> = f.rows().map(|r| r.collect::<Vec<Cell>>()).filter(|r| keep(r)).collect();
+        let mut rows = super::encoder::Rows::of_cells(f.rows());
+        rows.retain(|r| keep(r));
         if !rows.is_empty() {
             self.set_about_rows(name, rows);
         }
@@ -517,9 +581,9 @@ impl Builder<'_> {
             _ => true,
         };
         let filter = |b: &mut Self, name: &str, keep: &dyn Fn(&Self, &[Cell]) -> bool| {
-            let rows = b.about_rows(name);
-            let n = rows.len();
-            let kept: Vec<Vec<Cell>> = rows.into_iter().filter(|r| keep(b, r)).collect();
+            let mut kept = b.about_rows(name);
+            let n = kept.len();
+            kept.retain(|r| keep(b, r));
             if kept.len() != n {
                 b.set_about_rows(name, kept);
             }
@@ -535,22 +599,19 @@ impl Builder<'_> {
             Some(&Cell::Int(k)) => Some(k),
             _ => None,
         };
-        let mut kept: Vec<i64> = main.iter().filter(|r| named(self, r, 2, gates)).filter_map(|r| number(r)).collect();
+        let mut kept: Vector<i64> = main.iter().filter(|r| named(self, r, 2, gates)).filter_map(|r| number(r)).collect();
         if kept.len() == main.len() {
             return;
         }
         kept.sort_unstable();
         let again = |k: i64| kept.binary_search(&k).ok().map(|i| i as i64);
         for name in ["gate", "gate_quiet", "gate_dep", "gate_src"] {
-            let rows: Vec<Vec<Cell>> = self
-                .about_rows(name)
-                .into_iter()
-                .filter_map(|mut r| {
-                    let k = again(number(&r)?)?;
-                    r[1] = Cell::Int(k);
-                    Some(r)
-                })
-                .collect();
+            let mut rows = self.about_rows(name);
+            rows.retain(|r| number(r).and_then(again).is_some());
+            for r in rows.iter_mut() {
+                let k = number(r).and_then(again).expect("a row kept");
+                r[1] = Cell::Int(k);
+            }
             self.set_about_rows(name, rows);
         }
     }
@@ -569,7 +630,7 @@ impl Builder<'_> {
         pairs.extend(words.iter().map(|(r, w)| (r.as_ref().to_owned(), w.as_ref().to_owned())));
         pairs.sort_unstable();
         pairs.dedup();
-        let rows = pairs.iter().map(|(r, w)| vec![p, Cell::Str(self.atom(r)), Cell::Str(self.atom(w))]).collect();
+        let rows = pairs.iter().map(|(r, w)| [p, Cell::Str(self.atom(r)), Cell::Str(self.atom(w))]).collect();
         self.set_about_rows("qualifier", rows);
     }
     /// States the qualifiers (`Program::qualifiers`): each (relation, word), in order of relation then word, each once,
@@ -579,7 +640,7 @@ impl Builder<'_> {
         let mut pairs: Vec<(&str, &str)> = words.iter().map(|(r, w)| (r.as_ref(), w.as_ref())).collect();
         pairs.sort_unstable();
         pairs.dedup();
-        let rows = pairs.iter().map(|(r, w)| vec![p, Cell::Str(self.atom(r)), Cell::Str(self.atom(w))]).collect();
+        let rows = pairs.iter().map(|(r, w)| [p, Cell::Str(self.atom(r)), Cell::Str(self.atom(w))]).collect();
         self.set_about_rows("qualifier", rows);
     }
     /// Adds the tree's gates `gates` (`Program::gates`' entries, after the program's), each with its source where it
@@ -595,7 +656,7 @@ impl Builder<'_> {
         let mut srcs = self.about_rows("gate_src");
         for (k, (_, g)) in gates.iter().enumerate() {
             if let Some(src) = &g.src {
-                srcs.push(vec![p, Cell::Int(base + k as i64), Cell::Str(self.atom(src))]);
+                srcs.push([p, Cell::Int(base + k as i64), Cell::Str(self.atom(src))]);
             }
         }
         self.set_about_rows("gate_src", srcs);
@@ -607,14 +668,14 @@ impl Builder<'_> {
         let rows = answers
             .iter()
             .flat_map(|(req, by)| by.iter().enumerate().map(move |(i, b)| (req, i, b)))
-            .map(|(req, i, b)| vec![p, Cell::Str(self.atom(req)), Cell::Int(i as i64), Cell::Str(self.atom(b))])
+            .map(|(req, i, b)| [p, Cell::Str(self.atom(req)), Cell::Int(i as i64), Cell::Str(self.atom(b))])
             .collect();
         self.set_about_rows("answer", rows);
     }
     /// The request record as the program being built holds it (`Version::asked`).
     pub fn asked(&mut self) -> Asked {
         let mut asked = Asked::new();
-        for row in self.about_rows("asked") {
+        for row in self.about_rows("asked").iter() {
             let (Some(&Cell::Str(req)), Some(&Cell::Int(k)), Some(&Cell::Str(b))) = (row.get(1), row.get(2), row.get(3)) else { continue };
             let Ok(k) = usize::try_from(k) else { continue };
             let readers = asked.entry(self.text(req).to_owned()).or_default();
@@ -629,11 +690,11 @@ impl Builder<'_> {
     /// with the relations whose readers it serves. Replaces the program's.
     pub(in crate::code_rule_dsl::logic::program_image) fn set_asked(&mut self, asked: &Asked) {
         let p = program_cell(self);
-        let mut rows = Vec::new();
+        let mut rows = super::encoder::Rows::new();
         for (req, by) in asked {
             for (k, readers) in by.iter().enumerate() {
                 for b in readers {
-                    rows.push(vec![p, Cell::Str(self.atom(req)), Cell::Int(k as i64), Cell::Str(self.atom(b))]);
+                    rows.push([p, Cell::Str(self.atom(req)), Cell::Int(k as i64), Cell::Str(self.atom(b))]);
                 }
             }
         }
@@ -644,7 +705,7 @@ impl Builder<'_> {
     pub(in crate::code_rule_dsl::logic::program_image) fn keep_asked(&mut self, keep: &dyn Fn(&str) -> bool) {
         let rows = self.about_rows("asked");
         let n = rows.len();
-        let kept: Vec<Vec<Cell>> = rows.into_iter().filter(|r| !matches!(r.get(1), Some(&Cell::Str(a)) if !keep(self.text(a)))).collect();
+        let kept: super::encoder::Rows = rows.iter().filter(|r| !matches!(r.get(1), Some(&Cell::Str(a)) if !keep(self.text(a)))).collect();
         if kept.len() != n {
             self.set_about_rows("asked", kept);
         }
@@ -660,12 +721,12 @@ impl Builder<'_> {
         let base = main.len() as i64;
         for (k, (key, rel, level, q, d)) in gates.iter().enumerate() {
             let k = base + k as i64;
-            main.push(vec![p, Cell::Int(k), Cell::Str(self.atom(key)), Cell::Str(self.atom(rel)), Cell::Int(*level as i64)]);
+            main.push([p, Cell::Int(k), Cell::Str(self.atom(key)), Cell::Str(self.atom(rel)), Cell::Int(*level as i64)]);
             for (i, r) in q.iter().enumerate() {
-                quiet.push(vec![p, Cell::Int(k), Cell::Int(i as i64), Cell::Str(self.atom(r))]);
+                quiet.push([p, Cell::Int(k), Cell::Int(i as i64), Cell::Str(self.atom(r))]);
             }
             for (i, r) in d.iter().enumerate() {
-                deps.push(vec![p, Cell::Int(k), Cell::Int(i as i64), Cell::Str(self.atom(r))]);
+                deps.push([p, Cell::Int(k), Cell::Int(i as i64), Cell::Str(self.atom(r))]);
             }
         }
         self.set_about_rows("gate", main);
@@ -677,7 +738,7 @@ impl Builder<'_> {
         let p = program_cell(self);
         let mut rows = self.about_rows("setting");
         let k = rows.len() as i64;
-        rows.push(vec![p, Cell::Int(k), Cell::Str(self.atom(key)), Cell::Str(self.atom(text))]);
+        rows.push([p, Cell::Int(k), Cell::Str(self.atom(key)), Cell::Str(self.atom(text))]);
         self.set_about_rows("setting", rows);
     }
     /// Adds relations `rels` to the relations of no columns (kept in name order, each once, as the tree's set).
@@ -694,14 +755,14 @@ impl Builder<'_> {
         names.extend(rels.iter().map(|r| r.as_ref().to_owned()));
         names.sort_unstable();
         names.dedup();
-        rows = names.iter().map(|n| vec![p, Cell::Str(self.atom(n))]).collect();
+        rows = names.iter().map(|n| [p, Cell::Str(self.atom(n))]).collect();
         self.set_about_rows("nullary", rows);
     }
     /// States the columns declared `tape` (`Program::tapes`): each relation and column, in the program's order
     /// (relations by name, each's columns in order). Replaces the program's.
     pub(in crate::code_rule_dsl::logic::program_image) fn set_tapes<S: AsRef<str>>(&mut self, tapes: &[(S, usize)]) {
         let p = program_cell(self);
-        let rows = tapes.iter().map(|(r, c)| vec![p, Cell::Str(self.atom(r.as_ref())), Cell::Int(*c as i64)]).collect();
+        let rows = tapes.iter().map(|(r, c)| [p, Cell::Str(self.atom(r.as_ref())), Cell::Int(*c as i64)]).collect();
         self.set_about_rows("tape_column", rows);
     }
 }

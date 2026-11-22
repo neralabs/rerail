@@ -66,7 +66,7 @@ pub(super) struct Statement {
 struct Root {
     node: usize,
     qid: usize,
-    whole: Option<Vec<usize>>,
+    whole: Option<rerail_blocks::vector::Vector<usize>>,
 }
 impl Statement {
     pub fn preparations(&self) -> usize {

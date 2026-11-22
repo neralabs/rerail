@@ -1,4 +1,5 @@
 //! A bound input is read in place by the name its statement writes (O-pse-alone-strict).
+use rerail_blocks::vector::Vector;
 use super::*;
 
 /// A relation named like a SQLite keyword is quoted in every statement (`sql::ident`, O106): `plan` is read as
@@ -8,7 +9,7 @@ use super::*;
 fn a_bound_input_named_like_a_sql_keyword_is_read_in_place() {
     let db = Connection::open_in_memory().unwrap();
     let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
-    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(vec![4, 7])]);
+    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(rerail_blocks::vector![4, 7])]);
     modules.bind(&db, "plan", source).unwrap();
     let table = format!("main.{}", crate::code_rule_dsl::logic::sql::ident("plan"));
     assert_eq!(table, "main.\"plan\"");
@@ -35,7 +36,7 @@ fn unquote_reads_back_an_identifier() {
 fn an_export_named_like_an_input_is_read_in_place_by_the_inputs_column_names() {
     let db = Connection::open_in_memory().unwrap();
     let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
-    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(vec![4, 7]), Some(vec![40, 70])]);
+    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(rerail_blocks::vector![4, 7]), Some(rerail_blocks::vector![40, 70])]);
     modules.bind(&db, "value", source).unwrap();
     let (n, v) = (crate::code_rule_dsl::logic::plan::sql_col("value", 0), crate::code_rule_dsl::logic::plan::sql_col("value", 1));
     assert_eq!((n.as_str(), v.as_str()), ("n", "v"), "the statement names `value`'s columns as the input's");
@@ -52,10 +53,10 @@ fn an_export_named_like_an_input_is_read_in_place_by_the_inputs_column_names() {
 fn an_export_named_like_an_input_is_bound_again_with_the_same_columns() {
     let db = Connection::open_in_memory().unwrap();
     let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
-    let source = |rows: Vec<i64>| crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(rows.clone()), Some(rows)]);
-    modules.bind(&db, "value", source(vec![4])).unwrap();
-    modules.bind(&db, "value", source(vec![4, 7])).expect("bound again, the same columns");
+    let source = |rows: Vector<i64>| crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(rows.clone()), Some(rows)]);
+    modules.bind(&db, "value", source(rerail_blocks::vector![4])).unwrap();
+    modules.bind(&db, "value", source(rerail_blocks::vector![4, 7])).expect("bound again, the same columns");
     assert_eq!(crate::code_rule_dsl::facts::vtab::bound_source(&db, "value").unwrap().len(), 2);
-    let other = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(vec![1])]);
+    let other = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(rerail_blocks::vector![1])]);
     assert!(modules.bind(&db, "value", other).is_err(), "another shape is refused");
 }

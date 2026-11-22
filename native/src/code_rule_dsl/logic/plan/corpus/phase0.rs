@@ -18,6 +18,7 @@
 //! they were a check of their `stat`s; within a process, the graph is kept while every module and every absent
 //! candidate is as it was.
 
+use rerail_blocks::vector::Vector;
 use super::{Error as PlanError, Result};
 use crate::code_rule_dsl::logic::front::Error;
 use std::collections::{BTreeMap, HashMap};
@@ -59,7 +60,7 @@ pub struct Graph {
     /// The plans the run of `bootstrap.rerail` that derived it used (`Report::plans`): the run that reads the graph
     /// names them in its record, so they stay live. A graph kept as an image keeps them (`Images`, Q150), so a run
     /// that reads it names what the run that derived it named. Not part of the graph's digest.
-    pub(in crate::code_rule_dsl) plans: Vec<[u8; 32]>,
+    pub(in crate::code_rule_dsl) plans: Vector<[u8; 32]>,
 }
 
 impl Graph {

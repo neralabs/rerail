@@ -405,7 +405,7 @@ impl ContentStore {
 
     /// The digests the newest run of `root` named besides its plan (`record_corpus_run_naming`'s `also`): among them,
     /// what it kept for the next run to find by them (its pipelines' runs, decision 0333).
-    pub fn corpus_run_also(&self, root: &str) -> StoreResult<Vec<[u8; 32]>> {
+    pub fn corpus_run_also(&self, root: &str) -> StoreResult<rerail_blocks::vector::Vector<[u8; 32]>> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let rows = connection
             .prepare_cached(
@@ -414,7 +414,7 @@ impl ContentStore {
             )?
             .query_map([root], |r| r.get::<_, Vec<u8>>(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows.into_iter().filter_map(|d| d.try_into().ok()).collect())
+        Ok(rows.into_iter().filter_map(|d| <[u8; 32]>::try_from(d).ok()).collect())
     }
 
     /// `corpus_run_also` of the newest run of lane `lane` over `root`: what a run of the same programs named last.

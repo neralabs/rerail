@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::{native::component, profile, rr};
 
@@ -9,16 +10,16 @@ type V = Arc<crate::code_rule_dsl::logic::program_image::Version>;
 /// A program's version, as a run reads it (t36 item 7).
 fn pl(p: &V) -> crate::code_rule_dsl::logic::plan::body::Placed { crate::code_rule_dsl::logic::plan::body::Placed::whole(p.clone()) }
 /// A program's strata, each by its relations' names, as a run computes them once and passes them on.
-fn st(p: &V) -> Vec<BTreeSet<String>> {
+fn st(p: &V) -> crate::code_rule_dsl::logic::front::Components {
     let s = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::Strata>(p).unwrap();
-    s.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r).to_owned()).collect()).collect()
+    crate::code_rule_dsl::logic::front::Components::of_names(s.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r))))
 }
 
 /// An entry of `rows`, flat, of `types`' columns, at partition `part`: a relation's (part 0) in canonical order, a
 /// granule's or statistics' words as given (`retain::kept_flat`).
-fn put(rel: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>) -> KeptPut {
+fn put(rel: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vector<i64>) -> KeptPut {
     let n = if types.is_empty() { 0 } else { rows.len() / types.len() };
-    KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest, reads, what: crate::content_store::kept_facts::KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: None, given: part != DOCS_PART }, types }
+    KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest, reads, what: crate::content_store::kept_facts::KeptWhat::Flat { widths: rerail_blocks::vector![8; types.len()], rows, n, levels: None, given: part != DOCS_PART }, types }
 }
 fn gone(rel: &KeptRel, part: i64) -> KeptPut {
     KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest: 0, reads: vec![], types: vec![], what: crate::content_store::kept_facts::KeptWhat::Gone }
@@ -42,7 +43,7 @@ fn fixture(store: &ContentStore, count: usize) -> (V, HashMap<String, u64>, InKe
     for i in 0..count {
         let input = format!("input{i}");
         let result = format!("result{i}");
-        let rows: Vec<i64> = (1..=3).map(|d| (d << 32) | i as i64).collect();
+        let rows: Vector<i64> = (1..=3).map(|d| (d << 32) | i as i64).collect();
         let source = component::columns_source(vec!["c0".into()], vec![Some(rows.clone())]);
         let docs = docs_of(source.as_ref(), 0, &crate::code_rule_dsl::logic::plan::Cells::plain(1));
         let d = digest(source.as_ref(), &crate::code_rule_dsl::logic::plan::Cells::plain(1));
@@ -50,7 +51,7 @@ fn fixture(store: &ContentStore, count: usize) -> (V, HashMap<String, u64>, InKe
         now.insert(input.clone(), d);
         puts.push(put(&frames.names[&input], DOCS_PART, d, vec![], vec![b'i';3], docs.iter().flat_map(|(doc,(sum,n))| [*doc,*sum as i64,*n as i64]).collect()));
         for &row in &rows {
-            puts.push(put(&frames.names[&input], granule(row >> 32, None), 0, vec![], vec![b'i'], vec![row]));
+            puts.push(put(&frames.names[&input], granule(row >> 32, None), 0, vec![], vec![b'i'], rerail_blocks::vector![row]));
         }
         let rd = crate::code_rule_dsl::logic::plan::rows_digest(&crate::code_rule_dsl::logic::plan::Cells::plain(1), &rows, 3);
         puts.push(put(&frames.names[&result], DOCS_PART, rd, vec![(input,d)], vec![b'i'], rows));
@@ -66,7 +67,7 @@ fn k4_admission_batches_input_digests_derived_rows_and_mixed_granules() {
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let (prog, now, frames) = fixture(&store, 131);
-    store.queue_kept(SPACE, vec![put(&frames.names["result130"], DOCS_PART, 99, vec![("input130".into(),now["input130"].wrapping_add(1))], vec![b'i'], vec![999])]);
+    store.queue_kept(SPACE, vec![put(&frames.names["result130"], DOCS_PART, 99, vec![("input130".into(),now["input130"].wrapping_add(1))], vec![b'i'], rerail_blocks::vector![999])]);
     let changed: HashMap<_,_> = now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     profile::reset(); profile::set(true);
     let wave = profile::waves();
@@ -125,7 +126,7 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let empty=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     let initial=cut(Some(&empty),KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     let computed=Retained{key:KEY,rels:HashMap::from([("result".into(),Kept{
-        rel:InRel::flat(&[vec![1]],vec![b'i']),width:1,output:None,
+        rel:InRel::flat(&[rerail_blocks::vector![1]],vec![b'i']),width:1,output:None,
     })]),..Default::default()};
     assert_eq!(computed.write_kept(&store,empty.in_kept().unwrap(),&pl(&prog),&Default::default(),&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None,&HashMap::new(), &std::collections::BTreeMap::new()).unwrap(),1);
     let restored=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
@@ -150,9 +151,9 @@ fn a_derived_entry_replaced_after_the_run_bound_its_space_is_not_seen() {
     let mut kept=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     let changed=now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut=cut(Some(&kept),KEY,&pl(&prog),&st(&prog),&changed).unwrap();
-    store.queue_kept(SPACE, vec![put(&frames.names["result0"], DOCS_PART, 99, vec![], vec![b'i'], vec![999])]);
+    store.queue_kept(SPACE, vec![put(&frames.names["result0"], DOCS_PART, 99, vec![], vec![b'i'], rerail_blocks::vector![999])]);
     assert!(kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap().is_some());
-    assert_eq!(kept.rels["result0"].rel.live_rows().unwrap(), (1..=3).map(|d| d << 32).collect::<Vec<i64>>(), "the bound commit's rows");
+    assert_eq!(kept.rels["result0"].rel.live_rows().unwrap(), (1..=3).map(|d| d << 32).collect::<Vector<i64>>(), "the bound commit's rows");
     // The next run reads the new commit.
     let next=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     assert_eq!(next.in_kept().unwrap().derived["result0"].digest, 99);
@@ -168,10 +169,10 @@ fn an_input_granule_replaced_after_the_run_bound_its_space_is_not_seen() {
     let mut kept=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     let changed=now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut=cut(Some(&kept),KEY,&pl(&prog),&st(&prog),&changed).unwrap();
-    store.queue_kept(SPACE, vec![put(&frames.names["input0"], granule(1, None), 0, vec![], vec![b'i'], vec![(1<<32)|999])]);
+    store.queue_kept(SPACE, vec![put(&frames.names["input0"], granule(1, None), 0, vec![], vec![b'i'], rerail_blocks::vector![(1<<32)|999])]);
     assert!(kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap().is_some());
     let src=&kept.input_srcs["input0"];
-    assert_eq!((0..src.len()).map(|r| src.value(r,0)).collect::<Vec<_>>(), (1..=3).map(|d| d << 32).collect::<Vec<i64>>(), "the bound commit's rows");
+    assert_eq!((0..src.len()).map(|r| src.value(r,0)).collect::<Vec<_>>(), (1..=3).map(|d| d << 32).collect::<Vector<i64>>(), "the bound commit's rows");
 }
 
 /// An input whose documents' entry is gone is not kept: its readers derive again, cold. A run that bound the space
@@ -222,7 +223,7 @@ fn cut_again(kept: &Retained, prog: &V, now: &HashMap<String, u64>) -> Cut {
 fn kept_rows_are_grouped_by_the_column_the_memo_attributes_them_by() {
     let prog = rr::parse_version(".decl arg_at(d:number, i:number, a:node)\n.input arg_at\n").unwrap();
     assert_eq!(group_col(&pl(&prog), &Locations::new(), "arg_at"), 2, "with no location: the node column");
-    let located: Locations = [("arg_at".to_owned(), vec![0])].into_iter().collect();
+    let located: Locations = [("arg_at".to_owned(), rerail_blocks::vector![0])].into_iter().collect();
     assert_eq!(group_col(&pl(&prog), &located, "arg_at"), 0, "the memo's location column");
 }
 
@@ -248,7 +249,7 @@ fn the_kept_inputs_are_found_past_an_earlier_runs_snapshot() {
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let early = rr::parse_version(".decl input0(x:number)\n.input input0\n").unwrap();
-    store.queue_kept(SPACE, vec![put(&KeptRel { name: "other".into(), ident: [9; 32] }, 0, 1, vec![], vec![b'i'], vec![1])]);
+    store.queue_kept(SPACE, vec![put(&KeptRel { name: "other".into(), ident: [9; 32] }, 0, 1, vec![], vec![b'i'], rerail_blocks::vector![1])]);
     let earlier = kept_read::Bound::of(&store, &SPACE).unwrap().unwrap();
     assert!(earlier.entry("input0", &input_ident("input0", &pl(&early), &KEY), DOCS_PART).is_none(), "the earlier binding holds no entry of the input");
     let (prog, _, _) = fixture(&store, 1);
@@ -269,11 +270,11 @@ fn a_kept_input_is_bound_where_its_granules_lie() {
     assert_eq!((good.len(), other.len()), (3, 3), "each input's rows counted from its granules' entries");
     let one = kept["input1"].ranges().unwrap()[&3];
     assert_eq!(other.value(one.0 as usize, 0), (3 << 32) | 1, "input1's row of document 3, from its range");
-    let mut rows: Vec<i64> = (0..3).map(|r| good.value(r, 0)).collect();
+    let mut rows: Vector<i64> = (0..3).map(|r| good.value(r, 0)).collect();
     rows.sort_unstable();
-    assert_eq!(rows, (1..=3).map(|d| d << 32).collect::<Vec<i64>>(), "input0 read as kept");
+    assert_eq!(rows, (1..=3).map(|d| d << 32).collect::<Vector<i64>>(), "input0 read as kept");
     // input1's granule of document 2 holds two rows: more than its owner's.
-    store.queue_kept(SPACE, vec![put(&frames.names["input1"], granule(2, None), 0, vec![], vec![b'i'], vec![(2 << 32) | 1, (7 << 32) | 1])]);
+    store.queue_kept(SPACE, vec![put(&frames.names["input1"], granule(2, None), 0, vec![], vec![b'i'], rerail_blocks::vector![(2 << 32) | 1, (7 << 32) | 1])]);
     let Err(why) = kept_inputs(&store, SPACE, KEY, &pl(&prog), &rels, &BTreeSet::new()).unwrap() else { panic!("a granule not of its owners' rows is refused") };
     assert!(why.contains("input1") && why.contains("owners"), "{why}");
 }
@@ -288,7 +289,7 @@ fn a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go() {
     let (prog, now, _) = fixture(&store, 2);
     let was = Retained::bind_kept(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap().frames.unwrap();
     let cut = cut(None, KEY, &pl(&prog), &st(&prog), &now).unwrap();
-    let rows = |base: i64| component::InRel::flat(&(0..4).map(|i| vec![base + i]).collect::<Vec<_>>(), vec![b'i']);
+    let rows = |base: i64| component::InRel::flat(&(0..4).map(|i| rerail_blocks::vector![base + i]).collect::<Vec<_>>(), vec![b'i']);
     let derived = vec![("result0".to_owned(), 1, rows(100)), ("result1".to_owned(), 1, rows(200))];
     let mut next = after(None, KEY, now.clone(), &cut, derived, &BTreeMap::new(), &[], HashMap::new(), HashMap::new(), Default::default(), 0, false);
     assert_eq!(next.bytes(), 0, "nothing past the budget is held for the next run");
@@ -352,7 +353,7 @@ fn a_frames_digests_are_of_content_whichever_ids_its_atoms_have() {
     assert_ne!(a[0], b[2], "the two number `os.path` otherwise");
     // Rows (module, name, kind): two atom columns and a number.
     let types = *b"ssi";
-    let rows = |ids: &[crate::content_store::Sym]| -> Vec<i64> { vec![i64::from(ids[0]), i64::from(ids[1]), 7, i64::from(ids[2]), i64::from(ids[1]), 7] };
+    let rows = |ids: &[crate::content_store::Sym]| -> Vector<i64> { rerail_blocks::vector![i64::from(ids[0]), i64::from(ids[1]), 7, i64::from(ids[2]), i64::from(ids[1]), 7] };
     let (atoms_a, atoms_b) = (stores[0].atoms_handle(), stores[1].atoms_handle());
     let (ca, cb) = (crate::code_rule_dsl::logic::plan::Cells::new(&atoms_a, &types), crate::code_rule_dsl::logic::plan::Cells::new(&atoms_b, &types));
     let (ra, rb) = (rows(&a), rows(&[b[2], b[1], b[0]]));

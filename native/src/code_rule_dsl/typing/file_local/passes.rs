@@ -127,7 +127,7 @@ impl ProgramPass for Locate {
             .iter()
             .map(String::as_str)
             .chain(f.outputs().filter(|o| file_local.contains(*o) && !f.qualified(o, crate::code_rule_dsl::logic::plan::fields::PART_OUT)))
-            .filter(|r| local.contains(r) && locations.get(*r).is_none_or(Vec::is_empty))
+            .filter(|r| local.contains(r) && locations.get(*r).is_none_or(|v| v.is_empty()))
             .map(str::to_owned)
             .collect();
         let docof = f.is_input("docof");

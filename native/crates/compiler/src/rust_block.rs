@@ -404,8 +404,8 @@ impl<'a> Gen<'a> {
         v
     }
 
-    fn made(&self) -> Vec<u16> {
-        self.walk.map_or(Vec::new(), |w| w.made())
+    fn made(&self) -> rerail_blocks::vector::Vector<u16> {
+        self.walk.map_or(rerail_blocks::vector::Vector::new(), |w| w.made())
     }
 
     /// A block loop's body over `values` (in order): each a `let`, the carried operations'

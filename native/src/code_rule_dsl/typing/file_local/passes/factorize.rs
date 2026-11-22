@@ -25,6 +25,7 @@
 //! (`FileLocal`); variables are read by name, so each choice, counter and name is fixed by the program; each round's
 //! program is a version of its own, split again to check the parts stay file-local.
 
+use rerail_blocks::vector::Vector;
 use super::super::FileLocal;
 use super::{BodyItem, Made, NOwned, Round, lit_vars, name, term_vars, write};
 use crate::code_rule_dsl::logic::plan::body;
@@ -47,7 +48,7 @@ impl FactorizeExports {
     }
 }
 
-type Keys = BTreeMap<String, Vec<Vec<usize>>>;
+type Keys = BTreeMap<String, Vec<Vector<usize>>>;
 
 /// The variables `lits` of `rule` determine from `known`: an atom whose relation has a key all of whose columns are
 /// known (or constants) determines its other variables; so does an equality, and a nearest ancestor its node.
@@ -112,13 +113,13 @@ fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
         let at = |name: &str| columns.iter().position(|c| *c == name);
         if let ("child" | "field", Some(p), Some(c)) = (rel, at("p"), at("c")) {
             let other = (0..columns.len()).find(|&i| i != p && i != c);
-            keys.insert(rel.to_owned(), std::iter::once(vec![c]).chain(other.map(|o| vec![p, o])).collect());
+            keys.insert(rel.to_owned(), std::iter::once(rerail_blocks::vector![c]).chain(other.map(|o| rerail_blocks::vector![p, o])).collect());
             continue;
         }
         let Some(k) = at("n") else { continue };
         let others_nodes = types.iter().enumerate().any(|(i, (_, t))| i != k && (matches!(*t, "node" | "loc" | "span") || matches!(columns.get(i), Some(&("par" | "a" | "p" | "h")))));
         if !others_nodes {
-            keys.insert(rel.to_owned(), vec![vec![k]]);
+            keys.insert(rel.to_owned(), vec![rerail_blocks::vector![k]]);
         }
     }
     for l in f.lattices() {
@@ -140,7 +141,7 @@ fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
         for (rel, rules) in &rules_of {
             let width = rules[0].head().args().count();
             for c in 0..width {
-                if keys.get(*rel).is_some_and(|ks| ks.contains(&vec![c])) {
+                if keys.get(*rel).is_some_and(|ks| ks.contains(&rerail_blocks::vector![c])) {
                     continue;
                 }
                 if let Some(&at) = tried.get(&(*rel, c))
@@ -160,7 +161,7 @@ fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
                     lits.iter().all(|l| matches!(l.view(), L::Atom(_) | L::Cmp { .. } | L::Nearest { .. })) && head.is_subset(&determined(v, *r, &lits, start, &keys))
                 });
                 if proven {
-                    keys.entry((*rel).to_owned()).or_default().push(vec![c]);
+                    keys.entry((*rel).to_owned()).or_default().push(rerail_blocks::vector![c]);
                     found = true;
                     step += 1;
                     gained.insert((*rel).to_owned(), step);
@@ -175,7 +176,7 @@ fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
 }
 
 /// Per relation handed on as parts, per rule: its key and its parts (literal places).
-type Plan = BTreeMap<String, Vec<(String, Vec<Vec<usize>>)>>;
+type Plan = BTreeMap<String, Vec<(String, Vec<Vector<usize>>)>>;
 
 /// Per relation factorized as an intermediate (decision 0500): its pair cache, where one was made (its guard, its
 /// pairs, the witness allowance), else none.
@@ -257,8 +258,8 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys) -> (
             let Some(head) = head.filter(|h| h.iter().collect::<BTreeSet<_>>().len() == h.len()) else { break };
             let Some((key, parts)) = crate::code_rule_dsl::logic::plan::keeps::factors_of(v, *rule) else { break };
             let lits: Vec<LitRef<'_>> = rule.body().collect();
-            let part_lits = |p: &Vec<usize>| p.iter().map(|&i| lits[i]).collect::<Vec<_>>();
-            let keyed = |p: &Vec<usize>| part_lits(p).iter().any(|l| matches!(l.view(), L::Atom(a) if !a.neg() && body::atom_vars(a).iter().any(|s| name(v, *rule, s) == key)));
+            let part_lits = |p: &Vector<usize>| p.iter().map(|&i| lits[i]).collect::<Vec<_>>();
+            let keyed = |p: &Vector<usize>| part_lits(p).iter().any(|l| matches!(l.view(), L::Atom(a) if !a.neg() && body::atom_vars(a).iter().any(|s| name(v, *rule, s) == key)));
             if !parts.iter().all(keyed) {
                 break;
             }
@@ -415,8 +416,8 @@ fn round<'v>(
             // The parts in the order their keys are chained (below): the fewest positive atoms first, so a part that is
             // itself a join (`mf_def($c, $f), mf_def($a, $f)`) has its keys found within the keys of the parts before
             // it, never on its own.
-            let positive = |part: &Vec<usize>| part.iter().filter(|&&i| matches!(lits[i].view(), L::Atom(a) if !a.neg())).count();
-            let mut parts: Vec<&Vec<usize>> = parts.iter().collect();
+            let positive = |part: &Vector<usize>| part.iter().filter(|&&i| matches!(lits[i].view(), L::Atom(a) if !a.neg())).count();
+            let mut parts: Vec<&Vector<usize>> = parts.iter().collect();
             parts.sort_by_key(|p| positive(p));
             for part in parts {
                 let part: Vec<LitRef<'_>> = part.iter().map(|&i| lits[i]).collect();

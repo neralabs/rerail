@@ -24,6 +24,7 @@
 //!
 //! Threadgroup memory: eight words. Every loop is bounded by its input.
 
+use rerail_blocks::vector::Vector;
 use super::Error;
 use super::block::{BlockOp, BlockProgram, CmpOp, Rhs};
 use super::metal_sort::Held;
@@ -44,7 +45,7 @@ pub enum Input {
 
 /// A scan's result: the host rows that pass, in order, and the submission's device time.
 pub struct Scanned {
-    pub rows: Vec<u32>,
+    pub rows: Vector<u32>,
     pub gpu_seconds: f64,
 }
 
@@ -193,7 +194,7 @@ pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, param
     // One variant per program's source: the predicate is the program's.
     let count = pipeline(&src, "rows_count", || src.clone()).map_err(device_err)?;
     let scatter = pipeline(&src, "rows_scatter", || src.clone()).map_err(device_err)?;
-    let wide: Vec<i64> = params.iter().flat_map(|&p| [p, p >> 16, p & 0xffff]).chain([0]).collect();
+    let wide: Vector<i64> = params.iter().flat_map(|&p| [p, p >> 16, p & 0xffff]).chain([0]).collect();
     let params = Held::of(wide.iter().copied()).map_err(device_err)?;
     let tiles = resident.tile_count;
     let counts = Held::new(4 * tiles).map_err(device_err)?;
@@ -224,7 +225,7 @@ pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, param
     // SAFETY: the buffers hold `tiles + 1` and `rows` words, written by the kernels and read
     // after the command buffer completed.
     let total = unsafe { *offsets.buffer.contents().cast::<u32>().add(tiles) } as usize;
-    let rows = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), total) }.to_vec();
+    let rows = rerail_blocks::vector::Vector::from(unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), total) });
     Ok(Scanned { rows, gpu_seconds: gpu })
 }
 

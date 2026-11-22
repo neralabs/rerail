@@ -1,6 +1,7 @@
 //! The `.rerail` front end: the rule-syntax files parse and pass `check_rr.py`'s checks, the spellings lower to the
 //! engine's forms, and every `.rdl` program translates to `.rerail` that lowers to the same program.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, TermRef, Version, about::About, analyses};
@@ -41,7 +42,7 @@ fn body_of(v: &Version, r: RuleRef<'_>) -> Vec<String> {
 
 /// `v`'s components in T's order, or the first that a negation or an aggregate closes.
 fn strata(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
-    analyses::components_by_name(v, &About::of(v))
+    analyses::components_by_name(v, &About::of(v)).map(|c| c.to_sets())
 }
 
 #[test]
@@ -1571,7 +1572,7 @@ fn a_handed_program_run_again_finds_the_same() {
     crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = |out: &str| crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).map(|r| r["diagnostics"].clone());
     let first = run("first").unwrap();
-    assert_eq!(first.as_array().map(Vec::len), Some(1), "{first}");
+    assert_eq!(first.as_array().map(|v| v.len()), Some(1), "{first}");
     let again = run("again");
     crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
     let _ = std::fs::remove_dir_all(&dir);
@@ -2647,7 +2648,7 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     let names = ["sqlkinds", "objects", "unscoped", "qualified", "counted"];
     let (shown, docs) = guests_run_with("sqlguest", &[("a.py", py)], rule, |o| {
         let shown: Vec<Vec<Vec<String>>> = names.iter().map(|rel| o.get(rel).map(|r| r.shown()).unwrap_or_default()).collect();
-        (shown, o.rows("docs").iter().map(|r| r.get(0).int().expect("a document number")).collect::<Vec<i64>>())
+        (shown, o.rows("docs").iter().map(|r| r.get(0).int().expect("a document number")).collect::<Vector<i64>>())
     });
     let [sqlkinds, objects, unscoped, qualified, counted] = <[Vec<Vec<String>>; 5]>::try_from(shown).unwrap();
     assert!(sqlkinds.contains(&shown_row(&["object_reference"])), "{sqlkinds:?}");
@@ -4910,15 +4911,15 @@ fn a_layout_line_states_a_relations_facts_by_its_columns() {
                 .decl o(x: number)\n.output o\no(x) :- e(x, _, _).\n";
     let p = parse(text).unwrap();
     let want = vec![
-        F::Key(vec![1]),
-        F::Key(vec![0, 2]),
-        F::Fanout { from: vec![0], to: vec![1], fan: Fan::Few },
+        F::Key(rerail_blocks::vector![1]),
+        F::Key(rerail_blocks::vector![0, 2]),
+        F::Fanout { from: rerail_blocks::vector![0], to: rerail_blocks::vector![1], fan: Fan::Few },
         F::Local,
-        F::Order { col: 2, within: vec![0], dense: true },
+        F::Order { col: 2, within: rerail_blocks::vector![0], dense: true },
         F::Tree { from: 0, to: 1 },
         F::Size(LayoutSize::Per { most: 2, col: 0 }),
-        F::Fanout { from: vec![1], to: vec![0], fan: Fan::About(3) },
-        F::By(Algo::Running { col: 2, within: vec![0] }),
+        F::Fanout { from: rerail_blocks::vector![1], to: rerail_blocks::vector![0], fan: Fan::About(3) },
+        F::By(Algo::Running { col: 2, within: rerail_blocks::vector![0] }),
     ];
     let layouts = ProgramFields::layouts(&*p);
     assert_eq!(layouts.get("e"), Some(&want), "{layouts:?}");
@@ -4955,14 +4956,14 @@ fn layouts_are_carried_with_the_program() {
     let p = parse(&policy("a")).unwrap();
     let layouts = ProgramFields::layouts(&*p);
     let child = layouts.get("child").expect("core.rerail declares child's layout");
-    assert!(child.contains(&F::Key(vec![1])) && child.contains(&F::Order { col: 2, within: vec![0], dense: true }), "{child:?}");
-    assert!(layouts.get("node").is_some_and(|f| f.contains(&F::Key(vec![1]))), "{:?}", layouts.get("node"));
+    assert!(child.contains(&F::Key(rerail_blocks::vector![1])) && child.contains(&F::Order { col: 2, within: rerail_blocks::vector![0], dense: true }), "{child:?}");
+    assert!(layouts.get("node").is_some_and(|f| f.contains(&F::Key(rerail_blocks::vector![1]))), "{:?}", layouts.get("node"));
     // The image's facts, read back from its bytes.
     let v = Version::open(p.fold().unwrap().base_bytes().unwrap()).unwrap();
     assert_eq!(ProgramFields::layouts(&*v), layouts);
     let about = About::of(&v);
     let rel = v.rel("child").unwrap();
-    assert_eq!(about.layouts.iter().find(|(r, _)| *r == rel).map(|(_, f)| f), Some(child));
+    assert_eq!(about.layouts.iter().find(|e| e.0 == rel).map(|e| e.1.iter().map(|f| <crate::code_rule_dsl::logic::front::ast::LayoutFact as rerail_section::Decode>::decode(f, &rerail_section::Names::NONE)).collect::<Vec<_>>()).as_ref(), Some(child));
     // Combined: each relation keeps its facts under the name it has there.
     let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&policy("a"), &policy("b")]).unwrap();
     let layouts = combined.layouts();

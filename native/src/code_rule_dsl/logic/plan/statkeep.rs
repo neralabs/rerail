@@ -20,6 +20,7 @@
 //! or sketch answers, with `sqd` as `sq`, or as a sketch of the (document, value) pairs' counts where one is kept
 //! (`paired`, decision 0096 step 4): the sketch is linear, so a row's delete takes out what its insert put in.
 
+use rerail_blocks::vector::Vector;
 use rustc_hash::FxHashMap;
 
 use super::sketch::Sketch;
@@ -738,12 +739,12 @@ pub mod tests {
 
     /// Document `d`'s rows of `r(n, kind, name)`: `n` its nodes, `kind` few-valued, `name` many values shared
     /// across documents (Zipf-like), so each column takes another of the keeper's paths.
-    fn doc(d: i64, rows: i64, salt: i64) -> Vec<i64> {
+    fn doc(d: i64, rows: i64, salt: i64) -> rerail_blocks::vector::Vector<i64> {
         (0..rows).flat_map(|i| [d << 32 | i, (i * 7 + salt) % 9, ((i * i + salt) % 997) / (1 + i % 5)]).collect()
     }
 
-    fn measured(docs: &[Vec<i64>]) -> Vec<(String, i64, i64, i64, i64)> {
-        let mut cols = vec![Vec::new(); 3];
+    fn measured(docs: &[rerail_blocks::vector::Vector<i64>]) -> Vec<(String, i64, i64, i64, i64)> {
+        let mut cols = vec![rerail_blocks::vector::Vector::new(); 3];
         for d in docs {
             for row in d.as_chunks::<3>().0 {
                 for (c, v) in row.iter().enumerate() {
@@ -762,8 +763,8 @@ pub mod tests {
     /// from scratch of the documents now.
     #[test]
     fn documents_read_where_they_lie_count_as_their_flat_rows() {
-        let docs: Vec<Vec<i64>> = (1..=20).map(|d| doc(d, 30 + d * 7, d % 3)).collect();
-        let all: Vec<i64> = docs.concat();
+        let docs: Vec<rerail_blocks::vector::Vector<i64>> = (1..=20).map(|d| doc(d, 30 + d * 7, d % 3)).collect();
+        let all: rerail_blocks::vector::Vector<i64> = docs.iter().flat_map(|d| d.iter().copied()).collect();
         let n = all.len() / 3;
         fn read(rows: &[i64]) -> impl Fn(usize, usize) -> i64 + '_ {
             move |r, c| rows[r * 3 + c]
@@ -784,7 +785,7 @@ pub mod tests {
         fresh.documents_read(now.len() / 3, 3, &read(&now), &from, 1);
         assert_eq!(placed, fresh);
         // Read by the source's walk, a column at a time (`documents_scanned`): the same counts, in and out.
-        let source = |rows: &[i64]| crate::code_rule_dsl::facts::vtab::Relation::from_rows(&["n", "k", "name"], &mut rows.chunks_exact(3).map(<[i64]>::to_vec));
+        let source = |rows: &[i64]| crate::code_rule_dsl::facts::vtab::Relation::from_rows(&["n", "k", "name"], &mut rows.chunks_exact(3).map(rerail_blocks::vector::Vector::<i64>::from));
         let mut scanned = RelStats::new(names());
         scanned.documents_scanned(&source(&all), &from, 1);
         assert_eq!(scanned, flat);
@@ -795,7 +796,7 @@ pub mod tests {
 
     #[test]
     fn statistics_kept_by_document_are_those_of_the_documents_counted_in() {
-        let docs: Vec<Vec<i64>> = (1..=40).map(|d| doc(d, 50 + d * 13, d % 3)).collect();
+        let docs: Vec<rerail_blocks::vector::Vector<i64>> = (1..=40).map(|d| doc(d, 50 + d * 13, d % 3)).collect();
         let mut kept = RelStats::new(vec!["n".into(), "kind".into(), "name".into()]);
         for d in &docs {
             kept.documents(d, 3, 1);
@@ -833,15 +834,15 @@ pub mod tests {
     /// reads it as `sq`; its rows and its few-valued column stay exact.
     #[test]
     fn a_paired_relation_patched_by_rows_keeps_its_sum_within_documents() {
-        let docs: Vec<Vec<i64>> = (1..=40).map(|d| doc(d, 50 + d * 13, d % 3)).collect();
+        let docs: Vec<rerail_blocks::vector::Vector<i64>> = (1..=40).map(|d| doc(d, 50 + d * 13, d % 3)).collect();
         let names = vec!["n".to_owned(), "kind".into(), "name".into()];
         let (mut paired, mut plain) = (RelStats::paired(names.clone()), RelStats::new(names));
-        let all: Vec<i64> = docs.concat();
+        let all: rerail_blocks::vector::Vector<i64> = docs.iter().flat_map(|d| d.iter().copied()).collect();
         paired.documents(&all, 3, 1);
         plain.documents(&all, 3, 1);
         // Rows out of some documents, and others into them: not whole documents.
-        let removed: Vec<i64> = docs[3][..30].iter().chain(&docs[20][..60]).copied().collect();
-        let added: Vec<i64> = doc(9, 70, 1)[3 * 50..].iter().chain(&doc(41, 30, 0)).copied().collect();
+        let removed: rerail_blocks::vector::Vector<i64> = docs[3][..30].iter().chain(&docs[20][..60]).copied().collect();
+        let added: rerail_blocks::vector::Vector<i64> = doc(9, 70, 1)[3 * 50..].iter().chain(&doc(41, 30, 0)).copied().collect();
         paired.delta(&added, &removed, 3);
         plain.delta(&added, &removed, 3);
         let mut now = docs.clone();
@@ -864,12 +865,12 @@ pub mod tests {
 
     #[test]
     fn statistics_patched_by_a_delta_of_rows_count_the_rows() {
-        let rows: Vec<i64> = (0..300).flat_map(|i| [i % 10, i % 4]).collect();
+        let rows: rerail_blocks::vector::Vector<i64> = (0..300).flat_map(|i| [i % 10, i % 4]).collect();
         let mut kept = RelStats::new(vec!["a".into(), "b".into()]);
         kept.delta(&rows, &[], 2);
-        let (plus, minus): (Vec<i64>, Vec<i64>) = ((0..30).flat_map(|i| [i % 10, 9]).collect(), rows[..40].to_vec());
+        let (plus, minus): (rerail_blocks::vector::Vector<i64>, rerail_blocks::vector::Vector<i64>) = ((0..30).flat_map(|i| [i % 10, 9]).collect(), rerail_blocks::vector::Vector::from(&rows[..40][..]));
         kept.delta(&plus, &minus, 2);
-        let mut now: Vec<i64> = rows[40..].to_vec();
+        let mut now: rerail_blocks::vector::Vector<i64> = rerail_blocks::vector::Vector::from(&rows[40..][..]);
         now.extend(&plus);
         let mut fresh = RelStats::new(kept.columns().to_vec());
         fresh.delta(&now, &[], 2);
@@ -928,7 +929,7 @@ pub mod tests {
                 RelStats::values(col, &values.into_iter().collect::<Vec<_>>(), sign);
             }
         }
-        let mut flat = Vec::new();
+        let mut flat = rerail_blocks::vector::Vector::new();
         for i in 0..600i64 {
             let d = 1 + i % 7;
             let first = if i % 5 == 0 { d } else { d << 32 | i };
@@ -936,10 +937,10 @@ pub mod tests {
             flat.extend([first, i % 4, other]);
         }
         // One document's rows alone, in order (no sort), and its rows reversed (sorted).
-        let one: Vec<i64> = flat.as_chunks::<3>().0.iter().filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
-        let reversed: Vec<i64> = one.as_chunks::<3>().0.iter().rev().flatten().copied().collect();
+        let one: rerail_blocks::vector::Vector<i64> = flat.as_chunks::<3>().0.iter().filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
+        let reversed: rerail_blocks::vector::Vector<i64> = one.as_chunks::<3>().0.iter().rev().flatten().copied().collect();
         // Many values in one column: past the exact map's bound.
-        let wide: Vec<i64> = (0..700i64).flat_map(|i| [5 << 32 | i, i % 3, i]).collect();
+        let wide: rerail_blocks::vector::Vector<i64> = (0..700i64).flat_map(|i| [5 << 32 | i, i % 3, i]).collect();
         let names = || vec!["x".to_owned(), "k".into(), "y".into()];
         for new in [RelStats::new as fn(Vec<String>) -> RelStats, RelStats::paired] {
             for rows in [&flat, &one, &reversed, &wide] {

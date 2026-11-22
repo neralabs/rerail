@@ -58,7 +58,7 @@ fn put(rel: &str, part: i64, digest: u64, what: KeptWhat) -> KeptPut {
 }
 
 fn flat(rows: &[i64]) -> KeptWhat {
-    KeptWhat::Flat { widths: vec![8, 8], rows: rows.to_vec(), n: rows.len() / 2, levels: None, given: false }
+    KeptWhat::Flat { widths: rerail_blocks::vector![8, 8], rows: rerail_blocks::vector::Vector::from(rows), n: rows.len() / 2, levels: None, given: false }
 }
 
 /// A store's file with its schema, and a connection to it.
@@ -278,10 +278,10 @@ fn levels_follow_their_rows_and_an_entry_put_as_given_keeps_its_order() {
     let (path, c) = store("levels-given");
     let mut with_levels = put("p", 0, 1, flat(&[3, 30, 1, 10]));
     if let KeptWhat::Flat { levels, .. } = &mut with_levels.what {
-        *levels = Some(vec![5, 6]);
+        *levels = Some(rerail_blocks::vector![5, 6]);
     }
-    let granule_rows = vec![9, 2, 8, 1, 9, 2];
-    write(&path, &c, vec![with_levels, put("g", 0, 0, KeptWhat::Flat { widths: vec![8, 8], rows: granule_rows.clone(), n: 3, levels: None, given: true })]);
+    let granule_rows = rerail_blocks::vector![9, 2, 8, 1, 9, 2];
+    write(&path, &c, vec![with_levels, put("g", 0, 0, KeptWhat::Flat { widths: rerail_blocks::vector![8, 8], rows: granule_rows.clone(), n: 3, levels: None, given: true })]);
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
     let p = view.get(&FactKey { rel: "p", ident: &ID, part: 0 }).unwrap();
@@ -317,7 +317,7 @@ fn kept_facts_are_a_virtual_table() {
     let view = space.view();
     let p = view.all().find(|k| k.key.rel == "p").unwrap();
     assert!(p.rows.leads(0) && !p.rows.leads(1), "a canonical entry leads by its first column");
-    write(&path, &c, vec![put("r", 0, 5, KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 0, 1, 0], n: 2, levels: None, given: true })]);
+    write(&path, &c, vec![put("r", 0, 5, KeptWhat::Flat { widths: rerail_blocks::vector![8, 8], rows: rerail_blocks::vector![2, 0, 1, 0], n: 2, levels: None, given: true })]);
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
     let r = view.all().find(|k| k.key.rel == "r").unwrap();

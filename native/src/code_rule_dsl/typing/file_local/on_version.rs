@@ -5,10 +5,11 @@
 //! own: a relation is its `RelId`, a variable its `Slot`, and the last split is the analysis of the edit's input,
 //! carried to its output by the manager, which hands `maintain` the edit.
 
+use rerail_blocks::vector::Vector;
 use super::{CHUNK_VALUES, document_column, option_input};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::manager::{Analysis, Cx, Delta, Reads};
-use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit as L, NativeSpec, RelId, RuleRef, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit as L, ArchivedNativeSpec, NativeSpec, RelId, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 
@@ -38,10 +39,10 @@ use std::hash::{Hash, Hasher};
 pub struct FileLocal {
     pub local: BTreeSet<String>,
     pub constants: BTreeSet<String>,
-    pub locations: BTreeMap<String, Vec<usize>>,
+    pub locations: BTreeMap<String, Vector<usize>>,
     pub filters: BTreeSet<String>,
     pub causes: BTreeMap<String, String>,
-    pub same_doc: BTreeMap<String, Vec<usize>>,
+    pub same_doc: BTreeMap<String, Vector<usize>>,
     pub no_document: bool,
     keys: Keys,
 }
@@ -109,7 +110,7 @@ impl Analysis for FileLocal {
     }
     fn of_rows(_v: &Version, rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<FileLocal> {
         use crate::code_rule_dsl::logic::front::Value;
-        let cols = |s: &str| -> Option<Vec<usize>> { if s.is_empty() { Some(Vec::new()) } else { s.split(',').map(|x| x.parse().ok()).collect() } };
+        let cols = |s: &str| -> Option<rerail_blocks::vector::Vector<usize>> { if s.is_empty() { Some(rerail_blocks::vector::Vector::new()) } else { s.split(',').map(|x| x.parse::<usize>().ok()).collect() } };
         let mut f = FileLocal::default();
         for r in rows {
             match r.as_slice() {
@@ -158,7 +159,7 @@ impl Analysis for FileLocal {
             return Some(p.finish(self.clone(), keys));
         }
         let mut cone: BTreeSet<u32> = BTreeSet::new();
-        let mut work: Vec<u32> = changed.iter().filter_map(|r| p.v.rel(r)).map(|r| r.0).collect();
+        let mut work: Vector<u32> = changed.iter().filter_map(|r| p.v.rel(r)).map(|r| r.0).collect();
         cone.extend(work.iter().copied().filter(|&r| p.rels.is_derived(r)));
         while let Some(r) = work.pop() {
             for &k in p.rels.reading(r) {
@@ -185,7 +186,7 @@ impl Program<'_> {
     /// `split` with what it reads of every input, made again whatever the edit (the same-document columns, and
     /// whether the program reads a document: the keys digest only the inputs the fixpoints ask about), and `keys`.
     fn finish(&self, mut split: FileLocal, keys: Keys) -> FileLocal {
-        let mut same_doc: BTreeMap<String, Vec<usize>> = self.f.inputs().filter(|i| !self.f.derives(i)).map(|i| (i.to_owned(), self.base_locations(i))).collect();
+        let mut same_doc: BTreeMap<String, Vector<usize>> = self.f.inputs().filter(|i| !self.f.derives(i)).map(|i| (i.to_owned(), self.base_locations(i))).collect();
         same_doc.extend(split.local.iter().map(|rel| (rel.clone(), split.locations[rel].clone())));
         split.same_doc = same_doc;
         split.no_document = self.reads_no_document();
@@ -239,7 +240,7 @@ impl<'v> Program<'v> {
             }
             any = true;
             for w in self.f.qualifiers_of(rel) {
-                let cols = |c: &str| c.split(',').filter(|x| !x.is_empty()).filter_map(|x| x.parse().ok()).collect::<Vec<usize>>();
+                let cols = |c: &str| c.split(',').filter(|x| !x.is_empty()).filter_map(|x| x.parse::<usize>().ok()).collect::<Vector<usize>>();
                 match w.split_once('=') {
                     Some(("part:loc", c)) => drop(given.locations.insert(rel.to_owned(), cols(c))),
                     Some(("part:same", c)) => drop(given.same_doc.insert(rel.to_owned(), cols(c))),
@@ -322,7 +323,7 @@ impl<'v> Program<'v> {
         facts.hash(&mut g);
         // The `.about` rows: natives and lattices, and the rest, which the split does not read (a change there
         // splits whole, as a change of a native does).
-        let mut about: Vec<u64> = self.v.about_facts().into_iter().map(|f| f.hash()).collect();
+        let mut about: Vector<u64> = self.v.about_facts().into_iter().map(|f| f.hash()).collect();
         about.sort_unstable();
         about.hash(&mut g);
         let mut heads: BTreeMap<String, u64> = BTreeMap::new();
@@ -357,9 +358,9 @@ impl<'v> Program<'v> {
     /// A base relation's location columns: node columns, the document column (`document_column`: `node`, `doc`,
     /// `pkg`, `syntax_error`, `cpython_syntax_error`, the source text's, the path's, the guests') and `docof(n, d)`'s
     /// document.
-    fn base_locations(&self, rel: &str) -> Vec<usize> {
+    fn base_locations(&self, rel: &str) -> Vector<usize> {
         // An undeclared one (a tree axis before lowering declares it) has none of its own, as the tree's.
-        let mut columns: Vec<usize> = self.f.columns(rel).unwrap_or_default().iter().enumerate().filter(|(_, (_, t))| *t == "node").map(|(i, _)| i).collect();
+        let mut columns: Vector<usize> = self.f.columns(rel).unwrap_or_default().iter().enumerate().filter(|(_, (_, t))| *t == "node").map(|(i, _)| i).collect();
         if let Some(column) = document_column(rel) {
             columns.push(column);
         }
@@ -411,9 +412,9 @@ impl<'v> Program<'v> {
                     }
             })
             .collect();
-        let mut round: Vec<u32> = (0..rels.n as u32).filter(|&r| scope[r as usize] && constant[r as usize]).collect();
+        let mut round: Vector<u32> = (0..rels.n as u32).filter(|&r| scope[r as usize] && constant[r as usize]).collect();
         while !round.is_empty() {
-            let leaving: Vec<u32> = round.iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&k| forms.get(k).reads_constants(rels, &constant))).collect();
+            let leaving: Vector<u32> = round.iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&k| forms.get(k).reads_constants(rels, &constant))).collect();
             for &r in &leaving {
                 constant[r as usize] = false;
             }
@@ -435,23 +436,23 @@ impl<'v> Program<'v> {
         let constant = self.constants(&forms, &in_scope, prev.map(|p| &p.constants));
         let placeless: Vec<bool> = (0..n).map(|r| rels.fact[r] || constant[r] || rels.placeless_input[r] || rels.chunk_value[r] || rels.test[r]).collect();
         // A derived relation's location columns: those every rule fills from a location.
-        let mut locs: Vec<Vec<usize>> = (0..n)
+        let mut locs: Vec<Vector<usize>> = (0..n)
             .map(|r| {
                 if !rels.is_derived(r as u32) {
-                    return Vec::new();
+                    return Vector::new();
                 }
                 let kept = was(r).and_then(|p| p.locations.get(self.name(r as u32)).cloned());
                 kept.unwrap_or_else(|| (0..self.f.width(self.name(r as u32))).collect())
             })
             .collect();
-        let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize]).collect();
+        let mut round: Vector<u32> = (0..n as u32).filter(|&r| in_scope[r as usize]).collect();
         while !round.is_empty() {
-            let changed: Vec<(u32, Vec<usize>)> = round
+            let changed: Vec<(u32, Vector<usize>)> = round
                 .iter()
                 .filter_map(|&r| {
                     let rules = &rels.rules[r as usize];
                     let placed: Vec<Bits> = rules.iter().map(|&k| forms.get(k).placed_classes(rels, &locs)).collect();
-                    let kept: Vec<usize> = locs[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed(self.rules[k], c, p))).collect();
+                    let kept: Vector<usize> = locs[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed(self.rules[k], c, p))).collect();
                     (kept != locs[r as usize]).then_some((r, kept))
                 })
                 .collect();
@@ -462,12 +463,12 @@ impl<'v> Program<'v> {
             round = next;
         }
         let derived = || (0..n as u32).filter(|&r| rels.is_derived(r));
-        let locations: BTreeMap<String, Vec<usize>> = derived().map(|r| (self.name(r).to_owned(), locs[r as usize].clone())).collect();
+        let locations: BTreeMap<String, Vector<usize>> = derived().map(|r| (self.name(r).to_owned(), locs[r as usize].clone())).collect();
         // String filters (decision 0037).
         let mut filtering: Vec<bool> = (0..n).map(|r| rels.is_derived(r as u32) && was(r).is_none_or(|p| p.filters.contains(self.name(r as u32)))).collect();
-        let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && filtering[r as usize]).collect();
+        let mut round: Vector<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && filtering[r as usize]).collect();
         while !round.is_empty() {
-            let leaving: Vec<u32> = round.iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&k| forms.get(k).filters(self.rules[k], rels, &filtering))).collect();
+            let leaving: Vector<u32> = round.iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&k| forms.get(k).filters(self.rules[k], rels, &filtering))).collect();
             for &r in &leaving {
                 filtering[r as usize] = false;
             }
@@ -481,11 +482,11 @@ impl<'v> Program<'v> {
         };
         let cross_native = |rel: &str| {
             self.f.native(rel).is_some_and(|nat| match &nat.spec {
-                NativeSpec::TextTest { .. } => false,
+                ArchivedNativeSpec::TextTest { .. } => false,
                 // A rank's rows are its groups' (`rank_form`): its rule's join on the group is judged as any rule's.
-                NativeSpec::Rank { .. } => false,
-                NativeSpec::PythonCandidates { targets, .. } => !constants.contains(self.v.rel_name(*targets)) && !fact_not_input(*targets),
-                NativeSpec::Python { targets, .. } => targets.is_some_and(|t| !constants.contains(self.v.rel_name(t)) && !fact_not_input(t)),
+                ArchivedNativeSpec::Rank { .. } => false,
+                ArchivedNativeSpec::PythonCandidates { targets, .. } => !constants.contains(self.v.rel_name(*targets)) && !fact_not_input(*targets),
+                ArchivedNativeSpec::Python { targets, .. } => targets.is_some_and(|t| !constants.contains(self.v.rel_name(t)) && !fact_not_input(t)),
                 _ => true,
             })
         };
@@ -511,7 +512,7 @@ impl<'v> Program<'v> {
                 }
             })
             .collect();
-        let mut dirty: Option<Vec<usize>> = None;
+        let mut dirty: Option<rerail_blocks::vector::Vector<usize>> = None;
         loop {
             let explain = |k: usize, local_now: &[bool]| self.why_not_local(self.rules[k], local_now, &constants, &filters, &locations);
             let check = |k: usize| -> Option<(u32, String)> {
@@ -528,7 +529,7 @@ impl<'v> Program<'v> {
                 None => (0..self.rules.len()).filter(|&k| in_scope[rels.head[k] as usize] && local_now[rels.head[k] as usize]).filter_map(check).collect(),
                 Some(rules) => rules.iter().copied().filter(|&k| local_now[rels.head[k] as usize]).filter_map(check).collect(),
             };
-            let mut next: Vec<usize> = Vec::new();
+            let mut next: rerail_blocks::vector::Vector<usize> = rerail_blocks::vector::Vector::new();
             let mut left = false;
             for (r, why) in failing {
                 if std::mem::replace(&mut local_now[r as usize], false) {
@@ -551,7 +552,7 @@ impl<'v> Program<'v> {
 
     /// Why `rule` places more than one document, from its text: `None` where it does
     /// not. Asked only of a rule the numbered check fails (and, in a debug build, of each it passes).
-    fn why_not_local(&self, rule: RuleRef<'v>, local_now: &[bool], constants: &BTreeSet<String>, filters: &BTreeSet<String>, locations: &BTreeMap<String, Vec<usize>>) -> Option<String> {
+    fn why_not_local(&self, rule: RuleRef<'v>, local_now: &[bool], constants: &BTreeSet<String>, filters: &BTreeSet<String>, locations: &BTreeMap<String, Vector<usize>>) -> Option<String> {
         let v = self.v;
         let head = v.rel_name(rule.head().rel());
         let var = |s: Slot| v.text(rule.var(s)).to_owned();
@@ -687,14 +688,14 @@ struct Rels<'v> {
     chunk_value: Vec<bool>,
     test: Vec<bool>,
     text: Vec<Option<&'static [usize]>>,
-    base_locs: Vec<Vec<usize>>,
+    base_locs: Vec<Vector<usize>>,
     candidate: Vec<bool>,
     /// A derived relation's rules, by index in the program's order.
-    rules: Vec<Vec<usize>>,
+    rules: Vec<Vector<usize>>,
     /// The rules reading each relation, by index, each once, in order.
-    reading: Vec<Vec<usize>>,
+    reading: Vec<Vector<usize>>,
     /// Each rule's head.
-    head: Vec<u32>,
+    head: Vector<u32>,
     _v: std::marker::PhantomData<&'v ()>,
 }
 
@@ -702,10 +703,10 @@ impl<'v> Rels<'v> {
     fn of(v: &'v Version, f: Fields<'v>, rules: &[RuleRef<'v>]) -> Rels<'v> {
         let n = v.rel_end() as usize;
         let mut derived = vec![false; n];
-        let mut by_head: Vec<Vec<usize>> = vec![Vec::new(); n];
-        let mut reading: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut by_head: Vec<Vector<usize>> = vec![rerail_blocks::vector::Vector::new(); n];
+        let mut reading: Vec<Vector<usize>> = vec![rerail_blocks::vector::Vector::new(); n];
         let mut read = vec![false; n];
-        let head: Vec<u32> = rules.iter().map(|r| r.head().rel().0).collect();
+        let head: Vector<u32> = rules.iter().map(|r| r.head().rel().0).collect();
         for (k, r) in rules.iter().enumerate() {
             let h = head[k] as usize;
             derived[h] = true;
@@ -736,7 +737,7 @@ impl<'v> Rels<'v> {
             chunk_value: (0..n).map(|r| base(r) && CHUNK_VALUES.contains(&name(r))).collect(),
             test: (0..n).map(|r| (derived[r] || read[r]) && test(name(r))).collect(),
             text: (0..n).map(|r| if derived[r] || read[r] { crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(t, _)| *t == name(r)).map(|(_, c)| *c) } else { None }).collect(),
-            base_locs: (0..n).map(|r| if base(r) { p.base_locations(name(r)) } else { Vec::new() }).collect(),
+            base_locs: (0..n).map(|r| if base(r) { p.base_locations(name(r)) } else { rerail_blocks::vector::Vector::new() }).collect(),
             candidate: (0..n).map(|r| derived[r] && f.native(name(r)).is_none() && !f.lattice(name(r)) && !f.is_input(name(r))).collect(),
             rules: by_head,
             reading,
@@ -747,7 +748,7 @@ impl<'v> Rels<'v> {
     }
 
     fn empty() -> Rels<'v> {
-        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), placeless_input: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
+        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), placeless_input: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: rerail_blocks::vector::Vector::new(), _v: std::marker::PhantomData }
     }
 
     fn is_derived(&self, r: u32) -> bool {
@@ -759,8 +760,8 @@ impl<'v> Rels<'v> {
     }
 
     /// The derived relations whose rules read any of `rels`, each once, in order.
-    fn heads_reading(&self, rels: impl Iterator<Item = u32>, keep: impl Fn(u32) -> bool) -> Vec<u32> {
-        let mut out: Vec<u32> = rels.flat_map(|r| self.reading[r as usize].iter().map(|&k| self.head[k])).filter(|&h| keep(h)).collect();
+    fn heads_reading(&self, rels: impl Iterator<Item = u32>, keep: impl Fn(u32) -> bool) -> Vector<u32> {
+        let mut out: Vector<u32> = rels.flat_map(|r| self.reading[r as usize].iter().map(|&k| self.head[k])).filter(|&h| keep(h)).collect();
         out.sort_unstable();
         out.dedup();
         out
@@ -791,19 +792,19 @@ struct ValueTapes {
     by_binder: BTreeMap<u32, usize>,
     /// Each spliced tape's node and tape class.
     splices: Vec<(Slot, u32)>,
-    class: Vec<u32>,
+    class: Vector<u32>,
 }
 
 impl ValueTapes {
     fn of(v: &Version, rule: RuleRef<'_>) -> ValueTapes {
         let n = rule.var_count();
-        let mut root: Vec<u32> = (0..n as u32).collect();
+        let mut root: Vector<u32> = (0..n as u32).collect();
         for l in rule.body() {
             if let L::Cmp { l: TermRef::Var(a), op: CmpOp::Eq, r: TermRef::Var(b) } = l.view() {
                 join(&mut root, a.0, b.0);
             }
         }
-        let class: Vec<u32> = (0..n as u32).map(|s| find(&mut root, s)).collect();
+        let class: Vector<u32> = (0..n as u32).map(|s| find(&mut root, s)).collect();
         let mut out = ValueTapes { by_binder: BTreeMap::new(), splices: Vec::new(), class };
         let body: Vec<L<'_>> = rule.body().map(|l| l.view()).collect();
         for l in &body {
@@ -815,7 +816,7 @@ impl ValueTapes {
             match (v.rel_name(a.rel()), args.as_slice()) {
                 ("parse_of", [TermRef::Var(x), _, TermRef::Var(t)]) => {
                     let x = out.class[x.0 as usize];
-                    let binders: Vec<usize> = body
+                    let binders: Vector<usize> = body
                         .iter()
                         .enumerate()
                         .filter(|(_, l)| match l {
@@ -847,7 +848,7 @@ impl ValueTapes {
 
 /// A body literal as the split reads it.
 enum Lit {
-    Read { neg: bool, plain: bool, rel: u32, args: Vec<Option<u32>>, binder: bool, tapes: Vec<u32> },
+    Read { neg: bool, plain: bool, rel: u32, args: Vec<Option<u32>>, binder: bool, tapes: Vector<u32> },
     Ast,
     Nearest(u32, u32),
     Cmp,
@@ -859,7 +860,7 @@ struct Form {
     /// Whether a term of the body names the slot (a head's variable is found only then, as the tree's `Form` finds it
     /// by name).
     named: Vec<bool>,
-    class: Vec<u32>,
+    class: Vector<u32>,
     lits: Vec<Lit>,
     splices: Vec<(u32, u32)>,
     ids: usize,
@@ -887,11 +888,11 @@ impl Form {
                 _ => {}
             }
         }
-        let mut root: Vec<u32> = (0..n as u32).collect();
+        let mut root: Vector<u32> = (0..n as u32).collect();
         for (a, b) in super::var_equalities_in(v, rule) {
             join(&mut root, a.0, b.0);
         }
-        let class: Vec<u32> = (0..n as u32).map(|s| find(&mut root, s)).collect();
+        let class: Vector<u32> = (0..n as u32).map(|s| find(&mut root, s)).collect();
         let placed = ValueTapes::of(v, rule);
         // The value tapes, numbered after the slots.
         let mut tapes: BTreeMap<u32, u32> = BTreeMap::new();
@@ -910,7 +911,7 @@ impl Form {
                         _ => unreachable!(),
                     };
                     let args: Vec<TermRef<'_>> = a.args().collect();
-                    let mut stand: Vec<u32> = placed.by_binder.iter().filter(|(_, b)| **b == index).map(|(t, _)| tape(*t)).collect();
+                    let mut stand: Vector<u32> = placed.by_binder.iter().filter(|(_, b)| **b == index).map(|(t, _)| tape(*t)).collect();
                     if v.rel_name(a.rel()) == "tape_of"
                         && let Some(t) = args.get(1).and_then(|t| t.var())
                         && let Some(t) = placed.canonical(t)
@@ -952,7 +953,7 @@ impl Form {
         })
     }
 
-    fn placed_classes(&self, rels: &Rels<'_>, locs: &[Vec<usize>]) -> Bits {
+    fn placed_classes(&self, rels: &Rels<'_>, locs: &[Vector<usize>]) -> Bits {
         let mut out = Bits::new(self.ids);
         for l in &self.lits {
             if let Lit::Read { neg: false, rel, args, .. } = l {
@@ -991,15 +992,15 @@ impl Form {
         reads_only_text && rule.head().args().all(|t| self.var(t).is_some_and(|v| strings.has(v)))
     }
 
-    fn one_document(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], locs: &[Vec<usize>]) -> bool {
+    fn one_document(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], locs: &[Vector<usize>]) -> bool {
         let head_filter = filters[head as usize];
-        let mut root: Vec<u32> = (0..self.ids as u32).collect();
-        let mut firsts: Vec<u32> = Vec::new();
+        let mut root: Vector<u32> = (0..self.ids as u32).collect();
+        let mut firsts: Vector<u32> = rerail_blocks::vector::Vector::new();
         for &(n, t) in &self.splices {
             join(&mut root, n, t);
             firsts.push(n);
         }
-        let mut group: Vec<u32> = Vec::new();
+        let mut group: Vector<u32> = rerail_blocks::vector::Vector::new();
         for (index, l) in self.lits.iter().enumerate() {
             match l {
                 Lit::Read { plain, rel, args, binder, tapes, .. } => {
@@ -1034,7 +1035,7 @@ impl Form {
                 Lit::Cmp => {}
             }
         }
-        let mut roots: Vec<u32> = firsts.iter().map(|&f| find(&mut root, f)).collect();
+        let mut roots: Vector<u32> = firsts.iter().map(|&f| find(&mut root, f)).collect();
         roots.sort_unstable();
         roots.dedup();
         roots.len() == 1 || (roots.is_empty() && head_filter)
@@ -1057,11 +1058,11 @@ fn join(root: &mut [u32], a: u32, b: u32) {
 }
 
 /// A set of a body's ids.
-struct Bits(Vec<u64>);
+struct Bits(Vector<u64>);
 
 impl Bits {
     fn new(n: usize) -> Bits {
-        Bits(vec![0; n.div_ceil(64)])
+        Bits(rerail_blocks::vector![0; n.div_ceil(64)])
     }
     fn set(&mut self, i: u32) {
         self.0[i as usize / 64] |= 1 << (i % 64);

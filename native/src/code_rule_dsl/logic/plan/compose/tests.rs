@@ -125,7 +125,7 @@ fn composed_queries_read_adopted_inputs_and_replace_their_versions() {
     .unwrap();
     let _plans = KeepPlans::start(None);
     for n in [7, 9] {
-        native::component::retain(&db, "supplied", vec![vec![n]], vec![b'i']).unwrap();
+        native::component::retain(&db, "supplied", vec![rerail_blocks::vector![n]], vec![b'i']).unwrap();
         native::component::adopt(
             &db,
             "supplied",
@@ -237,7 +237,7 @@ fn exponentially_shared_ctes_use_bounded_bulk_stages() {
     let db=Connection::open_in_memory().unwrap();
     let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(empty(&placed)),kept:BTreeSet::new()};
     use crate::code_rule_dsl::logic::native::component;
-    component::retain(&db,"seed",vec![vec![1],vec![2]],vec![b'i']).unwrap();
+    component::retain(&db,"seed",vec![rerail_blocks::vector![1],rerail_blocks::vector![2]],vec![b'i']).unwrap();
     stages::bind(&placed,&db,&mut inputs,"seed",component::derived(&db,"seed").unwrap()).unwrap();
     let mut model=make_plan(&placed,&db,inputs.clone()).unwrap();
     let unbounded=compile(&placed,&mut model).unwrap();
@@ -256,7 +256,7 @@ fn restored_case_distinct_inputs_keep_their_own_bindings() {
     let db=Connection::open_in_memory().unwrap();
     for value in [2,1] {
         let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(empty(&placed)),kept:BTreeSet::new()};
-        for (r,rows) in [("leaf",vec![vec![1],vec![2]]),("LEAF",vec![vec![value]])] {
+        for (r,rows) in [("leaf",vec![rerail_blocks::vector![1],rerail_blocks::vector![2]]),("LEAF",vec![rerail_blocks::vector![value]])] {
             component::retain(&db,r,rows,vec![b'i']).unwrap();
             stages::bind(&placed,&db,&mut inputs,r,component::derived(&db,r).unwrap()).unwrap();
         }

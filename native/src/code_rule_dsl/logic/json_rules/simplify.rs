@@ -2,6 +2,7 @@
 //! helpers with the same rules, inline helpers used once, drop repeated literals and grounding atoms something
 //! else provides, and fold families of copies into one relation and a table (`fold`).
 
+use rerail_blocks::vector::Vector;
 use super::program::Program;
 use super::patterns::Patterns;
 use super::pyre::{captures, esc, findall, g, re, sub};
@@ -104,19 +105,19 @@ pub fn canon(px: &Patterns, heads_lits: &[(String, Vec<String>)]) -> Canon {
 
 /// All rules of one translated policy: violation rules (body entries), utils and helpers, as arena indices.
 pub struct Rules {
-    pub entries: Vec<usize>,
-    pub helper_rules: Vec<usize>,
+    pub entries: Vector<usize>,
+    pub helper_rules: Vector<usize>,
     pub facts: IndexMap<String, Vec<Value>>,
     pub protected: Set,
 }
 
 impl Rules {
-    pub fn all(&self) -> Vec<usize> {
+    pub fn all(&self) -> Vector<usize> {
         self.entries.iter().chain(self.helper_rules.iter()).copied().collect()
     }
 
-    pub fn defs(&self, prog: &Program) -> IndexMap<String, Vec<usize>> {
-        let mut d: IndexMap<String, Vec<usize>> = IndexMap::new();
+    pub fn defs(&self, prog: &Program) -> IndexMap<String, Vector<usize>> {
+        let mut d: IndexMap<String, Vector<usize>> = IndexMap::new();
         for r in self.all() {
             d.entry(prog.arena[r].name().to_owned()).or_default().push(r);
         }
@@ -235,7 +236,7 @@ fn bare_names(px: &Patterns, rs: &Rules, prog: &Program, names: &Set) -> Set {
     out
 }
 
-fn recursive(px: &Patterns, defs: &IndexMap<String, Vec<usize>>, prog: &Program) -> Set {
+fn recursive(px: &Patterns, defs: &IndexMap<String, Vector<usize>>, prog: &Program) -> Set {
     let graph: IndexMap<&String, Set> = defs
         .iter()
         .map(|(n, rules)| {
@@ -283,13 +284,13 @@ fn inline(px: &Patterns, rs: &mut Rules, prog: &mut Program) -> usize {
                 }
             }
         }
-        let mut cands: IndexMap<String, (usize, String, Vec<usize>)> = IndexMap::new();
+        let mut cands: IndexMap<String, (usize, String, Vector<usize>)> = IndexMap::new();
         for (name, rules) in &defs {
             if rs.protected.contains(name) || rec.contains(name) || !(is_generated(px, name) || is_meaningless(px, name)) {
                 continue;
             }
             let head = format!("{name}(n)");
-            if uses.get(name).map_or(0, Vec::len) != 1 || rules.len() > MAX_DISJ || !rules.iter().all(|&r| prog.arena[r].head == head) {
+            if uses.get(name).map_or(0, |v| v.len()) != 1 || rules.len() > MAX_DISJ || !rules.iter().all(|&r| prog.arena[r].head == head) {
                 continue;
             }
             if rules.iter().any(|&r| mentions_metavariable(px, &prog.arena[r].lits)) {
@@ -307,7 +308,7 @@ fn inline(px: &Patterns, rs: &mut Rules, prog: &mut Program) -> usize {
             }
             let caller = prog.arena[*r].lits.clone();
             let lit = format!("{name}({arg})");
-            let idx: Vec<usize> = caller.iter().enumerate().filter(|(_, l)| l.trim() == lit).map(|(i, _)| i).collect();
+            let idx: Vector<usize> = caller.iter().enumerate().filter(|(_, l)| l.trim() == lit).map(|(i, _)| i).collect();
             if idx.len() != 1 {
                 continue;
             }
@@ -421,8 +422,8 @@ fn unused_facts(px: &Patterns, rs: &mut Rules, prog: &mut Program) {
 
 /// Simplify in place. `entries` are the body's rules (arena indices, filtered in place); `prog.rules` holds helpers
 /// and facts, rebuilt facts first.
-pub fn simplify(px: &Patterns, entries: &mut Vec<usize>, prog: &mut Program, protected: Set, reserved: &Set) {
-    let helper_rules: Vec<usize> = prog.rules.iter().filter_map(|r| if let super::program::PRule::Rule(id) = r { Some(*id) } else { None }).collect();
+pub fn simplify(px: &Patterns, entries: &mut Vector<usize>, prog: &mut Program, protected: Set, reserved: &Set) {
+    let helper_rules: Vector<usize> = prog.rules.iter().filter_map(|r| if let super::program::PRule::Rule(id) = r { Some(*id) } else { None }).collect();
     let facts: IndexMap<String, Vec<Value>> = prog.rules.iter().filter_map(|r| if let super::program::PRule::Facts { name, vals } = r { Some((name.clone(), vals.clone())) } else { None }).collect();
     let mut rs = Rules { entries: std::mem::take(entries), helper_rules, facts, protected };
     let mut folded = false;

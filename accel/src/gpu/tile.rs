@@ -21,7 +21,7 @@ pub enum Form {
 /// A relation's columns on the device, grouped by the lead column's chunk.
 pub struct Resident {
     /// Each group's chunk and its rows (first, count), in order.
-    pub group_list: Vec<(i64, u32, u32)>,
+    pub group_list: rerail_blocks::vector::Vector<crate::rows::Run>,
     pub rows: usize,
     pub groups: usize,
     pub forms: Vec<Form>,
@@ -49,12 +49,12 @@ impl Resident {
     pub fn new(columns: &[&[i64]], rows: usize) -> Result<Self, String> {
         super::join::device()?;
         let lead = columns.first().ok_or("a relation of no columns")?;
-        let chunks: Vec<i64> = lead[..rows].iter().map(|&v| v >> 16).collect();
+        let chunks: rerail_blocks::vector::Vector<i64> = lead[..rows].iter().map(|&v| v >> 16).collect();
         let sorted = crate::rows::sort(&chunks);
         let group_list = crate::rows::runs(&sorted.keys);
         // Tiles: a group's rows 256 at a time.
-        let (mut highs, mut tiles) = (Vec::with_capacity(group_list.len()), Vec::<[u32; 4]>::new());
-        for (g, &(high, start, count)) in group_list.iter().enumerate() {
+        let (mut highs, mut tiles) = (rerail_blocks::vector::Vector::with_capacity(group_list.len()), rerail_blocks::vector::Vector::<[u32; 4]>::new());
+        for (g, &crate::rows::Run { key: high, start, count }) in group_list.iter().enumerate() {
             highs.push(high);
             for s in (start..start + count).step_by(TILE) {
                 tiles.push([g as u32, s, (start + count - s).min(TILE as u32), 0]);
@@ -64,7 +64,7 @@ impl Resident {
         let mut forms = Vec::with_capacity(columns.len());
         let mut buffers = Vec::with_capacity(columns.len());
         let mut bytes = 0;
-        let mut v: Vec<i64> = Vec::with_capacity(rows);
+        let mut v: rerail_blocks::vector::Vector<i64> = rerail_blocks::vector::Vector::with_capacity(rows);
         for c in columns {
             v.clear();
             v.extend(perm.iter().map(|&r| c[r as usize]));
@@ -102,7 +102,7 @@ impl Resident {
 
 /// A join's pairs (`tile_join`): each pair's host rows, left and right, and the GPU time.
 pub struct Joined {
-    pub pairs: Vec<(u32, u32)>,
+    pub pairs: rerail_blocks::vector::Vector<[u32; 2]>,
     pub gpu_seconds: f64,
     /// The pairs of rows the kernel compared: the brute force's work.
     pub compared: u64,
@@ -155,18 +155,18 @@ impl TileJob {
     }
     // The join's tiles: each left tile of a chunk the right also has, with the right's rows of it.
     let (lg, rg) = (&left.group_list, &right.group_list);
-    let mut tiles: Vec<[u32; 4]> = Vec::new();
-    let mut highs: Vec<i64> = Vec::new();
+    let mut tiles: rerail_blocks::vector::Vector<[u32; 4]> = rerail_blocks::vector::Vector::new();
+    let mut highs: rerail_blocks::vector::Vector<i64> = rerail_blocks::vector::Vector::new();
     let mut compared = 0u64;
     let mut r = 0;
-    for &(high, start, count) in lg {
-        while r < rg.len() && rg[r].0 < high {
+    for &crate::rows::Run { key: high, start, count } in lg {
+        while r < rg.len() && rg[r].key < high {
             r += 1;
         }
-        if r < rg.len() && rg[r].0 == high {
-            compared += u64::from(count) * u64::from(rg[r].2);
+        if r < rg.len() && rg[r].key == high {
+            compared += u64::from(count) * u64::from(rg[r].count);
             for s in (start..start + count).step_by(TILE) {
-                tiles.push([s, (start + count - s).min(TILE as u32), rg[r].1, rg[r].2]);
+                tiles.push([s, (start + count - s).min(TILE as u32), rg[r].start, rg[r].count]);
                 highs.push(high);
             }
         }
@@ -324,11 +324,11 @@ DEFINE_KERNEL2(join, tile_scatter,
 
     /// The pairs, (left host row, right host row), in tile order (in row order after `sort`): after the scatter's
     /// submission completed.
-    pub fn pairs(&self) -> Vec<(u32, u32)> {
-        let Some(out) = &self.out else { return Vec::new() };
-        // SAFETY: `2 * total` words, written by the scatter.
-        let flat = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), 2 * self.total) };
-        flat.chunks_exact(2).map(|p| (p[0], p[1])).collect()
+    pub fn pairs(&self) -> rerail_blocks::vector::Vector<[u32; 2]> {
+        let Some(out) = &self.out else { return rerail_blocks::vector::Vector::new() };
+        // SAFETY: `total` pairs, written by the scatter.
+        let flat = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<[u32; 2]>(), self.total) };
+        flat.iter().copied().collect()
     }
 }
 

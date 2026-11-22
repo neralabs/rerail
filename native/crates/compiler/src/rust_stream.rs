@@ -97,7 +97,7 @@ struct Facts<'a> {
     word_names: Vec<String>,
     /// A format 16 source's language's numbers by key (`native_cpu_stream::numbers_by_key`): a direct run writes
     /// each node's as a literal at its word. Empty elsewhere.
-    numbers: Vec<u32>,
+    numbers: rerail_tape_format::Vector<u32>,
     /// The regions read as a method each (`string_methods`), as the lean parser's `string`: each part's `TOKEN` the
     /// name of the method its loop is, one method a loop of the same code.
     strings: HashMap<usize, String>,
@@ -656,7 +656,7 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
     let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
-    let mut facts = Facts { native, loses, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, part_kinds, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, fn_names, kind_names, token_names, word_names, numbers: Vec::new(), strings: HashMap::new(), part_arg: false, methods: Default::default(), labels: Default::default() };
+    let mut facts = Facts { native, loses, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, part_kinds, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, fn_names, kind_names, token_names, word_names, numbers: rerail_tape_format::Vector::new(), strings: HashMap::new(), part_arg: false, methods: Default::default(), labels: Default::default() };
     facts.sentinel = sentinel(&facts);
     // Where tier 2 makes the records, the program is one function, as `walk_document`.
     if facts.fetch.is_some() && !facts.context {

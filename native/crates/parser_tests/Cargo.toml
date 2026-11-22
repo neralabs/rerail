@@ -7,10 +7,12 @@ description = "The parsers' tests that need no engine: the .rerail ladder agains
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-tape-format/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
+# The block runs' outputs (`BlockRun`), in blocks (decision 0353).
+rerail-blocks = { path = "../blocks" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 # Format 16's tapes, which the JSON suite compares (decision 0434).
 rerail-tape-format = { path = "../tape_format" }

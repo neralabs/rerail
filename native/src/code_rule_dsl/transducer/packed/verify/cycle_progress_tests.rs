@@ -1,11 +1,12 @@
 //! Behavioral validation of structural progress, independent of execution backend.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use ast_grep_core::tree_sitter::StrDoc;
 use crate::code_rule_dsl::language::GrammarDialect;
 
-fn program(words: Vec<u32>) -> Result<Program, Error> {
-    Program::new(words, vec![b"value".to_vec()], vec![], vec![0], vec![])
+fn program(words: Vector<u32>) -> Result<Program, Error> {
+    Program::new(words, vec![b"value".to_vec()], vec![], rerail_blocks::vector![0], rerail_blocks::vector![])
 }
 
 #[test]
@@ -13,7 +14,7 @@ fn cycle_progress_rejects_restored_and_bypassed_navigation() {
     let cases = [
         // A cursor saved before the loop restores its original node every time.
         (
-            vec![
+            rerail_blocks::vector![
                 word(SAVE_CURSOR, 0, 0),
                 word(FORK, 0, 5),
                 word(NEXT, NAMED, 0),
@@ -25,7 +26,7 @@ fn cycle_progress_rejects_restored_and_bypassed_navigation() {
         ),
         // Saving inside the loop does not make a canceled advance productive.
         (
-            vec![
+            rerail_blocks::vector![
                 word(SAVE_CURSOR, 0, 0),
                 word(NEXT, NAMED, 0),
                 word(RESTORE_CURSOR, 0, 0),
@@ -35,7 +36,7 @@ fn cycle_progress_rejects_restored_and_bypassed_navigation() {
         ),
         // A backward FORK needs the same progress proof as a backward GOTO.
         (
-            vec![
+            rerail_blocks::vector![
                 word(SAVE_CURSOR, 0, 0),
                 word(NEXT, NAMED, 0),
                 word(RESTORE_CURSOR, 0, 0),
@@ -46,17 +47,17 @@ fn cycle_progress_rejects_restored_and_bypassed_navigation() {
         ),
         // NEXT appears in the lexical range but is not executed.
         (
-            vec![word(GOTO, 0, 2), word(NEXT, NAMED, 0), word(GOTO, 0, 0)],
+            rerail_blocks::vector![word(GOTO, 0, 2), word(NEXT, NAMED, 0), word(GOTO, 0, 0)],
             2,
         ),
         // One branch advances. The other branch can repeat the same node.
         (
-            vec![word(FORK, 0, 2), word(NEXT, NAMED, 0), word(GOTO, 0, 0)],
+            rerail_blocks::vector![word(FORK, 0, 2), word(NEXT, NAMED, 0), word(GOTO, 0, 0)],
             2,
         ),
         // Visiting a sibling beneath the same parent does not advance that parent.
         (
-            vec![
+            rerail_blocks::vector![
                 word(CHILD, 0, 0),
                 word(NEXT, 0, 0),
                 word(PARENT, 0, 0),
@@ -83,20 +84,20 @@ fn cycle_progress_preserves_advancing_cursor_and_navigation_loops() {
     let roots = tape.transducer_children(0).collect::<Vec<_>>();
     assert_eq!(roots.len(), 2);
     let bodies = [
-        vec![word(NEXT, NAMED, 0)],
-        vec![
+        rerail_blocks::vector![word(NEXT, NAMED, 0)],
+        rerail_blocks::vector![
             word(SAVE_CURSOR, 0, 0),
             word(RESTORE_CURSOR, 0, 0),
             word(NEXT, NAMED, 0),
         ],
-        vec![
+        rerail_blocks::vector![
             word(NEXT, NAMED, 0),
             word(SAVE_CURSOR, 0, u16::MAX),
             word(CHILD, 0, 0),
             word(RESTORE_CURSOR, 0, u16::MAX),
         ],
-        vec![word(CHILD, 0, 0), word(PARENT, 0, 0), word(NEXT, NAMED, 0)],
-        vec![
+        rerail_blocks::vector![word(CHILD, 0, 0), word(PARENT, 0, 0), word(NEXT, NAMED, 0)],
+        rerail_blocks::vector![
             word(CHILD, 0, 0),
             word(CHILD, 0, 0),
             word(NEXT, 0, 0),
@@ -126,7 +127,7 @@ fn cycle_progress_preserves_advancing_cursor_and_navigation_loops() {
         })
         .collect::<Vec<_>>();
     for body in bodies {
-        let mut words = vec![word(FORK, 0, body.len() as u16 + 2)];
+        let mut words = rerail_blocks::vector![word(FORK, 0, body.len() as u16 + 2)];
         words.extend(body);
         words.extend([word(GOTO, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)]);
         let program = program(words).unwrap();
@@ -136,7 +137,7 @@ fn cycle_progress_preserves_advancing_cursor_and_navigation_loops() {
         );
     }
     // The productive path leaves the lexical interval of the edge at PC 2.
-    let noncontiguous = program(vec![
+    let noncontiguous = program(rerail_blocks::vector![
         word(FORK, 0, 8),
         word(GOTO, 0, 5),
         word(GOTO, 0, 0),
@@ -252,7 +253,7 @@ fn cycle_progress_acceptance_implies_actual_progress_for_short_sequences() {
                 body.push(operations[encoded % operations.len()]);
                 encoded /= operations.len();
             }
-            let mut words = vec![word(FORK, 0, length as u16 + 2)];
+            let mut words = rerail_blocks::vector![word(FORK, 0, length as u16 + 2)];
             words.extend(body.iter().map(|&op| word(op, 0, 0)));
             words.extend([word(GOTO, 0, 0), word(EMIT, 0, 0)]);
             match program(words) {

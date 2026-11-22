@@ -16,6 +16,7 @@
 //! constants the program's `fstring_template` atoms hold (`logic::strings::Vocabulary::markers`). Rows hold string
 //! indexes, as `Batch::build`'s do.
 
+use rerail_blocks::vector::Vector;
 use super::{Dialect, Document, Projected, Relation};
 use crate::code_rule_dsl::facts::core::NONE;
 use crate::code_rule_dsl::literal;
@@ -60,8 +61,8 @@ pub(super) struct FStrings {
     piece: bool,
     /// The markers of the `fstring_template` rows, when it is read.
     markers: Vec<String>,
-    pieces: Vec<[i64; 4]>,
-    templates: Vec<[i64; 3]>,
+    pieces: Vector<[i64; 4]>,
+    templates: Vector<[i64; 3]>,
 }
 
 impl FStrings {
@@ -80,7 +81,7 @@ impl FStrings {
     /// Document `p`'s rows (`d` its document; `python`: it is Python's).
     pub(super) fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, python: bool, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let (true, true, Some(dialect)) = (self.reads(), python, dialect) else { return Ok(()) };
-        let f = &*p.facts;
+        let f = p.f();
         let Some((tape, _)) = &d.tape else {
             return Err(StoreError::Invalid(format!("{}: fstring_piece and fstring_template need the document's tape", d.path)));
         };
@@ -88,7 +89,7 @@ impl FStrings {
             return Err(StoreError::Invalid(format!("{}: the tape is not the one the facts were read off", d.path)));
         }
         let root = ast_grep_core::AstGrep::doc(tape.clone());
-        let markers: Vec<i64> = self.markers.iter().map(|m| string(m) as i64).collect();
+        let markers: Vector<i64> = self.markers.iter().map(|m| string(m) as i64).collect();
         for id in 0..f.len() as u32 {
             let local = p.local_of_node(id);
             if local == NONE || !HOSTS.contains(&dialect.name(f, id)) {

@@ -38,7 +38,9 @@ impl Step {
     }
 }
 
-pub(super) fn sums(steps: &mut [Step], head: &[Term]) {
+/// The sums and slot copies no one reads: each one's step and the proof that eliding it observes nothing.
+pub(super) fn sums(steps: &[Step], head: &[Term]) -> Vec<Edit> {
+    let mut edits = Vec::new();
     let mut live = std::collections::BTreeSet::new();
     for term in head {
         match term {
@@ -51,7 +53,7 @@ pub(super) fn sums(steps: &mut [Step], head: &[Term]) {
             _ => {}
         }
     }
-    for (position, step) in steps.iter_mut().enumerate().rev() {
+    for (position, step) in steps.iter().enumerate().rev() {
         let proof = match step {
             Step::Scalar {
                 kind: ScalarKind::Sum,
@@ -74,7 +76,7 @@ pub(super) fn sums(steps: &mut [Step], head: &[Term]) {
             crate::code_rule_dsl::logic::profile::decision("native scalar use", || {
                 serde_json::json!({"step":position,"proof":proof}).to_string()
             });
-            *step = Step::Unused { proof };
+            edits.push(Edit::Unused(position, proof));
             continue;
         }
         let mut read = |key: &Key| {
@@ -165,4 +167,5 @@ pub(super) fn sums(steps: &mut [Step], head: &[Term]) {
             Step::Unused { .. } => {}
         }
     }
+    edits
 }

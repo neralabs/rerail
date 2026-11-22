@@ -394,7 +394,7 @@ impl GpuBackend {
                 Read::Pairs { total, buf, .. } => {
                     let t = total.read() as usize;
                     let buf = exact.remove(&i).map_or(buf, |(b, _)| b);
-                    Output::Pairs(read::<(u32, u32)>(&buf, t))
+                    Output::Pairs(read::<[u32; 2]>(&buf, t))
                 }
             });
         }
@@ -442,14 +442,14 @@ impl Drop for ReadPhase {
 const _: () = assert!(size_of::<(u32, u32)>() == 8 && std::mem::offset_of!((u32, u32), 0) == 0 && std::mem::offset_of!((u32, u32), 1) == 4);
 
 /// `n` values from the start of a buffer the host shares.
-fn read<T: Copy>(buf: &Buffer, n: usize) -> Vec<T> {
+fn read<T: rerail_blocks::Pod + Copy>(buf: &Buffer, n: usize) -> rerail_blocks::vector::Vector<T> {
     if n == 0 {
-        return Vec::new();
+        return rerail_blocks::vector::Vector::new();
     }
     assert!(buf.length() as usize >= n * size_of::<T>(), "gpu lane: reading past a buffer");
     // copy: not block data (a kernel's output, handed to the caller as its own)
     // SAFETY: a buffer the device finished writing (the submission completed); `n` values fit it.
-    unsafe { std::slice::from_raw_parts(buf.contents() as *const T, n) }.to_vec()
+    unsafe { std::slice::from_raw_parts(buf.contents() as *const T, n) }.iter().copied().collect()
 }
 
 /// A `#[repr(C)]` value's bytes, as a kernel's `ARGS` row takes them.
@@ -692,7 +692,7 @@ impl Planner<'_> {
 
     fn job(&mut self, k: &Kernel) -> Result<Job, String> {
         match k {
-            Kernel::BitProduct { a, b, min } => self.bit_product(a, b, min.as_deref()),
+            Kernel::BitProduct { a, b, min } => self.bit_product(a, b, min.as_deref().map(|m| &m[..])),
             Kernel::CountTable { loff, left, roff, right, emit } => self.count_table(loff, left, roff, right, *emit),
             Kernel::Histogram { off, codes, width } => self.histogram(off, codes, *width),
             Kernel::Closure { n, off, dst } => self.closure(*n, off, dst),
@@ -708,8 +708,8 @@ impl Planner<'_> {
         let (n, m, kw) = (a.rows as u64, b.rows as u64, a.words as u64);
         if n == 0 || m == 0 {
             return Ok(Job::ready(match min {
-                None => Output::Counts { rows: a.rows, cols: b.rows, data: Vec::new() },
-                Some(_) => Output::Pairs(Vec::new()),
+                None => Output::Counts { rows: a.rows, cols: b.rows, data: rerail_blocks::vector::Vector::new() },
+                Some(_) => Output::Pairs(rerail_blocks::vector::Vector::new()),
             }));
         }
         let (ba, bb) = (self.input(&a.data), self.input(&b.data));
@@ -745,7 +745,7 @@ impl Planner<'_> {
         }
         let nparts = (loff.len() - 1) as u64;
         if left.is_empty() {
-            return Ok(Job::ready(if emit { Output::Pairs(Vec::new()) } else { Output::PerRow(Vec::new()) }));
+            return Ok(Job::ready(if emit { Output::Pairs(rerail_blocks::vector::Vector::new()) } else { Output::PerRow(rerail_blocks::vector::Vector::new()) }));
         }
         let nl = left.len() as u64;
         let (bl, br, blo, bro) = (self.input(left), self.input(right), self.input(loff), self.input(roff));
@@ -774,7 +774,7 @@ impl Planner<'_> {
         let nparts = off.len() - 1;
         // No counts to make: the reference reads no codes either.
         if nparts == 0 || width == 0 {
-            return Ok(Job::ready(Output::Counts { rows: nparts, cols: width as usize, data: vec![0; nparts * width as usize] }));
+            return Ok(Job::ready(Output::Counts { rows: nparts, cols: width as usize, data: rerail_blocks::vector![0; nparts * width as usize] }));
         }
         let (bc, bo) = (self.input(codes), self.input(off));
         let h = self.alloc(nparts as u64 * width as u64 * 4);
@@ -791,7 +791,7 @@ impl Planner<'_> {
             return Err(format!("closure: not a CSR of {n} nodes"));
         }
         if nu == 0 {
-            return Ok(Job::ready(Output::Bits(Bits::new(0, words, Vec::<u64>::new()))));
+            return Ok(Job::ready(Output::Bits(Bits::new(0, words, rerail_blocks::vector::Vector::<u64>::new()))));
         }
         // The condensed DAG on the host: components, their successor components (deduplicated), cycles, levels.
         let (comp, ncomp) = crate::cpu::components(nu, off, dst);

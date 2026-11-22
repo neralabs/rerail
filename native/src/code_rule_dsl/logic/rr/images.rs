@@ -14,6 +14,7 @@
 //! The bundle's layout: `RRIMAGES`, the version (u32) and the count (u32); then one entry per image, sorted by key:
 //! the key's sha256 (32 bytes), the offset and the length (u64 each); then the images, each at a 16-byte boundary.
 
+use rerail_blocks::vector::Vector;
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -149,7 +150,7 @@ pub fn read_images(store: Option<&ContentStore>, keys: &[HashKey]) -> Vec<Option
     let shipped_count = out.iter().filter(|f| f.is_some()).count();
     crate::code_rule_dsl::prof::count("rr.image_shipped", shipped_count);
     let Some(store) = store else { return out };
-    let asked: Vec<usize> = (0..keys.len()).filter(|&i| out[i].is_none()).collect();
+    let asked: Vector<usize> = (0..keys.len()).filter(|&i| out[i].is_none()).collect();
     let asked_keys: Vec<HashKey> = asked.iter().map(|&i| keys[i]).collect();
     let (Ok(ids), Ok(bytes)) = (store.sources_by_aliases(&asked_keys), store.sources_by_alias_in_place(&asked_keys)) else { return out };
     for ((&i, id), b) in asked.iter().zip(ids).zip(bytes) {

@@ -62,7 +62,7 @@ pub struct SearchAnchorLookup {
 pub enum StoredAnchorSelection {
     Unknown,
     Candidate,
-    Roots(Vec<u32>),
+    Roots(rerail_blocks::vector::Vector<u32>),
 }
 
 
@@ -343,7 +343,7 @@ impl ContentStore {
                 selections[position] = if exact_value && value_candidate {
                     StoredAnchorSelection::Candidate
                 } else {
-                    StoredAnchorSelection::Roots(Vec::new())
+                    StoredAnchorSelection::Roots(rerail_blocks::vector::Vector::new())
                 };
             }
             if let Some(root) = root {

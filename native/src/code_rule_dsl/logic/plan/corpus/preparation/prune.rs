@@ -3,6 +3,7 @@
 //! of each request's readers follows the rules kept; a native nothing reads is dropped with them. Facts stay. A
 //! reader outside the version (another part's, decision 0345) keeps its ask.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{About, RuleRef};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -23,14 +24,14 @@ impl ProgramPass for Prune {
         let asked = w.input().asked();
         let mut gate: Vec<Option<&BTreeSet<String>>> = vec![None; rules.len()];
         for (req, readers) in asked.iter().filter(|(req, _)| !roots.contains(req)) {
-            let at: Vec<usize> = (0..rules.len()).filter(|&i| head(i) == req.as_str()).collect();
+            let at: Vector<usize> = (0..rules.len()).filter(|&i| head(i) == req.as_str()).collect();
             if at.len() == readers.len() {
                 for (i, by) in at.into_iter().zip(readers) {
                     gate[i] = Some(by);
                 }
             }
         }
-        let mut body_of: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut body_of: HashMap<&str, Vector<usize>> = HashMap::new();
         for i in 0..rules.len() {
             body_of.entry(head(i)).or_default().push(i);
         }
@@ -134,7 +135,7 @@ impl ProgramPass for Prune {
         // The natives' rows (each names its native in column 1).
         if !dropped_natives.is_empty() {
             for (name, _) in crate::code_rule_dsl::logic::program_image::about::RELATION_COLUMNS.iter().filter(|(n, _)| n.starts_with("native_")) {
-                super::demand::edit_native_rows(b, name, &dropped_natives, Vec::new());
+                super::demand::edit_native_rows(b, name, &dropped_natives, crate::code_rule_dsl::logic::program_image::Rows::new());
             }
         }
         Ok(())

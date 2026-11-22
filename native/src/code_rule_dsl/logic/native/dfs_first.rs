@@ -16,6 +16,7 @@
 //!
 //! `dfs_first` searches each root afresh. `dfs_first_memo` is the scripts' variant: roots in their given order,
 //! one memo shared by all, so a node finished while a cycle was open is remembered as reaching nothing.
+use rerail_blocks::vector::Vector;
 use std::collections::{HashMap, HashSet};
 
 const NONE: u32 = u32::MAX;
@@ -23,9 +24,9 @@ const NONE: u32 = u32::MAX;
 /// A graph over dense ids: out-edges of `u` are `off[u]..off[u + 1]`, in (ord, dst) order.
 struct Graph {
     n: usize,
-    off: Vec<usize>,
-    dst: Vec<u32>,
-    ord: Vec<i64>,
+    off: Vector<usize>,
+    dst: Vector<u32>,
+    ord: Vector<i64>,
     target: Vec<bool>,
 }
 
@@ -33,7 +34,7 @@ impl Graph {
     fn new(n: usize, mut edges: Vec<(u32, u32, i64)>, targets: &[u32]) -> Self {
         edges.sort_unstable_by_key(|e| (e.0, e.2, e.1));
         edges.dedup();
-        let mut off = vec![0; n + 1];
+        let mut off = rerail_blocks::vector![0; n + 1];
         for e in &edges {
             off[e.0 as usize + 1] += 1;
         }
@@ -57,11 +58,11 @@ type Found = Option<(u32, i64)>;
 struct Prep {
     live: Vec<bool>,
     /// The edge index of u's first edge into a live node, or NONE.
-    nxt: Vec<u32>,
+    nxt: Vector<u32>,
     /// The target u's chain of `nxt` edges ends at, or NONE.
-    first: Vec<u32>,
+    first: Vector<u32>,
     /// The first knot node on u's chain, or NONE: u is answered by the set passes.
-    ent: Vec<u32>,
+    ent: Vector<u32>,
 }
 
 fn prepare(g: &Graph) -> Prep {
@@ -84,7 +85,7 @@ fn prepare(g: &Graph) -> Prep {
         }
     }
     let mut live = vec![false; n];
-    let mut queue: Vec<u32> = (0..n as u32).filter(|&v| g.target[v as usize]).collect();
+    let mut queue: Vector<u32> = (0..n as u32).filter(|&v| g.target[v as usize]).collect();
     for &v in &queue {
         live[v as usize] = true;
     }
@@ -98,7 +99,7 @@ fn prepare(g: &Graph) -> Prep {
     }
     drop(rsrc);
     // 2. next: the first edge into a live node; an edge to itself is skipped unless it is a hit.
-    let mut nxt = vec![NONE; n];
+    let mut nxt = rerail_blocks::vector![NONE; n];
     for (u, next) in nxt.iter_mut().enumerate() {
         for e in g.out(u as u32) {
             let d = g.dst[e] as usize;
@@ -110,7 +111,7 @@ fn prepare(g: &Graph) -> Prep {
     }
     // 3. first_of: resolve the functional graph of next. A chain that loops, and every chain that runs into the
     //    loop, gets NONE; the knot sends those roots to the search.
-    let mut first = vec![NONE; n];
+    let mut first = rerail_blocks::vector![NONE; n];
     let mut state = vec![0u8; n]; // 0 new, 1 on the current walk, 2 resolved
     let mut walk = Vec::new();
     for s in 0..n {
@@ -140,7 +141,7 @@ fn prepare(g: &Graph) -> Prep {
     let knot = knot(g, &live);
     let inner = |u: usize| live[u] && !g.target[u];
     // 5. ent: the first knot node on each chain. Every next-loop lies in the knot, so walks end.
-    let mut ent = vec![NONE; n];
+    let mut ent = rerail_blocks::vector![NONE; n];
     let mut done = vec![false; n];
     for s in 0..n {
         let mut v = s;
@@ -181,7 +182,7 @@ fn knot(g: &Graph, live: &[bool]) -> Vec<bool> {
     let mut index = vec![u32::MAX; n];
     let mut low = vec![0u32; n];
     let mut on = vec![false; n];
-    let mut stk: Vec<u32> = Vec::new();
+    let mut stk: Vector<u32> = rerail_blocks::vector::Vector::new();
     let mut work: Vec<(u32, usize)> = Vec::new();
     let mut counter = 0u32;
     let mut comp = Vec::new();
@@ -339,19 +340,19 @@ fn answer(g: &Graph, p: &Prep, roots: &[u32], share: bool) -> Vec<Found> {
 /// an edge, each searched afresh. Values are the relations' own (node ids, numbers or atoms).
 pub(in crate::code_rule_dsl) fn dfs_first(edges: &[(i64, i64, i64)], targets: &[i64], roots: Option<&[i64]>) -> Vec<(i64, i64, i64)> {
     let mut ids: HashMap<i64, u32> = HashMap::new();
-    let mut values: Vec<i64> = Vec::new();
-    let mut id = |v: i64, values: &mut Vec<i64>| {
+    let mut values: Vector<i64> = rerail_blocks::vector::Vector::new();
+    let mut id = |v: i64, values: &mut Vector<i64>| {
         *ids.entry(v).or_insert_with(|| {
             values.push(v);
             (values.len() - 1) as u32
         })
     };
     let dense: Vec<(u32, u32, i64)> = edges.iter().map(|&(s, d, o)| (id(s, &mut values), id(d, &mut values), o)).collect();
-    let targets: Vec<u32> = targets.iter().map(|&t| id(t, &mut values)).collect();
-    let (roots, share): (Vec<u32>, bool) = match roots {
+    let targets: Vector<u32> = targets.iter().map(|&t| id(t, &mut values)).collect();
+    let (roots, share): (Vector<u32>, bool) = match roots {
         Some(roots) => (roots.iter().map(|&r| id(r, &mut values)).collect(), true),
         None => {
-            let mut sources: Vec<u32> = dense.iter().map(|e| e.0).collect();
+            let mut sources: Vector<u32> = dense.iter().map(|e| e.0).collect();
             sources.sort_unstable();
             sources.dedup();
             (sources, false)
@@ -441,10 +442,10 @@ pub mod tests {
             let n = 1 + rng.below(if case % 4 == 0 { 40 } else { 9 }) as usize;
             let m = rng.below(3 * n as u64 + 1) as usize;
             let edges: Vec<(u32, u32, i64)> = (0..m).map(|_| (rng.below(n as u64) as u32, rng.below(n as u64) as u32, rng.below(4) as i64)).collect();
-            let targets: Vec<u32> = (0..n as u32).filter(|_| rng.below(4) == 0).collect();
+            let targets: Vector<u32> = (0..n as u32).filter(|_| rng.below(4) == 0).collect();
             let g = Graph::new(n, edges.clone(), &targets);
             let p = prepare(&g);
-            let roots: Vec<u32> = (0..n as u32).collect();
+            let roots: Vector<u32> = (0..n as u32).collect();
             let fresh: Vec<Found> = roots.iter().map(|&r| oracle_first(&g, r, &mut HashMap::new())).collect();
             assert_eq!(answer(&g, &p, &roots, false), fresh, "case {case}, fresh memo: {edges:?} targets {targets:?}");
             let mut memo = HashMap::new();

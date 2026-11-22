@@ -26,6 +26,8 @@
 //! a dictionary's keys before its values; `a if t else b`'s test first. Nodes with no `ast` node of their own
 //! (wrappers) are numbered where they open. Rows hold string indexes, as `Batch::build`'s do.
 
+use crate::code_rule_dsl::facts::core::FactsIn;
+use rerail_blocks::vector::Vector;
 use super::{Dialect, Projected, Relation};
 use crate::code_rule_dsl::facts::core::{Facts, NONE};
 use std::collections::BTreeSet;
@@ -39,12 +41,12 @@ pub(super) struct Tree {
     /// kind) and its named children's by node (`rr_token_named(p, i, c, start, end)`, the text `node_text`'s).
     token_parts: bool,
     visit_index: bool,
-    op_ats: Vec<[i64; 3]>,
-    prev_tokens: Vec<[i64; 2]>,
-    tokens: Vec<[i64; 5]>,
-    anon_tokens: Vec<[i64; 5]>,
-    named_tokens: Vec<[i64; 5]>,
-    visit_indexes: Vec<[i64; 2]>,
+    op_ats: Vector<[i64; 3]>,
+    prev_tokens: Vector<[i64; 2]>,
+    tokens: Vector<[i64; 5]>,
+    anon_tokens: Vector<[i64; 5]>,
+    named_tokens: Vector<[i64; 5]>,
+    visit_indexes: Vector<[i64; 2]>,
 }
 
 impl Tree {
@@ -66,7 +68,7 @@ impl Tree {
         if !self.op_at {
             return;
         }
-        let f = &*p.facts;
+        let f = p.f();
         let fields = [dialect.operator, dialect.operators];
         for (_, id, n) in p.node_ids() {
             let kids = f.children(id);
@@ -79,7 +81,7 @@ impl Tree {
 
     /// Document `p`'s rows (`python`: it is Python's). A text document (no `dialect`) has none.
     pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, python: bool, string: &mut dyn FnMut(&str) -> usize) {
-        let f = &*p.facts;
+        let f = p.f();
         let Some(dialect) = dialect else { return };
         self.operators(p, dialect, string);
         if self.token_parts {
@@ -126,20 +128,20 @@ impl Tree {
     pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64, relation: super::Make) -> Vec<(&'static str, Relation)> {
         let mut out = Vec::new();
         if self.op_at {
-            out.push(("op_at", relation(&["n", "i", "s"], &mut self.op_ats.iter().map(|&[n, i, s]| vec![n, i, atom(s)]))));
+            out.push(("op_at", relation(&["n", "i", "s"], &mut self.op_ats.iter().map(|&[n, i, s]| rerail_blocks::vector![n, i, atom(s)]))));
         }
         if self.prev_token {
-            out.push(("prev_token", relation(&["n", "s"], &mut self.prev_tokens.iter().map(|&[n, s]| vec![n, atom(s)]))));
+            out.push(("prev_token", relation(&["n", "s"], &mut self.prev_tokens.iter().map(|&[n, s]| rerail_blocks::vector![n, atom(s)]))));
         }
         if self.token {
-            out.push(("token", relation(&["p", "i", "s", "start", "end_"], &mut self.tokens.iter().map(|&[p, i, s, a, b]| vec![p, i, atom(s), a, b]))));
+            out.push(("token", relation(&["p", "i", "s", "start", "end_"], &mut self.tokens.iter().map(|&[p, i, s, a, b]| rerail_blocks::vector![p, i, atom(s), a, b]))));
         }
         if self.token_parts {
-            out.push(("rr_token_anon", relation(&["p", "i", "s", "start", "end_"], &mut self.anon_tokens.iter().map(|&[p, i, s, a, b]| vec![p, i, atom(s), a, b]))));
-            out.push(("rr_token_named", relation(&["p", "i", "c", "start", "end_"], &mut self.named_tokens.iter().map(|r| r.to_vec()))));
+            out.push(("rr_token_anon", relation(&["p", "i", "s", "start", "end_"], &mut self.anon_tokens.iter().map(|&[p, i, s, a, b]| rerail_blocks::vector![p, i, atom(s), a, b]))));
+            out.push(("rr_token_named", relation(&["p", "i", "c", "start", "end_"], &mut self.named_tokens.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
         }
         if self.visit_index {
-            out.push(("visit_index", relation(&["n", "i"], &mut self.visit_indexes.iter().map(|r| r.to_vec()))));
+            out.push(("visit_index", relation(&["n", "i"], &mut self.visit_indexes.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
         }
         out
     }
@@ -148,21 +150,21 @@ impl Tree {
 /// CPython's visit order over one Python document's tape (the module doc), with a stack rather than recursion: a
 /// chain of 10,000 `+` is that deep.
 struct Order<'a> {
-    f: &'a Facts,
+    f: FactsIn<'a>,
     dialect: &'a Dialect,
     p: &'a Projected,
     next: i64,
-    out: &'a mut Vec<[i64; 2]>,
+    out: &'a mut Vector<[i64; 2]>,
 }
 
 /// What the order does next: number a node and take its children (with a definition's decorators), or number it only.
 enum Step {
-    Visit(u32, Vec<u32>),
+    Visit(u32, Vector<u32>),
     Number(u32),
 }
 
 fn visit(id: u32) -> Step {
-    Step::Visit(id, Vec::new())
+    Step::Visit(id, rerail_blocks::vector::Vector::new())
 }
 
 impl Order<'_> {
@@ -193,12 +195,12 @@ impl Order<'_> {
     }
 
     /// `id`'s children in CPython's order; `decorators`: a definition's, from the `decorated_definition` around it.
-    fn children(&self, id: u32, decorators: Vec<u32>) -> Vec<Step> {
+    fn children(&self, id: u32, decorators: Vector<u32>) -> Vec<Step> {
         let children = self.f.children(id);
         let with_field = |names: &[&str]| children.iter().copied().filter(|&c| names.contains(&self.field(c))).map(visit).collect::<Vec<_>>();
         match self.kind(id) {
             "decorated_definition" => {
-                let (definition, decorators): (Vec<u32>, Vec<u32>) = children.iter().copied().filter(|&c| self.f.named(c)).partition(|&c| self.field(c) == "definition");
+                let (definition, decorators): (Vector<u32>, Vector<u32>) = children.iter().copied().filter(|&c| self.f.named(c)).partition(|&c| self.field(c) == "definition");
                 // Anything else (tokens) has no `ast` place: it goes first.
                 let mut out: Vec<Step> = children.iter().copied().filter(|c| !definition.contains(c) && !decorators.contains(c)).map(visit).collect();
                 out.extend(definition.into_iter().map(|d| Step::Visit(d, decorators.clone())));
@@ -219,7 +221,7 @@ impl Order<'_> {
             }
             "argument_list" => {
                 let keyword = |c: &u32| matches!(self.kind(*c), "keyword_argument" | "dictionary_splat");
-                let (keywords, positional): (Vec<u32>, Vec<u32>) = children.iter().copied().partition(keyword);
+                let (keywords, positional): (Vector<u32>, Vector<u32>) = children.iter().copied().partition(keyword);
                 positional.into_iter().chain(keywords).map(visit).collect()
             }
             "parameters" | "lambda_parameters" => self.parameters(&children),
@@ -246,7 +248,7 @@ impl Order<'_> {
                 out
             }
             "conditional_expression" => {
-                let named: Vec<u32> = children.iter().copied().filter(|&c| self.f.named(c)).collect();
+                let named: Vector<u32> = children.iter().copied().filter(|&c| self.f.named(c)).collect();
                 match named.as_slice() {
                     [body, test, orelse] => vec![visit(*test), visit(*body), visit(*orelse)],
                     _ => named.into_iter().map(visit).collect(),
@@ -269,7 +271,7 @@ impl Order<'_> {
             match self.kind(c) {
                 "default_parameter" | "typed_default_parameter" => {
                     out.push(Step::Number(c));
-                    let (values, rest): (Vec<u32>, Vec<u32>) = self.f.children(c).iter().copied().partition(|&k| self.field(k) == "value");
+                    let (values, rest): (Vector<u32>, Vector<u32>) = self.f.children(c).iter().copied().partition(|&k| self.field(k) == "value");
                     out.extend(rest.into_iter().map(visit));
                     if keyword_only { &mut kw_defaults } else { &mut defaults }.extend(values.into_iter().map(visit));
                 }

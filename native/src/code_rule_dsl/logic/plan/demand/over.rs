@@ -2,6 +2,7 @@
 //! (`candidates`), and each reader's split (`analyse`), as `split_negations` and `split_with` read the tree. The
 //! rules are read by their handles, each variable by its name; the program's other fields by `Fields`.
 
+use rerail_blocks::vector::Vector;
 use super::super::super::program_image::{AtomRef, CmpOp, Lit, LitRef, RuleRef, Slot, TermRef, Version};
 use super::super::body::{Placed, lit_vars, term_vars, VarSet};
 use super::super::fields::Fields;
@@ -64,7 +65,7 @@ fn base(f: &Fields<'_>, rel: &str, a: AtomRef<'_>) -> bool {
 /// derived, `kind(o, "type_alias_statement")` bound nothing, a definition's `field(o, "left", l)` (8,152 rows in a
 /// chunk of PostHog) made `tp_name` large and so demanded, and `tp_ref`'s split made every identifier with each of
 /// its ancestors (55 M rows a cold run; work queue Q88's measurement).
-fn view_of<'v>(f: &Fields<'v>, a: AtomRef<'_>) -> Option<(String, Vec<usize>)> {
+fn view_of<'v>(f: &Fields<'v>, a: AtomRef<'_>) -> Option<(String, Vector<usize>)> {
     if f.is_input(f.v.rel_name(a.rel())) {
         return None;
     }
@@ -143,7 +144,7 @@ fn per_node_relations(rules: &[R<'_>]) -> BTreeSet<String> {
                         }
                     }
                     Lit::Atom(a) if !a.neg() => {
-                        let at: Vec<usize> = a.args().enumerate().filter(|(_, t)| t.var() == Some(key)).map(|(c, _)| c).collect();
+                        let at: Vector<usize> = a.args().enumerate().filter(|(_, t)| t.var() == Some(key)).map(|(c, _)| c).collect();
                         if at.is_empty() {
                             continue;
                         }
@@ -353,7 +354,7 @@ fn reached(f: &Fields<'_>, model: &super::super::Model, per_node: &BTreeSet<Stri
             _ => on(0),
         }
     };
-    let mut todo: Vec<usize> = (0..r.lits.len())
+    let mut todo: Vector<usize> = (0..r.lits.len())
         .filter(|&j| match r.lits[j].view() {
             Lit::Atom(b) => !b.neg() && !cut(j),
             Lit::Nearest { .. } => true,
@@ -392,7 +393,7 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
         eprintln!("demand: relations of a row per node: {per_node:?}");
     }
     let negated = |r: &R<'_>, i: usize| r.plain(i).is_some_and(|a| candidates.contains(r.rel(a)));
-    let readers: Vec<usize> = (0..n).filter(|&k| (0..rules[k].lits.len()).any(|i| negated(&rules[k], i))).collect();
+    let readers: Vector<usize> = (0..n).filter(|&k| (0..rules[k].lits.len()).any(|i| negated(&rules[k], i))).collect();
     // A positive read is cut only where one kept anchor binds all its variables (the module's guard). Every reader is
     // checked before any is split, so one round drops every candidate a guard refuses.
     let mut refused = BTreeSet::new();
@@ -454,8 +455,8 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
     let (mut splits, mut decls, mut nullary) = (BTreeMap::new(), Vec::new(), Vec::new());
     for &k in &readers {
         let r = &rules[k];
-        let cut: Vec<usize> = (0..r.lits.len()).filter(|&i| negated(r, i)).collect();
-        let kept: Vec<usize> = (0..r.lits.len()).filter(|i| !cut.contains(i)).collect();
+        let cut: Vector<usize> = (0..r.lits.len()).filter(|&i| negated(r, i)).collect();
+        let kept: Vector<usize> = (0..r.lits.len()).filter(|i| !cut.contains(i)).collect();
         let own = candidates.contains(r.head());
         // The reader's own demand's variables (its head's, a computed column a fresh `rr_demanded<i>`, which a
         // comparison binds with the column's variables), and the type a variable takes from the first positive
@@ -632,7 +633,7 @@ mod tests {
         let k = (0..placed.len()).find(|&k| R::of(&placed, k).head() == "named").unwrap();
         let r = R::of(&placed, k);
         let atom = |rel: &str| (0..r.lits.len()).find_map(|i| r.plain(i).filter(|a| r.rel(*a) == rel)).unwrap();
-        assert_eq!(view_of(&f, atom("kind")), Some(("node".to_owned(), vec![1, 2])), "kind's columns are node's 1 and 2");
+        assert_eq!(view_of(&f, atom("kind")), Some(("node".to_owned(), rerail_blocks::vector![1, 2])), "kind's columns are node's 1 and 2");
         assert!(base(&f, "kind", atom("kind")), "a view of an input is a base relation");
         assert_eq!(view_of(&f, atom("field")), None, "an input is no view");
         let n = (0..placed.len()).find(|&k| R::of(&placed, k).head() == "out").unwrap();

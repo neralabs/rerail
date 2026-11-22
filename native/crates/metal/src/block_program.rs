@@ -21,6 +21,7 @@
 //! file's groups by decoupled look-back with bounded polls (`13-tape-on-the-gpu.md` §5.3). Groups
 //! take their numbers in launch order from persistent workers; a group waits only on earlier groups
 //! of its file. A poll that runs out leaves the group unfinished, and the host launches again.
+use rerail_blocks::vector::Vector;
 #[allow(unused_imports)]
 use crate::Error;
 use crate::lane;
@@ -304,8 +305,8 @@ pub fn run_batch(
         .iter()
         .map(|p| if executor == Executor::Generated(ClassStrategy::Lookup) { (*p).clone() } else { p.planes_form() })
         .collect();
-    let carried: Vec<usize> = forms.iter().map(|n| n.insts.iter().filter(|i| i.carried()).count()).collect();
-    let records: Vec<usize> = match executor {
+    let carried: Vector<usize> = forms.iter().map(|n| n.insts.iter().filter(|i| i.carried()).count()).collect();
+    let records: Vector<usize> = match executor {
         Executor::Interpreter => carried.clone(),
         Executor::Generated(_) => forms.iter().map(record_words).collect(),
     };
@@ -320,9 +321,9 @@ pub fn run_batch(
     }
     // The file table, and each base after the files before.
     let (mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base, mut tot_base) = (0, 0, 0, 0, 0, 0, 0);
-    let counted: Vec<Vec<usize>> = forms.iter().map(rerail_compiler::native_cpu_block::counted).collect();
+    let counted: Vec<Vector<usize>> = forms.iter().map(rerail_compiler::native_cpu_block::counted).collect();
     let mut rows = Vec::with_capacity(files.len());
-    let mut group_file: Vec<u32> = Vec::new();
+    let mut group_file: Vector<u32> = rerail_blocks::vector::Vector::new();
     for (i, file) in files.iter().enumerate() {
         let n = forms.get(file.program).ok_or(Error::BackendFailure)?;
         let len = file.bytes.len();
@@ -471,7 +472,7 @@ pub fn run_batch(
         let lanes = groups * GROUP;
         // The kernel wrote the stream's words, at their delays and cut to the stream: read back.
         let words = len.div_ceil(64);
-        let outputs: Vec<Vec<u64>> = (0..n.outputs.len())
+        let outputs: Vec<Vector<u64>> = (0..n.outputs.len())
             .map(|k| {
                 let at = (row.out_base as usize + k * lanes) * word;
                 lanes_bytes[at..at + lanes * word].chunks(8).take(words).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect()
@@ -482,13 +483,13 @@ pub fn run_batch(
         let positions = (0..n.extracts.len())
             .map(|e| {
                 let from = row.pos_base as usize + e * capacity;
-                positions[from..from + (count(e) as usize).min(capacity)].to_vec()
+                Vector::from(&positions[from..from + (count(e) as usize).min(capacity)])
             })
             .collect();
-        let totals = if n.totals.is_empty() { Vec::new() } else { vec![u64::from(count(n.extracts.len()) != 0)] };
+        let totals = if n.totals.is_empty() { rerail_blocks::vector::Vector::new() } else { rerail_blocks::vector![u64::from(count(n.extracts.len()) != 0)] };
         let _ = groups;
         // This executor has no record pass: a program with records runs on the serial one.
-        results.push(BlockRun { outputs, positions, totals, codes: Vec::new() });
+        results.push(BlockRun { outputs, positions, totals, codes: rerail_blocks::vector::Vector::new() });
     }
     Ok(BatchRun { files: results, launches, seconds })
 }
@@ -498,7 +499,7 @@ pub fn interpret(
     program: &rerail_compiler::block::BlockProgram,
     bytes: &[u8],
     width: LaneWidth,
-) -> Result<Vec<Vec<u64>>, Error> {
+) -> Result<Vec<Vector<u64>>, Error> {
     interpret_extract(program, bytes, width).map(|run| run.outputs)
 }
 
@@ -680,9 +681,9 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
 /// A group waits on the one before it in its file, which took its ticket a round earlier. Given
 /// in file order, the groups in flight would be mostly a file's next ones, each waiting on the
 /// one before.
-fn ticket_order(groups: &[usize]) -> Vec<[u32; 2]> {
+fn ticket_order(groups: &[usize]) -> Vector<[u32; 2]> {
     let most = groups.iter().copied().max().unwrap_or(0);
-    let mut order = Vec::with_capacity(groups.iter().sum());
+    let mut order = rerail_blocks::vector::Vector::with_capacity(groups.iter().sum());
     for g in 0..most {
         for (file, &n) in groups.iter().enumerate() {
             if g < n {
@@ -707,26 +708,26 @@ struct Plan {
     /// The local `prev`s: of a value of the bytes alone (local `prev`s of such values included);
     /// their halo comes from the lanes before, by shuffles, the group's warm-up lanes included
     /// (`warm_lanes`).
-    windowed: Vec<usize>,
+    windowed: Vector<usize>,
     /// The scanned carries (`toggle`, `escaped`, `fill`), in order: a state per group each.
-    scanned: Vec<usize>,
+    scanned: Vector<usize>,
     /// The other `prev`s, in order: a published halo per group each.
-    halos: Vec<usize>,
+    halos: Vector<usize>,
     /// The warm-up lanes of each group at the lane width (`warm_lanes`); 0 until `at`.
     warm: usize,
     /// Each local value's reach: the bytes before it that it reads, through its local `prev`s.
-    reach: Vec<usize>,
+    reach: Vector<usize>,
     /// Each instruction's level: the exchanges between groups it waits on. A carried
     /// instruction (not windowed) of level `L + 1` is resolved in exchange `L`, with every other
     /// one whose operands are of level `L` at most.
-    level: Vec<usize>,
+    level: Vector<usize>,
 }
 
 impl Plan {
     fn new(native: &BlockNative) -> Self {
         let n = native.insts.len();
         let mut local = vec![true; n];
-        let mut plan = Plan { windowed: Vec::new(), scanned: Vec::new(), halos: Vec::new(), warm: 0, reach: vec![0; n], level: vec![0; n] };
+        let mut plan = Plan { windowed: rerail_blocks::vector::Vector::new(), scanned: rerail_blocks::vector::Vector::new(), halos: rerail_blocks::vector::Vector::new(), warm: 0, reach: rerail_blocks::vector![0; n], level: rerail_blocks::vector![0; n] };
         for at in 0..n {
             let ops = operands(&native.insts[at]);
             let ops_local = ops.iter().all(|&a| local[a]);
@@ -766,11 +767,11 @@ impl Plan {
 
     /// The exchanges, in order: each one's halos and scans (instructions it resolves). Every
     /// level above 0 has one: a level is only reached through an exchange.
-    fn exchanges(&self) -> Vec<(Vec<usize>, Vec<usize>)> {
+    fn exchanges(&self) -> Vec<(Vector<usize>, Vector<usize>)> {
         let most = self.level.iter().copied().max().unwrap_or(0);
         (1..=most)
             .map(|e| {
-                let at = |list: &[usize]| list.iter().copied().filter(|&x| self.level[x] == e).collect::<Vec<_>>();
+                let at = |list: &[usize]| list.iter().copied().filter(|&x| self.level[x] == e).collect::<Vector<_>>();
                 (at(&self.halos), at(&self.scanned))
             })
             .collect()
@@ -872,7 +873,7 @@ fn halo_words(native: &BlockNative, halos: &[usize]) -> Vec<Vec<Piece>> {
     words
 }
 
-fn operands(inst: &BlockInst) -> Vec<usize> {
+fn operands(inst: &BlockInst) -> Vector<usize> {
     inst.operands()
 }
 
@@ -983,7 +984,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
     let exchanges = plan.exchanges();
     let mut offset = 0usize;
     for level in 0..=exchanges.len() {
-        let chosen: Vec<usize> = (0..native.insts.len()).filter(|&at| plan.level[at] == level && (!values.insts[at].carried() || plan.windowed.contains(&at))).collect();
+        let chosen: Vector<usize> = (0..native.insts.len()).filter(|&at| plan.level[at] == level && (!values.insts[at].carried() || plan.windowed.contains(&at))).collect();
         // A local `prev` takes the bytes before its lane from the lanes before it, by shuffles:
         // the group's warm-up lanes make those before its first useful lane, and a lane before
         // the file gives zeros.
@@ -1417,7 +1418,7 @@ pub fn run_generated(
     native: &BlockNative,
     bytes: &[u8],
     width: LaneWidth,
-) -> Result<Vec<Vec<u64>>, Error> {
+) -> Result<Vec<Vector<u64>>, Error> {
     run_generated_with(native, bytes, width, ClassStrategy::Planes).map(|(words, _)| words)
 }
 
@@ -1428,7 +1429,7 @@ pub fn run_generated_with(
     bytes: &[u8],
     width: LaneWidth,
     strategy: ClassStrategy,
-) -> Result<(Vec<Vec<u64>>, f64), Error> {
+) -> Result<(Vec<Vector<u64>>, f64), Error> {
     run_generated_extract(native, bytes, width, strategy).map(|(run, seconds)| (run.outputs, seconds))
 }
 

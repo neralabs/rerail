@@ -21,6 +21,7 @@
 //! The store is `RERAIL_COSTS` (a SQLite file; `off`: none), else `~/.cache/rerail/costs.sqlite`. Its table keeps
 //! each sample's features as they were measured.
 
+use rerail_blocks::vector::Vector;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
@@ -191,7 +192,7 @@ fn write() {
     };
     let (machine, threads) = (machine(), rerail_accel::exec::threads() as i64);
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-    let r = (|| -> rusqlite::Result<Vec<i64>> {
+    let r = (|| -> rusqlite::Result<Vector<i64>> {
         let tx = db.transaction()?;
         if !samples.is_empty() {
             let mut ins = tx.prepare_cached("INSERT INTO samples VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)")?;
@@ -200,7 +201,7 @@ fn write() {
             }
         }
         let ids = if plans.is_empty() {
-            Vec::new()
+            Vector::new()
         } else {
             sql_plans::insert(&tx, &machine, threads, at, &plans)?
         };
@@ -814,7 +815,7 @@ pub mod tests {
         eprintln!("{c}");
         eprintln!("model wins: {}", c.model_wins());
         let held = &held[..];
-        let mut by: std::collections::BTreeMap<&str, (Vec<rerail_accel::join_model::StepSample>, Vec<f64>)> = Default::default();
+        let mut by: std::collections::BTreeMap<&str, (Vec<rerail_accel::join_model::StepSample>, rerail_blocks::vector::Vector<f64>)> = Default::default();
         for s in held {
             let e = by.entry(s.basis.as_str()).or_default();
             e.0.push(s.clone());
@@ -826,7 +827,7 @@ pub mod tests {
         }
         // By access, and by origin: membership tests apart (Q82), and the orders the planner did not keep.
         for key in [|s: &rerail_accel::join_model::StepSample| s.access.clone(), |s: &rerail_accel::join_model::StepSample| format!("origin {}", s.origin)] {
-            let mut by: std::collections::BTreeMap<String, (Vec<rerail_accel::join_model::StepSample>, Vec<f64>)> = Default::default();
+            let mut by: std::collections::BTreeMap<String, (Vec<rerail_accel::join_model::StepSample>, rerail_blocks::vector::Vector<f64>)> = Default::default();
             for s in held {
                 let e = by.entry(key(s)).or_default();
                 e.0.push(s.clone());

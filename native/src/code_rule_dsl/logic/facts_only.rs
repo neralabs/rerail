@@ -186,7 +186,6 @@ const NOT_YET_TABLES_PIN: usize = 57;
 const STATE: &[(&str, &str)] = &[
     // What a crate above registers at load, as the crate split made them (a function or a device, set once).
     ("code_rule_dsl/logic/device.rs", "SOLVER"),
-    ("code_rule_dsl/logic/plan/corpus.rs", "CROSS_FILE"),
     ("code_rule_dsl/logic/strings.rs", "FUNCTORS"),
     ("code_rule_dsl/logic/strings/functions.rs", "PY_REPR"),
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),

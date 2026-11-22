@@ -73,8 +73,8 @@ fn sha256_of(key: HashKey) -> Option<[u8; 32]> {
 /// format version) names, where one is stored. A content given by its sha256 and stored now is kept by its id (tag
 /// 0), as a reader of the table resolves it before the first wave: a run inside another's waves, which reads no SQL,
 /// finds its files by their ids, and compares them with the table's as they are.
-pub(super) fn resolve(t: &Connection, rows: &[i64], n: usize, tape: Option<[i64; 3]>) -> StoreResult<Vec<i64>> {
-    let mut out = Vec::with_capacity(n * PLACED_WORDS);
+pub(super) fn resolve(t: &Connection, rows: &[i64], n: usize, tape: Option<[i64; 3]>) -> StoreResult<rerail_blocks::vector::Vector<i64>> {
+    let mut out = rerail_blocks::vector::Vector::with_capacity(n * PLACED_WORDS);
     let mut source_st = t.prepare_cached(
         "SELECT h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, s.seg, s.seg_at, s.seg_len FROM source_objects s \
          JOIN hashes h ON h.hash_id = s.canonical_hash_id WHERE s.source_id = ?1",

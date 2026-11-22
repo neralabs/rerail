@@ -2,6 +2,7 @@
 //! `rir`, checked on the CPU interpreter and Cranelift against a row-by-row reference that exists
 //! only here.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use super::block::{CmpOp, RowBatch, lane};
 
@@ -26,7 +27,7 @@ const FILTER: &str = "  block 0 rows 3 1 1
 ";
 
 /// Values spread over 16 and 32 bits and their signs, and negative ones (a set reads none).
-fn column(seed: u64, len: usize) -> Vec<i64> {
+fn column(seed: u64, len: usize) -> Vector<i64> {
     let mut x = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
     (0..len)
         .map(|_| {
@@ -44,7 +45,7 @@ fn column(seed: u64, len: usize) -> Vec<i64> {
 }
 
 /// The reference: each row's bit, row by row.
-fn reference(c: &[Vec<i64>], p: i64, set: &[u64], len: usize) -> [Vec<bool>; 2] {
+fn reference(c: &[Vector<i64>], p: i64, set: &[u64], len: usize) -> [Vec<bool>; 2] {
     let member = |v: i64| usize::try_from(v).ok().and_then(|v| set.get(v / 64).map(|w| w >> (v % 64) & 1 == 1)).unwrap_or(false);
     let first = (0..len).map(|r| (CmpOp::Lt.holds(lane(c[0][r], 16), lane(c[1][r], 16)) || c[2][r] == p) && !member(c[0][r])).collect();
     let second = (0..len).map(|r| lane(c[0][r], 32) <= lane(p, 32)).collect();
@@ -64,17 +65,17 @@ fn a_row_program_filters_rows_on_every_cpu_executor() {
     block.verify().expect("a valid row program");
     let jit = block.compile_rows().expect("compiles");
     assert!(!jit.clif.contains("call"), "no call in a row program:\n{}", jit.clif);
-    let set: Vec<u64> = (0..3).map(|k| 0x8421_0842_1084_2108u64.rotate_left(k * 7)).collect();
+    let set: Vector<u64> = (0..3).map(|k| 0x8421_0842_1084_2108u64.rotate_left(k * 7)).collect();
     let mut values = Vec::new();
     let mut jit_out = Vec::new();
     for (seed, len) in [0usize, 1, 2, 63, 64, 65, 127, 128, 129, 300].into_iter().enumerate() {
-        let cols: Vec<Vec<i64>> = (0..3).map(|k| column((seed * 3 + k) as u64, len)).collect();
+        let cols: Vec<Vector<i64>> = (0..3).map(|k| column((seed * 3 + k) as u64, len)).collect();
         for param in [-1i64, 0, 5, 65_535, 1 << 33] {
-            let refs: Vec<&[i64]> = cols.iter().map(Vec::as_slice).collect();
+            let refs: Vec<&[i64]> = cols.iter().map(|v| v.as_slice()).collect();
             let batch = RowBatch { columns: &refs, params: &[param], sets: &[&set], len };
             let want = reference(&cols, param, &set, len);
             let words = len.div_ceil(64);
-            let got: Vec<Vec<u64>> = block.interpret_rows(&batch, &mut values).map(<[u64]>::to_vec).collect();
+            let got: Vec<Vector<u64>> = block.interpret_rows(&batch, &mut values).map(rerail_blocks::vector::Vector::<u64>::from).collect();
             for k in 0..2 {
                 assert_eq!(bits(&got[k], len), want[k], "interpreter, output {k}, len {len}, p {param}");
                 assert!(got[k].iter().enumerate().all(|(w, &x)| 64 * w + 64 <= len || x >> (len - 64 * w) == 0 || len % 64 == 0), "bits past the batch");
@@ -83,9 +84,9 @@ fn a_row_program_filters_rows_on_every_cpu_executor() {
             for k in 0..2 {
                 assert_eq!(&jit_out[k * words..(k + 1) * words], got[k].as_slice(), "Cranelift, output {k}, len {len}, p {param}");
             }
-            let mut rows = Vec::new();
+            let mut rows = rerail_blocks::vector::Vector::new();
             block.extract_rows(&batch, 0, &mut values, &mut rows);
-            let want_rows: Vec<u32> = (0..len).filter(|&r| want[0][r]).map(|r| r as u32).collect();
+            let want_rows: Vector<u32> = (0..len).filter(|&r| want[0][r]).map(|r| r as u32).collect();
             assert_eq!(rows, want_rows);
         }
     }
@@ -142,18 +143,18 @@ fn a_row_program_scans_rows_on_metal_in_the_16_bit_layout() {
     let node = |d: i64, i: i64| (d << 32) | i;
     let len = 5000;
     let x = column(7, len);
-    let a: Vec<i64> = (0..len as i64).map(|r| node(1 + r % 3, (r * 37) % 70_000)).collect();
+    let a: Vector<i64> = (0..len as i64).map(|r| node(1 + r % 3, (r * 37) % 70_000)).collect();
     // Column 1: the same chunk as column 0's mostly, so it is `Low16` only when every row is.
-    let b: Vec<i64> = a.iter().zip(&x).map(|(&v, &y)| (v & !0xffff) | (y & 0xffff)).collect();
-    let n: Vec<i64> = x.iter().map(|v| v % 9).collect();
+    let b: Vector<i64> = a.iter().zip(&x).map(|(&v, &y)| (v & !0xffff) | (y & 0xffff)).collect();
+    let n: Vector<i64> = x.iter().map(|v| v % 9).collect();
     for params in [[node(2, 30_000), node(2, 0) >> 32, 4], [node(3, 69_999), 1, 0], [-5, 3, 8]] {
         // Program column 3 is column 0's document.
         let cols: Vec<&[i64]> = vec![&a, &b, &n];
-        let docs: Vec<i64> = a.iter().map(|v| v >> 32).collect();
+        let docs: Vector<i64> = a.iter().map(|v| v >> 32).collect();
         let all: Vec<&[i64]> = vec![&a, &b, &n, &docs];
         let batch = RowBatch { columns: &all, params: &params, sets: &[], len };
         let mut values = Vec::new();
-        let mut want = Vec::new();
+        let mut want = rerail_blocks::vector::Vector::new();
         block.extract_rows(&batch, 0, &mut values, &mut want);
         let resident = Resident::new(&cols, len).expect("resident");
         assert_eq!(resident.forms, vec![Form::Low16, Form::Low16, Form::I32]);

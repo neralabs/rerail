@@ -37,7 +37,7 @@ system-allocator = []
 code-rule-profile = []
 p-anchor-corpus = []
 metal-tests = []
-test-hooks = ["rerail-context/test-hooks", "rerail-rr-syntax/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-context/test-hooks", "rerail-rr-syntax/test-hooks"]
 
 [target.'cfg(unix)'.dependencies]
 mimalloc = { version = "=0.1.52", default-features = false }
@@ -47,6 +47,9 @@ libc = "0.2.189"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [dependencies]
+# Its structures lie in blocks (`rerail_blocks::vector::Vector`, `maps`), as the engine\'s do.
+rerail-blocks = { path = "../blocks" }
+rerail-section = { path = "../section" }
 rerail-accel = { path = "../../../accel" }
 rerail-context = { path = "../context" }
 base64 = "=0.22.1"

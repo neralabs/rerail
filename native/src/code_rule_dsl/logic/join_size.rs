@@ -15,6 +15,7 @@
 //! The planner prices a probe by one atom's column at `J / rows` of that atom a binding: rows that meet and bindings
 //! that miss alike (`plan::Model::atom_rows`), where the error is a fraction of J (`Joined::tells`).
 
+use rerail_blocks::vector::Vector;
 /// The counters a column keeps.
 pub const BUCKETS: usize = 256;
 /// The values a column keeps exact counts of, at most.
@@ -262,7 +263,7 @@ mod tests {
             x ^= x << 17;
             x % m
         };
-        let mut col = |heavy: u64| -> Vec<i64> { (0..20_000).map(|_| if next(10) < 3 { next(heavy) as i64 } else { 1_000 + next(5_000) as i64 }).collect() };
+        let mut col = |heavy: u64| -> Vector<i64> { (0..20_000).map(|_| if next(10) < 3 { next(heavy) as i64 } else { 1_000 + next(5_000) as i64 }).collect() };
         let (a, b) = (col(20), col(40));
         let exact = |a: &[i64], b: &[i64]| {
             let mut m = std::collections::HashMap::new();
@@ -277,7 +278,7 @@ mod tests {
         assert!((got.rows - want).abs() < 3.0 * got.err, "{got:?} against {want}");
         assert!((got.rows / want - 1.0).abs() < 0.2, "{got:?} against {want}");
         // Few values each: exact.
-        let (s, t): (Vec<i64>, Vec<i64>) = ((0..3_000).map(|i| i % 7).collect(), (0..500).map(|i| i % 11).collect());
+        let (s, t): (Vector<i64>, Vector<i64>) = ((0..3_000).map(|i| i % 7).collect(), (0..500).map(|i| i % 11).collect());
         let few = JoinCounts::of(s.iter().copied()).join(&JoinCounts::of(t.iter().copied()));
         assert_eq!(few, Joined { rows: exact(&s, &t), err: 0.0 });
         // Few against counters: within its error.

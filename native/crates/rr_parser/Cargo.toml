@@ -7,10 +7,12 @@ description = "The .rerail parser: its Bitlex grammar compiled to tier 1 and tie
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-tape-format/test-hooks", "rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-tape-format/test-hooks", "rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }
+# The block runs' outputs it compares (`BlockRun`, decision 0353).
+rerail-blocks = { path = "../blocks" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-tape-format = { path = "../tape_format" }
 bitlex = { path = "../../../tools/bitlex", default-features = false }

@@ -9,6 +9,7 @@
 //! nodes' spans: a string is unescaped as the lexer does (`string_value`), a backtick literal loses its fences
 //! (`code_body`).
 
+use rerail_blocks::vector::Vector;
 use super::Error;
 use super::syntax;
 use super::syntax::Lines;
@@ -26,8 +27,8 @@ pub struct Tape<'a> {
 /// once when read; and the text's line starts. A statement of it is a node of the tape (`Stmt`), read in place.
 pub struct RrFile {
     src: std::sync::Arc<str>,
-    image: Box<[u8]>,
-    keys: Box<[u32]>,
+    image: Vector<u8>,
+    keys: Vector<u32>,
     lines: Lines,
 }
 
@@ -41,8 +42,10 @@ impl RrFile {
     /// `src` and its tape. A tape with an ERROR gives the error running the file gives (`syntax_error`).
     pub fn read(src: impl Into<std::sync::Arc<str>>) -> Result<std::sync::Arc<RrFile>, Error> {
         let src: std::sync::Arc<str> = src.into();
-        let image = rerail_rr_syntax::tape(&src).into_boxed_slice();
-        let keys = View::new(&image).map_err(|e| Error::Syntax(format!("tape: {e}")))?.into_keys();
+        let image = rerail_rr_syntax::tape(&src);
+        let mut keys = Vector::new();
+        keys.resize(View::code_count(&image).map_err(|e| Error::Syntax(format!("tape: {e}")))?, 0u32);
+        View::checked_into(&image, &mut keys).map_err(|e| Error::Syntax(format!("tape: {e}")))?;
         let lines = Lines::of(&src);
         let file = RrFile { src, image, keys, lines };
         if file.tape().has_error() {
@@ -396,7 +399,7 @@ impl<'a> Tape<'a> {
     /// A `.test` block's name, `exactly`, what it `uses` and its statements' nodes; a `.fixtures` block's name and
     /// statements (`exactly` false, `uses` none).
     #[allow(clippy::type_complexity)]
-    pub fn block(&self, s: u32) -> Result<(String, bool, Vec<String>, Vec<u32>), Error> {
+    pub fn block(&self, s: u32) -> Result<(String, bool, Vec<String>, Vector<u32>), Error> {
         Ok((
             self.name(s, Field::Name)?,
             self.is(s, Kind::TestBlock) && self.get(s, Field::Modifier).is_some(),

@@ -185,7 +185,7 @@ fn build(sources: &[String]) -> Vec<Entry> {
 /// A grammar's documents, and which are long (`documents`).
 type Docs = (Vec<Vec<u8>>, Vec<bool>);
 /// A document's tapes: format 15's image, format 16's and 16z's homes, and why either was refused.
-type Tapes = (Option<Vec<u8>>, Vec<Option<Vec<u8>>>, Vec<Option<String>>);
+type Tapes = (Option<rerail_tape_format::Vector<u8>>, Vec<Option<Vec<u8>>>, Vec<Option<String>>);
 
 /// A grammar's documents: drawn from it (`documents_with`), and its accepted ones joined, one after another, past
 /// several of format 16's blocks (1,024 nodes each), where the grammar takes them so. With which hold 3,000 nodes or
@@ -261,8 +261,8 @@ fn grammars_rust_tapes_are_the_jits() {
                 let Ok(f15) = c.parser.image(doc) else { continue };
                 let (_, table) = rerail_tape_format::tape::f15_columns(&f15).expect("a format 15 tape");
                 for e in table.entries() {
-                    if !keys.contains(e) {
-                        keys.push(e.clone());
+                    if !keys.iter().any(|k| k.as_ref() == e) {
+                        keys.push(e.to_owned());
                     }
                 }
             }

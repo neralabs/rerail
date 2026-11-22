@@ -11,6 +11,7 @@
 //!   with the return names the program derived and the module's `from` imports, are written to the cache under
 //!   the module file's identity.
 
+use rerail_blocks::vector::Vector;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -127,7 +128,7 @@ pub(crate) fn outputs(
     store: &ContentStore,
     root: &Path,
     type_of: Option<&[std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>]>,
-    returns: &[Vec<i64>],
+    returns: &[Vector<i64>],
     declared: &BTreeMap<String, BTreeSet<String>>,
     fn_q: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>,
     report: &mut TypingReport,
@@ -157,7 +158,7 @@ pub(crate) fn outputs(
             db.execute_batch("DROP TABLE IF EXISTS x.node_type; CREATE TABLE x.node_type(n INTEGER PRIMARY KEY, tid INTEGER)")?;
             let mut ins = db.prepare("INSERT INTO x.node_type VALUES (?1, ?2)")?;
             for (n, names) in &per {
-                let members: Vec<u32> = names.iter().map(|s| terms.named(atom[s.as_str()], &[])).collect();
+                let members: Vector<u32> = names.iter().map(|s| terms.named(atom[s.as_str()], &[])).collect();
                 let t = terms.union(&members, false);
                 ins.execute([*n, i64::from(t)])?;
             }

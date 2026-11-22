@@ -2,6 +2,7 @@
 //! through the lane (decision 0440 step C). The runtime it runs on (the device, the buffer budget, launches) is
 //! the `rerail-metal` crate's, re-exported here.
 
+use rerail_blocks::vector::Vector;
 use super::{EMIT, Error, KIND, Program, TEXT, TextPredicate, split};
 use crate::code_rule_dsl::tape::TapeDoc;
 #[allow(unused_imports)]
@@ -76,8 +77,8 @@ pub struct PreparedAnchorScan {
     /// {node, group} pairs, appended by the kernel.
     hits: rerail_metal::lane::Buffer,
     hit_count: rerail_metal::lane::Buffer,
-    group_programs: Vec<Vec<usize>>,
-    file_program_masks: Vec<u32>,
+    group_programs: Vec<Vector<usize>>,
+    file_program_masks: Vector<u32>,
     program_words: usize,
     file_count: usize,
     program_count: usize,
@@ -98,7 +99,7 @@ pub fn prepare_anchor_scan(
 pub fn prepare_anchor_scan_with_eligibility(
     programs: &[Program],
     files: &[TapeDoc],
-    file_program_masks: Option<&[Vec<u32>]>,
+    file_program_masks: Option<&[Vector<u32>]>,
 ) -> Result<PreparedAnchorScan, Error> {
     if file_program_masks.is_some_and(|masks| masks.len() != files.len()) {
         return Err(Error::InvalidAnchor);
@@ -116,7 +117,7 @@ pub fn prepare_anchor_scan_with_eligibility(
     {
         return Err(Error::InvalidAnchor);
     }
-    let mut flat_program_masks = Vec::with_capacity(files.len().saturating_mul(program_words));
+    let mut flat_program_masks = Vector::with_capacity(files.len().saturating_mul(program_words));
     for file in 0..files.len() {
         if let Some(masks) = file_program_masks {
             flat_program_masks.extend_from_slice(&masks[file]);
@@ -131,13 +132,13 @@ pub fn prepare_anchor_scan_with_eligibility(
     }
 
     let mut literal_groups = BTreeMap::<(u16, Vec<u8>), usize>::new();
-    let mut group_programs = Vec::<Vec<usize>>::new();
+    let mut group_programs = Vec::<Vector<usize>>::new();
     for (program_index, program) in programs.iter().enumerate() {
         let (kind, text, _, _) = anchor_literal(program)?;
         let next = literal_groups.len();
         let group = *literal_groups.entry((kind, text.to_vec())).or_insert(next);
         if group == group_programs.len() {
-            group_programs.push(Vec::new());
+            group_programs.push(rerail_blocks::vector::Vector::new());
         }
         group_programs[group].push(program_index);
     }
@@ -226,7 +227,7 @@ DEFINE_KERNEL2(anchor_scan, anchors,
     })
 }
 
-type AnchorLists = Vec<Vec<Vec<u32>>>;
+type AnchorLists = Vec<Vec<Vector<u32>>>;
 
 pub struct AnchorScanProfile {
     pub dispatch_and_wait: std::time::Duration,
@@ -242,8 +243,8 @@ impl PreparedAnchorScan {
 
     pub fn run_profiled(&mut self) -> Result<(AnchorLists, AnchorScanProfile), Error> {
         let mut anchors = (0..self.file_count)
-            .map(|_| (0..self.program_count).map(|_| Vec::new()).collect())
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .map(|_| (0..self.program_count).map(|_| Vector::new()).collect())
+            .collect::<Vec<Vec<Vector<u32>>>>();
         if self.table.nodes == 0 {
             return Ok((
                 anchors,

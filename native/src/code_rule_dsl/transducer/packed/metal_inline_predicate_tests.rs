@@ -1,11 +1,12 @@
 //! Ordinary assertions consume the current capture frame at their executed PC.
+use rerail_blocks::vector::Vector;
 use super::*;
 
 struct OrdinaryAssertionCases {
     programs: Vec<Program>,
     files: Vec<TapeDoc>,
-    anchors: Vec<Vec<Vec<u32>>>,
-    counts: Vec<usize>,
+    anchors: Vec<Vec<Vector<u32>>>,
+    counts: Vector<usize>,
 }
 
 fn ordinary_assertion_cases() -> OrdinaryAssertionCases {
@@ -153,7 +154,7 @@ fn ordinary_assertion_cases() -> OrdinaryAssertionCases {
 fn ordinary_assertion_expected(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     counts: &[usize],
 ) -> BatchOutcome {
     let expected =
@@ -161,7 +162,7 @@ fn ordinary_assertion_expected(
             .unwrap();
     assert_eq!(expected.errors, vec![vec![None; programs.len()]]);
     assert_eq!(
-        expected.outputs[0].iter().map(Vec::len).collect::<Vec<_>>(),
+        expected.outputs[0].iter().map(|v| v.len()).collect::<Vec<_>>(),
         counts
     );
     let first = &expected.outputs[0][0][0];
@@ -291,7 +292,7 @@ fn native_query_assertions_share_one_budget_across_successive_predicates() {
     assert_eq!(actual.outputs, expected.outputs);
 }
 
-fn ordered_inline_work_cases() -> (Vec<Program>, Vec<TapeDoc>, Vec<Vec<Vec<u32>>>) {
+fn ordered_inline_work_cases() -> (Vec<Program>, Vec<TapeDoc>, Vec<Vec<Vector<u32>>>) {
     let pattern = "^# (?:a|aa)*b$";
     let source = format!("# {}", "a".repeat(200_000));
     assert_eq!(
@@ -357,7 +358,7 @@ fn ordered_inline_work_cases() -> (Vec<Program>, Vec<TapeDoc>, Vec<Vec<Vec<u32>>
 fn ordered_inline_work_expected(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> BatchOutcome {
     let expected =
         execute_with_backend_outcomes(ExecutionBackend::CpuInterpreter, programs, files, anchors)
@@ -377,7 +378,7 @@ fn ordered_inline_work_expected(
             ]
         ]
     );
-    assert!(expected.outputs.iter().flatten().all(Vec::is_empty));
+    assert!(expected.outputs.iter().flatten().all(|v| v.is_empty()));
     expected
 }
 #[test]
@@ -457,7 +458,7 @@ fn metal_inline_text_values_compare_long_literals_and_regexes_before_capturing()
         expected
             .outputs
             .iter()
-            .map(|file| file.iter().map(Vec::len).collect::<Vec<_>>())
+            .map(|file| file.iter().map(|v| v.len()).collect::<Vec<_>>())
             .collect::<Vec<_>>(),
         [vec![1, 1, 1], vec![0, 0, 0], vec![0, 0, 1]]
     );

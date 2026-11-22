@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::passes::Parts as _;
 use super::fields::ProgramFields;
 use super::version::{Made, Version};
@@ -192,7 +193,7 @@ fn extents_keep_their_items_in_place() {
 /// A grouped index's appended values follow its base, in order, and freeze to the CSR a build would make.
 #[test]
 fn a_grouped_index_appends_to_its_tails() {
-    let mut g = Grouped::of(vec![0, 2, 2, 5], vec![10, 11, 20, 21, 22]);
+    let mut g = Grouped::of(rerail_blocks::vector![0, 2, 2, 5], rerail_blocks::vector![10, 11, 20, 21, 22]);
     for i in 0..40 {
         g.push(1, 100 + i);
     }
@@ -231,7 +232,7 @@ fn views_and_overlays_are_the_programs_they_say() {
     let x = || T::Var("x");
     // A view: the first and last thirds.
     let n = v0.rule_end();
-    let removed: Vec<u32> = (n / 3..2 * n / 3).collect();
+    let removed: Vector<u32> = (n / 3..2 * n / 3).collect();
     let mut b = v0.builder();
     for &g in &removed {
         b.remove(RuleId(g));
@@ -820,20 +821,20 @@ fn every_field() -> Arc<Version> {
 }
 
 /// A native's fields, by name, as the program states them.
-fn native_tree(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>, s: &super::NativeSpec) -> Native {
-    use super::NativeSpec as S;
+fn native_tree(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>, s: &super::ArchivedNativeSpec) -> Native {
+    use super::ArchivedNativeSpec as S;
     let r = |x: RelId| f.rel_name(x).to_owned();
     let t = |x: AtomId| f.text(x).to_owned();
     match s {
         S::DfsFirst { edge, target, roots } => Native::DfsFirst { edge: r(*edge), target: r(*target), roots: roots.map(r) },
         S::MatchAll { input, pattern, groups, positions } => Native::MatchAll { input: r(*input), pattern: t(*pattern), groups: groups.iter().map(|&g| t(g)).collect(), positions: *positions },
-        S::TextTest { input, column, op, patterns } => Native::TextTest { input: r(*input), column: *column, op: t(*op), patterns: patterns.iter().map(|&p| t(p)).collect() },
+        S::TextTest { input, column, op, patterns } => Native::TextTest { input: r(*input), column: *column as usize, op: t(*op), patterns: patterns.iter().map(|&p| t(p)).collect() },
         S::PythonCandidates { input, targets, context, member } => Native::PythonCandidates { input: r(*input), targets: r(*targets), context: t(*context), member: t(*member) },
         S::Python { kind, input, targets } => Native::Python { kind: t(*kind), input: r(*input), targets: targets.map(r) },
         S::Components { edge, own } => Native::Components { edge: r(*edge), own: r(*own) },
         S::Reach { seed, edge } => Native::Reach { seed: r(*seed), edge: r(*edge) },
         S::ReachThrough { reach, map } => Native::ReachThrough { reach: r(*reach), map: r(*map) },
-        S::Rank { query, counted, group, op } => Native::Rank { query: r(*query), counted: r(*counted), group: *group, op: t(*op) },
+        S::Rank { query, counted, group, op } => Native::Rank { query: r(*query), counted: r(*counted), group: *group as usize, op: t(*op) },
     }
 }
 
@@ -909,7 +910,7 @@ fn fields_agree(v: &Arc<Version>) {
         assert_eq!(got.reads.iter().map(|&r| f.rel_name(r)).collect::<Vec<_>>(), n.reads(), "{rel}");
     }
     // Answers, in order.
-    assert_eq!(f.answers().len(), answers.values().map(Vec::len).sum::<usize>());
+    assert_eq!(f.answers().len(), answers.values().map(|v| v.len()).sum::<usize>());
     for (req, ps) in &answers {
         assert_eq!(f.answers_of(req), strs(ps), "{req}");
         assert!(f.request(req) && f.answer(req));
@@ -917,7 +918,7 @@ fn fields_agree(v: &Arc<Version>) {
     // Gates, in order.
     // A gate's key, source, relation, level, quiet relations and dependencies.
     type Gate = (String, Option<String>, String, usize, Vec<String>, Vec<String>);
-    let gates: Vec<Gate> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
+    let gates: Vec<Gate> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level as usize, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
     let want: Vec<_> = pgates.iter().map(|(k, g)| (k.clone(), g.src.clone(), g.rel.clone(), g.level, g.quiet.clone(), g.deps.clone())).collect();
     assert_eq!(gates, want);
     for (k, _) in &pgates {
@@ -979,7 +980,7 @@ fn a_relations_identity_is_its_versions_hashes() {
         let f = Fields::of(&placed).unwrap();
         let vs = body::Versions::of_placed(placed.clone());
         let rules: Vec<_> = (0..v.rules().count()).map(body::RuleKey::program).collect();
-        let sccs = [BTreeSet::from(["r".to_owned()])];
+        let sccs = crate::code_rule_dsl::logic::front::Components::of_names([["r"]]);
         (plan::identities(f, &vs, &sccs, &[rules])["r"], plan::leaf_identity(f, "e"))
     };
     let base = ".decl e(x: number, y: number)\n.input e\n.decl r(x: number, y: number)\n.output r\ne(1, 2).\nr(x, y) :- e(x, y).\n";
@@ -1734,7 +1735,7 @@ fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
         p.finish().unwrap().0
     };
     let v0 = managed_asked();
-    assert_eq!(v0.asked().get("q").map(Vec::len), Some(1), "the input states a record");
+    assert_eq!(v0.asked().get("q").map(|v| v.len()), Some(1), "the input states a record");
     let mut p = Pipeline::keeping("test", v0.clone());
     p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
     let mut last = p.done().unwrap();
@@ -1931,9 +1932,9 @@ mod layouts {
                          .decl rr_has_ks3(n: node, a: node)\n.input rr_has_ks3\n.layout rr_has_ks3 key(n)\n\
                          .decl f(n: node)\n.output f\nf(n) :- rr_nearest_ks1(n, _), rr_inside_ks2(n, _), rr_has_ks3(n, _).\n");
         let ancestors = F::Values { col: 1, values: LayoutValues::OneIn(4) };
-        assert_eq!(facts(&v, &l, "rr_nearest_ks1"), [F::Key(vec![0]), F::Local, ancestors.clone()]);
-        assert_eq!(facts(&v, &l, "rr_inside_ks2"), [F::Fanout { from: vec![0], to: vec![1], fan: Fan::About(2) }, F::Local, ancestors]);
-        assert_eq!(facts(&v, &l, "rr_has_ks3"), [F::Key(vec![0])], "declared: its own");
+        assert_eq!(facts(&v, &l, "rr_nearest_ks1"), [F::Key(rerail_blocks::vector![0]), F::Local, ancestors.clone()]);
+        assert_eq!(facts(&v, &l, "rr_inside_ks2"), [F::Fanout { from: rerail_blocks::vector![0], to: rerail_blocks::vector![1], fan: Fan::About(2) }, F::Local, ancestors]);
+        assert_eq!(facts(&v, &l, "rr_has_ks3"), [F::Key(rerail_blocks::vector![0])], "declared: its own");
         assert!(l.0.get(&v.rel("rr_nearest_ks1").unwrap()).unwrap().iter().all(|(_, o)| *o == Origin::Made));
     }
 
@@ -1944,11 +1945,11 @@ mod layouts {
         let (v, l) = of(".decl f(c: node, p: node)\n.output f\nf(c, p) :- e(p, c, _).\n\
                          .decl g(p: node, c: node, i: number)\n.output g\ng(p, c, i) :- e(p, c, i), i > 0.\n\
                          .decl h(p: node, c: node, i: number)\n.output h\nh(p, c, i) :- e(p, c, i).\n");
-        assert_eq!(facts(&v, &l, "f"), [F::Key(vec![0]), F::Fanout { from: vec![1], to: vec![0], fan: Fan::Few }, F::Tree { from: 1, to: 0 }, F::Local]);
+        assert_eq!(facts(&v, &l, "f"), [F::Key(rerail_blocks::vector![0]), F::Fanout { from: rerail_blocks::vector![1], to: rerail_blocks::vector![0], fan: Fan::Few }, F::Tree { from: 1, to: 0 }, F::Local]);
         let g = facts(&v, &l, "g");
-        assert!(g.contains(&F::Key(vec![1])) && g.contains(&F::Key(vec![0, 2])) && g.contains(&F::Local), "{g:?}");
-        assert!(g.contains(&F::Order { col: 2, within: vec![0], dense: false }), "{g:?}");
-        assert!(facts(&v, &l, "h").contains(&F::Order { col: 2, within: vec![0], dense: true }));
+        assert!(g.contains(&F::Key(rerail_blocks::vector![1])) && g.contains(&F::Key(rerail_blocks::vector![0, 2])) && g.contains(&F::Local), "{g:?}");
+        assert!(g.contains(&F::Order { col: 2, within: rerail_blocks::vector![0], dense: false }), "{g:?}");
+        assert!(facts(&v, &l, "h").contains(&F::Order { col: 2, within: rerail_blocks::vector![0], dense: true }));
     }
 
     /// A join along a key keeps the other side's key: `c` fixes `e`'s row and, by `k`'s key, `s`. Two atoms that
@@ -1957,7 +1958,7 @@ mod layouts {
     fn a_join_along_a_key_keeps_the_key_and_a_cross_product_neither() {
         let (v, l) = of(".decl j(c: node, s: symbol)\n.output j\nj(c, s) :- e(_, c, _), k(c, s).\n\
                          .decl x(a: node, b: node)\n.output x\nx(a, b) :- e(_, a, _), e(_, b, _).\n");
-        assert_eq!(facts(&v, &l, "j"), [F::Key(vec![0]), F::Local]);
+        assert_eq!(facts(&v, &l, "j"), [F::Key(rerail_blocks::vector![0]), F::Local]);
         assert_eq!(facts(&v, &l, "x"), []);
     }
 
@@ -1970,7 +1971,7 @@ mod layouts {
                          .decl d(a: node, b: node)\n.layout d key(b)\n.output d\nd(a, b) :- d(a, c), e(c, b, _).\nd(a, b) :- e(a, b, _).\n");
         assert_eq!(facts(&v, &l, "u"), [F::Local]);
         assert_eq!(facts(&v, &l, "t"), [F::Local]);
-        assert_eq!(facts(&v, &l, "d"), [F::Key(vec![1]), F::Local]);
+        assert_eq!(facts(&v, &l, "d"), [F::Key(rerail_blocks::vector![1]), F::Local]);
         // A branch that joins two documents' nodes unjoined is not local, nor is the union.
         let (v, l) = of(".decl w(a: node, b: node)\n.output w\nw(a, b) :- e(a, b, _).\nw(a, b) :- e(_, a, _), e(_, b, _).\n");
         assert_eq!(facts(&v, &l, "w"), []);

@@ -17,6 +17,7 @@
 //! binds whole (`in_block`). A view's rows are read in place through one directory of the batch's documents and the
 //! values' (`device_chunk::views_over`), made again when values are admitted after it.
 
+use rerail_blocks::vector::Vector;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::super::DeviceView;
 use super::super::Source;
@@ -25,6 +26,9 @@ use rustc_hash::FxHashMap;
 use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// The end of a key's chain (`Parts::chained`).
+const END: u32 = u32::MAX;
 
 /// One admitted value's rows of a relation: its source (a batch of the value alone), from row `start` of the parts.
 #[derive(Clone)]
@@ -39,7 +43,10 @@ struct Part {
 struct Parts {
     list: Vec<Part>,
     total: usize,
-    by_key: FxHashMap<u32, Vec<usize>>,
+    /// Per key, its chain in `chained`: the first and last of the parts that hold node ids of it.
+    by_key: rerail_blocks::maps::BlockHash<u32, [u32; 2]>,
+    /// The keys' chains: a part, and the next link of its key's chain (`END` at the last).
+    chained: Vector<[u32; 2]>,
     /// The chunk's relation with every part's rows past its own, in one block relation, while every part is a
     /// [`Slice`] of it, each past the one before.
     whole: Option<Arc<super::Relation>>,
@@ -60,8 +67,11 @@ impl Parts {
             self.list.iter().for_each(each);
             return;
         }
-        for &i in self.by_key.get(&((v >> 32) as u32)).into_iter().flatten() {
-            each(&self.list[i]);
+        let mut at = self.by_key.get(&((v >> 32) as u32)).map_or(END, |c| c[0]);
+        while at != END {
+            let [part, next] = self.chained[at as usize];
+            each(&self.list[part as usize]);
+            at = next;
         }
     }
 }
@@ -120,9 +130,18 @@ impl Values {
             p.list.push(Part { start: p.total, src: Arc::clone(&src) });
             p.total += src.len();
             for &k in keys {
-                let at = p.by_key.entry(k).or_default();
-                if at.last() != Some(&i) {
-                    at.push(i);
+                let link = p.chained.len() as u32;
+                match p.by_key.get_mut(&k) {
+                    Some(chain) if p.chained[chain[1] as usize][0] == i as u32 => {}
+                    Some(chain) => {
+                        let last = std::mem::replace(&mut chain[1], link);
+                        p.chained[last as usize][1] = link;
+                        p.chained.push([i as u32, END]);
+                    }
+                    None => {
+                        p.by_key.insert(k, [link, link]);
+                        p.chained.push([i as u32, END]);
+                    }
                 }
             }
         }
@@ -137,7 +156,7 @@ impl Values {
     pub fn source_of(&self, name: &str, n: i64) -> Option<Arc<dyn Source>> {
         let parts = self.parts.load();
         let p = parts.get(name)?;
-        let i = *p.by_key.get(&((n >> 32) as u32))?.first()?;
+        let i = p.chained[p.by_key.get(&((n >> 32) as u32))?[0] as usize][0] as usize;
         Some(Arc::clone(&p.list[i].src))
     }
     fn total(&self, name: &str) -> usize {
@@ -195,7 +214,7 @@ impl Source for Slice {
         false
     }
     // A value's rows are few: read whole (`Layered::lookup`).
-    fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     fn value(&self, row: usize, column: usize) -> i64 {
@@ -213,10 +232,11 @@ const MADE_ROOM: usize = (1 << 32) - MADE_AT;
 /// looked-up value's rows written once, where they are computed, as `within` writes its own.
 #[derive(Default)]
 struct Made {
-    rows: Vec<i64>,
+    rows: Vector<i64>,
     /// Each looked-up value's run of rows, and how many parts there were when it was made: a part admitted since (a
     /// value given a place more) makes it again.
-    runs: FxHashMap<(usize, i64), ((usize, usize), usize)>,
+    /// Under (column, value): [first row, rows, parts].
+    runs: rerail_blocks::maps::BlockHash<[i64; 2], [u64; 3]>,
 }
 
 /// A chunk's source of relation `name`: the batch's (`base`), and the values admitted since, past its rows.
@@ -354,14 +374,14 @@ impl Source for Layered {
     fn doc_column(&self) -> Option<usize> {
         self.base.doc_column()
     }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         let mut out = self.base.lookup(column, values)?;
         if let Some(made) = &self.made {
             self.parts(|p| {
                 let mut made = made.lock();
                 for &v in values {
-                    let run = match made.runs.get(&(column, v)) {
-                        Some(&(run, parts)) if parts == p.list.len() => run,
+                    let run = match made.runs.get(&[column as i64, v]) {
+                        Some(&[first, n, parts]) if parts as usize == p.list.len() => (first as usize, n as usize),
                         _ => {
                             let at = made.rows.len() / self.width.max(1);
                             p.of(v, &mut |part| {
@@ -374,7 +394,7 @@ impl Source for Layered {
                             });
                             let run = (at, made.rows.len() / self.width.max(1) - at);
                             assert!(at + run.1 <= MADE_ROOM, "{}: more rows made of the tape values than its room", self.name);
-                            made.runs.insert((column, v), (run, p.list.len()));
+                            made.runs.insert([column as i64, v], [run.0 as u64, run.1 as u64, p.list.len() as u64]);
                             run
                         }
                     };
@@ -436,10 +456,10 @@ impl Source for Layered {
         });
         true
     }
-    fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
+    fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<rerail_blocks::vector::Vector<usize>> {
         if self.has_parts() { None } else { self.base.lookup_eq(column, value, eqs) }
     }
-    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<Vec<usize>> {
+    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<rerail_blocks::vector::Vector<usize>> {
         if self.has_parts() { None } else { self.base.lookup_in(column, values, doc) }
     }
     fn kept_to_doc(&self, column: usize) -> bool {
@@ -567,8 +587,8 @@ mod tests {
         fn indexed(&self, _: usize) -> bool {
             true
         }
-        fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
-            Some(Vec::new())
+        fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+            Some(rerail_blocks::vector::Vector::new())
         }
         fn value(&self, row: usize, _: usize) -> i64 {
             row as i64
@@ -589,7 +609,7 @@ mod tests {
             assert_eq!(base.0.load(Ordering::Relaxed), 0, "made on lookup: {made_on_lookup}");
             assert_eq!(layered.value(1, 0), 1);
             let lookup = layered.lookup(0, &[1]);
-            assert_eq!(lookup, Some(Vec::new()));
+            assert_eq!(lookup, Some(rerail_blocks::vector::Vector::new()));
             assert_eq!(base.0.load(Ordering::Relaxed), usize::from(!made_on_lookup), "made on lookup: {made_on_lookup}");
         }
     }

@@ -1,4 +1,5 @@
 //! Reusable indexes from checked equality predicates; no parsing of rendered or authored SQL.
+use rerail_blocks::vector::Vector;
 use super::super::logic::sql::select::{Join, Query, Relation, Select};
 use super::super::logic::sql::sql_ast::{SqlBinaryOperator, SqlExpression};
 use super::*;
@@ -7,7 +8,7 @@ use super::*;
 /// Keep requirements separate for each alias: two uses of one relation can probe different fields.
 pub(super) fn native<'a>(
     queries: impl IntoIterator<Item = &'a Query>,
-) -> BTreeMap<String, Vec<usize>> {
+) -> BTreeMap<String, Vector<usize>> {
     fn block(select: &Select, wanted: &mut BTreeMap<String, BTreeSet<usize>>) {
         let mut aliases = BTreeMap::<String, BTreeSet<usize>>::new();
         let ons = select.from.iter().flat_map(|item| match &item.join {
@@ -74,7 +75,7 @@ pub(super) fn native<'a>(
         .collect()
 }
 
-pub(super) fn wanted(emitted: &plan::emit::Emitted) -> BTreeSet<(String, Vec<u32>)> {
+pub(super) fn wanted(emitted: &plan::emit::Emitted) -> BTreeSet<(String, Vector<u32>)> {
     let tables: BTreeSet<_> = emitted
         .program
         .relations
@@ -82,7 +83,7 @@ pub(super) fn wanted(emitted: &plan::emit::Emitted) -> BTreeSet<(String, Vec<u32
         .map(|(name, _)| name.as_str())
         .collect();
     let mut indexes = BTreeSet::new();
-    fn select(block: &Select, tables: &BTreeSet<&str>, indexes: &mut BTreeSet<(String, Vec<u32>)>) {
+    fn select(block: &Select, tables: &BTreeSet<&str>, indexes: &mut BTreeSet<(String, Vector<u32>)>) {
         let mut columns = BTreeMap::<String, BTreeSet<u32>>::new();
         let ons = block.from.iter().flat_map(|item| match &item.join {
             Join::On(on) => on.iter().collect::<Vec<_>>(),
@@ -127,7 +128,7 @@ pub(super) fn wanted(emitted: &plan::emit::Emitted) -> BTreeSet<(String, Vec<u32
             // leading field. They need that access path without an automatic index.
             for &c in &cols {
                 if c > 0 && (prefix || Some(&c) != cols.first()) {
-                    indexes.insert((table.clone(), vec![c]));
+                    indexes.insert((table.clone(), rerail_blocks::vector![c]));
                 }
             }
         }

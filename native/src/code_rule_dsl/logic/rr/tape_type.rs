@@ -8,6 +8,7 @@
 //! ann_tree(s, v, t) :- ann_key(s, v), parse_of(s, "annotation", t).     t is a tape on both sides
 //! ```
 
+use rerail_blocks::vector::Vector;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::clause::{At, L, LitAt, Reads, T};
@@ -28,7 +29,7 @@ const BUILT_IN: &[(&str, &[&str])] = &[
 ];
 
 /// A relation of `core.rerail`'s tape columns.
-pub(super) fn tape_columns(rel: &str) -> Vec<usize> {
+pub(super) fn tape_columns(rel: &str) -> Vector<usize> {
     BUILT_IN.iter().filter(|(r, _)| *r == rel).flat_map(|(_, cols)| cols.iter().enumerate().filter(|(_, t)| **t == "tape").map(|(i, _)| i)).collect()
 }
 

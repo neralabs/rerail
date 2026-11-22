@@ -167,6 +167,27 @@ pub struct ViewsInPlace {
 }
 
 
+/// A batch's cache for `blocks` 16z blocks of entries up to `entry` bytes (`super::batch_cache`): in the device's
+/// memory where there is a device, so its host reads and its device's share it (decision 0353 step 4b), else the
+/// host's.
+pub(super) fn batch_cache(blocks: usize, entry: usize) -> rerail_tape_format::f16::ZCache {
+    let spec = rerail_clif::view::cache::Spec::configured(blocks, entry);
+    crate::code_rule_dsl::prof::count("zcache.batches", 1);
+    crate::code_rule_dsl::prof::count("zcache.blocks", blocks);
+    crate::code_rule_dsl::prof::count("zcache.entries", spec.entries as usize);
+    crate::code_rule_dsl::prof::count("zcache.entry_kb", spec.entry_bytes() >> 10);
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    if let Some(device) = crate::code_rule_dsl::tape::placed::device() {
+        let buffer = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, spec.bytes());
+        let at = buffer.contents().cast::<u8>();
+        // SAFETY: the buffer's bytes, shared with the host, read by no one yet.
+        spec.init(unsafe { std::slice::from_raw_parts_mut(at, spec.bytes()) }).expect("a cache's buffer of its size");
+        // SAFETY: the cache just made in the buffer, which the cache holds.
+        return unsafe { rerail_tape_format::f16::ZCache::over(at, &spec, Box::new(buffer)) };
+    }
+    rerail_tape_format::f16::ZCache::host(blocks, entry)
+}
+
 /// The batch's cache's counts in the profile when its directory goes (the statistics mode's too, where it is on).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl Drop for ViewsInPlace {
@@ -190,7 +211,7 @@ pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsIn
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
-    build_dir(&chunk.block, &docs_of(batch, [0; 9]))
+    build_dir(&chunk.block, &docs_of(batch, [0; 9]), batch.docs.cache().map(|c| &**c))
 }
 
 /// One document of a views' directory: its projection, its dialect, and its first row in each view (`VIEWS`).
@@ -238,12 +259,16 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
         let more = rows_of(v);
         past = std::array::from_fn(|k| past[k] + more[k]);
     }
-    build_dir(&batch.block, &docs)
+    build_dir(&batch.block, &docs, batch.docs.cache().map(|c| &**c))
 }
 
 /// The directory of `docs`, made in `b` (`ViewsInPlace`): each one's entry, tape and lines where the device reads them.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
+fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>], zcache: Option<&rerail_tape_format::f16::ZCache>) -> Option<ViewsInPlace> {
+    let refused_all = |why: &'static str| {
+        crate::code_rule_dsl::prof::count(why, 1);
+        None
+    };
     use rerail_clif::view_reads::{ViewDir, ViewRow};
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
     let device = crate::code_rule_dsl::tape::placed::device()?;
@@ -337,22 +362,25 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     }
     // The 16z documents' cache, shared by every thread of every stage that reads the views: each one's view names it
     // by its address less its tape's, its entry size the cache's, its reads checked (shared).
-    let cache = (!zrows.is_empty()).then(|| {
-        let spec = rerail_clif::view::cache::Spec::configured(zblocks, zentry);
-        crate::code_rule_dsl::prof::count("zcache.batches", 1);
-        crate::code_rule_dsl::prof::count("zcache.blocks", zblocks);
-        crate::code_rule_dsl::prof::count("zcache.entries", spec.entries as usize);
-        crate::code_rule_dsl::prof::count("zcache.entry_kb", spec.entry_bytes() >> 10);
-        let cache = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, spec.bytes());
-        // SAFETY: the buffer's bytes, shared with the host, read by no stage yet.
-        spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).expect("a cache's buffer of its size");
+    // The batch's cache (`super::batch_cache`): the one its host reads decode into, in the device's memory.
+    let cache = match (zrows.is_empty(), zcache) {
+        (true, _) => None,
+        (false, Some(c)) if c.entry_size() >= zentry => match c.owner().downcast_ref::<rerail_device::device::Buffer>() {
+            Some(buffer) => Some(buffer.clone()),
+            None => return refused_all("views.refused.zcache_host"),
+        },
+        (false, _) => return refused_all("views.refused.zcache_small"),
+    };
+    let _ = zblocks;
+    let cache = cache.map(|cache| {
+        let entry = zcache.expect("a cache where its rows are").entry_size();
         for &i in &zrows {
             // SAFETY: row `i`, written above in `b`.
             let row = unsafe { &mut *rows.add(i) };
             // An address: the slabs' tapes had theirs, so the device's buffers have them.
             let rel = cache.device_address().expect("a buffer's address where tapes have theirs").wrapping_sub(row.tape) as i64;
             (row.view.side[0], row.view.side[1]) = (rel as u32, (rel >> 32) as u32);
-            (row.view.columns[3], row.view.columns[4]) = (spec.entry_bytes() as u32, 1);
+            (row.view.columns[3], row.view.columns[4]) = (entry as u32, 1);
         }
         cache
     });
@@ -444,7 +472,7 @@ fn build_in(batch: &Batch) -> Chunk {
         canon.insert(tag, (p, d.canonical.len()));
     }
     for (i, p) in batch.docs.iter().enumerate() {
-        let f = &*p.facts;
+        let f = p.f();
         // SAFETY: entry `i` of the table just allocated; every span set below points into `b`.
         unsafe {
             let d = docs.add(i);

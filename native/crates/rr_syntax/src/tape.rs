@@ -355,7 +355,7 @@ pub fn kind_field(key: u32) -> (u16, u16) {
 /// The engine's tape of `nodes` (this parser's, in preorder) over `src`: its bytes, as the
 /// engine encodes a `.rerail` file (`code_rule_dsl::tape`). Each node given to the writer in order and
 /// closed where the next is not inside it. The lean parser's tape is checked against it.
-pub fn image(nodes: &[Node], src: &str) -> Vec<u8> {
+pub fn image(nodes: &[Node], src: &str) -> rerail_tape_format::Vector<u8> {
     use rerail_tape_format::{Redo, Widths, Writer};
     let mut widths = Widths::guess(src.len());
     loop {

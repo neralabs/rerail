@@ -17,7 +17,8 @@
 //! (`run_join_in`'s `paired`). Otherwise it runs as before. The pairs are the same set the host's index walk finds,
 //! so the seed's rows are the same.
 
-use super::spec::{JoinItem, JoinSpec, Source};
+use rerail_blocks::vector::Vector;
+use super::spec::{ArchivedJoinItem as JoinItem, ArchivedJoinSpec, ArchivedSource as Source, Join};
 use super::{InRel, Interner, Key, Result, Src, Step, err, is_dead};
 use rerail_accel::kernel::{JoinBy, Keys};
 use rerail_accel::{Batch, Kernel, Launch, Pairs};
@@ -72,7 +73,7 @@ struct Pending {
     at: usize,
     left: (u64, usize, usize),
     right: (u64, usize, usize),
-    lids: Vec<u32>,
+    lids: Arc<Vector<u32>>,
 }
 
 /// Pending pairs by the seed's spec: the run's own (decision 0442).
@@ -86,12 +87,12 @@ fn pendings() -> std::sync::Arc<Pendings> {
 
 /// A seed's pairs, taken: its first atom's row ids, and the pairs (an index into them, the second atom's row id).
 pub struct Paired {
-    pub lids: Vec<u32>,
+    pub lids: Arc<Vector<u32>>,
     pub pairs: Pairs,
 }
 
 /// The digest of a join's spec: the key its pairs are kept by.
-pub fn digest(spec: &JoinSpec) -> u64 {
+pub fn digest(spec: &ArchivedJoinSpec) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = rustc_hash::FxHasher::default();
     spec.hash(&mut h);
@@ -113,7 +114,7 @@ fn ident(r: &InRel) -> (u64, usize, usize) {
 /// The first two steps of a join that qualifies: the relations, the first atom's tests and binds, and the second's
 /// slot keys (column, slot).
 fn qualifies(j: &super::JoinRule) -> Option<(&Arc<InRel>, &Arc<InRel>, &[(usize, usize)], Vec<(usize, usize)>)> {
-    if j.fused.first().is_some_and(Option::is_some) {
+    if j.fused_at(0).is_some() {
         return None;
     }
     let (Some(Step::Atom { src: Src::In(r0, _), neg: false, keys: k0, binds: b0, tests: t0 }), Some(Step::Atom { src: Src::In(r1, _), neg: false, keys: k1, binds: b1, .. })) = (j.steps.first(), j.steps.get(1)) else {
@@ -122,17 +123,17 @@ fn qualifies(j: &super::JoinRule) -> Option<(&Arc<InRel>, &Arc<InRel>, &[(usize,
     if !k0.is_empty() || b0.is_empty() || b1.is_empty() {
         return None;
     }
-    let bound0: Vec<usize> = b0.iter().map(|&(_, s)| s).collect();
+    let bound0: Vector<usize> = b0.iter().map(|&(_, s)| s).collect();
     let slot_keys: Vec<(usize, usize)> = k1.iter().filter_map(|&(c, k)| match k { Key::Slot(s) if bound0.contains(&s) => Some((c, s)), _ => None }).collect();
     if slot_keys.is_empty() {
         return None;
     }
     let _ = t0;
-    Some((r0, r1, b0, slot_keys))
+    Some((j.bound(r0), j.bound(r1), b0, slot_keys))
 }
 
 /// Sends the seed joins of a level (`specs`, each a seed's join spec) as one batch: the launches it sent.
-pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<usize> {
+pub fn prefetch(conn: &rusqlite::Connection, specs: &[Join]) -> Result<usize> {
     if !on() {
         return Ok(0);
     }
@@ -160,18 +161,18 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
         let Some((r0, r1, b0, slot_keys)) = qualifies(&j) else { continue };
         let Step::Atom { tests: t0, .. } = &j.steps[0] else { continue };
         // The left: the first atom's live rows passing its tests; per key, the value its slot takes.
-        let lids: Vec<u32> = (0..r0.len() as u32)
+        let lids: Arc<Vector<u32>> = Arc::new((0..r0.len() as u32)
             .filter(|&id| !is_dead(&r0.dead, id) && {
                 let row = r0.at(id as usize).read();
                 t0.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
             })
-            .collect();
+            .collect());
         if lids.len() < min_left() || r1.len() == 0 {
             continue;
         }
         let col_of = |s: usize| b0.iter().find(|&&(_, b)| b == s).map(|&(c, _)| c).expect("a slot the first atom binds");
         // Staged: the columns' sizes are known now, their values are written after the batch is begun (below).
-        let mut stage = |n: usize, cols: Vec<(Arc<InRel>, Option<Vec<u32>>, usize)>| -> Result<Keys> {
+        let mut stage = |n: usize, cols: Vec<(Arc<InRel>, Option<Arc<Vector<u32>>>, usize)>| -> Result<Keys> {
             let mut out = Vec::with_capacity(cols.len());
             for (rel, ids, c) in cols {
                 let (col, w) = gate.column(n).map_err(err)?;
@@ -180,7 +181,7 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
             }
             Ok(out.into())
         };
-        let left: Keys = stage(lids.len(), slot_keys.iter().map(|&(_, s)| (Arc::clone(r0), Some(lids.clone()), col_of(s))).collect())?;
+        let left: Keys = stage(lids.len(), slot_keys.iter().map(|&(_, s)| (Arc::clone(r0), Some(Arc::clone(&lids)), col_of(s))).collect())?;
         let right: Keys = stage(r1.len(), slot_keys.iter().map(|&(c, _)| (Arc::clone(r1), None, c)).collect())?;
         // The right's id in the space: the relation and its key columns.
         let right_id = fx(&format!("{} {:?}", r1.uid.0, slot_keys.iter().map(|&(c, _)| c).collect::<Vec<_>>()));
@@ -221,7 +222,7 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
 struct Fill {
     w: rerail_accel::col::Writer,
     rel: Arc<InRel>,
-    ids: Option<Vec<u32>>,
+    ids: Option<Arc<Vector<u32>>>,
     c: usize,
 }
 

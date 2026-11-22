@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
     use rusqlite::Connection;
 
     fn hex(s: &str) -> String {
@@ -247,7 +248,7 @@
         let lattice = super::super::TestLattice::min;
         // Round r: keys 0..400 + 300r (new keys each round), each value lower for some keys each round; a key's rows
         // more than once in a round (the fold groups them).
-        let round = |r: i64| -> Vec<i64> {
+        let round = |r: i64| -> Vector<i64> {
             (0..400 + 300 * r).flat_map(|key| [[key, 1000 - r * (key % 3)], [key, 1001]]).flatten().collect()
         };
         let mut cpu = lattice();
@@ -1013,7 +1014,7 @@
         let (read, in_place) = super::column_stats(&cols, 8).expect("the device");
         assert_eq!(in_place, 2);
         for (c, got) in [1, 2].into_iter().zip(&read) {
-            let values: Vec<i64> = (0..n).map(|i| src.value(i, c)).collect();
+            let values: Vector<i64> = (0..n).map(|i| src.value(i, c)).collect();
             let (host, _) = super::column_stats(&[StatColumn::Values(&values)], 8).expect("the device");
             assert_eq!(*got, host[0], "column {c}");
         }
@@ -1031,7 +1032,7 @@
         let mut x = 0x0223_u64;
         let mut next = |m: u64| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x % m };
         let n = 6_000;
-        let mut rows = Vec::with_capacity(2 * n);
+        let mut rows = rerail_blocks::vector::Vector::with_capacity(2 * n);
         for _ in 0..n {
             let r = next(1000);
             rows.push(3_288_784_809_065_000_000 + (if r < 600 { next(20) } else { next(2_000) }) as i64);
@@ -1045,7 +1046,7 @@
         assert_eq!(in_place, 2);
         assert_eq!(std::sync::Arc::strong_count(&rel), 1, "the read keeps no handle to the relation (decision 0478 R1)");
         // The same statistics as the columns' values gathered on the host.
-        let (c0, c1): (Vec<i64>, Vec<i64>) = (rows.iter().step_by(2).copied().collect(), rows.iter().skip(1).step_by(2).copied().collect());
+        let (c0, c1): (Vector<i64>, Vector<i64>) = (rows.iter().step_by(2).copied().collect(), rows.iter().skip(1).step_by(2).copied().collect());
         let (of_values, in_place) = super::column_stats(&[StatColumn::Values(&c0), StatColumn::Values(&c1)], 16).expect("the device");
         assert_eq!(in_place, 0);
         assert_eq!(read, of_values);
@@ -1059,8 +1060,8 @@
         // A skewed key of node-like ids, and a narrow one.
         let mut x = 0x0209_u64;
         let mut next = || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
-        let wide: Vec<i64> = (0..20_000).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 30 } else { next() % 3_000 }) as i64 }).collect();
-        let narrow: Vec<i64> = (0..3_000).map(|_| (next() % 5) as i64).collect();
+        let wide: Vector<i64> = (0..20_000).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 30 } else { next() % 3_000 }) as i64 }).collect();
+        let narrow: Vector<i64> = (0..3_000).map(|_| (next() % 5) as i64).collect();
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }
@@ -1071,7 +1072,7 @@
             let cpu = table::HeavyCol::of_counts(counts);
             assert_eq!((g.rows, g.ndv, g.sq, g.cube, g.tail_rows, g.tail_ndv), (cpu.rows, cpu.ndv, cpu.sq, cpu.cube, cpu.tail_rows, cpu.tail_ndv));
             // The same top counts (ties may take other values of the same count).
-            let counts_of = |h: &table::HeavyCol| { let mut c: Vec<u64> = h.top.iter().map(|t| t.1 as u64).collect(); c.sort_unstable(); c };
+            let counts_of = |h: &table::HeavyCol| { let mut c: Vector<u64> = h.top.iter().map(|t| t.1 as u64).collect(); c.sort_unstable(); c };
             assert_eq!(counts_of(&g), counts_of(&cpu));
             let fan = |h: &table::HeavyCol| table::heavy_fan(table::PricedCol::new(h, None), &[table::PricedCol::new(h, None); 2]).unwrap();
             assert!((fan(&g) / fan(&cpu) - 1.0).abs() < 1e-6);
@@ -1085,7 +1086,7 @@
         let mut x = 0x0209_u64;
         let mut next = || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
         for n in [1usize << 20, 8 << 20] {
-            let col: Vec<i64> = (0..n).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 600 } else { next() % 200_000 }) as i64 }).collect();
+            let col: Vector<i64> = (0..n).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 600 } else { next() % 200_000 }) as i64 }).collect();
             let _ = table::heavy_of_values_gpu(&[&col]);
             let t = std::time::Instant::now();
             let gpu = table::heavy_of_values_gpu(&[&col]).expect("a device");
@@ -1165,7 +1166,7 @@
                     assert!(r.bindings <= 400, "{case}: {} bindings, a witness per document", r.bindings);
                 }
                 super::super::close(&db, "dev_wit").unwrap();
-                let mut rows: Vec<i64> = db.prepare("SELECT c0 FROM temp.h0").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+                let mut rows: Vector<i64> = db.prepare("SELECT c0 FROM temp.h0").unwrap().query_map([], |r| r.get::<_, i64>(0)).unwrap().map(Result::unwrap).collect();
                 rows.sort_unstable();
                 got.push(rows);
             }
@@ -1220,7 +1221,7 @@
         batch.finish().unwrap();
         let n = src.len();
         for c in [0, 1] {
-            let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+            let host: Vector<i64> = (0..n).map(|r| src.value(r, c)).collect();
             assert_eq!(dev.column(place[c] as usize), host, "column {c}");
         }
         let _ = std::fs::remove_file(&store_path);
@@ -1313,7 +1314,7 @@
                     batch.expand_view(&d.block.device_buffer(device).unwrap(), d.root, d.view, &cols, &out).unwrap();
                     batch.finish().unwrap();
                     for (j, &c) in cols.iter().enumerate() {
-                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                        let host: Vector<i64> = (0..n).map(|r| src.value(r, c)).collect();
                         assert_eq!(out.column(j), &host[..], "{name}: column {c}");
                     }
                 }
@@ -1329,7 +1330,7 @@
                     // A 16z batch's blocks through its cache (0353 step 4b): every read found room.
                     assert_eq!(v.cache_failed(), 0, "{name}: the 16z cache had room: {:?}", v.cache_counts());
                     for (j, &c) in cols.iter().enumerate() {
-                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                        let host: Vector<i64> = (0..n).map(|r| src.value(r, c)).collect();
                         assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
                     }
                     in_place += 1;
@@ -1365,7 +1366,7 @@
                 let without = shaped(&store, make(), &Projection::core()).unwrap();
                 let host = without.iter().find(|(n, _)| *n == "docof").unwrap().1.clone();
                 let host: std::collections::HashSet<i64> = (0..host.len()).filter(|&r| host.value(r, 1) == 7).map(|r| host.value(r, 0)).collect();
-                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 7 && !host.contains(&docof.value(r, 0))).collect();
+                let guest: Vector<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 7 && !host.contains(&docof.value(r, 0))).collect();
                 assert!(!guest.is_empty(), "the guest's places are rows");
                 assert!(guest.iter().all(|&r| docof.value(r, 1) == 7), "the guest's places are its host's file's");
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
@@ -1395,7 +1396,7 @@
                         }
                         batch.finish().unwrap();
                         for (j, &c) in cols.iter().enumerate() {
-                            let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                            let host: Vector<i64> = (0..n).map(|r| src.value(r, c)).collect();
                             assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
                         }
                     }
@@ -1411,10 +1412,10 @@
         crate::code_rule_dsl::facts::nearest::install_nearest(crate::code_rule_dsl::typing::file_local::nearest);
         let node = &all.iter().find(|(n, _)| *n == "node").unwrap().1;
         let batch = node.python_batch().expect("the batch");
-        let mut kinds: Vec<i64> = (0..node.len()).map(|r| node.value(r, 2)).collect();
+        let mut kinds: Vector<i64> = (0..node.len()).map(|r| node.value(r, 2)).collect();
         kinds.sort_unstable();
         kinds.dedup();
-        let kinds: Vec<i64> = kinds.into_iter().step_by(3).collect();
+        let kinds: Vector<i64> = kinds.into_iter().step_by(3).collect();
         let axes = [
             ("nearest", Within::axis(Arc::clone(&batch), Axis::Nearest, &kinds, Binding::Cpu)),
             ("inside", Within::axis(Arc::clone(&batch), Axis::Inside, &kinds, Binding::Cpu)),
@@ -1444,7 +1445,7 @@
             let n = host.len();
             assert_eq!(dev.len(), n);
             for c in 0..2 {
-                let (h, d): (Vec<i64>, Vec<i64>) = ((0..n).map(|r| host.value(r, c)).collect(), (0..n).map(|r| dev.value(r, c)).collect());
+                let (h, d): (Vector<i64>, Vector<i64>) = ((0..n).map(|r| host.value(r, c)).collect(), (0..n).map(|r| dev.value(r, c)).collect());
                 assert_eq!(d, h, "column {c}");
             }
             for r in (0..node.len()).step_by(7) {
@@ -1456,7 +1457,7 @@
         // The axes over one set share its solves (decision 0494 step 7): a set that nests nowhere (each document's root
         // kind, which no node of it is below) gives `inside` its `nearest`'s relation, read in place; a set that nests
         // gives each its own, the rows an axis alone makes. Either solved first, on either binding.
-        let roots: Vec<i64> = vec![node.value(0, 2)];
+        let roots: Vector<i64> = rerail_blocks::vector![node.value(0, 2)];
         for (set, binding, inside_first) in [(&roots, Binding::Cpu, true), (&roots, Binding::Metal, false), (&kinds, Binding::Cpu, true), (&kinds, Binding::Cpu, false)] {
             let shared = std::sync::Arc::new(crate::code_rule_dsl::facts::vtab::syntax::within::Solves::default());
             let near = Within::axis(Arc::clone(&batch), Axis::Nearest, set, binding).sharing(Arc::clone(&shared));
@@ -1511,14 +1512,16 @@
         assert_eq!(table_rows(10, 3, false, None, Some(0.0)), 16);
     }
 
-    /// A spec's estimates are not the rule: two specs that differ in them alone are one rule (the same digest, under
-    /// which the stages' growth is kept), and the rule takes them.
+    /// A spec's estimates are not the rule: they lie on the line that runs the join, not in the join's section, so
+    /// two lines that differ in them alone are equal and run one join (the same digest, under which the stages'
+    /// growth is kept).
     #[test]
     fn a_specs_estimates_leave_its_identity() {
-        use super::super::spec::{Est, JoinSpec};
+        use super::super::spec::{Est, JoinSpec, Line};
         let text = format!("pos t:x:{}:{}:ii v0 v1\nhead v0 v1", hex("temp.a"), hex("c0, c1"));
-        let plain = JoinSpec::parse(&text).unwrap();
-        let priced = JoinSpec { est: Est(vec![12.0, 3.0]), ..plain.clone() };
+        let join = JoinSpec::parse(&text).unwrap().encode();
+        let plain = Line::Seed { head: 0, join: join.clone(), est: Est::default() };
+        let priced = Line::Seed { head: 0, join: join.clone(), est: Est(rerail_blocks::vector![12.0, 3.0]) };
         assert_eq!(plain, priced);
-        assert_eq!(super::super::level::digest(&plain), super::super::level::digest(&priced));
+        assert_eq!(super::super::level::digest(&join), super::super::level::digest(&JoinSpec::parse(&text).unwrap().encode()));
     }

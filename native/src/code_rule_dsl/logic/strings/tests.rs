@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 
 /// The text passes (`plan::corpus::preparation::text`) over program `text`, as a program of no Python parts reads them:
@@ -94,7 +95,7 @@ fn tests_on_text_relations_become_relations() {
     assert_eq!(v.tests.len(), 3, "{:?}", v.tests.iter().map(|t| &t.0).collect::<Vec<_>>());
     let text = rules_of(&prog);
     // The tests are numbered by their content, not the rules' order: each is named here by what it matches.
-    let rows = v.rows(&["_x".into(), "x_async".into(), "db".into(), "y".into()], &[1, 2, 3, 4]);
+    let rows = v.rows(|i| ["_x", "x_async", "db", "y"][i], &[1, 2, 3, 4]);
     let suffix = rows.iter().position(|r| *r == [2]).expect("the suffix test");
     assert!(text.contains(&format!("!strtest_{suffix}($s)")), "{text}");
     assert!(text.contains("@prefix"), "{text}");
@@ -182,7 +183,7 @@ finding(d,l) :- selected(d,l,t), contains("inspect",t).
     let rendered = rules_of(&program);
     assert!(!rendered.contains("@prefix") && !rendered.contains("@contains"), "{rendered}");
     // Numbered by their content: `prefix` and `contains` in either order.
-    let mut rows = vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]);
+    let mut rows = vocabulary.rows(|i| ["#inspect", "inspect", "clean"][i], &[11,12,13]);
     rows.sort();
     assert_eq!(rows, [vec![11], vec![11,12]]);
 }
@@ -249,7 +250,7 @@ finding(d,l,x) :- split_line(d,l,t), surface(x), contains(x,t).
     assert_eq!(specs, [r#"contains ["alpha", "beta"]"#], "only the dead rows, as one set");
     let rendered = rules_of(&program);
     assert!(rendered.contains("strtest_") && rendered.contains("@contains"), "the set first, then each value: {rendered}");
-    assert_eq!(vocabulary.rows(&["an alpha".into(), "gamma".into()], &[1, 2]), [vec![1]]);
+    assert_eq!(vocabulary.rows(|i| ["an alpha", "gamma"][i], &[1, 2]), [rerail_blocks::vector![1]]);
 }
 
 /// Many batches' text tests at once, as jobs of one thread pool (a corpus run's file batches): each tests its new
@@ -275,9 +276,9 @@ fn batches_test_their_strings_at_once_on_one_pool() {
                         // Each batch's strings are new to the vocabulary, and enough that the search splits across the pool.
                         // Made on the pool first, as a batch's facts are: a thread waiting here takes other batches' jobs.
                         use rayon::prelude::*;
-                        let symbols: Vec<u32> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| (0..20_000).into_par_iter().map(|i| (round * 96 + batch) * 20_000 + i).collect());
+                        let symbols: Vector<u32> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| (0..20_000).into_par_iter().map(|i| (round * 96 + batch) * 20_000 + i).collect());
                         let strings: Vec<String> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| symbols.par_iter().map(|s| format!("item_{s}")).collect());
-                        let rows = vocabulary.rows(&strings, &symbols);
+                        let rows = vocabulary.rows(|i| strings[i].as_str(), &symbols);
                         *passed.lock().unwrap() += rows[0].len();
                         *expected.lock().unwrap() += strings.iter().filter(|s| s.starts_with("item_1")).count();
                     });

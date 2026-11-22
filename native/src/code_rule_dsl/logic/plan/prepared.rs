@@ -5,6 +5,7 @@
 //! the facts alone at a nominal scale (nothing measured, no store read). Its plans are kept by line (`line_key`: the
 //! rule's text and its delta), with their work and rows per node, and a run takes them as they are: no search, no
 //! pricing. Every other rule is planned at run time, as before (the exceptions).
+use rerail_blocks::vector::Vector;
 use super::shapes::{Counts, Shapes};
 use super::{Model, Step, Stats};
 use crate::code_rule_dsl::logic::front::{Fan, LayoutFact, LayoutSize, Value};
@@ -129,7 +130,7 @@ impl Prepared {
         if super::prepared_searched(line) {
             return None;
         }
-        if !shapes.2.is_empty() && ((0..b.len()).filter_map(|i| b.atom(i)).any(|a| shapes.left_out(b.rel(a))) || p.assumed.iter().any(|(r, _)| shapes.left_out(r))) {
+        if shapes.leaves_out() && ((0..b.len()).filter_map(|i| b.atom(i)).any(|a| shapes.left_out(b.rel(a))) || p.assumed.iter().any(|(r, _)| shapes.left_out(r))) {
             return None;
         }
         run_counts().taken.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -162,12 +163,13 @@ fn rows_of(facts: &[LayoutFact], node_col: &dyn Fn(usize) -> bool) -> Option<f64
 
 /// The model of the facts alone: each relation the facts size, its rows and its columns' distinct values; the base
 /// relations' indexes as a run's; the program's `.shape` directives.
-fn model_of(v: &Version, f: super::fields::Fields<'_>, shapes: &Shapes, layouts: &crate::code_rule_dsl::logic::program_image::layouts::Layouts) -> Model {
+fn model_of(placed: &super::body::Placed, v: &Version, f: super::fields::Fields<'_>, shapes: &Shapes, layouts: &crate::code_rule_dsl::logic::program_image::layouts::Layouts) -> Model {
     let counts = Counts { docs: Some(NOMINAL_DOCS), kinds: Some(NOMINAL_KINDS) };
     let mut stats = Stats::empty_of(&f);
     stats.nodes = NOMINAL_NODES;
     stats.docs = Some(NOMINAL_DOCS as i64);
     let mut ndv = super::ColMap::default();
+    let mut input_indexes: Vec<(String, Vec<Vec<String>>)> = Vec::new();
     for (rel, facts) in &layouts.0 {
         let name = v.rel_name(*rel);
         let node_col = |c: usize| v.decl_of(name).and_then(|d| d.cols().nth(c)).is_some_and(|(_, t)| matches!(v.text(t), "node" | "loc"));
@@ -182,25 +184,12 @@ fn model_of(v: &Version, f: super::fields::Fields<'_>, shapes: &Shapes, layouts:
             }
         }
         if f.is_input(name) {
-            Arc::make_mut(&mut stats.indexes).insert(name.to_owned(), super::vtab_indexes(name));
+            input_indexes.push((name.to_owned(), super::vtab_indexes(name)));
         }
     }
+    stats.indexes = stats.indexes.with(input_indexes);
     let given = super::Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: Default::default(), batch: HashMap::new(), given: None, kept: Default::default() };
-    let shapes_0137 = Arc::new(
-        f.shapes()
-            .iter()
-            .map(|s| crate::code_rule_dsl::logic::front::Shape {
-                head: f.text(s.head).to_owned(),
-                lit: f.text(s.lit).to_owned(),
-                wait: match &s.wait {
-                    crate::code_rule_dsl::logic::program_image::ShapeWaitRef::After(a) => crate::code_rule_dsl::logic::front::ShapeWait::After(f.text(*a).to_owned()),
-                    crate::code_rule_dsl::logic::program_image::ShapeWaitRef::Bound(vs) => crate::code_rule_dsl::logic::front::ShapeWait::Bound(vs.iter().map(|&a| f.text(a).to_owned()).collect()),
-                },
-                text: f.text(s.text).to_owned(),
-            })
-            .collect::<Vec<_>>(),
-    );
-    Model { shapes: shapes_0137, analysis: Default::default(), stats, ndv, docof: Default::default(), view_src: Default::default(), inputs: given.into(), docs_by_shift: false, derived: Arc::new(HashSet::new()) }
+    Model { shapes: super::ShapeSource::of(placed), analysis: Default::default(), stats, ndv, docof: Default::default(), view_src: Default::default(), inputs: given.into(), docs_by_shift: false, derived: Default::default() }
 }
 
 impl Analysis for Prepared {
@@ -214,11 +203,11 @@ impl Analysis for Prepared {
         let strata = cx.get::<Strata>()?;
         let placed = super::body::Placed::whole(Arc::clone(v));
         let f = placed.fields().map_err(|e| format!("{e:?}"))?;
-        let mut model = model_of(v, f, &shapes, &layouts);
-        model.derived = Arc::new((0..placed.len()).map(|k| placed.body(k)).map(|b| b.rel(b.head()).to_owned()).collect());
+        let mut model = model_of(&placed, v, f, &shapes, &layouts);
+        model.derived = (0..placed.len()).map(|k| placed.body(k)).map(|b| b.rel(b.head()).to_owned()).collect();
         // Each relation's component, by name: a recursive rule's deltas are its atoms of its own.
         let scc: HashMap<&str, usize> = strata.sccs.iter().enumerate().flat_map(|(i, s)| s.iter().map(move |r| (v.rel_name(*r), i))).collect();
-        let mut by_head: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_head: HashMap<&str, Vector<usize>> = HashMap::new();
         for k in 0..placed.len() {
             let b = placed.body(k);
             by_head.entry(b.rel(b.head())).or_default().push(k);
@@ -231,12 +220,12 @@ impl Analysis for Prepared {
         // (their rows priced, summed over the rules), so the rules that read it are planned after it.
         for comp in &strata.sccs {
             let names: Vec<&str> = comp.iter().map(|r| v.rel_name(*r)).collect();
-            let rules: Vec<usize> = names.iter().flat_map(|n| by_head.get(n).into_iter().flatten().copied()).collect();
+            let rules: Vector<usize> = names.iter().flat_map(|n| by_head.get(n).into_iter().flatten().copied()).collect();
             let reads_own = |k: usize| {
                 let b = placed.body(k);
                 (0..b.len()).any(|i| b.atom(i).is_some_and(|a| names.contains(&b.rel(a))))
             };
-            let (steps, base): (Vec<usize>, Vec<usize>) = rules.iter().partition(|&&k| reads_own(k));
+            let (steps, base): (Vector<usize>, Vector<usize>) = rules.iter().partition(|&&k| reads_own(k));
             let sized_by_facts: Vec<&str> = names.iter().copied().filter(|n| model.stats.card.contains_key(*n)).collect();
             let mut sums: HashMap<&str, Estimate> = HashMap::new();
             let mut all_known = true;
@@ -305,7 +294,7 @@ impl Analysis for Prepared {
         Some(self.to_rows())
     }
     fn of_rows(_v: &Version, rows: &[Row]) -> Option<Prepared> {
-        Prepared::read_rows(rows.iter().map(Vec::as_slice))
+        Prepared::read_rows(rows.iter().map(|v| v.as_slice()))
     }
 }
 
@@ -335,7 +324,7 @@ pub fn of_store_rows(rows: &[Row]) -> ByVersion {
     let mut by: HashMap<[u8; 32], Vec<&[Value]>> = HashMap::new();
     let mut bad = HashSet::new();
     for r in rows {
-        let Some(ids) = r.get(..4).and_then(|h| h.iter().map(|v| if let Value::Int(i) = v { Some(*i) } else { None }).collect::<Option<Vec<i64>>>()) else { continue };
+        let Some(ids) = r.get(..4).and_then(|h| h.iter().map(|v| if let Value::Int(i) = v { Some(*i) } else { None }).collect::<Option<Vector<i64>>>()) else { continue };
         let mut id = [0u8; 32];
         for (k, i) in ids.iter().enumerate() {
             id[k * 8..k * 8 + 8].copy_from_slice(&i.to_le_bytes());
@@ -376,7 +365,7 @@ pub struct DerivedEstimates(pub Option<bool>);
 #[derive(Clone, Debug, Default)]
 struct Estimate {
     rows: f64,
-    ndv: Vec<f64>,
+    ndv: Vector<f64>,
 }
 
 impl Estimate {
@@ -444,7 +433,7 @@ fn prepare_rule(model: &mut Model, f: super::fields::Fields<'_>, layouts: &crate
     };
     let kept = !(0..b.len()).any(by_values);
     let own = scc.get(b.rel(b.head())).copied();
-    let deltas: Vec<usize> = (0..b.len()).filter(|&i| matches!(b.view(i), Lit::Atom(a) if !a.neg() && own.is_some() && scc.get(b.rel(a)).copied() == own)).collect();
+    let deltas: Vector<usize> = (0..b.len()).filter(|&i| matches!(b.view(i), Lit::Atom(a) if !a.neg() && own.is_some() && scc.get(b.rel(a)).copied() == own)).collect();
     let mut whole = None;
     let mut assumed: Vec<(String, f64)> = Vec::new();
     for i in 0..b.len() {
@@ -519,7 +508,7 @@ pub fn sizes_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> 
 fn sizes_from() -> Option<std::sync::Arc<HashMap<String, f64>>> {
     crate::code_rule_dsl::logic::run::setting(|| {
         let text = std::fs::read_to_string(std::env::var_os("RERAIL_SIZES_FROM")?).ok()?;
-        let mut held: HashMap<String, Vec<f64>> = HashMap::new();
+        let mut held: HashMap<String, Vector<f64>> = HashMap::new();
         for line in text.lines() {
             let f: Vec<&str> = line.split('\t').collect();
             if let ["seen", rel, _, h, ..] = f.as_slice()

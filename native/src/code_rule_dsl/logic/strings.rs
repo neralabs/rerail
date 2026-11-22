@@ -30,6 +30,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use rerail_blocks::vector::Vector;
 
 use crate::code_rule_dsl::text::{Domain, Lowered, Source, Spelling, lower};
 use rusqlite::Connection;
@@ -214,7 +215,7 @@ pub fn install_functors(register: fn(&Connection) -> rusqlite::Result<()>) {
 /// Every test's plans as the vocabulary engine runs them, and each plan's test.
 struct Compiled {
     searchers: crate::code_rule_dsl::text::vocabulary::Searchers,
-    owner: Vec<usize>,
+    owner: Vector<usize>,
 }
 
 /// The text tests a run answers from the vocabulary: each input relation `strtest_<k>(s)` and its matcher; the
@@ -233,16 +234,25 @@ pub struct Vocabulary {
     /// Every test's plans compiled together, once (decision 0075): shared by `again`, so a program kept for the
     /// process compiles them once, and every batch runs the same searchers.
     compiled: Arc<std::sync::OnceLock<Compiled>>,
-    /// Per symbol, the tests it passes (bit k is test k): each string is tested once per run.
-    seen: Mutex<HashMap<u32, Box<[u64]>>>,
+    /// Per symbol, the tests it passes: the place of its words in `Seen::bits` (bit k is test k). Each string is
+    /// tested once per run.
+    seen: Mutex<Seen>,
     /// The strings tested, and the CPU (user + system seconds) testing them took.
     pub tested: Mutex<(usize, f64)>,
 }
 
+/// The symbols tested (`Vocabulary::seen`): each one's words of test bits, `words` a symbol, in one array.
+#[derive(Default)]
+struct Seen {
+    at: rerail_blocks::maps::BlockHash<u32, u32>,
+    bits: rerail_blocks::vector::Vector<u64>,
+}
+
 impl Vocabulary {
-    /// For each test, the symbols among `strings` (a batch's distinct strings and their symbols) that pass it.
-    pub fn rows(&self, strings: &[String], symbols: &[u32]) -> Vec<Vec<i64>> {
-        let mut out = vec![Vec::new(); self.tests.len()];
+    /// For each test, the symbols among `symbols` (a batch's distinct strings' symbols; `strings(i)` is the string of
+    /// `symbols[i]`) that pass it.
+    pub fn rows<'s>(&self, strings: impl Fn(usize) -> &'s str, symbols: &[u32]) -> Vec<rerail_blocks::vector::Vector<i64>> {
+        let mut out: Vec<Vector<i64>> = (0..self.tests.len()).map(|_| Vector::new()).collect();
         if self.tests.is_empty() {
             return out;
         }
@@ -253,35 +263,45 @@ impl Vocabulary {
         // there runs other queued jobs, among them another batch's call here. Held, that call waited on the lock
         // its own thread's earlier frame held, and the run hung (every pool thread asleep in a join). Two batches
         // may then test one new string each; the answer is the same.
-        let mut fresh: Vec<(u32, &str)> = Vec::new();
+        // The positions in `symbols` of the symbols not seen before, each once.
+        let mut fresh: Vector<u32> = Vector::new();
         {
             let seen = self.seen.lock().unwrap();
-            let mut queued: HashSet<u32> = HashSet::new();
-            for (s, &sym) in strings.iter().zip(symbols) {
-                if !seen.contains_key(&sym) && queued.insert(sym) {
-                    fresh.push((sym, s.as_str()));
+            let mut queued: rerail_blocks::maps::BlockSet<u32> = Default::default();
+            for (i, &sym) in symbols.iter().enumerate() {
+                if !seen.at.contains_key(&sym) && queued.put(sym) {
+                    fresh.push(i as u32);
                 }
             }
         }
-        let mut learned: Vec<(u32, Box<[u64]>)> = Vec::new();
+        // Each fresh symbol's words of bits, `words` a symbol.
+        let mut learned: Vector<u64> = Vector::new();
         if !fresh.is_empty() {
             tested += fresh.len();
             let compiled = self.compiled.get_or_init(|| self.compile_with(None, true));
-            let terms: Vec<&[u8]> = fresh.iter().map(|(_, s)| s.as_bytes()).collect();
+            // The searchers' argument: each term's bytes where they lie.
+            let terms: Vec<&[u8]> = fresh.iter().map(|&i| strings(i as usize).as_bytes()).collect();
             let (hits, _undecided) = compiled.searchers.evaluate(&terms);
-            let mut bits: Vec<Box<[u64]>> = vec![vec![0u64; words].into_boxed_slice(); fresh.len()];
+            learned.resize(fresh.len() * words, 0);
             for (p, matched) in hits.iter().enumerate() {
                 let k = compiled.owner[p];
                 for &t in matched {
-                    bits[t as usize][k / 64] |= 1 << (k % 64);
+                    learned[t as usize * words + k / 64] |= 1 << (k % 64);
                 }
             }
-            learned.extend(fresh.iter().map(|(sym, _)| *sym).zip(bits));
         }
         let mut seen = self.seen.lock().unwrap();
-        seen.extend(learned);
+        for (j, &i) in fresh.iter().enumerate() {
+            let sym = symbols[i as usize];
+            if !seen.at.contains_key(&sym) {
+                let at = (seen.bits.len() / words.max(1)) as u32;
+                seen.bits.extend_from_slice(&learned[j * words..(j + 1) * words]);
+                seen.at.insert(sym, at);
+            }
+        }
         for &sym in symbols {
-            let bits = &seen[&sym];
+            let at = *seen.at.get(&sym).expect("a tested symbol") as usize * words;
+            let bits = &seen.bits[at..at + words];
             for (k, rows) in out.iter_mut().enumerate() {
                 if bits[k / 64] >> (k % 64) & 1 == 1 {
                     rows.push(i64::from(sym));
@@ -299,16 +319,16 @@ impl Vocabulary {
     /// Of `strings` (distinct), the positions of those that pass test `k`: a test over strings the run answered
     /// (`front::Native::TextTest`). With their `symbols` they are tested as a batch's are (`rows`): every test at
     /// once, each string once a run. Without (a run whose symbols are text) they are tested, every test at once.
-    pub fn passing(&self, k: usize, strings: &[String], symbols: Option<&[u32]>) -> Vec<usize> {
+    pub fn passing(&self, k: usize, strings: &[String], symbols: Option<&[u32]>) -> Vector<usize> {
         if let Some(symbols) = symbols.filter(|s| s.len() == strings.len()) {
-            let passed: HashSet<i64> = self.rows(strings, symbols).swap_remove(k).into_iter().collect();
+            let passed: HashSet<i64> = self.rows(|i| strings[i].as_str(), symbols).swap_remove(k).into_iter().collect();
             return symbols.iter().enumerate().filter(|(_, s)| passed.contains(&i64::from(**s))).map(|(i, _)| i).collect();
         }
         let (tested, t0) = (strings.len(), crate::code_rule_dsl::prof::thread_usage());
         let compiled = self.compiled.get_or_init(|| self.compile_with(None, true));
         let terms: Vec<&[u8]> = strings.iter().map(|s| s.as_bytes()).collect();
         let (hits, _undecided) = compiled.searchers.evaluate(&terms);
-        let mut out: Vec<usize> = hits.iter().enumerate().filter(|(p, _)| compiled.owner[*p] == k).flat_map(|(_, m)| m.iter().map(|&t| t as usize)).collect();
+        let mut out: Vector<usize> = hits.iter().enumerate().filter(|(p, _)| compiled.owner[*p] == k).flat_map(|(_, m)| m.iter().map(|&t| t as usize)).collect();
         out.sort_unstable();
         out.dedup();
         let t1 = crate::code_rule_dsl::prof::thread_usage();
@@ -333,7 +353,7 @@ impl Vocabulary {
     }
 
     fn compile_with(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>, dense: bool) -> Compiled {
-        let (plans, owner): (Vec<&crate::code_rule_dsl::text::Plan>, Vec<usize>) =
+        let (plans, owner): (Vec<&crate::code_rule_dsl::text::Plan>, Vector<usize>) =
             self.tests.iter().enumerate().flat_map(|(k, (_, m))| m.plans.iter().map(move |p| (&p.plan, k))).unzip();
         Compiled { searchers: crate::code_rule_dsl::text::vocabulary::Searchers::new(&plans, cache, dense), owner }
     }

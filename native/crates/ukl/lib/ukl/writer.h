@@ -72,6 +72,7 @@
 #define CLIF_W_PART_SEEN 13u
 #define CLIF_W_PART_CKPT 14u
 #define CLIF_W_PART_LZ 15u
+#define CLIF_W_PART_ERRORS 16u
 
 // The state's fields: their byte offsets (`writer::at`).
 #define CLIF_W_AT_ESC 0u
@@ -919,12 +920,22 @@ UKL_COLD uint32_t clif_w_finalize(UKL_W_T, uint64_t s, uint32_t b, uint32_t rows
             number = cut + (byte - cut) * per + rest;
         }
         uint32_t kind_field = (uint64_t)number < numbers ? ukl_w_ld32(t, kinds + 4u * (uint64_t)number) : 0u;
-        uint32_t kind = kind_field & 0xffffu, field = kind_field >> 16;
+        // A MISSING code's word carries the fault bit (`presence::kind_word`): the presence's bit 0 (ERROR's kind).
+        uint32_t kind = kind_field & 0x7fffu, field = kind_field >> 16, fault = (kind_field >> 15) & 1u;
         ukl_w_set_bit(t, presence, 0u, kind);
         ukl_w_set_bit(t, presence, kw, field);
+        ukl_w_st64(t, presence, ukl_w_ld64(t, presence) | (uint64_t)fault);
         if (keep) {
             ukl_w_set_bit(t, mine, 0u, kind);
             ukl_w_set_bit(t, mine, kw, field);
+            ukl_w_st64(t, mine, ukl_w_ld64(t, mine) | (uint64_t)fault);
+        }
+        // An ERROR node (its kind 0) or a MISSING one listed in the ERRORS part, beside the fault bit it set.
+        if (kind == 0u || fault != 0u) {
+            uint64_t len = ukl_w_len(t, s, CLIF_W_PART_ERRORS);
+            UKL_W_TRY(ukl_w_room(t, s, CLIF_W_PART_ERRORS, len + 4u));
+            ukl_w_st32(t, ukl_w_part(t, s, CLIF_W_PART_ERRORS) + len, b * CLIF_W_Z + j);
+            ukl_w_set_len(t, s, CLIF_W_PART_ERRORS, len + 4u);
         }
     }
     for (uint32_t q = 0u; q < 4u; q++)

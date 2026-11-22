@@ -4,6 +4,7 @@
 //!
 //! What crosses the interface is data: a stratum's report, a lattice system and its solution, the nearest
 //! ancestors' targets. A join's device plan is the device's own, held here as an opaque value.
+use rerail_blocks::vector::Vector;
 use std::any::Any;
 use std::sync::{Arc, OnceLock};
 
@@ -37,12 +38,12 @@ pub trait SolverDevice: Send + Sync {
     fn refuse(&self, why: String);
     /// The seed joins `rules` (plan, rule, head relation) in one batch, their rows into `fresh`: per rule, the rows
     /// made. `names`: the run's symbols, for texts the device makes into heads.
-    fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
+    fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vector<u64>, String>;
     /// Encodes the seed joins `rules` into this thread's device wave (`lanes::wave`), to be finished by `resume`
     /// once the wave ran: the ticket, or `None` when they cannot wait in it (they then run by `run_joins`).
     fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String>;
     /// Finishes the joins `submit` sent with ticket `ticket`: their rows into `fresh`, per rule the rows made.
-    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
+    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vector<u64>, String>;
     /// Whether the plan reads its own component's relations (a delta join of a recursive component).
     fn reads_own(&self, plan: &JoinPlan) -> bool;
     /// A recursive component's fixpoint on the device: the `seeds` once, then the `deltas` round by round until no
@@ -56,7 +57,7 @@ pub trait SolverDevice: Send + Sync {
         store: &Store,
         names: &Interner,
         fresh: &mut [Fresh],
-    ) -> Result<Vec<u64>, String>;
+    ) -> Result<Vector<u64>, String>;
     /// The report of the last stratum the device ran or refused on this thread (taken).
     fn take_report(&self) -> Option<Report>;
     /// A flat-lattice system's least fixpoint on the device's work queue.

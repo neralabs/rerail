@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
     use super::*;
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -93,7 +94,7 @@
         for edge in [FIRST, LAST] {
             for mode in [0, NAMED] {
                 let program = Program::new(
-                    vec![
+                    rerail_blocks::vector![
                         word(CHILD, 0, 0),
                         word(edge, mode, 0),
                         word(CAPTURE, 0, 0),
@@ -101,8 +102,8 @@
                     ],
                     vec![b"edge".to_vec()],
                     vec![],
-                    vec![0],
-                    vec![],
+                    rerail_blocks::vector![0],
+                    rerail_blocks::vector![],
                 )
                 .unwrap();
                 let span = match (edge, mode) {
@@ -125,7 +126,7 @@
         }
         // Named and all-sibling queries share a parent; on a named-only tape their edges agree.
         let mixed = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(CHILD, 0, 0),
                 word(FORK, 0, 6),
                 word(FIRST, NAMED, 0),
@@ -138,8 +139,8 @@
             ],
             vec![b"edge".to_vec()],
             vec![],
-            vec![0],
-            vec![],
+            rerail_blocks::vector![0],
+            rerail_blocks::vector![],
         )
         .unwrap();
         assert_eq!(
@@ -148,11 +149,11 @@
         );
         for edge in [FIRST, LAST] {
             let program = Program::new(
-                vec![word(edge, NAMED, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(edge, NAMED, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
                 vec![b"edge".to_vec()],
                 vec![],
-                vec![0],
-                vec![],
+                rerail_blocks::vector![0],
+                rerail_blocks::vector![],
             )
             .unwrap();
             assert_eq!(
@@ -168,23 +169,23 @@
         const FILE_COUNT: usize = 129;
         let kind = tape("value = other\n").transducer_kind(1);
         let programs = [Program::new(
-            vec![word(KIND, 0, kind), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(KIND, 0, kind), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             vec![],
-            vec![0],
-            vec![],
+            rerail_blocks::vector![0],
+            rerail_blocks::vector![],
         )
         .unwrap()];
         let document = tape("value = other\n");
-        let roots = (0..document.transducer_len() as u32).collect::<Vec<_>>();
+        let roots = (0..document.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
         let files = vec![document; FILE_COUNT];
-        let anchors = vec![vec![Arc::<[u32]>::from(roots)]; FILE_COUNT];
+        let anchors = vec![vec![Arc::<[u32]>::from(&roots[..])]; FILE_COUNT];
         let execution = execute_production_corpus(&programs, &files, &anchors, &[32]).unwrap();
         assert_eq!(execution.physical_file_count(), FILE_COUNT);
         assert_eq!(execution.file_count(), FILE_COUNT);
         let oracle_anchors = anchors
             .iter()
-            .map(|file| file.iter().map(|roots| roots.to_vec()).collect())
+            .map(|file| file.iter().map(|roots| rerail_blocks::vector::Vector::from(&roots[..])).collect())
             .collect::<Vec<_>>();
         let expected = execute_batch(&programs, &files, Some(&oracle_anchors)).unwrap();
         assert_eq!(execution.into_outcome().unwrap().outputs, expected);
@@ -208,9 +209,9 @@
         assert_eq!(z.doc_tape().image().format(), Format::F16Z);
         assert!(z.transducer_len() > 3 * rerail_tape_format::f16::Z, "{} nodes", z.transducer_len());
         let programs = ["call", "argument", "v7"].map(identifier_program).to_vec();
-        let anchors = vec![programs.iter().map(|_| (0..plain.transducer_len() as u32).collect::<Vec<_>>()).collect::<Vec<_>>()];
+        let anchors = vec![programs.iter().map(|_| (0..plain.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>()).collect::<Vec<_>>()];
         let expected = execute_batch(&programs, std::slice::from_ref(&plain), Some(&anchors)).unwrap();
-        let outputs: usize = expected.iter().flatten().map(Vec::len).sum();
+        let outputs: usize = expected.iter().flatten().map(|v| v.len()).sum();
         assert!(outputs >= 800, "{outputs} outputs");
         assert_eq!(execute_with_backend(ExecutionBackend::CpuJit, &programs, std::slice::from_ref(&z), &anchors).unwrap(), expected);
     }
@@ -221,7 +222,7 @@
             .map(|tape| {
                 programs
                     .iter()
-                    .map(|_| (0..tape.transducer_len() as u32).collect::<Vec<_>>())
+                    .map(|_| (0..tape.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>())
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
@@ -253,8 +254,8 @@
                 );
                 panic!(
                     "backend {backend:?} diverged at evaluation {mismatch}, output {output_mismatch:?}: actual count {}, expected count {}, actual output {:?}, expected output {:?}",
-                    actual.get(mismatch).map_or(0, Vec::len),
-                    expected.get(mismatch).map_or(0, Vec::len),
+                    actual.get(mismatch).map_or(0, |v| v.len()),
+                    expected.get(mismatch).map_or(0, |v| v.len()),
                     output_mismatch.and_then(|index| actual.get(mismatch)?.get(index)),
                     output_mismatch.and_then(|index| expected.get(mismatch)?.get(index)),
                 );
@@ -269,7 +270,7 @@
             .map(|tape| {
                 programs
                     .iter()
-                    .map(|_| (0..tape.transducer_len() as u32).collect::<Vec<_>>())
+                    .map(|_| (0..tape.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>())
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
@@ -626,7 +627,7 @@
         let _compiled = native_cpu::compile_straight_line(&native).unwrap();
         let jit_compile_elapsed = jit_compile_started.elapsed();
         let jit_tapes = vec![stress_tape.clone()];
-        let jit_roots = (0..stress_tape.transducer_len() as u32).collect::<Vec<_>>();
+        let jit_roots = (0..stress_tape.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
         let jit_anchors = vec![vec![jit_roots]];
         let jit_started = Instant::now();
         let jit_output = execute_with_backend(
@@ -772,7 +773,7 @@
         .map(|query| Program::compile_tree_sitter_query_pattern(query, &language).unwrap())
         .collect::<Vec<_>>();
         let tapes = vec![tape(source)];
-        let roots = (0..tapes[0].transducer_len() as u32).collect::<Vec<_>>();
+        let roots = (0..tapes[0].transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
         let anchors = vec![programs.iter().map(|_| roots.clone()).collect::<Vec<_>>()];
         let expected = execute_batch(&programs, &tapes, Some(&anchors)).unwrap();
         assert_eq!(
@@ -789,56 +790,56 @@
         let identifier = grammar.id_for_node_kind("identifier", true);
         let function = grammar.field_id_for_name("function").unwrap().get();
         let alternative = grammar.field_id_for_name("alternative").unwrap().get();
-        let labels = || vec![0];
+        let labels = || rerail_blocks::vector![0];
         let strings = || vec![b"match".to_vec()];
         let plain =
-            |words| Program::new(words, strings(), vec![], labels(), vec![100_000]).unwrap();
+            |words| Program::new(words, strings(), vec![], labels(), rerail_blocks::vector![100_000]).unwrap();
         let mut programs = vec![
-            plain(vec![word(STOP, 0, 0)]),
-            plain(vec![word(KIND, 0, identifier), word(EMIT, 0, 0)]),
-            plain(vec![word(FIELD, 0, function), word(EMIT, 0, 0)]),
-            plain(vec![word(FLAGS, 1, 0b1110), word(EMIT, 0, 0)]),
-            plain(vec![word(FIRST, 0, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(FIRST, NAMED, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(LAST, 0, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(LAST, NAMED, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(ABSENT_FIELD, 0, alternative), word(EMIT, 0, 0)]),
-            plain(vec![word(CHILD, 0, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(CHILD, NAMED, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(NEXT, 0, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(NEXT, NAMED, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(PARENT, 0, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(DESCEND, 0, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(DESCEND, NAMED, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(FOLLOWING, 0, 0), word(EMIT, 0, 0)]),
-            plain(vec![word(FOLLOWING, NAMED, 0), word(EMIT, 0, 0)]),
-            plain(vec![
+            plain(rerail_blocks::vector![word(STOP, 0, 0)]),
+            plain(rerail_blocks::vector![word(KIND, 0, identifier), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(FIELD, 0, function), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(FLAGS, 1, 0b1110), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(FIRST, 0, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(FIRST, NAMED, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(LAST, 0, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(LAST, NAMED, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(ABSENT_FIELD, 0, alternative), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(CHILD, 0, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(CHILD, NAMED, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(NEXT, 0, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(NEXT, NAMED, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(PARENT, 0, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(DESCEND, 0, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(DESCEND, NAMED, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(FOLLOWING, 0, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(FOLLOWING, NAMED, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![
                 word(SAVE_CURSOR, 0, 0),
                 word(CHILD, NAMED, 0),
                 word(RESTORE_CURSOR, 0, 0),
                 word(EMIT, 0, 0),
             ]),
-            plain(vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)]),
-            plain(vec![
+            plain(rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![
                 word(REPEAT_BEGIN, 0, 7),
                 word(REPEAT_BUMP, 0, 7),
                 word(REPEAT_END, 0, 7),
                 word(EMIT, 0, 0),
             ]),
-            plain(vec![word(FORK, 0, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)]),
-            plain(vec![
+            plain(rerail_blocks::vector![word(FORK, 0, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![
                 word(FORK, GREEDY, 2),
                 word(EMIT, 0, 0),
                 word(EMIT, 0, 0),
             ]),
-            plain(vec![word(GOTO, 0, 1), word(EMIT, 0, 0)]),
+            plain(rerail_blocks::vector![word(GOTO, 0, 1), word(EMIT, 0, 0)]),
         ];
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         let mut metal_programs = programs.clone();
         for required in 0_u8..=0x0f {
             for forbidden in 0_u16..=0x000f {
                 if u16::from(required) & forbidden == 0 {
-                    programs.push(plain(vec![
+                    programs.push(plain(rerail_blocks::vector![
                         word(FLAGS, required, forbidden),
                         word(EMIT, 0, 0),
                     ]));
@@ -846,10 +847,10 @@
             }
         }
         for mode in [0, 1, 2] {
-            programs.push(plain(vec![word(SIZE, mode, 1), word(EMIT, 0, 0)]));
+            programs.push(plain(rerail_blocks::vector![word(SIZE, mode, 1), word(EMIT, 0, 0)]));
         }
         for mode in [0x80, 0x81, 0x82] {
-            programs.push(plain(vec![word(SIZE, mode, 0), word(EMIT, 0, 0)]));
+            programs.push(plain(rerail_blocks::vector![word(SIZE, mode, 0), word(EMIT, 0, 0)]));
         }
         for predicate in [
             TextPredicate::Equal(0),
@@ -864,11 +865,11 @@
             },
         ] {
             let program = Program::new(
-                vec![word(TEXT, 0, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(TEXT, 0, 0), word(EMIT, 0, 0)],
                 vec![b"match".to_vec(), b"output".to_vec()],
                 vec![predicate],
-                vec![1],
-                vec![],
+                rerail_blocks::vector![1],
+                rerail_blocks::vector![],
             )
             .unwrap();
             #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -876,7 +877,7 @@
             programs.push(program);
         }
         let assertion_program = Program::new_with_capture_predicates(
-            vec![word(CAPTURE, 0, 0), word(ASSERT, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(ASSERT, 0, 0), word(EMIT, 0, 0)],
             vec![b"capture".to_vec(), b"output".to_vec()],
             vec![],
             vec![CapturePredicate::Kind {
@@ -885,8 +886,8 @@
                 negated: false,
                 any: false,
             }],
-            vec![0, 1],
-            vec![],
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector![],
         )
         .unwrap();
         #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -897,10 +898,10 @@
         assert_jit_parity(&programs, std::slice::from_ref(&python_tape));
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            let alternatives = |blocks: Vec<Vec<u32>>| {
+            let alternatives = |blocks: Vec<Vector<u32>>| {
                 let prefix = blocks.len() + 1;
                 let mut at = prefix;
-                let mut words = Vec::new();
+                let mut words = rerail_blocks::vector::Vector::new();
                 for block in &blocks {
                     words.push(word(FORK, 0, at as u16));
                     at += block.len();
@@ -914,7 +915,7 @@
                     .flat_map(|required| {
                         (0_u16..=0x000f).filter_map(move |forbidden| {
                             (u16::from(required) & forbidden == 0)
-                                .then_some(vec![word(FLAGS, required, forbidden), word(EMIT, 0, 0)])
+                                .then_some(rerail_blocks::vector![word(FLAGS, required, forbidden), word(EMIT, 0, 0)])
                         })
                     })
                     .collect(),
@@ -923,7 +924,7 @@
                 [0, 1, 2, 0x80, 0x81, 0x82]
                     .into_iter()
                     .map(|mode| {
-                        vec![
+                        rerail_blocks::vector![
                             word(SIZE, mode, u16::from(mode & SIZE_LONG == 0)),
                             word(EMIT, 0, 0),
                         ]
@@ -934,9 +935,9 @@
             assert_metal_parity(&metal_programs, std::slice::from_ref(&python_tape));
         }
         for words in [
-            vec![word(RESTORE_CURSOR, 0, 0), word(EMIT, 0, 0)],
-            vec![word(REPEAT_BUMP, 0, 7), word(EMIT, 0, 0)],
-            vec![word(REPEAT_END, 0, 7), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(RESTORE_CURSOR, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(REPEAT_BUMP, 0, 7), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(REPEAT_END, 0, 7), word(EMIT, 0, 0)],
         ] {
             let program = plain(words);
             let expected = program.execute_roots(&python_tape, [0]).unwrap_err();
@@ -944,7 +945,7 @@
                 ExecutionBackend::CpuJit,
                 std::slice::from_ref(&program),
                 std::slice::from_ref(&python_tape),
-                &[vec![vec![0]]],
+                &[vec![rerail_blocks::vector![0]]],
             )
             .unwrap_err();
             assert_eq!(actual, expected);
@@ -954,7 +955,7 @@
                     ExecutionBackend::MetalJit,
                     std::slice::from_ref(&program),
                     std::slice::from_ref(&python_tape),
-                    &[vec![vec![0]]],
+                    &[vec![rerail_blocks::vector![0]]],
                 )
                 .unwrap_err();
                 assert_eq!(actual, expected);
@@ -1382,7 +1383,7 @@
             },
             CapturePredicate::AnyOf {
                 capture: 0,
-                strings: vec![0],
+                strings: rerail_blocks::vector![0],
                 negated: false,
                 any: false,
             },
@@ -1400,7 +1401,7 @@
             let mut program = base.clone();
             program.capture_predicates.push(CapturePredicate::AnyOf {
                 capture: 0,
-                strings: vec![0],
+                strings: rerail_blocks::vector![0],
                 negated: false,
                 any: false,
             });
@@ -1437,7 +1438,7 @@
         let identifier = grammar.id_for_node_kind("identifier", true);
         let function = grammar.field_id_for_name("function").unwrap().get();
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(KIND, 0, call),
                 word(CAPTURE, 0, 0),
                 word(CHILD, 0, 0),
@@ -1454,8 +1455,8 @@
                 b"match".to_vec(),
             ],
             vec![TextPredicate::Equal(0)],
-            vec![1, 2, 3],
-            vec![],
+            rerail_blocks::vector![1, 2, 3],
+            rerail_blocks::vector![],
         )
         .unwrap();
         let output = program
@@ -1469,7 +1470,7 @@
     #[test]
     fn alternatives_do_not_share_capture_mutation() {
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(
                     KIND,
                     0,
@@ -1484,8 +1485,8 @@
             ],
             vec![b"captured".to_vec(), b"match".to_vec()],
             vec![],
-            vec![0, 1],
-            vec![],
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector![],
         )
         .unwrap();
         let output = program.execute(&tape("name\n")).unwrap();
@@ -1508,7 +1509,7 @@
             ),
         ] {
             let program = Program::new(
-                vec![
+                rerail_blocks::vector![
                     word(
                         KIND,
                         0,
@@ -1521,8 +1522,8 @@
                 ],
                 vec![source, b"match".to_vec()],
                 vec![predicate],
-                vec![1],
-                vec![],
+                rerail_blocks::vector![1],
+                rerail_blocks::vector![],
             )
             .unwrap();
             assert_eq!(program.execute(&tape).unwrap().len(), 1);
@@ -1534,7 +1535,7 @@
         let grammar = SupportLang::Python.get_ts_language();
         let identifier = grammar.id_for_node_kind("identifier", true);
         let program = Program::new_with_capture_predicates(
-            vec![
+            rerail_blocks::vector![
                 word(KIND, 0, identifier),
                 word(CAPTURE, 0, 0),
                 word(NEXT, NAMED, 0),
@@ -1573,7 +1574,7 @@
                 },
                 CapturePredicate::AnyOf {
                     capture: 1,
-                    strings: vec![4, 5],
+                    strings: rerail_blocks::vector![4, 5],
                     negated: false,
                     any: false,
                 },
@@ -1584,8 +1585,8 @@
                     any: false,
                 },
             ],
-            vec![0, 1, 2],
-            vec![],
+            rerail_blocks::vector![0, 1, 2],
+            rerail_blocks::vector![],
         )
         .unwrap();
         assert!(program.execute(&tape("same = same\n")).unwrap().is_empty());
@@ -1608,7 +1609,7 @@
             .get_ts_language()
             .id_for_node_kind("identifier", true);
         let program = Program::new_with_capture_predicates(
-            vec![
+            rerail_blocks::vector![
                 word(KIND, 0, identifier),
                 word(CAPTURE, 0, 0),
                 word(NEXT, NAMED, 0),
@@ -1621,12 +1622,12 @@
             vec![],
             vec![CapturePredicate::AnyOf {
                 capture: 0,
-                strings: vec![2],
+                strings: rerail_blocks::vector![2],
                 negated: true,
                 any: false,
             }],
-            vec![0, 1],
-            vec![],
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector![],
         )
         .unwrap();
         assert!(program.execute(&tape("same = other\n")).unwrap().is_empty());
@@ -1639,7 +1640,7 @@
         let identifier = grammar.id_for_node_kind("identifier", true);
         let alternative = grammar.field_id_for_name("alternative").unwrap().get();
         let positions = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(KIND, 0, identifier),
                 word(FIRST, NAMED, 0),
                 word(LAST, NAMED, 0),
@@ -1647,8 +1648,8 @@
             ],
             vec![b"match".to_vec()],
             vec![],
-            vec![0],
-            vec![],
+            rerail_blocks::vector![0],
+            rerail_blocks::vector![],
         )
         .unwrap();
         assert_eq!(positions.execute(&tape("only\n")).unwrap().len(), 1);
@@ -1660,15 +1661,15 @@
         );
 
         let no_else = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(KIND, 0, grammar.id_for_node_kind("if_statement", true)),
                 word(ABSENT_FIELD, 0, alternative),
                 word(EMIT, 0, 0),
             ],
             vec![b"match".to_vec()],
             vec![],
-            vec![0],
-            vec![],
+            rerail_blocks::vector![0],
+            rerail_blocks::vector![],
         )
         .unwrap();
         assert_eq!(no_else.execute(&tape("if ok:\n  pass\n")).unwrap().len(), 1);
@@ -1685,7 +1686,7 @@
         let grammar = SupportLang::Python.get_ts_language();
         let identifier = grammar.id_for_node_kind("identifier", true);
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(DESCEND, NAMED, 0),
                 word(KIND, 0, identifier),
                 word(FLAGS, 1, 0b1110),
@@ -1697,8 +1698,8 @@
             ],
             vec![b"identifier".to_vec(), b"match".to_vec()],
             vec![],
-            vec![0, 1],
-            vec![100_000],
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector![100_000],
         )
         .unwrap();
         // Every identifier is shorter than the long constant. Only identifiers with a later
@@ -1718,7 +1719,7 @@
             .get_ts_language()
             .id_for_node_kind("identifier", true);
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(KIND, 0, identifier),
                 word(CAPTURE, 0, 0),
                 word(FORK, 0, 5),
@@ -1728,8 +1729,8 @@
             ],
             vec![b"item".to_vec(), b"sequence".to_vec()],
             vec![],
-            vec![0, 1],
-            vec![],
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector![],
         )
         .unwrap();
         let tape = tape("f(a, b, c)\n");
@@ -1771,7 +1772,7 @@
                     })
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         let expected =
             execute_with_backend(ExecutionBackend::CpuJit, &programs, &files, &anchors).unwrap();
         assert_eq!(
@@ -1813,7 +1814,7 @@
                     })
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         let semantic = |mut batch: Vec<Vec<Vec<Output>>>| {
             for output in batch.iter_mut().flatten().flatten() {
                 output.task_ordinal = 0;
@@ -1825,17 +1826,17 @@
             semantic(execute_batch(&programs, &files, Some(&anchors)).unwrap()),
             semantic(unanchored)
         );
-        let empty = vec![vec![Vec::new(), Vec::new()], vec![Vec::new(), Vec::new()]];
+        let empty = vec![vec![rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new()], vec![rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new()]];
         assert!(
             execute_batch(&programs, &files, Some(&empty))
                 .unwrap()
                 .iter()
                 .flatten()
-                .all(Vec::is_empty)
+                .all(|v| v.is_empty())
         );
         let invalid = vec![
-            vec![vec![u32::MAX], Vec::new()],
-            vec![Vec::new(), Vec::new()],
+            vec![rerail_blocks::vector![u32::MAX], rerail_blocks::vector::Vector::new()],
+            vec![rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new()],
         ];
         assert_eq!(
             execute_batch(&programs, &files, Some(&invalid)),
@@ -1879,7 +1880,7 @@
         assert!(
             loaded
                 .iter()
-                .all(|file| file[0].is_none() && file[1] == Some(Vec::new()))
+                .all(|file| file[0].is_none() && file[1] == Some(rerail_blocks::vector::Vector::new()))
         );
         let anchors = loaded
             .into_iter()
@@ -1891,7 +1892,7 @@
                     })
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         let semantic = |mut batch: Vec<Vec<Vec<Output>>>| {
             for output in batch.iter_mut().flatten().flatten() {
                 output.task_ordinal = 0;
@@ -1992,7 +1993,7 @@
                         .map(|_| (0..file.transducer_len() as u32).collect())
                         .collect()
                 })
-                .collect::<Vec<Vec<Vec<u32>>>>();
+                .collect::<Vec<Vec<Vector<u32>>>>();
             {
                 let metal_batch = registry
                     .register_metal_batch(&programs, &files, &anchors)
@@ -2039,7 +2040,7 @@
                     })
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         let expected = execute_batch(&programs, &files, Some(&anchors)).unwrap();
         assert_eq!(
             execute_with_backend(ExecutionBackend::CpuJit, &programs, &files, &anchors).unwrap(),
@@ -2048,7 +2049,7 @@
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         let registry = Arc::new(sql_backend::MatchRegistry::default());
         sql_backend::register_module(&connection, Arc::clone(&registry)).unwrap();
-        let expected_matches = expected.iter().flatten().map(Vec::len).sum::<usize>() as i64;
+        let expected_matches = expected.iter().flatten().map(|v| v.len()).sum::<usize>() as i64;
         {
             let batch = registry
                 .register_metal_batch(&programs, &files, &anchors)
@@ -2086,7 +2087,7 @@
         let mut filtered_scan = metal_backend::prepare_anchor_scan_with_eligibility(
             &programs,
             &files,
-            Some(&[vec![0b01], vec![0b10]]),
+            Some(&[rerail_blocks::vector![0b01], rerail_blocks::vector![0b10]]),
         )
         .unwrap();
         assert_eq!(metal_backend::pipelines_compiled_here(), anchor_pipeline_count);
@@ -2099,7 +2100,7 @@
         let many_programs = (0..40)
             .map(|_| identifier_program("execute"))
             .collect::<Vec<_>>();
-        let many_masks = vec![vec![1, 1 << 7], vec![1, 1 << 7]];
+        let many_masks = vec![rerail_blocks::vector![1, 1 << 7], rerail_blocks::vector![1, 1 << 7]];
         let many = metal_backend::prepare_anchor_scan_with_eligibility(
             &many_programs,
             &files,
@@ -2111,53 +2112,53 @@
         for file in 0..files.len() {
             assert_eq!(many[file][0], gpu_anchors[file][0]);
             assert_eq!(many[file][39], gpu_anchors[file][0]);
-            assert!(many[file][1..39].iter().all(Vec::is_empty));
+            assert!(many[file][1..39].iter().all(|v| v.is_empty()));
         }
     }
 
     #[test]
     fn verifier_rejects_invalid_and_non_progressing_programs() {
         assert!(matches!(
-            Program::new(vec![word(GOTO, 0, 0)], vec![], vec![], vec![], vec![]),
+            Program::new(rerail_blocks::vector![word(GOTO, 0, 0)], vec![], vec![], rerail_blocks::vector![], rerail_blocks::vector![]),
             Err(Error::NonProgressingCycle(0))
         ));
         assert!(matches!(
             Program::new(
-                vec![word(TEXT, 0, 0), word(STOP, 0, 0)],
+                rerail_blocks::vector![word(TEXT, 0, 0), word(STOP, 0, 0)],
                 vec![],
                 vec![],
-                vec![],
-                vec![]
+                rerail_blocks::vector![],
+                rerail_blocks::vector![]
             ),
             Err(Error::InvalidOperand(0))
         ));
         assert!(matches!(
             Program::new(
-                vec![word(CHILD, 2, 0), word(STOP, 0, 0)],
+                rerail_blocks::vector![word(CHILD, 2, 0), word(STOP, 0, 0)],
                 vec![],
                 vec![],
-                vec![],
-                vec![]
+                rerail_blocks::vector![],
+                rerail_blocks::vector![]
             ),
             Err(Error::InvalidMode(0))
         ));
         assert!(
             Program::new(
-                vec![word(FORK, GREEDY, 1), word(STOP, 0, 0)],
+                rerail_blocks::vector![word(FORK, GREEDY, 1), word(STOP, 0, 0)],
                 vec![],
                 vec![],
-                vec![],
-                vec![]
+                rerail_blocks::vector![],
+                rerail_blocks::vector![]
             )
             .is_ok()
         );
         assert!(matches!(
             Program::new(
-                vec![word(FORK, 2, 1), word(STOP, 0, 0)],
+                rerail_blocks::vector![word(FORK, 2, 1), word(STOP, 0, 0)],
                 vec![],
                 vec![],
-                vec![],
-                vec![]
+                rerail_blocks::vector![],
+                rerail_blocks::vector![]
             ),
             Err(Error::InvalidMode(0))
         ));
@@ -3200,7 +3201,7 @@
                     })
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         let anchor_time = anchor_started.elapsed();
         let started = Instant::now();
         let _cpu_jit = programs
@@ -3248,7 +3249,7 @@
                         .unwrap()
                         .iter()
                         .flatten()
-                        .map(Vec::len)
+                        .map(|v| v.len())
                         .sum(),
                 };
                 black_box(count);

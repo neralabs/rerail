@@ -703,7 +703,7 @@ pub(crate) fn tier1_agrees(cpu: &crate::block::BlockRun, interpreted: &crate::bl
 /// The outputs tier 1 on the CPU does not make as the interpreter does: those its record pass
 /// makes and the totals no one reads by their rows (`BlockNative::cpu_unstored`), and all of them
 /// where a pass has no block loop (`PassShape::block_loop`).
-fn tier1_made(c: &Compiled) -> Vec<usize> {
+fn tier1_made(c: &Compiled) -> rerail_blocks::vector::Vector<usize> {
     let block = &c.native.block_programs[0];
     let looped = c.parser.tier1.passes.iter().all(|p| p.back || p.block_loop);
     if !looped {

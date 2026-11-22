@@ -13,6 +13,7 @@
 //! `tsconfig*`, `git_*` and `signed_list` are not read yet (open item O80). `input_error`'s `missing` rows are made
 //! where the `.input` files are (`logic::plan::corpus::external_inputs`).
 
+use rerail_blocks::vector::Vector;
 use super::vtab::Relation;
 use crate::content_store::{ContentStore, StoreResult};
 use serde_json::Value;
@@ -197,26 +198,26 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     let mut next = atoms.iter().map(|&a| i64::from(a));
     let mut sym = || next.next().expect("an atom per string");
     let mut out = Vec::new();
-    let mut make = |name: &'static str, columns: &[&str], rows: Vec<Vec<i64>>| {
+    let mut make = |name: &'static str, columns: &[&str], rows: Vec<Vector<i64>>| {
         let mut r = Relation::new(columns);
         rows.iter().for_each(|row| r.push(row));
         out.push((name, r));
     };
-    let option: Vec<Vec<i64>> = rows.option.iter().map(|_| vec![sym(), sym()]).collect();
+    let option: Vec<Vector<i64>> = rows.option.iter().map(|_| rerail_blocks::vector![sym(), sym()]).collect();
     make("option", &["name", "v"], option);
     let item = rows.option_item.iter().map(|(_, i, _)| {
         let name = sym();
-        vec![name, *i, sym()]
+        rerail_blocks::vector![name, *i, sym()]
     });
-    let item: Vec<Vec<i64>> = item.collect();
+    let item: Vec<Vector<i64>> = item.collect();
     make("option_item", &["name", "i", "v"], item);
-    let file: Vec<Vec<i64>> = rows.file.iter().map(|_| vec![sym()]).collect();
+    let file: Vec<Vector<i64>> = rows.file.iter().map(|_| rerail_blocks::vector![sym()]).collect();
     make("file", &["path"], file);
-    let package: Vec<Vec<i64>> = rows.package.iter().map(|_| vec![sym(), sym()]).collect();
+    let package: Vec<Vector<i64>> = rows.package.iter().map(|_| rerail_blocks::vector![sym(), sym()]).collect();
     make("package", &["dir", "name"], package);
-    let field: Vec<Vec<i64>> = rows.package_field.iter().map(|_| vec![sym(), sym(), sym()]).collect();
+    let field: Vec<Vector<i64>> = rows.package_field.iter().map(|_| rerail_blocks::vector![sym(), sym(), sym()]).collect();
     make("package_field", &["dir", "key", "v"], field);
-    let pfor: Vec<Vec<i64>> = rows.package_for.iter().map(|_| vec![sym(), sym()]).collect();
+    let pfor: Vec<Vector<i64>> = rows.package_for.iter().map(|_| rerail_blocks::vector![sym(), sym()]).collect();
     make("package_for", &["path", "dir"], pfor);
     Ok(out)
 }

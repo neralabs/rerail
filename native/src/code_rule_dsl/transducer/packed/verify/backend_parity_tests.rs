@@ -27,9 +27,9 @@ fn the_verifier_and_the_metal_interpreter_share_one_opcode_set() {
     let admitted: std::collections::BTreeSet<u8> = (0..=u8::MAX)
         .filter(|&opcode| {
             // A minimal program around the opcode; only the opcode's own checks can refuse it.
-            let words = vec![word(opcode, 0, 0), word(STOP, 0, 0)];
+            let words = rerail_blocks::vector![word(opcode, 0, 0), word(STOP, 0, 0)];
             !matches!(
-                Program::new(words, vec![b"value".to_vec()], vec![], vec![0], vec![]),
+                Program::new(words, vec![b"value".to_vec()], vec![], rerail_blocks::vector![0], rerail_blocks::vector![]),
                 Err(Error::InvalidOpcode(0))
             )
         })

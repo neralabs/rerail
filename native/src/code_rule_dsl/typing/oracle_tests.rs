@@ -3,6 +3,7 @@
 //! (`score_calls.py`), which were not copied: parity with the spike's outputs (`logic::plan::tests`) says the
 //! port derives what the spike derived, not that it is right.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::plan::corpus;
 use crate::code_rule_dsl::logic::plan::output::{self, Outputs, Value};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -782,10 +783,10 @@ fn the_analysis_phase_binds_a_library_generics_type_variables_fits_overloads_and
         jedi_starts(&out);
     let at_line = |cell: &str| line(&src, starts[cell]);
     let targets = read("call_target");
-    let mut to_v: Vec<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
+    let mut to_v: Vector<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
     to_v.sort();
     assert_eq!(to_v, [5, 7], "V.run, through get()'s _T and the loop's __next__: {targets:?}");
-    let open: Vec<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
+    let open: Vector<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
     assert_eq!(open, [8], "the method of an async call's coroutine: {:?}", read("call_open"));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -864,9 +865,9 @@ fn the_analysis_phase_infers_a_library_constructors_type_variables_from_its_argu
         jedi_starts(&out);
     let at_line = |cell: &str| line(&src, starts[cell]);
     let targets = read("call_target");
-    let to: Vec<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
+    let to: Vector<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
     assert_eq!(to, [6], "V.run, through Set's _T bound by xs: {targets:?}");
-    let open: Vec<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
+    let open: Vector<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
     assert!(!open.contains(&8), "s.upper() of a Set built from a Lst[str]: {:?}", read("call_open"));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -910,7 +911,7 @@ fn the_analysis_phase_binds_a_library_context_managers_type_variable_from_the_wr
         jedi_starts(&out);
     let at_line = |cell: &str| line(&src, starts[cell]);
     let targets = read("call_target");
-    let to: Vec<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
+    let to: Vector<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
     assert!(to.contains(&9), "v.run() through Cm's _T bound by opened's It[V]: {targets:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -950,7 +951,7 @@ fn the_analysis_phase_rules_out_an_overload_whose_none_parameter_is_given_a_lite
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
         jedi_starts(&out);
-    let open: Vec<u64> = read("call_open").iter().map(|r| line(&src, starts[&r[0]])).collect();
+    let open: Vector<u64> = read("call_open").iter().map(|r| line(&src, starts[&r[0]])).collect();
     assert!(!open.contains(&4), "setdefault(k, []) runs the overload with a default, append is list's: {:?}", read("call_open"));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1015,9 +1016,9 @@ fn the_analysis_phase_gives_an_awaited_call_what_the_async_def_returns() {
         jedi_starts(&out);
     let at_line = |cell: &str| line(&src, starts[cell]);
     let targets = read("call_target");
-    let to: Vec<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
+    let to: Vector<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
     assert!(to.contains(&8) && to.contains(&10), "v.run() and w.run() through the awaited values: {targets:?}");
-    let open: Vec<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
+    let open: Vector<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
     assert!(!open.contains(&8) && !open.contains(&10), "{:?}", read("call_open"));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1051,8 +1052,8 @@ fn the_analysis_phase_awaits_an_async_loops_next_value_and_an_async_withs_entere
     let starts: std::collections::HashMap<String, usize> =
         jedi_starts(&out);
     let at_line = |cell: &str| line(&src, starts[cell]);
-    let to: Vec<u64> = read("call_target").iter().map(|r| at_line(&r[0])).collect();
-    let open: Vec<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
+    let to: Vector<u64> = read("call_target").iter().map(|r| at_line(&r[0])).collect();
+    let open: Vector<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
     assert!(to.contains(&16) && to.contains(&18), "x.run() and z.run() through the awaited values: {:?}", read("call_target"));
     assert!(!open.contains(&16) && !open.contains(&18) && !open.contains(&20), "open at lines {open:?}");
     assert!(open.contains(&22), "y's `__anext__` returns no declared class: {:?}", read("call_open"));
@@ -1527,7 +1528,7 @@ fn spike_liveness_of_the_calls_program() {
     println!("{:<28} {:>9} {:>9} {:>6} {:>9} {:>9} {:>9} {:>9}", "relation", "rows", "live", "live%", "keys", "live keys", "library", "lib live");
     let mut total = [0u64; 6];
     for (rel, m) in &rows {
-        let v: Vec<u64> = liveness::MEASURES.iter().map(|w| get(m, w)).collect();
+        let v: Vector<u64> = liveness::MEASURES.iter().map(|w| get(m, w)).collect();
         for (t, x) in total.iter_mut().zip(&v) {
             *t += x;
         }
@@ -1824,7 +1825,7 @@ fn spike_o125_session_maintains_calls() {
     let t = std::time::Instant::now();
     let first = run();
     println!("o125 cold session run: {:.1} s CPU (main), {:.1} s wall, strata {:?}", cpu(&first), t.elapsed().as_secs_f64(), first.cross_strata);
-    println!("o125 rows {:?}", outputs().iter().map(Vec::len).collect::<Vec<_>>());
+    println!("o125 rows {:?}", outputs().iter().map(|v| v.len()).collect::<Vec<_>>());
     let mut files: Vec<PathBuf> = walk(&root);
     files.sort();
     let pick = |i: usize| files[i * files.len() / 4].clone();
@@ -1840,7 +1841,7 @@ fn spike_o125_session_maintains_calls() {
         ("all reverted".into(), pick(2), b0.clone()),
     ];
     // `O125_EDITS`: which edits, by index (each costs a session run and a full one).
-    let wanted: Vec<usize> = std::env::var("O125_EDITS").map(|v| v.split(',').map(|i| i.parse().unwrap()).collect()).unwrap_or_else(|_| (0..edits.len()).collect());
+    let wanted: Vector<usize> = std::env::var("O125_EDITS").map(|v| v.split(',').map(|i| i.parse::<usize>().unwrap()).collect()).unwrap_or_else(|_| (0..edits.len()).collect());
     for (i, (what, path, text)) in edits.into_iter().enumerate() {
         if !wanted.contains(&i) {
             continue;
@@ -1994,7 +1995,7 @@ fn spike_o125_replay() {
     let cold = run();
     derivations(a - 1, "cold");
     keep(a - 1, "cold");
-    println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s ({:.2} G instructions); rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), cold.phase_instructions.iter().filter(|p| p.0 == "cross").map(|p| p.1).sum::<u64>() as f64 / 1e9, outputs().iter().map(Vec::len).collect::<Vec<_>>());
+    println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s ({:.2} G instructions); rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), cold.phase_instructions.iter().filter(|p| p.0 == "cross").map(|p| p.1).sum::<u64>() as f64 / 1e9, outputs().iter().map(|v| v.len()).collect::<Vec<_>>());
     let (opened, made) = crate::code_rule_dsl::logic::native::setfix::orders_counted();
     println!("o125r cold derived-input orders: {opened} opened, {made} made (first probed)");
     if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() { println!("o125r cold presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report()); }

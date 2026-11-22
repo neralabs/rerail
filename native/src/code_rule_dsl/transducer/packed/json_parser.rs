@@ -66,7 +66,7 @@ pub mod simdjson;
 // where simdjson builds compare the two.
 pub mod fallback;
 
-pub fn image(src: &str) -> Option<Vec<u8>> {
+pub fn image(src: &str) -> Option<rerail_blocks::vector::Vector<u8>> {
     compiled().ok()?.parser.image(src.as_bytes()).ok()
 }
 

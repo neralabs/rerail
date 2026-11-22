@@ -71,7 +71,8 @@ pub mod part {
     pub const SEEN: usize = 13;
     pub const CKPT: usize = 14;
     pub const LZ: usize = 15;
-    pub const COUNT: usize = 16;
+    pub const ERRORS: usize = 16;
+    pub const COUNT: usize = 17;
 }
 
 /// A part: where it lies (an offset from the state's address), its capacity and what it holds, in bytes.
@@ -603,12 +604,27 @@ impl State {
                     number = cut + (byte - cut) * per + r;
                 }
                 let kf = if u64::from(number) < numbers { ld32(kinds + 4 * number as usize) } else { 0 };
-                let (kind, field) = (kf & 0xffff, kf >> 16);
+                let (kind, field) = (kf & crate::f16::presence::KIND_MASK, kf >> 16);
+                // A MISSING code sets the fault bit too (`presence::kind_word`).
+                let fault = kf & crate::f16::presence::FAULT != 0;
                 set_bit(pres, 0, kind);
                 set_bit(pres, kw, field);
+                if fault {
+                    set_bit(pres, 0, u32::from(crate::ERROR_CODE));
+                }
                 if keep {
                     set_bit(mine, 0, kind);
                     set_bit(mine, kw, field);
+                    if fault {
+                        set_bit(mine, 0, u32::from(crate::ERROR_CODE));
+                    }
+                }
+                // An ERROR node or a MISSING one listed in the ERRORS part, beside the fault bit it set.
+                if kind == u32::from(crate::ERROR_CODE) || fault {
+                    let len = self.len(part::ERRORS);
+                    self.room(part::ERRORS, len + 4)?;
+                    st32(self.part(part::ERRORS) + len as usize, b * Z + j);
+                    self.set_len(part::ERRORS, len + 4);
                 }
             }
             for q in 0..4 {

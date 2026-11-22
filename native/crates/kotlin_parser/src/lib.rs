@@ -165,7 +165,7 @@ impl Compiled {
     }
 
     /// `src`'s tape image, or `None` where the grammar refuses the file.
-    pub fn image(&self, src: &str) -> Option<Vec<u8>> {
+    pub fn image(&self, src: &str) -> Option<rerail_tape_format::Vector<u8>> {
         self.parser.image(src.as_bytes()).ok()
     }
 }

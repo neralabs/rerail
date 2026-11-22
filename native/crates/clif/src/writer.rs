@@ -109,8 +109,10 @@ pub mod part {
     pub const SEEN: u32 = 13;
     pub const CKPT: u32 = 14;
     pub const LZ: u32 = 15;
+    /// The ERROR and MISSING nodes' indices (u32s), each block's listed as it is made final (`presence::faults`).
+    pub const ERRORS: u32 = 16;
     /// How many.
-    pub const COUNT: usize = 16;
+    pub const COUNT: usize = 17;
 }
 
 /// The writer's state, at the start of its region: the document's constants, the writer's variables, its parts.
@@ -182,6 +184,7 @@ pub struct State {
     pub seen: Part,
     pub ckpt: Part,
     pub lz: Part,
+    pub errors: Part,
 }
 
 /// Byte `k`'s offset of `State`'s fields.
@@ -1474,8 +1477,13 @@ mod ops {
                     w.set(kf, x);
                 });
                 let kfv = w.get(kf);
-                let kind = w.f.ins().band_imm(kfv, 0xffff);
+                // A MISSING code's word carries the fault bit (`presence::kind_word`): the presence's bit 0, ERROR's
+                // kind's, set beside its own.
+                let kind = w.f.ins().band_imm(kfv, 0x7fff);
                 let field = w.f.ins().ushr_imm(kfv, 16);
+                let fault = w.f.ins().ushr_imm(kfv, 15);
+                let fault = w.f.ins().band_imm(fault, 1);
+                let fault = w.u64of(fault);
                 let kw64 = w.u64of(kw);
                 let set_bit = |w: &mut W<'_, '_>, base: Value, word0: Value, bit: Value| {
                     let word = w.f.ins().ushr_imm(bit, 6);
@@ -1491,13 +1499,35 @@ mod ops {
                     let x = w.f.ins().bor(x, m);
                     w.st(x, at, 0);
                 };
+                let or_fault = |w: &mut W<'_, '_>, base: Value| {
+                    let x = w.ld(I64, base, 0);
+                    let x = w.f.ins().bor(x, fault);
+                    w.st(x, base, 0);
+                };
                 let z64 = w.c64(0);
                 set_bit(w, pres, z64, kind);
                 set_bit(w, pres, kw64, field);
+                or_fault(w, pres);
                 w.if_(keep, |w| {
                     let z64 = w.c64(0);
                     set_bit(w, mine, z64, kind);
                     set_bit(w, mine, kw64, field);
+                    or_fault(w, mine);
+                });
+                // An ERROR node (its kind 0) or a MISSING one listed in the ERRORS part, beside the fault bit it set.
+                let error = w.f.ins().icmp_imm(IntCC::Equal, kind, 0);
+                let missing = w.f.ins().icmp_imm(IntCC::NotEqual, fault, 0);
+                let listed = w.f.ins().bor(error, missing);
+                w.if_(listed, |w| {
+                    let len = w.part_len(part::ERRORS);
+                    let need = w.f.ins().iadd_imm(len, 4);
+                    w.room(part::ERRORS, need);
+                    let errors = w.part(part::ERRORS);
+                    let at = w.f.ins().iadd(errors, len);
+                    let first = w.f.ins().imul_imm(b, i64::from(Z));
+                    let node = w.f.ins().iadd(first, j);
+                    w.st(node, at, 0);
+                    w.set_part_len(part::ERRORS, need);
                 });
                 let j1 = w.f.ins().iadd_imm(j, 1);
                 w.set(jv, j1);
@@ -3364,6 +3394,7 @@ mod ukl_header {
             ("PART_SEEN", part::SEEN.into()),
             ("PART_CKPT", part::CKPT.into()),
             ("PART_LZ", part::LZ.into()),
+            ("PART_ERRORS", part::ERRORS.into()),
             ("AT_ESC", off(at::ESC)),
             ("AT_SOURCE_LEN", off(at::SOURCE_LEN)),
             ("AT_PREV_START", off(at::PREV_START)),

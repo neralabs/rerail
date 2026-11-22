@@ -18,6 +18,7 @@
 //! Not kept: T's `tape_load`/`tape_nearest` and per-kind seeds (`<p>_kseed`), which read a per-run copy of one
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
+use rerail_blocks::vector::Vector;
 pub mod setfix;
 pub mod width;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -232,7 +233,7 @@ fn lattice_fixpoint(conn: &Connection, results: &Results, p: &str, target: Optio
         }
     }
     // Keys are compacted to dense cells: T's node ids were dense, the store's are `d << 32 | index` (O13).
-    let mut keys: Vec<i64> = seeds.iter().map(|r| r.0).chain(copies.iter().flat_map(|r| [r.0, r.1]))
+    let mut keys: Vector<i64> = seeds.iter().map(|r| r.0).chain(copies.iter().flat_map(|r| [r.0, r.1]))
         .chain(bins.iter().flat_map(|r| [r.0, r.2, r.3])).collect();
     keys.sort_unstable();
     keys.dedup();
@@ -241,12 +242,12 @@ fn lattice_fixpoint(conn: &Connection, results: &Results, p: &str, target: Optio
     let copies: Vec<(i64, i64)> = copies.iter().map(|&(a, b)| (cell(a), cell(b))).collect();
     let bins: Vec<(i64, u8, i64, i64)> = bins.iter().map(|&(c, o, l, r)| (cell(c), o, cell(l), cell(r))).collect();
     let n = keys.len();
-    let mut seed = vec![BOT; n];
+    let mut seed = rerail_blocks::vector![BOT; n];
     for &(k, v) in &seeds { seed[k as usize] = lat.join(seed[k as usize], v); }
     // In-edges per node (to evaluate it) and out-edges (to find dependents), as CSR.
-    let csr = |edges: &mut Vec<(u32, u32)>| -> (Vec<u32>, Vec<u32>) {
+    let csr = |edges: &mut Vec<(u32, u32)>| -> (Vector<u32>, Vector<u32>) {
         edges.sort_unstable();
-        let mut start = vec![0u32; n + 1];
+        let mut start = rerail_blocks::vector![0u32; n + 1];
         for &(a, _) in edges.iter() { start[a as usize + 1] += 1; }
         for i in 0..n { start[i + 1] += start[i]; }
         (start, edges.iter().map(|e| e.1).collect())
@@ -295,7 +296,7 @@ fn lattice_fixpoint(conn: &Connection, results: &Results, p: &str, target: Optio
         }
     });
     let mut val = seed.clone();
-    let mut frontier: Vec<u32> = (0..n as u32).filter(|&v| val[v as usize] != BOT).collect();
+    let mut frontier: Vector<u32> = (0..n as u32).filter(|&v| val[v as usize] != BOT).collect();
     let (mut stamp, mut waves, mut visits) = (vec![0u32; n], 0u32, 0u64);
     let mut changes = vec![0u32; if widen.is_some() { n } else { 0 }];
     while !frontier.is_empty() {
@@ -325,7 +326,7 @@ fn lattice_fixpoint(conn: &Connection, results: &Results, p: &str, target: Optio
 /// The solved values written where `target` says, with the run's summary.
 /// `keys[cell]` is the key of each cell of `val`.
 #[allow(clippy::too_many_arguments)]
-fn finish(conn: &Connection, results: &Results, p: &str, target: Option<&str>, keys: Vec<i64>, val: Vec<i64>, waves: u32, visits: u64, t: Instant) -> Result<String> {
+fn finish(conn: &Connection, results: &Results, p: &str, target: Option<&str>, keys: Vector<i64>, val: Vector<i64>, waves: u32, visits: u64, t: Instant) -> Result<String> {
     let solve = t.elapsed();
     if let Some(name) = target.and_then(|t| t.strip_prefix('@')) {
         let rows = val.iter().filter(|&&v| v != BOT).count();
@@ -353,7 +354,7 @@ fn finish(conn: &Connection, results: &Results, p: &str, target: Option<&str>, k
 
 /// Fixpoint results kept in memory, by name, for `lattice_result`: each cell's key (ascending) and value. The
 /// connection's own (decision 0442): `register` makes them, and its functions and module hold them.
-type Solution = Arc<(Vec<i64>, Vec<i64>)>;
+type Solution = Arc<(Vector<i64>, Vector<i64>)>;
 #[derive(Default)]
 struct Results(Mutex<Vec<(String, Solution)>>);
 

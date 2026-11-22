@@ -11,6 +11,7 @@
 //!   form: numbered families are renumbered past the earlier parts' (`strtest_<k>`, `matchall_<k>`, `rr_ast_<k>_<m>`),
 //!   and only a name two parts made gets the part's suffix (`_x<j>`).
 
+use rerail_blocks::vector::Vector;
 use super::{Front, text::Matchers};
 use crate::code_rule_dsl::logic::front::{self, Value};
 use crate::code_rule_dsl::logic::program_facts::{self, Facts};
@@ -71,7 +72,7 @@ fn tag(rel: &str) -> Option<&str> {
 /// A part of the combined program: its rules, by place in the version's rule order.
 struct Part {
     name: String,
-    rules: Vec<usize>,
+    rules: Vector<usize>,
     made: BTreeSet<String>,
     read: BTreeSet<String>,
 }
@@ -114,7 +115,7 @@ fn parts_of(v: &Version) -> Vec<Part> {
             Some(t) => find(&mut parent, t),
             None => "l".to_owned(),
         };
-        let part = by.entry(name.clone()).or_insert_with(|| Part { name, rules: Vec::new(), made: BTreeSet::new(), read: BTreeSet::new() });
+        let part = by.entry(name.clone()).or_insert_with(|| Part { name, rules: rerail_blocks::vector::Vector::new(), made: BTreeSet::new(), read: BTreeSet::new() });
         part.rules.push(i);
         part.made.insert(v.rel_name(r.head().rel()).to_owned());
         part.read.extend(r.reads().map(|a| v.rel_name(a.rel()).to_owned()));
@@ -345,7 +346,7 @@ struct RelFields {
     qualifiers: Option<BTreeSet<String>>,
     tapes: Option<BTreeSet<usize>>,
     /// Its places in the demand list.
-    demand: Vec<usize>,
+    demand: Vector<usize>,
 }
 
 /// Each relation's per-relation fields of a version, as text, read once a run: a part's key reads its own relations'
@@ -953,7 +954,7 @@ fn link_front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gr
     let inputs_shared = version.input_names().len();
     let by = ByRelation::of(&version);
     // Every part's header and key, read from the program alone: all the kept link asks of a part that did not change.
-    let (heads, keys): (Vec<Own>, Vec<[u8; 32]>) = parts
+    let (heads, keys): (Vec<Own>, Vector<[u8; 32]>) = parts
         .iter()
         .enumerate()
         .map(|(j, part)| {
@@ -1000,7 +1001,7 @@ fn link_front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gr
     if let Some((facts, digest, source)) = last {
         let slots = link_slots(&facts);
         if slots.len() == parts.len() && slots.iter().zip(&parts).all(|(s, p)| s.name == p.name) {
-            let changed: Vec<usize> = (0..parts.len()).filter(|&j| slots[j].key != keys[j]).collect();
+            let changed: Vector<usize> = (0..parts.len()).filter(|&j| slots[j].key != keys[j]).collect();
             let mut same = true;
             for &j in &changed {
                 let (p, s) = prepare(j)?;
@@ -1597,7 +1598,7 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
             }
         }
     }
-    let keys: Vec<[u8; 32]> = slots.iter().map(|s| match s {
+    let keys: Vector<[u8; 32]> = slots.iter().map(|s| match s {
         Slot::Kept(_, _, k) | Slot::Made(_, _, k) => *k,
     }).collect();
     let digests: Vec<Option<[u8; 32]>> = slots.iter().map(|s| match s {
@@ -1634,7 +1635,7 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
     if let Some((facts, digest, source)) = last {
         let kept_slots = link_slots(&facts);
         if kept_slots.len() == parts.len() && kept_slots.iter().zip(&parts).all(|(s, p)| s.name == p.name) {
-            let changed: Vec<usize> = (0..parts.len()).filter(|&j| kept_slots[j].key != keys[j]).collect();
+            let changed: Vector<usize> = (0..parts.len()).filter(|&j| kept_slots[j].key != keys[j]).collect();
             let mut same = true;
             for &j in &changed {
                 image(j, &mut versions)?;

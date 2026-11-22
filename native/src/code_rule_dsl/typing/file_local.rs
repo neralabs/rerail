@@ -24,14 +24,14 @@ const TOP: i64 = 1 << 62;
 
 /// The flat-lattice system: seeds, and copies `(cell, source)`.
 pub struct System {
-    pub seeds: Vec<i64>,
+    pub seeds: Vector<i64>,
     pub copies: Vec<(u32, u32)>,
 }
 
-pub fn system(trees: &Trees<'_>, sets: &[Vec<i64>]) -> StoreResult<System> {
+pub fn system(trees: &Trees<'_>, sets: &[Vector<i64>]) -> StoreResult<System> {
     let n = trees.parent.len();
     let cells = n.checked_mul(sets.len()).filter(|&c| c < u32::MAX as usize).ok_or_else(|| StoreError::Invalid(format!("nearest: {n} nodes in {} sets", sets.len())))?;
-    let mut seeds = vec![BOT; cells];
+    let mut seeds = rerail_blocks::vector![BOT; cells];
     let mut copies = Vec::new();
     for (k, set) in sets.iter().enumerate() {
         let base = k * n;
@@ -51,12 +51,12 @@ pub fn system(trees: &Trees<'_>, sets: &[Vec<i64>]) -> StoreResult<System> {
 
 /// The system's least fixpoint on the CPU: a cell's value is its seed joined with its sources', evaluated
 /// again whenever a source rises.
-pub fn solve_cpu(system: &System) -> Vec<i64> {
+pub fn solve_cpu(system: &System) -> Vector<i64> {
     let n = system.seeds.len();
     // Sources and dependents as CSR (a cell has one source here; the solver does not rely on it).
-    let csr = |edges: &mut Vec<(u32, u32)>| -> (Vec<u32>, Vec<u32>) {
+    let csr = |edges: &mut Vec<(u32, u32)>| -> (Vector<u32>, Vector<u32>) {
         edges.sort_unstable();
-        let mut start = vec![0_u32; n + 1];
+        let mut start = rerail_blocks::vector![0_u32; n + 1];
         for &(a, _) in edges.iter() {
             start[a as usize + 1] += 1;
         }
@@ -69,7 +69,7 @@ pub fn solve_cpu(system: &System) -> Vec<i64> {
     let (dependent_start, dependents) = csr(&mut system.copies.iter().map(|&(cell, source)| (source, cell)).collect());
     let join = |a: i64, b: i64| if a == BOT { b } else if b == BOT || a == b { a } else { TOP };
     let mut values = system.seeds.clone();
-    let mut work: Vec<u32> = (0..n as u32).filter(|&c| values[c as usize] != BOT).collect();
+    let mut work: Vector<u32> = (0..n as u32).filter(|&c| values[c as usize] != BOT).collect();
     while let Some(cell) = work.pop() {
         for &dependent in &dependents[dependent_start[cell as usize] as usize..dependent_start[cell as usize + 1] as usize] {
             let d = dependent as usize;
@@ -88,12 +88,14 @@ pub fn solve_cpu(system: &System) -> Vec<i64> {
 const CELLS: usize = 1 << 18;
 
 /// Per set, per node of `trees`: its nearest strict ancestor whose kind is in the set, or `NONE`.
-pub fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+use rerail_blocks::vector::Vector;
+
+pub fn nearest(trees: &Trees<'_>, sets: &[Vector<i64>], binding: Binding) -> StoreResult<Vec<Vector<u32>>> {
     let n = trees.parent.len();
     if n == 0 || sets.is_empty() {
-        return Ok(vec![Vec::new(); sets.len()]);
+        return Ok((0..sets.len()).map(|_| Vector::new()).collect());
     }
-    let mut out = vec![Vec::with_capacity(n); sets.len()];
+    let mut out: Vec<Vector<u32>> = (0..sets.len()).map(|_| Vector::with_capacity(n)).collect();
     let per = (CELLS / sets.len()).max(1);
     let mut start = 0;
     while start < n {
@@ -102,7 +104,7 @@ pub fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreR
         while end < n && trees.parent[end] != NONE {
             end += 1;
         }
-        let parent: Vec<u32> = trees.parent[start..end].iter().map(|&p| if p == NONE { NONE } else { p - start as u32 }).collect();
+        let parent: Vector<u32> = trees.parent[start..end].iter().map(|&p| if p == NONE { NONE } else { p - start as u32 }).collect();
         let piece = Trees { parent: &parent, kind: &trees.kind[start..end] };
         for (set, found) in out.iter_mut().zip(solve(&piece, sets, binding)?) {
             set.extend(found.into_iter().map(|a| if a == NONE { NONE } else { a + start as u32 }));
@@ -116,7 +118,7 @@ pub fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreR
 /// starts at the parent and jumps to its target's target until final (`metal_nearest`). On the CPU: one pass in
 /// preorder, where a node reads its parent's answer once; the worklist over the lattice system where a parent does
 /// not precede its children.
-fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+fn solve(trees: &Trees<'_>, sets: &[Vector<i64>], binding: Binding) -> StoreResult<Vec<Vector<u32>>> {
     use crate::code_rule_dsl::logic::profile;
     let n = trees.parent.len();
     let member = |k: usize, node: u32| sets[k].contains(&trees.kind[node as usize]);
@@ -124,8 +126,8 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
     if let Some(dev) = crate::code_rule_dsl::logic::device::solver().filter(|_| binding == Binding::Metal) {
         let _span = profile::span(|| "nearest on Metal (pointer jumping)".into());
         profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on Metal by pointer jumping, one dispatch and one wait"));
-        let mut target = Vec::with_capacity(n * sets.len());
-        let mut done = Vec::with_capacity(n * sets.len());
+        let mut target: Vector<u32> = Vector::with_capacity(n * sets.len());
+        let mut done: Vector<u8> = Vector::with_capacity(n * sets.len());
         for k in 0..sets.len() {
             for &p in trees.parent {
                 target.push(p);
@@ -141,7 +143,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
                 profile::device(kernel, solved.launches as u64, solved.gpu, solved.wall, target.len() as u64);
                 profile::device_phases(kernel, solved.phases, solved.made, solved.reused);
                 crate::code_rule_dsl::prof::count("nearest.device_steps", solved.rounds as usize);
-                return Ok(solved.targets.chunks(n.max(1)).map(<[u32]>::to_vec).collect());
+                return Ok(solved.targets.chunks(n.max(1)).map(Vector::from).collect());
             }
             Err(Refused::NoDevice) => {
                 profile::decision("fallback", || "nearest ancestors: the Metal binding found no device and solved on the CPU".into());
@@ -156,7 +158,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
         profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on the CPU, one pass in preorder"));
         return Ok((0..sets.len())
             .map(|k| {
-                let mut found = vec![NONE; n];
+                let mut found: Vector<u32> = rerail_blocks::vector![NONE; n];
                 for v in 0..n {
                     let p = trees.parent[v];
                     if p != NONE {
@@ -269,9 +271,9 @@ pub struct Programs {
     pub exports: Vec<String>,
     pub base: Vec<String>,
     /// Each derived relation's location columns (`FileLocal::locations`).
-    pub locations: std::collections::BTreeMap<String, Vec<usize>>,
+    pub locations: std::collections::BTreeMap<String, Vector<usize>>,
     /// The same-document columns of each file-local or base relation (`FileLocal::same_doc`): what a cross-file hop reads.
-    pub same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+    pub same_doc: std::collections::BTreeMap<String, Vector<usize>>,
     /// What the split found, and the parts are made of (`assemble`): the file-local relations, and the relations of
     /// constants derived in both parts. A prepared program keeps these, not the two parts: each is the program's own
     /// rules, a part of them, so the parts are made from the program again when it is read.
@@ -312,8 +314,8 @@ pub fn assemble(
     version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     local: std::collections::BTreeSet<String>,
     constants: std::collections::BTreeSet<String>,
-    locations: std::collections::BTreeMap<String, Vec<usize>>,
-    same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+    locations: std::collections::BTreeMap<String, Vector<usize>>,
+    same_doc: std::collections::BTreeMap<String, Vector<usize>>,
 ) -> Result<Programs, String> {
     let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(version.clone());
     let f = placed.fields().map_err(|e| e.to_string())?;
@@ -444,7 +446,8 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
     // A relation with no node column reaches no node.
     let reaches_nodes = |rel: &str| types_of(rel).is_none_or(|ts| ts.iter().any(|t| matches!(*t, "node" | "loc" | "span")));
     let is_base = |rel: &str| base.iter().any(|b| b == rel);
-    let natives = crate::code_rule_dsl::logic::program_image::About::of(v).natives;
+    let about = crate::code_rule_dsl::logic::program_image::About::of(v);
+    let natives = &about.natives;
     let outputs: Vec<&str> = v.outputs().map(|a| v.text(a)).collect();
     // The attributes still taken as semi-joins (by their base relation), and the relations whose nodes may not trace
     // back to an export.
@@ -454,7 +457,7 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
         let (semi_before, tainted_before) = (semi.len(), tainted.len());
         // A source of tainted nodes: a base relation that reaches nodes and is no attribute, or a tainted relation.
         let source = |a: AtomRef<'_>, tainted: &BTreeSet<String>| !a.neg() && !key.contains_key(name(a)) && (tainted.contains(name(a)) || (is_base(name(a)) && reaches_nodes(name(a))));
-        for native in &natives {
+        for native in natives.iter() {
             for r in native.reads.iter().map(|r| v.rel_name(*r)) {
                 if key.contains_key(r) {
                     semi.remove(&root(r));

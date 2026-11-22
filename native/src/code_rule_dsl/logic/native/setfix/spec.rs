@@ -4,10 +4,14 @@
 //! components, over text symbols), the lab's capture files and the spikes' spec files: `to_text` writes what the
 //! planner wrote, and `parse` reads it back.
 
+use rerail_blocks::vector::Vector;
+use rerail_section::{Archive, Bound, Handle, Section, Tuple2};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
 /// A value position: `_`, `v<slot>`, `i:<int>` or `x:<hex symbol>`.
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash), decode)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Tok {
     Wild,
@@ -17,6 +21,8 @@ pub enum Tok {
 }
 
 /// An atom's column: a value position, or an aggregate's own column (`a<name>`, the same name tests equality).
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash), decode)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Arg {
     Tok(Tok),
@@ -24,6 +30,8 @@ pub enum Arg {
 }
 
 /// A head term: a value, or two slots' symbols joined by "." (`cat:v<a>:v<b>`).
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash), decode)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum HeadTok {
     Tok(Tok),
@@ -32,6 +40,8 @@ pub enum HeadTok {
 
 /// An input read for joins: `t:<b|d>:<hex select>:<hex columns>:<types>`. `base`: a base relation, kept across
 /// runs that do not change it.
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash), decode)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InputKey {
     pub base: bool,
@@ -42,6 +52,8 @@ pub struct InputKey {
 
 /// Where an atom's rows are: the component's relation `i`'s delta (`d<i>`) or all of it (`c<i>`), a lower stratum's
 /// native relation (`r:<hex table>`) or an input.
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash), decode)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Source {
     Delta(usize),
@@ -54,6 +66,8 @@ pub enum Source {
 
 /// A relation's version a join reads (decision 0364): its rows at the run's start (`Old`), now (`New`), those of
 /// the start gone since (`Minus`) and those added since (`Plus`).
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash), decode)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Ver {
     Old,
@@ -62,6 +76,8 @@ pub enum Ver {
     Plus,
 }
 
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash), decode)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Extreme {
     Sum,
@@ -70,6 +86,8 @@ pub enum Extreme {
 }
 
 /// One step of a native join, in plan order, or its head (last).
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash), decode)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum JoinItem {
     /// `pos|neg <src> <args…>`
@@ -106,6 +124,8 @@ pub enum JoinItem {
 }
 
 /// A native join: its steps, then its head.
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash), decode)]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct JoinSpec {
     pub items: Vec<JoinItem>,
@@ -113,18 +133,19 @@ pub struct JoinSpec {
     /// and its steps: a literal can make several items (`$k = @sub(@strlen($d), 1)` makes two), so the engine's
     /// steps are not the plan's. The engine reports counts, CPU and histograms by plan step through it
     /// (`JoinRule::from`). Empty (a spec read from text): each item is its own step.
-    pub from: Vec<u32>,
+    pub from: Vector<u32>,
     pub plan_steps: u32,
-    /// The rows the planner expects after each plan step, every row walked (`StepPlan::all`, decision 0277), where it
-    /// priced the rule: what the device sizes a stage's table by before the stage has run (`Est`).
-    pub est: Est,
 }
 
-/// A spec's estimates (`JoinSpec::est`): not the rule. Every two are equal and they hash as nothing, so a spec's
+/// The rows the planner expects after each plan step of a line's join, every row walked (`StepPlan::all`, decision
+/// 0277), where it priced the rule: what the device sizes a stage's table by before the stage has run. Not the rule:
+/// it lies on the line that runs the join (`Line::Seed`, `Line::Join`), not in the join's section, so the join's
 /// identity (`level::digest`), and what is kept by it (the stages' growth seen, compiled forms), stay a chunk's to the
-/// next while its estimates change.
-#[derive(Clone, Debug, Default)]
-pub struct Est(pub Vec<f64>);
+/// next while its estimates change, and a join kept for the run (`join_spec`) is priced again without being made
+/// again. Every two are equal and they hash as nothing.
+#[derive(Clone, Debug, Default, Archive)]
+#[archive(derive(Debug))]
+pub struct Est(pub Vector<f64>);
 
 impl PartialEq for Est {
     fn eq(&self, _: &Est) -> bool {
@@ -138,9 +159,44 @@ impl std::hash::Hash for Est {
     fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
 }
 
+impl PartialEq for ArchivedEst {
+    fn eq(&self, _: &ArchivedEst) -> bool {
+        true
+    }
+}
+
+impl Eq for ArchivedEst {}
+
+impl std::hash::Hash for ArchivedEst {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
+/// A join's section (decision 0569 §4): encoded once, where the planner made it (`JoinSpec::encode`), and named by
+/// the component's spec, which holds it.
+pub type Join = Bound<Section<JoinSpec>>;
+
+impl JoinSpec {
+    /// Its section.
+    pub fn encode(&self) -> Join {
+        Bound::new(Section::of(self))
+    }
+}
+
+/// A component's spec's section: its lines, and the joins they name.
+pub type Spec = Section<ComponentSpec>;
+
+impl ComponentSpec {
+    /// Its section.
+    pub fn encode(&self) -> Spec {
+        Section::of(self)
+    }
+}
+
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
 /// (`base`), plus its table's rows when `seeded`. A `base` with no relation gone (`-`) is a copy of the kept
 /// relation, its levels with it (decision 0090's `h__live`).
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash))]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Start {
     Rows,
@@ -151,19 +207,23 @@ pub enum Start {
 }
 
 /// An edge rule (`rule …`): see the module's spec.
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash))]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EdgeSpec {
     pub head: usize,
     pub src: usize,
     /// The edge table and its column types.
     pub edge: Option<(String, String)>,
-    pub key: Vec<usize>,
-    pub ecols: Vec<usize>,
+    pub key: Vector<usize>,
+    pub ecols: Vector<usize>,
     pub pat: Vec<Tok>,
     pub out: Vec<HeadTok>,
 }
 
 /// One spec line, after `name`.
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash))]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Line {
     Rel { name: String, types: String, start: Start },
@@ -174,53 +234,55 @@ pub enum Line {
     /// no row has one, and a closure may run on the device (bit rows give reach, not distance). The relations listed
     /// reach themselves through the stratum's rules as written, so they keep levels even where this run's rules over
     /// empty relations were left out and their cycle is not run (`leveled <rels|->`).
-    Leveled(Vec<usize>),
+    Leveled(Vector<usize>),
     /// A recursive component the static check proved (decision 0364 §5): no levels, its candidates rechecked once
     /// each in the measure's order. Each relation's measure column (`cols`) and rank (`ranks`: a row's derivations
     /// at its own node read relations of lower rank); a row's key is its measure's value, or the one row `key`'s
     /// SQL reads with it bound (`?1`: the node's depth or document order); descending where `desc`. Not `keyed`:
     /// the order is not the measure's (a node's key the run cannot read), and a candidate that stays is checked again
     /// when a row it may read goes (`measured a|d <key|-> k|u <cols> <ranks>`).
-    Measured { desc: bool, key: Option<String>, keyed: bool, cols: Vec<usize>, ranks: Vec<usize> },
+    Measured { desc: bool, key: Option<String>, keyed: bool, cols: Vector<usize>, ranks: Vector<usize> },
     /// Its relations started from kept rows (`Start::Base`) hold them as no wave's delta: its first wave is driven by
     /// its inputs' changes (seeds that read them, `plan::reads_change`), not by its kept rows (decision 0122 §2).
     KeptOld,
     /// The relations whose rows the run keeps past it (a chunk's exports): made in blocks of their own
     /// (`Life::Kept`), apart from the run's other relations (`keptrows <rels>`).
-    KeptRows(Vec<usize>),
+    KeptRows(Vector<usize>),
     /// Relation `rel` is a lattice's (decision 0124): its last column the value, joined by the lattice `name`'s join,
     /// the `keys` columns before it the key; after `widen` changes of a key, widened.
     Lattice { rel: usize, keys: usize, name: String, widen: Option<u32> },
     /// Relation `rel`'s layout says columns `cols` are a key (decision 0361 step 6): its rows are checked as they are
     /// written, and a second row of a key is reported (`key_breaks`).
-    Key { rel: usize, cols: Vec<usize> },
+    Key { rel: usize, cols: Vector<usize> },
     Request(usize),
     Produced(usize),
     /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
     Stats(usize),
     /// The relations declared sorted (`.decl … sorted`, decision 0456 K7): laid out in canonical order when done
     /// (`sorted <rels>`).
-    Sorted(Vec<usize>),
-    Seed { head: usize, join: Arc<JoinSpec> },
-    Join { head: usize, delta: usize, join: Arc<JoinSpec>, whole: Option<Arc<JoinSpec>> },
+    Sorted(Vector<usize>),
+    Seed { head: usize, join: Join, est: Est },
+    Join { head: usize, delta: usize, join: Join, whole: Option<Join>, est: Est },
     Probe { head: usize, delta: usize, sql: String },
     /// A probe not planned yet (decision 0123 §9): its delta has had no rows. The run returns for its plan when its
     /// delta first has rows (`done 4`), and the caller gives it its join (`reprobe`).
     Unplanned { head: usize, delta: usize },
-    Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize> },
+    Gate { done: usize, src: Option<usize>, quiet: Vector<usize>, after: Vector<usize> },
     Edge(EdgeSpec),
     /// The maintain mode (decision 0364 stage 3): a removal join, its head rows the candidates of relation `head`,
     /// read from its versions (`Source::Version`): run once, before the seeds (`remove <head> <hex join>`).
-    Remove { head: usize, join: Arc<JoinSpec> },
+    Remove { head: usize, join: Join },
     /// An add join whose rows are checked before they are added (one driven by a negated atom's rows gone, which
     /// may be back): `addchecked <head> <hex join>`.
-    AddChecked { head: usize, join: Arc<JoinSpec> },
+    AddChecked { head: usize, join: Join },
     /// A rule of `head` over the relations now, run per candidate with its head's slots bound: a candidate with no
     /// row from any of them is killed in place (`recheck <head> <hex join>`).
-    Recheck { head: usize, join: Arc<JoinSpec> },
+    Recheck { head: usize, join: Join },
 }
 
 /// A component: its name, then its lines in order (relations are numbered in order, probes are numbered in order).
+#[derive(Archive)]
+#[archive(derive(Debug, PartialEq, Eq, Hash))]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ComponentSpec {
     pub name: String,
@@ -231,8 +293,8 @@ pub struct ComponentSpec {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Reprobe {
     Sql(String),
-    Join(Arc<JoinSpec>),
-    Whole(Arc<JoinSpec>),
+    Join(Join),
+    Whole(Join),
 }
 
 /// Lowercase hex of a string's bytes.
@@ -318,35 +380,35 @@ fn source(t: &str) -> Result<Source, String> {
     Err(format!("bad source {t}"))
 }
 
-fn list(t: &str) -> Result<Vec<usize>, String> {
-    if t == "-" { Ok(Vec::new()) } else { t.split(',').map(num).collect() }
+fn list(t: &str) -> Result<Vector<usize>, String> {
+    if t == "-" { Ok(rerail_blocks::vector::Vector::new()) } else { t.split(',').map(num::<usize>).collect() }
 }
 
-impl std::fmt::Display for Tok {
+impl std::fmt::Display for ArchivedTok {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Tok::Wild => f.write_str("_"),
-            Tok::Slot(s) => write!(f, "v{s}"),
-            Tok::Int(i) => write!(f, "i:{i}"),
-            Tok::Sym(s) => write!(f, "x:{}", hex(s)),
+            ArchivedTok::Wild => f.write_str("_"),
+            ArchivedTok::Slot(s) => write!(f, "v{s}"),
+            ArchivedTok::Int(i) => write!(f, "i:{i}"),
+            ArchivedTok::Sym(s) => write!(f, "x:{}", hex(s)),
         }
     }
 }
 
-impl std::fmt::Display for Arg {
+impl std::fmt::Display for ArchivedArg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Arg::Tok(t) => t.fmt(f),
-            Arg::Local(l) => write!(f, "a{l}"),
+            ArchivedArg::Tok(t) => t.fmt(f),
+            ArchivedArg::Local(l) => write!(f, "a{l}"),
         }
     }
 }
 
-impl std::fmt::Display for HeadTok {
+impl std::fmt::Display for ArchivedHeadTok {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HeadTok::Tok(t) => t.fmt(f),
-            HeadTok::Cat(a, b) => write!(f, "cat:v{a}:v{b}"),
+            ArchivedHeadTok::Tok(t) => t.fmt(f),
+            ArchivedHeadTok::Cat(a, b) => write!(f, "cat:v{a}:v{b}"),
         }
     }
 }
@@ -360,20 +422,27 @@ impl InputKey {
     }
 }
 
-impl std::fmt::Display for InputKey {
+impl ArchivedInputKey {
+    /// The key as a value, to find its loaded input by.
+    pub fn owned(&self) -> InputKey {
+        InputKey { base: self.base, sql: self.sql.to_string(), cols: self.cols.to_string(), types: self.types.to_string() }
+    }
+}
+
+impl std::fmt::Display for ArchivedInputKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}:{}:{}", if self.base { "b" } else { "d" }, hex(&self.sql), hex(&self.cols), self.types)
     }
 }
 
-impl std::fmt::Display for Source {
+impl std::fmt::Display for ArchivedSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Source::Delta(i) => write!(f, "d{i}"),
-            Source::Full(i) => write!(f, "c{i}"),
-            Source::Native(t) => write!(f, "r:{}", hex(t)),
-            Source::Input(k) => write!(f, "t:{k}"),
-            Source::Version(t, v) => write!(f, "v:{}:{}", match v { Ver::Old => "o", Ver::New => "n", Ver::Minus => "m", Ver::Plus => "p" }, hex(t)),
+            ArchivedSource::Delta(i) => write!(f, "d{i}"),
+            ArchivedSource::Full(i) => write!(f, "c{i}"),
+            ArchivedSource::Native(t) => write!(f, "r:{}", hex(t)),
+            ArchivedSource::Input(k) => write!(f, "t:{k}"),
+            ArchivedSource::Version(t, v) => write!(f, "v:{}:{}", match v { ArchivedVer::Old => "o", ArchivedVer::New => "n", ArchivedVer::Minus => "m", ArchivedVer::Plus => "p" }, hex(t)),
         }
     }
 }
@@ -389,54 +458,62 @@ fn joined<T: std::fmt::Display>(xs: &[T]) -> String {
     s
 }
 
-fn comma(xs: &[usize]) -> String {
-    if xs.is_empty() { "-".to_owned() } else { xs.iter().map(usize::to_string).collect::<Vec<_>>().join(",") }
+fn comma(xs: &[u64]) -> String {
+    if xs.is_empty() { "-".to_owned() } else { xs.iter().map(u64::to_string).collect::<Vec<_>>().join(",") }
 }
 
-impl std::fmt::Display for JoinItem {
+impl std::fmt::Display for ArchivedJoinItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let col = |(c, sym): (usize, bool)| format!("{c}:{}", u8::from(sym));
+        use ArchivedExtreme as E;
+        let col = |c: &Tuple2<u64, bool>| format!("{}:{}", c.0, u8::from(c.1));
         match self {
-            JoinItem::Atom { neg, src, args } => write!(f, "{} {src} {}", if *neg { "neg" } else { "pos" }, joined(args)),
-            JoinItem::Count { src, args, out } => write!(f, "count {src} {} {out}", joined(args)),
-            JoinItem::Extreme { op, src, args, col, out, bound } => {
-                let name = match (op, bound) {
-                    (Extreme::Sum, _) => "sum",
-                    (Extreme::Min, None) => "min",
-                    (Extreme::Max, None) => "max",
-                    (Extreme::Min, Some((_, true))) => "mingt",
-                    (Extreme::Min, Some((_, false))) => "minge",
-                    (Extreme::Max, Some((_, true))) => "maxlt",
-                    (Extreme::Max, Some((_, false))) => "maxle",
+            ArchivedJoinItem::Atom { neg, src, args } => write!(f, "{} {src} {}", if *neg { "neg" } else { "pos" }, joined(args)),
+            ArchivedJoinItem::Count { src, args, out } => write!(f, "count {src} {} {out}", joined(args)),
+            ArchivedJoinItem::Extreme { op, src, args, col, out, bound } => {
+                let name = match (op, bound.as_ref()) {
+                    (E::Sum, _) => "sum",
+                    (E::Min, None) => "min",
+                    (E::Max, None) => "max",
+                    (E::Min, Some(Tuple2(_, true))) => "mingt",
+                    (E::Min, Some(Tuple2(_, false))) => "minge",
+                    (E::Max, Some(Tuple2(_, true))) => "maxlt",
+                    (E::Max, Some(Tuple2(_, false))) => "maxle",
                 };
-                match bound {
-                    Some((b, _)) => write!(f, "{name} {src} {} {col} {b} {out}", joined(args)),
+                match bound.as_ref() {
+                    Some(Tuple2(b, _)) => write!(f, "{name} {src} {} {col} {b} {out}", joined(args)),
                     None => write!(f, "{name} {src} {} {col} {out}", joined(args)),
                 }
             }
-            JoinItem::StrJoin { src, args, x, by, sep, out } => {
-                let by = if by.is_empty() { "-".to_owned() } else { by.iter().map(|&b| col(b)).collect::<Vec<_>>().join(",") };
-                write!(f, "strjoin {src} {} {} {by} {sep} {out}", joined(args), col(*x))
+            ArchivedJoinItem::StrJoin { src, args, x, by, sep, out } => {
+                let by = if by.is_empty() { "-".to_owned() } else { by.iter().map(col).collect::<Vec<_>>().join(",") };
+                write!(f, "strjoin {src} {} {} {by} {sep} {out}", joined(args), col(x))
             }
-            JoinItem::Cat { out, a, b } => write!(f, "cat {out} {a} {b}"),
-            JoinItem::Lt { a, b, or_eq } => write!(f, "{} {a} {b}", if *or_eq { "le" } else { "lt" }),
-            JoinItem::Func { name, out, args } => write!(f, "func {name} {out} {}", joined(args)),
-            JoinItem::Test { op, s, p, want } => write!(f, "test {op} {s} {p} {}", u8::from(*want)),
-            JoinItem::DocOf { out, n } => write!(f, "docof {out} {n}"),
-            JoinItem::TestSet { op, s, want, members } => write!(f, "testset {op} {s} {} {}", u8::from(*want), joined(members)),
-            JoinItem::In { a, want, set } => write!(f, "in {a} {} {}", u8::from(*want), joined(set)),
-            JoinItem::Doc { a, b, eq } => write!(f, "{} {a} {b}", if *eq { "deq" } else { "dne" }),
-            JoinItem::Eq { a, b, ne } => write!(f, "{} {a} {b}", if *ne { "ne" } else { "eq" }),
-            JoinItem::Near { down, n, a, kinds } => write!(f, "{} {n} {a} {}", if *down { "down" } else { "near" }, hex(kinds)),
-            JoinItem::Head(terms) => write!(f, "head {}", joined(terms)),
+            ArchivedJoinItem::Cat { out, a, b } => write!(f, "cat {out} {a} {b}"),
+            ArchivedJoinItem::Lt { a, b, or_eq } => write!(f, "{} {a} {b}", if *or_eq { "le" } else { "lt" }),
+            ArchivedJoinItem::Func { name, out, args } => write!(f, "func {name} {out} {}", joined(args)),
+            ArchivedJoinItem::Test { op, s, p, want } => write!(f, "test {op} {s} {p} {}", u8::from(*want)),
+            ArchivedJoinItem::DocOf { out, n } => write!(f, "docof {out} {n}"),
+            ArchivedJoinItem::TestSet { op, s, want, members } => write!(f, "testset {op} {s} {} {}", u8::from(*want), joined(members)),
+            ArchivedJoinItem::In { a, want, set } => write!(f, "in {a} {} {}", u8::from(*want), joined(set)),
+            ArchivedJoinItem::Doc { a, b, eq } => write!(f, "{} {a} {b}", if *eq { "deq" } else { "dne" }),
+            ArchivedJoinItem::Eq { a, b, ne } => write!(f, "{} {a} {b}", if *ne { "ne" } else { "eq" }),
+            ArchivedJoinItem::Near { down, n, a, kinds } => write!(f, "{} {n} {a} {}", if *down { "down" } else { "near" }, hex(kinds)),
+            ArchivedJoinItem::Head(terms) => write!(f, "head {}", joined(terms)),
         }
     }
 }
 
-impl JoinSpec {
+impl ArchivedJoinSpec {
     /// Its text: one line per item.
     pub fn to_text(&self) -> String {
-        self.items.iter().map(JoinItem::to_string).collect::<Vec<_>>().join("\n")
+        self.items.iter().map(ArchivedJoinItem::to_string).collect::<Vec<_>>().join("\n")
+    }
+}
+
+impl JoinSpec {
+    /// Its text (`ArchivedJoinSpec::to_text`).
+    pub fn to_text(&self) -> String {
+        self.encode().to_text()
     }
 
     pub fn parse(text: &str) -> Result<JoinSpec, String> {
@@ -504,66 +581,68 @@ impl JoinSpec {
     }
 }
 
-impl std::fmt::Display for Line {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Line::Rel { name, types, start } => {
-                write!(f, "rel {name} {types}")?;
-                match start {
-                    Start::Rows => Ok(()),
-                    Start::Empty => f.write_str(" empty"),
-                    Start::From(sql) => write!(f, " from {}", hex(sql)),
-                    Start::Base { old, gone, seeded } => write!(f, " base {} {}{}", hex(old), if gone == "-" { "-".to_owned() } else { hex(gone) }, if *seeded { " seeded" } else { "" }),
-                }
-            }
-            Line::NoWrite => f.write_str("nowrite"),
-            Line::Device => f.write_str("device"),
-            Line::Leveled(rels) => write!(f, "leveled {}", comma(rels)),
-            Line::Measured { desc, key, keyed, cols, ranks } => write!(f, "measured {} {} {} {} {}", if *desc { "d" } else { "a" }, key.as_ref().map_or_else(|| "-".to_owned(), |k| hex(k)), if *keyed { "k" } else { "u" }, comma(cols), comma(ranks)),
-            Line::KeptOld => f.write_str("keptold"),
-            Line::KeptRows(rels) => write!(f, "keptrows {}", comma(rels)),
-            Line::Lattice { rel, keys, name, widen } => write!(f, "lattice {rel} {keys} {} {}", hex(name), widen.map_or_else(|| "-".to_owned(), |w| w.to_string())),
-            Line::Key { rel, cols } => write!(f, "key {rel} {}", cols.iter().map(usize::to_string).collect::<Vec<_>>().join(",")),
-            Line::Request(r) => write!(f, "request {r}"),
-            Line::Produced(r) => write!(f, "produced {r}"),
-            Line::Stats(r) => write!(f, "stats {r}"),
-            Line::Sorted(rels) => write!(f, "sorted {}", comma(rels)),
-            Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
-            Line::Remove { head, join } => write!(f, "remove {head} {}", hex(&join.to_text())),
-            Line::AddChecked { head, join } => write!(f, "addchecked {head} {}", hex(&join.to_text())),
-            Line::Recheck { head, join } => write!(f, "recheck {head} {}", hex(&join.to_text())),
-            Line::Join { head, delta, join, whole } => {
-                write!(f, "join {head} {delta} {}", hex(&join.to_text()))?;
-                match whole {
-                    Some(w) => write!(f, " {}", hex(&w.to_text())),
-                    None => Ok(()),
-                }
-            }
-            Line::Probe { head, delta, sql } => write!(f, "probe {head} {delta} {}", hex(sql)),
-            Line::Unplanned { head, delta } => write!(f, "unplanned {head} {delta}"),
-            Line::Gate { done, src, quiet, after } => {
-                write!(f, "gate {done} {} {} {}", src.map_or("-".to_owned(), |s| s.to_string()), comma(quiet), comma(after))
-            }
-            Line::Edge(e) => {
-                let slots = |xs: &[usize]| xs.iter().map(|s| format!("v{s}")).collect::<Vec<_>>().join(" ");
-                let src = match &e.edge {
-                    Some((table, types)) => format!("{table} {}", if types.is_empty() { "-" } else { types }),
-                    None => "- -".to_owned(),
-                };
-                write!(f, "rule {} {} {src} key {} ; ecols {} ; pat {} ; head {}", e.head, e.src, slots(&e.key), slots(&e.ecols), joined(&e.pat), joined(&e.out))
-            }
+/// A spec line's text: its joins (`Join`) found in `spec`, the section that names them.
+fn line_text(spec: &Spec, l: &ArchivedLine) -> String {
+    let join = |j: &Handle<Section<JoinSpec>>| hex(&spec.bound(j).to_text());
+    match l {
+        ArchivedLine::Rel { name, types, start } => {
+            let start = match start {
+                ArchivedStart::Rows => String::new(),
+                ArchivedStart::Empty => " empty".to_owned(),
+                ArchivedStart::From(sql) => format!(" from {}", hex(sql)),
+                ArchivedStart::Base { old, gone, seeded } => format!(" base {} {}{}", hex(old), if gone == "-" { "-".to_owned() } else { hex(gone) }, if *seeded { " seeded" } else { "" }),
+            };
+            format!("rel {name} {types}{start}")
+        }
+        ArchivedLine::NoWrite => "nowrite".to_owned(),
+        ArchivedLine::Device => "device".to_owned(),
+        ArchivedLine::Leveled(rels) => format!("leveled {}", comma(rels)),
+        ArchivedLine::Measured { desc, key, keyed, cols, ranks } => format!("measured {} {} {} {} {}", if *desc { "d" } else { "a" }, key.as_ref().map_or_else(|| "-".to_owned(), |k| hex(k)), if *keyed { "k" } else { "u" }, comma(cols), comma(ranks)),
+        ArchivedLine::KeptOld => "keptold".to_owned(),
+        ArchivedLine::KeptRows(rels) => format!("keptrows {}", comma(rels)),
+        ArchivedLine::Lattice { rel, keys, name, widen } => format!("lattice {rel} {keys} {} {}", hex(name), widen.get().map_or_else(|| "-".to_owned(), |w| w.to_string())),
+        ArchivedLine::Key { rel, cols } => format!("key {rel} {}", cols.iter().map(u64::to_string).collect::<Vec<_>>().join(",")),
+        ArchivedLine::Request(r) => format!("request {r}"),
+        ArchivedLine::Produced(r) => format!("produced {r}"),
+        ArchivedLine::Stats(r) => format!("stats {r}"),
+        ArchivedLine::Sorted(rels) => format!("sorted {}", comma(rels)),
+        ArchivedLine::Seed { head, join: j, .. } => format!("seed {head} {}", join(j)),
+        ArchivedLine::Remove { head, join: j } => format!("remove {head} {}", join(j)),
+        ArchivedLine::AddChecked { head, join: j } => format!("addchecked {head} {}", join(j)),
+        ArchivedLine::Recheck { head, join: j } => format!("recheck {head} {}", join(j)),
+        ArchivedLine::Join { head, delta, join: j, whole, .. } => match whole.as_ref() {
+            Some(w) => format!("join {head} {delta} {} {}", join(j), join(w)),
+            None => format!("join {head} {delta} {}", join(j)),
+        },
+        ArchivedLine::Probe { head, delta, sql } => format!("probe {head} {delta} {}", hex(sql)),
+        ArchivedLine::Unplanned { head, delta } => format!("unplanned {head} {delta}"),
+        ArchivedLine::Gate { done, src, quiet, after } => {
+            format!("gate {done} {} {} {}", src.get().map_or("-".to_owned(), |s| s.to_string()), comma(quiet), comma(after))
+        }
+        ArchivedLine::Edge(e) => {
+            let slots = |xs: &[u64]| xs.iter().map(|s| format!("v{s}")).collect::<Vec<_>>().join(" ");
+            let src = match e.edge.as_ref() {
+                Some(Tuple2(table, types)) => format!("{table} {}", if types.is_empty() { "-" } else { types }),
+                None => "- -".to_owned(),
+            };
+            format!("rule {} {} {src} key {} ; ecols {} ; pat {} ; head {}", e.head, e.src, slots(&e.key), slots(&e.ecols), joined(&e.pat), joined(&e.out))
         }
     }
 }
 
+/// A component's spec's text: `name`, then one line per item.
+pub fn spec_text(spec: &Spec) -> String {
+    let mut s = format!("name {}", spec.name);
+    for l in spec.lines.iter() {
+        let _ = write!(s, "\n{}", line_text(spec, l));
+    }
+    s
+}
+
 impl ComponentSpec {
-    /// Its text: `name`, then one line per item.
+    /// Its text (`spec_text`).
     pub fn to_text(&self) -> String {
-        let mut s = format!("name {}", self.name);
-        for l in &self.lines {
-            let _ = write!(s, "\n{l}");
-        }
-        s
+        spec_text(&self.encode())
     }
 
     pub fn parse(text: &str) -> Result<ComponentSpec, String> {
@@ -571,7 +650,7 @@ impl ComponentSpec {
         for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
             let t: Vec<&str> = line.split_whitespace().collect();
             let at = |i: usize| t.get(i).copied().ok_or_else(|| format!("short spec item: {line}"));
-            let join = |x: &str| -> Result<Arc<JoinSpec>, String> { Ok(Arc::new(JoinSpec::parse(&unhex(x)?)?)) };
+            let join = |x: &str| -> Result<Join, String> { Ok(JoinSpec::parse(&unhex(x)?)?.encode()) };
             spec.lines.push(match t[0] {
                 "name" => {
                     spec.name = at(1)?.to_owned();
@@ -633,7 +712,7 @@ impl ComponentSpec {
                 "produced" => Line::Produced(num(at(1)?)?),
                 "stats" => Line::Stats(num(at(1)?)?),
                 "sorted" => Line::Sorted(list(at(1)?)?),
-                "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },
+                "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)?, est: Est::default() },
                 "remove" => Line::Remove { head: num(at(1)?)?, join: join(at(2)?)? },
                 "addchecked" => Line::AddChecked { head: num(at(1)?)?, join: join(at(2)?)? },
                 "recheck" => Line::Recheck { head: num(at(1)?)?, join: join(at(2)?)? },
@@ -642,6 +721,7 @@ impl ComponentSpec {
                     delta: num(at(2)?)?,
                     join: join(at(3)?)?,
                     whole: t.get(4).map(|w| join(w)).transpose()?,
+                    est: Est::default(),
                 },
                 "probe" => Line::Probe { head: num(at(1)?)?, delta: num(at(2)?)?, sql: unhex(at(3)?)? },
                 "unplanned" => Line::Unplanned { head: num(at(1)?)?, delta: num(at(2)?)? },
@@ -656,7 +736,7 @@ impl ComponentSpec {
                     let section = |name: &str| -> Result<&[&str], String> {
                         sections.iter().find(|s| s.first() == Some(&name)).map(|s| &s[1..]).ok_or_else(|| format!("no {name}"))
                     };
-                    let slots = |xs: &[&str]| xs.iter().map(|x| slot(x)).collect::<Result<Vec<_>, _>>();
+                    let slots = |xs: &[&str]| xs.iter().map(|x| slot(x)).collect::<Result<Vector<_>, _>>();
                     let edge = if at(3)? == "-" { None } else { Some((t[3].to_owned(), if at(4)? == "-" { String::new() } else { t[4].to_owned() })) };
                     Line::Edge(EdgeSpec {
                         head: num(at(1)?)?,
@@ -689,8 +769,8 @@ impl Reprobe {
         let body = unhex(body)?;
         Ok(match kind {
             "sql" => Reprobe::Sql(body),
-            "join" => Reprobe::Join(Arc::new(JoinSpec::parse(&body)?)),
-            "whole" => Reprobe::Whole(Arc::new(JoinSpec::parse(&body)?)),
+            "join" => Reprobe::Join(JoinSpec::parse(&body)?.encode()),
+            "whole" => Reprobe::Whole(JoinSpec::parse(&body)?.encode()),
             other => return Err(format!("unknown probe kind {other}")),
         })
     }

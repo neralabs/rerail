@@ -391,6 +391,27 @@ fn clear(l: &Look, g: *mut u8, stamp: u32) {
     s.store(stamp, SeqCst);
 }
 
+/// The entry of `key` (`reads::cache_get`, as a 16z block's read takes it: `z_block`): found in the live
+/// generations, or on a miss an entry of `size` bytes taken and `fill`ed (it gives whether its payload fit) and
+/// completed; an entry another thread writes waited for. The dead entry where the cache had no room (`FAILED`
+/// counted): its caller reads it as no entry.
+///
+/// # Safety
+/// `cache` is a live cache (`Spec::init`), and `fill` writes only its entry's `size` bytes.
+pub unsafe fn get(cache: *mut u8, key: u64, size: u32, fill: &dyn Fn(*mut u8) -> bool) -> *mut u8 {
+    // SAFETY: the caller's.
+    unsafe { lookup(cache, key, size, Some(fill)) as *mut u8 }
+}
+
+/// Whether `e` is `cache`'s dead entry (`get` found no room).
+///
+/// # Safety
+/// `cache` is a live cache.
+pub unsafe fn is_dead(cache: *const u8, e: *const u8) -> bool {
+    // SAFETY: the caller's.
+    unsafe { e == cache.add(word(cache, DEAD).load(SeqCst) as usize) }
+}
+
 /// Entry `r` an open lookup took (`TAKEN`'s bits cleared or not), written: completed, and its writer gone from its
 /// generation's count (`reads::cache_done`).
 ///

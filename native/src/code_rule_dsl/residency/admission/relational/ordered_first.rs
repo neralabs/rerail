@@ -1,5 +1,6 @@
 //! Ordered, memoized first-match traversal of a whole typed graph batch.
 //! SQL owns candidate scope, edge order, and sink selection. This producer has no rule names.
+use rerail_blocks::vector::Vector;
 use super::{Result, Stage, invalid, source, sql_error, syntax, table};
 use rusqlite::{Connection, types::Value, vtab::Context};
 use std::{
@@ -21,7 +22,7 @@ struct Found {
 struct Graph {
     keys: Vec<String>,
     ids: HashMap<String, usize>,
-    roots: Vec<usize>,
+    roots: Vector<usize>,
     requested: HashSet<usize>,
     edges: Vec<Vec<(usize, i64)>>,
     sinks: HashMap<usize, i64>,
@@ -128,8 +129,8 @@ struct Output {
     scopes: Vec<String>,
     roots: Vec<String>,
     sinks: Vec<String>,
-    locations: Vec<i64>,
-    postings: [HashMap<String, Vec<usize>>; 2],
+    locations: Vector<i64>,
+    postings: [HashMap<String, Vector<usize>>; 2],
     work: Arc<AtomicUsize>,
 }
 impl syntax::Source for Output {
@@ -157,11 +158,11 @@ impl syntax::Source for Output {
             .min(self.len())
             .max(1)
     }
-    fn lookup(&self, column: usize, values: &[Value]) -> rusqlite::Result<Option<Vec<usize>>> {
+    fn lookup(&self, column: usize, values: &[Value]) -> rusqlite::Result<Option<rerail_blocks::vector::Vector<usize>>> {
         let Some(postings) = self.postings.get(column) else {
             return Ok(None);
         };
-        let mut rows = Vec::new();
+        let mut rows = rerail_blocks::vector::Vector::new();
         for value in values {
             self.charge(1)?;
             if let Value::Text(value) = value
@@ -287,7 +288,7 @@ pub(super) fn create(
         scopes: Vec::new(),
         roots: Vec::new(),
         sinks: Vec::new(),
-        locations: Vec::new(),
+        locations: rerail_blocks::vector::Vector::new(),
         postings: Default::default(),
         work: Arc::clone(work),
     };

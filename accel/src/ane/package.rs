@@ -449,7 +449,8 @@ pub fn unarchive(bytes: &[u8], dir: &Path) -> Result<(), String> {
 const BITS_MAGIC: &[u8; 8] = b"RRBITS01";
 
 /// `(rows, words, data)` of a constant file.
-pub fn read_constant(bytes: &[u8]) -> Result<(usize, usize, Vec<u64>), String> {
+/// Its words into whatever the caller holds them in (`C`: a block where a lane reads them, a `Vec` in the build script).
+pub fn read_constant<C: FromIterator<u64>>(bytes: &[u8]) -> Result<(usize, usize, C), String> {
     if bytes.len() < 24 || &bytes[..8] != BITS_MAGIC {
         return Err("not a constant file (magic RRBITS01)".into());
     }

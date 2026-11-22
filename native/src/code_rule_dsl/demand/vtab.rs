@@ -166,7 +166,7 @@ pub struct PackedDemand {
     file_facts: Vec<Option<FileFactDescriptor>>,
     file_paths: Vec<String>,
     files: Vec<TapeDoc>,
-    anchors: Vec<Vec<Vec<u32>>>,
+    anchors: Vec<Vec<rerail_blocks::vector::Vector<u32>>>,
     task_grid: Vec<Vec<bool>>,
     sound_under_errors: Vec<bool>,
     result_limits: Vec<u32>,
@@ -289,10 +289,12 @@ impl PackedDemand {
         backend: ExecutionBackend,
         programs: Vec<Program>,
         files: Vec<TapeDoc>,
-        anchors: Vec<Vec<Vec<u32>>>,
+        anchors: Vec<Vec<rerail_blocks::vector::Vector<u32>>>,
         task_grid: Vec<Vec<bool>>,
         result_limits: Vec<u32>,
     ) -> Result<Self, PackedError> {
+        // The demand's files read in one batch, its rows' reads and the transducer's (`tape::formats::in_one_batch`).
+        let files = crate::code_rule_dsl::tape::formats::in_one_batch(&files).into_owned();
         if anchors.len() != files.len()
             || task_grid.len() != files.len()
             || anchors.iter().any(|file| file.len() != programs.len())
@@ -982,7 +984,7 @@ impl PackedDemand {
                             continue;
                         }
                         if !self.sound_under_errors[program]
-                            && !self.files[file].syntax_error_ranges().is_empty()
+                            && self.files[file].has_syntax_error()
                         {
                             rows.push(PackedRow::producer_status(
                                 token,

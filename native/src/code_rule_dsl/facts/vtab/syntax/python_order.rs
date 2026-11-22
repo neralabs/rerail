@@ -1,13 +1,14 @@
 //! CPython field order over the existing tape projection. Geometry and node ids stay unchanged.
 //! Only a demanded visit column builds this dense rank array, once per document. This is one
 //! iterative tree pass, with temporary child overrides for fields whose source order differs.
+use rerail_blocks::vector::Vector;
 use super::{Dialect, NONE, Projected};
 use std::collections::HashMap;
 
 struct Walker<'a> {
     p: &'a Projected,
     dialect: &'a Dialect,
-    overrides: HashMap<u32, Vec<u32>>,
+    overrides: HashMap<u32, Vector<u32>>,
 }
 impl Walker<'_> {
     fn kind(&self, n: u32) -> &str {
@@ -20,10 +21,10 @@ impl Walker<'_> {
         let local = self.p.local_of_node(core as u32);
         (local != NONE).then_some(local)
     }
-    fn children(&self, n: u32) -> Vec<u32> {
+    fn children(&self, n: u32) -> Vector<u32> {
         self.p.children(n).collect()
     }
-    fn decorators(&self, n: u32) -> Vec<u32> {
+    fn decorators(&self, n: u32) -> Vector<u32> {
         let parent = self.p.parent(n as usize);
         if parent == NONE || self.kind(parent) != "decorated_definition" {
             return Vec::new();
@@ -33,7 +34,7 @@ impl Walker<'_> {
             .filter(|&c| self.kind(c) == "decorator")
             .collect()
     }
-    fn definition(&self, n: u32, class: bool) -> Vec<u32> {
+    fn definition(&self, n: u32, class: bool) -> Vector<u32> {
         let fields: &[&str] = if class {
             &["name", "superclasses", "body", "type_parameters"]
         } else {
@@ -62,7 +63,7 @@ impl Walker<'_> {
         }
         out
     }
-    fn parameters(&mut self, n: u32) -> Vec<u32> {
+    fn parameters(&mut self, n: u32) -> Vector<u32> {
         let (mut positional, mut vararg, mut keyword, mut kwarg) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut defaults, mut kw_defaults, mut other) = (Vec::new(), Vec::new(), Vec::new());
@@ -120,7 +121,7 @@ impl Walker<'_> {
         other.extend(defaults);
         other
     }
-    fn dictionary(&mut self, n: u32) -> Vec<u32> {
+    fn dictionary(&mut self, n: u32) -> Vector<u32> {
         let (mut keys, mut values) = (Vec::new(), Vec::new());
         for child in self.children(n) {
             if self.kind(child) == "pair" {
@@ -139,7 +140,7 @@ impl Walker<'_> {
         keys.extend(values);
         keys
     }
-    fn changed_children(&mut self, n: u32) -> Option<Vec<u32>> {
+    fn changed_children(&mut self, n: u32) -> Option<Vector<u32>> {
         if let Some(children) = self.overrides.remove(&n) {
             return Some(children);
         }
@@ -178,7 +179,7 @@ impl Walker<'_> {
     }
 }
 
-pub(super) fn ranks(p: &Projected, dialect: &Dialect) -> Vec<u32> {
+pub(super) fn ranks(p: &Projected, dialect: &Dialect) -> Vector<u32> {
     let _profile = crate::code_rule_dsl::logic::profile::span(|| "Python AST visit ranks".into());
     let mut walker = Walker {
         p,
@@ -199,7 +200,7 @@ pub(super) fn ranks(p: &Projected, dialect: &Dialect) -> Vec<u32> {
             stack.extend(children.into_iter().rev());
         } else {
             // Most nodes need no temporary vector or hash lookup insertion.
-            for &core in p.facts.children(p.node(n as u32)).iter().rev() {
+            for &core in p.f().children(p.node(n as u32)).iter().rev() {
                 let local = p.local_of_node(core as u32);
                 if local != NONE {
                     stack.push(local);

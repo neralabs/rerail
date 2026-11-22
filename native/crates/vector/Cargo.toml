@@ -1,0 +1,12 @@
+[package]
+name = "rerail-vector"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Plain values (`Pod`), the rooms structures take their regions from, and the growable array over them (`Vector`): below the tape format, so every crate's arrays lie in blocks (decision 0569 §3)."
+
+
+[dependencies]
+rayon = "=1.12.0"
+# A vector is written and read as a sequence, as the `Vec` it replaces was.
+serde = "1.0"

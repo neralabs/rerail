@@ -12,6 +12,7 @@
 //! rows. Statistics are a function of the rows, and the digest names the rows, so a relation admitted at that
 //! digest has those statistics. An entry whose digest no frame has any more is stale and is never matched. They are
 //! a part of the relation's frame (`PART`), admitted with its rows, so reading them is no read of its own.
+use rerail_blocks::vector::Vector;
 use super::Measured;
 use std::collections::{BTreeSet, HashMap};
 
@@ -28,8 +29,8 @@ pub(super) fn on() -> bool {
 }
 
 /// `bytes` as a frame part's one column of words: the length, then the bytes eight to a word.
-pub(super) fn to_words(bytes: &[u8]) -> Vec<i64> {
-    let mut out = vec![bytes.len() as i64];
+pub(super) fn to_words(bytes: &[u8]) -> Vector<i64> {
+    let mut out = rerail_blocks::vector![bytes.len() as i64];
     out.extend(bytes.chunks(8).map(|c| {
         let mut w = [0u8; 8];
         w[..c.len()].copy_from_slice(c);

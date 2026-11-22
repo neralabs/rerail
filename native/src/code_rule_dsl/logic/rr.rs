@@ -11,6 +11,7 @@
 //! A file read with `parse_file_version` has `core.rerail` before it, included or not. An included file's `.output`s are its own,
 //! not the program's: they are left out (`python/calls.rerail`'s).
 
+use rerail_blocks::vector::Vector;
 pub use rerail_rr::code_rule_dsl::logic::rr::check;
 // Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "rr/aggregate_demand")]
@@ -638,7 +639,7 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
     let n = paths.len();
     // Each file's direct includes, by position: the library's file, else the one beside it (`#include`).
     let mut direct: Vec<BTreeSet<usize>> = Vec::with_capacity(n);
-    let mut digests: Vec<[u8; 32]> = Vec::with_capacity(n);
+    let mut digests: Vector<[u8; 32]> = rerail_blocks::vector::Vector::with_capacity(n);
     for (i, path) in paths.iter().enumerate() {
         let (rr_file, file) = read_shared(path)?;
         digests.push(file.sha256.unwrap_or_default());
@@ -675,13 +676,13 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
     }
     // The modules: files that reach each other are one, in the order of their first file; their files in the list's
     // order, so the module's statements are as one lowering of the list reads them.
-    let mut unit_of: Vec<usize> = vec![usize::MAX; n];
-    let mut units: Vec<Vec<usize>> = Vec::new();
+    let mut unit_of: Vector<usize> = rerail_blocks::vector![usize::MAX; n];
+    let mut units: Vec<Vector<usize>> = Vec::new();
     for i in 0..n {
         if unit_of[i] != usize::MAX {
             continue;
         }
-        let members: Vec<usize> = (i..n).filter(|&j| j == i || (reach[i].contains(&j) && reach[j].contains(&i))).collect();
+        let members: Vector<usize> = (i..n).filter(|&j| j == i || (reach[i].contains(&j) && reach[j].contains(&i))).collect();
         for &j in &members {
             unit_of[j] = units.len();
         }

@@ -2,6 +2,7 @@
 //! fixtures, at exactly the nodes W's matcher does (`GrammarMatcher::match_root` at each node of
 //! the same tape). Prints the coverage: clauses lowered, refused by operator, mismatched.
 
+use rerail_blocks::vector::Vector;
 use super::compile_matcher::{Entry, Label, LoweredMatcher, domain};
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -1113,7 +1114,7 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
     // Every third wave of a dozen clauses: a few seconds a mode.
     let chunks: Vec<_> = lowered.chunks(12).step_by(3).collect();
     let waves: Vec<LoweredWave> = chunks.iter().map(|chunk| LoweredWave::new(&chunk.iter().map(|(_, m)| m).collect::<Vec<_>>()).unwrap()).collect();
-    let every: Vec<Vec<u32>> = tapes.iter().map(|tape| (0..tape.transducer_len() as u32).collect()).collect();
+    let every: Vec<Vector<u32>> = tapes.iter().map(|tape| (0..tape.transducer_len() as u32).collect()).collect();
     type Records = Vec<Option<Vec<BTreeSet<String>>>>;
     let run = |mode: &str| {
         // SAFETY: nextest runs each test in a process of its own.
@@ -1203,7 +1204,7 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
 /// candidates per answer and the most steps.
 /// The members of `set` on `tape`, node by node from what each test and step means: the reference the formula reader
 /// (`compile_sets::Reader`) is checked against, whatever order or shortcut it evaluates in.
-fn set_members(set: &super::compile_sets::Set, tape: &TapeDoc, labels: &[Vec<u64>], texts: &[Vec<u64>]) -> Vec<bool> {
+fn set_members(set: &super::compile_sets::Set, tape: &TapeDoc, labels: &[Vector<u64>], texts: &[Vector<u64>]) -> Vec<bool> {
     use super::compile_sets::{Set, Step};
     use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
     let len = tape.transducer_len() as u32;
@@ -1377,7 +1378,7 @@ fn anchor_rows_per_answer() {
     // The anchor of a walk's program, evaluated on a tape: its members (`Set::anchor`, decision 0365).
     // A recursive group's pass reads its group's labels as every node (`unknown`): its anchor holds whatever they
     // settle to, so one evaluation before the group's rounds serves every round.
-    let anchored_with = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index, unknown: &dyn Fn(u16) -> bool| -> Vec<u64> {
+    let anchored_with = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index, unknown: &dyn Fn(u16) -> bool| -> Vector<u64> {
         use super::compile_sets::{Reader, Set};
         let walk = super::compile_micro::Micro::of(program);
         let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
@@ -1402,7 +1403,7 @@ fn anchor_rows_per_answer() {
             let (mut candidates, mut roots, mut steps, mut label_rows, mut anchor_rows) = (0_u64, 0_u64, 0_u64, 0_u64, 0_u64);
             for (view, index) in views.iter().zip(&indexes) {
                 let sets = view.transducer_labels();
-                let starts: Vec<u32> = domain(&clause.domain, view, sets).filter(|&n| entry.admits(view, n)).collect();
+                let starts: Vector<u32> = domain(&clause.domain, view, sets).filter(|&n| entry.admits(view, n)).collect();
                 candidates += starts.len() as u64;
                 let anchor = anchored(&clause.program, view, index);
                 anchor_rows += starts.iter().filter(|&&n| get(&anchor, n)).count() as u64;
@@ -1440,7 +1441,7 @@ fn anchor_rows_per_answer() {
                         _ => "interpreter",
                     };
                     let pass_entry = Entry::of(program);
-                    let pass_starts: Vec<u32> = domain(d, view, sets).filter(|&n| pass_entry.admits(view, n)).collect();
+                    let pass_starts: Vector<u32> = domain(d, view, sets).filter(|&n| pass_entry.admits(view, n)).collect();
                     let rows = pass_starts.len() as u64;
                     let answers = sets.get(clause.labels.offset() + at).map_or(0, |bits| bits.iter().map(|w| u64::from(w.count_ones())).sum());
                     // Anchored starts where a pass walks from each start (a roots, targets or count walk).
@@ -1448,7 +1449,7 @@ fn anchor_rows_per_answer() {
                         // The group's anchor (its labels unknown): no start outside it emits with the labels settled,
                         // nor in any round before (it reads none of them).
                         let anchor = anchored_with(program, view, index, &|label| group.contains(&((crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as usize + usize::from(label)) as u16)));
-                        let outside: Vec<u32> = pass_starts.iter().copied().filter(|&n| !get(&anchor, n)).collect();
+                        let outside: Vector<u32> = pass_starts.iter().copied().filter(|&n| !get(&anchor, n)).collect();
                         if let Ok((outputs, _)) = program.execute_roots_budgeted(view, outside.iter().copied(), usize::MAX) {
                             assert!(outputs.is_empty(), "{name}: a recursive group's start outside its anchor emitted");
                         }
@@ -1931,7 +1932,7 @@ fn presence_bitmap_census() {
         .iter()
         .map(|t| (0..t.transducer_len() as u32).map(|n| (t.transducer_kind(n), t.transducer_field(n))).unzip())
         .collect();
-    let distinct: Vec<usize> = present.iter().map(|(k, _)| k.len()).collect();
+    let distinct: Vector<usize> = present.iter().map(|(k, _)| k.len()).collect();
     eprintln!("presence: {} files, {} nodes, kinds a file: min {} median {} max {}", tapes.len(), tapes.iter().map(TapeDoc::transducer_len).sum::<usize>(), distinct.iter().min().unwrap_or(&0), {
         let mut d = distinct.clone();
         d.sort_unstable();

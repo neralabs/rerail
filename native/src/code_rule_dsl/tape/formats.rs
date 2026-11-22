@@ -10,6 +10,7 @@
 //! A language without format 16's table (`f16::lang`), or an image with a code the table lacks, keeps format 15,
 //! and the profile counts it (`tape.keeps_15.<language>`); a run that set `RERAIL_TAPE` is told once a language.
 
+use rerail_blocks::vector::Vector;
 use super::{Code, Columns15, FileImage, Grammar, Held, SENTINEL, TAIL_FROM_START, TapeDoc, TapeImage};
 use crate::code_rule_dsl::language::GrammarDialect;
 use rerail_tape_format::{Redo, Writer};
@@ -29,8 +30,9 @@ pub enum Format {
 /// Format 16's and 16z's stored layout: 3 since decision 0336 §6 (a newline index after the side lists, its count
 /// in the header; 16z holds it raw after the checkpoints). Layout 2 (0336: region starts in the header; 16z's blocks
 /// one piece an array, raw, LZ4 or a repeat) had keys 216 and 1216; layout 1, 16 and 1016. Layout 5 (decision 0434
-/// §4, step 6): the tape's presence stored after it, in its home.
-const F16_LAYOUT: u32 = 5;
+/// §4, step 6): the tape's presence stored after it, in its home. Layout 6: a MISSING node sets the presence's
+/// fault bit (`ERROR_CODE`'s) beside its kind's, so a presence says which blocks hold a syntax error.
+const F16_LAYOUT: u32 = 7;
 
 impl Format {
     pub const ALL: [Format; 3] = [Format::F15, Format::F16, Format::F16Z];
@@ -230,7 +232,14 @@ impl TreeOps {
     /// The run's format 16 output for a tree of `language` over `source`, of about `nodes` nodes: `None` where the
     /// run stores format 15 (`run_16`).
     pub(super) fn of_run(language: GrammarDialect, source: &[u8], nodes: usize) -> Option<Self> {
+        Self::of_run_as(language, source, nodes, true)
+    }
+
+    /// `of_run`, its blocks packed (16z) only where `packed` and the run stores 16z: a tape read where it is written
+    /// and never stored (a rule's pattern) is not packed to be unpacked at its next read.
+    pub(super) fn of_run_as(language: GrammarDialect, source: &[u8], nodes: usize, packed: bool) -> Option<Self> {
         let (lang, tag, z) = run_16(language)?;
+        let z = z && packed;
         let w = f16::Writer::new(lang, source, tag, z, true, nodes);
         Some(TreeOps { language, lang, tag, w, ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
     }
@@ -322,13 +331,24 @@ pub struct Lean<'a> {
     target: Option<rerail_tape_format::Sixteen>,
     /// `finish` asks for the parse again, in format 15 (`Sink::again`).
     again: bool,
+    /// The program ranges its tape leaves out (`omitting`).
+    omit: Vector<[u32; 2]>,
+}
+
+impl Lean<'_> {
+    /// The sink of a program's tape that leaves out its placeholders `omit` (`SegmentMap::omissions`), as the parse
+    /// writes it (`Writer::omitting`).
+    pub fn omitting(mut self, omit: Vector<[u32; 2]>) -> Self {
+        self.omit = omit;
+        self
+    }
 }
 
 pub fn lean<'a>(grammar: &'a Grammar, source: &'a str, budget: &'a dyn Fn() -> bool, code_of: impl Fn(&u32) -> Result<Code, String> + Send + Sync + 'static) -> Lean<'a> {
     let code_of: Arc<dyn Fn(&u32) -> Result<Code, String> + Send + Sync> = Arc::new(code_of);
     let codes = code_of.clone();
     let target = sixteen(grammar.lang, move |lang, key| codes(&key).ok().and_then(|c| lang.number(&c.entry())));
-    Lean { grammar, source, budget, code_of, target, again: false }
+    Lean { grammar, source, budget, code_of, target, again: false, omit: Vector::new() }
 }
 
 impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
@@ -338,6 +358,10 @@ impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
 
     fn again(&mut self) -> bool {
         std::mem::take(&mut self.again)
+    }
+
+    fn omissions(&self) -> Vector<[u32; 2]> {
+        self.omit.clone()
     }
 
     fn finish(&mut self, mut w: Writer) -> Result<Result<TapeImage, String>, Redo> {
@@ -429,7 +453,7 @@ impl TapeImage {
 /// A `.rerail` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
 /// writer, as `lean` writes the other languages', else format 15's image.
 pub(super) enum RrTape {
-    Image(Vec<u8>),
+    Image(rerail_tape_format::Vector<u8>),
     Written(Box<f16::Finished>),
 }
 
@@ -490,23 +514,35 @@ impl FileImage {
 /// A document's tape as held (its image), shared by the document (`TapeDoc`) and the facts read off it
 /// (`Facts::tape`). A test may read it in another format (`tape_in`): written from format 15 once.
 pub struct DocTape {
-    /// The image's reader, made once (`reader`). It borrows `image`, so it is declared first: dropped before it.
+    /// The image's reader, made once (`reader`). It borrows `image` and `cache`, so it is declared first: dropped
+    /// before them.
     reader: AnyTape<'static>,
     image: Arc<TapeImage>,
+    /// The cache a 16z tape's blocks are decoded into: its batch's (`TapeDoc::in_batch`); none outside a batch.
+    cache: Option<Arc<f16::ZCache>>,
     /// The document's source, which another format's tape is written over (`tape_in`: format 16 holds its newlines).
     source: Arc<String>,
-    other: [OnceLock<TapeImage>; 3],
+    /// The tape written in another format (a test's comparison, `tape_in`), with its own batch's cache: a tape apart
+    /// from the document's, read in a batch of its own.
+    other: [OnceLock<(TapeImage, Option<f16::ZCache>)>; 3],
 }
 
 impl DocTape {
     pub fn new(image: Arc<TapeImage>, source: Arc<String>) -> Self {
-        let reader = image.tape();
-        // SAFETY: the reader borrows the image's bytes and code table, and the language tables (static). The image
-        // is in the `Arc`'s allocation, which does not move, and is never changed once held; this holds the `Arc`
-        // for as long as the reader, and `reader` lends it at the borrow of `self` only.
-        let reader = unsafe { std::mem::transmute::<AnyTape<'_>, AnyTape<'static>>(reader) };
-        DocTape { reader, image, source, other: Default::default() }
+        Self::in_batch(image, source, None)
     }
+
+    /// `new`, a 16z tape's blocks decoded into `cache`, its batch's.
+    pub fn in_batch(image: Arc<TapeImage>, source: Arc<String>, cache: Option<Arc<f16::ZCache>>) -> Self {
+        let reader = image.tape_in(cache.as_deref());
+        // SAFETY: the reader borrows the image's bytes and code table, the cache, and the language tables (static).
+        // The image and the cache are in their `Arc`s' allocations, which do not move, and are never changed once
+        // held (the cache is written through its atomics only); this holds the `Arc`s for as long as the reader, and
+        // `reader` lends it at the borrow of `self` only.
+        let reader = unsafe { std::mem::transmute::<AnyTape<'_>, AnyTape<'static>>(reader) };
+        DocTape { reader, image, cache, source, other: Default::default() }
+    }
+
 
     /// The tape's reader, made once: a node's reads dispatch on the format, and nothing is built a read.
     #[inline]
@@ -517,6 +553,11 @@ impl DocTape {
     /// The image, shared: a document over the same tape holds it (`TapeDoc::over`).
     pub fn image_arc(&self) -> &Arc<TapeImage> {
         &self.image
+    }
+
+    /// The cache its 16z tape's blocks are decoded into: its batch's, where it is read in one.
+    pub fn cache(&self) -> Option<&Arc<f16::ZCache>> {
+        self.cache.as_ref()
     }
 
     /// The source the tape is over.
@@ -531,12 +572,12 @@ impl DocTape {
     /// The bytes it holds.
     pub fn bytes(&self) -> usize {
         self.image.estimated_bytes()
-            + self.other.iter().filter_map(OnceLock::get).map(TapeImage::estimated_bytes).sum::<usize>()
+            + self.other.iter().filter_map(OnceLock::get).map(|(image, cache)| image.estimated_bytes() + cache.as_ref().map_or(0, f16::ZCache::bytes)).sum::<usize>()
     }
 
     /// The tape as the reads written once take it (decision 0310): the bytes every offset of its view counts
     /// from, and the view. Format 15's columns and format 16's arrays as held; a 16z tape's blocks as stored, which
-    /// a reader reads through a `rerail_clif::view::Reader` of its own (a block decoded where a read falls, 0353
+    /// a reader reads through its batch's cache (`ZCache::view_for`: a block decoded where a read falls, 0353
     /// step 4b).
     pub fn in_place(&self) -> Result<(&[u8], rerail_clif::view::TapeView), String> {
         fn sixteen<'a>(t: &'a f16::Tape16, lang: Option<&Lang>) -> Result<(&'a [u8], rerail_clif::view::TapeView), String> {
@@ -556,13 +597,32 @@ impl DocTape {
         self.reader
     }
 
+    /// The tape, a 16z tape's blocks decoded into `cache`, its batch's: a read of it in that batch. A tape of
+    /// another format is read as held.
+    pub fn tape_with<'a>(&'a self, cache: Option<&'a f16::ZCache>) -> AnyTape<'a> {
+        match (&self.reader, cache) {
+            (AnyTape::F16Z(_), Some(_)) => self.image.tape_in(cache),
+            _ => self.reader,
+        }
+    }
+
     /// The tape in `format`: as held, or (a test's comparison of formats) written from format 15 once.
     pub fn tape_in(&self, format: Format) -> AnyTape<'_> {
+        self.tape_in_with(format, self.cache.as_deref())
+    }
+
+    /// `tape_in`, a 16z tape's blocks decoded into `cache`, its batch's.
+    pub fn tape_in_with<'a>(&'a self, format: Format, cache: Option<&'a f16::ZCache>) -> AnyTape<'a> {
         if format == self.image.format() {
-            return self.image.tape();
+            return self.image.tape_in(cache.or(self.cache.as_deref()));
         }
         let slot = Format::ALL.iter().position(|&f| f == format).expect("a format");
-        self.other[slot].get_or_init(|| (*self.image).clone().in_format(format, self.source.as_bytes())).tape()
+        let (image, own) = self.other[slot].get_or_init(|| {
+            let image = (*self.image).clone().in_format(format, self.source.as_bytes());
+            let own = image.own_cache();
+            (image, own)
+        });
+        image.tape_in(own.as_ref())
     }
 }
 
@@ -581,4 +641,42 @@ impl TapeDoc {
     pub fn doc_tape(&self) -> &Arc<DocTape> {
         &self.held
     }
+
+    /// The document read in its batch: a 16z tape's blocks decoded into `cache`, the batch's (the device's reads
+    /// share it). The document itself stays its own, read in every batch it is in, each through its own cache; a
+    /// tape of another format is read as held, and the document is returned as it is.
+    pub fn in_batch(&self, cache: &Arc<f16::ZCache>) -> TapeDoc {
+        if self.held.image.format() != Format::F16Z {
+            return self.clone();
+        }
+        let held = DocTape::in_batch(Arc::clone(&self.held.image), Arc::clone(&self.held.source), Some(Arc::clone(cache)));
+        TapeDoc { held: Arc::new(held), ..self.clone() }
+    }
+
+    /// Its 16z tape, where it holds one: a batch's cache is made for these (`f16::ZCache::of`).
+    pub fn z_tape(&self) -> Option<&f16::Tape16Z> {
+        self.held.image.z_tape()
+    }
+
+    /// The document read in a batch of its own (a reader outside every batch): a 16z tape's blocks decoded into a
+    /// cache made for it, where it is in no batch already (`in_one_batch`).
+    pub fn alone(&self) -> TapeDoc {
+        in_one_batch(std::slice::from_ref(self)).into_owned().swap_remove(0)
+    }
+
+    /// Whether it is a 16z document read in no batch whose cache holds its blocks (`in_batch`).
+    fn unbatched(&self) -> bool {
+        self.z_tape().is_some_and(|t| self.held.cache.as_ref().is_none_or(|c| c.entry_size() < t.entry_size()))
+    }
+}
+
+/// `files` read in one batch: a reader of documents outside every batch (the transducer's) makes one of the 16z
+/// documents it reads that are in none, their blocks decoded into one cache made for them (`TapeDoc::in_batch`). The
+/// files as they are where each is in one already.
+pub fn in_one_batch(files: &[TapeDoc]) -> std::borrow::Cow<'_, [TapeDoc]> {
+    if !files.iter().any(TapeDoc::unbatched) {
+        return std::borrow::Cow::Borrowed(files);
+    }
+    let cache = Arc::new(f16::ZCache::of(files.iter().filter(|d| d.unbatched()).filter_map(TapeDoc::z_tape)));
+    std::borrow::Cow::Owned(files.iter().map(|d| if d.unbatched() { d.in_batch(&cache) } else { d.clone() }).collect())
 }

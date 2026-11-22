@@ -420,7 +420,7 @@ fn overlapping_readers_child() {
         fn estimated_matches(&self, _: usize, _: bool) -> usize {
             4
         }
-        fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+        fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
             None
         }
         fn value(&self, r: usize, _: usize) -> i64 {
@@ -566,7 +566,7 @@ fn released_successors_child() {
         fn estimated_matches(&self, _: usize, _: bool) -> usize {
             1
         }
-        fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+        fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
             None
         }
         fn value(&self, _: usize, _: usize) -> i64 {

@@ -67,7 +67,7 @@ impl SolverDevice for Metal {
         joins::refuse(why);
     }
 
-    fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<rerail_blocks::vector::Vector<u64>, String> {
         joins::run(&plans(rules)?, store, names, fresh)
     }
 
@@ -75,7 +75,7 @@ impl SolverDevice for Metal {
         joins::submit(&plans(rules)?, names)
     }
 
-    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<rerail_blocks::vector::Vector<u64>, String> {
         joins::resume(ticket, &plans(rules)?, store, names, fresh)
     }
 
@@ -91,7 +91,7 @@ impl SolverDevice for Metal {
         store: &Store,
         names: &Interner,
         fresh: &mut [Fresh],
-    ) -> Result<Vec<u64>, String> {
+    ) -> Result<rerail_blocks::vector::Vector<u64>, String> {
         joins::fixpoint(&plans(seeds)?, &plans(deltas)?, heads, store, names, fresh)
     }
 
@@ -127,7 +127,7 @@ pub mod matcher {
     };
 
     impl MatcherDevice for super::Metal {
-        fn execute_packed(&self, engine: Engine, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error> {
+        fn execute_packed(&self, engine: Engine, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<rerail_blocks::vector::Vector<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error> {
             match engine {
                 Engine::Interpreter => {
                     let engine = programs::compile_interpreter()?;
@@ -141,7 +141,7 @@ pub mod matcher {
             }
         }
 
-        fn execute_outcomes(&self, backend: ExecutionBackend, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error> {
+        fn execute_outcomes(&self, backend: ExecutionBackend, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<rerail_blocks::vector::Vector<u32>>]) -> Result<BatchOutcome, Error> {
             match backend {
                 ExecutionBackend::MetalInterpreter => {
                     let engine = programs::compile_interpreter()?;
@@ -203,7 +203,7 @@ pub mod matcher {
         fn drop_label_pipelines(&self) {
             programs::label_passes::drop_pipelines();
         }
-        fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Result<Option<Vec<Vec<u64>>>, Error> {
+        fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Result<Option<Vec<rerail_blocks::vector::Vector<u64>>>, Error> {
             use programs::block_program::{ClassStrategy, Executor, LaneWidth, generated_ready, run_split};
             // Each set of patterns is a kernel of its own: until its compile (on a thread of its own) is done, the
             // interpreter's pipeline runs the batch, so no launch waits on the compiler.

@@ -21,6 +21,7 @@
 //!    class strategy) gives the CPU interpreter's outputs, bit for bit;
 //! 2. the CPU interpreter gives the evaluator's masks.
 
+use rerail_blocks::vector::Vector;
 #[allow(unused_imports)]
 use rerail_compiler::*;
 use rerail_compiler::program::Words as Program;
@@ -456,7 +457,7 @@ struct Case {
     stmts: Vec<Stmt>,
     program: Program,
     checked: Vec<(String, usize)>,
-    fallbacks: Vec<usize>,
+    fallbacks: Vector<usize>,
     /// It has a count: below zero the compiled program falls back where the evaluator holds 0.
     counts: bool,
 }
@@ -485,7 +486,7 @@ fn compile_case(name: &str, source: &str) -> Result<Case, String> {
     Ok(Case { name: name.to_owned(), stmts, program, checked, fallbacks, counts })
 }
 
-fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
+fn cut(mut words: Vector<u64>, n: usize) -> Vector<u64> {
     words.truncate(n.div_ceil(64));
     if !n.is_multiple_of(64)
         && let Some(last) = words.last_mut()
@@ -497,7 +498,7 @@ fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
 
 /// Check 2: the interpreter's outputs for `case` over `bytes` against the evaluator's masks:
 /// whether the file fell back, or the first difference.
-fn against_the_evaluator(case: &Case, bytes: &[u8], got: &[Vec<u64>]) -> Result<bool, String> {
+fn against_the_evaluator(case: &Case, bytes: &[u8], got: &[Vector<u64>]) -> Result<bool, String> {
     let n = bytes.len();
     let at = || format!("{n} bytes: {:?}", String::from_utf8_lossy(&bytes[..n.min(80)]));
     let out = ::bitlex::eval::Ev::run(&case.stmts, bytes, &HashMap::new()).map_err(|e| format!("evaluates: {e}"))?;
@@ -605,14 +606,14 @@ fn executors_equal_the_interpreter(metal: bool) {
     let inputs = corpus_inputs();
     let blocks: Vec<&block::BlockProgram> = cases.iter().map(|c| &c.program.block_programs[0]).collect();
     let files = batch(&cases, &inputs);
-    let want: Vec<Vec<Vec<u64>>> = block::run_batch(&blocks, &files).into_iter().map(|r| r.outputs).collect();
+    let want: Vec<Vec<Vector<u64>>> = block::run_batch(&blocks, &files).into_iter().map(|r| r.outputs).collect();
     let natives: Vec<block_native::BlockNative> = cases.iter().map(|c| native_ir::lower(&c.program, 0, 0).expect("lowers").block_programs.remove(0)).collect();
     let compiled: Vec<native_cpu_block::CompiledBlock> =
         natives.iter().zip(&cases).map(|(n, c)| native_cpu_block::compile(n).unwrap_or_else(|e| panic!("{}: cranelift: {e:?}", c.name))).collect();
     let refs: Vec<&native_cpu_block::CompiledBlock> = compiled.iter().collect();
     eprintln!("interpreted and compiled in {:.1} s", seconds(t));
     #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(unused_mut))]
-    let mut runs: Vec<(String, Vec<Vec<Vec<u64>>>)> =
+    let mut runs: Vec<(String, Vec<Vec<Vector<u64>>>)> =
         vec![("cranelift".to_owned(), native_cpu_block::run_batch(&refs, &files).into_iter().map(|r| r.outputs).collect())];
     if metal {
         runs.extend(metal_corpus_runs(&natives, &files, t));
@@ -647,7 +648,7 @@ fn executors_equal_the_interpreter(metal: bool) {
 /// The Metal executors' runs of the corpus' batch (`executors_equal_the_interpreter`): each lane width's interpreter
 /// and generated MSL, in chunks of programs.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::BatchFile<'_>], t: std::time::Instant) -> Vec<(String, Vec<Vec<Vec<u64>>>)> {
+fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::BatchFile<'_>], t: std::time::Instant) -> Vec<(String, Vec<Vec<Vector<u64>>>)> {
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
     let mut runs = Vec::new();
     let forms: Vec<&block_native::BlockNative> = natives.iter().collect();
@@ -663,7 +664,7 @@ fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::Batc
             // Generated MSL in chunks of programs: one source of every program takes Metal's
             // compiler minutes; its time grows faster than the source.
             let chunk = std::env::var("RERAIL_CORPUS_CHUNK").ok().and_then(|c| c.parse().ok()).unwrap_or(32usize);
-            let mut got: Vec<Vec<Vec<u64>>> = Vec::with_capacity(files.len());
+            let mut got: Vec<Vec<Vector<u64>>> = Vec::with_capacity(files.len());
             for (c, programs) in forms.chunks(chunk).enumerate() {
                 let base = c * chunk;
                 let mine: Vec<block::BatchFile<'_>> = files
@@ -683,7 +684,7 @@ fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::Batc
 
 /// No Metal executors off macOS.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn metal_corpus_runs(_: &[block_native::BlockNative], _: &[block::BatchFile<'_>], _: std::time::Instant) -> Vec<(String, Vec<Vec<Vec<u64>>>)> {
+fn metal_corpus_runs(_: &[block_native::BlockNative], _: &[block::BatchFile<'_>], _: std::time::Instant) -> Vec<(String, Vec<Vec<Vector<u64>>>)> {
     Vec::new()
 }
 
@@ -692,7 +693,7 @@ const GAPS: [&str; 0] = [];
 
 
 /// A node as ids: kind, field, supertypes (sorted), start, end, size.
-type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);
+type IdNode = (u16, u16, Vector<u16>, usize, usize, usize);
 
 /// Documents of `p`'s language: random values, nested, with random spacing; then each with one
 /// byte changed, dropped or doubled, so that many go to tree-sitter; and long atoms, deep
@@ -789,7 +790,7 @@ fn reference_nodes(stmts: &[Stmt], bytes: &[u8], ids: &Ids) -> Option<Vec<IdNode
             .iter()
             .map(|n| {
                 let field = n.field.as_deref().map_or(0, |f| ids.of(&format!("field {f}")));
-                let mut supers: Vec<u16> = n.supertypes.iter().map(|s| ids.of(s)).collect();
+                let mut supers: Vector<u16> = n.supertypes.iter().map(|s| ids.of(s)).collect();
                 supers.sort_unstable();
                 (ids.of(&n.kind), field, supers, n.start, n.end, n.size)
             })
@@ -808,7 +809,7 @@ fn tier2_nodes(p: &Program, bytes: &[u8]) -> Option<Vec<IdNode>> {
             .map(|n| {
                 let mut supers = n.supers;
                 supers.sort_unstable();
-                (n.kind, n.field, supers, n.start as usize, n.end as usize, n.size as usize)
+                (n.kind, n.field, Vector::from(&supers[..]), n.start as usize, n.end as usize, n.size as usize)
             })
             .collect(),
     )
@@ -913,7 +914,7 @@ fn a_file_on_every_executor() {
     let case = if path.ends_with(".rir") {
         let program = rir::assemble(&source).unwrap_or_else(|e| panic!("{e}"));
         let checked = (0..program.block_programs[0].outputs.len()).map(|k| (format!("out {k}"), k)).collect();
-        Case { name: path.clone(), stmts: Vec::new(), program, checked, fallbacks: Vec::new(), counts: false }
+        Case { name: path.clone(), stmts: Vec::new(), program, checked, fallbacks: rerail_blocks::vector::Vector::new(), counts: false }
     } else {
         compile_case(&path, &source).unwrap_or_else(|e| panic!("{e}"))
     };
@@ -929,7 +930,7 @@ fn a_file_on_every_executor() {
 /// Generated MSL's outputs over `bytes` where they differ from the interpreter's (`want`), each lane width's, for
 /// the outputs `checked` names; `RERAIL_DUMP_MSL=<file>` writes the 16-byte lanes' source.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: &[(String, usize)], want: &[Vec<u64>]) {
+fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: &[(String, usize)], want: &[Vector<u64>]) {
     use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with, run_generated_with};
     if let Some(dump) = std::env::var_os("RERAIL_DUMP_MSL") {
         std::fs::write(&dump, generate_with(&native.planes_form(), LaneWidth::W16, ClassStrategy::Planes)).expect("writes");
@@ -946,4 +947,4 @@ fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: 
 
 /// No Metal executors off macOS.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn metal_differences(_: &block_native::BlockNative, _: &[u8], _: &[(String, usize)], _: &[Vec<u64>]) {}
+fn metal_differences(_: &block_native::BlockNative, _: &[u8], _: &[(String, usize)], _: &[Vector<u64>]) {}

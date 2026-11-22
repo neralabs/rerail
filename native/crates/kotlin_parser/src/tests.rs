@@ -727,7 +727,7 @@ fn show() {
                             eprintln!("rules {:?}; ends {:?}; kind of 1 {} 0 {}", r.rules, r.ends, r.kinds[usize::from(b'1')], r.kinds[usize::from(b'0')]);
                             for rule in &r.rules {
                                 if let rerail_compiler::records::EndRule::Last(o) = rule {
-                                    let w = |v: &Vec<Vec<u64>>| v.get(usize::from(*o)).and_then(|x| x.first()).map(|x| format!("{:016b}", x.reverse_bits() >> 48));
+                                    let w = |v: &[rerail_blocks::vector::Vector<u64>]| v.get(usize::from(*o)).and_then(|x| x.first()).map(|x| format!("{:016b}", x.reverse_bits() >> 48));
                                     eprintln!("last {o}: interp {:?} cpu {:?}", w(&run.outputs), w(&cpu.outputs));
                                 }
                             }
@@ -737,7 +737,7 @@ fn show() {
                             let o = b.mask_outputs()[m.parse::<usize>().unwrap()];
                             let run = b.run(text.as_bytes());
                             let cpu = c.parser.tier1.extract(text.as_bytes());
-                            let w = |v: &Vec<Vec<u64>>| v.get(o).and_then(|x| x.first()).map(|x| format!("{:064b}", x.reverse_bits()));
+                            let w = |v: &[rerail_blocks::vector::Vector<u64>]| v.get(o).and_then(|x| x.first()).map(|x| format!("{:064b}", x.reverse_bits()));
                             eprintln!("mask {m} output {o}: interp {:?}\n  cpu {:?} (cpu outputs {})", w(&run.outputs), w(&cpu.outputs), cpu.outputs.len());
                         }
                         for rd in r.readers.iter().filter(|rd| !rd.parts.is_empty()) {

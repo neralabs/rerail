@@ -38,6 +38,7 @@
 //! Coverage is `Unknown` only where W's clause fails on the file: a file its parser did not read,
 //! or syntax errors under a clause not sound around them (`source-incomplete`).
 
+use rerail_blocks::vector::Vector;
 use super::owner::Lease;
 use super::schedule::{self, Limits, Outcome};
 use crate::code_rule_dsl::eval::grammar_matcher;
@@ -262,9 +263,9 @@ fn bound_capture(violation: &ViolationSpec) -> Option<String> {
 
 /// The starts of `name`'s bindings in `text`, at byte `start` of the file: the first regex's that
 /// binds it (`First`), or every binding of every regex holding it, each range once (`Each`).
-fn bindings(regexes: &[Regex], groups: Groups, name: &str, text: &str, start: usize) -> Vec<usize> {
+fn bindings(regexes: &[Regex], groups: Groups, name: &str, text: &str, start: usize) -> Vector<usize> {
     match groups {
-        Groups::None | Groups::Bound => Vec::new(),
+        Groups::None | Groups::Bound => rerail_blocks::vector::Vector::new(),
         Groups::First => regexes
             .iter()
             .find_map(|regex| regex.captures(text)?.name(name).map(|group| start + group.start()))
@@ -363,8 +364,8 @@ pub(in crate::code_rule_dsl) fn captured_counted(
                 if let Some(text) = env.get_transformed(name) {
                     return Some(Capture::Text(String::from_utf8_lossy(text).into_owned()));
                 }
-                let nodes: Vec<u32> = match env.get_match(name) {
-                    Some(node) => vec![node.node_id() as u32],
+                let nodes: Vector<u32> = match env.get_match(name) {
+                    Some(node) => rerail_blocks::vector![node.node_id() as u32],
                     None => env.get_multiple_matches(name).iter().map(|node| node.node_id() as u32).collect(),
                 };
                 (!nodes.is_empty()).then_some(Capture::Nodes(nodes))
@@ -377,7 +378,7 @@ pub(in crate::code_rule_dsl) fn captured_counted(
 /// What a name of an `ast` atom binds at a match (`captured`): nodes (a multi-capture's every node), or the text a
 /// rule's `transform` makes.
 pub(in crate::code_rule_dsl) enum Capture {
-    Nodes(Vec<u32>),
+    Nodes(Vector<u32>),
     Text(String),
 }
 
@@ -714,8 +715,8 @@ impl Layer {
     }
 
     /// Each (clause, document)'s matched nodes.
-    fn matched(&self, lease: &Lease<'_>) -> StoreResult<BTreeMap<(i64, i64), Vec<i64>>> {
-        let mut out = BTreeMap::<_, Vec<_>>::new();
+    fn matched(&self, lease: &Lease<'_>) -> StoreResult<BTreeMap<(i64, i64), Vector<i64>>> {
+        let mut out = BTreeMap::<_, rerail_blocks::vector::Vector<_>>::new();
         let rows: Vec<(i64, i64, i64)> = lease
             .prepare("SELECT c0, c1, c2 FROM matched")?
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?

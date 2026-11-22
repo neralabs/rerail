@@ -15,6 +15,7 @@
 //! empty slot. The host's fold (`Rel::fold`) and the device's (`Batch::lattice_fold`) probe the same slots: the map the
 //! device grows is the one the host's next fold probes. It grows (every key placed again) past half full.
 
+use rerail_blocks::vector::Vector;
 use super::rows::{BlockVec, Facts, Home};
 use super::runs::RowData;
 use std::sync::Arc;
@@ -282,7 +283,7 @@ mod tests {
         // 3,000 keys a wave, each key's value lower in the next wave for every third key.
         let mut want: std::collections::HashMap<i64, (i64, u32)> = std::collections::HashMap::new();
         for wave in 0..3i64 {
-            let rows: Vec<i64> = (0..3000i64).flat_map(|key| [key, if key % 3 == 0 { 100 - wave } else { 100 }]).collect();
+            let rows: Vector<i64> = (0..3000i64).flat_map(|key| [key, if key % 3 == 0 { 100 - wave } else { 100 }]).collect();
             rel.fold(&rows);
             for key in 0..3000i64 {
                 let v = if key % 3 == 0 { 100 - wave } else { 100 };

@@ -4,6 +4,7 @@
 //! against a byte-by-byte reference that exists only here, and checked for what it lowers to:
 //! straight bit operations.
 
+use rerail_blocks::vector::Vector;
 // The IR text's helpers, tier 1's (`rerail_compiler::clif_text`).
 pub use rerail_compiler::clif_text::{body_of, carried_words, hot_loop, opcode, state_bits};
 // The machine code's, which the AArch64 budgets below read.
@@ -31,8 +32,8 @@ fn program(rows: &str) -> Program {
 }
 
 /// The reference: bit `j` of word `j / 64` where byte `j` passes.
-fn reference(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<u64> {
-    let mut words = vec![0u64; bytes.len().div_ceil(64)];
+fn reference(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vector<u64> {
+    let mut words = rerail_blocks::vector![0u64; bytes.len().div_ceil(64)];
     for (j, &b) in bytes.iter().enumerate() {
         words[j / 64] |= u64::from(f(b)) << (j % 64);
     }
@@ -40,7 +41,7 @@ fn reference(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<u64> {
 }
 
 /// Check a program's outputs against references on every input and every executor.
-fn check_all(rows: &str, want: impl Fn(&[u8]) -> Vec<Vec<u64>>) {
+fn check_all(rows: &str, want: impl Fn(&[u8]) -> Vec<Vector<u64>>) {
     let p = program(rows);
     let ex = Executors::new(&p);
     for bytes in inputs() {
@@ -99,10 +100,10 @@ fn eq_equals_reference_on_every_executor() {
 fn eq_swar_form_equals_reference() {
     for bytes in inputs() {
         for byte in [b'"', 0x00, 0x80, 0xff] {
-            let got: Vec<u64> = block::padded(&bytes)
+            let got: Vector<u64> = block::padded(&bytes)
                 .iter()
                 .map(|b| block::eq_swar(b, byte))
-                .collect::<Vec<_>>();
+                .collect::<Vector<_>>();
             let mut got = got;
             block::mask_tail(&mut got, bytes.len());
             assert_eq!(got, reference(&bytes, |b| b == byte));
@@ -304,21 +305,21 @@ fn interpreters_have_no_byte_loops() {
 /// The quote and backslash masks the operator programs start from: `%0` and `%1`.
 const QUOTE_AND_BACKSLASH: &str = "  block 0 %0 = eq 0x22\n  block 0 %1 = eq 0x5c\n";
 
-fn quote(bytes: &[u8]) -> Vec<u64> {
+fn quote(bytes: &[u8]) -> Vector<u64> {
     reference(bytes, |b| b == b'"')
 }
 
-fn backslash(bytes: &[u8]) -> Vec<u64> {
+fn backslash(bytes: &[u8]) -> Vector<u64> {
     reference(bytes, |b| b == b'\\')
 }
 
 /// `words` with the bits past `len` bytes cleared.
-fn tail(mut words: Vec<u64>, len: usize) -> Vec<u64> {
+fn tail(mut words: Vector<u64>, len: usize) -> Vector<u64> {
     block::mask_tail(&mut words, len);
     words
 }
 
-fn zip(a: &[u64], b: &[u64], f: impl Fn(u64, u64) -> u64) -> Vec<u64> {
+fn zip(a: &[u64], b: &[u64], f: impl Fn(u64, u64) -> u64) -> Vector<u64> {
     a.iter().zip(b).map(|(&x, &y)| f(x, y)).collect()
 }
 
@@ -326,7 +327,7 @@ fn zip(a: &[u64], b: &[u64], f: impl Fn(u64, u64) -> u64) -> Vec<u64> {
 fn const_equals_reference_on_every_executor() {
     for c in [0xaaaa_aaaa_aaaa_aaaau64, 0x0123_4567_89ab_cdef, 0, u64::MAX, 1 << 63 | 1] {
         check_all(&format!("  block 0 %0 = const {c:#018x}\n  block 0 output %0\n"), |bytes| {
-            vec![tail(vec![c; bytes.len().div_ceil(64)], bytes.len())]
+            vec![tail(rerail_blocks::vector![c; bytes.len().div_ceil(64)], bytes.len())]
         });
     }
 }
@@ -368,8 +369,8 @@ fn operator_combinations_equal_reference_on_every_executor() {
     check_all(&rows, |bytes| {
         let (q, b) = (quote(bytes), backslash(bytes));
         let either = zip(&q, &b, |x, y| x | y);
-        let neither: Vec<u64> = either.iter().map(|w| !w).collect();
-        let odd_quote: Vec<u64> = q.iter().map(|w| w & 0xaaaa_aaaa_aaaa_aaaa).collect();
+        let neither: Vector<u64> = either.iter().map(|w| !w).collect();
+        let odd_quote: Vector<u64> = q.iter().map(|w| w & 0xaaaa_aaaa_aaaa_aaaa).collect();
         let mixed = zip(&odd_quote, &neither, |x, y| x ^ y);
         let last = zip(&mixed, &b, |x, y| x & !y);
         vec![either, tail(neither, bytes.len()), tail(last, bytes.len())]
@@ -418,7 +419,7 @@ fn simdjson_classes() -> String {
     )
 }
 
-fn simdjson_want(bytes: &[u8]) -> Vec<Vec<u64>> {
+fn simdjson_want(bytes: &[u8]) -> Vec<Vector<u64>> {
     vec![
         reference(bytes, |b| b",:[]{}".contains(&b)),
         reference(bytes, |b| b" \t\n\r".contains(&b)),
@@ -499,8 +500,8 @@ fn pair_equals_reference_on_every_executor() {
         rows.push_str(&format!("  block 0 output %{i}\n"));
     }
     let classes = |t: &block::ClassTable, x: u8| t.lo[usize::from(x & 15)] & t.hi[usize::from(x >> 4)];
-    let want = |bytes: &[u8]| -> Vec<Vec<u64>> {
-        let mut out: Vec<Vec<u64>> = cases
+    let want = |bytes: &[u8]| -> Vec<Vector<u64>> {
+        let mut out: Vec<Vector<u64>> = cases
             .iter()
             .map(|&(p, t, bits)| {
                 let hits: Vec<bool> = (0..bytes.len())
@@ -589,8 +590,8 @@ fn bits(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<bool> {
     bytes.iter().map(|&b| f(b)).collect()
 }
 
-fn words_of(bits: &[bool]) -> Vec<u64> {
-    let mut words = vec![0u64; bits.len().div_ceil(64)];
+fn words_of(bits: &[bool]) -> Vector<u64> {
+    let mut words = rerail_blocks::vector![0u64; bits.len().div_ceil(64)];
     for (j, &b) in bits.iter().enumerate() {
         words[j / 64] |= u64::from(b) << (j % 64);
     }
@@ -879,7 +880,7 @@ fn position_planes_equal_the_positions_on_every_executor() {
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     let want = |bytes: &[u8]| {
         let plane = |j: u8| (0..bytes.len()).map(|i| i >> j & 1 == 1).collect::<Vec<bool>>();
-        let mut out: Vec<Vec<u64>> = planes.iter().map(|&j| words_of(&plane(j))).collect();
+        let mut out: Vec<Vector<u64>> = planes.iter().map(|&j| words_of(&plane(j))).collect();
         let a = bits(bytes, |x| x == b'a');
         let late: Vec<bool> = prev_reference(&plane(planes[planes.len() - 2]), 3).iter().zip(&a).map(|(&x, &y)| x && y).collect();
         out.push(words_of(&late));
@@ -983,8 +984,8 @@ pub(crate) fn repo_file(path: &str) -> Vec<u8> {
 }
 
 /// The set bits of a mask over `len` bytes, as byte indexes.
-fn indexes(words: &[u64]) -> Vec<u32> {
-    let mut out = Vec::new();
+fn indexes(words: &[u64]) -> Vector<u32> {
+    let mut out = rerail_blocks::vector::Vector::new();
     for (i, &w) in words.iter().enumerate() {
         let mut w = w;
         while w != 0 {
@@ -1063,9 +1064,9 @@ fn extract_equals_reference_on_every_executor() {
     let mut cases = inputs();
     cases.extend([4095usize, 4096, 4097, 9000].map(|n| vec![b'"'; n]));
     for bytes in cases {
-        let ones: Vec<u32> = (0..bytes.len() as u32).collect();
-        let quotes: Vec<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == b'"').collect();
-        let soh: Vec<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == 0x01).collect();
+        let ones: Vector<u32> = (0..bytes.len() as u32).collect();
+        let quotes: Vector<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == b'"').collect();
+        let soh: Vector<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == 0x01).collect();
         let want = vec![ones.clone(), quotes.clone(), soh.clone()];
         for (name, got) in extract_executors(&p, &bytes) {
             assert_eq!(got.positions, want, "{name}, {} bytes", bytes.len());
@@ -1176,7 +1177,7 @@ fn stage1_utf8_equals_std_on_every_executor() {
             if name == "cranelift" {
                 continue;
             }
-            let run = BlockRun { outputs: got, positions: Vec::new(), totals: Vec::new(), codes: Vec::new() };
+            let run = BlockRun { outputs: got, positions: Vec::new(), totals: rerail_blocks::vector::Vector::new(), codes: rerail_blocks::vector::Vector::new() };
             assert_eq!(utf8_invalid(&run), want, "{name}: {tail:x?}");
         }
     }

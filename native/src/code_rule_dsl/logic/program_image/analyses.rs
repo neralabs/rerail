@@ -10,6 +10,7 @@ use super::handles::{AggRef, Lit, TermRef};
 use super::version::Version;
 use super::RelId;
 pub use crate::code_rule_dsl::logic::front::graph::{Edges, components_by_name, edges_by_name};
+pub use crate::code_rule_dsl::logic::front::{Comp, CompAt, Comps, Components};
 use crate::code_rule_dsl::logic::front::graph::components;
 use crate::code_rule_dsl::logic::front::{Error, Value};
 use std::collections::BTreeSet;
@@ -17,8 +18,53 @@ use std::collections::BTreeSet;
 /// The program's components, dependencies first, each sorted by id; and its dependency edges.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Strata {
-    pub sccs: Vec<Vec<RelId>>,
+    pub sccs: Sccs,
     pub edges: Edges,
+}
+
+/// The components, each a list of relations sorted by id: a section (decision 0569 §4), shared by a count.
+#[derive(Clone)]
+pub struct Sccs(std::sync::Arc<rerail_section::Section<Vec<Vec<RelId>>>>);
+
+impl Sccs {
+    pub fn of(sccs: &Vec<Vec<RelId>>) -> Sccs {
+        Sccs(std::sync::Arc::new(rerail_section::Section::of(sccs)))
+    }
+}
+
+impl std::ops::Deref for Sccs {
+    type Target = [rerail_section::RelList<RelId>];
+    fn deref(&self) -> &Self::Target {
+        self.0.get()
+    }
+}
+
+impl Default for Sccs {
+    fn default() -> Sccs {
+        Sccs::of(&Vec::new())
+    }
+}
+
+impl PartialEq for Sccs {
+    fn eq(&self, o: &Sccs) -> bool {
+        self.len() == o.len() && self.iter().zip(o.iter()).all(|(a, b)| **a == **b)
+    }
+}
+
+impl Eq for Sccs {}
+
+impl std::fmt::Debug for Sccs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter().map(|s| &**s)).finish()
+    }
+}
+
+impl<'a> IntoIterator for &'a Sccs {
+    type Item = &'a rerail_section::RelList<RelId>;
+    type IntoIter = std::slice::Iter<'a, rerail_section::RelList<RelId>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 /// The program's components, dependencies first, and its dependency edges: T's `strata`, with aggregation in
@@ -29,7 +75,7 @@ pub fn strata(v: &Version, about: &About) -> Result<Strata, Error> {
     let sccs = tarjan(v.rel_end() as usize, &derived, &edges);
     match first_unstratified(v, &sccs, &edges, &aggs, true).into_iter().next() {
         Some(e) => Err(e),
-        None => Ok(Strata { sccs, edges }),
+        None => Ok(Strata { sccs: Sccs::of(&sccs), edges }),
     }
 }
 
@@ -210,7 +256,8 @@ pub fn accepts(v: &Version, about: &About) -> Result<bool, Error> {
     {
         return Ok(false);
     }
-    for scc in strata(v, about)?.sccs {
+    let strata = strata(v, about)?;
+    for scc in strata.sccs.iter() {
         let [rel] = scc[..] else { return Ok(false) };
         for rule in v.heads(rel) {
             let reads = rule.reads().filter(|a| a.rel() == rel).count();
@@ -274,7 +321,7 @@ impl Analysis for Strata {
                 _ => return None,
             }
         }
-        Some(Strata { sccs, edges: Edges::of(edges) })
+        Some(Strata { sccs: Sccs::of(&sccs), edges: Edges::of(edges) })
     }
 }
 
@@ -306,37 +353,26 @@ impl Analysis for Needed {
     }
 }
 
-/// The components, dependencies first, in the tree form's order, each by name (`components_by_name`): what the run's readers of a version's strata read (`Placed::components`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Components(pub Vec<BTreeSet<String>>);
-
-impl std::ops::Deref for Components {
-    type Target = [BTreeSet<String>];
-    fn deref(&self) -> &[BTreeSet<String>] {
-        &self.0
-    }
-}
-
 impl Analysis for Components {
     const NAME: &'static str = "components";
     const READS: Reads = Reads::RULES.or(Reads::ABOUT);
     fn compute(cx: &Cx<'_>) -> Result<Components, String> {
-        components_by_name(cx.v(), &*cx.get::<About>()?).map(Components).map_err(|e| e.to_string())
+        components_by_name(cx.v(), &*cx.get::<About>()?).map_err(|e| e.to_string())
     }
     /// One row per member, `(k, name)`, components in order (decision 0333 §4).
     fn rows(&self, _v: &Version) -> Option<Vec<super::manager::Row>> {
-        Some(self.0.iter().enumerate().flat_map(|(k, c)| c.iter().map(move |n| vec![Value::Int(k as i64), Value::Str(n.clone().into())])).collect())
+        Some(self.iter().enumerate().flat_map(|(k, c)| c.iter().map(move |n| vec![Value::Int(k as i64), Value::Str(n.into())])).collect())
     }
     fn of_rows(_v: &Version, rows: &[super::manager::Row]) -> Option<Components> {
-        let mut out: Vec<BTreeSet<String>> = Vec::new();
+        let mut out: Vec<Vec<String>> = Vec::new();
         for r in rows {
             let [Value::Int(k), Value::Str(n)] = r.as_slice() else { return None };
             let k = usize::try_from(*k).ok()?;
             if k >= out.len() {
-                out.resize_with(k + 1, BTreeSet::new);
+                out.resize_with(k + 1, Vec::new);
             }
-            out[k].insert(n.to_string());
+            out[k].push(n.to_string());
         }
-        Some(Components(out))
+        Some(Components::of(out))
     }
 }

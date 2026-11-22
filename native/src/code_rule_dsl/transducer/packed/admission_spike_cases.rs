@@ -102,7 +102,7 @@ fn compare_case(
     roots: Option<&[u32]>,
 ) {
     let tape = document(source);
-    let all_roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+    let all_roots = (0..tape.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
     let roots = roots.unwrap_or(&all_roots);
     let (expected, early) = run(program, &tape, roots, Strategy::Early);
     let baseline_complete = early.stop.is_none();
@@ -169,11 +169,11 @@ fn compare_case(
                 "case": name, "query": query, "source_sha256": crate::code_rule_dsl::prof::lower_hex(&Sha256::digest(source)),
                 "source_bytes": source.len(), "roots": roots.len(), "strategy": format!("{strategy:?}"),
                 "measurement": measured, "complete": measured.stop.is_none(),
-                "outputs": actual.as_ref().ok().map(Vec::len), "error": actual.as_ref().err().map(|e| format!("{e:?}")),
+                "outputs": actual.as_ref().ok().map(|v| v.len()), "error": actual.as_ref().err().map(|e| format!("{e:?}")),
                 "full_cpu_equal": comparable.then_some(actual == expected),
                 "cpu_equal_without_ordinals": comparable.then_some(without_ordinals(&actual) == without_ordinals(&expected)),
                 "native_ordered_captures_equal": native_equal, "native_capture_multiset_equal": native_multiset_equal,
-                "native_outputs": native.as_ref().map(Vec::len), "native_first_difference": native_difference,
+                "native_outputs": native.as_ref().map(|v| v.len()), "native_first_difference": native_difference,
                 "first_difference": difference,
             })
         );
@@ -353,7 +353,7 @@ fn unequal_branch_depths_need_final_deduplication_after_active_bulk_reduction() 
         (12, 326, 20),
         (16, 562, 27),
     ] {
-        let mut words = vec![word(REPEAT_BEGIN, 0, 0)];
+        let mut words = rerail_blocks::vector![word(REPEAT_BEGIN, 0, 0)];
         for _ in 0..depth {
             let pc = words.len() as u16;
             words.extend([
@@ -482,7 +482,7 @@ fn continuation_capture_contract(jit: bool) {
             super::super::native_cpu::execute_batch(
                 std::slice::from_ref(&program),
                 std::slice::from_ref(&tape),
-                &[vec![vec![0]]],
+                &[vec![rerail_blocks::vector![0]]],
             )
             .unwrap()
             .remove(0)
@@ -532,7 +532,7 @@ fn repeated_capture_runs_stop_at_incompatible_named_siblings() {
         Program::compile_tree_sitter_query_pattern(query, &SupportLang::Python.get_ts_language())
             .unwrap();
     let expected = native_rows(query, source, &tape);
-    assert_eq!(expected.iter().map(Vec::len).collect::<Vec<_>>(), [1, 2]);
+    assert_eq!(expected.iter().map(|v| v.len()).collect::<Vec<_>>(), [1, 2]);
     assert_eq!(
         capture_rows(&program, &program.execute_roots(&tape, [0]).unwrap()),
         expected
@@ -589,7 +589,7 @@ fn wildcard_and_missing_flags_preserve_native_node_meaning() {
             expected,
             "{query}"
         );
-        let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+        let roots = (0..tape.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
         let anchors = [vec![roots]];
         let programs = std::slice::from_ref(&program);
         let tapes = std::slice::from_ref(&tape);
@@ -643,7 +643,7 @@ fn native_repetition_preserves_sibling_boundaries_and_capture_order() {
         .unwrap();
         let expected = native_rows(query, source, &tape);
         assert!(!expected.is_empty(), "native control: {query}");
-        let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+        let roots = (0..tape.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
         let actual = program.execute_roots(&tape, roots.iter().copied()).unwrap();
         assert_eq!(
             capture_rows(&program, &actual),
@@ -693,8 +693,8 @@ fn repetition_across_an_implied_token_is_one_run_on_the_tape() {
     let program =
         Program::compile_tree_sitter_query_pattern(query, &SupportLang::Python.get_ts_language()).unwrap();
     let native = native_rows(query, source, &tape);
-    assert_eq!(native.iter().map(Vec::len).collect::<Vec<_>>(), [1, 1, 1], "native");
-    let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+    assert_eq!(native.iter().map(|v| v.len()).collect::<Vec<_>>(), [1, 1, 1], "native");
+    let roots = (0..tape.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
     let actual = program.execute_roots(&tape, roots.iter().copied()).unwrap();
     let rows = capture_rows(&program, &actual);
     assert_eq!(rows, vec![native.concat()], "interpreter");

@@ -1,6 +1,8 @@
 use rerail_c_pp::tape::{IDENTIFIER, image};
 use rerail_metal::pp_eval::{Unit, evaluate, name_key};
 use rerail_tape_format::View;
+/// A tape image, in the run's blocks.
+type Tape = rerail_tape_format::Vector<u8>;
 
 /// `a == b`, or the difference printed and a panic (Relax keeps no assert's message).
 #[track_caller]
@@ -14,7 +16,7 @@ fn same<T: PartialEq + std::fmt::Debug>(a: T, b: T, what: impl std::fmt::Display
 use super::rounds::place;
 
 /// `corpus`'s files, each with whether it is C++.
-fn corpus_in() -> Vec<(Vec<u8>, Vec<u8>, bool)> {
+fn corpus_in() -> Vec<(Vec<u8>, Tape, bool)> {
     let root = corpus_root();
     let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(40);
     let mut out = Vec::new();
@@ -85,9 +87,9 @@ fn the_arena_is_one_block() {
 #[test]
 fn the_names_pass_reads_the_tapes_in_place() {
     let mut files = vec![
-        (b"#define F(a) a + x\nint y = F(abcdefghijklmnopq);\n".to_vec(), Vec::new(), true),
-        (b"".to_vec(), Vec::new(), true),
-        (b"x\n".to_vec(), Vec::new(), true),
+        (b"#define F(a) a + x\nint y = F(abcdefghijklmnopq);\n".to_vec(), Tape::new(), true),
+        (b"".to_vec(), Tape::new(), true),
+        (b"x\n".to_vec(), Tape::new(), true),
     ];
     for f in &mut files {
         f.1 = image(&f.0, crate::pp::options(true));
@@ -134,7 +136,7 @@ fn the_directives_pass_gives_the_spikes_tables() {
         b"#ifndef 1\n#endif\n",
         b"#define\n#define 1\n#define G(x) x\n#undef\n#undef G H\n#ifdef\n#elifdef X\n#endif\n#ifndef abcdefghijklmnopqrs\n#elifndef Y\n#endif\n#elifdef Z\n",
     ];
-    let mut files: Vec<(Vec<u8>, Vec<u8>, bool)> = shapes.iter().map(|s| (s.to_vec(), image(s, crate::pp::options(false)), false)).collect();
+    let mut files: Vec<(Vec<u8>, Tape, bool)> = shapes.iter().map(|s| (s.to_vec(), image(s, crate::pp::options(false)), false)).collect();
     files.extend(corpus_in());
     let unit = place(&files.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>()).unwrap();
     let got = evaluate(&unit, false).unwrap();
@@ -182,7 +184,7 @@ fn the_definitions_are_the_serial_passes() {
         b"#define FF(a) a##\n#define GG(a) ##a\n#define HH(a) a ## ## a\n",
         b"#define II std\\\nint \\  \n x\n#define JJ(a\\\n) a\n",
     ];
-    let mut files: Vec<(Vec<u8>, Vec<u8>, bool)> = Vec::new();
+    let mut files: Vec<(Vec<u8>, Tape, bool)> = Vec::new();
     for s in shapes {
         for cpp in [false, true] {
             files.push((s.to_vec(), image(s, crate::pp::options(cpp)), cpp));
@@ -359,7 +361,7 @@ struct Ran {
 /// The units whose main files are `units`' (each its files), settled in batched rounds
 /// (`rounds::run_many`) under `cfg`: each its expansion and its files' tapes, or why the rounds
 /// refused it; the runs counted in `ran`.
-fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::files::Files + '_>, String)], ran: &mut Ran) -> Vec<Result<(super::rounds::Settled, Vec<Vec<u8>>), &'static str>> {
+fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::files::Files + '_>, String)], ran: &mut Ran) -> Vec<Result<(super::rounds::Settled, Vec<Tape>), &'static str>> {
     let cpp = cfg.opts.cpp;
     let r = super::rounds::run_many(cfg, cpp, units, |u, l, s| {
         let t0 = std::time::Instant::now();
@@ -859,7 +861,7 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
 
 /// A part's output spelled: each ref's token in its file (`files` and `tapes`, the unit's), each
 /// scratch token's bytes.
-fn part_tokens(part: &rerail_metal::pp_expand::Part, files: &[Vec<u8>], tapes: &[Vec<u8>]) -> Vec<Vec<u8>> {
+fn part_tokens(part: &rerail_metal::pp_expand::Part, files: &[Vec<u8>], tapes: &[Tape]) -> Vec<Vec<u8>> {
     use rerail_metal::pp_expand::SCRATCH;
     let x = &*part.x;
     let views: Vec<View> = tapes.iter().map(|t| View::new(t).unwrap()).collect();
@@ -1312,7 +1314,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
             path: &'a str,
             serial: Vec<Vec<u8>>,
             s: super::rounds::Settled,
-            tapes: Vec<Vec<u8>>,
+            tapes: Vec<Tape>,
         }
         let mut entries = Vec::new();
         let settled = settled_many(&cfg, &mut ios, &mut ran);

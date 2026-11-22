@@ -14,6 +14,7 @@
 //! the tape as tree-sitter-json places them (extras), and a trailing comma passed over, as TypeScript
 //! reads it (rerail reads source as it is written: permissive). A file still refused (a number past
 //! simdjson's range, nesting past 1,024, invalid JSON) goes to tree-sitter-json.
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::tape::{Code, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, ParserImpl, TapeImage, TemplateError, TreeParser};
 pub use rerail_simdjson::Refusal;
 
@@ -77,8 +78,8 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
     let codes: Result<Vec<Code>, String> = t
         .codes
         .iter()
-        .map(|&(kind, field, in_value)| {
-            let mut code = Code::plain(kind, field, if in_value { std::slice::from_ref(value) } else { &[] })?;
+        .map(|&[kind, field, in_value]| {
+            let mut code = Code::plain(kind, field, if in_value != 0 { std::slice::from_ref(value) } else { &[] })?;
             // A comment is an extra, as tree-sitter-json's are.
             if kind == kinds.comment {
                 code.flags |= crate::code_rule_dsl::tape::CODE_EXTRA;
@@ -112,7 +113,7 @@ fn encode_16(kernel: rerail_simdjson::Kernel, kinds: &rerail_simdjson::Kinds, va
     let walk = |jsonc: bool| -> Result<(f16::Writer, [u8; 32], Option<String>), Refusal> {
         // About a node for every 8 bytes: the writer grows past it.
         let mut w = f16::Writer::new(lang, src, tag, z, true, src.len() / 8 + 16);
-        let mut numbers: Vec<u32> = Vec::new();
+        let mut numbers: Vector<u32> = rerail_blocks::vector::Vector::new();
         let mut bad: Option<String> = None;
         let digest = rerail_simdjson::events_with(kernel, src, kinds, jsonc, |codes, words| {
             if bad.is_some() {

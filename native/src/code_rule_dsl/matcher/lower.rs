@@ -131,12 +131,12 @@ impl Fact {
 
     /// Its nodes on `tape` where they are a node set (`is_node_set`), from the tape's sibling
     /// positions; asked once per tape where another fact asks the same (`question`).
-    pub fn nth_bits(&self, tape: &crate::code_rule_dsl::tape::TapeDoc, siblings: &super::nth_child::SiblingPositions) -> Option<Arc<Vec<u64>>> {
+    pub fn nth_bits(&self, tape: &crate::code_rule_dsl::tape::TapeDoc, siblings: &super::nth_child::SiblingPositions) -> Option<Arc<rerail_blocks::vector::Vector<u64>>> {
         if !self.is_node_set() {
             return None;
         }
         let answer = || {
-            let mut bits = vec![0u64; tape.transducer_len().div_ceil(64)];
+            let mut bits = rerail_blocks::vector![0u64; tape.transducer_len().div_ceil(64)];
             self.write_bits(tape, siblings, &mut bits);
             bits
         };
@@ -168,7 +168,7 @@ impl Fact {
         // `RERAIL_SETS_CHECK`: the bits against W's rows.
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SETS_CHECK").is_some()) {
             let file = ast_grep_core::AstGrep::doc(tape.clone());
-            let _scopes = super::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+            let _scopes = super::FileScopeSlot::install(Vec::new(), None, tape.has_syntax_error());
             let starts = (0..tape.transducer_len() as u32).filter(|&node| self.kinds.as_ref().is_none_or(|kinds| kinds.contains(&tape.transducer_kind(node))));
             let rows = nth.rows(&file, starts);
             let ones = bits.iter().enumerate().flat_map(|(w, &b)| (0..64u32).filter(move |i| b >> i & 1 != 0).map(move |i| w as u32 * 64 + i)).collect::<Vec<_>>();

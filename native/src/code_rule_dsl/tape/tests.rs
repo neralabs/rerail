@@ -2095,7 +2095,7 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
 
 /// A JSON file's tape from the Bitlex parser, and from tree-sitter-json: `None` where the Bitlex
 /// parser refuses the file (`Some` of each tape's bytes otherwise).
-fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
+fn json_tapes(source: &str) -> Option<(rerail_blocks::vector::Vector<u8>, Vec<u8>)> {
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
     let ours = crate::code_rule_dsl::transducer::packed::json_parser::image(source)?;
     let mut parser = tree_sitter::Parser::new();
@@ -7070,7 +7070,8 @@ fn vue_parse_costs() {
         .iter()
         .filter_map(|f| {
             let tape = vue_lean::encode(&grammar, f, &|| false).unwrap().unwrap();
-            let root = crate::code_rule_dsl::embed::host::Host::new(&tape, &grammar).root()?;
+            let cache = tape.own_cache();
+            let root = crate::code_rule_dsl::embed::host::Host::new(&tape, &grammar, cache.as_ref()).root()?;
             let view = crate::code_rule_dsl::vue::view::View::build(root, f, &|| false)?;
             Some((view.dialect(), view.text().to_owned()))
         })
@@ -7531,7 +7532,12 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         assert_eq!(placed.placed(), crate::code_rule_dsl::tape::placed::device().is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
         let text = Arc::new(source.clone());
-        let (own, placed) = (super::formats::DocTape::new(Arc::new(own), Arc::clone(&text)), super::formats::DocTape::new(Arc::new(placed), text));
+        // Each read in a batch of its own: a 16z tape's blocks decoded into a cache made for it.
+        let batch = |image: TapeImage| {
+            let cache = image.own_cache().map(Arc::new);
+            super::formats::DocTape::in_batch(Arc::new(image), Arc::clone(&text), cache)
+        };
+        let (own, placed) = (batch(own), batch(placed));
         let (a, b) = (own.tape(), placed.tape());
         rerail_tape_format::with_tape!(a, |a| {
             rerail_tape_format::with_tape!(b, |b| {
@@ -7567,6 +7573,8 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
     format_15();
     use super::formats::Format;
     fn same(a: &TapeDoc, b: &TapeDoc, name: &str) {
+        // Each read in a batch of its own: a 16z tape's blocks decoded into a cache made for it.
+        let (a, b) = (&a.alone(), &b.alone());
         assert_eq!(a.transducer_len(), b.transducer_len(), "{name}: nodes");
         for node in 0..a.transducer_len() as u32 {
             assert_eq!(
@@ -7743,7 +7751,9 @@ fn the_lean_parsers_write_each_format_directly() {
             if format == Format::F16 {
                 assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format, source.as_bytes()).to_bytes().unwrap(), "{at}: bytes");
             }
-            let (a, b) = (reference.tape(), image.tape());
+            // The tape read in a batch of its own: a 16z tape's blocks decoded into a cache made for it.
+            let cache = image.own_cache();
+            let (a, b) = (reference.tape(), image.tape_in(cache.as_ref()));
             rerail_tape_format::with_tape!(a, |a| rerail_tape_format::with_tape!(b, |b| {
                 assert_eq!(a.len(), b.len(), "{at}");
                 for i in 0..a.len() {
@@ -7903,10 +7913,11 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
                 format,
                 "held as {format:?}"
             );
+            // A 16z tape read in a batch of its own, the CLIF reads and the document's: its blocks decoded into a
+            // cache made for it.
+            let doc = doc.alone();
             let (tape, view) = doc.doc_tape().in_place().unwrap();
-            let reader = rerail_clif::view::Reader::new(&view, tape.as_ptr());
-            // SAFETY: the reader's view, which this thread alone reads.
-            let view = unsafe { &*reader.view() };
+            let view = &doc.doc_tape().cache().map_or(view, |c| c.view_for(&view, tape.as_ptr()));
             let codes = resident::doc_codes(&doc).unwrap();
             let none = |v: Option<u32>| v.unwrap_or(NONE);
             let n = doc.transducer_len() as u32;

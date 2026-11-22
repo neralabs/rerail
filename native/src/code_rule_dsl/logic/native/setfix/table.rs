@@ -22,7 +22,9 @@
 //!
 //! Both forms are exact: the count of a key is the number of live rows with that key, as the walk counts them.
 
-use super::{InRel, Key, Src, Step, is_dead};
+use rerail_blocks::vector::Vector;
+use super::{InRel, Key, Src, Step, is_dead, steps};
+use rerail_section::Section;
 use super::rows::BlockVec;
 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rerail_accel::{Batch, Kernel, Launch, Output};
@@ -45,7 +47,7 @@ const ABSENT: u16 = u16::MAX;
 /// A relation's counts by the values of some of its columns.
 pub(super) struct Table {
     /// Its key columns.
-    cols: Vec<usize>,
+    cols: Vector<usize>,
     /// Open addressing by the key's hash (`rerail_blocks::key_hash`, `mask`): each slot a row holding its key (its
     /// first) and the key's rows, `[EMPTY, 0]` for none; in a block near the relation's rows (decision 0478 step 6b).
     /// A probe checks the key against its row's values, read where they lie.
@@ -93,7 +95,7 @@ impl Table {
             }
             slots[at as usize] = [rep, n];
         }
-        Table { cols: cols.to_vec(), slots, mask }
+        Table { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), slots, mask }
     }
 }
 
@@ -106,13 +108,13 @@ pub(super) struct StepForm {
     /// wave's, is read as this step's own).
     looked: AtomicBool,
     table: OnceLock<Arc<Table>>,
-    per_row: OnceLock<Vec<u32>>,
+    per_row: OnceLock<Vector<u32>>,
 }
 
 /// The tables a run found worth building, by relation (its table's name) and columns: the next chunk builds them ahead,
 /// in its levels' waves. The run's own (decision 0442).
 #[derive(Default)]
-struct Paid(Mutex<BTreeSet<(String, Vec<usize>)>>);
+struct Paid(Mutex<BTreeSet<(String, Vector<usize>)>>);
 
 /// What the forms did in the run, for the profile (the run's own, `BuiltSums`; decision 0442).
 #[derive(Default, Clone, Copy)]
@@ -150,9 +152,9 @@ fn off_on() -> bool {
 struct Coded {
     parts: usize,
     /// Each distinct key's (partition, code), and its first row.
-    codes: HashMap<Box<[i64]>, (u32, u16, u32)>,
+    codes: HashMap<Vector<i64>, (u32, u16, u32)>,
     /// Per partition, its distinct keys.
-    sizes: Vec<u32>,
+    sizes: Vector<u32>,
     /// The relation's live rows' (partition, code).
     rows: Vec<(u32, u16)>,
 }
@@ -163,8 +165,8 @@ fn code(rel: &InRel, cols: &[usize]) -> Coded {
     let n = rel.len();
     let mut parts = n.div_ceil(PER_PART).max(1);
     'retry: loop {
-        let mut codes: HashMap<Box<[i64]>, (u32, u16, u32)> = HashMap::default();
-        let mut sizes = vec![0u32; parts];
+        let mut codes: HashMap<Vector<i64>, (u32, u16, u32)> = HashMap::default();
+        let mut sizes = rerail_blocks::vector![0u32; parts];
         let mut rows = Vec::with_capacity(n);
         let mut key = vec![0i64; cols.len()];
         for id in 0..n {
@@ -186,7 +188,7 @@ fn code(rel: &InRel, cols: &[usize]) -> Coded {
                     }
                     let pc = (p as u32, sizes[p] as u16);
                     sizes[p] += 1;
-                    codes.insert(key.clone().into_boxed_slice(), (pc.0, pc.1, id as u32));
+                    codes.insert(Vector::from(&key[..]), (pc.0, pc.1, id as u32));
                     pc
                 }
             };
@@ -197,8 +199,8 @@ fn code(rel: &InRel, cols: &[usize]) -> Coded {
 }
 
 /// Codes grouped by partition: the offsets (`parts + 1`), the codes, and each item's position in the grouped order.
-fn group(parts: usize, items: impl Iterator<Item = (u32, u16)> + Clone) -> (Vec<u32>, Vec<u16>, Vec<u32>) {
-    let mut off = vec![0u32; parts + 1];
+fn group(parts: usize, items: impl Iterator<Item = (u32, u16)> + Clone) -> (Vector<u32>, Vector<u16>, Vector<u32>) {
+    let mut off = rerail_blocks::vector![0u32; parts + 1];
     for (p, _) in items.clone() {
         off[p as usize + 1] += 1;
     }
@@ -207,8 +209,8 @@ fn group(parts: usize, items: impl Iterator<Item = (u32, u16)> + Clone) -> (Vec<
     }
     let mut at = off.clone();
     let total = off[parts] as usize;
-    let mut codes = vec![0u16; total];
-    let mut pos = Vec::with_capacity(total);
+    let mut codes = rerail_blocks::vector![0u16; total];
+    let mut pos = rerail_blocks::vector::Vector::with_capacity(total);
     for (p, c) in items {
         let i = at[p as usize];
         at[p as usize] += 1;
@@ -222,7 +224,7 @@ fn group(parts: usize, items: impl Iterator<Item = (u32, u16)> + Clone) -> (Vec<
 pub(super) struct Pending {
     coded: Coded,
     width: u32,
-    cols: Vec<usize>,
+    cols: Vector<usize>,
 }
 
 pub(super) fn histogram_launch(rel: &InRel, cols: &[usize]) -> (Pending, Launch) {
@@ -230,7 +232,7 @@ pub(super) fn histogram_launch(rel: &InRel, cols: &[usize]) -> (Pending, Launch)
     let width = coded.sizes.iter().copied().max().unwrap_or(0).max(1);
     let (off, codes, _) = group(coded.parts, coded.rows.iter().copied());
     let k = Kernel::Histogram { off: off.into(), codes: codes.into(), width };
-    (Pending { coded, width, cols: cols.to_vec() }, Launch::new(k))
+    (Pending { coded, width, cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>() }, Launch::new(k))
 }
 
 pub(super) fn histogram_table(rel: &InRel, p: Pending, out: Output) -> Result<Table, String> {
@@ -258,35 +260,35 @@ fn table(rel: &InRel, cols: &[usize]) -> Result<Arc<Table>, String> {
     let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run("count table (histogram)", Batch(vec![launch]))?;
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("count table (histogram)", "decode: the slot map of key to count");
     let t = Arc::new(histogram_table(rel, p, done.remove(0).out)?);
-    rel.tables.lock().unwrap().entry(cols.to_vec()).or_insert_with(|| Arc::clone(&t));
+    rel.tables.lock().unwrap().entry(cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()).or_insert_with(|| Arc::clone(&t));
     Ok(t)
 }
 
 /// The key columns of a count step over an input, when it can read a table: every key bound, no column tests.
-fn cols_of(src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)]) -> Option<(Arc<InRel>, Vec<usize>)> {
+fn cols_of(p: &Section<steps::Plan>, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)]) -> Option<(Arc<InRel>, Vector<usize>)> {
     let Src::In(rel, _) = src else { return None };
     if !tests.is_empty() || keys.is_empty() {
         return None;
     }
-    Some((Arc::clone(rel), keys.iter().map(|&(c, _)| c).collect()))
+    Some((Arc::clone(p.bound(rel)), keys.iter().map(|&(c, _)| c).collect()))
 }
 
 /// The count at step `i`, from its table, when it has one: `key` the key's values, `at0` the row of the join's first
 /// step.
 #[inline]
-pub(super) fn count(form: &StepForm, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64], at0: u32) -> Option<i64> {
+pub(super) fn count(form: &StepForm, p: &Section<steps::Plan>, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64], at0: u32) -> Option<i64> {
     if let Some(per) = form.per_row.get() {
         return Some(i64::from(per[at0 as usize]));
     }
     if let Some(t) = form.table.get() {
         let Src::In(rel, _) = src else { return None };
-        return Some(t.count(rel, key));
+        return Some(t.count(p.bound(rel), key));
     }
     if form.looked.load(Relaxed) {
         return None;
     }
     form.looked.store(true, Relaxed);
-    let (rel, cols) = cols_of(src, keys, tests)?;
+    let (rel, cols) = cols_of(p, src, keys, tests)?;
     let t = rel.tables.lock().unwrap().get(&cols).cloned()?;
     let n = t.count(&rel, key);
     let _ = form.table.set(t);
@@ -295,17 +297,18 @@ pub(super) fn count(form: &StepForm, src: &Src, keys: &[(usize, Key)], tests: &[
 
 /// Notes that step `i` of `steps` walked `walked` rows for one probe, and builds its table once walking has cost as
 /// much as building it would (see the module's comment).
-pub(super) fn spent(form: &StepForm, steps: &[Step], i: usize, walked: u64) {
+pub(super) fn spent(form: &StepForm, p: &Section<steps::Plan>, i: usize, walked: u64) {
+    let steps = &p.steps;
     if form.tried.load(Relaxed) {
         return;
     }
     let Step::Scalar { src, keys, tests, kind: ScalarKind::Count, col: None, .. } = &steps[i] else { return };
-    let Some((rel, cols)) = cols_of(src, keys, tests) else {
+    let Some((rel, cols)) = cols_of(p, src, keys, tests) else {
         form.tried.store(true, Relaxed);
         return;
     };
     let spent = form.spent.fetch_add(walked + 1, Relaxed) + walked + 1;
-    let left = per_row_left(steps, i);
+    let left = per_row_left(p, i);
     let cost = rel.len() as u64 + left.as_ref().map_or(0, |(l, _)| l.len() as u64) + FLOOR;
     if spent < cost && !at_once() {
         return;
@@ -349,7 +352,8 @@ pub(super) fn spent(form: &StepForm, steps: &[Step], i: usize, walked: u64) {
 
 /// When step `i`'s key comes whole from step 0, a scan of an input: the scan's relation, and per key column, the scan's
 /// column holding it (`None` for a constant).
-fn per_row_left(steps: &[Step], i: usize) -> Option<(Arc<InRel>, Vec<Option<usize>>)> {
+fn per_row_left(p: &Section<steps::Plan>, i: usize) -> Option<(Arc<InRel>, Vec<Option<usize>>)> {
+    let steps = &p.steps;
     let Step::Atom { src: Src::In(l, _), neg: false, keys: k0, binds, .. } = steps.first()? else { return None };
     if !k0.is_empty() || i == 0 {
         return None;
@@ -362,12 +366,12 @@ fn per_row_left(steps: &[Step], i: usize) -> Option<(Arc<InRel>, Vec<Option<usiz
             Key::Slot(s) => of_key.push(Some(binds.iter().find(|&&(_, b)| b == s)?.0)),
         }
     }
-    Some((Arc::clone(l), of_key))
+    Some((Arc::clone(p.bound(l)), of_key))
 }
 
 /// The count, for every row of `left`, of `rel`'s rows whose `cols` equal the row's key (`of_key`, with `keys`'
 /// constants): one `CountTable` launch.
-fn per_row(rel: &InRel, cols: &[usize], left: &InRel, of_key: &[Option<usize>], keys: &[(usize, Key)]) -> Result<Vec<u32>, String> {
+fn per_row(rel: &InRel, cols: &[usize], left: &InRel, of_key: &[Option<usize>], keys: &[(usize, Key)]) -> Result<Vector<u32>, String> {
     let h = crate::code_rule_dsl::logic::lanes::prof::host("count per row", "encode: code both sides, group by partition");
     let coded = code(rel, cols);
     let (roff, right, _) = group(coded.parts, coded.rows.iter().copied());
@@ -405,7 +409,7 @@ fn per_row(rel: &InRel, cols: &[usize], left: &InRel, of_key: &[Option<usize>], 
 /// The device wave of a level (0095 §5): the tables its strata will read that an earlier chunk found worth building,
 /// built now in one batch, so each lane gets one submission for the level. `wants`: the level's count reads, by
 /// relation and columns; `held`: the relation's rows, if this run holds them. Returns (launches, distinct relations).
-pub(super) fn prefetch(wants: &BTreeSet<(String, Vec<usize>)>, held: impl Fn(&str) -> Option<Arc<InRel>>) -> Result<(usize, usize), String> {
+pub(super) fn prefetch(wants: &BTreeSet<(String, Vector<usize>)>, held: impl Fn(&str) -> Option<Arc<InRel>>) -> Result<(usize, usize), String> {
     if off_on() {
         return Ok((0, 0));
     }
@@ -450,7 +454,7 @@ mod block_tests {
     #[test]
     fn a_count_table_is_slots_in_a_block() {
         let n = 1000usize;
-        let flat: Vec<i64> = (0..n as i64).flat_map(|id| [id % 7, id]).collect();
+        let flat: Vector<i64> = (0..n as i64).flat_map(|id| [id % 7, id]).collect();
         let rel = InRel::from_flat(flat, n, vec![b'i'; 2]);
         // Each value's first row is the value itself (`id % 7`), and its rows are those of `id % 7 == v`.
         let keys: Vec<(u32, u32)> = (0..7u32).map(|v| (v, (0..n as u32).filter(|id| id % 7 == v).count() as u32)).collect();

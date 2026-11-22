@@ -1,5 +1,6 @@
 //! Finite normal-loop jobs. NEXT strictly advances, static guards cannot change
 //! a frame, and all exits retain their exact logical branch positions.
+use rerail_blocks::vector::Vector;
 use super::*;
 
 pub(super) const MAX_JOB_INSTRUCTIONS: usize = super::MAX_FINITE_JOB_INSTRUCTIONS;
@@ -9,13 +10,13 @@ pub(super) struct AdmissionCut {
     /// Index before the first instruction already owned by an earlier path.
     pub at: usize,
     /// Read-only guards that prove an earlier equal frame reaches this key.
-    pub alternatives: Vec<Vec<usize>>,
+    pub alternatives: Vec<Vector<usize>>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct Body {
-    pub operations: Vec<usize>,
-    pub choices: Vec<u32>,
+    pub operations: Vector<usize>,
+    pub choices: Vector<u32>,
     /// Complete executed path, including control instructions and their choices.
     pub instructions: Vec<(usize, Option<u32>)>,
     pub admission: Vec<AdmissionCut>,
@@ -23,9 +24,9 @@ pub(super) struct Body {
 
 struct BodyState {
     pc: usize,
-    captures: Vec<u16>,
-    choices: Vec<u32>,
-    guards: Vec<usize>,
+    captures: Vector<u16>,
+    choices: Vector<u32>,
+    guards: Vector<usize>,
 }
 
 fn is_guard(op: u8) -> bool {
@@ -41,9 +42,9 @@ fn admission_cuts(words: &[u32], bodies: &mut [Body]) {
     let states = bodies
         .iter()
         .map(|body| {
-            let mut captures = Vec::new();
-            let mut choices = Vec::new();
-            let mut guards = Vec::new();
+            let mut captures = rerail_blocks::vector::Vector::new();
+            let mut choices = rerail_blocks::vector::Vector::new();
+            let mut guards = rerail_blocks::vector::Vector::new();
             body.instructions
                 .iter()
                 .map(|&(pc, choice)| {
@@ -127,8 +128,8 @@ pub(super) fn prove(words: &[u32], header: usize) -> Option<Job> {
     let named = mode == NAMED;
     let mut pending = vec![(
         header + 2,
-        Vec::new(),
-        Vec::new(),
+        rerail_blocks::vector::Vector::new(),
+        rerail_blocks::vector::Vector::new(),
         BTreeSet::new(),
         Vec::new(),
     )];

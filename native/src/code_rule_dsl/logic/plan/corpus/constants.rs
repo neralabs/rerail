@@ -26,6 +26,7 @@
 //! consulted. A later run whose consulted things are as they were (`World::still`) takes them as they are: an edit to
 //! a workspace file derives no constant again.
 
+use rerail_blocks::vector::Vector;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -135,7 +136,7 @@ pub(super) fn fold(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
-) -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>, BTreeSet<String>)> {
+) -> Result<(Vec<(String, String, String)>, Vector<[u8; 32]>, BTreeSet<String>)> {
     if options.get(OWN).is_some() {
         return Ok(Default::default());
     }
@@ -211,7 +212,7 @@ fn derive(
     typing: &Typing,
     options: &serde_json::Value,
     wanted: &BTreeSet<String>,
-) -> Result<(Derived, Vec<[u8; 32]>)> {
+) -> Result<(Derived, Vector<[u8; 32]>)> {
     let mut own = if options.is_object() { options.clone() } else { serde_json::json!({}) };
     own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
     own["inputFiles"] = serde_json::json!([]);
@@ -261,11 +262,11 @@ fn record_key(key: &str) -> String {
 /// The constants kept under `key`, when what their run consulted is as it was, with the plans their run used: the
 /// record's `plan` lines, for collection (`observe::collect` drops the record once none is live) and for the outer
 /// run's manifest.
-fn kept(key: &str, root: &Path, prog: &Version) -> Result<Option<(Derived, Vec<[u8; 32]>)>> {
+fn kept(key: &str, root: &Path, prog: &Version) -> Result<Option<(Derived, Vector<[u8; 32]>)>> {
     let Some((consulted, rows)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
     let Some(consulted) = super::reuse::decode_consulted(&consulted) else { return Ok(None) };
     let (plans, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "plan");
-    let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
+    let plans: Vector<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
     if !super::world::World::new(root, prog).still(&consulted) {
         return Ok(None);
     }

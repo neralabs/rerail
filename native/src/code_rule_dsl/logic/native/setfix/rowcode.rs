@@ -17,6 +17,7 @@
 //! The steps' observed fanouts (`JoinRule::counts`) stay exact: the program outputs each fused
 //! step's running mask, and its popcount is the rows that step passed on.
 
+use rerail_blocks::vector::Vector;
 use super::{Key, ScalarKind, Step};
 use rerail_compiler::block::{BlockOp, BlockProgram, CmpOp, Rhs, RowBatch, RowShape};
 
@@ -223,8 +224,8 @@ pub fn fused(binds: &[(usize, usize)], after: &[Step]) -> Option<Fused> {
     let kept_binds = binds.len() + count_binds(&after[..steps]);
     env.truncate(kept_binds);
     // The outputs: each distinct running mask, the last one's rows extracted.
-    let mut outputs: Vec<u16> = Vec::new();
-    let index = |v: u16, outputs: &mut Vec<u16>| outputs.iter().position(|&o| o == v).unwrap_or_else(|| {
+    let mut outputs: Vector<u16> = Vector::new();
+    let index = |v: u16, outputs: &mut Vector<u16>| outputs.iter().position(|&o| o == v).unwrap_or_else(|| {
         outputs.push(v);
         outputs.len() - 1
     });
@@ -243,7 +244,7 @@ pub fn fused(binds: &[(usize, usize)], after: &[Step]) -> Option<Fused> {
             b.column(Word::Col(c));
         }
     }
-    let extracts = vec![outputs[last]];
+    let extracts = rerail_blocks::vector![outputs[last]];
     let shape = RowShape { columns: b.columns.len() as u16, params: b.params.len() as u16, sets: 0 };
     let program = BlockProgram::row_program(shape, b.ops, outputs, extracts).ok()?;
     let gather = b.columns.iter().enumerate().filter_map(|(k, w)| match *w {
@@ -261,12 +262,12 @@ fn count_binds(steps: &[Step]) -> usize {
 /// A chunk's columns and the program's values, kept from chunk to chunk.
 #[derive(Default)]
 pub(super) struct Scratch {
-    pub(super) columns: Vec<Vec<i64>>,
-    pub(super) params: Vec<i64>,
-    pub(super) values: Vec<u64>,
+    pub(super) columns: Vec<Vector<i64>>,
+    pub(super) params: Vector<i64>,
+    pub(super) values: Vector<u64>,
     pub(super) rows: usize,
     /// The chunk's rows' ids in their relation, when the fused atom is the join's first step (`table`'s counts per row).
-    pub(super) ids: Vec<u32>,
+    pub(super) ids: Vector<u32>,
 }
 
 impl Fused {
@@ -289,9 +290,10 @@ impl Fused {
                 dst.extend(src.iter().map(|&x| x >> 32));
             }
         }
-        let cols: Vec<&[i64]> = s.columns.iter().map(Vec::as_slice).collect();
+        let cols: Vec<&[i64]> = s.columns.iter().map(|v| v.as_slice()).collect();
         let batch = RowBatch { columns: &cols, params: &s.params, sets: &[], len: n };
-        let outputs: Vec<&'s [u64]> = self.program.interpret_rows(&batch, &mut s.values).collect();
+        s.values.resize(self.program.row_words(n), 0);
+        let outputs: Vec<&'s [u64]> = self.program.interpret_rows(&batch, &mut s.values[..]).collect();
         for (m, p) in self.passed.iter().enumerate() {
             each(m, p.map_or(n as u64, |k| outputs[k].iter().map(|w| u64::from(w.count_ones())).sum()));
         }

@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use rerail_metal::lane::{self, HostMapped};
 use super::metal_batch_abi::{
     FORMAT_VERSION, FinalCaptureRecord, LinkRecord as CaptureRecord, MetalGlobalArenas,
@@ -322,17 +323,17 @@ pub(super) fn tape_view(format: u32) -> &'static str {
 #[derive(Clone, Eq, PartialEq)]
 pub(super) struct ProgramBufferKey {
     programs: Vec<super::metal_batch_abi::MetalProgram>,
-    words: Vec<u32>,
-    longs: Vec<u64>,
+    words: Vector<u32>,
+    longs: Vector<u64>,
     values: Vec<super::metal_batch_abi::ValueRecord>,
     strings: Vec<super::metal_batch_abi::MetalString>,
     nfa_states: Vec<super::metal_batch_abi::NfaStateRecord>,
-    nfa_data: Vec<u32>,
+    nfa_data: Vector<u32>,
     nfa_ranges: Vec<super::metal_batch_abi::NfaRangeRecord>,
     lua_instructions: Vec<super::metal_batch_abi::LuaInstructionRecord>,
     lua_members: Vec<super::metal_batch_abi::LuaSetMemberRecord>,
     assertions: Vec<super::packed_batch::AssertionRecord>,
-    assertion_data: Vec<u32>,
+    assertion_data: Vector<u32>,
     string_bytes: Vec<u8>,
 }
 
@@ -746,7 +747,7 @@ pub(super) fn execute(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<Vec<Vec<Vec<Output>>>, Error> {
     execute_outcomes(engine, programs, files, anchors)?.into_result()
 }
@@ -755,7 +756,7 @@ pub(in crate::code_rule_dsl) fn execute_outcomes(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<BatchOutcome, Error> {
     execute_packed(engine, programs, files, anchors)?.into_outcome()
 }
@@ -764,7 +765,7 @@ pub(super) fn execute_packed(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<PackedExecution, Error> {
     execute_packed_with_result_limits(engine, programs, files, anchors, None)
 }
@@ -773,7 +774,7 @@ pub fn execute_packed_with_result_limits(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
     execute_packed_budgeted(engine, programs, files, anchors, result_limits, super::Budget::current())
@@ -785,7 +786,7 @@ pub fn execute_packed_budgeted(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     budget: super::Budget,
 ) -> Result<PackedExecution, Error> {
@@ -796,7 +797,7 @@ fn execute_packed_once(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     budget: super::Budget,
     growth: &super::StateGrowth,

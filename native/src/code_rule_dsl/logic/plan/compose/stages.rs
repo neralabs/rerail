@@ -2,6 +2,7 @@
 //!
 //! A stage's program is a version (t36 item 7, step 6): each edit (relations made inputs, rules proved empty, the
 //! outputs a part publishes) an overlay of the version before it, made with the program image's builder.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::handles::Terms;
 use crate::code_rule_dsl::logic::program_image::{TermRef, Version};
@@ -78,7 +79,7 @@ fn simplify(p: &mut Placed, db: &Connection) -> Result<()> {
     let mut empty: BTreeSet<String> = p.fields()?.inputs().filter(|r|vtab::bound_source(db,r).is_some_and(|s|s.len()==0)).map(str::to_owned).collect();
     loop {
         let before = (empty.len(),p.len(),p.fields()?.inputs().len());
-        let gone: Vec<usize> = (0..p.len()).filter(|&k| p.rule(k).body().any(|l|matches!(l.view(),Lit::Atom(a) if !a.neg() && empty.contains(p.v.rel_name(a.rel()))))).collect();
+        let gone: Vector<usize> = (0..p.len()).filter(|&k| p.rule(k).body().any(|l|matches!(l.view(),Lit::Atom(a) if !a.neg() && empty.contains(p.v.rel_name(a.rel()))))).collect();
         if !gone.is_empty() { *p = without(p,&gone)?; }
         let f = p.fields()?;
         for d in f.decls() {

@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 
 /// Relation `name` of the stack in `bytes`, each value as shown (`Relation::shown`): sorted, each once.
@@ -20,10 +21,10 @@ fn an_image_holds_each_relations_rows_and_types_as_written() {
     let mut b = Builder::new(flags::OWN, false);
     let (x, y) = (i64::from(b.text("x")), i64::from(b.text("y")));
     // Unsorted, with a row twice: held sorted, once.
-    b.rows("p", &[col::TEXT, col::NODE, col::INT], vec![y, 5 << 32 | 3, -7, x, 1 << 32, 2, y, 5 << 32 | 3, -7]);
-    b.rows("empty", &[col::INT], Vec::new());
-    b.rows("none", &[], vec![]);
-    let many: Vec<i64> = (0..10_000).rev().flat_map(|i| [i, i * 3]).collect();
+    b.rows("p", &[col::TEXT, col::NODE, col::INT], rerail_blocks::vector![y, 5 << 32 | 3, -7, x, 1 << 32, 2, y, 5 << 32 | 3, -7]);
+    b.rows("empty", &[col::INT], rerail_blocks::vector::Vector::new());
+    b.rows("none", &[], rerail_blocks::vector![]);
+    let many: Vector<i64> = (0..10_000).rev().flat_map(|i| [i, i * 3]).collect();
     b.rows("many", &[col::INT, col::INT], many);
     let bytes = b.finish();
     assert_eq!(bytes.len() % 16, 0);
@@ -107,7 +108,7 @@ fn an_images_nodes_read_by_their_documents() {
 #[test]
 fn an_images_places_are_searched_by_value() {
     let mut b = Builder::new(0, false);
-    let places: Vec<i64> = (0..500).map(|i| -2 - ((i % 7) << 32 | i)).collect();
+    let places: Vector<i64> = (0..500).map(|i| -2 - ((i % 7) << 32 | i)).collect();
     for (i, &v) in places.iter().enumerate().rev() {
         b.place(v, &format!("p{}.py", i % 7), i as i64);
     }
@@ -126,12 +127,12 @@ fn an_overlay_replaces_the_relations_it_holds_and_the_rest_read_through() {
     std::fs::create_dir_all(&dir).unwrap();
     let mut base = Builder::new(0, false);
     let a = i64::from(base.text("a"));
-    base.rows("p", &[col::TEXT], vec![a]);
-    base.rows("q", &[col::INT], vec![1, 2]);
+    base.rows("p", &[col::TEXT], rerail_blocks::vector![a]);
+    base.rows("q", &[col::INT], rerail_blocks::vector![1, 2]);
     write(&dir, &base.finish()).unwrap();
     let mut over = Builder::new(0, true);
     let (b, c) = (i64::from(over.text("b")), i64::from(over.text("c")));
-    over.rows("p", &[col::TEXT], vec![c, b]);
+    over.rows("p", &[col::TEXT], rerail_blocks::vector![c, b]);
     write(&dir, &over.finish()).unwrap();
     let stack = read(&dir).unwrap();
     assert_eq!(stack.len(), 2);
@@ -140,7 +141,7 @@ fn an_overlay_replaces_the_relations_it_holds_and_the_rest_read_through() {
     assert_eq!(shown(&dir, "q").unwrap(), [["1"], ["2"]]);
     // A base written again starts the stack over.
     let mut again = Builder::new(0, false);
-    again.rows("q", &[col::INT], vec![3]);
+    again.rows("q", &[col::INT], rerail_blocks::vector![3]);
     write(&dir, &again.finish()).unwrap();
     let stack = read(&dir).unwrap();
     assert_eq!(stack.len(), 1);
@@ -161,11 +162,11 @@ fn a_write_replaces_the_file_whole_and_a_map_keeps_the_old() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("replace");
     std::fs::create_dir_all(&dir).unwrap();
     let mut a = Builder::new(0, false);
-    a.rows("n", &[col::INT], vec![1, 2, 3]);
+    a.rows("n", &[col::INT], rerail_blocks::vector![1, 2, 3]);
     write(&dir, &a.finish()).unwrap();
     let old = Image::mapped(&dir.join(FILE)).unwrap();
     let mut b = Builder::new(0, false);
-    b.rows("n", &[col::INT], vec![7]);
+    b.rows("n", &[col::INT], rerail_blocks::vector![7]);
     replace(&dir, &[&b.finish()]).unwrap();
     assert_eq!(find(&old, "n").unwrap().len(), 3, "the old map reads the old file");
     assert_eq!(shown(&dir, "n").unwrap(), [["7"]]);
@@ -186,11 +187,11 @@ fn the_file_holds_each_image_as_a_frozen_block() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("blocks");
     std::fs::create_dir_all(&dir).unwrap();
     let mut base = Builder::new(0, false);
-    base.rows("n", &[col::INT], vec![1, 2]);
+    base.rows("n", &[col::INT], rerail_blocks::vector![1, 2]);
     let base = base.finish();
     write(&dir, &base).unwrap();
     let mut over = Builder::new(0, true);
-    over.rows("n", &[col::INT], vec![5]);
+    over.rows("n", &[col::INT], rerail_blocks::vector![5]);
     write(&dir, &over.finish()).unwrap();
     let file = std::fs::read(dir.join(FILE)).unwrap();
     let first = frozen_at(&file, kind::OUTPUTS).unwrap();
@@ -220,11 +221,11 @@ fn a_folded_stack_shows_what_the_stack_showed() {
     base.doc(1, &Doc { path: Some("a.py".into()), first: None });
     base.place(place, "b.py", 8);
     let t = i64::from(base.text("int"));
-    base.rows("type_of", &[col::NODE, col::TEXT], vec![1 << 32 | (2 << crate::code_rule_dsl::facts::vtab::syntax::granules::INDEX_BITS | 5), t, place, t, 9 << 32 | 1, t]);
-    base.rows("gone", &[col::INT], vec![4]);
+    base.rows("type_of", &[col::NODE, col::TEXT], rerail_blocks::vector![1 << 32 | (2 << crate::code_rule_dsl::facts::vtab::syntax::granules::INDEX_BITS | 5), t, place, t, 9 << 32 | 1, t]);
+    base.rows("gone", &[col::INT], rerail_blocks::vector![4]);
     let mut over = Builder::new(flags::OWN | flags::DEFINITION_IDS, true);
     let s = i64::from(over.text("str"));
-    over.rows("gone", &[col::TEXT], vec![s]);
+    over.rows("gone", &[col::TEXT], rerail_blocks::vector![s]);
     let bytes = stacked(&[&base.finish(), &over.finish()]);
     let stack = Image::stack(&bytes).unwrap();
     let mut fold = Builder::new(flags::OWN | flags::DEFINITION_IDS, false);
@@ -244,7 +245,7 @@ fn a_folded_stack_shows_what_the_stack_showed() {
 fn a_damaged_image_is_refused() {
     let mut b = Builder::new(0, false);
     let x = i64::from(b.text("x"));
-    b.rows("p", &[col::TEXT], vec![x]);
+    b.rows("p", &[col::TEXT], rerail_blocks::vector![x]);
     let good = b.finish();
     assert!(Image::stack(&good).is_ok());
     let mut magic = good.clone();
@@ -257,7 +258,7 @@ fn a_damaged_image_is_refused() {
     assert!(Image::stack(&bounds).is_err());
     // A text value naming no string.
     let mut b = Builder::new(0, false);
-    b.rows("p", &[col::TEXT], vec![9]);
+    b.rows("p", &[col::TEXT], rerail_blocks::vector![9]);
     assert!(Image::stack(&b.finish()).is_err());
     // A stack that starts with an overlay.
     let o = Builder::new(0, true).finish();
@@ -353,7 +354,7 @@ fn rows_of_their_parts() {
     r.push(&[Cell::Text("a"), Cell::Int(1 << 32 | 3), Cell::Int(-2)]);
     r.push(&[Cell::Text("b"), Cell::Int(NULL), Cell::Int(7)]);
     r.push(&[Cell::Text("a"), Cell::Int(2 << 32), Cell::Int(0)]);
-    let vals: Vec<i64> = (0..r.len()).flat_map(|i| r.row(i).to_vec()).collect();
+    let vals: Vector<i64> = (0..r.len()).flat_map(|i| r.row(i).to_vec()).collect();
     let texts: Vec<String> = r.texts().iter().map(|t| t.to_string()).collect();
     assert_eq!(texts, ["a", "b"], "each text once");
     let back = Rows::of_parts(r.types().to_vec(), vals.clone(), texts.clone(), r.len()).unwrap();
@@ -366,10 +367,10 @@ fn rows_of_their_parts() {
     bad[3] = -1;
     assert!(Rows::of_parts(r.types().to_vec(), bad, texts.clone(), r.len()).is_err());
     // Values not of the rows' count.
-    assert!(Rows::of_parts(r.types().to_vec(), vals[..8].to_vec(), texts.clone(), r.len()).is_err());
-    assert!(Rows::of_parts(Vec::new(), vec![1], Vec::new(), 1).is_err());
+    assert!(Rows::of_parts(Vec::from(&r.types()[..]), rerail_blocks::vector::Vector::from(&vals[..8][..]), texts.clone(), r.len()).is_err());
+    assert!(Rows::of_parts(Vec::new(), rerail_blocks::vector![1], Vec::new(), 1).is_err());
     // Rows of no columns: their count.
-    let bare = Rows::of_parts(Vec::new(), Vec::new(), Vec::new(), 2).unwrap();
+    let bare = Rows::of_parts(Vec::new(), rerail_blocks::vector::Vector::new(), Vec::new(), 2).unwrap();
     assert_eq!(bare.len(), 2);
     // Equal rows are of equal types and values in order.
     let mut other = Rows::new(vec![col::TEXT, col::NODE, col::INT]);
@@ -420,8 +421,8 @@ fn a_directorys_outputs_are_read_from_its_stack() {
     assert!(Outputs::open(&dir).unwrap().names().is_empty());
     let mut base = Builder::new(0, false);
     let (x, y) = (i64::from(base.text("x")), i64::from(base.text("y")));
-    base.rows("a", &[col::TEXT, col::INT], vec![y, 2, x, 1]);
-    base.rows("e", &[col::INT], Vec::new());
+    base.rows("a", &[col::TEXT, col::INT], rerail_blocks::vector![y, 2, x, 1]);
+    base.rows("e", &[col::INT], rerail_blocks::vector::Vector::new());
     write(&dir, &base.finish()).unwrap();
     assert_eq!(shown(&dir, "a").unwrap(), rows(&[&["x", "1"], &["y", "2"]]));
     assert_eq!(shown(&dir, "e").unwrap(), Vec::<Vec<String>>::new());
@@ -429,7 +430,7 @@ fn a_directorys_outputs_are_read_from_its_stack() {
     // Over the stack, an overlay: the rest read through.
     let mut over = Builder::new(0, true);
     let t = i64::from(over.text("v\twith\ttabs"));
-    over.rows("b", &[col::TEXT], vec![t]);
+    over.rows("b", &[col::TEXT], rerail_blocks::vector![t]);
     write(&dir, &over.finish()).unwrap();
     assert_eq!(read(&dir).unwrap().len(), 2);
     let outputs = Outputs::open(&dir).unwrap();
@@ -458,9 +459,9 @@ fn an_overlay_of_rows_gone_and_added_reads_as_the_relation_they_make() {
     // Relation r of rows (text, int), q of one text.
     let image = |r: &[(&str, i64)], q: &[&str]| {
         let mut b = Builder::new(0, false);
-        let vals: Vec<i64> = r.iter().flat_map(|&(t, n)| [i64::from(b.text(t)), n]).collect();
+        let vals: Vector<i64> = r.iter().flat_map(|&(t, n)| [i64::from(b.text(t)), n]).collect();
         b.rows("r", &[col::TEXT, col::INT], vals);
-        let q: Vec<i64> = q.iter().map(|t| i64::from(b.text(t))).collect();
+        let q: Vector<i64> = q.iter().map(|t| i64::from(b.text(t))).collect();
         if !q.is_empty() {
             b.rows("q", &[col::TEXT], q);
         }
@@ -473,7 +474,7 @@ fn an_overlay_of_rows_gone_and_added_reads_as_the_relation_they_make() {
     // The same rows hash the same in both images, their strings held at other indexes.
     assert_eq!(old.iter().filter(|h| new.binary_search(h).is_ok()).count(), 2);
     let r = made.rel("r").unwrap();
-    let added: Vec<usize> = (0..r.rows).filter(|&i| old.binary_search(&r.hash(i)).is_err()).collect();
+    let added: Vector<usize> = (0..r.rows).filter(|&i| old.binary_search(&r.hash(i)).is_err()).collect();
     let gone: Vec<u128> = old.iter().copied().filter(|h| new.binary_search(h).is_err()).collect();
     assert_eq!((added.len(), gone.len()), (1, 1));
     let mut overlay = Builder::new(0, true);
@@ -511,11 +512,11 @@ fn a_nodes_hash_is_its_documents_not_its_key() {
     // One document under two keys, in two images: its nodes hash the same; another document's differ.
     let mut a = Builder::new(flags::OWN, false);
     a.doc(3, &Doc { path: Some("m.py".into()), first: None });
-    a.rows("n", &[col::NODE], vec![3 << 32 | 7]);
+    a.rows("n", &[col::NODE], rerail_blocks::vector![3 << 32 | 7]);
     let mut b = Builder::new(flags::OWN, false);
     b.doc(5, &Doc { path: Some("m.py".into()), first: None });
     b.doc(6, &Doc { path: Some("o.py".into()), first: None });
-    b.rows("n", &[col::NODE], vec![5 << 32 | 7, 6 << 32 | 7]);
+    b.rows("n", &[col::NODE], rerail_blocks::vector![5 << 32 | 7, 6 << 32 | 7]);
     let (a_bytes, b_bytes) = (a.finish(), b.finish());
     let (a, b) = (Image::one(&a_bytes).unwrap(), Image::one(&b_bytes).unwrap());
     let (ra, rb) = (a.rel("n").unwrap(), b.rel("n").unwrap());
@@ -525,7 +526,7 @@ fn a_nodes_hash_is_its_documents_not_its_key() {
     assert_eq!(rb.each_hash(), [rb.hash(0), rb.hash(1)]);
     let mut t = Builder::new(0, false);
     let (x, y) = (i64::from(t.text("a")), i64::from(t.text("b")));
-    t.rows("t", &[col::TEXT, col::INT], vec![x, 1, y, 2, x, 3]);
+    t.rows("t", &[col::TEXT, col::INT], rerail_blocks::vector![x, 1, y, 2, x, 3]);
     let t = Image::one(&t.finish()).unwrap();
     let rt = t.rel("t").unwrap();
     assert_eq!(rt.each_hash(), (0..3).map(|i| rt.hash(i)).collect::<Vec<_>>());

@@ -1,4 +1,5 @@
 //! Native scalar summaries over one input version. Compatibility belongs to logical analysis.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::analysis::{
     bags,
@@ -7,7 +8,7 @@ use crate::code_rule_dsl::logic::analysis::{
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Bag {
-    columns: Vec<usize>,
+    columns: Vector<usize>,
     tests: Vec<(usize, usize)>,
     pub value: Option<usize>,
 }
@@ -282,27 +283,21 @@ impl Pool {
     }
 }
 
-pub(super) fn explain(steps: &[Step], store: &Store) {
+pub(super) fn explain(p: &Section<steps::Plan>, store: &Store) {
     use crate::code_rule_dsl::logic::profile;
     if !profile::on() {
         return;
     }
     let mut consumers = vec![];
-    for (step, s) in steps.iter().enumerate() {
+    for (step, s) in p.steps.iter().enumerate() {
         if let Step::Unused { proof } = s {
-            consumers.push(serde_json::json!({"step":step,"evaluation_elided":proof}));
+            consumers.push(serde_json::json!({"step":step,"evaluation_elided":{"proven":proof.proven,"reason":proof.reason.as_str()}}));
             continue;
         }
-        let Step::Scalar {
-            src,
-            bag: Some(bag),
-            ..
-        } = s
-        else {
-            continue;
-        };
+        let Step::Scalar { src, bag, .. } = s else { continue };
+        let Some(bag) = bag.as_ref().map(|h| p.bound(h)) else { continue };
         let pool = match src {
-            Src::In(r, _) => &r.summaries,
+            Src::In(r, _) => &p.bound(r).summaries,
             Src::Full(r) | Src::FullMulti(r, _) | Src::Delta(r) => &store.rels[*r].summaries,
         };
         let selected = pool.selected(bag);
@@ -315,16 +310,13 @@ pub(super) fn explain(steps: &[Step], store: &Store) {
     });
 }
 
-pub(super) fn register(steps: &[Step], store: Option<&Store>) {
-    for step in steps {
-        if let Step::Scalar {
-            src,
-            bag: Some(bag),
-            ..
-        } = step
+pub(super) fn register(p: &Section<steps::Plan>, store: Option<&Store>) {
+    for step in p.steps.iter() {
+        if let Step::Scalar { src, bag, .. } = step
+            && let Some(bag) = bag.as_ref().map(|h| p.bound(h))
         {
             match src {
-                Src::In(rel, _) => rel.summaries.register(bag),
+                Src::In(rel, _) => p.bound(rel).summaries.register(bag),
                 Src::Full(r) | Src::FullMulti(r, _) | Src::Delta(r) => {
                     if let Some(store) = store {
                         store.rels[*r].summaries.register(bag)
@@ -336,7 +328,9 @@ pub(super) fn register(steps: &[Step], store: Option<&Store>) {
 }
 
 /// Adapt physical steps to the same bag proof used by SQL. Lookup slots stay local to the consumer.
-pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
+/// Each scalar step's bag, by the same proof SQL's uses (`Edit::Bag`).
+pub(super) fn plan(p: &Section<steps::Plan>) -> Vec<Edit> {
+    let steps = &p.steps;
     let mut previous = std::collections::BTreeSet::new();
     let mut positions = Vec::new();
     let mut inputs = Vec::new();
@@ -374,7 +368,7 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
             continue;
         };
         let source = match src {
-            Src::In(rel, _) => format!("input:{:p}", Arc::as_ptr(rel)),
+            Src::In(rel, _) => format!("input:{:p}", Arc::as_ptr(p.bound(rel))),
             Src::Full(r) | Src::FullMulti(r, _) => format!("full:{r}"),
             Src::Delta(r) => format!("delta:{r}"),
         };
@@ -411,6 +405,7 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
         ));
     }
     let analysis = bags::analyze(inputs);
+    let mut edits = Vec::new();
     for family in &analysis.bags.families {
         if !analysis.bags.inputs[family.witness]
             .same_bag(&analysis.bags.inputs[family.witness])
@@ -423,19 +418,15 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
             _ => None,
         };
         for &member in &family.members {
-            if let Step::Scalar {
-                keys, tests, bag, ..
-            } = &mut steps[positions[member]]
-            {
-                *bag = Some(Arc::new(Bag {
+            if let Step::Scalar { keys, tests, .. } = &steps[positions[member]] {
+                edits.push(Edit::Bag(positions[member], Arc::new(Bag {
                     columns: keys.iter().map(|(c, _)| *c).collect(),
-                    tests: tests.clone(),
+                    tests: tests.to_vec(),
                     value,
-                }));
+                })));
             }
         }
     }
-    register(steps, None);
     crate::code_rule_dsl::logic::profile::decision("native scalar summaries", || {
         serde_json::json!({
         "analysis":analysis,
@@ -444,7 +435,7 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
         "sum_range_check":"At each scalar use, after exact accumulation",
     }).to_string()
     });
-    analysis
+    edits
 }
 
 #[cfg(test)]
@@ -559,7 +550,7 @@ pub mod tests {
     fn shared_native_fold_preserves_duplicates_empty_results_and_range_checks() {
         let pool = Pool::default();
         let bag = Arc::new(Bag {
-            columns: vec![0],
+            columns: rerail_blocks::vector![0],
             tests: vec![],
             value: Some(1),
         });
@@ -656,7 +647,7 @@ pub mod tests {
         else {
             panic!("native scalar")
         };
-        let active = rel.summaries.memos().into_iter().filter(|m| m.groups > 0).collect::<Vec<_>>();
+        let active = j.bound(rel).summaries.memos().into_iter().filter(|m| m.groups > 0).collect::<Vec<_>>();
         assert_eq!(active.len(), 1);
         let memo = &active[0];
         assert_eq!(
@@ -781,7 +772,7 @@ pub mod tests {
         else {
             panic!("native input")
         };
-        let memos = rel.summaries.memos();
+        let memos = j.bound(rel).summaries.memos();
         assert_eq!(
             memos.iter().map(|m| m.builds).sum::<usize>(),
             1000,
@@ -793,7 +784,7 @@ pub mod tests {
     #[test]
     fn mutable_input_views_pin_their_version_before_any_scalar_fold() {
         use crate::code_rule_dsl::facts::vtab::{Modules, Source};
-        struct Cells(Arc<Mutex<Vec<[i64; 2]>>>);
+        struct Cells(Arc<Mutex<Vector<[i64; 2]>>>);
         impl Source for Cells {
             fn columns(&self) -> Vec<String> {
                 vec!["g".into(), "v".into()]
@@ -807,7 +798,7 @@ pub mod tests {
             fn indexed(&self, _: usize) -> bool {
                 false
             }
-            fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+            fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
                 None
             }
             fn value(&self, r: usize, c: usize) -> i64 {
@@ -820,7 +811,7 @@ pub mod tests {
             }
         }
         let db = connection();
-        let values = Arc::new(Mutex::new(vec![[1, 7], [1, 3]]));
+        let values = Arc::new(Mutex::new(rerail_blocks::vector![[1, 7], [1, 3]]));
         Modules::default()
             .bind(&db, "versioned", Arc::new(Cells(values.clone())))
             .unwrap();

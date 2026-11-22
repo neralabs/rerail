@@ -257,10 +257,10 @@ pub struct Names {
 /// A program's words and the tables they index.
 #[derive(Clone, Default)]
 pub struct Words {
-    pub words: Vec<u32>,
+    pub words: rerail_blocks::vector::Vector<u32>,
     pub strings: Vec<Vec<u8>>,
-    pub labels: Vec<u16>,
-    pub longs: Vec<u64>,
+    pub labels: rerail_blocks::vector::Vector<u16>,
+    pub longs: rerail_blocks::vector::Vector<u64>,
     pub tree_sitter_query: bool,
     /// Set mode (t1 spec-transducer §1, list step 14): the program's consumer reads its output
     /// as a set of (task, label) keys, so an executor may stop a label at its first emit in a

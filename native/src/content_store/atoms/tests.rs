@@ -601,7 +601,7 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
         digest: 9,
         reads: Vec::new(),
         types: vec![b's', b'i'],
-        what: crate::content_store::kept_facts::KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 2, 3, 3, 1, 1], n: 3, levels: None, given: false },
+        what: crate::content_store::kept_facts::KeptWhat::Flat { widths: rerail_blocks::vector![8, 8], rows: rerail_blocks::vector![2, 2, 3, 3, 1, 1], n: 3, levels: None, given: false },
     };
     super::mapped(|| store.queue_kept(space, vec![put]));
     let row = store.kept_row(&space).unwrap().expect("written");

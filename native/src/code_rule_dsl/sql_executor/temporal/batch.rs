@@ -1,6 +1,7 @@
 //! Execute a wide wave schedule as one read-only SQL statement. The recursive CTE
 //! visits each active rule and relation fold in order. Callbacks only advance the
 //! schedule, expose pinned inputs, and store the rows produced by SQL.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::facts::vtab::Modules;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -47,7 +48,7 @@ pub struct History {
 
 pub struct Rule {
     pub relation: usize,
-    reads: Vec<usize>,
+    reads: Vector<usize>,
     external: BTreeSet<String>,
     reusable: bool,
     candidate: versions::Version,
@@ -57,14 +58,14 @@ pub struct Rule {
 pub struct Output {
     pub name: String,
     spec: Relation,
-    readers: Vec<usize>,
+    readers: Vector<usize>,
     empty: state::Roots,
 }
 pub struct Plan {
     pub rules: Vec<Rule>,
     pub outputs: Vec<Output>,
     after: BTreeSet<(u32, u32)>,
-    strata: Vec<u32>,
+    strata: Vector<u32>,
     width: usize,
     sql: String,
     reuse_id: usize,

@@ -5,6 +5,7 @@
 //!
 //! Public so the engine's tests of its own block programs (`packed::regex_block`) use them too.
 
+use rerail_blocks::vector::Vector;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::{block, native_cpu_block, native_ir};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -58,7 +59,7 @@ pub fn runs() -> Vec<Vec<u8>> {
 }
 
 /// Each executor's outputs on a file, by its name.
-pub type Runs = Vec<(String, Vec<Vec<u64>>)>;
+pub type Runs = Vec<(String, Vec<Vector<u64>>)>;
 
 /// A program's first block program, lowered and compiled once, for runs over many inputs.
 pub struct Executors<'a> {
@@ -106,7 +107,7 @@ impl<'a> Executors<'a> {
     fn device(&self, bytes: &[u8], out: &mut Runs, skipped: &mut Vec<String>) {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
         use rerail_compiler::Error;
-        let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
+        let mut keep = |name: String, got: Result<Vec<Vector<u64>>, Error>| match got {
             Ok(got) => out.push((name, got)),
             Err(Error::BackendLaunchLimit) => skipped.push(name),
             // A device whose SIMD groups are not 32 lanes runs no block program (`block_program::ready`).

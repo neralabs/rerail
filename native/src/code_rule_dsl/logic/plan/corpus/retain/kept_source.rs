@@ -4,6 +4,7 @@
 //! is in order, so a probe of it is a binary search of the column (`sorted_range`); another column's probes go through
 //! its rows sorted by that column, made when first asked (as a relation's own order is). A relation the run extends is
 //! made from its rows then (`Rel::based` takes no view).
+use rerail_blocks::vector::Vector;
 use super::kept_read::Bound;
 use crate::code_rule_dsl::facts::vtab::Source;
 use rerail_blocks::packed::Packed;
@@ -16,11 +17,11 @@ pub(super) struct KeptSource {
     /// Its entries, in order, each in `_bound`'s mapping.
     parts: Vec<*const Packed>,
     /// Each part's first row, and the rows' count last.
-    starts: Vec<usize>,
+    starts: Vector<usize>,
     names: Vec<String>,
     /// Each column's rows in its order, made when first asked (a single entry's leading column needs none): its
     /// values sorted, and the rows in that order.
-    by: Vec<OnceLock<(Vec<i64>, Vec<u32>)>>,
+    by: Vec<OnceLock<(Vector<i64>, Vector<u32>)>>,
     /// Each column's distinct values, counted when first asked.
     distinct: Vec<OnceLock<usize>>,
 }
@@ -34,7 +35,7 @@ impl KeptSource {
     pub(super) fn new(bound: Arc<Bound>, parts: Vec<*const Packed>) -> KeptSource {
         // SAFETY: as above.
         let k = parts.first().map_or(0, |&p| unsafe { &*p }.arity as usize);
-        let mut starts = Vec::with_capacity(parts.len() + 1);
+        let mut starts = rerail_blocks::vector::Vector::with_capacity(parts.len() + 1);
         let mut n = 0;
         for &p in &parts {
             starts.push(n);
@@ -79,7 +80,7 @@ impl KeptSource {
         lo..hi
     }
 
-    fn by(&self, column: usize) -> &(Vec<i64>, Vec<u32>) {
+    fn by(&self, column: usize) -> &(Vector<i64>, Vector<u32>) {
         self.by[column].get_or_init(|| {
             let mut pairs: Vec<(i64, u32)> = Vec::with_capacity(self.len());
             let mut r = 0u32;
@@ -137,8 +138,8 @@ impl Source for KeptSource {
         self.len().div_ceil(distinct.max(1)).max(1)
     }
 
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
-        let mut out = Vec::new();
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let mut out = rerail_blocks::vector::Vector::new();
         for &v in values {
             if self.leads(column) {
                 out.extend(self.range(column, v));
@@ -180,7 +181,7 @@ impl Source for KeptSource {
 
     /// A single entry's canonical order: the order key's columns, then the rest (an entry put as given, or granules
     /// one after another, record none).
-    fn order(&self) -> Option<Vec<usize>> {
+    fn order(&self) -> Option<rerail_blocks::vector::Vector<usize>> {
         let rows = self.single()?;
         let key = &rows.okey[..rows.nokey as usize];
         (!key.is_empty()).then(|| key.iter().map(|&c| c as usize).chain((0..rows.arity as usize).filter(|c| !key.contains(&(*c as u16)))).collect())
