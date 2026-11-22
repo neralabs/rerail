@@ -1309,13 +1309,11 @@ pub(in crate::code_rule_dsl) fn warm() {
                     // device is not opened here: on S7 a wave waiting on this job's open waited longer (to
                     // 0.8 s under load) than opening it itself (50-80 ms).
                     let _ = super::set_steps::kernel();
-                    let _ = compile_resident_interpreter_cached();
-                    // The run's format, as its tapes are placed (a 16z tape as 16): its batches' kernels.
-                    let _ = pipelines(match crate::code_rule_dsl::tape::formats::Format::of_run() {
-                        crate::code_rule_dsl::tape::formats::Format::F15 => 15,
-                        _ => 16,
-                    });
-                    let _ = compile_sweep_cached();
+                    // The run's format, as its tapes are placed: its batches' kernels.
+                    let format = run_format();
+                    let _ = compile_resident_interpreter_cached(format);
+                    let _ = pipelines(format);
+                    let _ = compile_sweep_cached(format);
                 });
             });
         });
@@ -1336,6 +1334,14 @@ fn pipeline_of(source: &str, name: &str, format: u32) -> Result<LabelKernel, Err
 }
 
 /// The label kernels of tape format `format` compiled (`metal_program_backend::kernels_ahead`), as a wave asks for them.
+/// The format a run places its tapes in (a 16z tape as 16), which its label batches are of.
+pub(in crate::code_rule_dsl) fn run_format() -> u32 {
+    match crate::code_rule_dsl::tape::formats::Format::of_run() {
+        crate::code_rule_dsl::tape::formats::Format::F15 => 15,
+        _ => 16,
+    }
+}
+
 pub(in crate::code_rule_dsl) fn compile_labels(format: u32) -> Result<(), Error> {
     pipelines(format).map(drop)
 }
@@ -1940,10 +1946,10 @@ fn encode(
         crate::code_rule_dsl::prof::count_named(format!("gpu.tape_format={format}"), 1);
     }
     let mut runner = Runner {
-        engine: compile_resident_interpreter_cached()?,
+        engine: compile_resident_interpreter_cached(format)?,
         kernels: pipelines(format)?,
         sweep: if plan.steps.iter().any(|(recursive, levels)| *recursive && sweeps(levels)) {
-            Some(compile_sweep_cached()?)
+            Some(compile_sweep_cached(format)?)
         } else {
             None
         },

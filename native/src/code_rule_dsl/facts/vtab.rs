@@ -79,6 +79,8 @@ pub struct ViewInPlace {
     pub buffers: Vec<rerail_device::device::Buffer>,
     pub cache: Option<rerail_device::device::Buffer>,
     pub failed: u32,
+    /// Its batch's tape format (`ViewsInPlace::format`; 0: several), which the stages reading it are compiled for.
+    pub format: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }
 

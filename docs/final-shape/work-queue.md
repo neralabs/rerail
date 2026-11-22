@@ -10183,3 +10183,13 @@ Each choice is read by both sides' invariants in `notes/roll-up-43-main.md`:
   `compile_contained`, `compile_async` and `CompileTask` call it.
 - **Owners**: ours' `refreshOwners()` (one look-again point), then theirs' `prepareRules(paths)`.
 - **Identity** (#977): theirs' lazy candidate, and ours' bare-folder ids and `checkoutIdentity`.
+
+### Q465. Roll-up 44 (CUDA-support 949511d462 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-44-cuda-support.md`:
+
+- **Tape reads**: theirs' per-format files (0576), with ours' 16z cache polls and the take's `own` (0540) in
+  `tape_f16z.h`.
+- **Large reads cold** (0548): `CLIF_TAPE_READ` takes its linkage. Ours' six large reads are `UKL_COLD`.
+- **The launch**: ours' `dispatch_batch`, with theirs' choice of the batch format's interpreter.
+- **Generated view reads**: written again from the merged generator.
