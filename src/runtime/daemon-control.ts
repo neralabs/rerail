@@ -106,12 +106,12 @@ export interface EngineEndpoint {
   socketPath: string;
   accessToken?: string;
   /**
-   * Epoch ms by which the engine must have answered the event, where the engine was asked for a proof before the
-   * event (one that shows the Windows pipe `RERAIL_ENGINE_SOCKET` names to be the home's own daemon,
-   * {@link engineEndpointAt}): together they wait no longer than the event alone ({@link ENGINE_ANSWER_WAIT_MS}).
-   * Absent, the event waits that long from its own request.
+   * How long, in ms, the engine took to answer a proof asked before the event (one that shows the Windows pipe
+   * `RERAIL_ENGINE_SOCKET` names to be the home's own daemon, {@link engineEndpointAt}): the event then waits what the
+   * proof left of {@link ENGINE_ANSWER_WAIT_MS}, from its own request, however long the hook waited between the two
+   * (its session's lock). Absent, the event waits that long from its own request.
    */
-  answerBy?: number;
+  proofTookMs?: number;
 }
 
 function engineEndpointOf(state: Pick<DaemonState, "kernelSocketPath" | "accessToken">): EngineEndpoint {
@@ -160,7 +160,7 @@ const NOTHING_SENT = "so nothing was sent to it";
  * proof the pipe gave this process for the same capability since the event arrived ({@link provedSinceArrival})
  * answers for both. Windows' wait for a free instance of the pipe stands where the event's own wait to connect would,
  * so the event keeps its whole wait from its request; only a proof asked after Windows answered shares it
- * ({@link EngineEndpoint.answerBy}).
+ * ({@link EngineEndpoint.proofTookMs}).
  */
 async function provenEnginePipe(pipe: NamedPipe, deadline: number | undefined): Promise<EngineEndpoint> {
   const { socketPath, machine } = pipe;
@@ -168,9 +168,9 @@ async function provenEnginePipe(pipe: NamedPipe, deadline: number | undefined): 
   if (provedSinceArrival(pipe, accessToken, deadline)) return { socketPath, accessToken };
   const holder = await machine.pipeServer(socketPath, ENGINE_ANSWER_WAIT_MS);
   if (heldByRecordedDaemon(holder, state)) return { socketPath, accessToken };
-  const answerBy = Date.now() + ENGINE_ANSWER_WAIT_MS;
+  const asked = Date.now();
   const answer = pipeStayedBusy(holder) ? "silent" : await machine.capabilityProof(socketPath, accessToken, ENGINE_ANSWER_WAIT_MS);
-  if (answer === "proved") return { socketPath, accessToken, answerBy };
+  if (answer === "proved") return { socketPath, accessToken, proofTookMs: Date.now() - asked };
   throw new Error(notSentReason(pipe, answer, holder));
 }
 

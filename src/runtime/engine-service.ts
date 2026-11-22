@@ -1239,11 +1239,11 @@ function answered(response: ServerResponse, body: string): AnswerFate {
 }
 
 /**
- * How long the event's request to `endpoint` waits for its answer: {@link ENGINE_ANSWER_WAIT_MS}, or what is left of it
- * after a wait on the engine that came first (`answerBy`), and at least 1 ms, since a socket reads 0 as no limit.
+ * How long the event's request to `endpoint` waits for its answer, from the request: {@link ENGINE_ANSWER_WAIT_MS}, less
+ * what a proof on the engine that came first took (`proofTookMs`), and at least 1 ms, since a socket reads 0 as no limit.
  */
 function answerWaitMs(endpoint: EngineEndpoint): number {
-  return endpoint.answerBy === undefined ? ENGINE_ANSWER_WAIT_MS : Math.max(1, endpoint.answerBy - Date.now());
+  return endpoint.proofTookMs === undefined ? ENGINE_ANSWER_WAIT_MS : Math.max(1, ENGINE_ANSWER_WAIT_MS - endpoint.proofTookMs);
 }
 
 export async function ingestEngineEvent(

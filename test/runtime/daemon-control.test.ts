@@ -858,7 +858,7 @@ describe("a state file Windows left behind", () => {
     it("asks Windows which process holds it first, and its engine to prove it holds the capability only when Windows names another, within a wait the event shares", async () => {
       await recordState({ kernelSocketPath: PIPE, accessToken: "capability", startedAt: STARTED });
       const endpoint = await atStandInTime(async () => await engineEndpointAt(PIPE, undefined, answering("proved")));
-      expect(endpoint).toEqual({ socketPath: PIPE, accessToken: "capability", answerBy: STARTED + ENGINE_ANSWER_WAIT_MS });
+      expect(endpoint).toEqual({ socketPath: PIPE, accessToken: "capability", proofTookMs: 0 });
       expect(held).toEqual([[PIPE, ENGINE_ANSWER_WAIT_MS]]);
       expect(asked).toEqual([[PIPE, "capability", ENGINE_ANSWER_WAIT_MS]]);
     });
@@ -890,19 +890,19 @@ describe("a state file Windows left behind", () => {
       },
     });
 
-    it("gives the engine's proof the whole wait from when Windows named another holder, however long Windows took to free an instance, and the event what the proof left", async () => {
+    it("gives the engine's proof the whole wait from when Windows named another holder, however long Windows took to free an instance, and the event how long the proof took", async () => {
       await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
       const other = answering("proved", "win32", { pid: DEAD_PID + 1, startedAt: STARTED - 1 });
-      const left = await atStandInTime(async advance => {
-        const after: number[] = [];
+      const took = await atStandInTime(async advance => {
+        const proofs: Array<number | undefined> = [];
         for (const freedAfterMs of [10_000, ENGINE_ANSWER_WAIT_MS - 1_000]) {
-          const { answerBy } = await engineEndpointAt(PIPE, undefined, slowed(other, advance, freedAfterMs, 12_000));
-          after.push((answerBy ?? Number.NaN) - Date.now());
+          const { proofTookMs } = await engineEndpointAt(PIPE, undefined, slowed(other, advance, freedAfterMs, 12_000));
+          proofs.push(proofTookMs);
         }
-        return after;
+        return proofs;
       });
       expect(asked.map(([, , timeoutMs]) => timeoutMs)).toEqual([ENGINE_ANSWER_WAIT_MS, ENGINE_ANSWER_WAIT_MS]);
-      expect(left).toEqual([ENGINE_ANSWER_WAIT_MS - 12_000, ENGINE_ANSWER_WAIT_MS - 12_000]);
+      expect(took).toEqual([12_000, 12_000]);
     });
 
     it("is asked the home's proof when daemon.json names another pipe, and sent nothing without it", async () => {

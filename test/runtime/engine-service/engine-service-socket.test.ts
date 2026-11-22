@@ -7,12 +7,13 @@ import { tmpdir } from "node:os";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { ENGINE_ANSWER_WAIT_MS } from "../../../src/runtime/daemon-control.js";
+import { ENGINE_ANSWER_WAIT_MS, engineEndpointAt } from "../../../src/runtime/daemon-control.js";
 import { engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer } from "../../../src/runtime/daemon/engine-pipe.js";
 import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
+import { fakeMachine } from "../../support/platform/daemon-machine.js";
 import { oneInstanceHolder } from "../../support/platform/one-instance-pipe.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
@@ -497,27 +498,62 @@ async function silentListener(): Promise<{ socketPath: string; close(): Promise<
 describe("an event sent after a proof on the engine", () => {
   const event = { kind: "session-end", eventId: "end", sessionId: "s" } as const;
 
-  it("hands its socket what is left of the wait it shares with the proof, 1 ms once that is past, and its own 30 s with no proof", async () => {
-    const silent = await silentListener();
+  /** The wait each request hands its socket while `body` runs, through a stand-in timer that fires once it is handed. */
+  const socketWaits = async (body: () => Promise<void>): Promise<number[]> => {
     const waits: number[] = [];
-    // A stand-in for the socket's timer: it notes the wait the request hands it and fires once the request is sent.
     const timer = vi.spyOn(ClientRequest.prototype, "setTimeout").mockImplementation(function (this: ClientRequest, ms: number, fire?: () => void) {
       waits.push(ms);
       process.nextTick(() => fire?.());
       return this;
     });
     try {
-      await expect(ingestEngineEvent({ socketPath: silent.socketPath, answerBy: Date.now() + 300 }, event)).rejects.toThrow("Kernel request timed out");
-      await expect(ingestEngineEvent({ socketPath: silent.socketPath, answerBy: Date.now() - 1_000 }, event)).rejects.toThrow("Kernel request timed out");
-      await expect(ingestEngineEvent({ socketPath: silent.socketPath }, event)).rejects.toThrow("Kernel request timed out");
+      await body();
     } finally {
       timer.mockRestore();
+    }
+    return waits;
+  };
+
+  it("hands its socket what the proof left of the wait it shares with it, 1 ms once the proof took it all, and its own 30 s with no proof", async () => {
+    const silent = await silentListener();
+    try {
+      const waits = await socketWaits(async () => {
+        await expect(ingestEngineEvent({ socketPath: silent.socketPath, proofTookMs: ENGINE_ANSWER_WAIT_MS - 300 }, event)).rejects.toThrow("Kernel request timed out");
+        await expect(ingestEngineEvent({ socketPath: silent.socketPath, proofTookMs: ENGINE_ANSWER_WAIT_MS + 1_000 }, event)).rejects.toThrow("Kernel request timed out");
+        await expect(ingestEngineEvent({ socketPath: silent.socketPath }, event)).rejects.toThrow("Kernel request timed out");
+      });
+      // At least 1 ms, since a socket reads 0 as no limit.
+      expect(waits).toEqual([300, 1, ENGINE_ANSWER_WAIT_MS]);
+    } finally {
       await silent.close();
     }
-    expect(waits[0]).toBeGreaterThan(0);
-    expect(waits[0]).toBeLessThanOrEqual(300);
-    // At least 1 ms, since a socket reads 0 as no limit.
-    expect(waits.slice(1)).toEqual([1, ENGINE_ANSWER_WAIT_MS]);
+  });
+
+  it("keeps what the proof left of its wait, from its own request, however long the hook waited for its session's lock in between", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-proof-then-lock-"));
+    const silent = await silentListener();
+    // daemon.json records another pid than any holder Windows names, so the engine on the pipe proves itself first.
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test",
+      databasePath: join(home, "rerail.sqlite"), kernelSocketPath: String.raw`\\.\pipe\rerail-engine-proof-then-lock`, ui: "bundled", startedAt: 1, packageRoot: home, accessToken: "capability" }));
+    let now = 1_700_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const proving = fakeMachine("win32", { env: { RERAIL_HOME: home }, capabilityProof: async () => {
+        now += 12_000;
+        return "proved";
+      } });
+      const endpoint = await engineEndpointAt(String.raw`\\.\pipe\rerail-engine-proof-then-lock`, undefined, proving);
+      // The hook then waits 31 s for its session's lock, held by another hook of the session.
+      now += 31_000;
+      const waits = await socketWaits(async () => {
+        await expect(ingestEngineEvent({ ...endpoint, socketPath: silent.socketPath }, event)).rejects.toThrow("Kernel request timed out");
+      });
+      expect(waits).toEqual([ENGINE_ANSWER_WAIT_MS - 12_000]);
+    } finally {
+      clock.mockRestore();
+      await silent.close();
+      await removeFolder(home);
+    }
   });
 });
 
