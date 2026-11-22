@@ -9646,6 +9646,12 @@ fn run_observed_within(
             })();
             let (k, how) = match looked {
                 Some(k) => (k, "counted at the held nodes"),
+                // The walk refused: the whole relation's, from the source's own structure where it has them (no row
+                // counted on the heap: a place relation's, `places::Places`, 49.5 MB each at the M3's 300-file peak),
+                // else counted.
+                None if let Some(known) = source.statistics() => {
+                    (super::statkeep::RelStats::of_statistics(columns.to_vec(), &known), "the source's own, whole: its keyed walk refused (no row counted)")
+                }
                 None => {
                     let _m = crate::code_rule_dsl::logic::profile::span(|| format!("a base relation counted whole ({} rows)", source.len()));
                     let mut k = super::statkeep::RelStats::new(columns.to_vec());

@@ -470,9 +470,12 @@ impl Source for LongTexts {
     fn len(&self) -> usize {
         self.nodes.len()
     }
-    /// The nodes' estimate, made of no rows (`Source::estimated_len`'s default is `len`, which makes them).
+    /// Its rows, made of none (`Source::estimated_len`'s default is `len`, which makes them): counted on the tape, or
+    /// for a batch whose documents' counts were given (`Batch::lazy`), the counts' estimate, which projects none. The
+    /// relation's own estimate makes every document's rows where no count was given (`MadeRows::estimated_len`): the
+    /// planner's measure made the whole group that way (36 MB of node rows at the M3's 300-file peak, ab160).
     fn estimated_len(&self) -> usize {
-        self.nodes.estimated_len()
+        if self.batch.lazy() { self.nodes.estimated_len() } else { self.tape_len() }
     }
     /// Its one column's statistics, of its rows counted on the tape (decision 0353): one row a node, so each of its
     /// counts is its rows. Measured as rows (`sampled_statistics_unanswered`), the measure made its whole group's
@@ -481,7 +484,7 @@ impl Source for LongTexts {
         if let Some(known) = self.nodes.statistics() {
             return Some(known);
         }
-        let n = self.tape_len() as i64;
+        let n = self.estimated_len() as i64;
         Some(self.nodes.columns().into_iter().map(|c| (c, n, n, n, n)).collect())
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {

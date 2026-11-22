@@ -781,6 +781,26 @@ impl Batch {
         Some(values.iter().filter_map(|v| by.get(v)).flatten().copied().collect())
     }
 
+    /// `doc`'s statistics, of the documents' paths and modules, none made (`Source::statistics`, as
+    /// `syntax::measured` gives them): a row a file (a tape value has none), its key, its path and its module. Its
+    /// rows' first column is a document key, so every row is one group's. Measured as rows, the planner's measure of
+    /// `doc` made every document's rows of every relation of its group (33.9 MB of node rows at the M3's 300-file
+    /// peak, ab161). `None` with no file.
+    fn doc_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.keys_of_modules(&[])?;
+        let by = self.by_module.get()?.as_ref()?;
+        let rows: i64 = by.values().map(|k| k.len() as i64).sum();
+        if rows == 0 {
+            return None;
+        }
+        let squares = |counts: &mut dyn Iterator<Item = i64>| counts.fold((0i64, 0i64), |(k, s), n| (k + 1, s + n * n));
+        let mut paths: Vec<&str> = (0..self.docs.len()).filter(|&i| !self.docs.guest(i).is_some_and(|g| matches!(g.made, super::Made::Tape { .. }))).map(|i| self.docs.path(i)).collect();
+        paths.sort_unstable();
+        let (path_ndv, path_sq) = squares(&mut paths.chunk_by(|a, b| a == b).map(|run| run.len() as i64));
+        let (module_ndv, module_sq) = squares(&mut by.values().map(|k| k.len() as i64));
+        Some(vec![("d".into(), rows, rows, rows, rows), ("path".into(), rows, path_ndv, path_sq, path_sq), ("module".into(), rows, module_ndv, module_sq, module_sq)])
+    }
+
     /// Each host's guests, by key (decision 0055), from the documents' places, none made: what a probe of a guest's
     /// row by its host's node makes (`ByDocument::Host`). `None` where a tape value is among them (decision 0431),
     /// whose rows stand at places in many hosts.
@@ -847,6 +867,10 @@ impl MadeRows {
     /// `target`, if every document is made.
     fn done(&self) -> Option<&dyn Source> {
         self.batch.rows.complete.get().map(|c| &*c[self.rel] as &dyn Source)
+    }
+    /// Whether it is core.rerail's `doc(d, path, module)`, a row a file: what the documents give with none made.
+    fn is_doc(&self) -> bool {
+        self.batch.rows.names[self.rel] == "doc" && self.template().columns() == ["d", "path", "module"]
     }
     /// How the relation's first column names its row's document.
     fn by(&self) -> ByDocument {
@@ -1013,9 +1037,12 @@ impl Source for MadeRows {
     fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
         self.target().rows_of(columns, out)
     }
+    /// Before its rows are made, its counts as given, else `doc`'s its documents' (a row a file): the target's estimate
+    /// is its made rows', which makes every document (the planner's measure of `doc` did, ab162).
     fn estimated_len(&self) -> usize {
         match (self.done(), self.batch.rows.counted(self.rel)) {
             (None, Some(n)) => n,
+            (None, None) if self.is_doc() => self.batch.doc_statistics().map_or(0, |s| s[0].1 as usize),
             _ => self.target().estimated_len(),
         }
     }
@@ -1123,8 +1150,13 @@ impl Source for MadeRows {
             t.expect_lookups(_column, _keys)
         }
     }
+    /// The made relation's, or before its rows are made, those its documents give (`doc`'s: `doc_statistics`).
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        self.done().and_then(|t| t.statistics())
+        match self.done() {
+            Some(t) => t.statistics(),
+            None if self.is_doc() => self.batch.doc_statistics(),
+            None => None,
+        }
     }
     fn value_counts(&self, _wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
         self.done().and_then(|t| t.value_counts(_wanted))

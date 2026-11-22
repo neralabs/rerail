@@ -47,6 +47,9 @@ impl Source for Places {
     fn python_batch(&self) -> Option<Arc<super::Batch>> {
         self.view.python_batch()
     }
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn columns(&self) -> Vec<String> {
         self.view.columns()
     }
@@ -81,6 +84,29 @@ impl Source for Places {
         if going && range.end > first {
             self.spans.for_rows_in(range.start.saturating_sub(first)..range.end - first, columns, &mut |r, row| each(first + r, row));
         }
+    }
+    /// The view's walk of the keyed rows, then the spans' (their own keyed walk, else every span row with a key: the
+    /// spans are few beside the nodes).
+    fn for_rows_keyed(&self, column: usize, keys: &rustc_hash::FxHashSet<i64>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
+        let mut going = true;
+        if !self.view.for_rows_keyed(column, keys, columns, &mut |r, row| {
+            going = each(r, row);
+            going
+        }) {
+            return false;
+        }
+        if !going {
+            return true;
+        }
+        let first = self.first();
+        if self.spans.for_rows_keyed(column, keys, columns, &mut |r, row| each(first + r, row)) {
+            return true;
+        }
+        let mut all = columns.to_vec();
+        all.push(column);
+        let k = columns.len();
+        self.spans.for_rows_in(0..self.spans.len(), &all, &mut |r, row| !keys.contains(&row[k]) || each(first + r, &row[..k]));
+        true
     }
     fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
         self.view.rows_of(columns, out);
@@ -124,6 +150,12 @@ impl Source for Places {
         }
         true
     }
+    /// Counted in dense arrays in a block of the run's (`dense_statistics`): a place is a small number. Counted as a
+    /// view's rows by `RelStats`, its counts took 48 bytes a row on the heap (`line`'s and `col`'s 49.5 MB each at the
+    /// M3's 300-file peak, ab160).
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        dense_statistics(self)
+    }
     fn failure(&self) -> Option<String> {
         self.view.failure().or_else(|| self.spans.failure())
     }
@@ -147,4 +179,121 @@ pub(super) fn join<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<
             *source = Arc::new(Places::new(view, Arc::clone(source)));
         }
     }
+}
+
+/// The largest value `dense_statistics` counts: past it, a relation is counted as rows (`None`).
+const DENSE: i64 = 1 << 24;
+
+/// Each value's count over all rows (`all`) and within the document open (`doc`, its values `touched`), in a block.
+struct Counts {
+    all: crate::code_rule_dsl::facts::rows::BlockVec<i64>,
+    doc: crate::code_rule_dsl::facts::rows::BlockVec<i64>,
+    touched: crate::code_rule_dsl::facts::rows::BlockVec<u32>,
+    sqd: i64,
+    ok: bool,
+}
+
+impl Counts {
+    fn add(&mut self, v: i64) {
+        if !self.ok || !(0..DENSE).contains(&v) {
+            self.ok = false;
+            return;
+        }
+        let v = v as usize;
+        if self.all.len() <= v {
+            let grown = (v + 1).next_power_of_two();
+            self.all.resize(grown, 0);
+            self.doc.resize(grown, 0);
+        }
+        self.all[v] += 1;
+        if self.doc[v] == 0 {
+            self.touched.push(v as u32);
+        }
+        self.doc[v] += 1;
+    }
+    /// The open document's counts into `sqd` (each value's count within it, squared), and cleared.
+    fn close(&mut self) {
+        for &v in self.touched.iter() {
+            let n = std::mem::take(&mut self.doc[v as usize]);
+            self.sqd += n * n;
+        }
+        self.touched.resize(0, 0);
+    }
+}
+
+/// A place relation's statistics, as `syntax::measured` gives them: each column's `(name, rows, distinct values, the
+/// sum of their counts' squares, that sum within each document)`. Its first column is a node or span, one row each;
+/// its second a small number, counted by value in arrays in a block, none on the heap. A document's rows are the
+/// view's and then its spans' (`Places` puts every span after every node), so a document's span rows are counted
+/// while the view's rows of it are open. `None` for a value negative or past `DENSE`, or rows out of order.
+fn dense_statistics(p: &Places) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+    use crate::code_rule_dsl::facts::rows::BlockVec;
+    let names = p.columns();
+    if names.len() != 2 {
+        return None;
+    }
+    // The spans' runs of one document: (document, first row, end), three values a run.
+    let mut runs: BlockVec<i64> = BlockVec::new();
+    let mut increasing = true;
+    let mut last = None::<i64>;
+    p.spans.for_rows(&[0], &mut |r, row| {
+        increasing &= last.is_none_or(|l| l < row[0]);
+        last = Some(row[0]);
+        let d = row[0] >> 32;
+        let n = runs.len();
+        if n >= 3 && runs[n - 3] == d && runs[n - 1] == r as i64 {
+            runs[n - 1] += 1;
+        } else {
+            runs.extend_from_slice(&[d, r as i64, r as i64 + 1]);
+        }
+    });
+    let mut used: BlockVec<u8> = BlockVec::new();
+    used.resize(runs.len() / 3, 0);
+    let mut c = Counts { all: BlockVec::new(), doc: BlockVec::new(), touched: BlockVec::new(), sqd: 0, ok: true };
+    let mut next = 0usize;
+    // Document `d`'s span rows into the counts: the run after the last one taken, else any.
+    let spans_of = |d: i64, c: &mut Counts, used: &mut BlockVec<u8>, next: &mut usize| {
+        let k = runs.len() / 3;
+        let Some(i) = (*next..k).chain(0..*next).find(|&i| used[i] == 0 && runs[3 * i] == d) else { return };
+        used[i] = 1;
+        *next = i + 1;
+        let (lo, hi) = (runs[3 * i + 1] as usize, runs[3 * i + 2] as usize);
+        p.spans.for_rows_in(lo..hi, &[1], &mut |_, row| {
+            c.add(row[0]);
+            true
+        });
+    };
+    let mut at = None::<i64>;
+    last = None;
+    p.view.for_rows(&[0, 1], &mut |_, row| {
+        increasing &= last.is_none_or(|l| l < row[0]);
+        last = Some(row[0]);
+        let d = row[0] >> 32;
+        if at != Some(d) {
+            if let Some(prev) = at {
+                spans_of(prev, &mut c, &mut used, &mut next);
+                c.close();
+            }
+            at = Some(d);
+        }
+        c.add(row[1]);
+    });
+    if let Some(prev) = at {
+        spans_of(prev, &mut c, &mut used, &mut next);
+        c.close();
+    }
+    // The documents with spans and no node: each its own.
+    for i in 0..runs.len() / 3 {
+        if used[i] == 0 {
+            let d = runs[3 * i];
+            spans_of(d, &mut c, &mut used, &mut next);
+            c.close();
+        }
+    }
+    if !c.ok || !increasing {
+        return None;
+    }
+    let r = p.len() as i64;
+    let (ndv, sq) = c.all.iter().filter(|&&n| n > 0).fold((0i64, 0i64), |(k, s), &n| (k + 1, s + n * n));
+    Some(vec![(names[0].clone(), r, r, r, r), (names[1].clone(), r, ndv, sq, c.sqd)])
 }
