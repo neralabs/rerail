@@ -290,6 +290,29 @@ Gate: the library's tests, `join_stages` and `pp_grid` equal on each back end; a
 not the test's host side, which is the same on every back end) 1000 times the interpreter's; the generated code
 read beside hand-written SIMD Rust of the same kernel, with each difference fixed.
 
+## Step 3, an idea noted, not built: a scalar version below x lanes
+
+The user's (2026-11-22): a pragma that, where it is on, runs a fully scalar version (recursion included) once fewer
+than x lanes of the group's are still running.
+
+- **Why.** A vector round costs about the same with one lane on as with all (a gather is a load a lane either way,
+  and the mask's work and the test of any lane left are the same). A loop's last rounds, run for its slowest lanes,
+  and a recursion, whose lanes part further at each depth, are where few lanes run. `nearest_jump` on a deep forest
+  is one: 3.5 ms vectorized (hand or written), against 2.4 ms scalar, its chunks' last rounds for one lane or two.
+- **How it fits `rs.rs`.** A function's scalar version is one more instance: every parameter one value (`Sh::S`),
+  nothing masked, recursion Rust's (a lanes' instance is `#[inline(always)]`, so a recursive one is a call anyway).
+  At a loop's round or a call, with fewer than x lanes on: each lane's live values out of the registers, the scalar
+  rest of the loop (or the call) for each lane in turn, the results back in their lanes, and the vector code on from
+  the loop's end. The pragma names x; its sense is per width (of 8 lanes on NEON at W=8, of 32 on a GPU).
+- **When it may.** The lanes one after another is one interleaving of their threads, so only where the region holds
+  no barrier, no SIMD-group operation, and no wait on another thread's progress (a lane run alone first would wait
+  forever). The vectorizer marks the first two; the third is a check to write. Otherwise the pragma is refused.
+- **Not for the GPU.** A warp's idle lanes cost the same, and there is no cheaper scalar unit; the GPU's form of it
+  is to gather the few running lanes of many SIMD groups into full ones, through the work queue (continuations).
+- **The cost**: a second, scalar copy of each marked loop or function. x is a vector round's fixed cost against a
+  lane's scalar one, high (3–4 of 8) for a loop of gathers. The first measure: the hand-vectorized `nearest_jump`
+  going scalar at 2 lanes or fewer, on the deep forest.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
