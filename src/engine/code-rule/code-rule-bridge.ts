@@ -316,6 +316,28 @@ async function readEntriesInto(discovery: SourceDiscovery, root: string, unmerge
   const entries = await unmergedNow(discovery, root);
   if (entries !== undefined) unmerged.set(root, entries);
 }
+/**
+ * Each of `roots`, checkouts whose `HEAD` the session keeps, whose `.git` entry stands. A read of one whose entry is
+ * absent asks Git, one Git after another inside the walk a shell command's result waits for, and Git finds no checkout
+ * there: a worktree `git worktree remove` took, whose snapshot a walk that began before the removal handed back, a
+ * checkout deleted inside the session folder, or one whose `.git` was moved aside for a while. Its `HEAD` and unmerged
+ * entries stay as the last walk read them, as a failed read leaves them, so a checkout whose entry comes back is read
+ * against them again.
+ */
+async function standingCheckouts(roots: readonly string[]): Promise<string[]> {
+  const standing: string[] = [];
+  for (const root of roots) if (!(await gitEntryAbsent(root))) standing.push(root);
+  return standing;
+}
+/** Whether no `.git` entry stands at `root`, nor a folder holding one; a look that fails otherwise leaves it standing. */
+async function gitEntryAbsent(root: string): Promise<boolean> {
+  try {
+    await lstat(join(root, ".git"));
+    return false;
+  } catch (error) {
+    return hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR");
+  }
+}
 /** `HEAD` of each of `roots` that names a commit, with its unmerged entries put in `unmerged`. */
 async function readHeads(discovery: SourceDiscovery, roots: Iterable<string>, unmerged: Map<string, ReadonlyMap<string, string>>): Promise<Map<string, string>> {
   const heads = new Map<string, string>();
@@ -3461,12 +3483,13 @@ export class CodeRuleBridge {
    */
   async #readCheckouts(discovery: SourceDiscovery): Promise<Pick<WalkStart, "heads" | "unmerged">> {
     const unmerged = new Map<string, ReadonlyMap<string, string>>();
-    const others = [...discovery.heads.keys()].filter(known => !inWorktrees(discovery, known));
+    const others = await standingCheckouts([...discovery.heads.keys()].filter(known => !inWorktrees(discovery, known)));
     // When no checkout owns the session folder, no change in it is asked about.
     const session = this.#owningCheckout(discovery.root, "");
     const withHead = new Set(session === undefined ? others : [session, ...others]);
     const heads = await readHeads(discovery, withHead, unmerged);
-    for (const root of discovery.passedCheckouts) if (!withHead.has(root) && !inWorktrees(discovery, root)) await readEntriesInto(discovery, root, unmerged);
+    // A kept checkout left out for its absent `.git` entry has no entries read either: Git would find no checkout there.
+    for (const root of discovery.passedCheckouts) if (root !== session && !discovery.heads.has(root) && !inWorktrees(discovery, root)) await readEntriesInto(discovery, root, unmerged);
     return { heads, unmerged };
   }
 
