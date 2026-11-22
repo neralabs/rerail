@@ -986,6 +986,26 @@ pub fn given_back() -> usize {
 
 impl Drop for Held {
     fn drop(&mut self) {
+        use crate::code_rule_dsl::logic::profile::memory::width_census;
+        if width_census::on() && self.facts.block.is_writable() {
+            // SAFETY: the relation lies in `facts`' block, and this is its last holder: no writer goes on.
+            let rel = unsafe { &*self.rel };
+            let n = rel.len_all();
+            if n > 0 {
+                for c in 0..rel.arity as usize {
+                    let (mut lo, mut hi, mut dlo, mut dhi, mut low) = (i64::MAX, i64::MIN, i64::MAX, i64::MIN, 0u64);
+                    for id in 0..n {
+                        let v = rel.get(id, c);
+                        lo = lo.min(v);
+                        hi = hi.max(v);
+                        dlo = dlo.min(v >> 32);
+                        dhi = dhi.max(v >> 32);
+                        low = low.max(v as u64 & 0xffff_ffff);
+                    }
+                    width_census::column(u64::from(n), lo, hi, (dlo, dhi, low));
+                }
+            }
+        }
         // SAFETY: the relation lies in `facts`' block, and this was its last holder. Its chunks go to the block's
         // free list, their whole pages past the list's link back to the OS (Q76: a block lives while any relation in
         // it does, so a chunk's dead relations otherwise kept their pages resident; about 500 MB of a 300-file cold
