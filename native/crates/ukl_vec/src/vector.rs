@@ -36,6 +36,8 @@ pub struct Kernel {
     pub lid: bool,
     /// Its code tape compiled (`jit`), on its first launch that asks for it, or why it could not be.
     pub jit: std::sync::OnceLock<Result<crate::jit::Jit, String>>,
+    /// Its SSA compiled (`cl`), on its first launch that asks for it, or why it could not be.
+    pub cl: std::sync::OnceLock<Result<crate::cl::Compiled, String>>,
 }
 
 type R<T> = Result<T, Error>;
@@ -89,7 +91,7 @@ impl Kernel {
         }
         let code = tapes.pop()?;
         let tape = tapes.pop()?;
-        Some(Kernel { tape, code, name, lid, jit: Default::default() })
+        Some(Kernel { tape, code, name, lid, jit: Default::default(), cl: Default::default() })
     }
 }
 
@@ -143,7 +145,7 @@ pub fn vectorize(p: &Program, kernel: u32) -> R<Kernel> {
     }
     let tape = b.finish();
     let code = crate::code::compile(&tape)?;
-    Ok(Kernel { tape, code, name: f.name.clone(), lid, jit: Default::default() })
+    Ok(Kernel { tape, code, name: f.name.clone(), lid, jit: Default::default(), cl: Default::default() })
 }
 
 /// The context a function is called in: each argument's level (an aggregate's, its most varying byte's). A body's

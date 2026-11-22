@@ -35,6 +35,7 @@ fn the_library_tests_lower_and_vectorize() {
         let vk = super::vector::vectorize(&p, k as u32).unwrap_or_else(|e| panic!("{}: {e}", f.name));
         let v = super::k::View::new(&vk.tape);
         cut += usize::from(v.gsync(0));
+        ssa_of(&p, &vk);
     }
     assert!(cut > 0, "some kernels have threadgroup barriers: the cut");
 }
@@ -101,6 +102,7 @@ fn the_interpreter_runs_fused_opcodes_and_each_thread_gets_its_value() {
     assert!(!ops.iter().any(|o| matches!(o, I::VBinGen | I::VUnGen | I::VCastGen)), "a generic opcode in {ops:?}");
     let out = run_on(&p, &k, super::run::Exec::Interpret);
     assert_eq!(run_on(&p, &k, super::run::Exec::Jit), out, "compiled against interpreted");
+    ssa_runs_equal(&p, &k, &out);
     let want: Vec<u32> = (0..64u32)
         .map(|l| {
             let x = l * 3 + (l >> 1);
@@ -160,13 +162,23 @@ fn the_written_sources_lower_and_vectorize() {
             let t = std::time::Instant::now();
             match super::vector::vectorize(&p, k as u32) {
                 Err(e) => failed.push(format!("{name} {f}: {e}")),
-                Ok(vk) if std::env::var("RERAIL_UKL_VEC_TIMES").is_ok() => {
+                Ok(vk) => {
+                    // The kernel's SSA, compiled at a width of 8 (32 if it is the group's).
                     let vt = t.elapsed().as_secs_f64();
                     let t = std::time::Instant::now();
-                    let j = super::run::compiled(&vk).map(|_| ());
-                    eprintln!("TIME {f}: {vt:.2} s, vector tape {} nodes, code {} words; compiled {:.3} s {j:?}", super::k::View::new(&vk.tape).len(), vk.code.words.len(), t.elapsed().as_secs_f64());
+                    let names = |id: u32| if id == u32::MAX { vk.name.clone() } else { p.funcs[id as usize].name.clone() };
+                    let ssa = super::ssa::build(&vk.tape, &names);
+                    let st = t.elapsed().as_secs_f64();
+                    let t = std::time::Instant::now();
+                    let c = ssa.as_ref().map_err(|e| e.0.clone()).and_then(|s| super::cl::compile(s, &vk.name, 8, &super::exec::places()).map_err(|e| e.0));
+                    if std::env::var("RERAIL_UKL_VEC_TIMES").is_ok() {
+                        let values = ssa.as_ref().map_or(0, |s| s.funcs.iter().map(|f| f.insts.len()).sum::<usize>());
+                        eprintln!("TIME {f}: vectorized {vt:.2} s ({} nodes), SSA {st:.3} s ({values} values), compiled {:.3} s", super::k::View::new(&vk.tape).len(), t.elapsed().as_secs_f64());
+                    }
+                    if let Err(e) = c {
+                        failed.push(format!("{name} {f}: {e}"));
+                    }
                 }
-                Ok(_) => {}
             }
         }
         eprintln!("{name}: {} kernels", p.funcs.iter().filter(|f| f.kernel).count());
@@ -188,8 +200,10 @@ fn ran_with(prelude: &str, body: &str) -> Vec<u32> {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("t_rule").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    ssa_of(&p, &k);
     let interpreted = run_on(&p, &k, super::run::Exec::Interpret);
     assert_eq!(run_on(&p, &k, super::run::Exec::Jit), interpreted, "compiled against interpreted");
+    ssa_runs_equal(&p, &k, &interpreted);
     interpreted
 }
 
@@ -214,6 +228,15 @@ fn sixty_four_bit_unsigned_division_is_unsigned() {
             (q >> 32) as u32 ^ q as u32 ^ if v > u { 0x8000_0000 } else { 0 } ^ if v > q { 0x4000_0000 } else { 0 }
         })
         .collect();
+    assert_eq!(out, want);
+}
+
+/// Lanes of a SIMD group exchange values through memory at a SIMD group barrier (`ukl_sg_barrier`, as `ukl/lz4.h`'s
+/// copies do): compiled at a width of fewer lanes, the barrier ends a chunk, so each lane reads its neighbour's write.
+#[test]
+fn a_simd_group_barrier_shows_each_lanes_write_to_the_others() {
+    let out = ran("    out[lid] = lid * 7u + 1u;\n    ukl_sg_barrier();\n    uint32_t v = out[lid ^ 5u];\n    ukl_sg_barrier();\n    out[lid] = v;");
+    let want: Vec<u32> = (0..64u32).map(|l| (l ^ 5) * 7 + 1).collect();
     assert_eq!(out, want);
 }
 
@@ -337,4 +360,26 @@ fn compiled_code_kept_as_bytes_runs_the_same() {
     let mut compiled = false;
     super::run::compiled_kept(&other, || Some(bad), |_| compiled = true).unwrap();
     assert!(compiled, "a kept form cut short is compiled again");
+}
+
+/// Kernel `k`'s SSA (`ssa`), built and checked, or the test fails with why; its listing to `RERAIL_UKL_VEC_SSA`'s
+/// directory when set.
+fn ssa_of(p: &super::lower::Program, k: &super::vector::Kernel) -> super::ssa::Ssa {
+    let s = super::ssa::build(&k.tape, &|id| if id == u32::MAX { k.name.clone() } else { p.funcs[id as usize].name.clone() }).unwrap_or_else(|e| panic!("{}: {e}", k.name));
+    if let Ok(dir) = std::env::var("RERAIL_UKL_VEC_SSA") {
+        std::fs::write(format!("{dir}/{}.ssa", k.name), s.listing()).unwrap();
+    }
+    s
+}
+
+
+/// Kernel `k`'s SSA compiled (`cl`) at each width runs as the interpreter did (`want`).
+fn ssa_runs_equal(p: &super::lower::Program, k: &super::vector::Kernel, want: &[u32]) {
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let ssa = ssa_of(p, k);
+        let c = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap_or_else(|e| panic!("{}: {e}", k.name));
+        let again = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = again.cl.set(Ok(c));
+        assert_eq!(run_on(p, &again, super::run::Exec::Ssa), want, "{} at width {w}: the compiled SSA against the interpreter", k.name);
+    }
 }

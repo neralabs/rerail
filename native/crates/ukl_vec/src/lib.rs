@@ -11,13 +11,17 @@
 
 use rerail_c_lean::{Dialect, Tape};
 
+pub mod cl;
 pub mod code;
 pub mod jit;
 pub mod ctape;
+pub mod exec;
+pub mod fiber;
 pub mod k;
 pub mod lower;
 pub mod ops;
 pub mod run;
+pub mod ssa;
 pub mod ty;
 pub mod vector;
 

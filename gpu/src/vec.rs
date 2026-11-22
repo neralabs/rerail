@@ -14,7 +14,7 @@ use rerail_ukl_vec::vector::Kernel;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Whether `device`'s kernels run on the vector path: the CPU's, with `RERAIL_CPU_EXEC=vec` or `jit`.
+/// Whether `device`'s kernels run on the vector path: the CPU's, with `RERAIL_CPU_EXEC=vec`, `jit` or `ssa` (its SSA compiled).
 pub fn on(device: &Device) -> bool {
     matches!(device, Device::Cpu(_)) && exec().is_some()
 }
@@ -24,6 +24,7 @@ fn exec() -> Option<rerail_ukl_vec::run::Exec> {
     match std::env::var("RERAIL_CPU_EXEC").ok()?.as_str() {
         "vec" => Some(rerail_ukl_vec::run::Exec::Interpret),
         "jit" => Some(rerail_ukl_vec::run::Exec::Jit),
+        "ssa" => Some(rerail_ukl_vec::run::Exec::Ssa),
         _ => None,
     }
 }

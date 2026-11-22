@@ -42,6 +42,8 @@ type R<T> = Result<T, Error>;
 pub enum Exec {
     Interpret,
     Jit,
+    /// The kernel's SSA compiled (`cl`), its SIMD groups fibers (`exec`).
+    Ssa,
 }
 
 /// Why a SIMD group's turn ended: its end, a threadgroup barrier (its site), or a poll of another group's progress.
@@ -216,6 +218,9 @@ pub struct Launch {
 /// poll another's progress (`Yield`). So a persistent grid of up to `resident` groups meets its barriers, and a
 /// larger one fails their bound, as on a GPU that holds fewer; a run is the same every time.
 pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
+    if launch.exec == Exec::Ssa {
+        return crate::exec::run(p, k, args, launch);
+    }
     let Launch { grid, block, local, resident, exec } = launch;
     let cv = View::new(&k.code);
     let words = cv.p(0);
@@ -240,6 +245,7 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
     let jit = match exec {
         Exec::Interpret => None,
         Exec::Jit => Some(compiled(k)?),
+        Exec::Ssa => unreachable!("run by `exec`"),
     };
     let data = p.data().as_ptr() as u64;
     let mut cx = Cx {
