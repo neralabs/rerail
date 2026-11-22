@@ -78,3 +78,18 @@ before. Against main, the pack loses RUF060's two string annotations and C408's 
 to 83–85 s, peak 5.8 GB to 6.4 GB: 88 narrow copies are evaluated beside their originals.
 
 Test: `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone`.
+
+Added 2026-11-21. A narrow copy is made only where the original's rows under the narrow bound are not already the
+copy's. An annotation is a document of its own (`RUN_VALUE_KEYS` to `HIDDEN_KEYS`), so an original whose every row
+is one document's (`Local`, decision 0361; its folded copies too) holds, for a file's nodes, the rows its narrow
+copy would. Its readers read it in place where each atom of it they hold has a node the reader bounds narrow, or
+one document's with a bounded node (`nearest`, an equality, a local atom). They also read it in place where the
+reader repeats a rule of its head over the copies. That is hiding's twin for the annotation: `walk`'s rule over
+`rr_in_annotation_0_nameref`, which the reader is once the copies fold, and it goes as a repeat. An original that
+reads a narrow copy, or that a native operator reads, keeps its copy (`Narrowing::unbounded`).
+
+- Cold hogql (CPU, 1,629 findings, the same before and after): 102.9 B instructions merged with #923, 90.3–90.6 B
+  after this change, 90.5 B before #923. `nameref`, `attr_of`, `tp_ref` and their dependents are read in place.
+  `gbefore` keeps its copy: it joins `gbind` to `nameref` by name, across documents.
+
+Test: `a_local_original_read_bounded_is_read_in_place_not_copied`.
