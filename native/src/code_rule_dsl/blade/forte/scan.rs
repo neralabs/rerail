@@ -8,7 +8,7 @@
 
 /// `strpos($haystack, $needle, $offset)`: `None` for no match, or for an offset past the end
 /// (where PHP throws a `ValueError`, which no caller lets happen).
-pub(crate) fn strpos(haystack: &[u8], needle: &[u8], offset: usize) -> Option<usize> {
+pub fn strpos(haystack: &[u8], needle: &[u8], offset: usize) -> Option<usize> {
     if offset > haystack.len() {
         return None;
     }
@@ -134,7 +134,7 @@ pub(crate) fn skip_line_comment(source: &[u8], pos: &mut usize, len: usize) {
 }
 
 /// `skipLineCommentStoppingAt`: to the line's end (past it), or to `stop` (before it, `true`).
-pub(crate) fn skip_line_comment_stopping_at(
+pub fn skip_line_comment_stopping_at(
     source: &[u8],
     pos: &mut usize,
     len: usize,

@@ -5,9 +5,9 @@ use crate::code_rule_dsl::stats::identity;
 use crate::code_rule_dsl::logic::sql::physical;
 mod render;
 mod scope;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 mod semantics;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 mod utility;
 
 pub(super) use execution::{ClauseLogicalPlan, exact_scope_groups};

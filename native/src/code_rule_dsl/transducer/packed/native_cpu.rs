@@ -3329,3 +3329,29 @@ fn rebase_property_text(property: &mut PropertyRecord, byte_base: u32) -> Result
 }
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+
+/// The compiled CPU executor, as the transducer's dispatch reads it (`packed::CPU`).
+pub struct Executor;
+
+impl super::CpuExecutor for Executor {
+    fn execute_packed(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: super::Budget) -> Result<PackedExecution, Error> {
+        execute_batch_packed_budgeted(programs, files, anchors, result_limits, budget)
+    }
+    fn execute_outcomes(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error> {
+        execute_batch_outcomes(programs, files, anchors)
+    }
+    fn warm(&self, program: &Program) -> Result<(), Error> {
+        warm_jit(program)
+    }
+    fn compiled(&self, programs: &[Program]) -> Result<bool, Error> {
+        compiled(programs)
+    }
+    fn compile(&self, program: &Program) -> Result<(), Error> {
+        compile_cached(program).map(|_| ())
+    }
+}
+
+/// Registers the compiled CPU executor (`packed::CPU`): boot does, and each test binary below it that runs `CpuJit`.
+pub fn register() {
+    super::CPU.register("rerail-transducer-cpu", &Executor);
+}

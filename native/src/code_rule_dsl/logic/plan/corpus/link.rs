@@ -134,6 +134,14 @@ impl Names {
     }
 }
 
+/// A `.pass` setting (`NAME of HOST roots REL exports R, … [reads R, …]`) with its roots and reads renamed.
+fn renamed_pass(text: &str, rename: &dyn Fn(&str) -> String) -> String {
+    let words = crate::code_rule_dsl::logic::passes_made::words(text);
+    let reads = words.iter().position(|w| w == "reads").unwrap_or(words.len());
+    let out: Vec<String> = words.iter().enumerate().map(|(i, w)| if (i == 4 && words.get(3).is_some_and(|r| r == "roots")) || (i > reads && w != ",") { rename(w) } else { w.clone() }).collect();
+    out.join(" ").replace(" , ", ", ")
+}
+
 /// The parts' fields merged (`merge`) into the linked program's (`all`), each part's relations renamed by its
 /// names: declarations, rows, inputs and outputs stated on `all` as they come, the fields of lists and maps gathered
 /// and stated once (`finish`). The combine states the documents read, the text globs and the shared kind sets.
@@ -248,6 +256,11 @@ impl Merged {
                 && let Some((rel, params)) = setting.1.split_once('(')
             {
                 setting.1 = format!("{}({params}", rename(rel));
+            }
+            // A made pass names the relations of its part (decision 0597): its roots and what it reads, renamed as the
+            // part's relations are (`p<i>_quoted_root`); its exports are names, their instances renamed as relations.
+            if setting.0 == "pass" {
+                setting.1 = renamed_pass(&setting.1, &rename);
             }
             if !self.settings.contains(&setting) {
                 self.settings.push(setting);

@@ -170,9 +170,9 @@ impl History {
         let guard = {
             let mut runtime = w.pool.batch_runtime.lock();
             if runtime.is_none() {
-                *runtime = Some(Runtime::new(w.db)?);
+                *runtime = Some(Box::new(Runtime::new(w.db)?));
             }
-            runtime.as_ref().unwrap().enter(arena.clone())?
+            runtime.as_ref().unwrap().downcast_ref::<Runtime>().expect("the batches' runtime").enter(arena.clone())?
         };
         let _context = w.profile_scope(|| {
             json!({

@@ -8,7 +8,7 @@ use serde_json::json;
         let pool = e.scratch.clone();
         let mut work = Work::new(&e.db, &pool);
         work.versions = Some(&e.versions);
-        let trace = e.executions[0].temporal.get_mut(&0).unwrap();
+        let trace = crate::code_rule_dsl::sql_executor::temporal::Trace::of_mut(&mut **e.executions[0].temporal.get_mut(&0).unwrap());
         assert!(trace.frames.iter().any(|f| !f.observation["recursive_components"].as_array().unwrap().is_empty()));
         let before = trace.frames.last().unwrap().versions(&e.versions);
         trace.replay(&mut work, &e.versions, &BTreeMap::new(), 100).unwrap();

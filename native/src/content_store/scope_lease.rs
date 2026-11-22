@@ -28,7 +28,7 @@ use std::path::PathBuf;
 
 /// What a lease records of its run.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Held {
+pub struct Held {
     pub acquisition: i64,
     pub scope: String,
     pub acquired_at: i64,
@@ -59,7 +59,7 @@ pub struct ScopeLease {
     file: Option<std::fs::File>,
     #[cfg(not(target_family = "wasm"))]
     path: PathBuf,
-    pub(super) acquisition: i64,
+    pub acquisition: i64,
 }
 
 impl Drop for ScopeLease {
@@ -186,7 +186,7 @@ fn leases(dir: &Path) -> StoreResult<Vec<Held>> {
 
 /// The highest acquisition a live lease of `store` holds (0 for none): what an acquisition the store numbers
 /// itself (`analysis_scope::next_acquisition`) is above.
-pub(super) fn highest(store: &Path) -> i64 {
+pub fn highest(store: &Path) -> i64 {
     #[cfg(not(target_family = "wasm"))]
     {
         directory(store).and_then(|dir| leases(&dir)).map_or(0, |l| l.last().map_or(0, |h| h.acquisition))
@@ -199,7 +199,7 @@ pub(super) fn highest(store: &Path) -> i64 {
 }
 
 /// Whether a live lease of `store` holds `acquisition` (`None`: any).
-pub(crate) fn live(store: &Path, acquisition: Option<i64>) -> bool {
+pub fn live(store: &Path, acquisition: Option<i64>) -> bool {
     #[cfg(not(target_family = "wasm"))]
     {
         directory(store).and_then(|dir| leases(&dir)).is_ok_and(|l| l.iter().any(|h| acquisition.is_none_or(|a| h.acquisition == a)))
@@ -215,7 +215,7 @@ pub(crate) fn live(store: &Path, acquisition: Option<i64>) -> bool {
 /// scope has no generation (the run's first write creates one); both are reads, made while the gate holds deletions
 /// and other starts off. The acquisition is above the counter and above every live lease. Returns the lease and the
 /// generation the run's first write creates (`None`: the scope has one).
-pub(super) fn take(
+pub fn take(
     store: &Path,
     scope: &str,
     acquired_at: i64,
@@ -272,7 +272,7 @@ pub(super) fn take(
 }
 
 /// A deletion's hold: no run starts while it is held. `others` are the live leases the deletion does not touch.
-pub(super) struct Deleting {
+pub struct Deleting {
     #[cfg(not(target_family = "wasm"))]
     gate: Option<std::fs::File>,
     pub others: Vec<Held>,
@@ -289,7 +289,7 @@ impl Drop for Deleting {
 
 /// Holds runs' starts off for a deletion of `store`'s scopes, unless a live lease is one `touches` names: then the
 /// deletion fails (`StoreError::InUse`), to be retried once that run has finished.
-pub(super) fn deleting(store: &Path, what: &str, touches: impl Fn(&Held) -> bool) -> StoreResult<Deleting> {
+pub fn deleting(store: &Path, what: &str, touches: impl Fn(&Held) -> bool) -> StoreResult<Deleting> {
     #[cfg(not(target_family = "wasm"))]
     {
         let dir = directory(store)?;

@@ -10390,3 +10390,94 @@ Decision 0603, a stratum's levels and rounds as one program on the device (`note
 - **An index build keeps both sides' rules**: ours' taken-from-another-batch and give-back, and theirs' gated and live
   builds, which are never told to other batches.
 - **A set head's delta is theirs' block**, which the device rounds read and write. Each rerun finds its indexes again.
+
+### Q487. Roll-up 66 (Go-C-and-C-support a39040bb03 onto Pulling-it-all-together): what the merge chose
+
+Decision 0588, the expansion as one loop phase and §6's teams (`notes/roll-up-66-go-c.md`):
+- **A slab's refusals by layer**: the lease's under the pool's `RERAIL_POOL_DEBUG`, the residency's under 0588's
+  `RERAIL_PP_WHY`. Only a capacity refusal counts as capacity (87fe4b4a28).
+- **The setup's split** is 9 libraries, 5 calls deep: ours' and theirs' levels both counted.
+- **`pp_expand::RUNS`** is an id counter in the global-state list.
+
+### Q488. Roll-up 67 (uglykl-CPU-SIMD-parallelization 7ff70f5dd7 onto Pulling-it-all-together): what the merge chose
+
+0567 step 3, UKL on the CPU as hand-shaped vector code (`notes/roll-up-67-uglykl-simd.md`):
+- **Git's merge**: one base, no file both sides changed.
+- **Theirs' vendored Cranelift patches** are recorded in its `PATCHES.md`.
+- **Roll-up 65's coherent atomics** are not defined on the vector path, which has one memory and whose C reader saw
+  them as defined twice. rerail-ukl-vec's 35 tests pass again.
+- **`fiber.rs`' `PREPARED`** is listed as `Thread`.
+
+### Q489. Roll-up 68 (cost-classifier-metal-rf 480a02cc10 onto Pulling-it-all-together): what the merge chose
+
+Decision 0597's contexts, steps 2 to 4 (`notes/roll-up-68-cost-classifier.md`):
+- **`passes_made` is rerail-plan-base's**, beside `answers`, below its readers in rerail-rr-root and
+  rerail-corpus-prep.
+- **The combine's context passes** are in ours' `corpus/base.rs`, the combine's tail.
+
+### Q490. Roll-up 69 (final-rerail-shape 9a082a2457 onto Pulling-it-all-together): what the merge chose
+
+The width census, 0165 §3's in-place local original, and t52 step 4 (`notes/roll-up-69-final-rerail-shape.md`):
+- **Theirs' merge of cost-classifier stays out.** Its inputs are in ours (roll-ups 53 and 68). Its own text joins
+  49f7195169's kept writer to the crate split, which ours does in `plan/source_rows.rs` with ours' statistics (Q474).
+- **Theirs' own commits on ours' files**: the census's `made_in` on ours' `Held`, and `Narrowing::unbounded` in ours'
+  narrowing loop.
+- **The census's `RANGED`, `BY_NAME` and `BY_SPAN`** are in the global-state list.
+
+### Q491. Roll-up 70 (engine-crating 001841e689 onto Pulling-it-all-together): what the merge chose
+
+Crate split steps 7b to 7i (`notes/roll-up-70-engine-crating.md`):
+- **Theirs' 7b stands** (corrected, Q494): the observer and git are below the store, and reach its kept facts and
+  manifests through an interface the store registers at load.
+- **Ours' `mod.rs` changes on theirs' split**: t33's removals and the in-memory store's own folder, in `mod.rs` and
+  `base.rs`.
+- **Ours' code on theirs' interfaces**: `Places::syntax_batch`, the `CHUNK_AXIS` slot in `within.rs`, and boot's
+  ungated `native_cpu::register`.
+- **The global-state list** follows theirs' moves and new slots.
+
+### Q492. Roll-up 71 (Parser-generators-final-shape 62187a8c9a onto Pulling-it-all-together): what the merge chose
+
+Decisions 0602 and 0604, JSON's generated Rust in simdjson's shape (`notes/roll-up-71-parser-generators.md`):
+- **Theirs' merge of the hub stays out.** Its inputs are in ours. Its text puts the lowerings' removal on the hub's
+  `stream_facts` split, and roll-up 55 chose the JIT's own `native_cpu_facts`. Ours' decision numbers (0562, 0569,
+  0577 to 0579) stand.
+- **Theirs' own commits** are applied to ours' files. The slab trace is already roll-up 66's print.
+- **The decisions index** gets rows for 0576, 0597, 0601 and 0603, with theirs' 0602 and 0604.
+
+### Q493. Roll-up 71, corrected: tier 2's facts in Parser-generators' layout (the user's choice)
+
+Roll-up 71 had kept roll-up 55's `native_cpu_facts` over Parser-generators-final-shape's own later merge of the hub
+(f1793ae112). The user chose the feeder's (2026-11-22):
+- `stream_facts` and `stream_analysis` are the front end's, and `native_cpu_clusters` is the compiler's.
+- `native_cpu_facts` goes.
+- 0565 is amended (`notes/roll-up-71-parser-generators.md`, "Correction").
+
+### Q494. Roll-up 70, corrected: theirs' 7b kept, t33 K2's store reads inverted (the user's choice)
+
+Roll-up 70 had folded rerail-observe into rerail-store, reversing engine-crating's 7b. The user chose (2026-11-22)
+to keep 7b and invert t33 K2 (`notes/roll-up-70-engine-crating.md`, "Correction"):
+- rerail-observe is below rerail-store again.
+- The observer's kept facts and git's `owned_again` reach the store through rerail-store-base's
+  `observer_store::base` (`Store`, `Kept`, the `STORE` slot), which rerail-store fills at load.
+- The puts' types are the base's (`kept_facts/base.rs`).
+- The store's sweep of the observer stays in the store.
+
+### Q495. A warm run over a Git snapshot takes the whole-run cutoff
+
+Every run over a Git snapshot root evaluated again, warm or not: `reuse::reused` and `reuse::record` returned early for
+any snapshot root (since 395a6ac2f7). So each warm run of a Git policy derived its views and fact relations again,
+the Git inventory's among them. Now the cutoff (t23 §4) applies to a snapshot run as to a run over files:
+- **The record's key** names a snapshot's root by what it is of: the repository's facts root under the selected
+  object, its commit or else its tree (`snapshot::run_identity`). A named analysis's view is another path in each run
+  (its invocation's), so a key of the view's path never found the last run's record.
+- **A loaded document** under a snapshot's root is recorded by its path from the root (`World::load_name`), as its
+  loaded identity already was. An absolute name carried the last run's view path, so the check found it gone.
+- What else a snapshot run read is checked as before: the documents by their blobs (the observer), and the
+  revisions, objects and file storage by the world's Git observations.
+- The test `an_unchanged_git_snapshot_run_writes_its_kept_outputs` covers a cold run, a warm run that is kept, a new
+  commit that runs again, and the next run kept in turn.
+
+On the way:
+- `RERAIL_WIDTH_CENSUS` only measures (`profile::memory`), so the run's key leaves it out.
+- The converter's overlay carries a library's `.pass` settings (decision 0597 step 2) with the merged program, as it
+  does `.global library` and `.answer`.

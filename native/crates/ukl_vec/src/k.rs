@@ -262,12 +262,14 @@ pub enum Builtin {
     As,
     Min,
     Max,
+    /// `a * b + c`, rounded once (OpenCL's `fma`, `mad`, and what a floating `a * b + c` contracts to).
+    Fma,
 }
 
 impl Builtin {
     pub fn of(w: u32) -> Builtin {
-        assert!(w <= Builtin::Max as u32, "a builtin: {w}");
-        // SAFETY: `Builtin` is `repr(u32)`, its values 0 to `Max` in order.
+        assert!(w <= Builtin::Fma as u32, "a builtin: {w}");
+        // SAFETY: `Builtin` is `repr(u32)`, its values 0 to `Fma` in order.
         unsafe { std::mem::transmute::<u32, Builtin>(w) }
     }
 
@@ -321,6 +323,7 @@ impl Builtin {
             "as_int" | "as_uint" | "as_float" | "as_long" | "as_ulong" | "as_double" | "as_short" | "as_ushort" | "as_char" | "as_uchar" => Builtin::As,
             "min" => Builtin::Min,
             "max" => Builtin::Max,
+            "fma" | "mad" => Builtin::Fma,
             _ => return None,
         })
     }

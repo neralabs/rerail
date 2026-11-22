@@ -57,7 +57,7 @@ mod native {
 }
 
 /// The backend `RERAIL_GPU` chooses, lower case: "cpu", "opencl", or "" for the target's GPU.
-fn chosen() -> &'static str {
+pub(crate) fn chosen() -> &'static str {
     static CHOSEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     CHOSEN.get_or_init(|| std::env::var("RERAIL_GPU").map(|v| v.to_ascii_lowercase()).unwrap_or_default())
 }

@@ -330,7 +330,7 @@ impl Program {
 
 /// The plans' set program as `rir` (list step 18; P `spec-tooling.md` §2.2.1, `setplan`): each
 /// operation `S<n>` on the earlier ones, then each plan's output.
-pub(in crate::code_rule_dsl) fn dump(plans: &[&AnchorPlan], grammar: Option<&crate::code_rule_dsl::transducer::packed::rir::Names>) -> String {
+pub fn dump(plans: &[&AnchorPlan], grammar: Option<&crate::code_rule_dsl::transducer::packed::rir::Names>) -> String {
     use std::fmt::Write as _;
     let program = Program::lower(plans);
     let sets = |ids: &[usize]| format!("[{}]", ids.iter().map(|id| format!("S{id}")).collect::<Vec<_>>().join(" "));
@@ -557,7 +557,7 @@ pub(super) fn select(
 
 /// Where a set program's operations run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Device {
+pub enum Device {
     Cpu,
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     Metal,
@@ -638,7 +638,7 @@ fn evaluate(program: &Program, space: &NodeSpace, mut leaves: HashMap<usize, Nod
 /// written in theirs (`set_steps`).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn evaluate_metal(program: &Program, space: &NodeSpace, leaves: &HashMap<usize, NodeSet>) -> StoreResult<Vec<NodeSet>> {
-    use crate::code_rule_dsl::transducer::packed::set_steps::{self, SetStep};
+    use crate::code_rule_dsl::transducer::packed::device::{self, SetStep};
     let slot = |id: usize| id as u32;
     let mut steps = Vec::new();
     for (id, op) in program.ops.iter().enumerate() {
@@ -665,7 +665,9 @@ fn evaluate_metal(program: &Program, space: &NodeSpace, leaves: &HashMap<usize, 
     let files = (0..space.files()).map(|file| (space.base(file), space.count(file))).collect::<Vec<_>>();
     let leaves = leaves.iter().map(|(&id, set)| (id, set.to_words(space))).collect::<Vec<_>>();
     let leaves = leaves.iter().map(|(id, words)| (*id, words.as_slice())).collect::<Vec<_>>();
-    let words = set_steps::run(&files, space.len(), program.ops.len(), &leaves, &steps, &program.outputs)
+    let metal = device::matcher().ok_or_else(|| crate::content_store::StoreError::Invalid("the set steps need a device, and none is registered".into()))?;
+    let words = metal
+        .set_steps(&files, space.len(), program.ops.len(), &leaves, &steps, &program.outputs)
         .map_err(|error| crate::content_store::StoreError::Invalid(format!("the set steps failed on Metal: {error:?}")))?;
     Ok(words.into_iter().map(|words| NodeSet::from_words(space, &words)).collect())
 }

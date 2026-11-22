@@ -85,12 +85,12 @@ pub struct PackedBatch {
     /// The batch's rows over its nodes, `derived_words` words of bits each: the files' derived classes
     /// (`TapeDoc::with_labels`, per class from `DERIVED_CLASS_BASE`, `derived_classes` rows), then each contains
     /// test's row (`contains_rows`).
-    pub(super) derived: Vec<u32>,
-    pub(super) derived_classes: u32,
-    pub(super) derived_words: u32,
+    pub derived: Vec<u32>,
+    pub derived_classes: u32,
+    pub derived_words: u32,
     /// Per program, the row of its first contains test's first string (past the derived classes), its tests' strings
     /// in turn (capture programs, then strings, in order: `contains_needles`).
-    pub(super) contains_starts: Vec<u32>,
+    pub contains_starts: Vec<u32>,
     /// The contains tests' rows in `derived`.
     pub(super) contains_rows: u32,
     pub files: Vec<BatchFile>,
@@ -245,7 +245,7 @@ impl PackedBatch {
         supertypes
     }
 
-    pub(super) fn arena_start(&self, kind: ArenaKind) -> u32 {
+    pub fn arena_start(&self, kind: ArenaKind) -> u32 {
         self.global_arenas.arenas[kind as usize].start
     }
 
@@ -253,7 +253,7 @@ impl PackedBatch {
         self.global_arenas.arenas[kind as usize].cursor
     }
 
-    pub(super) fn evaluation_limit(&self, task: &BatchTask, kind: ArenaKind) -> u32 {
+    pub fn evaluation_limit(&self, task: &BatchTask, kind: ArenaKind) -> u32 {
         self.evaluations[task.evaluation as usize].quotas[kind as usize].limit
     }
 
@@ -911,7 +911,7 @@ impl PackedBatch {
         self.assign_workspace_with_result_limits(programs, None)
     }
 
-    pub(super) fn assign_workspace_with_result_limits(
+    pub fn assign_workspace_with_result_limits(
         &mut self,
         programs: &[Program],
         result_limits: Option<&[u32]>,

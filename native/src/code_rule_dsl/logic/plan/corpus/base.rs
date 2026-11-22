@@ -733,6 +733,10 @@ pub fn tail_passes<'s>(mut p: crate::code_rule_dsl::logic::program_image::manage
     use preparation::{combining, hide, on_request, whole};
     let mut spaces_report = None;
     if let Tail::Many { hide: bound, policies, .. } = tail {
+        // A context's instance completed over the combined program (decision 0597): a member's rule of a library's
+        // context (`p1_rr_cx_annotation_ann_list`) reads the library's rules it reaches as the context's, which its
+        // part, lowered without the library's rules, could not.
+        p.program(&mut crate::code_rule_dsl::logic::contexts::Passes).program(&mut crate::code_rule_dsl::logic::contexts::CrossingCycles);
         // core.rerail's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
         // `projections`) and inputs in one that does not: once one part projects them, they are no inputs of the
         // combined program. Both would give `kind` two domains.

@@ -23,22 +23,10 @@ pub const AT_FIELD: i32 = 2;
 pub const AT_START: i32 = 4;
 pub const AT_END: i32 = 8;
 
-/// No code for a key yet (`id_of`).
-pub const NO_CODE: i64 = 0xffff;
-/// The id table's slots: a key's kind (10 bits) and field (6), then a bit for each supertype
-/// class the program names (`classes`, at most `MAX_CLASSES`).
-pub const fn id_slots(classes: usize) -> usize {
-    1 << (16 + classes)
-}
-/// The most supertype classes a program's codes carry (`NODE_SUPER`'s kinds).
-pub const MAX_CLASSES: usize = 4;
+pub use crate::stream_analysis::{MAX_CLASSES, NO_CODE, WIDE_OFF, WIDE_TAIL, id_slots};
 /// Bytes past each column's cells that a word copy may read (`finish`).
 pub const SLACK: usize = 16;
 
-/// The flags of a value that did not fit its width (`Mem::Wide`): an offset, a tail (or an end
-/// before the last descendant's start, from the last descendant).
-pub const WIDE_OFF: i64 = 1;
-pub const WIDE_TAIL: i64 = 2;
 
 /// Cell `i`'s address in a column of `width`-byte cells.
 pub fn cell(f: &mut FunctionBuilder<'_>, col: Value, i: Value, width: u8) -> Value {
@@ -467,7 +455,7 @@ pub type OpRef = (cranelift_module::FuncId, cranelift_codegen::ir::Signature);
 pub struct Ops {
     pub open: OpRef,
     pub close: OpRef,
-    /// `w_leaf`: a node and its close in one, where its key is known at its word (`native_cpu_facts::direct_keys`).
+    /// `w_leaf`: a node and its close in one, where its key is known at its word (`stream_facts::direct_keys`).
     pub leaf: OpRef,
     pub commit: OpRef,
     pub retag: OpRef,

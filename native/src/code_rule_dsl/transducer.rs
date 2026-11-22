@@ -15,8 +15,8 @@ use std::ops::Range;
 // program. Nothing outside its tests calls it until the demand vtab (Phase 5) drives it.
 #[allow(dead_code)]
 pub mod packed;
-// N's semantic fact rows, which the matcher's families emit for N's catalog backend (tests).
-pub use rerail_rules::code_rule_dsl::transducer::semantic_facts;
+// cratify: `semantic_facts` (N's semantic fact rows, which the matcher's families emit for N's catalog backend: tests)
+// is rerail-rules'; rerail-transducer re-exports it here
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub const STOP: u8 = 0x00;

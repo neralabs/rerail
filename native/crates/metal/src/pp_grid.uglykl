@@ -149,14 +149,20 @@
     u.sc = IF_SCOPE
 
 // A group's threadgroup memory: the barrier's flag, the scans' scratch, and the sorts' counts or
-// a sorted tile (the segmented scans' two rows alias them: no phase runs two of them).
+// a sorted tile (the segmented scans' two rows alias them: no phase runs two of them); in the
+// loop's phase, which runs no scan or sort, each SIMD group's piece's run (`lp_piece`: its stacks,
+// indexed as it goes, in the group's memory, not a thread's, which Metal keeps in device memory).
 #define PP_TG_BIG UKL_GRID_SORT_WORDS
+#define LP_SLOTS (256u / UKL_SIMD_WIDTH)
 typedef struct PpTg {
     uint32_t flag;
     // The group's ticket and the grid's count (`ukl_grid_join`).
     uint32_t join[2];
     uint32_t scratch[UKL_TG_SCRATCH];
-    uint32_t big[PP_TG_BIG];
+    union {
+        uint32_t big[PP_TG_BIG];
+        LpRun lp[LP_SLOTS];
+    };
 } PpTg;
 
 // The stage word of `GRID` (after the grid's four: the barrier's three and the join's tickets,
@@ -271,7 +277,7 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
                 lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),
                        AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, LOB), AT(uint32_t, PLAST),
                        AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, s,
-                       g.lid & (UKL_SIMD_WIDTH - 1u) __UKL_ARGS);
+                       g.lid & (UKL_SIMD_WIDTH - 1u), &tg->lp[(g.lid / UKL_SIMD_WIDTH) % LP_SLOTS] __UKL_ARGS);
         }
         BARRIER();
     }
@@ -303,11 +309,17 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
 #define PX_QUIT return
 #define LP_LOOP_CALL(is_if) if (!lp_loop(arena, data, lay, tg, g, &phase, stop, (is_if) __UKL_ARGS)) return
 
-DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
+// One unit's setup over the arena laid out as `lay`, by the grid `g`: the whole dispatch's groups
+// (`pp_setup`), or one group, the unit's team (`pp_teams`, decision 0588 §6), whose barriers are its
+// own threadgroup's.
+UKL_ONCE void pp_unit(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(uint32_t) lay, UKL_LOCAL PpTg* tg, UklGrid g __UKL_PARAMS)
 {
-    PP_GRID_BEGIN
-    // The grid is the groups that run (decision 0540 §3): a group past the count's close ends here.
-    if (!ukl_grid_join(&g, gsz / lsz, tg->join)) return;
+    PP_SORT_LOCAL;
+    UKL_GLOBAL const PpFile* files = IN(const PpFile, FILES);
+    uint32_t nf = W(N_FILES);
+    uint32_t stop = 0u, phase = 0u;
+    UklScanJob jobs[UKL_GRID_SCANS];
+    (void)data; (void)files; (void)nf; (void)sl; (void)stop; (void)phase; (void)jobs;
     stop = W(STOP);
     if (ukl_grid_failed(g)) return;
     uint32_t last = W(LAST);
@@ -518,10 +530,12 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         {
             IF_UX(u);
             IF_FILES(fx, nm);
-            EACH(w, nd) p1_if_eval(u, fx, nm, W(OUT_CAP), AT(const uint32_t, IF_KIND), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), nodes, AT(const uint32_t, DIR_BASES), AT(const uint32_t, N_DIRS), AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_FIRST),
+            // Whole SIMD groups: a line's lanes read its tokens together (`p1_if_line`).
+            EACH(w, (nd + UKL_SIMD_WIDTH - 1u) & ~(UKL_SIMD_WIDTH - 1u)) p1_if_eval(u, fx, nm, W(OUT_CAP), AT(const uint32_t, IF_KIND), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), nodes, AT(const uint32_t, DIR_BASES), AT(const uint32_t, N_DIRS), AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_FIRST),
                                    AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, DSLOT), AT(const uint32_t, IF_OPS), AT(const uint32_t, STATE), AT(const uint32_t, OUT), AT(const uint32_t, OBASE),
                                    AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), defined_key, true_key, W(IF_TRUE), AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP),
-                                   AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), AT(uint32_t, IF_VAL), AT(uint32_t, VBAD), w);
+                                   AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), AT(uint32_t, IF_VAL), AT(uint32_t, VBAD), w,
+                                   g.lid & (UKL_SIMD_WIDTH - 1u) __UKL_ARGS);
             // The `#line` rows (§6), for the next iteration's lines and the text.
             EACH(w, nd) p1_line_row(u, AT(const uint32_t, IF_KIND), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, N_DIRS),
                                     AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, OUT), AT(const uint32_t, OBASE), AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), W(OUT_CAP),
@@ -644,15 +658,56 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     ONE(x) AT(uint32_t, GRID)[PG_STAGE] = 2u;
 }
 
-// The refusals, one thread: the output's room, a setup that did not reach its end (`X_QUEUE`), and
-// a failed barrier (a wait past its bound, among the groups that joined the grid: the host's run
-// is `BackendFailure`).
-DEFINE_KERNEL2(pp, pp_check,
-               RWBUFFER, uint8_t,  arena, "[arena]",
-               ROBUFFER, uint32_t, lay,   "[slots]",
-               GID0,     uint32_t, i,     )
+// The grid over one unit: every group dispatched that joins it (decision 0540 §3).
+DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
 {
-    if (i != 0u) return;
+    PP_GRID_BEGIN
+    // The grid is the groups that run: a group past the count's close ends here.
+    if (!ukl_grid_join(&g, gsz / lsz, tg->join)) return;
+    pp_unit(arena, data, lay, tg, g __UKL_ARGS);
+}
+
+// A batch's units, a team each (decision 0588 §6): a team is one or more groups, a unit's setup
+// their grid, its barriers among them alone (on the unit's grid words). `teams`: the units `n`, the
+// seats taken (a counter), the seats in all, then each unit's slots' byte offset in the arena, its
+// first seat and its seats. A group takes the next seat, and runs its team's unit as that team's
+// group `seat - first`; then the next. The host orders the units largest first, so the teams of
+// more than one group are the first wave's; and the earliest team not done has every seat taken
+// before any later seat is, by a group that is running, so a team's barrier waits only for groups
+// that come.
+DEFINE_KERNEL2(pp, pp_teams,
+               RWBUFFER, uint8_t,  arena, "[arena]",
+               ROBUFFER, uint8_t,  data,  "[data]",
+               RWBUFFER, uint32_t, teams, "[teams]",
+               SHARED,   PpTg,     tg,    1,
+               GSZ0,     uint32_t, gsz,   ,
+               TGID0,    uint32_t, group, ,
+               LID0,     uint32_t, lid,   ,
+               LSZ0,     uint32_t, lsz,   )
+{
+    (void)gsz; (void)group;
+    uint32_t n = teams[0], seats = teams[2];
+    for (uint32_t turn = 0u; turn <= seats; turn++) {
+        ukl_tg_barrier();
+        if (lid == 0u) tg->join[0] = ukl_atomic_add(&teams[1], 1u);
+        ukl_tg_barrier();
+        uint32_t seat = tg->join[0];
+        if (seat >= seats) return;
+        uint32_t t = 0u;
+        while (t + 1u < n && teams[3u + 3u * (t + 1u) + 1u] <= seat) t++;
+        UKL_GLOBAL const uint32_t* e = teams + 3u + 3u * t;
+        ROBUFFER(uint32_t) lay = (ROBUFFER(uint32_t))(arena + e[0]);
+        UklGrid g;
+        g.ctl = IN(uint32_t, GRID); g.groups = e[2]; g.group = seat - e[1]; g.lid = lid; g.lsz = lsz;
+        pp_unit(arena, data, lay, tg, g __UKL_ARGS);
+    }
+}
+
+// A unit's refusals (`pp_check`, `pp_check_teams`): the output's room, a setup that did not reach
+// its end (`X_QUEUE`), and a failed barrier (a wait past its bound, among the groups that joined the
+// grid: the host's run is `BackendFailure`).
+UKL_INLINE void pp_check_unit(RWBUFFER(uint8_t) arena, ROBUFFER(uint32_t) lay)
+{
     PP_GLOBAL uint32_t* ctl = AT(uint32_t, CTL);
     PP_GLOBAL const uint32_t* grid = AT(const uint32_t, GRID);
     if (grid[PG_STOP] != 0u) return;
@@ -661,3 +716,22 @@ DEFINE_KERNEL2(pp, pp_check,
     else if (AT(const uint32_t, OPTOTAL)[0] > W(OUT_CAP)) px_refuse(ctl, X_ROOM);
     if ((grid[2] & 1u) == 0u && grid[PG_STAGE] != 2u) px_refuse(ctl, X_QUEUE);
 }
+
+// The refusals, one thread.
+DEFINE_KERNEL2(pp, pp_check,
+               RWBUFFER, uint8_t,  arena, "[arena]",
+               ROBUFFER, uint32_t, lay,   "[slots]",
+               GID0,     uint32_t, i,     )
+{
+    if (i == 0u) pp_check_unit(arena, lay);
+}
+
+// A batch's refusals (`pp_teams`), a thread a unit.
+DEFINE_KERNEL2(pp, pp_check_teams,
+               RWBUFFER, uint8_t,  arena, "[arena]",
+               RWBUFFER, uint32_t, teams, "[teams]",
+               GID0,     uint32_t, i,     )
+{
+    if (i < teams[0]) pp_check_unit(arena, (ROBUFFER(uint32_t))(arena + teams[3u + 3u * i]));
+}
+

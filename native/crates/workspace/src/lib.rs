@@ -176,7 +176,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::tape::index::IndexImage;
         #[allow(unused_imports)]
-        pub(super) use crate::code_rule_dsl::tape::wire::index_span;
+        pub use crate::code_rule_dsl::tape::wire::index_span;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::tape::wire::{CHECKPOINT_STRIDE, WIDTH};
     }

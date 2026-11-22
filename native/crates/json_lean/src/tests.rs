@@ -190,6 +190,125 @@ fn against_simdjson() {
     }
 }
 
+/// The three parsers phase by phase, and each one's whole path to a format 16 and a 16z tape, over the files
+/// `RERAIL_JSON_FILES` names (`:`-separated): instructions and cycles a byte, each the least of `RR_ROUNDS` rounds.
+/// - simdjson: its DOM parser (stage 1 and its stage 2, `structurals`); the kernel's stage 1; the kernel's v9np tape;
+///   and the engine's path to 16 and 16z, the kernel's walk (its source hashed) giving its nodes to format 16's ops
+///   (`events_with`, as `json_parser::simdjson::encode_16`).
+/// - the lean parser (this crate): stage 1 and its v9np tape. It has no path to format 16.
+/// - Bitlex (`rerail-json-aot`): tier 1; tier 2 and the writer, on tier 1's records; the whole path to 16 and to
+///   16z, the file padded first (each kernel above copies it into its padded buffer too).
+///
+/// Each writer is kept from one document to the next, each tape given back (`recycle`), as simdjson's parser keeps
+/// its tape. simdjson's events are numbered in a code table of their own codes, at Bitlex's widths.
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "a benchmark: run by hand, in an optimized build"]
+fn three_parsers_phase_by_phase() {
+    use rerail_tape_format::f16::{Lang, Writer};
+    use rerail_tape_format::tape::{CodeTable, Entry};
+    let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(9);
+    let files: Vec<(String, Vec<u8>)> = std::env::var("RERAIL_JSON_FILES")
+        .expect("RERAIL_JSON_FILES")
+        .split(':')
+        .map(|p| (std::path::Path::new(p).file_name().unwrap().to_string_lossy().into_owned(), std::fs::read(p).expect("reads")))
+        .collect();
+    let kernel = Kernel::Arm64Sha;
+    let least = |run: &mut dyn FnMut()| {
+        run();
+        let mut best = (u64::MAX, u64::MAX);
+        for _ in 0..rounds {
+            let (i0, c0) = retired();
+            run();
+            let (i1, c1) = retired();
+            best = (best.0.min(i1 - i0), best.1.min(c1 - c0));
+        }
+        best
+    };
+    // Bitlex's language.
+    let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let ours = Lang::new(CodeTable::new(entries), rerail_json_aot::WIDTHS, 1).expect("Bitlex's language");
+    let mut p = Parser::new();
+    eprintln!("least of {rounds} rounds, instructions / cycles a byte; simdjson's kernel {}", kernel.name());
+    for (name, f) in &files {
+        let b = f.len() as f64;
+        let nodes = f.len() / 2 + 16;
+        // simdjson's codes, numbered in a table of their own.
+        let mut seen: Vec<(u16, u16, bool)> = Vec::new();
+        rerail_simdjson::events_with(kernel, f, &KINDS, false, |codes, _| {
+            while seen.len() < codes.len() {
+                seen.push(codes.get(seen.len()));
+            }
+        })
+        .unwrap_or_else(|e| panic!("{name}: simdjson refuses it: {e:?}"));
+        let entry = |&(kind, field, in_value): &(u16, u16, bool)| Entry { kind, field, flags: 0, alias: None, classes: if in_value { vec![13] } else { vec![] } };
+        let theirs = Lang::new(CodeTable::new(seen.iter().map(entry).collect()), rerail_json_aot::WIDTHS, 1).expect("simdjson's language");
+        let numbers: Vec<u32> = seen.iter().map(|c| theirs.number(&entry(c)).expect("numbered")).collect();
+        let mut w = Writer::empty();
+        let mut simdjson_16 = |z: bool| {
+            w.begin(&theirs, f, 0, z, true, nodes);
+            rerail_simdjson::events_with(kernel, f, &KINDS, false, |_, words| {
+                for e in words.as_chunks::<3>().0 {
+                    let number = numbers[(e[0] >> 8) as usize];
+                    match e[0] & 0xff {
+                        rerail_simdjson::EV_OPEN => _ = w.open(number, u64::from(e[1])),
+                        rerail_simdjson::EV_LEAF => _ = w.leaf(number, u64::from(e[1]), u64::from(e[2])),
+                        _ => w.close(u64::from(e[1])),
+                    }
+                }
+                w.commit();
+            })
+            .expect("parses");
+            let t = w.finish().expect("finishes");
+            w.recycle(std::hint::black_box(t).tape);
+        };
+        let s16 = least(&mut || simdjson_16(false));
+        let s16z = least(&mut || simdjson_16(true));
+        let dom = least(&mut || _ = std::hint::black_box(rerail_simdjson_native::structurals(f, |i| i.len()).expect("parses")));
+        let s1 = least(&mut || _ = std::hint::black_box(kernel.stage1(f, false)));
+        let tape = least(&mut || _ = std::hint::black_box(rerail_simdjson::tape_unhashed_with(kernel, f, &KINDS).expect("parses").node_count()));
+        let l1 = least(&mut || _ = std::hint::black_box(p.stage1(f)));
+        let ltape = least(&mut || _ = std::hint::black_box(p.tape(f, &KINDS).expect("parses").node_count()));
+        // Bitlex.
+        let fp = rerail_json_aot::padded(f);
+        let t1 = least(&mut || _ = std::hint::black_box(rerail_json_aot::lex(&fp, f.len())));
+        let lexed = rerail_json_aot::lex(&fp, f.len());
+        let mut w = Writer::empty();
+        let t2 = least(&mut || {
+            w.begin(&ours, f, 0, false, true, nodes);
+            rerail_json_aot::parse_lexed(&fp, &lexed, &mut w).expect("parses");
+            let t = w.finish().expect("finishes");
+            w.recycle(std::hint::black_box(t).tape);
+        });
+        let mut bitlex = |z: bool| {
+            let fp = rerail_json_aot::padded(f);
+            w.begin(&ours, f, 0, z, true, nodes);
+            rerail_json_aot::parse(&fp, f.len(), &mut w).expect("parses");
+            let t = w.finish().expect("finishes");
+            w.recycle(std::hint::black_box(t).tape);
+        };
+        let b16 = least(&mut || bitlex(false));
+        let b16z = least(&mut || bitlex(true));
+        let per = |(i, c): (u64, u64)| format!("{:7.2} / {:6.2}", i as f64 / b, c as f64 / b);
+        eprintln!("{name} ({} bytes)", f.len());
+        for (what, m) in [
+            ("simdjson: DOM parse (stage 1 + 2)", dom),
+            ("simdjson: kernel stage 1", s1),
+            ("simdjson: kernel v9np tape", tape),
+            ("simdjson: kernel walk -> 16", s16),
+            ("simdjson: kernel walk -> 16z", s16z),
+            ("lean: stage 1", l1),
+            ("lean: v9np tape", ltape),
+            ("bitlex: tier 1", t1),
+            ("bitlex: tier 2 + writer, 16", t2),
+            ("bitlex: padded + tier 1 + 2 -> 16", b16),
+            ("bitlex: padded + tier 1 + 2 -> 16z", b16z),
+        ] {
+            eprintln!("  {what:<38} {}", per(m));
+        }
+    }
+}
+
 /// `prefix_xor` as simdjson's arm64 has it (six shift-XOR rounds) against the carry-less multiply
 /// it leaves out (`vmull_p64`): stage 1 over the benchmarks' inputs, and the form alone, its
 /// latency (each a function of the one before) and its throughput (none dependent), the least of

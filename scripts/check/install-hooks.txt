@@ -10,7 +10,6 @@ native/src/code_rule_dsl/facts/core.rs install_core_names
 native/src/code_rule_dsl/facts/core.rs install_executors
 native/src/code_rule_dsl/facts/core.rs install_value_reader
 native/src/code_rule_dsl/facts/families.rs install_prefilter_image
-native/src/code_rule_dsl/facts/nearest.rs install_chunk_axis
 native/src/code_rule_dsl/facts/nearest.rs install_nearest
 native/src/code_rule_dsl/facts/rows.rs install_block_device
 native/src/code_rule_dsl/facts/rows.rs install_heap_net

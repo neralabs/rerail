@@ -450,8 +450,9 @@ pub(super) fn attach_storage(
     } else {
         discovered.worktree_root.clone()
     };
-    let published = discovered.publish_snapshot(
-        &store,
+    let published = store.publish_snapshot(
+        &discovered.trees,
+        discovered.root_tree,
         1,
         grammar_set(),
         i64::from(tape::formats::stored_version()),

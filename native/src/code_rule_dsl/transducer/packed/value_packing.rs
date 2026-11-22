@@ -25,7 +25,7 @@ pub struct PackedValueTables {
 }
 
 impl PackedValueTables {
-    pub(super) fn with_unicode_word_data() -> Self {
+    pub fn with_unicode_word_data() -> Self {
         Self {
             nfa_data: unicode_word_data(),
             ..Self::default()
@@ -75,7 +75,7 @@ impl PackedValueTables {
         })
     }
 
-    pub(super) fn push_regex(&mut self, nfa: &ByteNfa) -> Result<(), Error> {
+    pub fn push_regex(&mut self, nfa: &ByteNfa) -> Result<(), Error> {
         let state_start = checked_u32(self.nfa_states.len())?;
         for state in &nfa.states {
             let record = match state {
@@ -202,7 +202,7 @@ impl PackedValueTables {
         Ok(())
     }
 
-    pub(super) fn push_program(&mut self, values: &[ValueProgram]) -> Result<u32, Error> {
+    pub fn push_program(&mut self, values: &[ValueProgram]) -> Result<u32, Error> {
         let start = checked_u32(self.values.len())?;
         for value in values {
             match value {

@@ -127,8 +127,9 @@ fn owned_again(inventory: &Inventory, store: Option<&Path>, owner: Option<&Analy
         return Ok(true);
     }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let store = crate::content_store::ContentStore::open(store).map_err(InventoryError::Cache)?;
-    Ok(store.own_recorded_manifests(&inventory.manifest_root, &inventory.plans, owner, now).map_err(InventoryError::Cache)? > 0)
+    // The store is above git (rerail-store over rerail-observe): reached through what it registers at load.
+    let opened = crate::content_store::observer_store::base::STORE.get().map_err(|missing| InventoryError::Cache(crate::content_store::StoreError::Invalid(missing.to_string())))?;
+    Ok(opened.own_recorded_manifests(store, &inventory.manifest_root, &inventory.plans, owner, now).map_err(InventoryError::Cache)? > 0)
 }
 
 #[derive(Clone, Debug)]
@@ -986,6 +987,16 @@ pub fn repository(
 pub fn fact_root(path: &Path) -> Option<PathBuf> {
     let v = view(path)?;
     Some(v.cache_root.join(path.strip_prefix(&v.root).ok()?))
+}
+
+/// What a run over `path` is of, as the whole-run cutoff keys its record: the repository's facts root under the
+/// selected object (its commit, else its tree). Not the view's own path: a named analysis's view is another path in
+/// each run (its invocation's), so no record of one run was found by the next. The same tree under another commit
+/// answers `git_commit` otherwise, so the commit is the object when there is one.
+pub fn run_identity(path: &Path) -> Option<String> {
+    let v = view(path)?;
+    let under = v.cache_root.join(path.strip_prefix(&v.root).ok()?);
+    Some(format!("{}\0{}", under.display(), v.commit.unwrap_or(v.tree)))
 }
 
 /// The selected tree whose facts a named analysis may retain.

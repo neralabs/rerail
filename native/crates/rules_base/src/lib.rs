@@ -63,7 +63,6 @@ pub mod code_rule_dsl {
         pub use rerail_prof::code_rule_dsl::logic::profile;
         pub use rerail_facts::code_rule_dsl::logic::strings;
     }
-    #[path = "matcher"]
     pub mod matcher {
         pub use rerail_matcher::code_rule_dsl::matcher::*;
         /// P's anchors module and SQL anchor engine as copied (2814d875), test-only (O20).

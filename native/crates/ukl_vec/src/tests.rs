@@ -167,7 +167,7 @@ fn the_written_sources_lower_and_vectorize() {
                     let vt = t.elapsed().as_secs_f64();
                     let t = std::time::Instant::now();
                     let names = |id: u32| if id == u32::MAX { vk.name.clone() } else { p.funcs[id as usize].name.clone() };
-                    let ssa = super::ssa::build(&vk.tape, &names);
+                    let ssa = super::ssa::build(&vk.tape, &names, &|id| p.funcs[id as usize].called);
                     if let (Ok(dir), Ok(s)) = (std::env::var("RERAIL_UKL_VEC_SSA"), &ssa) {
                         std::fs::write(format!("{dir}/{f}.ssa"), s.listing()).unwrap();
                     }
@@ -217,6 +217,55 @@ fn run_on(p: &super::lower::Program, k: &super::vector::Kernel, exec: super::run
     let args = [super::run::Arg::Bytes(ptr), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
     super::run::run(p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [64, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
     out
+}
+
+/// Uniform 32-bit values whose readers read only their low 32 bits are held with the bits past 32 not made
+/// (`Cg::low_only`): products and sums of them, a left shift of one, a store of one, its narrowings, its bits as a
+/// float; and the values made of them that other readers read (a right shift, a compare, a division, a widening to 64
+/// bits, signed and unsigned) are each the 32-bit value.
+#[test]
+fn uniform_values_read_for_their_low_bits_are_each_32_bit_value() {
+    let out = ran(concat!(
+        "    uint32_t a = (out[63] + 0x9e3779b9u) * 0x85ebca6bu;\n",
+        "    uint32_t b = a * 7u + a;\n",
+        "    uint32_t c = (b << 5) ^ a;\n",
+        "    uint32_t g = c * 3u;\n",
+        "    out[40] = g;\n",
+        "    uint8_t d = (uint8_t)g;\n",
+        "    uint16_t h = (uint16_t)(g + 9u);\n",
+        "    float f = as_float(g | 1u);\n",
+        "    int32_t s = (int32_t)(out[62] + 3u) * -0x7654321;\n",
+        "    int32_t t = s - 1;\n",
+        "    uint32_t r = lid == 0u ? b >> 3 : lid == 1u ? (uint32_t)d : lid == 2u ? as_uint(f) : lid == 3u ? (uint32_t)(t >> 2)\n",
+        "        : lid == 4u ? (uint32_t)(t / 3) : lid == 5u ? (c < b ? 1u : 2u) : lid == 6u ? (uint32_t)((int64_t)t >> 40)\n",
+        "        : lid == 7u ? (uint32_t)h : lid == 8u ? (uint32_t)((uint64_t)c >> 31) : lid;\n",
+        "    if (lid < 40u)\n",
+        "        out[lid] = r;\n",
+    ));
+    let a = 0x9e37_79b9u32.wrapping_mul(0x85eb_ca6b);
+    let b = a.wrapping_mul(7).wrapping_add(a);
+    let c = (b << 5) ^ a;
+    let g = c.wrapping_mul(3);
+    let t = 3i32.wrapping_mul(-0x765_4321).wrapping_sub(1);
+    let mut want: Vec<u32> = (0..64).collect();
+    want[..9].copy_from_slice(&[
+        b >> 3,
+        u32::from(g as u8),
+        g | 1,
+        (t >> 2) as u32,
+        (t / 3) as u32,
+        if c < b { 1 } else { 2 },
+        (i64::from(t) >> 40) as u32,
+        u32::from(g.wrapping_add(9) as u16),
+        (u64::from(c) >> 31) as u32,
+    ]);
+    want[40] = g;
+    want[62] = 0;
+    want[63] = 0;
+    for l in 41..62 {
+        want[l] = 0;
+    }
+    assert_eq!(out, want);
 }
 
 /// 64-bit unsigned division and comparison are unsigned, on a uniform value and on one that varies: the overflow
@@ -406,7 +455,7 @@ fn compiled_code_kept_as_bytes_runs_the_same() {
 /// Kernel `k`'s SSA (`ssa`), built and checked, or the test fails with why; its listing to `RERAIL_UKL_VEC_SSA`'s
 /// directory when set.
 fn ssa_of(p: &super::lower::Program, k: &super::vector::Kernel) -> super::ssa::Ssa {
-    let s = super::ssa::build(&k.tape, &|id| if id == u32::MAX { k.name.clone() } else { p.funcs[id as usize].name.clone() }).unwrap_or_else(|e| panic!("{}: {e}", k.name));
+    let s = super::ssa::build(&k.tape, &|id| if id == u32::MAX { k.name.clone() } else { p.funcs[id as usize].name.clone() }, &|id| p.funcs[id as usize].called).unwrap_or_else(|e| panic!("{}: {e}", k.name));
     if let Ok(dir) = std::env::var("RERAIL_UKL_VEC_SSA") {
         std::fs::write(format!("{dir}/{}.ssa", k.name), s.listing()).unwrap();
     }
@@ -449,21 +498,32 @@ fn kernel_of(body: &str) -> (super::lower::Program, super::vector::Kernel) {
     (p, k)
 }
 
-/// The register pressure a width gives: a kernel of few values live runs wide, one of many (each live to the end)
-/// narrower, where its values fit the registers; and the pressure model's counts are a lanes value's parts.
+/// A kernel of many values live in a loop: 20 accumulators, each updated each time round and read at the end (at 32
+/// lanes 160 vector registers, at 4 lanes 20).
+fn many_values_body() -> String {
+    let names: Vec<String> = (0..20).map(|j| format!("a{j}")).collect();
+    let mut body = String::new();
+    for (j, n) in names.iter().enumerate() {
+        body += &format!("    uint32_t {n} = out[lid] + {j}u;\n");
+    }
+    body += "    for (uint32_t k = 0u; k < 16u; k++) {\n";
+    for (j, n) in names.iter().enumerate() {
+        body += &format!("        {n} = {n} * {}u + (k ^ lid);\n", 2 * j + 3);
+    }
+    body += "    }\n";
+    body += &format!("    out[lid] = {};", names.join(" ^ "));
+    body
+}
+
+/// The register pressure a width gives: a kernel of few values live runs wide, one of many live in a loop narrower,
+/// where its values fit the registers; and the pressure model's counts are a lanes value's parts.
 #[test]
 fn the_width_is_the_one_whose_registers_hold_the_values_live() {
     let files = super::pressure::Files { vec: 28, int: 24, float: 0 };
     let (p, k) = kernel_of("    uint32_t a = out[(lid + 1u) % 64u] * 3u + lid;\n    out[lid] = a ^ (a >> 2);");
     let few = super::pressure::of(&ssa_of(&p, &k));
     let w_few = super::pressure::width(&few, files);
-    let names: Vec<String> = (0..20).map(|j| format!("a{j}")).collect();
-    let mut body = String::new();
-    for (j, n) in names.iter().enumerate() {
-        body += &format!("    uint32_t {n} = out[(lid + {j}u) % 64u] * {}u + lid;\n", 2 * j + 3);
-    }
-    body += &format!("    out[lid] = {};", names.join(" ^ "));
-    let (p2, k2) = kernel_of(&body);
+    let (p2, k2) = kernel_of(&many_values_body());
     let many = super::pressure::of(&ssa_of(&p2, &k2));
     let w_many = super::pressure::width(&many, files);
     // At width 8 each of the 20 lanes values is two vector registers: at least 40 live at the last.
@@ -471,7 +531,12 @@ fn the_width_is_the_one_whose_registers_hold_the_values_live() {
     assert!(at8 >= 40, "the 20 values at width 8: {at8} vector registers");
     let ats = |ps: &[super::pressure::FuncPressure]| ps.iter().map(|f| (f.lanes, f.scalar, f.other, f.at[0], f.at[2], f.at[5])).collect::<Vec<_>>();
     assert!(w_few >= 8, "a kernel of few values runs wide: {w_few} ({:?})", ats(&few));
-    assert!(w_many < w_few, "one of many values runs narrower: {w_many} against {w_few} ({:?})", ats(&many));
+    // The widths their launches are fastest at (`width_times`, and the split-float product's measurement): the 20
+    // accumulators at 4 lanes, where they fit the registers; the split-float product at 32.
+    assert_eq!(w_many, 4, "one of many values runs at 4 lanes ({:?})", ats(&many));
+    let (p3, k3) = split_floats();
+    let w_split = super::pressure::width(&super::pressure::of(&ssa_of(&p3, &k3)), files);
+    assert_eq!(w_split, 32, "the split-float product runs at 32 lanes");
     // Both run as the interpreter does at the width chosen.
     for (p, k) in [(&p, &k), (&p2, &k2)] {
         let want = run_on(p, k, super::run::Exec::Interpret);
@@ -483,18 +548,13 @@ fn the_width_is_the_one_whose_registers_hold_the_values_live() {
     }
 }
 
-/// A development measurement (`RERAIL_UKL_VEC_BENCH`): the 20-values kernel's launch time at each width.
+/// A development measurement (`RERAIL_UKL_VEC_BENCH`): the many-values kernel's launch time at each width.
 #[test]
 fn width_times() {
     if std::env::var("RERAIL_UKL_VEC_BENCH").is_err() {
         return;
     }
-    let names: Vec<String> = (0..20).map(|j| format!("a{j}")).collect();
-    let mut body = String::new();
-    for (j, n) in names.iter().enumerate() {
-        body += &format!("    uint32_t {n} = out[(lid + {j}u) % 64u] * {}u + lid;\n", 2 * j + 3);
-    }
-    body += &format!("    out[lid] = {};", names.join(" ^ "));
+    let body = many_values_body();
     for b in [&body, &"    uint32_t a = out[(lid + 1u) % 64u] * 3u + lid;\n    out[lid] = a ^ (a >> 2);".to_string()] {
         let (p, k) = kernel_of(b);
         let ssa = ssa_of(&p, &k);
@@ -509,11 +569,15 @@ fn width_times() {
             let _ = kk.cl.set(Ok(c));
             let go = || super::run::run(&p, &kk, &args, super::run::Launch { grid: [256, 1, 1], block: [64, 1, 1], local: 0, resident: 1, exec: super::run::Exec::Ssa }).unwrap();
             go();
-            let t = std::time::Instant::now();
-            for _ in 0..20 {
-                go();
-            }
-            eprintln!("BENCH w{w}: {:.1} us a launch (chosen w{chosen})", t.elapsed().as_secs_f64() * 1e6 / 20.0);
+            // The least of 50: a loaded machine's other work only adds.
+            let best = (0..50)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    go();
+                    t.elapsed().as_secs_f64() * 1e6
+                })
+                .fold(f64::MAX, f64::min);
+            eprintln!("BENCH w{w}: {best:.1} us a launch (chosen w{chosen})");
         }
     }
 }
@@ -578,6 +642,7 @@ fn thirty_two_bit_lanes_divide_as_each_lanes_integer() {
 #[test]
 fn a_cross_lane_kernel_runs_as_chunks_of_its_lanes() {
     let before = CHUNKED.load(std::sync::atomic::Ordering::Relaxed);
+    let fibers = super::fiber::prepared();
     let out = ran(concat!(
         "    if (lid % 5u == 3u) { out[lid] = 1000u + lid; return; }\n",
         "    uint32_t r = 0u;\n",
@@ -590,6 +655,9 @@ fn a_cross_lane_kernel_runs_as_chunks_of_its_lanes() {
         "    out[lid] = s ^ acc * 3u ^ b;"
     ));
     assert!(CHUNKED.load(std::sync::atomic::Ordering::Relaxed) > before, "the kernel ran as chunks");
+    // A SIMD group's chunks are a loop of its code, between its exchanges: no fiber runs them, nor the SIMD groups of
+    // a group with no barrier.
+    assert_eq!(super::fiber::prepared(), fibers, "fibers prepared for a group with no barrier");
     for l in 0..64u32 {
         if l % 5 == 3 {
             assert_eq!(out[l as usize], 1000 + l, "lane {l} ended first");
@@ -607,11 +675,34 @@ fn a_cross_lane_kernel_runs_as_chunks_of_its_lanes() {
     assert_eq!(out[0], s ^ acc.wrapping_mul(3) ^ b, "lane 0");
 }
 
+/// A threadgroup barrier in a cross-lane kernel run as chunks: its SIMD group's chunks all reach it, the group then
+/// waits for the other SIMD group (a fiber each: the only waits that need one), and each lane reads what the other
+/// SIMD group wrote before it; the ballot before and the sum after are their SIMD group's.
+#[test]
+fn a_threadgroup_barrier_in_a_chunked_kernel_waits_for_the_other_simd_group() {
+    let fibers = super::fiber::prepared();
+    let out = ran(concat!(
+        "    uint32_t b = ukl_sg_ballot(lid % 3u == 0u __UKL_ARGS);\n",
+        "    out[lid] = lid * 5u + b;\n",
+        "    ukl_tg_barrier();\n",
+        "    uint32_t v = out[lid ^ 32u];\n",
+        "    ukl_tg_barrier();\n",
+        "    out[lid] = v ^ ukl_sg_sum(lid __UKL_ARGS);"
+    ));
+    let ballot = |g: u32| (0..32u32).filter(|l| (g * 32 + l) % 3 == 0).fold(0u32, |a, l| a | 1 << l);
+    for l in 0..64u32 {
+        let (g, o) = (l / 32, (l ^ 32) / 32);
+        let sum: u32 = (g * 32..g * 32 + 32).sum();
+        assert_eq!(out[l as usize], ((l ^ 32) * 5 + ballot(o)) ^ sum, "lane {l}");
+    }
+    assert!(super::fiber::prepared() > fibers, "the SIMD groups wait for each other as fibers");
+}
+
 /// A call keeps the caller's registers where the callee takes fewer than the caller keeps across it: a small function
 /// called while twelve lanes values live in its caller keeps its callers' registers (`CallConv::PreserveAll`), and the kernel runs as the interpreter does at every width.
 #[test]
 fn a_small_callee_keeps_its_callers_registers() {
-    let prelude = "static uint32_t mix(uint32_t x) { return (x ^ (x >> 3)) * 2654435761u; }\n";
+    let prelude = "static __attribute__((noinline)) uint32_t mix(uint32_t x) { return (x ^ (x >> 3)) * 2654435761u; }\n";
     let names: Vec<String> = (0..12).map(|j| format!("a{j}")).collect();
     let mut body = String::new();
     for (j, n) in names.iter().enumerate() {
@@ -650,6 +741,398 @@ fn an_element_sum_is_a_horizontal_sum_and_one_atomic() {
     let mut want: Vec<u32> = (0..64u32).map(|i| 3 * i + 1).collect();
     want[0] += (0..32u32).map(|i| 3 * i + 1).sum::<u32>();
     assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+    }
+}
+
+/// A per-lane atomic (each lane its own address, under a branch that varies) of a SIMD group's sum: every lane that
+/// runs adds the group's sum to its own word, as the interpreter does (the sum computed once, not again for each
+/// lane's atomic: Cranelift's elaboration places a pure value no deeper than its uses' common dominator).
+#[test]
+fn a_per_lane_atomic_of_a_sum_adds_it_in_each_lane() {
+    let out = ran("    uint32_t s = ukl_sg_sum(lid * 3u + 1u __UKL_ARGS);\n    if (lid % 3u == 0u) ukl_atomic_add(&out[lid], s);");
+    for l in 0..64u32 {
+        let g = l / 32 * 32;
+        let s: u32 = (g..g + 32).map(|i| i * 3 + 1).sum();
+        assert_eq!(out[l as usize], if l % 3 == 0 { s } else { 0 }, "lane {l}");
+    }
+}
+
+/// A matrix product: `c = a b` of 32 by 32 matrices of `float`, one group of 32 by 32 threads, each thread its row's
+/// (`i`, its id in the second dimension) and column's (`j`, the first) element: a SIMD group a row, its lanes the
+/// row's columns. The values are small integers, so each sum is exact: the same on the interpreter and on the compiled
+/// SSA at every width.
+#[test]
+fn a_matrix_product_is_each_rows_columns_in_lanes() {
+    const N: usize = 32;
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\nDEFINE_KERNEL2(rule, t_mm,\n               ROBUFFER, float, a, \"[1024]\",\n               ROBUFFER, float, b, \"[1024]\",\n               RWBUFFER, float, c, \"[1024]\",\n               LID0,     uint32_t, j, ,\n               LID1,     uint32_t, i, )\n{\n    float s = 0.0f;\n    for (uint32_t k = 0; k < 32u; ++k)\n        s += a[i * 32u + k] * b[k * 32u + j];\n    c[i * 32u + j] = s;\n}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_mm").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let a: Vec<f32> = (0..N * N).map(|x| (x % 7) as f32 - 3.0).collect();
+    let b: Vec<f32> = (0..N * N).map(|x| (x % 5) as f32 + 1.0).collect();
+    let mut want = vec![0f32; N * N];
+    for i in 0..N {
+        for j in 0..N {
+            want[i * N + j] = (0..N).map(|k| a[i * N + k] * b[k * N + j]).sum();
+        }
+    }
+    let run = |k: &super::vector::Kernel, exec| {
+        let mut c = vec![0f32; N * N];
+        let ptr = |p: *const f32| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args = [ptr(a.as_ptr()), ptr(b.as_ptr()), ptr(c.as_mut_ptr()), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [32, 32, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        c
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+    }
+}
+
+/// A matrix product of 32 by 32 floats stored apart: each entry's sign a bit of a word, its exponent a byte, its
+/// fraction 3 bytes; its result stored the same way, each row's signs one SIMD group's ballot.
+fn split_floats() -> (super::lower::Program, super::vector::Kernel) {
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\n\
+#define UNPACK(sg, ex, mt, x) as_float(((sg[(x) >> 5u] >> ((x) & 31u)) << 31) | ((uint32_t)ex[x] << 23) | (uint32_t)mt[3u * (x)] | ((uint32_t)mt[3u * (x) + 1u] << 8) | ((uint32_t)mt[3u * (x) + 2u] << 16))\n\
+DEFINE_KERNEL2(rule, t_mms,\n\
+               ROBUFFER, uint32_t, asg, \"[32]\",\n\
+               ROBUFFER, uint8_t, aex, \"[1024]\",\n\
+               ROBUFFER, uint8_t, amt, \"[3072]\",\n\
+               ROBUFFER, uint32_t, bsg, \"[32]\",\n\
+               ROBUFFER, uint8_t, bex, \"[1024]\",\n\
+               ROBUFFER, uint8_t, bmt, \"[3072]\",\n\
+               RWBUFFER, uint32_t, csg, \"[32]\",\n\
+               RWBUFFER, uint8_t, cex, \"[1024]\",\n\
+               RWBUFFER, uint8_t, cmt, \"[3072]\",\n\
+               LID0,     uint32_t, j, ,\n\
+               LID1,     uint32_t, i, )\n\
+{\n\
+    float s = 0.0f;\n\
+    for (uint32_t k = 0; k < 32u; ++k) {\n\
+        uint32_t x = i * 32u + k;\n\
+        uint32_t y = k * 32u + j;\n\
+        s += UNPACK(asg, aex, amt, x) * UNPACK(bsg, bex, bmt, y);\n\
+    }\n\
+    uint32_t r = as_uint(s);\n\
+    uint32_t z = i * 32u + j;\n\
+    cex[z] = (uint8_t)(r >> 23);\n\
+    cmt[3u * z] = (uint8_t)r;\n\
+    cmt[3u * z + 1u] = (uint8_t)(r >> 8);\n\
+    cmt[3u * z + 2u] = (uint8_t)((r >> 16) & 0x7fu);\n\
+    uint32_t sign = sub_group_ballot((r >> 31) != 0u).x;\n\
+    if (j == 0u)\n\
+        csg[i] = sign;\n\
+}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_mms").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    (p, k)
+}
+
+/// A matrix product of floats stored apart: each entry's sign a bit (32 to a word, entry `e` bit `e % 32` of word
+/// `e / 32`), its exponent a byte, its fraction 3 bytes (low byte first, the top bit 0). Each lane unpacks its
+/// operands to floats, sums their products as `fma` (each rounded once), and packs its result the same way, the
+/// sign bits of a row a ballot of its 32 lanes. The result's bits are a 32-bit `fma` product's.
+#[test]
+fn a_matrix_product_of_split_floats_is_a_floating_one() {
+    const N: usize = 32;
+    let (p, k) = split_floats();
+    // Fractions that use all 23 bits, both signs, exponents around 1.
+    let float = |x: usize, salt: u32| {
+        let h = (x as u32).wrapping_mul(0x9e37_79b9).wrapping_add(salt).rotate_left(13).wrapping_mul(0x85eb_ca6b);
+        f32::from_bits((h & 0x807f_ffff) | ((124 + (h >> 23) % 6) << 23))
+    };
+    let a: Vec<f32> = (0..N * N).map(|x| float(x, 1)).collect();
+    let b: Vec<f32> = (0..N * N).map(|x| float(x, 2)).collect();
+    let mut want = vec![0u32; N * N];
+    for i in 0..N {
+        for j in 0..N {
+            want[i * N + j] = (0..N).fold(0f32, |s, k| a[i * N + k].mul_add(b[k * N + j], s)).to_bits();
+        }
+    }
+    let split = |v: &[f32]| {
+        let mut sg = vec![0u32; v.len() / 32];
+        let (mut ex, mut mt) = (Vec::new(), Vec::new());
+        for (e, f) in v.iter().enumerate() {
+            let r = f.to_bits();
+            sg[e / 32] |= (r >> 31) << (e % 32);
+            ex.push((r >> 23) as u8);
+            mt.extend_from_slice(&(r & 0x7f_ffff).to_le_bytes()[..3]);
+        }
+        (sg, ex, mt)
+    };
+    let ((asg, aex, amt), (bsg, bex, bmt)) = (split(&a), split(&b));
+    let run = |k: &super::vector::Kernel, exec| {
+        let (mut csg, mut cex, mut cmt) = (vec![0u32; N], vec![0u8; N * N], vec![0u8; 3 * N * N]);
+        let ptr = |p: *const u8| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args = [
+            ptr(asg.as_ptr().cast()), ptr(aex.as_ptr()), ptr(amt.as_ptr()),
+            ptr(bsg.as_ptr().cast()), ptr(bex.as_ptr()), ptr(bmt.as_ptr()),
+            ptr(csg.as_mut_ptr().cast()), ptr(cex.as_mut_ptr()), ptr(cmt.as_mut_ptr()),
+            super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4]),
+        ];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [32, 32, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        (0..N * N)
+            .map(|e| ((csg[e / 32] >> (e % 32)) & 1) << 31 | u32::from(cex[e]) << 23 | u32::from_le_bytes([cmt[3 * e], cmt[3 * e + 1], cmt[3 * e + 2], 0]))
+            .collect::<Vec<u32>>()
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    let fibers = super::fiber::prepared();
+    // 0: the width its registers' pressure chooses.
+    for w in [0u32, 1, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+        // A development measurement (`RERAIL_UKL_VEC_BENCH`): the least of 50 launches.
+        if std::env::var("RERAIL_UKL_VEC_BENCH").is_ok() {
+            let best = (0..50)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    run(&at, super::run::Exec::Ssa);
+                    t.elapsed().as_secs_f64() * 1e6
+                })
+                .fold(f64::MAX, f64::min);
+            eprintln!("BENCH t_mms w{w}: {best:.1} us a launch");
+        }
+    }
+    // One SIMD group's code, its chunks a loop of it: no fiber.
+    assert_eq!(super::fiber::prepared(), fibers, "fibers prepared for a group with no barrier");
+}
+
+/// A compiled function's counted loop (machine code as text, `compile_listed`): from the block of its first fused
+/// multiply-add to its back edge, the jumps between blocks left out.
+#[cfg(target_arch = "aarch64")]
+fn fma_loop(code: &str) -> Vec<&str> {
+    let lines: Vec<&str> = code.lines().collect();
+    let fm = lines.iter().position(|l| l.trim_start().starts_with("fmadd ") || l.trim_start().starts_with("fmla ")).expect("a multiply-add");
+    let start = (0..fm).rev().find(|&i| lines[i].starts_with("block")).expect("its block");
+    let end = (fm..lines.len()).find(|&i| lines[i].trim_start().starts_with("cbnz ")).expect("its back edge");
+    lines[start + 1..=end].iter().copied().filter(|l| l.starts_with("  ") && !l.trim_start().starts_with("b label")).collect()
+}
+
+/// The split-float matrix product's loop at each width is vector code as written by hand:
+/// - nothing in the stack: its constants and accumulators are in registers (one sign multiplier for every 4 lanes,
+///   one swizzle pattern for each window offset, no pattern for exponent bytes);
+/// - B's sign word (one for the SIMD group: its lanes' index over 32) loaded once and shifted as a scalar;
+/// - each 4 lanes' fraction one swizzle (`tbl`) of a window of B's bytes, its exponents a widening (`uxtl`) of a
+///   window of 16 (under 16 lanes, where registers are left, a swizzle): B's bytes are never loaded one at a time;
+/// - A's fraction bytes loads at offsets 1 apart from one register;
+/// - at 1 lane, each sign bit's shift a shift of the count the source masks (`x & 31`), with no mask of its own;
+/// - no zero-extension of a uniform value already zero-extended (`mov w, w`): A's bytes, as loaded, widened and
+///   shifted to their places;
+/// - the counter up to 0, tested at the loop's end with no compare;
+/// - fewer instructions a lane at each wider width.
+/// AArch64's code.
+#[test]
+#[cfg(target_arch = "aarch64")]
+fn the_split_float_products_loop_is_vector_code() {
+    let (p, k) = split_floats();
+    let ssa = ssa_of(&p, &k);
+    let mut last = f64::MAX;
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile_listed(&ssa, &k.name, w, &super::exec::places()).unwrap();
+        let code = c.listing.last().expect("the kernel's code for a chunk whose lanes all run");
+        let body = fma_loop(code);
+        let count = |op: &str| body.iter().filter(|l| l.trim_start().starts_with(op)).count();
+        let text = body.join("\n");
+        assert!(!text.contains("[sp"), "w{w}: the loop reads or writes the stack:\n{text}");
+        let movs: Vec<&&str> = body.iter().filter(|l| l.trim_start().starts_with("mov w")).collect();
+        assert!(movs.is_empty(), "w{w}: zero-extensions {movs:?}:\n{text}");
+        let per = body.len() as f64 / f64::from(w);
+        assert!(per < last, "w{w}: {per:.2} instructions a lane, against {last:.2} at half the width:\n{text}");
+        last = per;
+        // A's bytes: its exponent and its 3 fraction bytes, the fraction's from one register at offsets k, k+1, k+2.
+        let at: Vec<(String, i64)> = body
+            .iter()
+            .filter_map(|l| {
+                let r = l.trim_start().strip_prefix("ldrb ")?;
+                let (base, off) = r.split_once("[")?.1.trim_end_matches(']').split_once(", #")?;
+                Some((base.to_string(), off.parse().ok()?))
+            })
+            .collect();
+        assert!(
+            at.iter().any(|(b, o)| at.contains(&(b.clone(), o + 1)) && at.contains(&(b.clone(), o + 2))),
+            "w{w}: A's fraction bytes are not loaded at offsets from one register:\n{text}"
+        );
+        if w == 1 {
+            let masks = body.iter().filter(|l| l.trim_start().starts_with("and ") && l.ends_with(", #31")).count();
+            assert_eq!(masks, 2, "w1: the shifts' counts masked again:\n{text}");
+        }
+        if w >= 2 {
+            assert_eq!(count("ldrb "), 4, "w{w}: B's bytes loaded one at a time:\n{text}");
+        }
+        if w >= 4 {
+            let tbl = if w >= 16 { w / 4 } else { 2 * w / 4 };
+            assert_eq!(count("tbl "), tbl as usize, "w{w}: a swizzle for each 4 lanes' fraction (and exponents, under 16 lanes):\n{text}");
+            assert_eq!(count("uxtl") > 0, w >= 16, "w{w}: the exponent bytes a widening at 16 lanes and more:\n{text}");
+            assert_eq!(count("mul "), w as usize / 4, "w{w}: the sign bits' products:\n{text}");
+            assert_eq!(count("ushl "), 0, "w{w}: the sign word (one for the SIMD group) shifted as a vector:\n{text}");
+        }
+        // The back edge: the counter's increment, then a test of it against 0.
+        let (inc, br) = (body[body.len() - 2].trim_start(), body[body.len() - 1].trim_start());
+        let reg = br.strip_prefix("cbnz ").and_then(|r| r.split(',').next()).unwrap();
+        assert!(inc.starts_with(&format!("add {reg}, {reg}, #1")), "w{w}: the loop's end:\n{inc}\n{br}");
+    }
+}
+
+/// Bytes and 16-bit lanes next to each other (each lane's the next), unsigned and signed, and `or`s of a record's
+/// bytes each shifted to its place by a multiple of 8 (a 32-bit word of 4 bytes, 24 bits of 3 in another order, a
+/// word of two 16-bit halves), and an `or` whose bytes overlap (one byte twice, at 0 and 8; two at 0; one shifted
+/// by 4): at every width, as the interpreter's.
+#[test]
+fn next_bytes_and_records_bytes_ored_are_each_lanes() {
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\n\
+DEFINE_KERNEL2(rule, t_rec,\n\
+               ROBUFFER, uint8_t, ub, \"[256]\",\n\
+               ROBUFFER, int8_t, sb, \"[256]\",\n\
+               ROBUFFER, uint16_t, uh, \"[128]\",\n\
+               ROBUFFER, int16_t, sh, \"[128]\",\n\
+               ROBUFFER, uint8_t, rec, \"[256]\",\n\
+               RWBUFFER, uint32_t, out, \"[512]\",\n\
+               LID0,     uint32_t, lid, )\n\
+{\n\
+    out[lid] = (uint32_t)ub[lid] * 3u;\n\
+    out[64u + lid] = (uint32_t)((int32_t)sb[lid] * 5);\n\
+    out[128u + lid] = (uint32_t)uh[lid] + 1u;\n\
+    out[192u + lid] = (uint32_t)((int32_t)sh[lid] - 7);\n\
+    out[256u + lid] = (uint32_t)rec[4u * lid] | ((uint32_t)rec[4u * lid + 1u] << 8) | ((uint32_t)rec[4u * lid + 2u] << 16) | ((uint32_t)rec[4u * lid + 3u] << 24);\n\
+    out[320u + lid] = ((uint32_t)rec[3u * lid + 2u] << 16) | (uint32_t)rec[3u * lid] | ((uint32_t)rec[3u * lid + 1u] << 8);\n\
+    out[384u + lid] = (uint32_t)rec[2u * lid] | ((uint32_t)rec[2u * lid] << 8) | ((uint32_t)rec[2u * lid + 1u] << 4) | (uint32_t)rec[2u * lid + 1u];\n\
+    out[448u + lid] = (uint32_t)uh[2u * lid] | ((uint32_t)uh[2u * lid + 1u] << 16);\n\
+}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_rec").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let h = |x: u32, salt: u32| x.wrapping_mul(0x9e37_79b9).wrapping_add(salt).rotate_left(11).wrapping_mul(0x85eb_ca6b);
+    let ub: Vec<u8> = (0..256).map(|x| (h(x, 1) >> 24) as u8).collect();
+    let sb: Vec<i8> = (0..256).map(|x| (h(x, 2) >> 24) as i8).collect();
+    let uh: Vec<u16> = (0..128).map(|x| (h(x, 3) >> 16) as u16).collect();
+    let sh: Vec<i16> = (0..128).map(|x| (h(x, 4) >> 16) as i16).collect();
+    let rec: Vec<u8> = (0..256).map(|x| (h(x, 5) >> 24) as u8).collect();
+    let mut want = vec![0u32; 512];
+    for l in 0..64usize {
+        let r = |i: usize| u32::from(rec[i]);
+        want[l] = u32::from(ub[l]) * 3;
+        want[64 + l] = (i32::from(sb[l]) * 5) as u32;
+        want[128 + l] = u32::from(uh[l]) + 1;
+        want[192 + l] = (i32::from(sh[l]) - 7) as u32;
+        want[256 + l] = u32::from_le_bytes([rec[4 * l], rec[4 * l + 1], rec[4 * l + 2], rec[4 * l + 3]]);
+        want[320 + l] = r(3 * l + 2) << 16 | r(3 * l) | r(3 * l + 1) << 8;
+        want[384 + l] = r(2 * l) | r(2 * l) << 8 | r(2 * l + 1) << 4 | r(2 * l + 1);
+        want[448 + l] = u32::from(uh[2 * l]) | u32::from(uh[2 * l + 1]) << 16;
+    }
+    let run = |k: &super::vector::Kernel, exec| {
+        let mut out = vec![0u32; 512];
+        let ptr = |p: *const u8| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args = [
+            ptr(ub.as_ptr()), ptr(sb.as_ptr().cast()), ptr(uh.as_ptr().cast()), ptr(sh.as_ptr().cast()), ptr(rec.as_ptr()),
+            ptr(out.as_mut_ptr().cast()), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4]),
+        ];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [64, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        out
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    let ssa = ssa_of(&p, &k);
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile_listed(&ssa, &k.name, w, &super::exec::places()).unwrap();
+        // At 16 lanes and more, each 4 lanes' swizzles: one for each record's word (the 4 bytes', the 3 bytes', the
+        // two halves'), and the overlapping bytes' three (the byte at 0 and 8 one; the other byte's two loads, the one
+        // shifted by 4 and the one at 0, each its own). The lanes next to each other are widenings, no swizzle.
+        if w >= 16 && cfg!(target_arch = "aarch64") {
+            let code = c.listing.last().unwrap();
+            let tbl = code.lines().filter(|l| l.trim_start().starts_with("tbl ")).count();
+            assert_eq!(tbl, 6 * w as usize / 4, "w{w}: the swizzles:\n{code}");
+        }
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+    }
+}
+
+/// Lanes of 1 and 2 bytes some bytes apart, as windows of their bytes and shuffles: signed bytes 3 apart, 2-byte
+/// lanes 4 apart; and stores of two of each 3 bytes, which are never whole elements, so each lane's go as they are
+/// (the third byte of each kept). At every width, as a lane at a time would.
+#[test]
+fn byte_lanes_some_bytes_apart_are_read_and_written_as_each_lanes() {
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\n\
+DEFINE_KERNEL2(rule, t_bytes,\n\
+               ROBUFFER, int8_t, src, \"[256]\",\n\
+               ROBUFFER, int16_t, hs, \"[128]\",\n\
+               RWBUFFER, uint8_t, dst, \"[256]\",\n\
+               RWBUFFER, uint32_t, out, \"[64]\",\n\
+               LID0,     uint32_t, lid, )\n\
+{\n\
+    int32_t a = src[3u * lid + 1u];\n\
+    int32_t h = hs[2u * lid];\n\
+    dst[3u * lid] = (uint8_t)(a + h);\n\
+    dst[3u * lid + 2u] = (uint8_t)(h >> 8);\n\
+    out[lid] = (uint32_t)(a * 65536 + h);\n\
+}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_bytes").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let bytes: Vec<i8> = (0..256u32).map(|x| (x.wrapping_mul(0x9e37_79b9) >> 24) as i8).collect();
+    let halves: Vec<i16> = (0..128u32).map(|x| (x.wrapping_mul(0x85eb_ca6b) >> 16) as i16).collect();
+    let mut want_dst = vec![0xa5u8; 256];
+    let mut want_out = vec![0u32; 64];
+    for l in 0..64usize {
+        let (a, h) = (i32::from(bytes[3 * l + 1]), i32::from(halves[2 * l]));
+        want_dst[3 * l] = (a + h) as u8;
+        want_dst[3 * l + 2] = (h >> 8) as u8;
+        want_out[l] = (a * 65536 + h) as u32;
+    }
+    let run = |k: &super::vector::Kernel, exec| {
+        let (mut dst, mut out) = (vec![0xa5u8; 256], vec![0u32; 64]);
+        let ptr = |p: *const u8| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args = [ptr(bytes.as_ptr().cast()), ptr(halves.as_ptr().cast()), ptr(dst.as_mut_ptr()), ptr(out.as_mut_ptr().cast()), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [64, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        (dst, out)
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), (want_dst.clone(), want_out.clone()), "the interpreter");
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), (want_dst.clone(), want_out.clone()), "the compiled SSA at width {w}");
+    }
+}
+
+/// A floating `a * a - b` is contracted to one multiply-add, rounded once (OpenCL C's `FP_CONTRACT`), on the
+/// interpreter and the compiled SSA alike: with `a = 1 + 2^-12` and `b = 1 + 2^-11` it is `2^-24`, where rounding the
+/// product first (to `b`) would give 0. Also `+=` of a product, and `fma` called by name.
+#[test]
+fn a_floating_multiply_add_is_rounded_once() {
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\nDEFINE_KERNEL2(rule, t_fma,\n               ROBUFFER, float, a, \"[32]\",\n               ROBUFFER, float, b, \"[32]\",\n               RWBUFFER, float, c, \"[96]\",\n               LID0,     uint32_t, j, )\n{\n    c[j] = a[j] * a[j] - b[j];\n    float s = -b[j];\n    s += a[j] * a[j];\n    c[32u + j] = s;\n    c[64u + j] = fma(a[j], a[j], -b[j]);\n}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_fma").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let a = vec![1.0f32 + 2f32.powi(-12); 32];
+    let b = vec![1.0f32 + 2f32.powi(-11); 32];
+    assert_eq!(a[0] * a[0] - b[0], 0.0, "rounded twice");
+    let want = vec![2f32.powi(-24); 96];
+    let run = |k: &super::vector::Kernel, exec| {
+        let mut c = vec![0f32; 96];
+        let ptr = |p: *const f32| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args = [ptr(a.as_ptr()), ptr(b.as_ptr()), ptr(c.as_mut_ptr()), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [32, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        c
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    assert_eq!(run(&k, super::run::Exec::Jit), want, "the JIT");
     for w in [1u32, 2, 4, 8, 16, 32] {
         let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
         let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();

@@ -177,6 +177,19 @@ pub trait MachInst: Clone + Debug {
     /// the instruction must have a nonzero size if preferred_size is nonzero.
     fn gen_nop(preferred_size: usize) -> Self;
 
+    /// Whether this instruction, its registers allocated, may be one of a pair
+    /// (`pair`), emitted after the next one is seen (rerail's patch).
+    fn may_pair(&self) -> bool {
+        false
+    }
+
+    /// This instruction and `next`, the one after it, as one instruction, if
+    /// they are one (two loads of consecutive places from one base: AArch64's
+    /// `ldp`).
+    fn pair(&self, _next: &Self) -> Option<Self> {
+        None
+    }
+
     /// Align a basic block offset (from start of function).  By default, no
     /// alignment occurs.
     fn align_basic_block(offset: CodeOffset) -> CodeOffset {

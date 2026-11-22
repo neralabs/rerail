@@ -226,3 +226,52 @@
         let keyed: Vec<&String> = seen.iter().filter(|s| !s.starts_with("RERAIL_DUMP") && !super::measures_only(s)).collect();
         assert!(keyed.is_empty(), "read by a profile and in a run's key: {keyed:?}");
     }
+
+    /// A run over a Git snapshot is kept as a run over files is: what it read is the selected tree's (its blobs, its
+    /// revisions), each checked as the record has it. A named analysis's view is another path in each run (its
+    /// invocation's), so the record's key names the root by the repository's facts and the selected object. A new
+    /// commit runs it again, and that run is kept in turn. Before, every snapshot run evaluated again, warm or not.
+    #[test]
+    fn an_unchanged_git_snapshot_run_writes_its_kept_outputs() {
+        use crate::content_store::{ContentStore, analysis_scope::AnalysisRun};
+        use crate::git_workspace::snapshot::Snapshot;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("a.py"), "def f():\n    return 1\n").unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgSign=false"])
+                .args(args).current_dir(&repo).output().unwrap();
+            assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        };
+        git(&["init", "-q"]);
+        git(&["add", "--", "a.py"]);
+        git(&["commit", "-qm", "one"]);
+        let text = {
+            let text = "#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
+            crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(text).unwrap()).unwrap()
+        };
+        let store = dir.path().join("store.sqlite");
+        let options = serde_json::json!({ "reuse": true });
+        let run = |id: &str| {
+            let snapshot = Snapshot::scoped(&repo, "HEAD", "reuse").unwrap();
+            let mut analysis = AnalysisRun::begin(ContentStore::open(&store).unwrap(), "named:reuse", id).unwrap();
+            let out = dir.path().join(id);
+            let report = super::super::with_tape_cache_path(&store, Some((snapshot.root().to_owned(), analysis.owner.clone())), || {
+                super::super::run_with_options(&[&text], snapshot.root(), None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap()
+            });
+            analysis.finish(true).unwrap();
+            let kept = report.phases.iter().any(|p| p.0.starts_with("unchanged"));
+            (kept, crate::code_rule_dsl::logic::plan::output::shown(&out, "defs").unwrap())
+        };
+        let one = || vec![vec!["f".to_owned()]];
+        assert_eq!(run("cold"), (false, one()), "the first run derives");
+        assert_eq!(run("warm"), (true, one()), "unchanged: kept");
+        std::fs::write(repo.join("a.py"), "def g():\n    return 1\n").unwrap();
+        git(&["commit", "-qam", "two"]);
+        let two = vec![vec!["g".to_owned()]];
+        assert_eq!(run("edited"), (false, two.clone()), "a new commit");
+        assert_eq!(run("again"), (true, two), "kept in turn");
+        rerail_accel::upkeep::retire_files_under(dir.path());
+    }

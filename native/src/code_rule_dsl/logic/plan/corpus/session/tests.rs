@@ -1029,3 +1029,116 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
         }
     }
 }
+
+/// 0597 rung 2.11: a pass runs only on what changed in its inputs (rule 7, 0563 B). In a session, an edit that changes
+/// no root and no relation the context reads `.from` (b.py's own line) changes no input of the context, so none of its
+/// cross strata runs. Renaming the class the annotation names (a.py's `Foo`, the annotation's text unchanged) changes
+/// what the context reads `.from` its host (`defined`, a cross-file relation, so the context's `resolved` is the cross
+/// part's), and the row goes. Each run's rows are a full run's.
+#[test]
+fn a_contexts_strata_run_only_on_changes_to_its_roots_and_reads() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-context");
+    let (src, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    let rule = base.join("context.rerail");
+    std::fs::write(
+        &rule,
+        r#".policy "test-context" revision 1
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/ast.rerail"
+.decl defined(x: symbol)
+defined(x) :- kind(c, "class_definition"), field(c, "name", n), text(n, x).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, "annotation", r).
+.decl resolved(x: symbol)
+resolved(x) :- kind(i, "identifier"), text(i, x), defined(x).
+.decl quoted_resolved(x: symbol)
+quoted_resolved(x) :- res(x).
+.output quoted_resolved
+.context quoted of python roots quoted_root exports resolved
+.from python defined for quoted
+.from quoted resolved as res
+"#,
+    )
+    .unwrap();
+    std::fs::write(src.join("a.py"), "class Foo: ...\nx: \"Foo\" = 1\n").unwrap();
+    std::fs::write(src.join("b.py"), "y = 1\n").unwrap();
+    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let rows = || {
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "quoted_resolved").unwrap_or_default();
+        rows.sort();
+        rows
+    };
+    let full = || {
+        full(run);
+        rows()
+    };
+    let session = start(&base.join("session")).unwrap();
+    run();
+    assert_eq!(rows(), [["Foo"]]);
+    std::fs::write(src.join("b.py"), "y = 2\n").unwrap();
+    let report = run();
+    assert_eq!(rows(), full(), "the session's rows are a full run's");
+    assert!(!report.cross_changed.iter().any(|c| c.contains("rr_cx_quoted") || c == "defined_at"), "no input of the context changed: {:?}", report.cross_changed);
+    std::fs::write(src.join("a.py"), "class Bar: ...\nx: \"Foo\" = 1\n").unwrap();
+    let report = run();
+    assert_eq!(rows(), full(), "the session's rows are a full run's");
+    assert!(rows().is_empty(), "Foo names no class now: {:?}", rows());
+    assert!(report.cross_changed.iter().any(|c| c == "defined_at"), "what the context reads .from changed: {:?}", report.cross_changed);
+    drop(session);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A session's run with nothing changed derives no stratum again, nor does one whose edit reaches only some: a stratum
+/// no changed read reaches is placed as it was, kept or not (a view's, a fact relation's), and made only for a
+/// stratum that runs and reads it. Before, every such stratum whose rows were not kept was derived again on every run
+/// (`NOT_KEPT`), warm or not.
+#[test]
+fn a_session_derives_nothing_again_that_no_change_reaches() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-not-kept");
+    let _ = std::fs::remove_dir_all(&base);
+    let (src, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    let rule = base.join("cycle.rerail");
+    std::fs::write(
+        &rule,
+        r#".policy "test-import-cycle-quiet" revision 1
+.description "An import that closes a cycle of imports."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rerail"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl reach(a: number, b: number) no_reach
+reach(a, b) :- dep(a, b).
+reach(a, c) :- reach(a, b), dep(b, c).
+.violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
+CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+.decl defines(d: number)
+defines(d) :- kind(n, "function_definition"), docof(n, d).
+.violation SHADOW(at: node) code "SHADOW" "A module that defines a function imports one that does too."
+SHADOW(i) :- impmod(i, m), docof(i, a), defines(a), doc(b, _, m), defines(b).
+"#,
+    )
+    .unwrap();
+    for (path, text) in [("a.py", "from b import x\ndef f():\n    pass\n"), ("b.py", "from c import y\ndef g():\n    pass\n"), ("c.py", "from a import z\n"), ("d.py", "x = 1\n")] {
+        std::fs::write(src.join(path), text).unwrap();
+    }
+    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let session = start(&base.join("session")).unwrap();
+    let first = run();
+    let findings = |r: &super::super::Report| (r.rows.get("CYC").copied(), r.rows.get("SHADOW").copied());
+    let unchanged = run();
+    std::fs::write(src.join("d.py"), "x = 2\n").unwrap();
+    let edited = run();
+    drop(session);
+    let _ = std::fs::remove_dir_all(&base);
+    assert_eq!((findings(&unchanged), findings(&edited)), (findings(&first), findings(&first)), "a full run's findings");
+    assert!(unchanged.cross_again.is_empty(), "nothing changed, nothing derived again: {:?}", unchanged.cross_again);
+    assert!(edited.cross_again.is_empty(), "an edit that reaches no import derives nothing again: {:?}", edited.cross_again);
+}

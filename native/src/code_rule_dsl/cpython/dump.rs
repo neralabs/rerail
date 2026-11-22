@@ -16,21 +16,21 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 /// A tree's dump, written once: each node's piece of it, by the node's address.
-pub(crate) struct Dump {
+pub struct Dump {
     text: String,
     at: HashMap<*const Node, (usize, usize)>,
 }
 
 impl Dump {
     /// The dump of `root`'s tree, and of each node in it.
-    pub(crate) fn of(root: &Node) -> Self {
+    pub fn of(root: &Node) -> Self {
         let mut d = Dump { text: String::new(), at: HashMap::new() };
         d.node(root);
         d
     }
 
     /// `ast.dump(n)` of a node of the tree.
-    pub(crate) fn get(&self, n: &Node) -> Option<&str> {
+    pub fn get(&self, n: &Node) -> Option<&str> {
         self.at.get(&std::ptr::from_ref(n)).map(|&(s, e)| &self.text[s..e])
     }
 
@@ -101,7 +101,7 @@ impl Dump {
     }
 
     /// `sha256(ast.dump(n))`, W's `dump_sha256`.
-    pub(crate) fn sha256(&self, n: &Node) -> Option<String> {
+    pub fn sha256(&self, n: &Node) -> Option<String> {
         Some(hex(Sha256::digest(self.get(n)?.as_bytes()).as_slice()))
     }
 
@@ -150,12 +150,12 @@ impl Dump {
     }
 
     /// W's `body_sha256` of a def.
-    pub(crate) fn body_sha256(&self, def: &Node) -> Option<String> {
+    pub fn body_sha256(&self, def: &Node) -> Option<String> {
         Some(digest(&self.body(def)?))
     }
 
     /// W's `signature_sha256` of a def.
-    pub(crate) fn signature_sha256(&self, def: &Node) -> Option<String> {
+    pub fn signature_sha256(&self, def: &Node) -> Option<String> {
         Some(digest(&self.signature(def)?))
     }
 

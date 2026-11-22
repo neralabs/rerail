@@ -16,6 +16,7 @@
 //! included (per kind its nodes and sizes, per parent kind its children, the postings of the program's constants:
 //! `Own`). The cross-file part plans with the chunks' sums. Nodes are written as `path:index`.
 
+use crate::code_rule_dsl::facts::vtab::syntax::PythonBatch as _;
 use rerail_store::Canonical as _;
 use super::{Error, Outcome, Result, lower, output};
 

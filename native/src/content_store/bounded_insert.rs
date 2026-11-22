@@ -1,10 +1,10 @@
 //! Bounded typed publication batches, from PIAT's anchor store. SQLite owns
 //! stored rows and transaction rollback.
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use rusqlite::{Connection, Result, limits::Limit, params_from_iter, types::Value};
 
-pub(super) fn insert<const N: usize>(
+pub fn insert<const N: usize>(
     db: &Connection,
     prefix: &str,
     suffix: &str,

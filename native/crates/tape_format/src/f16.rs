@@ -3437,15 +3437,19 @@ mod tests {
     }
 
     /// The ops at constant widths (`writer16::Fixed`) write the bytes the state's widths do (`Run`, the methods), in
-    /// format 16 and 16z: values past each width (escapes and side lists), codes past the cut, many blocks.
+    /// format 16 and 16z: values past each width (escapes and side lists), codes past the cut, many blocks. So does a
+    /// walk's hold on the writer (`writer16::Cursor`, as generated tier 2s write), each node final as written: its
+    /// stores through the held block, and the state's ops at a block's first node and a close of a block before.
     #[test]
     fn the_ops_at_constant_widths_write_the_state_widths_bytes() {
         use crate::tape::Entry;
-        use crate::writer16::{CellWidths, Fixed, w_close_with, w_commit, w_leaf_with, w_open_with};
+        use crate::writer16::{CellWidths, Cursor, Fixed, w_close_with, w_commit, w_leaf_in_with, w_leaf_with, w_open_with};
         #[derive(Clone, Copy)]
         enum Op {
             Open(u32, u64),
             Leaf(u32, u64, u64),
+            /// A node and its one leaf child: number, child's, start, the child's start and end, end.
+            LeafIn(u32, u32, u64, u64, u64, u64),
             Close(u64),
         }
         // A tree over `len` bytes: gaps and lengths of every size, numbers up to `kinds`.
@@ -3460,11 +3464,9 @@ mod tests {
             let (mut ops, mut at, mut open) = (vec![Op::Open(0, 0)], 0u64, 1usize);
             while at < len {
                 let r = next();
-                let step = match r % 7 {
-                    0 => r >> 8 & 0x3ff,
-                    1 => r >> 8 & 0x1_ffff,
-                    _ => r >> 8 & 3,
-                };
+                // The long steps and lengths rare, so a tree is many blocks of nodes; a leaf past two bytes each 3000.
+                let long = |r: u64| if r.is_multiple_of(64) { 0x3ff } else { 7 };
+                let step = r >> 8 & if r % 3 == 0 { long(r >> 3) } else { 3 };
                 at = (at + step).min(len);
                 let number = (r >> 40) as u32 % kinds;
                 match r >> 4 & 3 {
@@ -3476,8 +3478,15 @@ mod tests {
                         ops.push(Op::Close(at));
                         open -= 1;
                     }
+                    2 if r >> 6 & 1 == 1 => {
+                        let cs = (at + (r >> 12 & 3)).min(len);
+                        let ce = (cs + (r >> 20 & long(r >> 30))).min(len);
+                        let end = (ce + (r >> 14 & 1)).min(len);
+                        ops.push(Op::LeafIn(number, (r >> 50) as u32 % kinds, at, cs, ce, end));
+                        at = end;
+                    }
                     _ => {
-                        let end = (at + (r >> 20 & if r & 1 == 0 { 7 } else { 0x1_ffff })).min(len);
+                        let end = (at + if ops.len() % 3000 == 1500 { 0x1_0400 } else { r >> 20 & long(r >> 30) }).min(len);
                         ops.push(Op::Leaf(number, at, end));
                         at = end;
                     }
@@ -3486,24 +3495,49 @@ mod tests {
             ops.extend(std::iter::repeat_n(Op::Close(len), open));
             ops
         }
-        fn both<X: CellWidths>(widths: [usize; 3]) {
+        fn both<X: CellWidths>(widths: [usize; 3]) -> [usize; 4] {
             let entries = (0..300).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
             let lang = Lang::new(CodeTable::new(entries), widths, 1).unwrap();
             let source = source_of(300_000);
-            for seed in [1, 2, 3] {
+            // The block edges the cursor meets (`Z` rows a block): an open, a leaf and a node of one leaf at a
+            // block's first row, and a node of one leaf whose child is at it.
+            let mut edges = [0usize; 4];
+            for seed in [1, 2, 3, 4, 5, 6, 7, 8] {
                 let ops = tree(source.len() as u64, 300, seed);
+                let mut n = 0u32;
+                for o in &ops {
+                    let at = n % crate::writer16::Z;
+                    match o {
+                        Op::Open(..) | Op::Leaf(..) if n != 0 && at == 0 => edges[usize::from(matches!(o, Op::Leaf(..)))] += 1,
+                        Op::LeafIn(..) if at == 0 => edges[2] += 1,
+                        Op::LeafIn(..) if at == crate::writer16::Z - 1 => edges[3] += 1,
+                        _ => {}
+                    }
+                    n += match o {
+                        Op::Close(_) => 0,
+                        Op::LeafIn(..) => 2,
+                        _ => 1,
+                    };
+                }
+                assert!(ops.iter().any(|o| matches!(*o, Op::Leaf(_, s, e) if e - s > 0xffff)), "a length past two bytes");
+                assert!(ops.len() > 4 * 1024 && ops.iter().filter(|o| matches!(o, Op::LeafIn(..))).count() > 1000, "many blocks, and nodes of one leaf: {} ops, {} of one leaf", ops.len(), ops.iter().filter(|o| matches!(o, Op::LeafIn(..))).count());
                 for z in [false, true] {
-                    let mut a = Writer::new(&lang, &source, 0, z, true, ops.len());
+                    let mut a = Writer::new(&lang, &source, 0, z, true, 2 * ops.len());
                     for &op in &ops {
                         match op {
                             Op::Open(n, s) => _ = a.open(n, s),
                             Op::Leaf(n, s, e) => _ = a.leaf(n, s, e),
+                            Op::LeafIn(n, c, s, cs, ce, e) => {
+                                _ = a.open(n, s);
+                                _ = a.leaf(c, cs, ce);
+                                a.close(e);
+                            }
                             Op::Close(e) => a.close(e),
                         }
                         a.commit();
                     }
-                    let mut b = Writer::new(&lang, &source, 0, z, true, ops.len());
-                    b.reserve_run(ops.len(), 41);
+                    let mut b = Writer::new(&lang, &source, 0, z, true, 2 * ops.len());
+                    b.reserve_run(2 * ops.len(), 41);
                     let d = b.state_address();
                     for &op in &ops {
                         // SAFETY: `d` is `b`'s state, its room reserved for every node and level.
@@ -3511,6 +3545,7 @@ mod tests {
                             match op {
                                 Op::Open(n, s) => w_open_with::<X>(d, n, s),
                                 Op::Leaf(n, s, e) => w_leaf_with::<X>(d, n, s, e),
+                                Op::LeafIn(n, c, s, cs, ce, e) => w_leaf_in_with::<X>(d, n, c, s, cs, ce, e),
                                 Op::Close(e) => w_close_with::<X>(d, e),
                             }
                         };
@@ -3518,15 +3553,37 @@ mod tests {
                         // SAFETY: as the op's.
                         assert_eq!(unsafe { w_commit(d) }, 0);
                     }
-                    let (a, b) = (a.finish().unwrap(), b.finish().unwrap());
+                    let mut c = Writer::new(&lang, &source, 0, z, true, 2 * ops.len());
+                    c.reserve_run(2 * ops.len(), 41);
+                    c.final_as_written();
+                    {
+                        // SAFETY: `c`'s state, its room reserved for every node and level, written by the cursor alone.
+                        let mut cur = unsafe { Cursor::<X>::begin(c.state_address()) };
+                        for &op in &ops {
+                            // SAFETY: as `begin`'s; each close is an open's.
+                            unsafe {
+                                match op {
+                                    Op::Open(n, s) => cur.open(n, s),
+                                    Op::Leaf(n, s, e) => cur.leaf(n, s, e),
+                                    Op::LeafIn(n, k, s, cs, ce, e) => cur.leaf_in(n, k, s, cs, ce, e),
+                                    Op::Close(e) => cur.close(e),
+                                }
+                            }
+                        }
+                    }
+                    assert!(c.failure().is_none(), "widths {widths:?}: the cursor's ops, the room reserved");
+                    let (a, b, c) = (a.finish().unwrap(), b.finish().unwrap(), c.finish().unwrap());
                     assert!(a.tape.extent() == b.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the constant widths' bytes");
+                    assert!(a.tape.extent() == c.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the cursor's bytes");
                 }
             }
+            edges
         }
-        both::<Fixed<1, 1, 1>>([1, 1, 1]);
-        both::<Fixed<2, 1, 4>>([2, 1, 4]);
-        both::<Fixed<1, 2, 2>>([1, 2, 2]);
-        both::<Fixed<4, 4, 8>>([4, 4, 8]);
-        both::<Fixed<3, 1, 1>>([3, 1, 1]);
+        let edges = both::<Fixed<1, 1, 1>>([1, 1, 1]);
+        assert!(edges.iter().all(|&e| e > 0), "every block edge met (an open, a leaf, a node of one leaf, its child): {edges:?}");
+        _ = both::<Fixed<2, 1, 4>>([2, 1, 4]);
+        _ = both::<Fixed<1, 2, 2>>([1, 2, 2]);
+        _ = both::<Fixed<4, 4, 8>>([4, 4, 8]);
+        _ = both::<Fixed<3, 1, 1>>([3, 1, 1]);
     }
 }

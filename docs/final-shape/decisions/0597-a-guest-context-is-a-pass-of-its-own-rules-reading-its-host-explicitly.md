@@ -137,10 +137,114 @@ The template's findings stand at the file's lines.
    earlier pass's blocks; the strata of every pass in one order, on the CPU and the device (one launch per pass's
    stratum, bounded). Tests: a context's rules see its roots' nodes alone; a host stratum after the pass reads its
    exports.
+
+   Built on the integration's preparation (merged first, ca7e1c18a6: 0563's reach by kind, 0575's diffed narrow
+   copies, the corpus's preparation in its own crate), so the passes replace what the branches have, not a tree they
+   left. The ladder, each rung a test written red before its code, in the order the mechanism needs:
+
+   | Rung | Test (run-level unless said) | Locks |
+   |---|---|---|
+   | 2.1 | the passes made of a program, printed and read again, are the same program (`same_program`); the lowered form holds `.pass` settings, not `.context` or `.from` (unit) | made once, on any path that reads a printed program |
+   | 2.2 | a program whose host reads a context's export runs, through `guests_run` (`parse_file_version`, a printed program, `corpus::run`) and a pack (`run_all`) | every reading path makes the passes |
+   | 2.3 | the context's `kind`, `child`, `text` give its roots' nodes alone: `x: "List[int]"`'s export is `List`, `int`, never `x` | a context's views bounded to its documents, read in place |
+   | 2.4 | the host's views give the host's nodes alone in a program with a context: its identifiers are `x`, never `List`; the prepared program holds no `rr_in_annotation_` copy and no `rr_narrow_` relation for the rules the context holds | no widening, no narrow copy, for what a context holds |
+   | 2.5 | a context reads its host's finished rows: `class Foo: ...` then `x: "Foo"` resolves `Foo`, `x: "Bar"` does not | `.from` read in place, ordered before the reader |
+   | 2.6 | host, context, host: classes no code and no annotation names (`.from python defined for annotation`, `.from annotation ann_used`) | the three-step order in one plan |
+   | 2.7 | an annotation inside an annotation (`q: "Opt['Baz']"`): the context's own roots relation adds its roots | a pass's roots are its host's and its own |
+   | 2.8 | a finding at a context's node stands at its string's line and column in the file | placement through `guest_place` (0431 §3) |
+   | 2.9 | two policies, one with a context, find together what each finds alone | #923 by construction |
+   | 2.10 | a run over files with no root makes no stratum of the context | 0563 A: no rule can fill it |
+   | 2.11 | a maintained edit that changes no root and no `.from` relation runs none of the context's strata; renaming the class an annotation names runs them | 0563 B: reach by its inputs alone |
+   | 2.12 | 2.3 and 2.5 on Metal (a farm Mac), the same rows | one mechanism on the CPU and the device |
+
+   As built:
+   - 2.1 (adc1b74e7d): what is made holds `.pass NAME of HOST roots REL exports R, … [reads R, …]` in place of
+     `.context` and `.from`; `contexts::made` reads it. A later `.from` of a made pass (a pack's policy reading the
+     library's context) reads its instance; the same read twice is one; a read for a made pass is refused.
+   - 2.2: the passes are a program pass of the lowering's tail (`contexts::Passes`, before `Declared`, since a `.from`
+     name is declared by its pass), so every reading path makes them: a policy file, a printed program, a pack's
+     `combine`. A made pass is completed there with what its instance reaches that it does not hold yet (a part
+     lowered in a library's scope holds less than the combined pack); its roots and reads stay its host's.
+   - 2.3: each context's nodes, `rr_cx_<context>_rr_nodes(n)`, are its roots and what is `within` them, a derived
+     fact; each node variable a positive view atom of its rules reads is joined with them. The views stay read in
+     place (the tape); nothing is made of their rows. Tests: `a_host_reading_a_contexts_export_runs_on_every_reading_path`,
+     `a_contexts_views_are_its_roots_nodes_alone` (`x: "List[int]"` and `def f(y: float)`: `List`, `int`, never `float` or `x`, alone and in a
+     pack).
+   - 2.4 (4798383568): hidden at the run values' bound and folded as a pack folds it, a context's instances get no
+     `rr_in_annotation_` copy and no `rr_narrow_` copy, and the host's relation both passes read stays the host's; the
+     control, the same reach written into the annotation's trees from the host's rules, is copied and widened.
+     Nothing in hiding was changed for it: a context's views are scoped by its nodes, which its roots' guest relation
+     scopes, and nothing of the host reaches them.
+   - 2.5, 2.6: one engine fixpoint orders the passes by their reads: the context reads the host's finished classes,
+     and the host's rows after the context's read them.
+   - 2.7: a nested annotation's tree is a root already: the host's roots rule reads `parsed`, so a string inside an
+     annotation's tree is scoped, and its parse a root. No roots relation of the context's own was needed.
+   - 2.8: a finding at a context's node stands at its string's line (`guest_place`, unchanged).
+   - 2.9: moved after step 3. A policy whose own clauses read `parsed` (its own roots rule) asks guests of its own and
+     runs alone (`tools::policy_groups`, `asks.own`), so the pack the rung tests is the shape step 3 makes: the roots and
+     the context in `python/annotation.rerail`, which every policy that includes `ruff.rerail` includes.
+   - 2.10: with no root the context's nodes are empty, and the file-local part holds each of its strata empty (no
+     component opened). The cross-file part read the local part's export of it as an input and joined it: an input bound
+     already is now taken as empty when it holds no rows, in a program that answers no request (no source grows while
+     it runs). Test: a profiled child run's `heads.tsv` names no head of the context.
+   - 2.11: in a session, an edit that changes no root and nothing the context reads changes no input of its cross
+     strata; renaming the class an annotation names changes `defined_at`, the host relation the context reads.
+   - 2.12: 2.3's and 2.5's rows on Metal (every stratum the device takes placed there) are the CPU's.
 3. **The Python annotation context.** `lib/python/annotation.rerail` from the annotation rules of `names.rerail`,
    `typing` and `ann_*`; the host's readers of annotation facts read `annotation.*`. Tests, kept and passing:
    `quoted_annotations_are_read_as_their_code`, #923's `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone`,
    C408's `a: "dict({})"`, a nested annotation, R9's placement.
+
+   As built (2026-11-22). The ladder:
+
+   | Rung | Test | Shape it locks |
+   |---|---|---|
+   | 3.1 | `a_context_declared_twice_exports_both_declarations` | each library file declares the context again, with its own exports |
+   | 3.2 | `a_contexts_read_of_its_hosts_node_binds_only_its_own` | `host_node` and `guest_of` are not guarded: their host column is no node of the context |
+   | 3.3 | `a_hosts_rule_reading_a_contexts_export_is_no_rule_of_the_context` | a host rule that unions an export, by an alias, is no rule of the instance |
+   | 3.4 | `a_program_of_no_language_is_its_librarys_host` | a test's or a phase's program takes its contexts' host as its pass |
+   | 3.5 | `a_contexts_rule_reading_an_export_by_its_own_name_is_the_contexts` | a read with no alias names the context's own relation in both passes |
+   | 3.6 | `a_nested_quoted_annotation_is_its_code_and_no_any` | ANN401 over a nested string: parsed, a forward reference, not `Any` |
+
+   - **The library.**
+     - `python/annotation.rerail` holds the extraction (rule 3), which is the host's:
+       - `ann_root`, `ann_ctx`, `str_node`, `ann_str`;
+       - `ann_parse(s, r)`, every string's tree, nested ones too;
+       - `ann_host(h, s)`, a tree's host node and its outermost string;
+       - `ann_tree`, the roots.
+     - It also holds `ann_in`, the context's nodes by their outermost string.
+     - `ann_parse` is the only rule that asks for a parse. A reader reads it, never `parsed`: one request of a
+       cross-file relation would make every request of the program cross-file, unanswered by its files (the oracle
+       test's runs admitted no value until this held).
+     - The context reads the host's `ann_parse` (`.from python ann_parse for annotation`). Its own instance would hold
+       nothing, as no annotation root is in a tree.
+     - Each reading file declares the context again with its exports:
+       - `names` exports `look` and `miss`;
+       - `ast` exports `ann_dotted`;
+       - `annotations` (ANN) exports `annt_root_*`;
+       - `points-to` exports `pt_aleaf`, `pt_ahead`, `pt_aarg`, `pt_dtype`, `pt_aself`, `pt_look`, `pt_qn` and
+         `pt_builtin_ref`.
+     - The host counts an export's rows in rules of its own (rule 5).
+   - **Lookups.** A guest's name starts from its tree's host node:
+     - `ann_start` and `pt_hstart` are keyed by `ann_host`'s h, which `host_node` gives every node of a tree.
+     - Keying them by the string matched nothing: `host_node` gives the string's content.
+     - The walk then steps through the host's `scope_up` and `pt_up`, as one meaning (rule 4).
+   - **Engine.**
+     - Repeated declarations merge (3.1).
+     - An export a library declares whose rules the program's outputs never reach (no rule derives or reads it) is
+       dropped, and a context left with no export is no pass. An export declared nowhere is still refused.
+   - **Dropped.** `ruff-classes`' `ann_input` from `parsed` went: RUF013 never found a quoted annotation, with or
+     without parses.
+   - **Not changed.** `typing`'s `type_ctx` reads quoted strings that are not annotation roots. Those are not the
+     context's.
+   - **2.9.** Covered by #923's test in the shape 2.9 needed: both policies include `ruff.rerail`, so both ask the same
+     guests and run as one pack.
+   - **Results.**
+     - The probe gives 20 findings, the baseline's.
+     - corpus0 × B-now gives 463 findings, identical to the earlier run's.
+     - The targeted set passes: contexts, corpus, session, rr, tape and oracle tests (88 and 13).
+     - The names.rerail include of annotation comes before imports: names and imports are one unit, which must be
+       listed after what it includes.
 4. **Removal.** Hiding's annotation range and copies, `FoldOwn`, the narrow copies, `combining::one_document`, and
    their tests, ported to the passes' (removal is removal: no switch to the old path).
 5. **f-strings and Vue.** `python/format-spec` and SQL in a template; `vue/expression` reading the script's bindings.

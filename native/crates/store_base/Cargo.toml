@@ -1,0 +1,60 @@
+[package]
+name = "rerail-store-base"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The content store's base: its keys, ids, errors and payloads, the atoms, the segments, the rows, the postings, the vocabulary, the journal and the hazards."
+
+# Written by the crate split (step 7b): its sources stay where they were (`native/src`), mounted in place.
+
+[features]
+# The store's test hooks (busy-wait overrides, write counters, test-only writers), for the engine's tests. The
+# engine turns it on always, not only for its tests: a feature that differed between its test and bin builds
+# would rebuild the engine at each switch. The hooks do nothing unless a test sets them.
+test-hooks = ["rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-clif/test-hooks"]
+
+[dependencies]
+# `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
+dunce = "=1.0.5"
+rerail-prof = { path = "../prof" }
+rerail-accel = { path = "../../../accel" }
+# The memo's segments are journal blocks of deferrable leases (decision 0295 §4).
+rerail-blocks = { path = "../blocks" }
+# The content store as the observer and git reach it, registered at load by the store (`observer_store::base::STORE`).
+rerail-registry = { path = "../registry" }
+# The rolling cache's shape (`view::cache`) for the text tests' verdicts (decision 0478 step 2d); the view alone.
+rerail-clif = { path = "../clif", default-features = false }
+clru = "=0.6.3"
+foldhash = "=0.2.0"
+hashbrown = { version = "=0.16.1", default-features = false }
+libc = "0.2.189"
+parking_lot = { version = "0.12", features = ["arc_lock"] }
+rayon = "=1.12.0"
+regex = "=1.13.1"
+regex-automata = "=0.4.18"
+regex-syntax = "=0.8.11"
+rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab", "array"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11"
+zstd = "=0.14.3"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+same-file = "1.0.6"
+tempfile = "=3.27.0"
+
+[target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
+tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+onig = { version = "=6.5.3", default-features = false }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+# Exercise the Windows matcher on Unix in the same test suite.
+onig = { version = "=6.5.3", default-features = false }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-store-base = { path = ".", features = ["test-hooks"] }
+tempfile = "=3.27.0"

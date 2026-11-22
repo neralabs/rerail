@@ -1,6 +1,6 @@
 use super::*;
 use rerail_blocks::block::{Block, kind};
-use rerail_blocks::relation::{RelW, Spec, freeze};
+use rerail_blocks::relation::{RelW, Relation, Spec, freeze};
 use rusqlite::Connection;
 
 /// A relation of the run's, as the engine lends one: its rows in a block of its own.

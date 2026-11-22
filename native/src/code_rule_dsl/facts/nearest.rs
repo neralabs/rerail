@@ -32,7 +32,7 @@ pub fn install_nearest(solve: Nearest) {
 }
 
 /// The registered solve of `nearest` over `trees`.
-pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+pub fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
     match NEAREST.get() {
         Some(solve) => solve(trees, sets, binding),
         None => Err(StoreError::Invalid("no nearest solve is registered".to_owned())),
@@ -49,24 +49,3 @@ pub struct InChunk {
     pub rows: super::rows::Part,
 }
 
-/// What makes an axis's solve in a chunk: `members` per dialect tag (256) and kind code (1,024) a bit, `None` for
-/// every kind (containment); `inside` for every ancestor in the set, else the nearest.
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
-/// Several chunks' rows go in one relation, each chunk's past those before (a chunk's batch and its tape values,
-/// decision 0431 §8); the starts are the first's.
-pub type ChunkAxis = fn(&[&crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk], Option<&[u32]>, bool) -> Result<InChunk, String>;
-
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
-static CHUNK_AXIS: std::sync::OnceLock<ChunkAxis> = std::sync::OnceLock::new();
-
-/// Registers the device's solve of an axis in a chunk (once, at load: the Metal device's).
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub fn install_chunk_axis(solve: ChunkAxis) {
-    let _ = CHUNK_AXIS.set(solve);
-}
-
-/// The device's solve of an axis in a chunk, when one is registered.
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub(crate) fn chunk_axis() -> Option<ChunkAxis> {
-    CHUNK_AXIS.get().copied()
-}
