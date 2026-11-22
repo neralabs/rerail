@@ -5627,12 +5627,13 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     const root = await twoBranches();
     git(root, "branch", "third", "main");
     const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
-    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const nested = join(worktree, "lib");
+    const sourceRoot = (path: string) => resolve(root, path).startsWith(`${nested}${sep}`) ? nested : extra.sourceRoot!(path);
+    const { bridge, auditGeneratedEdits } = await opened(root, { ...extra, sourceRoot });
     const bothWalks = async () => {
       await bridge.checkpoint("turn");
       await bridge.settleWorktreeWalk();
     };
-    const nested = join(worktree, "lib");
     await modifyDeleteBranches(nested, false);
     const file = join(nested, "src", "gone.py");
     // The walk read the worktree's `HEAD` as it began; Git stops listing the worktree as the walk looks at a file of the
