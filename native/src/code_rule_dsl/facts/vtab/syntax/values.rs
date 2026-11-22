@@ -424,6 +424,22 @@ impl Source for Layered {
         });
         Some(out)
     }
+    /// The base's counts and each part's, a part with none counted by its rows (a value's rows are few).
+    fn column_counts(&self, c: usize) -> Option<Vec<(i64, u64)>> {
+        if self.made.is_some() {
+            return None;
+        }
+        let mut by: std::collections::BTreeMap<i64, u64> = self.base.column_counts(c)?.into_iter().collect();
+        self.parts(|p| {
+            for part in &p.list {
+                match part.src.column_counts(c) {
+                    Some(counts) => counts.into_iter().for_each(|(v, n)| *by.entry(v).or_default() += n),
+                    None => (0..part.src.len()).for_each(|r| *by.entry(part.src.value(r, c)).or_default() += 1),
+                }
+            }
+        });
+        Some(by.into_iter().collect())
+    }
     fn for_rows_keyed(&self, column: usize, keys: &rustc_hash::FxHashSet<i64>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
         // The base's walk, then each part's rows of the keys (a value's rows are few: read whole where its source has
         // no walk). Made on lookup, the values' rows are made as looked up, never walked (`for_rows_in`).

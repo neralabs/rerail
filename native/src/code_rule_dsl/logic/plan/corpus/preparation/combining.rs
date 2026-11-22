@@ -11,7 +11,7 @@ use crate::code_rule_dsl::logic::plan::corpus::scoping::{Policy, Report};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
-use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Cell, CmpOp, Lit, RuleRef, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Cell, CmpOp, Lit, RuleRef, Slot, TermRef, Version};
 use crate::code_rule_dsl::typing::file_local::FileLocal;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -605,11 +605,13 @@ impl ProgramPass for FoldOwn<'_> {
         // stays narrow, so no copy of it is derived again. Leaving one unfolded can make another mixed; until none is.
         let asks = asking(v);
         let mut unfolded: BTreeSet<String> = BTreeSet::new();
+        // A split that fails leaves every bounded variable seeded apart (`Diffed::write`).
+        let same_doc = cx.get::<FileLocal>().map(|s| s.same_doc.clone()).unwrap_or_default();
         let (originals, read, diffed) = loop {
             let originals = annotated(&folded);
             let narrowing = Narrowing { widened: &originals, asking: asks.clone(), apart: unfolded.clone() };
             let read = narrowing.reads(v, &folded);
-            let diffed = Diffed::new(v, &folded, &read, &narrowing, &requests, narrow);
+            let diffed = Diffed::new(v, &folded, &read, &narrowing, &requests, narrow, &same_doc);
             let mixed: BTreeSet<String> = diffed.mixed.iter().filter(|x| folded.values().any(|o| o == *x)).cloned().collect();
             if mixed.is_empty() || std::env::var("RERAIL_MIXED_FOLDED").is_ok_and(|x| x == "on") {
                 break (originals, read, diffed);
@@ -1611,6 +1613,9 @@ pub(super) struct Diffed {
     scc: HashMap<String, BTreeSet<String>>,
     /// The program as written, each copy a node: who reads whom.
     edges: HashMap<String, BTreeSet<String>>,
+    /// Each base input's and file-local relation's columns whose values in one row lie in one document
+    /// (`FileLocal::same_doc`): the widened bounds' variables these join are seeded once (`write`).
+    same_doc: BTreeMap<String, Vec<usize>>,
     /// The originals of a component one of which reaches a copy of one (`pt_vopen` reads `rr_narrow_pt_bopen`, and
     /// the wide `pt_base_open` reads `pt_vopen`): a copy there cannot be its original less a change, and was its
     /// rules again, the wide and narrow relations one recursive component. `FoldOwn` leaves their guests' copies
@@ -1700,10 +1705,10 @@ fn recheck_name(orig: &str) -> String {
 }
 
 impl Diffed {
-    fn new(v: &Version, folded: &HashMap<String, String>, read: &BTreeSet<String>, narrowing: &Narrowing<'_>, requests: &BTreeSet<String>, narrow: i64) -> Diffed {
+    fn new(v: &Version, folded: &HashMap<String, String>, read: &BTreeSet<String>, narrowing: &Narrowing<'_>, requests: &BTreeSet<String>, narrow: i64, same_doc: &BTreeMap<String, Vec<usize>>) -> Diffed {
         let node = v.columns_of("kind").and_then(|c| c.first().cloned());
         let doc = v.columns_of("docof").and_then(|c| c.get(1).cloned());
-        let mut out = Diffed { of: BTreeSet::new(), read: read.clone(), cols: HashMap::new(), node, doc, scc: HashMap::new(), edges: HashMap::new(), mixed: BTreeSet::new() };
+        let mut out = Diffed { of: BTreeSet::new(), read: read.clone(), cols: HashMap::new(), node, doc, same_doc: same_doc.clone(), scc: HashMap::new(), edges: HashMap::new(), mixed: BTreeSet::new() };
         if std::env::var("RERAIL_NARROW_DIFF").is_ok_and(|x| x == "off") || out.node.is_none() || out.doc.is_none() || read.is_empty() {
             return out;
         }
@@ -1940,16 +1945,23 @@ impl Diffed {
         for rn in ways(None, false) {
             out.rewrite(&mut fold(false, cand.clone(), rn))?;
         }
-        // The widened bounds: the wide rule with the annotations' keys read at one.
+        // The widened bounds: the wide rule with the annotations' keys read at one. A node's key is its document's
+        // shifted up 32 bits, so a node is an annotation's where its document is; the bounded variables one document
+        // holds (joined through a relation's same-document columns, or a node and its `@doc`) are read at one alone,
+        // the first of them. `pt_impmod`'s rule bounds `$i`, `$mn`, `$pre`, `$dn` and their document `$d`, all one
+        // document's: five candidates' rules, each a stratum a chunk, found the rows the first finds.
         if rw.original {
-            for l in r.body() {
-                if let Lit::Cmp { op: CmpOp::Lt, l: TermRef::Var(s), r: TermRef::Int(b) } = l.view()
-                    && (b == narrow << 32 || b == narrow)
-                {
-                    let ann = if b == narrow << 32 { ANN_NODE } else { ANN_DOC };
-                    let mut f = fold(true, cand.clone(), Vec::new());
-                    out.rewriting(&mut f).atom(ann, &[T::VarAtom(r.var(s))]).finish()?;
-                }
+            let bounded: Vec<(Slot, &str)> = r
+                .body()
+                .filter_map(|l| match l.view() {
+                    Lit::Cmp { op: CmpOp::Lt, l: TermRef::Var(s), r: TermRef::Int(b) } if b == narrow << 32 => Some((s, ANN_NODE)),
+                    Lit::Cmp { op: CmpOp::Lt, l: TermRef::Var(s), r: TermRef::Int(b) } if b == narrow => Some((s, ANN_DOC)),
+                    _ => None,
+                })
+                .collect();
+            for (s, ann) in self.one_document_each(v, r, &bounded) {
+                let mut f = fold(true, cand.clone(), Vec::new());
+                out.rewriting(&mut f).atom(ann, &[T::VarAtom(r.var(s))]).finish()?;
             }
         }
         // A computed head term (`@cat(m, x)`) is read from the candidates as a variable equal to it.
@@ -1966,6 +1978,58 @@ impl Diffed {
         }
         b.finish()?;
         Ok(())
+    }
+
+    /// Of `bounded` (each a variable and its seed), the first of each document's: variables are of one document where
+    /// a positive atom of a base input or file-local relation holds them in its same-document columns, or one is the
+    /// other's `@doc`.
+    fn one_document_each(&self, v: &Version, r: RuleRef<'_>, bounded: &[(Slot, &'static str)]) -> Vec<(Slot, &'static str)> {
+        let mut vars: Vec<Slot> = bounded.iter().map(|(s, _)| *s).collect();
+        let mut parent: Vec<usize> = (0..vars.len()).collect();
+        fn root(p: &mut [usize], mut i: usize) -> usize {
+            while p[i] != i {
+                p[i] = p[p[i]];
+                i = p[i];
+            }
+            i
+        }
+        let mut at = |vars: &mut Vec<Slot>, parent: &mut Vec<usize>, s: Slot| -> usize {
+            vars.iter().position(|x| *x == s).unwrap_or_else(|| {
+                vars.push(s);
+                parent.push(parent.len());
+                parent.len() - 1
+            })
+        };
+        for l in r.body() {
+            let group: Vec<Slot> = match l.view() {
+                Lit::Atom(a) if !a.neg() => {
+                    let Some(cols) = self.same_doc.get(v.rel_name(a.rel())) else { continue };
+                    a.args().enumerate().filter(|(c, _)| cols.contains(c)).filter_map(|(_, t)| t.var()).collect()
+                }
+                Lit::Cmp { op: CmpOp::Eq, l: TermRef::Var(d), r: TermRef::Call(f, mut args) } if v.text(f) == "doc" => match (args.next(), args.next()) {
+                    (Some(TermRef::Var(n)), None) => vec![d, n],
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let Some((&first, rest)) = group.split_first() else { continue };
+            let a = at(&mut vars, &mut parent, first);
+            for &x in rest {
+                let b = at(&mut vars, &mut parent, x);
+                let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+                parent[rb] = ra;
+            }
+        }
+        let mut seen: Vec<usize> = Vec::new();
+        let mut out = Vec::new();
+        for (i, &(s, ann)) in bounded.iter().enumerate() {
+            let g = root(&mut parent, i);
+            if !seen.contains(&g) {
+                seen.push(g);
+                out.push((s, ann));
+            }
+        }
+        out
     }
 
     /// Each diffed copy's rows, and its deltas; the annotations' nodes and documents.

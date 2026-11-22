@@ -459,6 +459,9 @@ impl Source for LongTexts {
     fn range_indexed(&self, column: usize) -> bool {
         self.nodes.range_indexed(column)
     }
+    fn column_counts(&self, c: usize) -> Option<Vec<(i64, u64)>> {
+        self.nodes.column_counts(c)
+    }
     fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
         self.nodes.range_lookup(column, lower, upper)
     }
@@ -1975,6 +1978,9 @@ impl Source for FamilySource {
     }
     fn range_indexed(&self, column: usize) -> bool {
         self.rows().range_indexed(column)
+    }
+    fn column_counts(&self, c: usize) -> Option<Vec<(i64, u64)>> {
+        self.rows().column_counts(c)
     }
     fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
         self.rows().range_lookup(column, lower, upper)
@@ -3639,6 +3645,21 @@ pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Opt
 
 impl Source for Viewed {
     fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
+    /// `docof`'s document column: a document's rows are its own, at its offsets.
+    fn column_counts(&self, c: usize) -> Option<Vec<(i64, u64)>> {
+        if !matches!((self.view, c), (View::Loc(Place::Docof), 1)) {
+            return None;
+        }
+        let offsets = self.batch.offsets(self.view);
+        let mut by: std::collections::BTreeMap<i64, u64> = std::collections::BTreeMap::new();
+        for (i, p) in self.batch.docs.iter().enumerate() {
+            let n = (offsets[i + 1] - offsets[i]) as u64;
+            if n > 0 {
+                *by.entry(i64::from(p.file)).or_default() += n;
+            }
+        }
+        Some(by.into_iter().collect())
+    }
     /// A view's rows are in document order (decision 0494): a document's lie at its offset, counted.
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
         let offsets = self.batch.offsets(self.view);

@@ -121,6 +121,21 @@ or read `guest_of` (784 to 809 G) were unsound, and are not counted.
     bounds after a first scan now cut it as they cut a probe: by two searches where its rows are in the column's
     order, else by the view's source's range read (`range_lookup`), which `Layered` (a chunk's batch and the tape
     values' parts) now passes through. 155 ms to 0.8 ms.
+16. **A copy's candidates are seeded once a document** (`Diffed::one_document_each`). The wide rule's rows that
+    differ are those with a bounded variable in the annotations' keys, and a node's key is its document's shifted up
+    32 bits: the bounded variables one document holds (joined through a base or file-local relation's same-document
+    columns, `FileLocal::same_doc`, or a node and its `@doc`) are in those keys together. Each was seeded apart:
+    `pt_impmod`'s rule bounds `$i`, `$mn`, `$pre`, `$dn` and their document `$d`, five candidates' rules where one
+    finds the rows, and each pushed into the chunks as a join, a stratum a chunk. The candidates' strata run went
+    from 349 to 232, the run's strata from 2,162 to 2,003.
+17. **A probe by a few documents is priced by their nodes** (`Source::column_counts`, `JoinCounts::of_counts`,
+    `rows_held`). `docof`'s documents are counted by the batch without reading a row (each one's rows at its
+    offsets), and a probe from a relation whose keys are kept is priced by the rows of the values those keys hold.
+    `rr_ann_doc`'s documents (an annotation's, about 40 nodes each) were priced at the chunk's average, 2,192 to
+    3,000 a document (a light value's share of the heavy values' estimate), so `rr_cand_pt_ownq` led from `kind`
+    (190 K rows, 0.16 s); priced at 1,095 rows for 94 documents, it leads from them.
+18. **An anti-join with a relation held empty is left out** (`setfix::join_rule_bound`). A copy read in place reads
+    its rows gone, `!rr_gone_<x>`, empty for most copies: 286 such steps read 2 M rows (145 ms).
 7. **A rule beside its annotation twin reads only the copies' deltas** (`Folding::beside_twin`). Since #923 a rule
    that reads an original (narrow, so its copy) sits beside a twin of the same head that reads an annotation's copy
    (folded, so the whole original) and is the rule otherwise: each derivation was made twice (`pt_vopen`). The rule is
@@ -146,21 +161,30 @@ as its own rules again (781 G: the work moves into its readers).
 | 13, one pushed join | 724.8 G | 1.49 GB |
 | 14, whole plans by members' rows | 697.1 G | 1.49 GB |
 | 15, a first scan's range read alone | 695.8 G | 1.44 GB |
+| 16, candidates seeded once a document | 676.9 G | 1.37 GB |
+| 17, a probe by a few documents | 674.2 G | 1.42 GB |
+| 18, no anti-join with an empty relation | 672.0 G | 1.41 GB |
 
 Two runs of one binary differed by up to 8 G at loads of 20 to 30.
 
 ## What is left
 
 The baseline's own tree (its rules and typing programs, commit 8e14e2bb8c, exported whole) gives the measure that
-compares: the baseline engine runs it in 578.9 G and 33.1 s of user CPU; this engine in 694.1 G and 39.4 s. Over
-today's rules this engine takes 695.8 G, so the rules merged since cost nothing: the gap is the engine's.
+compares: the baseline engine runs it in 578.9 G and 33.1 s of user CPU; this engine (at step 15) in 694.1 G and
+39.4 s. Over today's rules it took 695.8 G, so the rules merged since cost nothing: the gap is the engine's.
 
-Of the 3.3 s more profiled CPU, the diff machinery's strata are 1.9 s: 1,765 strata, of which the candidates are 608
-(1.53 s, joins 0.05 s of it), the rechecks 217 (0.31 s). Almost all of it is each stratum's fixed cost (planning,
-opening, inputs loaded and indexed, the profile's record), at about half a millisecond a stratum a chunk; the base
-inputs' indexes are built again by each stratum that loads them (`child` on `(p, c)`: 168 builds, 123 ms). Then
-preparation (+1.0 s: the prepared program's passes, the measures' keys, the fold), per-stratum work of the other
-strata (+0.5 s), and the chunks' evaluation (+0.5 s).
+The baseline has 41 strata of the engine's own (`rr_`), this engine 1,062 after step 16: four for each of the 168
+diffed copies (candidates, recheck, gone, added) and a stratum for each candidates' join pushed into the chunks.
+Of 677 copies (the pushed ones counted apart), 33 differ from their originals in this run: the rest are skipped
+where their inputs are empty (the gone, added and recheck of a copy whose candidates are none), and the candidates
+of 232 run each chunk and find none, each a stratum's fixed cost (planning, opening, the profile's record, about
+0.3 ms a chunk). The base inputs' indexes are built once a chunk (`child` on `(p, c)`: 31 builds, one a chunk), not
+by each stratum.
 
-A candidates' rule led by `rr_ann_doc` is priced by the average document's nodes (2,192), though the annotations'
-documents are small, so with more than a few of them it starts from `kind` (`rr_cand_pt_ownq`, 0.17 s).
+The candidates and rechecks are 3,000 of the program's 8,900 rules, and preparation's passes read every rule:
+pushing the joins into the chunks takes 9 rounds, each a split of every relation (0.29 s against 0.05 s), cutting
+the exports to their demand 0.15 s, the measures' keys 0.14 s, reading copies in place 0.10 s; 1.27 s in all
+against the baseline's 0.25 s.
+
+The recursion of the open attributes (`pt_vopen`, `pt_base_open`, …) holds its annotations' copies apart (step 11)
+and reads its originals' narrow copies in place: 957 ms against 530 ms.

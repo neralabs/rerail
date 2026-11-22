@@ -7072,8 +7072,17 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
         bound[o] = true;
         Ok((o, bind))
     }
-    for item in &spec.items {
+    // The items whose steps are left out: an anti-join with a relation held empty passes every row (a narrow copy
+    // read in place reads `!rr_gone_<x>`, empty for most copies: 286 such steps read 2 M rows, 145 ms, on leg-083).
+    let mut dropped: Vec<usize> = Vec::new();
+    for (at, item) in spec.items.iter().enumerate() {
         let is_bound = |b: &Vec<bool>, k: Key| match k { Key::Slot(s) => b.get(s).copied().unwrap_or(false), Key::Const(_) => true };
+        if let JoinItem::Atom { neg: true, src: Source::Native(table), .. } = item
+            && on(conn).derived.lock().get(table.as_str()).is_some_and(|r| r.len() == 0)
+        {
+            dropped.push(at);
+            continue;
+        }
         match item {
             JoinItem::Atom { src, args: atoks, .. } | JoinItem::Count { src, args: atoks, .. } | JoinItem::Extreme { src, args: atoks, .. } | JoinItem::StrJoin { src, args: atoks, .. } => {
                 let neg = matches!(item, JoinItem::Atom { neg: true, .. });
@@ -7307,8 +7316,8 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
     let probes = probes(&steps, &out);
     let step_ns = (0..=steps.len()).map(|_| Default::default()).collect();
     // Each step's plan step, where the planner said (a spec read from text did not: each step is its own).
-    let (from, plan_steps) = if spec.from.len() == steps.len() {
-        (spec.from.iter().map(|&p| p as usize).collect(), spec.plan_steps as usize)
+    let (from, plan_steps) = if spec.from.len() == steps.len() + dropped.len() {
+        (spec.from.iter().enumerate().filter(|(k, _)| !dropped.contains(k)).map(|(_, &p)| p as usize).collect(), spec.plan_steps as usize)
     } else {
         ((0..steps.len()).collect(), steps.len())
     };

@@ -1274,6 +1274,9 @@ impl Source for Renamed {
     fn range_indexed(&self, column: usize) -> bool {
         self.0.range_indexed(column)
     }
+    fn column_counts(&self, c: usize) -> Option<Vec<(i64, u64)>> {
+        self.0.column_counts(c)
+    }
     fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
         self.0.range_lookup(column, lower, upper)
     }
@@ -2406,6 +2409,9 @@ impl Source for Traced {
     }
     fn range_indexed(&self, column: usize) -> bool {
         self.inner.range_indexed(column)
+    }
+    fn column_counts(&self, c: usize) -> Option<Vec<(i64, u64)>> {
+        self.inner.column_counts(c)
     }
     fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
         self.whole("range_lookup (index)");

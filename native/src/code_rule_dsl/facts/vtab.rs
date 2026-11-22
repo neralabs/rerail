@@ -107,6 +107,9 @@ impl ViewInPlace {
 
 pub trait Source: Send + Sync {
     fn python_batch(&self) -> Option<Arc<syntax::Batch>> { None }
+    /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
+    /// one's nodes); `None` otherwise.
+    fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
     fn direct_all(&self,_equal:&[(usize,i64)])->Option<Vec<ReadRow>> {None}
     fn direct_one(&self,_column:usize,_values:&[i64])->Option<Vec<ReadRow>> {None}

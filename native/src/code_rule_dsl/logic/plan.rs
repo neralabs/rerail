@@ -3973,6 +3973,31 @@ impl Model {
                         if joined_else { all = false; }
                         by_cols.extend(b.args(*d).iter().enumerate().filter(|(_, t)| matches!(t, TermRef::Var(x) if *x == v)).map(|(dc, _)| (dr, dc)));
                     }
+                    // Drawn through one atom's column where both columns' counts are exact (one of few values, the
+                    // other counted by value): the rows they join, exactly, before any estimate. A light value is
+                    // not the light values' average: `rr_ann_doc`'s documents, 40 nodes each, were priced by heavy
+                    // values at 3,000 a document.
+                    if all && let [(dr, dc)] = by_cols[..]
+                        && let (Some(mine), Some(theirs)) = (self.stats.counts.at(rel, c), self.stats.counts.at(dr, dc))
+                        && theirs.rows >= 1.0
+                        && let joined = mine.join(theirs)
+                        && joined.err == 0.0
+                    {
+                        basis.set("join counts");
+                        misses_counted.set(misses_counted.get() | 1 << c.min(63));
+                        return (joined.rows / theirs.rows).max(0.01);
+                    }
+                    // This column counted by value, the binding drawn from kept keys: each key's rows, summed, a key,
+                    // by the fewest keys of the atoms that hold it (its values are in each).
+                    if let Some(mine) = self.stats.counts.at(rel, c)
+                        && let Some(theirs) = by_cols.iter().filter_map(|&(dr, dc)| self.stats.keys.at(dr, dc)).filter(|k| k.distinct() >= 1.0).min_by(|a, b| a.distinct().total_cmp(&b.distinct()))
+                        && let Some(held) = mine.rows_held(theirs)
+                        && let of = theirs.distinct()
+                    {
+                        basis.set("counts at keys");
+                        misses_counted.set(misses_counted.get() | 1 << c.min(63));
+                        return (held / of).max(0.01);
+                    }
                     // Each column priced with its kept keys (decision 0488), read where the engine keeps them.
                     let priced = |r: &str, c: usize| self.heavy_of(r, c).map(|h| table::PricedCol::new(h, self.stats.keys.at(r, c)));
                     if all && !by_cols.is_empty() && let Some(here) = priced(rel, c)
@@ -4775,7 +4800,7 @@ impl Model {
             for &j in &joins {
                 let Some(a) = b.atom(j) else { continue };
                 let rel = b.rel(a);
-                let cols: Vec<String> = (0..b.args(j).len()).map(|c| format!("ndv {:?} fan {:?}", self.ndv.get(&(rel.to_owned(), c)), self.stats.fan.get(&(rel.to_owned(), c)))).collect();
+                let cols: Vec<String> = (0..b.args(j).len()).map(|c| format!("ndv {:?} fan {:?} counts {} keys {}", self.ndv.get(&(rel.to_owned(), c)), self.stats.fan.get(&(rel.to_owned(), c)), self.stats.counts.at(rel, c).is_some(), self.stats.keys.at(rel, c).is_some())).collect();
                 eprintln!(
                     "plan show   atom {}: derived {} held {} view {} card {:?} lazy {} solving {} prior_later {} col {:?} | {}",
                     b.show_atom(a),
@@ -4793,7 +4818,7 @@ impl Model {
             for (m, c) in cells.iter().enumerate().filter_map(|(m, c)| c.as_ref().map(|c| (m as u64, c))) {
                 if m.count_ones() <= 5 || m == full_mask {
                     let lits: Vec<String> = (0..joins.len()).filter(|&i| m >> i & 1 == 1).map(|i| b.atom(joins[i]).map_or_else(|| format!("#{}", joins[i]), |a| b.show_atom(a))).collect();
-                    eprintln!("plan show   {m:b} last {} work {:.1} rows {:.1} unfounded {}: {}", c.last, c.work, c.rows, c.unfounded, lits.join(" , "));
+                    eprintln!("plan show   {m:b} last {} work {:.1} rows {:.1} unfounded {} by {}: {}", c.last, c.work, c.rows, c.unfounded, c.basis, lits.join(" , "));
                 }
             }
         }
@@ -5291,6 +5316,18 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
     }
     // An input no rule reads needs no statistics: a `.rerail` program declares every `core.rerail` relation (its prelude).
     let read: BTreeSet<String> = rules().flat_map(|b| (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a).to_owned()).collect::<Vec<_>>()).collect();
+    // A column its source counts by value without reading its rows (`docof`'s documents): a probe by it is priced by
+    // the rows it joins (`atom_rows`' join sketch), not the column's average. `rr_ann_doc`'s few documents, an
+    // annotation's each (40 nodes), were priced at the chunk's 2,192 a document, and the candidates of `pt_ownq`
+    // started from `kind`.
+    for rel in f.inputs().filter(|rel| read.contains(*rel)) {
+        let Some(source) = crate::code_rule_dsl::facts::vtab::bound_source(db, rel) else { continue };
+        for col in 0..f.arity(rel).unwrap_or(0) {
+            if let Some(counts) = source.column_counts(col) {
+                stats.counts.insert((rel.to_owned(), col), Arc::new(super::join_size::JoinCounts::of_counts(counts)));
+            }
+        }
+    }
     for rel in f.inputs().filter(|rel| !inputs.batch.contains_key(*rel) && read.contains(*rel)) {
         // A relation whose statistics are made when first planned with (`Model::resolve`).
         if stats.lazy.0.contains_key(rel) {
