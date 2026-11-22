@@ -935,3 +935,34 @@ Two designs remove this, and each changes 0494:
   documents. String annotations, `Extra`, the tree and the node walk are 0.44 s of its 0.64 s. But `make_rows` takes a
   relation's producer from the program's reads (with no span read, `docof` is core.rerail's and has no spans). A
   narrower group needs a set of relations to make that is apart from the reads that fix their meaning.
+
+**Done** (2026-11-22, the first design, decision 0613):
+
+- A session holds its corpus batch, and the next run's is renewed from it: the held groups whose documents did not
+  change are taken, their rows read where they lie (`rows::Part::range`, `Relation::of_runs`), in at most
+  `MAX_SEGMENTS - 1` parts a relation.
+- A session's batch makes its documents in groups of 4 (`RERAIL_SESSION_GROUP`), probed or read whole, so an edit
+  makes again only its changed documents' groups.
+- `unchanged_as_read` (0090 §4) finds the rows that agree by hash, each row's columns read once. Its sorting
+  comparison read both rows through the source at every step: 0.39 s of steps 02-03.
+
+The engine of 2026-11-18 (b5a135e149) was run again on its own rule library (`RERAIL_RR_LIB`), on the same host
+and the same way, so the two can be compared directly:
+
+| Engine | Files | 00 (first) | 01 | 02 | 03 |
+|---|---|---|---|---|---|
+| b5a135e149 (2026-11-18), none profiled | 334 | 8.98 | 0.87-0.93 | 1.26 | 1.04 |
+| 0613 and the hash (dc324c0b05), none profiled | 334 | 16.9-17.0 | 0.80 | 1.72 | 1.41 |
+
+Each step's findings equal a cold run's. The table's earlier 1.90 for step 02 was a profiled run.
+
+**What is left** (the step-02 profiles, span by span; the rules are the same where the names are):
+
+- The changed files' chunk: its stream jobs' strata take 0.44 s against 0.18 s. `unparen`, `py_next_code` and
+  `mf_class` each take 3-4 times as long, on the same rules and the same 27,963 held nodes. The strata's step
+  counters show a few ms of each, so the time is outside the joins' steps.
+- The base relations' versions (0458) take 0.15 s, where 2026-11-18's session took 0.065 s for its input deltas by
+  document and 0.10 s to measure the base rows held, which is now 0.01 s.
+- A pool thread waiting for the chunk's evaluation (`run_observed_within`, `help_until_as`) spends about 0.17 s of
+  samples in rayon's `yield_now`. Each try to steal costs CPU, between naps that start at 20 µs.
+- The first run costs twice 2026-11-18's (16.9 s against 9.0 s). Steps 1-20 measured edits only.
