@@ -106,7 +106,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                         // A step's rows are read as the probe finds them, with the columns it reads (none for
                         // a test): a source that reads in place answers without a list of ids; one that does
                         // not gives the ids.
-                        let read = v.find_read(&ix.cols, key, ix.lead, need);
+                        let read = v.find_read(&ix.cols, key, ix.lead, need, &mut hints[..]);
                         let p = match read {
                             Some(rows) => Probed::Read(rows, need),
                             None => Probed::Ids(v.find_keyed(&ix.cols, key, ix.lead)),

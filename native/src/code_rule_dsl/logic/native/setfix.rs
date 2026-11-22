@@ -4286,7 +4286,8 @@ impl View {
     }
     /// `find_keyed`'s rows, each with its values of view columns `need` (bit `c`: column `c`), read as the source's
     /// probe found them (`Source::lookup_read`); `None` where it has no such read, or the probe is not `find`'s.
-    fn find_read(&self, cols: &[usize], key: &[i64], lead: usize, need: u64) -> Option<Found> {
+    /// `hint`: the step's probe cursor (`Source::lookup_read_at`).
+    fn find_read(&self, cols: &[usize], key: &[i64], lead: usize, need: u64, hint: &mut [u32]) -> Option<Found> {
         if !self.eqs.is_empty() || self.ids.is_some() || self.cols.len() > READ {
             return None;
         }
@@ -4332,7 +4333,7 @@ impl View {
             }
         }
         let (mut first, mut more) = (None, Vec::new());
-        let read = self.src.lookup_read(self.cols[cols[lead]], key[lead], &src[..m], &mut |row, got| {
+        let read = self.src.lookup_read_at(self.cols[cols[lead]], key[lead], &src[..m], hint, &mut |row, got| {
             let mut vals = [0i64; READ];
             for j in 0..m {
                 vals[at[j]] = got[j];

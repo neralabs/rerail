@@ -272,6 +272,49 @@ impl Numbering {
         Some((g, j))
     }
 
+    /// `granule`, from `hint`: the last granule starting at or before the number read before. Where it is still
+    /// that for `k` (probes in key order read numbers near each other), no bisection; else `granule`'s, and the hint
+    /// is its. The same answer as `granule` whatever the hint (it is checked, not trusted).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn granule_near(&self, item: u32, k: u32, hint: &mut u32) -> Option<(u32, u32)> {
+        // SAFETY: the caller's.
+        let (starts, ends, parents) = unsafe { (Self::of::<u32>(&self.rank_starts[item as usize]), Self::of::<u32>(&self.rank_ends[item as usize]), Self::of::<u32>(&self.parents)) };
+        let j = *hint;
+        let n = self.granules;
+        if j >= n || starts[j as usize] > k || (j + 1 < n && starts[j as usize + 1] <= k) {
+            // SAFETY: the caller's.
+            let (g, j) = unsafe { self.granule(item, k) }?;
+            *hint = j;
+            return Some((g, j));
+        }
+        let mut g = j;
+        while k >= ends[g as usize] {
+            g = parents[g as usize];
+            if g == NONE {
+                return None;
+            }
+        }
+        Some((g, j))
+    }
+
+    /// `low_of`, its granule found from `hint` (`granule_near`).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn low_of_near(&self, item: u32, k: u32, hint: &mut u32) -> u32 {
+        // SAFETY: the caller's.
+        unsafe {
+            let Some((g, j)) = self.granule_near(item, k, hint) else { return NONE };
+            let index = self.index_in(item, k, g, j);
+            let slot = Self::u32_at(&self.slots, Self::u32_at(&self.at, g).wrapping_add(index >> INDEX_BITS));
+            slot << INDEX_BITS | index & ((1 << INDEX_BITS) - 1)
+        }
+    }
+
     /// `item` number `k`'s index in granule `g` (`j` the last granule starting at or before it).
     #[inline(always)]
     unsafe fn index_in(&self, item: u32, k: u32, g: u32, j: u32) -> u32 {

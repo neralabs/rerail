@@ -738,6 +738,14 @@ impl Table {
         (low != rerail_clif::ids::NONE).then_some(low)
     }
 
+    /// `low_of`, the granule searched from `hint` (`Numbering::low_of_near`): probes in key order.
+    #[inline]
+    pub fn low_of_near(&self, r: &Ranks, item: Item, k: u32, hint: &mut u32) -> Option<u32> {
+        // SAFETY: as `low_of`.
+        let low = unsafe { r.numbering().low_of_near(item as u32, k, hint) };
+        (low != rerail_clif::ids::NONE).then_some(low)
+    }
+
     /// The start of the innermost granule whose subtree holds tape node `x` below its start (an ancestor of `x`),
     /// 0 when none does: where a parent search may start (`Facts::parent_within`).
     pub fn holding(&self, x: u32) -> u32 {

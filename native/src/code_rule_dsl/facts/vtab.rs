@@ -181,6 +181,13 @@ pub trait Source: Send + Sync {
     fn lookup_read(&self, _column: usize, _value: i64, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64])) -> bool {
         false
     }
+    /// `lookup_read` from a probe cursor (`hint`, the step's, zeroed at its start): where the last probe of the step
+    /// ended, which a source may keep its place in (a view of the tape: the document and granule). Probes in key
+    /// order (a scan's rows sorted by the next key, decision 0112) then find their place without a search. A hint is
+    /// checked, never trusted: any value gives the same rows.
+    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _hint: &mut [u32], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        self.lookup_read(column, value, columns, each)
+    }
     /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
     /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's
     /// node, id and parent coming from the walk, not a point read a row.
@@ -364,6 +371,17 @@ pub trait Source: Send + Sync {
     /// Whether each value of `column` is at most one row, which `key_row` finds without allocating (a node's own
     /// column): a view of the source's columns held in place probes by it (`setfix::hold_view_in_place`).
     fn keys_rows(&self, _column: usize) -> bool {
+        false
+    }
+    /// Whether `column`'s values are document keys (`node`'s and `core_node`'s `d`, `docof`'s `d`): a key names the
+    /// documents its rows are of, as a node id's high bits do.
+    fn keys_documents(&self, _column: usize) -> bool {
+        false
+    }
+    /// Whether every row is of the source's own documents: each node id it holds, and each document key, one of
+    /// theirs (a view of a batch's tapes), never a host's that a place names. An admitted value's part of such a
+    /// relation is found by its own documents' keys alone (`values::Values::add`).
+    fn rows_of_own_documents(&self) -> bool {
         false
     }
     /// The row whose `column` (a `keys_rows` column) is `value`, if there is one: `lookup`'s answer, not allocated.

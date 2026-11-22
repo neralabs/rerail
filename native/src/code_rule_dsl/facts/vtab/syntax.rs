@@ -1877,6 +1877,14 @@ impl Projected {
         };
         i64::from(self.key) << 32 | i64::from(low)
     }
+    /// `global` of a node, its granule searched from `hint` (`granules::Table::low_of_near`): a probe's matches, and
+    /// probes in key order, read ids near each other.
+    pub fn global_near(&self, local: u32, hint: &mut u32) -> i64 {
+        match &self.defs {
+            Some(d) if local < self.len() => i64::from(self.key) << 32 | i64::from(d.table.low_of_near(&self.ranks, Item::Node, local, hint).expect("a numbered node")),
+            _ => self.global(local),
+        }
+    }
     /// Every node in order with its id: `(local id, tape node, id)`. One walk (`granules::ids`), no point read.
     pub fn node_ids(&self) -> impl Iterator<Item = (u32, u32, i64)> + '_ {
         let key = i64::from(self.key) << 32;
@@ -3781,6 +3789,26 @@ impl Batch {
         DOC.with(|h| h.set((key, i)));
         Some(i)
     }
+    /// `doc`, from `hint` (the document a probe before found): checked, then the next one, then searched.
+    fn doc_near(&self, d: i64, hint: &mut u32) -> Option<usize> {
+        let d = u32::try_from(d).ok()?;
+        let h = *hint as usize;
+        for i in [h, h + 1] {
+            if i < self.docs.len() && self.docs.key(i) == d {
+                *hint = i as u32;
+                return Some(i);
+            }
+        }
+        let i = self.docs.position(d)?;
+        *hint = i as u32;
+        Some(i)
+    }
+    /// `node`, its document found from `hint` (`doc_near`).
+    fn node_near(&self, n: i64, hint: &mut u32) -> Option<(usize, u32)> {
+        let doc = self.doc_near(n >> 32, hint)?;
+        let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
+        (n >= 0 && local < self.docs[doc].len()).then_some((doc, local))
+    }
     /// The document index and node of id `n`.
     pub fn node(&self, n: i64) -> Option<(usize, u32)> {
         let doc = self.doc(n >> 32)?;
@@ -4076,13 +4104,23 @@ impl Source for Viewed {
         Some(if lo > hi { Vec::new() } else { self.batch.between(self.view, lo, hi) })
     }
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        self.read_matches(column, value, columns, each)
+        self.read_matches(column, value, columns, &mut [0, 0], each)
+    }
+    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], hint: &mut [u32], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        self.read_matches(column, value, columns, hint, each)
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         self.lookup_docs(column, values, None)
     }
     fn keys_rows(&self, column: usize) -> bool {
         column == self.own()
+    }
+    fn keys_documents(&self, column: usize) -> bool {
+        matches!((self.view, column), (View::Node | View::Core, 0) | (View::Loc(Place::Docof), 1))
+    }
+    /// A place's `docof` is its file's (a program's host's); every other view's columns are its documents' own.
+    fn rows_of_own_documents(&self) -> bool {
+        !matches!(self.view, View::Loc(_))
     }
     /// `lookup_docs`' own column, for one value.
     fn key_row(&self, column: usize, value: i64) -> Option<usize> {
@@ -4339,11 +4377,15 @@ impl Viewed {
     /// A lookup by a node's id knows the row's id; by its parent, the parent's id and each child's tape node; by a
     /// kind or a tape node, the tape node: no select, granule search or parent search a row for those. Views whose
     /// rows are not one a node (`field`, `loc`), and the other lookups, read none (`false`).
-    fn read_matches(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        if columns.len() > 8 || matches!(self.view, View::Field | View::Loc(_)) {
+    /// `hint`: the step's probe cursor (`Source::lookup_read_at`): `[document, granule]` of the probe before, so a
+    /// probe in key order finds its document and its matches' granule without a search.
+    fn read_matches(&self, column: usize, value: i64, columns: &[usize], hint: &mut [u32], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        if columns.len() > 8 || matches!(self.view, View::Field | View::Loc(_)) || hint.len() < 2 {
             return false;
         }
         let b = &*self.batch;
+        let (doc_hint, granule_hint) = hint.split_at_mut(1);
+        let (doc_hint, granule) = (&mut doc_hint[0], std::cell::Cell::new(granule_hint[0]));
         let mut vals = [0i64; 8];
         // A match: its document, local id, tape node (`NONE`: unknown), own id and parent's id where known.
         let mut emit = |doc: usize, local: u32, x: u32, id: Option<i64>, up: Option<i64>| {
@@ -4364,7 +4406,14 @@ impl Viewed {
             for (o, &c) in vals.iter_mut().zip(columns) {
                 let at = At {
                     node: &x,
-                    n: &|| *n.get_or_init(|| p.global(local)),
+                    n: &|| {
+                        *n.get_or_init(|| {
+                            let mut g = granule.get();
+                            let id = p.global_near(local, &mut g);
+                            granule.set(g);
+                            id
+                        })
+                    },
                     up: &|| *parent.get_or_init(|| Self::parent_id_of(p, local, x())),
                     idx: &|| p.idx(local as usize),
                     depth: &|| p.depth(local as usize),
@@ -4375,14 +4424,14 @@ impl Viewed {
             each(row, &vals[..columns.len()]);
         };
         if column == self.own() {
-            if let Some((doc, local)) = b.node(value) {
+            if let Some((doc, local)) = b.node_near(value, doc_hint) {
                 emit(doc, local, NONE, Some(value), None);
             }
         } else if Some(column) == self.parent() {
             if value == -1 {
                 return false;
             }
-            if let Some((doc, local)) = b.node(value) {
+            if let Some((doc, local)) = b.node_near(value, doc_hint) {
                 b.docs[doc].each_child_node(local, |c, x| emit(doc, c, x, None, Some(value)));
             }
         } else if matches!(self.view, View::Core) && column == 1 {
@@ -4400,6 +4449,7 @@ impl Viewed {
         } else {
             return false;
         }
+        hint[1] = granule.get();
         true
     }
     fn row_value(&self, row: usize, column: usize) -> i64 {

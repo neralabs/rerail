@@ -1795,6 +1795,15 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 } else {
                     Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None)
                 };
+                // An id read from a probe cursor's granule (`global_near`) is `global`'s whatever the hint: carried
+                // from the read before (forward and back), fresh, or out of range.
+                let mut carried = 0;
+                let some = p.len().min(4_000);
+                for l in (0..some).chain((0..some).rev()).chain((p.len() - some..p.len()).step_by(7)) {
+                    for hint in [&mut carried, &mut 0, &mut u32::MAX, &mut (l / 3)] {
+                        assert_eq!(p.global_near(l, hint), p.global(l), "{label} {format:?} {shape:?}: the id of local {l} from a hint");
+                    }
+                }
                 // The walk's parents (one pass, no tape parent read) are `parent`'s.
                 for (l, _, q) in p.walk() {
                     assert_eq!(q, p.parent(l as usize), "{label} {format:?} {shape:?}: the parent of local {l}");

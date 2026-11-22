@@ -117,7 +117,10 @@ impl Keys {
 struct Parts {
     list: Blocks,
     total: usize,
+    /// The parts by the document keys of the node ids their rows hold.
     by_key: Keys,
+    /// The parts by the keys of their documents and those documents' files: a lookup by a document key (`Parts::of`).
+    by_doc: Keys,
     /// The chunk's relation with every part's rows past its own, in one block relation, while every part is a
     /// [`Slice`] of it, each past the one before.
     whole: Option<Arc<super::Relation>>,
@@ -131,14 +134,19 @@ impl Parts {
         let p = &self.list[i];
         (row < p.start + p.src.len()).then(|| (p, row - p.start))
     }
-    /// The parts that may hold rows whose value is `v`: those that hold node ids of `v`'s key, or every part for a
-    /// value no key names (an atom, a number).
-    fn of(&self, v: i64, each: &mut dyn FnMut(&Part)) {
-        if !(1 << 32..).contains(&v) {
-            self.list.iter().for_each(each);
+    /// The parts that may hold rows whose value is `v`: those that hold node ids of `v`'s key; where the column's
+    /// values are document keys (`docs`), those of the document `v` (a part is found by its documents' keys and
+    /// their files', `Values::add`): no part is read for a key it does not hold. Every part for a value no key
+    /// names (an atom, a number).
+    fn of(&self, v: i64, docs: bool, each: &mut dyn FnMut(&Part)) {
+        let key = if docs { u32::try_from(v).ok() } else { (1 << 32..).contains(&v).then_some((v >> 32) as u32) };
+        let Some(key) = key else {
+            if !docs {
+                self.list.iter().for_each(each);
+            }
             return;
-        }
-        for &i in self.by_key.get(&((v >> 32) as u32)).into_iter().flatten() {
+        };
+        for &i in if docs { &self.by_doc } else { &self.by_key }.get(&key).into_iter().flatten() {
             each(&self.list[i]);
         }
     }
@@ -181,7 +189,21 @@ impl Values {
     pub fn add(&self, keys: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
         let _adding = self.adding.lock();
         let mut parts: FxHashMap<String, Arc<Parts>> = (**self.parts.load()).clone();
+        // The keys a part is found by: its nodes' (`keys`), and its documents' and their files' (a lookup by
+        // document, `Parts::of`).
+        // A relation whose rows are its documents' own (`Source::rows_of_own_documents`, a view of the value's tape) is
+        // found by those documents' keys alone: a probe of a host's node reads none of its values' views.
+        let given = keys;
+        let (mut keys, mut own) = (keys.to_vec(), Vec::new());
         if let Some(b) = sources.iter().find_map(|(_, s)| s.python_batch()) {
+            for d in 0..b.docs.len() {
+                keys.extend([b.docs.key(d), b.file(d)]);
+                own.push(b.docs.key(d));
+            }
+            keys.sort_unstable();
+            keys.dedup();
+            own.sort_unstable();
+            own.dedup();
             self.batches.write().push(b);
         }
         for (name, src) in sources {
@@ -197,6 +219,10 @@ impl Values {
             p.whole = slice.filter(|_| p.sliced).map(|sl| Arc::clone(&sl.whole));
             p.list.push(Part { start: p.total, src: Arc::clone(&src) });
             p.total += src.len();
+            for &k in &keys {
+                p.by_doc.add(k, i);
+            }
+            let keys = if src.rows_of_own_documents() && !own.is_empty() { &own } else { given };
             for &k in keys {
                 p.by_key.add(k, i);
             }
@@ -431,6 +457,7 @@ impl Source for Layered {
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         let mut out = self.base.lookup(column, values)?;
+        let docs = self.base.keys_documents(column);
         if let Some(made) = &self.made {
             self.parts(|p| {
                 let mut made = made.lock();
@@ -439,7 +466,7 @@ impl Source for Layered {
                         Some(&(run, parts)) if parts == p.list.len() => run,
                         _ => {
                             let at = made.rows.len() / self.width.max(1);
-                            p.of(v, &mut |part| {
+                            p.of(v, docs, &mut |part| {
                                 for r in part.src.lookup(column, &[v]).unwrap_or_default() {
                                     for c in 0..self.width {
                                         let x = part.src.value(r, c);
@@ -460,7 +487,7 @@ impl Source for Layered {
         }
         self.parts(|p| {
             for &v in values {
-                p.of(v, &mut |part| {
+                p.of(v, docs, &mut |part| {
                     let at = self.base_len() + part.start;
                     match part.src.lookup(column, &[v]) {
                         Some(rows) => out.extend(rows.into_iter().map(|r| at + r)),
@@ -472,8 +499,43 @@ impl Source for Layered {
         });
         Some(out)
     }
+    /// The base's matches read as found, then each part's that may hold the value (`Parts::of`), numbered past the
+    /// base's as `lookup` numbers them: a part with no such read is looked up and its rows read (a value's rows are
+    /// few). Refused, a chunk with a value admitted read every probe's rows a point read each (`row_at`).
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        !self.has_parts() && self.base.lookup_read(column, value, columns, each)
+        self.lookup_read_at(column, value, columns, &mut [0, 0], each)
+    }
+    /// The cursor is the base's: a part's reads keep none (a value's rows are few).
+    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], hint: &mut [u32], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        if !self.has_parts() {
+            return self.base.lookup_read_at(column, value, columns, hint, each);
+        }
+        if self.made.is_some() || columns.len() > 8 || !self.base.lookup_read_at(column, value, columns, hint, each) {
+            return false;
+        }
+        let (base, docs) = (self.base_len(), self.base.keys_documents(column));
+        let mut row = [0i64; 8];
+        let row = &mut row[..columns.len()];
+        self.parts(|p| {
+            p.of(value, docs, &mut |part| {
+                let at = base + part.start;
+                if part.src.lookup_read(column, value, columns, &mut |r, got| each(at + r, got)) {
+                    return;
+                }
+                let rows = part.src.lookup(column, &[value]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == value).collect());
+                for r in rows {
+                    part.src.row_at(r, columns, row);
+                    each(at + r, row);
+                }
+            })
+        });
+        true
+    }
+    fn keys_documents(&self, column: usize) -> bool {
+        self.base.keys_documents(column)
+    }
+    fn rows_of_own_documents(&self) -> bool {
+        self.base.rows_of_own_documents()
     }
     /// A range of the base's column (a node view's own), and of each part's: not made on lookup (a value's rows are
     /// then made per key, never all read).
@@ -543,8 +605,9 @@ impl Source for Layered {
         }
         let &(_, v) = equal.iter().min_by_key(|e| e.0)?;
         let mut held = Some(false);
+        let docs = self.base.keys_documents(equal.iter().min_by_key(|e| e.0)?.0);
         self.parts(|p| {
-            p.of(v, &mut |part| {
+            p.of(v, docs, &mut |part| {
                 held = match (held, part.src.holds(equal)) {
                     (Some(true), _) | (_, Some(true)) => Some(true),
                     (Some(false), Some(false)) => Some(false),
@@ -759,6 +822,71 @@ mod tests {
         let (p, row) = after.at(3 * 200 + 2).expect("the last row's part");
         assert_eq!((p.start, row), (600, 2));
         assert!(after.at(3 * 201).is_none());
+    }
+
+    /// Rows `(n, d)`: a node id and a document key, looked up by filtering; read as found where `read`.
+    struct Table {
+        rows: Vec<[i64; 2]>,
+        read: bool,
+    }
+    impl Source for Table {
+        fn columns(&self) -> Vec<String> {
+            vec!["n".into(), "d".into()]
+        }
+        fn len(&self) -> usize {
+            self.rows.len()
+        }
+        fn estimated_matches(&self, _: usize, _: bool) -> usize {
+            1
+        }
+        fn indexed(&self, _: usize) -> bool {
+            true
+        }
+        fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+            Some((0..self.rows.len()).filter(|&r| values.contains(&self.rows[r][c])).collect())
+        }
+        fn value(&self, row: usize, c: usize) -> i64 {
+            self.rows[row][c]
+        }
+        fn keys_documents(&self, c: usize) -> bool {
+            c == 1
+        }
+        fn lookup_read(&self, c: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+            if !self.read {
+                return false;
+            }
+            for r in self.lookup(c, &[value]).unwrap_or_default() {
+                let row: Vec<i64> = columns.iter().map(|&k| self.rows[r][k]).collect();
+                each(r, &row);
+            }
+            true
+        }
+    }
+
+    /// A layered source's probe read as found (`lookup_read_at`) gives `lookup`'s rows, each with the values `value`
+    /// reads, with values admitted: by a node id (its key's parts), by a document key (the parts of that document),
+    /// and by a value no key names (every part), whether a part reads as found or not. Refused with values admitted,
+    /// a chunk read every probe's rows a point read each.
+    #[test]
+    fn a_layered_probe_read_as_found_is_its_lookup_and_rows() {
+        let id = |d: i64, l: i64| d << 32 | l;
+        let base = Arc::new(Table { rows: vec![[id(1, 0), 1], [id(1, 1), 1], [id(2, 0), 2], [7, 2]], read: true }) as Arc<dyn Source>;
+        let values = Arc::new(Values::default());
+        for (k, read) in [(10u32, true), (11, false), (12, true)] {
+            let k64 = i64::from(k);
+            let part = Arc::new(Table { rows: vec![[id(k64, 0), k64], [id(k64, 1), k64], [7, k64]], read }) as Arc<dyn Source>;
+            values.add(&[k], vec![("r".to_owned(), part)]);
+        }
+        let layered = Layered::new("r", base, Arc::clone(&values));
+        for (c, v) in [(0, id(1, 1)), (0, id(11, 1)), (0, id(12, 0)), (0, 7), (1, 2), (1, 11), (1, 12), (1, 99), (0, id(99, 0))] {
+            let mut want: Vec<(usize, Vec<i64>)> = layered.lookup(c, &[v]).expect("a lookup").into_iter().map(|r| (r, vec![layered.value(r, 0), layered.value(r, 1)])).collect();
+            let mut got = Vec::new();
+            assert!(layered.lookup_read_at(c, v, &[0, 1], &mut [0, 0], &mut |r, row| got.push((r, row.to_vec()))), "({c}, {v}) read");
+            want.sort();
+            got.sort();
+            assert_eq!(got, want, "column {c}, value {v}");
+            assert!(got.iter().all(|(_, row)| row[c] == v), "column {c}, value {v}: every row's");
+        }
     }
 
     /// Every source a chunk binds is layered (decision 0431 §8), read or not: layering one counts none of its rows,
