@@ -1865,11 +1865,15 @@ thread_local! {
 /// one ends and no stratum of the thread waits for its wave, the thread's join scratch is given back
 /// (`join::scratch_return`, Q203): to the device, which frees it once the command buffers that hold it completed. The
 /// next stratum's sorts lease theirs anew.
-struct InDevice;
+///
+/// It is the stratum's evaluation of the launch budget (`rerail_accel::gpu::launch`), or the caller's when it is in
+/// one: every launch of its joins, of its rounds and of its stages run again (those a rerun's, decision 0540) is
+/// charged to it, and a stratum past it is refused and runs on the CPU.
+struct InDevice(#[allow(dead_code, reason = "held: the stratum's evaluation")] rerail_accel::gpu::launch::LaunchScope);
 
 fn in_device() -> InDevice {
     DEPTH.with(|d| d.set(d.get() + 1));
-    InDevice
+    InDevice(rerail_accel::gpu::launch::LaunchScope::enter())
 }
 
 impl Drop for InDevice {
@@ -1967,6 +1971,9 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
         })?;
         crate::code_rule_dsl::logic::lanes::wave::defer(Box::new(move || {
             let Some((n, mut batch)) = with_open::<Wave, _>(Option::take) else { return Ok(()) };
+            // Its strata's launches were charged as each encoded (`in_device`); what it commits here is checked in an
+            // evaluation of its own.
+            let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
             let done = on_lane("stratum joins (a wave)", 1, || batch.finish().map_err(|e| format!("{e:?}")));
             // A failed wave fails its strata, which then run on the CPU: the flush itself goes on.
             // Kept for the strata that wait on it; a wave none waits on (its work held, unread) keeps nothing.
@@ -2148,6 +2155,8 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
             Some(b) => b,
             None => batch.insert(direct_batch(Some(arena.max(mj::ARENA_START)))?),
         };
+        // A run again is a rerun (decision 0540): its launches charge the run's reruns' budget.
+        let _rerun = rerail_accel::gpu::launch::rerun();
         for (k, s) in again {
             runs[k].encode(s, b, rep, &mut Own::default(), names)?;
         }
@@ -2496,6 +2505,9 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         runs.push(Some(r));
     }
     let mut pending: Vec<usize> = (0..runs.len()).filter(|&k| runs[k].is_some()).collect();
+    // Once a stage runs again, a rerun (decision 0540): its launches, and the finish that commits them, charge the
+    // run's reruns' budget, to the round's end.
+    let mut rerun: Option<rerail_accel::gpu::launch::Rerun> = None;
     loop {
         let (t0, w0) = (Instant::now(), thread_cpu());
         let done = batch.finish().map_err(|e| format!("{e:?}"))?;
@@ -2529,6 +2541,7 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         }
         rep.reruns += again.len() as u32;
         pending = again.iter().map(|&(k, _)| k).collect();
+        rerun.get_or_insert_with(rerail_accel::gpu::launch::rerun);
         for (k, s) in again {
             if let Err(e) = runs[k].as_mut().expect("a run").encode(s, &mut batch, rep, own, names) {
                 let _ = batch.finish();

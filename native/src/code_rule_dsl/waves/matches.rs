@@ -540,10 +540,13 @@ impl Wave {
         use rayon::prelude::*;
         // Each clause's starts per file: its set's nodes where its root program starts, ascending
         // (the set's order). Held through the labels and the roots: no growth slack.
+        // Each clause's item in the caller's run (decision 0442): a pool thread that takes it reads the run's records.
+        let carry = crate::code_rule_dsl::logic::profile::carry();
         crate::code_rule_dsl::logic::profile::on_cores(|| {
             sets.into_par_iter()
                 .enumerate()
                 .map(|(clause, set)| {
+                    let _in = carry.enter("candidates.clause");
                     let out = (0..tapes.len())
                         .map(|file| {
                             let mut nodes = set.file_nodes(&space, file).filter(|&node| self.lowered.starts(clause, &tapes[file].doc, node)).collect::<Vec<_>>();
@@ -598,9 +601,9 @@ fn labelled_metal(
 ) -> Result<(Vec<crate::code_rule_dsl::tape::TapeDoc>, crate::code_rule_dsl::transducer::packed::RootsFound), crate::code_rule_dsl::transducer::packed::Error> {
     use crate::code_rule_dsl::transducer::packed::{Error as PackedError, RootJobs};
     match lowered.labelled_metal(docs, active, Some(jobs)) {
-        // A pool or the launch bound the plan cannot fit (list step 13): the batch is split, still
-        // on Metal (a half's chains, and so its rounds, are no longer than the whole's).
-        Err(PackedError::BackendCapacity | PackedError::BackendLaunchLimit) if docs.len() > 1 => {
+        // A pool the plan cannot fit (list step 13): the batch is split, still on Metal (a half's
+        // chains, and so its rounds, are no longer than the whole's).
+        Err(PackedError::BackendCapacity) if docs.len() > 1 => {
             let half = docs.len() / 2;
             let split = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
             let part = |range: std::ops::Range<usize>| RootJobs {

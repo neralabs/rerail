@@ -31,8 +31,6 @@ pub trait Device: Send + Sync {
     fn lattice(&self, system: &lattice::System<'_>) -> Result<lattice::Solved, Refused>;
     /// Nearest ancestors in a set by pointer jumping (`nodes` per set; `target` and `done` set-major).
     fn nearest(&self, nodes: usize, target: &[u32], done: &[u8], how: nearest::Buffers) -> Result<nearest::Solved, Refused>;
-    /// Checks every submission the relational executor makes against the engine's launch budget (decision 0100 §2).
-    fn install_launch_guard(&self);
 }
 
 /// The logic's device, as the program's composition registers it (boot's `install_devices`): a solver device

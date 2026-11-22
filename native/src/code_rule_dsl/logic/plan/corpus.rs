@@ -4795,7 +4795,7 @@ fn run_observed_within(
                 jobs.spawn("a window of files resolved", move |jobs| {
                     let from = thread_usage();
                     let end = (to + WINDOW).min(docs.asked.len());
-                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (*self.resolve.lock())(&docs.asked[to..end])));
+                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (*self.resolve.lock())(&docs.asked[to..end]))).map_err(rerail_accel::exec::abort_over_budget);
                     Self::add(&mut self.jobs_cpu.lock(), from);
                     match r {
                         Ok(Ok(r)) => {
@@ -4843,7 +4843,7 @@ fn run_observed_within(
                 self.build_jobs.fetch_add(1, Relaxed);
                 jobs.spawn("a document built", move |jobs| {
                     let from = thread_usage();
-                    let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.build)(&docs, i))).unwrap_or_else(|_| Err(Error::Plan("the chunk builder panicked".to_owned())));
+                    let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.build)(&docs, i))).unwrap_or_else(|p| { rerail_accel::exec::abort_over_budget(p); Err(Error::Plan("the chunk builder panicked".to_owned())) });
                     Self::add(&mut self.jobs_cpu.lock(), from);
                     docs.built.lock().insert(i, made);
                     self.advance(jobs);
@@ -4963,7 +4963,7 @@ fn run_observed_within(
             let id = c.posted;
             c.posted += 1;
             jobs.spawn("a chunk projected", move |jobs| {
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.project)(pending)));
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.project)(pending))).map_err(rerail_accel::exec::abort_over_budget);
                 self.projected.lock().insert(id, r);
                 self.advance(jobs);
             });
@@ -6021,7 +6021,10 @@ fn run_observed_within(
                         r
                     }
                 }))
-                .unwrap_or_else(|_| (Err(Error::Plan("a chunk's evaluation panicked".to_owned())), Default::default()));
+                .unwrap_or_else(|p| {
+                    rerail_accel::exec::abort_over_budget(p);
+                    (Err(Error::Plan("a chunk's evaluation panicked".to_owned())), Default::default())
+                });
                 *into.lock() = Some(got);
                 bell.ring();
             });

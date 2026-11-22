@@ -10246,3 +10246,10 @@ held image store and kept rows staged. Theirs' edits of code ours' split moved a
 R9's test of `own_names` stands beside it in `base.rs`. Found red at both tips, fixed at root in the next commits: a
 session's aggregate stratum derived again, and a warm host edit building an unchanged document from its tape, both only
 beside the other corpus tests (`notes/roll-up-51-cost-classifier-metal-rf.md`).
+
+### Q473. Roll-up 52 (django-bugs 87dbbe9135 onto Pulling-it-all-together): what the merge chose
+
+0540 steps 3-7 and 0601 taken whole: one launch ledger in `rerail-accel`, past it a hard failure, no guard and no
+split batches. Ours' moved `Device` impl loses `install_launch_guard`, the test loader registers its carriers once, and
+ours' `InFlight` index records stay on theirs' commit. Ours' new submissions all go through charged commits
+(`notes/roll-up-52-django-bugs.md`).
