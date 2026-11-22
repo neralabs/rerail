@@ -87,6 +87,26 @@ partitions in place of the three tables, (3) `observer_cursor`, and `observer_me
 `facts_only`'s and `cache_architecture`'s lists. Measured at each step: a warm unchanged run and a one-file edit
 over the 84-file corpus (the observer's `stat`s and reads, its load time, CPU).
 
+**Built (2026-11-21).** `content_store/observe/facts.rs`. The observer opens the content store its file is named
+after (`<store>.files` beside `<store>`) and keeps three relations in a space of its own (one per observer file, so
+a test thread's observer keeps apart, as its file did):
+
+- `observed(path, kind, dev, ino, size, mtime_ns, ctime_ns, digest, listed, listing, recorded_ns)`, the path, the
+  digest's hex and the encoded listing as atoms of the store. One partition per directory, not per root: an edit
+  rewrites its directory's partition, where a root's is up to `LIST_MAX` answers. A root's part is read as the
+  partitions at and under it, and the root's own answer from its parent's.
+- `canonical(path, canonical, recorded_ns)`, partitioned as `observed`: the `canonical:` records `run_record` held.
+  Collection drops the old records.
+- `observer_meta(key, is_text, number, text)`, one partition: the cursors, the observer's own journal's generation and
+  floor, its output directories.
+
+Each change is one put of the space, sent through the observer's writer in order after its SQLite writes: the
+answers a root forgets and the cursor that vouches for the rest are written together, as the table's transaction
+wrote them. The aged cursor, a write a warm run may make, is a job of its own under that name
+(`ContentStore::queue_kept_as`). The listing stays a column, not `dir_entry` rows. `git_alias` and
+`observed_changes` stay as planned; `run_record`'s other records (the Git file lists, the cutoffs, the constants,
+the cone's rounds) are step 1's.
+
 **A relation's identity.** A relation of a program is stored under the digest of the rules it is derived from,
 the identities of what they read, and the engine (`plan::identities`). A rule edit makes it another relation,
 empty, so it is derived again and its readers see the delta; a relation two programs derive alike is one frame.

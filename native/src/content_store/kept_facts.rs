@@ -471,6 +471,26 @@ impl super::ContentStore {
         self.write_back_syms(super::write_back::Syms::Mapped, "kept facts", held, vec![(space_key(&space), None)], super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
     }
 
+    /// [`Self::queue_kept`] as a job of its own called `what`: a write a warm run may make
+    /// (`profile::WARM_WRITES_ALLOWED`, the journal's aged cursor) is so named, not gathered with the run's others.
+    pub fn queue_kept_as(&self, space: [u8; 32], puts: Vec<KeptPut>, what: &'static str) {
+        if what == "kept facts" {
+            return self.queue_kept(space, puts);
+        }
+        if puts.is_empty() {
+            return;
+        }
+        let held: usize = puts.iter().map(held_bytes).sum();
+        let write = KeptWrite { spaces: vec![(space, puts)] };
+        self.write_back_syms(super::write_back::Syms::Mapped, what, held, vec![(space_key(&space), None)], super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
+    }
+
+    /// Waits until every kept write this process queued for `space` is written, reading nothing: so it may be asked
+    /// as a thread ends, its connection gone.
+    pub fn settle_kept(&self, space: &[u8; 32]) {
+        self.settle(&space_key(space));
+    }
+
     /// The rows of `space`'s chain once every kept write this process queued for it is written (`settle`): what a
     /// run reads before its first wave (decision 0104), its own earlier runs' writes included. `None` when it keeps
     /// none.

@@ -134,8 +134,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     // The cost model fitted from `samples`, per machine (planning's placement).
     ("models", "6"),
     ("run_record", "1"),
-    ("observed", "1"),
-    ("observer_meta", "1"),
     ("derivations", "1"),
     ("derivation_inputs", "1"),
     ("name_bindings", "1"),
@@ -192,8 +190,9 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
 /// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
 /// merge took one out (2026-11-12); 58 when the cross-file memo's three tables went (decision 0450 §3, 2026-11-19); 57 when `local_check_results`, which nothing wrote, went (0450 step 2); 56 when
-/// `corpus_stats` went, a corpus file's content the observer's answer (t33 K2, 2026-11-21).
-const NOT_YET_TABLES_PIN: usize = 56;
+/// `corpus_stats` went, a corpus file's content the observer's answer (t33 K2, 2026-11-21); 54 when the observer's
+/// answers and settings (`observed`, `observer_meta`) became kept facts of the content store (t33 K2).
+const NOT_YET_TABLES_PIN: usize = 54;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
