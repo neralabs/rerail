@@ -88,6 +88,22 @@ Now, where no region is read in parts:
 
 Kotlin reads regions in parts, so it keeps its masks, and its file is unchanged.
 
+0586's other half, tier 2 reading from the bytes, has nothing to apply to here:
+
+- 0586's point 1 reads a region in parts from the bytes. `.rerail` reads no region in parts.
+- Point 2 takes a run's end from the bytes, in place of a mask. `.rerail`'s tier 2 reads no mask for an end, because
+  tier 1's records hold each token's last byte.
+- Point 3 decides a split kind's words by their bytes. `.rerail`'s words are in the records' codes.
+
+The records and codes are what tier 2 reads, as the goal's first item asks (0618). Reading a token's end from the
+bytes again would make tier 2 read each region (strings, comments, backtick literals) a second time. Tier 2 reads
+no byte of the file, only its length: the root's end.
+
+The farm run also took in four probes and benchmarks of the JIT, which are run by hand (`#[ignore]`). One passes run as
+its note says (`rr_words_text`, with `RR_WORDS`). Three fail: `rr_tier1_split`, `rr_sparse_marks_bound` and
+`rr_tier2_clusters`. They fail the same way, at the same line, with the grammar from before step 1. They read the JIT
+and the native code, not the generated Rust, so these steps did not cause them.
+
 ## Checks
 
 On a Linux arm64 farm host:

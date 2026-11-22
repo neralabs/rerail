@@ -198,12 +198,18 @@ fn tier1s_records_are_the_interpreters() {
 fn tapes_are_the_jits() {
     let c = compiled().expect("the grammar compiles");
     let (mut same, mut refused) = (0, 0);
-    for (k, t) in cases().iter().enumerate() {
+    // Every case that differs, each named, so that a run counts them all.
+    let mut differ = Vec::new();
+    let cases = cases();
+    for (k, t) in cases.iter().enumerate() {
         if let Some(d) = tape_differs(c, t) {
-            panic!("case {k} ({:?}): {d}", &t[..t.len().min(60)]);
+            eprintln!("differs: case {k} ({:?}): {d}", &t[..t.len().min(60)]);
+            differ.push(format!("case {k} ({:?}): {d}", &t[..t.len().min(60)]));
+            continue;
         }
         if c.parser.image(t.as_bytes()).is_ok() { same += 1 } else { refused += 1 }
     }
+    assert!(differ.is_empty(), "{} of {} cases differ; the first: {}", differ.len(), cases.len(), differ[0]);
     eprintln!("{same} tapes the JIT's, {refused} refused by both");
     assert!(same > 0 && refused > 0);
 }
@@ -233,14 +239,21 @@ fn corpus_tapes_are_the_jits() {
     let c = compiled().expect("the grammar compiles");
     let files = crate::tests::corpus();
     let mut parsed = 0;
+    // Every file that differs, each named, so that a run counts them all.
+    let mut differ = Vec::new();
     for (k, t) in files.iter().enumerate() {
         if let Some(d) = tape_differs(c, t) {
-            if let Ok(dir) = std::env::var("RERAIL_RR_DIFFERS") {
+            if differ.is_empty()
+                && let Ok(dir) = std::env::var("RERAIL_RR_DIFFERS")
+            {
                 std::fs::write(format!("{dir}/differs.rerail"), t).expect("writes");
             }
-            panic!("file {k}: {d}");
+            eprintln!("differs: file {k}: {d}");
+            differ.push(format!("file {k}: {d}"));
+            continue;
         }
         parsed += usize::from(c.parser.image(t.as_bytes()).is_ok());
     }
+    assert!(differ.is_empty(), "{} of {} files differ; the first: {}", differ.len(), files.len(), differ[0]);
     eprintln!("{} files, {parsed} parsed", files.len());
 }

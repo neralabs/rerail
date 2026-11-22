@@ -69,6 +69,22 @@ then the samples' and the corpus's comparisons run (`tapes_are_the_jits`, `corpu
 
 `asks` is not in the table: no `.rerail` mark asks a question, so its tier 2 has none.
 
+Then the features were added one at a time. The run starts from the records form with all five out. Each step adds
+one back, generates `tier2.rs` again, and runs both comparisons. The comparisons now count every case and file that
+differs, not only the first. The corpus now holds 1,831 files, since the repository has grown.
+
+| Step | Samples that differ (of 53) | Corpus files that differ (of 1,831) |
+|---|---|---|
+| The five out | 9 | 693 |
+| The depth counted back | 4 | 48 |
+| A flag restored | 4 | 0 |
+| A level's own refused marks set | 1 | 1 (file 1679) |
+| The caller's refused marks restored | 1 | 0 |
+| The caller's word restored | 0 | 0 |
+
+Each step clears its own differences. Setting a level's refused marks without giving the caller's back refuses file
+1679, and the next step clears it.
+
 On the first run, the word's restore was not caught. No sample read a word back after a nested level had set its
 own. The samples now hold `min(…) : {…}` with an aggregate in its arguments.
 
