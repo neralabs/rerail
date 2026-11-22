@@ -216,6 +216,20 @@ describe("worktreeGitFolder", () => {
   });
 });
 
+describe("definesNoDriver", () => {
+  it.each([
+    ["", true],
+    ['[filter "x"]\n\tclean = x\n', false],
+  ])("reads a config to its end where each read gives 7 bytes: %j after its first section defines no driver: %j", async (section, expected) => {
+    const { work } = repositories(await folder());
+    const config = join(work, ".git", "config");
+    realFs.appendFileSync(config, section);
+    shortReads(config, 7);
+
+    expect(definesNoDriver(join(work, ".git"))).toBe(expected);
+  });
+});
+
 describe("a file of a Git folder whose close fails", () => {
   it.each<[string, (work: string, linked: string) => boolean]>([
     ["HEAD", work => definesNoDriver(join(work, ".git"))],
@@ -298,6 +312,26 @@ function failingCloses(name: string): void {
   vi.mocked(closeSync).mockImplementation(file => {
     realFs.closeSync(file);
     if (names.get(file) === name) throw lostShare();
+  });
+}
+
+/**
+ * Makes each read of the file at `path` give at most `most` bytes, as a mount (FUSE with direct_io, a network share)
+ * may cut a read short before the end. A file opened at another path takes its number out.
+ */
+function shortReads(path: string, most: number): void {
+  const cut = new Set<number>();
+  vi.mocked(openSync).mockImplementation((opened, flags, mode) => {
+    const file = realFs.openSync(opened, flags, mode);
+    if (opened === path) cut.add(file);
+    else cut.delete(file);
+    return file;
+  });
+  vi.mocked(readSync).mockImplementation((...args: Parameters<typeof readSync>) => {
+    if (!cut.has(args[0])) return realFs.readSync(...args);
+    // The read of a config passes (file, buffer, offset, length, position), a form the type of its last overload omits.
+    const [file, buffer, offset, length, position] = args as unknown as [number, NodeJS.ArrayBufferView, number, number, null];
+    return realFs.readSync(file, buffer, offset, Math.min(length, most), position);
   });
 }
 

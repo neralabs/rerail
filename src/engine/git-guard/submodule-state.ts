@@ -683,7 +683,7 @@ function namesNoDriver(path: string): boolean {
 function configText(path: string): string | undefined {
   const file = openedFile(path);
   if (typeof file !== "number") return file === "absent" ? "" : undefined;
-  return readClosing(file, opened => readWithin(opened, MAX_READ_CONFIG_BYTES, fstatSync(opened).size)?.toString("latin1"));
+  return readClosing(file, opened => readWithin(opened, MAX_READ_CONFIG_BYTES, fstatSync(opened).size, UNTIL_EMPTY)?.toString("latin1"));
 }
 
 /**
@@ -729,13 +729,27 @@ function isFile(file: number): boolean {
   }
 }
 
+/** Whether a file may hold more after a read of it gave `got` of the `wanted` bytes it asked for. */
+type MoreToRead = (got: number, wanted: number) => boolean;
+
 /**
- * The bytes of the open file `file` to its end; undefined past `most`. The buffer is sized from `size`, the file's size
- * by its stat, at most `most` and one byte, and grows to that bound where the file holds more by the read, so one that
- * grew or was put in its place after its stat is still read to its end. A read that gives fewer bytes than it asked
- * for met the end of the file, as a read of a regular file does, so a file of the size its stat gave takes one read.
+ * A config file is read until a read gives nothing: a mount (FUSE with direct_io, a network share) or a signal may cut
+ * a read short before the end, and a driver section after the cut would go unseen.
  */
-function readWithin(file: number, most: number, size: number): Buffer | undefined {
+const UNTIL_EMPTY: MoreToRead = got => got > 0;
+
+/**
+ * A `.git` file is read until a read gives fewer bytes than it asked for, as a read of a regular file does at its end,
+ * so a file of the size its stat gave takes one read.
+ */
+const UNTIL_SHORT: MoreToRead = (got, wanted) => got === wanted;
+
+/**
+ * The bytes of the open file `file` to its end, read until `more` says it holds no more; undefined past `most`. The
+ * buffer is sized from `size`, the file's size by its stat, at most `most` and one byte, and grows to that bound where
+ * the file holds more by the read, so one that grew or was put in its place after its stat is still read to its end.
+ */
+function readWithin(file: number, most: number, size: number, more: MoreToRead): Buffer | undefined {
   let bytes = Buffer.alloc(Math.min(size, most) + 1);
   let read = 0;
   let wanted: number;
@@ -745,7 +759,7 @@ function readWithin(file: number, most: number, size: number): Buffer | undefine
     wanted = bytes.length - read;
     got = readSync(file, bytes, read, wanted, null);
     read += got;
-  } while (got === wanted && read <= most);
+  } while (more(got, wanted) && read <= most);
   return read > most ? undefined : bytes.subarray(0, read);
 }
 
@@ -839,7 +853,7 @@ function statOf(path: string): Stats | undefined {
 function gitfileText(path: string, size: number): string | GitFailure | undefined {
   const file = openedFile(path);
   if (typeof file !== "number") return undefined;
-  return readClosing(file, opened => readWithin(opened, MAX_GITFILE_BYTES, size)?.toString("utf8") ?? fatal(`too large to be a .git file: '${path}'`));
+  return readClosing(file, opened => readWithin(opened, MAX_GITFILE_BYTES, size, UNTIL_SHORT)?.toString("utf8") ?? fatal(`too large to be a .git file: '${path}'`));
 }
 
 /** The text of the file at `path`, opened without waiting ({@link openedFile}); undefined when it is no file that can be read. */
