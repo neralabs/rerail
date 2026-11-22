@@ -787,9 +787,9 @@ pub mod presence {
     }
 
     /// A `kind_word`'s bit that says its code is MISSING: the writer sets the presence's bit `ERROR_CODE` for it.
-    pub const FAULT: u32 = 1 << 15;
+    pub const FAULT: u32 = crate::writer16::FAULT;
     /// A `kind_word`'s kind.
-    pub const KIND_MASK: u32 = FAULT - 1;
+    pub const KIND_MASK: u32 = crate::writer16::KIND_MASK;
 
     /// Where a tape `end` bytes long lays its presence.
     pub fn at(end: usize) -> usize {

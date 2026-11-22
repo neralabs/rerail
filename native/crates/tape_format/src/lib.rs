@@ -76,7 +76,7 @@ pub const FIELD_LIMIT: usize = 64;
 /// No alias.
 pub const SENTINEL: u16 = u16::MAX;
 /// ERROR's `kf`.
-pub const ERROR_CODE: u16 = 0;
+pub const ERROR_CODE: u16 = writer16::ERROR_CODE;
 /// The `.rerail` dialect's language tag (`languages/rr.json`'s `tapeTag`).
 pub const RR_TAG: u8 = 13;
 
