@@ -9,7 +9,7 @@
 //! programs bind one plan): asked again while it runs it is not started twice, once done its plan
 //! runs compiled, and once it failed the plan stays on the interpreter.
 
-use super::{Error, ExecutionBackend, Program, native_cpu};
+use super::{Error, ExecutionBackend, Program};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
@@ -18,7 +18,7 @@ use std::sync::Mutex;
 /// runs, whatever binds it. The interpreter and the compiled programs are two bindings of the same
 /// plan, so their requests and their readiness are keyed by it, per binding.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct PlanId(pub(in crate::code_rule_dsl) [u8; 32]);
+pub struct PlanId(pub [u8; 32]);
 
 impl PlanId {
     /// A batch of programs' plan: their digests in order (`Program::plain_digest`, which holds
@@ -154,13 +154,12 @@ pub fn resolve(backend: ExecutionBackend, programs: &[Program]) -> Result<Execut
 pub fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[Program]) -> Result<ExecutionBackend, Error> {
     let resolved = match backend {
         ExecutionBackend::CpuBackground => {
-            if ready(Binding::CpuJit, plan) || native_cpu::compiled(programs)? {
+            if ready(Binding::CpuJit, plan) || super::cpu()?.compiled(programs)? {
                 ExecutionBackend::CpuJit
             } else {
                 let owned = programs.to_vec();
-                request(Binding::CpuJit, plan, move || {
-                    owned.iter().try_for_each(|program| native_cpu::compile_cached(program).map(|_| ()))
-                });
+                let cpu = super::cpu()?;
+                request(Binding::CpuJit, plan, move || owned.iter().try_for_each(|program| cpu.compile(program)));
                 ExecutionBackend::CpuInterpreter
             }
         }

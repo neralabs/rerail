@@ -682,8 +682,9 @@ pub struct Index {
     classes: Mutex<HashMap<u16, Arc<Vec<u64>>>>,
     /// Steps over every node asked for (`Reader::over_all`), by step.
     over_all: Mutex<HashMap<Set, Arc<Vec<u64>>>>,
-    /// Sibling positions and `nthChild` answers, for facts that are node sets.
-    pub(in crate::code_rule_dsl) siblings: crate::code_rule_dsl::matcher::SiblingPositions,
+    /// What W's facts that are node sets keep of the tape (the matcher's sibling positions and `nthChild` answers),
+    /// made by the lowered matcher on its first read (`compile_matcher::siblings`).
+    pub facts: OnceLock<Box<dyn std::any::Any + Send + Sync>>,
 }
 
 /// A column's nodes by value, in order: `nodes[offsets[value]..offsets[value + 1]]`. Built by a
@@ -1148,6 +1149,35 @@ fn ones(words: &[u64]) -> impl Iterator<Item = u32> + '_ {
             })
         })
     })
+}
+
+// The lowered matcher's relabelling of a program (`compile_matcher`), with the program's type.
+impl Program {
+    /// The program with every label it tests renamed by `map`.
+    pub fn relabelled(&self, map: &dyn Fn(u16) -> u16) -> Self {
+        let mut program = self.clone();
+        for word in &mut program.words {
+            if let (SUPERTYPE, mode, class) = split(*word)
+                && class >= DERIVED_CLASS_BASE
+            {
+                *word = super::word(SUPERTYPE, mode, map(class));
+            }
+        }
+        program
+    }
+
+    /// The program with every label it tests `by` higher (a clause's place in a wave).
+    pub fn shifted(&self, by: u16) -> Self {
+        let mut program = self.clone();
+        for word in &mut program.words {
+            if let (SUPERTYPE, mode, class) = split(*word)
+                && class >= DERIVED_CLASS_BASE
+            {
+                *word = super::word(SUPERTYPE, mode, class + by);
+            }
+        }
+        program
+    }
 }
 
 #[cfg(test)]

@@ -58,14 +58,14 @@ impl NodeSpace {
 /// baseline the containers are measured against (0045).
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct DenseSet {
+pub struct DenseSet {
     words: Vec<u64>,
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]
 impl DenseSet {
-    pub(in crate::code_rule_dsl) fn empty(space: &NodeSpace) -> Self {
+    pub fn empty(space: &NodeSpace) -> Self {
         Self { words: vec![0; space.words()] }
     }
 
@@ -84,11 +84,11 @@ impl DenseSet {
         Self { words }
     }
 
-    pub(in crate::code_rule_dsl) fn words(&self) -> &[u64] {
+    pub fn words(&self) -> &[u64] {
         &self.words
     }
 
-    pub(in crate::code_rule_dsl) fn insert(&mut self, node: u32) {
+    pub fn insert(&mut self, node: u32) {
         self.words[node as usize / 64] |= 1 << (node % 64);
     }
 
@@ -99,7 +99,7 @@ impl DenseSet {
     }
 
     /// Adds the nodes in `range`.
-    pub(in crate::code_rule_dsl) fn fill(&mut self, range: std::ops::Range<u32>) {
+    pub fn fill(&mut self, range: std::ops::Range<u32>) {
         let (start, end) = (range.start as usize, range.end as usize);
         if start >= end {
             return;
@@ -133,20 +133,20 @@ impl DenseSet {
             || self.words[last] & high != 0
     }
 
-    pub(in crate::code_rule_dsl) fn union_with(&mut self, other: &Self) {
+    pub fn union_with(&mut self, other: &Self) {
         self.words.iter_mut().zip(&other.words).for_each(|(a, b)| *a |= b);
     }
 
-    pub(in crate::code_rule_dsl) fn intersect_with(&mut self, other: &Self) {
+    pub fn intersect_with(&mut self, other: &Self) {
         self.words.iter_mut().zip(&other.words).for_each(|(a, b)| *a &= b);
     }
 
-    pub(in crate::code_rule_dsl) fn difference_with(&mut self, other: &Self) {
+    pub fn difference_with(&mut self, other: &Self) {
         self.words.iter_mut().zip(&other.words).for_each(|(a, b)| *a &= !b);
     }
 
     /// Keeps the set's nodes in files where each of `tests` has a node.
-    pub(in crate::code_rule_dsl) fn within_files(&mut self, space: &NodeSpace, tests: &[&Self]) {
+    pub fn within_files(&mut self, space: &NodeSpace, tests: &[&Self]) {
         for file in 0..space.files() {
             let range = space.range(file);
             if !tests.iter().all(|test| test.any_in(range.clone())) {

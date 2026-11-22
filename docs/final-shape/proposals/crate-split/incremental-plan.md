@@ -1013,3 +1013,44 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     - The logic's and the compiler's test crates' tests of Python's families, the node reads and the Python batch:
       90 of 93. The 3 failures are pack-data tests (`python_shortcuts_change_no_pack_result_*`).
     - On a Mac, the store base and the observer in full: 61 of 61, with the FSEvents journal's tests.
+- **Step 7d** (2026-11-22): the transducer, 47.2k production lines, is now three crates. The base and the CPU
+  executor read none of W.
+  - **rerail-transducer-base** (`native/crates/transducer_base`, 21.4k) has the packed programs and their
+    interpreter, the batch ABI, the device interface, the query front end (`scm`), the label sets and micro walks,
+    the verifiers, the scheduler and `space`. It does not depend on rerail-rules.
+  - **rerail-transducer-cpu** (`native/crates/transducer_cpu`, 19.3k) has the compiled CPU executor (`native_cpu` and
+    its 11 parts), the capture runs and the admission spike, over the base. The scm audit (`scm_audit_tests.rs`,
+    moved out of `scm.rs`'s tests) times this crate's executor, so it is mounted here.
+  - **rerail-transducer** (6.5k; same name, so no reader above changes) mounts `compile_matcher` (W's matchers and
+    waves, lowered), `demand`, `residency` (the rules' admission) and the `set_census` test over the CPU crate. It
+    is the transducer's one crate that reads W.
+  - The base's reads up are cut:
+    - Its dispatch (`execute_planned_once`, `execute_with_backend_outcomes`, `warm_production_programs`,
+      `compilation::resolve_plan`) called `native_cpu`. It now reads `packed::CPU`, a `rerail_registry::Slot` of
+      `CpuExecutor`. Boot registers it (`install_devices`), and so do the CPU crate's, the top's and the Metal
+      device's own test binaries. With none, `CpuJit` is `UnsupportedBackend`, as a device's backend with no device
+      is.
+    - `MatcherDevice` named the lowered matcher's types in four methods (`matcher_roots`, `wave_roots`,
+      `wave_labelled`, `wave_pattern_sources`). They are now `compile_matcher::WaveDevice`, a second trait the Metal
+      device registers (`WAVES`).
+    - `compile_sets::Index` held W's `SiblingPositions`. It now holds a slot, which the lowered matcher fills on
+      first read (`compile_matcher::siblings`).
+    - `impl Program` (`relabelled`, `shifted`) moved from `compile/matcher.rs` to `compile/sets.rs`, with its type.
+    - `transducer.rs` re-exported the rules' `semantic_facts`. The top crate's facade does that now.
+  - Fixed on the way:
+    - rerail-rules-base's facade had a `#[path]` on an inline module that a build without tests reported as unused.
+    - The budget test (`a_clause_over_its_budget_goes_to_w_…`) reads its large file from pack test data. Without
+      the data it failed with "no evaluation ran over its budget"; it now fails with the pack-data message
+      (`pack_test_data`).
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the three crates and boot.
+    - On a Linux host:
+      - The three crates in full: 65 of 65 (6 ignored).
+      - `rerail-tests-transducer` in full: 174 of 186. The 12 failures are 8 Metal parity tests (no device on
+        Linux), 3 pack-data tests, and `sqlite_virtual_table_drives_batched_matching_and_relational_composition`.
+      - The crates between the transducer and boot, whose test binaries are not booted (workspace, planner,
+        typing, corpus memo, rr root, logic, sessions): 426 of 426.
+    - On a Mac:
+      - `rerail-tests-transducer` in full: 184 of 187. The Metal parity tests and the SQLite test pass there; the 3
+        failures are the pack-data tests.
+      - The Metal device's test binary, filtered (`block_rows_tests`, `regex_relocation`): 4 of 4.

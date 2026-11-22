@@ -555,7 +555,7 @@ pub fn assemble_all(text: &str) -> Result<Vec<(Program, Option<Names>)>, String>
 /// entry test, `fusion::entry_key`, and where its branch starts past the shared prefix) and where
 /// its captures start; its emit table (each fused label's member and the member's own label);
 /// then the fused program.
-pub(in crate::code_rule_dsl) fn fused(pack: &super::fusion::Fused, members: &[&Program], names: Option<&Names>) -> String {
+pub fn fused(pack: &super::fusion::Fused, members: &[&Program], names: Option<&Names>) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "group members={} prefix={}", members.len(), pack.prefix);
     for (at, member) in members.iter().enumerate() {

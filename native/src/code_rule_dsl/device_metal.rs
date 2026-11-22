@@ -15,6 +15,7 @@ pub(crate) static METAL: Metal = Metal;
 pub fn register() {
     crate::code_rule_dsl::logic::device::register("rerail-device-metal", &METAL);
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
+    crate::code_rule_dsl::transducer::packed::compile_matcher::WAVES.register("rerail-device-metal", &METAL);
     // Kind-set axes solved on the device in a batch's chunk block (decision 0289 §2).
     crate::code_rule_dsl::facts::vtab::syntax::device_chunk::CHUNK_AXIS.register("rerail-device-metal", packed::metal_join::axis_in_chunk);
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
@@ -28,6 +29,8 @@ pub fn register() {
 mod test_load {
     extern "C" fn load() {
         super::register();
+        // The compiled CPU, which the device's tests compare it with, as boot registers it (`install_devices`).
+        crate::code_rule_dsl::transducer::packed::native_cpu::register();
         // What a job carries of its run: the program's list, as boot registers it (`logic::CARRIERS`).
         crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -125,11 +128,30 @@ pub mod matcher {
     use std::collections::BTreeSet;
 
     use crate::code_rule_dsl::tape::TapeDoc;
+    use crate::code_rule_dsl::transducer::packed::compile_matcher::WaveDevice;
     use crate::code_rule_dsl::transducer::packed::device::{Engine, MatcherDevice, Outcome, RootJobs};
     use crate::code_rule_dsl::transducer::packed::{
         BatchOutcome, Error, ExecutionBackend, LoweredMatcher, Budget, LoweredWave, PackedExecution, Program, matcher_metal,
         metal_program_backend as programs,
     };
+
+    impl WaveDevice for super::Metal {
+        fn matcher_roots(&self, matcher: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {
+            matcher_metal::matcher_roots(matcher, tapes)
+        }
+
+        fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: crate::code_rule_dsl::transducer::packed::device::ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
+            matcher_metal::wave_roots(wave, tapes, roots)
+        }
+
+        fn wave_labelled(&self, wave: &LoweredWave, tapes: &[TapeDoc], active: &[Vec<bool>], roots: Option<&RootJobs<'_>>) -> Result<(Vec<TapeDoc>, Outcome), Error> {
+            matcher_metal::wave_labelled(wave, tapes, active, roots)
+        }
+
+        fn wave_pattern_sources(&self, wave: &LoweredWave, format: u32) -> Result<Vec<String>, Error> {
+            matcher_metal::wave_pattern_sources(wave, format)
+        }
+    }
 
     impl MatcherDevice for super::Metal {
         fn execute_packed(&self, engine: Engine, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error> {
@@ -175,22 +197,6 @@ pub mod matcher {
         fn compile_background(&self, batch: &[Program]) -> Result<(), Error> {
             programs::compile_sweep_cached(crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::run_format())?;
             programs::compile_jit_cached(batch).map(|_| ())
-        }
-
-        fn matcher_roots(&self, matcher: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {
-            matcher_metal::matcher_roots(matcher, tapes)
-        }
-
-        fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: crate::code_rule_dsl::transducer::packed::device::ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
-            matcher_metal::wave_roots(wave, tapes, roots)
-        }
-
-        fn wave_labelled(&self, wave: &LoweredWave, tapes: &[TapeDoc], active: &[Vec<bool>], roots: Option<&RootJobs<'_>>) -> Result<(Vec<TapeDoc>, Outcome), Error> {
-            matcher_metal::wave_labelled(wave, tapes, active, roots)
-        }
-
-        fn wave_pattern_sources(&self, wave: &LoweredWave, format: u32) -> Result<Vec<String>, Error> {
-            matcher_metal::wave_pattern_sources(wave, format)
         }
 
         fn pattern_variant(&self, format: u32) -> usize {

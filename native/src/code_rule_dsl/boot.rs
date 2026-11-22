@@ -389,8 +389,10 @@ pub fn install_languages(tests: bool) {
 }
 
 /// The engine's devices, into the logic's and the transducer's registries (`logic::device`,
-/// `transducer::packed::device`). Called as the library loads, before any run.
+/// `transducer::packed::device`), and the transducer's compiled CPU executor (`transducer::packed::CPU`). Called as
+/// the library loads, before any run.
 pub fn install_devices() {
+    transducer::packed::native_cpu::register();
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     device_metal::register();
 }

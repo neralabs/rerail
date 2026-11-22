@@ -74,6 +74,8 @@ rerail-lang-php	provider
 rerail-lang-python	provider
 rerail-lang-rust	provider
 rerail-lang-sql	provider
+rerail-transducer-base	core
+rerail-transducer-cpu	core
 rerail-transducer	core
 rerail-workspace	core
 rerail-plan-search	core
