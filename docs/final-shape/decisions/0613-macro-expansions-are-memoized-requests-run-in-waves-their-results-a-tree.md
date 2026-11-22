@@ -295,6 +295,27 @@ So:
    - the roll-up's two passes.
 
    Written once in UKL, so the small tests run on UKL's CPU backend and the rest on Metal on a farm Mac.
+
+   **Built: the nodes** (2026-11-22, `an_argument_passed_on_is_read_once`).
+   - An argument's expansion of 2 entries or more is a node in the token store, made once where it is expanded:
+     a header (its entries' count, its delimiters' summary, its names a rescan still acts on, whether a node is
+     among its entries), its first token, then its entries. A plain use of the parameter substitutes one
+     `P_NODE` entry, not the expansion's entries.
+   - A node with no name a rescan acts on is taken whole: into an enclosing argument's expansion as one entry,
+     into a callee's raw argument when the callee reads no parameter raw and the node is balanced with no comma
+     (or is the variadic rest), and into the output, its entries a step. Any other node is read entry by entry
+     through a frame of its own (region 3, the store itself), as a list's.
+   - A chain `C8(w, a0 X a1 X …)` through `R2`/`R4`/`R8`: 137 and 972 steps at 4 and 40 terms before, 95 and 204
+     after. The corpus's 100 units and the eval tests give the serial pass's tokens on the CPU backend, CUDA and
+     Metal.
+   - GB10, CUDA, the slowest piece's unit (`tif_getimage.c`): its slowest piece from 1.43 ms (393 steps) to
+     0.70 ms; that piece itself 393 steps to 183, then fewer with the one-step take. The batch's GPU time for the
+     100 units is unchanged (3.35 and 3.46 ms medians): the slowest piece was not what bounds it. Pieces with no
+     node ran 3 to 10% slower a step in one run each (327 steps: 0.39 to 0.43 ms), the loop's added code.
+   - M3 Max, Metal: the slowest piece's unit 6.0 to 8.6 ms against 8.2 to 10.6 ms (3 runs each, GPU time of a
+     batch of one unit, which Metal does not clock by piece). The node frames' reads inlined into the look for a
+     `(` crashed the M3's back end (a segfault in a machine pass, whatever form the read took), so
+     `lp_next_is_lparen` is called, not inlined.
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

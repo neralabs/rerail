@@ -1293,6 +1293,12 @@ impl Exp {
         unsafe { *self.opscan.total.host().cast::<u32>() }
     }
 
+    /// The longest piece's steps in the run (`TRN[16]`, decision 0588).
+    pub fn steps(&self) -> u32 {
+        // SAFETY: the device finished; `trn` holds 24 words.
+        unsafe { *self.trn.host().cast::<u32>().add(16) }
+    }
+
     /// The last text pass's pieces (`TRN[13]`, decision 0588).
     pub fn loop_pieces(&self) -> u32 {
         // SAFETY: the device finished; `trn` holds 24 words.
@@ -1412,6 +1418,8 @@ pub struct Expanded {
     pub passes: (u32, u32),
     /// The givings back at the loop's substitutions (decision 0486 §10), every top's.
     pub gives: u32,
+    /// The longest piece's steps (`TRN[16]`, decision 0588): a measurement, and the tests' bound on a chain.
+    pub steps: u32,
     pub def_rung: u32,
     /// The command it ran in (`next_run`): a batch's units ran in one, and its GPU time is that command's.
     pub run: u64,
@@ -1648,7 +1656,7 @@ impl<'u> Runs<'u> {
         }
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
-            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung, run })
+            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), def_rung, run })
         };
         // SAFETY: the device finished writing `room`.
         let why = |room: &str| {

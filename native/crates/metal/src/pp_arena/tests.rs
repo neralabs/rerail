@@ -275,7 +275,8 @@ fn a_units_groups_are_one_a_small_grids_nodes() {
 
 /// The setup's Metal source splits one unit a barriered phase function (decision 0571): the grid's
 /// primitives, the expansion's loop (`lp_loop`, decision 0588) and a unit's setup (`pp_unit`, the
-/// grid's or a team's: 0588 §6), 9 dynamic libraries; the small tape reads stay in their callers.
+/// grid's or a team's: 0588 §6) and the loop's look for a `(` (`lp_next_is_lparen`: inlined, it crashed the
+/// M3's back end), 10 dynamic libraries; the small tape reads stay in their callers.
 #[test]
 fn the_setup_splits_one_unit_a_barriered_function() {
     let msl = rerail_ukl::metal_source("pp_setup", source()).expect("the setup's source preprocesses");
@@ -287,8 +288,9 @@ fn the_setup_splits_one_unit_a_barriered_function() {
     assert!(split.units.iter().any(|u| u.name == "lp_loop"), "lp_loop is a unit");
     assert!(split.units.iter().any(|u| u.name == "pp_unit"), "pp_unit is a unit");
     assert!(split.local.iter().any(|n| n.starts_with("node_")), "the tape's reads stay local");
-    assert_eq!(split.units.len(), 9);
-    assert_eq!(split.depth, 6);
+    assert!(split.units.iter().any(|u| u.name == "lp_next_is_lparen"), "the look for a `(` is a unit");
+    assert_eq!(split.units.len(), 10);
+    assert_eq!(split.depth, 7);
     assert!(split.kernel.contains("kernel void pp_setup") && split.units.iter().all(|u| !u.source.contains("kernel void")));
 }
 

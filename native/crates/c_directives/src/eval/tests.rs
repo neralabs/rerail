@@ -1190,6 +1190,65 @@ fn calls_with_arguments_are_the_serial_passes() {
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }
 
+/// Decision 0613 §3: an argument's expansion is a node, and a body passes it on by reference. A chain
+/// of calls each handing its parameter to the next (libtiff's `REPEAT8` and `CASE8`, Boost's
+/// iterations) reads the argument's tokens once, where it is expanded, and once where the output takes
+/// them: not again at each level's collection, expansion and rescan. So the longest piece's steps
+/// grow with the output, not with the argument's length times the depth. The outputs are the serial
+/// pass's, including where a node's tokens are read one by one: a name in it that may still be called
+/// (`f` with no `(` in the argument, called by the body after it), a comma in it that splits the
+/// next call's arguments, and `#` or `##` beside its parameter.
+#[test]
+fn an_argument_passed_on_is_read_once() {
+    let chain = |terms: usize| -> String {
+        let op: Vec<String> = (0..terms).map(|k| format!("a{k} X")).collect();
+        format!("#define X x\n#define R2(op) op; op\n#define R4(op) R2(op); R2(op)\n#define R8(op) R4(op); R4(op)\n#define C8(n, op) switch (n) {{ case 1: R8(op); case 2: R4(op); }}\nC8(w, {})\n", op.join(" "))
+    };
+    let mut steps = Vec::new();
+    for terms in [4usize, 40] {
+        let src = chain(terms);
+        let (got, want, _, _, _, n) = expanded_steps(&[("main.c", &src)], false);
+        same(show(&got.expect("refused")), show(&want), format!("{terms} terms"));
+        steps.push(n);
+    }
+    // The 36 terms more are read once where the argument is expanded (each `X` an invocation: its name,
+    // its body, the run before it, at most 4 steps a term), and are 72 entries more of its expansion
+    // (`a` from the text, `x` from `X`'s body), each output 12 times: 864 entries the output takes 32 at a
+    // time (27 asks). The levels' own steps do not change. Read again at each level, they were 835 steps
+    // more (137 and 972).
+    eprintln!("steps: {steps:?}");
+    assert!(steps[1] <= steps[0] + 4 * 36 + 27, "the steps grow with the argument times the depth: {steps:?}");
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define f(x) [x]\n#define X f\n#define A(op) op(1) op\n#define B(op) A(op)\nB(X y X) B(X)\n")],
+        &[("main.c", "#define X a, b\n#define Y (c, d)\n#define P(x, y) <x|y>\n#define A(op) P(op)\n#define B(op) A(op)\nB(X) B(Y) B((X))\n")],
+        &[("main.c", "#define X x\n#define S(a) #a\n#define T(a) S(a) a ## 1 a\n#define A(op) T(op)\nA(X y X) A(X)\n")],
+        &[("main.c", "#define I(x) x\n#define A(op) I(I(op)) I(op)\nA(I(1) I(2)) A(A(3 I(4)))\n")],
+        &[("main.c", "#define g(x) x\n#define F(op) op op\n#define G(op) F(op)\nG(g g) (1) G(g)(2)\n")],
+    ];
+    let (tokens, _) = shapes_agree(shapes);
+    eprintln!("{} shapes, {tokens} tokens", shapes.len() * 2);
+}
+
+/// `expanded_run`, and the longest piece's steps.
+fn expanded_steps(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32, u32) {
+    use rerail_c_pp::files::Search;
+    let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+    let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+    let mut serial = Spelled::default();
+    let m2 = m.clone();
+    let mut io = Search::new(Vec::new(), move |p: &str| m2.get(p).cloned());
+    let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+    assert!(pp.run("main.c"));
+    drop(pp);
+    let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
+    let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
+    let x = &*s.part.x;
+    if x.refused != 0 {
+        return (Err(x.refused), serial.0, x.rung, x.launches, x.gives, x.steps);
+    }
+    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches, x.gives, x.steps)
+}
+
 /// R6 of decision 0448, its second part: `#`, a parameter's raw argument as one string literal:
 /// its tokens' spellings, a space where a token had space or a line's start before it (the first
 /// token's left out), a literal's `"` and `\` escaped; an empty argument's `""`; spacing kept through
