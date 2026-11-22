@@ -1,7 +1,7 @@
 //! The tests of the engine's napi items (`code_rule_dsl/mod.rs`): the package facts a host reads through
 //! `packageFacts` and `PackageFactsReader`, against the repository ingestion's and a file set's derivations, and the
 //! server graph `serverGraphAsync` reads on disk. Every other test of the module graph and the workspace context is a
-//! test crate's (`rerail-tests-scope`, `rerail-tests-matcher`).
+//! test crate's (`rerail-tests-scope`, `rerail-tests-workspace`).
 
 use crate::code_rule_dsl::module_graph::fixtures::{HOOK, NEXT_MANIFEST, disk_graph, graph, temp_root, write_file};
 use crate::code_rule_dsl::module_graph::{config_on_disk, on_disk};

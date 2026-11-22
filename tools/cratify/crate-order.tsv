@@ -106,4 +106,7 @@ rerail-tests-scope	test
 rerail-tests-value	test
 rerail-tests-calls	test
 rerail-tests-matcher	test
+rerail-tests-anchors	test
+rerail-tests-workspace	test
+rerail-tests-findings	test
 rerail-tests-lang	test

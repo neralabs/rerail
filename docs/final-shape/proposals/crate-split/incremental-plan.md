@@ -1161,3 +1161,15 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     | rerail-tests-compile | 6.9k | the rest of `compile` (parse, format arguments, configuration, values) |
 
     Tests: on a Linux host, the five crates in full: 752 of 756. The 4 failures are pack-data tests.
+  - rerail-tests-matcher (34.1k) is now four crates. The anchors' SQL tests read their anchors' `tests`
+    (`compile_rule`, `document`, `planned_batch`), and cross-file findings read `storage_tests`, so each pair stays
+    in one crate.
+
+    | crate | test lines | what it holds |
+    |---|---:|---|
+    | rerail-tests-anchors | 9.6k | `matcher::d_anchors`, `matcher::p_anchors` |
+    | rerail-tests-workspace | 8.7k | `workspace::tests`, `workspace::context_tests` |
+    | rerail-tests-findings | 7.6k | the rest of `workspace` (storage, cross-file, placement, results), `findings`, `violations` |
+    | rerail-tests-matcher | 9.6k | the rest of `matcher`, and `suppress` |
+
+    Tests: on a Linux host, the four crates in full: 624 of 624.
