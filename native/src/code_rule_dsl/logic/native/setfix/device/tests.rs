@@ -243,8 +243,11 @@
             assert!(r.launch_items >= b, "budget {b}: a launch's budget is its workers' shares': {r:?}");
             assert!(u64::from(r.relaunches) <= r.taken / r.launch_items + 1, "budget {b}: its relaunches its budget's: {r:?}");
             if arena.is_none() {
-                // Its first arena is what a round's tables can reach: its claims map no more pages.
-                assert_eq!(r.remaps, 0, "budget {b}: the closure's first arena its rounds' reach: {r:?}");
+                // Its first arena is what a round's tables can reach where mapping commits nothing (the CPU backend):
+                // its claims map no more pages. On Metal a mapped page is real memory: its first arena is its claims'
+                // guess, the rest mapped as they reach it, a remap each, a doubling each, none a rerun.
+                let commits = crate::code_rule_dsl::transducer::packed::metal_join::map_commits();
+                assert!(if commits { r.remaps <= 8 } else { r.remaps == 0 }, "budget {b}: the closure's first arena (mapping commits: {commits}): {r:?}");
             }
             if budget.is_some() {
                 assert!(r.relaunches > 0, "budget {b}: the closure's items past one launch's budgets: {r:?}");

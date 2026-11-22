@@ -212,6 +212,20 @@ UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { re
 UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicMin(p, v); }
 UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicMax(p, v); }
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomicCAS(p, e, n); }
+// The same on a word read coherently (`UKL_COHERENT`, `volatile` here: a block other groups write, `CLIF_BLOCK_SPACE`
+// in a join program): C++ does not take a `volatile` pointer where a plain one is wanted, as Metal's and OpenCL's do.
+// An atomic reaches the device's memory either way.
+UKL_INLINE uint32_t ukl_atomic_load(UKL_COHERENT uint32_t* p) { return *p; }
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_COHERENT uint32_t* p) { return *p; }
+UKL_INLINE void ukl_atomic_store(UKL_COHERENT uint32_t* p, uint32_t v) { *p = v; }
+UKL_INLINE uint32_t ukl_atomic_add(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicAdd((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_sub(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicSub((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_or(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicOr((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_and(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicAnd((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_exchange(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicExch((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_min(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicMin((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_max(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicMax((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_cas(UKL_COHERENT uint32_t* p, uint32_t e, uint32_t n) { return atomicCAS((uint32_t*)p, e, n); }
 UKL_INLINE void ukl_fence_device() { __threadfence(); }
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomicAdd(p, v); }
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile uint32_t*)p; }

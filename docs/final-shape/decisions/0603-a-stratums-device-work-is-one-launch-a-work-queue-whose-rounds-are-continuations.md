@@ -522,3 +522,45 @@ arena parking as a size script does.
 - **Memory.** As the user chose ("commit within caps"), a recursive component's first arena (the reach, at least
   `ARENA_REACH_BYTES`) and a head's room (within `PLACE_ROOM_BYTES`) are committed on Metal, within the device's
   share. The text arena commits what its texts reach.
+
+## Done (2026-11-22): the first arena mapped as reached; arenas grow on Windows' CPU backend and CUDA
+
+**The user's choice on memory (2026-11-22), replacing "commit within caps": map as reached**, as the goal says.
+
+- **A program's first arena maps only its guess where mapping commits memory** (`device::map_commits`: Metal, and
+  CUDA where its memory is not pageable). Its claims map the rest as they reach it: a park, then a remap. A recursive
+  component's reach (`ARENA_REACH_BYTES`) is no longer its first arena's pages there. Where mapping commits nothing
+  (the CPU backend's pages, committed as touched; CUDA on pageable memory) the reach is still the first mapping.
+- **The arenas grow in place on two more backends** (`device::reserve_grows`):
+  - Windows' CPU backend: `os::reserve` is `VirtualAlloc(MEM_RESERVE)`, and mapping commits the pages mapped
+    (`os::commit`, `MEM_COMMIT`). Unix's reservation is a map, and its commit nothing.
+  - CUDA where the device reaches host memory at the host's address (`at_host_address`: pageable memory, as on the
+    GB10, or memory registered at its host pointer). The arena is the host's reservation wrapped over the bytes
+    mapped (`Reserved::Wrapped`), as Metal's host-read one is. A new wrap lies at the same address, longer: a
+    program's arena is rebased where its wrap's address *or length* changed, so its placed tables read the newer wrap.
+  - OpenCL stays a fixed allocation: a claim past it is a rerun there, and the check skips it.
+- **`join_run` compiles for CUDA.** NVRTC refused 41 lines: a `volatile` pointer (`JSPACE`, coherent on CUDA) to the
+  atomics, and whole copies of `volatile` structs (`LatP`, `GateCheck`, `RoundOp`). The atomics have `UKL_COHERENT`
+  overloads (`backend.h`), and the structs are read field by field (`lat_load`, `&p->check[t]`, `p->ops[i]`).
+- **Windows builds again.** `within.rs`'s `on_device` lacked Windows in its `cfg` (a hub regression).
+- **Measured** (the setfix device, join and parity tests; `RERAIL_ONE_LAUNCH_CHECK=log` counts each stratum):
+
+  | Backend | Strata one launch | Tests |
+  |---|---|---|
+  | spark2's CUDA (GB10) | 5,531 of 5,531 | 48 of 48, strict check |
+  | spark2's CPU backend | 5,531 of 5,531 | 48 of 48, strict check |
+  | The mini's Metal (M1) | every one (the strict check) | 48 of 48 |
+  | win1's CPU backend (Windows) | every one (the strict check) | 48 of 48 |
+
+  The Windows arm64 guest builds no CPU kernels: its clang targets x64, and the kernels' `asm` is arm64's. win2 was
+  not used: it reset under this work's load before.
+- **Still committed on Metal: a recursive component's rooms.** Its heads' relations and deltas are blocks, and each
+  reserves its bound's row chunks (`Part::reserve(bound)`, `reserve(slack)`), as do its live indexes' rooms (a live
+  relation's rows are its bound, `live_rel`). A block's device buffer wraps its used extent, and on Metal a wrap is
+  wired whole (0295 §7). So the reach within `REACH_BYTES` is real memory there. Mapping them as reached needs the
+  head gate to park instead of stop, and the host to grow the rooms and re-point the program between launches:
+  - The rows grow by chunks, read through the block's directory (`clif_rows_put`), so they need only the block's
+    new wrap address.
+  - The gate's caps, a live index's room (`IxParams::mask`, `desc.a`, `desc.counters`) and the probes that read it
+    are encoded in the program, so they must either be patched in place or read from the block at run time.
+  That is the next step.

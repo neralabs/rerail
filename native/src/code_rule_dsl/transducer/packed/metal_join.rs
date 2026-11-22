@@ -2753,13 +2753,18 @@ impl Batch {
         let counts = match &self.pool {
             Some(a) => a.clone(),
             None => {
-                // A test's first arena is its own, past the floor, so its claims map pages as a larger one's would.
-                let room = sizes.arena.unwrap_or((2 * prog.arena).max(self.floor)).max(16).next_multiple_of(16);
+                let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+                // Its first pages: its claims' guess, and the floor (a round's reach, `arena_floor`) where mapping
+                // commits no memory (the CPU backend's pages are committed as touched) or the arena cannot grow. On
+                // Metal a mapped page is real memory, so a reserved arena maps its guess and its claims map the rest
+                // as they reach it (a park, then a remap). A test's first arena is its own, so its claims map pages as
+                // a larger one's would.
+                let floor = if self.reserve_arena && rerail_device::device::map_commits(device) { 0 } else { self.floor };
+                let room = sizes.arena.unwrap_or((2 * prog.arena).max(floor)).max(16).next_multiple_of(16);
                 if room > ARENA_MAX {
                     return Err(Error::BackendCapacity);
                 }
                 let held = if self.reserve_arena {
-                    let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
                     let r = std::sync::Arc::new(rerail_device::device::reserve(device, ARENA_MAX, room, self.host_reads).map_err(|_| Error::BackendCapacity)?);
                     self.reserved = Some(r.clone());
                     Held::kept(r.buffer(), Box::new(r))
@@ -2832,10 +2837,11 @@ impl Batch {
     /// second word.
     fn launch(&mut self, mut kit: Kit, ctl: Words, slots: Words) -> Result<(), Error> {
         let nphases = kit.phase_items.len();
-        // A wrapped arena mapped further since its last launch: a new buffer at another address over the same pages.
+        // A wrapped arena mapped further since its last launch: a new buffer over the same pages, at another address
+        // (Metal) or at the same one, longer (CUDA's host memory at the host's address).
         if let Some(r) = &kit.reserved {
             let now = r.buffer();
-            if address(&now)? != kit.rebase.ca {
+            if address(&now)? != kit.rebase.ca || now.length() != kit.counts.buffer.length() {
                 let held = std::rc::Rc::new(Held::kept(now, Box::new(r.clone())));
                 self.pool = Some(held.clone());
                 kit.rebase(held)?;
@@ -3764,6 +3770,13 @@ const PROGRAM_WORKERS: usize = 1 << 16;
 /// tickets its groups share (`ctl[8]`), so a group takes more than its share where others ended. A launch's GPU time is
 /// its budget's items, whatever its rules and rounds, and the host launches it again while items are left.
 pub(in crate::code_rule_dsl) const PROGRAM_BUDGET: u32 = 16;
+
+/// Whether mapping a reserved arena's pages commits real memory on this run's device (Metal's do;
+/// `rerail_device::device::map_commits`).
+#[cfg(test)]
+pub(in crate::code_rule_dsl) fn map_commits() -> bool {
+    rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::map_commits)
+}
 
 /// A program's sizes where a test sets them: its workers' budget (`PROGRAM_BUDGET` else), and its first arena's
 /// bytes (twice what its claims were guessed to take, else), so a test's launches go again and its arena's pages are

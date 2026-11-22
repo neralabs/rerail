@@ -235,6 +235,12 @@ thread_local! {
 }
 
 impl CudaDevice {
+    /// Whether its buffers over the host's memory are at the host's address (`pageable`, or registered memory the
+    /// device reads there): a wrap of a longer prefix of the same pages is then at the same address.
+    pub fn at_host_address(&self) -> bool {
+        self.pageable || self.host_pointer
+    }
+
     /// The first device, or `None` without a driver, NVRTC or a device.
     pub fn system_default() -> Option<CudaDevice> {
         match Self::open() {
