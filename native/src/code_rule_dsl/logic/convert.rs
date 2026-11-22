@@ -904,10 +904,36 @@ pub(in crate::code_rule_dsl) fn reachable(v: &Arc<Version>) -> Result<Arc<Versio
             }
         }
     }
+    // A made pass (decision 0597 step 2), as `v` declares it (pruned, an export may have no rule left), stays while a rule
+    // left reaches one of its exports' instances: then its roots,
+    // its exports' instances and what it reads stay declared with it, as every reader of the program checks
+    // (`contexts::declared`), and what it reads may be another pass's export, which keeps that pass in turn. A pass
+    // no rule left reaches goes with its rules: its `.pass` named roots no longer declared.
+    let passes: Vec<super::contexts::Context> = super::contexts::declared(v).map_err(|e| e.to_string())?.contexts.into_values().filter(|c| c.made).collect();
+    let mut kept_passes = BTreeSet::new();
+    loop {
+        let reached: Vec<&super::contexts::Context> = passes.iter()
+            .filter(|c| !kept_passes.contains(&c.name) && c.exports.iter().any(|e| used.contains(&super::contexts::instance(&c.name, e))))
+            .collect();
+        if reached.is_empty() {
+            break;
+        }
+        for c in reached {
+            used.insert(c.roots.clone());
+            used.insert(super::contexts::instance(&c.host, &c.roots));
+            used.extend(c.exports.iter().map(|e| super::contexts::instance(&c.name, e)));
+            used.extend(c.reads.iter().cloned());
+            kept_passes.insert(c.name.clone());
+        }
+    }
     let mut b = Builder::on(&pruned);
     for rel in pruned.declared_names().iter().filter(|r| !used.contains(*r)) {
         b.fields().undeclare(rel);
     }
+    let settings: Vec<(String, String)> = ProgramFields::settings(&*pruned).into_iter()
+        .filter(|(key, text)| key != "pass" || super::passes_made::words(text).first().is_some_and(|name| kept_passes.contains(name)))
+        .collect();
+    b.fields().set_field(Field::Settings(&settings));
     let inputs: Vec<String> = pruned.input_names().into_iter().filter(|r| used.contains(r)).collect();
     b.fields().set_inputs(&inputs);
     for rel in pruned.fact_names().iter().filter(|r| !used.contains(*r)) {
@@ -1025,9 +1051,9 @@ pub(in crate::code_rule_dsl) fn overlay(converted: &Arc<Version>, authored: &Arc
     // The prelude's declarations the file does not use are core.rerail's, not the file's (`rr::drop_unread_core`).
     let a = super::rr::drop_unread_core(&authored)?;
     // `.global library …` is what reading the file wrote of the libraries it includes (decision 0091), and an
-    // `.answer` a library's declaration of a native step (t33 K3): no directive of its own, each goes with the merged
-    // program.
-    let (library, settings): (Vec<_>, Vec<_>) = ProgramFields::settings(&*a).into_iter().partition(|(key, _)| key == front::GLOBAL || key == "answer");
+    // `.answer` a library's declaration of a native step (t33 K3), and a `.pass` a context its libraries make (decision
+    // 0597 step 2): no directive of its own, each goes with the merged program.
+    let (library, settings): (Vec<_>, Vec<_>) = ProgramFields::settings(&*a).into_iter().partition(|(key, _)| key == front::GLOBAL || key == "answer" || key == "pass");
     if !ProgramFields::policies(&*a).is_empty() || !settings.is_empty() {
         return err("`.policy` and setting directives are the policy's, not the overlay's".into());
     }

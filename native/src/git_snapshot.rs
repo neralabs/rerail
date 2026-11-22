@@ -989,6 +989,16 @@ pub fn fact_root(path: &Path) -> Option<PathBuf> {
     Some(v.cache_root.join(path.strip_prefix(&v.root).ok()?))
 }
 
+/// What a run over `path` is of, as the whole-run cutoff keys its record: the repository's facts root under the
+/// selected object (its commit, else its tree). Not the view's own path: a named analysis's view is another path in
+/// each run (its invocation's), so no record of one run was found by the next. The same tree under another commit
+/// answers `git_commit` otherwise, so the commit is the object when there is one.
+pub fn run_identity(path: &Path) -> Option<String> {
+    let v = view(path)?;
+    let under = v.cache_root.join(path.strip_prefix(&v.root).ok()?);
+    Some(format!("{}\0{}", under.display(), v.commit.unwrap_or(v.tree)))
+}
+
 /// The selected tree whose facts a named analysis may retain.
 pub fn scoped_tree(path: &Path) -> Option<gix::ObjectId> {
     let v = view(path)?;
