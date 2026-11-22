@@ -3156,22 +3156,109 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     Ok(format!("{new_rows} {waves} {visits} {runs} {skips} {:.1} {:.1} {} 1", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")))
 }
 
-/// The request rows not yet answered, per request relation (its table), now counted as answered.
-pub fn pending(conn: impl Scoped, name: &str) -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+/// A request's rows as its answerer reads them, where they lie (decision 0353 step 8): its relation's rows not yet
+/// answered, read through a handle on its rows (`Rows::clone` shares them; a row the engine killed is skipped), then
+/// the rows held back from an earlier answer (`defer`), or an answer's held-back rows asked again (`Asked::rows`),
+/// which are rows the answers made.
+#[derive(Clone, Default)]
+pub struct Asked {
+    data: Option<(Rows, usize, AskedIds)>,
+    /// A relation's live rows, read through it (`of_rel`).
+    rel: Option<(Arc<InRel>, AskedIds)>,
+    held: Vec<Vec<i64>>,
+}
+
+#[derive(Clone)]
+enum AskedIds {
+    Range(std::ops::Range<u32>),
+    Ids(Vec<u32>),
+}
+
+impl Asked {
+    /// Rows an answer made (its held-back keys, a test's).
+    pub fn rows(held: Vec<Vec<i64>>) -> Asked {
+        Asked { data: None, rel: None, held }
+    }
+    /// A relation's live rows, read through it where they lie (`InRel::value`: its own rows, or a view's source).
+    pub fn of_rel(rel: &Arc<InRel>) -> Asked {
+        let n = rel.len() as u32;
+        let ids = if rel.ndead == 0 { AskedIds::Range(0..n) } else { AskedIds::Ids((0..n).filter(|&id| !is_dead(&rel.dead, id)).collect()) };
+        Asked { data: None, rel: Some((Arc::clone(rel), ids)), held: Vec::new() }
+    }
+    pub fn len(&self) -> usize {
+        let count = |ids: &AskedIds| match ids {
+            AskedIds::Range(r) => r.len(),
+            AskedIds::Ids(ids) => ids.len(),
+        };
+        self.data.as_ref().map_or(0, |d| count(&d.2)) + self.rel.as_ref().map_or(0, |r| count(&r.1)) + self.held.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Each row, in order: the relation's, then those held.
+    pub fn iter(&self) -> impl Iterator<Item = Row> + '_ {
+        let own: Box<dyn Iterator<Item = Row> + '_> = match &self.data {
+            None => Box::new(std::iter::empty()),
+            Some((rows, k, AskedIds::Range(r))) => Box::new(r.clone().map(move |id| rows.row(id, *k))),
+            Some((rows, k, AskedIds::Ids(ids))) => Box::new(ids.iter().map(move |&id| rows.row(id, *k))),
+        };
+        let through: Box<dyn Iterator<Item = Row> + '_> = match &self.rel {
+            None => Box::new(std::iter::empty()),
+            Some((rel, ids)) => {
+                let row = move |id: u32| Row::from_fn(rel.k, |c| rel.value(id as usize, c));
+                match ids {
+                    AskedIds::Range(r) => Box::new(r.clone().map(row)),
+                    AskedIds::Ids(ids) => Box::new(ids.iter().map(move |&id| row(id))),
+                }
+            }
+        };
+        own.chain(through).chain(self.held.iter().map(|r| Row::of(r)))
+    }
+    /// Its row `i` (`iter`'s order).
+    pub fn row(&self, mut i: usize) -> Row {
+        let at = |ids: &AskedIds, i: usize| match ids {
+            AskedIds::Range(r) => (i < r.len()).then(|| r.start + i as u32),
+            AskedIds::Ids(ids) => ids.get(i).copied(),
+        };
+        let count = |ids: &AskedIds| match ids {
+            AskedIds::Range(r) => r.len(),
+            AskedIds::Ids(ids) => ids.len(),
+        };
+        if let Some((rows, k, ids)) = &self.data {
+            if let Some(id) = at(ids, i) {
+                return rows.row(id, *k);
+            }
+            i -= count(ids);
+        }
+        if let Some((rel, ids)) = &self.rel {
+            if let Some(id) = at(ids, i) {
+                return Row::from_fn(rel.k, |c| rel.value(id as usize, c));
+            }
+            i -= count(ids);
+        }
+        Row::of(&self.held[i])
+    }
+    /// Its rows as rows of their own: for a test's answerer, which keeps what it was asked.
+    pub fn to_vec(&self) -> Vec<Vec<i64>> {
+        self.iter().map(|r| r.to_vec()).collect()
+    }
+}
+
+/// The request rows not yet answered, per request relation (its table), now counted as answered: read where they lie
+/// (`Asked`), nothing copied.
+pub fn pending(conn: impl Scoped, name: &str) -> Result<Vec<(String, Asked)>> {
     let conn = conn.db();
     let comp = component(conn, name)?;
     let mut comp = comp.lock().unwrap();
     let store = Arc::clone(&comp.store);
     let store = store.read().unwrap();
-    let mut out: Vec<(String, Vec<Vec<i64>>)> = Vec::new();
+    let mut out: Vec<(String, Asked)> = Vec::new();
     for (r, answered) in &mut comp.requests {
         let rel = &store.rels[*r];
         if rel.n > *answered {
-            // copy (0353 step 8): a request's new rows read out of its relation for the answerer.
-            let rows: Vec<Vec<i64>> = (*answered..rel.n).filter(|&i| !rel.dead(i as u32)).map(|i| rel.row(i).to_vec()).collect();
-            const PENDING: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "a request's new rows read for its answerer (pending)");
-            PENDING.copied(8 * rows.iter().map(Vec::len).sum::<usize>());
-            out.push((rel.table.clone(), rows));
+            let range = *answered as u32..rel.n as u32;
+            let ids = if (range.clone()).any(|i| rel.dead(i)) { AskedIds::Ids(range.filter(|&i| !rel.dead(i)).collect()) } else { AskedIds::Range(range) };
+            out.push((rel.table.clone(), Asked { data: Some((rel.data.clone(), rel.k, ids)), rel: None, held: Vec::new() }));
             *answered = rel.n;
         }
     }
@@ -3180,8 +3267,8 @@ pub fn pending(conn: impl Scoped, name: &str) -> Result<Vec<(String, Vec<Vec<i64
         for (r, rows) in std::mem::take(&mut comp.deferred) {
             let table = store.rels[r].table.clone();
             match out.iter_mut().find(|(t, _)| *t == table) {
-                Some((_, got)) => got.extend(rows),
-                None => out.push((table, rows)),
+                Some((_, got)) => got.held.extend(rows),
+                None => out.push((table, Asked::rows(rows))),
             }
         }
     }
@@ -4681,6 +4768,38 @@ pub fn hold_maintained(conn: impl Scoped, table: &str, rel: Arc<InRel>) {
 
 /// A native fact operator's completed set. No rows are published until a SQL consumer materializes it.
 /// Unlike `adopt`, this is a result of the current run, not an input scheduled for the next one.
+/// `retain`, `rows` (a request's answers) held with the rows `table` holds now: those rows shared where they lie (a
+/// clone of its `Rows`, decision 0353 step 8), each answer it lacks written after them. Its rows are read once, to
+/// drop the answers it holds; none is copied. A relation it holds as a view, or of another width, is replaced.
+pub fn retain_with(conn: impl Scoped, table: &str, rows: Vec<Vec<i64>>, types: Vec<u8>) -> Result<()> {
+    let db = conn.db();
+    let old = on(db).derived.lock().get(table).cloned().filter(|o| o.view.is_none() && o.k == types.len() && o.k > 0);
+    let Some(old) = old else { return retain(db, table, rows, types) };
+    if rows.iter().any(|r| r.len() != types.len()) { return Err(err(format!("{table}: native result width differs from its declaration"))); }
+    let mut new: std::collections::HashSet<Vec<i64>> = rows.into_iter().collect();
+    let mut row = vec![0i64; old.k];
+    for id in 0..old.len() {
+        if old.ndead > 0 && is_dead(&old.dead, id as u32) { continue; }
+        for (c, v) in row.iter_mut().enumerate() { *v = old.value(id, c); }
+        new.remove(&row);
+        if new.is_empty() { break; }
+    }
+    if new.is_empty() { return Ok(()); }
+    let mut new: Vec<Vec<i64>> = new.into_iter().collect();
+    new.sort_unstable();
+    let mut data = old.rows.clone();
+    for r in &new { data.extend_from_slice(r); }
+    let n = old.len() + new.len();
+    // Its dead rows' bits, the answers after them live.
+    let dead = if old.ndead == 0 { Vec::new() } else { let mut d: Vec<u64> = old.dead.iter().copied().collect(); d.resize(n.div_ceil(64), 0); d };
+    let mut rel = InRel::held(data, n, types, dead);
+    Arc::get_mut(&mut rel).unwrap().stored = 0;
+    forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
+    on(db).derived.lock().insert(table.to_owned(), rel);
+    Ok(())
+}
+
 pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vec<i64>>, types: Vec<u8>) -> Result<()> {
     let conn = conn.db();
     if rows.iter().any(|r| r.len() != types.len()) { return Err(err(format!("{table}: native result width differs from its declaration"))); }
@@ -4792,24 +4911,6 @@ pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
 /// rows lie (decision 0353 step 8).
 pub fn kept_rel(conn: &Connection, table: &str) -> Option<Arc<InRel>> {
     on(conn).derived.lock().get(table).filter(|rel| rel.view.is_none()).cloned()
-}
-
-/// A native relation of `conn`'s run as it can be kept and held again (`hold_rows`): its columns' types and its live
-/// rows, flat.
-pub fn kept_rows(conn: &Connection, table: &str) -> Option<(Vec<u8>, Vec<i64>, usize)> {
-    let rel = on(conn).derived.lock().get(table).cloned()?;
-    if rel.view.is_some() {
-        return None;
-    }
-    let k = rel.k;
-    let mut out = Vec::with_capacity(rel.rows() * k);
-    for id in 0..rel.len() as u32 {
-        if rel.ndead > 0 && is_dead(&rel.dead, id) {
-            continue;
-        }
-        out.extend_from_slice(&rel.rows.row(id, k));
-    }
-    Some((rel.types.clone(), out, rel.rows()))
 }
 
 /// The relations `adopt`ed into `conn`'s next run, taken by its planner.

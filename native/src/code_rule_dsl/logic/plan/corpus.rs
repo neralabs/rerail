@@ -7201,7 +7201,7 @@ fn run_observed_within(
                 values.add(&[Some(key), owner].into_iter().flatten().collect::<Vec<u32>>(), made_rows);
             }
         }
-        let mut parse_answer = |req: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+        let mut parse_answer = |req: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             let (Some((made, docs)), Some(values), Some(grower)) = (kept_guests.as_mut(), values.as_ref(), grower.as_mut()) else {
                 return Err(Error::Plan(format!("{req}: a request, and no one to answer it")));
             };
@@ -7211,7 +7211,7 @@ fn run_observed_within(
             let _span = crate::code_rule_dsl::logic::profile::span(|| "tape values admitted".into());
             let text = |a: i64| atoms.value(a as _).map_err(|e| Error::Plan(e.to_string()));
             let mut given_rows: BTreeMap<String, Vec<Vec<i64>>> = given.iter().map(|g| (g.clone(), Vec::new())).collect();
-            for row in rows {
+            for row in rows.iter() {
                 // The value asked, and the keys of the nodes its rows hold: its own, and its place's or its node's
                 // document's (`Values::add`).
                 let (key, owner) = match (req, &row[..]) {
@@ -8018,7 +8018,7 @@ fn run_observed_within(
         let mut answered: BTreeMap<String, Vec<Vec<i64>>> = world_rels.iter().map(|(r, _)| (r.clone(), Vec::new())).collect();
         let lowered_load = part_of(load.clone());
         let load_stats = t_stats.clone();
-        let (ask_tx, ask_rx) = std::sync::mpsc::channel::<(u64, String, Vec<Vec<i64>>)>();
+        let (ask_tx, ask_rx) = std::sync::mpsc::channel::<(u64, String, crate::code_rule_dsl::logic::native::component::Asked)>();
         let (reply_tx, reply_rx) = std::sync::mpsc::channel::<(u64, std::result::Result<Vec<(String, Vec<Vec<i64>>)>, String>)>();
         // The rows the cone starts from: the counted exports less those of the files not seen yet (gone, or a load
         // of the last run's, not yet loaded), when the chunks did not hold the hits' rows again; from here on they do.
@@ -8161,7 +8161,7 @@ fn run_observed_within(
             // Requests go to the main thread with a ticket, and their answers come back with it (decision 0114 §3).
             let asks = std::cell::RefCell::new(Asks { tx: ask_tx, rx: reply_rx, next: 0, early: BTreeMap::new(), posted: HashMap::new(), recorded: None });
             // A request answered in place (the rounds, a stratum needed at once): it waits for its own ticket.
-            let mut answer = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> { asks.borrow_mut().ask(rel, rows) };
+            let mut answer = |rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked| -> Result<Vec<(String, Vec<Vec<i64>>)>> { asks.borrow_mut().ask(rel, rows) };
             // The rounds from the last run's final round, kept in the store.
             let rounds_space = rounds_key.as_ref().map(&rounds_space_of).unwrap_or_default();
             let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs, constants: &constants_at, ledger: &load_ledger_in };
@@ -8291,7 +8291,7 @@ fn run_observed_within(
             }
             // The gated fixpoint, its answers recorded for a closing round.
             asks.borrow_mut().recorded = Some(cone_rounds::Answers::default());
-            let mut recording = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> { asks.borrow_mut().ask(rel, rows) };
+            let mut recording = |rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked| -> Result<Vec<(String, Vec<Vec<i64>>)>> { asks.borrow_mut().ask(rel, rows) };
             let mut posting = Posting(&asks);
             let mut fixpoint_keeps = kept_in.clone();
             if let Some(r) = &round {
@@ -8332,7 +8332,7 @@ fn run_observed_within(
                 for ask in r.asks() {
                     asks.insert(ask.clone(), held_rows(&db2, &got, ask, widths[ask.as_str()])?);
                 }
-                let mut refuse = |rel: &str, _: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> { Err(Error::Plan(format!("the closing round asked {rel}"))) };
+                let mut refuse = |rel: &str, _: &crate::code_rule_dsl::logic::native::component::Asked| -> Result<Vec<(String, Vec<Vec<i64>>)>> { Err(Error::Plan(format!("the closing round asked {rel}"))) };
                 match r.run(on, &rounds_in, cone_rounds::Start::Closing(asks), recorded, &mut refuse) {
                     Ok(done) => {
                         crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0145)", || format!("closing round over the fixpoint's answers kept ({} of {} strata; {} rows written back)", done.strata.0, done.strata.1, done.written));
@@ -8360,7 +8360,7 @@ fn run_observed_within(
         let times = std::cell::RefCell::new(AnswerTimes::default());
         let active_inventory = std::cell::OnceCell::new();
         let mut payloads = git_content::Reader::default();
-        let mut answer_one = |rel: &str, rows: &[Vec<i64>], process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+        let mut answer_one = |rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked, process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             pauses += 1;
             let t_call = std::time::Instant::now();
             let _counted = Finally(|| {
@@ -8371,8 +8371,8 @@ fn run_observed_within(
             });
             if rel == git_content::REQUEST {
                 let mut out = Vec::with_capacity(rows.len());
-                for row in rows {
-                    let [r, id, offset, length] = row.as_slice() else { return Err(Error::Plan("invalid payload request".into())); };
+                for row in rows.iter() {
+                    let [r, id, offset, length] = &row[..] else { return Err(Error::Plan("invalid payload request".into())); };
                     let (repo, oid) = (text(*r)?, text(*id)?);
                     let a = payloads.read(world.git(), store, &late_sources, &repo, &oid, *offset, *length)?;
                     world.consulted_lookup(git::OBJECT, &repo, &oid, a.storage.clone());
@@ -8403,15 +8403,15 @@ fn run_observed_within(
                 let mut atoms = atoms(&texts)?.into_iter();
                 let mut out: BTreeMap<&str, Vec<Vec<i64>>> = wanted.iter().map(|r| (*r, Vec::new())).collect();
                 for (r, k, c) in &cells {
-                    let row = rows[*k].iter().copied().chain(c.iter().map(|c| match c { Cell::Int(i) => *i, Cell::Text(_) => atoms.next().expect("an atom a text") })).collect();
+                    let row = rows.row(*k).iter().copied().chain(c.iter().map(|c| match c { Cell::Int(i) => *i, Cell::Text(_) => atoms.next().expect("an atom a text") })).collect();
                     out.entry(r).or_default().push(row);
                 }
                 return Ok(out.into_iter().map(|(r, rows)| (r.to_owned(), rows)).collect());
             }
             if matches!(rel, git::REVISION | git::REPO_REVISION | git::OBJECT) {
                 let mut out = Vec::new();
-                for row in rows {
-                    let [repo, arg] = row.as_slice() else { return Err(Error::Plan(format!("{rel} takes a repository and a key"))); };
+                for row in rows.iter() {
+                    let [repo, arg] = &row[..] else { return Err(Error::Plan(format!("{rel} takes a repository and a key"))); };
                     let key = text(*repo)?;
                     let arg_text = text(*arg)?;
                     if rel != git::OBJECT {
@@ -8430,8 +8430,8 @@ fn run_observed_within(
             }
             if rel == analysis_history::REQUEST {
                 let mut out = Vec::new();
-                for row in rows {
-                    let [kind, key] = row.as_slice() else { return Err(Error::Plan("analysis_history_request takes a kind and a key".into())); };
+                for row in rows.iter() {
+                    let [kind, key] = &row[..] else { return Err(Error::Plan("analysis_history_request takes a kind and a key".into())); };
                     let (kind, key) = (text(*kind)?, text(*key)?);
                     let (records, digest) = analysis_history::requested(&kind, &key)?;
                     world.consulted_lookup(rel, &kind, &key, digest);
@@ -8443,8 +8443,8 @@ fn run_observed_within(
             }
             if rel == git::INVENTORY_CHILD {
                 let mut out = Vec::new();
-                for row in rows {
-                    let [repo, selection, directory, name, mode, encoding] = row.as_slice() else {
+                for row in rows.iter() {
+                    let [repo, selection, directory, name, mode, encoding] = &row[..] else {
                         return Err(Error::Plan(format!("{rel}: invalid child request")));
                     };
                     let Some((r, s)) = active_inventory.get_or_init(|| crate::git_workspace::snapshot::inventory_request_key(root)) else { continue };
@@ -8452,7 +8452,7 @@ fn run_observed_within(
                     if let Some(path) = world.inventory_child(
                         &text(*directory)?, &text(*name)?, *mode, text(*encoding)? == "bytes",
                     ).map_err(Error::Plan)? {
-                        let mut found = row.clone();
+                        let mut found = row.to_vec();
                         found.extend(atoms(&[&path])?);
                         out.push(found);
                     }
@@ -8462,7 +8462,7 @@ fn run_observed_within(
             if let Some((produced, _)) = WORLD.iter().find(|(_, req)| *req == rel) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
                 let mut out = Vec::new();
-                for row in rows {
+                for row in rows.iter() {
                     let asked = text(row[0])?;
                     if *produced == "dir_entry" {
                         let entries = world.dir(&asked);
@@ -8505,7 +8505,8 @@ fn run_observed_within(
                 ledger.rounds
             };
             let mut hold: Vec<Vec<i64>> = Vec::new();
-            let mut now: Vec<Vec<i64>> = Vec::new();
+            // The rows answered now, by their place among those asked (decision 0353 step 8: read where they lie).
+            let mut now: Vec<usize> = Vec::new();
             // Each request's path, resolved once (`World::resolve`), by its path's atom.
             // Resolved together: their `realpath`s at once on the pool (notes/t40).
             let mut resolved: HashMap<i64, Option<std::path::PathBuf>> = if no_loads {
@@ -8516,16 +8517,16 @@ fn run_observed_within(
             };
             if levels && !in_rounds && !no_loads {
                 let mut quiet = false;
-                for row in rows {
+                for (i, row) in rows.iter().enumerate() {
                     let at = resolved.get(&row[0]).cloned().flatten();
                     let bounded = world.bounded(at.as_deref());
                     if !bounded {
-                        now.push(row.clone());
-                    } else if held.remove(row) {
+                        now.push(i);
+                    } else if held.remove(&row[..]) {
                         quiet = true;
-                        now.push(row.clone());
+                        now.push(i);
                     } else {
-                        hold.push(row.clone());
+                        hold.push(row.to_vec());
                     }
                 }
                 if !hold.is_empty() {
@@ -8534,10 +8535,10 @@ fn run_observed_within(
                     load_levels += 1;
                 }
             } else {
-                now.extend(rows.iter().cloned());
+                now.extend(0..rows.len());
             }
             let over_before = world.over_budget;
-            let rows: &[Vec<i64>] = &now;
+            let asked_now = rows;
             let mut out = 'load: {
             let mut fresh = Vec::new();
             let mut fresh_files: Vec<i64> = Vec::new();
@@ -8547,8 +8548,8 @@ fn run_observed_within(
             // last run's, kept.
             // Taken in an order of the requests themselves, not of their atoms: where the load budget binds, a
             // top-level module before a submodule, then by module and path (decision 0145).
-            let mut asked_rows: Vec<(String, String, String, &Vec<i64>)> = Vec::new();
-            for row in rows.iter().filter(|_| !no_loads) {
+            let mut asked_rows: Vec<(String, String, String, crate::code_rule_dsl::facts::rows::Row)> = Vec::new();
+            for row in now.iter().filter(|_| !no_loads).map(|&i| asked_now.row(i)) {
                 asked_rows.push((text(row[0])?, text(row[1])?, text(row[2])?, row));
             }
             asked_rows.sort_by(|a, b| (a.1.matches('.').count(), &a.1, &a.0).cmp(&(b.1.matches('.').count(), &b.1, &b.0)));
@@ -12821,22 +12822,23 @@ impl<F: FnMut()> Drop for Finally<F> {
 /// and its answer taken back by that ticket, in place (`ask`) or as it comes (`Posting`). The fixpoint's answers
 /// are recorded for a closing round (`recorded`).
 struct Asks {
-    tx: std::sync::mpsc::Sender<(u64, String, Vec<Vec<i64>>)>,
+    tx: std::sync::mpsc::Sender<(u64, String, crate::code_rule_dsl::logic::native::component::Asked)>,
     rx: std::sync::mpsc::Receiver<(u64, std::result::Result<Vec<(String, Vec<Vec<i64>>)>, String>)>,
     next: u64,
     /// Answers come before they were taken.
     early: BTreeMap<u64, Vec<(String, Vec<Vec<i64>>)>>,
     /// Each ticket's request, until its answer comes.
-    posted: HashMap<u64, (String, Vec<Vec<i64>>)>,
+    posted: HashMap<u64, (String, crate::code_rule_dsl::logic::native::component::Asked)>,
     recorded: Option<cone_rounds::Answers>,
 }
 
 impl Asks {
-    fn post(&mut self, rel: &str, rows: &[Vec<i64>]) -> Result<u64> {
+    fn post(&mut self, rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked) -> Result<u64> {
         let ticket = self.next;
         self.next += 1;
-        self.tx.send((ticket, rel.to_owned(), rows.to_vec())).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
-        self.posted.insert(ticket, (rel.to_owned(), rows.to_vec()));
+        // A handle on the request's rows where they lie (`Asked`), not the rows.
+        self.tx.send((ticket, rel.to_owned(), rows.clone())).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
+        self.posted.insert(ticket, (rel.to_owned(), rows.clone()));
         Ok(ticket)
     }
 
@@ -12872,7 +12874,7 @@ impl Asks {
     }
 
     /// A request answered in place: posted, then its own answer waited for (the others come are kept).
-    fn ask(&mut self, rel: &str, rows: &[Vec<i64>]) -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+    fn ask(&mut self, rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked) -> Result<Vec<(String, Vec<Vec<i64>>)>> {
         let ticket = self.post(rel, rows)?;
         loop {
             if let Some(given) = self.early.remove(&ticket) {
@@ -12893,7 +12895,7 @@ impl Asks {
 struct Posting<'r>(&'r std::cell::RefCell<Asks>);
 
 impl super::Asking for Posting<'_> {
-    fn post(&mut self, rel: &str, rows: &[Vec<i64>]) -> Result<u64> {
+    fn post(&mut self, rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked) -> Result<u64> {
         self.0.borrow_mut().post(rel, rows)
     }
     fn arrived(&mut self, wait: std::time::Duration) -> Result<Vec<(u64, Vec<(String, Vec<Vec<i64>>)>)>> {

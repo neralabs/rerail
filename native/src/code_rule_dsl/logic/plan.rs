@@ -5950,14 +5950,17 @@ pub struct Run<'a, 'b> {
 
 /// The runner's answer to requests (`Run::answer`): a request relation and its new rows (atoms and integers), to the
 /// rows each produced relation gains.
-pub type Answer<'a> = &'a mut dyn FnMut(&str, &[Vec<i64>]) -> Result<Vec<(String, Vec<Vec<i64>>)>>;
+/// A request's answerer: given a request relation's rows (read where they lie, `component::Asked`), the rows each
+/// produced relation gains.
+pub type Answer<'a> = &'a mut dyn FnMut(&str, &super::native::component::Asked) -> Result<Vec<(String, Vec<Vec<i64>>)>>;
 
 /// A complete request relation has no pending recursive work before its consumer. Resume held keys at once,
 /// grouped by request family, as a quiet recursive component does. Never publish the protocol rows as facts.
 /// (Ported from Data-layer-rule-expressivity d659df1c4: held-back keys of a complete request were lost before its
 /// non-recursive consumer ran.)
-fn answer_complete(answer: Answer<'_>, request: &str, keys: &[Vec<i64>]) -> Result<BTreeMap<String, Vec<Vec<i64>>>> {
-    let mut pending = BTreeMap::from([(request.to_owned(), keys.to_vec())]);
+fn answer_complete(answer: Answer<'_>, request: &str, keys: super::native::component::Asked) -> Result<BTreeMap<String, Vec<Vec<i64>>>> {
+    use super::native::component::Asked;
+    let mut pending = BTreeMap::from([(request.to_owned(), keys)]);
     let mut produced: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
     while !pending.is_empty() {
         let mut held: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
@@ -5968,7 +5971,8 @@ fn answer_complete(answer: Answer<'_>, request: &str, keys: &[Vec<i64>]) -> Resu
                 } else { produced.entry(rel).or_default().extend(rows); }
             }
         }
-        pending = held;
+        // The rows an answer held back, asked again: rows the answers made.
+        pending = held.into_iter().map(|(r, rows)| (r, Asked::rows(rows))).collect();
     }
     Ok(produced)
 }
@@ -5979,7 +5983,7 @@ fn answer_complete(answer: Answer<'_>, request: &str, keys: &[Vec<i64>]) -> Resu
 /// event, taken when it has come.
 pub trait Asking {
     /// Posts a request relation's new rows: the ticket its answer comes back with.
-    fn post(&mut self, rel: &str, rows: &[Vec<i64>]) -> Result<u64>;
+    fn post(&mut self, rel: &str, rows: &super::native::component::Asked) -> Result<u64>;
     /// The answers that have come, each with its ticket; when none has, waits up to `wait` for one. The rows
     /// each produced relation gains, as `Answer` gives them.
     fn arrived(&mut self, wait: std::time::Duration) -> Result<Vec<(u64, Vec<(String, Vec<Vec<i64>>)>)>>;
@@ -11477,15 +11481,14 @@ fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel
 }
 
 /// A clean relation's kept rows (`KeptStrata::rows`), as the requests it answers again take them.
-fn kept_strata_rows(ks: &mut dyn KeptStrata, f: Fields<'_>, rel: &str) -> Result<Vec<Vec<i64>>> {
+fn kept_strata_rows(ks: &mut dyn KeptStrata, f: Fields<'_>, rel: &str) -> Result<super::native::component::Asked> {
     let types = vec![b'i'; f.types(rel).len()];
     let (_, held) = ks.rows(rel, &types).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
-    let k = types.len();
-    if k == 0 {
-        return Ok(Vec::new());
+    if types.is_empty() {
+        return Ok(super::native::component::Asked::default());
     }
-    // copy: not block data: the requests a replayed stratum asks again, as its answer function takes them.
-    Ok(held.live_rows().unwrap_or_default().chunks_exact(k).map(<[i64]>::to_vec).collect())
+    // The requests a replayed stratum asks again, read where the kept rows lie (decision 0353 step 8).
+    Ok(super::native::component::Asked::of_rel(&held))
 }
 
 /// How a digest reads a relation's cells (decision 0212): an atom column (`b's'`, as frames type it) by its atoms'
@@ -13034,24 +13037,23 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         let width = f0.width(&req);
                         // The request's rows where they are: the engine's (a relation it holds), none (one still to be
                         // made: no table, no rows), or its table's.
-                        let native = run.native_rels.contains(&req).then(|| super::native::component::kept_rows(db, &req)).flatten();
-                        let asked: Vec<Vec<i64>> = if let Some((_, flat, _)) = native.filter(|_| width > 0) {
-                            // copy (0353 step 8): a request's rows read out of the engine's relation for the answerer.
-                            const ASKED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "a request's rows read for its answerer (answer_complete)");
-                            ASKED.copied(8 * flat.len());
-                            flat.chunks(width).map(<[i64]>::to_vec).collect()
+                        // The engine's relation read where its rows lie (decision 0353 step 8).
+                        let native = run.native_rels.contains(&req).then(|| super::native::component::kept_rel(db, &req)).flatten();
+                        let asked = if let Some(rel) = native.filter(|_| width > 0) {
+                            super::native::component::Asked::of_rel(&rel)
                         } else if run.pending.contains_key(&req) && !run.native_rels.contains(&req) {
-                            Vec::new()
+                            super::native::component::Asked::default()
                         } else {
                             run.materialize(std::slice::from_ref(&req))?;
                             let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-                            db.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(&req)))?
+                            // SQL's rows (a relation the engine does not hold).
+                            super::native::component::Asked::rows(db.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(&req)))?
                                 .query_map([], |r| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vec<_>>>())?
-                                .collect::<rusqlite::Result<_>>()?
+                                .collect::<rusqlite::Result<_>>()?)
                         };
                         let answer = run.answer.as_deref_mut().ok_or_else(|| Error::Plan(format!("{req}: a request, and no one to answer it")))?;
                         let mut mine = Vec::new();
-                        for (p, got) in answer_complete(answer, &req, &asked)? {
+                        for (p, got) in answer_complete(answer, &req, asked)? {
                             if p == *rel { mine.extend(got) } else { run.answered.entry(p).or_default().extend(got) }
                         }
                         mine
@@ -13075,15 +13077,12 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 let types: Vec<u8> = f0.types(rel).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes();
                 // `retain` replaces what the engine holds: rows it already holds (the relation's program facts) stay,
                 // so its readers read the facts and the answers both.
-                let mut rows = rows;
-                if run.native_rels.contains(rel)
-                    && let Some((_, flat, k)) = super::native::component::kept_rows(db, rel).filter(|(_, _, k)| *k == types.len() && *k > 0) {
-                        // copy (0353 step 8): a relation's rows read out to be held again with a request's answers.
-                        const HELD_AGAIN: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "a relation's rows held again with its answers (retain)");
-                        HELD_AGAIN.copied(8 * flat.len());
-                        rows.extend(flat.chunks(k).map(<[i64]>::to_vec));
-                    }
-                super::native::component::retain(db, rel, rows, types)?;
+                // Held with the rows the engine holds now, those shared where they lie (decision 0353 step 8).
+                if run.native_rels.contains(rel) {
+                    super::native::component::retain_with(db, rel, rows, types)?;
+                } else {
+                    super::native::component::retain(db, rel, rows, types)?;
+                }
                 run.native_rels.insert(rel.clone());
             }
             continue;

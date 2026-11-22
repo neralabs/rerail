@@ -320,8 +320,9 @@ impl Answers {
     }
 
     /// Records an answer: `rel`'s `keys` asked, and what was given.
-    pub(in crate::code_rule_dsl) fn record(&mut self, rel: &str, keys: &[Vec<i64>], given: &[(String, Vec<Vec<i64>>)]) {
-        self.asked.extend(keys.iter().map(|k| (rel.to_owned(), k.clone())));
+    pub(in crate::code_rule_dsl) fn record(&mut self, rel: &str, keys: &crate::code_rule_dsl::logic::native::component::Asked, given: &[(String, Vec<Vec<i64>>)]) {
+        // The keys answered so far, across rounds: a set the rounds test against (derived, not the request's rows).
+        self.asked.extend(keys.iter().map(|k| (rel.to_owned(), k.to_vec())));
         for (r, rows) in given {
             self.rows.entry(r.clone()).or_default().extend(rows.iter().cloned());
         }
@@ -410,7 +411,7 @@ impl RoundProgram {
         inputs: &Inputs<'_>,
         start: Start,
         mut answers: Answers,
-        answer: &mut dyn FnMut(&str, &[Vec<i64>]) -> Result<Vec<(String, Vec<Vec<i64>>)>>,
+        answer: &mut dyn FnMut(&str, &crate::code_rule_dsl::logic::native::component::Asked) -> Result<Vec<(String, Vec<Vec<i64>>)>>,
     ) -> std::result::Result<Done, Gave> {
         let (kept, closing) = match start {
             Start::Kept(k) => (Some(k), None),
@@ -577,6 +578,8 @@ impl RoundProgram {
             let batch = [pick(true, false), pick(true, true), pick(false, false), pick(false, true)].into_iter().find(|b| !b.is_empty());
             if let Some(batch) = batch {
                 for (req, keys) in batch {
+                    // The keys the rounds chose (rows they made), asked.
+                    let keys = crate::code_rule_dsl::logic::native::component::Asked::rows(keys);
                     let given: Vec<(String, Vec<Vec<i64>>)> = answer(&req, &keys)?.into_iter().map(|(r, rows)| (self.kept_as(&r), rows)).collect();
                     if inputs.ledger.lock().unwrap_or_else(|e| e.into_inner()).bound {
                         return Err(Gave::Up("a load past the budget: where it binds, the loads are taken level by level, in a fresh cone".into()));
