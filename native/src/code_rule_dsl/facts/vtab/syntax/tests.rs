@@ -2621,6 +2621,38 @@ fn a_renewed_batch_takes_its_unchanged_groups_and_makes_the_changed_document_alo
     assert_eq!(renewed.vocabulary_strings(), fresh.vocabulary_strings(), "a fresh batch's vocabulary");
 }
 
+/// A session's batch read whole makes its documents in groups of `RERAIL_SESSION_GROUP` (decision 0613): the next
+/// run, one document changed, takes every group but that document's, and makes that group's documents' rows alone
+/// (the others' projections shared). Read whole as one group, the first run's batch left the next nothing to take.
+#[test]
+fn a_sessions_whole_read_makes_groups_the_next_run_takes_but_the_changed_ones() {
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment here.
+    unsafe { std::env::set_var("RERAIL_SESSION_GROUP", "2") };
+    let store = ContentStore::open(&temp("session-groups")).unwrap();
+    let src = |k: u32, v: u32| format!("def f{k}(x, y={v}):\n    return g(x, 'w{v}')\n\nclass C{k}:\n    pass\n");
+    let docs = |changed: bool| -> Vec<Document> { (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &src(k, if changed && k == 3 { 99 } else { k }))).collect() };
+    let reads = ["node", "child", "docof", "src_line", "doc", "text"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let held = Batch::renewed(&store, docs(false), &projection, None).unwrap();
+    let whole = |b: &Arc<Batch>| -> Vec<(String, Vec<Vec<i64>>)> {
+        made_sources(b)
+            .into_iter()
+            .map(|(name, _, s)| {
+                let mut v: Vec<Vec<i64>> = (0..s.len()).map(|r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect();
+                v.sort();
+                (name.to_owned(), v)
+            })
+            .collect()
+    };
+    whole(&held);
+    assert_eq!(held.groups(), 2, "read whole in groups of two documents");
+    let renewed = Batch::renewed(&store, docs(true), &projection, Some(Arc::clone(&held))).unwrap();
+    let fresh = Batch::new(&store, docs(true), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    assert_eq!(whole(&renewed), whole(&fresh), "every relation's rows are a fresh batch's");
+    assert_eq!(renewed.makes(), 1, "the changed document's group alone is made");
+    assert_eq!(renewed.docs.made_count(), 1, "and of its documents, the changed one's projection alone");
+}
+
 /// A tape value admitted into the batch (decision 0431 §8) runs no `ast` matcher: the files the batch was started
 /// with are matched once, and are not matched again (a value alone is no file, `Grower::admit`). Each round of guests
 /// ran the wave over every file of the chunk again, 17 s of 131 s of CPU on `all` once the reference graph's rules

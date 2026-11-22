@@ -861,6 +861,17 @@ impl Batch {
         if let Some(c) = self.rows.complete.get() {
             return c;
         }
+        // A session's batch, which the next run renews from (decision 0613), is made in groups of a few documents:
+        // an edit then makes again only its changed documents' groups. They go on in the same block relations.
+        if self.keeps_strings {
+            let unmade: Vec<usize> = {
+                let s = self.rows.state.lock();
+                (0..self.docs.len()).filter(|&i| s.of[i].is_none()).collect()
+            };
+            for group in unmade.chunks(session_group()) {
+                self.ensure(group);
+            }
+        }
         self.ensure(&(0..self.docs.len()).collect::<Vec<_>>());
         self.rows.complete.get_or_init(|| {
             let rels = self.rows.state.lock().rels.clone();
@@ -993,6 +1004,11 @@ impl Batch {
         used.dedup();
         (used.iter().map(|&i| shared.strings[i as usize].clone()).collect(), used.iter().map(|&i| shared.atoms[i as usize]).collect())
     }
+}
+
+/// The documents a group of a session's batch read whole holds (decision 0613): `RERAIL_SESSION_GROUP`, default 32.
+fn session_group() -> usize {
+    std::env::var("RERAIL_SESSION_GROUP").ok().and_then(|v| v.parse::<usize>().ok()).filter(|&n| n > 0).unwrap_or(32)
 }
 
 /// A relation a batch makes (`text`, `op`, the matchers'), over its groups (decision 0494): every document made, the

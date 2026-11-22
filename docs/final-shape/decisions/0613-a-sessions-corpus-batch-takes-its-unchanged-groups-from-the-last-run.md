@@ -25,6 +25,9 @@ lie inside it, so the held relation cannot be the next run's relation as it is.
   taken groups' rows: one segment each (`rows::Part` gains a first row and an end, `Part::range`), no row copied.
   The rows the run's own groups make go on in a relation of their own after them (a tail past segments that do not
   chain, as 0384's forks open one). Ids stay dense: a taken run's rows are numbered after the runs before it.
+- **A session's batch read whole is made in groups.** A whole read (`complete`) of a session's batch makes its unmade
+  documents in groups of `RERAIL_SESSION_GROUP` (32), in the same block relations, before the rest. So the first
+  run's batch, read whole, leaves the next run every group but a changed document's to take.
 - **At most `MAX_SEGMENTS - 1` runs are taken.** A changed document's group splits the held rows. Past the limit,
   the runs with the fewest rows are left, and their documents are made again. So no relation's segments are merged
   (0353 step 6's copy). The batch's shape stays bounded over a long session.
@@ -53,5 +56,7 @@ lie inside it, so the held relation cannot be the next run's relation as it is.
   groups counted).
 - R3: a taken run is read in place: the new relation shares the held relation's part.
 - R4: a renewed batch's vocabulary is a fresh batch's.
+- R6: a session's batch read whole makes groups of `RERAIL_SESSION_GROUP` documents, and the next run, one document
+  changed, makes that document's group alone.
 - R5: a session's edit takes the held groups (profile decision "a session's corpus batch renewed (decision
   0613)"), and its outputs are a fresh run's.
