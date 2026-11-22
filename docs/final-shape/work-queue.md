@@ -10205,3 +10205,9 @@ The farm tooling (farm 54–57) is taken whole. In `test-remote`'s main, theirs'
 0494 step 7 (key-run columns, 8-byte solves, shared axis solves) is taken whole. Its `solve` takes ours' Windows
 device gate. The manifests are ours', with one `rerail-clif` dev-dependency. 0494's section appears once
 (`notes/roll-up-46-phased-facts.md`).
+
+### Q468. Roll-up 47 (main b922e65dc8 onto Pulling-it-all-together): what the merge chose
+
+Main's two test fixes (#986, #988). In `outside-git.test.ts`, both sides fixed the named-pipe case's wait for its
+writer. Theirs (#986) supersedes ours (96142c32b3): it listens from the start, sends SIGKILL, and checks that nothing
+read the pipe. Ours' GIT_DIR shapes stay (`notes/roll-up-47-main.md`).
