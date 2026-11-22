@@ -633,3 +633,27 @@ fn a_small_callee_keeps_its_callers_registers() {
     assert!(keeps[mix], "mix at width 8 keeps its callers' registers: {:?}", ps.iter().map(|f| (&f.across, f.at[3])).collect::<Vec<_>>());
     ran_with(prelude, &body);
 }
+
+/// The element sum: each lane loads its value, the SIMD group sums them (a horizontal sum), and the group's first lane
+/// adds the sum to the result atomically. One SIMD group of 32 lanes, `out[i] = 3i + 1` to start: `out[0]` ends
+/// `1 + (1 + 4 + ... + 94)`, on the interpreter and on the compiled SSA at every width.
+#[test]
+fn an_element_sum_is_a_horizontal_sum_and_one_atomic() {
+    let (p, k) = kernel_of("    uint32_t v = out[lid];\n    uint32_t s = ukl_sg_sum(v __UKL_ARGS);\n    if (lane == 0u) ukl_atomic_add(&out[0], s);");
+    let run = |k: &super::vector::Kernel, exec| {
+        let mut out: Vec<u32> = (0..64u32).map(|i| 3 * i + 1).collect();
+        let ptr = (out.as_mut_ptr() as u64).to_le_bytes().to_vec();
+        let args = [super::run::Arg::Bytes(ptr), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [32, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        out
+    };
+    let mut want: Vec<u32> = (0..64u32).map(|i| 3 * i + 1).collect();
+    want[0] += (0..32u32).map(|i| 3 * i + 1).sum::<u32>();
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+    }
+}
