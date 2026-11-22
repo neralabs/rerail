@@ -1,6 +1,6 @@
 # On Windows a hook sends events only to its home's own daemon
 
-For [pull request #979](https://github.com/neralabs/rerail/pull/979), head af511af74. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #979](https://github.com/neralabs/rerail/pull/979), head 7f999c574. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #979](https://github.com/neralabs/rerail/pull/979), head af511
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 1,195 lines in 20 files: 404 ship, 791 are tests and text | Careful. A code owner approves: it decides what leaves the machine. | Nothing. CI on GitHub has not run this head yet. | 3 |
+| 1,398 lines in 23 files: 616 ship, 782 are tests and text | Careful. A code owner approves: it decides what leaves the machine. | Nothing. CI on GitHub has not run this head yet. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -49,11 +49,11 @@ Start at `provenEnginePipe`: it decides what leaves the machine on Windows.
 
 <details><summary><b>7. How it fits</b></summary>
 
-Nothing merges first: it stands on `main` 8b4c74cbe, the lines of #677 and #973 kept in the seven files it shares. #964 meets this head in six files; whichever lands second keeps both. #963 and #967 merge with it cleanly.
+Nothing merges first: it stands on `main` 1609ac3a3, the lines of #677 and #973 kept in the seven files it shares. #964 meets this head in six files; whichever lands second keeps both. #963 and #967 merge with it cleanly.
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 3 not verified, 2 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 3 not verified, 3 limits that stay</summary>
 
 1. **A weak case** the hook's deadline taken at its lookup fails no case, 20 of 20 runs; it costs one call to Windows on that path, never an event.
 2. **macOS** never ran; nothing changes there by the code.
@@ -62,7 +62,8 @@ Nothing merges first: it stands on `main` 8b4c74cbe, the lines of #677 and #973 
 **Limits that stay**
 
 - Off Windows a socket the variable names that `daemon.json` does not name still gets events with no capability, as at `main`.
-- A process that is not the recorded pid but proves shares 30 s between its proof and its event; no run produced one.
+- A process that is not the recorded pid but proves has its proof's time taken off its event's 30 s; no run produced one.
+- The check and the event use two connections: the threat model states the whole time between them, the session's lock included; closing it is a change of its own.
 
 </details>
 
@@ -83,8 +84,8 @@ The description is the record: "How you tested it" holds the runs at `main` and 
 | Windows 11 | 50 hooks before a tool call to an idle daemon, 3 rounds | Median 185 ms at `main` and 191 ms here over 150 hooks a side; Windows asked, 194 and 189 ms; no process started. |
 | Linux x64 | 6 one-line changes to the fix's lines, 20 runs each | 5 fail a case in every run; the hook's deadline taken at its lookup fails none. |
 | Linux x64 | The 96 importing test files, against `main` | The same 956 failures at both, from pack test data the machine lacks; none more. |
-| Linux x64 | At this head against `main` 8b4c74cbe: the 15 test files that import `daemon-control.ts` or `engine-pipe.ts` with `claude-hook.test.ts`, and CI's lint and type-check job; earlier, rustfmt, clippy and the pipe lookup's Rust cases | 490 passed at `main` and 510 here, none failed; the rest all pass. |
+| Linux x64 | At this head against `main` 1609ac3a3: the 97 test files that import a changed module, `integration/`, CI's lint and type-check job, rustfmt, clippy, the pipe lookup's Rust cases and the wasm32-wasip1 checks | 490 passed at `main` and 510 here, none failed; the rest all pass. |
 
-**Sources.** The branch and its diff against `main` 8b4c74cbe, read on 21 November 2026; the threat model at `main` for the quoted intent.
+**Sources.** The branch and its diff against `main` 1609ac3a3, read on 22 November 2026; the threat model at `main` for the quoted intent.
 
 </details>
