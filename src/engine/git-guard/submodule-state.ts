@@ -795,8 +795,7 @@ function statOf(path: string): Stats | undefined {
  * {@link MAX_GITFILE_BYTES}, so a file put in its place after its stat is not read past that; how Git's diff fails when
  * it holds more. Undefined when it went, is no regular file by then, or cannot be opened or read. Git's diff opens a
  * submodule's `.git` to find its commit before it asks the submodule, and a `.git` it cannot open or read fails that
- * diff, Rerail's included, with Git's message; so Rerail meets one only where it became so after Git's diff read it,
- * or where Git for Windows answers for it (a `.git` another program holds open sharing nothing), and Rerail answers too.
+ * diff, Rerail's included, with Git's message; so Rerail meets one only where it became so after Git's diff read it.
  */
 function gitfileText(path: string): string | GitFailure | undefined {
   const file = openedFile(path);
