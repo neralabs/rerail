@@ -10,6 +10,7 @@ import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridg
 import type * as WalkReads from "../../../../src/engine/code-rule/walk-read-buffers.js";
 import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
 import { nativeGitAccess } from "../../../../src/engine/native/git-access.js";
+import { runGit, runGitAsync } from "../../../../src/engine/git.js";
 import { startEngineService } from "../../../../src/runtime/index.js";
 import { testEmbedder } from "../../../support/hook-events.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
@@ -40,6 +41,11 @@ vi.mock("node:fs/promises", async importOriginal => {
       return await actual.opendir(...args);
     },
   };
+});
+// Every Git started on the caller's thread or as a process no thread waits on passes through, so a case can count them.
+vi.mock("../../../../src/engine/git.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../../../src/engine/git.js")>();
+  return { ...actual, runGit: vi.fn(actual.runGit), runGitAsync: vi.fn(actual.runGitAsync) };
 });
 const { reads } = counted;
 
@@ -84,6 +90,11 @@ async function folder(): Promise<string> {
 
 function socketPathIn(root: string, name: string): string {
   return process.platform === "win32" ? `\\\\.\\pipe\\rerail-${name}-${process.pid}` : join(root, "engine.sock");
+}
+
+/** How many of `calls` ran `git worktree list --porcelain`. */
+function worktreeLists(calls: ReadonlyArray<readonly [string, readonly string[], ...unknown[]]>): number {
+  return calls.filter(([, args]) => args.join(" ") === "worktree list --porcelain").length;
 }
 
 describe("the engine service and the other worktrees of a repository", () => {
@@ -194,6 +205,38 @@ describe("the engine service and the other worktrees of a repository", () => {
       expect({ settled, logged }).toEqual({ settled: true, logged: ["../w1/src/x.py"] });
     } finally {
       releases.splice(0).forEach(release => release());
+      await service.close();
+    }
+  });
+
+  it("lists Git's worktrees off the daemon's thread when a worktree is added while a session watches them", { timeout: 60_000 }, async () => {
+    const root = await folder();
+    const databasePath = join(root, "rerail.sqlite");
+    const { main, worktrees } = repository(root, databasePath, ["w1", "w2"]);
+    const opens = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace");
+    const roots = vi.spyOn(CheckoutCodeRuleRouter.prototype, "worktreeRoots");
+    const service = await startEngineService({ socketPath: socketPathIn(root, "registry-off-thread"), storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder });
+    const session = { host: "claude-code" as const, sessionId: "session-1", cwd: worktrees[0]! };
+    try {
+      await service.ingest({ kind: "session-start", eventId: "session-1:start", session });
+      await vi.waitFor(() => expect(opens.mock.results).toHaveLength(1), { timeout: 30_000, interval: 20 });
+      await opens.mock.results[0]!.value;
+      const bridge = opens.mock.contexts[0] as CodeRuleBridge;
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+      const added = join(root, "w3");
+      git(main, "worktree", "add", "--quiet", "--detach", added);
+      const [blocking, waiting] = [worktreeLists(vi.mocked(runGit).mock.calls), worktreeLists(vi.mocked(runGitAsync).mock.calls)];
+
+      // The next walk names the added worktree, and Git's list it reads was asked as a process no thread waits on.
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+      expect({
+        blocking: worktreeLists(vi.mocked(runGit).mock.calls) - blocking,
+        waiting: worktreeLists(vi.mocked(runGitAsync).mock.calls) > waiting,
+        named: roots.mock.results.at(-1)?.value,
+      }).toEqual({ blocking: 0, waiting: true, named: expect.arrayContaining([added]) });
+    } finally {
       await service.close();
     }
   });
