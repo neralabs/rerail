@@ -110,6 +110,69 @@ So:
 - **The memo saves 6% of the corpus's reading.** Its value there is the other units' headers, which this corpus
   stubs.
 
+## In the loop's steps, with real headers, and the arguments' edges (measured 2026-11-22)
+
+`measure_the_waves_of_expansions` now also counts in steps, a model of 0588's loop:
+- a run of plain tokens is one look-ahead step per 32 tokens;
+- a macro's name is one step;
+- its arguments are one list ask per 32 tokens.
+
+It also checks the arguments' edges, two ways.
+- **Statically:** a hole the rescan can't read past before the argument is done. That is a function-like name
+  before it with a macro's name first in the argument, or a macro's name or `)` last in it with a `(` after it.
+- **Dynamically:** calls whose name and `(` came from different parts of the list.
+
+The arguments' rule has three settings.
+- **after:** as before, the rescan starts once the arguments are expanded.
+- **holes:** the rescan reads past the arguments. It waits for an argument whose edge it can't decide. A call
+  whose name or arguments come from its parent's arguments (`needs_args`) waits for all of that parent's
+  arguments, an upper bound.
+- **free:** nothing waits, a lower bound.
+
+**The model against the device.** 0588's slowest piece in `tif_getimage.c` is top tokens 7,872..7,984. The device
+takes 393 steps for it (1.32 ms of the loop on the GB10). The model gives 155 steps serially, so a device step is
+about 2.5 model steps. For that piece the model gives 55 steps in waves (both after and holes) and 43 free. Scaled
+by the same factor, that is about 0.47 ms, and 0.37 ms free, against 1.32 ms: about 2.8 times shorter. One request
+there, which reads 797 tokens of its own, is most of the chain.
+
+| | The corpus, its headers stubs | The corpus with the system's headers (glibc, libstdc++ 13) | Boost.Preprocessor (25) |
+|---|---|---|---|
+| Requests | 4,271 | 267,641 | 4,378,731 |
+| Steps read serially | 15,712 | 634,816 | 7,701,591 |
+| With a unit's memo | 83.4% | 77.0% | 11.6% |
+| With a batch's memo, by spelling (a bound) | 82.6% | 52.2% | 33.8% (the units differ) |
+| The files' own tokens | 84% | 79% | 0.02% |
+| Open tails | 2 | 2 | 210,011 |
+| Holes whose edge waits (before, after) | 0 | 0 | 41,592 (140, 41,465) |
+| Edges taken in the rescan | 0 | 0 | 24,702 |
+| Calls needing their parent's arguments | 127 | 15,200 | 1,400,244 |
+| The longest invocation, steps serially | 146 | 326 | 2,081,468 (`seq.c`) |
+| Waves after / holes / free | 48 / 49 / 37 | 169 / 166 / 166 | 54,666 / 33,831 / 2,786 (`tuple.c`) |
+
+Boost's rows, in steps:
+
+| Unit | Serially | After | Holes | Free |
+|---|---|---|---|---|
+| `seq.c` | 2,081,468 | 6,035 | 3,966 | 490 |
+| `arithmetic.c` | 145,131 | 2,869 | 1,881 | 148 |
+| `tuple.c` | 97,770 | 54,666 | 33,831 | 2,786 |
+| `facilities.c` | 16,897 | 9,978 | 6,618 | 610 |
+
+So:
+- **The earlier "holes" figure was the free bound.** It is not what the semantics allow. A call built from its
+  parent's arguments needs their expansions to know its own arguments and key. In Boost that is 1.4 M calls, and
+  with them the holes rule saves only 1.6 times over after (`tuple.c`: 54,666 → 33,831 steps). The gap from there
+  to free (12 times) is what passing arguments to a child as references would buy. The child would read its body
+  with the parameter as a hole and wait only where the argument's tokens are needed.
+- **Sharing between units is real with real headers.** A batch's memo by spelling reads 52% of the serial steps,
+  against 77% for a unit's memo. The headers' own tokens (79% of the reading) are read again by every unit that
+  includes them, which is another sharing, outside this model.
+- **Arguments' edges are a Boost matter.** The corpus has none, with or without headers. Boost has 41,592 holes
+  whose edge waits, nearly all an argument ending in a name or `)` before a `(`, and 24,702 calls formed across
+  parts.
+- **In the corpus, the waves shorten the slowest piece about 2.8 times.** The rest is one request's own reading,
+  which 0588's loop would split as it splits the files.
+
 ## Decision
 
 1. **An expansion is a request.** Kinds:
@@ -166,9 +229,10 @@ So:
    - **Done:** hits and depth on the corpus; the waves modelled on the corpus and Boost.Preprocessor
      (`measure_the_waves_of_expansions`), with open tails counted.
    - **Next:**
-     - a corpus with its headers, for sharing across units;
-     - how often an argument's edges are open in the rescan;
-     - the model in the device's steps rather than tokens: a request's own reading costs 0588's steps.
+     - **Done since:** the model in steps, against the device's slowest piece; the corpus with the system's
+       headers; the arguments' edges, statically and taken.
+     - **Next:** a call's dependence on the one argument its tokens come from, not all of them; a child
+       reading its arguments as references.
 2. **A CPU reference of the waves**, test-only: the serial pass's reader, run as requests with the memo, the holes,
    the edge checks and the continuations. Its output must equal the serial pass's on the eval tests, the corpus
    and Boost.Preprocessor. This proves the semantics (painting, tails, `(` from a child, `#`/`##` on unexpanded

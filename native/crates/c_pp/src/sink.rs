@@ -129,6 +129,25 @@ pub struct Request {
     pub place: bool,
     /// Calls whose name is this request's last token and whose `(` comes after it (open tails).
     pub tails: u32,
+    /// `Entered::key` (no definitions' count): the key of a memo across units.
+    pub skey: u64,
+    /// An invocation's expansion id (its body's tokens'); an argument's, 0.
+    pub exp: u32,
+    /// The step model of 0588's loop: the steps of the reading so far (`run` tokens not yet a step).
+    pub steps: u32,
+    pub run: u32,
+    /// The parent's steps when this was posted.
+    pub pos_steps: u32,
+    /// An invocation whose name or arguments come from its parent's arguments' expansions.
+    pub needs_args: bool,
+    /// An argument's expansion with an edge its rescan can't decide before it is done.
+    pub blocks: bool,
+    /// An invocation's holes with such an edge: before (a function-like name, then a macro's
+    /// name first) and after (a macro's name or `)` last, then the body's `(`).
+    pub edge_first: u32,
+    pub edge_last: u32,
+    /// Calls in the rescan whose name and `(` came from different parts (an argument and the body).
+    pub taken: u32,
 }
 
 /// No outputs.

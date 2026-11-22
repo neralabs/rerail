@@ -219,6 +219,8 @@ pub struct Pp<'a> {
     last_req: u32,
     /// The invocation whose arguments are being expanded (their requests' parent).
     building: u32,
+    /// By (expansion, parameter): its argument's request.
+    arg_reqs: HashMap<(u32, usize), u32>,
     /// Reading an `#if`'s line: `defined` is an operator.
     in_if: bool,
     /// Collecting a call's arguments: a file's end ends them, not the file.
@@ -287,6 +289,7 @@ impl<'a> Pp<'a> {
             reqs: Vec::new(),
             last_req: 0,
             building: 0,
+            arg_reqs: HashMap::new(),
             in_if: false,
             collecting: 0,
             lines,
@@ -477,6 +480,7 @@ impl<'a> Pp<'a> {
                         self.last_req = *req;
                         if let Some(r) = self.reqs.get_mut(*req as usize) {
                             r.own += 1;
+                            r.run += 1;
                         }
                         return toks[*pos - 1];
                     }
@@ -502,16 +506,17 @@ impl<'a> Pp<'a> {
                         continue;
                     }
                     let t = self.file_tok(pt, file);
-                    self.last_req = 0;
-                    if let Some(r) = self.reqs.first_mut() {
-                        r.own += 1;
-                    }
                     if t.flags & BOL != 0 && t.kind == P::Hash {
                         self.directive(t, file);
                         continue;
                     }
                     if t.kind == P::Ident && !self.poisoned.is_empty() && self.poisoned.contains(&t.sym) {
                         self.diag(file, t.start, Diag::Poisoned, b"");
+                    }
+                    self.last_req = 0;
+                    if let Some(r) = self.reqs.first_mut() {
+                        r.own += 1;
+                        r.run += 1;
                     }
                     return t;
                 }
@@ -541,7 +546,7 @@ impl<'a> Pp<'a> {
                 return self.defined_op(t);
             }
             let Some(d) = self.def_of(t.sym) else { return t };
-            let (parent, ppos) = (self.last_req, self.reqs.get(self.last_req as usize).map_or(0, |r| r.own));
+            let (parent, ppos, prun) = (self.last_req, self.reqs.get(self.last_req as usize).map_or(0, |r| r.own), self.reqs.get(self.last_req as usize).map_or(0, |r| r.run));
             let def = &self.defs[d as usize];
             if def.disabled {
                 t.flags |= NOEXP;
@@ -550,6 +555,9 @@ impl<'a> Pp<'a> {
             let (fnlike, builtin) = (def.fnlike, def.builtin);
             if fnlike && !self.next_is_lparen() {
                 return t;
+            }
+            if fnlike && parent != 0 && !self.reqs.is_empty() {
+                self.note_edge(&t, parent);
             }
             if let Some(b) = builtin {
                 // `__has_include` and `__has_embed` are operators of `#if` alone (clang reads
@@ -560,6 +568,8 @@ impl<'a> Pp<'a> {
                 let toks = self.builtin(b, t);
                 if let Some(r) = self.reqs.get_mut(parent as usize) {
                     r.place = true;
+                    r.steps += (prun.saturating_sub(1)).div_ceil(32) + 1;
+                    r.run = 0;
                 }
                 if !toks.is_empty() {
                     self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: false, req: parent });
@@ -577,7 +587,21 @@ impl<'a> Pp<'a> {
             } else {
                 (Vec::new(), t)
             };
-            self.enter(d, t, end, args, parent, ppos);
+            let mut needs = false;
+            if let Some(r) = self.reqs.get_mut(parent as usize) {
+                // The step model (0588's loop): the plain run before the name a look-ahead, the
+                // name a step, its arguments a list ask each 32 tokens.
+                let argtoks = r.own - ppos;
+                r.steps += (prun.saturating_sub(1)).div_ceil(32) + 1 + argtoks.div_ceil(32);
+                r.run = 0;
+                // A call whose name or arguments come from its parent's arguments needs their
+                // expansions.
+                if parent != 0 && !r.arg {
+                    let id = r.exp;
+                    needs = t.exp != id || args.iter().flatten().any(|a| a.exp != id);
+                }
+            }
+            self.enter(d, t, end, args, parent, ppos, needs);
         }
     }
 
@@ -686,8 +710,8 @@ impl<'a> Pp<'a> {
         let req = if self.reqs.is_empty() {
             0
         } else {
-            let key = self.list_key(&toks);
-            self.reqs.push(crate::sink::Request { parent: self.building, key, arg: true, ..Default::default() });
+            let (skey, key) = self.list_key(&toks);
+            self.reqs.push(crate::sink::Request { parent: self.building, key, skey, arg: true, ..Default::default() });
             self.reqs.len() as u32 - 1
         };
         self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: true, req });
@@ -742,7 +766,7 @@ impl<'a> Pp<'a> {
     }
 
     /// Macro `d`'s expansion of the call `name` with `args`, entered as the next source.
-    fn enter(&mut self, d: u32, name: Tk, end: Tk, args: Vec<Vec<Tk>>, parent: u32, ppos: u32) {
+    fn enter(&mut self, d: u32, name: Tk, end: Tk, args: Vec<Vec<Tk>>, parent: u32, ppos: u32, needs_args: bool) {
         self.exps.push(Expansion { def: d, name, end });
         let id = self.exps.len() as u32;
         {
@@ -756,8 +780,9 @@ impl<'a> Pp<'a> {
         let mut pre: Vec<Option<Vec<Tk>>> = vec![None; args.len()];
         let entry = self.sink.wants_entries().then(|| self.entry_key(d, &args));
         let req = match entry {
-            Some((_, epoch_key, _)) if !self.reqs.is_empty() => {
-                self.reqs.push(crate::sink::Request { parent, pos: ppos, key: epoch_key, ..Default::default() });
+            Some((skey, epoch_key, _)) if !self.reqs.is_empty() => {
+                let pos_steps = self.reqs[parent as usize].steps;
+                self.reqs.push(crate::sink::Request { parent, pos: ppos, pos_steps, key: epoch_key, skey, exp: id, needs_args, ..Default::default() });
                 self.reqs.len() as u32 - 1
             }
             _ => 0,
@@ -821,7 +846,7 @@ impl<'a> Pp<'a> {
 
     /// An argument's key before its expansion (`Sink::requests`): its tokens' spellings, the
     /// names of the macros disabled, and the definitions' count.
-    fn list_key(&self, toks: &[Tk]) -> u64 {
+    fn list_key(&self, toks: &[Tk]) -> (u64, u64) {
         fn mix(h: &mut u64, b: &[u8]) {
             for &c in b {
                 *h = (*h ^ u64::from(c)).wrapping_mul(0x0100_0000_01b3);
@@ -839,8 +864,27 @@ impl<'a> Pp<'a> {
             mix(&mut h, &[0xfa]);
             mix(&mut h, self.syms.text(self.defs[x as usize].name));
         }
+        let skey = h;
         mix(&mut h, &self.epoch.to_le_bytes());
-        h
+        (skey, h)
+    }
+
+    /// A measurement's (`Sink::requests`): a call about to be made in request `req`'s rescan whose
+    /// name and `(` come from different parts of its list (an argument's expansion and the body,
+    /// or two arguments'): an argument's edge taken.
+    fn note_edge(&mut self, name: &Tk, req: u32) {
+        let Some(Src::Toks { toks, pos, req: top, .. }) = self.stack.last() else { return };
+        if *top != req || *pos >= toks.len() || !toks[*pos].is(T::LParen) {
+            return;
+        }
+        let Some(r) = self.reqs.get_mut(req as usize) else { return };
+        if r.arg {
+            return;
+        }
+        let lp = toks[*pos].exp;
+        if (name.exp == r.exp) != (lp == r.exp) || (name.exp != r.exp && name.exp != lp) {
+            r.taken += 1;
+        }
     }
 
     /// The file position a token was called from: through its expansions to the token read from
@@ -925,7 +969,14 @@ impl<'a> Pp<'a> {
                     args[p].clone()
                 } else {
                     if pre[p].is_none() {
+                        let rid = self.reqs.len() as u32;
                         pre[p] = Some(self.expand_list(args[p].clone()));
+                        if !self.reqs.is_empty() {
+                            self.arg_reqs.insert((id, p), rid);
+                        }
+                    }
+                    if !self.reqs.is_empty() {
+                        self.note_hole(d, &out, &args[p], body.get(i + 1), id, p);
                     }
                     pre[p].clone().unwrap()
                 };
@@ -943,6 +994,28 @@ impl<'a> Pp<'a> {
             i += 1;
         }
         out
+    }
+
+    /// A measurement's (`Sink::requests`): whether an argument's expansion read as a hole has an
+    /// edge its rescan can't decide before the expansion is done. Before it, a function-like name
+    /// and the argument's first token a macro's name; after it, a `(` in the body and its last
+    /// token a macro's name or a `)`.
+    fn note_hole(&mut self, d: u32, out: &[Tk], arg: &[Tk], next: Option<&Tk>, id: u32, p: usize) {
+        let is_macro = |s: &Self, t: &Tk| t.kind == P::Ident && t.flags & NOEXP == 0 && s.def_of(t.sym).is_some();
+        let fn_before = out.last().is_some_and(|t| {
+            t.kind == P::Ident && t.flags & NOEXP == 0 && self.def_of(t.sym).is_some_and(|e| e != d && self.defs[e as usize].fnlike && !self.defs[e as usize].disabled)
+        });
+        let first = fn_before && arg.first().is_some_and(|t| is_macro(self, t));
+        let last = next.is_some_and(|n| n.is(T::LParen)) && arg.last().is_some_and(|t| is_macro(self, t) || t.is(T::RParen));
+        if !(first || last) {
+            return;
+        }
+        if let Some(&rid) = self.arg_reqs.get(&(id, p)) {
+            self.reqs[rid as usize].blocks = true;
+        }
+        let r = &mut self.reqs[self.building as usize];
+        r.edge_first += u32::from(first);
+        r.edge_last += u32::from(last);
     }
 
     /// Whether the variadic argument has tokens once expanded (`__VA_OPT__`'s test).

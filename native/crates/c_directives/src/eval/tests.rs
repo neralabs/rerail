@@ -1501,22 +1501,39 @@ fn measure_what_expansions_repeat() {
 }
 
 /// Decision 0613's waves, modelled on the serial pass (`Sink::requests`): each invocation and
-/// argument expansion a request, a token read a unit of time, every ready request at once. A
-/// request's reading starts when it is posted (an invocation's, once its arguments are expanded);
-/// its children are posted as its reading reaches them; it is done when its reading and its
-/// children are. A memo hit (an equal key, no place built-in below) waits for the first's result and
-/// computes nothing. Against that, the serial pass's cost of a top-level invocation is every token
-/// read under it. The corpus (`RERAIL_PP_FIRST`, `RERAIL_PP_COUNT`), or Boost.Preprocessor's tests
-/// with `RERAIL_PP_SET=boost` (each test once: its `.c`, else its `.cpp`); `RERAIL_PP_NAME` filters the
-/// rows. A child with an open tail (a call at its end taking its `(` from after it) holds its
-/// parent's reading after it until it is done.
+/// argument expansion a request, every ready request at once, a unit's memo (a hit computes
+/// nothing and waits for the first's result). A request's reading starts when it is posted; its
+/// children are posted as its reading reaches them; it is done when its reading and its children
+/// are. A child with an open tail holds its parent's reading after it until it is done. Three rules
+/// for arguments:
+/// - `after`: an invocation's rescan starts once its arguments are expanded;
+/// - `holes`: the rescan reads past them, but waits for one whose edge it can't decide
+///   (`Request::blocks`), and a call made of an argument's tokens waits for the arguments
+///   (`needs_args`);
+/// - `free`: neither wait (a bound).
+///
+/// Costs are counted two ways: tokens, a token read a unit; and steps, 0588's loop modelled
+/// (`Request::steps`: a plain run a look-ahead each 32 tokens, a macro's name a step, its arguments a
+/// list ask each 32 tokens). The serial pass's cost of a top-level invocation is everything read
+/// under it.
+///
+/// Inputs:
+/// - the corpus (`RERAIL_PP_FIRST`, `RERAIL_PP_COUNT`), its headers stubs, or found in
+///   `RERAIL_PP_INCLUDE` and `RERAIL_PP_INCLUDE_CPP` (C's and C++'s directories, `:` between) with
+///   `RERAIL_PP_PREDEF_C` and `_CPP` (files of `#define` lines, a compiler's predefines); a header
+///   found in none is a stub;
+/// - Boost.Preprocessor's tests with `RERAIL_PP_SET=boost` (each test once: its `.c`, else its
+///   `.cpp`; `RERAIL_PP_ONLY` a part of the name).
+///
+/// `RERAIL_PP_NAME` filters the rows. `RERAIL_PP_PIECE=A..B` also models the top-level tokens A..B
+/// (0588's piece, as `RERAIL_PP_LOOP_LOG` names the slowest) of the units shown.
 #[test]
 #[ignore = "a measurement over the corpus (~/orca/rerail-shared/lean-corpus)"]
 fn measure_the_waves_of_expansions() {
     use rerail_c_pp::Config;
     use rerail_c_pp::files::{DirKind, Search};
     use rerail_c_pp::sink::Request;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     #[derive(Default)]
     struct Rec(Vec<Request>);
     impl rerail_c_pp::sink::Sink for Rec {
@@ -1527,19 +1544,21 @@ fn measure_the_waves_of_expansions() {
             self.0 = r.to_vec();
         }
     }
-    let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
-    let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
-    let boost = std::env::var("RERAIL_PP_SET").is_ok_and(|v| v == "boost");
+    let env = |k: &str| std::env::var(k).ok();
+    let count = env("RERAIL_PP_COUNT").and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
+    let first = env("RERAIL_PP_FIRST").and_then(|n| n.parse().ok()).unwrap_or(0);
+    let boost = env("RERAIL_PP_SET").is_some_and(|v| v == "boost");
     let mut units: Vec<(String, bool)> = Vec::new();
-    let dirs;
+    let mut dirs: Vec<(String, DirKind)> = Vec::new();
     if boost {
-        let root = std::env::var("RERAIL_PP_BOOST").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/boost-preprocessor"));
+        let root = env("RERAIL_PP_BOOST").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/boost-preprocessor"));
+        let only = env("RERAIL_PP_ONLY");
         let mut paths: Vec<String> = std::fs::read_dir(root.join("test")).unwrap().flatten().map(|e| e.path().to_string_lossy().into_owned())
             .filter(|p| p.ends_with(".c") || p.ends_with(".cpp") && !std::path::Path::new(&p.replace(".cpp", ".c")).exists())
-            .filter(|p| std::env::var("RERAIL_PP_ONLY").is_err() || std::env::var("RERAIL_PP_ONLY").is_ok_and(|o| p.contains(&o))).collect();
+            .filter(|p| only.as_ref().is_none_or(|o| p.contains(o.as_str()))).collect();
         paths.sort();
         units.extend(paths.into_iter().skip(first).take(count).map(|p| { let c = !p.ends_with(".c"); (p, c) }));
-        dirs = vec![(root.join("include").to_string_lossy().into_owned(), DirKind::Angle)];
+        dirs.push((root.join("include").to_string_lossy().into_owned(), DirKind::Angle));
     } else {
         let root = corpus_root();
         for (dir, cpp) in [("c", false), ("cpp", true)] {
@@ -1548,71 +1567,123 @@ fn measure_the_waves_of_expansions() {
             paths.sort();
             units.extend(paths.into_iter().skip(first).take(count).map(|p| (p, cpp)));
         }
-        dirs = vec![("<stub>".to_string(), DirKind::After)];
+    }
+    let mut dirs_cpp = dirs.clone();
+    for (var, to) in [("RERAIL_PP_INCLUDE", &mut dirs), ("RERAIL_PP_INCLUDE_CPP", &mut dirs_cpp)] {
+        for d in env(var).iter().flat_map(|v| v.split(':').filter(|d| !d.is_empty()).map(str::to_string).collect::<Vec<_>>()) {
+            to.push((d, DirKind::System));
+        }
+        to.push(("<stub>".to_string(), DirKind::After));
     }
     assert!(!units.is_empty(), "no units");
-    let cfgs = [Config::new(crate::pp::options(false)), Config::new(crate::pp::options(true))];
+    let mut cfgs = [Config::new(crate::pp::options(false)), Config::new(crate::pp::options(true))];
+    for (k, var) in [(0, "RERAIL_PP_PREDEF_C"), (1, "RERAIL_PP_PREDEF_CPP")] {
+        let Some(f) = env(var) else { continue };
+        for line in std::fs::read_to_string(&f).unwrap().lines() {
+            let Some(rest) = line.strip_prefix("#define ") else { continue };
+            let (n, b) = rest.split_once(' ').unwrap_or((rest, ""));
+            cfgs[k].predefines.push((n.to_string(), Some(b.to_string())));
+        }
+    }
+    #[derive(Clone, Copy, PartialEq)]
+    enum Args {
+        After,
+        Holes,
+        Free,
+    }
     struct Model<'a> {
         r: &'a [Request],
-        kids: Vec<Vec<u32>>,
-        place: Vec<bool>,
-        memo: HashMap<u64, u64>,
+        kids: &'a [Vec<u32>],
+        place: &'a [bool],
+        steps: bool,
+        args: Args,
+        /// By key: when the first was done, and how long it took.
+        memo: HashMap<u64, (u64, u64)>,
         work: u64,
         computed: u64,
         deepest: u32,
-        /// The longest own reading of a request computed.
-        longest: u32,
-        /// Whether an open tail holds its parent's reading (`RERAIL_PP_TAILS=0`: not, a bound).
-        hold: bool,
-        /// Whether an invocation's rescan reads past its arguments' expansions as holes
-        /// (`RERAIL_PP_ARGS=holes`, a bound), not after them.
-        arg_holes: bool,
     }
     impl Model<'_> {
+        fn cost(&self, q: &Request) -> u64 {
+            if self.steps { u64::from(q.steps + q.run.div_ceil(32)) } else { u64::from(q.own) }
+        }
+        fn pos(&self, q: &Request) -> u64 {
+            u64::from(if self.steps { q.pos_steps } else { q.pos })
+        }
         /// Request `i` posted at `post`, at nesting `depth`: when it is done.
         fn run(&mut self, i: u32, post: u64, depth: u32) -> u64 {
             let q = self.r[i as usize];
-            let memoizable = i != 0 && !self.place[i as usize];
-            if memoizable && let Some(&f) = self.memo.get(&q.key) {
-                return f.max(post);
+            let memoizable = !self.place[i as usize];
+            // A hit waits for the first's result, or takes as long as the first took, whichever is
+            // sooner (a result is ready when the first is done).
+            if memoizable && let Some(&(f, took)) = self.memo.get(&q.key) {
+                return f.min(post + took).max(post);
             }
-            self.work += u64::from(q.own);
+            self.work += self.cost(&q);
             self.computed += 1;
             self.deepest = self.deepest.max(depth);
-            self.longest = self.longest.max(q.own);
-            let kids = std::mem::take(&mut self.kids[i as usize]);
-            let mut start = post;
-            let mut args_done = post;
+            let kids = &self.kids[i as usize];
+            let (mut start, mut args_done) = (post, post);
             for &a in kids.iter().filter(|&&k| self.r[k as usize].arg) {
-                args_done = args_done.max(self.run(a, post, depth + 1));
+                let f = self.run(a, post, depth + 1);
+                args_done = args_done.max(f);
+                if self.args == Args::Holes && self.r[a as usize].blocks {
+                    start = start.max(f);
+                }
             }
-            if !self.arg_holes {
+            if self.args == Args::After {
                 start = args_done;
             }
-            // A child with an open tail holds the reading after it until it is done (the
-            // continuation reads on from the hole with the child's tokens in hand).
             let mut late = 0u64;
-            let mut done = start + u64::from(q.own);
             for &c in kids.iter().filter(|&&k| !self.r[k as usize].arg) {
-                let at = start + u64::from(self.r[c as usize].pos) + late;
+                let qc = self.r[c as usize];
+                let mut at = start + self.pos(&qc) + late;
+                if self.args == Args::Holes && qc.needs_args {
+                    at = at.max(args_done);
+                }
                 let f = self.run(c, at, depth + 1);
-                if self.r[c as usize].tails > 0 && self.hold {
+                if qc.tails > 0 {
                     late = late.max(f - at);
                 }
-                done = done.max(f);
+                args_done = args_done.max(f);
             }
-            done = done.max(start + u64::from(q.own) + late).max(args_done);
+            let done = args_done.max(start + self.cost(&q) + late);
             if memoizable {
-                self.memo.insert(q.key, done);
+                self.memo.insert(q.key, (done, done - post));
             }
             done
         }
     }
-    let (mut t_read, mut t_work, mut t_reqs, mut t_computed, mut t_tails, mut t_place, mut t_top) = (0u64, 0u64, 0usize, 0u64, 0u64, 0usize, 0u64);
-    let (mut worst_serial, mut worst_wave, mut worst_waves) = (0u64, 0u64, 0u32);
-    let mut rows: Vec<(u64, u64, u64, u64, usize, u64, u32, u32, String)> = Vec::new();
+    let modes = [(false, Args::After), (false, Args::Holes), (false, Args::Free), (true, Args::After), (true, Args::Holes), (true, Args::Free)];
+    let piece: Option<(u32, u32)> = env("RERAIL_PP_PIECE").and_then(|v| v.split_once("..").and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))));
+    let only = env("RERAIL_PP_NAME");
+    #[derive(Default)]
+    struct Sum {
+        reqs: u64,
+        computed: u64,
+        read: u64,
+        work: u64,
+        read_steps: u64,
+        work_steps: u64,
+        top: u64,
+        tails: u64,
+        place: u64,
+        blocks: u64,
+        edge_first: u64,
+        edge_last: u64,
+        taken: u64,
+        needs: u64,
+        args: u64,
+        batch_work: u64,
+        batch_steps: u64,
+    }
+    let mut t = Sum::default();
+    let mut batch: HashSet<u64> = HashSet::new();
+    // By mode: the longest serial and wave chain of any top-level invocation.
+    let (mut worst_serial, mut worst) = ([0u64; 2], [0u64; 6]);
+    let mut rows: Vec<(u64, String)> = Vec::new();
     for (path, cpp) in &units {
-        let mut io = Search::new(dirs.clone(), |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new)));
+        let mut io = Search::new(if *cpp { dirs_cpp.clone() } else { dirs.clone() }, |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new)));
         let mut rec = Rec::default();
         {
             let mut pp = rerail_c_pp::Pp::new(cfgs[usize::from(*cpp)].clone(), &mut io, &mut rec);
@@ -1622,54 +1693,110 @@ fn measure_the_waves_of_expansions() {
         if r.is_empty() {
             continue;
         }
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
         let mut kids: Vec<Vec<u32>> = vec![Vec::new(); r.len()];
         for (i, q) in r.iter().enumerate().skip(1) {
             kids[q.parent as usize].push(i as u32);
         }
-        // A request is place-dependent when it or a request below it reads a place built-in.
         let mut place: Vec<bool> = r.iter().map(|q| q.place).collect();
         for i in (1..r.len()).rev() {
             if place[i] {
                 place[r[i].parent as usize] = true;
             }
         }
-        // The serial cost under each request: every token read in its subtree.
-        let mut under: Vec<u64> = r.iter().map(|q| u64::from(q.own)).collect();
+        let steps_of = |q: &Request| u64::from(q.steps + q.run.div_ceil(32));
+        let (mut under, mut under_s): (Vec<u64>, Vec<u64>) = (r.iter().map(|q| u64::from(q.own)).collect(), r.iter().map(steps_of).collect());
         for i in (1..r.len()).rev() {
             under[r[i].parent as usize] += under[i];
+            under_s[r[i].parent as usize] += under_s[i];
         }
-        let tops: Vec<u32> = kids[0].clone();
-        let mut m = Model { r: &r, kids, place: place.clone(), memo: HashMap::new(), work: 0, computed: 0, deepest: 0, longest: 0, hold: std::env::var("RERAIL_PP_TAILS").map_or(true, |v| v != "0"), arg_holes: std::env::var("RERAIL_PP_ARGS").is_ok_and(|v| v == "holes") };
-        // Each top-level invocation's chain: posted at 0 with the unit's memo so far.
-        let (mut serial, mut wave) = (0u64, 0u64);
-        m.work += u64::from(r[0].own);
-        for &c in &tops {
+        // A memo across the units, by spelling (a bound: it assumes the lookups alike): what is
+        // computed once in the batch, a hit's subtree not.
+        {
+            let mut stack: Vec<u32> = kids[0].clone();
+            t.batch_work += u64::from(r[0].own);
+            t.batch_steps += steps_of(&r[0]);
+            while let Some(i) = stack.pop() {
+                let q = &r[i as usize];
+                if !place[i as usize] && !batch.insert(q.skey) {
+                    continue;
+                }
+                t.batch_work += u64::from(q.own);
+                t.batch_steps += steps_of(q);
+                stack.extend(kids[i as usize].iter().copied());
+            }
+        }
+        let tops = &kids[0];
+        let mut chains = [0u64; 6];
+        let (mut serial, mut serial_s) = (0u64, 0u64);
+        let mut computed = 0u64;
+        let (mut work, mut work_s, mut deep) = (0u64, 0u64, 0u32);
+        for &c in tops {
             serial = serial.max(under[c as usize]);
-            wave = wave.max(m.run(c, 0, 1));
+            serial_s = serial_s.max(under_s[c as usize]);
         }
-        let tails: u64 = r.iter().map(|q| u64::from(q.tails)).sum();
-        let nplace = place.iter().skip(1).filter(|&&p| p).count();
-        t_read += under[0];
-        t_work += m.work;
-        t_reqs += r.len() - 1;
-        t_computed += m.computed;
-        t_tails += tails;
-        t_place += nplace;
-        t_top += u64::from(r[0].own);
-        worst_serial = worst_serial.max(serial);
-        worst_wave = worst_wave.max(wave);
-        worst_waves = worst_waves.max(m.deepest);
-        let name = path.rsplit('/').next().unwrap_or(path).to_string();
-        rows.push((serial, wave, under[0], m.work, r.len() - 1, m.computed, m.deepest, tails as u32, format!("{name} (the longest own reading {})", m.longest)));
+        for (k, &(steps, args)) in modes.iter().enumerate() {
+            let mut m = Model { r: &r, kids: &kids, place: &place, steps, args, memo: HashMap::new(), work: 0, computed: 0, deepest: 0 };
+            for &c in tops {
+                chains[k] = chains[k].max(m.run(c, 0, 1));
+            }
+            if k == 1 {
+                (work, computed) = (m.work + u64::from(r[0].own), m.computed);
+            }
+            if k == 4 {
+                (work_s, deep) = (m.work + steps_of(&r[0]), m.deepest);
+            }
+            worst[k] = worst[k].max(chains[k]);
+        }
+        worst_serial[0] = worst_serial[0].max(serial);
+        worst_serial[1] = worst_serial[1].max(serial_s);
+        let sum = |f: &dyn Fn(&Request) -> u64| -> u64 { r.iter().skip(1).map(f).sum() };
+        t.reqs += r.len() as u64 - 1;
+        t.computed += computed;
+        t.read += under[0];
+        t.work += work;
+        t.read_steps += under_s[0];
+        t.work_steps += work_s;
+        t.top += u64::from(r[0].own);
+        t.tails += sum(&|q| u64::from(q.tails));
+        t.place += place.iter().skip(1).filter(|&&p| p).count() as u64;
+        t.blocks += sum(&|q| u64::from(q.blocks));
+        t.edge_first += sum(&|q| u64::from(q.edge_first));
+        t.edge_last += sum(&|q| u64::from(q.edge_last));
+        t.taken += sum(&|q| u64::from(q.taken));
+        t.needs += sum(&|q| u64::from(q.needs_args));
+        t.args += sum(&|q| u64::from(q.arg));
+        if only.as_deref().is_none_or(|o| name.contains(o)) {
+            rows.push((serial_s, format!("{name}: the longest invocation in steps {serial_s} serially, waves after/holes/free {}/{}/{}; in tokens {serial}, {}/{}/{}; read {} steps, {} with the memo; {} deep",
+                chains[3], chains[4], chains[5], chains[0], chains[1], chains[2], under_s[0], work_s, deep)));
+            if let Some((a, b)) = piece {
+                // The piece: the top-level tokens a..b, its calls posted at their steps in it.
+                let inside: Vec<u32> = tops.iter().copied().filter(|&c| r[c as usize].pos > a && r[c as usize].pos <= b).collect();
+                let base = tops.iter().copied().filter(|&c| r[c as usize].pos <= a).last().map_or(0, |c| r[c as usize].pos_steps);
+                let last = inside.last().map_or((a, base), |&c| (r[c as usize].pos, r[c as usize].pos_steps));
+                let own_s = u64::from(last.1 - base) + u64::from(b.saturating_sub(last.0)).div_ceil(32);
+                let serial_piece: u64 = own_s + inside.iter().map(|&c| under_s[c as usize]).sum::<u64>();
+                let mut out = Vec::new();
+                for args in [Args::After, Args::Holes, Args::Free] {
+                    let mut m = Model { r: &r, kids: &kids, place: &place, steps: true, args, memo: HashMap::new(), work: 0, computed: 0, deepest: 0 };
+                    let mut done = own_s;
+                    for &c in &inside {
+                        done = done.max(m.run(c, u64::from(r[c as usize].pos_steps - base), 1));
+                    }
+                    out.push(done);
+                }
+                eprintln!("WAVES {name} piece {a}..{b}: {} calls at the top; {serial_piece} steps serially ({own_s} the top's own), waves after/holes/free {}/{}/{}", inside.len(), out[0], out[1], out[2]);
+            }
+        }
     }
     let pct = |a: u64, b: u64| 100.0 * a as f64 / b.max(1) as f64;
-    eprintln!("WAVES {} units: {t_reqs} requests ({t_computed} computed with the memo, {:.1}%), {t_place} place-dependent; {t_read} tokens read serially, {t_work} with the memo ({:.1}%), {t_top} of them the files'", rows.len(), pct(t_computed, t_reqs as u64), pct(t_work, t_read));
-    eprintln!("WAVES open tails (a call taking its `(` past a macro's list): {t_tails}");
-    eprintln!("WAVES the longest top-level invocation: {worst_serial} tokens read serially; the longest chain in waves {worst_wave}; the deepest computed request {worst_waves}");
+    eprintln!("WAVES {} units: {} requests ({} arguments), {} computed with a unit's memo ({:.1}%), {} place-dependent", units.len(), t.reqs, t.args, t.computed, pct(t.computed, t.reqs), t.place);
+    eprintln!("WAVES read serially: {} tokens ({} the files' own), {} steps; with a unit's memo {:.1}% of the tokens, {:.1}% of the steps; with a batch's memo by spelling {:.1}%, {:.1}%", t.read, t.top, t.read_steps, pct(t.work, t.read), pct(t.work_steps, t.read_steps), pct(t.batch_work, t.read), pct(t.batch_steps, t.read_steps));
+    eprintln!("WAVES edges: open tails {}; argument holes whose edge waits {} (before {}, after {}); calls whose name and ( came from different parts {}; calls needing their parent's arguments {}", t.tails, t.blocks, t.edge_first, t.edge_last, t.taken, t.needs);
+    eprintln!("WAVES the longest top-level invocation: serially {} steps ({} tokens); waves after/holes/free {}/{}/{} steps ({}/{}/{} tokens)", worst_serial[1], worst_serial[0], worst[3], worst[4], worst[5], worst[0], worst[1], worst[2]);
     rows.sort_by_key(|r| std::cmp::Reverse(r.0));
-    let only = std::env::var("RERAIL_PP_NAME").ok();
-    for (s, w, rd, wk, n, c, d, t, name) in rows.iter().filter(|r| only.as_deref().is_none_or(|o| r.8.contains(o))).take(15) {
-        eprintln!("WAVES {name}: longest invocation {s} serially, {w} in waves; read {rd}, with the memo {wk}; {n} requests, {c} computed, {d} deep, {t} open tails");
+    for (_, row) in rows.iter().take(15) {
+        eprintln!("WAVES {row}");
     }
 }
 
