@@ -3142,7 +3142,6 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
     // Inputs first: their digests are what the relations derived from them record. Each input is a job of its
     // own (its rows' digests by document, its changed granules' rows, each encoded); their frames are taken in
     // the inputs' order.
-    let phase = super::phases::current();
     let atoms_ref = &atoms;
     // Each input's frames are queued as its job makes them (Q74), into the run's wave (`Carry`: the writer takes
     // the wave whole, in one transaction, with the derived relations' frames when they are written together; before
@@ -3172,7 +3171,8 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
             queue(kept);
             return Some((digest, written));
         }
-        // An input kept as its documents' digest (decision 0458): its documents' entry alone, one row, no granules.
+        // A base relation is kept as its documents' digest (decision 0458): its documents' entry alone, one row, no
+        // granules; its rows are its documents' tapes.
         if let Some(bound) = digest_only.get(rel) {
             let rows = vec![0, digest as i64, bound.unwrap_or_else(|| source.len()) as i64];
             kept.push(kept_flat(name, DOCS_PART, digest, vec![(DIGEST_ONLY_READ.to_owned(), 1)], vec![b'i'; 3], rows, 1));
@@ -3199,75 +3199,18 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         if let Some(o) = &old {
             changed.extend(o.keys().filter(|d| !docs.contains_key(*d)).map(|d| granule(*d)));
         }
-        if std::env::var_os("RERAIL_INPUT_TRACE").is_some() && changed.len() <= 8 && source.len() > 20_000 {
-            let differ_n: Vec<(i64, Option<(u64, u64)>, Option<(u64, u64)>)> = docs.iter().filter(|(d, _)| differ(d)).take(4).map(|(d, v)| (*d, Some(*v), old.as_ref().and_then(|o| o.get(d)).copied())).collect();
-            eprintln!("rerail: input {rel} {:?} (group col {g} of {width}, {} rows, {} owners): granules {changed:?}; owners differ {differ_n:?}", prog.fields().ok().and_then(|f| f.columns(rel)), source.len(), docs.len());
-        }
-        if changed.len() > 8 && std::env::var_os("RERAIL_INPUT_TRACE").is_some() {
-            let differ_n = docs.keys().filter(|d| differ(d)).count();
-            let gone_n = old.as_ref().map_or(0, |o| o.keys().filter(|d| !docs.contains_key(*d)).count());
-            let ex: Vec<String> = docs.iter().filter(|(d, _)| differ(d)).take(3).map(|(d, v)| format!("{d}: {v:?} was {:?}", old.as_ref().and_then(|o| o.get(d)))).collect();
-            let hit = input_docs(rel).is_some_and(|d| digest_of_docs(&d) == digest);
-            eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, phase, source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
-        }
-        // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's
-        // rows as one range), each in the source's order, read a window at a time into the granule's entry. A
-        // maintained input (`Layered`) gives each owner's rows from its ranges; another is read through once for its
-        // rows' places (4 bytes a row), then by them.
-        let layered = source.as_any().and_then(|a| a.downcast_ref::<Layered>());
-        let all: Vec<usize> = (0..width).collect();
-        let mut owners_of: BTreeMap<i64, Vec<i64>> = changed.iter().map(|g| (*g, Vec::new())).collect();
-        let mut ids: BTreeMap<i64, BTreeMap<i64, Vec<u32>>> = BTreeMap::new();
-        match layered {
-            Some(_) => {
-                for owner in docs.keys().filter(|d| changed.contains(&granule(**d))) {
-                    owners_of.get_mut(&granule(*owner)).expect("a changed granule").push(*owner);
-                }
+        // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's rows as
+        // one range), each in the source's order. Never gathered: their row ids are an index written in a block of
+        // the run (`picked_ids`), and the store's writer reads each granule's rows from the input where they lie,
+        // into its scratch (`KeptWhat::Picked`). Gathered into flat vectors, every changed granule's rows were held
+        // on the heap until written (1.7 GB on 3,089 files), a copy of the input's blocks (decision 0353).
+        if !changed.is_empty() {
+            let (ids, ranges) = picked_ids(source.as_ref(), g, &changed, &granule);
+            for (part, (lo, hi)) in ranges {
+                written += (hi - lo) as usize;
+                let picked = PickedRows { source: Arc::clone(source), ids: Arc::clone(&ids), lo, hi, width };
+                kept.push(KeptPut { rel: name.name.clone(), ident: name.ident, part, digest: 0, reads: Vec::new(), what: KeptWhat::Picked(Box::new(picked)), types: types.clone() });
             }
-            None => {
-                let mut row = vec![0i64; width];
-                for r in 0..source.len() {
-                    source.row_at(r, &all[g..=g], &mut row[g..=g]);
-                    let owner = super::memo::document_of(row[g]);
-                    let gr = granule(owner);
-                    if changed.contains(&gr) {
-                        ids.entry(gr).or_default().entry(owner).or_default().push(u32::try_from(r).expect("an input of fewer than 2^32 rows"));
-                    }
-                }
-            }
-        }
-        for part in changed.iter().copied() {
-            let by_id = ids.remove(&part).unwrap_or_default();
-            let mut owners = owners_of.remove(&part).unwrap_or_default();
-            owners.sort_unstable();
-            let n: usize = match layered {
-                Some(l) => owners.iter().map(|o| l.owner_rows(*o).len() / width).sum(),
-                None => by_id.values().map(Vec::len).sum(),
-            };
-            let each = |f: &mut dyn FnMut(&[i64])| match layered {
-                Some(l) => owners.iter().for_each(|o| f(&l.owner_rows(*o))),
-                None => {
-                    let mut buf: Vec<i64> = Vec::with_capacity(4096.min(n) * width);
-                    for r in by_id.values().flatten() {
-                        let at = buf.len();
-                        buf.resize(at + width, 0);
-                        source.row_at(*r as usize, &all, &mut buf[at..]);
-                        if buf.len() == 4096 * width {
-                            f(&buf);
-                            buf.clear();
-                        }
-                    }
-                    if !buf.is_empty() {
-                        f(&buf);
-                    }
-                }
-            };
-            written += n;
-            // copy (0353 step 8): the granule's rows gathered from the input's source into its entry (0353's row 12,
-            // the kept facts' rows of their own); an input's owners are spread through its source's rows.
-            let mut granule_rows: Vec<i64> = Vec::with_capacity(n * width);
-            each(&mut |w: &[i64]| granule_rows.extend_from_slice(w));
-            kept.push(kept_flat(name, part, 0, Vec::new(), types.clone(), granule_rows, n));
         }
         let mut table: Vec<(i64, (u64, u64))> = docs.iter().map(|(d, v)| (*d, *v)).collect();
         table.sort_unstable();
@@ -3296,6 +3239,73 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         written += n;
     }
     InputsWritten { now, written }
+}
+
+/// The row ids of `source`'s rows in the granules `changed`, an index in a block of the run: granule by granule
+/// (ascending), owner by owner (ascending) within it, each owner's rows in the source's order; and each granule's
+/// range of it. Two passes over the owner column `g`, read in place: one counts each owner's rows, one places them.
+fn picked_ids(source: &dyn Source, g: usize, changed: &BTreeSet<i64>, granule: &dyn Fn(i64) -> i64) -> (Arc<crate::code_rule_dsl::facts::rows::Part>, Vec<(i64, (u32, u32))>) {
+    use crate::code_rule_dsl::facts::rows::{Life, Part};
+    let n = source.len();
+    // Per owner of a changed granule: its rows' count, then where its next row goes.
+    let mut at: BTreeMap<(i64, i64), u32> = BTreeMap::new();
+    for r in 0..n {
+        let owner = super::memo::document_of(source.value(r, g));
+        let gr = granule(owner);
+        if changed.contains(&gr) {
+            *at.entry((gr, owner)).or_insert(0) += 1;
+        }
+    }
+    let mut ranges: Vec<(i64, (u32, u32))> = Vec::new();
+    let mut next = 0u32;
+    for ((gr, _), count) in at.iter_mut() {
+        match ranges.last_mut() {
+            Some((g0, (_, hi))) if g0 == gr => *hi += *count,
+            _ => ranges.push((*gr, (next, next + *count))),
+        }
+        let c = *count;
+        *count = next;
+        next += c;
+    }
+    let ids = Part::with_index_room(Life::Run, 1, next as usize, 0);
+    for r in 0..n {
+        let owner = super::memo::document_of(source.value(r, g));
+        if let Some(slot) = at.get_mut(&(granule(owner), owner)) {
+            // SAFETY: slot `*slot` is below the `next` rows reserved, each written once, none read before `written`.
+            unsafe { ids.put(*slot, 0, r as i64) };
+            *slot += 1;
+        }
+    }
+    // SAFETY: rows `0..next` are written.
+    unsafe { ids.written(next) };
+    (Arc::new(ids), ranges)
+}
+
+/// A granule's rows, picked from its input where they lie by their ids (`picked_ids`): the store's writer reads them
+/// into its scratch (`KeptPicked`).
+struct PickedRows {
+    source: Arc<dyn Source>,
+    ids: Arc<crate::code_rule_dsl::facts::rows::Part>,
+    lo: u32,
+    hi: u32,
+    width: usize,
+}
+
+impl crate::content_store::kept_facts::KeptPicked for PickedRows {
+    fn rows(&self) -> usize {
+        (self.hi - self.lo) as usize
+    }
+    fn width(&self) -> usize {
+        self.width
+    }
+    fn fill(&self, cols: &mut [i64]) {
+        let n = self.rows();
+        for c in 0..self.width {
+            for (k, i) in (self.lo..self.hi).enumerate() {
+                cols[c * n + k] = self.source.value(self.ids.get(i, 0) as usize, c);
+            }
+        }
+    }
 }
 
 /// A derived relation lent to the keep (decision 0401 F6): its rows as one relation in its block, its dead bits and

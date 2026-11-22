@@ -8837,7 +8837,7 @@ fn run_observed_within(
                 let (d, k) = kept.get(rel)?;
                 let rows = if *d == base_digest(rel) {
                     k.rows()
-                } else if Some(*d) == table_digest.map(|t| t ^ tag(rel)) {
+                } else if Some(*d) == table_digest.map(|t| t ^ tag(rel)) && k.patchable() {
                     let (old, new) = base_wholes.get(rel)?;
                     k.rows() - old.as_ref().map_or(0, |s| s.len() as i64) + new.as_ref().map_or(0, |s| s.len() as i64)
                 } else {
@@ -9219,7 +9219,7 @@ fn run_observed_within(
             // are checked against it.
             let counted = match kept {
                 Some((d, k)) if d == now => Some((k, "kept", session_binds.is_some())),
-                Some((d, mut k)) if Some(d) == table_digest.map(|t| t ^ tag(rel)) => base_wholes.get(rel).and_then(|(old, new)| {
+                Some((d, mut k)) if Some(d) == table_digest.map(|t| t ^ tag(rel)) && k.patchable() => base_wholes.get(rel).and_then(|(old, new)| {
                     for (v, sign) in [(old, -1), (new, 1)] {
                         if let Some(v) = v {
                             k.documents_scanned(v.as_ref(), &from, sign);
@@ -9232,7 +9232,9 @@ fn run_observed_within(
             // Not kept: a source whose rows are made on lookup answers them from its structure (`Source::statistics`:
             // `within`'s, from the tree), with no row made. Counted, `within`'s rows were every node's containers, 1.1 GB
             // allocated on 1,000 files and past 16 GB on 3,089: the count's lists are 48 bytes a row, over a relation
-            // `len` had made whole. Not kept for the next run: it is read again from the structure, as cheaply.
+            // `len` had made whole. Kept for the next run as they are (`RelStats::of_structure`), standing while its
+            // documents are these: the structure is the documents' trees, and read again each run, every warm run
+            // built every document from its tape for them (Q332, R7).
             if counted.is_none()
                 && let Some(known) = source.statistics()
             {
@@ -9242,7 +9244,8 @@ fn run_observed_within(
                 }
                 let rows = known.first().map_or(0, |m| m.1);
                 let st = columns.iter().map(|c| by_name.get(c.as_str()).map_or_else(|| (c.clone(), rows, rows, rows, rows), |m| (*m).clone())).collect();
-                return (st, "the source's own, from its structure (no row made)", None);
+                let keep = keeps.then(|| super::statkeep::RelStats::of_structure(names.clone(), &known.iter().filter(|m| held.contains(m.0.as_str())).cloned().collect::<Vec<_>>()));
+                return (st, "the source's own, from its structure (no row made)", keep);
             }
             let (counted, how, keep) = counted.unwrap_or_else(|| {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}'s statistics off the corpus batch"));

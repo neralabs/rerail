@@ -170,6 +170,9 @@ pub(in crate::code_rule_dsl) struct RelStats {
     /// Patched by rows that are not whole documents (`delta`): the per-document sums no longer hold.
     partial: bool,
     cols: Vec<Column>,
+    /// Given by a source's structure (`of_structure`): each column's (rows, distinct values, Σcount², Σ within a
+    /// document), which stand while its documents are the same and are never patched (`patchable`).
+    shape: Option<Vec<[i64; 4]>>,
 }
 
 /// The document a row's first column names: as `syntax::measured` reads it.
@@ -240,7 +243,25 @@ impl RelStats {
     /// No rows yet, of these columns.
     pub(in crate::code_rule_dsl) fn new(columns: Vec<String>) -> Self {
         let cols = columns.iter().map(|_| Column { exact: Some(Exact::default()), zero: Some(Exact::default()), ..Column::default() }).collect();
-        RelStats { columns, rows: 0, partial: false, cols }
+        RelStats { columns, rows: 0, partial: false, cols, shape: None }
+    }
+
+    /// The statistics a source answers from its structure (`Source::statistics`: `within`'s, from the tree), with no
+    /// row made, kept as they are: of the same documents they stand, and a warm run reads no document for them (Q332).
+    /// Not patched by documents' rows (`patchable`): of other documents, they are answered from the structure again.
+    pub(in crate::code_rule_dsl) fn of_structure(columns: Vec<String>, stats: &[(String, i64, i64, i64, i64)]) -> Self {
+        let by_name: std::collections::HashMap<&str, [i64; 4]> = stats.iter().map(|m| (m.0.as_str(), [m.1, m.2, m.3, m.4])).collect();
+        let rows = stats.first().map_or(0, |m| m.1);
+        let shape = columns.iter().map(|c| by_name.get(c.as_str()).copied().unwrap_or([rows; 4])).collect();
+        let mut s = Self::new(columns);
+        s.rows = rows;
+        s.shape = Some(shape);
+        s
+    }
+
+    /// Whether documents' rows patch these statistics: not those of a source's structure (`of_structure`).
+    pub(in crate::code_rule_dsl) fn patchable(&self) -> bool {
+        self.shape.is_none()
     }
 
     /// `new`, keeping each column's (document, value) pairs sketched too: for a relation patched by rows that are
@@ -648,6 +669,9 @@ impl RelStats {
     /// stated as a key, as `columns_source`'s own measure states it.
     pub(in crate::code_rule_dsl) fn statistics(&self, held: &dyn Fn(&str) -> bool) -> Vec<(String, i64, i64, i64, i64)> {
         let n = self.rows.max(0);
+        if let Some(shape) = &self.shape {
+            return self.columns.iter().zip(shape).map(|(name, m)| if held(name) { (name.clone(), m[0], m[1], m[2], m[3]) } else { (name.clone(), n, n, n, n) }).collect();
+        }
         self.columns
             .iter()
             .zip(&self.cols)
@@ -715,7 +739,8 @@ impl RelStats {
                 }
             }
         };
-        out.push(3);
+        // Format 4: format 3's, then a source's structure's statistics (`of_structure`), or none.
+        out.push(4);
         int(out, self.columns.len() as i64);
         for c in &self.columns {
             int(out, c.len() as i64);
@@ -742,6 +767,15 @@ impl RelStats {
                 }
             }
         }
+        match &self.shape {
+            None => int(out, -1),
+            Some(shape) => {
+                int(out, shape.len() as i64);
+                for v in shape.iter().flatten() {
+                    int(out, *v);
+                }
+            }
+        }
     }
 
     /// `encode`'s statistics back from `bytes` at `*at`, which moves past them; `None` if they are not.
@@ -765,7 +799,8 @@ impl RelStats {
             }
             Some(Some(m))
         };
-        if take(bytes, at, 1)? != [3] {
+        let format = take(bytes, at, 1)?[0];
+        if format != 3 && format != 4 {
             return None;
         }
         let k = usize::try_from(int(at)?).ok()?;
@@ -790,7 +825,15 @@ impl RelStats {
             };
             cols.push(Column { sqd, zero, zero_sq, local_ndv, crossing, exact, sketch, pairs });
         }
-        Some(RelStats { columns, rows, partial, cols })
+        let shape = if format == 4 {
+            match int(at)? {
+                l if l < 0 => None,
+                l => Some((0..l).map(|_| Some([int(at)?, int(at)?, int(at)?, int(at)?])).collect::<Option<Vec<_>>>()?),
+            }
+        } else {
+            None
+        };
+        Some(RelStats { columns, rows, partial, cols, shape })
     }
 }
 
