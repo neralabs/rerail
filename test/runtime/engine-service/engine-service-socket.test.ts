@@ -577,7 +577,7 @@ describe("the holder of a Windows named pipe", () => {
 
   it.runIf(process.platform === "win32")("is not named while another client keeps the pipe's one instance open for the whole wait, says so with no pid, and leaves this process's timers running meanwhile", async () => {
     const pipe = String.raw`\\.\pipe\rerail-holder-busy-${process.pid}-${Date.now()}`;
-    // Another process holds the pipe's one instance, which it never lists again once a client takes it.
+    // The pipe's one instance is served by another process, which never lists it again once a client takes it.
     const holder = await oneInstanceHolder(pipe);
     const client = connect(pipe).on("error", () => undefined);
     try {

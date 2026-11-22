@@ -293,7 +293,7 @@ describe("rerail events in a main build", () => {
   it.runIf(process.platform === "win32")("sends the events, with no capability, to the daemon on the pipe RERAIL_ENGINE_SOCKET names when its daemon.json records none, as a daemon before Rerail 0.1.1 wrote it", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-no-capability-"));
     cleanups.push(async () => await removeFolder(root));
-    // This process holds the pipe as the daemon daemon.json records, which stamped its start after the process began.
+    // This process serves the pipe as the daemon daemon.json records, which stamped its start after the process began.
     const socketPath = testEngineEndpoint(root);
     const received = await fakeEngineService(socketPath);
     await writeFile(join(root, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "0.1.0",
