@@ -875,6 +875,7 @@ fn fma_loop(code: &str) -> Vec<&str> {
 /// The split-float matrix product's loop at each width is vector code as written by hand:
 /// - nothing in the stack: its constants and accumulators are in registers (one sign multiplier for every 4 lanes,
 ///   one swizzle pattern for each window offset, no pattern for exponent bytes);
+/// - B's sign word (one for the SIMD group: its lanes' index over 32) loaded once and shifted as a scalar;
 /// - each 4 lanes' fraction one swizzle (`tbl`) of a window of B's bytes, its exponents a widening (`uxtl`) of a
 ///   window of 16 (under 16 lanes, where registers are left, a swizzle): B's bytes are never loaded one at a time;
 /// - A's fraction bytes loads at offsets 1 apart from one register;
@@ -923,6 +924,7 @@ fn the_split_float_products_loop_is_vector_code() {
             assert_eq!(count("tbl "), tbl as usize, "w{w}: a swizzle for each 4 lanes' fraction (and exponents, under 16 lanes):\n{text}");
             assert_eq!(count("uxtl") > 0, w >= 16, "w{w}: the exponent bytes a widening at 16 lanes and more:\n{text}");
             assert_eq!(count("mul "), w as usize / 4, "w{w}: the sign bits' products:\n{text}");
+            assert_eq!(count("ushl "), 0, "w{w}: the sign word (one for the SIMD group) shifted as a vector:\n{text}");
         }
         // The back edge: the counter's increment, then a test of it against 0.
         let (inc, br) = (body[body.len() - 2].trim_start(), body[body.len() - 1].trim_start());

@@ -2744,19 +2744,9 @@ impl<'a, 'b> Cg<'a, 'b> {
                 }
                 // Lane `4p + l`'s count is `u + 4pt + lt`: register `p`'s shift by `u + 4pt` (an immediate past
                 // the first), then a product by one constant, `2^(lt)`.
-                let pa = self.lanes(a, m);
                 let c = lane_of(self, &|l| 1u32 << (l as i64 * t));
                 let u = self.b.ins().ireduce(I32, u);
-                Some(
-                    pa.iter()
-                        .enumerate()
-                        .map(|(p, &v)| {
-                            let y = self.b.ins().ishl(v, u);
-                            let y = if p == 0 { y } else { self.b.ins().ishl_imm(y, 4 * p as i64 * t) };
-                            self.b.ins().imul(y, c)
-                        })
-                        .collect(),
-                )
+                Some(self.shifted_parts(a, m, u, 4 * t, false, c))
             }
             (Op::Shl | Op::And, Some(kk)) if bits == 32 && (op == Op::Shl && kk < 32 || op == Op::And && kk == 1) => {
                 let ai = *self.f.inst(a);
@@ -2770,18 +2760,9 @@ impl<'a, 'b> Cg<'a, 'b> {
                 }
                 // Lane `4p + l`'s bit `u + 4pt + lt` to bit `top`: register `p`'s shift right by `u + 4pt` (an
                 // immediate past the first), then a product by one constant, `2^(top - lt)`.
-                let px = self.lanes(ai.a, m);
                 let c = lane_of(self, &|l| 1u32 << (top - l as i64 * t));
                 let u = self.b.ins().ireduce(I32, u);
-                let ys: Vec<Value> = px
-                    .iter()
-                    .enumerate()
-                    .map(|(p, &v)| {
-                        let y = self.b.ins().ushr(v, u);
-                        let y = if p == 0 { y } else { self.b.ins().ushr_imm(y, 4 * p as i64 * t) };
-                        self.b.ins().imul(y, c)
-                    })
-                    .collect();
+                let ys = self.shifted_parts(ai.a, m, u, 4 * t, true, c);
                 Some(if op == Op::Shl {
                     let hi = self.b.ins().iconst(I32, i64::from(u32::MAX << top));
                     let hv = self.b.ins().splat(I32X4, hi);
@@ -2790,6 +2771,56 @@ impl<'a, 'b> Cg<'a, 'b> {
                     ys.into_iter().map(|y| self.b.ins().ushr_imm(y, 31)).collect()
                 })
             }
+            _ => None,
+        }
+    }
+
+    /// Each register of 32-bit lanes `a` shifted (`right`, else left) by `u` (an `I32`) and `p * step` more for
+    /// register `p` (an immediate), then times `c`: of a uniform `a` (or lanes all one splat of a scalar), its
+    /// shifts scalar and each register one splat.
+    fn shifted_parts(&mut self, a: V, m: M, u: Value, step: i64, right: bool, c: Value) -> Vec<Value> {
+        let (n, _) = parts(m, self.w);
+        let scalar = match self.vals[a as usize].clone() {
+            Rp::U(x) => Some(x),
+            Rp::L(p) if p.iter().all(|&v| v == p[0]) => self.splat_of(p[0]),
+            _ => None,
+        };
+        if let Some(x) = scalar {
+            let x = if self.b.func.dfg.value_type(x) == I32 { x } else { self.b.ins().ireduce(I32, x) };
+            let y0 = if right { self.b.ins().ushr(x, u) } else { self.b.ins().ishl(x, u) };
+            return (0..n as i64)
+                .map(|p| {
+                    let y = match (p, right) {
+                        (0, _) => y0,
+                        (_, true) => self.b.ins().ushr_imm(y0, p * step),
+                        (_, false) => self.b.ins().ishl_imm(y0, p * step),
+                    };
+                    let v = self.b.ins().splat(I32X4, y);
+                    self.b.ins().imul(v, c)
+                })
+                .collect();
+        }
+        let pa = self.lanes(a, m);
+        pa.iter()
+            .enumerate()
+            .map(|(p, &v)| {
+                let y = if right { self.b.ins().ushr(v, u) } else { self.b.ins().ishl(v, u) };
+                let y = match (p, right) {
+                    (0, _) => y,
+                    (_, true) => self.b.ins().ushr_imm(y, p as i64 * step),
+                    (_, false) => self.b.ins().ishl_imm(y, p as i64 * step),
+                };
+                self.b.ins().imul(y, c)
+            })
+            .collect()
+    }
+
+    /// The scalar a Cranelift vector `v` is a `splat` of, if it is one.
+    fn splat_of(&self, v: Value) -> Option<Value> {
+        let dfg = &self.b.func.dfg;
+        let ir::ValueDef::Result(inst, _) = dfg.value_def(v) else { return None };
+        match dfg.insts[inst] {
+            ir::InstructionData::Unary { opcode: ir::Opcode::Splat, arg } => Some(arg),
             _ => None,
         }
     }
@@ -2952,9 +2983,10 @@ impl<'a, 'b> Cg<'a, 'b> {
                 };
                 (v, Box::new(move |b| b - o))
             } else {
+                // Loaded to the vector registers (a float's load), but for 2 bytes.
                 let (h, ty, vt) = match hi_u - lo_u {
-                    8.. => (8, I64, I64X2),
-                    4.. => (4, I32, I32X4),
+                    8.. => (8, F64, F64X2),
+                    4.. => (4, F32, F32X4),
                     _ => (2, I16, I16X8),
                 };
                 let a1 = hi_u - h;
