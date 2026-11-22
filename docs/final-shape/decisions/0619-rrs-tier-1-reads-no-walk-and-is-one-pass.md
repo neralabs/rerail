@@ -123,6 +123,32 @@ its note says (`rr_words_text`, with `RR_WORDS`). Three fail: `rr_tier1_split`, 
 `rr_tier2_clusters`. They fail the same way, at the same line, with the grammar from before step 1. They read the JIT
 and the native code, not the generated Rust, so these steps did not cause them.
 
+## Two faults the one pass had, found by measuring it
+
+A benchmark (`rr-aot-speed`, and `rr_aot_against_jit` in `rr_parser`'s tests) read the corpus both as its files and
+as one file. As one file, tier 1 took about 180 times as long a byte: it was quadratic. Two faults:
+
+- **A search with no end read the blocks not made.** Their words are zeros until stage 1 makes them, so a search for
+  a bit past the made blocks reads every word to the file's end. Each row's closer search is cut at the blocks made
+  (`first_bit(&m_q[..made], …)`, `made_searches`). Two helpers had no end at all: `any_in` (a gap's newline and
+  form-feed marks) found the first bit after the gap and then tested it against the gap's end, and `run_once_last` (a
+  number's one `.`) did the same for the dot. Both now read only the words up to their end (`first_in`). This is in
+  the helpers that Kotlin's tier 1 shares too, so its file changes in those two functions alone.
+- **A region with an `else` form paused nowhere.** `t2`'s read has `else e_t2 bytes 2` in its `none` arm. If the
+  closer was in a block not made yet, the arm took the empty literal instead of waiting. Now that arm pauses too, as
+  the others do, while blocks remain. Samples hold a two-backtick literal, a string and a block comment across 1, 3
+  and 11 blocks; the fault fails them.
+
+On a Linux arm64 farm host, from `rr-aot-speed` (product build, the least of 7 rounds, the 1,831 files, 12.39 MB):
+
+| | Before | After |
+|---|---|---|
+| Tier 1, the files | about 300 ms | 33 ms |
+| Tier 1, the corpus as one file | about 56 s | 44 ms |
+| Tier 2 | 63 ms | 63 ms |
+
+Most of the cost was inside the files as well, because a file's last line and its numbers sent the searches to its end.
+
 ## Checks
 
 On a Linux arm64 farm host:

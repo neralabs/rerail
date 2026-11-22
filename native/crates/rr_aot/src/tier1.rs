@@ -1245,7 +1245,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
             match row {
                 0 => {
                     // `string`: read str
-                    let l = match first_bit(&m_q, s + 1) {
+                    let l = match first_bit(&m_q[..made], s + 1) {
                         Some(c) => c + 0,
                         None => {
                             if made < nw {
@@ -1283,14 +1283,14 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         assert_eq!(bit(&m_line_open, s), bit(&m_o_line, s), "region `line` opens at byte {s}");
                         bit(&m_line_open, s)
                     } {
-                        first_bit(&m_lf, s + 1).unwrap_or(n) - 1
+                        first_bit(&m_lf[..made], s + 1).unwrap_or(n) - 1
 
                     } else if {
                         #[cfg(feature = "test-hooks")]
                         assert_eq!(bit(&m_block_open, s), bit(&m_o_block, s), "region `block` opens at byte {s}");
                         bit(&m_block_open, s)
                     } {
-                        match first_bit(&m_block_end, s + 1) {
+                        match first_bit(&m_block_end[..made], s + 1) {
                             Some(c) => c + 0,
                             None => {
                                 if made < nw {
@@ -1329,7 +1329,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         assert_eq!(bit(&m_tick1, s), bit(&m_o_t1, s), "region `t1` opens at byte {s}");
                         bit(&m_tick1, s)
                     } {
-                        match first_bit(&m_tick, s + 1) {
+                        match first_bit(&m_tick[..made], s + 1) {
                             Some(c) => c + 0,
                             None => {
                                 if made < nw {
@@ -1346,9 +1346,15 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         assert_eq!(bit(&m_tick2, s), bit(&m_o_t2, s) || bit(&m_e_t2, s), "region `t2` opens at byte {s}");
                         bit(&m_tick2, s)
                     } {
-                        match first_bit(&m_tt, s + 1) {
+                        match first_bit(&m_tt[..made], s + 1) {
                             Some(c) => c + 1,
-                            None => s + 1,
+                            None => {
+                                if made < nw {
+                                    wait = (2 * made - b).min(nw);
+                                    continue 'pass;
+                                }
+                                s + 1
+                            }
                         }
 
                     } else if {
@@ -1356,7 +1362,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         assert_eq!(bit(&m_tick3, s), bit(&m_o_t3, s), "region `t3` opens at byte {s}");
                         bit(&m_tick3, s)
                     } {
-                        match first_bit(&m_ttt, s + 1) {
+                        match first_bit(&m_ttt[..made], s + 1) {
                             Some(c) => c + 2,
                             None => {
                                 if made < nw {
@@ -1691,7 +1697,7 @@ fn first_clear(x: &[u64], from: usize, n: usize) -> Option<usize> {
 #[inline(always)]
 fn run_once_last(r: &[u64], d: &[u64], s: usize) -> usize {
     let l = run_last(r, s);
-    match first_bit(d, s + 1).filter(|&p| p <= l).and_then(|p| first_bit(d, p + 1)).filter(|&q| q <= l) {
+    match first_in(d, s + 1, l).and_then(|p| first_in(d, p + 1, l)) {
         Some(q) => q - 1,
         None => l,
     }
@@ -1712,10 +1718,10 @@ fn run_last(r: &[u64], s: usize) -> usize {
     }
 }
 
-/// Whether `x` holds anywhere in bytes `a..=b` (none where `a > b`).
+/// Whether `x` holds anywhere in bytes `a..=b` (none where `a > b`), its words to `b`'s alone read.
 #[inline(always)]
 fn any_in(x: &[u64], a: usize, b: usize) -> bool {
-    a <= b && first_bit(x, a).is_some_and(|i| i <= b)
+    first_in(x, a, b).is_some()
 }
 
 /// The first byte in `a..=b` that `x` holds, a word at a time.

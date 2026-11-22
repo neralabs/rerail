@@ -133,6 +133,13 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
 /// backtick literal: a region's `else`), the marks.
 fn cases() -> Vec<String> {
     let mut out: Vec<String> = SAMPLES.iter().map(|s| (*s).to_owned()).collect();
+    // A region whose closer is blocks past its opener: tier 1's one pass reads the token again as stage 1 makes them
+    // (decision 0619), and a `` `` `` with its closer there is no empty literal (`else e_t2`).
+    for n in [60, 200, 700] {
+        out.push(format!("a(b) :- r(c, ``{}``).\n", "x".repeat(n)));
+        out.push(format!("a(\"{}\").\n", "y".repeat(n)));
+        out.push(format!("/* {} */ a(1).\n", "z".repeat(n)));
+    }
     for n in [126, 127, 128, 200] {
         out.push(format!("a(X) :- b(X), X = {}1{}.\n", "[".repeat(n), "]".repeat(n)));
         out.push(format!(".policy {}{}\n", "{\"a\": ".repeat(n), "}".repeat(n)));
@@ -259,4 +266,46 @@ fn corpus_tapes_are_the_jits() {
     }
     assert!(differ.is_empty(), "{} of {} files differ; the first: {}", differ.len(), files.len(), differ[0]);
     eprintln!("{} files, {parsed} parsed", files.len());
+}
+
+/// CPU time over the corpus (this thread's, the least of `RR_ROUNDS` rounds, 7 by default), the parsers in turns each
+/// round: the parser as Rust (`rerail_rr_aot`), tier 1 alone (`lex`) and the whole (`parse`, tier 2 the difference);
+/// the JIT (`compiled().parser.image`); and the engine's hand-written reader (`engine_tape`), for scale. Each from the
+/// text, the buffers padded before. Build optimized (`--profile profiling`) and run alone, at nice 19; the load is
+/// printed.
+#[test]
+#[ignore = "a benchmark: run by hand"]
+fn rr_aot_against_jit() {
+    let c = compiled().expect("the grammar compiles");
+    let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
+    let files = crate::tests::corpus();
+    let bufs: Vec<Vec<u8>> = files.iter().map(|t| rerail_rr_aot::padded(t.as_bytes())).collect();
+    let bytes: usize = files.iter().map(String::len).sum();
+    let time = |f: &dyn Fn() -> usize| {
+        let t = rerail_prof::thread_cpu();
+        std::hint::black_box(f());
+        rerail_prof::thread_cpu() - t
+    };
+    let lex = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len()).starts.len()).sum::<usize>();
+    let aot = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::parse(b, t.len()).map_or(0, |c| c.keys.len())).sum::<usize>();
+    let jit = || files.iter().map(|t| c.parser.image(t.as_bytes()).map_or(0, |i| i.len())).sum::<usize>();
+    let engine = || files.iter().map(|t| crate::engine_tape(t).len()).sum::<usize>();
+    let mut best = [std::time::Duration::MAX; 4];
+    for _ in 0..rounds {
+        for (k, f) in [&lex as &dyn Fn() -> usize, &aot, &jit, &engine].into_iter().enumerate() {
+            best[k] = best[k].min(time(f));
+        }
+    }
+    let refused = |f: &dyn Fn(&str, &[u8]) -> bool| files.iter().zip(&bufs).filter(|(t, b)| f(t, b)).count();
+    let (aot_refused, jit_refused) = (refused(&|t, b| rerail_rr_aot::parse(b, t.len()).is_err()), refused(&|t, _| c.parser.image(t.as_bytes()).is_err()));
+    let mb = bytes as f64 / 1e6;
+    let row = |name: &str, d: std::time::Duration| eprintln!("  {name:<44} {:>9.3} ms  {:>8.1} MB/s  {:>6.2} ns/byte", d.as_secs_f64() * 1e3, mb / d.as_secs_f64(), d.as_secs_f64() * 1e9 / bytes as f64);
+    eprintln!("{} files, {:.2} MB; refused: the parser as Rust {aot_refused}, the JIT {jit_refused}; least of {rounds} rounds", files.len(), mb);
+    row("the parser as Rust, tier 1 (lex)", best[0]);
+    row("the parser as Rust, tier 2 (parse - lex)", best[1].saturating_sub(best[0]));
+    row("the parser as Rust, whole (parse)", best[1]);
+    row("the JIT, whole (image)", best[2]);
+    row("the engine's hand-written reader", best[3]);
+    let load = std::process::Command::new("uptime").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
+    eprintln!("  load: {load}");
 }

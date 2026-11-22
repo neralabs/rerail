@@ -3087,7 +3087,7 @@ fn first_clear(x: &[u64], from: usize, n: usize) -> Option<usize> {
 #[inline(always)]
 fn run_once_last(r: &[u64], d: &[u64], s: usize) -> usize {
     let l = run_last(r, s);
-    match first_bit(d, s + 1).filter(|&p| p <= l).and_then(|p| first_bit(d, p + 1)).filter(|&q| q <= l) {
+    match first_in(d, s + 1, l).and_then(|p| first_in(d, p + 1, l)) {
         Some(q) => q - 1,
         None => l,
     }
@@ -3108,10 +3108,10 @@ fn run_last(r: &[u64], s: usize) -> usize {
     }
 }
 
-/// Whether `x` holds anywhere in bytes `a..=b` (none where `a > b`).
+/// Whether `x` holds anywhere in bytes `a..=b` (none where `a > b`), its words to `b`'s alone read.
 #[inline(always)]
 fn any_in(x: &[u64], a: usize, b: usize) -> bool {
-    a <= b && first_bit(x, a).is_some_and(|i| i <= b)
+    first_in(x, a, b).is_some()
 }
 
 /// The first byte in `a..=b` that `x` holds, a word at a time.

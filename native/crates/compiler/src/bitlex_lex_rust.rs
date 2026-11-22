@@ -904,6 +904,26 @@ fn pause_refusals(code: &str) -> String {
     out
 }
 
+/// `code` with each search of a mask (`first_bit(&M, …)`) in the blocks stage 1 has made (`M[..made]`, decision 0619):
+/// past them a mask is not made yet, so a search there would read every word to the file's end at each pause.
+fn made_searches(code: &str) -> String {
+    let mut out = String::new();
+    let mut rest = code;
+    while let Some(i) = rest.find("first_bit(&") {
+        let at = i + "first_bit(&".len();
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let name = rest.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len());
+        out.push_str(&rest[..name]);
+        if rest[name..].starts_with(',') {
+            out.push_str("[..made]");
+        }
+        rest = &rest[name..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn uses(text: &str, var: &str) -> bool {
     text.match_indices(var).any(|(i, _)| {
         let before = text[..i].chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
@@ -5117,6 +5137,9 @@ impl Gen<'_> {
                             }
                         };
                         let none = match &r.empty {
+                            // In one pass (decision 0619), no closer in the blocks made so far is none in the file only
+                            // once every block is made: before, the token is read again.
+                            Some((_, m)) if fused => format!("{{\n                    if made < nw {{\n                        wait = (2 * made - b).min(nw);\n                        continue 'pass;\n                    }}\n                    s + {}\n                }}", m.saturating_sub(1)),
                             Some((_, m)) => format!("s + {},", m.saturating_sub(1)),
                             None => "{\n                    refused = true;\n                    break;\n                }".to_owned(),
                         };
@@ -5323,7 +5346,7 @@ impl Gen<'_> {
             // again once it has made more (its distance from the token's block, again), as is one the blocks made so
             // far refuse; the token changed nothing yet.
             let (l, pause) = if fused {
-                (pause_refusals(&l), "            // The byte after the token in a block stage 1 has not made: it makes more, and the token is read again.\n            if l + 1 >= 64 * made && made < nw {\n                wait = (2 * made - b).min(nw);\n                continue 'pass;\n            }\n".to_owned())
+                (pause_refusals(&made_searches(&l)), "            // The byte after the token in a block stage 1 has not made: it makes more, and the token is read again.\n            if l + 1 >= 64 * made && made < nw {\n                wait = (2 * made - b).min(nw);\n                continue 'pass;\n            }\n".to_owned())
             } else {
                 (l, String::new())
             };
@@ -6660,7 +6683,7 @@ fn first_clear(x: &[u64], from: usize, n: usize) -> Option<usize> {
 #[inline(always)]
 fn run_once_last(r: &[u64], d: &[u64], s: usize) -> usize {
     let l = run_last(r, s);
-    match first_bit(d, s + 1).filter(|&p| p <= l).and_then(|p| first_bit(d, p + 1)).filter(|&q| q <= l) {
+    match first_in(d, s + 1, l).and_then(|p| first_in(d, p + 1, l)) {
         Some(q) => q - 1,
         None => l,
     }
@@ -6681,10 +6704,10 @@ fn run_last(r: &[u64], s: usize) -> usize {
     }
 }
 
-/// Whether `x` holds anywhere in bytes `a..=b` (none where `a > b`).
+/// Whether `x` holds anywhere in bytes `a..=b` (none where `a > b`), its words to `b`'s alone read.
 #[inline(always)]
 fn any_in(x: &[u64], a: usize, b: usize) -> bool {
-    a <= b && first_bit(x, a).is_some_and(|i| i <= b)
+    first_in(x, a, b).is_some()
 }
 
 /// The first byte in `a..=b` that `x` holds, a word at a time.
