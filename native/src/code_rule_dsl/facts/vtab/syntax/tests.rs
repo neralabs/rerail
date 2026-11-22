@@ -1521,6 +1521,70 @@ fn text_only_for_the_nodes_read() {
     }
 }
 
+/// `TextNodes` read as a dialect's codes (`NodesOf`, what the node walk tests) is `TextNodes::reads`, by names, over
+/// every node of documents in several languages, for sets of kinds, fields, parents' kinds and fields, ERROR among
+/// the kinds, and constants.
+#[test]
+fn nodes_read_as_codes_are_the_nodes_read_by_name() {
+    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage};
+    let set = |names: &[&str]| names.iter().map(|k| k.to_string()).collect::<BTreeSet<_>>();
+    let sets = [
+        TextNodes { kinds: set(&["identifier", "ERROR", "call_expression"]), ..TextNodes::default() },
+        TextNodes { fields: set(&["name", "function", "alias"]), ..TextNodes::default() },
+        TextNodes { parents: set(&["binary_operator", "binary_expression", "list_splat_pattern"]), parent_fields: set(&["module_name", "body"]), ..TextNodes::default() },
+        TextNodes { kinds: set(&["string"]), fields: set(&["value"]), parents: set(&["call"]), values: set(&["self", "x"]), ..TextNodes::default() },
+        TextNodes::default(),
+    ];
+    let cases: &[(&str, &str)] = &[
+        ("python", "import os as o\ndef f(self, *a, b=2):\n    return o.g(a | b, self.x) + (1 +\n"),
+        ("python", "class C(B):\n    @d(x)\n    def m(self): return [y for y in self.x if y]\n"),
+        ("typescript", "import { a } from 'b';\nfunction g(n: number) { return a(n) + 1; }\n"),
+        ("rust", "fn main() { let x = S { a: 1 }; println!(\"{x}\"); }\n"),
+    ];
+    for &(label, source) in cases {
+        let lang = dialect_by_label(label).unwrap_or_else(|| panic!("no dialect {label}"));
+        let grammar = Grammar::new(lang).unwrap();
+        let source = Arc::new(source.to_owned());
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+        let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+        let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image, lines).unwrap());
+        let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+        let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
+        let mut read = 0;
+        for nodes in &sets {
+            let codes = nodes.of_dialect(&dialect);
+            for (_, id, _) in p.node_ids() {
+                let by_name = nodes.reads(&p, id, &dialect);
+                assert_eq!(codes.reads(nodes, &p, id, &dialect), by_name, "{label}: node {id} ({}) in {nodes:?}", dialect.name(&facts, id));
+                read += usize::from(by_name);
+            }
+        }
+        assert!(read > 0, "{label}: the sets read no node");
+    }
+}
+
+/// The nodes given `op` and `op_at` rows are the ones the rules read, narrowed as `text`'s are: a fixed kind
+/// (python/annotations' `op(m, "|")` of a `binary_operator`), a parent's kind, a derived column; a node nothing
+/// narrows, or a program's own `op` rules, widens it to every node.
+#[test]
+fn op_rows_only_for_the_nodes_read() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    let kinds = |ks: &[&str]| Some(TextNodes { kinds: ks.iter().map(|k| k.to_string()).collect(), ..TextNodes::default() });
+    for (body, op) in [
+        ("out(\"|\") :- kind(m, \"binary_operator\"), op(m, \"|\").", kinds(&["binary_operator"])),
+        ("out(o) :- kind(m, \"boolean_operator\"), op(m, o).\nout(o) :- kind(m, \"comparison_operator\"), !op(m, \"in\"), op_at(m, 0, o).", kinds(&["boolean_operator", "comparison_operator"])),
+        ("out(o) :- kind(p, \"list_splat_pattern\"), child(p, s, 0), op(s, o).", Some(TextNodes { parents: BTreeSet::from(["list_splat_pattern".to_owned()]), ..TextNodes::default() })),
+        (".decl bin(n: node)\nbin(n) :- kind(n, \"binary_operator\").\nout(o) :- bin(n), op(n, o).", kinds(&["binary_operator"])),
+        ("out(o) :- child(_, n, 0), op(n, o).", None),
+        ("out(o) :- node(_, n, _, _, _), op(n, o).", None),
+        ("out(\"x\") :- kind(m, \"binary_operator\").", Some(TextNodes::default())),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]).op, op, "{body}");
+    }
+}
+
 /// A negated `text` read narrows the nodes given `text` as a positive one does: by the field the node is in
 /// (PYI025's `field(a, "alias", al), !text(al, "AbstractSet")`), the constant it is compared with, or its fixed kind.
 /// Of a constant within the bound it needs no text past the bound, even of a fixed kind; compared with a variable, its

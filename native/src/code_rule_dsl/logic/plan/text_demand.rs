@@ -548,7 +548,32 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
             }
         }
     }
-    TextDemand { long: kinds, any, negated_any, read, wide }
+    // The nodes whose ops a rule reads (`op(n, o)`, `op_at(n, i, o)`, positive or negated: a node without its rows has
+    // no op to test), narrowed as a text read is, but by a constant (an op is no node's text). A program that gives
+    // `op` or `op_at` rules of its own reads every node's.
+    let (mut op, mut op_wide): (Option<TextNodes>, Option<String>) = (Some(TextNodes::default()), None);
+    if rules.iter().any(|r| matches!(head_of(*r), "op" | "op_at")) {
+        (op, op_wide) = (None, Some("a rule of the program's own `op`".to_owned()));
+    }
+    let narrows = op.is_some();
+    'rules: for &rule in rules.iter().filter(|_| narrows) {
+        for a in rule.body().filter_map(|l| l.atom()).filter(|a| matches!(v.rel_name(a.rel()), "op" | "op_at")) {
+            let narrowed = match a.args().next() {
+                Some(TermRef::Var(s)) => own_nodes(rule, s).or_else(|| first_read(&nodes_of, &read_from(rule, s))),
+                _ => None,
+            };
+            let (Some(nodes), Some(n)) = (&mut op, narrowed) else {
+                op_wide = Some(format!("{}, reading {}(…)", head_of(rule), v.rel_name(a.rel())));
+                op = None;
+                break 'rules;
+            };
+            nodes.kinds.extend(n.kinds);
+            nodes.fields.extend(n.fields);
+            nodes.parents.extend(n.parents);
+            nodes.parent_fields.extend(n.parent_fields);
+        }
+    }
+    TextDemand { long: kinds, any, negated_any, read, wide, op, op_wide }
 }
 
 /// The constraints on the node `$name` matches in a matcher's rule, read where its pattern sits.

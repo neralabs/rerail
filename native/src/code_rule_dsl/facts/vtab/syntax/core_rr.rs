@@ -472,6 +472,11 @@ pub(super) struct CoreRows {
     /// The nodes whose `text` is made (`Projection::text_nodes`): of these kinds, or in one of these fields of their
     /// parent. `None` every node.
     pub(super) text_nodes: Option<super::TextNodes>,
+    /// The nodes whose `op` and `op_at` rows are made (`Projection::op_nodes`); `None` every node.
+    pub(super) op_nodes: Option<super::TextNodes>,
+    /// `text_nodes` and `op_nodes` as the walked document's dialect's codes (`for_dialect`).
+    text_codes: Option<super::NodesOf>,
+    op_codes: Option<super::NodesOf>,
     op: Vec<[i64; 2]>,
     op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
@@ -517,8 +522,8 @@ impl CoreRows {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Visits {
     All,
-    /// Those whose text a rule reads (`text_nodes`): `node` makes no other row.
-    TextNodes,
+    /// Those whose text (`text`, `text_nodes`) or ops (`op`, `op_nodes`) a rule reads: `node` makes no other row.
+    Read { text: bool, op: bool },
     None,
 }
 
@@ -569,21 +574,43 @@ pub(super) const RX_MEMO_TEXT: usize = 4096;
 impl CoreRows {
     /// Whether a rule reads node `id`'s `text` (`text_nodes`, `TextNodes::reads`).
     fn reads_text(&self, p: &Projected, dialect: &Dialect, id: u32) -> bool {
-        self.text_nodes.as_ref().is_none_or(|nodes| nodes.reads(p, id, dialect))
+        self.text_nodes.as_ref().is_none_or(|nodes| match self.text_codes.as_ref().filter(|c| c.is_of(dialect.tag)) {
+            Some(codes) => codes.reads(nodes, p, id, dialect),
+            None => nodes.reads(p, id, dialect),
+        })
     }
 
-    /// The nodes `node` visits. Where it makes no row but `text`, and the rules read only some nodes' (`text_nodes`),
-    /// those nodes; where it makes none, no node. A phase that reads a few names' text (phase 1's imports) then makes
-    /// its rows without a second walk of every node of every document (the main phase's).
+    /// Whether a rule reads node `id`'s `op` or `op_at` rows (`op_nodes`).
+    fn reads_op(&self, p: &Projected, dialect: &Dialect, id: u32) -> bool {
+        self.op_nodes.as_ref().is_none_or(|nodes| match self.op_codes.as_ref().filter(|c| c.is_of(dialect.tag)) {
+            Some(codes) => codes.reads(nodes, p, id, dialect),
+            None => nodes.reads(p, id, dialect),
+        })
+    }
+
+    /// `text_nodes` and `op_nodes` resolved to `dialect`'s codes, for a walk of one of its documents.
+    pub(super) fn for_dialect(&mut self, dialect: &Dialect) {
+        if let Some(nodes) = &self.text_nodes && !self.text_codes.as_ref().is_some_and(|c| c.is_of(dialect.tag)) {
+            self.text_codes = Some(nodes.of_dialect(dialect));
+        }
+        if let Some(nodes) = &self.op_nodes && !self.op_codes.as_ref().is_some_and(|c| c.is_of(dialect.tag)) {
+            self.op_codes = Some(nodes.of_dialect(dialect));
+        }
+    }
+
+    /// The nodes `node` visits. Where it makes no row but `text` and the ops, and the rules read only some nodes'
+    /// (`text_nodes`, `op_nodes`), those nodes; where it makes none, no node. A phase that reads a few names' text
+    /// (phase 1's imports) then makes its rows without a second walk of every node of every document (the main
+    /// phase's), and one reading the ops of a few kinds' nodes (`op(m, "|")` of a `binary_operator`) visits those.
     pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_text = s.ops && s.structural && s.comment && s.spread && s.name && s.literal_rows
+        let only_these = s.structural && s.comment && s.spread && s.name && s.literal_rows
             && !(wants_parts || wants_part_starts || wants_words);
-        match (only_text, wants_text, self.text_nodes.is_some()) {
-            (false, _, _) | (true, true, false) => Visits::All,
-            (true, false, _) => Visits::None,
-            (true, true, true) => Visits::TextNodes,
+        let (text, op) = (wants_text, !s.ops);
+        if !only_these || text && self.text_nodes.is_none() || op && self.op_nodes.is_none() {
+            return Visits::All;
         }
+        if !text && !op { Visits::None } else { Visits::Read { text, op } }
     }
 
     /// Whether `visits` takes node `local` of `p`.
@@ -591,7 +618,7 @@ impl CoreRows {
         match visits {
             Visits::All => true,
             Visits::None => false,
-            Visits::TextNodes => self.reads_text(p, dialect, id),
+            Visits::Read { text, op } => text && self.reads_text(p, dialect, id) || op && self.reads_op(p, dialect, id),
         }
     }
 
@@ -606,7 +633,8 @@ impl CoreRows {
         // `op`: every anonymous child the tape stores (none the grammar implies); `op_at`: those that are no
         // punctuation, in order, Python's two-word operators as one ("not in", "is not"), which `op` has too.
         let mut ops: Vec<String> = Vec::new();
-        for &c in children.iter().filter(|&&c| !self.skip.ops && !f.named(c)) {
+        let op_read = !self.skip.ops && self.reads_op(p, dialect, id);
+        for &c in children.iter().filter(|&&c| op_read && !f.named(c)) {
             let t = dialect.name(f, c);
             self.op.push([n, string(t) as i64]);
             if !is_punct(t) {
