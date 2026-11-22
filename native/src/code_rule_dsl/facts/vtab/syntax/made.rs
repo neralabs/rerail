@@ -736,7 +736,30 @@ impl Batch {
     /// (the base relations counted on the pool made the whole batch once each, Q396: four times its work and its
     /// memory on 901 files). A thread making a group of this batch never waits: a read under it (a job it ran while
     /// it waited) makes what it reads, as before, so no two makers wait on each other.
+    ///
+    /// A session's batch, which the next run renews from (decision 0613), is made in groups of at most
+    /// `RERAIL_SESSION_GROUP` documents, in their order, whether a probe or a whole read asks for them: an edit then
+    /// makes again only its changed documents' groups. They go on in the same block relations.
     pub(super) fn ensure(&self, want: &[usize]) {
+        let size = session_group();
+        if self.keeps_strings && want.len() > size {
+            let mut unmade: Vec<usize> = {
+                let s = self.rows.state.lock();
+                want.iter().copied().filter(|&i| s.of[i].is_none()).collect()
+            };
+            unmade.sort_unstable();
+            unmade.dedup();
+            if unmade.len() > size {
+                for group in unmade.chunks(size) {
+                    self.ensure_group(group);
+                }
+            }
+        }
+        self.ensure_group(want)
+    }
+
+    /// `ensure`'s documents not made yet, as one group.
+    fn ensure_group(&self, want: &[usize]) {
         let me = std::thread::current().id();
         loop {
             // What to make, and its claim, under one lock: a document another thread claims between the two would be
@@ -860,17 +883,6 @@ impl Batch {
     pub(super) fn complete(&self) -> &[Arc<Relation>] {
         if let Some(c) = self.rows.complete.get() {
             return c;
-        }
-        // A session's batch, which the next run renews from (decision 0613), is made in groups of a few documents:
-        // an edit then makes again only its changed documents' groups. They go on in the same block relations.
-        if self.keeps_strings {
-            let unmade: Vec<usize> = {
-                let s = self.rows.state.lock();
-                (0..self.docs.len()).filter(|&i| s.of[i].is_none()).collect()
-            };
-            for group in unmade.chunks(session_group()) {
-                self.ensure(group);
-            }
         }
         self.ensure(&(0..self.docs.len()).collect::<Vec<_>>());
         self.rows.complete.get_or_init(|| {
@@ -1006,9 +1018,9 @@ impl Batch {
     }
 }
 
-/// The documents a group of a session's batch read whole holds (decision 0613): `RERAIL_SESSION_GROUP`, default 32.
+/// The documents a group of a session's batch holds at most (decision 0613): `RERAIL_SESSION_GROUP`, default 4.
 fn session_group() -> usize {
-    std::env::var("RERAIL_SESSION_GROUP").ok().and_then(|v| v.parse::<usize>().ok()).filter(|&n| n > 0).unwrap_or(32)
+    std::env::var("RERAIL_SESSION_GROUP").ok().and_then(|v| v.parse::<usize>().ok()).filter(|&n| n > 0).unwrap_or(4)
 }
 
 /// A relation a batch makes (`text`, `op`, the matchers'), over its groups (decision 0494): every document made, the

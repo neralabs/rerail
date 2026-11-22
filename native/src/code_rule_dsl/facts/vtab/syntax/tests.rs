@@ -2653,6 +2653,35 @@ fn a_sessions_whole_read_makes_groups_the_next_run_takes_but_the_changed_ones() 
     assert_eq!(renewed.docs.made_count(), 1, "and of its documents, the changed one's projection alone");
 }
 
+/// A session's batch probed for many documents at once makes them in groups of `RERAIL_SESSION_GROUP` too (decision
+/// 0613): a derive's probe of `docof` by every node it reads reached 250 of the data layer's 334 documents in one
+/// group, and the next edit, one of them changed, took none of the 250.
+#[test]
+fn a_sessions_probe_of_many_documents_makes_groups_the_next_run_takes_but_the_changed_ones() {
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment here.
+    unsafe { std::env::set_var("RERAIL_SESSION_GROUP", "2") };
+    let store = ContentStore::open(&temp("session-probe-groups")).unwrap();
+    let src = |k: u32, v: u32| format!("def f{k}(x, y={v}):\n    return g(x, 'w{v}')\n\nclass C{k}:\n    pass\n");
+    let docs = |changed: bool| -> Vec<Document> { (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &src(k, if changed && k == 3 { 99 } else { k }))).collect() };
+    let reads = ["node", "child", "docof", "src_line", "doc", "text"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let of = |b: &Arc<Batch>, name: &str| Arc::clone(&made_sources(b).into_iter().find(|(n, _, _)| *n == name).expect("made as rows").2);
+    let keys = |b: &Arc<Batch>| (0..4).map(|k| i64::from(b.docs.key(k))).collect::<Vec<i64>>();
+    let held = Batch::renewed(&store, docs(false), &projection, None).unwrap();
+    of(&held, "docof").lookup(1, &keys(&held)).unwrap();
+    assert_eq!(held.groups(), 2, "one probe of four documents, in groups of two");
+    let renewed = Batch::renewed(&store, docs(true), &projection, Some(Arc::clone(&held))).unwrap();
+    let fresh = Batch::new(&store, docs(true), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let rows = |s: &Arc<dyn Source>, found: Vec<usize>| -> Vec<Vec<i64>> {
+        let mut v: Vec<Vec<i64>> = found.into_iter().map(|r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect();
+        v.sort();
+        v
+    };
+    let (mine, theirs) = (of(&renewed, "docof"), of(&fresh, "docof"));
+    assert_eq!(rows(&mine, mine.lookup(1, &keys(&renewed)).unwrap()), rows(&theirs, theirs.lookup(1, &keys(&fresh)).unwrap()), "a fresh batch's docof rows");
+    assert_eq!(renewed.makes(), 1, "the changed document's group alone is made");
+}
+
 /// A tape value admitted into the batch (decision 0431 §8) runs no `ast` matcher: the files the batch was started
 /// with are matched once, and are not matched again (a value alone is no file, `Grower::admit`). Each round of guests
 /// ran the wave over every file of the chunk again, 17 s of 131 s of CPU on `all` once the reference graph's rules
