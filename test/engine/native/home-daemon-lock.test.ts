@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,6 +16,7 @@ import {
 } from "../../../src/engine/native/home-daemon-lock.js";
 import { LOCKS_DIR } from "../../../src/engine/native/file-lock.js";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
+import { DAEMON_LOG_FILE } from "../../../src/engine/storage/rerail-home.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const packageRoot = resolve(import.meta.dirname, "..", "..", "..");
@@ -91,19 +92,29 @@ describe("the daemon lock of a Rerail home", () => {
   }, 30_000);
 
   // A start beside a daemon still in its start waits for it on this record: before, nothing told a daemon in its start
-  // from one that had started and did not answer.
-  it("records its holder as starting from the lock on, and as started once it says so, its pid kept throughout", async () => {
+  // from one that had started and did not answer. The record says where the daemon's output starts in the home's log,
+  // so a start that found it and sees it fail shows that output whole, what it wrote before the find included.
+  it("records its holder as starting from the lock on, with where the log ended then, and as started once it says so, its pid kept throughout", async () => {
     const home = await temporaryHome();
+    const earlier = "rerail daemon: an earlier run's line\n";
+    await writeFile(join(home, DAEMON_LOG_FILE), earlier);
     const lease = await holdHomeDaemonLock(home);
     expect(lease).toBeDefined();
     leases.push(lease!);
-    expect(homeDaemonStarting(home)).toBe(process.pid);
+    expect(homeDaemonStarting(home)).toEqual({ pid: process.pid, logOffset: Buffer.byteLength(earlier) });
     expect(homeDaemonHolder(home)).toBe(process.pid);
     lease!.started();
     expect(homeDaemonStarting(home)).toBeUndefined();
     expect(homeDaemonHolder(home)).toBe(process.pid);
     lease!.release();
     expect(homeDaemonStarting(home)).toBeUndefined();
+  });
+
+  it("reads a starting record that says nothing of the log as output from the log's beginning", async () => {
+    const home = await temporaryHome();
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: 4242, starting: true }));
+    expect(homeDaemonStarting(home)).toEqual({ pid: 4242, logOffset: 0 });
   });
 
   it("waits out a process that holds the lock for an instant, as a start asking whether a daemon runs does", async () => {

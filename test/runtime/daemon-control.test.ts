@@ -211,10 +211,13 @@ describe("Rerail daemon control", () => {
     expect(await withStartLock(home, async () => "the start lock is free")).toBe("the start lock is free");
   });
 
-  /** The home lock's holder record naming `pid` as a daemon still in its start writes it. */
-  async function holdHomeStarting(pid: number): Promise<void> {
+  /**
+   * The home lock's holder record naming `pid` as a daemon still in its start writes it, with `logOffset`, where its
+   * output starts in the log, when given.
+   */
+  async function holdHomeStarting(pid: number, logOffset?: number): Promise<void> {
     await mkdir(join(home, LOCKS_DIR), { recursive: true });
-    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid, starting: true }));
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid, starting: true, logOffset }));
   }
 
   /**
@@ -319,15 +322,17 @@ describe("Rerail daemon control", () => {
 
   // A daemon that took the home between a start's looks, before it wrote daemon.json, failed the start once the wait for
   // it to record itself was over, or was started beside. The start waits for it, and its exit ends the start with what
-  // it wrote once found, never an earlier run's lines.
+  // it wrote from the lock on, a notice before the start found it included, never an earlier run's lines.
   it.each([
     ["while the start waits for a holder to record itself", 1],
     ["after the start found no holder", 2],
   ])("waits for a daemon that took the home %s, and fails once with its exit and its own output", async (_when, free) => {
     waits.startMs = 1_000;
-    await holdHomeStarting(DEAD_PID);
     const log = join(home, DAEMON_LOG_FILE);
-    await writeFile(log, "rerail daemon: an earlier run's failure\n");
+    const earlier = "rerail daemon: an earlier run's failure\n";
+    await writeFile(log, earlier);
+    await holdHomeStarting(DEAD_PID, Buffer.byteLength(earlier));
+    appendFileSync(log, "rerail daemon: this daemon's notice\n");
     let gone = false;
     const kill = (): true => {
       if (gone) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
@@ -342,7 +347,7 @@ describe("Rerail daemon control", () => {
     };
     const control = { home, packageRoot: "/nowhere/rerail", onWaiting, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
     await expect(startDaemon(control, { dev: true }, machine))
-      .rejects.toThrow(new Error(`Rerail daemon (pid ${DEAD_PID}) exited before it was ready:\nrerail daemon: this daemon's failure`));
+      .rejects.toThrow(new Error(`Rerail daemon (pid ${DEAD_PID}) exited before it was ready:\nrerail daemon: this daemon's notice\nrerail daemon: this daemon's failure`));
     expect(told).toEqual([DEAD_PID]);
   });
 

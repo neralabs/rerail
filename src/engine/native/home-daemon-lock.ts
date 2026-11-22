@@ -2,6 +2,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmS
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { replaceFileSync } from "../file-replace.js";
+import { DAEMON_LOG_FILE } from "../storage/rerail-home.js";
 import { LOCKS_DIR } from "./file-lock.js";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
 
@@ -70,12 +71,16 @@ function fileAt(path: string): Pick<BigIntStats, "dev" | "ino"> | "none" | undef
 /** Module state keeps the native handle reachable: a collected handle would close, and so release, the lock. */
 let held: NativeExclusiveFileLock | undefined;
 
-/** What the holder of `home`'s lock recorded: its pid, and `starting` until its start is over. */
-function holderRecord(home: string): { pid: number; starting: boolean } | undefined {
+/**
+ * What the holder of `home`'s lock recorded: its pid, and `starting` until its start is over, with where its output
+ * starts in the home's log, `logOffset` (0, the log's beginning, when the record does not say).
+ */
+function holderRecord(home: string): { pid: number; starting: boolean; logOffset: number } | undefined {
   try {
     // JSON null throws here too, and is no record.
-    const { pid, starting } = JSON.parse(readFileSync(join(home, LOCKS_DIR, HOLDER_FILE), "utf8")) as { pid?: unknown; starting?: unknown };
-    return typeof pid === "number" && Number.isInteger(pid) ? { pid, starting: starting === true } : undefined;
+    const { pid, starting, logOffset } = JSON.parse(readFileSync(join(home, LOCKS_DIR, HOLDER_FILE), "utf8")) as { pid?: unknown; starting?: unknown; logOffset?: unknown };
+    if (typeof pid !== "number" || !Number.isInteger(pid)) return undefined;
+    return { pid, starting: starting === true, logOffset: typeof logOffset === "number" ? logOffset : 0 };
   } catch {
     return undefined;
   }
@@ -87,13 +92,13 @@ export function homeDaemonHolder(home: string): number | undefined {
 }
 
 /**
- * The pid the holder of `home`'s lock recorded while its start is not over ({@link HomeDaemonLease.started}), or
- * undefined. The record alone proves nothing: a holder killed in its start leaves it, so a reader asks whether that pid
- * runs and the lock is held.
+ * The pid the holder of `home`'s lock recorded while its start is not over ({@link HomeDaemonLease.started}), with
+ * where its output starts in the home's log, or undefined. The record alone proves nothing: a holder killed in its start
+ * leaves it, so a reader asks whether that pid runs and the lock is held.
  */
-export function homeDaemonStarting(home: string): number | undefined {
+export function homeDaemonStarting(home: string): { pid: number; logOffset: number } | undefined {
   const record = holderRecord(home);
-  return record?.starting === true ? record.pid : undefined;
+  return record?.starting === true ? { pid: record.pid, logOffset: record.logOffset } : undefined;
 }
 
 /** Where the holder of `home`'s lock records its pid. */
@@ -192,19 +197,34 @@ async function waitForLock(home: string, tryLock: () => NativeExclusiveFileLock 
 /**
  * Writes this process's pid beside the lock, whole, with `starting` while its start is not over, since a refusal or a
  * start may read the record at any moment: the replace is atomic, so a reader sees the record a holder killed outright
- * left, or this one, never none. Never fails the daemon: a holder that could not record itself holds the home all the
- * same, and removes the record an earlier holder left, so the refusal names no pid rather than one that runs no daemon.
+ * left, or this one, never none. A starting record says where the daemon's output starts in the home's log
+ * ({@link logEnd}), so a start that finds it and sees it fail shows that output whole. Never fails the daemon: a holder
+ * that could not record itself holds the home all the same, and removes the record an earlier holder left, so the
+ * refusal names no pid rather than one that runs no daemon.
  */
 function recordHolder(home: string, starting: boolean): void {
   const record = join(home, LOCKS_DIR, HOLDER_FILE);
   try {
-    replaceFileSync(record, `${JSON.stringify(starting ? { pid: process.pid, starting } : { pid: process.pid })}\n`, { mode: 0o600 });
+    replaceFileSync(record, `${JSON.stringify(starting ? { pid: process.pid, starting, logOffset: logEnd(home) } : { pid: process.pid })}\n`, { mode: 0o600 });
   } catch {
     try {
       rmSync(record, { force: true });
     } catch {
       // Unrecorded, the holder holds the home all the same.
     }
+  }
+}
+
+/**
+ * Where the home's log ends now, in bytes. A start launches the daemon with its output appended there, and the daemon
+ * writes nothing before it takes the lock but its refusal of an unsupported Node, after which it exits: its output
+ * starts here. 0 when the log cannot be read: a failure then shows the log's last lines.
+ */
+function logEnd(home: string): number {
+  try {
+    return statSync(join(home, DAEMON_LOG_FILE)).size;
+  } catch {
+    return 0;
   }
 }
 

@@ -1022,35 +1022,35 @@ interface ComingUp {
 }
 
 /**
- * The pid of the daemon that holds `home` and is still in its start, or undefined: the record beside the home's lock
- * says it is starting (`homeDaemonStarting`), that pid runs, and the lock is held, asked as `homeDaemonRuns` asks it.
- * A daemon killed in its start leaves that record and lets go of the lock, so it is not coming up. On Windows the
- * engine pipe is not asked: a daemon binds it well into its start.
+ * The pid of the daemon that holds `home` and is still in its start, with where its output starts in the home's log,
+ * or undefined: the record beside the home's lock says it is starting (`homeDaemonStarting`), that pid runs, and the
+ * lock is held, asked as `homeDaemonRuns` asks it. A daemon killed in its start leaves that record and lets go of the
+ * lock, so it is not coming up. On Windows the engine pipe is not asked: a daemon binds it well into its start.
  */
-function daemonComingUp(home: string, machine: DaemonMachine): number | undefined {
-  const pid = homeDaemonStarting(home);
-  if (pid === undefined || !processAlive(pid, machine.kill)) return undefined;
-  return machine.homeDaemonLockHeld(home) === true ? pid : undefined;
+function daemonComingUp(home: string, machine: DaemonMachine): { pid: number; logOffset: number } | undefined {
+  const found = homeDaemonStarting(home);
+  if (found === undefined || !processAlive(found.pid, machine.kill)) return undefined;
+  return machine.homeDaemonLockHeld(home) === true ? found : undefined;
 }
 
 /** The pid of the daemon of `home` still in its start ({@link daemonComingUp}), for `rerail status`; undefined when none is. */
 export function homeDaemonInStart(home: string, machine: DaemonMachine = THIS_MACHINE): number | undefined {
-  return daemonComingUp(home, machine);
+  return daemonComingUp(home, machine)?.pid;
 }
 
 /**
  * The daemon of `home` still in its start, found by a start that did not launch it: waited for as long as a start waits
  * for its own launch, from now, and gone once its pid is. One that daemon.json names and that answers is running,
  * whatever its record says: a record a daemon could not rewrite at the end of its start must not keep a start waiting.
- * Its failure shows what the log gets from now on, as for a daemon the start launched: what the log holds already is
- * earlier runs' and other starts'.
+ * Its failure shows what it wrote to the log from where its record says its output starts, the lines it wrote before
+ * this start found it included, as for a daemon the start launched: what the log held before is earlier runs' and
+ * other starts'.
  */
 async function foundStarting(home: string, machine: DaemonMachine): Promise<ComingUp | DaemonLookup | undefined> {
-  const pid = daemonComingUp(home, machine);
-  if (pid === undefined) return undefined;
-  const logFile = join(home, DAEMON_LOG_FILE);
-  const logOffset = await stat(logFile).then(info => info.size, () => 0);
-  const records = { home, stateFile: join(home, DAEMON_STATE_FILE), logFile, logOffset };
+  const found = daemonComingUp(home, machine);
+  if (found === undefined) return undefined;
+  const { pid, logOffset } = found;
+  const records = { home, stateFile: join(home, DAEMON_STATE_FILE), logFile: join(home, DAEMON_LOG_FILE), logOffset };
   const answering = await answeringDaemon(records.stateFile, pid, machine.platform);
   if (answering !== undefined) return { status: "running", ...answering };
   const exitReason = (): string | undefined => (processAlive(pid, machine.kill) ? undefined : `(pid ${pid}) exited`);
@@ -1468,7 +1468,7 @@ async function readyDaemon(launched: LaunchedDaemon, records: LaunchRecords, mac
     const daemon = await answeredLaunch(launched, records, machine.platform);
     if (daemon !== undefined) return daemon;
     const { pid } = launched;
-    if (pid !== undefined && daemonComingUp(records.home, machine) === pid) return { status: "coming-up", pid, daemon: launched, launched: true, records, deadline };
+    if (pid !== undefined && daemonComingUp(records.home, machine)?.pid === pid) return { status: "coming-up", pid, daemon: launched, launched: true, records, deadline };
     await sleep(POLL_INTERVAL_MS);
   }
   throw await unansweredLaunch(launched, records);
