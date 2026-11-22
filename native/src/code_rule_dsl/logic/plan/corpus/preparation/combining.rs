@@ -701,12 +701,21 @@ impl ProgramPass for FoldOwn<'_> {
     }
 }
 
-/// Each diffed original's narrow copy read where it is (decision 0575), not built: it is its original less its
-/// candidates, and its recheck's rows (`Diffed::finish`). A rule reading it reads, for each such read,
-/// - positively: the original less the candidates, or the recheck;
-/// - negated: neither the original nor the recheck, or a candidate the recheck does not hold.
-/// A copy stays built where a read cannot be so written: in an aggregate, gated, with a term not a variable or a
-/// constant, in a native operator's rule, or more than `READS` of them in one rule (each rule is one per way).
+/// Each diffed original's narrow copy read where it is (decision 0575), not built. The copy is its original less its
+/// rows gone, and its rows added (`N = X \ G ∪ A`, `Diffed::finish`); `A` is empty where the copy can only lose rows
+/// (`adds`: nothing it reads is a copy read negated, in an aggregate, or one that may gain rows). A read is written:
+/// - positive, its terms all named: `X(t), !G(t)`; and `A(t)` where it may gain rows;
+/// - positive with `_` (a test that a row is there): `X(t, _), !G_s(t_s)`, and `G_s(t_s), X(t, w), !G(t, w)` for the
+///   few keys with rows gone (`G_s`: the rows gone, on the read's named columns `s`); and `A(t, w)`;
+/// - negated: `!X(t)` or `G(t)`, each with `!A(t)`;
+/// - negated with `_`: `!X(t, _)`, or `G_s(t_s), !M_s(t_s)` (`M_s`: the keys of rows gone with a row not gone), each
+///   with `!A_s(t_s)`.
+/// Inside the recheck's recursion (where a read of `G` would close a cycle through a negation) a positive read is the
+/// original less the candidates, or the recheck's rows (`N = X \ C ∪ R`). A rule is written once a way, the product of
+/// its reads' ways: one where the copy only loses rows and its terms are named. A copy stays built where a read
+/// cannot be written so (an aggregate's, a gated one, a term not a variable, a constant or `_`, a native operator's
+/// rule, a negation or a `_` inside the recursion), where a rule would be more than `WAYS` rules, or where the program
+/// lists it (inputs, outputs, demand).
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct Unnarrow {
     diffed: BTreeSet<String>,
     /// How many copies stayed built.
@@ -714,8 +723,73 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) struct Unnarrow {
 }
 
 impl Unnarrow {
-    /// The most reads of copies a rule is written out for: `2^READS` rules.
-    const READS: usize = 3;
+    /// The most rules one rule is written as.
+    const WAYS: usize = 16;
+}
+
+/// The variables a positive read's `_` is written as, by read and column: `WILD_COLS` a read.
+const WILD_COLS: usize = 8;
+const WILD_READS: usize = 8;
+fn wild_var(k: usize, c: usize) -> &'static str {
+    const NAMES: [&str; WILD_READS * WILD_COLS] = [
+        "rr_w0_0", "rr_w0_1", "rr_w0_2", "rr_w0_3", "rr_w0_4", "rr_w0_5", "rr_w0_6", "rr_w0_7",
+        "rr_w1_0", "rr_w1_1", "rr_w1_2", "rr_w1_3", "rr_w1_4", "rr_w1_5", "rr_w1_6", "rr_w1_7",
+        "rr_w2_0", "rr_w2_1", "rr_w2_2", "rr_w2_3", "rr_w2_4", "rr_w2_5", "rr_w2_6", "rr_w2_7",
+        "rr_w3_0", "rr_w3_1", "rr_w3_2", "rr_w3_3", "rr_w3_4", "rr_w3_5", "rr_w3_6", "rr_w3_7",
+        "rr_w4_0", "rr_w4_1", "rr_w4_2", "rr_w4_3", "rr_w4_4", "rr_w4_5", "rr_w4_6", "rr_w4_7",
+        "rr_w5_0", "rr_w5_1", "rr_w5_2", "rr_w5_3", "rr_w5_4", "rr_w5_5", "rr_w5_6", "rr_w5_7",
+        "rr_w6_0", "rr_w6_1", "rr_w6_2", "rr_w6_3", "rr_w6_4", "rr_w6_5", "rr_w6_6", "rr_w6_7",
+        "rr_w7_0", "rr_w7_1", "rr_w7_2", "rr_w7_3", "rr_w7_4", "rr_w7_5", "rr_w7_6", "rr_w7_7",
+    ];
+    NAMES[k * WILD_COLS + c]
+}
+
+/// A copy's rows gone, added, and gone with a row not gone, on the named columns `s` (a bit a column).
+fn gone_on(orig: &str, s: u32) -> String {
+    format!("rr_gone{s:x}_{orig}")
+}
+fn added_on(orig: &str, s: u32) -> String {
+    format!("rr_added{s:x}_{orig}")
+}
+fn left_on(orig: &str, s: u32) -> String {
+    format!("rr_left{s:x}_{orig}")
+}
+
+/// How a read of a copy is written.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Form {
+    /// The original less its rows gone, and its rows added.
+    Delta,
+    /// The original less its candidates, and the recheck's rows: inside the recheck's recursion.
+    Cand,
+}
+
+/// What `Unnarrow` decided: the copies read in place, how each reader reads them.
+struct Plan {
+    /// Each copy read in place, by its name: its original.
+    read: HashMap<String, String>,
+    /// The originals whose copies may gain rows.
+    adds: BTreeSet<String>,
+    /// Per original, what its rows gone reach and what its candidates reach (a reader among them would close a
+    /// cycle through a negation).
+    gone_reach: HashMap<String, BTreeSet<String>>,
+    cand_reach: HashMap<String, BTreeSet<String>>,
+}
+
+impl Plan {
+    /// The form of a read of `orig`'s copy in a rule of `head`, and its number of ways; `None` where it has none.
+    fn form(&self, head: &str, orig: &str, neg: bool, wild: bool) -> Option<(Form, usize)> {
+        let adds = self.adds.contains(orig);
+        if !self.gone_reach[orig].contains(head) {
+            let ways = match (neg, wild) {
+                (false, false) => 1 + usize::from(adds),
+                (false, true) => 2 + usize::from(adds),
+                (true, _) => 2,
+            };
+            return Some((Form::Delta, ways));
+        }
+        (!neg && !wild && !self.cand_reach[orig].contains(head)).then_some((Form::Cand, 2))
+    }
 }
 
 impl ProgramPass for Unnarrow {
@@ -724,12 +798,83 @@ impl ProgramPass for Unnarrow {
         let v = cx.v();
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
+        let debug = std::env::var_os("RERAIL_NARROW_DIFF_DEBUG").is_some();
         let natives = v.native_map().unwrap_or_default();
         let of: HashMap<String, String> = self.diffed.iter().map(|x| (narrow_name(x), x.clone())).collect();
+        // Who reads whom, and what each reaches.
+        let mut edges: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+        for r in v.rules() {
+            let e = edges.entry(v.rel_name(r.head().rel())).or_default();
+            for a in r.body().filter_map(|l| match l.view() {
+                Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(a),
+                _ => None,
+            }) {
+                e.insert(v.rel_name(a.rel()));
+            }
+        }
+        let reach = |from: &str| -> BTreeSet<String> {
+            let mut seen: BTreeSet<String> = BTreeSet::new();
+            let mut todo = vec![from.to_owned()];
+            while let Some(n) = todo.pop() {
+                for m in edges.get(n.as_str()).into_iter().flatten() {
+                    if seen.insert((*m).to_owned()) {
+                        todo.push((*m).to_owned());
+                    }
+                }
+            }
+            seen
+        };
+        // A rule `x` reads, as reads of what (`G` reaching it, so `x`'s readers below it).
+        let mut gone_reach: HashMap<String, BTreeSet<String>> = HashMap::new();
+        let mut cand_reach: HashMap<String, BTreeSet<String>> = HashMap::new();
+        for x in &self.diffed {
+            let mut g = reach(&gone_name(x));
+            g.insert(gone_name(x));
+            g.insert(added_name(x));
+            let mut c = reach(&cand_name(x));
+            c.insert(cand_name(x));
+            gone_reach.insert(x.clone(), g);
+            cand_reach.insert(x.clone(), c);
+        }
+        // Each copy that may gain rows: its narrow rules (a diffed one's recheck, a built one's own) read a copy
+        // negated or in an aggregate, or one that may gain rows. The narrow bound only takes rows away.
+        let narrow_rules = |n: &str| -> String { of.get(n).map_or_else(|| n.to_owned(), |o| recheck_name(o)) };
+        let copies: BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).filter(|h| h.starts_with("rr_narrow_")).chain(of.keys().cloned()).collect();
+        let mut adding: BTreeSet<String> = BTreeSet::new();
+        loop {
+            let before = adding.len();
+            for n in &copies {
+                if adding.contains(n) {
+                    continue;
+                }
+                let head = narrow_rules(n);
+                let adds = v.rules().filter(|r| v.rel_name(r.head().rel()) == head).any(|r| {
+                    r.body().any(|l| match l.view() {
+                        Lit::Atom(a) => copies.contains(v.rel_name(a.rel())) && (a.neg() || adding.contains(v.rel_name(a.rel()))),
+                        Lit::Agg { atom, .. } => copies.contains(v.rel_name(atom.rel())),
+                        _ => false,
+                    })
+                });
+                if adds {
+                    adding.insert(n.clone());
+                }
+            }
+            if adding.len() == before {
+                break;
+            }
+        }
+        let adds: BTreeSet<String> = of.iter().filter(|(n, _)| adding.contains(*n)).map(|(_, o)| o.clone()).collect();
+        let mut plan = Plan { read: HashMap::new(), adds, gone_reach, cand_reach };
         let mut kept: BTreeSet<String> = BTreeSet::new();
+        let keep = |o: &str, why: &dyn Fn() -> String, kept: &mut BTreeSet<String>| {
+            if debug {
+                eprintln!("NKEEP {o}: {}", why());
+            }
+            kept.insert(o.to_owned());
+        };
         for x in f.inputs().chain(f.outputs()).chain(f.demand()) {
             if let Some(o) = of.get(x) {
-                kept.insert(o.clone());
+                keep(o, &|| "listed".to_owned(), &mut kept);
             }
         }
         for r in v.rules() {
@@ -738,6 +883,8 @@ impl ProgramPass for Unnarrow {
                 continue;
             }
             let native = natives.contains_key(head);
+            let mut ways = 1usize;
+            let mut wilds = 0;
             let mut reads = Vec::new();
             for l in r.body() {
                 let (a, plain) = match l.view() {
@@ -746,109 +893,184 @@ impl ProgramPass for Unnarrow {
                     _ => continue,
                 };
                 let Some(o) = of.get(v.rel_name(a.rel())) else { continue };
-                let terms = a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_)));
-                if native || !plain || a.gated() || !terms {
-                    kept.insert(o.clone());
-                }
                 reads.push(o.clone());
+                let wild = a.args().any(|t| matches!(t, TermRef::Wild));
+                let terms = a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Wild)) && a.arity() <= WILD_COLS;
+                if native || !plain || a.gated() || !terms {
+                    keep(o, &|| format!("native {native} agg {} gated {} terms {} in {head}", !plain, a.gated(), !terms), &mut kept);
+                    continue;
+                }
+                wilds += usize::from(wild);
+                match plan.form(head, o, a.neg(), wild) {
+                    Some((_, n)) => ways = ways.saturating_mul(n),
+                    None => keep(o, &|| format!("in its recursion, neg {} wild {wild}, in {head}", a.neg()), &mut kept),
+                }
             }
-            if reads.len() > Self::READS {
-                kept.extend(reads);
+            if ways > Self::WAYS || wilds > WILD_READS {
+                for o in &reads {
+                    keep(o, &|| format!("{ways} ways in {head}"), &mut kept);
+                }
             }
         }
-        let read: HashMap<String, String> = of.into_iter().filter(|(_, o)| !kept.contains(o)).collect();
+        plan.read = of.into_iter().filter(|(_, o)| !kept.contains(o)).collect();
         self.kept = kept.len();
-        if read.is_empty() {
+        if plan.read.is_empty() {
             return Ok(());
         }
-        let n = read.len();
-        let kept_n = kept.len();
-        crate::code_rule_dsl::logic::profile::decision("narrow copies read in place (decision 0575)", || format!("{n} read in place, {kept_n} built"));
+        let (n, k) = (plan.read.len(), kept.len());
+        crate::code_rule_dsl::logic::profile::decision("narrow copies read in place (decision 0575)", || format!("{n} read in place, {k} built"));
         w.derive()?;
-        w.apply(cx, &mut InPlace { read: &read }, &crate::code_rule_dsl::logic::program_image::manager::Select::All)
+        w.apply(cx, &mut InPlace { plan: &plan, on: Default::default() }, &crate::code_rule_dsl::logic::program_image::manager::Select::All)
     }
 }
 
 /// `Unnarrow`'s edit of each rule.
 struct InPlace<'a> {
-    /// Each copy read in place, by its name: its original.
-    read: &'a HashMap<String, String>,
+    plan: &'a Plan,
+    /// The rows gone, added and left on named columns its rules read: by original, the columns.
+    on: BTreeSet<(String, u32)>,
 }
 
-/// One way of a rule's reads of copies: each read's place among its atoms, written as `(relation, negated)`.
+/// One way of a rule's reads of copies: the reads' literals (by place in the body) left out, each written again after.
 struct Way<'a> {
-    at: &'a HashMap<usize, (String, bool)>,
-    atoms: usize,
+    drop: &'a BTreeSet<usize>,
+    lits: usize,
 }
 
 impl Rewrite for Way<'_> {
-    fn atom_as(&mut self, a: AtomRef<'_>) -> Option<(String, bool, bool)> {
-        let at = self.atoms;
-        self.atoms += 1;
-        self.at.get(&at).map(|(rel, neg)| (rel.clone(), *neg, a.gated()))
+    fn keep(&mut self, _l: crate::code_rule_dsl::logic::program_image::LitRef<'_>) -> bool {
+        let at = self.lits;
+        self.lits += 1;
+        !self.drop.contains(&at)
     }
+}
+
+/// A literal a way writes: its relation, whether negated, its terms.
+type WLit<'t> = (String, bool, Vec<T<'t>>);
+fn lit<'t>(rel: &str, neg: bool, t: &[T<'t>]) -> WLit<'t> {
+    (rel.to_owned(), neg, t.to_vec())
 }
 
 impl RulePass for InPlace<'_> {
     const NAME: &'static str = "narrow copies read in place: rules";
     fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> Result<Step> {
+        use crate::code_rule_dsl::logic::program_image::build::t_of;
         let v = cx.v();
-        if self.read.contains_key(v.rel_name(r.head().rel())) {
+        let head = v.rel_name(r.head().rel());
+        if self.plan.read.contains_key(head) {
             return Ok(Step::Drop);
         }
-        // Each read: its place, original, sign and terms.
-        let mut reads: Vec<(usize, &str, bool, Vec<T<'_>>)> = Vec::new();
-        let mut at = 0;
-        for l in r.body() {
-            let a = match l.view() {
-                Lit::Atom(a) => a,
-                Lit::Agg { atom, .. } => atom,
-                _ => continue,
+        // Each read's place and its ways, each a few literals.
+        let mut drop: BTreeSet<usize> = BTreeSet::new();
+        let mut reads: Vec<Vec<Vec<WLit<'_>>>> = Vec::new();
+        let mut wilds = 0;
+        for (j, l) in r.body().enumerate() {
+            let Lit::Atom(a) = l.view() else { continue };
+            let Some(o) = self.plan.read.get(v.rel_name(a.rel())) else { continue };
+            let o = o.as_str();
+            let wild = a.args().any(|t| matches!(t, TermRef::Wild));
+            let Some((form, _)) = self.plan.form(head, o, a.neg(), wild) else { unreachable!("a copy read in place is read in a form") };
+            drop.insert(j);
+            let k = wilds;
+            wilds += usize::from(wild);
+            // Its terms as written (`_` kept), with each `_` a variable of its own, and its named columns' alone.
+            let plain: Vec<T<'_>> = a.args().map(|t| t_of(r, t)).collect();
+            let fresh: Vec<T<'_>> = a.args().enumerate().map(|(c, t)| if matches!(t, TermRef::Wild) { T::Var(wild_var(k, c)) } else { t_of(r, t) }).collect();
+            let s: u32 = a.args().enumerate().filter(|(_, t)| !matches!(t, TermRef::Wild)).fold(0, |m, (c, _)| m | 1 << c);
+            let key: Vec<T<'_>> = a.args().filter(|t| !matches!(t, TermRef::Wild)).map(|t| t_of(r, t)).collect();
+            let adds = self.plan.adds.contains(o);
+            let (x, g, ad, c, rk) = (o.to_owned(), gone_name(o), added_name(o), cand_name(o), recheck_name(o));
+            let ways: Vec<Vec<WLit<'_>>> = match (form, a.neg(), wild) {
+                (Form::Cand, ..) => vec![vec![lit(&x, false, &plain), lit(&c, true, &plain)], vec![lit(&rk, false, &plain)]],
+                (Form::Delta, false, false) => {
+                    let mut w = vec![vec![lit(&x, false, &plain), lit(&g, true, &plain)]];
+                    if adds {
+                        w.push(vec![lit(&ad, false, &plain)]);
+                    }
+                    w
+                }
+                (Form::Delta, false, true) => {
+                    self.on.insert((x.clone(), s));
+                    let gs = gone_on(o, s);
+                    let mut w = vec![
+                        vec![lit(&x, false, &plain), lit(&gs, true, &key)],
+                        vec![lit(&gs, false, &key), lit(&x, false, &fresh), lit(&g, true, &fresh)],
+                    ];
+                    if adds {
+                        w.push(vec![lit(&ad, false, &fresh)]);
+                    }
+                    w
+                }
+                (Form::Delta, true, false) => {
+                    let mut w = vec![vec![lit(&x, true, &plain)], vec![lit(&g, false, &plain)]];
+                    if adds {
+                        for way in &mut w {
+                            way.push(lit(&ad, true, &plain));
+                        }
+                    }
+                    w
+                }
+                (Form::Delta, true, true) => {
+                    self.on.insert((x.clone(), s));
+                    let (gs, ls, as_) = (gone_on(o, s), left_on(o, s), added_on(o, s));
+                    let mut w = vec![vec![lit(&x, true, &plain)], vec![lit(&gs, false, &key), lit(&ls, true, &key)]];
+                    if adds {
+                        for way in &mut w {
+                            way.push(lit(&as_, true, &key));
+                        }
+                    }
+                    w
+                }
             };
-            if let Some(o) = self.read.get(v.rel_name(a.rel())) {
-                reads.push((at, o.as_str(), a.neg(), a.args().map(|t| crate::code_rule_dsl::logic::program_image::build::t_of(r, t)).collect()));
-            }
-            at += 1;
+            reads.push(ways);
         }
         if reads.is_empty() {
             return Ok(Step::Keep);
         }
-        for m in 0u32..1 << reads.len() {
-            let mut places: HashMap<usize, (String, bool)> = HashMap::new();
-            let mut extra: Vec<(String, bool, &[T<'_>])> = Vec::new();
-            for (k, (place, o, neg, terms)) in reads.iter().enumerate() {
-                let (c, k2) = (cand_name(o), recheck_name(o));
-                let second = m >> k & 1 == 1;
-                match (neg, second) {
-                    // The original less the candidates.
-                    (false, false) => {
-                        places.insert(*place, ((*o).to_owned(), false));
-                        extra.push((c, true, terms));
-                    }
-                    // The recheck's rows.
-                    (false, true) => {
-                        places.insert(*place, (k2, false));
-                    }
-                    // Neither the original nor the recheck.
-                    (true, false) => {
-                        places.insert(*place, ((*o).to_owned(), true));
-                        extra.push((k2, true, terms));
-                    }
-                    // A candidate the recheck does not hold.
-                    (true, true) => {
-                        places.insert(*place, (c, false));
-                        extra.push((k2, true, terms));
-                    }
+        // Every way: one of each read's.
+        let mut at = vec![0usize; reads.len()];
+        loop {
+            let mut way = Way { drop: &drop, lits: 0 };
+            let mut b = out.rewriting(&mut way);
+            for (k, i) in at.iter().enumerate() {
+                for (rel, neg, terms) in &reads[k][*i] {
+                    b = if *neg { b.not(rel.as_str(), terms) } else { b.atom(rel.as_str(), terms) };
                 }
             }
-            let mut way = Way { at: &places, atoms: 0 };
-            let mut b = out.rewriting(&mut way);
-            for (rel, neg, terms) in &extra {
-                b = if *neg { b.not(rel.as_str(), terms) } else { b.atom(rel.as_str(), terms) };
-            }
             b.finish()?;
+            let mut k = 0;
+            loop {
+                if k == at.len() {
+                    return Ok(Step::Written);
+                }
+                at[k] += 1;
+                if at[k] < reads[k].len() {
+                    break;
+                }
+                at[k] = 0;
+                k += 1;
+            }
         }
-        Ok(Step::Written)
+    }
+    fn finish(&mut self, cx: &Cx<'_>, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>) -> Result<()> {
+        let v = cx.v();
+        for (o, s) in &self.on {
+            let cols = v.columns_of(o).expect("a diffed original's columns");
+            let names: Vec<String> = (0..cols.len()).map(|i| format!("rr_x{i}")).collect();
+            let xs: Vec<T<'_>> = names.iter().map(|n| T::Var(n)).collect();
+            let on: Vec<usize> = (0..cols.len()).filter(|c| s >> c & 1 == 1).collect();
+            let ks: Vec<T<'_>> = on.iter().map(|&c| xs[c].clone()).collect();
+            let pairs: Vec<(&str, &str)> = on.iter().map(|&c| (cols[c].0.as_str(), cols[c].1.as_str())).collect();
+            let (gs, ls, as_) = (gone_on(o, *s), left_on(o, *s), added_on(o, *s));
+            for n in [&gs, &ls, &as_] {
+                b.fields().declare(n, &pairs);
+                b.fields().add_qualifiers(&[(n.as_str(), "no_inline"), (n.as_str(), "no_magic")]);
+            }
+            b.rule().head(gs.as_str(), &ks).atom(gone_name(o).as_str(), &xs).finish()?;
+            b.rule().head(ls.as_str(), &ks).atom(gs.as_str(), &ks).atom(o.as_str(), &xs).not(gone_name(o).as_str(), &xs).finish()?;
+            b.rule().head(as_.as_str(), &ks).atom(added_name(o).as_str(), &xs).finish()?;
+        }
+        Ok(())
     }
 }
 
@@ -1728,5 +1950,10 @@ impl Diffed {
         // Rows of their own, not a test inlined into each candidate's rule: the few a candidate's join starts from,
         // made whole (a reader's demand would join them with its keys, every node's).
         b.fields().add_qualifiers(&[(ANN_NODE, "no_inline"), (ANN_DOC, "no_inline"), (ANN_NODE, "no_magic"), (ANN_DOC, "no_magic")]);
+        // So are the candidates, the recheck and the deltas: each a few rows a join starts from. Inlined (a candidate's
+        // rule is often a filter), a reader's join starts from the whole original instead.
+        let few: Vec<String> = self.of.iter().flat_map(|x| [cand_name(x), recheck_name(x), gone_name(x), added_name(x)]).collect();
+        let words: Vec<(&str, &str)> = few.iter().flat_map(|n| [(n.as_str(), "no_inline"), (n.as_str(), "no_magic")]).collect();
+        b.fields().add_qualifiers(&words);
     }
 }
