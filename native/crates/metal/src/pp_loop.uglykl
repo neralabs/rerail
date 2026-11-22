@@ -1511,12 +1511,13 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
             // An entry is plain where its tokens are all before the row's first that is not; the plain
             // ones before the first that is not, each given the thread by its lane, are taken in one step.
             LpTok x; x.src = 0u; x.st = 0u; x.flags = 0u; x.org = 0u;
-            uint32_t len = 0u;
+            uint32_t len = 0u, full = 0u;
             bool longe = false;
             if (p < q_end) {
                 uint32_t i = q_def + p;
                 x.src = a.psrc[i]; x.st = a.pst[i]; x.flags = a.pn[i]; x.org = a.pexp[i];
                 len = lp_is_span(x) ? lp_span_len(x) : 1u;
+                full = len;
                 // A span longer than the row: one place, not plain (the thread reads it).
                 if (len > UKL_SIMD_WIDTH) { longe = true; len = 1u; }
             }
@@ -1568,7 +1569,30 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     if (me && rp->stop == 0u) lp_list_take(rp, &o, u, a, y);
                 }
             }
-            if (me) rp->noask = k == 0u;
+            // The first entry a span longer than the row: its frame pushed (`lp_lex`'s), and its first tokens
+            // looked at now, a lane each (`LQ_NAMES`'s), so the thread runs them next, not a token a step.
+            bool first_long = ukl_sg_shuffle(longe ? 1u : 0u, 0u __UKL_ARGS) != 0u;
+            if (k == 0u && first_long) {
+                uint32_t fsrc = ukl_sg_shuffle(x.src, 0u __UKL_ARGS), fst = ukl_sg_shuffle(x.st, 0u __UKL_ARGS);
+                uint32_t flen = ukl_sg_shuffle(full, 0u __UKL_ARGS);
+                uint32_t fflags = ukl_sg_shuffle(x.flags, 0u __UKL_ARGS), forg = ukl_sg_shuffle(x.org, 0u __UKL_ARGS);
+                uint32_t n = ukl_min(flen, (uint32_t)UKL_SIMD_WIDTH);
+                bool pl = ln < n && lp_ahead(u, a, fsrc & ~P_KIND, fst + ln, q_slot, q_floor);
+                uint32_t kk = ukl_min(ukl_ctz64((uint64_t)(ukl_sg_ballot(!pl __UKL_ARGS))), n);
+                if (me && rp->stop == 0u) {
+                    if (rp->sp == LP_DEPTH) {
+                        rp->stop = LP_DEEP;
+                    } else {
+                        LpTok e; e.src = fsrc; e.st = fst; e.flags = fflags; e.org = forg;
+                        rp->fr[(rp->sp - 1u) & (LP_DEPTH - 1u)].at++;
+                        UKL_LOCAL LpFrame* g = &rp->fr[(rp->sp++) & (LP_DEPTH - 1u)];
+                        g->kind = FK_SPAN; g->def = e.src & ~P_KIND; g->at = e.st; g->end = e.st + lp_span_len(e); g->mark = rp->mem[0].top; g->nsp = e.flags & 15u; g->org = e.org;
+                        rp->run = kk; rp->noask = kk == 0u;
+                    }
+                }
+            } else if (me) {
+                rp->noask = k == 0u;
+            }
         } else {
             lp_window(rp, u, q_def, q_at, q_end, ln, me __UKL_ARGS);
         }
