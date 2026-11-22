@@ -190,7 +190,10 @@ Implementer's choices:
   - `rerail-tape-format`'s `f16::tests::the_device_reads_read_every_node_as_the_crate_does` fails on the M3 and on
     this Mac, at HEAD without item 17 too: the device's reads of a 16z tape through its cache give another child
     count for node 0 than the crate's reads (1 against 6862 on the M3). The test does not use the writer's cursor.
-    It was not looked into further (decision 0540's cache lookup).
+    With the cache's stats on, the M3 gives 148 duplicates (waits that ran out their 65,536 turns), 6 turns of the
+    cache, then about 1.6 million failed lookups. Decision 0540 (step 5, the M3, 2026-11-21) recorded the same: a
+    16z writer stands still while its waiters spin. Its step 4 (a block decoded by its SIMD group's lanes together)
+    is the planned fix. It is that workstream's open step, not done here.
 - **New unit tests** in `bitlex_lex_rust`:
   - the records proof holds for JSON's grammar, and fails without the new error;
   - `without_lv`'s rewrites;
