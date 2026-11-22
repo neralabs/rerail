@@ -42,7 +42,8 @@ vi.mock("node:fs/promises", async importOriginal => {
     },
   };
 });
-// Every Git started on the caller's thread or as a process no thread waits on passes through, so a case can count them.
+// Every runGit and runGitAsync another module calls passes through, so a case can count them; Git that git.ts starts
+// itself does not.
 vi.mock("../../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/git.js")>();
   return { ...actual, runGit: vi.fn(actual.runGit), runGitAsync: vi.fn(actual.runGitAsync) };
@@ -236,6 +237,34 @@ describe("the engine service and the other worktrees of a repository", () => {
         waiting: worktreeLists(vi.mocked(runGitAsync).mock.calls) > waiting,
         named: roots.mock.results.at(-1)?.value,
       }).toEqual({ blocking: 0, waiting: true, named: expect.arrayContaining([added]) });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("lists Git's worktrees off the daemon's thread when a worktree is added and the registry's notice alone asks for the next walk", { timeout: 60_000 }, async () => {
+    const root = await folder();
+    const databasePath = join(root, "rerail.sqlite");
+    const { main, worktrees } = repository(root, databasePath, ["w1", "w2"]);
+    const opens = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace");
+    const roots = vi.spyOn(CheckoutCodeRuleRouter.prototype, "worktreeRoots");
+    const service = await startEngineService({ socketPath: socketPathIn(root, "registry-notice"), storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder });
+    const session = { host: "claude-code" as const, sessionId: "session-1", cwd: worktrees[0]! };
+    try {
+      await service.ingest({ kind: "session-start", eventId: "session-1:start", session });
+      await vi.waitFor(() => expect(opens.mock.results).toHaveLength(1), { timeout: 30_000, interval: 20 });
+      await opens.mock.results[0]!.value;
+      const bridge = opens.mock.contexts[0] as CodeRuleBridge;
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+      const added = join(root, "w3");
+      const blocking = worktreeLists(vi.mocked(runGit).mock.calls);
+      git(main, "worktree", "add", "--quiet", "--detach", added);
+
+      // No event of the session follows: the walk that names the added worktree is the one the registry's notice asked for.
+      const named = () => roots.mock.results.some(result => result.type === "return" && result.value.includes(added));
+      await vi.waitFor(() => expect(named()).toBe(true), { timeout: 30_000, interval: 20 });
+      expect(worktreeLists(vi.mocked(runGit).mock.calls) - blocking).toBe(0);
     } finally {
       await service.close();
     }
