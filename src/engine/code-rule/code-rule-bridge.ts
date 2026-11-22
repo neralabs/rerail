@@ -755,14 +755,14 @@ interface WorktreeDiscovery {
   unread: ReadonlyMap<string, { readonly stamp: string; readonly readError: string }>;
   /** Filesystem-clock reading taken as the last finished walk began; undefined until one finishes. */
   walkedFrom: number | undefined;
-  /** How many times the session let go of each worktree Git stopped listing (`#forgetWorktrees`), by its path. */
-  readonly letGo: Map<string, number>;
+  /** A mark of each of `roots`, made new each time Git lists one the session did not list before (`#syncWorktrees`). */
+  readonly listed: Map<string, symbol>;
 }
 
 function worktreeDiscovery(): WorktreeDiscovery {
   return {
     roots: new Set(), fresh: new Set(), baselineRoots: new Set(), watch: undefined, gaps: [], unread: new Map(), walkedFrom: undefined,
-    letGo: new Map(),
+    listed: new Map(),
   };
 }
 
@@ -770,8 +770,8 @@ function worktreeDiscovery(): WorktreeDiscovery {
 interface WorktreeStart {
   /** `WorktreeDiscovery.roots` as the walk began. */
   readonly worktrees: ReadonlySet<string>;
-  /** `WorktreeDiscovery.letGo` as the walk began. */
-  readonly letGo: ReadonlyMap<string, number>;
+  /** `WorktreeDiscovery.listed` as the walk began. */
+  readonly listed: ReadonlyMap<string, symbol>;
   readonly versions: ReadonlyMap<string, number>;
   /** `ToolCallWindows.ends` as the walk began. */
   readonly callsEnded: number;
@@ -1123,8 +1123,8 @@ interface WalkStart {
   readonly checkpoint: DiscoveryCheckpoint;
   /** `WorktreeDiscovery.roots` as the walk started. */
   readonly worktrees: ReadonlySet<string>;
-  /** `WorktreeDiscovery.letGo` as the walk of the other worktrees began (`walkKeeps`); none for the session folder's. */
-  readonly letGo?: ReadonlyMap<string, number>;
+  /** `WorktreeDiscovery.listed` as the walk of the other worktrees began (`walkHeld`); none for the session folder's. */
+  readonly listed?: ReadonlyMap<string, symbol>;
   readonly previous: ReadonlyMap<string, ObservedSource>;
   readonly versions: ReadonlyMap<string, number>;
   readonly heads: ReadonlyMap<string, string>;
@@ -1164,13 +1164,13 @@ async function listedChanges(discovery: SourceDiscovery, findings: WorktreeFindi
 }
 /**
  * Each walk answers for what it covers: a path a tool wrote elsewhere is never observed missing here. A worktree that
- * came or went while a walk ran is not the session walk's, and one gone is no longer the worktree walk's either.
+ * came or went while a walk ran is not the session walk's, and the worktree walk answers only for the worktrees Git
+ * listed for the whole walk (`walkHeld`).
  */
 function walkAnswersFor(discovery: SourceDiscovery, walk: WalkStart, path: string): boolean {
-  const walked = underBaselineRoot(walk.worktrees, path);
-  const current = underBaselineRoot(discovery.worktrees.roots, path);
-  if (!walk.inSession) return walked && current;
-  return !walked && !current && path !== ".." && !path.startsWith("../");
+  const walked = rootHolding(walk.worktrees, path);
+  if (!walk.inSession) return walked !== undefined && walkHeld(discovery, walk, walked);
+  return walked === undefined && !underBaselineRoot(discovery.worktrees.roots, path) && path !== ".." && !path.startsWith("../");
 }
 /**
  * The digest a changed source was observed with before, when the walk found it changed and could not read what it was;
@@ -1618,15 +1618,21 @@ function forgetSnapshots(discovery: SourceDiscovery, worktrees: ReadonlySet<stri
 /**
  * Whether `walk` keeps what it read of the Git of the checkout at `root` as what the next walk is judged from. The
  * session folder's walk keeps all it read. The walk of the other worktrees keeps only what it read of a checkout in one
- * of its worktrees that Git listed for the whole walk, which the session let go of none of the times since the walk
- * began (`WorktreeDiscovery.letGo`): one Git stopped listing meanwhile, even for a while, was let go of
- * (`#forgetWorktrees`), and a worktree Git lists again at its path is new to the session.
+ * of its worktrees that Git listed for the whole walk (`walkHeld`).
  */
 function walkKeeps(discovery: SourceDiscovery, walk: WalkStart, root: string): boolean {
   if (walk.inSession) return true;
   const path = sessionPath(discovery.root, root);
   const worktree = walk.worktrees.has(path) ? path : rootHolding(walk.worktrees, path);
-  return worktree !== undefined && discovery.worktrees.letGo.get(worktree) === walk.letGo?.get(worktree);
+  return worktree !== undefined && walkHeld(discovery, walk, worktree);
+}
+/**
+ * Whether Git listed `worktree`, one of the worktrees `walk` of the other worktrees read, for the whole walk: the session
+ * holds the mark it held of it as the walk began (`WorktreeDiscovery.listed`). One Git stopped listing meanwhile, even
+ * for a while, was let go of (`#forgetWorktrees`), and one Git lists again at its path is new to the session.
+ */
+function walkHeld(discovery: SourceDiscovery, walk: WalkStart, worktree: string): boolean {
+  return discovery.worktrees.listed.get(worktree) === walk.listed?.get(worktree);
 }
 /** Keeps the `HEAD` and unmerged entries a walk read, those it keeps (`walkKeeps`), as what the next walk is judged from. */
 function keepWalkedGit(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
@@ -2846,7 +2852,12 @@ export class CodeRuleBridge {
   #syncWorktrees(discovery: SourceDiscovery): readonly string[] {
     const worktrees = (this.#auditor.worktreeRoots?.() ?? []).filter(worktree => worktree !== discovery.root);
     const current = new Set(worktrees.map(worktree => sessionPath(discovery.root, worktree)));
-    for (const worktree of current) if (!discovery.worktrees.roots.has(worktree)) discovery.worktrees.fresh.add(worktree);
+    const { roots, fresh, listed } = discovery.worktrees;
+    for (const worktree of current) {
+      if (roots.has(worktree)) continue;
+      fresh.add(worktree);
+      listed.set(worktree, Symbol(worktree));
+    }
     const removed = new Set([...discovery.worktrees.roots].filter(worktree => !current.has(worktree)));
     if (removed.size > 0) this.#forgetWorktrees(discovery, removed);
     discovery.worktrees.roots = current;
@@ -2854,17 +2865,17 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Lets go of the worktrees Git no longer lists, and of the checkouts inside them: their files, and the `HEAD` and
-   * unmerged entries the walks kept of them. The session folder's walk reads every kept `HEAD` outside the worktrees
-   * (`#readCheckouts`), and one whose checkout is gone asks Git, one Git start at a time, inside the walk a shell
-   * command's result waits for. Each is counted (`WorktreeDiscovery.letGo`): a walk that began before keeps nothing it
-   * read of one, even when Git lists a worktree at its path again by then (`walkKeeps`).
+   * Lets go of the worktrees Git no longer lists, and of the checkouts inside them: their files, their marks, and the
+   * `HEAD` and unmerged entries the walks kept of them. The session folder's walk reads every kept `HEAD` outside the
+   * worktrees (`#readCheckouts`), and one whose checkout is gone asks Git, one Git start at a time, inside the walk a
+   * shell command's result waits for. A walk that began before takes nothing it read of one, even when Git lists a
+   * worktree at its path again by then (`walkHeld`).
    */
   #forgetWorktrees(discovery: SourceDiscovery, removed: ReadonlySet<string>): void {
-    const { fresh, letGo } = discovery.worktrees;
+    const { fresh, listed } = discovery.worktrees;
     for (const worktree of removed) {
       fresh.delete(worktree);
-      letGo.set(worktree, (letGo.get(worktree) ?? 0) + 1);
+      listed.delete(worktree);
     }
     for (const path of this.#observed.keys()) if (underBaselineRoot(removed, path)) this.#observed.delete(path);
     forgetSnapshots(discovery, removed);
@@ -2909,7 +2920,7 @@ export class CodeRuleBridge {
       return undefined;
     }
     const start: WorktreeStart = {
-      worktrees: new Set(discovery.worktrees.roots), letGo: new Map(discovery.worktrees.letGo), versions: new Map(discovery.versions),
+      worktrees: new Set(discovery.worktrees.roots), listed: new Map(discovery.worktrees.listed), versions: new Map(discovery.versions),
       callsEnded: discovery.toolCalls.ends,
     };
     const rules = { current: false };
@@ -3076,7 +3087,7 @@ export class CodeRuleBridge {
     }
     const walk: WalkStart = {
       inSession: false, baseline: false, checkpoint: "edit", worktrees: new Set(snapshots.keys()), previous, versions: start.versions,
-      heads, unmerged, callsEnded: start.callsEnded, observedAt, letGo: start.letGo,
+      heads, unmerged, callsEnded: start.callsEnded, observedAt, listed: start.listed,
     };
     const views = await this.#readTakenTexts(discovery, walk, scan, found);
     // Not this take's to record: the session keeps what it saw of them (`#takeSnapshots`).
@@ -3290,7 +3301,7 @@ export class CodeRuleBridge {
    * the take leaves to the next walk (`WorktreeTake.views`).
    */
   #takeSnapshots(discovery: SourceDiscovery, take: WorktreeTake): void {
-    for (const [worktree, snapshot] of take.snapshots) if (discovery.worktrees.roots.has(worktree)) this.#worktreeView.take(worktree, snapshot);
+    for (const [worktree, snapshot] of take.snapshots) if (walkHeld(discovery, take.walk, worktree)) this.#worktreeView.take(worktree, snapshot);
     const toolChanged = this.#toolChanges(discovery, take.walk);
     for (const path of new Set([...take.walk.previous.keys(), ...take.scan.sources.keys()])) {
       if (toolChanged(path, take.scan.sources.get(path))) this.#keepToolView(path, take.walk.previous.get(path));
@@ -3340,9 +3351,12 @@ export class CodeRuleBridge {
     }
   }
 
-  /** Puts back what `walk` had observed of `edits`, but in a worktree removed since, which took its files with it (`#forgetWorktrees`). */
+  /**
+   * Puts back what `walk` had observed of `edits`, but in a worktree Git did not list for the whole walk (`walkHeld`),
+   * which took its files with it (`#forgetWorktrees`). No edit of the session folder's walk lies in a worktree.
+   */
   #restoreObservations(discovery: SourceDiscovery, walk: WalkStart, edits: readonly CodeRuleEdit[]): void {
-    const gone = new Set([...walk.worktrees].filter(worktree => !discovery.worktrees.roots.has(worktree)));
+    const gone = new Set([...walk.worktrees].filter(worktree => !walkHeld(discovery, walk, worktree)));
     for (const edit of edits.filter(edit => !underBaselineRoot(gone, edit.path))) {
       const before = walk.previous.get(edit.path);
       if (before === undefined) this.#unobserve(edit.path);
@@ -3368,12 +3382,13 @@ export class CodeRuleBridge {
   #finishWorktreeWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
     const worktrees = discovery.worktrees;
     worktrees.walkedFrom = walk.observedAt;
-    for (const worktree of walk.worktrees) worktrees.fresh.delete(worktree);
+    // A worktree Git lists again at its path while the walk is taken is new to the session: its first walk is to come.
+    const gone = new Set([...walk.worktrees].filter(worktree => !walkHeld(discovery, walk, worktree)));
+    for (const worktree of walk.worktrees) if (!gone.has(worktree)) worktrees.fresh.delete(worktree);
     worktrees.baselineRoots = scan.failedRoots;
     // `git worktree remove` takes the worktree's folder before Git stops listing it, so a walk that began with it listed
-    // can find the folder gone, or its delete pending, which fails the walk there. A worktree gone since the walk began
-    // (`#applyWalk`) took its folders and files with it: nothing the walk could not read there is a place.
-    const gone = new Set([...walk.worktrees].filter(worktree => !worktrees.roots.has(worktree)));
+    // can find the folder gone, or its delete pending, which fails the walk there. A worktree Git did not list for the
+    // whole walk (`#applyWalk`) took its folders and files with it: nothing the walk could not read there is a place.
     const stays = (path: string): boolean => !gone.has(path) && !underBaselineRoot(gone, path);
     worktrees.gaps = scanGaps(scan.errors.filter(error => stays(error.path)));
     worktrees.unread = new Map([...scan.unread].filter(([path]) => stays(path)));
