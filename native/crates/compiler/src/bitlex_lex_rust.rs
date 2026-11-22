@@ -1368,7 +1368,8 @@ impl Gen<'_> {
                 None => start.clone(),
             });
         }
-        let all_e = factored(&all.ok_or("tier 1 as Rust: no token")?);
+        let all_e = factored(&all.ok_or("tier 1 as Rust: no token")?, x.stmts);
+        let all_e = refused_equal(&all_e, x.stmts).unwrap_or(all_e);
         let all = if in_pass {
             self.index = Some(self.node(&all_e)?);
             String::new()
@@ -1890,9 +1891,172 @@ fn lookup_code(l: &crate::bitlex_pair_lookup::Lookup) -> String {
     out
 }
 
-/// `a | b | …` with the conjuncts every term has taken out once: `(a' | b' | …) & c` (simdjson's `structural_start`,
-/// `… & ~string_tail` once).
-fn factored(e: &Expr) -> Expr {
+/// Whether `e` holds at a byte `b`, where that says (its classes, and the masks of them); `None` where it reads more.
+fn at_byte(e: &Expr, b: u8, stmts: &[Stmt]) -> Option<bool> {
+    let f = |x: &Expr| at_byte(x, b, stmts);
+    match e {
+        Expr::Name(n) => stmts.iter().rev().find_map(|s| match s {
+            Stmt::Class(c, items) if c == n => Some(Some(items.iter().any(|&(lo, hi)| (lo..=hi).contains(&u32::from(b))))),
+            Stmt::Mask(m, x) if m == n => Some(f(x)),
+            _ => None,
+        })?,
+        Expr::Not(x) => f(x).map(|v| !v),
+        Expr::And(x, y) => match (f(x), f(y)) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        },
+        Expr::Or(x, y) => match (f(x), f(y)) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        },
+        Expr::Xor(x, y) => Some(f(x)? ^ f(y)?),
+        _ => None,
+    }
+}
+
+/// The masks a start reads that its byte does not decide: each call (`escaped(B)`, `prev(X)`, …) and each name no
+/// statement defines (a region's), by its text.
+fn atoms(e: &Expr, stmts: &[Stmt], out: &mut Vec<(String, Expr)>) {
+    match e {
+        Expr::Name(n) => match stmts.iter().rev().find(|s| matches!(s, Stmt::Class(c, _) | Stmt::Mask(c, _) if c == n)) {
+            Some(Stmt::Mask(_, x)) => atoms(x, stmts, out),
+            Some(_) => {}
+            None => {
+                if !out.iter().any(|a| a.0 == *n) {
+                    out.push((n.clone(), e.clone()));
+                }
+            }
+        },
+        Expr::Call(..) => {
+            let k = format!("{e:?}");
+            if !out.iter().any(|a| a.0 == k) {
+                out.push((k, e.clone()));
+            }
+        }
+        Expr::Not(x) => atoms(x, stmts, out),
+        Expr::And(x, y) | Expr::Or(x, y) | Expr::Xor(x, y) => {
+            atoms(x, stmts, out);
+            atoms(y, stmts, out);
+        }
+        _ => {}
+    }
+}
+
+/// `e` at byte `b`, the atoms valued `v`; `None` where it reads what is neither.
+fn at_atoms(e: &Expr, b: u8, stmts: &[Stmt], atoms: &[(String, Expr)], v: u32) -> Option<bool> {
+    let f = |x: &Expr| at_atoms(x, b, stmts, atoms, v);
+    let atom = |k: &str| atoms.iter().position(|a| a.0 == k).map(|i| v >> i & 1 == 1);
+    match e {
+        Expr::Name(n) => match stmts.iter().rev().find(|s| matches!(s, Stmt::Class(c, _) | Stmt::Mask(c, _) if c == n)) {
+            Some(Stmt::Class(_, items)) => Some(items.iter().any(|&(lo, hi)| (lo..=hi).contains(&u32::from(b)))),
+            Some(Stmt::Mask(_, x)) => f(x),
+            _ => atom(n),
+        },
+        Expr::Call(..) => atom(&format!("{e:?}")),
+        Expr::Not(x) => f(x).map(|v| !v),
+        Expr::And(x, y) => Some(f(x)? & f(y)?),
+        Expr::Or(x, y) => Some(f(x)? | f(y)?),
+        Expr::Xor(x, y) => Some(f(x)? ^ f(y)?),
+        _ => None,
+    }
+}
+
+/// The records `u` as a mask the grammar names, where the two differ only at bytes an error of tier 1 refuses the
+/// file at: simdjson's `structural_start`, where a token's start (a string's quote, the region's opener) is not the
+/// mask's and an error refuses the bytes between.
+///
+/// Proved by enumeration: each byte, and each value of the atoms (`atoms`) the starts and errors read, where an
+/// escaped byte's `B` is before it (`escaped(B)` makes `prev(X)` true for each class mask `X` holding `B`).
+fn refused_equal(u: &Expr, stmts: &[Stmt]) -> Option<Expr> {
+    let covered = piece_covers(stmts);
+    let errors: Vec<&Expr> = stmts.iter().enumerate().filter(|(i, _)| !covered.contains(i)).filter_map(|(_, s)| if let Stmt::Error(_, e) = s { Some(e) } else { None }).collect();
+    // The candidates: the masks the terms of `u` have as a conjunct.
+    let mut names = Vec::new();
+    fn conj(e: &Expr, out: &mut Vec<String>) {
+        match e {
+            Expr::And(a, b) => {
+                conj(a, out);
+                conj(b, out);
+            }
+            Expr::Or(a, b) => {
+                conj(a, out);
+                conj(b, out);
+            }
+            Expr::Name(n) => out.push(n.clone()),
+            _ => {}
+        }
+    }
+    conj(u, &mut names);
+    names.dedup();
+    let class_of = |x: &Expr| -> Option<[bool; 256]> {
+        let mut set = [false; 256];
+        for b in 0..=255u8 {
+            set[usize::from(b)] = at_byte(x, b, stmts)?;
+        }
+        Some(set)
+    };
+    for n in names {
+        if !stmts.iter().any(|s| matches!(s, Stmt::Mask(m, _) if *m == n)) {
+            continue;
+        }
+        let m = Expr::Name(n.clone());
+        let mut ats = Vec::new();
+        atoms(u, stmts, &mut ats);
+        atoms(&m, stmts, &mut ats);
+        // Only the errors that read the atoms alone (and classes) can be weighed.
+        let errs: Vec<&Expr> = errors
+            .iter()
+            .copied()
+            .filter(|e| {
+                let mut a = ats.clone();
+                atoms(e, stmts, &mut a);
+                a.len() == ats.len()
+            })
+            .collect();
+        if ats.len() > 12 || errs.is_empty() {
+            continue;
+        }
+        // `escaped(B)` before `prev(X)`, `B` within `X`.
+        let mut implies = Vec::new();
+        for (i, (_, ei)) in ats.iter().enumerate() {
+            let Expr::Call(f, args) = ei else { continue };
+            let [Arg::E(bx)] = args.as_slice() else { continue };
+            if f != "escaped" {
+                continue;
+            }
+            let Some(bset) = class_of(bx) else { continue };
+            for (j, (_, ej)) in ats.iter().enumerate() {
+                let Expr::Call(g, a2) = ej else { continue };
+                let x = match a2.as_slice() {
+                    [Arg::E(x)] | [Arg::E(x), Arg::N(1)] if g == "prev" => x,
+                    _ => continue,
+                };
+                if let Some(xs) = class_of(x)
+                    && (0..256).all(|c| !bset[c] || xs[c])
+                {
+                    implies.push((i, j));
+                }
+            }
+        }
+        let ok = (0..1u32 << ats.len()).filter(|v| implies.iter().all(|&(i, j)| v >> i & 1 == 0 || v >> j & 1 == 1)).all(|v| {
+            (0..=255u8).all(|b| {
+                let err = errs.iter().any(|e| at_atoms(e, b, stmts, &ats, v) == Some(true));
+                err || at_atoms(u, b, stmts, &ats, v).is_some_and(|x| Some(x) == at_atoms(&m, b, stmts, &ats, v))
+            })
+        });
+        if ok {
+            return Some(m);
+        }
+    }
+    None
+}
+
+/// `a | b | …` with the conjuncts every term has taken out once: `(a' | b' | …) & c`; `c` alone where `a' | b' | …`
+/// is classes holding every byte `c` can hold (simdjson's `structural_start`: each token's start `structural_start &
+/// C`, their union `structural_start`).
+fn factored(e: &Expr, stmts: &[Stmt]) -> Expr {
     fn terms<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
         match e {
             Expr::Or(a, b) => {
@@ -1929,7 +2093,11 @@ fn factored(e: &Expr) -> Expr {
     }
     let and = |v: Vec<Expr>| v.into_iter().reduce(|a, b| Expr::And(Box::new(a), Box::new(b))).expect("a conjunct");
     let rest = cs.into_iter().map(|t| and(t.into_iter().filter(|x| !common.iter().any(|c| key(c) == key(x))).collect())).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a term");
-    Expr::And(Box::new(rest), Box::new(and(common)))
+    let common = and(common);
+    if (0..=255u8).all(|b| at_byte(&common, b, stmts) == Some(false) || at_byte(&rest, b, stmts) == Some(true)) {
+        return common;
+    }
+    Expr::And(Box::new(rest), Box::new(common))
 }
 
 /// Class `set`'s code in stage 1: one compare where it is one byte, else its nibble-table bits, each a product of high
@@ -2262,4 +2430,27 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
     Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, lookup: None }.source()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// JSON's records are `structural_start` where the tokens' starts differ from it only where an error refuses the
+    /// file (`refused_equal`): without the error, not.
+    #[test]
+    fn records_are_structural_start_where_an_error_refuses_the_rest() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
+        let source = std::fs::read_to_string(path).expect("reads");
+        let stmts = ::bitlex::syntax::parse(&source).expect("parses");
+        let starts = |stmts: &[Stmt]| stmts.iter().filter_map(|s| match s {
+            Stmt::Token { rule: Some(TokenRule::Inside(..)), .. } => None,
+            Stmt::Token { start, .. } => Some(start.clone()),
+            _ => None,
+        }).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a token");
+        let u = factored(&starts(&stmts), &stmts);
+        assert!(matches!(refused_equal(&u, &stmts), Some(Expr::Name(n)) if n == "structural_start"));
+        let without: Vec<Stmt> = stmts.into_iter().filter(|s| !matches!(s, Stmt::Error(why, _) if why == "a string right after a scalar")).collect();
+        assert!(refused_equal(&factored(&starts(&without), &without), &without).is_none(), "no error refuses a quote after a scalar");
+    }
 }

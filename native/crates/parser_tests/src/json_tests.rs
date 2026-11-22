@@ -1185,7 +1185,7 @@ fn json_rusts_tapes_are_the_jits() {
         r#"["\uD83D\uDE00"]"#, r#"["\ud83d\ude00"]"#, r#"["\uD83D"]"#, r#"["\uDE00"]"#, r#"["\uDE00\uD83D"]"#, r#"["\uD83D\n"]"#,
         r#"["\uD83Dx\uDE00"]"#, r#"["\uD83D\uD83D\uDE00"]"#, r#"["\u12"]"#, r#"["\u12G4"]"#, r#"["\\u12"]"#, r#"["\\uD83D\uDE00"]"#,
         r#"["\\uDE00"]"#, r#"["a\uD83D","\uDE00"]"#, r#"{"\u00e9": "\u0041\u00"}"#,
-        r#"["\uD83D\uDE0g"]"#, r#"["\uD83D\uDE"]"#, r#"["\uD83D\uDE00\uDE00"]"#, r#"["\uD83D\uDE00\uD83D\uDE01x"]"#, r#"["\uD83D\uDBFF"]"#,
+        r#"["\uD83D\uDE0g"]"#, r#"["\uD83D\uDE"]"#, r#"["\uD83D\uDE00\uDE00"]"#, r#"["\uD83D\uDE00\uD83D\uDE01x"]"#, r#"["\uD83D\uDBFF"]"#, r#"[1"a"]"#, r#"[true"a"]"#, r#"{"a":1"b"}"#, r#"[1 "a"]"#, r#"["a""b"]"#,
     ] {
         inputs.push(f.as_bytes().to_vec());
     }
@@ -1323,13 +1323,17 @@ fn json_tier1_masks_are_block_locals() {
     assert_eq!(outer, ["    let mut v_m_f_str = 0u64;", "    let mut v_m_nonquote_scalar = 0u64;"]);
     assert!(stage1.contains("            let p_m_nonquote_scalar = v_m_nonquote_scalar;\n"), "the block before's `nonquote_scalar`, a local");
     // The string and token masks are `index`'s (`json_scanner`, `json_string_scanner`): `scalar`, `nonquote_scalar`,
-    // `follows`, `string_tail`, and the starts one expression, `~string_tail` once, as `structural_start`.
+    // `follows`, `string_tail`, and the records `structural_start` itself (proved equal to the tokens' starts but where
+    // an error refuses the file, `refused_equal`).
     for part in [
         "let v_m_scalar = !(v_m_op | v_m_ws) & lv;",
         "v_m_nonquote_scalar = v_m_scalar & (!v_m_quote & lv);",
         "let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63) & lv;",
         "let v_m_string_tail = (v_m_f_str ^ v_m_q);",
-        "let v_t3 = ((v_m_q | v_m_op) | v_m_nonquote_scalar & (!v_m_follows & lv)) & (!v_m_string_tail & lv);",
+        "let v_m_structural_start = (v_m_op | v_m_scalar & (!v_m_follows & lv)) & (!v_m_string_tail & lv);",
+        "let (base, cnt, mut bits) = (64 * q as u32, v_m_structural_start.count_ones() as usize, v_m_structural_start);",
+        // A string right after a scalar, refused: simdjson's stage 2 refuses it at the number's or the atom's end.
+        "let v_t3 = v_m_q & v_m_follows & (!v_m_string_tail & lv);\n            // a string right after a scalar\n            errors |= v_t3;",
     ] {
         assert!(stage1.contains(part), "no `{part}`:\n{stage1}");
     }

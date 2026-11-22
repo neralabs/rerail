@@ -128,14 +128,10 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
             v_m_nonquote_scalar = v_m_scalar & (!v_m_quote & lv);
             // mask follows = prev(nonquote_scalar)
             let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63) & lv;
-            // in_string & control
-            let v_t2 = v_m_f_str & v_m_control;
-            // a control byte in a string
-            errors |= v_t2;
-            // ((q | op) | (nonquote_scalar & ~follows)) & ~string_tail
-            let v_t3 = ((v_m_q | v_m_op) | v_m_nonquote_scalar & (!v_m_follows & lv)) & (!v_m_string_tail & lv);
+            // mask structural_start = (op | (scalar & ~follows)) & ~string_tail
+            let v_m_structural_start = (v_m_op | v_m_scalar & (!v_m_follows & lv)) & (!v_m_string_tail & lv);
             // The records: the block's bits as indexes (simdjson's `bit_indexer::write`).
-            let (base, cnt, mut bits) = (64 * q as u32, v_t3.count_ones() as usize, v_t3);
+            let (base, cnt, mut bits) = (64 * q as u32, v_m_structural_start.count_ones() as usize, v_m_structural_start);
             // SAFETY: `count + cnt` is at most `n`; the room is `n + 64 + 3`.
             unsafe {
                 for k in 0..4 {
@@ -156,6 +152,14 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
                 }
             }
             count += cnt;
+            // in_string & control
+            let v_t2 = v_m_f_str & v_m_control;
+            // a control byte in a string
+            errors |= v_t2;
+            // (q & follows) & ~string_tail
+            let v_t3 = v_m_q & v_m_follows & (!v_m_string_tail & lv);
+            // a string right after a scalar
+            errors |= v_t3;
         }
     }
     // The errors, once.

@@ -133,22 +133,27 @@ error "a string open at the end of the file" when in_string & last_byte
 mask scalar          = ~(op | ws)
 mask nonquote_scalar = scalar & ~quote
 mask follows         = prev(nonquote_scalar)
+# simdjson's `structural_start`: a structural, or a scalar that follows none, outside a string's
+# tail. A string's quote right after a scalar is the scalar's, as there: the file is refused (in
+# simdjson by the number's or the atom's end in stage 2).
+mask structural_start = (op | scalar & ~follows) & ~string_tail
+error "a string right after a scalar" when q & follows & ~string_tail
 
 # --- Tokens ------------------------------------------------------------------------------------
 
 # A string, read in parts from its quote, as a lexer reads one: the quotes are `'"'`, each
 # escape's two bytes an escape_sequence (its kind's words check them), the other bytes
 # string_content.
-# Each token's start is outside a string's tail, as simdjson's `structural_start`.
+# Each token's start is a structural start, of its bytes.
 token '"'             = start q & ~string_tail read str parts { escape_sequence = esc bytes 2 } else string_content
 keywords escape_sequence {
   "\\\"" -> escape_sequence  "\\\\" -> escape_sequence  "\\/" -> escape_sequence
   "\\b" -> escape_sequence   "\\f" -> escape_sequence   "\\n" -> escape_sequence
   "\\r" -> escape_sequence   "\\t" -> escape_sequence   "\\u" -> escape_sequence
 } required
-token punctuation     = start op & ~string_tail pair empty
+token punctuation     = start structural_start & op pair empty
 keywords punctuation { "{"  "}"  "["  "]"  ","  ":" } required
-token number          = start nonquote_scalar & ~follows & ~string_tail run nonquote_scalar
+token number          = start structural_start & nonquote_scalar run nonquote_scalar
 keywords number { "true" -> true  "false" -> false  "null" -> null }
 check number = ['-'] ('0' | nonzero digit*) ['.' digit+] [expo ['+' | '-'] digit+]
 
