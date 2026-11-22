@@ -9,6 +9,7 @@ import { delimiter, join, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { gitModifiedOrUntrackedPaths, runGit, runGitWithoutBlocking, type GitResult } from "../../../src/engine/git.js";
+import { looksOutsideFolder } from "../../../src/engine/git-guard/submodule-state.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { unopenable, type Unopenable } from "../../support/platform/unopenable-file.js";
 
@@ -565,20 +566,20 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     }
   }, 60_000);
 
-  // A scan from a folder: Git's diff from a commit reads the rules of, and looks into, the submodule outside that folder
-  // too, and prints none of it; the audit's diff, of the worktree with the index, does neither. Each row: the state, and
-  // whether Git's own audit and scan from the folder answer.
-  it.each<[string, (work: string) => void, [boolean, boolean]]>([
-    ["whose `.gitmodules` Git cannot read", work => writeFileSync(join(work, ".gitmodules"), "[submodule\n"), [true, false]],
-    ["whose submodule's `.git` file holds no `gitdir: `", work => writeFileSync(join(work, "sub", ".git"), "nothing\n"), [true, false]],
-    ["whose submodule's worktree changed", work => writeFileSync(join(work, "sub", "inner.txt"), "two\n"), [true, true]],
+  // A scan from a folder: before 2.56, Git's diff against a commit reads the rules of, and looks into, the submodule
+  // outside that folder too, and prints none of it; from 2.56 it skips it, and the audit's diff, of the worktree with the
+  // index, skips it in each Git. Each row: the state, and whether it fails the scan's diff of a Git before 2.56.
+  it.each<[string, (work: string) => void, boolean]>([
+    ["whose `.gitmodules` Git cannot read", work => writeFileSync(join(work, ".gitmodules"), "[submodule\n"), true],
+    ["whose submodule's `.git` file holds no `gitdir: `", work => writeFileSync(join(work, "sub", ".git"), "nothing\n"), true],
+    ["whose submodule's worktree changed", work => writeFileSync(join(work, "sub", "inner.txt"), "two\n"), false],
     // The folder's own file `sub` changed, and Git reads no rule of the marked submodule `sub` outside the folder.
     ["whose marked submodule shares its path with a changed file of the folder, and whose `.gitmodules` Git cannot read", work => {
       git(work, "update-index", "--assume-unchanged", "sub");
       writeFileSync(join(work, ".gitmodules"), "[submodule\n");
       writeFileSync(join(work, "dir", "sub"), "changed\n");
-    }, [true, true]],
-  ])("and answer as Git's own diffs from a folder with no submodule below it, in a checkout %s", async (_what, made, answered) => {
+    }, false],
+  ])("and answer as Git's own diffs from a folder with no submodule below it, in a checkout %s", async (_what, made, failsBefore256) => {
     const root = await folder();
     const { work, gitfile, named } = await submoduleGitfile(root);
     await writeFile(gitfile, `${named}\n`);
@@ -593,7 +594,7 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const gits = [gitAnswer(dir, AUDIT_DIFF), gitAnswer(dir, SCAN_DIFF)];
 
     expect(answers.map(answer => [answer.status === 0, answer.stdout])).toEqual(gits);
-    expect(gits.map(([ok]) => ok)).toEqual(answered);
+    expect(gits.map(([ok]) => ok)).toEqual([true, !(failsBefore256 && looksOutsideFolder(git(work, "version")))]);
   }, 60_000);
 
   // Git's diff looks into no submodule marked assume-unchanged or skip-worktree, so it opens no `.git` of one.

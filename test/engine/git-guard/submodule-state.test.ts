@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  definesNoDriver, nameDiff, readStatus, recordsNoSubmodule, submoduleChanged, UNASKED, worktreeGitFolder, worktreeIndex,
+  definesNoDriver, looksOutsideFolder, nameDiff, readStatus, recordsNoSubmodule, submoduleChanged, UNASKED, worktreeGitFolder, worktreeIndex,
 } from "../../../src/engine/git-guard/submodule-state.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { unopenable } from "../../support/platform/unopenable-file.js";
@@ -31,11 +31,11 @@ afterEach(async () => {
 
 describe("nameDiff and readStatus", () => {
   it.each([
-    [AUDIT_DIFF, { relative: true, ignore: "none", listsModified: true, fromCommit: false }],
-    [SCAN_DIFF, { relative: true, ignore: undefined, listsModified: true, fromCommit: true }],
-    [["diff", "--name-only", "-z", "--diff-filter=d", "--"], { relative: false, ignore: undefined, listsModified: true, fromCommit: false }],
-    [["diff", "--name-only", "-z", "--diff-filter=AD", "--"], { relative: false, ignore: undefined, listsModified: false, fromCommit: false }],
-    [["diff", "--name-only", "-z", "--merge-base", "main", "--"], { relative: false, ignore: undefined, listsModified: true, fromCommit: true }],
+    [AUDIT_DIFF, { relative: true, ignore: "none", listsModified: true, decidesOutside: false }],
+    [SCAN_DIFF, { relative: true, ignore: undefined, listsModified: true, decidesOutside: true }],
+    [["diff", "--name-only", "-z", "--diff-filter=d", "--"], { relative: false, ignore: undefined, listsModified: true, decidesOutside: false }],
+    [["diff", "--name-only", "-z", "--diff-filter=AD", "--"], { relative: false, ignore: undefined, listsModified: false, decidesOutside: false }],
+    [["diff", "--name-only", "-z", "--merge-base", "main", "--"], { relative: false, ignore: undefined, listsModified: true, decidesOutside: true }],
     [["diff", "--name-only", "-z", "--", "a.txt"], undefined],
     [["diff", "--name-only", "-z"], undefined],
     [["diff", "--name-status", "-z", "--"], undefined],
@@ -45,7 +45,23 @@ describe("nameDiff and readStatus", () => {
     [["diff", "--name-only", "-z", "HEAD^!", "--"], undefined],
     [["diff", "--name-only", "-z", "--merge-base", "main", "HEAD", "--"], undefined],
   ] as const)("%j is %j", (args, expected) => {
-    expect(nameDiff(args)).toEqual(expected);
+    expect(nameDiff(args, true)).toEqual(expected);
+  });
+
+  it("takes a diff against a commit on a Git from 2.56 on for one that decides on no submodule outside its folder", () => {
+    expect(nameDiff(SCAN_DIFF, false)).toEqual({ relative: true, ignore: undefined, listsModified: true, decidesOutside: false });
+  });
+
+  it.each([
+    ["git version 2.53.0\n", true],
+    ["git version 2.55.9\n", true],
+    ["git version 1.9.5\n", true],
+    ["git version 2.56.0.windows.2\n", false],
+    ["git version 2.60.1\n", false],
+    ["git version 3.0.0\n", false],
+    ["no version\n", false],
+  ] as const)("reads %j as a Git whose diff against a commit looks outside the folder: %j", (version, expected) => {
+    expect(looksOutsideFolder(version)).toBe(expected);
   });
 
   it("tells a submodule's own entries from those of the submodules inside it", () => {

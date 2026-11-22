@@ -12,7 +12,7 @@ import {
   CONFIG_LISTING, configEntryVariables, driverOverrides, listedEntries, oldGitNotice, readDriverConfig, worktreeRead, type ListedEntry,
 } from "./git-guard/filter-drivers.js";
 import {
-  definesNoDriver, GITLINK_LISTING, nameDiff, outsideSubmodules, recordsNoSubmodule, repositoryConfig, UNASKED, withChangedSubmodules,
+  definesNoDriver, GITLINK_LISTING, looksOutsideFolder, nameDiff, outsideSubmodules, recordsNoSubmodule, repositoryConfig, UNASKED, withChangedSubmodules,
   worktreeGitFolder, worktreeIndex, type Ask, type DiffRepository, type GitFailure, type GuardedRepository, type Places, type SubmoduleOpener,
 } from "./git-guard/submodule-state.js";
 
@@ -1226,7 +1226,7 @@ function unanswered(failure: GitFailure): GitResult {
  * that submodule's drivers as they are.
  */
 async function diffOutsideSubmodules({ git, cwd, args, options }: GuardedCall, guarded: Guarded | UnlistedGuard): Promise<GitResult> {
-  const diff = nameDiff(args);
+  const diff = nameDiff(args, looksOutside());
   if (diff === undefined) return await git(cwd, args, { ...options, env: guarded.env });
   const outside = await git(cwd, outsideSubmodules(args), { ...options, env: guarded.env });
   if (outside.status !== 0 || outside.error !== undefined) return outside;
@@ -1338,10 +1338,14 @@ async function holdsNoEntry(git: LaterGit, folder: string, gitFolder: string): P
   return listed.status === 0 && listed.stdout === "";
 }
 
-/** What a Git means for the guard: what Rerail says when it is too old ({@link oldGitNotice}), and whether it said it. */
+/**
+ * What a Git means for the guard: what Rerail says when it is too old ({@link oldGitNotice}), whether it said it, and
+ * whether its diff against a commit looks outside the folder of a `--relative` diff ({@link looksOutsideFolder}).
+ */
 interface GuardGit {
   readonly notice: string | undefined;
   told: boolean;
+  readonly looksOutside: boolean;
 }
 
 /**
@@ -1377,7 +1381,20 @@ function askedGuardGitSync(git: CallGit, cwd: string): GuardGit | undefined {
 
 /** {@link GuardGit} from what `git version` answered; undefined when it did not answer. */
 function guardGitOf(answer: GitResult): GuardGit | undefined {
-  return answer.status === 0 ? { notice: oldGitNotice(answer.stdout), told: false } : undefined;
+  return answer.status === 0 ? guardGitFrom(answer.stdout) : undefined;
+}
+
+/** {@link GuardGit} from the `version` a `git version` printed. */
+function guardGitFrom(version: string): GuardGit {
+  return { notice: oldGitNotice(version), told: false, looksOutside: looksOutsideFolder(version) };
+}
+
+/**
+ * Whether the Git this process runs looks outside the folder of a `--relative` diff against a commit, as the guard
+ * asked it; false when no Git is kept, as for one whose version was not read.
+ */
+function looksOutside(): boolean {
+  return knownGuardGit()?.looksOutside === true;
 }
 
 /**
@@ -1404,7 +1421,7 @@ async function gitVersionLater(git: LaterGit, cwd: string): Promise<GuardGit | u
 /** {@link GuardGit} from `git version` asked in `cwd` by a read that does not block, within what is left of its limit. */
 async function askedGuardGit(cwd: string, start: Omit<ReadStart, "env" | "maxBuffer">): Promise<GuardGit | undefined> {
   const answer = await readGitWith(cwd, ["version"], { ...start, maxBuffer: GIT_OUTPUT_MAX_BYTES, env: {} });
-  return answer.ended === "printed" ? { notice: oldGitNotice(answer.stdout), told: false } : undefined;
+  return answer.ended === "printed" ? guardGitFrom(answer.stdout) : undefined;
 }
 
 /** Whether `git` is one the guard works with, saying once why not when it is older. */

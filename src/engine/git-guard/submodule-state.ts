@@ -86,10 +86,23 @@ export interface NameDiff {
   /** Whether its `--diff-filter` lets a changed entry (`M`) through. */
   readonly listsModified: boolean;
   /**
-   * Whether it compares a commit with the worktree (`git diff <commit>`), not the index: with `--relative`, Git's diff
-   * then reads the rules of, and looks into, each submodule outside its folder too, and only prints none of them.
+   * Whether, with `--relative`, it reads the rules of and looks into each submodule outside its folder too, and prints
+   * none of them: a diff against a commit (`git diff <commit>`) on a Git before 2.56 ({@link looksOutsideFolder}).
    */
-  readonly fromCommit: boolean;
+  readonly decidesOutside: boolean;
+}
+
+/**
+ * Whether the Git that answered `git version` with `version` is one before 2.56, whose diff against a commit looks at
+ * each entry outside the folder of a `--relative` diff before it leaves it out of what it prints; from 2.56 that diff
+ * skips such an entry first (`oneway_diff`), as the diff of the worktree with the index does in each Git. False for a
+ * version it cannot read.
+ */
+export function looksOutsideFolder(version: string): boolean {
+  const match = /^git version (\d+)\.(\d+)/mu.exec(version);
+  if (match === null) return false;
+  const [major, minor] = [Number(match[1]), Number(match[2])];
+  return major < 2 || (major === 2 && minor < 56);
 }
 
 /** The options of a diff: its arguments after `diff` and before `--`. */
@@ -99,15 +112,15 @@ function diffOptions(args: readonly string[]): readonly string[] {
 }
 
 /**
- * `args` (from `diff` on) as a {@link NameDiff}; undefined for any other form: another output, a pathspec, or
- * `--relative=<folder>`, which this module does not take apart.
+ * `args` (from `diff` on) as a {@link NameDiff} run by a Git that `looksOutside` ({@link looksOutsideFolder}); undefined
+ * for any other form: another output, a pathspec, or `--relative=<folder>`, which this module does not take apart.
  */
-export function nameDiff(args: readonly string[]): NameDiff | undefined {
+export function nameDiff(args: readonly string[], looksOutside: boolean): NameDiff | undefined {
   if (!namesOnly(args)) return undefined;
   const options = diffOptions(args);
   return {
     relative: options.includes("--relative"), ignore: ignoreOption(options), listsModified: listsModified(options),
-    fromCommit: options.some(option => !option.startsWith("-")),
+    decidesOutside: looksOutside && options.some(option => !option.startsWith("-")),
   };
 }
 
@@ -408,12 +421,12 @@ interface Shown {
 
 /**
  * The submodules of `paths` a diff decides on, each as it names it: with `--relative`, those below its folder, named
- * from there, and for a diff from a commit ({@link NameDiff.fromCommit}) the others too, which it does not print.
+ * from there, and where it decides on those outside it ({@link NameDiff.decidesOutside}) the others too, unprinted.
  */
 function shownSubmodules(paths: readonly string[], prefix: string, diff: NameDiff): Shown[] {
   if (!diff.relative) return paths.map(path => ({ path, name: path, printed: true }));
   const shown = paths.map(path => path.startsWith(prefix) ? { path, name: path.slice(prefix.length), printed: true } : { path, name: path, printed: false });
-  return shown.filter(each => each.printed || diff.fromCommit);
+  return shown.filter(each => each.printed || diff.decidesOutside);
 }
 
 /** `.gitmodules` as Git reads it for submodule config: the worktree's file, else the index's, else `HEAD`'s. */
@@ -506,9 +519,9 @@ async function changedSubmodules(stdout: string, { diff, gitlinks, top, open }: 
 /**
  * The submodules of `gitlinks` a diff decides on ({@link shownSubmodules}): each one Git's diff looks into, and a marked
  * one ({@link Gitlinks.marked}) only where Git's diff in Rerail `named` it, as its commit changed, so that its rules may
- * leave it out, as they leave it out of Git's own diff. Git reads no rule of a marked one it does not name. A
- * `--relative` diff of the worktree with the index reads none of a submodule outside its folder either, so where it
- * decides on none no rule is read; one from a commit reads them, and fails where they cannot be read, as Git's does.
+ * leave it out, as they leave it out of Git's own diff. Git reads no rule of a marked one it does not name, nor of one
+ * outside the folder of a `--relative` diff but where it decides on those ({@link NameDiff.decidesOutside}), so where
+ * the diff decides on none no rule is read; where it decides on those, they are read, and fail as Git's diff fails.
  */
 function decidedSubmodules(gitlinks: Gitlinks, named: ReadonlySet<string>, prefix: string, diff: NameDiff): Shown[] {
   return shownSubmodules(gitlinks.paths, prefix, diff).filter(shown => !gitlinks.marked.has(shown.path) || (shown.printed && named.has(shown.name)));
