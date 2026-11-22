@@ -53,12 +53,6 @@ pub fn group_lanes() -> Result<usize, Error> {
     ready().map(|d| group_of(d).expect("a ready device's group"))
 }
 
-/// The lanes a source is generated for: the device's group, or 32 where no device runs block
-/// programs (a source written to be read).
-fn source_lanes() -> usize {
-    group_lanes().unwrap_or(32)
-}
-
 /// The bytes each lane owns, and so the width of its mask words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LaneWidth {
