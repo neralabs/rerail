@@ -39,13 +39,14 @@ fn the_hand_vectorized_nearest_is_the_scalar_one() {
     }
 }
 
-/// rerail-ukl-vec's Rust of `nearest_jump` at 8 lanes: the scalar kernel's answers, at groups of 32, 64 and 256
-/// threads (the last groups part full), and a thread's steps counted (`stats`) when any took one.
+/// rerail-ukl-vec's Rust of `nearest_jump` at 8 lanes: the scalar kernel's answers, at groups of 20, 32, 36, 64 and
+/// 256 threads (the last groups part full), and a thread's steps counted (`stats`) when any took one.
 #[cfg(target_arch = "aarch64")]
 #[test]
 fn the_kernels_rust_nearest_is_the_scalar_one() {
     for f in forests() {
-        for block in [32, 64, 256] {
+        // Groups of 20 and 36 threads end in part of a chunk; the cells' end is a chunk's middle in most forests.
+        for block in [20, 32, 36, 64, 256] {
             let mut state = f.start.clone();
             let most = unsafe { crate::nearest_run(crate::nearest_jump_w8::nearest_jump_w8, &mut state, args(&f), block) };
             assert_eq!(state, f.want, "{} nodes, {} sets, groups of {block}", f.nodes, f.sets);

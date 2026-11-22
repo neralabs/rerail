@@ -1337,3 +1337,64 @@ fn the_nearest_kernels_rust_is_the_checked_in_one() {
     let kept = std::fs::read_to_string(at).unwrap_or_default();
     assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
 }
+
+/// The nearest kernel's Rust masks only where its lanes part (decision 0567 step 3):
+/// - a group's chunks of 8 threads all run: a chunk past the group's last thread is the one slow path (1);
+/// - `cell >= args.cells`, of consecutive lanes against one value, is decided for the chunk at once, its one chunk
+///   whose lanes are on both sides the slow path (2);
+/// - a test of a mask's lanes is a comparison of its bits, which the compiler folds where the mask is known (3);
+/// - in the loop, whose lanes part (each its own rounds), a variable no lane reads after it leaves is set in every
+///   lane, `steps` counted by its mask, and the maximum of `steps > 0` lanes is the lanes' maximum, unmasked (4).
+///
+/// So where a function's lanes all run (its `_f` instance), no mask is read outside the loop and the slow paths.
+#[test]
+fn the_nearest_kernels_rust_masks_only_where_its_lanes_part() {
+    let text = include_str!("../../../src/code_rule_dsl/transducer/packed/nearest.uglykl");
+    let src = super::source("/<kernels>/nearest.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("nearest_jump").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0));
+    let lines: Vec<&str> = rust.lines().collect();
+    // (1) Full chunks, then the group's last threads.
+    assert!(rust.contains("while lid0 + 8 <= n {") && rust.contains("if lid0 < n {"), "no chunks of all lanes:\n{rust}");
+    // The functions where all lanes run: outside the slow paths (marked, to the end of their block), no mask.
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let mut full = 0;
+    let mut i = 0;
+    while i < lines.len() {
+        if !(lines[i].starts_with("unsafe fn ") && lines[i].contains("_f(")) {
+            i += 1;
+            continue;
+        }
+        full += 1;
+        let name = lines[i];
+        i += 1;
+        while i < lines.len() && lines[i] != "}" {
+            let l = lines[i];
+            if l.trim_start().starts_with("// Lanes part") {
+                let d = indent(l);
+                while i < lines.len() && !(indent(lines[i]) < d && !lines[i].trim().is_empty()) {
+                    i += 1;
+                }
+                continue;
+            }
+            let masked = ["vbslq_u32", "vbicq_u32", "select_unpredictable", "any(&", "all(&", "live[", "vcgtq_u32"].iter().find(|t| l.contains(*t));
+            assert!(masked.is_none(), "{name}: a mask ({}) where all lanes run: {l}\n{rust}", masked.unwrap());
+            i += 1;
+        }
+    }
+    // `nearest_jump`'s own, its load of `state[cell]` and its maximum: the gather and the store run in the loop only.
+    assert!(full == 3, "{full} functions of all lanes:\n{rust}");
+    // A chunk whose lanes all return runs nothing after.
+    let after: Vec<&[&str]> = lines.windows(2).filter(|w| w[0].trim() == "return;" && !w[1].trim().starts_with('}')).collect();
+    assert!(after.is_empty(), "statements after a return: {after:?}\n{rust}");
+    // (2) The bounds check decided for a chunk at once.
+    assert!(lines.iter().any(|l| l.contains("as u64 + 7")), "`cell >= args.cells` not decided for the chunk:\n{rust}");
+    // (3) Mask tests of the mask's bits.
+    assert!(rust.contains("fn any(") && !rust.contains("vminvq_u32(") && !rust.contains("vmaxvq_u32(vorrq_u32"), "mask tests by reductions:\n{rust}");
+    // (4) No variable set by a mask's select; `steps` counted by its mask.
+    let selected: Vec<&&str> = lines.iter().filter(|l| { let t = l.trim_start(); t.starts_with('x') && t.contains(" = [vbslq_u32(") }).collect();
+    assert!(selected.is_empty(), "variables set by a select: {selected:?}\n{rust}");
+    assert!(lines.iter().any(|l| { let t = l.trim_start(); t.starts_with('x') && t.contains(" = [vsubq_u32(x") }), "`steps` not counted by its mask:\n{rust}");
+}
