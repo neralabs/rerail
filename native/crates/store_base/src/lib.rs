@@ -32,6 +32,14 @@ pub mod content_store {
         pub mod base;
         pub use base::*;
     }
+    /// A put of a space's kept facts; the space's chain and its writer are the store's.
+    pub mod kept_facts {
+        pub mod base;
+    }
+    /// The store as the observer and git below it reach it; its provider is the store's.
+    pub mod observer_store {
+        pub mod base;
+    }
     pub mod bounded_insert;
     pub mod compression;
     pub use compression::{compress, decompress, decompress_chunks, decompress_head, decompress_into};

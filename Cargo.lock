@@ -3351,7 +3351,6 @@ dependencies = [
  "rerail-cpu-pp",
  "rerail-cpu-stream",
  "rerail-metal",
- "rerail-pp-aot",
  "rerail-rir",
  "rerail-simd8",
  "rerail-tape-format",
@@ -4226,6 +4225,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-device",
  "rerail-ukl",
+ "rerail-ukl-vec",
 ]
 
 [[package]]
@@ -4252,6 +4252,7 @@ name = "rerail-json-aot"
 version = "0.1.0"
 dependencies = [
  "rerail-json-aot",
+ "rerail-simd8",
  "rerail-tape-format",
 ]
 
@@ -4260,8 +4261,10 @@ name = "rerail-json-lean"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rerail-json-aot",
  "rerail-simdjson",
  "rerail-simdjson-native",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -4281,6 +4284,7 @@ name = "rerail-kotlin-aot"
 version = "0.1.0"
 dependencies = [
  "rerail-kotlin-aot",
+ "rerail-simd8",
  "rerail-tape-format",
 ]
 
@@ -5086,7 +5090,7 @@ dependencies = [
  "rerail-clif",
  "rerail-observe",
  "rerail-prof",
- "rerail-registry",
+ "rerail-store",
  "rerail-store-base",
  "rusqlite",
  "same-file",
@@ -5129,20 +5133,16 @@ name = "rerail-parser-tests"
 version = "0.1.0"
 dependencies = [
  "bitlex",
- "libc",
  "rerail-bitlex",
  "rerail-compiler",
  "rerail-context",
  "rerail-cpu-block",
  "rerail-cpu-stream",
- "rerail-device",
  "rerail-json-aot",
- "rerail-kotlin-parser",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rir",
  "rerail-rr-syntax",
- "rerail-rust-stream",
  "rerail-simdjson-native",
  "rerail-tape-format",
  "tree-sitter",
@@ -5398,16 +5398,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rerail-pp-aot"
-version = "0.1.0"
-dependencies = [
- "rerail-compiler",
- "rerail-cpu-pp",
- "rerail-cpu-stream",
- "rerail-rir",
-]
-
-[[package]]
 name = "rerail-prefilter"
 version = "0.1.0"
 dependencies = [
@@ -5646,16 +5636,8 @@ dependencies = [
 name = "rerail-rr-aot"
 version = "0.1.0"
 dependencies = [
- "libc",
- "rerail-bitlex",
- "rerail-compiler",
- "rerail-context",
- "rerail-cpu-block",
- "rerail-cpu-stream",
  "rerail-rr-aot",
- "rerail-rr-parser",
- "rerail-rr-syntax",
- "rerail-rust-stream",
+ "rerail-simd8",
  "rerail-tape-format",
 ]
 
@@ -5673,6 +5655,7 @@ dependencies = [
  "rerail-metal",
  "rerail-prof",
  "rerail-rir",
+ "rerail-rr-aot",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-simdjson-native",
@@ -5995,17 +5978,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rerail-rust-stream"
-version = "0.1.0"
-dependencies = [
- "rerail-clif",
- "rerail-compiler",
- "rerail-cpu-block",
- "rerail-rust-stream",
- "rerail-tape-format",
-]
-
-[[package]]
 name = "rerail-scala-lean"
 version = "0.1.0"
 dependencies = [
@@ -6323,6 +6295,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-clif",
  "rerail-prof",
+ "rerail-registry",
  "rerail-store-base",
  "rusqlite",
  "same-file",
@@ -8559,6 +8532,21 @@ dependencies = [
  "rerail-c-lean",
  "rerail-c-pp",
  "rerail-ukl",
+]
+
+[[package]]
+name = "rerail-ukl-vec"
+version = "0.1.0"
+dependencies = [
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-module",
+ "cranelift-native",
+ "rerail-c-lean",
+ "rerail-tape-format",
+ "rerail-ukl",
+ "rerail-ukl-vec",
 ]
 
 [[package]]

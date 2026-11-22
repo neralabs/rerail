@@ -12,9 +12,9 @@
    engine on boot. The providers register through boot (`rerail-registry`).
 3. **No new install hook outside the registry.** A function named `install` or `install_*` that stores what it is
    handed in a `OnceLock` (`.set(`, `.get_or_init(`) and not in a `rerail_registry` `Slot` or `Registry`
-   (`.register(`) is refused, but for the ones `install-hooks.txt` lists, which were there when the check came. The
-   list only shrinks: a listed hook that is gone, or now registers, must be cut from it (`--write-hooks` rewrites
-   it, and refuses to add one).
+   (`.register(`) is refused, but for the ones `install-hooks.txt` lists, which were there when the check came.
+   A file with no `OnceLock` holds no such hook (its `.set(` is another type's). The list only shrinks: a listed
+   hook that is gone, or now registers, must be cut from it (`--write-hooks` rewrites it, and refuses to add one).
 
 Exits 1 with what is wrong.
 """
@@ -130,7 +130,11 @@ def hooks():
                 path = os.path.join(dirpath, f)
                 if is_test(path):
                     continue
-                lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
+                source = open(path, encoding="utf-8", errors="replace").read()
+                # A hook stores in a OnceLock: a file with none has no hook (its `.set(` is another type's).
+                if "OnceLock" not in source:
+                    continue
+                lines = source.split("\n")
                 for i, line in enumerate(lines):
                     m = HOOK_FN.match(line)
                     if not m:

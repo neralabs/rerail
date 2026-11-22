@@ -10,8 +10,6 @@ pub mod span_prefilter;
 pub mod connection;
 pub mod grammar_shape;
 // cratify: `families` is rerail-facts' (it mounts it, over the base)
-#[allow(dead_code)]
-pub mod memo;
 /// M's layered map as copied; `overlay` is its adaptation (open item O19).
 #[allow(dead_code)]
 pub mod lmap;
@@ -24,8 +22,6 @@ pub mod d_projection;
 pub mod observe;
 #[allow(dead_code)]
 pub mod overlay;
-#[allow(dead_code)]
-pub mod pages;
 #[allow(dead_code)]
 pub mod producers;
 #[allow(dead_code)]

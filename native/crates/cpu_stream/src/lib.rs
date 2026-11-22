@@ -2,9 +2,8 @@
 //! stream program's words lowered to Cranelift (`native_cpu_stream`), the tape they write (`native_cpu_tape`), and the
 //! parser of both tiers (`native_cpu_stream::Parser`). Tier 2 read over tier 1's records where the device left them is
 //! `tier2_on`. Where a direct format 16 run passes each node at its word is the front end's to decide
-//! (`stream_facts::direct_keys`, `open_bound`), as it is for the Rust's (`rerail-rust-stream`). `clif_rust`, deprecated
-//! (decision 0550), writes this parser's own Cranelift IR as Rust. The sources stay in the compiler's folder
-//! (`crates/compiler/src`); this crate mounts them.
+//! (`stream_facts::direct_keys`, `open_bound`; `rust_stream`, which read them too, is removed, decision 0565). The
+//! sources stay in the compiler's folder (`crates/compiler/src`); this crate mounts them.
 
 // The compiler's passes hand each other plain tuples of tables; naming each would add nothing.
 #![allow(clippy::type_complexity)]
@@ -27,8 +26,6 @@ use rerail_bitlex::*;
 pub mod native_cpu_stream;
 #[path = "../../compiler/src/native_cpu_tape.rs"]
 pub mod native_cpu_tape;
-#[path = "../../compiler/src/clif_rust.rs"]
-pub mod clif_rust;
 /// The Bitlex ladder's checks, for this crate's tests and the engine's.
 #[cfg(any(test, feature = "test-hooks"))]
 #[path = "../../compiler/src/ladder.rs"]

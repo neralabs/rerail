@@ -149,6 +149,25 @@ fn a_whole_plans_step_histograms_are_read_in_its_whole_join() {
     close(&db, "whist").unwrap();
 }
 
+/// A histogram's counts lie in a block of the run's (`Counts`, decision 0353): each key's count as added, through its
+/// table's growth, scaled for a strided read, and 0 for a key no row has.
+#[test]
+fn a_histograms_counts_are_each_keys_through_growth() {
+    let mut c = super::Counts::new();
+    for k in 0..5000u64 {
+        for _ in 0..(k % 3 + 1) {
+            c.add(k.wrapping_mul(0x1000_0001) ^ 7, 1);
+        }
+    }
+    assert_eq!(c.len(), 5000);
+    c.scale(4);
+    for k in (0..5000u64).step_by(37) {
+        assert_eq!(c.get(k.wrapping_mul(0x1000_0001) ^ 7), 4 * (k % 3 + 1), "key {k}");
+    }
+    assert_eq!(c.get(u64::MAX), 0);
+    assert_eq!(c.iter().map(|(_, n)| n).sum::<u64>(), 4 * (0..5000u64).map(|k| k % 3 + 1).sum::<u64>());
+}
+
 /// Decision 0206, a first step fused with its filters (`rowcode`): a cut inside a chunk stops the chunk at the row it
 /// is at, so the rows after it are left and read by the wave going on. Before, the chunk's loop went on naming each
 /// row it passed over as reached: the cut left one row, and the fixpoint lost what the rest derive.

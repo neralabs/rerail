@@ -1155,6 +1155,9 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
         for (own, stated, own_stated) in appended {
             p.program(&mut lowering_tail::AppendModule { own, stated, own_stated });
         }
+        // A guest context's passes (decision 0597): made before the declarations are checked, since a `.from` name
+        // is declared by its pass.
+        p.program(&mut super::contexts::Passes).program(&mut super::contexts::CrossingCycles);
         if declared {
             p.program(&mut lowering_tail::Declared);
         }
@@ -1446,7 +1449,9 @@ fn builtin_resolve(statements: Vec<Stmt>) -> Result<(Files, Vec<Stmt>), Error> {
 pub fn metadata(program: &(impl super::program_image::fields::ProgramFields + ?Sized)) -> Result<serde_json::Value, Error> {
     use syntax::Tok;
     let mut policies = program.policies();
-    let settings = program.settings();
+    // A program's passes (decision 0597: `.context` and `.from` as written, `.pass` as made) are its structure, not
+    // its metadata: a pack's member's header holds its library's as written, its run alone the made ones.
+    let settings: Vec<(String, String)> = program.settings().into_iter().filter(|(key, _)| !matches!(key.as_str(), "context" | "from" | "pass")).collect();
     for (_, text) in settings.iter().filter(|(key, _)| key == "policy") {
         let tokens = syntax::tokens(text)?;
         let Some((Tok::Str(id), _, _)) = tokens.first() else {
@@ -2009,6 +2014,20 @@ fn noted(file: &LibraryFile) {
             read.push(file.clone());
         }
     });
+}
+
+/// Whether library file `path` still reads as of digest `sha256` (`LibraryFile::unchanged`): what a text's kept
+/// modules (`Modules::files`) need, to stand for reading the text again.
+pub(in crate::code_rule_dsl) fn file_holds(path: &Path, sha256: &[u8; 32]) -> bool {
+    LibraryFile { path: path.to_owned(), sha256: Some(*sha256) }.unchanged()
+}
+
+/// The library files of a text's kept modules noted as read, in their order, as reading the text notes them
+/// (`resolve_shared`): a run that takes the modules kept records the same reads.
+pub(in crate::code_rule_dsl) fn note_files(modules: &Modules) {
+    for (path, sha256, _) in &modules.files {
+        noted(&LibraryFile { path: path.clone(), sha256: Some(*sha256) });
+    }
 }
 
 impl LibraryFile {

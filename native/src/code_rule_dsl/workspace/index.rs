@@ -660,7 +660,7 @@ impl WorkspaceIndexTask {
             .collect::<Vec<_>>();
         let result_manifest = storage
             .store
-            .local_check_results_by_key(&keys, catalog)
+            .workspace_results(&keys, catalog)
             .map_err(|error| invalid(error.to_string()))?;
         let owner = self.lock()?.pending_analysis.as_ref().map(|(owner, _)| owner.clone());
         let checked_sources = repository.snapshot.as_ref().and_then(|snapshot| {

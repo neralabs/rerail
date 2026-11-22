@@ -515,6 +515,21 @@ fn a_climb_over_the_tapes_parent_column_is_file_local() {
     assert!(split.locations["up"].contains(&0), "{:?}", split.locations);
 }
 
+/// A file-local output the cross-file part also reads (decision 0431 R9: a pack's `rr_found_through` over each
+/// policy's findings) is an export, which the file-local part keeps in the engine for the cross-file part, not
+/// decoded: the cross-file part writes it. Neither did, and the policy's findings' file was empty.
+#[test]
+fn an_exported_output_is_the_cross_file_parts_to_write() {
+    let text = ".decl kind(n: node, k: number)\n.input kind\n\
+        .decl hit(n: node)\nhit(n) :- kind(n, 3).\n\
+        .decl hits(c: number)\nhits(c) :- c = count : { hit(_) }.\n.output hit, hits\n";
+    let parts = programs_of(read(text)).unwrap();
+    assert!(parts.file_local.contains("hit") && parts.exports.iter().any(|e| e == "hit"), "{:?} {:?}", parts.file_local, parts.exports);
+    let cross = &parts.versions.cross;
+    let outputs: Vec<&str> = cross.outputs().map(|a| cross.text(a)).collect();
+    assert!(outputs.contains(&"hit") && outputs.contains(&"hits"), "{outputs:?}");
+}
+
 /// `boot-python.rerail`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
 /// The equality names one value, so the pieces are one join, pushed into the chunks whole; apart, the split pushed each
 /// and left their join to the cross-file part (decision 0093 §4, O140).

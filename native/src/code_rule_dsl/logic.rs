@@ -214,11 +214,13 @@ pub mod plan {
         #[allow(unused_imports)]
         use super::super::front::Value;
         #[allow(unused_imports)]
-        use super::super::program_facts::{self, Facts};
+        use super::super::program_facts::Facts;
         #[allow(unused_imports)]
         use super::super::program_text;
         #[allow(unused_imports)]
-        use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
+        use super::kept_entry::Entries;
+        #[allow(unused_imports)]
+        use crate::content_store::{ContentStore, FactsPlanSet, HashKey, StoreResult};
         #[allow(unused_imports)]
         use sha2::{Digest as _, Sha256};
         #[allow(unused_imports)]
@@ -403,6 +405,7 @@ pub use rerail_rr_root::code_rule_dsl::logic::rr;
 pub use rerail_rr_root::code_rule_dsl::logic::settings;
 /// Contexts: code inside code analysed as a pass of its own rules (decision 0597), read with the language's root.
 pub use rerail_rr_root::code_rule_dsl::logic::contexts;
+pub use rerail_planner::code_rule_dsl::logic::passes_made;
 pub use rerail_logic_core::code_rule_dsl::logic::sql;
 /// The reach index's form found in a program (decision 0119).
 pub use rerail_logic_core::code_rule_dsl::logic::reach_form;

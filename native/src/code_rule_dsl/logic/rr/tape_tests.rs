@@ -394,8 +394,14 @@ fn a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone() {
         path
     };
     let cmps = policy("cmps", ".violation Cmp(at: node) code \"cmp\" \"in an empty list\"\nCmp(c) :- cmp(c, \"in\", _, r), empty_literal(r, _).");
-    // A tape value's node is no file's (decision 0431 R9): `Ann` is placed at the string.
-    let anns = policy("anns", ".violation Ann(at: node) code \"ann\" \"a list in an annotation\"\nAnn(s) :- annotation(e), list_like(e, _), guest_of(e, s).");
+    // A tape value's node is no file's (decision 0431 R9): `Ann` is placed at the string. An annotation's nodes are
+    // the annotation context's to read (decision 0597): the policy adds an export to the library's context.
+    let anns = policy(
+        "anns",
+        ".decl ann_list(s: node)\nann_list(s) :- ann_in(e, s), list_like(e, _).\n\
+         .context annotation of python roots ann_tree exports ann_list\n.from annotation ann_list as lists\n\
+         .violation Ann(at: node) code \"ann\" \"a list in an annotation\"\nAnn(s) :- lists(s).",
+    );
     let found = |report: &serde_json::Value, policy: &str| -> Vec<(u64, String)> {
         let rows = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["policy"] == policy);
         let mut found: Vec<(u64, String)> = rows.map(|d| (d["line"].as_u64().unwrap_or(0), d["code"].as_str().unwrap_or("").to_owned())).collect();
@@ -548,6 +554,26 @@ fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
     // C408 and its twin ask the same and run as one pack; the policy that includes `ruff-classes.rerail` runs alone.
     let together: Vec<u64> = batch["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
     assert_eq!(together, [2, 1, 2], "{batch:#}");
+}
+
+/// Decision 0597 step 3: ANN401 reads a quoted annotation's tree in the annotation context, and a string nested in
+/// one (`'Node'` in `"Optional['Node']"`) is parsed too: it is a forward reference, not an invalid one, so no `Any`.
+/// A quoted `Any` is.
+#[test]
+fn a_nested_quoted_annotation_is_its_code_and_no_any() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("ann401-nested");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("u.py"),
+        "from typing import Any, List, Optional\nclass Node: ...\ndef f(n: \"Node\", m: \"Optional['Node']\" = None) -> \"List['int']\":\n    return []\ndef g(a: \"Any\") -> None:\n    pass\n",
+    )
+    .unwrap();
+    let pack = crate::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-ann401-any-type.rerail");
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&pack), &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut lines: Vec<u64> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_u64().unwrap_or(0)).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, [5], "only g's quoted Any: {report:#}");
 }
 
 /// O-pha000-kept-part: a reader whose body is only a negation of a demanded relation (`PHA000 :- !allow_status(

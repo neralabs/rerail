@@ -20,6 +20,9 @@ pub const HEAD16: u32 = 120;
 pub const MAX_NODES: u32 = 1 << 30;
 /// No node.
 pub const NONE: u32 = u32::MAX;
+/// The state's flag: each node is final as it is written (no `retag` or `set_start`), so the frontier is the count
+/// and a block settles once the node after it opens or its last open node closes, as after a commit each node.
+pub const FINAL_AS_WRITTEN: u32 = 4;
 /// Format 16's magic, as a little-endian word.
 pub const MAGIC16: u64 = u64::from_le_bytes(*b"TMPTAPB6");
 
@@ -133,7 +136,7 @@ pub struct State {
     /// A block's bytes, and where each of its columns starts in it.
     pub stride: u32,
     pub at: [u32; 5],
-    /// 1: a presence a block is kept; 2: the tape is 16z.
+    /// 1: a presence a block is kept; 2: the tape is 16z; 4: each node final as written (`FINAL_AS_WRITTEN`).
     pub flags: u32,
     /// The presence's words of kinds and of fields.
     pub kw: u32,
@@ -1351,6 +1354,11 @@ mod ops {
         let is_done = w.f.ins().icmp_imm(IntCC::NotEqual, done, 0);
         let short = w.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, n, end);
         let behind = w.f.ins().icmp(IntCC::UnsignedLessThan, frontier, end);
+        // Each node final as written: the frontier is the count.
+        let flags = w.get32(at::FLAGS);
+        let fin = w.f.ins().band_imm(flags, i64::from(FINAL_AS_WRITTEN));
+        let committing = w.f.ins().icmp_imm(IntCC::Equal, fin, 0);
+        let behind = w.f.ins().band(behind, committing);
         let not = w.f.ins().bor(is_done, short);
         let not = w.f.ins().bor(not, behind);
         let z = w.zero32();
@@ -1684,10 +1692,13 @@ mod ops {
         w.f.ins().return_(&[z]);
     }
 
-    /// Fails unless node `i` is written and its block not final.
+    /// Fails unless node `i` is written, its block not final, and nodes are not final as written.
     fn changeable(w: &mut W<'_, '_>, i: Value) {
         let n = w.get32(at::N);
         let written = w.f.ins().icmp(IntCC::UnsignedLessThan, i, n);
+        let flags = w.get32(at::FLAGS);
+        let direct = w.f.ins().band_imm(flags, i64::from(FINAL_AS_WRITTEN));
+        let direct = w.f.ins().icmp_imm(IntCC::NotEqual, direct, 0);
         w.if_else(
             written,
             |w| {
@@ -1695,6 +1706,7 @@ mod ops {
                 let e = w.entry(b);
                 let done = w.ld(I32, e, 8);
                 let fin = w.f.ins().icmp_imm(IntCC::NotEqual, done, 0);
+                let fin = w.f.ins().bor(fin, direct);
                 w.fail_if(fin, fail::FINAL, i);
             },
             |w| w.fail(fail::FINAL, i),
@@ -3329,6 +3341,7 @@ mod ukl_header {
             ("HEAD16", HEAD16.into()),
             ("MAX_NODES", MAX_NODES.into()),
             ("NONE", NONE.into()),
+            ("FINAL_AS_WRITTEN", FINAL_AS_WRITTEN.into()),
             ("MAGIC16", MAGIC16),
             ("MAGIC16Z", MAGIC16Z),
             ("OPEN", OPEN.into()),

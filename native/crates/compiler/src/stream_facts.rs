@@ -2,16 +2,15 @@
 //! tier 2 tests itself, where it is one function (`OneFn`) and its calls nest as its nodes (`stacked`), where each
 //! node's key is known at its word (`coded`, `key_after`), where tier 2 makes the records itself (`Fetched`) and how a
 //! region's parts go (`part_facts`). A format 16 run passes each node at its word where `direct_keys` says so, with the
-//! writer's stack bounded by `open_bound`: the JIT's (`native_cpu_stream`) and the Rust's (`rust_stream`), which
-//! take the same programs. Also the local checks' word form (`word_form`). Nothing here emits code.
+//! writer's stack bounded by `open_bound`, for the JIT (`native_cpu_stream`). Also the local checks' word form
+//! (`word_form`). Nothing here emits code.
 //!
-//! `facts` refuses the programs a direct run does not take yet, the reasons the Rust lowering names. It reads no
-//! code the lowerings write: a part's content is checked on the words' own successors (`word_succ`), which the
-//! Rust's (`rust_stream::succ`) are wherever the check reads them.
+//! `facts` refuses the programs a direct run does not take yet. It reads no code a lowering writes: a part's content
+//! is checked on the words' own successors (`word_succ`).
 
 use crate::native_ir::{FlagOp, On, Structure, StructuralOperation as Op};
 use crate::program::LocalOp;
-use crate::stream_ir::{ByteSwitch, DEAD, REFUSE, REMEMBERED, WORD_KIND};
+use crate::stream_ir::{ByteSwitch, REFUSE, REMEMBERED, WORD_KIND};
 use std::collections::{BTreeSet, HashMap};
 
 /// The program's facts as a whole (`facts`), which the words' lowerings read.
@@ -63,8 +62,8 @@ pub struct StreamFacts<'a> {
     pub sentinel: bool,
 }
 
-/// The program's facts (`StreamFacts`), or why a direct run does not take it yet: the reasons the Rust lowering
-/// (`rust_stream`) names, which the JIT's direct format 16 run (`native_cpu_stream`) keeps too.
+/// The program's facts (`StreamFacts`), or why a direct run does not take it yet: the reasons the JIT's direct
+/// format 16 run (`native_cpu_stream`) keeps.
 pub fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixteen: bool) -> Result<StreamFacts<'_>, String> {
     if !crate::stream_analysis::calls_on_stack(native) {
         return Err("calls are not on the machine's stack (`calls_on_stack`)".into());
@@ -147,8 +146,7 @@ pub fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, si
 }
 
 /// A word's successors in its function, as its operation names them: its next, its targets, a call's two returns (in
-/// one function, `OneFn`: a call's rule, a return's places); past a node's field set by the next word. A lowering's own
-/// (`rust_stream::succ`) differ only at a part's `TOKEN`, a switch and an empty container's `OPEN`.
+/// one function, `OneFn`: a call's rule, a return's places); past a node's field set by the next word.
 pub fn word_succ(x: &StreamFacts<'_>, pc: usize) -> Vec<usize> {
     let n = x.native.structural.len();
     if let Some(one) = &x.one {
@@ -433,46 +431,6 @@ pub fn direct_keys(native: &Structure, widths: rerail_tape_format::Widths, tag: 
     let x = facts(native, widths, tag, true).ok()?;
     let plain = native.extras.is_empty() && native.readings.provisional.is_empty() && !native.structural.iter().any(|w| matches!(w.operation, Op::Leaf { deferred: true, .. } | Op::Leaf { extra: true, .. }));
     (x.coded && plain).then(|| (0..native.structural.len()).map(|pc| key_after(&x, pc)).collect())
-}
-
-/// Every key a direct run of the program writes (`direct_keys`' programs), as the language's entries: each node word's
-/// kind (a keyword's leaf: each keyword's), its field and its supertypes' classes, keyed as the run numbers them
-/// (`Facts::number`). A language that holds them all leaves no node word of the grammar without its number, whatever
-/// the files a test reads. `None` where the program is not one a direct run takes.
-pub fn direct_entries(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) -> Option<Vec<rerail_tape_format::tape::Entry>> {
-    direct_keys(native, widths, tag)?;
-    let x = facts(native, widths, tag, true).ok()?;
-    let mut out: Vec<rerail_tape_format::tape::Entry> = Vec::new();
-    let mut add = |kf: u32, classes: u32| {
-        let e = rerail_tape_format::tape::Entry {
-            kind: (kf & 0x3ff) as u16,
-            field: ((kf >> 16) & 0x3f) as u16,
-            flags: 0,
-            alias: None,
-            classes: (0..x.classes.len()).filter(|&j| classes >> (16 + j) & 1 != 0).map(|j| x.classes[j]).collect(),
-        };
-        if !out.contains(&e) {
-            out.push(e);
-        }
-    };
-    for (pc, w) in native.structural.iter().enumerate() {
-        let (field, classes) = key_after(&x, pc);
-        match w.operation {
-            Op::Open { kind } => {
-                let kf = u32::from(kind) | u32::from(field_after(&x, pc).unwrap_or(0)) << 16;
-                add(if field != 0 { kf & 0xffff | field } else { kf }, classes);
-            }
-            Op::Leaf { kind, .. } if kind != REMEMBERED && kind != DEAD => {
-                let f = u32::from(field_after(&x, pc).unwrap_or(0)) << 16;
-                let kinds: Vec<u32> = if kind == WORD_KIND { native.word_kinds.iter().map(|&(_, k)| u32::from(k)).collect() } else { vec![u32::from(kind)] };
-                for k in kinds {
-                    add(if field != 0 { (k | f) & 0xffff | field } else { k | f }, classes);
-                }
-            }
-            _ => {}
-        }
-    }
-    Some(out)
 }
 
 /// The most nodes a direct run of the program holds open (`f16::Writer::reserve_run`'s depth): a rule holds at most

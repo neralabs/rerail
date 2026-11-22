@@ -127,15 +127,10 @@ fn owned_again(inventory: &Inventory, store: Option<&Path>, owner: Option<&Analy
         return Ok(true);
     }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let own = OWN_RECORDED.try_get().ok_or("the content store's owner of recorded manifests is not registered")?;
-    Ok(own(store, &inventory.manifest_root, &inventory.plans, owner, now).map_err(InventoryError::Cache)? > 0)
+    // The store is above git (rerail-store over rerail-observe): reached through what it registers at load.
+    let opened = crate::content_store::observer_store::base::STORE.get().map_err(|missing| InventoryError::Cache(crate::content_store::StoreError::Invalid(missing.to_string())))?;
+    Ok(opened.own_recorded_manifests(store, &inventory.manifest_root, &inventory.plans, owner, now).map_err(InventoryError::Cache)? > 0)
 }
-
-/// Owns the manifests that `plans` recorded under `root` again for `owner`, in the content store at `store`, and
-/// gives how many it owned (`ContentStore::own_recorded_manifests`). The store's, above this crate (rerail-store);
-/// boot registers it.
-pub type OwnRecorded = fn(&Path, &str, &[[u8; 32]], &AnalysisOwner, i64) -> Result<usize, crate::content_store::StoreError>;
-pub static OWN_RECORDED: rerail_registry::Slot<OwnRecorded> = rerail_registry::Slot::new("the content store's owner of a reused inventory's recorded manifests");
 
 #[derive(Clone, Debug)]
 pub struct RawTreeEntry {

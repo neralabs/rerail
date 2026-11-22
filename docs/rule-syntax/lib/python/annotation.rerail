@@ -1,0 +1,64 @@
+// python/annotation: the annotation context (decision 0597): the trees of a file's string annotations, a pass of
+// their own rules.
+//
+// A string annotation (`x: "List[Node]"`) is parsed as the `annotation` grammar, a tape value (decision 0431): its
+// tree is no node of its file's. The host's rules never read those nodes. The context `annotation` holds the rules
+// that do: its own instance of each relation its exports reach, over its trees' nodes alone (`.context`). The host
+// reads what the context exports (`.from annotation …`), and the context what it needs of the host, finished
+// (`.from python … for annotation`). Each library file that reads annotations declares the context again with the
+// relations it exports, and reads them in rules of its own (rule 5: a host relation that counts an annotation's rows
+// says so): python/names (lookups), python/ast (names mentioned), python/points-to (an annotation's members).
+//
+// The extraction is the host's (rule 3): which strings are annotations, and so the context's roots.
+//   ann_root(t)     t is the root of an annotation: a parameter's, a return's, an annotated assignment's
+//   ann_ctx(s)      s is an annotation root or inside one: where a string annotation can stand
+//   str_node(s)     s is a string or an implicit concatenation: what a parse request may name
+//   ann_str(s)      s is a string read as a type: not a piece of `"a" "b"` (the whole is), not in `Literal[...]`
+//   ann_parse(s, r) r is the root of the tree parsed from string annotation s, its own (s nested or not)
+//   ann_host(h, s)  h is the host node (`host_node`) of a tree of string annotation s, or of a string nested in
+//                   one, s then the outermost: a tree's nodes all stand for its string's content, h
+//   ann_tree(r, s)  r is the root of the tree parsed from string annotation s, or from a string nested in one, s
+//                   then the outermost: the context's roots. Its names are looked up from s's place.
+// These are the only rules that ask for an annotation's parse: a reader reads them, never `parsed` (a request one
+// rule of a cross-file relation asks would make every request of the program cross-file, unanswered by its files),
+// the context's rules too (`.from python ann_parse`).
+// The context's:
+//   ann_in(n, s)    n is a node of a tree of string annotation s (the outermost)
+//
+//   def f(x: "List['int']"): ...      ann_tree(<List['int']>, <"List['int']">), ann_tree(<int>, <"List['int']">)
+#include "core.rerail"
+.decl ann_root(t: node)
+ann_root(t) :- kind(p, k), (k = "typed_parameter" ; k = "typed_default_parameter"), field(p, "type", t).
+ann_root(t) :- kind(f, "function_definition"), field(f, "return_type", t).
+ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
+.decl ann_ctx(s: node)
+ann_ctx(s) :- ann_root(a), (s = a ; within(s, a)).
+.decl str_node(s: node)
+str_node(s) :- kind(s, "string").
+str_node(s) :- kind(s, "concatenated_string").
+.decl ann_str(s: node)
+ann_str(s) :- (kind(s, "string") ; kind(s, "concatenated_string")), !concat_part(s), !literal_str(s).
+.decl concat_part(s: node)  // s is one of the strings of `"a" "b"`
+concat_part(s) :- kind(c, "concatenated_string"), child(c, s, _).
+.decl literal_str(s: node)  // s is inside the brackets of `Literal[...]` or `x.Literal[...]`
+literal_str(s) :- kind(l, "subscript"), field(l, "value", v), (kind(v, "identifier") ; kind(v, "attribute")),
+    text(v, t), (t = "Literal" ; suffix(".Literal", t)),
+    within(s, l), !within(s, v).
+literal_str(s) :- kind(l, "generic_type"), child(l, v, 0), text(v, "Literal"), within(s, l).
+// A nested string (`'int'` in `"List['int']"`) is one Ruff reads as an annotation (`string_annotation`, whose
+// strings are its own, the nested ones in their outer tree), in a tree of one of these: its host is the outer string.
+// Equal texts share a tree (decision 0431): a tree is each of its strings', and its host nodes are each one's.
+.decl ann_parse(s: node, r: node)
+ann_parse(s, r) :- ann_ctx(s), ann_str(s), parsed(s, "annotation", r).
+ann_parse(s, r) :- string_annotation(s), host_node(s, h), ann_host(h, _), parsed(s, "annotation", r).
+.decl ann_host(h: node, s: node)
+ann_host(h, s) :- ann_ctx(s), ann_parse(s, r), host_node(r, h), (h = s ; within(h, s)).
+ann_host(h, t) :- ann_parse(s, r), host_node(s, h0), ann_host(h0, t), host_node(r, h), h != h0.
+.decl ann_tree(r: node, s: node)
+ann_tree(r, s) :- ann_parse(_, r), host_node(r, h), ann_host(h, s).
+.decl ann_in(n: node, s: node)
+ann_in(n, s) :- ann_tree(r, s), (n = r ; within(n, r)).
+.context annotation of python roots ann_tree exports ann_in
+// The context reads the host's parses, a nested string's among them (its own instance would hold none: no annotation
+// root is in a tree).
+.from python ann_parse for annotation

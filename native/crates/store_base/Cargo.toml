@@ -20,6 +20,8 @@ rerail-prof = { path = "../prof" }
 rerail-accel = { path = "../../../accel" }
 # The memo's segments are journal blocks of deferrable leases (decision 0295 §4).
 rerail-blocks = { path = "../blocks" }
+# The content store as the observer and git reach it, registered at load by the store (`observer_store::base::STORE`).
+rerail-registry = { path = "../registry" }
 # The rolling cache's shape (`view::cache`) for the text tests' verdicts (decision 0478 step 2d); the view alone.
 rerail-clif = { path = "../clif", default-features = false }
 clru = "=0.6.3"

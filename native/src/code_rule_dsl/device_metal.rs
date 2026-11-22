@@ -25,11 +25,14 @@ pub fn register() {
 /// registered as the binary loads, as the engine registers them (`crate::install_devices`, `install_languages`), so
 /// the device's tests run on the device and no test's CPU worker meets a document before its pack is registered.
 /// What a job carries of its run is the logic's (`logic::CARRIERS`, which the engine's composition registers): a
-/// stratum's jobs on the pool carry it (`run_state::Carry::here`).
+/// stratum's jobs on the pool carry it (`run_state::Carry::here`). Strict mode on every connection and the core names,
+/// as boot registers them: without them its device tests stopped at their first job.
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
+        crate::code_rule_dsl::logic::profile::strict_on_every_connection();
         crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
+        crate::code_rule_dsl::logic::plan::keeps::CORE_NAMES.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::rr::core_names);
         super::register();
         // The compiled CPU, which the device's tests compare it with, as boot registers it (`install_devices`).
         crate::code_rule_dsl::transducer::packed::native_cpu::register();
@@ -38,7 +41,8 @@ mod test_load {
     }
     #[used]
     #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
-    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
     static LOAD: extern "C" fn() = load;
 }
 

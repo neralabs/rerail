@@ -14,13 +14,16 @@
 //! vouches for the rest are written together, as the table's transaction wrote them. A put waits for this process's
 //! earlier puts of the space (`ContentStore::kept_row` settles them first), so each reads the last.
 //!
+//! The store is above the observer (rerail-store over rerail-observe): the observer reaches it through what it
+//! needs of it (`observer_store::base`: `Store`, `Kept`), which the store registers at load (`STORE`). With none
+//! registered, nothing is kept.
+//!
 //! The space is the observer's path's (`<store>.files`, or a test thread's own): two observers of one store keep
 //! apart, as their files did.
 
-use crate::content_store::observe::kept::{Canon, Change, Edit, Kept, Row};
-use crate::content_store::observe::{Meta, Stat};
-use crate::content_store::ContentStore;
-use crate::content_store::kept_facts::{BlockFlat, KeptPut, KeptWhat};
+use super::{Meta, Stat};
+use crate::content_store::kept_facts::base::{BlockFlat, KeptPut, KeptWhat};
+use crate::content_store::observer_store::base::{Kept, STORE};
 use rerail_blocks::kept::{FactKey, KeptRead};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -31,6 +34,10 @@ const META: &str = "observer_meta";
 /// `observer_meta`'s column types: `s` an atom of the store.
 const META_TYPES: &[u8] = b"siis";
 
+/// An answer as the table held it: path, kind, stat, digest, listing (encoded), when recorded.
+pub(super) type Row = (String, i64, Stat, Vec<u8>, Option<Vec<u8>>, i64);
+/// A canonical form: the path, its canonical path, when recorded.
+pub(super) type Canon = (String, String, i64);
 
 /// A relation of the space partitioned by directory: a row's first column is its path, an atom.
 trait ByDir: Sized {
@@ -62,7 +69,7 @@ impl ByDir for Row {
     fn decode(facts: &Open<'_>, r: &[i64]) -> Option<Row> {
         let path = facts.text(r[0])?;
         let stat = Stat { dev: r[2], ino: r[3], size: r[4], mtime_ns: r[5], ctime_ns: r[6] };
-        let digest = crate::content_store::observe::unhex(&facts.text(r[7]).unwrap_or_default()).map_or_else(Vec::new, |d| d.to_vec());
+        let digest = super::unhex(&facts.text(r[7]).unwrap_or_default()).map_or_else(Vec::new, |d| d.to_vec());
         let listing = (r[8] == 1).then(|| facts.text(r[9]).unwrap_or_default().into_bytes());
         Some((path, r[1], stat, digest, listing, r[10]))
     }
@@ -86,18 +93,51 @@ impl ByDir for Canon {
     }
 }
 
+/// One relation's part of a change: rows put, paths whose rows go, paths whose rows go with every row under them.
+pub(super) struct Edit<R> {
+    pub put: Vec<R>,
+    pub delete: Vec<String>,
+    pub delete_under: Vec<String>,
+}
+
+impl<R> Default for Edit<R> {
+    fn default() -> Self {
+        Edit { put: Vec::new(), delete: Vec::new(), delete_under: Vec::new() }
+    }
+}
+
+impl<R> Edit<R> {
+    fn is_empty(&self) -> bool {
+        self.put.is_empty() && self.delete.is_empty() && self.delete_under.is_empty()
+    }
+}
+
+/// One change of the observer's kept facts, written as one put.
+#[derive(Default)]
+pub(super) struct Change {
+    pub answers: Edit<Row>,
+    pub canon: Edit<Canon>,
+    pub meta_put: Vec<(String, rusqlite::types::Value)>,
+    pub meta_delete: Vec<String>,
+}
+
+impl Change {
+    fn is_empty(&self) -> bool {
+        self.answers.is_empty() && self.canon.is_empty() && self.meta_put.is_empty() && self.meta_delete.is_empty()
+    }
+}
 
 /// The observer's kept facts in the content store at `path`. The store is opened as it is first asked and closed at
 /// the outermost run's end (`close`): a run leaves no handle of its store open.
-struct Facts {
+pub(super) struct Facts {
     path: PathBuf,
     space: [u8; 32],
-    store: Mutex<Option<ContentStore>>,
+    store: Mutex<Option<Box<dyn Kept>>>,
 }
 
 /// The facts read and written through an open store.
 struct Open<'s> {
-    store: &'s ContentStore,
+    store: &'s dyn Kept,
     space: [u8; 32],
 }
 
@@ -134,11 +174,11 @@ fn at_or_under(path: &str, at: &str) -> bool {
 impl Facts {
     /// The facts of the observer whose file is `observer` (`<store>.files…`), in the content store beside it; `None`
     /// when the store cannot be opened.
-    fn open(observer: &Path) -> Option<Facts> {
+    pub(super) fn open(observer: &Path) -> Option<Facts> {
         let text = observer.to_string_lossy();
         let at = text.rfind(".files")?;
         let path = PathBuf::from(&text[..at]);
-        let store = ContentStore::open_images(&path).ok()?;
+        let store = STORE.try_get()?.open(&path)?;
         let space = Sha256::digest(format!("rerail.observer-space/v1\0{text}").as_bytes()).into();
         Some(Facts { path, space, store: Mutex::new(Some(store)) })
     }
@@ -147,9 +187,9 @@ impl Facts {
     fn with<T>(&self, f: impl FnOnce(&Open<'_>) -> T) -> Option<T> {
         let mut held = self.store.lock();
         if held.is_none() {
-            *held = Some(ContentStore::open_images(&self.path).ok()?);
+            *held = Some(STORE.try_get()?.open(&self.path)?);
         }
-        Some(f(&Open { store: held.as_ref()?, space: self.space }))
+        Some(f(&Open { store: held.as_deref()?, space: self.space }))
     }
 
     /// Every setting kept.
@@ -175,41 +215,45 @@ impl Facts {
     /// Waits until every put queued is written, reading nothing (so a thread may ask it as it ends).
     pub(super) fn written(&self) {
         if let Some(store) = self.store.lock().as_ref() {
-            store.settle_kept(&self.space);
+            store.settle(&self.space);
         }
     }
 
     /// Waits until every put queued is written, and closes the store (the outermost run's end).
     pub(super) fn close(&self) {
         if let Some(store) = self.store.lock().take() {
-            store.settle_kept(&self.space);
+            store.settle(&self.space);
         }
     }
 }
 
 impl Open<'_> {
     fn text(&self, sym: i64) -> Option<String> {
-        self.store.atom_value(u32::try_from(sym).ok()?).ok().flatten()
+        self.store.text(u32::try_from(sym).ok()?)
     }
 
     fn meta(&self) -> Meta {
         let mut meta = Meta::new();
-        let Ok(Some(space)) = self.store.kept_space(&self.space) else { return meta };
-        let chain = space.view();
-        let Some(kept) = chain.get(&FactKey { rel: META, ident: &ident(META), part: 0 }) else { return meta };
-        for i in 0..kept.rows.len() {
-            let row = kept.row(i);
-            let Some(key) = self.text(row[0]) else { continue };
-            let value = if row[1] == 1 { rusqlite::types::Value::Text(self.text(row[3]).unwrap_or_default()) } else { rusqlite::types::Value::Integer(row[2]) };
-            meta.insert(key, value);
-        }
+        self.store.read(&self.space, &mut |chain| {
+            let Some(kept) = chain.and_then(|c| c.get(&FactKey { rel: META, ident: &ident(META), part: 0 })) else { return };
+            for i in 0..kept.rows.len() {
+                let row = kept.row(i);
+                let Some(key) = self.text(row[0]) else { continue };
+                let value = if row[1] == 1 { rusqlite::types::Value::Text(self.text(row[3]).unwrap_or_default()) } else { rusqlite::types::Value::Integer(row[2]) };
+                meta.insert(key, value);
+            }
+        });
         meta
     }
 
     fn under(&self, unit: &str) -> (Vec<Row>, Vec<Canon>) {
-        let Ok(Some(space)) = self.store.kept_space(&self.space) else { return Default::default() };
-        let chain = space.view();
-        (self.rows_under(&chain, unit), self.rows_under(&chain, unit))
+        let mut out = Default::default();
+        self.store.read(&self.space, &mut |chain| {
+            if let Some(chain) = chain {
+                out = (self.rows_under(chain, unit), self.rows_under(chain, unit));
+            }
+        });
+        out
     }
 
     fn rows_under<R: ByDir>(&self, chain: &dyn KeptRead, unit: &str) -> Vec<R> {
@@ -238,9 +282,13 @@ impl Open<'_> {
     }
 
     fn all(&self) -> (Vec<Row>, Vec<Canon>) {
-        let Ok(Some(space)) = self.store.kept_space(&self.space) else { return Default::default() };
-        let chain = space.view();
-        (self.all_of(&chain), self.all_of(&chain))
+        let mut out = Default::default();
+        self.store.read(&self.space, &mut |chain| {
+            if let Some(chain) = chain {
+                out = (self.all_of(chain), self.all_of(chain));
+            }
+        });
+        out
     }
 
     fn all_of<R: ByDir>(&self, chain: &dyn KeptRead) -> Vec<R> {
@@ -248,27 +296,31 @@ impl Open<'_> {
     }
 
     /// Writes `change`: the partitions it touches, and the settings when they change, as one put, a job called `what`
-    /// (`ContentStore::queue_kept_as`).
+    /// (`Kept::queue`).
     fn apply(&self, change: Change, what: &'static str) {
         if change.is_empty() {
             return;
         }
-        let space = self.store.kept_space(&self.space).ok().flatten();
-        let chain = space.as_ref().map(|s| s.view());
-        let chain = chain.as_ref().map(|c| c as &dyn KeptRead);
+        let Change { answers, canon, meta_put, meta_delete } = change;
+        let (mut answers, mut canon) = (Some(answers), Some(canon));
         let mut puts = Vec::new();
-        if !self.edit(chain, change.answers, &mut puts) || !self.edit(chain, change.canon, &mut puts) {
+        let mut edited = false;
+        self.store.read(&self.space, &mut |chain| {
+            let (Some(answers), Some(canon)) = (answers.take(), canon.take()) else { return };
+            edited = self.edit(chain, answers, &mut puts) && self.edit(chain, canon, &mut puts);
+        });
+        if !edited {
             return;
         }
-        if !change.meta_put.is_empty() || !change.meta_delete.is_empty() {
+        if !meta_put.is_empty() || !meta_delete.is_empty() {
             let mut meta: HashMap<String, rusqlite::types::Value> = self.meta();
-            for k in &change.meta_delete {
+            for k in &meta_delete {
                 meta.remove(k);
             }
-            meta.extend(change.meta_put);
+            meta.extend(meta_put);
             let ordered: BTreeMap<String, rusqlite::types::Value> = meta.into_iter().collect();
             let texts: Vec<String> = ordered.iter().flat_map(|(k, v)| [k.clone(), match v { rusqlite::types::Value::Text(t) => t.clone(), _ => String::new() }]).collect();
-            let Ok(syms) = self.store.intern_atoms(&texts.iter().map(String::as_str).collect::<Vec<_>>()) else { return };
+            let Some(syms) = self.store.intern(&texts.iter().map(String::as_str).collect::<Vec<_>>()) else { return };
             let mut flat = Vec::new();
             for ((_, v), s) in ordered.iter().zip(syms.as_chunks::<2>().0) {
                 let (is_text, number) = match v {
@@ -282,7 +334,7 @@ impl Open<'_> {
             let rows_or_gone = if n == 0 { KeptWhat::Gone } else { KeptWhat::Picked(Box::new(BlockFlat::of_rows(&flat, META_TYPES.len(), true))) };
             puts.push(KeptPut { rel: META.to_owned(), ident: ident(META), part: 0, digest: digest_of(&flat), reads: Vec::new(), types: META_TYPES.to_vec(), what: rows_or_gone });
         }
-        self.store.queue_kept_as(self.space, puts, what);
+        self.store.queue(self.space, puts, what);
     }
 
     /// `edit`'s partitions of `R`, read as kept, edited and pushed to `puts` whole. False if their atoms could not be
@@ -344,7 +396,7 @@ impl Open<'_> {
                 continue;
             }
             let texts: Vec<String> = rows.values().flat_map(|r| r.texts().into_iter().take(R::TEXTS)).collect();
-            let Ok(syms) = self.store.intern_atoms(&texts.iter().map(String::as_str).collect::<Vec<_>>()) else { return false };
+            let Some(syms) = self.store.intern(&texts.iter().map(String::as_str).collect::<Vec<_>>()) else { return false };
             let mut flat = Vec::with_capacity(rows.len() * R::TYPES.len());
             for (r, s) in rows.values().zip(syms.chunks_exact(R::TEXTS)) {
                 flat.extend(r.words(s));
@@ -363,40 +415,23 @@ fn digest_of(flat: &[i64]) -> u64 {
     u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes"))
 }
 
+/// Every answer's path kept, sorted, for a test.
+#[cfg(test)]
+pub(super) fn all_paths(facts: &Facts) -> Vec<String> {
+    let mut out = facts.all().0.into_iter().map(|r| r.0).collect::<Vec<_>>();
+    out.sort();
+    out
+}
 
+/// Every canonical form's path kept, sorted, for a test.
+#[cfg(test)]
+pub(super) fn all_canonical(facts: &Facts) -> Vec<String> {
+    let mut out = facts.all().1.into_iter().map(|r| r.0).collect::<Vec<_>>();
+    out.sort();
+    out
+}
 
 /// A digest as hex (empty for none).
 fn hex_of(d: &[u8]) -> String {
     d.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-impl Kept for Facts {
-    fn meta(&self) -> Meta {
-        Facts::meta(self)
-    }
-    fn under(&self, unit: &str) -> (Vec<Row>, Vec<Canon>) {
-        Facts::under(self, unit)
-    }
-    fn all(&self) -> (Vec<Row>, Vec<Canon>) {
-        Facts::all(self)
-    }
-    fn apply(&self, change: Change, what: &'static str) {
-        Facts::apply(self, change, what)
-    }
-    fn written(&self) {
-        Facts::written(self)
-    }
-    fn close(&self) {
-        Facts::close(self)
-    }
-}
-
-/// The kept facts of the observer whose file is `observer`, as the observer below reads them (its `kept::OPEN`).
-pub fn open(observer: &Path) -> Option<Box<dyn Kept>> {
-    Facts::open(observer).map(|facts| Box::new(facts) as Box<dyn Kept>)
-}
-
-/// Hands the observer below its kept facts (rerail-observe's `kept::OPEN`).
-pub fn register() {
-    crate::content_store::observe::kept::OPEN.register("rerail-store", open);
 }

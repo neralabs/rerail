@@ -351,7 +351,7 @@ impl Layered {
         if (dv_ref.view == super::device_chunk::VIEW_LINE && !views.lines) || (loc && !views.locs) {
             return None;
         }
-        v.dir = views.dir;
+        v.dir = views.dir?;
         v.buffers = views.buffers.clone();
         v.cache = views.cache.clone();
         v.keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;

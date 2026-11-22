@@ -20,9 +20,6 @@ fn measured(docs: &[Vec<i64>]) -> Vec<(String, i64, i64, i64, i64)> {
     syntax::measured(columns_source(vec!["n".into(), "kind".into(), "name".into()], cols.into_iter().map(Some).collect()).as_ref())
 }
 
-/// Kept by delta, the statistics are those of the documents counted in, whatever came and went before: node
-/// and few-valued columns exactly as measured, a many-valued one within the planner's margin. The blob reads
-/// back the same.
 /// A base relation's documents counted where their rows lie (`documents_read`, decision 0458), at some of its
 /// columns, are counted as their flat rows are; an edit's patch (the old document out, the new in) is a count
 /// from scratch of the documents now.
@@ -66,6 +63,43 @@ fn documents_read_where_they_lie_count_as_their_flat_rows() {
     }
 }
 
+/// A column's watched values (the constants the rules test) are counted exactly as documents come and go and as
+/// rows are patched, past the column's exact map, and read back from the blob: an edit's run takes them as kept.
+#[test]
+fn watched_values_are_counted_exactly_past_the_exact_map() {
+    let names = vec!["n".to_owned(), "kind".into(), "name".into()];
+    let docs: Vec<Vec<i64>> = (1..=40).map(|d| doc(d, 50 + d * 13, d % 3)).collect();
+    let mut s = RelStats::new(names);
+    s.documents(&docs.concat(), 3, 1);
+    assert!(s.exact(2).is_none(), "the name column is many-valued");
+    let watch = [0i64, 5, 12, 99_999];
+    let count = |rows: &[Vec<i64>], v: i64| rows.iter().flat_map(|d| d.as_chunks::<3>().0).filter(|r| r[2] == v).count() as i64;
+    s.watch(2, watch.iter().map(|&v| (v, count(&docs, v))));
+    // Documents out and in, and a delta of rows that are not whole documents.
+    s.documents(&docs[7], 3, -1);
+    let new = doc(41, 400, 2);
+    s.documents(&new, 3, 1);
+    let added = doc(42, 30, 1);
+    let removed: Vec<i64> = docs[3][..3 * 20].to_vec();
+    s.delta(&added, &removed, 3);
+    let mut now = docs.clone();
+    now[7].clear();
+    now[3].drain(..3 * 20);
+    now.push(new);
+    now.push(added);
+    let mut bytes = Vec::new();
+    s.encode(&mut bytes);
+    let back = RelStats::decode(&bytes, &mut 0).expect("reads back");
+    for v in watch {
+        assert_eq!(s.watched(2, v), Some(count(&now, v)), "value {v}");
+        assert_eq!(back.watched(2, v), Some(count(&now, v)), "value {v}, read back");
+    }
+    assert_eq!(s.watched(2, 7), None, "a value not watched");
+}
+
+/// Kept by delta, the statistics are those of the documents counted in, whatever came and went before: node
+/// and few-valued columns exactly as measured, a many-valued one within the planner's margin. The blob reads
+/// back the same.
 #[test]
 fn statistics_kept_by_document_are_those_of_the_documents_counted_in() {
     let docs: Vec<Vec<i64>> = (1..=40).map(|d| doc(d, 50 + d * 13, d % 3)).collect();

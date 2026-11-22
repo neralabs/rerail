@@ -178,8 +178,9 @@ fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, 
     // Of those, the ones whose blob the content memo knows under these rules take its rows.
     let mut evaluate = Vec::with_capacity(changed.len());
     let mut reused = Vec::new();
+    let entries = if changed.is_empty() { None } else { memo::open(store)? };
     for document in changed {
-        match prof::time("slice.memo_lookup", || memo::lookup(store, scope, &rules.digest, &document))? {
+        match prof::time("slice.memo_lookup", || memo::lookup(store, entries.as_ref(), scope, &rules.digest, &document))? {
             Some(rows) => reused.push((document, rows)),
             None => evaluate.push(document),
         }
@@ -209,7 +210,7 @@ fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, 
     let memoised = evaluate.clone();
     let outcome = prof::time("slice.wave", || schedule::batches::run_over(&lease, store, &program, scope, evaluate, inputs, &limits, &mut |chunk| wave.demand(&lease, store, scope, chunk)))?;
     prof::time("slice.remember", || -> StoreResult<()> {
-        wave.statistics(&lease, scope)?;
+        wave.statistics(&lease, store)?;
         memo::remember(&lease, store, scope, &rules.digest, &memoised)?;
         kept::remember(&lease, store, space, &rules.digest, &documents, &last, &fresh, cold)
     })?;

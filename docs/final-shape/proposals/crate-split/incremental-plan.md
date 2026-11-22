@@ -979,6 +979,15 @@ decision record. There are no A/B triples. One run per state, with the host's lo
       with and without tests.
     - On a Linux host, the three crates in full: 293 of 293 (4 ignored child-process and measurement tests).
     - The engine's and rerail-workspace's `git_access`, `git_ignore`, `workspace` and `content_store` tests: 54 of 54.
+  - **Roll-up 70: the store is reached from below.** On the hub, the observer's answers, canonical forms and
+    settings are kept facts of the content store (t33 K2, `observe/facts.rs`), and git's snapshot owns again the
+    manifests a run recorded there (`owned_again`). Both read the store, which is above them. They reach it through
+    what they need of it, declared in rerail-store-base (`content_store::observer_store::base`: `Store` opens a
+    store at a path and owns its manifests again; `Kept` settles, reads, interns and queues a space's kept facts),
+    whose slot (`STORE`) rerail-store fills at load (`observer_store::register`: boot's `install_with`, and the
+    store's and the observer's own test binaries). The puts' types (`KeptPut`, `KeptWhat`, `BlockFlat`, …) are the
+    base's (`kept_facts/base.rs`), re-exported by `kept_facts` where they were. The store's collection still sweeps
+    the observer under its lease (`corpus_runs`), downward.
 - **Step 7c** (2026-11-22): the facts, 32.9k production lines, are now three crates.
   - **rerail-ygraph** (`native/crates/ygraph`, 4.0k): M's Y1 reference graph (`facts::ygraph`). It reads nothing else
     of the facts, only `logic::profile`; `facts.rs` re-exports it.

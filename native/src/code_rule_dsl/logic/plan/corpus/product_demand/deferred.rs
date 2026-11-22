@@ -272,10 +272,12 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
         }
         (pairs, guarded, broad, open_readers, recursive)
     };
-    // The requests installed, once every read is classified.
+    // The requests installed, once every read is classified: in rounds, each one derivation of the program.
+    let requests: Vec<(String, &[usize])> = pairs.iter().map(|(rel, cols, _)| (rel.clone(), *cols)).collect();
+    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r)))?;
     let mut no_inline = Vec::new();
-    for (rel, cols, positive) in pairs {
-        if !upstream::install_named(p, &rel, cols, &BTreeSet::new(), false, DEFERRED_PAIRS, &|v, proofs| !proofs.iter().any(|r| void_request(v, &rel, cols, r)))? {
+    for ((rel, cols, positive), installed) in pairs.into_iter().zip(installed) {
+        if !installed {
             continue;
         }
         no_inline.push(rel.clone());

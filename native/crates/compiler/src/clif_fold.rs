@@ -4,11 +4,10 @@
 //! The code that builds tier 1 makes a value constant where it knows it: a test that a
 //! gate's quick path has shown is none (`native_cpu_bytes::words_gated`), a mark that every
 //! token of a kind sets. The operations after it are still written out (an `and` with the
-//! zero, its count of bits, a compare of that count), and so is a branch on it. Neither
-//! backend folds them: the JIT runs Cranelift without its optimizer, and the Rust that
-//! `clif_rust` prints would carry them for `rustc` to remove.
+//! zero, its count of bits, a compare of that count), and so is a branch on it. The JIT
+//! runs Cranelift without its optimizer, which does not fold them.
 //!
-//! `fold` does that work on the IR itself, before either backend sees it:
+//! `fold` does that work on the IR itself, before a backend sees it:
 //!
 //! ```text
 //! v1 = iconst.i64 0          ; a test's word, known none
@@ -522,7 +521,7 @@ fn fold_once(func: &mut ir::Function, callees: &Summaries) -> bool {
                     };
                     let k = signed(k, w);
                     // A small constant only, as an instruction's immediate is: a wide one (an
-                    // address the backends place, `clif_rust`'s tables) stays a constant.
+                    // address the backends place) stays a constant.
                     if i32::try_from(k).is_err() {
                         continue;
                     }

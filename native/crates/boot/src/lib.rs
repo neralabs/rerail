@@ -3448,6 +3448,8 @@ pub mod code_rule_dsl {
             pub mod native_cpu {
                 #[cfg(any(test, feature = "test-hooks"))]
                 pub use rerail_transducer::code_rule_dsl::transducer::packed::native_cpu::*;
+                // The compiled CPU executor's registration, which boot makes in every build (`install_devices`).
+                pub use rerail_transducer::code_rule_dsl::transducer::packed::native_cpu::register;
                 #[allow(unused_imports)]
                 use super::{ BatchOutcome, Error, Output, Program, metal_batch_abi::{ ARENA_KIND_COUNT, FORMAT_VERSION, FinalCaptureRecord, GreedyEntryRecord, LinkRecord, LuaInstructionRecord, LuaSetMemberRecord, MetalNode, MetalSupertype, NONE, NfaRangeRecord, NfaStateRecord, PENDING_FOLLOWING, PENDING_GREEDY, PENDING_PATH, PathRecord, PendingRecord, PropertyRecord, QueryBucketRecord, QueryMemberRecord, QueuedStateRecord, RepeatRecord, ResultRecord, TaskStatus, ValueRecord, }, native_cpu_capture, native_cpu_output, native_cpu_reduction, native_cpu_scheduler, native_cpu_value, native_ir::{ArenaKind, FunctionRef, NativeModule, StructuralOperation}, packed_batch::{PackedBatch, PackedExecution, PackedResultPage}, value_packing::PackedValueTables, };
                 #[allow(unused_imports)]

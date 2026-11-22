@@ -33,6 +33,8 @@ pub mod code_rule_dsl {
             pub mod search;
             pub use search::*;
             pub mod choices;
+            /// A memo entry of program facts kept as kept facts, held by its source (t33 step 3).
+            pub mod kept_entry;
             pub mod demand;
             pub mod keeps;
             pub mod prepared;

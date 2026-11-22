@@ -331,7 +331,7 @@
             // A round is a stratum's evaluation (`in_device`): its launches its budget's.
             let _evaluation_round = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = super::direct_batch(None).unwrap();
-            batch.lattice_fold(&u, n, &r_rel, had, 1, lat, super::map_at(m), first, &counters, &changed, None, None).unwrap();
+            batch.lattice_fold(&u, n, &r_rel, had, 1, lat, super::map_at(m), first, &counters, &changed, None, None, None).unwrap();
             batch.finish().unwrap();
             drop(old);
             let added = counters.get(1) as usize;

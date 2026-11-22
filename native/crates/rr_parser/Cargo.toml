@@ -23,6 +23,8 @@ bitlex = { path = "../../../tools/bitlex", default-features = false }
 rerail-context = { path = "../context", features = ["test-hooks"] }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-rr-parser = { path = ".", features = ["test-hooks"] }
+# The parser as Rust from the grammar, against the JIT (`rust_tests`).
+rerail-rr-aot = { path = "../rr_aot", features = ["test-hooks"] }
 rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
 rerail-rir = { path = "../rir" }
 # The measurements' CPU clocks (`tests`), on every platform.

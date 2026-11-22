@@ -39,19 +39,38 @@ pub fn device() -> Option<&'static rerail_metal::lane::Device> {
     rerail_metal::lane::device().ok()
 }
 
-/// Where the device reads `bytes` of a tape placed in `room` (decision 0353 step 4d): their device address, and the
-/// slab's buffer, which a pass that reads them makes resident. `None` for a room that is no slab's, bytes outside
-/// it, or a device whose buffers have no addresses (OpenCL 1.2).
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub fn on_device(room: &std::sync::Arc<dyn Room>, bytes: &[u8]) -> Option<(u64, rerail_metal::lane::Buffer)> {
-    let slab = &room.as_any().downcast_ref::<SlabRoom>()?.slab;
-    let held = room.bytes().as_ptr_range();
-    if bytes.as_ptr() < held.start || bytes.as_ptr_range().end > held.end {
-        return None;
+/// The home `bytes` lie in, as a views' directory names it (`view_reads::ViewHome`, decision 0353 step 3 on the CPU):
+/// its identity (the same for every tape of one slab), its host address, the offset of `bytes` in it, and where a
+/// device reads it (its device address and its slab's buffer, which a pass that reads it makes resident). A room that
+/// is no slab's, or no room (a tape or lines in a vector of their own), is a home of its own at `bytes`, which no
+/// device reads.
+pub struct HomeOf {
+    pub id: usize,
+    pub host: u64,
+    pub at: u64,
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub device: Option<(u64, rerail_metal::lane::Buffer)>,
+}
+
+pub fn home_of(room: Option<&std::sync::Arc<dyn Room>>, bytes: &[u8]) -> HomeOf {
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    if let Some(slab) = room.and_then(|r| r.as_any().downcast_ref::<SlabRoom>()).map(|r| &r.slab) {
+        let host = slab.host() as usize;
+        if let Some(at) = (bytes.as_ptr() as usize).checked_sub(host) {
+            let buffer = slab.device_buffer();
+            let device = buffer.device_address().map(|address| (address, buffer.clone()));
+            return HomeOf { id: host, host: host as u64, at: at as u64, device };
+        }
     }
-    let buffer = slab.device_buffer();
-    let at = bytes.as_ptr() as usize - slab.host() as usize;
-    Some((buffer.device_address()? + at as u64, buffer.clone()))
+    let _ = room;
+    let host = bytes.as_ptr() as usize;
+    HomeOf {
+        id: host,
+        host: host as u64,
+        at: 0,
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        device: None,
+    }
 }
 
 /// `len` bytes written by `fill` into their home: a slab's room where the device's pool gives one, else a vector.

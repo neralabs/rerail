@@ -47,6 +47,8 @@ fn install_with(ids: Option<BuildIds>) {
         install_languages(ids.is_none());
         // The retained traces, which the SQL executor's parts below them read (`maintenance::TEMPORAL`).
         sql_executor::temporal::register();
+        // The content store, which the observer and git below it reach (`content_store::observer_store::STORE`).
+        crate::content_store::observer_store::register();
         logic::plan::corpus::install_git_inventory();
         logic::run_state::CARRIERS.register("boot", logic::CARRIERS);
         logic::plan::corpus::RUNNER.register("boot", &logic::plan::corpus::Corpus);
@@ -59,9 +61,6 @@ fn install_with(ids: Option<BuildIds>) {
         logic::plan::keeps::CORE_NAMES.register("boot", logic::rr::core_names);
         #[cfg(target_os = "macos")]
         logic::costs::join_steps::register_install(logic::plan::joins::model::install);
-        // What the store hands the observer and git below it: the observer's kept facts, a reused inventory's
-        // manifests owned again.
-        crate::content_store::register_below();
         // D's compiler of a clause's relational plan, and P's anchor corpus, above the code rules that read them
         // (test-only copies, O19 and O20).
         #[cfg(feature = "test-hooks")]

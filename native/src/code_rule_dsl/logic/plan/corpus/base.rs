@@ -153,6 +153,8 @@ pub struct Report {
     /// Of those, the strata a changed read reached that no rule of saw a row of its delta, by kind or key (decision
     /// 0563 B; `Outcome::unseen`), by their keys.
     pub cross_unseen: Vec<String>,
+    /// The rules the run dropped as no row can reach them, it admitting no guest (decision 0563 A; `may_embed`).
+    pub unfillable: usize,
     /// The cross-file relations handed off as the run went, their frames made once no later stratum read them and
     /// their rows let go (Q74): a run not driven by deltas.
     pub cross_handed: usize,
@@ -731,6 +733,10 @@ pub fn tail_passes<'s>(mut p: crate::code_rule_dsl::logic::program_image::manage
     use preparation::{combining, hide, on_request, whole};
     let mut spaces_report = None;
     if let Tail::Many { hide: bound, policies, .. } = tail {
+        // A context's instance completed over the combined program (decision 0597): a member's rule of a library's
+        // context (`p1_rr_cx_annotation_ann_list`) reads the library's rules it reaches as the context's, which its
+        // part, lowered without the library's rules, could not.
+        p.program(&mut crate::code_rule_dsl::logic::contexts::Passes).program(&mut crate::code_rule_dsl::logic::contexts::CrossingCycles);
         // core.rerail's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
         // `projections`) and inputs in one that does not: once one part projects them, they are no inputs of the
         // combined program. Both would give `kind` two domains.
@@ -907,14 +913,15 @@ pub fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::A
     // The run's context on each job's thread (`run_state::Carry`): its observer and store, a test's own included.
     // Without it a read on the pool asked the process's store, not the test's.
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-    let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 {
+    type ReadText = (std::result::Result<Option<crate::code_rule_dsl::logic::rr::Text>, front::Error>, Vec<crate::code_rule_dsl::logic::rr::LibraryFile>);
+    // The texts at `at` read on the pool, each with the library files it read, not noted yet.
+    let read_at = |at: &[usize]| -> Vec<ReadText> {
         use crate::code_rule_dsl::logic::rr::{read_parsed, read_seed};
         let parsed: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
-            programs
-                .par_iter()
-                .map(|text| {
+            at.par_iter()
+                .map(|&i| {
                     let _in = carry.enter();
-                    read_seed(text)
+                    read_seed(programs[i])
                 })
                 .collect()
         });
@@ -926,36 +933,56 @@ pub fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::A
             // An error is left to the read that meets it, which reports it in its program's place.
             let _ = crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds);
         }
-        let each: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
-            programs
-                .par_iter()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            at.par_iter()
                 .zip(parsed)
-                .map(|(text, parsed)| {
+                .map(|(&i, parsed)| {
                     let _in = carry.enter();
-                    recorded_on_worker(|| parsed.and_then(|r| read_parsed(r.statements)).map(Some).map_err(|e| in_policy(text, e)))
+                    recorded_on_worker(|| parsed.and_then(|r| read_parsed(r.statements)).map(Some).map_err(|e| in_policy(programs[i], e)))
                 })
                 .collect()
-        });
-        each.into_iter().map(|(got, read)| {
-            replay(read);
-            got
-        }).collect::<std::result::Result<_, _>>()?
-    } else {
-        programs.iter().map(|_| None).collect()
+        })
     };
+    // The texts the last run of this shape read (`kept_texts`): one whose digest and library files are as they were
+    // then is not read here, its modules the record's and its files noted in its place. The others are read.
+    let texts_store = if programs.len() > 1 { crate::code_rule_dsl::logic::rr::image_store() } else { None };
+    let mut known: Vec<Option<Option<crate::code_rule_dsl::logic::rr::Modules>>> = match texts_store.as_deref() {
+        Some(store) => kept_texts::known(store, programs),
+        None => vec![None; programs.len()],
+    };
+    let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = programs.iter().map(|_| None).collect();
+    let mut read_any = false;
+    if programs.len() > 1 {
+        let at: Vec<usize> = (0..programs.len()).filter(|&i| known[i].is_none()).collect();
+        read_any = !at.is_empty();
+        let mut read = read_at(&at).into_iter();
+        for (slot, known) in texts.iter_mut().zip(&known) {
+            match known {
+                Some(modules) => {
+                    if let Some(modules) = modules {
+                        crate::code_rule_dsl::logic::rr::note_files(modules);
+                    }
+                }
+                None => {
+                    let (got, files) = read.next().expect("a text read");
+                    replay(files);
+                    *slot = got?;
+                }
+            }
+        }
+    }
     // Each program's library modules (decision 0089), when it names them by `#include`.
     let modular: Vec<Option<crate::code_rule_dsl::logic::rr::Modules>> = if programs.len() > 1 {
-        programs
-            .iter()
-            .zip(&texts)
-            .map(|(text, read)| match read {
-                Some(read) => Ok(read.modules()),
-                None => crate::code_rule_dsl::logic::rr::modules(text),
-            })
-            .collect::<std::result::Result<_, _>>()?
+        texts.iter().zip(known.iter_mut()).map(|(read, known)| match read {
+            Some(read) => read.modules(),
+            None => known.take().flatten(),
+        }).collect()
     } else {
         vec![None]
     };
+    if read_any && let Some(store) = texts_store.as_deref() {
+        kept_texts::keep(store, programs, &modular);
+    }
     let copied = std::env::var("RERAIL_LIBRARIES").is_ok_and(|v| v == "copied");
     let core = crate::code_rule_dsl::logic::rr::core_names();
     // A program that adds to no library relation is read with its libraries' declarations only: the run holds their
@@ -998,7 +1025,8 @@ pub fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::A
     // Each distinct scope seeded once (decision 0246 §2), before the programs lowered in it.
     let mut scoped: Vec<crate::code_rule_dsl::logic::rr::Scoped> = Vec::new();
     let scope_of: Vec<Option<usize>> = match in_scope {
-        Some(library) => texts.iter().map(|t| t.as_ref().and_then(|t| t.files())).map(|files| {
+        // A text's library files are its modules' (`Text::files`), whether it was read or its modules kept.
+        Some(library) => modular.iter().map(|m| m.as_ref().map(|m| m.files.iter().map(|(path, _, _)| path.clone()).collect::<Vec<_>>())).map(|files| {
             let files = files?;
             let keys = library.scope(&files).1;
             Some(scoped.iter().position(|s| s.keys == keys).unwrap_or_else(|| {
@@ -1017,7 +1045,7 @@ pub fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::A
         if !splice || !P::KEEPS || programs.len() < 2 || read.is_some() || copied {
             return None;
         }
-        let keys = programs.iter().zip(&scope_of).zip(&texts).map(|((text, k), t)| t.as_ref().and_then(|_| scoped[(*k)?].program_image(text).sha256_bytes())).collect::<Option<Vec<_>>>()?;
+        let keys = programs.iter().zip(&scope_of).map(|(text, k)| scoped[(*k)?].program_image(text).sha256_bytes()).collect::<Option<Vec<_>>>()?;
         Some((keys, kept_link::family(programs.len(), extra, &library.image_keys())))
     })();
     if let (Some((keys, family)), Some(store), Some(library)) = (&keeping, images.as_deref(), in_scope)
@@ -1029,6 +1057,15 @@ pub fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::A
             out.extend(programs.iter().zip(&scope_of).filter_map(|(text, k)| Some(scoped[(*k)?].program_image(text))));
         }
         return Ok(got);
+    }
+    // Not spliced: every program is lowered, so the texts not read above (their modules kept, or taken by a splice
+    // that fell back) are read now, their files noted again (a recording keeps each once).
+    if programs.len() > 1 {
+        let at: Vec<usize> = (0..programs.len()).filter(|&i| texts[i].is_none()).collect();
+        for (i, (got, files)) in at.iter().zip(read_at(&at)) {
+            replay(files);
+            texts[*i] = got?;
+        }
     }
     // Each program's kept image, read for all of them at once (a few statements, not three each from the pool's
     // threads), its lease renewed in one more.

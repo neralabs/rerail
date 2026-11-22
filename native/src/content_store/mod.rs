@@ -7,17 +7,6 @@
 // and payloads (`base.rs`), the atoms, the segments, the rows, the postings, the vocabulary, compression, the journal,
 // the hazards, the scope leases and the private files, and the observer (`observe`), re-exported here.
 pub use rerail_observe::content_store::*;
-/// The observer's kept facts in the store (t33 K2), as the observer below reads them (`observe::kept::OPEN`).
-#[path = "observe/facts.rs"]
-pub mod observe_facts;
-
-/// What the store hands the observer and git below it (rerail-observe's slots): the observer's kept facts, and the
-/// owning again of a reused inventory's recorded manifests. Boot registers them as it installs, the store's own
-/// tests as they load.
-pub fn register_below() {
-    observe_facts::register();
-    crate::git_workspace::snapshot::OWN_RECORDED.register("rerail-store", corpus_runs::own_recorded_at);
-}
 pub mod analysis_scope;
 pub mod atoms;
 pub use atoms::{ProcessIds, StoreIds, Sym};
@@ -31,7 +20,7 @@ mod connection;
 pub use connection::set_connection_functions;
 mod corpus_runs;
 pub use corpus_runs::process_gone;
-pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, RETIRED_CORPUS_MEMO_SCHEMAS, live_fact_schema, stat_blob_key};
+pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
 pub use connection::{flush_of, store_flush};
@@ -41,9 +30,13 @@ mod document_places;
 pub use document_places::{DOCUMENT_WORDS, DocumentPlaces, PLACED_WORDS};
 mod held;
 pub mod kept_facts;
+/// The store as the observer and git below it reach it (`observer_store::base::STORE`), registered at load.
+pub mod observer_store;
 pub mod guest_keys;
 mod object_segments;
-mod facts_memo;
+mod plan_set;
+/// The demand's terminal matches' row estimate, a kept fact (t33 step 6).
+mod estimates;
 mod objects;
 pub use objects::{ResidentFrames, TapeFrame};
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
@@ -64,12 +57,7 @@ mod schema;
 mod search_index;
 mod snapshots;
 mod tree_diff;
-mod tree_pages;
 pub mod upkeep;
-/// G's tree result segments as copied, beside `tree_pages` (O19).
-#[cfg(any(test, feature = "test-hooks"))]
-#[allow(dead_code)]
-mod tree_result_segments;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
@@ -83,10 +71,9 @@ pub use held::{Rel as KeptRel, Stored as KeptStored, local_space, MemoBlob, Memo
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation};
-pub use facts_memo::{FactsCompletion, FactsFrame, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
+pub use plan_set::FactsPlanSet;
 pub use schema::STORE_FILE_NAME;
 pub use tree_diff::{TreeChange, TreeDiff};
-pub use tree_pages::{TREE_PAGE_FILES, TreePage, TreePageKey, tree_pages_digest};
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub use connection::{
@@ -97,24 +84,16 @@ pub use connection::{
 pub use snapshots::AFTER_GIT_TREE_TRANSACTION;
 
 use connection::{ThreadConnection, retry_busy};
-use results::LocalResultCache;
+pub use results::WorkspaceResults;
 use rusqlite::{Connection, OpenFlags};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::AtomicUsize;
-
-/// Facts plan sets, each its plans' digests, by the set's digest.
-type PlanSets = HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>;
 
 pub struct ContentStore {
     database_path: PathBuf,
     connection: ThreadConnection,
     compression_level: i32,
-    local_result_cache: Mutex<LocalResultCache>,
-    /// Facts plan sets by digest (immutable once written: `facts_memo`).
-    facts_plan_sets: parking_lot::Mutex<PlanSets>,
     /// This process's atoms of the store (atoms.rs, decision 0049), shared with the planner's symbols.
     atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
@@ -216,8 +195,6 @@ impl ContentStore {
             database_path: self.database_path.clone(),
             connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity(), self.connection.flush()),
             compression_level: self.compression_level,
-            local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
-            facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms: std::sync::Arc::clone(&self.atoms),
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
@@ -300,8 +277,6 @@ impl ContentStore {
             database_path,
             connection,
             compression_level: DEFAULT_COMPRESSION_LEVEL,
-            local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
-            facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms,
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
@@ -324,10 +299,6 @@ impl ContentStore {
     /// resident documents: an active apply benefits from the caches, while an inactive one should
     /// not retain an arena or SQLite page cache. Connections reopen on the next read.
     pub fn release_memory(&self) -> StoreResult<()> {
-        self.local_result_cache
-            .lock()
-            .expect("local result cache mutex poisoned")
-            .clear();
         self.connection.release_all();
         Ok(())
     }
@@ -361,7 +332,7 @@ impl std::fmt::Debug for StoredProgram {
 #[derive(Clone, Debug)]
 pub struct StoredLocalResult {
     pub candidate: CandidateClause,
-    /// The result's bytes where its segment holds them, mapped (decision 0450 step 2).
+    /// The result's bytes where its entry holds them, mapped (`results.rs`).
     pub bytes: ObjectBytes,
 }
 

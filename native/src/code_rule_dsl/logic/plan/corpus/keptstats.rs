@@ -466,7 +466,8 @@ impl Keeper {
     }
 
     pub fn map_symbols(&mut self, syms: &dyn Fn(&str, &[String]) -> Option<Vec<bool>>, strict: bool, f: impl FnOnce(&mut [i64]) -> crate::content_store::StoreResult<()>) -> crate::content_store::StoreResult<()> {
-        let mut taken: Vec<(String, usize, Vec<i64>)> = Vec::new();
+        // Each column's exact map and its watched values (`true`), their counts in order.
+        let mut taken: Vec<(String, usize, bool, Vec<i64>)> = Vec::new();
         let mut values: Vec<i64> = Vec::new();
         for (rel, stats) in self.rels.iter_mut() {
             let width = stats.columns().len();
@@ -474,6 +475,7 @@ impl Keeper {
                 if strict {
                     for c in 0..width {
                         stats.take_exact(c);
+                        stats.take_watched(c);
                     }
                 }
                 continue;
@@ -482,7 +484,13 @@ impl Keeper {
                 if let Some(pairs) = stats.take_exact(c) {
                     let (vs, ns): (Vec<i64>, Vec<i64>) = pairs.into_iter().unzip();
                     values.extend(vs);
-                    taken.push((rel.clone(), c, ns));
+                    taken.push((rel.clone(), c, false, ns));
+                }
+                let pairs = stats.take_watched(c);
+                if !pairs.is_empty() {
+                    let (vs, ns): (Vec<i64>, Vec<i64>) = pairs.into_iter().unzip();
+                    values.extend(vs);
+                    taken.push((rel.clone(), c, true, ns));
                 }
             }
         }
@@ -490,13 +498,21 @@ impl Keeper {
             f(&mut values)?;
         }
         let mut values = values.into_iter();
-        for (rel, c, ns) in taken {
-            let pairs = ns.into_iter().map(|n| (values.next().expect("one a count"), n)).collect();
+        for (rel, c, watched, ns) in taken {
+            let pairs: Vec<(i64, i64)> = ns.into_iter().map(|n| (values.next().expect("one a count"), n)).collect();
             if let Some(stats) = self.rels.get_mut(&rel) {
-                stats.put_exact(c, pairs);
+                if watched { stats.watch(c, pairs) } else { stats.put_exact(c, pairs) }
             }
         }
         Ok(())
+    }
+
+    /// Export `key`'s column `c` watches the values `counts` names, each with its count in the rows counted
+    /// (`RelStats::watch`): the constants the rules test there, kept with the statistics from this run on.
+    pub fn watch(&mut self, key: &str, c: usize, counts: Vec<(i64, i64)>) {
+        if let Some(stats) = self.rels.get_mut(key) {
+            stats.watch(c, counts);
+        }
     }
 
     /// Whether this run traces export `key` (`RERAIL_KEPT_DOCS`).

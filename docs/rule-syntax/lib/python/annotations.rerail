@@ -155,10 +155,25 @@ annt_form(e, "invalid") :- annt_bare(e, s), (kind(s, "string") ; kind(s, "concat
 // annt_quoted(s, r): string s holds the type expression r. annt_parses(s): r is not itself a string (Ruff
 // refuses a quoted string inside a quoted annotation).
 .decl annt_quoted(s: node, r: node)
-annt_quoted(s, r) :- annt_bare(_, s), str_node(s), parsed(s, "annotation", r0),
+annt_quoted(s, r) :- annt_bare(_, s), ann_parse(s, r0),
     unparen(r0, r1), (kind(r1, "type"), child(r1, r, 0) ; !kind(r1, "type"), r = r1).
 .decl annt_parses(s: node)
 annt_parses(s) :- annt_quoted(s, r), !kind(r, "string"), !kind(r, "concatenated_string").
+// A quoted annotation's code is the annotation context's (decision 0597, python/annotation): its instance of these
+// rules reads each tree from its root's expression (annt_code), a string nested in it through annt_quoted, and it
+// exports what the host's forms read of a root: that its code is a string itself, contains Any, or is Any at the top.
+annt_in(e) :- ann_tree(r, _), annt_code(r, e).
+.decl annt_code(r: node, e: node)  // the expression of tree r, below its `type` wrapper and parentheses
+annt_code(r0, r) :- ann_tree(r0, _), unparen(r0, r1), (kind(r1, "type"), child(r1, r, 0) ; !kind(r1, "type"), r = r1).
+.decl annt_root_str(r: node)
+annt_root_str(r0) :- annt_code(r0, r), (kind(r, "string") ; kind(r, "concatenated_string")).
+.decl annt_root_any(r: node)
+annt_root_any(r0) :- annt_code(r0, r), annt_contains_any(r).
+.decl annt_root_top(r: node)
+annt_root_top(r0) :- annt_code(r0, r), annt_any_top(r).
+.context annotation of python roots ann_tree exports annt_root_str, annt_root_any, annt_root_top
+.from annotation annt_root_str as annt_q_str, annt_root_any as annt_q_any, annt_root_top as annt_q_top
+annt_parses(s) :- annt_bare(_, s), ann_parse(s, r), !annt_q_str(r).
 .decl annt_sub_form(x: symbol, f: symbol)
 annt_sub_form("Union", "union"). annt_sub_form("Optional", "optional"). annt_sub_form("Annotated", "annotated").
 .decl annt_name_form(x: symbol, f: symbol)
@@ -174,10 +189,12 @@ annt_part(e, "forward", r) :- annt_bare(e, s), annt_parses(s), annt_quoted(s, r)
 .decl annt_contains_any(e: node)
 annt_contains_any(e) :- annt_form(e, "any").
 annt_contains_any(e) :- annt_form(e, f), annt_part(e, f, a), (annt_form(a, "invalid") ; annt_contains_any(a)).
+annt_contains_any(e) :- annt_form(e, "forward"), annt_bare(e, s), ann_parse(s, r), annt_q_any(r).
 // ann_any_type(t): at the top, bare Optional is Any too; Annotated is Any when its type is; a quoted annotation is
 // read as the type it holds, and one that does not parse is not reported.
 .decl ann_any_type(t: node)
 ann_any_type(t) :- annt_top(t, e), annt_any_top(e).
+ann_any_type(t) :- annt_in(t), !annt_part(_, _, t), annt_bare(t, s), ann_parse(s, r), annt_q_top(r).
 .decl annt_top(t: node, e: node)
 annt_top(t, t) :- annt_in(t), !annt_part(_, _, t), annt_bare(t, m), !kind(m, "string"), !kind(m, "concatenated_string").
 annt_top(t, r) :- annt_in(t), !annt_part(_, _, t), annt_bare(t, s), annt_quoted(s, r).

@@ -168,12 +168,13 @@ fn globs_nest_alternatives() {
 #[test]
 fn logical_line_predicates_and_aliases_use_the_vocabulary_batch() {
     let (program, vocabulary) = prepared(r##"
-.decl split_line(d: number, l: number, t: symbol)
-.input split_line
+.decl src_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.input src_line, text
 .decl candidate(d: number, l: number, t: symbol)
 .decl selected(d: number, l: number, t: symbol)
 .decl finding(d: number, l: number)
-candidate(d,l,t) :- split_line(d,l,t), !prefix("#",t).
+candidate(d,l,t) :- src_line(d,l,sp), text(sp,t), !prefix("#",t).
 selected(d,l,t) :- candidate(d,l,t).
 finding(d,l) :- selected(d,l,t), contains("inspect",t).
 .output finding
@@ -192,15 +193,16 @@ finding(d,l) :- selected(d,l,t), contains("inspect",t).
 #[test]
 fn computed_or_fact_writers_prevent_alias_vocabulary_rewrites() {
     let (_, vocabulary) = prepared(r##"
-.decl split_line(d: number, l: number, t: symbol)
-.input split_line
+.decl src_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.input src_line, text
 .decl combined(t: symbol)
 .decl constant(t: symbol)
 .decl finding(t: symbol)
-combined(t) :- split_line(_,_,t).
-combined(t) :- split_line(_,_,s), t = @dot(s,"added").
+combined(t) :- src_line(_,_,sp), text(sp,t).
+combined(t) :- src_line(_,_,sp), text(sp,s), t = @dot(s,"added").
 constant("invented").
-constant(t) :- split_line(_,_,t).
+constant(t) :- src_line(_,_,sp), text(sp,t).
 finding(t) :- combined(t), suffix("added",t).
 finding(t) :- constant(t), prefix("invented",t).
 .output finding
@@ -235,14 +237,15 @@ fn signed_allowlists_verify_existing_bytes_and_reject_tampering() {
 #[test]
 fn a_test_of_a_constant_tables_values_gains_the_whole_table_as_one_set() {
     let (program, vocabulary) = prepared(r##"
-.decl split_line(d: number, l: number, t: symbol)
-.input split_line
+.decl src_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.input src_line, text
 .decl table(k: symbol, x: symbol)
 table("dead", "alpha"). table("dead", "beta"). table("live", "gamma").
 .decl surface(x: symbol)
 surface(x) :- table("dead", x).
 .decl finding(d: number, l: number, x: symbol)
-finding(d,l,x) :- split_line(d,l,t), surface(x), contains(x,t).
+finding(d,l,x) :- src_line(d,l,sp), text(sp,t), surface(x), contains(x,t).
 .output finding
 "##).unwrap();
     let specs: Vec<_> = vocabulary.specs.iter().map(|(op, p)| format!("{op} {p:?}")).collect();

@@ -14,20 +14,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub const HASH_SHA256: i64 = 1;
 pub const HASH_GIT_SHA1: i64 = 2;
 pub const HASH_GIT_SHA256: i64 = 3;
-/// The facts engine's content key (blake3), stored only as a source alias.
-pub const HASH_BLAKE3: i64 = 4;
-pub const CODEC_ZSTD: i64 = 1;
+// Hash kind 4 was the facts memo's content key (blake3, a source alias): taken, never reused.
 pub const STRING_PATH: i64 = 1;
 pub const STRING_REPOSITORY: i64 = 2;
 pub const STRING_OWNER: i64 = 3;
 pub const STRING_PATH_COMPONENT: i64 = 4;
-pub const STRING_CLAUSE_KEY: i64 = 5;
+// String domain 5 was a candidate check's clause key (`candidate_checks`): taken, never reused.
 
 pub const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 pub const MAX_PUBLICATION_BATCH: usize = 64;
 /// Largest `collect` batch: the per-statement row limit of one collection transaction.
 pub const MAX_COLLECTION_BATCH: usize = 256;
-pub const DEFAULT_READ_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -177,6 +174,12 @@ impl HashKey {
             *chunk = lane.to_be_bytes();
         }
         out
+    }
+
+    /// The key `key_bytes` wrote.
+    pub fn from_key_bytes(bytes: [u8; 40]) -> Option<Self> {
+        let words: Vec<i64> = bytes.as_chunks::<8>().0.iter().map(|w| i64::from_be_bytes(*w)).collect();
+        Some(Self { algorithm: words[0], lanes: [words[1], words[2], words[3], words[4]] })
     }
 
     pub fn git_sha256(bytes: [u8; 32]) -> Self {
@@ -484,25 +487,8 @@ pub struct SnapshotFilePublication<'a> {
     pub source: &'a [u8],
     pub aliases: &'a [HashKey],
     pub tape: Option<TapePayload<'a>>,
-    pub catalog: CandidateCatalogIdentity,
-    pub candidates: &'a [CandidateClause],
 }
 
-#[derive(Clone, Debug)]
-pub struct LocalResultPublication {
-    pub candidate: CandidateClause,
-    pub context: HashKey,
-    /// The result's bytes, stored as they are, in a segment (decision 0450 step 2).
-    pub bytes: Vec<u8>,
-}
-
-
-#[derive(Clone, Copy, Debug)]
-pub struct WorkspaceCompletion {
-    pub workspace_id: WorkspaceId,
-    pub revision: i64,
-    pub completed_at: i64,
-}
 
 #[derive(Clone, Debug)]
 pub struct DirectoryReuse {
@@ -530,10 +516,6 @@ pub struct OverlayFilePublication<'a> {
     pub source: &'a [u8],
     pub aliases: &'a [HashKey],
     pub tape: Option<TapePayload<'a>>,
-    pub catalog: CandidateCatalogIdentity,
-    pub candidates: &'a [CandidateClause],
-    pub local_results: &'a [LocalResultPublication],
-    pub candidates_current: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -542,9 +524,6 @@ pub struct CollectionReport {
     pub retired_workspaces: usize,
     pub snapshot_files: usize,
     pub snapshots: usize,
-    pub candidate_rows: usize,
-    pub candidate_checks: usize,
-    pub candidate_catalogs: usize,
     pub tapes: usize,
     pub sources: usize,
 }
@@ -643,13 +622,6 @@ impl FileStat {
 /// How long before its recording an entry's mtime must be for the entry to be trusted (git's racy rule, with margin
 /// for file systems whose mtime is coarse).
 pub const RACY_NS: i64 = 2_000_000_000;
-
-impl HashKey {
-    /// A blake3 content hash (the facts engine's content key), stored as a source alias.
-    pub fn blake3(bytes: [u8; 32]) -> Self {
-        Self::from_padded(super::HASH_BLAKE3, bytes)
-    }
-}
 
 impl TapeId {
     pub const fn for_benchmark(value: i64) -> Self {

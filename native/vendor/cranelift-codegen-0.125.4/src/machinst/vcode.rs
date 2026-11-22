@@ -895,7 +895,17 @@ impl<I: VCodeInst> VCode<I> {
                 do_emit(&block_start, &mut disasm, &mut buffer, &mut state);
             }
 
+            // A load held for the next instruction, which may pair with it
+            // (`MachInst::pair`; rerail's patch): emitted as one with it, else
+            // before it.
+            let mut held: Option<I> = None;
+            let pairing = self.debug_value_labels.is_empty();
             for inst_or_edit in regalloc.block_insts_and_edits(&self, block) {
+                if let InstOrEdit::Edit(_) = inst_or_edit {
+                    if let Some(h) = held.take() {
+                        do_emit(&h, &mut disasm, &mut buffer, &mut state);
+                    }
+                }
                 match inst_or_edit {
                     InstOrEdit::Inst(iix) => {
                         if !self.debug_value_labels.is_empty() {
@@ -955,6 +965,9 @@ impl<I: VCodeInst> VCode<I> {
                         // (and don't emit the return; the actual
                         // epilogue will contain it).
                         if self.insts[iix.index()].is_term() == MachTerminator::Ret {
+                            if let Some(h) = held.take() {
+                                do_emit(&h, &mut disasm, &mut buffer, &mut state);
+                            }
                             for inst in self.abi.gen_epilogue() {
                                 do_emit(&inst, &mut disasm, &mut buffer, &mut state);
                             }
@@ -981,13 +994,23 @@ impl<I: VCodeInst> VCode<I> {
                             );
                             debug_assert!(allocs.next().is_none());
 
-                            // Emit the instruction!
-                            do_emit(
-                                &self.insts[iix.index()],
-                                &mut disasm,
-                                &mut buffer,
-                                &mut state,
-                            );
+                            // Emit the instruction! With the held one, as a
+                            // pair, or after it; or held itself.
+                            let cur = &self.insts[iix.index()];
+                            let paired = held.as_ref().and_then(|h| h.pair(cur));
+                            if let Some(h) = held.take() {
+                                match &paired {
+                                    Some(p) => do_emit(p, &mut disasm, &mut buffer, &mut state),
+                                    None => do_emit(&h, &mut disasm, &mut buffer, &mut state),
+                                }
+                            }
+                            if paired.is_none() {
+                                if pairing && stack_map_disasm.is_none() && cur.may_pair() {
+                                    held = Some(cur.clone());
+                                } else {
+                                    do_emit(cur, &mut disasm, &mut buffer, &mut state);
+                                }
+                            }
                             if let Some(stack_map_disasm) = stack_map_disasm {
                                 disasm.push_str(&stack_map_disasm);
                                 disasm.push('\n');
@@ -1028,6 +1051,9 @@ impl<I: VCodeInst> VCode<I> {
                         }
                     }
                 }
+            }
+            if let Some(h) = held.take() {
+                do_emit(&h, &mut disasm, &mut buffer, &mut state);
             }
 
             if cur_srcloc.is_some() {

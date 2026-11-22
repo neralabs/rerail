@@ -16,7 +16,7 @@
 //! `direct`), `native_set_fixpoint` (`setfix`), `join_spec` (`join`), `observe` and `live_stats` (statistics the
 //! native store reports), the `tape_nearest` climb (`nearest`). They call the SQL
 //! functions of T's extension (`logic::native`), which the caller registers on the connection, as T loads it.
-//! Rule bodies are typed queries (`sql::select`, over `sql_ast`'s expressions), checked before they are rendered; the wave keeps its planned program in `compiled_plans` (`waves::matches`). Left out of the
+//! Rule bodies are typed queries (`sql::select`, over `sql_ast`'s expressions), checked before they are rendered; the wave keeps its planned program as a compiled plan (`stats::plans`, `waves::matches`). Left out of the
 //! port: T's measurement switches (`RDL_PLAN0`, `RDL_SQL_REPLAN`, `RDL_CLUSTER=0`, `RDL_WHOLE=0`, `RDL_REPLAN`, traces
 //! and profiles, with `timed_plan`, T's planning timer) and its 1 GB page caches (over the 500 MB budget; SQLite's
 //! defaults instead).
@@ -42,7 +42,7 @@ use super::sql::sql_ast::{SqlBinaryOperator as Op, SqlExpression as Expr, SqlUna
 // cratify: the planner's base is rerail-plan-base's (its facade of `plan` mounts the vocabulary, `base`, and the
 // children the search reads: the forms, joins, outputs, placement, tables and emission), and its search is
 // rerail-plan-search's (its facade mounts `search`, with `choices`, `demand`, `keeps`, `prepared`, `replanning` and
-// `select`, the passes that read the model); the run re-exports both here.
+// `select`, the passes that read the model, and `kept_entry`, the kept facts' entries they and the corpus keep); the run re-exports both here.
 pub use rerail_plan_search::code_rule_dsl::logic::plan::*;
 // cratify: `corpus` is rerail-logic's (it mounts it: the corpus runner reads the language, above the planner)
 pub mod join_spec;
@@ -2328,7 +2328,7 @@ impl<'a> Run<'a, '_> {
             if (*rows as i64) < OBS_MIN {
                 continue;
             }
-            let joined: u64 = ha.iter().map(|(k, n)| n * hc.get(k).copied().unwrap_or(0)).sum();
+            let joined: u64 = ha.iter().map(|(k, n)| n * hc.get(k)).sum();
             out.push((b.sig(c, b.vars(a)), [*rows as i64, joined as i64]));
         }
         out
@@ -2628,20 +2628,38 @@ impl<'a> Run<'a, '_> {
         let (mut maintain, mut derive) = (0.0, 0.0);
         for b in &bodies {
             plan_site("the threshold's price of a derive (0090 §4)");
-            derive += self.model.plan_rule_reused(pf, b, None)?.0.1;
+            let derived = self.model.plan_rule_reused(pf, b, None)?.0.1;
+            derive += derived;
             for k in 0..b.len() {
                 let Lit::Atom(a) = b.view(k) else { continue };
                 let rel = b.rel(a);
                 let Some(&n) = deltas.get(rel).filter(|n| **n > 0) else { continue };
                 let was = self.model.stats.delta_rows.insert(rel, n as f64);
                 plan_site("the threshold's price of the mode (0090 §4)");
-                let priced = self.model.plan_rule_reused(pf, b, (!a.neg()).then_some(k));
+                // Priced as the mode plans it (`maintain_mode`): a positive driver past the floor free to start
+                // anywhere.
+                let first = (!a.neg()).then_some(k);
+                self.model.stats.lead_free = first.is_some() && crate::code_rule_dsl::logic::plan::again::past_floor(n);
+                let mut priced = self.model.plan_rule_reused(pf, b, first).map(|p| p.0.1);
+                // A kept order is run as it is while its work re-priced is under `REPLAN_ROWS`: a search could save
+                // no more than that. Its price may still be far over the line's best, and here it is summed with
+                // the stratum's others against the derive: a line priced over its rule's derive is searched, and
+                // priced at its best. After ep2's append, three lines kept from its few moved lines were each
+                // priced 9,836 at the import's 9,350 (their best, 10 to 60), and the mode's 30,377 against the
+                // derive's 3,505 derived `violation` again, its finding's places making 33 documents.
+                if let Ok(kept) = priced
+                    && kept > derived
+                    && let Ok(((_, best, _), _)) = self.model.plan_inner(pf, b, first, None, false)
+                {
+                    priced = Ok(kept.min(best));
+                }
+                self.model.stats.lead_free = false;
                 match was {
                     Some(w) => self.model.stats.delta_rows.insert(rel, w),
                     None => self.model.stats.delta_rows.remove(rel),
                 };
                 // A removal and an add, each over its side of the delta: priced once over the whole delta.
-                maintain += priced?.0.1;
+                maintain += priced?;
             }
         }
         Ok((maintain, derive))
@@ -2791,9 +2809,22 @@ impl<'a> Run<'a, '_> {
                     };
                     // The line's order: the driver first, then the rest as planned from its variables bound.
                     let led = led.map(|o| std::iter::once(Step { at: k, mode: None }).chain(o.into_iter().filter(|st| st.at != k)).collect::<Vec<_>>());
+                    // A positive driver's line is a whole join (`Line::Remove`, `Line::Seed`), its delta probed
+                    // through its own index where another atom binds it (`Source::Version`): past 0090 §4's floor,
+                    // sized by its rows, it leads only where it is the cheapest start (`Stats::lead_free`). Led by
+                    // it, a one-row finding read after 4,672 moved lines was each of 163 rules' lines in ep2's import
+                    // edit, and their price (1.9 M) kept `violation` derived again: 33 documents made for their
+                    // places (0.19 s). Under the floor a line costs little whatever its order, and keeps the
+                    // program's (its prepared and kept plans): planned free, ep2's appends' lines cost 1 G more.
                     let (order, key) = match (&led, &led_body) {
                         (Some(o), Some(lb)) => (o.clone(), self.model.reused_key(lb, None)),
-                        _ => (self.model.plan_rule_reused(pf, b, first)?.0.0, self.model.reused_key(b, first)),
+                        _ => {
+                            // The relation's change, both sides, as the clause's price reads it (`mode_costs`).
+                            self.model.stats.lead_free = crate::code_rule_dsl::logic::plan::again::past_floor(gone + added);
+                            let planned = self.model.plan_rule_reused(pf, b, first).map(|p| (p.0.0, self.model.reused_key(b, first)));
+                            self.model.stats.lead_free = false;
+                            planned?
+                        }
                     };
                     // The changed inputs' literals read their versions: the driver's, and as they were in a removal.
                     self.mode_reads.clear();
@@ -3172,11 +3203,19 @@ impl<'a> Run<'a, '_> {
         // them all (to measure what leaving them out saves).
         let rules: Vec<RuleKey> = if std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_some() { rules } else {
             let fillable: BTreeSet<&str> = f.answers().iter().map(|&(_, p)| f.rel_name(p)).flat_map(|p| [Some(p), f.request_of(p)]).flatten().collect();
+            // A program that answers no request grows no source while it runs (a tape value's rows are admitted as a
+            // request asks, decision 0431 §8): an input it has bound already holds all its rows. The cross-file part's
+            // inputs are such, the file-local part's exports (a context's, with no root: 0597 rung 2.10).
+            let asks_nothing = f.answers().is_empty();
             let mut empty: HashMap<String, bool> = HashMap::new();
             let mut is_empty = |rel: &str| -> bool {
-                // An input may be bound when its first reader runs, so it is not taken as empty.
-                if scc.contains(rel) || fillable.contains(rel) || !native_rels.contains(rel) {
+                if scc.contains(rel) || fillable.contains(rel) {
                     return false;
+                }
+                // An input may be bound when its first reader runs, so it is not taken as empty unless it is bound
+                // already, in a program that asks nothing.
+                if !native_rels.contains(rel) {
+                    return asks_nothing && self.inputs.contains(rel) && crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| s.len() == 0);
                 }
                 if let Some(&e) = empty.get(rel) {
                     return e;
@@ -8114,7 +8153,7 @@ fn climb_ends(p: &body::Placed, sccs: Vec<BTreeSet<String>>, deps: &super::front
             let Some(d) = deps.get(&t) else { continue };
             let reads = d.contains(&(w.clone(), false)) && !d.contains(&(w.clone(), true)) && !d.iter().any(|(r, _)| *r == t);
             let before = d.iter().all(|(r, _)| *r == w || at.get(r.as_str()).is_none_or(|&s| s < j));
-            if into[i].is_none() && reads && before && rules.get(t.as_str()).is_some_and(|ks| ks.iter().all(|&k| reads_once(p, k, &w))) {
+            if into[i].is_none() && reads && before && rules.get(t.as_str()).is_some_and(|ks| ks.iter().all(|&k| reads_once(p, k, &w) && of_the_row(p, k, &w))) {
                 into[i] = Some(j);
             }
         }
@@ -8149,6 +8188,22 @@ fn reads_once(p: &body::Placed, k: usize, w: &str) -> bool {
         }
     }
     n == 1
+}
+
+/// Whether rule `k` binds nothing past its row of `w` (read once, `reads_once`): every variable of its other literals
+/// is one of the row's. Its rest is then tests of the row (`bound_in(s, x)`, `kind(m, "module")`), which the climb asks
+/// once a row (decision 0561, 3). A rest that joins out from the row (`annotated_on_chain`'s annotations of the row's
+/// scope, a scope's nodes a row) is planned from its own side, a stratum of its own: driven by every row of the climb,
+/// it scanned a scope's nodes for each (43 s of corpus0's normal packs).
+fn of_the_row(p: &body::Placed, k: usize, w: &str) -> bool {
+    let r = p.rule(k);
+    let Some(row) = r.body().find_map(|l| match l.view() {
+        Lit::Atom(a) if p.v.rel_name(a.rel()) == w => Some(body::lit_vars(l)),
+        _ => None,
+    }) else {
+        return false;
+    };
+    r.body().filter(|l| !matches!(l.view(), Lit::Atom(a) if p.v.rel_name(a.rel()) == w)).all(|l| body::lit_vars(l).is_subset(&row))
 }
 
 /// Whether relation `w`'s rules (`ks`) are a keyed walk (decision 0570) as written: each recursive rule reads `w`
@@ -9539,5 +9594,40 @@ mod ordered_tests {
         ordered.file(m1);
         assert_eq!(taken(), Some(vec!["b".to_owned()]), "filed in the chunks' order: the later chunk's stands");
         assert_eq!(in_view(&ordered.next_view(), taken).0, Some(vec!["a".to_owned()]), "chunk 2 begins with chunk 0's");
+    }
+}
+
+/// The climb's ends (decision 0561) are the readers the climb answers from its row alone: a reader whose rules bind
+/// nothing past the walk's row (`look`'s `bound_in(s, x)`) joins the walk's stratum; one that joins out from the row
+/// (`chained`'s `ann(a, x, s)`, as `annotated_on_chain` joins a scope's annotations) stays a stratum of its own,
+/// planned from its own side, not driven by every row of the climb.
+#[cfg(test)]
+mod climb_tests {
+    use super::*;
+
+    #[test]
+    fn a_reader_that_joins_out_from_the_walks_row_is_not_a_climb_end() {
+        use crate::code_rule_dsl::logic::program_image::{Builder, T};
+        // walk(n, x, s) :- nameref(n, x), wstart(n, s).
+        // walk(n, x, p) :- walk(n, x, s), !bound_in(s, x), up(s, p).
+        // look(n, x, s) :- walk(n, x, s), bound_in(s, x).
+        // chained(n, x) :- walk(n, x, s), ann(a, x, s).
+        let mut b = Builder::base();
+        for (rel, cols) in [("nameref", &[("n", "node"), ("x", "symbol")][..]), ("wstart", &[("n", "node"), ("s", "node")]), ("bound_in", &[("s", "node"), ("x", "symbol")]), ("up", &[("s", "node"), ("p", "node")]), ("ann", &[("a", "node"), ("x", "symbol"), ("s", "node")]), ("walk", &[("n", "node"), ("x", "symbol"), ("s", "node")]), ("look", &[("n", "node"), ("x", "symbol"), ("s", "node")]), ("chained", &[("n", "node"), ("x", "symbol")])] {
+            b.fields().declare(rel, cols);
+        }
+        let v = |x: &'static str| T::Var(x);
+        b.rule().head("walk", &[v("n"), v("x"), v("s")]).atom("nameref", &[v("n"), v("x")]).atom("wstart", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("x"), v("p")]).atom("walk", &[v("n"), v("x"), v("s")]).not("bound_in", &[v("s"), v("x")]).atom("up", &[v("s"), v("p")]).finish().unwrap();
+        b.rule().head("look", &[v("n"), v("x"), v("s")]).atom("walk", &[v("n"), v("x"), v("s")]).atom("bound_in", &[v("s"), v("x")]).finish().unwrap();
+        b.rule().head("chained", &[v("n"), v("x")]).atom("walk", &[v("n"), v("x"), v("s")]).atom("ann", &[v("a"), v("x"), v("s")]).finish().unwrap();
+        let v = b.finish().unwrap().0;
+        let p = body::Placed::whole(v);
+        let f = Fields::of(&p).expect("a whole version");
+        let deps = crate::code_rule_dsl::logic::program_image::analyses::edges_by_name(f.v, f.about);
+        let sccs = climb_ends(&p, p.components().unwrap().to_vec(), &deps);
+        let walk = sccs.iter().find(|s| s.contains("walk")).expect("walk's stratum");
+        assert!(walk.contains("look"), "a reader of the row alone is answered in the climb: {sccs:?}");
+        assert!(!walk.contains("chained"), "a reader that joins out from the row is a stratum of its own: {sccs:?}");
     }
 }

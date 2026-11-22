@@ -15,8 +15,6 @@ test-hooks = ["rerail-store-base/test-hooks", "rerail-blocks/test-hooks", "rerai
 
 [dependencies]
 rerail-store-base = { path = "../store_base" }
-# The slots the store above fills: the observer's kept facts, a reused inventory's manifests owned again.
-rerail-registry = { path = "../registry" }
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
 rerail-prof = { path = "../prof" }
@@ -59,4 +57,8 @@ onig = { version = "=6.5.3", default-features = false }
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-observe = { path = ".", features = ["test-hooks"] }
+# The store its tests keep the observer's answers in (t33 K2), registered as the test binary loads
+# (`observer_store::base::STORE`): above this crate, a test's dependency only. Named apart, as this crate's sources
+# name its base `rerail_store` (`lib.rs`).
+rerail-store-above = { package = "rerail-store", path = "../store", features = ["test-hooks"] }
 tempfile = "=3.27.0"

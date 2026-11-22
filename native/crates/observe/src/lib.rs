@@ -21,3 +21,17 @@ pub mod content_store {
 pub mod git_access;
 #[path = "../../../src/git_workspace.rs"]
 pub mod git_workspace;
+
+/// This crate's own test binary, which boot does not load: the store its tests keep the observer's answers in is
+/// registered as the binary loads (`observer_store::base::STORE`), as boot registers it (`install_with`).
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        rerail_store_above::content_store::observer_store::register();
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
