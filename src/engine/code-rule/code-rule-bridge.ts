@@ -1115,18 +1115,18 @@ interface WalkStart {
   readonly heads: ReadonlyMap<string, string>;
   readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /**
+   * In a take of the other worktrees' walk, by checkout (physical), the files its Git listed as modified or untracked
+   * when the walk first showed the session that checkout's worktree (`takeFirstSightListings`): every other file there
+   * holds what its index holds.
+   */
+  readonly listedAtFirstSight?: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
    * `ToolCallWindows.ends` as the walk started: a command that ended since may have been writing what the walk read, and
    * only the calls that ended before are those the walk answers for (`ToolCallWindows.answered`).
    */
   readonly callsEnded: number;
   /** Filesystem-clock reading taken as the walk started. */
   readonly observedAt: number;
-  /**
-   * In a take of the other worktrees' walk, by checkout (physical), the files its Git listed as modified or untracked
-   * when the walk first showed the session that checkout's worktree (`takeFirstSightListings`): every other file there
-   * holds what its index holds.
-   */
-  readonly listedAtFirstSight?: ReadonlyMap<string, ReadonlySet<string>>;
 }
 /** A worktree whose walk a session takes: its root (physical), its path as the session names it, and what the walk found. */
 interface TakenWorktree {
