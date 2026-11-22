@@ -1614,7 +1614,13 @@ impl Narrowing<'_> {
         let orig = |rel: &str| folded.get(rel).cloned().unwrap_or_else(|| rel.to_owned());
         let natives: BTreeSet<String> = v.native_map().map(|m| m.values().flat_map(|n| n.reads().into_iter().map(orig).collect::<Vec<_>>()).collect()).unwrap_or_default();
         let node_col = |rel: &str, c: usize| v.decl_of(rel).and_then(|d| d.cols().nth(c)).is_some_and(|(_, t)| v.text(t) == "node");
+        let debug = std::env::var_os("RERAIL_NARROW_DIFF_DEBUG").is_some();
         let mut same: BTreeSet<String> = within.iter().filter(|x| local(x) && !natives.contains(*x) && folded.iter().all(|(c, o)| o != *x || local(c))).cloned().collect();
+        if debug {
+            for x in within.iter().filter(|x| !same.contains(*x)) {
+                eprintln!("NDIFF {x}: a filter made: local {}, read by a native {}, its copies not local {:?}", local(x), natives.contains(x), folded.iter().filter(|(c, o)| *o == x && !local(c)).map(|(c, _)| c).collect::<Vec<_>>());
+            }
+        }
         // A rule's text with its copies' names their originals' (`show_rule`'s identifiers mapped).
         let as_folded = |text: String| -> String {
             let mut out = String::with_capacity(text.len());
@@ -1677,6 +1683,9 @@ impl Narrowing<'_> {
                 let (Lit::Atom(a) | Lit::Agg { atom: a, .. }) = l.view() else { continue };
                 let rel = v.rel_name(a.rel());
                 if same.contains(rel) && !a.args().enumerate().any(|(c, t)| node_col(rel, c) && t.var().is_some_and(|x| bounded.contains(&x))) {
+                    if debug {
+                        eprintln!("NDIFF {rel}: a filter made: read unbounded by {}", v.show_rule(r));
+                    }
                     same.remove(rel);
                 }
             }
@@ -1701,6 +1710,9 @@ impl Narrowing<'_> {
                 break;
             }
             for x in out {
+                if debug {
+                    eprintln!("NDIFF {x}: a filter made: its rules read a copy made");
+                }
                 same.remove(&x);
             }
         }

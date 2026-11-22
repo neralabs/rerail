@@ -157,6 +157,25 @@ unchanged and CPU noted.
    says why it is not diffed or read in place. Each reason is fixed in the pass, not by a constant: the goal is no
    `rr_narrow_` relation in the census of a run with no annotation documents, and on `all` only the annotations'
    change computed.
+   Done as far as the pass can go, 2026-11-22. After steps 1 and 2 the large twins are gone: on `all`, `walk`, `look`,
+   `rf_bind`, `rf_expr`, `nameref` and `wstart` are released once each, where each had an `rr_narrow_` twin of its
+   size. Six filter twins are left, about 30 MB in all: `rr_narrow_rf_attr` (0.76 M rows), `rr_narrow_rf_plain_attr`
+   (0.56 M), `rr_narrow_rf_owner_class`, `rr_narrow_rf_import_target`, `rr_narrow_rf_qn` and `dm_rr_narrow_rf_attr_1`
+   (the demand of `rf_attr`'s), each a few thousand rows or fewer. The debug output (`NDIFF …: a filter made: …`)
+   gives two reasons. A folded annotation copy of the original is not local, so a widened row pairs a code node
+   with an annotation's (`rf_attr(e, t, o, f)`: `e` and `o` an annotation's, `t` the code definition around it). Or
+   the reader holds the original's node columns under no bound of its own: its only bounds are the narrow copies it
+   reads (`rf_ref($t, "self", …) :- rf_attr(_, $t, $o, $f), rf_selfish($o), rf_owner_class($t, _, $c)`, all three
+   widened). Where an annotation exists these twins differ from their originals, so no rule of the pass removes them.
+   A finer test was built and measured (each relation's node columns grouped by document, a reader holding every
+   column; `tmp/t52/combining-column-groups.rs`) and left nothing fewer on `s100`.
+
+   What is left is a check at run time: with no run-value document, each filter is its original. That needs a fact
+   the run does not have. `GuestKeys` holds every key the store has given, and a memo hit's rows carry an
+   annotation's nodes without admitting it again, so "this run has no run-value document" is a new record: kept in
+   the memo, read by the executor, which binds the twin to its original's rows (`hold_bound`), with filter twins kept
+   out of column projection and demand.
+
 4. **An export is read where its chunks' rows lie.** `Exports::add` appends a chunk's part to the export's rows
    (`Rows::append_part`) under the export's life, in place of writing its rows again. A row given twice is marked
    dead in the export's dead bits, found by a set of row ids (an `IdTable` in a block, as `phased-facts` has it), not
