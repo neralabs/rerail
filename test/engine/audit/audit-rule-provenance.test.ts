@@ -1484,7 +1484,7 @@ describe("audit rule provenance", () => {
  */
 const UNREADABLE_PROVENANCE = {
   clauseId: "rule-provenance", code: "adapter-error", stage: "persistence",
-  message: "The audit's rule provenance in the database is not a JSON array, which only a damaged file or a hand edit leaves, so it reads as none.",
+  message: "The audit's rule provenance in the database is not a JSON array of objects, which only a damaged file or a hand edit leaves, so it reads as none.",
 };
 
 /**
@@ -1595,8 +1595,8 @@ describe("an audit whose rule provenance does not read", () => {
     }
   });
 
-  it.each(['{"ruleId":"typescript/broken"}', "null", '"[]"', "3"])(
-    "reads provenance that parses as %s, which is no JSON array, as none, with a failure that says so",
+  it.each(['{"ruleId":"typescript/broken"}', "null", '"[]"', "3", "[null]", '[{"ruleId":"typescript/a"},[]]'])(
+    "reads provenance that parses as %s, which is no JSON array of objects, as none, with a failure that says so",
     async text => {
       const path = await temporaryDatabase();
       const { auditIds } = sixAudits(path);
@@ -1637,28 +1637,29 @@ describe("an audit whose rule provenance does not read", () => {
     }
     expect(logged).toBe(
       `rerail: ${path}: audit ${auditIds[1]} reads with no rule provenance, and a failure that says so: rule_provenance_json `
-      + `of audit_rule_provenances row ${copy}, which every audit naming it reads, is not a JSON array (it parses to another JSON value).\n`
+      + `of audit_rule_provenances row ${copy}, which every audit naming it reads, is not a JSON array of objects (it parses to another JSON value).\n`
       + `rerail: ${path}: audit ${auditIds[4]} reads with no rule provenance, and a failure that says so: the rule_provenance_json `
-      + `of its own row is not a JSON array (${parseFailure(text)}).\n`,
+      + `of its own row is not a JSON array of objects (${parseFailure(text)}).\n`,
     );
   });
 });
 
-/** Each other list an `audits` row holds, by its column, and what the failure an audit lists for it calls it. */
+/** Each other list an `audits` row holds, by its column, what the failure an audit lists for it calls it and its items. */
 const STORED_LISTS = {
-  ruleRevisions: { column: "rule_revisions_json", clauseId: "rule-revisions", name: "rule revisions" },
-  paths: { column: "paths_json", clauseId: "paths", name: "paths" },
-  violations: { column: "violations_json", clauseId: "violations", name: "violations" },
-  failures: { column: "failures_json", clauseId: "failures", name: "failures" },
+  ruleRevisions: { column: "rule_revisions_json", clauseId: "rule-revisions", name: "rule revisions", items: "objects" },
+  paths: { column: "paths_json", clauseId: "paths", name: "paths", items: "strings" },
+  violations: { column: "violations_json", clauseId: "violations", name: "violations", items: "objects" },
+  failures: { column: "failures_json", clauseId: "failures", name: "failures", items: "objects" },
 } as const;
 type StoredList = keyof typeof STORED_LISTS;
 const LISTS = Object.keys(STORED_LISTS) as StoredList[];
 
-/** The failure an audit lists before its own when the text the database holds for its `list` is not a JSON array. */
+/** The failure an audit lists before its own when the text the database holds for its `list` is not a JSON array of its items. */
 function unreadableList(list: StoredList): AuditFailure {
+  const { clauseId, name, items } = STORED_LISTS[list];
   return {
-    clauseId: STORED_LISTS[list].clauseId, code: "adapter-error", stage: "persistence",
-    message: `The audit's ${STORED_LISTS[list].name} in the database are not a JSON array, which only a damaged file or a hand edit leaves, so they read as none.`,
+    clauseId, code: "adapter-error", stage: "persistence",
+    message: `The audit's ${name} in the database are not a JSON array of ${items}, which only a damaged file or a hand edit leaves, so they read as none.`,
   };
 }
 
@@ -1715,7 +1716,10 @@ function readAudit(path: string, auditId: string): AuditRecord | undefined {
 }
 
 describe("an audit whose other stored lists do not read", () => {
-  it.each(LISTS)("lists every audit of each page that holds one whose %s do not parse, that one with none and a failure that says so", async list => {
+  // Lists that parse with an item that is not what the list holds, as the CHECK on `audits` lets through.
+  const STRAY_ITEMS = [["ruleRevisions", "[null]"], ["paths", '["src/a.ts",3]'], ["violations", "[null]"], ["failures", "[null]"]] as const;
+  it.each([...LISTS.map(list => [list, '[{"ruleId":"typescript/broken"'] as const), ...STRAY_ITEMS])(
+    "lists every audit of each page that holds one whose %s read as %s, that one with none and a failure that says so", async (list, text) => {
     const path = await temporaryDatabase();
     const auditIds = threeAudits(path);
     const before = readAudit(path, auditIds[1]!)!;
@@ -1723,7 +1727,7 @@ describe("an audit whose other stored lists do not read", () => {
     expect(healthy).toMatchObject({
       ruleRevisions: [{ ruleId: "typescript/rule-000", revision: 1 }], paths: ["src/a.ts"], violations: [{ id: "violation-1" }], failures: [FAILURE],
     });
-    damageList(path, auditIds[1]!, list, '[{"ruleId":"typescript/broken"');
+    damageList(path, auditIds[1]!, list, text);
     const failures = list === "failures" ? [unreadableList(list)] : [unreadableList(list), FAILURE];
     const stderr = spyOnStderr();
     const store = new SqliteAuditStore(path);
@@ -1749,7 +1753,7 @@ describe("an audit whose other stored lists do not read", () => {
   const OBJECT = '{"blind":"budget"}';
   it.each([
     ["ruleRevisions", BROKEN], ["ruleProvenance", BROKEN], ["paths", OBJECT], ["violations", BROKEN], ["violations", OBJECT],
-    ["failures", BROKEN], ["failures", OBJECT],
+    ["failures", BROKEN], ["failures", OBJECT], ["ruleProvenance", "[null]"], ...STRAY_ITEMS,
   ] as const)("answers the session's summary when its latest audit's %s read as %s, with the counts of its record", async (list, text) => {
     const path = await temporaryDatabase();
     threeAudits(path);
@@ -1782,6 +1786,7 @@ describe("an audit whose other stored lists do not read", () => {
     damageList(path, auditIds[0]!, "paths", text);
     damageList(path, auditIds[0]!, "failures", "null");
     damageList(path, auditIds[1]!, "violations", "{}");
+    damageList(path, auditIds[2]!, "failures", "[null]");
     const stderr = spyOnStderr();
     const store = new SqliteAuditStore(path);
     const reader = new SqliteAuditReader(path);
@@ -1800,11 +1805,13 @@ describe("an audit whose other stored lists do not read", () => {
     expect(logged.split("\n").sort()).toEqual([
       "",
       `rerail: ${path}: audit ${auditIds[0]} reads with no paths, and a failure that says so: the paths_json of its own row is `
-      + `not a JSON array (${parseFailure(text)}).`,
+      + `not a JSON array of strings (${parseFailure(text)}).`,
       `rerail: ${path}: audit ${auditIds[0]} reads with no failures, and a failure that says so: the failures_json of its `
-      + "own row is not a JSON array (it parses to another JSON value).",
+      + "own row is not a JSON array of objects (it parses to another JSON value).",
       `rerail: ${path}: audit ${auditIds[1]} reads with no violations, and a failure that says so: the violations_json of its `
-      + "own row is not a JSON array (it parses to another JSON value).",
+      + "own row is not a JSON array of objects (it parses to another JSON value).",
+      `rerail: ${path}: audit ${auditIds[2]} reads with no failures, and a failure that says so: the failures_json of its `
+      + "own row is not a JSON array of objects (an item of it is another JSON value).",
     ].sort());
   });
 });

@@ -10,7 +10,8 @@ import { openRerailDatabase, type RerailDatabase } from "../storage/database.js"
 import { runGit } from "../git.js";
 import { processState } from "../process-liveness.js";
 import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits, events } from "../storage/schema.js";
-import { isOmittedFailuresSummary, isSourceGap } from "./audit.js";
+import { isOmittedFailuresSummary, isSourceGap, type AuditFailure } from "./audit.js";
+import { parsedList } from "./audit-store.js";
 import { ownerLockFreed, ownerLockOf, ownerToken } from "./owner-lock.js";
 import { scrubSecrets } from "../secret-scrub.js";
 
@@ -30,6 +31,17 @@ const GIT_OUTPUT_LIMIT = 10 * 1024 * 1024;
 function isScanLimitMarker(failure: { stage?: string | undefined; code: string; message: string }): boolean {
   return failure.stage === "scan" && failure.code === "budget-exceeded"
     && /^Repository scan stopped after reaching \d+ failures$/u.test(failure.message);
+}
+
+/**
+ * Whether the failures `text` holds are some and each one a failed audit tolerates today. They are read as an audit
+ * record reads them (`parsedList`): text that holds no JSON array of failures reads as an adapter error there, which
+ * fails the same way again.
+ */
+function onlyToleratedFailures(text: string): boolean {
+  const failures = parsedList(text, "failures");
+  return Array.isArray(failures) && failures.length > 0
+    && (failures as AuditFailure[]).every(item => isScanLimitMarker(item) || isOmittedFailuresSummary(item) || isSourceGap(item));
 }
 
 function gitPaths(workspaceRoot: string, args: readonly string[]): string[] {
@@ -370,12 +382,11 @@ export class SqliteAuditControlStore {
   #failedAuditCanDifferNow(auditId: string | null, catalogRevision: string | undefined): boolean {
     const failed = auditId === null
       ? undefined
-      : this.#database.select({ failures: audits.failures, catalogRevision: audits.catalogRevision })
+      : this.#database.select({ failures: sql<string>`${audits.failures}`, catalogRevision: audits.catalogRevision })
         .from(audits).where(eq(audits.auditId, auditId)).get();
     if (failed === undefined) return false;
     if (failed.catalogRevision !== null && catalogRevision !== undefined && failed.catalogRevision !== catalogRevision) return true;
-    return failed.failures.length > 0
-      && failed.failures.every(item => isScanLimitMarker(item) || isOmittedFailuresSummary(item) || isSourceGap(item));
+    return onlyToleratedFailures(failed.failures);
   }
   finishRepositoryAudit(
     sessionId: string,

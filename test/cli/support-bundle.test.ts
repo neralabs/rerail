@@ -6,7 +6,7 @@ import { createServer as createHttpServer, type Server as HttpServer } from "nod
 import type { AddressInfo, Server } from "node:net";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { checkouts, defaultRerailDatabasePath, events, openRerailDatabase, PACKAGE_ROOT, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
 import { collectSupportBundle, type KnownValue, runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
 import { holdHomeAsDaemon } from "../support/processes/home-lock.js";
@@ -320,16 +320,12 @@ describe("rerail support-bundle", () => {
     } finally {
       database.$client.close();
     }
-    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    try {
-      const audit = (await run(world)).bundle.session?.audits[0];
-      expect(audit).toMatchObject({ pathCount: 0, failuresOmitted: 21, blindFileCount: 120 });
-      expect(audit?.failures).toContainEqual(expect.objectContaining({ clauseId: "paths", code: "adapter-error", stage: "persistence" }));
-      // The command reads the file in its own process, so its own error output names the audit.
-      expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).toContain("the paths_json of its own row is not a JSON array");
-    } finally {
-      stderr.mockRestore();
-    }
+    const { bundle, stderr } = await run(world);
+    const audit = bundle.session?.audits[0];
+    expect(audit).toMatchObject({ pathCount: 0, failuresOmitted: 21, blindFileCount: 120 });
+    expect(audit?.failures).toContainEqual(expect.objectContaining({ clauseId: "paths", code: "adapter-error", stage: "persistence" }));
+    // The error output the command was given names the audit.
+    expect(stderr).toContain("the paths_json of its own row is not a JSON array of strings");
   });
 
   it("records a kind it does not know by its name alone", async () => {

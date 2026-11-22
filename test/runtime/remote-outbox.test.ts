@@ -58,6 +58,24 @@ function seed(): { sessionId: string; auditId: string } {
   return { sessionId, auditId };
 }
 
+/** Writes `text` over an audit's stored paths, past the CHECK on `audits`, as a hand edit or a damaged file leaves it. */
+function setPathsText(auditId: string, text: string): void {
+  const database = new Database(databasePath());
+  database.pragma("ignore_check_constraints = ON");
+  database.prepare("UPDATE audits SET paths_json = ? WHERE audit_id = ?").run(text, auditId);
+  database.close();
+}
+
+/** `run`'s result, with the line the audit reader writes for damaged paths kept out of the test's output. */
+async function quietly<T>(run: () => Promise<T>): Promise<T> {
+  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  try {
+    return await run();
+  } finally {
+    stderr.mockRestore();
+  }
+}
+
 function addEvent(sessionId: string, eventId: string): void {
   const store = new SqliteSessionStore(databasePath(), { repositoryId: REPOSITORY });
   store.append({ sessionId, eventId, kind: "user-prompt", observedAt: 600_000, payload: { text: "secret plans" } });
@@ -163,6 +181,30 @@ describe("remote sink outbox", () => {
     expect(sink.requests).toHaveLength(2);
     expect(sink.requests[1]!.records.map(item => item.type)).toEqual(["event"]);
     expect(outbox().status()[0]).toMatchObject({ pendingEvents: 0, sentBatches: 2, lastError: null });
+  });
+
+  it("holds back an audit whose stored paths do not read, sends the rest, and names it in the remote's error", async () => {
+    const { auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    const [held] = await quietly(() => outbox().sync({ force: true }));
+    expect(held!.error).toContain(`audit ${auditId} not sent`);
+    expect(outbox().status()[0]).toMatchObject({ lastError: held!.error, consecutiveFailures: 0, pendingEvents: 0 });
+    expect(storedRecords(sink).filter(item => item.type === "audit" || item.type === "violation")).toEqual([]);
+  });
+
+  it("sends an audit held back for its stored paths whole once they are mended", async () => {
+    const { auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await quietly(() => outbox().sync({ force: true }));
+    setPathsText(auditId, "[]");
+    const [mended] = await outbox().sync({ force: true });
+    expect(mended!.error).toBeUndefined();
+    expect(outbox().status()[0]!.lastError).toBeNull();
+    const records = sink.requests.at(-1)!.records;
+    expect(records.find(item => item.type === "audit")).toMatchObject({ id: auditId, ruleRevisions: [{ ruleId: "no-todo", revision: 1 }], paths: [], failures: [] });
+    expect(records.filter(item => item.type === "violation").map(item => item.id)).toEqual([`${auditId}:0`]);
   });
 
   it("keeps the cursor on failure, backs off, and resends the same batch id once the remote is back", async () => {

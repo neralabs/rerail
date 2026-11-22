@@ -97,16 +97,25 @@ function ruleProvenanceText(): SQL<string> {
 
 /**
  * The JSON lists an audit record reads from the database, in the order the failures that mark them come before the
- * audit's own: each one's column, its name in that failure and in the log, and whether that name is plural.
+ * audit's own: each one's column, its name in that failure and in the log, whether that name is plural, and the JSON
+ * type of its items as SQLite names it (`json_each`'s `type`).
  */
 const STORED_LISTS = {
-  ruleRevisions: { column: "rule_revisions_json", clauseId: "rule-revisions", name: "rule revisions", plural: true },
-  ruleProvenance: { column: "rule_provenance_json", clauseId: "rule-provenance", name: "rule provenance", plural: false },
-  paths: { column: "paths_json", clauseId: "paths", name: "paths", plural: true },
-  violations: { column: "violations_json", clauseId: "violations", name: "violations", plural: true },
-  failures: { column: "failures_json", clauseId: "failures", name: "failures", plural: true },
+  ruleRevisions: { column: "rule_revisions_json", clauseId: "rule-revisions", name: "rule revisions", plural: true, item: "object" },
+  ruleProvenance: { column: "rule_provenance_json", clauseId: "rule-provenance", name: "rule provenance", plural: false, item: "object" },
+  paths: { column: "paths_json", clauseId: "paths", name: "paths", plural: true, item: "text" },
+  violations: { column: "violations_json", clauseId: "violations", name: "violations", plural: true, item: "object" },
+  failures: { column: "failures_json", clauseId: "failures", name: "failures", plural: true, item: "object" },
 } as const;
 type StoredList = keyof typeof STORED_LISTS;
+type StoredItem = (typeof STORED_LISTS)[StoredList]["item"];
+/** Whether a parsed item is of each `StoredItem` type: a string, or a plain object. */
+const IS_ITEM: Record<StoredItem, (item: unknown) => boolean> = {
+  text: item => typeof item === "string",
+  object: item => typeof item === "object" && item !== null && !Array.isArray(item),
+};
+/** What a list of each `StoredItem` type holds, in the failure that marks it and in the log. */
+const ITEMS: Record<StoredItem, string> = { text: "strings", object: "objects" };
 
 /**
  * An `audits` row with each stored list as the text the database holds, which `record` parses (`readLists`), so one
@@ -126,28 +135,39 @@ type AuditReadRow = Omit<AuditRow, StoredList> & Record<StoredList, string> & { 
 type AuditLists = Pick<AuditRecord, StoredList>;
 
 /**
- * The failure an audit lists before its own when the text the database holds for `list` is not a JSON array. A CHECK
- * refuses such text for the rule provenance (in `audits` and in `audit_rule_provenances`), the paths, the violations and
- * the failures; none holds the rule revisions, which Rerail only ever writes as an array. So only a damaged file or a
- * hand edit leaves it.
+ * The failure an audit lists before its own when the text the database holds for `list` is not a JSON array of its
+ * items. A CHECK refuses text that is no JSON array for the rule provenance (in `audits` and in
+ * `audit_rule_provenances`), the paths, the violations and the failures; none holds the rule revisions, which Rerail
+ * only ever writes as an array, and none checks the items. Rerail writes only lists of its own items, so only a
+ * damaged file or a hand edit leaves it.
  */
 function unreadable(list: StoredList): AuditFailure {
-  const { clauseId, name, plural } = STORED_LISTS[list];
+  const { clauseId, name, plural, item } = STORED_LISTS[list];
   return {
     clauseId, code: "adapter-error", stage: "persistence",
-    message: `The audit's ${name} in the database ${plural ? "are" : "is"} not a JSON array, which only a damaged file or a hand edit leaves, so ${plural ? "they read" : "it reads"} as none.`,
+    message: `The audit's ${name} in the database ${plural ? "are" : "is"} not a JSON array of ${ITEMS[item]}, which only a damaged file or a hand edit leaves, so ${plural ? "they read" : "it reads"} as none.`,
   };
 }
+/** The message of each failure `unreadable` makes. */
+const UNREADABLE_MESSAGES = new Set((Object.keys(STORED_LISTS) as StoredList[]).map(list => unreadable(list).message));
+/**
+ * Whether `failure` is one an audit record lists because a stored list of it does not read (`unreadable`): its record
+ * reads that list as none, so it is not the audit as recorded.
+ */
+export function isUnreadableList(failure: AuditFailure): boolean {
+  return UNREADABLE_MESSAGES.has(failure.message);
+}
 
-/** The JSON array `text` holds, or why it holds none. */
-function parsedList(text: string): unknown[] | string {
+/** The JSON array of `list`'s items `text` holds, as an audit record reads it, or why it holds none. */
+export function parsedList(text: string, list: StoredList): unknown[] | string {
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch (error) {
     return (error as SyntaxError).message; // JSON.parse throws nothing else
   }
-  return Array.isArray(value) ? value : "it parses to another JSON value";
+  if (!Array.isArray(value)) return "it parses to another JSON value";
+  return value.every(IS_ITEM[STORED_LISTS[list].item]) ? value : "an item of it is another JSON value";
 }
 
 /**
@@ -156,37 +176,43 @@ function parsedList(text: string): unknown[] | string {
  */
 const NAMED_UNREADABLE = new Set<string>();
 
+/** Where an audit record is read from: its database, and where the line that names a damaged list goes. */
+interface AuditSource {
+  readonly database: RerailDatabase;
+  readonly log: Pick<NodeJS.WriteStream, "write">;
+}
+
 /**
- * The line that names `row`'s audit and where its damaged `list` text is, once for each such text, on the stderr of the
- * process that read it: `daemon.log` for the API and a coding agent's `audits_list`, the command's own error output for
- * `rerail support-bundle`. Every audit naming a damaged stored copy of a rule provenance reads it, so the line names the
- * copy's row.
+ * The line that names `row`'s audit and where its damaged `list` text is, once for each such text, on the error output
+ * of the reader that read it: `daemon.log` for the API and a coding agent's `audits_list`, the command's own error
+ * output for `rerail support-bundle`. Every audit naming a damaged stored copy of a rule provenance reads it, so the
+ * line names the copy's row.
  */
-function sayUnreadable(database: RerailDatabase, row: AuditReadRow, list: StoredList, why: string): void {
+function sayUnreadable({ database, log }: AuditSource, row: AuditReadRow, list: StoredList, why: string): void {
   const copy = list === "ruleProvenance" ? row.ruleProvenanceId : null;
-  const { column, name } = STORED_LISTS[list];
+  const { column, name, item } = STORED_LISTS[list];
   const [where, place] = copy === null
     ? [`audit ${row.auditId} ${column}`, `the ${column} of its own row`]
     : [`copy ${copy}`, `${column} of audit_rule_provenances row ${copy}, which every audit naming it reads,`];
   const key = `${database.$client.name}\0${where}`;
   if (NAMED_UNREADABLE.has(key)) return;
   NAMED_UNREADABLE.add(key);
-  process.stderr.write(`rerail: ${database.$client.name}: audit ${row.auditId} reads with no ${name}, and a failure `
-    + `that says so: ${place} is not a JSON array (${why}).\n`);
+  log.write(`rerail: ${database.$client.name}: audit ${row.auditId} reads with no ${name}, and a failure `
+    + `that says so: ${place} is not a JSON array of ${ITEMS[item]} (${why}).\n`);
 }
 
 /**
- * `row`'s stored lists, its failures after one for each list whose text is no JSON array: such a list reads as none,
- * rather than failing every read of a page that holds the audit, and its failure and `sayUnreadable` say so. Those
- * failures come first, so the support bundle, which keeps an audit's first 100, keeps them; every other reader of the
- * record keeps every failure, and the session's summary only counts them.
+ * `row`'s stored lists, its failures after one for each list whose text is no JSON array of its items: such a list
+ * reads as none, rather than failing every read of a page that holds the audit, and its failure and `sayUnreadable` say
+ * so. Those failures come first, so the support bundle, which keeps an audit's first 100, keeps them; every other
+ * reader of the record keeps every failure, and the session's summary only counts them.
  */
-function readLists(database: RerailDatabase, row: AuditReadRow): AuditLists {
+function readLists(source: AuditSource, row: AuditReadRow): AuditLists {
   const marks: AuditFailure[] = [];
   const read = (list: StoredList): unknown[] => {
-    const parsed = parsedList(row[list]);
+    const parsed = parsedList(row[list], list);
     if (Array.isArray(parsed)) return parsed;
-    sayUnreadable(database, row, list, parsed);
+    sayUnreadable(source, row, list, parsed);
     marks.push(unreadable(list));
     return [];
   };
@@ -380,8 +406,8 @@ function paging(query: Pick<AuditQuery, "limit" | "offset">): { limit: number; o
   };
 }
 
-function record(database: RerailDatabase, row: AuditReadRow): AuditRecord {
-  const { ruleRevisions, ruleProvenance, paths, violations, failures } = readLists(database, row);
+function record(source: AuditSource, row: AuditReadRow): AuditRecord {
+  const { ruleRevisions, ruleProvenance, paths, violations, failures } = readLists(source, row);
   const blindFiles = blindFilePaths(failures);
   return {
     auditId: row.auditId,
@@ -407,7 +433,8 @@ function record(database: RerailDatabase, row: AuditReadRow): AuditRecord {
   };
 }
 
-function listAudits(database: RerailDatabase, query: AuditQuery = {}, repositoryId?: Repository): AuditPage {
+function listAudits(source: AuditSource, query: AuditQuery = {}, repositoryId?: Repository): AuditPage {
+  const { database } = source;
   const where = conditions(query, repositoryId);
   const { limit, offset } = paging(query);
   const total = database.select({ total: count() }).from(audits).where(where).get()!.total;
@@ -419,7 +446,7 @@ function listAudits(database: RerailDatabase, query: AuditQuery = {}, repository
     .limit(limit)
     .offset(offset)
     .all()
-    .map(row => record(database, row));
+    .map(row => record(source, row));
   return { audits: page, total };
 }
 
@@ -435,23 +462,34 @@ const FILE_WORK_STOPPED = sql.raw(`(json_extract(value, '$.blind') IS NULL AND j
   AND json_extract(value, '$.ruleId') IS NOT NULL AND coalesce(json_extract(value, '$.stage'), '') NOT IN ('read', 'scan'))`);
 
 /**
- * A stored list in SQL when it holds a JSON array, else an empty one, so that reading it fails no query: an audit record
- * reads such a list as none and lists a failure for it (`readLists`).
+ * 1 when `text` holds a JSON array whose items are each of JSON type `item`, as `parsedList` reads it, else 0, in SQL.
+ * Each test runs only once the one before it passed, so text that does not parse fails no query.
+ */
+function holdsList(text: SQL | SQLiteColumn, item: StoredItem): SQL<number> {
+  return sql<number>`(CASE WHEN NOT json_valid(${text}) THEN 0 WHEN json_type(${text}) <> 'array' THEN 0
+    WHEN EXISTS (SELECT 1 FROM json_each(${text}) entry WHERE entry.type <> ${item}) THEN 0 ELSE 1 END)`;
+}
+/**
+ * A stored list of objects in SQL when it holds one, else an empty one, so that reading it fails no query: an audit
+ * record reads such a list as none and lists a failure for it (`readLists`).
  */
 function readableList(text: SQLiteColumn): SQL<string> {
-  return sql<string>`(CASE WHEN NOT json_valid(${text}) THEN '[]' WHEN json_type(${text}) = 'array' THEN ${text} ELSE '[]' END)`;
+  return sql<string>`(CASE WHEN ${holdsList(text, "object")} THEN ${text} ELSE '[]' END)`;
 }
-/** How many of an audit's stored lists hold no JSON array: the failures its record lists for them (`readLists`). */
+/** How many of an audit's stored lists `parsedList` reads as none: the failures its record lists for them (`readLists`). */
 function unreadableLists(): SQL<number> {
-  const texts = [audits.ruleRevisions, ruleProvenanceText(), audits.paths, audits.violations, audits.failures];
-  const unreadable = texts.map(text => sql`(CASE WHEN NOT json_valid(${text}) THEN 1 WHEN json_type(${text}) = 'array' THEN 0 ELSE 1 END)`);
+  const texts: Record<StoredList, SQL | SQLiteColumn> = {
+    ruleRevisions: audits.ruleRevisions, ruleProvenance: ruleProvenanceText(), paths: audits.paths, violations: audits.violations,
+    failures: audits.failures,
+  };
+  const unreadable = (Object.keys(texts) as StoredList[]).map(list => sql`(1 - ${holdsList(texts[list], STORED_LISTS[list].item)})`);
   return sql<number>`(${sql.join(unreadable, sql` + `)})`;
 }
 
 /**
  * The session's latest audit's counts, in SQL, each the audit record's: violations or failures that are no JSON array
- * count as none, and each stored list that is none counts the failure its record lists, rather than failing the
- * session's page.
+ * of objects count as none, and each stored list that reads as none counts the failure its record lists, rather than
+ * failing the session's page.
  */
 function latestAuditSummary(database: RerailDatabase, sessionId: string): AuditSummary | undefined {
   const violations = readableList(audits.violations);
@@ -903,10 +941,10 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
 
   get(auditId: string): AuditRecord | undefined {
     const row = this.#database.select(auditColumns(this.#database)).from(audits).where(eq(audits.auditId, auditId)).get();
-    return row === undefined ? undefined : record(this.#database, row);
+    return row === undefined ? undefined : record({ database: this.#database, log: process.stderr }, row);
   }
   list(query: AuditQuery = {}, repositoryIds?: readonly string[]): AuditPage {
-    return listAudits(this.#database, query, repositoryIds);
+    return listAudits({ database: this.#database, log: process.stderr }, query, repositoryIds);
   }
   listRepositoryAudits(query: RepositoryAuditQuery = {}, repositoryIds?: readonly string[]): RepositoryAuditPage {
     return listRepositoryAudits(this.#database, query, repositoryIds);
@@ -945,10 +983,13 @@ export class SqliteAuditReader implements AuditReader {
   readonly path: string;
   readonly #database: LazyReadonlyRerailDatabase;
   readonly #repositoryId: Repository;
+  readonly #log: AuditSource["log"];
 
-  constructor(path: string, { repositoryId }: { repositoryId?: string | readonly string[] } = {}) {
+  /** `log`: where the line that names an audit whose stored lists do not read goes (`sayUnreadable`). */
+  constructor(path: string, { repositoryId, log = process.stderr }: { repositoryId?: string | readonly string[]; log?: AuditSource["log"] } = {}) {
     this.path = path;
     this.#repositoryId = repositoryId;
+    this.#log = log;
     this.#database = new LazyReadonlyRerailDatabase(path);
   }
 
@@ -956,11 +997,11 @@ export class SqliteAuditReader implements AuditReader {
     const database = this.#database.open();
     if (database === undefined) return undefined;
     const row = database.select(auditColumns(database)).from(audits).where(eq(audits.auditId, auditId)).get();
-    return row === undefined ? undefined : record(database, row);
+    return row === undefined ? undefined : record({ database, log: this.#log }, row);
   }
   list(query: AuditQuery = {}, repositoryIds?: readonly string[]): AuditPage {
     const database = this.#database.open();
-    return database === undefined ? { audits: [], total: 0 } : listAudits(database, query, repositoryIds ?? this.#repositoryId);
+    return database === undefined ? { audits: [], total: 0 } : listAudits({ database, log: this.#log }, query, repositoryIds ?? this.#repositoryId);
   }
   listRepositoryAudits(query: RepositoryAuditQuery = {}, repositoryIds?: readonly string[]): RepositoryAuditPage {
     const database = this.#database.open();
