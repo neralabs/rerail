@@ -1607,11 +1607,9 @@ ats(s, p, l) :- struct__at(s, p, l).
     let full_store = format!("{kept_store}.full");
     let full = || {
         let _ = std::fs::remove_file(format!("{full_store}.phases"));
-        // SAFETY: the spike's thread is the only one running between runs.
-        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
-        let r = crate::code_rule_dsl::logic::plan::corpus::session::full(run);
-        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &kept_store) };
-        r
+        // Held for the full run alone (`switches::set`, the kept store again as it drops).
+        let _full = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_TAPE_CACHE", full_store.as_str())]);
+        crate::code_rule_dsl::logic::plan::corpus::session::full(run)
     };
     // `RERAIL_SPIKE_SESSION`: the runs are a session's (decision 0063), as the explorer's are; the full runs are not.
     let session = std::env::var_os("RERAIL_SPIKE_SESSION").is_some();
@@ -1723,14 +1721,12 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
         // The full run: no session, a phase store of its own.
         let store = std::env::var("RERAIL_TAPE_CACHE").expect("RERAIL_TAPE_CACHE");
         let full_store = format!("{store}.full");
-        // SAFETY: the spike's thread is the only one running between runs.
-        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
-        // Its cross-file part derived, not maintained from what its store kept (t32 4.1).
-        unsafe { std::env::set_var("RERAIL_KEPT_PART", "off") };
+        // Its cross-file part derived, not maintained from what its store kept (t32 4.1): held for the full run alone
+        // (`switches::set`, restored as it drops).
+        let switched = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_TAPE_CACHE", full_store.as_str()), ("RERAIL_KEPT_PART", "off")]);
         profile_as(&format!("{edit} full"));
         let full = session::full(run);
-        unsafe { std::env::remove_var("RERAIL_KEPT_PART") };
-        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &store) };
+        drop(switched);
         show(&format!("{edit} full"), &full);
         let derived = dump();
         let differ: Vec<String> = exports.iter().filter(|e| kept[*e] != derived[*e]).map(|e| format!("{e} ({} kept, {} derived)", kept[e].len(), derived[e].len())).collect();

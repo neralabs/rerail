@@ -680,10 +680,10 @@ fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
     INTERPRET_ONLY.set(true);
     let (mut checked, mut replanned) = (0, 0);
     for matcher in matchers.iter().step_by(4).take(12) {
-        // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
-        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") };
+        // Held for the read alone (`switches::set`, restored as it drops): the binary's other tests read it too.
+        let _full = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_BUDGET", "full")]);
         let full = matcher.roots_metal(&tapes);
-        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") };
+        let _replan = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_BUDGET", "replan")]);
         let replan = matcher.roots_metal(&tapes);
         match (full, replan) {
             (Ok((full, _)), Ok((replan, outcome))) => {
@@ -695,7 +695,6 @@ fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
             (full, replan) => panic!("full {:?}, replanned {:?}", full.err(), replan.err()),
         }
     }
-    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
     INTERPRET_ONLY.set(false);
     eprintln!("{checked} clauses checked, {replanned} reruns with twice the budget");
     assert!(checked > 0, "no clause ran");
@@ -814,11 +813,8 @@ fn replan_finds_the_full_budgets_roots(backend: super::compile_matcher::Backend,
         let Ok(wave) = LoweredWave::new(&matchers) else { continue };
         let active = vec![vec![true; tapes.len()]; matchers.len()];
         let run = |budget: WorkBudget| {
-            // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
-            match budget {
-                WorkBudget::Full => unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") },
-                WorkBudget::Replan { .. } => unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") },
-            }
+            // Held for the run alone (`switches::set`, restored as it drops): the binary's other tests read it too.
+            let _budget = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_BUDGET", match budget { WorkBudget::Full => "full", WorkBudget::Replan { .. } => "replan" })]);
             wave.roots_batch_budgeted(backend, &tapes, &active, budget)
         };
         let started = std::time::Instant::now();
@@ -849,7 +845,6 @@ fn replan_finds_the_full_budgets_roots(backend: super::compile_matcher::Backend,
         }
         waves += 1;
     }
-    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
     eprintln!("{backend:?}: {} clauses in {waves} waves on {} tapes: {checked} evaluations, {given} given to W, {replanned} reruns", lowered.len(), tapes.len());
     assert!(waves > 0);
 }
@@ -912,15 +907,15 @@ fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where
     let (mut checked, mut handed, mut replanned) = (0, 0, 0);
     for matcher in matchers.iter().step_by(4).take(12) {
         let wave = LoweredWave::new(&[matcher]).unwrap();
-        // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
-        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") };
+        // Held for the read alone (`switches::set`, restored as it drops): the binary's other tests read it too.
+        let _full = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_BUDGET", "full")]);
         evaluation_costs::install(Default::default());
         let full = match wave.roots_batch(Backend::MetalInterpreter, &tapes, &active) {
             Ok(found) => found,
             Err(Error::BackendCapacity | Error::BackendLaunchLimit) => continue,
             Err(e) => panic!("full: {e:?}"),
         };
-        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") };
+        let _replan = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_BUDGET", "replan")]);
         priced(&wave, 1e9);
         let (again, again_run) = wave.roots_batch(Backend::MetalInterpreter, &tapes, &active).unwrap();
         replanned += again_run.replanned;
@@ -940,7 +935,6 @@ fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where
         handed += cheap_run.limited.len().saturating_sub(full.1.limited.len());
         checked += 1;
     }
-    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
     INTERPRET_ONLY.set(false);
     eprintln!("{checked} clauses checked, {replanned} reruns, {handed} evaluations given to W");
     assert!(checked > 0, "no clause ran");
@@ -1024,8 +1018,8 @@ fn anchored_walks_find_the_unanchored_roots() {
     let chunks: Vec<_> = lowered.chunks(16).collect();
     let waves: Vec<LoweredWave> = chunks.iter().map(|chunk| LoweredWave::new(&chunk.iter().map(|(_, m)| m).collect::<Vec<_>>()).unwrap()).collect();
     let run = |mode: &str| {
-        // SAFETY: nextest runs each test in a process of its own.
-        unsafe { std::env::set_var("RERAIL_ANCHORS", mode) };
+        // Held for the read alone (`switches::set`, restored as it drops): the binary's other tests read it too.
+        let _mode = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_ANCHORS", mode)]);
         drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
         let cpu = || {
             let (user, system) = crate::code_rule_dsl::prof::process_usage();
@@ -1056,7 +1050,6 @@ fn anchored_walks_find_the_unanchored_roots() {
     };
     let (unanchored, plain, _, _, _) = run("off");
     let (anchored, with, kept, dropped, swept) = run("on");
-    unsafe { std::env::remove_var("RERAIL_ANCHORS") };
     // A run's findings: its roots, or W's matcher at its candidates where it gave the clause to W.
     // A run's roots by clause and text, and the (clause, text)s it gave to W.
     type Found = (Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>);
@@ -1119,10 +1112,9 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
     let every: Vec<Vec<u32>> = tapes.iter().map(|tape| (0..tape.transducer_len() as u32).collect()).collect();
     type Records = Vec<Option<Vec<BTreeSet<String>>>>;
     let run = |mode: &str| {
-        // SAFETY: nextest runs each test in a process of its own.
+        // Held for the read alone (`switches::set`, restored as it drops): the binary's other tests read it too.
         // Off: no anchors, and every formula pass walked (`RERAIL_SETS=walk`).
-        unsafe { std::env::set_var("RERAIL_ANCHORS", mode) };
-        unsafe { std::env::set_var("RERAIL_SETS", if mode == "off" { "walk" } else { "formulas" }) };
+        let _mode = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_ANCHORS", mode), ("RERAIL_SETS", if mode == "off" { "walk" } else { "formulas" })]);
         drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
         let started = std::time::Instant::now();
         let found: Vec<_> = waves
@@ -1157,8 +1149,6 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
     let _ = run("on");
     let (unanchored, plain) = run("off");
     let (anchored, with) = run("on");
-    unsafe { std::env::remove_var("RERAIL_ANCHORS") };
-    unsafe { std::env::remove_var("RERAIL_SETS") };
     let settled = |found: &(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>, bool), w: usize, c: usize, t: usize| -> BTreeSet<u32> {
         if !found.1.contains(&(c, t)) {
             return found.0[c][t].clone();
