@@ -92,9 +92,13 @@ mask sq_close   = sq & ~escaped(backslash)
 mask t_dollar   = dollar & next(lbrace) & ~escaped(backslash)
 mask t_lex      = prev(t_dollar)
 mask t_close    = rbrace
-# A raw string: `"""`, then to the last three quotes of the next run of three or more.
+# A raw string: `"""`, then to the last three quotes of the next run of three or more, but
+# never one or two bytes past a run's first quote: the opener's run of four or five quotes
+# (`""""x"""`) is its `"""` and content, as the lean lexer reads it, and the run of six its
+# opener and its closer (`""""""`). A closing run of four or more is refused (`rbody`).
 mask dq3        = dq & next(dq) & next(dq, 2)
-mask rclose     = dq3 & ~next(dq, 3)
+mask dq_first   = dq & ~prev(dq)
+mask rclose     = dq3 & ~next(dq, 3) & ~prev(dq_first) & ~(prev(dq_first, 2) & prev(dq))
 regions hidden {
   line  = line_open .. lf outside
   block = block_open .. block_end
@@ -132,11 +136,9 @@ escape "a string, a character or a backtick name over a line" when (f_str | f_ta
 # A raw string's bytes after its `"""`, and a raw tail's after its `}`. No backslash escapes in it: a `\$` is not read yet.
 mask rbody      = f_rstr & ~o_rstr & ~prev(o_rstr) & ~prev(o_rstr, 2) | f_rtail & ~o_rtail
 escape "a backslash before `$` in a raw string" when rbody & dollar & prev(backslash)
-# The lean parser keeps the quotes of a closing run past three as none of the string's leaves.
-escape "a raw string closed by four quotes or more" when rbody & dq & next(rclose)
-# An opener's run past three quotes but for the empty raw string's six: its closer would be
-# found within the run.
-escape "a raw string opened by four quotes or more" when o_rstr & next(dq, 3) & ~(next(dq, 4) & next(dq, 5) & ~next(dq, 6))
+# The lean parser ends a raw string at a run of three quotes or more in it, and keeps the
+# quotes past three as none of the string's leaves.
+escape "a raw string closed by four quotes or more" when rbody & dq3 & next(dq, 3)
 mask body       = f_str & ~o_str | f_tail & ~o_tail | rbody
 mask s_word     = body & word
 mask s_dollar   = body & dollar & ~escaped(backslash)

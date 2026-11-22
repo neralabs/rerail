@@ -498,6 +498,25 @@ fn raw_strings_are_the_lean_parsers() {
     same(&[
         "val a = \"\"\"x\n  \"y\" $b \\n\"\"\"\nval d = \"\"\"\"\"\"\nval f = \"\"\"$\"\"\"\nval g = \"\"\"\n    a\"\"b\n\"\"\"\nval i = \"\"\"a\"\n\"\"\"\n",
         "fun q() = \"\"\"\n    SELECT * FROM t WHERE a = $b\n\"\"\".trimIndent()\n",
+        // An opener's run of four or five quotes: its `"""`, then content.
+        "val h = \"\"\"\"a\"\"\"\n",
+        "val h = \"\"\"\"\"a\"\"\"\n",
+        "val h = \"\"\"\"\n\"\"\"\n",
+        "val h = \"\"\"\"$a\"\"\"\n",
+        "val h = \"\"\"\"${a}\"\"\"\n",
+        "val h = \"\"\"a\"b\"\"c\"\"\"\n",
+        "val h = \"\"\"\"\"\"\nval i = 1\n",
+        // A quote one or two bytes before a closer, in a run of its own.
+        "val i = \"\"\"a\"\n\"\"\"\n",
+        "val i = \"\"\"a\"b\"\"\"\n",
+        "val i = \"\"\"a\" \"\"\"\n",
+    ]);
+    // A closing run of four quotes or more: the lean parser's closer takes them all.
+    refused(&[
+        "val h = \"\"\"a\"\"\"\"\n",
+        "val h = \"\"\"a\"\"\"\"\"\n",
+        "val h = \"\"\"${a}\"\"\"\"\n",
+        "val h = \"\"\"\"\"\"\"\n",
     ]);
     // A string whose `"` starts a block (byte 64, 65, 128), the token before in the block
     // before: the refill reads the block before its rows' words are final, and the opener of
@@ -729,8 +748,6 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
         "val s = \"${f(\"${x}\")}\"\n",
         "val s = \"${if (a) { 1 } else 2}\"\n",
-        "val h = \"\"\"\"a\"\"\"\n",
-        "val h = \"\"\"a\"\"\"\"\n",
         "val h = \"\"\"\\$a\"\"\"\n",
         "import a.b import c\n",
         "val s = 'x\n",
