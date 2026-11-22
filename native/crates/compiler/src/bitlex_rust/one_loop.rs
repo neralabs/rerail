@@ -1193,12 +1193,12 @@ fn close(d: &mut Cursor<Cells>, end: u64) {
 /// The first byte of record `i`: past the last, the padding's (a space, which no token starts with), as simdjson's
 /// stage 2 reads `*next`.
 #[inline(always)]
-fn peek(src: &[u8], starts: &[u32], i: usize) -> u16 {
+fn peek(src: &[u8], starts: &[u32], i: usize) -> u8 {
     debug_assert!(i < starts.len() && (starts[i] as usize) < src.len());
     // SAFETY: `i` is at most the count: a record past the last is the first of the index's three last entries,
     // `len`, whose byte is the padding's, which no arm takes, so nothing reads past it; `len` is within the padded
     // source.
-    unsafe { u16::from(*src.get_unchecked(*starts.get_unchecked(i) as usize)) }
+    unsafe { *src.get_unchecked(*starts.get_unchecked(i) as usize) }
 }
 
 /// Where record `i` starts: past the last, the file's end (the index's last entries).
