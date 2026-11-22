@@ -1830,7 +1830,7 @@ const BINDING_FIXTURES: &[&str] = &[
     "flake8_bugbear/B006_B008.py", "flake8_return/RET504.py",
 ];
 fn binding_fixtures() -> Vec<(String, TapeDoc)> {
-    let root = crate::source_tree::native().join("../packs/python/upstream/ruff/fixtures");
+    let root = crate::code_rule_dsl::test_support::pack_test_data("packs/python/upstream/ruff/fixtures");
     BINDING_FIXTURES
         .iter()
         .map(|path| {

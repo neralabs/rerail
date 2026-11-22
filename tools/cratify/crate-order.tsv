@@ -96,6 +96,9 @@ rerail-boot	root
 rerail-engine	root
 rerail-tests-demand	test
 rerail-tests-transducer	test
+rerail-tests-conformance	test
+rerail-tests-cpu	test
+rerail-tests-admission	test
 rerail-tests-logic	test
 rerail-tests-corpus	test
 rerail-tests-rr	test

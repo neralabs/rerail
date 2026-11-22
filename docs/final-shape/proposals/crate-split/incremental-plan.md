@@ -1173,3 +1173,20 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     | rerail-tests-matcher | 9.6k | the rest of `matcher`, and `suppress` |
 
     Tests: on a Linux host, the four crates in full: 624 of 624.
+  - rerail-tests-transducer (25.1k) is now four crates. The Metal crate is named `conformance`, since test-remote
+    sends a command that names "metal" to a Mac. The greedy contracts read the admission experiment's cases, so the
+    two stay together.
+
+    | crate | test lines | what it holds |
+    |---|---:|---|
+    | rerail-tests-conformance | 8.9k | `metal_semantic_conformance` (with the Metal operator tests it mounts), `metal_program_backend`, `metal_backend` |
+    | rerail-tests-cpu | 6.4k | `native_cpu`, `rir`, `regex_block`, `compilation`, `set_mode`, the capture runs |
+    | rerail-tests-admission | 6.7k | `compile_matcher_tests`, `admission_spike`, `greedy_contract_tests`, `cycle_progress_tests` |
+    | rerail-tests-transducer | 4.6k | the rest: `packed::tests`, `transducer::tests` |
+
+  - Tests:
+    - On a Linux host, cpu, admission and transducer: 183 of 194. Seven of the failures are `UnsupportedBackend`,
+      one is the SQL test's Metal batch (the host has no GPU), and three are pack data.
+    - On one farm Mac, conformance, admission and transducer: 115 of 118. All three failures are pack data.
+    - The binding fixtures of `compile_matcher_tests` now read their Ruff fixtures through `pack_test_data`, so a
+      missing archive gives the pack-data message rather than "No such file".
