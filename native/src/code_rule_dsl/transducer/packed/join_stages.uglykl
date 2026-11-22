@@ -1991,14 +1991,18 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
 // The program (decision 0603; 0540 step 6's scheme): a group of `JOIN_TG` threads an item. The first phase's items
 // are there from the start (the seeds, taken from a counter); the group that finishes a phase's last item pushes the
 // next phase's, the continuation, and takes items on: a pushed item has a worker that is running. A group that finds
-// nothing to take ends, and so does one that took its budget's items (`a.budget`, decision 0603 point 5): the host
-// launches the program again over the same control words while items are left, so a launch's GPU time is its
-// workers' budgets'. No group waits for another.
+// nothing to take ends, and so does one that finds the launch's budget spent (decision 0603 point 5): a launch's
+// items are tickets the groups share (`ctl[8]`, the items taken, below `a.budget`, which the host sets at each launch
+// to the items taken so far and the launch's budget), so a group takes more than its share where the others ended,
+// up to the launch's. The host launches the program again over the same control words while items are left, so a
+// launch's GPU time is its budget's items, and its launches are its items over its budget, whatever its rounds and
+// however many of its groups run at once. No group waits for another.
 //
 // `ctl`: 0-4 the queue's control (head, tail, active, overflow, base), 5 the seeds taken, 6 the program's flags (1:
 // a push past the queue's capacity; 2: a gate stopped it; 4, 16: a round's end stopped it past its rounds, ended it;
 // 32: a size script parked, its claims past its arena's room), `counts` the arena (each level's counts at the offsets
-// its size script claimed, decision 0603 step 5), 7 a round's end's jump, 8 the items taken, 9 the parked item and
+// its size script claimed, decision 0603 step 5), 7 a round's end's jump, 8 the items taken (a parked one again as it
+// is put back), 9 the parked item and
 // one (the host puts it back once the arena's pages are mapped), then each phase's items done (emptied as the phase is
 // pushed: a round runs a phase again), then each phase's items as pushed (0: all of them; a phase of segments,
 // theirs). `phases`: each phase's first item, its items, its first segment and its segments (`segs`). Ordering: a
@@ -2030,7 +2034,7 @@ DEFINE_KERNEL2(join, join_run,
     q.slots = slots;
     q.capacity = a.capacity;
     q.ring = 0u;
-    q.budget = a.budget;
+    q.budget = 0u;
     ProgLocal m;
     m.scratch = scratch;
     m.h = h;
@@ -2040,18 +2044,20 @@ DEFINE_KERNEL2(join, join_run,
     m.digits = digits;
     UKL_GLOBAL uint32_t* done = ctl + 10u;
     UKL_GLOBAL uint32_t* target = ctl + 10u + a.phases;
-    // Bounded: each turn does an item or ends the group; its budget spent, it ends.
+    // Bounded: each turn does an item or ends the group; the launch's budget spent, it ends.
     for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
-        if (ukl_wq_spent(q, turn)) return;
         if (l == 0u) {
-            // A seed while any are left, else a continuation; else none (0).
+            // A ticket of the launch's budget (`ctl[8]` below `a.budget`), then a seed while any are left, else a
+            // continuation; else none (0), and the ticket given back.
             uint32_t got = 0u, item = 0u;
-            if (ukl_atomic_poll(&ctl[5]) < a.seeds) {
+            bool ticket = ukl_atomic_add(&ctl[8], 1u) < a.budget;
+            if (ticket && ukl_atomic_poll(&ctl[5]) < a.seeds) {
                 item = ukl_atomic_add(&ctl[5], 1u);
                 got = item < a.seeds ? 1u : 0u;
                 item += phases[0];
             }
-            if (got == 0u && ukl_wq_take(q, &item)) got = 2u;
+            if (ticket && got == 0u && ukl_wq_take(q, &item)) got = 2u;
+            if (got == 0u) ukl_atomic_sub(&ctl[8], 1u);
             // What the phase before wrote, seen after the take (the pusher's fence before its push).
             ukl_fence_device();
             took[0] = got;
@@ -2066,7 +2072,6 @@ DEFINE_KERNEL2(join, join_run,
         // The group's writes, then the item counted: the one that brings its phase's count to its items pushes the
         // next phase's. A parked one is not counted: the host puts it back (lane 0's `whole`, a size script's).
         ukl_tg_barrier_device();
-        if (l == 0u) ukl_atomic_add(&ctl[8], 1u);
         if (l == 0u && !whole) {
             ukl_atomic_store(&ctl[9], item + 1u);
             ukl_fence_device();

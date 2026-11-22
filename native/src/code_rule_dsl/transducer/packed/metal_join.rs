@@ -1336,12 +1336,14 @@ pub(in crate::code_rule_dsl) struct Done {
     /// that at least (`Batch::arena_floor`).
     pub(in crate::code_rule_dsl) arena_full: bool,
     pub(in crate::code_rule_dsl) arena_wanted: usize,
-    /// Its programs' launches again (decision 0603 point 5): a budget's, where a launch's workers spent their
-    /// budgets with items left, and an arena's, where a size script parked and the arena's pages were mapped for it.
+    /// Its programs' launches again (decision 0603 point 5): a budget's, where a launch spent its budget with items
+    /// left, and an arena's, where a size script parked and the arena's pages were mapped for it.
     pub(in crate::code_rule_dsl) relaunches: u32,
     pub(in crate::code_rule_dsl) remaps: u32,
-    /// Its programs' items taken, over all their launches.
+    /// Its programs' items taken, over all their launches, and a launch's budget of items (its workers' shares'), the
+    /// least of its programs'.
     pub(in crate::code_rule_dsl) taken: u64,
+    pub(in crate::code_rule_dsl) launch_items: u64,
 }
 
 /// Work encoded into one submission at a time, committed at `commit_open` and `finish`; every submission runs on the
@@ -2682,7 +2684,8 @@ impl Batch {
         let counts = match &self.pool {
             Some(a) => a.clone(),
             None => {
-                let room = sizes.arena.unwrap_or(2 * prog.arena).max(self.floor).max(16).next_multiple_of(16);
+                // A test's first arena is its own, past the floor, so its claims map pages as a larger one's would.
+                let room = sizes.arena.unwrap_or((2 * prog.arena).max(self.floor)).max(16).next_multiple_of(16);
                 if room > ARENA_MAX {
                     return Err(Error::BackendCapacity);
                 }
@@ -2768,7 +2771,12 @@ impl Batch {
             let room = kit.reserved.as_ref().map_or(kit.counts.buffer.length() as usize, |r| r.mapped());
             t.set(1, u32::try_from(room / 16).map_err(|_| Error::BackendCapacity)?);
         }
-        let args: Vec<u8> = [nphases as u32, kit.capacity as u32, kit.phase_items[0][1], kit.budget].iter().flat_map(|w| w.to_ne_bytes()).collect();
+        // The launch's budget: its items taken so far (`ctl[8]`) and its workers' budgets' items, the tickets its groups
+        // share.
+        let items = kit.budget.saturating_mul(kit.workers as u32);
+        let limit = ctl.get(8).saturating_add(items);
+        self.done.launch_items = if self.done.launch_items == 0 { u64::from(items) } else { self.done.launch_items.min(u64::from(items)) };
+        let args: Vec<u8> = [nphases as u32, kit.capacity as u32, kit.phase_items[0][1], limit].iter().flat_map(|w| w.to_ne_bytes()).collect();
         let pass = self.open()?;
         // What its jobs reach by address, and its own buffers: resident for the launch.
         let mut seen = std::collections::HashSet::new();
@@ -2847,7 +2855,7 @@ impl Batch {
                 self.done.taken += u64::from(r.ctl.get(8));
                 continue;
             }
-            // Its workers spent their budgets with items left: launched again, where it goes on.
+            // It spent its budget with items left: launched again, where it goes on.
             if !overflow && (r.ctl.get(2) > 0 || r.ctl.get(5) < r.kit.phase_items[0][1]) {
                 self.done.relaunches += 1;
                 r.compact();
@@ -3570,8 +3578,9 @@ impl Ran {
 /// A program's groups at most: a group an item.
 const PROGRAM_WORKERS: usize = 1 << 16;
 
-/// A worker's items in a launch at most (decision 0603 point 5, `ukl_wq_spent`): a launch's GPU time is its workers'
-/// budgets', whatever its rules and rounds, and the host launches it again while items are left.
+/// A worker's share of a launch's items (decision 0603 point 5): a launch takes its workers' shares' items at most, as
+/// tickets its groups share (`ctl[8]`), so a group takes more than its share where others ended. A launch's GPU time is
+/// its budget's items, whatever its rules and rounds, and the host launches it again while items are left.
 pub(in crate::code_rule_dsl) const PROGRAM_BUDGET: u32 = 16;
 
 /// A program's sizes where a test sets them: its workers' budget (`PROGRAM_BUDGET` else), and its first arena's

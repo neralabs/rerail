@@ -216,16 +216,18 @@
     }
 
     /// Decision 0603's test: a stratum is one launch and its budget's relaunches, whatever its rules and rounds. The
-    /// closure's seed round and its rounds are one program; with a worker's budget of 8 items and a first arena of 16
-    /// bytes, its launches go again (each past its workers' budgets, with items left, or where a size script parked
-    /// past the arena's pages, mapped then), and nothing else launches; its rows are the CPU's.
+    /// closure's seed round and its rounds are one program; with a worker's share of one item and a first arena of 16
+    /// bytes, its launches go again (each past the launch's budget, its workers' shares, with items left, or where a
+    /// size script parked past the arena's pages, mapped then), and nothing else launches; its rows are the CPU's. On
+    /// every backend alike: a launch's budget is shared by its groups, so groups that end idle while a phase runs
+    /// leave it to the one that goes on.
     #[test]
     fn a_stratum_is_one_launch_and_its_budgets_relaunches() {
         use crate::code_rule_dsl::transducer::packed::metal_join::PROGRAM_BUDGET;
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }
-        for (budget, arena) in [(None, None), (Some(8), Some(16))] {
+        for (budget, arena) in [(None, None), (Some(1), Some(16))] {
             let (bs, as_) = (budget.map(|b: u32| b.to_string()), arena.map(|a: usize| a.to_string()));
             let mut sizes = Vec::new();
             sizes.extend(bs.as_deref().map(|b| ("RERAIL_PROGRAM_BUDGET", b)));
@@ -234,8 +236,14 @@
             let b = u64::from(budget.unwrap_or(PROGRAM_BUDGET));
             assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "budget {b}: one launch, and its relaunches: {r:?}");
             assert_eq!(r.reruns, 0, "budget {b}: no round runs again: {r:?}");
-            // A launch that leaves items had a worker that spent its budget (`<ukl/workqueue.h>`).
-            assert!(u64::from(r.relaunches) * b <= r.taken, "budget {b}: a relaunch a budget's items at least: {r:?}");
+            // A launch that leaves items spent its budget's items (its groups' shared tickets, however many of them run
+            // at once), so its relaunches are its items over a launch's budget: none of them a phase's or a round's.
+            assert!(r.launch_items >= b, "budget {b}: a launch's budget is its workers' shares': {r:?}");
+            assert!(u64::from(r.relaunches) <= r.taken / r.launch_items + 1, "budget {b}: its relaunches its budget's: {r:?}");
+            if arena.is_none() {
+                // Its first arena is what a round's tables can reach: its claims map no more pages.
+                assert_eq!(r.remaps, 0, "budget {b}: the closure's first arena its rounds' reach: {r:?}");
+            }
             if budget.is_some() {
                 assert!(r.relaunches > 0, "budget {b}: the closure's items past one launch's budgets: {r:?}");
             }

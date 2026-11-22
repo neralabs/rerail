@@ -378,31 +378,43 @@ remain; and test that a stratum takes one launch plus its budget's relaunches, w
   out of memory), and `phys_footprint` hides that wiring. Every no-copy wrap of the same memory gets another GPU
   address. Placement sparse buffers work on the M1 (tier 1) in private storage only: shared storage is refused by an
   assertion. That is why the arena is a sparse buffer, and why a block (host-read, shared) is not.
-- **A worker's budget** (`PROGRAM_BUDGET`, 16 items): `join_run` sets `q.budget` and ends a worker once it has taken
-  that many items (`ukl_wq_spent`). After a launch with items left (queued, or seeds not taken), the host empties the
-  queue of what was taken (`Ran::compact`) and launches again (`Done::relaunches`). The round's yield
-  (`ROUNDS_A_LAUNCH`, `ctl[8]`/`ctl[9]` as rounds, bit 8) and `Batch::resume` are gone. `ctl[8]` now counts the items
-  taken (`Report::taken`). A program runs as many groups as its largest phase has items, not its total items, which
-  would bound nothing: a launch then takes its workers' budgets' items at most, so its GPU time is bounded by the
-  budget, not by its rounds.
+- **A launch's budget, its workers' shares** (`PROGRAM_BUDGET`, 16 items a worker). A launch takes at most its workers'
+  shares' items: tickets its groups share. `ctl[8]`, the items taken, must be below the launch's limit (`ProgP::budget`,
+  which the host sets at each launch to the items taken so far plus workers × budget). A group takes a ticket before
+  each take and gives it back when it finds nothing, so a group takes more than its share where others ended. Once the
+  tickets are spent, every group ends. After a launch with items left (queued, or seeds not taken), the host empties the
+  queue of what was taken (`Ran::compact`) and launches again (`Done::relaunches`). The round's yield (`ROUNDS_A_LAUNCH`,
+  `ctl[9]` as rounds, bit 8) and `Batch::resume` are gone. A program runs as many groups as its largest phase has items.
+  A launch's GPU time is so bounded by its budget's items, and its launches are its items over its budget
+  (`Report::launch_items`), whatever its rules and rounds.
+
+  First built as a worker's own budget (`ukl_wq_spent`), it failed on Metal. There a launch's groups run at once, and
+  those that find the queue empty while a phase is in flight end (`<ukl/workqueue.h>`: an idle worker never polls). The
+  finisher pushes the next phase and takes on alone, so its own budget ended the launch about once a phase: the closure
+  took 50 launches at a budget of 16, and passed the 200 launches at a budget of 1. With the budget shared, the finisher
+  takes the tickets the idle groups left. The CPU backend, whose groups run one after another, takes the same launches.
+- **The first arena is a round's reach** (`reach`'s second answer). This is each rule's stage tables, a stage's rows
+  at most the product of the values of the slots bound by then, times its slots' 8-byte words; and its head's union (its
+  bindings' rows) and distinct and new rows (its head's reach at most). Where that fits `ARENA_REACH_BYTES` (256 MB), it
+  is the batch's arena floor, so its claims map no more pages. Otherwise it is the host's guess, mapped further as claims
+  reach it. The mapped pages are real memory on Metal, so the cap bounds that.
 - **The test** (`a_stratum_is_one_launch_and_its_budgets_relaunches`): it runs the closure first at the program's
-  sizes, then at a budget of 8 with a first arena of 16 bytes (test switches `RERAIL_PROGRAM_BUDGET` and
-  `RERAIL_PROGRAM_ARENA`). It asserts:
+  sizes, then at a worker's share of one item with a first arena of 16 bytes (test switches `RERAIL_PROGRAM_BUDGET`
+  and `RERAIL_PROGRAM_ARENA`). It asserts:
   - dispatches = 1 + relaunches + remaps;
   - no reruns;
-  - relaunches × budget ≤ items taken;
+  - relaunches at most the items taken over a launch's budget, plus one;
+  - no remaps at the program's sizes;
   - relaunches with the budget, and remaps with the arena;
   - the CPU's rows.
 
   The closure test now asserts no reruns too.
 - **Measured** (the closure, 8 rounds, about 2,660 items):
-  - spark2's CPU backend runs it in 1 launch with no reruns (before: 5 launches, 3 of them reruns). Its groups run one
-    after another there, so later groups take what earlier ones pushed.
-  - The mini's Metal, at the program's sizes: 50 launches, 45 of them relaunches and 4 remaps, with no reruns. At a
-    budget of 4 and an arena of 16 bytes: 126 launches. At a budget of 1, it passes the 200 launches.
-  - The setfix device and join tests: 36 of 36 on spark2's CPU backend and 36 of 36 on the mini's Metal.
 
-  On Metal a launch carries about one phase. Its groups run at once, so those that find the queue empty while a phase
-  is in flight end (`<ukl/workqueue.h>`: an idle worker never polls). The finisher pushes the next phase and takes on
-  alone, until its budget is spent. The relaunch then brings back the whole width. So Metal's launches follow the
-  phases a launch's finisher cannot carry, within the budget's bound (items over the budget).
+  | Backend | Program's sizes | Share of 1 item, 16-byte arena |
+  |---|---|---|
+  | spark2's CPU backend | 2 launches: 1 relaunch (2,655 items, a launch's budget 1,792), no remaps, no reruns | passes |
+  | The mini's Metal | 2 launches: 1 relaunch, no remaps, no reruns | 28 launches: 21 relaunches (2,661 items, a launch's budget 112), 6 remaps |
+
+  Before this step: 5 launches, 3 of them reruns. The setfix device and join tests: 36 of 36 on spark2's CPU backend
+  and 36 of 36 on the mini's Metal.

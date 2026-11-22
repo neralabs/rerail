@@ -2655,6 +2655,9 @@ fn tally(rep: &mut Report, done: &mj::Done) {
     rep.relaunches += done.relaunches;
     rep.remaps += done.remaps;
     rep.taken += done.taken;
+    if done.launch_items != 0 {
+        rep.launch_items = if rep.launch_items == 0 { done.launch_items } else { rep.launch_items.min(done.launch_items) };
+    }
     rep.gpu_seconds += done.gpu_seconds;
     rep.levels += done.levels;
     rep.screened += done.screened;
@@ -2871,7 +2874,12 @@ const REACH_BYTES: usize = 64 << 20;
 /// the component's rules (a set of the base columns and constants it reaches, so a column copied into itself adds
 /// nothing). A base column's values are its relation's rows at most. None for a head with a column no rule bounds so
 /// (a function's value, a text made, a lattice's fold).
-fn reach(rules: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store) -> HashMap<usize, usize> {
+///
+/// And the bytes a round's tables can reach in the program's arena (`arena`, none where a slot is unbounded so): each
+/// rule's stage tables, a stage's rows at most the product of the values of the slots bound by then, its slots' words
+/// a row (decision 0603 5c: rows × slots × 8 bytes), and its head's: its union's rows (its bindings') and its
+/// distinct and new rows (its head's reach at most). The arena is emptied at each round's end, so a round's claims are all it holds.
+fn reach(rules: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store) -> (HashMap<usize, usize>, Option<usize>) {
     use std::collections::BTreeSet;
     // A base column (its relation, by address or store index, and its column) with its rows, or a constant.
     #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -2962,7 +2970,7 @@ fn reach(rules: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store) ->
             break;
         }
     }
-    heads
+    let heads: HashMap<usize, usize> = heads
         .iter()
         .filter_map(|&h| {
             let mut rows = 1usize;
@@ -2971,8 +2979,40 @@ fn reach(rules: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store) ->
             }
             Some((h, rows))
         })
-        .collect()
+        .collect();
+    let reach_of = |h: usize| heads.get(&h).copied();
+    let arena = (|| {
+        let mut bytes = 0usize;
+        for &(_, j, h) in rules {
+            let mut bound: BTreeSet<usize> = BTreeSet::new();
+            let mut rows = 1usize;
+            for step in &j.steps {
+                let mut new: Vec<usize> = Vec::new();
+                match step {
+                    Step::Atom { neg: false, binds, .. } => new.extend(binds.iter().map(|&(_, s)| s)),
+                    Step::Let { a, .. } => new.push(*a),
+                    _ => continue,
+                }
+                for s in new {
+                    if bound.insert(s) {
+                        rows = rows.saturating_mul(size(slot_dom(j, s, &dom, &src_dom, 0).as_ref()?));
+                    }
+                }
+                bytes = bytes.saturating_add(rows.saturating_mul(8 * j.nslots.max(1)));
+            }
+            // Its union holds its bindings' head rows; its distinct and new rows, its head's reach at most.
+            let k = 8 * j.out.len().max(1);
+            let head = reach_of(h).map_or(rows, |r| r.min(rows));
+            bytes = bytes.saturating_add(rows.saturating_mul(k)).saturating_add(head.saturating_mul(2 * k));
+        }
+        Some(bytes)
+    })();
+    (heads, arena)
 }
+
+/// A program's first arena's bytes at most that a round's reach (`reach`) maps outright: its pages are real memory on
+/// Metal once mapped, so past this the arena is mapped from the host's guess and grows as its claims reach it.
+const ARENA_REACH_BYTES: usize = 256 << 20;
 
 /// What a program of rounds reads and writes besides its relations, held until its launches are done; each
 /// template's heads' ends, read when a gate stopped a round.
@@ -3022,7 +3062,7 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
     round.set(0, (*lp.rounds + 1) as u32);
     let start = *lp.rounds + 1;
     let all: Vec<(&Plan, &JoinRule, usize)> = seeds.iter().chain(deltas).copied().collect();
-    let reaches = reach(&all, heads, store);
+    let (reaches, arena_reach) = reach(&all, heads, store);
     // A set head's new rows by round, where it keeps levels (decision 0311).
     let mut logs: HashMap<usize, mj::Words> = HashMap::new();
     for &h in heads.iter().filter(|&&h| leveled(h)) {
@@ -3060,8 +3100,9 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
     let mut side = 0;
     let mut programs = 0;
     let mut rerun: Option<rerail_accel::gpu::launch::Rerun> = None;
-    // Its programs' arenas' bytes at least (decision 0603 step 5): twice what a stopped one's claims wanted.
-    let mut floor = 0usize;
+    // Its programs' arenas' bytes at least (decision 0603 step 5): what a round's tables can reach where it fits
+    // `ARENA_REACH_BYTES`, so its claims map no more pages, and twice what a stopped one's claims wanted.
+    let mut floor = arena_reach.filter(|&b| b <= ARENA_REACH_BYTES).unwrap_or(0);
     loop {
         programs += 1;
         if programs > PROGRAMS_MAX {
