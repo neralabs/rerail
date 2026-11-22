@@ -497,3 +497,18 @@ that reads the earlier one's relation, or a relation its demand reads. If any gu
 its relation, the round falls back to one request at a time. A guard only adds edges, so a round whose guards are
 all apart installs what one request at a time would (the rounds test). The edit is 36.4 G (prepare 22.5 G), cold
 874 G, warm 2.0 G, the rows h1's.
+
+The combine read and parsed all 317 program texts on every edit, and built their include graphs, before the splice
+(decision 0373). The splice needs only each text's modules: its files with their digests and declared names, and
+its heads and declarations. A record kept in the store (`corpus::kept_texts`) holds those by text digest. A text
+is read again only when its digest is not in the record, or when one of its files no longer reads as kept (checked
+by stat). The others take their modules from the record, and their files are noted as read in program order.
+Combine is 4.0 G (from 6.6 G).
+
+The stats phase had two costs that grew with the program rather than the edit. Each export given whole was first
+forgotten by scanning every relation's constants and value columns, so the cost was quadratic in the 1,366 exports.
+The constants are kept by relation now, and an export's columns are removed by their own range. And the constants
+the rules test, in columns with too many values for an exact map, were counted in the held rows on every run. A
+column now watches those constants (`RelStats::watch`): it counts each exactly as documents come and go, and keeps
+the counts in the blob. A constant new to the keeper is counted once. Stats is 0.66 G after an edit or two (from
+1.16 G), and the edit is 33.4 G, cold 874 G, warm 2.1 G, the rows h1's.
