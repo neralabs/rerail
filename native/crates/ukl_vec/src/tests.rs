@@ -1478,10 +1478,10 @@ fn f16_parent_rust(kernel: &str) -> Result<String, super::Error> {
     super::rs::kernel(&k, 8).map_err(|e| super::Error(format!("{}\n{}", e.0, super::k::View::new(&k.tape).listing())))
 }
 
-/// `f16_parent`'s two kernels' Rust at 8 lanes (one step a node, a round of pointer jumping), as checked in.
+/// `f16_parent`'s two kernels' Rust at 8 lanes (one step a node, the chase of its links), as checked in.
 #[test]
 fn the_f16_parent_kernels_rust_is_the_checked_in_one() {
-    for kernel in ["parent_step", "parent_jump"] {
+    for kernel in ["parent_step", "parent_link"] {
         let rust = f16_parent_rust(kernel).unwrap_or_else(|e| panic!("{kernel}: {}", e.0));
         let at = format!("{}/../ukl_aot/src/{kernel}_w8.rs", env!("CARGO_MANIFEST_DIR"));
         if std::env::var_os("UKL_RS_WRITE").is_some() {

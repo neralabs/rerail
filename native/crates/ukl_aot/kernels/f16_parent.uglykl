@@ -1,58 +1,81 @@
 // A test kernel of rerail-ukl-aot (decision 0567 step 3): every node's parent over a format 16 tape in place, by one
-// step a node and pointer jumping, no walk. A walk's only state is its node, so a node whose first step
-// (`clif_f16_parent_step`, `<ukl/reads/tape_f16.h>`) goes on from a previous sibling's node `j` has `j`'s parent:
+// step a node and a chase of the steps' links, no walk over the slots. A walk's only state is its node, so a node
+// whose first step (`clif_f16_parent_step`, `<ukl/reads/tape_f16.h>`) goes on from a previous sibling's node `j` has
+// `j`'s parent:
 //
-// - `parent_step`: each node's step, its parent (`link` NONE) or the node it is linked to (`link`, and `res` its
-//   number too);
-// - `parent_jump`, 3 rounds, each from one pair of buffers to the other: a linked node takes its link's `res` and
-//   `link`, so after round `r` its link has passed `2^r` links. A chain is at most K - 1 = 7 links (every K-th
-//   sibling names the parent), so 3 rounds resolve every node of a tape's; the last round (`args.last`) gives a node
-//   still linked (a slot no tape's) to the walk (`clif_f16_parent`), as the host reads it.
+// - `parent_step`: each node's step as one word, its parent, or (`LINKED`) the node `j` it is linked to. A node's
+//   number is below 2^31 (a node takes 2 bytes of the tape at least, whose offsets are u32), so the high bit is free;
+//   NONE is a parent.
+// - `parent_link`: a linked node follows its links through the steps' words, at most K - 1 = 7 (every K-th sibling
+//   names the parent), each a 4-byte load of a word another thread wrote in the launch before; a node still linked
+//   after 7 (a slot no tape's) is the walk's (`clif_f16_parent`), as the host reads it.
 //
-// Every thread one node in every launch: no lane waits on another's walk.
+// Every thread one node in each launch; a node's slot is read once, and a node not linked reads only its own word.
+// (Three rounds of pointer jumping, each reading and writing two arrays of every node, were twice the walk's time on
+// an M3's Metal on a document of short walks: the traffic, not the threads.)
 
 #define CLIF_VIEW_SPACE UKL_GLOBAL
 #include <ukl/backend.h>
 #include <ukl/reads/tape.h>
 
-typedef struct ParentArgs { uint32_t nodes, last, pad1, pad2; } ParentArgs;
-UKL_REFLECT_STRUCT(ParentArgs, nodes, last, pad1, pad2)
+#define LINKED 2147483648u
+
+typedef struct ParentArgs { uint32_t nodes, pad0, pad1, pad2; } ParentArgs;
+UKL_REFLECT_STRUCT(ParentArgs, nodes, pad0, pad1, pad2)
 
 DEFINE_KERNEL2(f16, parent_step,
-               ROBUFFER, uint8_t,    tape, "[bytes]",
-               ROBUFFER, uint32_t,   view, "[words]",
-               RWBUFFER, uint32_t,   res,  "[args.nodes]",
-               RWBUFFER, uint32_t,   link, "[args.nodes]",
-               ARGS,     ParentArgs, args, ,
-               GID0,     uint32_t,   i,    )
+               ROBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[words]",
+               RWBUFFER, uint32_t,   steps, "[args.nodes]",
+               ARGS,     ParentArgs, args,  ,
+               GID0,     uint32_t,   i,     )
 {
   if(i>=args.nodes)return;
   uint64_t r=clif_f16_parent_step(tape,view,i);
-  res[i]=(uint32_t)r;
-  link[i]=(r&CLIF_T_LINK)!=0u?(uint32_t)r:CLIF_T_NONE;
+  steps[i]=(r&CLIF_T_LINK)!=0u?LINKED|(uint32_t)r:(uint32_t)r;
 }
 
-DEFINE_KERNEL2(f16, parent_jump,
-               ROBUFFER, uint8_t,    tape,    "[bytes]",
-               ROBUFFER, uint32_t,   view,    "[words]",
-               ROBUFFER, uint32_t,   res,     "[args.nodes]",
-               ROBUFFER, uint32_t,   link,    "[args.nodes]",
-               RWBUFFER, uint32_t,   resOut,  "[args.nodes]",
-               RWBUFFER, uint32_t,   linkOut, "[args.nodes]",
-               ARGS,     ParentArgs, args,    ,
-               GID0,     uint32_t,   i,       )
+DEFINE_KERNEL2(f16, parent_link,
+               ROBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[words]",
+               ROBUFFER, uint32_t,   steps, "[args.nodes]",
+               RWBUFFER, uint32_t,   out,   "[args.nodes]",
+               ARGS,     ParentArgs, args,  ,
+               GID0,     uint32_t,   i,     )
 {
   if(i>=args.nodes)return;
-  uint32_t l=link[i];
-  uint32_t r=res[i];
-  if(l!=CLIF_T_NONE){
-    r=res[l];
-    l=link[l];
-  }
-  if(l!=CLIF_T_NONE&&args.last!=0u){
+  uint32_t r=steps[i];
+  for(uint32_t k=0u;k<7u&&r!=CLIF_T_NONE&&(r&LINKED)!=0u;k++)
+    r=steps[r&(LINKED-1u)];
+  if(r!=CLIF_T_NONE&&(r&LINKED)!=0u)
     r=clif_f16_parent(tape,view,i);
-    l=CLIF_T_NONE;
+  out[i]=r;
+}
+
+// One launch (groups of 256 threads): each group's steps in its threadgroup's memory, a barrier, then each linked node's
+// chase there; a link that leaves the group (or a chain past 7) is the walk from that link's node, whose parent it
+// is (`clif_f16_parent`).
+DEFINE_KERNEL2(f16, parent_group,
+               ROBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[words]",
+               RWBUFFER, uint32_t,   out,   "[args.nodes]",
+               ARGS,     ParentArgs, args,  ,
+               SHARED,   uint32_t,   steps, 256,
+               GID0,     uint32_t,   i,     ,
+               LID0,     uint32_t,   lid,   )
+{
+  uint32_t first=i-lid;
+  uint32_t r=CLIF_T_NONE;
+  if(i<args.nodes){
+    uint64_t s=clif_f16_parent_step(tape,view,i);
+    r=(s&CLIF_T_LINK)!=0u?LINKED|(uint32_t)s:(uint32_t)s;
   }
-  resOut[i]=r;
-  linkOut[i]=l;
+  steps[lid]=r;
+  ukl_tg_barrier();
+  if(i>=args.nodes)return;
+  for(uint32_t k=0u;k<7u&&r!=CLIF_T_NONE&&(r&LINKED)!=0u&&(r&(LINKED-1u))>=first;k++)
+    r=steps[(r&(LINKED-1u))-first];
+  if(r!=CLIF_T_NONE&&(r&LINKED)!=0u)
+    r=clif_f16_parent(tape,view,r&(LINKED-1u));
+  out[i]=r;
 }

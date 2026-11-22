@@ -42,42 +42,35 @@ pub fn scalar(d: &Doc) -> Vec<u32> {
     (0..d.nodes()).map(|i| rerail_tape_format::reads::f16::parent(&d.bytes, &d.view, i)).collect()
 }
 
-/// `f16_parent`'s arguments' struct (`ParentArgs`): the nodes, and whether a jump is the last round.
+/// `f16_parent`'s arguments' struct (`ParentArgs`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct ParentArgs {
     pub nodes: u32,
-    pub last: u32,
+    pub pad0: u32,
     pub pad1: u32,
     pub pad2: u32,
 }
 
-/// `f16_parent`'s kernels as Rust (`step`: `parent_step`, `jump`: `parent_jump`) over `d`'s nodes in groups of
-/// `block` threads: one step a node into (`res`, `la`), then 3 rounds of jumping, (`res`, `la`) to (`out`, `lb`) and
-/// back, the last into `out`. Each node's parent.
+/// `f16_parent`'s kernels as Rust (`step`: `parent_step`, `link`: `parent_link`) over `d`'s nodes in groups of
+/// `block` threads: one step a node into `steps`, then each linked node's chase of its links. Each node's parent.
 ///
 /// # Safety
 ///
-/// `step` and `jump` are kernels of `parent_step`'s and `parent_jump`'s arguments.
-pub unsafe fn run(step: crate::Kernel, jump: crate::Kernel, d: &Doc, block: u32) -> Vec<u32> {
+/// `step` and `link` are kernels of `parent_step`'s and `parent_link`'s arguments.
+pub unsafe fn run(step: crate::Kernel, link: crate::Kernel, d: &Doc, block: u32) -> Vec<u32> {
     let n = d.nodes() as usize;
-    let (mut out, mut res, mut la, mut lb) = (vec![0u32; n], vec![0u32; n], vec![0u32; n], vec![0u32; n]);
+    let (mut out, mut steps) = (vec![0u32; n], vec![0u32; n]);
     let (tp, vp) = (d.bytes.as_ptr(), (&raw const d.view).cast::<u8>());
+    let (sp, op) = (steps.as_mut_ptr().cast::<u8>().cast_const(), out.as_mut_ptr().cast::<u8>().cast_const());
     let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
-    let groups = d.nodes().div_ceil(block);
+    let args = ParentArgs { nodes: d.nodes(), pad0: 0, pad1: 0, pad2: 0 };
     let p = |x: &*const u8| (&raw const *x).cast::<u8>();
+    let (a, c, f) = ((&raw const args).cast::<u8>(), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>());
+    let groups = d.nodes().div_ceil(block);
     unsafe {
-        let args = ParentArgs { nodes: d.nodes(), last: 0, pad1: 0, pad2: 0 };
-        let (rp, lp) = (res.as_mut_ptr().cast::<u8>().cast_const(), la.as_mut_ptr().cast::<u8>().cast_const());
-        let argv = [p(&tp), p(&vp), p(&rp), p(&lp), (&raw const args).cast::<u8>(), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>()];
-        crate::launch(step, &argv, groups, block);
-        for r in 0..3 {
-            let args = ParentArgs { last: u32::from(r == 2), ..args };
-            let (from, fl, to, tl) = if r % 2 == 0 { (&mut res, &mut la, &mut out, &mut lb) } else { (&mut out, &mut lb, &mut res, &mut la) };
-            let (a, b, c, e) = (from.as_ptr().cast::<u8>(), fl.as_ptr().cast::<u8>(), to.as_mut_ptr().cast::<u8>().cast_const(), tl.as_mut_ptr().cast::<u8>().cast_const());
-            let argv = [p(&tp), p(&vp), p(&a), p(&b), p(&c), p(&e), (&raw const args).cast::<u8>(), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>()];
-            crate::launch(jump, &argv, groups, block);
-        }
+        crate::launch(step, &[p(&tp), p(&vp), p(&sp), a, c, f], groups, block);
+        crate::launch(link, &[p(&tp), p(&vp), p(&sp), p(&op), a, c, f], groups, block);
     }
     out
 }

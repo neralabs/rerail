@@ -342,6 +342,43 @@ a long array's walks visit one each. Times (`examples/parent_bench`, profiling b
   its search runs 8 lanes' loads for one lane, 8 times a chunk, the 7 times the host's time on the numbers. That is
   the idea above (a scalar version below x lanes), its first case outside `nearest_jump`.
 
+## Step 3, format 16's parent: the parallel shape (the user's, 2026-11-22)
+
+The user: "there should be a more efficient shape for this computation / do all 8 steps in lockstep / do all of the
+binary searching in parallel ... I would prefer to take advantage of parallelism", then "go ahead with them / they
+should also improve the speed on Metal, but please verify that it is true".
+
+1. **The side search is a count, in every copy of the read** (CLIF, the host's Rust, the kernels' UKL body). A run of
+   offsets is ascending, so the first at or past a node's low byte is the count below it: 8 a word, each byte compared
+   unsigned within the word, summed by popcount, no load waiting on another.
+2. **A walk's first step is a read of its own** (`parent_step`, host Rust and UKL; `parent` is a loop of it). A walk's
+   only state is its node, so a node whose step goes on from a previous sibling's node `j` has `j`'s parent: no
+   walk, a chain of at most K - 1 = 7 links (`every_chain_of_links_is_at_most_seven`).
+3. **The kernel is one step a node and a chase of the links** (`parent_step`, `parent_link`: its Rust checked in).
+
+Metal, an M3, the GPU's clock, the median of 9 (`examples/parent_gpu`); every node checked against the host's:
+
+| Kernel | 40,000 records (1.4 M nodes) | 200,000 numbers | random values (53 k) |
+|---|---|---|---|
+| The walk, the halving search (before) | 0.474 ms | 0.382 ms | 0.069 ms |
+| The walk, the count search | 0.509 ms | 0.231 ms | 0.070 ms |
+| Step, 3 rounds of pointer jumping (4 launches) | 1.027 ms | 0.197 ms | 0.061 ms |
+| Step, then the links' chase (2 launches, kept) | 0.581 ms | 0.120 ms | 0.037 ms |
+| One launch: steps in threadgroup memory, a barrier, the chase there | 0.400 ms | 0.127 ms | 0.049 ms |
+
+- **Not faster everywhere as first built.** Pointer jumping reads and writes two arrays of every node each round:
+  on records, whose walks are short (1.7 steps), twice the walk's time. The traffic, not the threads.
+- **The chase** reads one word a node and hops through the steps' words only where linked: 3.2 and 1.9 times the
+  walk's speed where escapes and long sibling runs are, but its second launch's 8 bytes a node keep it 23% behind the
+  walk on records.
+- **One launch is faster than the walk on all three** (1.2, 3.0 and 1.4 times): a group's links mostly stay in it,
+  and a link that leaves it is the walk from that node. Its Rust needs the threadgroup barrier in `rs.rs` (refused
+  today), so it runs on the GPU only, beside the two-launch form that the CPU's Rust is.
+
+The written kernels' Rust on the CPU (instructions and cycles a node, this Mac at load 10–50, `PARENT_ONLY` with
+`/usr/bin/time -l`): records 167 → 71 and 52 → 17 cycles; numbers 1,525 → 345 and 558 → 89; random 258 → 92 and
+101 → 23. The host's scalar read now 18, 95 and 33 cycles: the written kernel is at or under it on each.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

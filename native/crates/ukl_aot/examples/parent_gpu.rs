@@ -1,6 +1,6 @@
 //! `kernels/f16_parent.uglykl` on the process's GPU (Metal on macOS, CUDA on Linux; `RERAIL_GPU=cpu` the UKL CPU
 //! backend), against the host's read on every node: the walk (`parent_all`, each thread its node's walk) and, where
-//! the source has them, one step a node and pointer jumping (`parent_step`, then `parent_jump` 3 times). Each is timed
+//! the source has them, one step a node and the chase of its links (`parent_step`, then `parent_link`). Each is timed
 //! by the GPU's own clock: the median of 9 runs after a first, the tape and view uploaded once before (not timed).
 //!
 //! `cargo run -p rerail-ukl-aot --profile profiling --example parent_gpu [records|numbers|random] [SIZE]`
@@ -14,7 +14,7 @@ const SOURCE: &str = include_str!("../kernels/f16_parent.uglykl");
 #[derive(Clone, Copy)]
 struct Args {
     nodes: u32,
-    last: u32,
+    pad0: u32,
     pad1: u32,
     pad2: u32,
 }
@@ -64,9 +64,9 @@ fn main() {
     // SAFETY: the view is plain u32s.
     let words = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(&d.view).cast::<u32>(), size_of::<rerail_clif::view::TapeView>() / 4) };
     let (tb, vb) = (buffer_of(&bytes).unwrap(), buffer_of(words).unwrap());
-    let (out, res, la, lb) = (alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap());
+    let (out, res) = (alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap());
     let groups = [n.div_ceil(256) as u64];
-    let args = |last: u32| Args { nodes: n as u32, last, pad1: 0, pad2: 0 };
+    let args = |_: u32| Args { nodes: n as u32, pad0: 0, pad1: 0, pad2: 0 };
     let median = |mut v: Vec<f64>| {
         v.sort_by(f64::total_cmp);
         v[v.len() / 2]
@@ -93,22 +93,15 @@ fn main() {
             launch(q, f).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).value("args", &args(0)).run(&groups, &[256]).unwrap();
         });
     }
-    if let (Ok(step), Ok(jump)) = (p.function("parent_step"), p.function("parent_jump")) {
-        time("step + jumps", &|q| {
-            // One step a node into (res, la); 3 rounds of jumping, (res, la) -> (out, lb) -> (res, la) -> (out, lb).
-            launch(q, step).buffer("tape", &tb).buffer("view", &vb).buffer("res", &res).buffer("link", &la).value("args", &args(0)).run(&groups, &[256]).unwrap();
-            for (r, (from, fl, to, tl)) in [(&res, &la, &out, &lb), (&out, &lb, &res, &la), (&res, &la, &out, &lb)].into_iter().enumerate() {
-                launch(q, jump)
-                    .buffer("tape", &tb)
-                    .buffer("view", &vb)
-                    .buffer("res", from)
-                    .buffer("link", fl)
-                    .buffer("resOut", to)
-                    .buffer("linkOut", tl)
-                    .value("args", &args(u32::from(r == 2)))
-                    .run(&groups, &[256])
-                    .unwrap();
-            }
+    if let (Ok(step), Ok(link)) = (p.function("parent_step"), p.function("parent_link")) {
+        time("step + links", &|q| {
+            launch(q, step).buffer("tape", &tb).buffer("view", &vb).buffer("steps", &res).value("args", &args(0)).run(&groups, &[256]).unwrap();
+            launch(q, link).buffer("tape", &tb).buffer("view", &vb).buffer("steps", &res).buffer("out", &out).value("args", &args(0)).run(&groups, &[256]).unwrap();
+        });
+    }
+    if let Ok(f) = p.function("parent_group") {
+        time("group", &|q| {
+            launch(q, f).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).value("args", &args(0)).run(&groups, &[256]).unwrap();
         });
     }
 }
