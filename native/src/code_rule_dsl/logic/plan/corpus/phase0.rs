@@ -87,10 +87,10 @@ pub struct Graph {
 }
 
 impl Graph {
-    /// Whether every module and every absent candidate is as it was: a `stat` each.
+    /// Whether every module and every absent candidate is as it was (`Looks::holds`, for this graph alone).
+    #[cfg(any(test, feature = "test-hooks"))]
     fn holds(&self) -> bool {
-        self.digests.iter().chain(&self.rules).all(|(p, d)| super::observe(|o| o.digest(p)).as_ref() == Some(d))
-            && self.absent.iter().all(|p| super::observe(|o| o.kind(p)) == crate::content_store::observe::Kind::Missing)
+        Looks::default().holds(self)
     }
 
     /// The program's key: its modules (path and digest) and its edges.
@@ -156,6 +156,24 @@ impl Graph {
     }
 }
 
+/// The files a call of `graphs` looked at, each once for all its graphs: a pack's graphs share their modules (the
+/// library's), and asked graph by graph the observer answered each module once a graph (316 graphs, 0.42 G of a warm
+/// ep2 run's 1.9 G, checking the graphs the same process had checked a moment before).
+#[derive(Default)]
+struct Looks {
+    digests: HashMap<PathBuf, Option<[u8; 32]>>,
+    missing: HashMap<PathBuf, bool>,
+}
+
+impl Looks {
+    /// Whether every module of `g` and every absent candidate is as it was: a look at each file this call has not
+    /// looked at yet.
+    fn holds(&mut self, g: &Graph) -> bool {
+        g.digests.iter().chain(&g.rules).all(|(p, d)| self.digests.entry(p.clone()).or_insert_with(|| super::observe(|o| o.digest(p))).as_ref() == Some(d))
+            && g.absent.iter().all(|p| *self.missing.entry(p.clone()).or_insert_with(|| super::observe(|o| o.kind(p)) == crate::content_store::observe::Kind::Missing))
+    }
+}
+
 /// A text's key in the graph a seed is given.
 pub(in crate::code_rule_dsl) const TEXT: &str = "text";
 
@@ -187,7 +205,9 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     // A kept graph that no longer holds leaves the process's map too: the images' step below fills a seed from the
     // map, and found the stale graph there again, so a file edited after its graph was kept was read as it was (its
     // include's old digest), though phase 0 derived its graph anew.
-    let stale: Vec<&Seed> = seeds.iter().zip(found.iter_mut()).filter(|(_, g)| g.as_ref().is_some_and(|g| !g.holds())).map(|(s, g)| {
+    // Each file is looked at once in this call, for the kept graphs and the images alike.
+    let mut looks = Looks::default();
+    let stale: Vec<&Seed> = seeds.iter().zip(found.iter_mut()).filter(|(_, g)| g.as_ref().is_some_and(|g| !looks.holds(g))).map(|(s, g)| {
         *g = None;
         s
     }).collect();
@@ -222,13 +242,6 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     let mut wanted = wanted;
     if !wanted.is_empty() && let Some(images) = &images {
         let mut accepted = HashMap::new();
-        // A pack's graphs share their modules: each file is looked at once for all of them, not once a graph.
-        let mut looked: HashMap<PathBuf, Option<[u8; 32]>> = HashMap::new();
-        let mut missing: HashMap<PathBuf, bool> = HashMap::new();
-        let mut holds = |g: &Graph| {
-            g.digests.iter().chain(&g.rules).all(|(p, d)| looked.entry(p.clone()).or_insert_with(|| super::observe(|o| o.digest(p))).as_ref() == Some(d))
-                && g.absent.iter().all(|p| *missing.entry(p.clone()).or_insert_with(|| super::observe(|o| o.kind(p)) == crate::content_store::observe::Kind::Missing))
-        };
         let graphs: Vec<Option<Graph>> = wanted.iter().map(|seed| crate::code_rule_dsl::logic::rr::graph_image(images.store(), images.key(seed)).and_then(|b| images.decode(&b))).collect();
         let mut graphs = graphs.into_iter();
         let trace = std::env::var_os("RERAIL_PHASE0_TRACE").is_some();
@@ -247,7 +260,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
                 };
                 eprintln!("rerail: phase 0 seed {}: {why}", format!("{seed:?}").chars().take(300).collect::<String>());
             }
-            let Some(g) = image.filter(|g| holds(g)) else {
+            let Some(g) = image.filter(|g| looks.holds(g)) else {
                 return true;
             };
             crate::code_rule_dsl::prof::count("phase0.graph_image_read", 1);

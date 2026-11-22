@@ -67,6 +67,29 @@
         }
     }
 
+    /// A call's graphs share their look at each file (`Looks`): two kept graphs of one module, the module edited, and
+    /// the next call finds both stale and derives both again, each holding the module's new digest; the look one graph
+    /// took answers the other.
+    #[test]
+    fn graphs_sharing_a_module_all_see_its_edit() {
+        let dir = std::env::temp_dir().join(format!("rerail-p0-shared-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("shared.rerail"), "t(1).\n").unwrap();
+        for name in ["a", "b"] {
+            std::fs::write(dir.join(format!("{name}.rerail")), format!("#include \"shared.rerail\"\n.decl {name}(x: number)\n{name}(1).\n.output {name}\n")).unwrap();
+        }
+        let seeds: Vec<super::Seed> = ["a", "b"].iter().map(|n| super::Seed::File(dunce::canonicalize(dir.join(format!("{n}.rerail"))).unwrap())).collect();
+        let before: Vec<[u8; 32]> = super::graphs(&seeds).unwrap().iter().map(|g| g.digest()).collect();
+        // A new size and content: the observer's stat sees it, whatever the clock's grain.
+        std::fs::write(dir.join("shared.rerail"), "t(1).\nt(2).\n").unwrap();
+        let after = super::graphs(&seeds).unwrap();
+        for (k, g) in after.iter().enumerate() {
+            assert_ne!(g.digest(), before[k], "{:?}'s graph still holds the old module:\n{}", seeds[k], g.describe());
+            assert!(g.holds_now(), "{}", g.describe());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A rule's include beside it whose directory lies outside phase 0's roots (`rules/../packs/…`, a benchmark's
     /// copy of a pack's tables): the loader refused it, so the graph does not hold it absent, and the graph holds while
     /// the file is there. Held absent, the graph never held, and phase 0 ran again on every run.

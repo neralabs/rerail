@@ -512,3 +512,20 @@ the rules test, in columns with too many values for an exact map, were counted i
 column now watches those constants (`RelStats::watch`): it counts each exactly as documents come and go, and keeps
 the counts in the blob. A constant new to the keeper is counted once. Stats is 0.66 G after an edit or two (from
 1.16 G), and the edit is 33.4 G, cold 874 G, warm 2.1 G, the rows h1's.
+
+Three costs left after the hub merge (2026-11-22, m3, ep2):
+- The warm run looked at each file twice. `settings::program_texts` and `Texts::of` each check that the graphs of
+  phase 0 hold, and the second check looked at every file again: 0.42 G of the warm run's 1.9 G. One call's graphs
+  now share their looks (`phase0::Looks`), so the second check is 0.06 G and the warm run is 1.6 G.
+- Stats after an edit was not the counting of constants new to the keeper. The cold run already watches all 61
+  tested constants, and the first edit counted none. The cost was binding all 1,181 kept inputs (20,217 granules):
+  each lookup compared the relation names as strings, and each granule's entry was looked up again for its types and
+  digest. The lookup now compares bytes (`KeptFacts::rel_bytes`), and the entry keeps what it read. Stats is 0.75 G
+  on the first edit and 0.71 G on the second. Each granule's atom columns are still scanned for their greatest atom
+  (`readable`); knowing it without the scan needs it written with the granule.
+- The edit's extra 1.6 G in prepare was the fold of own guests' copies (`one_document`, decision 0165). It found what
+  each relation keeps in every row (`Kept::of`) by rounds over every rule, remaking each rule's graph and searching it
+  once a pair, and it did so again for each round of `same`: 2.98 G of the edit. `Kept::of` is now a worklist over
+  readers, with each variable's reach found once, and the shape it reads (`Shape`) is made once a fold.
+
+The edit is 30.9 G (35.0 G after the merge, 33.4 G before it), cold 711.7 G, warm 1.6 G, the rows h1's.
