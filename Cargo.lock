@@ -3884,8 +3884,10 @@ name = "rerail-json-lean"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rerail-json-aot",
  "rerail-simdjson",
  "rerail-simdjson-native",
+ "rerail-tape-format",
 ]
 
 [[package]]
