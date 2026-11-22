@@ -201,7 +201,7 @@ rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.ph
 |---|---|---|
 | `stat_blob`, `fact_stats`, `fact_value_stats`, `kind_size`, `edge_freq`, `tape_kind_counts`, `term_freq`, `term_kind_freq`, `term_node_freq`, `term_coverage`, own counts (a name binding) | one blob per plan; patched by its own delta code (0096) | aggregate relations over K1's relations (`count` per relation, column and document), maintained by counting like any aggregate |
 | `compiled_plans`, `compiled_plan_reads`, `plan.rs` `PLANS`, `SESSION_PLANS`, `KEPT`, `derived.rs` `MEMO`, `SESSION_MEMO` | a plan key; statistic intervals | a plan is an answer keyed by its stratum's definition and the statistics' intervals it is valid over (03 §6 already records those intervals) |
-| `plan_feedback`, `keeps.rs` `OBSERVED`, `table.rs` `PAID`, `accel_models` | what a run observed | facts the run produces about itself, stored in K1 |
+| `plan_feedback`, `keeps.rs` `OBSERVED`, `table.rs` `PAID`, `accel_models` | what a run observed | facts the run produces about itself, stored in K1. `accel_models`: **built** (2026-11-21, `content_store/accel_models.rs`): `accel_model(key, archive)` in the store's models' space, a partition a key; the archive a source of the store by its SHA-256, pinned with no end as the table kept it |
 
 ### Step 7: text patterns and indexes
 
