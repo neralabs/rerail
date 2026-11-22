@@ -1177,8 +1177,9 @@ async function replacedOlderDaemon(
 ): Promise<StartDaemonResult> {
   const ended = await stopFound(control.home, older, machine);
   const started = await spawnDaemon(control, options, machine);
-  // A pid that passed to a later process since the lookup was let alone, and a daemon that had exited by itself was
-  // not ended here: the start names only a daemon its end ended.
+  // The start names only a daemon its end read as ended. A pid that passed to a later process since the lookup was let
+  // alone; a daemon whose end could not be read and whose pid was free afterwards may have exited by itself or by that
+  // end, so the start does not name it.
   if (ended !== "asked") return started;
   const { pid, version } = older.state;
   return { ...started, replaced: { pid, version } };
@@ -1871,9 +1872,10 @@ function namesLockHolder(home: string, machine: DaemonMachine): boolean {
 
 /**
  * What asking a daemon to stop came to ({@link askDaemonToStop}): it was asked, or let alone as already ending (`asked`);
- * a daemon of a release before the engine's proof had exited by itself before its end ({@link endOlderDaemon}: `exited`);
- * its pid was proven not the home's daemon and the record naming it is removed (`not-daemon`); or it was proven not the
- * home's daemon once daemon.json named it no longer, and that record is left as it is (`record-changed`).
+ * the end of a daemon of a release before the engine's proof could not be read and its pid was free afterwards, so it
+ * had exited, by itself or by that end ({@link endOlderDaemon}: `exited`); its pid was proven not the home's daemon and
+ * the record naming it is removed (`not-daemon`); or it was proven not the home's daemon once daemon.json named it no
+ * longer, and that record is left as it is (`record-changed`).
  */
 type StopAsk = "asked" | "exited" | Extract<StopDaemonResult, "not-daemon" | "record-changed">;
 

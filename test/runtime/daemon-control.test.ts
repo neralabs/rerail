@@ -1198,8 +1198,8 @@ describe("a state file Windows left behind", () => {
   });
 
   // The start names the daemon it ended only when the end answered that it ended it: a pid that passed to a later
-  // process since the lookup was let alone, or a daemon that had exited by itself before its end, and the start says
-  // nothing of it.
+  // process since the lookup was let alone, and a daemon whose end could not be read and whose pid was free afterwards
+  // may have exited by itself or by that end, so the start says nothing of either.
   it.each([
     ["ended", { pid: DEAD_PID, version: "0.1.4" }],
     ["later", undefined],
