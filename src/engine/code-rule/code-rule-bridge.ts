@@ -818,15 +818,12 @@ function takeCheckouts(
 }
 
 /**
- * Puts into `listed` (`WalkStart.listedAtFirstSight`) what the Git of each checkout of the worktree at `root` listed as
- * modified or untracked for the walk that first shows it to a session (`WorktreeFindings.listed`), for each checkout
- * whose listing finished and whose index the walk read with no unmerged entry: a conflict is judged by reading Git.
+ * Puts into `listed` (`WalkStart.listedAtFirstSight`) what the Git of each checkout of a worktree listed as modified or
+ * untracked for the walk that first shows it to a session (`WorktreeFindings.listed`), for each checkout whose listing
+ * finished. Git lists an unmerged path as modified, so a conflict is among the files read.
  */
-function takeFirstSightListings(root: string, findings: WorktreeFindings, listed: Map<string, ReadonlySet<string>>): void {
-  for (const [checkout, paths] of findings.listed) {
-    const entries = checkout === root ? findings.unmerged : findings.inner.unmerged.get(checkout) ?? findings.inner.passed.get(checkout);
-    if (paths !== undefined && entries?.size === 0) listed.set(checkout, new Set(paths));
-  }
+function takeFirstSightListings(findings: WorktreeFindings, listed: Map<string, ReadonlySet<string>>): void {
+  for (const [checkout, paths] of findings.listed) if (paths !== undefined) listed.set(checkout, new Set(paths));
 }
 
 /** Whether `edit`, of the file at `path` in its checkout, is one Git's listing (`listed`) leaves out: it holds what its index holds. */
@@ -3018,7 +3015,7 @@ export class CodeRuleBridge {
       if (!start.worktrees.has(worktree)) continue;
       snapshots.set(worktree, findings.snapshot);
       takeCheckouts(root, findings, { heads, unmerged, passed: scan.unmerged });
-      if (discovery.worktrees.fresh.has(worktree)) takeFirstSightListings(root, findings, listedAtFirstSight);
+      if (discovery.worktrees.fresh.has(worktree)) takeFirstSightListings(findings, listedAtFirstSight);
       this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
     }
     const walk: WalkStart = {
