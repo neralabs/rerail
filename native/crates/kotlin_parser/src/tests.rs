@@ -589,6 +589,71 @@ fn a_tail_is_the_strings_whose_template_it_ends() {
     ]);
 }
 
+/// A string with templates is one record (decision 0600), with its templates' code's records
+/// inside it and none at a template's `}`, as the lean lexer reads it: Kotlin's grammar with its
+/// tails resuming their strings, tier 1 and tier 2 by the interpreter, the tape the lean
+/// parser's.
+#[test]
+fn a_string_with_templates_is_one_record() {
+    let grammar = crate::GRAMMAR.replace(" after str\n", " resumes str\n").replace(" after rstr\n", " resumes rstr\n");
+    assert_ne!(grammar, crate::GRAMMAR, "the tails' `after`s");
+    let c = crate::compile_text(&grammar).unwrap_or_else(|e| panic!("the grammar compiles: {e}"));
+    let texts = [
+        "val a = \"x ${b} y\"\n",
+        "val a = \"${b}${c}\" + d\n",
+        "val a = \"${f(\"x\", 'y')} $z ${g}\"\nval b = \"\"\"${h(\"i\")} j\"\"\"\n",
+        "val h = \"${f(\"\"\"a\"\"\")} b ${c}\" + \"\"\"${d}\"\"\"\n",
+        "val h = \"\"\"a ${f(\"b\")} \"c\" ${'d'}e\"\"\"\n",
+    ];
+    for text in texts {
+        let bytes = text.as_bytes();
+        let want = lean_text(text).unwrap_or_else(|| panic!("the lean parser refuses {text:?}"));
+        let program = &c.program.block_programs[0];
+        let run = program.run(bytes);
+        let r = program.records.as_ref().expect("records");
+        assert!(run.totals.iter().all(|&t| t == 0), "tier 1 refuses {text:?}");
+        let (starts, lasts) = (&run.positions[usize::from(r.starts)], &run.positions[usize::from(r.lasts)]);
+        // Each string's record: from its quote to its last, outside the templates' code.
+        let mut at = 0usize;
+        while at < bytes.len() {
+            if bytes[at] == b'"' {
+                let raw = bytes[at..].starts_with(b"\"\"\"");
+                let k = starts.iter().position(|&s| s as usize == at).unwrap_or_else(|| panic!("a record at {at} of {text:?}"));
+                let mut e = at + if raw { 3 } else { 1 };
+                let mut code = 0usize;
+                loop {
+                    if code == 0 && bytes[e..].starts_with(if raw { b"\"\"\"" } else { b"\"" }) {
+                        e += if raw { 2 } else { 0 };
+                        break;
+                    }
+                    if code == 0 && bytes[e..].starts_with(b"${") {
+                        code = 1;
+                        e += 2;
+                        continue;
+                    }
+                    if code > 0 && bytes[e] == b'}' {
+                        assert!(!starts.contains(&(e as u32)), "no record at a template's `}}`, {e} of {text:?}");
+                    }
+                    code = match (code, bytes[e]) {
+                        (0, _) => 0,
+                        (_, b'}') => code - 1,
+                        (_, b'{') => code + 1,
+                        _ => code,
+                    };
+                    e += 1;
+                }
+                assert_eq!(lasts[k] as usize, e, "the string's record at {at} of {text:?}");
+                at = e + 1;
+                continue;
+            }
+            at += 1;
+        }
+        let nodes = rerail_compiler::stream::run(&c.program, bytes, &run).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why:?}"));
+        let interp = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, bytes);
+        assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
+    }
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {

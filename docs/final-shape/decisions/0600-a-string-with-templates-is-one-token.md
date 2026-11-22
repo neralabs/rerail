@@ -1,0 +1,52 @@
+# 0600: A string with templates is one token
+
+Status: in progress (the user, 2026-11-21: "go ahead with the full change", on "Template code is still read as
+separate tokens, where lean reads the whole string, interpolations included, as one token"). Follows 0598.
+
+## Intro
+
+**The problem.** Tier 1 cut a string with templates into tokens at each template:
+- the string's record ran from its `"` to the first `${`;
+- the template's code was records of its own;
+- each `}` that ends a template opened a tail region (`tail`, `rtail`), a record of its own up to the next `${`
+  or the closing quote.
+
+So tier 2 read a string as several tokens, its parts split from each one. The lean lexer reads a string with its
+templates as one token (`string_end`, `interpolation_end`). Its parser walks the token's bytes and lexes each
+template's code where it reaches the `${` (`parse/expr.rs`, `string_literal`, `interpolation`).
+
+## The decision
+
+- **`resumes K …`**, a region's word in place of `after K …`: it has the same openers (0598), and the region is
+  the rest of the token whose region its template closed.
+- **Tier 1: one record a string.**
+  - A read that closes at a template's `$` (`ReadArm::template`, the region's `or`) leaves its record open over
+    the template's code.
+  - The read of a region that resumes (`Reader::resumes`, at the template's `}`) makes no record. It ends the open
+    record, or, closed at another `$`, leaves it open over the next template.
+  - The template's code's records lie inside the string's. The record pass accepts a record inside an open
+    string's record and nowhere else.
+- **Tier 2: the string's parts, then the code's records, then the parts again.** The parts stop at a `${`. The
+  code's records are read up to the template's `}`, the next opener of a reader that resumes (a tier-1 mask),
+  where the parts go on. This is how the lean parser reads a template.
+
+## Steps
+
+1. The interpreter's tiers (`records::walk`, `records::pass`, `stream.rs`). Tested on Kotlin's grammar with
+   its tails' `after` replaced by `resumes` (`a_string_with_templates_is_one_record`): the string's record runs
+   to its last quote, there is no record at a template's `}`, and the tape is the lean parser's.
+2. The CPU's tier 1 and tier 2 (`native_cpu_block`, `native_cpu_stream`).
+3. Tier 1 and tier 2 as Rust (`bitlex_lex_rust`, `bitlex_rust`).
+4. Metal.
+5. Kotlin's grammar: `resumes`.
+
+## What changed (step 1)
+
+- Bitlex: `Region::resumes`.
+- The compiler:
+  - `ReadArm::template`, `Reader::resumes`, their rir text and their outputs;
+  - `records::read_end`, `walk`, and `pass`'s nesting check;
+  - `stream.rs`'s resume at the template's `}`.
+- `kotlin.bitlex`: `tail`'s closer is `dq_close or t_dollar`, which means the same, so its `or` is its template.
+- `bitlex_lex_rust`: a closer whose `or` has its own length is one expression, and a region's comment shows its
+  `or`.

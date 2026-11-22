@@ -1594,7 +1594,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         }
                     }
                     2 => {
-                        // `rstr = dq3 .. rclose`
+                        // `rstr = dq3 .. rclose or t_dollar`
                         set(&mut m_o_rstr, p, p + 1);
                         match first_bit(&t4, p + 1) {
                             Some(c) => {
@@ -1616,7 +1616,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         }
                     }
                     3 => {
-                        // `str = dq & ~dq3 .. dq_close`
+                        // `str = dq & ~dq3 .. dq_close or t_dollar`
                         set(&mut m_o_str, p, p + 1);
                         match first_bit(&t6, p + 1) {
                             Some(c) => {
@@ -1624,7 +1624,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                                     if bit(&m_t_dollar, c) {
                                         template = 3;
                                     }
-                                    if bit(&m_t_dollar, c) { c + 0 } else { c + 0 }
+                                    c + 0
                                 };
                                 set(&mut m_f_str, p, c);
                                 set(&mut m_hidden, p + 1, last + 1);
@@ -1672,7 +1672,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         }
                     }
                     6 => {
-                        // `tail = t_close .. dq_close | t_dollar`
+                        // `tail = t_close .. dq_close or t_dollar`
                         set(&mut m_o_tail, p, p + 1);
                         match first_bit(&t6, p + 1) {
                             Some(c) => {
@@ -1689,7 +1689,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         }
                     }
                     7 => {
-                        // `rtail = t_close .. rclose`
+                        // `rtail = t_close .. rclose or t_dollar`
                         set(&mut m_o_rtail, p, p + 1);
                         match first_bit(&t4, p + 1) {
                             Some(c) => {
@@ -2386,7 +2386,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                                 template = 3;
                             }
                             {
-                            let last = if bit(&m_t_dollar, c) { c + 1 } else { if bit(&m_t_dollar, c) { c + 0 } else { c + 0 } };
+                            let last = if bit(&m_t_dollar, c) { c + 1 } else { c + 0 };
                             // a string, a character or a backtick name over a line
                             if any_in(&m_lf, s + 1, c - 1) {
                                 refused = true;

@@ -75,6 +75,7 @@ use crate::block::{BlockOp, BlockProgram, ClassTable};
 use crate::{bitlex_prove, bitlex_tier2, grammar};
 use ::bitlex::syntax::{Arg, Expr, NExpr, Stmt, TokenElem};
 use rustc_hash::FxHashMap as HashMap;
+use rustc_hash::FxHashSet as HashSet;
 use std::cell::RefCell;
 
 /// A number's planes: a byte's value mod 2^32, exact for a place in a file or a distance.
@@ -338,6 +339,13 @@ pub struct Lowering {
     pub token_reads: HashMap<String, Vec<(Val, Val, i8, crate::records::ReadNone)>>,
     /// A region read in parts with `closes`: its closer's last (`ReadArm::last`).
     pub token_closer_last: HashMap<String, Val>,
+    /// A token reading in parts regions a kind `resumes` (decision 0600): their second closers'
+    /// output, where a read closes at a template.
+    pub token_templates: HashMap<String, Val>,
+    /// The tokens reading in parts regions that `resume` (decision 0600).
+    pub token_resumes: HashSet<String>,
+    /// The regions' kinds, as `regions H { … }` declares them.
+    pub region_kinds: Vec<::bitlex::syntax::Region>,
     /// A kind read in parts (`read K parts { … }`): each part's start mask and bytes, in order.
     /// Each part's start, and its bytes or its last (`ReadPart`).
     pub token_parts: HashMap<String, Vec<(Val, u8, Option<Val>)>>,
@@ -538,6 +546,9 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_threes: HashMap::default(),
         token_reads: HashMap::default(),
         token_closer_last: HashMap::default(),
+        token_templates: HashMap::default(),
+        token_resumes: HashSet::default(),
+        region_kinds: Vec::new(),
         token_parts: HashMap::default(),
         token_part_names: HashMap::default(),
         token_fills: HashMap::default(),
@@ -737,7 +748,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 t.o = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's start mask not an output")? as u16;
             }
             for a in r.readers.iter_mut().flat_map(|rd| rd.arms.iter_mut()) {
-                for k in [&mut a.opener, &mut a.closer].into_iter().chain(a.last.as_mut()) {
+                for k in [&mut a.opener, &mut a.closer].into_iter().chain(a.last.as_mut()).chain(a.template.as_mut()) {
                     let v = low.program.masks[usize::from(*k)];
                     *k = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's mask not an output")? as u16;
                 }
@@ -1008,6 +1019,25 @@ impl Lowering {
                                 let l = self.expr(&l)?;
                                 self.token_closer_last.insert(kind.clone(), l);
                             }
+                            // Regions that resume, and regions resumed (decision 0600): all of
+                            // the reader's or none, each with its template, where a read leaves
+                            // the token's record open.
+                            let all = self.region_kinds.clone();
+                            let resumed = |r: &::bitlex::syntax::Region| r.resumes || all.iter().any(|q| q.resumes && q.after.contains(&r.kind));
+                            if rs.iter().any(|r| r.resumes) {
+                                if !rs.iter().all(|r| r.resumes) {
+                                    return Err(format!("token {kind}: regions that resume read with ones that do not"));
+                                }
+                                self.token_resumes.insert(kind.clone());
+                            }
+                            if rs.iter().any(resumed) {
+                                let ts: Vec<Option<Expr>> = rs.iter().map(|r| r.or.as_ref().filter(|_| resumed(r)).map(|o| o.0.clone())).collect();
+                                let Some(t) = ts[0].clone().filter(|t| ts.iter().all(|x| x.as_ref().is_some_and(|x| format!("{x:?}") == format!("{t:?}")))) else {
+                                    return Err(format!("token {kind}: regions resumed with different templates, or with ones that are not"));
+                                };
+                                let t = self.expr(&t)?;
+                                self.token_templates.insert(kind.clone(), t);
+                            }
                             let mut ps = Vec::new();
                             for (_, e, len) in &parts.parts {
                                 let start = self.expr(e)?;
@@ -1267,6 +1297,7 @@ impl Lowering {
     /// bytes after them by `prev`s at `D`. An `else`'s "a closer after the byte" is the closer's
     /// `back_fill` at `D - 1`: the same bits, a byte on.
     pub fn regions(&mut self, regions: &::bitlex::syntax::Regions) -> Result<(), String> {
+        self.region_kinds.extend(regions.kinds.iter().cloned());
         let mut inputs = Vec::new();
         let mut seconds = Vec::new();
         for r in &regions.kinds {
@@ -4882,7 +4913,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     mark_masks.push(l);
                     (mark_masks.len() - 1) as u16
                 });
-                let mut arms: Vec<crate::records::ReadArm> = low.token_reads[&kind].clone().into_iter().map(|(o, c, off, none)| crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, last, none, retag: None }).collect();
+                let mut arms: Vec<crate::records::ReadArm> = low.token_reads[&kind].clone().into_iter().map(|(o, c, off, none)| crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, last, none, retag: None, template: None }).collect();
+                // A region a kind `resumes` (decision 0600): its arm's template, the second
+                // closer's output; and a reader of regions that resume, none of its own.
+                if let Some(&t) = low.token_templates.get(&kind) {
+                    for a in &mut arms {
+                        a.template = Some(mask_of(low, t, &mut mark_masks));
+                    }
+                }
+                let resumes = low.token_resumes.contains(&kind);
                 for k in &also {
                     // A kind's own tag tells its tokens from the reader's: it needs one, as does
                     // the reader's kind, and neither is read in parts.
@@ -4893,7 +4932,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         return Err(format!("two kinds read by readers start at byte {b:#x}, one in parts"));
                     }
                     for (o, c, off, none) in low.token_reads[k].clone() {
-                        arms.push(crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, last: None, none, retag: Some(tag) });
+                        arms.push(crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, last: None, none, retag: Some(tag), template: None });
                     }
                 }
                 // A region read in parts: each part's start, a mask output.
@@ -4915,7 +4954,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 let mut closers: Vec<(u8, u8)> = closer_rows.iter().filter(|c| c.0 == kind).flat_map(|&(_, r, f)| { let first = real_first[r]; (0..=255u8).filter(move |&b| first[usize::from(b >> 6)] >> (b & 63) & 1 == 1).map(move |b| (b, f)) }).map(|(b, f)| (b, kinds[usize::from(f)])).collect();
                 closers.sort_unstable();
                 closers.dedup();
-                let reader = crate::records::Reader { arms, other, retag, parts, content, closers, split, quiet: false };
+                let reader = crate::records::Reader { arms, other, retag, parts, content, closers, split, quiet: false, resumes };
                 let at = match readers.iter().position(|x| *x == reader) {
                     Some(at) => at,
                     None => {

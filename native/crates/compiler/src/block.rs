@@ -1897,7 +1897,8 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     };
                     let retag = a.retag.map_or(String::new(), |(kind, marks)| format!(" retag {kind} {marks}"));
                     let last = a.last.map_or(String::new(), |o| format!(" last {o}"));
-                    let _ = writeln!(out, "  block {at} recarm {k} {} {} {} {none}{retag}{last}", a.opener, a.closer, a.off);
+                    let template = a.template.map_or(String::new(), |o| format!(" template {o}"));
+                    let _ = writeln!(out, "  block {at} recarm {k} {} {} {} {none}{retag}{last}{template}", a.opener, a.closer, a.off);
                 }
                 // `block N recpart K START BYTES [last O] [kind K]` each part of a region read in parts.
                 for p in &rd.parts {
@@ -1913,6 +1914,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 }
                 if rd.quiet {
                     let _ = writeln!(out, "  block {at} recquiet {k}");
+                }
+                if rd.resumes {
+                    let _ = writeln!(out, "  block {at} recresumes {k}");
                 }
                 if rd.split == crate::records::Split::Tier2 {
                     let _ = writeln!(out, "  block {at} recsplit {k} tier2");

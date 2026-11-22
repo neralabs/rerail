@@ -3638,8 +3638,8 @@ impl Gen<'_> {
                 format!("                    let c = first_bit(&{c}, p + 1).unwrap_or(n);\n                    set(&mut {f}, p, c);\n                    set(&mut {hidden}, p + 1, c);\n                    at = c.max(p + 1);\n")
             } else {
                 let last = match &ors[k] {
-                    Some((c2, m)) => format!("if bit(&{c2}, c) {{ c + {} }} else {{ c + {} }}", m - 1, r.bytes - 1),
-                    None => format!("c + {}", r.bytes - 1),
+                    Some((c2, m)) if *m != r.bytes => format!("if bit(&{c2}, c) {{ c + {} }} else {{ c + {} }}", m - 1, r.bytes - 1),
+                    Some(_) | None => format!("c + {}", r.bytes - 1),
                 };
                 // A plain kind's close at its second closer: a template opens in it.
                 let last = match &ors[k] {
@@ -3654,7 +3654,7 @@ impl Gen<'_> {
                 Some((e, m)) => format!("                    if first_bit(&{c}, p + 1).is_none() {{\n                        set(&mut m_{e}, p, p + 1);\n                        set(&mut {hidden}, p + 1, p + {m});\n                        at = (p + {m}).max(p + 1);\n                    }} else {{\n{}                    }}\n", indent(&arm, "    "), e = ident(e)),
                 None => arm,
             };
-            let _ = write!(self.body, "                {k} => {{\n                    // `{} = {} .. {}`\n{body}                }}\n", r.kind, show(&r.opener), show(&r.closer));
+            let _ = write!(self.body, "                {k} => {{\n                    // `{} = {} .. {}`\n{body}                }}\n", r.kind, show(&r.opener), match &r.or { Some((c2, _)) => format!("{} or {}", show(&r.closer), show(c2)), None => show(&r.closer) });
         }
         let _ = writeln!(self.body, "                _ => break,\n            }}\n        }}\n    }}");
         self.names.insert(rg.hidden.clone(), hidden);
@@ -3729,8 +3729,8 @@ impl Gen<'_> {
             let _ = write!(out, "if bit(&{v}, c) {{ c + {} }} else ", n - 1);
         }
         let own = match &r.or {
-            Some((c2, m)) => format!("if bit(&{}, c) {{ c + {} }} else {{ c + {} }}", self.val(c2)?, m - 1, r.bytes - 1),
-            None => format!("c + {}", r.bytes - 1),
+            Some((c2, m)) if *m != r.bytes => format!("if bit(&{}, c) {{ c + {} }} else {{ c + {} }}", self.val(c2)?, m - 1, r.bytes - 1),
+            Some(_) | None => format!("c + {}", r.bytes - 1),
         };
         Ok(if out.is_empty() { own } else { format!("{out}{{ {own} }}") })
     }

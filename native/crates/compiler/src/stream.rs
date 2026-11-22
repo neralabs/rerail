@@ -401,6 +401,11 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     let late = records.filter(|r| r.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2)).map(|r| (r, crate::records::WordTable::new(&r.words).expect("verified: the words fit a table")));
 
     let mut parts: std::collections::VecDeque<(u32, u32, u32)> = std::collections::VecDeque::new();
+    // Tier 1's records a template left open (decision 0600): a string's, whose parts go on at the
+    // next opener of a reader that resumes it (`Reader::resumes`, the template's `}`), past the
+    // records of the template's code, as the lean parser reads a string's template.
+    let mut strings = 0usize;
+    let resumers: Vec<u16> = records.map(|r| r.readers.iter().filter(|rd| rd.resumes).flat_map(|rd| rd.arms.iter().map(|a| a.opener)).collect()).unwrap_or_default();
     let block = program.block_programs.first();
     let mask_bit = |m: u16, at: u32| -> bool {
         block.is_some_and(|b| {
@@ -476,20 +481,35 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                         (start, end, rec_end, code) = (s, s, l + 1, c);
                         break;
                     }
-                    if next == starts.len().min(lasts.len()) {
-                        at_end = true;
-                        break;
+                    let count = starts.len().min(lasts.len());
+                    // The string's parts go on at its template's `}`, where it comes before the
+                    // next record.
+                    let resume = if strings == 0 { None } else { resumers.iter().filter_map(|&o| crate::records::first_bit(&tier1.outputs, o, rec_end as usize)).min().filter(|&p| next == count || (p as u32) < starts[next]) };
+                    if let Some(p) = resume {
+                        (start, end, rec_end, code) = (p as u32, p as u32, p as u32 + 2, 0);
+                    } else {
+                        if next == count {
+                            at_end = true;
+                            break;
+                        }
+                        (start, end) = (starts[next], starts[next]);
+                        rec_end = lasts[next] + 1;
+                        code = tier1.codes.get(next).copied().unwrap_or(0);
+                        next += 1;
                     }
-                    (start, end) = (starts[next], starts[next]);
-                    rec_end = lasts[next] + 1;
-                    code = tier1.codes.get(next).copied().unwrap_or(0);
-                    next += 1;
                     if let Some((r, rd, table)) = late.as_ref().and_then(|(r, t)| Some((*r, split_reader(r, bytes.get(start as usize).copied()?)?, t))) {
                         let opens = rd.arms.first().is_some_and(|a| tier1.outputs.get(usize::from(a.opener)).and_then(|w| w.get(start as usize / 64)).is_some_and(|w| w >> (start % 64) & 1 == 1));
                         if opens && rec_end > start + 1 {
                             let Some(tokens) = crate::records::read_parts(rd, start as usize, &tier1.outputs) else {
                                 return refuse!(pc - 1, "a region with no closer");
                             };
+                            // Closed at a template: the string's record open over its code.
+                            let template = tokens.last().is_some_and(|&(c, _)| rd.arms.iter().any(|a| a.template.is_some_and(|t| crate::records::first_bit(&tier1.outputs, t, c) == Some(c))));
+                            if rd.resumes && !template {
+                                strings = strings.saturating_sub(1);
+                            } else if !rd.resumes && template {
+                                strings += 1;
+                            }
                             let (s, l): (Vec<u32>, Vec<u32>) = tokens.iter().map(|&(a, b)| (a as u32, b as u32)).unzip();
                             let (codes, _) = crate::records::pass(r, table, bytes, &s, &l, &tier1.outputs);
                             parts.extend(s.iter().zip(&l).zip(&codes).map(|((&a, &b), &c)| (a, b, c)));

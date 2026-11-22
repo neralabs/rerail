@@ -804,7 +804,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
                     _ => None,
                 };
-                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false });
+                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false, resumes: false });
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
@@ -831,16 +831,17 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     "end" => crate::records::ReadNone::End,
                     w => crate::records::ReadNone::Bytes(w.strip_prefix("bytes").and_then(|m| m.parse().ok()).ok_or(format!("block {at} recarm: `refuse`, `end` or `bytesM`, not {w}"))?),
                 };
-                let (mut retag, mut last) = (None, None);
+                let (mut retag, mut last, mut template) = (None, None, None);
                 while let Ok(w) = line.word() {
                     match w.as_str() {
                         "retag" => retag = Some((line.number("")?, line.number("")?)),
                         "last" => last = Some(line.number("")?),
-                        w => return Err(format!("block {at} recarm: `retag` or `last`, not {w}")),
+                        "template" => template = Some(line.number("")?),
+                        w => return Err(format!("block {at} recarm: `retag`, `last` or `template`, not {w}")),
                     }
                 }
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recarm {k}: no such reader"))?;
-                rd.arms.push(crate::records::ReadArm { opener, closer, off, last, none, retag });
+                rd.arms.push(crate::records::ReadArm { opener, closer, off, last, none, retag, template });
             } else if first == "recpart" {
                 // `recpart K START BYTES [last O] [kind K]`: a part of reader K's region (`Reader::parts`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recpart before its records"))?;
@@ -868,6 +869,11 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let k: usize = line.number("")?;
                 let (b, kind): (u8, u8) = (line.number("")?, line.number("")?);
                 r.readers.get_mut(k).ok_or(format!("block {at} recclose {k}: no such reader"))?.closers.push((b, kind));
+            } else if first == "recresumes" {
+                // `recresumes K`: reader K's regions resume a token's (`Reader::resumes`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recresumes before its records"))?;
+                let k: usize = line.number("")?;
+                r.readers.get_mut(k).ok_or(format!("block {at} recresumes {k}: no such reader"))?.resumes = true;
             } else if first == "recquiet" {
                 // `recquiet K`: reader K's region holds no mask mark (`Reader::quiet`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recquiet before its records"))?;

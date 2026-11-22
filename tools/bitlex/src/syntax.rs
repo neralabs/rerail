@@ -429,6 +429,12 @@ pub struct Region {
     /// code, closed at its own closer, leaves it so. Such a kind has no `else` and no `outside`;
     /// the kinds it names have an `or`.
     pub after: Vec<String>,
+    /// `resumes K …` in place of `after K …`: the same openers, and the region is the rest of
+    /// the token whose region its template closed, as the lean lexer reads a string with its
+    /// templates as one token (decision 0600). Its reader's read makes no record of its own: it
+    /// ends that token's record, or, closed at its own second closer, leaves it open over the
+    /// next template's code. Tier 2 reads the template's code's records inside the string's.
+    pub resumes: bool,
 }
 
 impl Regions {
@@ -1648,18 +1654,19 @@ impl P {
                 None
             };
             let mut after = Vec::new();
-            if self.eat_kw("after") {
+            let resumes = self.eat_kw("resumes");
+            if resumes || self.eat_kw("after") {
                 while matches!(self.peek(), Some(Tok::Ident(_))) {
                     after.push(self.ident()?);
                 }
                 if after.is_empty() || outside || empty.is_some() {
-                    return self.err("`after` and the kinds it names, on a kind with no `outside` or `else`");
+                    return self.err("`after` or `resumes` and the kinds it names, on a kind with no `outside` or `else`");
                 }
             }
             if !(1..=3).contains(&bytes) || (outside && bytes != 1) || (outside && or.is_some()) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
                 return self.err("a closer of 1 to 3 bytes (`outside`: 1, and no `or`), an `else` of 1 to 3");
             }
-            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after });
+            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes });
             self.nls();
         }
         if kinds.is_empty() {

@@ -99,7 +99,7 @@ regions hidden {
   str   = dq & ~dq3 .. dq_close or t_dollar
   chr   = sq .. sq_close
   tick  = bt .. bt
-  tail  = t_close .. dq_close | t_dollar after str
+  tail  = t_close .. dq_close or t_dollar after str
   rtail = t_close .. rclose bytes 3 or t_dollar after rstr
 }
 # Where a token in a region starts: a string's, a character's or a backtick name's opener.
