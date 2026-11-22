@@ -1927,13 +1927,15 @@ pub fn lex(src: &[u8]) -> Lexed {
     // `o_chr` for tier 2, written over each region token.
     let mut fw_o_chr = vec![0u64; nw];
     while let Some(s) = first_clear(&m_ws, at, n) {
+        // Whether `m_lf` holds in the gap before the token.
+        let gap_m_lf = s > at && any_in(&m_lf, at, s - 1);
         // `fill(prev(code & semicolon), solid)`: at the byte before the token.
         let fs_2 = fill_2 || (s > at && xl_2);
         let xs_2 = s == at && xl_2;
         // Over the gap.
         let fgap_2 = fill_2 || xl_2;
         // `fill(lf & code, solid)`: at the byte before the token.
-        let fs_3 = fill_3 || (s > at && any_in(&m_lf, at, s - 1));
+        let fs_3 = fill_3 || (gap_m_lf);
         // `fill(prev(as_kw, 2), ~(code & (((word | dot) | text(" ")) | text("?"))))`: at the byte before the token.
         let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t44, at))) && !any_in(&t44, at + 1, s - 1) } else { fill_4 };
         let xs_4 = s == at && xl_4;
@@ -1979,19 +1981,19 @@ pub fn lex(src: &[u8]) -> Lexed {
         if matches!(open, 0 | 1 | 2 | 3 | 4 | 5) {
             plain = open;
         }
-        // The skipped bytes before the token, for the gap masks.
-        if s > at && any_in(&m_lf, at, s - 1) {
+        // The skipped bytes before the token, for the gap masks (none where there are none).
+        if gap_m_lf {
             acc_0 = true;
             rec_0 = true;
         }
-        // The skipped bytes before the token, for the gap masks.
-        if s > at && (!fgap_2 && any_in(&m_lf, at, s - 1)) {
+        // The skipped bytes before the token, for the gap masks (none where there are none).
+        if (!fgap_2 && gap_m_lf) {
             acc_1 = true;
             rec_1 = true;
         }
         let here_1 = ((open == usize::MAX && bit(&m_rbrace, s)) && fs_2 || xs_2);
-        // The skipped bytes before the token, for the gap masks.
-        if s > at && any_in(&m_ws, at, s - 1) {
+        // The skipped bytes before the token, for the gap masks (none where there are none).
+        if s > at {
             acc_2 = true;
         }
         let here_2 = (open == 0 || open == 1);
