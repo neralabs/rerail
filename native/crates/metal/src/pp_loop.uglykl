@@ -1054,6 +1054,34 @@ UKL_INLINE void lp_overruns(PP_GLOBAL const uint32_t* ovr, PP_GLOBAL const uint3
     if (s < n_toks[0] && ovr[s] != 0u) at[xat[s]] = s;
 }
 
+// The next `k` tokens of the span on top, plain (the group's look ahead, `lp_ahead`): emitted, or
+// pushed onto the argument being expanded, as `k` steps would. Its tokens past the first are
+// flagless and next in their source: after two emitted (three pushed) the piece out (the span on
+// top) ends at the next one and is flagless too, so each of the rest would grow it by one.
+UKL_INLINE bool lp_plain_run(UKL_PRIVATE LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar a, uint32_t k) {
+    UKL_PRIVATE LpFrame* f = &r->fr[(r->sp - 1u) & (LP_DEPTH - 1u)];
+    uint32_t n = ukl_min(k, r->nc == 0u ? 2u : 3u);
+    for (uint32_t i = 0u; i < n; i++) {
+        LpTok t = lp_frame_tok(r, a, *f, f->at);
+        if (f->nsp != 0u) { t.flags = f->nsp; f->nsp = 0u; }
+        f->at++;
+        if (r->nc == 0u) lp_emit(o, u, t);
+        else if (!lp_push(r, a, 1u, r->calls[(r->nc - 1u) & (LP_CALLS - 1u)].ocur, t)) return false;
+    }
+    uint32_t rest = k - n;
+    if (rest != 0u) {
+        f->at += rest;
+        if (r->nc == 0u) {
+            o->len += rest; o->nv += rest;
+        } else {
+            uint32_t x = r->mem[1].top - 1u;
+            LpTok l = lp_get(r, a, 1u, x);
+            l.flags += 16u * rest;
+            lp_put(r, a, 1u, x, l);
+        }
+    }
+    return true;
+}
 // One lane's look ahead (`lp_run`): whether token `p` of span `def` is plain, its name no macro
 // visible at `slot` (nor popped there). A walk past its rows is not plain: the step refuses it.
 UKL_INLINE bool lp_ahead(Ux u, Ar a, uint32_t def, uint32_t p, uint32_t slot, uint32_t floor) {
@@ -1116,8 +1144,14 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     if (at >= e && (at >= re || start[at] != 0u) && lp_at_top(&r)) { ee = at; break; }
                     if (r.sp == 1u) { r.mem[0].top = 0u; r.mem[1].top = 0u; r.mem[2].top = 0u; }
                 }
-                // A span next, its tokens not looked ahead: the group looks.
-                if (r.run == 0u && !r.noask) {
+                // A run of plain tokens the group found, one step; a span next, not looked ahead: the group looks.
+                if (r.run != 0u) {
+                    uint32_t k = r.run;
+                    r.run = 0u;
+                    if (!lp_plain_run(&r, &o, u, a, k)) break;
+                    continue;
+                }
+                if (!r.noask) {
                     UKL_PRIVATE LpFrame* f = &r.fr[(r.sp - 1u) & (LP_DEPTH - 1u)];
                     if (f->kind == FK_SPAN && f->at + 1u < f->end) {
                         ask = true; q_def = f->def; q_at = f->at; q_end = ukl_min(f->end, f->at + UKL_SIMD_WIDTH);
@@ -1126,8 +1160,6 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     }
                 }
                 r.noask = false;
-                bool known = r.run != 0u;
-                if (known) r.run--;
                 LpTok t; bool at_stop = false;
                 if (!lp_lex(&r, a, obase, write, o.vbase + o.nv, &t, &at_stop)) {
                     if (!at_stop) break;
@@ -1154,7 +1186,7 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                         r.raw = 1u;
                     }
                 }
-                if ((t.flags & T_NOEXP) == 0u && !raw && !known) {
+                if ((t.flags & T_NOEXP) == 0u && !raw) {
                     if (r.sp == 1u) {
                         m = lookups[t.st];
                     } else {
