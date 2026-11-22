@@ -526,7 +526,7 @@ pub(super) fn select(
     let started = std::time::Instant::now();
     let mut outputs = match device {
         Device::Cpu => evaluate(&program, &space, leaves),
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Device::Metal => evaluate_metal(&program, &space, &leaves)?,
     };
     crate::code_rule_dsl::prof::peak("2a2.evaluated");
@@ -544,7 +544,7 @@ pub(super) fn select(
     let candidates = outputs.iter().map(NodeSet::len).collect::<Vec<_>>();
     let backend = match device {
         Device::Cpu => "cpu",
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Device::Metal => "metal",
     };
     store.candidate_transaction(true, |db| super::gates::observe(db, &gated, &candidates, space.len(), backend, ns_per_plan))?;
@@ -555,7 +555,7 @@ pub(super) fn select(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) enum Device {
     Cpu,
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     Metal,
 }
 
@@ -632,7 +632,7 @@ fn evaluate(program: &Program, space: &NodeSpace, mut leaves: HashMap<usize, Nod
 
 /// The program's outputs, its operations as Metal set steps: a slot per operation, the leaves
 /// written in theirs (`set_steps`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn evaluate_metal(program: &Program, space: &NodeSpace, leaves: &HashMap<usize, NodeSet>) -> StoreResult<Vec<NodeSet>> {
     use crate::code_rule_dsl::transducer::packed::set_steps::{self, SetStep};
     let slot = |id: usize| id as u32;

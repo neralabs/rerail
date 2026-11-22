@@ -103,7 +103,7 @@ pub const VIEW_DEPTH: u32 = 11;
 pub const VIEW_ORDER: u32 = 12;
 
 /// The views' reads' views (`rerail_clif::view_reads::VIEWS`): a directory's document has its first row in each.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 const NVIEWS: usize = rerail_clif::view_reads::VIEWS.len();
 
 /// A view's number in the views' reads (`vread`'s `kind`: 1 + its place in `rerail_clif::view_reads::VIEWS`), of its
@@ -159,7 +159,7 @@ pub struct Chunk {
 /// A batch's documents as the views' reads find them on the device (decision 0353 step 4d, `ViewDir`): each one's
 /// entry, beside its projection's numbering in the batch's block, and its tape where it lies in its slab. A stage
 /// reads a view through them; nothing makes the view's rows.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub struct ViewsInPlace {
     /// The directory's offset in the batch's block (`ViewDir::at`): every executor's reads take it there, the host's at
     /// the block's host address, the device's at its device address.
@@ -181,13 +181,16 @@ pub struct ViewsInPlace {
     /// 16z.
     /// Each batch's, a layered source's (`views_over`) one for each of its batches that has one.
     pub caches: Vec<crate::code_rule_dsl::facts::vtab::ZCache>,
+    /// The tape format of every document read off its tape (15, 16, `F16Z_FORMAT`), or 0 for a batch of several: the
+    /// stages that read its views are compiled for it (decision 0576).
+    pub format: u32,
 }
 
 
 /// The batch's views' directory as the device reads it (`ViewsInPlace`), made on its first ask, with or without a
 /// device: `None` when a document is in another block or has no tape read in place. Where the device reads it is
 /// `ViewsInPlace::dir`.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn views_in_place(batch: &Batch) -> Option<&ViewsInPlace> {
     batch.views.get_or_init(|| build_views(batch)).as_ref()
 }
@@ -195,7 +198,7 @@ pub fn views_in_place(batch: &Batch) -> Option<&ViewsInPlace> {
 /// The batch's own directory (`made::directory`, its first rows `Batch::firsts`), each document's row of its reads
 /// layer written (`Docs::reads`, the host's reads' rows), with what the device needs to read them: whether it reads
 /// every tape, lines and `Loc` row where they lie, and the buffers those lie in.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
     let device = crate::code_rule_dsl::tape::placed::device();
@@ -203,10 +206,14 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
     batch.firsts(View::Node);
     // The batch's 16z blocks and its largest entry, which its cache is made for (where no row made it first).
     let (mut zblocks, mut zentry) = (0usize, 0usize);
+    // And the documents' one tape format, 0 for several (decision 0576), of those with nodes.
+    let mut format: Option<u32> = None;
     for p in docs.iter() {
-        if let Some(Ok((_, view))) = p.facts.tape.as_ref().map(|t| t.in_place())
-            && view.format == rerail_clif::view::F16Z_FORMAT
-        {
+        let Some(Ok((_, view))) = p.facts.tape.as_ref().map(|t| t.in_place()) else { continue };
+        if p.len() > 0 {
+            format = Some(same_format(format, view.format));
+        }
+        if view.format == rerail_clif::view::F16Z_FORMAT {
             zblocks += (view.nodes as usize).div_ceil(rerail_clif::view::F16Z_BLOCK as usize);
             zentry = zentry.max(view.columns[3] as usize);
         }
@@ -254,7 +261,17 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
     }
     let lines = lines && dir_on_device.is_some();
     let locs = locs && dir_on_device.is_some();
-    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, caches: cache.into_iter().collect() })
+    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, caches: cache.into_iter().collect(), format: format.unwrap_or(0) })
+}
+
+/// The one format of `so_far` and `next`, or 0 for several (decision 0576).
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+fn same_format(so_far: Option<u32>, next: u32) -> u32 {
+    match so_far {
+        None => next,
+        Some(f) if f == next => f,
+        Some(_) => 0,
+    }
 }
 
 /// The views' directory of a chunk's batch and the tape values admitted inside its fixpoint (decision 0431 §8,
@@ -263,7 +280,7 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
 /// (`views_in_place`: `Docs::reads`, the host's reads' rows), once; this directory names them, each row's first rows
 /// past the batches before it and its homes among theirs, and each batch's 16z cache its own (decision 0353 step 4).
 /// Every batch is in the chunk's block: `None` where one is not, or a batch's directory is refused.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> {
     use rerail_clif::view_reads::{ROWS, ViewDir, ViewHome, ViewRow};
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
@@ -330,7 +347,9 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
     let lines = dir_on_device.is_some() && own.iter().all(|o| o.lines);
     let locs = dir_on_device.is_some() && own.iter().all(|o| o.locs);
     let caches = own.iter().flat_map(|o| o.caches.iter().cloned()).collect();
-    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, caches })
+    // The batches' one format, else 0, which the stages read whatever the format (decision 0576).
+    let format = own.iter().map(|o| o.format).reduce(|a, b| same_format(Some(a), b)).unwrap_or(0);
+    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, caches, format })
 }
 
 /// Copies `src` into the block and points `span` at it.

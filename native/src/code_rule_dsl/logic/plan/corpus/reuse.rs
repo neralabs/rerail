@@ -277,11 +277,13 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 /// The kept outputs written into `out`, when every read of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
-    if crate::git_workspace::snapshot::contains(root) || super::ThreadStore::owner(root).is_some_and(|owner| owner.is_staged()) {
-        // A scoped run must publish its ownership after the run, including after
-        // a scope deletion. Its relation and document caches are independent.
+    if crate::git_workspace::snapshot::contains(root) {
         return Ok(None);
     }
+    // A run an analysis run owns (decision 0547) publishes what it recorded as the owner finishes: a hit re-owns the
+    // manifests the recorded run wrote (`own_recorded_manifests`), below. Skipped instead, every `logic` command's
+    // warm run evaluated again (each begins an analysis run).
+    let owner = super::ThreadStore::owner(root).filter(|owner| owner.is_staged());
     let programs = given.programs;
     let checking = super::thread_usage();
     let key = key(given, &settings(root, options)?, root, options, modes, typing);
@@ -333,6 +335,17 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     if !unchanged(programs, &given.graphs, given.read, root, typing, options, &rest, summary)? {
         miss("a consulted file or read changed");
         return Ok(None);
+    }
+    if let Some(owner) = &owner {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        let owned = crate::code_rule_dsl::logic::profile::around_the_run(|| -> Result<usize> {
+            let Some(store) = super::tape_cache().map_err(|e| Error::Plan(format!("the tape cache: {e}")))? else { return Ok(0) };
+            store.own_recorded_manifests(&super::manifest_root(root), &plans, owner, now).map_err(|e| Error::Plan(format!("the recorded run's manifests: {e}")))
+        })?;
+        if owned == 0 {
+            miss("the recorded run's manifests are gone, or its owner may no longer publish");
+            return Ok(None);
+        }
     }
     crate::code_rule_dsl::logic::profile::decision("whole-run cutoff (t23 §4)", || "every read as it was: the kept outputs written, nothing evaluated".into());
     if captured.is_none() { crate::content_store::prepare_cache_directory(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?; }

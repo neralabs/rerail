@@ -363,7 +363,10 @@ impl AtomsW {
             use std::io::{Seek, Write};
             let Some(mut f) = self.file.as_ref() else { return Ok(()) };
             f.seek(io::SeekFrom::Start(0))?;
-            f.write_all(self.block.bytes(0, self.block.used()))?;
+            let bytes = self.block.bytes(0, self.block.used());
+            // The kernel reads and writes a reservation's pages without faulting them in (Windows: `crate::windows`).
+            crate::mem::commit(bytes.as_ptr().cast_mut(), bytes.len())?;
+            f.write_all(bytes)?;
             if self.flush.waits() { f.sync_data() } else { Ok(()) }
         }
     }
@@ -382,13 +385,14 @@ impl AtomsW {
             std::ptr::write_volatile(&mut h.state, FROZEN);
         }
         self.sync()?;
-        // On Windows once the block's last view goes, if no reader's maps the file then (`truncate_file`); its tail
-        // takes no disk meanwhile, the file being sparse.
+        // The file cut once this writer's view is gone: Windows cuts no file a view maps (`block::cut`).
         #[cfg(any(unix, windows))]
-        self.block.truncate_file(len)?;
-        // Frozen: read-only on disk too (`mapped`).
-        #[cfg(any(unix, windows))]
-        self.block.mark_file_frozen()?;
+        if let Some(f) = self.block.mapped_file().map(std::fs::File::try_clone).transpose()? {
+            drop(self);
+            crate::block::cut(&f, len)?;
+            // Frozen: read-only on disk too (`mapped`, decision 0574).
+            crate::mapped::mark_frozen(&f)?;
+        }
         #[cfg(not(any(unix, windows)))]
         if let Some(f) = &self.file {
             f.set_len(len)?;
@@ -761,13 +765,19 @@ mod tests {
         for (s, id) in [("a", 0), ("b", 1), ("c", 2)] {
             assert_eq!(again.find(s, h(s)), Some(id));
         }
-        // Frozen: the file shrinks to what it holds, and still reads. (Windows truncates it once no view maps it.)
+        // (Windows cuts no file a view maps: the readers' views go first.)
         drop((v, old));
+        // Frozen: the file is what it holds, and still reads. A mapped file (Unix, Windows) is the whole reservation
+        // until then, so it shrinks; elsewhere the file was written only to the block's end (`sync`).
         again.sync().unwrap();
         let before = std::fs::metadata(&path).unwrap().len();
         again.freeze().unwrap();
-        assert!(std::fs::metadata(&path).unwrap().len() < before);
+        let after = std::fs::metadata(&path).unwrap().len();
         let frozen = AtomsV::open(&path, 4).unwrap();
+        assert_eq!(after, frozen._block.header().length, "the frozen file is its header's length");
+        #[cfg(any(unix, windows))]
+        assert!(after < before, "the mapping's unwritten tail is given back");
+        let _ = before;
         assert_eq!(frozen.find("e", h("e")), Some(3));
         assert_eq!(frozen.str(0), Some("a"));
         assert!(AtomsW::reopen(&path, 4, Flush::Synced).is_err(), "a frozen block takes no appends");

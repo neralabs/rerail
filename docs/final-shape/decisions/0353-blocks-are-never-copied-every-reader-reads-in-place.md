@@ -715,12 +715,12 @@ Each step ends with:
      strata refused at run time 2, 2 and 2 against 22, 10 and 5; peak 817–928 MB against 831–1,023 MB; instructions
      106.1–113.0 B against 103.1–108.2 B; findings 1,629, and 1,629 in format 15.
    - A second build of the same (benchmarks-on-integration, cd091ab09 and ec0835fc7, 2026-11-19: ids written from
-     the solve's pairs on its first whole read) was superseded by this one when the branches merged; its tests are
-     kept on this one (`syntax::tests::a_solved_axis_is_one_relation_of_ids_in_a_block`, and the device's read in
-     place in `device::tests::views_made_on_the_device_are_the_hosts_rows`). Measured on the bench's full shape (the
-     M3, a 512 MB budget, Q203 (c)): the residency's made views, 142 MB of 511 at a refusal, gone; refusals 21–68 a
-     run against 44–88; 463 violations in each. Without index room each device index copied the relation whole
-     (`DevIndex::moved`, 16 MB at a refusal), as this one's `with_index_room` avoids.
+     the solve's pairs on its first whole read) was superseded by this one when the branches merged; its device
+     test is kept on this one (`device::tests::views_made_on_the_device_are_the_hosts_rows`, the device's read in
+     place). Measured on the bench's full shape (the M3, a 512 MB budget, Q203 (c)): the residency's made views,
+     142 MB of 511 at a refusal, gone; refusals 21–68 a run against 44–88; 463 violations in each. Without index
+     room each device index copied the relation whole (`DevIndex::moved`, 16 MB at a refusal), as this one's
+     `with_index_room` avoids.
 6. **The executors write and index in place.**
    - The CPU's head rows are claimed and written in the relation's block, as the device's are (0325 step 4). A
      round's new rows are the relation's delta range; `Fresh`'s staging and merge go.

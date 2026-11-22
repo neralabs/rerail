@@ -121,7 +121,7 @@ fn row_programs_are_verified_and_digested() {
 /// On Metal, over the 16-bit layout (`metal_rows`): node columns in a few documents (each a chunk
 /// or more), a number column, comparisons of two node columns of a row's chunk, a node column
 /// against parameters in and out of its chunk, and documents: the interpreter's rows.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn a_row_program_scans_rows_on_metal_in_the_16_bit_layout() {
     use super::metal_rows::{Form, Input, Resident, scan};

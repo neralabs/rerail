@@ -1636,6 +1636,42 @@ fn a_chains_use_is_flat_in_its_length() {
     assert!(flat, "a store's use grows with the chain's length (above)");
 }
 
+/// Decision 0527 §2: a pause gives back a done call's span through its exits' chain, to the
+/// chain's last `)` (its exits' calls' sums by pointer doubling over the lists, not a walk). Each
+/// level of a chain has a done call beside its pending one whose exits chain two deep in the
+/// level's list (`F2(s)(s)(...)`: `F2` gives `G2`, whose call gives `H2`), the last's arguments
+/// 31 pieces. A level adds 64 tokens (its expansion, which the output holds); stopping at the
+/// first exit's `)` would keep the last's arguments too (96 a level), so the bound is 80.
+#[test]
+fn a_done_calls_exits_are_given_back_to_their_last() {
+    // SAFETY: as `a_chains_use_is_flat_in_its_length`.
+    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
+    use rerail_metal::pp_expand::ROOM_STORES;
+    let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
+    let last = (0..16).map(|_| "s").collect::<Vec<_>>().join(" a ");
+    let chain = |levels: usize| {
+        let mut t = String::from("#define L0(s) [s]\n#define F2(x) x G2\n#define G2(x) x H2\n#define H2(x) x\n");
+        for k in 1..=levels {
+            t += &format!("#define L{k}(s) F2(s)(s)({last}) a L{}(s) b\n", k - 1);
+        }
+        t += &format!("L{levels}({state})\nend\n");
+        t
+    };
+    let tokens = ROOM_STORES.iter().position(|s| *s == "tokens").unwrap();
+    let uses: Vec<u32> = [16usize, 48]
+        .iter()
+        .map(|&n| {
+            let text = chain(n);
+            let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+            let got = got.unwrap_or_else(|why| panic!("{n} levels: refused {why}"));
+            same(show(&got), show(&want), "a chain of exits beside it");
+            room[tokens].0
+        })
+        .collect();
+    eprintln!("tokens: {} {}", uses[0], uses[1]);
+    assert!(uses[1] <= uses[0] + 80 * 32, "the tokens grow {} a level", (uses[1] - uses[0]) / 32);
+}
+
 /// A unit expanded with its run's own figures (`expanded_x`): its output spelled, or its refusal bits; the serial
 /// pass's output; each room's use.
 type RoomsRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS]);

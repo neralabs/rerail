@@ -51,14 +51,14 @@ pub trait RowCells: Send+Sync {
 pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
 /// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub struct DeviceView<'a> {
     pub block: &'a rerail_blocks::Block,
     pub root: usize,
     pub view: u32,
     pub rows: usize,
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub in_place: Option<ViewInPlace>,
     /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0478 step
     /// 3, R4): made once by the source, which holds it (its batch's life), so every stratum on any thread finds them.
@@ -72,7 +72,7 @@ pub struct DeviceView<'a> {
 /// A 16z batch's views read their blocks through its cache (`caches`, decision 0353 step 4b), which its reads write:
 /// a stage that reads the view is refused when the caches' failures rise past `failed` (no room found). A layered
 /// source's view reads each of its batches' caches.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[derive(Clone)]
 pub struct ViewInPlace {
     pub dir: u64,
@@ -80,6 +80,8 @@ pub struct ViewInPlace {
     pub buffers: Vec<rerail_device::device::Buffer>,
     pub caches: Vec<ZCache>,
     pub failed: u32,
+    /// Its batch's tape format (`ViewsInPlace::format`; 0: several), which the stages reading it are compiled for.
+    pub format: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }
 
@@ -98,7 +100,7 @@ pub struct ZCache {
 
 /// A `has` axis read off the tape (`Source::has_walk`): its batch's `node` view in place, of `nodes` rows, through which
 /// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub struct HasWalk {
     pub nodes: usize,
     pub view: ViewInPlace,
@@ -113,7 +115,7 @@ impl ZCache {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl ViewInPlace {
     /// Its batches' caches' counts (none without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
     pub fn cache_counts(&self) -> Vec<rerail_clif::view::cache::Counts> {
@@ -291,13 +293,13 @@ pub trait Source: Send + Sync {
     }
     /// A `has` axis the device reads off the tape (decision 0353 step 5): a stage probes it by one column, each
     /// binding's rows walked there (`metal_join::Batch::by_has`). `None` for any other source.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn has_walk(&self) -> Option<HasWalk> {
         None
     }
     /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
     /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         None
     }

@@ -166,7 +166,7 @@ pub struct CompiledPp {
     pub code_bytes: Vec<usize>,
     /// Each word's CLIF instructions in the run's function.
     pub word_insts: Vec<usize>,
-    /// Each function's IR as Cranelift was given it, by its id, where asked for (`rust_source`).
+    /// Each function's IR as Cranelift was given it, by its id, where asked for (`disassemble`).
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     /// The run's function's id.
     pub run_id: u32,
@@ -274,7 +274,7 @@ impl Lower<'_, '_> {
 
     /// To `cases`' block whose key `x` is (the keys rising, small), else to `default`: a jump
     /// table. Cranelift's code has it as a tree of compares
-    /// (`native_cpu_codegen::switch_trees`, its jump tables' barrier); `clif_rust`'s keeps
+    /// (`native_cpu_codegen::switch_trees`, its jump tables' barrier);
     /// the table. Ends the current block.
     fn switch(&mut self, x: Value, cases: &[(u64, Block)], default: Block) {
         debug_assert!(cases.windows(2).all(|w| w[0].0 < w[1].0));
@@ -6674,6 +6674,7 @@ pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
     compile_kept(program, false)
 }
 
+/// **Deprecated** (decision 0550): `rerail-pp-aot`'s source, through `clif_rust`.
 /// The compiled words' IR as Rust (`clif_rust`): the same functions, compiled by
 /// rustc and LLVM ahead of time. Its entry is `pp_run`, run by `run_aot`; it ends with its
 /// fingerprint, `SOURCE`, so a build runs it only where the words translate to it again.
@@ -6725,7 +6726,7 @@ pub unsafe fn run_aot(entry: unsafe extern "C" fn(u64) -> u64, program: &Words, 
 }
 
 /// The compiled words, their IR and machine code kept (`ir`, `disasm`): to read
-/// Cranelift's code beside rustc's of the same IR (`rust_source`).
+/// Cranelift's code.
 pub fn disassemble(program: &Words) -> Result<CompiledPp, Error> {
     compile_kept(program, true)
 }

@@ -5,6 +5,23 @@
 //! `crate::git_workspace`), so no caller changed. What the store needs of the engine, the engine hands it as
 //! it loads: the SQL functions every connection gets ([`content_store::set_connection_functions`]).
 
+// The store's files name the trait below as `rerail_store::Canonical`, as every crate that compiles them does.
+extern crate self as rerail_store;
+
+/// A path's canonical name: absolute, its links resolved, and the one name the engine gives it on every system. On
+/// Windows that is the drive's name (`C:\a\b`), not the verbatim one std's `canonicalize` returns (`\\?\C:\a\b`), in
+/// which `/` is no separator and which compares unequal to the drive's (`dunce`). Elsewhere it is std's. The engine's
+/// and the store's every canonical path (`.canonical()`, not `.canonicalize()`), of anything that names a path.
+pub trait Canonical {
+    fn canonical(&self) -> std::io::Result<std::path::PathBuf>;
+}
+
+impl<P: AsRef<std::path::Path> + ?Sized> Canonical for P {
+    fn canonical(&self) -> std::io::Result<std::path::PathBuf> {
+        dunce::canonicalize(self)
+    }
+}
+
 #[path = "../../../src/content_store/mod.rs"]
 pub mod content_store;
 /// Every in-process Git read: the one opener, its setup and its pool (`native/src/git_access`). Its Node-API
@@ -19,3 +36,9 @@ pub mod source_tree;
 /// A regex's literal probe (the prefilter's; the store's vocabulary uses it too).
 #[path = "../../../src/code_rule_dsl/prefilter/probes.rs"]
 pub mod probes;
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

@@ -22,5 +22,5 @@ impl Decision {
         }
     }
 }
-#[cfg(test)]
-pub mod tests;
+// Its tests read the whole language (`logic::rr::parse_version`): `rerail-logic`'s facade of this module mounts
+// `tests.rs`.

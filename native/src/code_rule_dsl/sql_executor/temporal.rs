@@ -43,7 +43,7 @@ impl Relation {
     fn aggregate(&self, value: &str) -> String {
         match &self.ops {
             Some(ops) => format!("{}({value})", ops.aggregate),
-            None => crate::code_rule_dsl::logic::sql::lattices::flat_aggregate(value, self.top),
+            None => crate::code_rule_dsl::logic::native::lattices::flat_aggregate(value, self.top),
         }
     }
     fn merge(&self, old: &str, new: &str) -> String {

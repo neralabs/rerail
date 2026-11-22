@@ -1,3 +1,5 @@
+//! **Deprecated** (decision 0550): Rust from an intermediate form. A grammar's Rust is the Bitlex compiler's own (`bitlex_lex_rust`, `bitlex_rust`); no new use. Kept until Go-C-and-C-support and Parser-generators-final-shape remove theirs.
+//!
 //! The `.rerail` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
 //! from Rust the build script writes: tier 1's the JIT's own functions (their Cranelift IR,
 //! `clif_rust`); tier 2's the structured backend of the native IR (`rust_stream`), a function a
@@ -36,7 +38,9 @@ use rerail_compiler::native_ir;
 #[cfg(feature = "generated")]
 use rerail_cpu_block::native_cpu_block;
 #[cfg(feature = "generated")]
-use rerail_cpu_stream::{clif_rust, native_cpu_stream, rust_stream};
+use rerail_cpu_stream::{clif_rust, native_cpu_stream};
+#[cfg(feature = "generated")]
+use rerail_rust_stream::rust_stream;
 
 /// Which tiers run the ahead-of-time build.
 #[derive(Clone, Copy, Debug)]

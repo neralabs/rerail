@@ -1,5 +1,4 @@
-#[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use super::fs::{HeldFiles, View};
 use super::{ModuleType, Style, target};
 use std::path::{Path, PathBuf};

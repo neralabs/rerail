@@ -1083,10 +1083,24 @@ def windows_sync(src, dst, wenv):
     """Brings the Windows drive's copy `dst` up to the copy `src` here: the files changed since
     the last sync (size or time, from its manifest) in one tar stream to Windows' own tar, which
     writes them natively (WSL's mount wrote 13 files a second); the files gone, removed. A
-    `target` directory and `.git` stay out: the mirror's compile outputs, and no build reads them."""
-    import hashlib, tarfile
-    started = time.time()
+    `target` directory and `.git` stay out: the mirror's compile outputs, and no build reads them.
+
+    One sync of a copy at a time: two commands of one checkout share its copy when their files are
+    the same, and two tars writing one folder at once failed on Windows ("Can't unlink
+    already-existing object: Permission denied", one holding a file the other replaced). The
+    second waits, then finds the manifest current and sends nothing."""
+    import fcntl, hashlib
     manifest = os.path.join(FARM, "winsync", hashlib.sha256(dst.encode()).hexdigest()[:16] + ".json")
+    os.makedirs(os.path.dirname(manifest), exist_ok=True)
+    with open(manifest + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        windows_sync_held(src, dst, wenv, manifest)
+
+
+def windows_sync_held(src, dst, wenv, manifest):
+    """`windows_sync`'s work, with the copy's lock held."""
+    import tarfile
+    started = time.time()
     try:
         old = json.load(open(manifest))
     except (OSError, ValueError):

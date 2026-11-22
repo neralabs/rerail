@@ -269,18 +269,8 @@ pub fn emit_inputs(placed: super::body::Placed, db:&Connection, name:&str, count
     })
 }
 
-/// `source` (a program over batch inputs alone) as the wave program `name`: parsed, lowered (its
-/// names interned by `intern`) and emitted, with no statistics to read.
-pub fn emit_batch(
-    source: &str,
-    name: &str,
-    batch: &HashMap<String, (Source, f64)>,
-    intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
-) -> Result<Emitted> {
-    emit_program(crate::code_rule_dsl::logic::rr::parse_version(source)?, name, batch, intern)
-}
-
-/// `emit_batch` of a program already read (or built, as a wave's demand program is).
+/// A program over batch inputs alone (read by the caller, or built, as a wave's demand program is) as the wave program
+/// `name`: lowered (its names interned by `intern`) and emitted, with no statistics to read.
 pub fn emit_program(
     prog: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     name: &str,
@@ -397,4 +387,61 @@ pub fn outputs(
     let outputs: Vec<&str> = f.outputs().collect();
     let (outputs, nodes) = decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
     Ok((outputs.into_iter().map(|(rel, rows)| (rel, rows.shown())).collect(), nodes))
+}
+
+/// Arithmetic over a lattice's top stays top, including min's negative sentinel.
+pub fn transfers(
+    emitted: &mut Emitted,
+    lattices: &BTreeMap<String, (usize, i64)>,
+) {
+    use crate::code_rule_dsl::logic::sql::sql_ast::{
+        SqlBinaryOperator as B, SqlExpression as E, SqlValue as V,
+    };
+    for (step, query) in emitted.program.steps.iter().zip(&mut emitted.queries) {
+        let Some((_, top)) = lattices.get(&step.output) else {
+            continue;
+        };
+        let Some(query) = query else { continue };
+        let Some((value, _)) = query.body.columns.last() else {
+            continue;
+        };
+        let mut arithmetic = false;
+        let mut checks = Vec::new();
+        value.visit(&mut |e| match e {
+            E::Binary {
+                operator: B::Add | B::Subtract | B::Multiply | B::Divide,
+                ..
+            } => arithmetic = true,
+            E::Qualified { alias, column } => {
+                if let Some(item) = query.body.from.iter().find(|i| i.alias == *alias)
+                    && let Some(rel) = item.relation.program_relation()
+                    && let Some((col, source_top)) = lattices.get(rel)
+                    && *column == format!("c{col}")
+                {
+                    let check = E::Binary {
+                        operator: B::Equal,
+                        left: Box::new(e.clone()),
+                        right: Box::new(E::Value(V::Integer(*source_top))),
+                    };
+                    if !checks.contains(&check) {
+                        checks.push(check);
+                    }
+                }
+            }
+            _ => {}
+        });
+        if arithmetic
+            && let Some(check) = checks.into_iter().reduce(|a, b| E::Binary {
+                operator: B::Or,
+                left: Box::new(a),
+                right: Box::new(b),
+            })
+        {
+            let (value, _) = query.body.columns.last_mut().unwrap();
+            *value = E::Case {
+                branches: vec![(check, E::Value(V::Integer(*top)))],
+                fallback: Box::new(value.clone()),
+            };
+        }
+    }
 }

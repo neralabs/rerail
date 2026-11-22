@@ -160,21 +160,6 @@ pub fn shipped() -> Option<&'static Bundle> {
         .as_ref()
 }
 
-/// The store the run's rule images are kept in (decision 0264): the engine build's, shared by every project
-/// (`RERAIL_IMAGE_STORE`: a path, or `project` for the run's own store); a test's own store under test.
-pub fn store() -> Option<Arc<ContentStore>> {
-    let project = || crate::code_rule_dsl::logic::plan::corpus::phases::reading_store();
-    if cfg!(any(test, feature = "test-hooks")) {
-        return project();
-    }
-    let path = match std::env::var("RERAIL_IMAGE_STORE") {
-        Ok(v) if v == "project" => return project(),
-        Ok(v) => PathBuf::from(v),
-        Err(_) => crate::code_rule_dsl::logic::plan::corpus::build_store("rerail-images", None),
-    };
-    ContentStore::open_images(&path).ok().map(Arc::new)
-}
-
 /// The entry kept under `key` (a group of automata, a phase 0 graph: bytes their reader decodes, not a program image,
 /// which `read_image` reads in place): the shipped bundle's, else `store`'s, with its source there (for its lease).
 pub fn read(store: Option<&ContentStore>, key: HashKey) -> Option<(Cow<'static, [u8]>, Option<SourceId>)> {

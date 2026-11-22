@@ -441,7 +441,7 @@ impl Layer {
             batch.insert(name.clone(), (Source::positional(&table(name), &columns), 100.0));
         }
         let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
-        let mut emitted = emit::single(emit::emit_batch(FINDINGS, PROGRAM, &batch, intern).map_err(invalid)?, RELATION).map_err(invalid)?;
+        let mut emitted = emit::single(emit::emit_program(crate::code_rule_dsl::logic::rr::parse_version(FINDINGS).map_err(|e| invalid(e.to_string()))?, PROGRAM, &batch, intern).map_err(invalid)?, RELATION).map_err(invalid)?;
         emitted.program.partitions = vec![(RELATION.to_owned(), self.rules.clone())];
         Ok(emitted)
     }

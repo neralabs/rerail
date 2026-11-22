@@ -134,7 +134,7 @@ impl Held {
 
 /// Every export's rows, by relation.
 #[derive(Default)]
-pub(super) struct Exports {
+pub struct Exports {
     rels: BTreeMap<String, Held>,
 }
 
@@ -142,7 +142,7 @@ impl Exports {
     /// Adds the rows of `rows` (its first `width` columns) to export `rel`; how many were new. A relation the engine
     /// derived (`held_rows`) is read where it lies, its live rows not given before written once into the export's
     /// relation, as one batch's: nothing of the chunk's relation is kept. Other sources' rows are copied in.
-    pub(super) fn add(&mut self, rel: &str, width: usize, rows: &dyn Source) -> usize {
+    pub fn add(&mut self, rel: &str, width: usize, rows: &dyn Source) -> usize {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
         debug_assert!(held.source.is_none(), "export {rel} added to after the cross-file part read it");
         let start = held.len() as u32;
@@ -211,7 +211,7 @@ impl Exports {
     /// its own file), which no other file's rows hold, and no row is given twice. Rows that may be another file's
     /// too (a value document's, kept by each file that asked for it) go through `add`. A later `add` of a row of one
     /// of `documents` puts these in the set first, so a document that comes again is still kept once.
-    pub(super) fn append_own(&mut self, rel: &str, width: usize, at: usize, columns: Vec<Vec<i64>>, documents: impl IntoIterator<Item = i64>) -> usize {
+    pub fn append_own(&mut self, rel: &str, width: usize, at: usize, columns: Vec<Vec<i64>>, documents: impl IntoIterator<Item = i64>) -> usize {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
         debug_assert!(held.source.is_none(), "export {rel} added to after the cross-file part read it");
         let n = columns.first().map_or(0, Vec::len);
@@ -237,13 +237,13 @@ impl Exports {
     }
 
     /// How many rows export `rel` holds.
-    pub(super) fn len(&self, rel: &str) -> usize {
+    pub fn len(&self, rel: &str) -> usize {
         self.rels.get(rel).map_or(0, |h| h.source.as_ref().map_or_else(|| h.live(), |s| s.len()))
     }
 
     /// Export `rel`'s rows so far, copied, as a source of columns `c0…`: for a reader that starts while chunks may
     /// still add (the cone of requests, decision 0065 §2a, whose loads go through the chunk path).
-    pub(super) fn snapshot(&self, rel: &str, width: usize) -> Arc<dyn Source> {
+    pub fn snapshot(&self, rel: &str, width: usize) -> Arc<dyn Source> {
         let names = (0..width).map(|c| format!("c{c}")).collect();
         let values = match self.rels.get(rel) {
             Some(Held { source: Some(s), .. }) => return Arc::clone(s),
@@ -268,7 +268,7 @@ impl Exports {
 
     /// Export `rel`'s rows held so far whose column `at` is a node of one of `documents` (`memo::document_of`):
     /// a load's new documents' rows, for the cone of requests that asked for them.
-    pub(super) fn rows_of(&self, rel: &str, width: usize, at: usize, documents: &std::collections::HashSet<i64>) -> Vec<Vec<i64>> {
+    pub fn rows_of(&self, rel: &str, width: usize, at: usize, documents: &std::collections::HashSet<i64>) -> Vec<Vec<i64>> {
         let mut out = Vec::new();
         if at < width {
             self.visit(rel, width, |row| {
@@ -281,7 +281,7 @@ impl Exports {
     }
 
     /// Visits held rows without a scratch SQL table or a second column store.
-    pub(super) fn visit(&self, rel: &str, width: usize, mut row: impl FnMut(&[i64])) {
+    pub fn visit(&self, rel: &str, width: usize, mut row: impl FnMut(&[i64])) {
         let Some(held) = self.rels.get(rel) else { return };
         let mut cells = vec![0; width];
         if let Some(source) = &held.source {
@@ -303,7 +303,7 @@ impl Exports {
 
     /// Export `rel` as a source of columns `c0…`: its rows, or none when no chunk added any. Made once. The rows
     /// move into it, where they lie, and the set that kept them distinct is dropped.
-    pub(super) fn source(&mut self, rel: &str, width: usize) -> Arc<dyn Source> {
+    pub fn source(&mut self, rel: &str, width: usize) -> Arc<dyn Source> {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
         debug_assert!(!held.released, "export {rel} read after it was let go");
         if let Some(s) = &held.source {
@@ -330,7 +330,7 @@ impl Exports {
 impl Exports {
     /// Lets export `rel`'s rows go (Q74): the cross-file part read it for the last time. A later `source` is a
     /// mistake, caught in debug builds.
-    pub(super) fn release(&mut self, rel: &str) {
+    pub fn release(&mut self, rel: &str) {
         if let Some(held) = self.rels.get_mut(rel) {
             let width = held.width().max(held.source.as_ref().map_or(0, |s| s.columns().len()));
             *held = Held::new(width);
@@ -340,7 +340,7 @@ impl Exports {
 
     /// Export `rel`'s rows are `source` (a session's counted exports, `Counted`): what a chunk added this run is
     /// dropped, as the counted rows hold it.
-    pub(super) fn install(&mut self, rel: &str, width: usize, source: Arc<dyn Source>) {
+    pub fn install(&mut self, rel: &str, width: usize, source: Arc<dyn Source>) {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
         held.rows = Rows::living(width, Life::Kept);
         held.dead.clear();
@@ -353,7 +353,7 @@ impl Exports {
 /// file's rows counted in when its content is new and out when it changes or leaves, so a run's exports are the
 /// rows counted, not every file's rows added again. A row is held while one file holds it.
 #[derive(Default)]
-pub(super) struct Counted {
+pub struct Counted {
     rels: BTreeMap<String, CountedRel>,
 }
 
@@ -380,7 +380,7 @@ struct OwnRows {
 impl Counted {
     /// A file's rows of `rel` (`flat` row-major, `width` a row) in (`sign` 1) or out (−1). False when a row counted
     /// out is not held: the counts no longer say what files hold.
-    pub(super) fn patch(&mut self, rel: &str, width: usize, flat: &[i64], sign: i64) -> bool {
+    pub fn patch(&mut self, rel: &str, width: usize, flat: &[i64], sign: i64) -> bool {
         if width == 0 || flat.is_empty() {
             return true;
         }
@@ -506,7 +506,7 @@ impl CountedRel {
 
 impl Counted {
     /// Export `rel`'s rows held, as a source of columns `c0…` (a copy: the counts stay for the next run).
-    pub(super) fn source(&self, rel: &str, width: usize) -> Arc<dyn Source> {
+    pub fn source(&self, rel: &str, width: usize) -> Arc<dyn Source> {
         let names = (0..width).map(|c| format!("c{c}")).collect();
         let values = match self.rels.get(rel) {
             Some(held) if held.columns.len() == width => held.rows_once().into_iter().map(Some).collect(),
@@ -516,7 +516,7 @@ impl Counted {
     }
 
     /// `source`, less the rows `minus` counts: a row held by more files than `minus` says.
-    pub(super) fn source_without(&self, rel: &str, width: usize, minus: &Counted) -> Arc<dyn Source> {
+    pub fn source_without(&self, rel: &str, width: usize, minus: &Counted) -> Arc<dyn Source> {
         let (Some(held), Some(less)) = (self.rels.get(rel), minus.rels.get(rel)) else { return self.source(rel, width) };
         // Rare (a cone of requests over files not seen yet): every row by hash.
         let (held, less) = (&held.materialized(), &less.materialized());
@@ -568,7 +568,7 @@ impl Counted {
     }
 
     /// Rows held, over every export.
-    pub(super) fn rows(&self) -> usize {
+    pub fn rows(&self) -> usize {
         self.rels.values().map(|r| r.counts.len() + r.own.values().map(|o| o.rows.len() / r.columns.len().max(1)).sum::<usize>()).sum()
     }
 }

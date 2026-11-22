@@ -241,3 +241,9 @@ pub mod code_rule_dsl {
 pub use rerail_classic::git_ignore;
 pub use rerail_classic::panic_boundary;
 // cratify: mounts end
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

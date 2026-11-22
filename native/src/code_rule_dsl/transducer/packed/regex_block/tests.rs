@@ -104,7 +104,7 @@
         let sources: Vec<Arc<String>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.to_owned())).collect();
         let files: Vec<(usize, usize)> = (0..sources.len()).flat_map(|d| (0..filters.len()).map(move |f| (d, f))).collect();
         let ex = |device| crate::code_rule_dsl::logic::lanes::executor_for(device);
-        let gpu = cfg!(any(target_os = "macos", target_os = "linux")) && ex(true).lanes().contains(&rerail_accel::Lane::Gpu);
+        let gpu = cfg!(any(target_os = "macos", target_os = "linux", windows)) && ex(true).lanes().contains(&rerail_accel::Lane::Gpu);
         let mut runs = vec![(false, Some(rerail_accel::Lane::Cpu)), (true, None)];
         if gpu {
             runs.push((true, Some(rerail_accel::Lane::Gpu)));
@@ -122,7 +122,7 @@
 
     /// A new set of patterns runs on the GPU's interpreter while its own kernel compiles on another thread, then on
     /// that kernel: the same marks both times, and the first launch never waits on the compiler.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[test]
     fn a_new_pattern_set_runs_on_the_interpreter_while_its_kernel_compiles() {
         use crate::code_rule_dsl::transducer::packed::metal_program_backend::block_program::{LaneWidth, generated_ready};

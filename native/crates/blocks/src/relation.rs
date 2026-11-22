@@ -962,6 +962,8 @@ pub(crate) fn canonical_cols(spec: &Spec, a: usize) -> Vec<usize> {
 pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation>, scratch: &crate::scratch::Scratch) -> FreezeStats {
     assert!(!rel.is_frozen());
     let a = rel.arity as usize;
+    // Its rows are moved by value: a column under key runs is written in its runs' order by its writer, never sorted.
+    assert!((0..a).all(|c| !rel.rows.col(c).has_runs()), "a relation of key runs frozen");
     let n = rel.rows.len() as usize;
     let before = block.used();
     let br = rel.base_rows as usize;

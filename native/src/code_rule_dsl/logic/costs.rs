@@ -39,6 +39,9 @@ const READ_PER_FORM: i64 = 2_000;
 const MIN_TRAIN: usize = 500;
 /// The samples written after a training that start another.
 pub const RETRAIN_AFTER: usize = 2_000;
+/// How far a size may move before a kept price is worked out again: the planner's kept prices (`plan::Priced`), and
+/// setfix's waves, which return for planning once a delta's statistics grew past it.
+pub const PRICE_DRIFT: f64 = 2.0;
 /// The least time between two trainings.
 pub const RETRAIN_EVERY: std::time::Duration = std::time::Duration::from_secs(600);
 

@@ -10,7 +10,8 @@
 
 use rerail_bitlex::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_ir, rir_asm as rir};
-use rerail_cpu_stream::{native_cpu_clusters, native_cpu_stream};
+use rerail_compiler::native_cpu_clusters;
+use rerail_cpu_stream::native_cpu_stream;
 
 /// The grammar.
 pub const GRAMMAR: &str = include_str!("../directives.bitlex");
@@ -154,14 +155,14 @@ impl Compiled {
 
     /// The same for each of `files`, tier 1 on Metal and tier 2 over its buffers; `None` for a
     /// file refused, and for all where the device cannot run the batch.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn metal_read(&self, files: &[&[u8]]) -> Result<Vec<Option<Read>>, rerail_compiler::Error> {
         Ok(self.metal_images(files)?.into_iter().map(|t| t.and_then(|t| read(&t).ok())).collect())
     }
 
     /// Each of `files`' tapes, tier 1 on Metal and tier 2 over its buffers; `None` for a file
     /// refused; the device's error where it cannot run the batch.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>, rerail_compiler::Error> {
         use rerail_metal::block_program::serial::{Segments, run_resident};
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();

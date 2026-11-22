@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// What `combine` knows of one policy: its prefix, its own relations (prefixed), its globals (unprefixed), its scope.
 #[derive(Clone, Debug)]
-pub(super) struct Policy {
+pub struct Policy {
     pub prefix: String,
     pub own: BTreeSet<String>,
     pub named: BTreeSet<String>,
@@ -33,7 +33,7 @@ pub(super) struct Policy {
 
 /// What the fact spaces did (`preparation::combining::FactSpaces`), for the profile.
 #[derive(Default, Debug)]
-pub(in crate::code_rule_dsl) struct Report {
+pub struct Report {
     /// Global relations with one copy for the run (by name), and how many policies' copies each merged.
     pub canonical: BTreeMap<String, usize>,
     /// Copies of the engine's relations made canonical (alike in several policies).

@@ -24,7 +24,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 53
+VERSION = 57
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1085,6 +1085,102 @@ def host_os(host):
     return host.get("os", "macos")
 
 
+# `uname -m`'s names, as test-remote's --arch takes them.
+ARCHES = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x86_64", "amd64": "x86_64"}
+
+
+def host_arch(host):
+    """`host`'s CPU architecture ("arm64", "x86_64"), as its last health probe found it (`arch` in
+    the configuration for one never probed: a guest not yet started); None when unknown. A Windows
+    host's is its WSL's, the same machine's."""
+    return read_json(state("health", host["name"]), {}).get("arch") or host.get("arch")
+
+
+def host_memory_gb(host):
+    """The memory a command on `host` has, in GB: a VM's own (a guest's is less than its machine's),
+    from its last health probe (`memory_gb` in the configuration for one never probed); None when
+    unknown. A Windows host's is its WSL VM's, under what Windows itself has."""
+    return read_json(state("health", host["name"]), {}).get("memory_gb") or host.get("memory_gb")
+
+
+# ---- a host's CPU: its model, its features under one set of names, its vector lengths
+#
+# Each health probe asks (`CPU_SCRIPT`), so a guest restarted on other hardware is seen at once; a
+# stopped guest keeps what its last run found. test-remote's `--cpu-feature`, `features` and
+# `status` read it, and a test-remote command gets it as RERAIL_FARM_CPU_* (`cpu_env`).
+
+# One line: "cpu MODEL|FEATURES|SVE BYTES|SME BYTES". macOS: the hw.optional flags set to 1 (arm64's
+# under `arm.`), the SME streaming length; Linux (and a Windows host, through its WSL): cpuinfo's
+# flags or Features, each core type's model (big.LITTLE: "Cortex-X925+Cortex-A725"), the kernel's
+# default SVE and SME lengths.
+CPU_SCRIPT = {
+    "macos": "echo \"cpu $(sysctl -n machdep.cpu.brand_string)|$(sysctl hw.optional 2>/dev/null | awk -F': ' '$2 == 1 {print $1}' | tr '\\n' ' ')||$(sysctl -n hw.optional.arm.sme_max_svl_b 2>/dev/null)\"",
+    "linux": "echo \"cpu $(lscpu 2>/dev/null | awk -F': *' '/^Model name/ {print $2}' | grep -v '^-$' | paste -sd+ -)|$(grep -m1 -E '^(flags|Features)' /proc/cpuinfo | cut -d: -f2)|$(cat /proc/sys/abi/sve_default_vector_length 2>/dev/null)|$(cat /proc/sys/abi/sme_default_vector_length 2>/dev/null)\"",
+}
+# Linux's and macOS's names for one feature, as the farm names it (Linux x86's names otherwise).
+CPU_ALIASES = {"asimd": "neon", "advsimd": "neon", "asimdhp": "fp16", "asimddp": "dotprod", "asimdfhm": "fhm",
+               "asimdrdm": "rdm", "fphp": "fp16", "advsimd_hpfpcvt": "fp16_cvt"}
+# The vector units, in the order `vector_summary` names them.
+VECTOR_FEATURES = ["sse4_2", "avx", "avx2", "fma", "f16c", "avx_vnni", "avx512f", "avx512bw", "avx512vl",
+                   "avx512_vnni", "avx512_bf16", "avx512_fp16", "amx_tile", "neon", "fp16", "dotprod", "fhm",
+                   "bf16", "i8mm", "sve", "sve2", "sme", "sme2"]
+
+
+def parse_cpu(line):
+    """The record of a CPU_SCRIPT line: {"model", "features", "sve_bytes", "sme_bytes"}, or None."""
+    if not line.startswith("cpu "):
+        return None
+    parts = (line[4:].split("|") + ["", "", ""])[:4]
+    features = set()
+    for w in parts[1].split():
+        if w.startswith("hw.optional."):
+            w = w[len("hw.optional."):]
+            if not w.startswith("arm."):
+                continue  # macOS's older names (armv8_*, neon_*): the arm.* ones say the same
+            w = w[4:]
+            w = w[5:] if w.startswith("FEAT_") else w
+        w = w.lower()
+        features.add(CPU_ALIASES.get(w, w))
+    return {"model": parts[0].strip() or None, "features": sorted(features),
+            "sve_bytes": int(parts[2]) if parts[2].strip().isdigit() else None,
+            "sme_bytes": int(parts[3]) if parts[3].strip().isdigit() else None}
+
+
+def local_cpu():
+    """This Mac's CPU record (as a host's), read once a day."""
+    path = state("cpu-local.json")
+    c = read_json(path, None)
+    if c is None or time.time() - c.get("at", 0) > 86400:
+        out = subprocess.run(["sh", "-c", CPU_SCRIPT["macos" if sys.platform == "darwin" else "linux"]],
+                             capture_output=True, text=True, timeout=20).stdout.strip()
+        c = dict(parse_cpu(out) or {}, at=time.time())
+        write_json(path, c)
+    return c
+
+
+def host_cpu(host):
+    """`host`'s CPU record (`parse_cpu`) from its last health probe (`cpu` in the configuration for
+    one never probed), or {}."""
+    return read_json(state("health", host["name"]), {}).get("cpu") or host.get("cpu") or {}
+
+
+def vector_summary(cpu):
+    """`cpu`'s vector units, in a few words: "neon, bf16, i8mm, sve2 (SVE 128-bit)"."""
+    have = set(cpu.get("features") or [])
+    words = [f for f in VECTOR_FEATURES if f in have]
+    lengths = [f"{k} {cpu[k + '_bytes'] * 8}-bit" for k in ("sve", "sme") if cpu.get(k + "_bytes")]
+    return ", ".join(words) + (f" ({', '.join(x.upper() for x in lengths).replace('-BIT', '-bit')})" if lengths else "") if words else ""
+
+
+def cpu_env(cpu):
+    """What a command is told of the CPU it runs on: RERAIL_FARM_CPU_MODEL, RERAIL_FARM_CPU_FEATURES
+    (space-separated, the farm's names), RERAIL_FARM_SVE_BITS and RERAIL_FARM_SME_BITS (0: none)."""
+    return {"RERAIL_FARM_CPU_MODEL": cpu.get("model") or "",
+            "RERAIL_FARM_CPU_FEATURES": " ".join(cpu.get("features") or []),
+            "RERAIL_FARM_SVE_BITS": str((cpu.get("sve_bytes") or 0) * 8),
+            "RERAIL_FARM_SME_BITS": str((cpu.get("sme_bytes") or 0) * 8)}
+
+
 def entry(name):
     """`name`'s configuration entry, or {} (a name ssh knows that the farm does not)."""
     return next((h for h in hosts() if h["name"] == name), {})
@@ -1171,7 +1267,8 @@ def probe(host, cfg, fell_back=False, recovered=False):
     previous = read_json(state("health", name), {})
     h = {"checked": time.time(), "ok": False, "failures": previous.get("failures", 0),
          "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0),
-         "mbps_seen": [s for s in previous.get("mbps_seen", []) if time.time() - s[0] < MBPS_MEMORY_SECONDS]}
+         "mbps_seen": [s for s in previous.get("mbps_seen", []) if time.time() - s[0] < MBPS_MEMORY_SECONDS],
+         "arch": previous.get("arch"), "memory_gb": previous.get("memory_gb"), "cpu": previous.get("cpu")}
     if previous.get("route") != route(name):
         h["mbps"], h["mbps_at"], h["mbps_seen"] = None, 0, []  # another path: its throughput is not known
     # Free disk: what macOS gives an important write (AVAILABLE_JS), then statvfs's, in KB.
@@ -1192,6 +1289,10 @@ def probe(host, cfg, fell_back=False, recovered=False):
         # Counted first; docker may be outside a plain ssh command's PATH on a Mac.
         script = ('echo "fleet $(PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin '
                   'docker ps -q --filter label=fleet.job 2>/dev/null | wc -l)"; ' + script)
+    # Its CPU architecture and memory (`host_arch`, `host_memory_gb`; test-remote's --arch and
+    # --memory), first: a VM's own, which is what a command there gets.
+    memory = "$(($(sysctl -n hw.memsize) / 1024))" if host_os(host) == "macos" else "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+    script = f'echo "hw $(uname -m) {memory}"; {CPU_SCRIPT["macos" if host_os(host) == "macos" else "linux"]}; ' + script
     # Asked twice before it counts as down, the second time with longer to answer: one lost or slow
     # connection (this Mac at a load of 90 can take seconds to start ssh) is not a host gone.
     for timeout in (10, 20):
@@ -1215,6 +1316,13 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = blocked or "unreachable (off, asleep, or off the network)"
         return h
     lines = out.stdout.splitlines()
+    if lines and lines[0].startswith("hw "):
+        words = lines.pop(0).split()
+        if len(words) == 3 and words[2].isdigit():
+            h["arch"] = ARCHES.get(words[1], words[1])
+            h["memory_gb"] = round(int(words[2]) / (1 << 20))
+    if lines and lines[0].startswith("cpu "):
+        h["cpu"] = parse_cpu(lines.pop(0)) or h.get("cpu")
     fleet_jobs = None
     if lines and lines[0].startswith("fleet "):
         fleet_jobs = h["fleet_jobs"] = int(lines.pop(0).split()[1] or 0)
@@ -1393,6 +1501,9 @@ def health(host, fresh=False):
                    "starting": "a guest, starting", "stopping": "a guest, stopping"}[g["state"]]
             return dict(h or {}, ok=False, why=why + (f" ({g['why']})" if g.get("why") and g["state"] == "stopped" else ""),
                         guest=g["state"])
+        if g.get("state") == "unknown" and g.get("why"):
+            # Its provider did not answer (a cloud guest's gcloud signed out): that, not "unreachable".
+            return dict(h or {}, ok=False, why=f"a guest, its state unknown: {g['why']}", guest="unknown")
     if h is not None and not fresh:
         if h.get("ok") and now - h.get("checked", 0) < HEALTHY_SECONDS:
             return h
@@ -1942,13 +2053,73 @@ def farm_rustc(argv0, args):
 
 def local(rustc, args):
     """Compiles here, in one of this machine's slots: held by this process, since a lock does not
-    survive an exec."""
+    survive an exec. A compile that fails on a stale library it links (`stale_externs`) has those
+    rebuilt (`rebuild_extern`) and runs once more."""
     lock = local_slot()
     try:
-        code = subprocess.run([rustc] + args).returncode
+        code, err = compile_here(rustc, args)
+        rebuilt = [name for name in stale_externs(err, args) if rebuild_extern(rustc, name, args)]
+        if code != 0 and rebuilt:
+            code, err = compile_here(rustc, args)
     finally:
         lock.release()
+    sys.stderr.buffer.write(err)
     sys.exit(code)
+
+
+def compile_here(rustc, args):
+    """rustc's exit status and its stderr (cargo's JSON diagnostics: written once the compile's fate
+    is known, so a failure the farm repairs is not shown)."""
+    p = subprocess.run([rustc] + args, stderr=subprocess.PIPE)
+    return p.returncode, p.stderr
+
+
+# rustc refusing a library it links: missing in effect (E0463, also when the file is there but was
+# built against another version of a crate below it), built against another version of a crate
+# (E0460, which names the library that depends on it), or by another rustc (E0514).
+STALE_EXTERN = [re.compile(rb"can't find crate for `(\w+)`"),
+                re.compile(rb"found possibly newer version of crate `\w+` which `(\w+)` depends on"),
+                re.compile(rb"found crate `(\w+)` compiled by an incompatible version of rustc")]
+
+
+def stale_externs(err, args):
+    """The `--extern` crates of `args` that rustc's stderr `err` refused as built against other
+    versions of what they link (2026-11-21: cranelift_frontend in a target, built against a
+    cranelift_codegen since replaced under the same file name and cargo fingerprint, with a file time
+    no newer than the frontend's: cargo saw both fresh)."""
+    externs = {e.split("=", 1)[0] for e in values(args, "--extern") if "=" in e}
+    found = []
+    for pattern in STALE_EXTERN:
+        for m in pattern.finditer(err):
+            name = m.group(1).decode()
+            if name in externs and name not in found:
+                found.append(name)
+    return found
+
+
+def rebuild_extern(rustc, name, args, depth=0):
+    """Compiles the library `--extern name=...` of `args` again, as it was compiled (its `calls`
+    record), against the libraries there now, in place of the stale one; its own stale libraries
+    first (a few levels). True when it was rebuilt."""
+    path = next((os.path.abspath(e.split("=", 1)[1]) for e in values(args, "--extern") if e.split("=", 1)[0] == name), None)
+    rec = read_json(state("calls", key(stem_of(path))), None) if path else None
+    if rec is None or depth > 3:
+        log(f"{name}: stale, and no record of its compile to repeat")
+        return False
+    run_env = dict(os.environ, **rec["env"])
+    p = subprocess.run([rustc] + rec["args"], cwd=rec["cwd"], env=run_env, stderr=subprocess.PIPE)
+    if p.returncode != 0:
+        below = [n for n in stale_externs(p.stderr, rec["args"]) if rebuild_extern(rustc, n, rec["args"], depth + 1)]
+        if below:
+            p = subprocess.run([rustc] + rec["args"], cwd=rec["cwd"], env=run_env, stderr=subprocess.PIPE)
+    ok = p.returncode == 0
+    note = (f"{name}: {os.path.basename(path)} was built against another version of a crate it links "
+            f"(same file name, same cargo fingerprint); {'compiled again here' if ok else 'compiling it again failed'}")
+    log(note)
+    with open(state("stale-externs.log"), "a") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {path}: {note}\n")
+    sys.stderr.write(f"warning: rerail-farm: {note}\n")
+    return ok
 
 
 if __name__ == "__main__" and sys.argv[1:2] == ["free-host"]:

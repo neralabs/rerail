@@ -3,7 +3,7 @@ name = "rerail-pp-aot"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The C preprocessing words built ahead of time: the JIT's Cranelift IR as Rust, compiled by rustc; the CPU path of rerail-c-directives (decision 0348)."
+description = "Deprecated (decision 0550). The C preprocessing words built ahead of time: the JIT's Cranelift IR as Rust, compiled by rustc; the CPU path of rerail-c-directives (decision 0348)."
 
 [features]
 # The generated code: the build script writes the words' code as Rust (about 3.4 MB) and this

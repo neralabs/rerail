@@ -510,7 +510,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports, hidden_glob_reexports)]
         use std::sync::Arc;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::sql::lattices;
+        use crate::code_rule_dsl::logic::native::lattices;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::sql::program;
     }
@@ -707,7 +707,7 @@ pub mod code_rule_dsl {
             }
         }
         // The slabs' tests store parsed documents: they run where the languages are registered.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         pub mod slabs {
             pub use rerail_boot::code_rule_dsl::residency::slabs::*;
             #[cfg(test)]

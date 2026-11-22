@@ -56,6 +56,14 @@ pub fn mark_word_rows(out: &mut String, mark_words: &[(u8, u16)]) {
     }
 }
 
+/// The marks each mark passes: `markpasses K MASK` (`Words::mark_passes`).
+pub fn mark_pass_rows(out: &mut String, mark_passes: &[(u8, u64)]) {
+    use std::fmt::Write as _;
+    for &(k, m) in mark_passes {
+        let _ = writeln!(out, "  markpasses {k} {m}");
+    }
+}
+
 pub fn word_kind_rows(out: &mut String, word_kinds: &[(u16, u16)]) {
     use std::fmt::Write as _;
     for &(s, k) in word_kinds {
@@ -102,6 +110,9 @@ fn mark_rows(out: &mut String, row: &str, marks: &[crate::program::TokenMark]) {
             }
             if e.run {
                 out.push_str(" run");
+            }
+            if e.since {
+                out.push_str(" since");
             }
             if e.without != 0 {
                 let _ = write!(out, " w{:x}", e.without);

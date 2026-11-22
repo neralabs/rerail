@@ -40,7 +40,8 @@ fn python_files(root: &Path) -> BTreeMap<String, String> {
             if path.is_dir() {
                 walk(root, &path, out);
             } else if path.extension().is_some_and(|e| e == "py") {
-                out.insert(path.strip_prefix(root).unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&path).unwrap());
+                // Keyed as documents are named, with `/` on every OS.
+                out.insert(path.strip_prefix(root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"), std::fs::read_to_string(&path).unwrap());
             }
         }
     }
@@ -1519,7 +1520,7 @@ fn spike_liveness_of_the_calls_program() {
     let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("{} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
-    let counts = liveness::read_counts(&Outputs::open(&out).unwrap());
+    let counts = crate::code_rule_dsl::logic::plan::output::read_counts(&Outputs::open(&out).unwrap());
     let _ = std::fs::remove_dir_all(&out);
     let get = |m: &BTreeMap<String, u64>, w: &str| m.get(w).copied().unwrap_or(0);
     let mut rows: Vec<(&String, &BTreeMap<String, u64>)> = counts.iter().collect();
