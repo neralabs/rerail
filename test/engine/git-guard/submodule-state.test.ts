@@ -172,13 +172,30 @@ describe("worktreeGitFolder", () => {
     expect(worktreeGitFolder(work, { [name]: join(work, ".git") })).toBeUndefined();
   });
 
-  it("reads a linked worktree's `.git` file into a buffer of the file's own size", async () => {
+  it("reads a linked worktree's `.git` file in one read, into a buffer of the file's own size", async () => {
     const { linked } = repositories(await folder());
     const found = gitFolderFound(linked);
+    const gitfile = join(linked, ".git");
+    const open = new Set<number>();
+    let reads = 0;
+    vi.mocked(openSync).mockImplementation((path, flags, mode) => {
+      const file = realFs.openSync(path, flags, mode);
+      if (path === gitfile) open.add(file);
+      return file;
+    });
+    vi.mocked(closeSync).mockImplementation(file => {
+      open.delete(file);
+      realFs.closeSync(file);
+    });
+    vi.mocked(readSync).mockImplementation((...args: Parameters<typeof readSync>) => {
+      if (open.has(args[0])) reads += 1;
+      return realFs.readSync(...args);
+    });
     const alloc = vi.spyOn(Buffer, "alloc");
     try {
       expect(worktreeGitFolder(linked, {})).toBe(found);
       expect(alloc.mock.calls.map(([size]) => size).filter(size => size > 1024)).toEqual([]);
+      expect(reads).toBe(1);
     } finally {
       alloc.mockRestore();
     }
