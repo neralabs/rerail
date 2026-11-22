@@ -1,7 +1,7 @@
 //! Metal, as the engine's device (`rerail-device-metal`): the implementations of the logic's and the transducer's
-//! device interfaces (`logic::device::SolverDevice`, `transducer::packed::device::MatcherDevice`) over the Metal
+//! device interfaces (`logic::device::{Device, SolverDevice}`, `transducer::packed::device::MatcherDevice`) over the Metal
 //! code, registered as the engine loads (`crate::install_devices`). macOS only; the core never names it.
-use crate::code_rule_dsl::logic::device::{ColumnStats, JoinPlan, Refused, Report, SolverDevice, StatColumn, lattice, nearest};
+use crate::code_rule_dsl::logic::device::{ColumnStats, Device, JoinPlan, Refused, Report, SolverDevice, StatColumn, lattice, nearest};
 use crate::code_rule_dsl::logic::native::setfix::{Fresh, Interner, JoinRule, Store, device as joins};
 use crate::code_rule_dsl::transducer::packed::{self, Error};
 
@@ -13,7 +13,7 @@ pub(crate) static METAL: Metal = Metal;
 
 /// Registers Metal as the logic's and the transducer's device.
 pub fn register() {
-    crate::code_rule_dsl::logic::device::register(&METAL);
+    crate::code_rule_dsl::logic::device::register("rerail-device-metal", &METAL);
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
     // Kind-set axes solved on the device in a batch's chunk block (decision 0289 §2).
     crate::code_rule_dsl::facts::nearest::install_chunk_axis(packed::metal_join::axis_in_chunk);
@@ -21,13 +21,16 @@ pub fn register() {
 }
 
 /// This crate's own test binary, which the engine does not load: Metal and the language packs its tests read are
-/// registered as the binary loads, as the engine registers them (`crate::install_devices`, `install_languages`), so
-/// the device's tests run on the device and no test's CPU worker meets a document before its pack is registered.
+/// registered as the binary loads, as the engine registers them (`crate::install_devices`, `install_languages`), with
+/// what a job carries of its run (`run_state::CARRIERS`), so the device's tests run on the device and no test's CPU
+/// worker meets a document before its pack is registered.
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
         super::register();
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        // What a job carries of its run: the program's list, as boot registers it (`logic::CARRIERS`).
+        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         crate::test_languages();
     }
     #[used]
@@ -52,6 +55,24 @@ fn plans<'a>(rules: &[(&'a JoinPlan, &'a JoinRule, usize)]) -> Result<Vec<(&'a j
             Ok((plan, *join, *head))
         })
         .collect()
+}
+
+impl Device for Metal {
+    fn take_report(&self) -> Option<Report> {
+        joins::take_report()
+    }
+
+    fn lattice(&self, system: &lattice::System<'_>) -> Result<lattice::Solved, Refused> {
+        packed::metal_lattice::solve(system).map_err(refused)
+    }
+
+    fn nearest(&self, nodes: usize, target: &[u32], done: &[u8], how: nearest::Buffers) -> Result<nearest::Solved, Refused> {
+        packed::metal_nearest::solve_with(nodes, target, done, how).map_err(refused)
+    }
+
+    fn install_launch_guard(&self) {
+        packed::metal_sort::install_guard();
+    }
 }
 
 impl SolverDevice for Metal {
@@ -93,22 +114,6 @@ impl SolverDevice for Metal {
         fresh: &mut [Fresh],
     ) -> Result<Vec<u64>, String> {
         joins::fixpoint(&plans(seeds)?, &plans(deltas)?, heads, store, names, fresh)
-    }
-
-    fn take_report(&self) -> Option<Report> {
-        joins::take_report()
-    }
-
-    fn lattice(&self, system: &lattice::System<'_>) -> Result<lattice::Solved, Refused> {
-        packed::metal_lattice::solve(system).map_err(refused)
-    }
-
-    fn nearest(&self, nodes: usize, target: &[u32], done: &[u8], how: nearest::Buffers) -> Result<nearest::Solved, Refused> {
-        packed::metal_nearest::solve_with(nodes, target, done, how).map_err(refused)
-    }
-
-    fn install_launch_guard(&self) {
-        packed::metal_sort::install_guard();
     }
 
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
@@ -168,7 +173,7 @@ pub mod matcher {
         }
 
         fn compile_background(&self, batch: &[Program]) -> Result<(), Error> {
-            programs::compile_sweep_cached()?;
+            programs::compile_sweep_cached(crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::run_format())?;
             programs::compile_jit_cached(batch).map(|_| ())
         }
 
@@ -198,6 +203,12 @@ pub mod matcher {
 
         fn warm_labels(&self) {
             matcher_metal::warm();
+        }
+
+        fn kernels_ahead(&self) -> Vec<crate::code_rule_dsl::transducer::packed::device::KernelAhead> {
+            let mut v = crate::code_rule_dsl::transducer::packed::metal_join::kernels_ahead();
+            v.extend(programs::kernels_ahead());
+            v
         }
 
         fn drop_label_pipelines(&self) {

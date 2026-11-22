@@ -1,6 +1,6 @@
 //! The structuring of a function's graph that `clif_ukl` prints as C (`Shape`), and the reads of a function's graph
 //! it needs (`successors`, `returned_call`). It was the Rust translator's (`rerail_clif::rust`),
-//! removed (decision 0570).
+//! removed (decision 0606).
 
 use cranelift_codegen::ir;
 use std::fmt::Write;

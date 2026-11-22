@@ -7,8 +7,8 @@
 //!
 //! The compilers and backends are the crates above, each its own so that an edit to one rebuilds it and what reads
 //! it, not the front end's readers: the Bitlex compiler (`rerail-bitlex`), tier 1 on the CPU (`rerail-cpu-block`),
-//! tier 2 on the CPU (`rerail-cpu-stream`), the C preprocessor on the CPU (`rerail-cpu-pp`) and Metal's
-//! (`rerail-metal`). Their sources stay in this folder; they mount them. The engine
+//! tier 2 on the CPU (`rerail-cpu-stream`), the C preprocessor on the
+//! CPU (`rerail-cpu-pp`) and Metal's (`rerail-metal`). Their sources stay in this folder; they mount them. The engine
 //! (`code_rule_dsl::transducer::packed`) re-exports each module under the same name.
 
 // The compiler's passes hand each other plain tuples of tables; naming each would add nothing.
@@ -35,15 +35,20 @@ pub mod native_cpu_pressure;
 pub mod native_cpu_shape;
 pub mod native_ir;
 pub mod program;
-pub mod pp_expr;
-pub mod pp_words;
-#[cfg(test)]
-mod pp_words_tests;
+// The RIR assembler and the preprocessor's words (`rir_asm`, `pp_words`, `pp_expr`) are rerail-rir's, over this
+// crate (step 7a).
 pub mod records;
-pub mod rir_asm;
 pub mod rir_text;
 pub mod set_mode;
 pub mod stream;
+/// What tier 2's stream program is, apart from any lowering of it.
+pub mod stream_analysis;
+/// Tier 2's stream program as a whole: where a direct run takes it, apart from any lowering.
+pub mod stream_facts;
+/// The functions tier 2's program is cut into, by the calls between its words.
+pub mod native_cpu_clusters;
+/// Tier 1's record tables, as the token loop reads them.
+pub mod record_tables;
 pub mod stream_ir;
 /// Which tier 1 values are token-level checks (doc 25): local windows, anchors, readers.
 pub mod token_local;

@@ -3,7 +3,7 @@
 //! preprocessor (`rerail-c-pp`).
 
 use crate::tokens::{self, BOL, SPACE};
-use rerail_compiler::pp_words::{self, Bounds, File, Tok};
+use rerail_rir::pp_words::{self, Bounds, File, Tok};
 use rerail_compiler::program::Words;
 
 pub const EXPAND: &str = include_str!("../expand/expand.rir");
@@ -13,7 +13,7 @@ static PROGRAM: std::sync::OnceLock<Result<Words, String>> = std::sync::OnceLock
 /// The process's expansion program, assembled and verified the first time: one for C and C++,
 /// the dialect a run's (`pp_words::Env::cpp`).
 pub fn program() -> Result<&'static Words, &'static str> {
-    PROGRAM.get_or_init(|| rerail_compiler::rir_asm::assemble(EXPAND)).as_ref().map_err(String::as_str)
+    PROGRAM.get_or_init(|| rerail_rir::rir_asm::assemble(EXPAND)).as_ref().map_err(String::as_str)
 }
 
 /// A token tape's kind, as the words know it.
@@ -246,14 +246,14 @@ pub fn ukl() -> Result<&'static str, String> {
 }
 
 /// The words on the process's device, a TU a batch (`rerail_metal::pp_on`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn on_device(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> {
     on_device_batch(&[(program, files, env, bounds)]).pop().expect("one result")
 }
 
 /// The words on the device over a batch of TUs' rounds, a TU a thread (0408, L3): the batch
 /// runner of `expand_tus_with`.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn on_device_batch(jobs: &[Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> {
     let refused = |why: &'static str| jobs.iter().map(|_| Err(pp_words::Refused { pc: 0, why })).collect();
     let Ok(source) = ukl() else { return refused("the words do not translate to UKL") };

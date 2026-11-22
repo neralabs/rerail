@@ -150,46 +150,19 @@ pub fn model_price(est: f64, steps: &[StepSample], targets: &[f64]) -> Option<f6
     (sum_planned > 0.0 && sum_predicted.is_finite()).then(|| est * sum_predicted / sum_planned)
 }
 
+/// Where a trained join model goes: the planner's batch pricer over it (`plan::joins::model::install`), which the
+/// engine registers as it loads (`boot`). The first registration holds; without one a trained model is dropped.
 #[cfg(target_os = "macos")]
-struct ModelPricer(rerail_accel::join_model::JoinModel);
+static INSTALL: std::sync::OnceLock<fn(rerail_accel::join_model::JoinModel)> = std::sync::OnceLock::new();
 
+/// Registers what puts a trained join model in place ([`install_model`]'s last step).
 #[cfg(target_os = "macos")]
-impl crate::code_rule_dsl::logic::plan::joins::Pricer for ModelPricer {
-    /// Every step of every candidate of the round in one prediction (on the device, past a few steps), then each
-    /// candidate's price from its steps' targets.
-    fn price(&self, round: &[crate::code_rule_dsl::logic::plan::joins::Choice]) -> Option<Vec<Vec<f64>>> {
-        let steps: Vec<&StepSample> = round.iter().flat_map(|c| c.candidates.iter().flat_map(|k| &k.steps)).collect();
-        if steps.is_empty() {
-            return None;
-        }
-        // Queued with the rounds of strata planned at once (`JoinModel::fanouts`): one dispatch for all of them.
-        let targets = self.0.fanouts(&steps).ok()?;
-        let [asked, dispatched, walked] = self.0.counts();
-        if asked.is_power_of_two() {
-            let [rows, waiting, predicting] = self.0.cpu();
-            crate::code_rule_dsl::logic::plan::joins::log(|| format!("join model: {asked} rounds, {dispatched} dispatches, {walked} walked on the host; CPU {rows:.3} s bucketing, {waiting:.3} s waiting, {predicting:.3} s predicting"));
-        }
-        let mut at = 0;
-        Some(
-            round
-                .iter()
-                .map(|c| {
-                    c.candidates
-                        .iter()
-                        .map(|k| {
-                            let t = &targets[at..at + k.steps.len()];
-                            at += k.steps.len();
-                            model_price(k.est, &k.steps, t).unwrap_or(k.est)
-                        })
-                        .collect()
-                })
-                .collect(),
-        )
-    }
+pub fn register_install(install: fn(rerail_accel::join_model::JoinModel)) {
+    let _ = INSTALL.set(install);
 }
 
-/// Trains the join model on the stored steps of `machine` and sets it as the batch pricer (called on the cost
-/// statistics' read thread, with `RERAIL_JOIN_MODEL=1`).
+/// Trains the join model on the stored steps of `machine` and puts it in place as the batch pricer, by what is
+/// registered ([`register_install`]) (called on the cost statistics' read thread, with `RERAIL_JOIN_MODEL=1`).
 #[cfg(target_os = "macos")]
 pub fn install_model(db: &Connection, machine: &str) {
     let t = std::time::Instant::now();
@@ -206,7 +179,10 @@ pub fn install_model(db: &Connection, machine: &str) {
     match rerail_accel::join_model::JoinModel::train(&steps, &config) {
         Ok(m) => {
             eprintln!("rerail: join model in place: trained on {} steps in {:.2} s: {:.2} s of this thread's CPU, {:.2} s of the GPU (the forest's device: {}); a dispatch {:.1} µs of CPU, a host walk {:.2} µs a step: the device from {} steps", steps.len(), t.elapsed().as_secs_f64(), rerail_accel::exec::thread_cpu() - cpu, rerail_forest_gpu_seconds() - gpu, m.on_device(), m.costs.0 * 1e6, m.costs.1 * 1e6, m.device_rows);
-            crate::code_rule_dsl::logic::plan::joins::set_pricer(Some(std::sync::Arc::new(ModelPricer(m))));
+            match INSTALL.get() {
+                Some(install) => install(m),
+                None => eprintln!("rerail: join model: trained, but nothing takes it (no planner registered)"),
+            }
         }
         Err(e) => eprintln!("rerail: join model: not trained: {e}"),
     }

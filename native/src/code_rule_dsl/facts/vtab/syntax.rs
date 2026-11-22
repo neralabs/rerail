@@ -58,7 +58,7 @@ pub mod ranks;
 /// A batch's documents and rows, each made when first read (decision 0494).
 pub mod made;
 mod cells;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub mod device_chunk;
 pub mod view_docs;
 use guests::GuestRows;
@@ -1120,11 +1120,16 @@ pub fn module(rel: &str) -> String {
     m.strip_suffix(".__init__").map(str::to_owned).unwrap_or(m)
 }
 
+/// The last segment of `path`: a library document is named as the engine has the file, with `\` on Windows.
+pub(crate) fn file_name(path: &str) -> &str {
+    path.rsplit(|c| c == '/' || (cfg!(windows) && c == '\\')).next().unwrap_or(path)
+}
+
 /// The package relative imports resolve against (`__package__`): a package's own name, else its
 /// module's parent.
 /// The package of module `m`, the file at `path`: `m` itself for a package's `__init__`, else `m`'s parent.
 pub(crate) fn package_of(path: &str, m: &str) -> String {
-    let name = path.rsplit('/').next().unwrap_or(path);
+    let name = file_name(path);
     if name.starts_with("__init__.") { m.to_owned() } else { m.rsplit_once('.').map(|(p, _)| p.to_owned()).unwrap_or_default() }
 }
 
@@ -1926,7 +1931,7 @@ pub struct Batch {
     /// (`device_chunk`) is nested in it, so the device reads the projections where the host does.
     block: Arc<Block>,
     /// The batch's chunk (decision 0289): its views' arrays, made on the device's first read of a view.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     chunk: OnceLock<device_chunk::Chunk>,
     /// What a group's rows are made with (`make_rows`): the projection, the `match_all` regexes, the markers of the
     /// `fstring_template` atoms, the span prefilter's binding, the store's atoms, and the `ast` matchers' wave.
@@ -3198,7 +3203,7 @@ impl Batch {
             families: bound,
             made: BTreeSet::new(),
             block,
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             chunk: OnceLock::new(),
             projection,
             matches: matches.to_vec(),
@@ -3662,7 +3667,7 @@ impl Batch {
     }
 
     /// The batch's chunk block (decision 0289), made on first use.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn chunk(&self) -> &device_chunk::Chunk {
         self.chunk.get_or_init(|| device_chunk::build(self))
     }
@@ -3891,13 +3896,13 @@ impl Source for Viewed {
         let offsets = self.batch.offsets(self.view);
         Some(docs.iter().filter_map(|&k| self.batch.docs.position(k)).flat_map(|i| offsets[i]..offsets[i + 1]).collect())
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
         let view = device_chunk::device_view(self.view)?;
         let chunk = self.batch.chunk();
         // The views the views' reads answer are read in place where every tape (and for `line`, every document's
         // lines) is on the device.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let loc = matches!(self.view, View::Loc(_));
         // The directory is of the process's device's addresses, which the stages read it by (decision 0440 step C):
         // none where its buffers have none (`views_in_place`).
@@ -3908,11 +3913,11 @@ impl Source for Viewed {
             .flatten()
             .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
             .map(|v| {
-                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
                 in_place.failed = in_place.cache_failed();
                 in_place
             });
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         let in_place: Option<()> = None;
         // `tape`, `ast_depth` and `node_order` are read in place or not at all: no device code makes their rows.
         if read_only && in_place.is_none() {
@@ -3924,16 +3929,21 @@ impl Source for Viewed {
         if matches!(self.view, View::Line) && in_place.is_none() && !device_chunk::fill_lines(&self.batch, chunk) {
             return None;
         }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()).clone());
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| {
+            // Room for an index of each key the strata probe a view by, found again by every later binding: with room
+            // for one, each binding probing it by another key made a fresh home of its own, never found again (133 of
+            // 3.4 MB in each of pth_unpack's fixpoints, its 49 lines by kind pair; ab138).
+            crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, self.len(), crate::code_rule_dsl::facts::rows::AXIS_KEYS).ok()
+        }).clone());
+        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         let home = None;
         Some(crate::code_rule_dsl::facts::vtab::DeviceView {
             block: &chunk.block,
             root: chunk.root,
             view,
             rows: self.len(),
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             in_place,
             home,
         })
@@ -4887,6 +4897,9 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
     // no join binds, cost nothing. Their statistics come from the tree.
     let _nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
     use crate::code_rule_dsl::logic::front::ast::{AXIS, DESCENDANTS};
+    // The axes over one set of kinds share their solves (`within::Solves`, decision 0494 step 7): each mode's is made
+    // once, and an `inside` whose set nests nowhere is its `nearest`.
+    let mut solves: Vec<(BTreeSet<i64>, Arc<within::Solves>)> = Vec::new();
     for (name, members) in sets {
         let axis = if name.starts_with(DESCENDANTS) {
             within::Axis::Has
@@ -4895,7 +4908,16 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
         } else {
             within::Axis::Nearest
         };
-        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members, binding))));
+        let set: BTreeSet<i64> = members.iter().copied().collect();
+        let shared = match solves.iter().find(|(s, _)| *s == set) {
+            Some((_, shared)) => Arc::clone(shared),
+            None => {
+                let shared = Arc::new(within::Solves::default());
+                solves.push((set, Arc::clone(&shared)));
+                shared
+            }
+        };
+        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members, binding).sharing(shared))));
     }
     // The stored-projection spike (measurement only): the relations the program reads, but the per-node axes.
     if let Some(db) = std::env::var_os("RERAIL_SPIKE_PROJECTION") {

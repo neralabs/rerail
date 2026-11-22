@@ -218,7 +218,7 @@ Implementer's choices:
   did not come back:
   - All of `rerail-parser-tests` passed there later (98 of 98), and so did `block_tests::` and `compile_tests::`
     (72 of 72). One forward-carry test failed once, then passed six times in a row with every trace on.
-  - The refusal was not in a slab's block or its device buffer: a trace of those (`RERAIL_DEVICE_TRACE`, added to
-    `Slab::lease`) printed nothing in the failing run. The budget is fixed per process. So the refusal depends on
+  - The refusal was not in a slab's block or its device buffer: a trace of those (added to `Slab::lease`; at the merge
+    of the hub it is the hub's same print, `RERAIL_POOL_DEBUG`) printed nothing in the failing run. The budget is fixed per process. So the refusal depends on
     the host's state. Its cause was not found.
 - Only JSON's grammar meets the conditions of the proofs (5, 6, 8) and of the separator rule.

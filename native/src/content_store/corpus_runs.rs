@@ -69,6 +69,21 @@ impl Default for CorpusPolicy {
     }
 }
 
+impl CorpusPolicy {
+    /// The policy a run collects under: the default, its history's bounds set by `RERAIL_CORPUS_HISTORY_MB`; `None`
+    /// with `RERAIL_CORPUS_GC=off`.
+    pub fn of_run() -> Option<CorpusPolicy> {
+        if std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") {
+            return None;
+        }
+        let mut policy = CorpusPolicy::default();
+        if let Some(mb) = std::env::var("RERAIL_CORPUS_HISTORY_MB").ok().and_then(|v| v.parse::<u64>().ok()) {
+            (policy.high_water, policy.low_water) = (mb << 20, (mb << 20) / 4 * 3);
+        }
+        Some(policy)
+    }
+}
+
 /// What one decision kept and dropped.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CorpusKept {
@@ -260,73 +275,7 @@ impl FileStat {
 /// for file systems whose mtime is coarse).
 pub const RACY_NS: i64 = 2_000_000_000;
 
-/// A root's stat index as loaded: by path, the stat recorded and its source, for entries a run may trust.
-#[derive(Debug, Default)]
-pub struct StatIndex {
-    entries: HashMap<String, (FileStat, SourceId)>,
-}
-
-impl StatIndex {
-    /// The source of the file at `path` when its stat is `now` and the index holds the same: else `None`, and the file
-    /// is to be read.
-    pub fn source(&self, path: &str, now: FileStat) -> Option<SourceId> {
-        self.entries.get(path).filter(|(stat, _)| *stat == now).map(|(_, id)| *id)
-    }
-    /// The source last read at `path`, whatever the file's stat is now.
-    pub fn recorded(&self, path: &str) -> Option<SourceId> {
-        self.entries.get(path).map(|(_, id)| *id)
-    }
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-}
-
 impl ContentStore {
-    /// The stat index of `root`: entries whose mtime is over [`RACY_NS`] before their recording and whose source is
-    /// still stored.
-    pub fn corpus_stats(&self, root: &str) -> StoreResult<StatIndex> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let mut statement = connection.prepare_cached(
-            "SELECT st.path, st.size, st.mtime_ns, st.inode, st.source_id FROM corpus_stats st \
-             JOIN corpus_roots r ON r.root_id=st.root_id JOIN source_objects s ON s.source_id=st.source_id \
-             WHERE r.path=?1 AND st.mtime_ns < st.recorded_ns - ?2",
-        )?;
-        let rows = statement.query_map(params![root, RACY_NS], |r| {
-            Ok((r.get::<_, String>(0)?, FileStat { size: r.get(1)?, mtime_ns: r.get(2)?, inode: r.get(3)? }, SourceId(r.get(4)?)))
-        })?;
-        let mut entries = HashMap::new();
-        for row in rows {
-            let (path, stat, id) = row?;
-            entries.insert(path, (stat, id));
-        }
-        Ok(StatIndex { entries })
-    }
-
-    /// Records in `root`'s stat index each (path, stat, source) of `read`, the files a run read, at `now_ns`.
-    pub fn record_corpus_stats(&self, root: &str, read: &[(String, FileStat, SourceId)], now_ns: i64) -> StoreResult<()> {
-        if read.is_empty() {
-            return Ok(());
-        }
-        self.immediate_transaction(|tx| {
-            tx.execute_cached("INSERT OR IGNORE INTO corpus_roots(path) VALUES (?1)", [root])?;
-            let root_id: i64 = tx.query_row_cached("SELECT root_id FROM corpus_roots WHERE path=?1", [root], |r| r.get(0))?;
-            // A few statements whatever the files' number.
-            bounded_insert::insert(
-                tx,
-                "INSERT INTO corpus_stats(root_id, path, size, mtime_ns, inode, source_id, recorded_ns)",
-                "ON CONFLICT(root_id, path) DO UPDATE SET size=excluded.size, mtime_ns=excluded.mtime_ns, inode=excluded.inode, \
-                 source_id=excluded.source_id, recorded_ns=excluded.recorded_ns",
-                read.iter().map(|(path, stat, id)| {
-                    [Value::Integer(root_id), Value::Text(path.clone()), Value::Integer(stat.size), Value::Integer(stat.mtime_ns), Value::Integer(stat.inode), Value::Integer(id.0), Value::Integer(now_ns)]
-                }),
-            )?;
-            Ok(())
-        })
-    }
-
     /// Keeps memo plan `plan`'s statistics (decision 0096 §2): one blob, written by the run that counted them.
     pub fn put_stat_blob(&self, plan: [u8; 32], blob: &[u8]) -> StoreResult<()> {
         self.immediate_transaction(|tx| {
@@ -595,6 +544,42 @@ impl ContentStore {
         })
     }
 
+    /// The manifests a run whose every read is as it was would record again (a whole-run cutoff's, decision 0547),
+    /// for `owner`: of `root`'s, per lane the newest manifest of each of `plans` (the recorded run's), its run and
+    /// time moved and the owner's acquisition its membership, as an identical manifest's are when recorded
+    /// (`record_corpus_run_retaining`). How many; none when they are gone (collected) or the owner may no longer
+    /// publish.
+    pub fn own_recorded_manifests(&self, root: &str, plans: &[[u8; 32]], owner: &super::analysis_scope::AnalysisOwner, now: i64) -> StoreResult<usize> {
+        let plans_json = serde_json::to_string(&plans.iter().map(|p| hex(p)).collect::<Vec<_>>()).expect("text");
+        self.immediate_transaction(|tx| {
+            owner.acquire(tx)?;
+            if !owner.current(tx)? {
+                return Ok(0);
+            }
+            let manifests: Vec<i64> = tx
+                .prepare_cached(
+                    "SELECT max(manifest_id) FROM corpus_manifests WHERE root_id=(SELECT root_id FROM corpus_roots WHERE path=?2) \
+                     AND plan_digest IN (SELECT unhex(value) FROM json_each(?1)) GROUP BY plan_digest, lane",
+                )?
+                .query_map(params![&plans_json, root], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            for manifest in &manifests {
+                let run: i64 = tx.query_row_cached("UPDATE corpus_state SET run=run+1 WHERE singleton=1 RETURNING run", [], |r| r.get(0))?;
+                tx.execute_cached("UPDATE corpus_manifests SET last_run=?1, last_time=?2 WHERE manifest_id=?3", params![run, now, manifest])?;
+                tx.execute_cached(
+                    "INSERT INTO analysis_scope_manifest(scope,manifest_id,acquired_at,acquisition,recorded_run) VALUES (?1,?2,?3,?4,?5) \
+                     ON CONFLICT(scope,manifest_id) DO UPDATE SET (acquired_at,acquisition,recorded_run)=(excluded.acquired_at,excluded.acquisition,excluded.recorded_run) \
+                     WHERE (acquired_at,acquisition,recorded_run)<(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)",
+                    (owner.membership(), manifest, owner.acquired_at(), owner.acquisition, run),
+                )?;
+            }
+            if !manifests.is_empty() {
+                tx.prepare_cached("UPDATE corpus_plans SET live=1 WHERE plan_digest IN (SELECT unhex(value) FROM json_each(?1))")?.execute([&plans_json])?;
+            }
+            Ok(manifests.len())
+        })
+    }
+
     /// Whether corpus collection has work: a new manifest to decide on, or a decision's rows not yet collected.
     pub fn corpus_collection_due(&self) -> StoreResult<bool> {
         Ok(self.corpus_due()? != 0)
@@ -610,6 +595,25 @@ impl ContentStore {
         let mut st = connection.prepare("SELECT plan_digest FROM corpus_plans WHERE live=1")?;
         let plans = st.query_map([], |r| r.get::<_, Vec<u8>>(0))?.filter_map(|p| p.ok()?.try_into().ok()).collect();
         Ok(plans)
+    }
+
+    /// The collection a run's owner held off while it ran (its lease, `AnalysisRun`), once it lets go: passes while
+    /// they find work, for up to 200 ms, as a run's own (`record_run`). The passes and the decision, if one was made;
+    /// `None` when none was wanted.
+    pub fn collect_after(&self, now: i64) -> StoreResult<Option<(usize, Option<CorpusKept>)>> {
+        let Some(policy) = CorpusPolicy::of_run() else { return Ok(None) };
+        if !self.corpus_pass_wanted(&policy, now)? {
+            return Ok(None);
+        }
+        let started = std::time::Instant::now();
+        let (mut idle, mut passes, mut kept) = (0, 0, None);
+        while idle < 2 && started.elapsed() < std::time::Duration::from_millis(200) {
+            let pass = self.collect_corpus_pass(&policy, now)?;
+            passes += 1;
+            idle = if pass.did_work() { 0 } else { idle + 1 };
+            kept = pass.kept.or(kept);
+        }
+        Ok(Some((passes, kept)))
     }
 
     pub fn corpus_pass_wanted(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<bool> {
@@ -872,7 +876,6 @@ impl ContentStore {
             tx.prepare_cached("UPDATE corpus_plans SET live = (plan_digest IN (SELECT unhex(value) FROM json_each(?1)))")?
                 .execute([serde_json::to_string(&live_plans).expect("text")])?;
             let gone_json = serde_json::to_string(&gone_roots).expect("integers");
-            tx.prepare_cached("DELETE FROM corpus_stats WHERE root_id IN (SELECT value FROM json_each(?1))")?.execute([&gone_json])?;
             tx.prepare_cached("DELETE FROM corpus_roots WHERE root_id IN (SELECT value FROM json_each(?1))")?.execute([&gone_json])?;
             tx.execute_cached("UPDATE corpus_decided SET run=(SELECT run FROM corpus_state WHERE singleton=1), time=?1 WHERE singleton=1", [now])?;
             // Collection stays due until a pass finds nothing (`collect_corpus_pass`), unless a new manifest came first.
@@ -970,6 +973,8 @@ impl ContentStore {
             // utility job: soon, behind the run, and finished before the process exits; decision 0227).
             rerail_accel::upkeep::kick();
         }
+        // The kept spaces' entries only dead programs read (decision 0401 F4), while their plans are still known dead.
+        pass.plan_rows += self.collect_kept_facts()?;
         // Dead plans, one transaction each, until the pass's budget of rows is spent: a dead build's memo is its
         // entries' rows (one statement), and one plan a pass left a store's dead builds for as many runs.
         let mut budget = PLAN_ROWS_PER_PASS as usize;

@@ -5,7 +5,7 @@
 pub fn sum_value(sum: i128) -> rusqlite::Result<i64> {
     i64::try_from(sum).map_err(|_| rusqlite::Error::UserFunctionError("integer overflow".into()))
 }
-pub(in crate::code_rule_dsl) fn register_sum(db: &rusqlite::Connection) -> rusqlite::Result<()> {
+pub fn register_sum(db: &rusqlite::Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::{Aggregate, Context, FunctionFlags};
     struct Sum;
     impl Aggregate<i128, i64> for Sum {
@@ -171,7 +171,7 @@ pub mod tests {
             .unwrap();
         let sql = format!(
             "SELECT {} FROM input",
-            crate::code_rule_dsl::logic::sql::lattices::flat_aggregate("v", TOP)
+            crate::code_rule_dsl::logic::native::lattices::flat_aggregate("v", TOP)
         );
         for values in [
             vec![],
@@ -193,7 +193,7 @@ pub mod tests {
             assert_eq!(actual, expected);
         }
         // Callback registrations cannot obtain a builtin proof through JSON.
-        let ops: crate::code_rule_dsl::waves::schedule::LatticeOperations = serde_json::from_value(serde_json::json!({"aggregate":"min","merge":"max","top":TOP,"widen":null,"after":null,"reduction":"Min"})).unwrap();
+        let ops: crate::code_rule_dsl::logic::native::lattices::Operations = serde_json::from_value(serde_json::json!({"aggregate":"min","merge":"max","top":TOP,"widen":null,"after":null,"reduction":"Min"})).unwrap();
         assert_eq!(ops.reduction, Reduction::Opaque);
     }
 }

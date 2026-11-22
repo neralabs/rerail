@@ -406,7 +406,7 @@ pub fn stamp(raw: &Path, out: &Path, root: &Path, declared: &BTreeMap<String, Ve
 #[derive(Default)]
 struct Consulted(std::sync::Mutex<Vec<(String, String, String)>>);
 
-pub(super) fn take_consulted() -> Vec<(String, String, String)> {
+pub fn take_consulted() -> Vec<(String, String, String)> {
     crate::code_rule_dsl::logic::run::local_if_any::<Consulted>().map(|c| std::mem::take(&mut *c.0.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default()
 }
 
@@ -442,7 +442,7 @@ fn artifact_entry(text: &ReadResult<String>, digest: &ReadResult<String>) -> Str
 
 /// `program` is the program's edit: its inputs read as facts, the inputs read dropped, and the rules an incomplete
 /// input withholds removed. What it reads of the rules is `shape`'s.
-pub(super) fn populate(program: &mut Edit<'_>, shape: &super::shape::Shape, root: &Path) -> Result<()> {
+pub fn populate(program: &mut Edit<'_>, shape: &super::shape::Shape, root: &Path) -> Result<()> {
     let declared = artifacts(&program.settings())?;
     let base = options().base;
     let base = base.as_deref();
@@ -670,7 +670,8 @@ fn populate_with(
                     let mut failure = None;
                     for file in paths {
                         if !crate::git_workspace::snapshot::is_file(&file) { continue; }
-                        let name = file.strip_prefix(root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+                        // The file as the rules name it, with `/` on every OS (`corpus::slashed`).
+                        let name = super::slashed(file.strip_prefix(root).unwrap());
                         match readers.rows(&name, io, pointer, records, vec![Json::String(name.clone())], columns, read) {
                             Ok(part) => rows.extend(part), Err(e) => { failure = Some(e); break; }
                         }

@@ -102,15 +102,15 @@ impl Slab {
         let device = crate::lane::device()?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
-        // A measurement aid: `RERAIL_DEVICE_TRACE` prints why a slab is refused.
+        // `RERAIL_POOL_DEBUG` prints why a lease is refused, as the pool's does.
         let refused = |what: &str, e: String| {
-            if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
-                eprintln!("RERAIL_DEVICE_TRACE a slab of {bytes} bytes refused, {what}: {e}");
+            if std::env::var_os("RERAIL_POOL_DEBUG").is_some() {
+                eprintln!("slab of {bytes} bytes: {what}: {e}");
             }
             Error::BackendCapacity
         };
-        let block = rerail_blocks::alloc::block(&need).map_err(|e| refused("its block", format!("{e:?}")))?;
-        let buffer = block.device_buffer(device).map_err(|e| refused("its device buffer", e))?;
+        let block = rerail_blocks::alloc::block(&need).map_err(|e| refused("block", format!("{e:?}")))?;
+        let buffer = block.device_buffer(device).map_err(|e| refused("device buffer", e))?;
         Ok(Slab { id, block, buffer, tables: Mutex::default() })
     }
 
@@ -461,10 +461,22 @@ impl State {
                         rerail_prof::count("residency.slabs", 1);
                         return Ok((self.slabs.len() - 1, offset));
                     }
-                    Err(_) => rerail_prof::count("capacity.residency_slab", 1),
+                    // Over the budget: an older slab retired makes room. No device (or a failed one) is no room
+                    // to make: the caller's, as it is (a block program skips a machine without one); a caller that
+                    // took it for capacity split its batch down to one file before failing.
+                    Err(Error::BackendCapacity) => {
+                        if std::env::var_os("RERAIL_POOL_DEBUG").is_some() {
+                            eprintln!("residency: a slab of {length} bytes refused");
+                        }
+                        rerail_prof::count("capacity.residency_slab", 1)
+                    }
+                    Err(e) => return Err(e),
                 }
             }
             if !self.retire(keep) {
+                if std::env::var_os("RERAIL_POOL_DEBUG").is_some() {
+                    eprintln!("residency: no room for {bytes} bytes: {held} held of {} with {length} more", limit());
+                }
                 return Err(Error::BackendCapacity);
             }
         }

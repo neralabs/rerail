@@ -6,7 +6,7 @@
 //! A batch read whole from its first read makes one group, in key order: one relation per relation, as an eager batch.
 
 use super::*;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use crate::code_rule_dsl::facts::vtab::DeviceView;
 use crate::code_rule_dsl::facts::vtab::{ReadRow, RowCells, RowStream};
 use crate::code_rule_dsl::logic::profile;
@@ -874,7 +874,11 @@ impl MadeRows {
             profile::decision("a batch's every document made by a read of a relation no document routes (decision 0494)", || format!("{} column {column} (document column {:?})", self.batch.rows.names[self.rel], by.column()));
             return None;
         };
+        let before = self.batch.rows.groups();
         let groups = self.batch.groups_of(keys);
+        if self.batch.rows.groups() > before {
+            profile::decision("a batch's documents made by a probe (decision 0494)", || format!("{} column {column}", self.batch.rows.names[self.rel]));
+        }
         let r = self.batch.made_so_far(self.rel);
         let mut rows = Vec::new();
         for g in groups {
@@ -1098,7 +1102,7 @@ impl Source for MadeRows {
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
         self.target().filter_eq(eqs)
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         self.done().and_then(|t| t.device_view())
     }

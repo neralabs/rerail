@@ -182,7 +182,7 @@ impl Wave {
 
     /// The wave of `clauses` running the policies' rules `logic` (`policies::lower`).
     pub fn with_logic(clauses: &[Clause], logic: super::policies::Logic, backend: ExecutionBackend) -> StoreResult<Self> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         if matches!(backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground) {
             LoweredWave::warm_metal();
         }
@@ -402,11 +402,11 @@ impl Wave {
         let docs = tapes.iter().zip(documents).map(|(tape, document)| tape.doc.with_path(&document.path)).collect::<Vec<_>>();
         // The walks' text tests from the term index (`R[tid]`, list step 17).
         let docs = crate::code_rule_dsl::prof::time("demand.texts", || self.texts(graph.store(), &tapes, docs))?;
-        let metal = cfg!(any(target_os = "macos", target_os = "linux"))
+        let metal = cfg!(any(target_os = "macos", target_os = "linux", windows))
             && matches!(self.backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground);
         let programs = self.lowered.programs();
         // Set by the Metal run of the labels (macOS).
-        #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(unused_mut))]
+        #[cfg_attr(not(any(target_os = "macos", target_os = "linux", windows)), allow(unused_mut))]
         let mut found = None;
         let (candidates, views) = if metal {
             // On Metal the candidates come first (set steps on the device, ~150 ms), then every
@@ -418,19 +418,19 @@ impl Wave {
             // Wave preparation (PIAT §20.3): what the residency lacks of the chunk's tapes is read
             // from the store in one query and decompressed into slabs; the label run then finds
             // every document resident.
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             crate::code_rule_dsl::prof::time("demand.residency", || prepare(graph.store(), &docs))?;
             crate::code_rule_dsl::prof::peak("2b.residency");
             let active = vec![vec![true; docs.len()]; self.plans.len()];
             let views = crate::code_rule_dsl::prof::time("demand.labels", || {
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(any(target_os = "macos", target_os = "linux", windows))]
                 {
                     let jobs = crate::code_rule_dsl::transducer::packed::RootJobs { programs: programs.iter().collect(), starts: candidates.clone() };
                     let (views, records) = labelled_metal(&self.lowered, &docs, &active, &jobs).map_err(invalid)?;
                     found = Some(records);
                     Ok::<_, StoreError>(views)
                 }
-                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
                 self.lowered.labelled(&docs, &active).map_err(invalid)
             })?;
             (candidates, views)
@@ -528,7 +528,7 @@ impl Wave {
         // The plans' sets over the batch's node space, on the wave's device (decision 0024 §2).
         use crate::code_rule_dsl::prefilter::sets::Device;
         let device = match self.backend {
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground => Device::Metal,
             _ => Device::Cpu,
         };
@@ -589,7 +589,7 @@ pub use crate::code_rule_dsl::facts::families::stored_documents as documents;
 /// (06 S7: 250 files in one chunk) or the evaluation's launch bound, each half on its own: a file's labels read only that file.
 /// Their roots' records come with them (`RootsFound`): a half's program that did not run on the
 /// device makes the program's records `None` for both.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn labelled_metal(
     lowered: &LoweredWave,
     docs: &[crate::code_rule_dsl::tape::TapeDoc],
@@ -630,7 +630,7 @@ fn labelled_metal(
 #[cfg(test)]
 mod tests;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 /// The chunk's documents admitted from the store by their tape digests (decision 0032). A grammar
 /// is the dialect the store's tag names. Leases are not kept: the label run takes its own.
 fn prepare(store: &ContentStore, docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> StoreResult<()> {

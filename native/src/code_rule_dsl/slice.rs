@@ -3,15 +3,14 @@
 //! documents (S4) and the findings layer over its matches (S5); cold and warm are one path.
 //!
 //! A warm run evaluates only the documents whose core facts changed since the run before. The
-//! others' match facts are kept in the store (`slice_match`, `slice_span`, per scope) and read
-//! back into the wave's relations (`Wave::kept_program`), so its families are of every document
+//! others' match facts are kept in the store (`slice_match`, `slice_span`: kept facts of the
+//! scope's space, `slice::kept`) and read where they lie as the wave's relations
+//! (`Wave::kept_program`), so its families are of every document
 //! and an edit's unchanged families cut off. The layer then runs over every document: its facts
 //! are the documents' comments and lines, and its families cut off an unchanged finding set.
 //!
 //! Hosts call it through `napi::CodeRuleSlice` (S6's napi method, after S7's gate passed).
 
-use crate::code_rule_dsl::stats::ingest::{FactTable, merge_facts};
-use crate::code_rule_dsl::stats::plans::write_stat1;
 use crate::code_rule_dsl::prof;
 use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::facts::families::{Families, Ingested};
@@ -20,7 +19,7 @@ use crate::code_rule_dsl::facts::vtab::syntax::Document;
 use crate::code_rule_dsl::findings::contract::Findings;
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use crate::code_rule_dsl::waves::findings::{Layer, Shape};
-use crate::code_rule_dsl::waves::matches::{self, Clause, KEPT_MATCH, KEPT_SPAN, Wave};
+use crate::code_rule_dsl::waves::matches::{self, Clause, Wave};
 use crate::code_rule_dsl::waves::owner::{Backing, Lease};
 use crate::code_rule_dsl::waves::schedule::{self, Limits};
 use crate::content_store::{ContentStore, DerivationInput, HashKey, StoreResult};
@@ -29,16 +28,10 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Waves a push may take (S3's tape; core and prefilter; kinds, with room for readers).
 const PUSH_WAVES: u32 = 8;
 
-/// The store's tables of the last run per scope: its rules, each document's core digest, and the
-/// wave's rows, which a warm run keeps for the documents it does not evaluate.
-const KEPT: &str = "
-CREATE TABLE IF NOT EXISTS slice_rules(scope TEXT PRIMARY KEY, digest BLOB NOT NULL) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS slice_document(scope TEXT NOT NULL, path TEXT NOT NULL, d INTEGER NOT NULL,
-  digest BLOB NOT NULL, PRIMARY KEY (scope, path)) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS slice_match(scope TEXT NOT NULL, c0 INTEGER NOT NULL, c1 INTEGER NOT NULL,
-  c2 INTEGER NOT NULL, PRIMARY KEY (scope, c1, c0, c2)) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS slice_span(scope TEXT NOT NULL, c0 INTEGER NOT NULL, c1 INTEGER NOT NULL,
-  c2 INTEGER NOT NULL, c3 INTEGER NOT NULL, PRIMARY KEY (scope, c0, c1, c2, c3)) WITHOUT ROWID;
+/// The tables a store kept the last run per scope in before they were kept facts (`slice::kept`, t33 step 3).
+const BEFORE: &str = "
+DROP TABLE IF EXISTS slice_rules; DROP TABLE IF EXISTS slice_document;
+DROP TABLE IF EXISTS slice_match; DROP TABLE IF EXISTS slice_span;
 ";
 
 /// The rules the slice runs: the lowered Python `ast` clauses of a pack's policies, as one wave,
@@ -134,7 +127,7 @@ pub fn apply(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules
 /// §20.10, decision 0032).
 fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold: bool) -> StoreResult<Run> {
     let run = execute(store, scope, root, rules, cold);
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     crate::code_rule_dsl::residency::slabs::executed();
     run
 }
@@ -142,17 +135,11 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
 fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold: bool) -> StoreResult<Run> {
     let entered = rules.backing.enter(store);
     let lease = entered.pool().take()?;
-    lease.execute_batch(KEPT)?;
-    let kept_rules: Option<Vec<u8>> = lease
-        .query_row("SELECT digest FROM slice_rules WHERE scope = ?1", [scope], |row| row.get(0))
-        .map(Some)
-        .or_else(|error| if error == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(error) })?;
-    let cold = cold || kept_rules.as_deref() != Some(&rules.digest[..]);
-    if cold {
-        for table in ["slice_document", "slice_match", "slice_span"] {
-            lease.execute(&format!("DELETE FROM {table} WHERE scope = ?1"), [scope])?;
-        }
-    }
+    lease.execute_batch(BEFORE)?;
+    let space = kept::space(scope);
+    let last = kept::last(store, &space)?;
+    // Cold: what was kept is of other rules, or not asked for; none of it is read, and all of it is written again.
+    let cold = cold || last.rules != Some(rules.digest);
     // The paths that may have changed: every path of the root when cold, else the observer's.
     let old = if cold { None } else { store.binding(&tree_name(scope, ""))? };
     prof::peak("0.start");
@@ -178,7 +165,7 @@ fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, 
         })
     })?;
     let changes = store.tree_changes_since(old, root)?;
-    let kept = kept_documents(&lease, scope)?;
+    let kept = if cold { Default::default() } else { last.documents.clone() };
     let paths = kept
         .keys()
         .cloned()
@@ -202,9 +189,9 @@ fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, 
     let mut fresh = evaluate.iter().chain(reused.iter().map(|(d, _)| d)).map(|d| i64::from(d.key)).collect::<Vec<_>>();
     fresh.extend(kept.iter().filter(|(path, _)| !current.contains(path.as_str())).map(|(_, (d, _))| *d));
     prof::time("slice.keep", || -> StoreResult<()> {
-        keep(&lease, scope, &fresh)?;
+        kept::views(&lease, &space, &fresh, cold)?;
         for (document, rows) in &reused {
-            memo::keep(&lease, document.key, rows, KEPT_MATCH, KEPT_SPAN)?;
+            memo::keep(&lease, document.key, rows, kept::REUSED_MATCH, kept::REUSED_SPAN)?;
         }
         Ok(())
     })?;
@@ -224,7 +211,7 @@ fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, 
     prof::time("slice.remember", || -> StoreResult<()> {
         wave.statistics(&lease, scope)?;
         memo::remember(&lease, store, scope, &rules.digest, &memoised)?;
-        remember(&lease, scope, &rules.digest, &documents, &fresh)
+        kept::remember(&lease, store, space, &rules.digest, &documents, &last, &fresh, cold)
     })?;
 
     crate::code_rule_dsl::prof::release();
@@ -244,80 +231,7 @@ fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, 
     })
 }
 
-/// Each kept document of `scope`: its key and core digest, by path.
-fn kept_documents(lease: &Lease<'_>, scope: &str) -> StoreResult<BTreeMap<String, (i64, [u8; 32])>> {
-    let rows = lease
-        .prepare("SELECT path, d, digest FROM slice_document WHERE scope = ?1")?
-        .query_map([scope], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?)))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows.into_iter().filter_map(|(path, d, digest)| Some((path, (d, digest.try_into().ok()?)))).collect())
-}
-
-/// The wave's kept inputs: the scope's kept rows but those of the documents `fresh`.
-fn keep(lease: &Lease<'_>, scope: &str, fresh: &[i64]) -> StoreResult<()> {
-    lease.execute_batch(&format!(
-        "DROP TABLE IF EXISTS {KEPT_MATCH}; CREATE TEMP TABLE {}(c0 INTEGER, c1 INTEGER, c2 INTEGER);
-         DROP TABLE IF EXISTS {KEPT_SPAN}; CREATE TEMP TABLE {}(c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER);
-         DROP TABLE IF EXISTS temp.slice_fresh; CREATE TEMP TABLE slice_fresh(d INTEGER PRIMARY KEY);",
-        unqualified(KEPT_MATCH),
-        unqualified(KEPT_SPAN),
-    ))?;
-    {
-        let mut insert = lease.prepare("INSERT OR IGNORE INTO temp.slice_fresh(d) VALUES (?1)")?;
-        for d in fresh {
-            insert.execute([d])?;
-        }
-    }
-    lease.execute(
-        &format!("INSERT INTO {KEPT_MATCH} SELECT c0, c1, c2 FROM slice_match WHERE scope = ?1 AND c1 NOT IN (SELECT d FROM temp.slice_fresh)"),
-        [scope],
-    )?;
-    lease.execute(
-        &format!("INSERT INTO {KEPT_SPAN} SELECT c0, c1, c2, c3 FROM slice_span WHERE scope = ?1 AND c0 NOT IN (SELECT d FROM temp.slice_fresh)"),
-        [scope],
-    )?;
-    Ok(())
-}
-
-/// The kept wave rows as fact relations stored as SQL tables, for their column statistics.
-const KEPT_FACTS: [FactTable<'static>; 2] = [
-    FactTable { name: "slice_match", doc: "c1", local: &["c2"], values: &["scope", "c0"] },
-    FactTable { name: "slice_span", doc: "c0", local: &["c1", "c2", "c3"], values: &["scope"] },
-];
-
-/// The run's rules, documents and wave rows, kept for the next run of `scope`. The documents
-/// `fresh` (evaluated, reused or gone) are the only ones whose rows change, so the column
-/// statistics move by theirs alone (`merge_facts`), and `sqlite_stat1` is written from them.
-fn remember(lease: &Lease<'_>, scope: &str, digest: &[u8; 32], documents: &[Document], fresh: &[i64]) -> StoreResult<()> {
-    lease.execute("INSERT OR REPLACE INTO slice_rules(scope, digest) VALUES (?1, ?2)", rusqlite::params![scope, &digest[..]])?;
-    merge_facts(lease, &KEPT_FACTS, fresh, -1)?;
-    for table in ["slice_document", "slice_match", "slice_span"] {
-        lease.execute(&format!("DELETE FROM {table} WHERE scope = ?1"), [scope])?;
-    }
-    {
-        let mut insert = lease.prepare("INSERT INTO slice_document(scope, path, d, digest) VALUES (?1, ?2, ?3, ?4)")?;
-        for d in documents {
-            insert.execute(rusqlite::params![scope, d.path, d.key, &d.digest[..]])?;
-        }
-    }
-    lease.execute("INSERT INTO slice_match SELECT ?1, c0, c1, c2 FROM matched", [scope])?;
-    lease.execute("INSERT INTO slice_span SELECT ?1, c0, c1, c2, c3 FROM span", [scope])?;
-    merge_facts(lease, &KEPT_FACTS, fresh, 1)?;
-    write_stat1(
-        lease,
-        &[
-            ("slice_match", "sqlite_autoindex_slice_match_1", &["scope", "c1", "c0", "c2"]),
-            ("slice_span", "sqlite_autoindex_slice_span_1", &["scope", "c0", "c1", "c2", "c3"]),
-        ],
-    )?;
-    Ok(())
-}
-
-/// A temp table's name without its schema.
-fn unqualified(table: &str) -> &str {
-    table.strip_prefix("temp.").unwrap_or(table)
-}
-
+mod kept;
 mod memo;
 // The slice tests' fixtures: this crate's tests and the engine's napi test (`slice/napi_tests.rs`) read them.
 #[cfg(any(test, feature = "test-hooks"))]

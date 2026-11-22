@@ -115,7 +115,7 @@ fn slice_bench() {
         })
         .collect::<Vec<_>>();
     let backend = match std::env::var("RERAIL_S6_BACKEND").as_deref() {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Ok("metal") => ExecutionBackend::MetalJit,
         _ => ExecutionBackend::CpuJit,
     };
@@ -429,7 +429,7 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = f(y)\nreturn g(x)\n").unwrap();
     // The device's backends where there is one (the device layer's targets, decision 0440 step E).
-    let device = if cfg!(any(target_os = "macos", target_os = "linux")) { &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit][..] } else { &[] };
+    let device = if cfg!(any(target_os = "macos", target_os = "linux", windows)) { &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit][..] } else { &[] };
     let backends = [ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit].into_iter().chain(device.iter().copied());
     let mut reference = None;
     for backend in backends {
@@ -466,10 +466,10 @@ fn the_backends_find_the_same_keys_on_real_files() {
     let dir = temp("phase4");
     let (paths, _) = sample_of(&dir, 4, 0);
     assert!(paths.len() == 4 || std::env::var_os("RERAIL_S7_FIXTURES").is_some() || std::env::var_os("RERAIL_S7_FILES").is_some(), "{} files", paths.len());
-    #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(unused_mut))]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "linux", windows)), allow(unused_mut))]
     let mut stores = vec![dir.clone()];
     // The device's backends where there is one (the device layer's targets, decision 0440 step E).
-    let device = if cfg!(any(target_os = "macos", target_os = "linux")) { &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)][..] } else { &[] };
+    let device = if cfg!(any(target_os = "macos", target_os = "linux", windows)) { &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)][..] } else { &[] };
     let backends = [("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)].into_iter().chain(device.iter().copied());
     // Each (policy, file)'s coverage.
     type Coverages = BTreeMap<(String, String), Coverage>;
@@ -553,7 +553,7 @@ fn the_slice_finds_ws_findings_on_real_files() {
     if wanted.contains("cpu") {
         backends.push(("cpu", ExecutionBackend::CpuBackground));
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if wanted.contains("metal") {
         backends.push(("metal", ExecutionBackend::MetalBackground));
     }
@@ -567,12 +567,12 @@ fn the_slice_finds_ws_findings_on_real_files() {
         let run = audit(&store, WS, root, &mut rules).unwrap();
         let (spent, wall) = (cpu() - cpu0, wall0.elapsed());
         eprintln!("S7 {name} footprint: {before} MB before the audit, {} MB after{}", footprint(), if w_run.is_none() { " (before W's run)" } else { "" });
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         eprintln!("S7 {name} Metal buffers: peak {} MB", crate::code_rule_dsl::transducer::packed::metal_backend::peak_mb());
         // `RERAIL_S7_HOLD=<path>`: wait here, the audit's state alive, until `path` exists (to
         // inspect the process's heap).
         if let Some(path) = std::env::var_os("RERAIL_S7_HOLD") {
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             eprintln!(
                 "S7 Metal buffers alive: {} MB; the driver's allocation {} MB",
                 crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
@@ -674,17 +674,11 @@ fn the_slice_finds_ws_findings_on_real_files() {
         Some(at)
     };
     let doc = run.paths.iter().map(|(d, p)| (p.clone(), *d)).collect::<BTreeMap<_, _>>();
-    let shifted = {
-        let entered = rules.backing.enter(&store);
-        let lease = entered.pool().take().unwrap();
-        keys(&run).iter().filter(|k| k.3 > 0).find_map(|(_, _, path, line)| {
-            let start = line_start(path, *line).filter(|&s| s > 0)?;
-            let moved = lease
-                .execute("UPDATE slice_span SET c2 = c2 - 1 WHERE scope = ?1 AND c0 = ?2 AND c2 = ?3", rusqlite::params![WS, doc[path], start as i64])
-                .unwrap();
-            (moved > 0).then(|| format!("{path} byte {start} ({moved} spans)"))
-        })
-    };
+    let shifted = keys(&run).iter().filter(|k| k.3 > 0).find_map(|(_, _, path, line)| {
+        let start = line_start(path, *line).filter(|&s| s > 0)?;
+        let moved = super::kept::shift_spans(&store, WS, i64::from(doc[path]), start as i64);
+        (moved > 0).then(|| format!("{path} byte {start} ({moved} spans)"))
+    });
     let shifted = shifted.expect("a finding whose anchor starts its line");
     let mutated = apply(&store, WS, root, &mut rules).unwrap();
     assert!(mutated.evaluated.is_empty(), "the layer runs over the kept, shifted spans");
@@ -768,7 +762,7 @@ fn s8_measures_the_targets_on_s7s_sample() {
     for pass in 0..passes {
         for backend in backends.split(',') {
             let execution = match backend {
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(any(target_os = "macos", target_os = "linux", windows))]
                 "metal" => ExecutionBackend::MetalJit,
                 _ => ExecutionBackend::CpuJit,
             };
@@ -883,18 +877,16 @@ fn the_statistics_loop_runs_on_the_slices_path() {
     assert!(plans > 0);
     assert!(count("SELECT count(*) FROM compiled_plan_reads") > 0);
     assert!(count("SELECT count(*) FROM plan_feedback") > 0);
-    // The kept rows' column statistics, and SQLite's from them.
-    let matches = count("SELECT count(*) FROM slice_match");
-    assert_eq!(count("SELECT rows FROM fact_stats WHERE tbl = 'slice_match' AND col = 'c0'"), matches);
-    assert_eq!(count("SELECT count(*) FROM sqlite_stat1 WHERE tbl IN ('slice_match', 'slice_span')"), 2);
-    // An edit: the statistics move by the edited document, and match a cold build's.
+    // The wave's rows are kept facts of the scope (t33 step 3), read through `kept_facts`; no SQLite table keeps them.
+    let matches = super::kept::count(&store, WS, "slice_match");
+    assert!(matches > 0 && super::kept::count(&store, WS, "slice_span") > 0);
+    assert_eq!(count("SELECT count(*) FROM sqlite_master WHERE name IN ('slice_match', 'slice_span')"), 0);
+    // An edit: the edited document's rows alone are written again (an `assert` the less), and the findings match a
+    // cold build's.
     write(&one, "b.py", "def f():\n    return 1\n");
     let edited = apply(&store, WS, directory_root(&store, &one).unwrap(), &mut rules).unwrap();
     assert_eq!(keys(&edited), keys(&cold(&one, &policies)));
-    let matches = count("SELECT count(*) FROM slice_match");
-    assert_eq!(count("SELECT rows FROM fact_stats WHERE tbl = 'slice_match' AND col = 'c0'"), matches);
-    let distinct = count("SELECT count(DISTINCT c0) FROM slice_match");
-    assert_eq!(count("SELECT ndv FROM fact_stats WHERE tbl = 'slice_match' AND col = 'c0'"), distinct);
+    assert!(super::kept::count(&store, WS, "slice_match") < matches, "the edited document's matches went with its assert");
     // Unchanged statistics keep their compiled gates.
     assert_eq!(count("SELECT count(*) FROM compiled_plans"), plans);
     assert!(count("SELECT max(samples) FROM plan_feedback") >= 2);
@@ -973,7 +965,7 @@ fn rer131_pack_keys() {
     let store = ContentStore::open(&temp("pack-keys-store").with_extension("sqlite")).unwrap();
     let backend = match std::env::var("RERAIL_BACKEND").as_deref() {
         Ok("jit") => ExecutionBackend::CpuJit,
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Ok("metal") => ExecutionBackend::MetalInterpreter,
         _ => ExecutionBackend::CpuInterpreter,
     };

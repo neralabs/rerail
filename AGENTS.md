@@ -102,8 +102,13 @@ run …` by default: the hosts take several test commands each at once, in a war
 checkout, and this machine stays free for the edit loop. A build here prints when a host has a free
 test slot. Run tests here only when no host is usable (test-remote then runs them here itself).
 A command that does not need macOS may go to a Linux host, as a Linux build and run (as CI's):
-`--os macos` keeps one on a Mac when its result must be macOS's. Each command gets a share of its
-host (twice its cores over its test slots) as its cargo jobs and test threads.
+`--os macos` keeps one on a Mac when its result must be macOS's. `--os linux` alone takes any Linux
+host, x86_64 PCs and a 6 GB VM included: say what the command needs with `--arch arm64` (or
+`x86_64`) and `--memory GB` (what a command there gets; `status` shows each host's), not by naming a
+host. `--cpu-feature F` takes only hosts whose CPU has F (`sve2`, `sme2`, `i8mm`, `avx2`, ...), and
+the command is told its machine's CPU (RERAIL_FARM_CPU_FEATURES and the like);
+`scripts/build/farm/features` shows which host has what. Each command gets a share of its host (twice its cores over its test slots) as its cargo jobs
+and test threads.
 
 A test that takes 20 s or more belongs in the slow tier (the default profile's
 `default-filter`). Tests that read the packs' test data need it pulled first
@@ -119,13 +124,22 @@ usernames, home paths, addresses, interfaces or network layout. Model numbers ar
 the file there are no hosts, and every command below runs here instead.
 
 ```
-scripts/build/farm/status                          # which hosts are usable now, and why not
+scripts/build/farm/status                          # which hosts are usable now, and why not; each one's compile speed
+scripts/build/farm/bench [HOST...]                 # measure compile speed again (a clean gix build at 1, 4 and 8 jobs)
+scripts/build/farm/features [FEATURE...]           # each host's CPU and vector units; who has FEATURE
+scripts/build/farm/bench --table                   # every host's saved figures, against this Mac
 scripts/build/farm/dashboard --open                # a live page: each host's CPU, GPU, memory, disk, jobs, links
 scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds miss the shared cache
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
 ```
+
+The hosts differ in speed by up to 5 times (`status` shows each one's measured compile times; the farm's
+README, "How fast each host compiles"). The Linux sides (the VMs on the Macs, the Sparks) are the
+fastest, about this Mac's speed. A Windows build takes 2 to 2.5 times the Linux side of the same PC, and
+the M1 Max and the mini about twice this Mac's time. So send a command that needs neither Windows nor
+macOS to Linux (`--os linux`), and judge a slow run by its host's figure there before suspecting the code.
 
 Benchmarks are ordinary commands: run them with `test-remote` (`--tree DIR` sends their inputs or a
 program built here) or here, without waiting for an idle machine, and note the machine's load with
@@ -205,7 +219,7 @@ hours (scripts/dev/relax/README.md, "How the caches stay bounded").
 - Both build outside every worktree, under `~/Library/Caches`, with the repository's toolchain.
   Don't build them in a worktree's `tmp/`, and don't run binaries from there.
 
-`rerail-pp-aot`, `rust_stream` and `clif_rust` are removed (decisions 0565, 0570). A
+`rerail-pp-aot`, `rust_stream` and `clif_rust` are removed (decisions 0565, 0606). A
 grammar's Rust is the Bitlex compiler's (`bitlex_lex_rust`, `bitlex_rust`), checked in, as
 `rerail-kotlin-aot`, `rerail-json-aot` and `rerail-rr-aot` hold theirs (decision 0560).
 

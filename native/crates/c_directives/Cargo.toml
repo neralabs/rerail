@@ -7,10 +7,11 @@ description = "C's and C++'s directives as a Bitlex grammar (decision 0327, mode
 
 [features]
 # The compiler's and Metal's test hooks, for a build with `--features test-hooks` (scripts/check/check_dev_features.py).
-test-hooks = ["rerail-c-pp/test-hooks", "rerail-c-lean/test-hooks", "rerail-tape-format/test-hooks", "rerail-compiler/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-pp/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-metal/test-hooks"]
+test-hooks = ["rerail-c-pp/test-hooks", "rerail-c-lean/test-hooks", "rerail-tape-format/test-hooks", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-pp/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-metal/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }
+rerail-rir = { path = "../rir" }
 rerail-bitlex = { path = "../bitlex" }
 rerail-cpu-block = { path = "../cpu_block" }
 rerail-cpu-pp = { path = "../cpu_pp" }
@@ -27,8 +28,8 @@ rerail-simd8 = { path = "../simd8" }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-c-directives = { path = ".", features = ["test-hooks"] }
 
-# The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
-[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+# The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
 rerail-metal = { path = "../metal" }
 # A placed document's digest (`eval::rounds::place`, and the evaluator's tests).
 sha2 = "0.10"

@@ -3,16 +3,7 @@
 use super::{Result, Stage, quote, sql_error};
 use std::sync::{Arc, atomic::AtomicUsize};
 
-#[derive(Clone)]
-pub struct Reachability {
-    pub(super) ordered_first: Option<super::ordered_first::Spec>,
-    pub(in crate::code_rule_dsl) roots: String,
-    pub(in crate::code_rule_dsl) edges: String,
-    pub(in crate::code_rule_dsl) batch_size: usize,
-    pub(in crate::code_rule_dsl) forest: bool,
-    pub(in crate::code_rule_dsl) syntax: Option<String>,
-    pub(in crate::code_rule_dsl) expand: bool,
-}
+pub use super::base::reachability::Reachability;
 
 pub(in crate::code_rule_dsl) fn create(
     db: &super::Database,

@@ -108,6 +108,7 @@ export {
   resolveNativeBindingPath,
 } from "./native/native.js";
 export { LOCKS_DIR } from "./native/file-lock.js";
+export { mainContentStoreDirectory } from "./native/rerail-build.js";
 export {
   acquireDirectoryAnalysisGeneration, acquireNamedAnalysisRun, analysisScopeHome, collectAnalysisCaches,
   deleteNamedAnalysisScope, finishNamedAnalysisRegistration, queueAnalysisScopeReleases, readAnalysisScopeGeneration,

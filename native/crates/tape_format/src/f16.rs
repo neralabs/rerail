@@ -41,6 +41,8 @@ pub struct Lang {
     revision: u8,
     /// Each number's kind and field: what a presence's bits are (decision 0434 §4).
     kind_field: Vec<(u16, u16)>,
+    /// `presence_words`, counted once: a tape's reader checks its presence against it at every read.
+    presence_words: (usize, usize),
 }
 
 impl Lang {
@@ -56,14 +58,15 @@ impl Lang {
         let cut = if n <= 256 { 256 } else { 255 };
         let per = if cut >= 256 { 1 } else { n - cut };
         let index = table.entries().iter().enumerate().map(|(k, e)| (e.clone(), k as u32)).collect();
-        let kind_field = table.entries().iter().map(|e| (e.kind, e.field)).collect();
-        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field })
+        let kind_field: Vec<(u16, u16)> = table.entries().iter().map(|e| (e.kind, e.field)).collect();
+        let kinds = kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
+        let fields = kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
+        let presence_words = (kinds.div_ceil(64), fields.div_ceil(64));
+        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field, presence_words })
     }
     /// The words of a presence's kinds' and fields' bitmaps: one bit a kind and a field the table names.
     pub fn presence_words(&self) -> (usize, usize) {
-        let kinds = self.kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
-        let fields = self.kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
-        (kinds.div_ceil(64), fields.div_ceil(64))
+        self.presence_words
     }
     pub fn table(&self) -> &CodeTable {
         &self.table
@@ -574,6 +577,109 @@ fn mask(w: usize) -> u64 {
 
 // ---- the writer ------------------------------------------------------------------------------------------
 
+/// The device's kernel: every read of node `i` (`DEVICE_READS` of them) into its slots, from the reads as UKL
+/// (`READS_HEADER`: `<ukl/reads/tape.h>`, or `tape_z.h`, which reads 16z too), the view read where its buffer holds
+/// it. `parentEnd[i]` is the end of `i`'s parent's subtree (`tape_next_in`'s bound).
+#[cfg(any(test, feature = "test-hooks"))]
+pub const DEVICE_KERNEL: &str = r#"
+#define CLIF_VIEW_SPACE UKL_GLOBAL
+#include READS_HEADER
+
+typedef struct ReadArgs {
+    uint32_t n;
+    uint32_t pad;
+} ReadArgs;
+UKL_REFLECT_STRUCT(ReadArgs, n, pad)
+
+DEFINE_KERNEL2(tests, t_reads,
+               ARGS,     ReadArgs, args,      ,
+               RWBUFFER, uint8_t,  tape,      "[bytes]",
+               ROBUFFER, uint32_t, view,      "[29]",
+               ROBUFFER, uint32_t, parentEnd, "[n]",
+               RWBUFFER, uint32_t, out,       "[n * 23]",
+               GID0,     uint32_t, i,         )
+{
+    if (i >= args.n)
+        return;
+    RWBUFFER(uint32_t) o = out + i * 23u;
+    o[0] = clif_tape_size(tape, view, i);
+    o[1] = clif_tape_end_of(tape, view, i);
+    o[2] = clif_tape_number(tape, view, i);
+    o[3] = clif_tape_start(tape, view, i);
+    o[4] = clif_tape_end(tape, view, i);
+    o[5] = clif_tape_parent(tape, view, i);
+    o[6] = clif_tape_next(tape, view, i);
+    o[7] = clif_tape_next_in(tape, view, i, parentEnd[i]);
+    o[8] = clif_tape_first_child(tape, view, i);
+    o[9] = clif_tape_child_count(tape, view, i);
+    for (uint32_t k = 0u; k <= 12u; k++)
+        o[10u + k] = clif_tape_child(tape, view, i, k);
+}
+
+typedef struct RandomArgs {
+    uint32_t n;
+    uint32_t threads;
+    uint32_t rounds;
+    uint32_t cache;
+} RandomArgs;
+UKL_REFLECT_STRUCT(RandomArgs, n, threads, rounds, cache)
+
+// Each thread's reads of `rounds` nodes at random (its code, start, end and parent, against `want`'s): how many were
+// wrong, and how many of those were wrong with no failure yet counted by the cache (at `cache` in the tape), in its
+// own two words (no counter shared by every thread).
+DEFINE_KERNEL2(tests, t_random,
+               ARGS,     RandomArgs, args,  ,
+               RWBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[29]",
+               ROBUFFER, uint32_t,   want,  "[n * 4]",
+               RWBUFFER, uint32_t,   out,   "[threads * 2]",
+               GID0,     uint32_t,   i,     )
+{
+    if (i >= args.threads)
+        return;
+    uint32_t x = i * 0x9E3779B9u + 1u, wrong = 0u, silent = 0u;
+    for (uint32_t r = 0u; r < args.rounds; r++) {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        uint32_t node = x % args.n;
+        ROBUFFER(uint32_t) w = want + node * 4u;
+        uint32_t bad = 0u;
+        bad += clif_tape_number(tape, view, node) != w[0] ? 1u : 0u;
+        bad += clif_tape_start(tape, view, node) != w[1] ? 1u : 0u;
+        bad += clif_tape_end(tape, view, node) != w[2] ? 1u : 0u;
+        bad += clif_tape_parent(tape, view, node) != w[3] ? 1u : 0u;
+        wrong += bad;
+        if (bad != 0u && ukl_atomic_load_at(tape, (uint64_t)args.cache + CLIF_T_C_FAILED) == 0u)
+            silent += bad;
+    }
+    out[2u * i] = wrong;
+    out[2u * i + 1u] = silent;
+}
+"#;
+
+/// The reads' program over `header` (`tape.h`, or `tape_z.h`): its name and its text, as the device layer compiles it
+/// (`rerail_gpu::kernels::program`; this crate is below the device layer, so its callers compile it).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn device_reads_kernel(header: &str) -> (String, String) {
+    // Formats 15's and 16's reads use no SIMD group; 16z's block decode is a SIMD group's (`UKL_SIMD_GROUP_FREE`,
+    // ukl/backend.h).
+    let free = if header == "tape.h" { SIMD_GROUP_FREE } else { "" };
+    (format!("tape_reads_{header}"), format!("{free}{}", DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>"))))
+}
+
+/// What a source says first when its kernels use no SIMD group (ukl/backend.h, decision 0576 §14): on OpenCL they
+/// then require no sub-group size, and a kernel that reaches a SIMD-group operation is refused at its build.
+#[cfg(any(test, feature = "test-hooks"))]
+const SIMD_GROUP_FREE: &str = "#define UKL_SIMD_GROUP_FREE 1\n";
+
+/// The tape format's kernels, by name and text (`rerail_gpu::kernels::program` compiles each): its tests' (the
+/// writer's replay, the reads' two programs), which the engine's `kernels compile` compiles ahead of them.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn kernels() -> Vec<(String, String)> {
+    vec![(ops::REPLAY_NAME.to_owned(), ops::REPLAY.to_owned()), device_reads_kernel("tape.h"), device_reads_kernel("tape_z.h")]
+}
+
 /// The writer whose ops are the CLIF ones (decision 0434 §6).
 pub mod ops;
 #[cfg(any(test, feature = "reference"))]
@@ -797,6 +903,11 @@ pub(crate) trait WriterOps: Sized {
     #[cfg_attr(not(test), allow(dead_code))]
     fn set_start(&mut self, i: usize, start: u64);
     fn finish(self) -> Result<Finished, String>;
+    /// Each writer's `finish`, in order (the device's run in one launch, a thread a writer).
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn finish_all(ws: Vec<Self>) -> Vec<Result<Finished, String>> {
+        ws.into_iter().map(Self::finish).collect()
+    }
 }
 
 macro_rules! writer_ops {
@@ -807,7 +918,11 @@ macro_rules! writer_ops {
     ($t:ty, again) => {
         writer_ops!($t, |mut w: $t| <$t>::finish(&mut w));
     };
-    ($t:ty, $finish:expr) => {
+    // Every writer's `finish` at once too (`DeviceOps::finish_all`: one launch).
+    ($t:ty, all) => {
+        writer_ops!($t, |w: $t| <$t>::finish(w), <$t>::finish_all);
+    };
+    ($t:ty, $finish:expr $(, $all:expr)?) => {
         impl WriterOps for $t {
             fn open(&mut self, number: u32, start: u64) -> usize {
                 <$t>::open(self, number, start)
@@ -830,6 +945,11 @@ macro_rules! writer_ops {
             fn finish(self) -> Result<Finished, String> {
                 ($finish)(self)
             }
+            $(
+                fn finish_all(ws: Vec<Self>) -> Vec<Result<Finished, String>> {
+                    ($all)(ws)
+                }
+            )?
         }
     };
 }
@@ -837,7 +957,7 @@ writer_ops!(Writer, again);
 #[cfg(any(test, feature = "reference"))]
 writer_ops!(reference::Writer<'_>);
 #[cfg(test)]
-writer_ops!(ops::device::DeviceOps);
+writer_ops!(ops::device::DeviceOps, all);
 
 pub fn write(lang: &Lang, n: usize, source: &[u8], tag: u8, z: bool, node: impl FnMut(usize) -> Node) -> Result<Written, String> {
     write_with(Writer::new(lang, source, tag, z, false, n), n, node).map(|f| f.tape)
@@ -2039,6 +2159,106 @@ mod tests {
         }
     }
 
+    /// Decision 0463: every walk ends, whatever it is asked of whatever view. A node at or past the view's count, a
+    /// view whose count is short of its tape's, a byte past the source and a line past the last ask each walking read
+    /// (sizes' hops, a parent's descent, the newline index's selects) to step past what the tape holds: each step must
+    /// still move it on, and the walk end. A read that does not return within its time is reported by name, not left
+    /// to hang the run (on a GPU, nothing stops such a kernel: decision 0440). The tape lies before a zeroed tail, and
+    /// the nodes asked lie within it.
+    #[test]
+    fn every_walk_ends_whatever_it_is_asked() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let t = sixteen(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2);
+        let v16 = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
+        let (image, _) = crate::tape::tests::sample();
+        let v15 = crate::tape::f15_view(&image, 0).unwrap();
+        let tail = |bytes: &[u8]| bytes.iter().copied().chain(std::iter::repeat_n(0u8, 8 << 20)).collect::<Vec<u8>>();
+        let tapes = vec![("format 16", tail(t.as_bytes()), v16), ("format 15", tail(&image), v15)];
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let (done, finished) = std::sync::mpsc::channel();
+        let at = asked.clone();
+        std::thread::spawn(move || {
+            let reads = rerail_clif::jit::Reads::new();
+            // Said on stderr too: a read that leaves the buffer faults, and the fault ends the process.
+            let ask = |what: String| {
+                eprintln!("asking {what}");
+                *at.lock().unwrap() = what;
+            };
+            for (format, bytes, view) in &tapes {
+                let n = view.nodes;
+                // Within the zeroed tail: a node further out reads its own cell outside any buffer, which no walk does.
+                let past = [n, n + 1, n + 7, n + 4096];
+                // Views whose count is short of the tape's, each asked of every node the tape holds.
+                let mut short = Vec::new();
+                for count in [0, 1, n / 2] {
+                    short.push((TapeView { nodes: count, ..*view }, (0..n).collect::<Vec<u32>>()));
+                }
+                short.push((*view, past.to_vec()));
+                for (v, nodes) in &short {
+                    for &i in nodes {
+                        for read in ["tape_size", "tape_end_of", "tape_parent", "tape_next", "tape_first_child", "tape_child_count", "tape_start", "tape_end"] {
+                            ask(format!("{format}: {read}({i}) of a view of {} nodes", v.nodes));
+                            reads.one(read, bytes, v, i as usize);
+                        }
+                        for k in [0, 1, 5, u32::MAX] {
+                            ask(format!("{format}: tape_child({i}, {k}) of a view of {} nodes", v.nodes));
+                            reads.two("tape_child", bytes, v, i as usize, k);
+                        }
+                        ask(format!("{format}: tape_next_in({i}, {}) of a view of {} nodes", u32::MAX, v.nodes));
+                        reads.two("tape_next_in", bytes, v, i as usize, u32::MAX);
+                    }
+                }
+                // Bytes past the source, lines past the last.
+                for x in [view.source_len, view.source_len + 1, view.source_len + 4096] {
+                    ask(format!("{format}: tape_line({x}) of a source of {} bytes", view.source_len));
+                    reads.one("tape_line", bytes, view, x as usize);
+                }
+                let lines = reads.one("tape_line", bytes, view, view.source_len.saturating_sub(1) as usize);
+                for k in [lines + 1, lines + 2, lines + 1000] {
+                    ask(format!("{format}: tape_line_start({k}) of {} lines", lines + 1));
+                    reads.one("tape_line_start", bytes, view, k as usize);
+                }
+                // The same walks by the reads written directly in Rust (decision 0534), on the same views and nodes.
+                let f16_tape = *format == "format 16";
+                for (v, nodes) in &short {
+                    for &i in nodes {
+                        ask(format!("{format}: the direct reads of {i} of a view of {} nodes", v.nodes));
+                        if f16_tape {
+                            use crate::reads::f16;
+                            let _ = (f16::size(bytes, v, i), f16::parent(bytes, v, i), f16::start(bytes, v, i), f16::end(bytes, v, i));
+                        } else {
+                            use crate::reads::f15;
+                            let _ = (f15::size(bytes, v, i), f15::parent(bytes, v, i), f15::start(bytes, v, i), f15::end(bytes, v, i));
+                        }
+                    }
+                }
+                if f16_tape {
+                    use crate::reads::f16;
+                    for x in [view.source_len, view.source_len + 1, view.source_len + 4096] {
+                        ask(format!("{format}: the direct line({x}) of a source of {} bytes", view.source_len));
+                        let _ = f16::line(bytes, view, x);
+                    }
+                    let lines = f16::line(bytes, view, view.source_len.saturating_sub(1));
+                    for k in [lines + 1, lines + 2, lines + 1000] {
+                        ask(format!("{format}: the direct line_start({k}) of {} lines", lines + 1));
+                        let _ = f16::line_start(bytes, view, k);
+                    }
+                }
+            }
+            let _ = done.send(());
+        });
+        // A direct read past its slice panics (the walk's thread ends without its message): said apart from a hang.
+        match finished.recv_timeout(std::time::Duration::from_secs(20)) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => panic!("a read that panicked: {}", asked.lock().unwrap_or_else(|e| e.into_inner())),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("a walk that does not end: {}", asked.lock().unwrap_or_else(|e| e.into_inner())),
+        }
+    }
+
     /// Decision 0463: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
     /// what its block's bytes decode to is refused when the tape is read in. A block whose literals claim more
     /// bytes than it has is decoded no further than its own: the tape lies against a page no read may touch, and
@@ -2235,85 +2455,6 @@ mod tests {
         check(z.as_bytes().as_ptr(), reader.view(), z.len());
     }
 
-    /// The device's kernel: every read of node `i` (`DEVICE_READS` of them) into its slots, from the reads as UKL
-    /// (`READS_HEADER`: `<ukl/reads/tape.h>`, or `tape_z.h`, which reads 16z too), the view read where its buffer holds
-    /// it. `parentEnd[i]` is the end of `i`'s parent's subtree (`tape_next_in`'s bound).
-    const DEVICE_KERNEL: &str = r#"
-#define CLIF_VIEW_SPACE UKL_GLOBAL
-#include READS_HEADER
-
-typedef struct ReadArgs {
-    uint32_t n;
-    uint32_t pad;
-} ReadArgs;
-UKL_REFLECT_STRUCT(ReadArgs, n, pad)
-
-DEFINE_KERNEL2(tests, t_reads,
-               ARGS,     ReadArgs, args,      ,
-               RWBUFFER, uint8_t,  tape,      "[bytes]",
-               ROBUFFER, uint32_t, view,      "[29]",
-               ROBUFFER, uint32_t, parentEnd, "[n]",
-               RWBUFFER, uint32_t, out,       "[n * 23]",
-               GID0,     uint32_t, i,         )
-{
-    if (i >= args.n)
-        return;
-    RWBUFFER(uint32_t) o = out + i * 23u;
-    o[0] = clif_tape_size(tape, view, i);
-    o[1] = clif_tape_end_of(tape, view, i);
-    o[2] = clif_tape_number(tape, view, i);
-    o[3] = clif_tape_start(tape, view, i);
-    o[4] = clif_tape_end(tape, view, i);
-    o[5] = clif_tape_parent(tape, view, i);
-    o[6] = clif_tape_next(tape, view, i);
-    o[7] = clif_tape_next_in(tape, view, i, parentEnd[i]);
-    o[8] = clif_tape_first_child(tape, view, i);
-    o[9] = clif_tape_child_count(tape, view, i);
-    for (uint32_t k = 0u; k <= 12u; k++)
-        o[10u + k] = clif_tape_child(tape, view, i, k);
-}
-
-typedef struct RandomArgs {
-    uint32_t n;
-    uint32_t threads;
-    uint32_t rounds;
-    uint32_t cache;
-} RandomArgs;
-UKL_REFLECT_STRUCT(RandomArgs, n, threads, rounds, cache)
-
-// Each thread's reads of `rounds` nodes at random (its code, start, end and parent, against `want`'s): how many were
-// wrong, and how many of those were wrong with no failure yet counted by the cache (at `cache` in the tape), in its
-// own two words (no counter shared by every thread).
-DEFINE_KERNEL2(tests, t_random,
-               ARGS,     RandomArgs, args,  ,
-               RWBUFFER, uint8_t,    tape,  "[bytes]",
-               ROBUFFER, uint32_t,   view,  "[29]",
-               ROBUFFER, uint32_t,   want,  "[n * 4]",
-               RWBUFFER, uint32_t,   out,   "[threads * 2]",
-               GID0,     uint32_t,   i,     )
-{
-    if (i >= args.threads)
-        return;
-    uint32_t x = i * 0x9E3779B9u + 1u, wrong = 0u, silent = 0u;
-    for (uint32_t r = 0u; r < args.rounds; r++) {
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        uint32_t node = x % args.n;
-        ROBUFFER(uint32_t) w = want + node * 4u;
-        uint32_t bad = 0u;
-        bad += clif_tape_number(tape, view, node) != w[0] ? 1u : 0u;
-        bad += clif_tape_start(tape, view, node) != w[1] ? 1u : 0u;
-        bad += clif_tape_end(tape, view, node) != w[2] ? 1u : 0u;
-        bad += clif_tape_parent(tape, view, node) != w[3] ? 1u : 0u;
-        wrong += bad;
-        if (bad != 0u && ukl_atomic_load_at(tape, (uint64_t)args.cache + CLIF_T_C_FAILED) == 0u)
-            silent += bad;
-    }
-    out[2u * i] = wrong;
-    out[2u * i + 1u] = silent;
-}
-"#;
     const DEVICE_READS: usize = 23;
 
     #[repr(C)]
@@ -2415,10 +2556,9 @@ DEFINE_KERNEL2(tests, t_random,
             return;
         }
         let program = |header: &str| {
-            let text: &'static str = Box::leak(DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>")).into_boxed_str());
-            let name: &'static str = Box::leak(format!("tape_reads_{header}").into_boxed_str());
             let started = std::time::Instant::now();
-            let p = rerail_gpu::kernels::program(name, text).unwrap_or_else(|e| panic!("{}: {header}: {e}", rerail_gpu::device::backend()));
+            let (name, text) = super::device_reads_kernel(header);
+            let p = rerail_gpu::kernels::program(&name, &text).unwrap_or_else(|e| panic!("{}: {header}: {e}", rerail_gpu::device::backend()));
             eprintln!("{}: {header} compiled in {:.2} s", rerail_gpu::device::backend(), started.elapsed().as_secs_f64());
             p
         };
@@ -2535,8 +2675,9 @@ DEFINE_KERNEL2(tests, t_random,
             eprintln!("no device: the reads as UKL did not run");
             return;
         };
-        let text: &'static str = Box::leak(DEVICE_KERNEL.replace("READS_HEADER", "<ukl/reads/tape_z.h>").into_boxed_str());
-        let program = rerail_gpu::kernels::program("tape_reads_turning", text).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+        // The reads' 16z program, as compiled ahead (`kernels`): it holds `t_random` too.
+        let (name, text) = device_reads_kernel("tape_z.h");
+        let program = rerail_gpu::kernels::program(&name, &text).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
         let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
         let table = CodeTable::new(entries);
         let lang = lang_of(&table);
@@ -3014,11 +3155,24 @@ DEFINE_KERNEL2(tests, t_random,
             eprintln!("no device: the writer's ops in UKL did not run");
             return;
         }
-        writes_the_references_tape(|lang, source, z, blocks, nodes| ops::device::DeviceOps::new(lang, source, 3, z, blocks, nodes / 3));
+        writes_the_references_tape_together(|lang, source, z, blocks, nodes| ops::device::DeviceOps::new(lang, source, 3, z, blocks, nodes / 3));
     }
 
-    /// R13's cases: `make(lang, source, z, blocks, nodes)`'s writer and the reference, from the same ops.
+    /// R13's cases: `make(lang, source, z, blocks, nodes)`'s writer and the reference, from the same ops, each case's
+    /// finished before the next is made.
     fn writes_the_references_tape<W: WriterOps>(make: impl Fn(&Lang, &[u8], bool, bool, usize) -> W) {
+        references_tape(make, false);
+    }
+
+    /// `writes_the_references_tape`, every case's writer finished together (`WriterOps::finish_all`: the device's in
+    /// one launch, a group a writer).
+    fn writes_the_references_tape_together<W: WriterOps>(make: impl Fn(&Lang, &[u8], bool, bool, usize) -> W) {
+        references_tape(make, true);
+    }
+
+    /// R13's cases: `make`'s writer and the reference, from the same ops; each case's finished before the next is made
+    /// (a writer used again is the one the case before gave back), or all at once (`together`).
+    fn references_tape<W: WriterOps>(make: impl Fn(&Lang, &[u8], bool, bool, usize) -> W, together: bool) {
         let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
         let table = CodeTable::new(entries);
         let lang = lang_of(&table);
@@ -3060,6 +3214,7 @@ DEFINE_KERNEL2(tests, t_random,
         type Case<'a> = (&'a str, &'a [(u32, u64, u64, usize)], &'a Vec<u8>);
         let mut cases: Vec<Case> = vec![("escaped", &nodes[..], &source), ("repeating", &rep[..], &rep_source), ("one node", &small[..], &source), ("none", &[][..], &source)];
         cases.extend(randoms.iter().map(|(t, src)| ("random", &t[..], src)));
+        let (mut whats, mut refs, mut made, mut done) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (label, nodes, source) in cases {
             for (z, every, late, blocks) in [(false, 1, false, true), (false, 1_000_000, false, false), (false, 97, false, true), (false, 1, true, false), (false, 13, true, true), (true, 1, false, true), (true, 1_000_000, false, false), (true, 13, true, true)] {
                 if late && nodes.len() < 2 {
@@ -3069,28 +3224,37 @@ DEFINE_KERNEL2(tests, t_random,
                 by_ops_of(&mut r, nodes, every, late);
                 let mut c = make(&lang, source, z, blocks, nodes.len());
                 by_ops_of(&mut c, nodes, every, late);
-                let what = format!("{label}: 16z {z}, commit every {every}, late {late}, blocks {blocks}");
-                match (r.finish(), c.finish()) {
-                    (Ok(r), Ok(c)) => {
-                        match (&r.tape, &c.tape) {
-                            (Written::F16(rt), Written::F16(ct)) => assert_eq!(ct.as_bytes(), rt.as_bytes(), "{what}: the tape"),
-                            (Written::F16Z(rt), Written::F16Z(ct)) => {
-                                let (rb, cb) = (rt.as_bytes(), ct.as_bytes());
-                                assert_eq!(cb.len(), rb.len(), "{what}: the 16z tape's length");
-                                if let Some(k) = (0..rb.len()).find(|&k| rb[k] != cb[k]) {
-                                    panic!("{what}: the 16z tapes differ from byte {k} of {}", rb.len());
-                                }
-                                for &k in &rb[rt.zat[ZKINDS]..rt.zat[ZEND]] {
-                                    kinds[usize::from(k)] += 1;
-                                }
-                            }
-                            _ => panic!("{what}: the formats"),
-                        }
-                        assert_eq!(c.tape.presence_bytes(), r.tape.presence_bytes(), "{what}: the presence");
-                    }
-                    (Err(_), Err(_)) => assert!(nodes.is_empty(), "{what}: both failed"),
-                    (r, c) => panic!("{what}: the reference {:?}, the ops {:?}", r.map(|_| ()), c.map(|_| ())),
+                whats.push((format!("{label}: 16z {z}, commit every {every}, late {late}, blocks {blocks}"), nodes.is_empty()));
+                refs.push(r.finish());
+                if together {
+                    made.push(c);
+                } else {
+                    done.push(c.finish());
                 }
+            }
+        }
+        done.extend(W::finish_all(made));
+        for (((what, empty), r), c) in whats.into_iter().zip(refs).zip(done) {
+            match (r, c) {
+                (Ok(r), Ok(c)) => {
+                    match (&r.tape, &c.tape) {
+                        (Written::F16(rt), Written::F16(ct)) => assert_eq!(ct.as_bytes(), rt.as_bytes(), "{what}: the tape"),
+                        (Written::F16Z(rt), Written::F16Z(ct)) => {
+                            let (rb, cb) = (rt.as_bytes(), ct.as_bytes());
+                            assert_eq!(cb.len(), rb.len(), "{what}: the 16z tape's length");
+                            if let Some(k) = (0..rb.len()).find(|&k| rb[k] != cb[k]) {
+                                panic!("{what}: the 16z tapes differ from byte {k} of {}", rb.len());
+                            }
+                            for &k in &rb[rt.zat[ZKINDS]..rt.zat[ZEND]] {
+                                kinds[usize::from(k)] += 1;
+                            }
+                        }
+                        _ => panic!("{what}: the formats"),
+                    }
+                    assert_eq!(c.tape.presence_bytes(), r.tape.presence_bytes(), "{what}: the presence");
+                }
+                (Err(_), Err(_)) => assert!(empty, "{what}: both failed"),
+                (r, c) => panic!("{what}: the reference {:?}, the ops {:?}", r.map(|_| ()), c.map(|_| ())),
             }
         }
         assert!(kinds.iter().all(|&k| k > 0), "16z's pieces of every kind (raw, LZ4, repeat): {kinds:?}");

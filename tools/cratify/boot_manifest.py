@@ -24,7 +24,7 @@ features = section(src, 'features')
 deps = section(src, 'dependencies')
 targets = re.findall(r"^(\[target\.'[^']+'\.dependencies\]\n.*?)(?=^\[|\Z)", src, re.S | re.M)
 dev = section(src, 'dev-dependencies')
-keep_dev = [l for l in dev.split('\n') if re.match(r'(rerail-(facts|lang|lang-[a-z]+|logic|rr|sessions|transducer|classic|compiler) =|ast-grep-language =|rusqlite =|tempfile =)', l)]
+keep_dev = [l for l in dev.split('\n') if re.match(r'(rerail-(facts|lang|lang-[a-z]+|logic|rr|sessions|transducer|workspace|compiler) =|ast-grep-language =|rusqlite =|tempfile =)', l)]
 dev_targets = re.findall(r"^(\[target\.'[^']+'\.dev-dependencies\]\n.*?)(?=^\[|\Z)", src, re.S | re.M)
 dev_targets = [re.sub(r'^rerail-gpu = .*\n', '', t, flags=re.M) for t in dev_targets]
 dev_targets = [re.sub(r'^# The tape.s views run as UKL kernels.*\n', '', t, flags=re.M) for t in dev_targets]
@@ -56,7 +56,7 @@ open(f'{native}/crates/boot/Cargo.toml', 'w').write(out)
 # The engine: every feature that forwards to its crates forwards to boot's too; boot is a dependency.
 def add(m):
     name, body = m.group(1), m.group(2)
-    if 'rerail-classic/' not in body or 'rerail-boot/' in body: return m.group(0)
+    if 'rerail-workspace/' not in body or 'rerail-boot/' in body: return m.group(0)
     return f'{name} = [{body}, "rerail-boot/{name}"]'
 lines = src.split('\n')
 feat_start = lines.index('[features]')
@@ -64,11 +64,11 @@ feat_end = next(i for i in range(feat_start + 1, len(lines)) if lines[i].startsw
 body = '\n'.join(lines[feat_start:feat_end])
 body = re.sub(r'^([a-z0-9-]+) = \[(.*?)\]$', add, body, flags=re.M | re.S)
 src2 = '\n'.join(lines[:feat_start]) + '\n' + body + '\n' + '\n'.join(lines[feat_end:])
-src2 = src2.replace('rerail-classic = { path = "crates/classic", default-features = false }\n',
-    'rerail-classic = { path = "crates/classic", default-features = false }\n'
+src2 = src2.replace('rerail-workspace = { path = "crates/workspace", default-features = false }\n',
+    'rerail-workspace = { path = "crates/workspace", default-features = false }\n'
     '# The composition root and the glue under napi and the CLI (incremental-plan.md, step 1).\n'
     'rerail-boot = { path = "crates/boot", default-features = false }\n', 1)
-src2 = src2.replace('rerail-classic = { path = "crates/classic", default-features = false, features = ["test-hooks"] }\n',
-    'rerail-classic = { path = "crates/classic", default-features = false, features = ["test-hooks"] }\n'
+src2 = src2.replace('rerail-workspace = { path = "crates/workspace", default-features = false, features = ["test-hooks"] }\n',
+    'rerail-workspace = { path = "crates/workspace", default-features = false, features = ["test-hooks"] }\n'
     'rerail-boot = { path = "crates/boot", default-features = false, features = ["test-hooks"] }\n', 1)
 open(f'{native}/Cargo.toml', 'w').write(src2)

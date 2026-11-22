@@ -937,7 +937,7 @@ where
     }
 
     #[cfg(feature = "code-rule-profile")]
-    pub(in crate::code_rule_dsl) fn estimated_bytes(&self) -> usize {
+    pub fn estimated_bytes(&self) -> usize {
         let mut bytes = self.entries.capacity() * std::mem::size_of::<Entry<'tree, D>>()
             + self.kinds.capacity() * std::mem::size_of::<Vec<usize>>()
             + self.errors.capacity() * std::mem::size_of::<usize>()

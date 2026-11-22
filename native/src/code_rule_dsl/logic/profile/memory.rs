@@ -142,14 +142,24 @@ pub(super) struct Sample {
 fn holders() -> [usize; 7] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
     // Relational work's device leases exist only where the device does (macOS).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     let (live, idle) = rerail_accel::gpu::shared::held_bytes();
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     let (live, idle) = (0, 0);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
     let (host, host_free) = rerail_accel::blocks::host_held();
     [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20]
 }
+
+/// The relations' blocks live now by the span that made them (span, life, bytes used, blocks), as the facts crate
+/// reads them (`rows::held_by_span`), which sets it at its first block: the sampler takes it at the peak.
+#[derive(Default)]
+pub struct BlocksBySpan(pub std::sync::OnceLock<fn() -> Vec<(u32, u8, usize, usize, String)>>);
+
+/// The runs' relations held now by name (name, rows, columns, bytes of values, runs holding it), as the evaluator
+/// reads them (`setfix::held_by_name`), which sets it at its first run: the sampler takes it at the peak.
+#[derive(Default)]
+pub struct RelationsByName(pub std::sync::OnceLock<fn() -> Vec<(String, usize, usize, usize, usize)>>);
 
 #[derive(Default)]
 pub(super) struct Sampled {
@@ -165,6 +175,11 @@ pub(super) struct Sampled {
     pub(super) heap: Vec<(u32, u64)>,
     /// The same by allocating call stack (`RERAIL_HEAP_FRAMES`).
     pub(super) heap_frames: Vec<((u32, Vec<usize>), u64)>,
+    /// The relations' blocks live then, by the span that made them and their life (`rows::held_by_span`): span,
+    /// life, bytes used, blocks.
+    pub(super) blocks: Vec<(u32, u8, usize, usize, String)>,
+    /// The runs' relations held then (`RelationsByName`).
+    pub(super) relations: Vec<(String, usize, usize, usize, usize)>,
     pub(super) heap_at: u64,
     /// `RERAIL_HEAP_AT=<text>`: the live heap by allocating span at the most footprint seen while a thread had a
     /// span open whose path holds the text (a phase that is not the peak's), and that footprint.
@@ -186,7 +201,7 @@ pub(super) fn sample() {
         let every_ms = std::env::var("RERAIL_PROF_MEMORY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5u64).max(1);
         SAMPLED.lock().unwrap().every_ms = every_ms;
         // Relational work's device leases are sampled as the heap is, under the span that leased them.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         if rerail_prof::heap::on() {
             rerail_accel::gpu::shared::set_lease_hook(|ptr, len| {
                 if len == 0 {
@@ -260,9 +275,13 @@ pub(super) fn sample() {
                         drop(s);
                         let heap = rerail_prof::heap::snapshot();
                         let heap_frames = rerail_prof::heap::snapshot_frames();
+                        let blocks = super::machine::<BlocksBySpan>().0.get().map_or_else(Vec::new, |f| f());
+                        let relations = super::machine::<RelationsByName>().0.get().map_or_else(Vec::new, |f| f());
                         s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         s.heap = heap;
                         s.heap_frames = heap_frames;
+                        s.blocks = blocks;
+                        s.relations = relations;
                     }
                 }
                 if let Some(text) = heap_at_text()
@@ -333,14 +352,17 @@ pub(super) fn sampled_report(r: &mut String) {
     for p in &t.open {
         let _ = writeln!(r, "    {}", super::short(p, 160));
     }
-    // The footprint then, by holder: the heap's live bytes and what it keeps resident beyond them, the device's
-    // buffers (the driver's count; of them the pool's reservations and relational work's leases), SQLite's heap
-    // (inside jemalloc's when it allocates there), and the rest (stacks, code, maps, other allocators).
+    // The footprint then, by holder: the heap's live bytes and what it keeps resident beyond them, the device's own
+    // buffers (the pool's reservations, relational work's leases and its idle buffers: IOAccelerator memory), SQLite's
+    // heap (inside jemalloc's when it allocates there), the host blocks, and the rest (stacks, code, maps, other
+    // allocators). The driver's count (`current_allocated_size`) is shown apart: it counts every no-copy wrap of host
+    // memory (the blocks, the heap) again, so it is no holder of its own (ab145: 2,709 MB of it at a 3,051 MB
+    // footprint whose IOAccelerator regions were 971 MB).
     let [driver, reserved, leased, idle, sqlite, host, host_free] = t.holders;
     let heap_mb = |b: u64| (b >> 20) as usize;
-    let accounted = heap_mb(t.resident) + driver;
-    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; Metal driver {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} ({} free on their lists); the rest {}",
-        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), driver, reserved, leased, idle, sqlite, host, host_free, heap_mb(t.footprint).saturating_sub(accounted + host));
+    let accounted = heap_mb(t.resident) + reserved + leased + idle + host;
+    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} ({} free on their lists); the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
+        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, sqlite, host, host_free, heap_mb(t.footprint).saturating_sub(accounted), driver);
     // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
     // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
     let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
@@ -353,6 +375,26 @@ pub(super) fn sampled_report(r: &mut String) {
             mb(s.heap_at as f64), rerail_prof::heap::INTERVAL >> 10, mb(total as f64), rerail_prof::heap::DROPPED.load(std::sync::atomic::Ordering::Relaxed));
         for (id, bytes) in s.heap.iter().take(30) {
             let _ = writeln!(r, "{:>10} MB  {}", mb(*bytes as f64), super::short(&rerail_prof::heap::name(*id), 150));
+        }
+    }
+    if !s.blocks.is_empty() {
+        let total: usize = s.blocks.iter().map(|b| b.2).sum();
+        let _ = writeln!(r, "Relations' blocks live then, by the span that made them (at {} MB footprint; {} MB used in all, of {} blocks):",
+            mb(s.heap_at as f64), total >> 20, s.blocks.iter().map(|b| b.3).sum::<usize>());
+        let lives = ["a run's", "sources'", "kept", "a device run's own"];
+        for (id, life, bytes, n, by) in s.blocks.iter().take(30) {
+            let by = if by.is_empty() { String::new() } else { format!(", by {by}") };
+            let _ = writeln!(r, "{:>10} MB  {:>5} blocks, {}, made in {}{by}", bytes >> 20, n, lives.get(*life as usize).unwrap_or(&"?"), super::short(&rerail_prof::heap::name(*id), 140));
+        }
+    }
+    if !s.relations.is_empty() {
+        let total: usize = s.relations.iter().map(|r| r.3).sum();
+        let rows: usize = s.relations.iter().map(|r| r.1).sum();
+        let _ = writeln!(r, "The runs' relations held then, by name (at {} MB footprint; {} relations, {} rows, {} MB of values in all; rows, columns, MB, runs):",
+            mb(s.heap_at as f64), s.relations.len(), rows, total >> 20);
+        // Every one: what the rows are is read off the whole list, not its head.
+        for (name, rows, k, bytes, runs) in s.relations.iter() {
+            let _ = writeln!(r, "{:>10} KB  {:>9} rows  {k} columns  {runs} runs  {}", bytes >> 10, rows, super::short(name, 120));
         }
     }
     if let Some(text) = heap_at_text()
@@ -407,4 +449,74 @@ pub fn sampled_tsv() -> String {
         let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{h}\t{f}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
     }
     t
+}
+
+/// The memory ceiling in bytes: `RERAIL_MEMORY_MAX_MB`, else three quarters of the machine's memory; `None` with
+/// `off` (or where neither the machine's memory nor the process's can be read).
+pub fn memory_ceiling() -> Option<u64> {
+    match std::env::var("RERAIL_MEMORY_MAX_MB").ok().as_deref().map(str::trim) {
+        Some("off") | Some("0") => None,
+        Some(mb) if mb.parse::<u64>().is_ok() => Some(mb.parse::<u64>().unwrap() << 20),
+        _ => physical_bytes().map(|b| b / 4 * 3),
+    }
+    .filter(|_| resident_bytes().is_some())
+}
+
+/// The machine's memory, in bytes.
+pub fn physical_bytes() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut size: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        // SAFETY: `hw.memsize` is a u64; `size` and `len` describe its buffer.
+        let code = unsafe { libc::sysctlbyname(c"hw.memsize".as_ptr(), (&mut size as *mut u64).cast(), &mut len, std::ptr::null_mut(), 0) };
+        (code == 0 && size > 0).then_some(size)
+    }
+    #[cfg(all(unix, not(target_os = "macos"), not(target_family = "wasm")))]
+    {
+        // SAFETY: sysconf has no pointer arguments.
+        let (pages, page) = unsafe { (libc::sysconf(libc::_SC_PHYS_PAGES), libc::sysconf(libc::_SC_PAGESIZE)) };
+        (pages > 0 && page > 0).then(|| pages as u64 * page as u64)
+    }
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_physical_bytes()
+    }
+    #[cfg(not(any(all(unix, not(target_family = "wasm")), windows)))]
+    {
+        None
+    }
+}
+
+/// The process's resident memory, in bytes (`None` where it cannot be read).
+pub fn resident_bytes() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info = std::mem::MaybeUninit::<libc::mach_task_basic_info>::zeroed();
+        let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
+        unsafe extern "C" {
+            // The task's own port (`mach_task_self()` is a macro over it; libc's function is deprecated).
+            static mach_task_self_: libc::mach_port_t;
+        }
+        // SAFETY: task_info writes this C-layout buffer; count describes its capacity in words.
+        let code = unsafe { libc::task_info(mach_task_self_, libc::MACH_TASK_BASIC_INFO, info.as_mut_ptr().cast(), &mut count) };
+        // SAFETY: a successful task_info call initializes the output structure.
+        (code == libc::KERN_SUCCESS).then(|| unsafe { info.assume_init() }.resident_size)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/statm").ok()?;
+        let pages = status.split_whitespace().nth(1)?.parse::<u64>().ok()?;
+        // SAFETY: sysconf has no pointer arguments.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        (page_size > 0).then(|| pages.saturating_mul(page_size as u64))
+    }
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_working_set()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    {
+        None
+    }
 }

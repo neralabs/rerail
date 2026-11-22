@@ -197,10 +197,23 @@ function adoptedIn(db: RerailDatabase): Set<RepositoryKey> {
  */
 export function recordCheckout(db: RerailDatabase, workspace: string, now = Date.now()): CheckoutContext & { readonly cloneId: string } {
   refuseUnboundedFolder(repositoryIdentityLocation(workspace));
-  const { cloneId, location } = resolveCloneId(workspace);
+  const { cloneId, location } = resolveCloneId(workspace, located => refusedCheckoutCloneId(db, located));
   const checkoutPath = physicalPath(location.workspaceRoot);
   const repositoryKey = db.transaction(tx => recordCheckoutRow(tx, location, checkoutPath, cloneId, now), { behavior: "immediate" });
   return adoptRemoteOnce(db, contextOf(location, checkoutPath, repositoryKey, cloneId), location, now);
+}
+
+/**
+ * The clone id recorded at a linked worktree whose Git folder is gone, as `location` was read
+ * ({@link RepositoryIdentityLocation.gitFolderGone}): its main checkout was deleted or moved away, or Git pruned its
+ * entry, and Git refuses it. That id cannot be read through Git, and the checkout recorded there still names it, as
+ * {@link lookupCheckout} reads it; a new id would make the checkout a re-clone, and its repository, start state and
+ * settings would go. Undefined in any other folder Git places in no repository, where the id file decides.
+ */
+function refusedCheckoutCloneId(db: Reader, location: RepositoryIdentityLocation): string | undefined {
+  if (location.gitFolderGone !== true) return undefined;
+  const checkoutPath = physicalPath(location.workspaceRoot);
+  return db.select({ cloneId: checkouts.cloneId }).from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get()?.cloneId;
 }
 
 /** Outside git a folder is its own checkout; a filesystem root or the home folder would claim everything below it. */
@@ -331,7 +344,8 @@ export function lookupCheckoutAt(db: Reader, location: RepositoryIdentityLocatio
 
 function lookupAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
   const { id, marked } = checkoutIdentity(location);
-  const cloneId = id ?? null;
+  // A worktree whose Git folder is gone has no id to read: the one recorded at its path, as its start takes it.
+  const cloneId = id ?? refusedCheckoutCloneId(db, location) ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
   const knownClone = cloneId === null ? undefined : recordedRepositoryAt(db, checkoutPath, cloneId) ?? cloneRepository(db, cloneId);
   const repositoryKey = knownClone ?? remoteRepository(db, location);

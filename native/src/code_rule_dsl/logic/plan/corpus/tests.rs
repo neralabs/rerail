@@ -730,7 +730,8 @@ fn a_load_whose_chunk_fails_ends_the_run_with_its_error() {
     let rule = dir.join("p.rerail");
     std::fs::write(&rule, format!(
         "#include \"core.rerail\"\nload(p, \"f\", \"python\") :- file_line(\"later.txt\", 1, p).\nload(p, \"b\", \"python\") :- dir_entry(\"{lib}\", \"b.pyi\", 0), p = cat(\"{lib}\", \"/b.pyi\").\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n",
-        lib = lib.display()
+        // Spelled with `/` in the rule's string literal, where `\` would start an escape (Windows takes either).
+        lib = lib.display().to_string().replace('\\', "/")
     )).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let (out, store) = (dir.join("out"), dir.join("store.sqlite"));
@@ -1985,6 +1986,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_SPLIT_DUMP",
         "RERAIL_DEMAND_DUMP",
         "RERAIL_PREPARED_TRACE",
+        // Prints each diffed copy's change points (decision 0575).
+        "RERAIL_NARROW_DIFF_DEBUG",
         // How the combine's link is made (decision 0373): spliced into the last one, linked whole, or both and compared;
         // the program is the same (`check` asserts it).
         "RERAIL_COMBINE_LINK",
@@ -2055,7 +2058,7 @@ fn every_switch_lowering_reads_is_classified() {
                 if let Some(m) = test_module.find(&text) {
                     text.truncate(m.start());
                 }
-                files.push((p.strip_prefix(&root).unwrap().display().to_string(), text));
+                files.push((p.strip_prefix(&root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"), text));
             }
         }
         files
@@ -2092,13 +2095,17 @@ fn every_switch_lowering_reads_is_classified() {
         }
         all
     };
-    // `corpus.rs` itself: its preparation (`run_observed` up to the prepared program) and `combine_tail`.
+    // `corpus.rs` itself: its preparation (`run_observed` up to the prepared program); and the corpus's base
+    // (`corpus/base.rs`, rerail-rr-root's), whose `combine_tail` combines the texts.
     let corpus = std::fs::read_to_string(root.join("logic/plan/corpus.rs")).unwrap();
-    let region = |from: &str, to: &str| -> String {
-        let a = corpus.find(from).unwrap_or_else(|| panic!("corpus.rs has no {from:?}"));
-        let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
-        corpus[a..b].to_owned()
+    let base = std::fs::read_to_string(root.join("logic/plan/corpus/base.rs")).unwrap();
+    let region_of = |file: &str, text: &str, from: &str, to: &str| -> String {
+        let a = text.find(from).unwrap_or_else(|| panic!("{file} has no {from:?}"));
+        let b = a + text[a..].find(to).unwrap_or_else(|| panic!("{file} has no {to:?} after {from:?}"));
+        text[a..b].to_owned()
     };
+    let region = |from: &str, to: &str| region_of("corpus.rs", &corpus, from, to);
+    let base_region = |from: &str, to: &str| region_of("corpus/base.rs", &base, from, to);
     // Combining: `combine_tail` (its link, `combine_linked_as`, and its tail, `tail_version`), what it calls that
     // reads a switch (`scoping`, the tail's passes), and the `.rerail` lowering its `rr::parse` runs
     // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
@@ -2106,10 +2113,10 @@ fn every_switch_lowering_reads_is_classified() {
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
         "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
     ]);
-    combining.push(("corpus.rs, combine_tail".to_owned(), region("\nfn combine_tail(", "\n}\n")));
-    combining.push(("corpus.rs, the combine's tail".to_owned(), region("\nenum Tail {", "\n/// The programs `programs` linked into one")));
+    combining.push(("corpus/base.rs, combine_tail".to_owned(), base_region("\npub fn combine_tail(", "\n}\n")));
+    combining.push(("corpus/base.rs, the combine's tail".to_owned(), base_region("\npub enum Tail {", "\n/// The programs `programs` linked into one")));
     // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).
-    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies, kept }))")));
+    combining.push(("corpus/base.rs, combine_linked_as".to_owned(), base_region("\npub fn combine_linked_as<", "Ok((all, Tail::Many { hide, policies, kept }))")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`combining::FoldOwn`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
@@ -2385,7 +2392,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
 /// Decision 0431 R8: CPU and Metal give the same rows, the device reading the same tapes, with both kinds: tape values
 /// read in the fixpoint (R10's program: values, a value inside one, and a scan that lists none), and a file's programs
 /// (an HTML file's scripts), whose `docof` and lines are the file's (R1).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn cpu_and_metal_read_the_same_tape_values() {
     use crate::code_rule_dsl::typing::file_local::Binding;
@@ -2524,7 +2531,9 @@ fn a_finding_no_file_holds_is_refused_naming_its_clause() {
     let text = ".policy \"p\" revision 1\n.language python\n.violation Assert(at: node) \"an assert\"\nAssert(n) :- kind(n, \"assert_statement\").\n";
     let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
     let shown = v.show();
-    assert!(shown.contains("rr_unplaced(\"Assert\") :- Assert(") && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
+    // The finding's node by its clause, and the program's one rule refusing those of no file's document.
+    let found = crate::code_rule_dsl::logic::rr::FOUND_NODE;
+    assert!(shown.contains(&format!("{found}(\"Assert\", ")) && shown.contains(&format!("rr_unplaced($rr_clause) :- {found}(")) && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
     assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
     let out = dir.join("out");
     let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
@@ -2569,4 +2578,52 @@ v(n) :- kind(n, \"assert_statement\").
     let got: Vec<(String, usize)> = ["c1", "c2", "c3", "v"].iter().map(|r| (r.to_string(), crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap().len())).collect();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(got, [("c1".to_owned(), 1), ("c2".to_owned(), 1), ("c3".to_owned(), 1), ("v".to_owned(), 1)]);
+}
+
+/// The engine's Git programs (`git::SOURCE_CHECKS`, `ROOT_TREE`, `INVENTORY`) each read as one program, their library
+/// modules included by name and each read once: what each derives is declared, and so are the trailers `git.rerail`
+/// includes (`git/messages.rerail`, which includes `git.rerail` again).
+#[test]
+fn the_git_programs_read_their_library_once() {
+    for (name, text, derives) in [
+        ("source checks", super::git::SOURCE_CHECKS, "git_selected_source_blob"),
+        ("root tree", super::git::ROOT_TREE, "git_root_tree_error"),
+        ("inventory", super::git::INVENTORY, "inventory_error"),
+    ] {
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        for rel in [derives, "git_trailer", "git_tree_entry"] {
+            assert!(v.decl_of(rel).is_some(), "{name}: {rel} is not declared");
+        }
+    }
+}
+
+/// Decision 0597 (`logic::contexts`), through the library: an annotation context holds its own instance of the library's `unparen` (and what it reads),
+/// while the host keeps its own for its own rules; the roots are the annotations' trees the host parses.
+#[test]
+fn a_context_holds_the_librarys_rules_it_reaches_as_its_own() {
+    use crate::code_rule_dsl::logic::rr::parse_version;
+    let rules_of = |v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str| -> Vec<String> { v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).map(|r| v.show_rule(r)).collect() };
+    let text = "\
+.language python
+#include \"python/ast.rerail\"
+.decl ann_root(r: node)
+ann_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_inner(r: node, e: node)
+ann_inner(r, e) :- ann_root(r), unparen(r, e).
+.decl host_inner(e: node)
+host_inner(e) :- kind(n, \"parenthesized_expression\"), unparen(n, e).
+.decl seen(e: node)
+seen(e) :- quoted(_, e).
+seen(e) :- host_inner(e).
+.output seen
+.context annotation of python roots ann_root exports ann_inner
+.from python ann_root for annotation
+.from annotation ann_inner as quoted
+";
+    let v = parse_version(text).unwrap();
+    let all = v.show();
+    assert!(!rules_of(&v, "rr_cx_annotation_unparen").is_empty(), "the context's own unparen: {all}");
+    assert!(rules_of(&v, "rr_cx_annotation_ann_inner").iter().all(|r| r.contains("rr_cx_annotation_unparen(") && r.contains(" ann_root(")), "{all}");
+    assert!(!rules_of(&v, "unparen").is_empty() && rules_of(&v, "host_inner").iter().all(|r| r.contains(" unparen(")), "the host's own: {all}");
+    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_annotation_ann_inner(")), "{all}");
 }

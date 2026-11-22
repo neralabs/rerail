@@ -160,7 +160,7 @@ fn simdjson_forms_trees_are_14_jsons() {
 }
 
 /// The JIT's format 16 run of the simdjson form passes each node to the writer's ops at its word (`direct`,
-/// `native_cpu_facts::direct_keys`): no working row, so no step on the rows is called, and its tape holds no format 15
+/// `stream_facts::direct_keys`): no working row, so no step on the rows is called, and its tape holds no format 15
 /// buffer. (Kept from the Rust trees' test, which 0555 removed.)
 #[test]
 fn simdjson_forms_sixteen_run_is_direct() {
@@ -255,7 +255,7 @@ fn tree_inputs() -> Vec<Vec<u8>> {
     inputs.push(format!("[{}]", vec!["true"; 3000].join(",")).into_bytes());
     inputs.push(format!("{}1{}", "[".repeat(400), "]".repeat(400)).into_bytes());
     // At the depth's limit (`DEPTH`, 1,024 calls) and past it, arrays and objects and both by turns: the open nodes
-    // the writer's stack is reserved for (`native_cpu_facts::open_bound`, decision 0537), at their most; past it, refused.
+    // the writer's stack is reserved for (`stream_facts::open_bound`, decision 0537), at their most; past it, refused.
     inputs.extend(deep_nests(1022..1028));
     inputs.push(format!("{{{}}}", (0..1500).map(|k| format!("\"k{k}\": [{k}, \"v\\n\"]")).collect::<Vec<_>>().join(",")).into_bytes());
     inputs.push(format!("[{}1,{}\"{}\", [{}]]", " ".repeat(300), "\n".repeat(400), "s".repeat(700), vec!["null"; 300].join(", ")).into_bytes());
@@ -272,7 +272,7 @@ fn tree_inputs() -> Vec<Vec<u8>> {
 /// built here (`--profile profiling`: optimized). simdjson's: its DOM parser, stage 1 and stage 2 to its tape, from a
 /// padded copy of the bytes (`structurals`). Per file: the instructions retired a byte and the time a byte (each the
 /// median of `RERAIL_ITERS` runs), single-threaded.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", unix))]
 #[test]
 #[ignore = "a measurement: run by name with RERAIL_JSON_FILES and --nocapture, in an optimized build"]
 fn simdjson_form_against_simdjson() {
@@ -1107,7 +1107,7 @@ fn jsonc_refusals_by_reason() {
         eprintln!("{n:5} {reason}: {path}");
     }
     if let Ok(out) = std::env::var("RERAIL_DISASM") {
-        std::fs::write(out, rerail_compiler::rir_asm::disassemble(&c.program)).expect("writes");
+        std::fs::write(out, rerail_rir::rir_asm::disassemble(&c.program)).expect("writes");
     }
 }
 

@@ -12,7 +12,10 @@ static ENTERED: OnceLock<SystemTime> = OnceLock::new();
 
 /// Marks the process's `main`: called first thing (`watch::watch`). Later calls change nothing.
 pub fn entered() {
-    let _ = ENTERED.set(SystemTime::now());
+    if ENTERED.set(SystemTime::now()).is_ok() {
+        #[cfg(windows)]
+        windows::own_job();
+    }
 }
 
 /// When the system started this process (its fork), if it says.
@@ -31,7 +34,11 @@ pub fn started() -> Option<SystemTime> {
         };
         Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(info.pbi_start_tvsec) + std::time::Duration::from_micros(info.pbi_start_tvusec))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        windows::started()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         None
     }
@@ -50,10 +57,69 @@ pub fn cpu(children: bool) -> f64 {
         let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
         s(u.ru_utime) + s(u.ru_stime)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        let (user, kernel) = rerail_prof::windows_cpu(false);
+        let own = (user + kernel).as_secs_f64();
+        if children { windows::job_cpu().map_or(0.0, |all| (all - own).max(0.0)) } else { own }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = children;
         0.0
+    }
+}
+
+/// Windows has no `RUSAGE_CHILDREN`: the process puts itself in a job of its own at `main` (`entered`), which its
+/// child processes join as they start, and the job's accounting counts every process in it, those exited too. Its
+/// children's CPU is the job's less its own. Nothing is held: the job is the process's, found from it.
+#[cfg(windows)]
+mod windows {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation, QueryInformationJobObject};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+
+    /// Puts the process in a new job (nested in any it is in already). The job lives while a process is in it, so its
+    /// handle is closed at once. If it cannot be made, the job queried is the one the process is in, if any.
+    pub(super) fn own_job() {
+        // SAFETY: a new unnamed job with default security; the pseudo-handle names this process.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if !job.is_null() {
+                AssignProcessToJobObject(job, GetCurrentProcess());
+                CloseHandle(job);
+            }
+        }
+    }
+
+    /// The user and kernel CPU seconds of every process of the process's job: none outside a job.
+    pub(super) fn job_cpu() -> Option<f64> {
+        // SAFETY: a null handle names the calling process's job; the out-pointer is the class's struct, of its size.
+        let info = unsafe {
+            let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = std::mem::zeroed();
+            let size = std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32;
+            let got = QueryInformationJobObject(std::ptr::null_mut(), JobObjectBasicAccountingInformation, (&raw mut info).cast(), size, std::ptr::null_mut());
+            if got == 0 {
+                return None;
+            }
+            info
+        };
+        // 100 ns ticks.
+        Some((info.TotalUserTime + info.TotalKernelTime) as f64 / 1e7)
+    }
+
+    /// When the system created the process.
+    pub(super) fn started() -> Option<std::time::SystemTime> {
+        let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+        // SAFETY: the pseudo-handle names this process, and every out-pointer is a FILETIME.
+        if unsafe { GetProcessTimes(GetCurrentProcess(), &mut created, &mut exited, &mut kernel, &mut user) } == 0 {
+            return None;
+        }
+        // 100 ns ticks since 1601-01-01, which is 11,644,473,600 s before the Unix epoch.
+        let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+        let since_1601 = std::time::Duration::from_nanos(ticks.checked_mul(100)?);
+        std::time::SystemTime::UNIX_EPOCH.checked_add(since_1601.checked_sub(std::time::Duration::from_secs(11_644_473_600))?)
     }
 }
 
@@ -115,9 +181,12 @@ mod tests {
             x = std::hint::black_box(x.wrapping_add(1));
         }
         let before = super::cpu(true);
+        #[cfg(unix)]
         std::process::Command::new("/bin/sh").args(["-c", "i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done"]).status().unwrap();
+        #[cfg(windows)]
+        std::process::Command::new("cmd").args(["/C", "for /L %i in (1,1,200000) do @rem"]).status().unwrap();
         let life = super::now();
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         {
             assert!(life.before_main.is_some_and(|s| s >= 0.0), "{life:?}");
             assert!(life.to_now.is_some_and(|s| s >= 0.0), "{life:?}");

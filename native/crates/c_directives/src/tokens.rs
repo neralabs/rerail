@@ -112,15 +112,13 @@ mod tests {
             return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
         }
         // The device's tape: on a Mac it always runs, so a failure is the test's (a failed device compile is fatal,
-        // never skipped). A Linux host's GPU lane (decision 0440 step E) may have no device, and is then skipped.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        if let Some(m) = match c.metal_images(&[src]) {
-            Ok(m) => Some(m),
-            Err(e) if cfg!(target_os = "macos") => return Err(format!("the device runs it: {e:?}")),
-            Err(_) => None,
-        } && m[0] != image
-        {
-            return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
+        // never skipped). A Linux or Windows host's GPU lane (decision 0440 step E) may have no device
+        // (`UnsupportedBackend`), and is then skipped; where there is one, any other failure is the test's there too.
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        match c.metal_images(&[src]) {
+            Ok(m) if m[0] != image => return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some())),
+            Ok(_) | Err(rerail_compiler::Error::UnsupportedBackend) => {}
+            Err(e) => return Err(format!("the device runs it: {e:?}")),
         }
         let Some(image) = image else { return Ok(false) };
         let (got, want) = (read(&image, src)?, lean(src, cpp));
@@ -226,7 +224,7 @@ mod lowering_time {
             let compile = t.elapsed();
             let t = std::time::Instant::now();
             let text = compiled.text();
-            let program = rerail_compiler::rir_asm::assemble(&text).unwrap();
+            let program = rerail_rir::rir_asm::assemble(&text).unwrap();
             let assemble = t.elapsed();
             let t = std::time::Instant::now();
             let _native = rerail_compiler::native_ir::lower(&program, 0, 0).unwrap();

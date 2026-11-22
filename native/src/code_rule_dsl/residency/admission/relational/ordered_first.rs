@@ -7,11 +7,7 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 
-#[derive(Clone)]
-pub(super) struct Spec {
-    pub sinks: String,
-    pub on_edge: bool,
-}
+pub use super::base::ordered_first::Spec;
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Found {
     sink: usize,

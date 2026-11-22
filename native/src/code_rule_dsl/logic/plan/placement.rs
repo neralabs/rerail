@@ -219,73 +219,21 @@ pub(in crate::code_rule_dsl) fn gpu_bias() -> f64 {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_GPU_BIAS").ok().and_then(|v| v.parse().ok()).filter(|b: &f64| *b > 0.0).unwrap_or(GPU_BIAS))
 }
 
-/// Where a thread's run may place strata: the CPU only, the device where it is the cheaper (the Metal binding), or
-/// the device wherever it has every form (`Always`: what the device can run, apart from what it should; the
-/// executor coverage gate's, and `RERAIL_DEVICE=always`'s).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Binding {
-    Cpu,
-    Metal,
-    Always,
-}
-
-/// The run's binding (`typing::file_local::Binding::Metal` is `Metal`), in the run's context: its jobs' too.
-#[derive(Clone, Copy)]
-struct Device(Binding);
-impl Default for Device {
-    fn default() -> Self {
-        Device(Binding::Cpu)
-    }
-}
-
-/// Whether this thread's run may use the device.
-pub(in crate::code_rule_dsl) fn device() -> bool {
-    binding() != Binding::Cpu
-}
-
-/// Whether this run may place strata on the device, until the guard drops. `RERAIL_DEVICE=always` makes a Metal
-/// binding `Always`, and so does a caller's `Always` (a test's, `set_binding`).
-pub(in crate::code_rule_dsl) fn set_device(on: bool) -> rerail_prof::code_rule_dsl::logic::profile::Bound {
-    let b = match on {
-        false => Binding::Cpu,
-        true if always_env() || binding() == Binding::Always => Binding::Always,
-        true => Binding::Metal,
-    };
-    set_binding(b)
-}
-
-/// What a block this run makes for the device to read asks of the block policy (decision 0342): the device may
-/// read it when the run is bound to the device; a CPU run's never.
-pub fn block_device() -> rerail_blocks::alloc::Device {
-    if device() { rerail_blocks::alloc::Device::May } else { rerail_blocks::alloc::Device::No }
-}
-
-/// The run's binding.
-pub fn binding() -> Binding {
-    rerail_prof::code_rule_dsl::logic::profile::bound::<Device>().0
-}
-
-/// The run's binding, until the guard drops.
-pub fn set_binding(b: Binding) -> rerail_prof::code_rule_dsl::logic::profile::Bound {
-    rerail_prof::code_rule_dsl::logic::profile::bind(Device(b))
-}
-
-fn always_env() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "always"))
-}
+/// The run's binding: where its strata may go (`logic::device::binding`, under the planner).
+pub use crate::code_rule_dsl::logic::device::binding::{Binding, binding, block_device, device, set_binding, set_device};
 
 /// A stratum's shape: its forms, and its planned work.
 #[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct Shape {
+pub struct Shape {
     pub(in crate::code_rule_dsl) forms: BTreeSet<Form>,
-    pub(in crate::code_rule_dsl) work: f64,
+    pub work: f64,
     pub(in crate::code_rule_dsl) rules: usize,
     /// Its join steps' estimates, when the planner recorded them (profiling, or a run that may use the device).
     pub(in crate::code_rule_dsl) joins: Vec<JoinEst>,
     /// The relations its atoms read, each with its rows, the columns an atom reads of it (the most any one does),
     /// and whether the device would make a view of it (decision 0289): an input no device stratum of the run read
     /// before (`Run::device_views`). A relation the program derives is read in place (0325), and so is a view made.
-    pub(in crate::code_rule_dsl) reads: Vec<(String, f64, usize, bool)>,
+    pub reads: Vec<(String, f64, usize, bool)>,
     /// The rows its scans read (a positive atom read whole), of its planned work: on the CPU a scanned row costs a
     /// read, not a probe (`CPU_PER_SCANNED`).
     pub(in crate::code_rule_dsl) scanned: f64,
@@ -397,12 +345,12 @@ impl Shape {
     }
 
     /// Seeds' rows `rows` made into `rel`.
-    pub(in crate::code_rule_dsl) fn seeded(&mut self, rel: &str, rows: f64) {
+    pub fn seeded(&mut self, rel: &str, rows: f64) {
         *self.seeds.entry(rel.to_owned()).or_default() += rows.max(0.0);
     }
 
     /// A recursive probe of delta `rel`, planned at `work` and `rows` for a delta of `delta` rows.
-    pub(in crate::code_rule_dsl) fn probe(&mut self, rel: &str, work: f64, rows: f64, delta: f64) {
+    pub fn probe(&mut self, rel: &str, work: f64, rows: f64, delta: f64) {
         self.probes.push((rel.to_owned(), work.max(0.0), rows.max(0.0), delta));
     }
 
@@ -411,7 +359,7 @@ impl Shape {
     /// at the delta the planner saw (one round's, often the relation's few rows when it opened); the rows its
     /// relation gains are at least its seeds' rows, and the rows its probes make from them: one round more, at most
     /// as many again (a round's estimate is rough, and its rounds after that compound its error).
-    pub(in crate::code_rule_dsl) fn close_rounds(&mut self) {
+    pub fn close_rounds(&mut self) {
         let mut by: BTreeMap<&str, (f64, f64)> = BTreeMap::new();
         for (rel, work, rows, delta) in &self.probes {
             let d = delta.max(1.0);
@@ -429,7 +377,7 @@ impl Shape {
     /// Adds one planned rule: its steps in order (its head's terms the rule's) and its planned work.
     /// `texts_kept`: its head is a `shortlex_min` lattice, whose value its recursive rounds make into one device arena
     /// (decision 0307).
-    pub(in crate::code_rule_dsl) fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool, texts_kept: bool) {
+    pub fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool, texts_kept: bool) {
         let (b, v) = (order.b, order.b.v);
         self.rules += 1;
         self.steps += order.len();
@@ -516,7 +464,7 @@ impl Shape {
     }
 
     /// The operations behind the forms the device lacks, each `form: operation`.
-    pub(in crate::code_rule_dsl) fn lacking(&self) -> Vec<String> {
+    pub fn lacking(&self) -> Vec<String> {
         self.uses.iter().flat_map(|(f, ops)| ops.iter().map(move |o| format!("{}: {o}", f.name()))).collect()
     }
 }
@@ -531,7 +479,7 @@ impl Shape {
     /// Adds a planned rule's join steps: `order` its steps, `plan` the planner's record of them (one per step, its
     /// access and rows out), `card` a relation's rows, `cost` a lookup on a relation's column (`Stats::lookup_cost`).
     /// `is_input` whether a relation is one of the program's inputs (a view).
-    pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: Order<'_, '_>, plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64, cost: impl Fn(&str, &str) -> f64, is_input: impl Fn(&str) -> bool) {
+    pub fn add_joins(&mut self, order: Order<'_, '_>, plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64, cost: impl Fn(&str, &str) -> f64, is_input: impl Fn(&str) -> bool) {
         let (mut input, mut walked) = (1.0, 1.0);
         for (step, priced) in order.steps.iter().zip(&plan.steps) {
             if let Some(a) = order.b.plain_atom(step.at) {
@@ -624,7 +572,7 @@ pub fn recorded(prefix: &str) -> Vec<(String, Ran)> {
 
 /// Keeps a native stratum's placement while recording: `refused`, the device's report's refusal (`Some(None)`: it ran
 /// there).
-pub(in crate::code_rule_dsl) fn record(key: &str, placed: &Placement, refused: Option<Option<String>>) {
+pub fn record(key: &str, placed: &Placement, refused: Option<Option<String>>) {
     {
         use crate::code_rule_dsl::logic::profile;
         let (ran, device): (&'static str, Vec<String>) = match (placed.gpu, &refused) {
@@ -651,22 +599,22 @@ pub(in crate::code_rule_dsl) fn record(key: &str, placed: &Placement, refused: O
 /// Keeps a stratum that fell back to SQLite while recording: the class of literal the native engine had no step
 /// for, and its explanation.
 /// `lacking`: the device's hazards for the stratum besides (`Shape::lacking`).
-pub(in crate::code_rule_dsl) fn record_fallback(key: &str, class: &str, why: &str, lacking: Vec<String>) {
+pub fn record_fallback(key: &str, class: &str, why: &str, lacking: Vec<String>) {
     crate::code_rule_dsl::logic::profile::executor(key, "SQLite", Some(format!("{class} ({why})")), lacking);
     let Some(recorded) = recorded_here() else { return };
     recorded.lock().unwrap_or_else(|e| e.into_inner()).push((key.to_owned(), Ran { device: false, why: format!("sqlite: {class} ({why})") }));
 }
 
 /// Whether this thread's run may place strata on the device.
-pub(in crate::code_rule_dsl) fn device_on() -> bool {
+pub fn device_on() -> bool {
     device()
 }
 
 /// Where a stratum runs, and what the choice weighed.
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct Placement {
+pub struct Placement {
     /// Whether it runs on the device.
-    pub(in crate::code_rule_dsl) gpu: bool,
+    pub gpu: bool,
     /// Whether the GPU's estimate is under `GPU_BIAS` times the CPU's.
     pub(in crate::code_rule_dsl) gpu_cheaper: bool,
     /// The forms the device lacks (none when it has them all).
@@ -732,7 +680,7 @@ pub(in crate::code_rule_dsl) fn gpu_price(runs: u64, work: f64) -> f64 {
 /// pairs made, rows sorted), and the rest of its work at the GPU's unit price; no copies (decision 0325 step 6). The
 /// stratum's floor (planning, opening, closing) is paid
 /// wherever its joins run, so the choice weighs the joins alone: the GPU while its part is under `GPU_BIAS` times the CPU's.
-pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
+pub fn place(shape: &Shape) -> Placement {
     let scanned = shape.scanned.min(shape.work).max(0.0);
     // A lookup into a view that costs more than a derived relation's adds what it costs past one (decision 0312):
     // the units of planned work are priced as the fit's mix, at about one.
@@ -783,7 +731,7 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
 
 /// A measurement aid only: `RERAIL_DEVICE_JOINS=off` keeps every stratum's joins on the CPU under a device binding,
 /// so a run can be paired against the same binding with them on. Placement still prices and reports as usual.
-pub(crate) fn device_joins_off() -> bool {
+pub fn device_joins_off() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEVICE_JOINS").is_ok_and(|v| v == "off"))
 }
 

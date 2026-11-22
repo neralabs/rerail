@@ -63,6 +63,51 @@ fn tracking_index(repo: &Repo) -> Option<(gix::index::File, String)> {
     Some((file, crate::content_store::observe::hex(&digest.finalize().into())))
 }
 
+/// What a kept part's Git functors (`@git_tracked`, `@git_commit`, `@git_has`) read, as an input of the strata that
+/// call them (`retain::GIT`): the rows `consulted` gives (the index, each object predicate asked), each with its
+/// answer. The answers move between runs (the index is written, an object is damaged or fetched), so the strata are
+/// kept by their digest: the last run's rows asked again now (`again`) give the digest the last run recorded only if
+/// every answer is as it was.
+#[derive(Default)]
+pub struct Answers(std::collections::BTreeMap<(String, String), String>);
+
+impl Answers {
+    /// `rows` (a last run's, `rows`), each answered now.
+    pub fn again(root: &Path, rows: Vec<(String, String, String)>) -> Answers {
+        Answers(rows.into_iter().map(|(what, key, _)| {
+            let now = now(root, &what, &key);
+            ((what, key), now)
+        }).collect())
+    }
+    /// With what this run's evaluation asked and answered (`consulted`).
+    pub fn and_this_run(mut self, root: &Path) -> Answers {
+        self.0.extend(consulted(root).into_iter().map(|(what, key, value)| ((what, key), value)));
+        self
+    }
+    pub fn digest(&self) -> u64 {
+        use sha2::Digest as _;
+        let mut digest = sha2::Sha256::new();
+        for ((what, key), value) in &self.0 {
+            for part in [what, key, value] {
+                digest.update((part.len() as u64).to_le_bytes());
+                digest.update(part.as_bytes());
+            }
+        }
+        u64::from_le_bytes(digest.finalize()[..8].try_into().expect("eight bytes"))
+    }
+    pub fn rows(&self) -> Vec<(String, String, String)> {
+        self.0.iter().map(|((what, key), value)| (what.clone(), key.clone(), value.clone())).collect()
+    }
+}
+
+/// A `consulted` row's answer now: the index's paths' digest, or an object predicate's value.
+fn now(root: &Path, what: &str, key: &str) -> String {
+    match what {
+        "git_tracking_index" => open(root).and_then(|repo| tracking_index(&repo)).map(|(_, digest)| digest).unwrap_or_default(),
+        _ => predicate_now(root, key),
+    }
+}
+
 fn tracked(state: &mut State, path: &str) -> Option<bool> {
     let root = state.root.as_deref();
     let repo = state.repo.get_or_insert_with(|| root.and_then(open)).as_ref()?;
@@ -173,13 +218,17 @@ pub fn consulted(root: &Path) -> Vec<(String, String, String)> {
 }
 
 pub fn predicate_still(root: &Path, key: &str, expected: &str) -> bool {
-    let Ok((name, sha, path)) = serde_json::from_str::<(&str, &str, &str)>(key) else { return false };
-    let value = open(root).and_then(|repo| match name {
+    serde_json::from_str::<(&str, &str, &str)>(key).is_ok() && predicate_now(root, key) == expected
+}
+
+/// An object predicate's value now (`consulted`'s `git_object_predicate` row, by its key).
+fn predicate_now(root: &Path, key: &str) -> String {
+    let value = serde_json::from_str::<(&str, &str, &str)>(key).ok().and_then(|(name, sha, path)| open(root).and_then(|repo| match name {
         "git_commit" => commit(&repo, sha),
         "git_has" => has(&repo, sha, path),
         _ => None,
-    });
-    serde_json::to_string(&value).expect("optional boolean") == expected
+    }));
+    serde_json::to_string(&value).expect("optional boolean")
 }
 
 /// The commit `rev` names: a revision spec (`HEAD~1`, `origin/main`, an id).

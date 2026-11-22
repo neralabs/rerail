@@ -10,6 +10,7 @@
 .decl analysis_history_lookup(kind: symbol, key: symbol)
 analysis_history_lookup(k, v) :- analysis_history_request(k, v).
 .decl analysis_history_of(kind: symbol, key: symbol, scope: symbol, run: symbol, scan: symbol, directory: symbol, repo: symbol, tree: symbol, commit: symbol, snapshot: symbol)
+.answer analysis_history_lookup -> analysis_history_of
 
 .decl analysis_named_scope(name: symbol, scope: symbol)
 analysis_named_scope(name, s) :- analysis_scope_record(s, "named", name).

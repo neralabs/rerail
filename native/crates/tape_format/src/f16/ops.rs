@@ -586,18 +586,13 @@ impl Lz {
     }
 }
 
-/// The ops in UKL on the device (decisions 0434 §6 R15, 0440), a test's: the calls are recorded, then replayed by one
-/// thread of a kernel over the region in one buffer, the state at its start and each part at its offset from it, as
-/// the host names them. The device's region does not grow: each part gets the room the host's run of the same calls
-/// reserved (sizing it from bounds is tier 2's, R17). On the process's device, whatever its backend.
-#[cfg(test)]
-pub(super) mod device {
-    use super::{FRESH, Writer, State, Z, finished, part};
-    use crate::f16::{Finished, Lang};
-
-    /// The kernel: the calls `c` (an op and up to three arguments each) through the ops (`<ukl/writer.h>`), then
-    /// `finish`.
-    const REPLAY: &str = r#"
+/// The kernel: thread `id` replays writer `id` of `args.n`: its calls (an op and up to three arguments each, at
+/// `jobs[id].calls` in `c`) through the ops (`<ukl/writer.h>`) on its region (at `jobs[id].region` in `r`), then
+/// `finish`. A writer's ops are one thread's, in a group of its own; the writers are many groups.
+#[cfg(any(test, feature = "test-hooks"))]
+pub const REPLAY: &str = r#"
+// Its kernel uses no SIMD group (ukl/backend.h, decision 0576 §14).
+#define UKL_SIMD_GROUP_FREE 1
 #include <ukl/writer.h>
 
 typedef struct ReplayArgs {
@@ -609,15 +604,18 @@ UKL_REFLECT_STRUCT(ReplayArgs, n, pad)
 DEFINE_KERNEL2(writer, replay,
                ARGS,     ReplayArgs, args, ,
                RWBUFFER, uint8_t,    r,    "[bytes]",
-               ROBUFFER, uint64_t,   c,    "[4 * n]",
-               RWBUFFER, uint32_t,   out,  "[1]",
+               ROBUFFER, uint64_t,   c,    "[calls]",
+               ROBUFFER, uint64_t,   jobs, "[3 * n]",
+               RWBUFFER, uint32_t,   out,  "[n]",
                GID0,     uint32_t,   id,   )
 {
-    if (id != 0u)
+    if (id >= args.n)
         return;
-    UKL_GLOBAL const uint8_t* t = r;
-    for (uint32_t k = 0u; k < args.n; k++) {
-        ROBUFFER(uint64_t) e = c + 4u * k;
+    UKL_GLOBAL const uint8_t* t = r + jobs[3u * id];
+    ROBUFFER(uint64_t) calls = c + 4u * jobs[3u * id + 1u];
+    uint32_t count = (uint32_t)jobs[3u * id + 2u];
+    for (uint32_t k = 0u; k < count; k++) {
+        ROBUFFER(uint64_t) e = calls + 4u * k;
         switch ((uint32_t)e[0]) {
             case 0u: clif_w_open(t, 0ul, (uint32_t)e[1], e[2]); break;
             case 1u: clif_w_close(t, 0ul, e[1]); break;
@@ -627,9 +625,23 @@ DEFINE_KERNEL2(writer, replay,
             default: clif_w_set_start(t, 0ul, (uint32_t)e[1], e[2]); break;
         }
     }
-    out[0] = clif_w_finish(t, 0ul);
+    out[id] = clif_w_finish(t, 0ul);
 }
 "#;
+
+/// The replay's program's name (`REPLAY` its text: `f16::kernels`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub const REPLAY_NAME: &str = "tape_writer_replay";
+
+/// The ops in UKL on the device (decisions 0434 §6 R15, 0440), a test's: the calls are recorded, then replayed by one
+/// thread of a kernel over the region in one buffer, the state at its start and each part at its offset from it, as
+/// the host names them. The device's region does not grow: each part gets the room the host's run of the same calls
+/// reserved (sizing it from bounds is tier 2's, R17). On the process's device, whatever its backend.
+#[cfg(test)]
+pub(super) mod device {
+    use super::{FRESH, Writer, State, Z, finished, part};
+    use crate::f16::{Finished, Lang};
+
 
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -676,9 +688,14 @@ DEFINE_KERNEL2(writer, replay,
             self.host.set_start(i, start);
         }
 
-        pub(in crate::f16) fn finish(mut self) -> Result<Finished, String> {
+        pub(in crate::f16) fn finish(self) -> Result<Finished, String> {
+            Self::finish_all(vec![self]).pop().unwrap()
+        }
+
+        /// The region `finish` hands the device: the state, then each part at a 64-byte boundary, as long as the
+        /// host's buffer for it.
+        fn region(&mut self) -> Result<Vec<u8>, String> {
             self.host.finish_ops()?;
-            // The region: the state, then each part at a 64-byte boundary, as long as the host's buffer for it.
             let mut offsets = [0usize; part::COUNT];
             let mut end = size_of::<State>().next_multiple_of(64);
             for (k, at) in offsets.iter_mut().enumerate() {
@@ -706,33 +723,68 @@ DEFINE_KERNEL2(writer, replay,
             }
             // SAFETY: the state is plain integers (`repr(C)`), and the region starts with its room.
             unsafe { std::ptr::write_unaligned(bytes.as_mut_ptr().cast::<State>(), state) };
+            Ok(bytes)
+        }
+
+        /// Each writer's `finish`, in one launch: a thread a writer, each on its region of one buffer.
+        pub(in crate::f16) fn finish_all(mut ws: Vec<Self>) -> Vec<Result<Finished, String>> {
             use rerail_gpu::kernels::{buffer_of, launch, read};
-            let shared = rerail_gpu::shared::get().ok_or("no device")?;
-            let program = rerail_gpu::kernels::program("tape_writer_replay", REPLAY).unwrap_or_else(|e| panic!("{}: the writer's ops in UKL: {e}", rerail_gpu::device::backend()));
-            let n = self.calls.len() as u32;
-            // At least one call's room: a buffer is never empty.
-            self.calls.push([0; 4]);
-            let calls: Vec<u64> = self.calls.iter().flatten().copied().collect();
-            let (region, calls, result) = (buffer_of(&bytes)?, buffer_of(&calls)?, buffer_of(&[0u32])?);
-            let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
-            launch(&q, program.function("replay")?)
-                .value("args", &ReplayArgs { n, pad: 0 })
-                .buffer("r", &region)
-                .buffer("c", &calls)
-                .buffer("out", &result)
-                .run(&[1], &[1])?;
-            q.flush().await_()?;
-            let r = read::<u32>(&result, 1)[0];
-            let bytes: Vec<u8> = read(&region, end);
-            // SAFETY: the region starts with the state, plain integers.
-            let state: State = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<State>()) };
-            if r != 0 {
-                return Err(format!("the writer's ops failed on the device: {r:#x} at node {}", state.bad_node as i32));
+            let regions: Vec<Result<Vec<u8>, String>> = ws.iter_mut().map(DeviceOps::region).collect();
+            // The writers whose host run succeeded: their regions and calls, one after another.
+            let (mut bytes, mut calls, mut jobs, mut at) = (Vec::new(), Vec::<u64>::new(), Vec::<u64>::new(), Vec::new());
+            for (w, region) in ws.iter().zip(&regions) {
+                let Ok(region) = region else {
+                    at.push(None);
+                    continue;
+                };
+                at.push(Some((bytes.len(), region.len())));
+                jobs.extend([bytes.len() as u64, (calls.len() / 4) as u64, w.calls.len() as u64]);
+                bytes.extend_from_slice(region);
+                calls.extend(w.calls.iter().flatten());
             }
-            let (at, len) = (state.out.at as usize, state.out.len as usize);
-            let count = (state.n as usize).div_ceil(Z);
-            let presence = &bytes[state.presence.at as usize..][..self.host.parts[part::PRESENCE as usize].len()];
-            finished(bytes[at..at + len].to_vec(), presence, self.made.presence_words, self.made.keep_blocks.then_some(count), self.made.z)
+            let n = jobs.len() / 3;
+            let ran = (|| -> Result<(Vec<u32>, Vec<u8>), String> {
+                if n == 0 {
+                    return Ok((Vec::new(), Vec::new()));
+                }
+                let shared = rerail_gpu::shared::get().ok_or("no device")?;
+                let program = rerail_gpu::kernels::program(super::REPLAY_NAME, super::REPLAY).unwrap_or_else(|e| panic!("{}: the writer's ops in UKL: {e}", rerail_gpu::device::backend()));
+                // At least one call's room: a buffer is never empty.
+                calls.extend([0; 4]);
+                let (region, calls, jobs, result) = (buffer_of(&bytes)?, buffer_of(&calls)?, buffer_of(&jobs)?, buffer_of(&vec![0u32; n])?);
+                let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
+                launch(&q, program.function("replay")?)
+                    .value("args", &ReplayArgs { n: n as u32, pad: 0 })
+                    .buffer("r", &region)
+                    .buffer("c", &calls)
+                    .buffer("jobs", &jobs)
+                    .buffer("out", &result)
+                    // A group a writer: its ops are one thread's, and other writers' in its group would diverge from
+                    // them at every op (the group taking their sum, past a driver's watchdog on Windows).
+                    .run(&[n as u64], &[1])?;
+                q.flush().await_()?;
+                Ok((read::<u32>(&result, n), read(&region, bytes.len())))
+            })();
+            let mut thread = 0;
+            ws.into_iter()
+                .zip(regions)
+                .zip(at)
+                .map(|((w, region), at)| {
+                    let (off, end) = at.ok_or_else(|| region.unwrap_err())?;
+                    let (results, all) = ran.as_ref().map_err(String::clone)?;
+                    let (r, bytes) = (results[thread], &all[off..off + end]);
+                    thread += 1;
+                    // SAFETY: the region starts with the state, plain integers.
+                    let state: State = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<State>()) };
+                    if r != 0 {
+                        return Err(format!("the writer's ops failed on the device: {r:#x} at node {}", state.bad_node as i32));
+                    }
+                    let (at, len) = (state.out.at as usize, state.out.len as usize);
+                    let count = (state.n as usize).div_ceil(Z);
+                    let presence = &bytes[state.presence.at as usize..][..w.host.parts[part::PRESENCE as usize].len()];
+                    finished(bytes[at..at + len].to_vec(), presence, w.made.presence_words, w.made.keep_blocks.then_some(count), w.made.z)
+                })
+                .collect()
         }
     }
 }

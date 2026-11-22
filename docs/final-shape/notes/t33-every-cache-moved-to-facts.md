@@ -57,6 +57,68 @@ checks, and what needs a decision.
 With K4, the whole-run cutoff is not a mechanism of its own: when every leaf delta is empty, no stratum runs,
 and every output is as stored.
 
+### K2 in detail (2026-11-21, Typing-support)
+
+The observer (`content_store/observe.rs`) keeps its answers in a SQLite file of its own beside the store
+(`<store>.files`): `observed` (a path's kind, stat, digest, listing, when recorded), `observer_meta` (the journal's
+cursors per root and volume), `run_record` (each path's canonical form, the git listings, the whole-run cutoff,
+the run constants), `observed_changes` and `git_alias`. It reads a root's part at a time, as a run first watches or
+reads under it (`load_under`, a range of paths), and writes what changed behind the run (`write_dirty`). K2 keeps
+the same answers as relations of one kept space, in K1's form (`kept_facts`, 0456), and changes nothing in how
+they are answered (the journal, the racy rule, validation, Git's blobs):
+
+| Relation | Columns | Partition |
+|---|---|---|
+| `file_stat` | path, kind, dev, ino, size, mtime_ns, ctime_ns, recorded_ns, digest (a `digest`, t32 1.4) | the root it is under (`load_under`'s unit) |
+| `dir_entry` | dir, name, is_dir | the root its directory is under |
+| `canonical` | path, canonical path | the root |
+| `observer_cursor` | root, volume, cursor | one partition |
+
+A partition is one put (`KeptWhat::Flat`) and one read, as a root's range of rows is now. `git_alias` and
+`observed_changes` stay: the first is a name of bytes (a fact store table), the second the observer's journal
+(decision 0433, listed as a fact store table). The whole-run cutoff's and the constants' records move with step 1's
+other entries (below), not with K2.
+
+What has to be built first: paths as atoms of the content store. The observer is opened on its own, one per store
+path in the shared object (`observe::with`, decision 0442), the first time a run asks it, and its file has no atoms;
+the kept space needs the store's. So the order is (1) the observer opens with the content store whose atoms it
+uses, (2) `file_stat`, `dir_entry` and `canonical` written and read as the space's
+partitions in place of the three tables, (3) `observer_cursor`, and `observer_meta` and `observed` go from
+`facts_only`'s and `cache_architecture`'s lists. Measured at each step: a warm unchanged run and a one-file edit
+over the 84-file corpus (the observer's `stat`s and reads, its load time, CPU).
+
+**Built (2026-11-21).** `content_store/observe/facts.rs`. The observer opens the content store its file is named
+after (`<store>.files` beside `<store>`) and keeps three relations in a space of its own (one per observer file, so
+a test thread's observer keeps apart, as its file did):
+
+- `observed(path, kind, dev, ino, size, mtime_ns, ctime_ns, digest, listed, listing, recorded_ns)`, the path, the
+  digest's hex and the encoded listing as atoms of the store. One partition per directory, not per root: an edit
+  rewrites its directory's partition, where a root's is up to `LIST_MAX` answers. A root's part is read as the
+  partitions at and under it, and the root's own answer from its parent's.
+- `canonical(path, canonical, recorded_ns)`, partitioned as `observed`: the `canonical:` records `run_record` held.
+  Collection drops the old records.
+- `observer_meta(key, is_text, number, text)`, one partition: the cursors, the observer's own journal's generation and
+  floor, its output directories.
+
+Each change is one put of the space, sent through the observer's writer in order after its SQLite writes: the
+answers a root forgets and the cursor that vouches for the rest are written together, as the table's transaction
+wrote them. The aged cursor, a write a warm run may make, is a job of its own under that name
+(`ContentStore::queue_kept_as`). The listing stays a column, not `dir_entry` rows. `git_alias` and
+`observed_changes` stay as planned; `run_record`'s other records (the Git file lists, the cutoffs, the constants,
+the cone's rounds) are step 1's.
+
+### K3 in detail (2026-11-21, Typing-support)
+
+The native steps were three lists in Rust (`rr::lower`'s `FILE_SYSTEM` and `ENGINE_ANSWERS`, and the languages'
+`Answerer`s), with `load` beside them in `corpus::world`, and nothing in the library said which request a native
+step answers. Built: each is declared where its relations are, as `.answer REQ -> R1, R2` (`core.rerail`,
+`git/*.rerail`, `analysis.rerail`, `c/preprocess.rerail`, `c/compile-commands.rerail`), read like `.cache` and
+linted by `front::answers` (its relations declared, none answered by two requests).
+`language::tests::every_native_answer_is_declared_in_the_library` holds the engine's answerers and the library's
+declarations to one list, so an answerer is registered only for a request the library declares, and the reverse.
+An answer that is an object is a value naming it already: `parse_of`'s and `splice_of`'s tapes are `tape` columns,
+and a digest or a blob is a column of its type (t32 1.4).
+
 **A relation's identity.** A relation of a program is stored under the digest of the rules it is derived from,
 the identities of what they read, and the engine (`plan::identities`). A rule edit makes it another relation,
 empty, so it is derived again and its readers see the delta; a relation two programs derive alike is one frame.
@@ -96,7 +158,7 @@ removed with nothing in its place but K1–K4.
 |---|---|---|
 | `rr.rs` `PARSED`, `LIBRARIES`, `PROGRAMS` | a file's path and digest; the files' digests | a rule file is a document loaded by `load(path, _, "rr")` (phase 0 already does); its statements are 0074's program facts, stored in K1 under the file's `file` row |
 | `phase0.rs` `KEPT` | the seed; held while every module is as it was | `bootstrap.rr`'s output relations (the include graph), stored in K1 |
-| `corpus.rs` `COMBINED`, `PREPARED`, `prepared.rs`'s memo entries | the texts' digest; the texts, additions, stage, dialect, build | `prepared(p, …) :- program(p, digest), engine(b), …` answered by preparing; its rows are the `prepared_*` program facts 0074 already writes |
+| `corpus.rs` `COMBINED`, `PREPARED`, `prepared.rs`'s memo entries | the texts' digest; the texts, additions, stage, dialect, build | `prepared(p, …) :- program(p, digest), engine(b), …` answered by preparing; its rows are the `prepared_*` program facts 0074 already writes. **Pointer built** (2026-11-21, `prepared.rs` `pointer`): the `prepared_*` and `prepared_program` rows are kept facts of the store's prepared programs' space, a partition a program (its pointer plan: build, grammar, key); `PREPARED` is their in-memory copy (state). The programs' texts stay sources |
 | `choices.rs` `KEPT` | a digest of the program, the build and three switches, "a scale at most GROWTH times theirs" | an answer keyed by the program's facts and the statistics it read (with step 6) |
 
 ### Step 3: a document's facts
@@ -108,7 +170,7 @@ removed with nothing in its place but K1–K4.
 | tapes: `source_objects`, `tape_objects` (kept: they are objects) | (content, tag, grammar version, format) | `doc_key` and `doc_tape` as in the Intro; the object tables hold the bytes the answer's value names |
 | `guests.rs` `KEPT` | (text, grammar) | `parse_of`'s answer rows (K3) |
 | `cross_rows`, `cross_blocks`, `cross_components` (0076) | an import component's file bytes | goes: cross-file relations in K1, partitioned by the document of their first location column, maintained by K4. 0092 §6: keys of bytes have no cutoff |
-| `slice_rules`, `slice_document`, `slice_match`, `slice_span`, `slice_fresh` | the slice's rules and documents | the slice's match relations in K1, partitioned by document |
+| `slice_rules`, `slice_document`, `slice_match`, `slice_span`, `slice_fresh` | the slice's rules and documents | **built** (2026-11-21, `slice/kept.rs`): relations of the scope's space in K1, a document's rows its own partition. A run writes only the partitions of the documents it evaluated, reused or lost; the wave reads the others where they lie, through `kept_facts` (a temp view, no copy). The SQL column statistics of the two tables went with them. `slice_fresh` is the run's scratch |
 | `corpus_stats` | a path's stat to its source | goes: K2's `file_stat` |
 | `corpus_plans`, `corpus_plan_relations`, `corpus_manifests`, `corpus_manifest_plans`, `corpus_roots`, `corpus_live`, `corpus_state`, `corpus_decided`, `corpus_swept` (0053) | each run's manifest of what it used | collection is reachability: an object or a frame is live while a stored fact names it. How long an old state is kept is a `.cache` directive on the relation |
 | `session.rs` `SESSION` | the session's memo, cross part, phased exports, written outputs, statistics | the resident copy of K1's relations, written behind by 0102 |
@@ -139,15 +201,15 @@ rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.ph
 |---|---|---|
 | `stat_blob`, `fact_stats`, `fact_value_stats`, `kind_size`, `edge_freq`, `tape_kind_counts`, `term_freq`, `term_kind_freq`, `term_node_freq`, `term_coverage`, own counts (a name binding) | one blob per plan; patched by its own delta code (0096) | aggregate relations over K1's relations (`count` per relation, column and document), maintained by counting like any aggregate |
 | `compiled_plans`, `compiled_plan_reads`, `plan.rs` `PLANS`, `SESSION_PLANS`, `KEPT`, `derived.rs` `MEMO`, `SESSION_MEMO` | a plan key; statistic intervals | a plan is an answer keyed by its stratum's definition and the statistics' intervals it is valid over (03 §6 already records those intervals) |
-| `plan_feedback`, `keeps.rs` `OBSERVED`, `table.rs` `PAID`, `accel_models` | what a run observed | facts the run produces about itself, stored in K1 |
+| `plan_feedback`, `keeps.rs` `OBSERVED`, `table.rs` `PAID`, `accel_models` | what a run observed | facts the run produces about itself, stored in K1. `accel_models`: **built** (2026-11-21, `content_store/accel_models.rs`): `accel_model(key, archive)` in the store's models' space, a partition a key; the archive a source of the store by its SHA-256, pinned with no end as the table kept it |
 
 ### Step 7: text patterns and indexes
 
 | Today | Key and check today | Becomes |
 |---|---|---|
 | `text_matcher`, `text_term`, `text_pending`, the stored automata (0075's memo entries) | the patterns' key | `dfa(g, a) :- text_group(g, patterns), …` answered by determinizing; the automaton is an object its value names |
-| `strings.rs` `MATCHERS`, `GROUPS`, `functions.rs` `CACHE`, `text.rs` `LOWERED` | a pattern | in-memory forms of a pattern fact, made again from it: nothing to write (compiling a regex is cheap; determinizing, above, is not) |
-| `text.rs` `NAMES` | a production's name | a profiling counter: state, not a cache (reclassify) |
+| `strings.rs` `MATCHERS`, `GROUPS`, `functions.rs` `CACHE`, `text.rs` `LOWERED` | a pattern | in-memory forms of a pattern fact, made again from it: nothing to write (compiling a regex is cheap; determinizing, above, is not). `CACHE`: **done**, listed as state (2026-11-21) |
+| `text.rs` `NAMES` | a production's name | a profiling counter: state, not a cache. **Done**, listed as state (2026-11-21) |
 | `prefilter_sets`, `term_postings`, `vocabulary_*`, `search_index_sets` | the store's own triggers and indexes | derived relations over tapes, in K1 per document, with the indexes they need |
 
 ### Step 8: the workspace pipeline
@@ -181,3 +243,9 @@ Decided (user, 2026-11-10):
 1. **K1's layout is frames** per (space, relation, partition), as chosen for SQL access (bd12fc52d).
 2. **This branch builds what the other session is not doing:** K1 to K4, and steps 1 and 4.
 3. **Identity by naming for every relation**; a version is a column of the facts, bumped in the rule (above).
+
+Decided (user, 2026-11-21):
+
+4. **Typing-support-final-shape takes on the rest of this plan** (t32 5.3): K2, K3 and step 1 first, which no
+   other branch is building; then steps 3, 2, 6 and 7. K4 for each document and the statistics stay with the sync
+   branch's Q332, merged from the hub as they land.

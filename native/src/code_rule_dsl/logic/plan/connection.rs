@@ -47,11 +47,11 @@ fn once(
     }
     Ok(())
 }
-pub(crate) fn run(db: &Connection, bit: u32, install: impl FnOnce() -> Result<()>) -> Result<()> {
+pub fn run(db: &Connection, bit: u32, install: impl FnOnce() -> Result<()>) -> Result<()> {
     once(db, bit, true, install)
 }
 /// Keep adopted-input binding cells alive while cached statements reference them.
-pub(crate) fn bind(
+pub fn bind(
     db: &Connection,
     name: &str,
     source: std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,

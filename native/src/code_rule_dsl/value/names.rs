@@ -16,7 +16,7 @@ const HANGUL: &str = "HANGUL SYLLABLE ";
 /// The failure a clause reports where it read a `\N{...}` escape the malformed table could not
 /// answer (`take_unavailable`). `native/build.rs` refuses to build with such a table, so only a
 /// table corrupted past its header gets here.
-pub(crate) const TABLE_UNAVAILABLE: &str = "the engine's Unicode names table (names.bin) is malformed: rebuild the engine after `git lfs install && git lfs pull`";
+pub const TABLE_UNAVAILABLE: &str = "the engine's Unicode names table (names.bin) is malformed: rebuild the engine after `git lfs install && git lfs pull`";
 
 thread_local! {
     /// Whether a lookup on this thread found the table malformed since `take_unavailable` last
@@ -26,7 +26,7 @@ thread_local! {
 
 /// Whether a `\N{...}` lookup on this thread found the table malformed since the last call: the
 /// name read as unknown, so the clause reading it has no verdict of its own.
-pub(crate) fn take_unavailable() -> bool {
+pub fn take_unavailable() -> bool {
     UNAVAILABLE.replace(false)
 }
 

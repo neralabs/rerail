@@ -73,12 +73,28 @@ pub fn moved() -> (u64, u64) {
 /// Room a block keeps past a new relation's: what its other relations' tails may take meanwhile.
 const MARGIN: usize = 1 << 20;
 
+/// The indexes an axis's relation (`n`, `a`) has room for in its block: by `n`, by `a`, and by both in either order,
+/// the keys a stratum may probe a relation of two columns by (decision 0353 step 6). With room for two (by each
+/// column), a third key copied it (`DevIndex::moved`). The room is address space, memory as an index is written.
+pub const AXIS_KEYS: usize = 4;
+
+/// An index the device builds into a relation of a block (`Facts::ix`), its builder's work committed: the relation's
+/// descriptor's offset in the block, the index's room, and its builder's submission, for a taker to wait on (a builder
+/// the device failed fails its takers' batches too).
+pub struct InFlight {
+    pub at: usize,
+    pub room: rerail_blocks::relation::IndexRoom,
+    pub done: rerail_accel::gpu::join::Submitted,
+}
+
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {
     /// Held by handle (decision 0491 step 3): a region of it keeps it as its relations do.
     pub block: Arc<Block>,
-    /// Held while an index is added to one of its relations (`Relation::try_reserve_index`, decision 0325 step 5).
-    pub ix: Mutex<()>,
+    /// Held while an index is added to one of its relations (`Relation::try_reserve_index`, decision 0325 step 5): the
+    /// indexes the device builds in it, their work committed and not yet marked built (`Building`), which another
+    /// batch's probe takes instead of building its own (its work, committed after, runs after on the one queue).
+    pub ix: Mutex<Vec<InFlight>>,
     /// The count of bytes given back of the run that leased it (`given_back`): a relation's last holder may drop it
     /// on any thread.
     given: Arc<GivenBack>,
@@ -86,13 +102,43 @@ pub struct Facts {
     tally: Option<Arc<std::sync::atomic::AtomicUsize>>,
     /// How long its relations live.
     life: Life,
+    /// Whether relations are made in it while it has room (`new_open`), not one alone in it.
+    shared: bool,
 }
 
 impl Facts {
     /// A block of relations of `life`: the chunk's the run is evaluating, if one is, counted in its tally.
     fn new(block: Block, life: Life) -> Facts {
+        Facts::with_sharing(block, life, false)
+    }
+
+    /// A block of relations of `life` that new relations are made in while it has room (`new_open`).
+    fn shared(block: Block, life: Life) -> Facts {
+        Facts::with_sharing(block, life, true)
+    }
+
+    fn with_sharing(block: Block, life: Life, shared: bool) -> Facts {
         let tally = current_chunk().map(|c| Arc::clone(&c.tally));
-        Facts { block: Arc::new(block), ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life }
+        // Where it was made, for the profile's account of the blocks at the footprint's peak (`held_by_span`).
+        if rerail_prof::heap::on() {
+            let made = crate::code_rule_dsl::logic::profile::machine::<Made>();
+            let mut m = made.0.lock().unwrap_or_else(|e| e.into_inner());
+            m.retain(|(e, _, _, _)| e.strong_count() > 0);
+            let maker = (life == Life::Device).then(made_by);
+            m.push((block.meter(), rerail_prof::heap::span(), life as u8, maker));
+            let _ = crate::code_rule_dsl::logic::profile::machine::<crate::code_rule_dsl::logic::profile::memory::BlocksBySpan>().0.set(held_by_span);
+        }
+        Facts { block: Arc::new(block), ix: Mutex::new(Vec::new()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life, shared }
+    }
+
+    /// Whether relations are made in it while it has room (`shared`), not one alone in it.
+    pub fn is_shared(&self) -> bool {
+        self.shared
+    }
+
+    /// Whether a new relation (or a new structure) of `need` bytes is made in it: past its others' margin.
+    fn admits(&self, need: usize) -> bool {
+        self.block.reserved().saturating_sub(self.block.used()) >= need + MARGIN
     }
 }
 
@@ -170,6 +216,54 @@ fn open_blocks() -> Arc<Open> {
 /// machine's, as the memory it counts is).
 #[derive(Default)]
 struct Live(Mutex<[Vec<std::sync::Weak<Facts>>; 3]>);
+
+/// The relations' blocks made while heap sampling is on (`RERAIL_HEAP_SAMPLE`), as they live: each one's extent, the
+/// span open where it was made (`rerail_prof::heap::span`) and its `Life`.
+#[derive(Default)]
+struct Made(Mutex<Vec<(std::sync::Weak<rerail_blocks::block::Extent>, u32, u8, Option<Arc<str>>)>>);
+
+/// The engine's frames that made a block (a device run's own, which a span alone does not name): its maker's
+/// innermost `code_rule_dsl` functions, outermost last, four of them.
+fn made_by() -> Arc<str> {
+    let bt = std::backtrace::Backtrace::force_capture().to_string();
+    let mut names: Vec<String> = Vec::new();
+    for line in bt.lines() {
+        let l = line.trim();
+        let Some(f) = l.split_once(": ").map(|(_, f)| f) else { continue };
+        if !f.contains("code_rule_dsl") || f.contains("facts::rows::") || f.contains("made_by") {
+            continue;
+        }
+        let f = f.rsplit_once("::h").map_or(f, |(a, _)| a);
+        let short: Vec<&str> = f.split("::").filter(|p| !p.starts_with('{')).collect();
+        let name = short[short.len().saturating_sub(2)..].join("::");
+        if names.last() != Some(&name) {
+            names.push(name);
+        }
+        if names.len() == 4 {
+            break;
+        }
+    }
+    names.join(" < ").into()
+}
+
+/// The relations' blocks live now, by the span that made them and their `Life`: their bytes used (written up to
+/// their top, less what their free lists hold), most first. Empty unless heap sampling is on.
+pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
+    let made = crate::code_rule_dsl::logic::profile::machine::<Made>();
+    let m = made.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut by: std::collections::HashMap<(u32, u8, Option<Arc<str>>), (usize, usize)> = std::collections::HashMap::new();
+    for (e, span, life, maker) in m.iter() {
+        if let Some(e) = e.upgrade() {
+            use std::sync::atomic::Ordering::Relaxed;
+            let v = by.entry((*span, *life, maker.clone())).or_default();
+            v.0 += e.top.load(Relaxed).saturating_sub(e.free.load(Relaxed));
+            v.1 += 1;
+        }
+    }
+    let mut out: Vec<(u32, u8, usize, usize, String)> = by.into_iter().map(|((s, l, w), (b, n))| (s, l, b, n, w.map_or_else(String::new, |w| w.to_string()))).collect();
+    out.sort_by_key(|o| std::cmp::Reverse(o.2));
+    out
+}
 
 /// Per `Life`, the blocks held now, their bytes written and their bytes reserved: a profile's account of the rows
 /// outside the heap.
@@ -416,7 +510,7 @@ pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
 /// A new block for relations of `life` with room for `need` bytes and its others' margin: the chunk's, if a chunk's
 /// evaluation runs, counted while it lives.
 fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<Facts>, String> {
-    let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?, life));
+    let f = Arc::new(Facts::shared(lease(2 * need + MARGIN, life)?, life));
     if let Some(c) = chunk {
         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
         c.note();
@@ -437,7 +531,7 @@ fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usi
     let runs = open_blocks();
     let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
-        && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN
+        && f.admits(need)
         && let Some(c) = f.block.try_alloc_chunk_fit(need, align)
     {
         return Ok((f.clone(), c));
@@ -831,17 +925,41 @@ impl<T: rerail_blocks::Pod + std::fmt::Debug> std::fmt::Debug for BlockVec<T> {
 /// The bytes a relation of `k` 8-byte columns and `rows` rows takes in its block: its descriptor and directories,
 /// and its chunks as `Rows::try_reserve` makes them (quarter steps of doubling groups, each chunk aligned).
 fn room_for(k: usize, rows: usize) -> usize {
+    room_for_widths(&vec![8; k], rows)
+}
+
+/// `room_for`, of columns `widths` bytes wide.
+fn room_for_widths(widths: &[u32], rows: usize) -> usize {
     let min_log = rerail_blocks::rows::MIN_LOG;
     let align = |bytes: usize| if bytes >= rerail_blocks::block::PAGE { rerail_blocks::block::PAGE } else { 64 };
     let mut chunks = 0;
     let mut bytes = 0;
     while rerail_blocks::rows::capacity(chunks, min_log) < rows as u64 {
-        let b = rerail_blocks::rows::chunk_rows(chunks as usize, min_log) as usize * 8;
-        bytes += k * (b + align(b));
+        let r = rerail_blocks::rows::chunk_rows(chunks as usize, min_log) as usize;
+        bytes += widths.iter().map(|&w| r * w as usize + align(r * w as usize)).sum::<usize>();
         chunks += 1;
     }
-    bytes + (k + 1) * size_of::<rerail_blocks::rows::ColDir>() + 4096
+    bytes + (widths.len() + 1) * size_of::<rerail_blocks::rows::ColDir>() + 4096
 }
+
+/// The rows a relation's chunks hold once they hold `rows` (`Rows::try_reserve`'s steps).
+fn capacity_for(rows: usize) -> u64 {
+    let min_log = rerail_blocks::rows::MIN_LOG;
+    let mut chunks = 0;
+    while rerail_blocks::rows::capacity(chunks, min_log) < rows as u64 {
+        chunks += 1;
+    }
+    rerail_blocks::rows::capacity(chunks, min_log)
+}
+
+/// The bytes `indexes` indexes of `rows` rows take in their relation's block (`Relation::try_reserve_index`): each
+/// its buckets and its rows, each chunk aligned, and the directory.
+fn index_room(indexes: usize, rows: u64) -> usize {
+    let rows = rows.max(1) as usize;
+    let one = 4 * (rows.next_power_of_two() + 1) + 4 * rows + 2 * rerail_blocks::block::PAGE;
+    indexes * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64
+}
+
 
 /// A block of the device's own of at least `bytes`: a relation alone in it, from the block policy (decision 0342) as
 /// every block is (Q205). Exact, and counted as a device join's buffers are (bounded inside the join's budget, a
@@ -849,7 +967,7 @@ fn room_for(k: usize, rows: usize) -> usize {
 /// anonymous memory, which the CPU's reads take as they take any block.
 fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
     use rerail_blocks::alloc::{Budget, Device, Need, Size, Writes};
-    let device = if cfg!(any(target_os = "macos", target_os = "linux")) && life == Life::Device && rerail_accel::gpu::shared::layer().is_some() {
+    let device = if cfg!(any(target_os = "macos", target_os = "linux", windows)) && life == Life::Device && rerail_accel::gpu::shared::layer().is_some() {
         Device::Must
     } else {
         Device::No
@@ -877,6 +995,30 @@ pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     }
     let at = facts.block.offset_of(rel);
     InBlock { facts, at, rows: rows as u32, dead: 0, kills: None, part: None }
+}
+
+
+/// The run table of a relation under key runs (`Part::over_key_runs`), for its writer.
+pub struct KeyRuns {
+    t: *mut u32,
+    runs: usize,
+    /// The relation whose block holds it.
+    part: Part,
+}
+
+impl KeyRuns {
+    /// Run `k`: its rows from `first` (past the run's before; the first's 0) hold ids of high bits `key`.
+    pub fn put(&self, k: usize, first: u32, key: u32) {
+        assert!(k < self.runs, "run {k} of {}", self.runs);
+        assert!(self.part.len() == 0, "a run set after its relation's rows");
+        // SAFETY: a table of `runs` runs in the relation's block, which `part` keeps; read only once rows are written.
+        unsafe { rerail_blocks::rows::put_run(self.t, k, first, key) };
+    }
+
+    /// Its offset in its block (a device writer's).
+    pub fn at(&self) -> usize {
+        self.part.facts.block.offset_of(self.t.cast_const())
+    }
 }
 
 /// A relation of `k` values a row, 8 bytes each, read in their order.
@@ -914,6 +1056,10 @@ pub struct Held {
     /// Rows of a continuation's base it took when it moved (`grow`, `moved_room`): its rows start at id 0 then, and the
     /// `Rows` holding it drops the base's segment (`Rows::absorbed`).
     absorbed: u32,
+    /// The indexes of its rows its block keeps room for (decision 0353 step 6): its rows' growth leaves their bytes
+    /// free (`Part::reserve_keeping`), and moves it to a block of its own with as much room past its rows when the
+    /// block has no more; 0 for none.
+    ix_room: u8,
 }
 
 /// Room past a relation's rows lent to another writer (the device, `Part::room`): rows `at..` of it, which the writer
@@ -943,7 +1089,7 @@ impl Lent {
         }
         self.tail.lent.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         let lent = Lent { tail: self.tail.clone(), at, from: None };
-        self.tail.rel().rows.try_reserve(&self.tail.facts.block, end).then_some(lent)
+        self.tail.reserve_keeping(end).then_some(lent)
     }
 
     /// `after`, when its block has no room: the relation's rows so far (this loan's first `written` too) moved into
@@ -1090,12 +1236,28 @@ impl Part {
         Part::try_new_with(life, k, rows, 0, false)
     }
 
+    /// A relation of `k` columns alone in a block with room for `rows` rows, past them for its rows to double and for
+    /// `indexes` indexes of all of them, which its growth keeps (`ix_room`). The block is address space, memory only
+    /// as it is written (decision 0342's `Device::No`).
+    fn alone_indexed(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        let rows = rows.max(1);
+        let extra = room_for(k, 2 * rows) - room_for(k, rows) + index_room(indexes, capacity_for(2 * rows)) + (64 << 10);
+        let mut part = Part::try_new_with(life, k, rows, extra, false)?;
+        Arc::get_mut(&mut part.held).expect("a new relation's one holder").ix_room = indexes as u8;
+        Ok(part)
+    }
+
     /// `try_new`, a block of its own (a device relation's) with `extra` bytes past the relation's room.
     /// `rewritten`: its rows' values change in place (`for_writes_with_room`): its block alone keeps a free list, and
     /// its indexes are whole chunks the next takes again (`Relation::rewritten`).
     fn try_new_with(life: Life, k: usize, rows: usize, extra: usize, rewritten: bool) -> Result<Part, String> {
-        let spec = spec(k);
-        let need = room_for(k, rows);
+        Part::try_new_spec(life, spec(k), rows, extra, rewritten)
+    }
+
+    /// `try_new_with`, of columns `spec`'s widths.
+    fn try_new_spec(life: Life, spec: Spec, rows: usize, extra: usize, rewritten: bool) -> Result<Part, String> {
+        let k = spec.widths.len();
+        let need = room_for_widths(&spec.widths, rows);
         // A device relation is written once at its size, and lives as the device's buffers did: alone in a block of
         // its size (leased within the device's budget), given back with it. A run's tail grows: its block has room for
         // it to double.
@@ -1120,7 +1282,7 @@ impl Part {
                     }
                     f
                 }
-                Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
+                Some(f) if !fresh && f.admits(need) => f.clone(),
                 _ => {
                     let f = new_open(&chunk, life, need)?;
                     *open = Some(f.clone());
@@ -1135,7 +1297,7 @@ impl Part {
                 }
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0 }), cap: u32::MAX });
+                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0, ix_room: 0 }), cap: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -1167,6 +1329,17 @@ impl Part {
 
     /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for
     /// `indexes` indexes of its rows.
+    /// A device run's own relation of no columns and `rows` rows with no room for an index: what a `has` axis read
+    /// off the tape is bound by (`DevRel::has`), which nothing indexes (its probes walk the tape). Room for an index
+    /// of its rows was 8 to 10 bytes a node, per binding: 133 blocks, 448 MB, at a 300-file run's peak (ab135).
+    pub fn for_device_unindexed(rows: usize) -> Result<Part, String> {
+        let directory = rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
+        let part = Part::try_new_with(Life::Device, 0, rows, directory, false)?;
+        // SAFETY: a relation of no columns: its rows have no values to write.
+        unsafe { part.rel().rows.claim_reserved(rows as u32) };
+        Ok(part)
+    }
+
     fn claimed(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
         let cap = rows.next_power_of_two().max(1);
         let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;
@@ -1177,12 +1350,12 @@ impl Part {
         Ok(part)
     }
 
-    /// How long its rows live: the blocks it is in.
     /// Whether nothing else holds its relation (no other part, reader or borrowed array of it).
     pub fn is_unique(&self) -> bool {
         Arc::strong_count(&self.held) == 1
     }
 
+    /// How long its rows live: the blocks it is in.
     pub fn life(&self) -> Life {
         self.life
     }
@@ -1237,17 +1410,44 @@ impl Part {
     /// (`DevIndex::moved`). The room is the block's address space: its pages are taken as an index is written. Not
     /// leased from the device's budget.
     pub fn with_index_room(life: Life, k: usize, rows: usize, indexes: usize) -> Part {
-        let cap = rows.next_power_of_two().max(1);
-        let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
-        let room = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>();
-        Part::try_new_with(life, k, rows, room, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+        let indexes = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES);
+        let mut part = Part::try_new_with(life, k, rows, index_room(indexes, rows as u64), false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"));
+        // Its rows' growth keeps the room (`ix_room`).
+        Arc::get_mut(&mut part.held).expect("a new relation's one holder").ix_room = indexes as u8;
+        part
+    }
+
+    /// `with_index_room` of `k` columns of ids under key runs (an axis's solve, decision 0494 step 7): each column 4
+    /// bytes a row, its ids' low bits, their high bits (a document's key) the runs' of one table of `runs` runs in
+    /// the relation's block (`rows::ColDir`'s `runs`), which every column reads. The writer sets each run (`KeyRuns::put`)
+    /// before it writes a row.
+    pub fn over_key_runs(life: Life, k: usize, rows: usize, indexes: usize, runs: usize) -> (Part, KeyRuns) {
+        let spec = Spec { widths: vec![4; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG };
+        let table = 8 * (runs + 2) + 64;
+        let indexes = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES);
+        let mut part = Part::try_new_spec(life, spec, rows, index_room(indexes, rows as u64) + table, false).unwrap_or_else(|e| panic!("an axis of {rows} rows: {e}"));
+        // Its rows' growth keeps the room (`ix_room`), as `with_index_room`'s.
+        Arc::get_mut(&mut part.held).expect("a new relation's one holder").ix_room = indexes as u8;
+        let t = rerail_blocks::rows::alloc_runs(&part.facts.block, runs);
+        for c in 0..k {
+            // SAFETY: the table is in the relation's block, which it lives as long as; its runs are set before a row.
+            unsafe { part.rel().rows.set_runs(c, t) };
+        }
+        let keys = KeyRuns { t, runs, part: part.clone() };
+        (part, keys)
     }
 
     /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device
     /// goes on writing round after round (a lattice head, its held rows updated in place, its new keys' rows past
     /// them), its rows' chunks and its key map growing in the block (`reserve`), never moved. Its block reserves
     /// address space: the room is memory only as it is written. `Err` when no block can be had.
+    ///
+    /// Where a reservation is address space, `room` is its least: the block reserves as every growing block of
+    /// relations does (decision 0445, `BLOCK_RESERVE`). A recursive head's 256 MB ran out under its rows and its
+    /// rounds' indexes, and its relation was copied for each next key (ab127: 478.7 MB of 0353 row 9). Few are live at
+    /// once (a fixpoint's heads).
     pub fn for_writes_with_room(k: usize, rows: usize, room: usize) -> Result<Part, String> {
+        let room = if RESERVES_ADDRESS_SPACE { room.max(BLOCK_RESERVE - room_for(k, rows).min(BLOCK_RESERVE / 2)) } else { room };
         Part::try_new_with(Life::Run, k, rows, room.max(1), true)
     }
 
@@ -1318,7 +1518,7 @@ impl Part {
         self.lent.compare_exchange(0, 1, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire).ok()?;
         // Made now, so a refusal below gives the loan back.
         let lent = Lent { tail: self.clone(), at, from: None };
-        self.rel().rows.try_reserve(&self.facts.block, end).then_some(lent)
+        self.reserve_keeping(end).then_some(lent)
     }
 
     /// Its first `rows` rows (claimed, or written into room lent and finished) moved into a relation of its life with
@@ -1367,11 +1567,17 @@ impl Part {
     /// Room for `n` rows: chunks in its block, or the relation moved to a block with room for twice as many.
     fn grow(&mut self, n: u64) {
         debug_assert!(!self.capped(), "a write to a shared prefix");
-        if self.rel().rows.try_reserve(&self.facts.block, n) {
+        if self.reserve_keeping(n) {
             return;
         }
         let moved = self.moved_whole(self.len(), 2 * n as usize);
         *self = moved;
+    }
+
+    /// Room for `n` rows in all in its block, leaving the room its indexes take there (`ix_room`).
+    fn reserve_keeping(&self, n: u64) -> bool {
+        let ix = self.ix_room as usize;
+        self.rel().rows.try_reserve_keeping(&self.facts.block, n, |rows| if ix == 0 { 0 } else { index_room(ix, rows) })
     }
 
     /// Its first `rows` rows moved into a new relation of its life with room for `room` rows of its own more: a
@@ -1380,11 +1586,22 @@ impl Part {
     fn moved_whole(&self, rows: u32, room: usize) -> Part {
         let k = self.rel().rows.ncols as usize;
         let pre = self.base.as_ref().map_or(0, |_| self.rel().base_rows);
-        let mut moved = Part::new(self.life, k, room.max(rows as usize) + pre as usize);
+        let all = room.max(rows as usize) + pre as usize;
+        // One given room for its indexes keeps it where it goes.
+        let mut moved = match self.ix_room {
+            0 => Part::new(self.life, k, all),
+            ix => Part::alone_indexed(self.life, k, all, ix as usize).unwrap_or_else(|e| panic!("a relation of {k} columns and {all} rows: {e}")),
+        };
         count_move(rows + pre, k);
         if let Some(base) = &self.base {
             // copy: growth: a continuation moved out of a full block takes the rows of its chain with it, once.
             moved.copy_reads(base, pre);
+        }
+        if crate::code_rule_dsl::prof::on() {
+            let from = if self.held.facts.is_shared() { "a shared" } else { "its own" };
+            let bytes = 8 * k * (rows as usize + pre as usize);
+            crate::code_rule_dsl::prof::count_named(format!("facts.moved for growth: from {from} block, {:?}, {k} columns, bytes", self.life), bytes);
+            crate::code_rule_dsl::prof::count_named(format!("facts.moved for growth: from {from} block, {:?}, {k} columns, moves", self.life), 1);
         }
         // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
         moved.copy_from(self, 0, rows);
@@ -1427,7 +1644,7 @@ impl Part {
         let rel = Relation::try_continue(&base.facts.block, &spec(k), base.rel(), base.reads())?;
         let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
         let held = Held { facts: base.facts.clone(), life: base.life, rel: std::ptr::from_ref(rel), cols, lent: std::sync::atomic::AtomicU32::new(0),
-                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0 };
+                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0, ix_room: base.ix_room };
         Some(Part { held: Arc::new(held), cap: u32::MAX })
     }
 
@@ -2896,6 +3113,27 @@ mod tests {
         assert_ne!(Arc::as_ptr(&block_of(&kept)) as usize, run);
     }
 
+    /// Pushed a batch at a time far past the rows it was made for (moved as it grows), a relation given room for its
+    /// indexes (`Rows::with_index_room`) still has room in its block for them (decision 0353 step 6): its growth
+    /// never takes their bytes.
+    #[test]
+    fn a_large_relations_growth_keeps_room_for_its_indexes() {
+        let mut r = Rows::with_index_room(2, Life::Run, 8192, 3);
+        for b in 0..40i64 {
+            // copy: not block data (a test's literal rows)
+            r.extend_from_slice(&(0..2 * 3000).map(|v| b * 6000 + v).collect::<Vec<i64>>());
+        }
+        assert_eq!(r.rows(), 120_000);
+        let part = r.parts().next().expect("one part");
+        assert_eq!(r.parts().count(), 1, "one relation");
+        let n = part.len();
+        for key in [&[0u16][..], &[1], &[0, 1]] {
+            // SAFETY: no other thread adds an index; its rows are written.
+            let room = unsafe { part.rel().try_reserve_index(&part.facts().block, key, n) };
+            assert!(room.is_some(), "room for an index on {key:?} of {n} rows");
+        }
+    }
+
     /// What a chunk wrote (decision 0435 R6) is its blocks' bytes, whatever was given back before it ended, and the
     /// same on every run of the same chunk: of the rows it keeps past it, the held part.
     #[test]
@@ -2954,6 +3192,33 @@ mod tests {
         let live = [(Life::Run, 10 << 20, 4 << 20), (Life::Kept, 2 << 20, 2 << 20), (Life::Device, 64 << 20, 64 << 20), (Life::Source, 1 << 20, 0)];
         assert_eq!(held_of(&live), 6 << 20);
         assert_eq!(held_of(&live[..2]), held_of(&live), "the device's blocks, alive or not, change nothing");
+    }
+
+    /// Relations made in a shared block, grown together, each have an index of every key in their block (decision
+    /// 0353 step 6), none copied for it: the block reserves address space enough for their growth and their indexes
+    /// (decision 0445).
+    #[test]
+    fn a_shared_blocks_relations_have_room_for_their_indexes() {
+        in_chunk(|| {
+            let fill = |base: i64| {
+                let mut r = Rows::new(2);
+                // copy: not block data (a test's literal rows)
+                r.extend_from_slice(&(0..2 * 100_000).map(|v| base + v).collect::<Vec<i64>>());
+                r
+            };
+            let held: Vec<Rows> = (0..20).map(fill).collect();
+            let facts = block_of(&held[0]);
+            assert!(facts.is_shared() && held.iter().all(|r| Arc::ptr_eq(&facts, &block_of(r))), "one shared block");
+            for r in &held {
+                let part = r.parts().next().expect("one part");
+                let n = part.len();
+                for key in [&[0u16][..], &[1]] {
+                    // SAFETY: no other thread adds an index; its rows are written.
+                    let room = unsafe { part.rel().try_reserve_index(&facts.block, key, n) };
+                    assert!(room.is_some(), "an index on {key:?} of {n} rows in its block ({} of {} used)", facts.block.used(), facts.block.reserved());
+                }
+            }
+        });
     }
 
     /// Outside a run the open blocks are the machine's (decision 0442, `open_blocks`): a session's relations made

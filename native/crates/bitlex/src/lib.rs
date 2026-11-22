@@ -15,6 +15,7 @@ use rerail_compiler::*;
 #[cfg(not(target_family = "wasm"))]
 #[path = "../../compiler/src/answers.rs"]
 pub mod answers;
+/// Tier 1 as Rust, written from the lexer's statements (decision 0550).
 #[path = "../../compiler/src/bitlex_lex_rust.rs"]
 pub mod bitlex_lex_rust;
 #[path = "../../compiler/src/bitlex_masks.rs"]
@@ -25,6 +26,7 @@ pub mod bitlex_pair_lookup;
 pub mod bitlex_piece_checks;
 #[path = "../../compiler/src/bitlex_prove.rs"]
 pub mod bitlex_prove;
+/// Tier 2 as Rust, written from the tree rules (decision 0550).
 #[path = "../../compiler/src/bitlex_rust.rs"]
 pub mod bitlex_rust;
 #[path = "../../compiler/src/bitlex_sat.rs"]

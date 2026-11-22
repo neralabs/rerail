@@ -111,7 +111,7 @@ impl SnapshotContext for NoContext {
 }
 
 /// The snapshot's derived context (`SnapshotContext`).
-pub(crate) type DerivedPackages = Box<dyn SnapshotContext>;
+pub type DerivedPackages = Box<dyn SnapshotContext>;
 
 fn derive_context(
     snapshot: &mut Snapshot,
@@ -127,7 +127,7 @@ fn derive_context(
 // cratify: `ecma` is rerail-lang-ecma's (it mounts it)
 
 /// Evaluates `code_rule`, its grammar matchers matched natively (`matcher::run_clause`).
-pub(super) fn evaluate_code_rule(
+pub fn evaluate_code_rule(
     code_rule: &CompiledCodeRule,
     snapshot: &Snapshot,
     mode: &str,
@@ -142,7 +142,7 @@ pub(super) fn evaluate_code_rule(
     Ok(evaluation)
 }
 
-pub(super) fn evaluate_clauses(
+pub fn evaluate_clauses(
     code_rule: &CompiledCodeRule,
     snapshot: &Snapshot,
     mode: &str,
@@ -152,8 +152,9 @@ pub(super) fn evaluate_clauses(
     #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
     let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
     let _tapes = TapeCacheSlot::install();
-    // P's syntax facts, shared by P's relational inputs (test-only, open item O18).
-    let _syntax = super::relational::syntax::Pool::install();
+    // P's syntax facts, shared by P's relational inputs (test-only, open item O18): the admission's pool, where a
+    // program registered the admission (`relational::ADMISSION`).
+    let _syntax = super::relational::ADMISSION.try_get().map(|admission| admission.syntax_pool());
     if mode != "decision" && mode != "report" {
         return Err(invalid(format!("unsupported evaluation mode `{mode}`")));
     }
@@ -319,22 +320,12 @@ pub(super) fn evaluate_clauses(
                     vec![snapshot.clone()]
                 };
                 for partition in partitions {
-                    relational_jobs.push(
-                        crate::code_rule_dsl::residency::admission::relational::Job {
-                            code_rule,
-                            clause,
-                            inputs:
-                                crate::code_rule_dsl::residency::admission::relational::Inputs {
-                                    gate: None,
-                                    file_local: false,
-                                    read_bytes: 0,
-                                    rows: None,
-                                    facts: Vec::new(),
-                                    snapshot: partition,
-                                },
-                            budget: super::budget::Context::capture(),
-                        },
-                    );
+                    relational_jobs.push(crate::code_rule_dsl::residency::admission::relational::ClauseRun {
+                        code_rule,
+                        clause,
+                        snapshot: partition,
+                        budget: super::budget::Context::capture(),
+                    });
                 }
             }
             ClauseKind::Llm => evaluation.failures.push(failure(
@@ -355,10 +346,11 @@ pub(super) fn evaluate_clauses(
             ));
         }
     }
-    for result in
-        crate::code_rule_dsl::residency::admission::relational::evaluate_batch(relational_jobs)
-    {
-        merge(&mut evaluation, result);
+    // The registered admission's (`relational::ADMISSION`): none is needed where no clause is relational.
+    if !relational_jobs.is_empty() {
+        for result in crate::code_rule_dsl::residency::admission::relational::registered().evaluate(relational_jobs) {
+            merge(&mut evaluation, result);
+        }
     }
     if evaluation.metrics.witnesses > limits.max_witnesses
         && !evaluation.failures.iter().any(|failure| {
@@ -491,7 +483,7 @@ pub fn stateless_rows(
 ) -> Result<evidence::Rows> {
     stateless_rows_to(code_rule, clause, (relation, side), snapshot, metrics, None)
 }
-pub(in crate::code_rule_dsl) fn stateless_rows_to(
+pub fn stateless_rows_to(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (relation, side): (&FactQuery, evidence::Side),

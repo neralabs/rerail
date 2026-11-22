@@ -4,8 +4,7 @@
 //! owner) run again in a child process of this test binary ([`in_child`]), since the environment
 //! and the installed setup belong to the whole process.
 
-#[allow(unused_imports)]
-use crate::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use super::opener::{self, OpenError};
 use super::pool;
 use super::setup::{self, GitSetup};

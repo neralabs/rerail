@@ -12,7 +12,7 @@
 //! not the program's: they are left out (`python/calls.rerail`'s).
 
 #[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 pub use rerail_rr::code_rule_dsl::logic::rr::check;
 // Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "rr/aggregate_demand")]
@@ -28,13 +28,15 @@ pub use rerail_rr::code_rule_dsl::logic::rr::clause;
 pub use from_tape::{code_body, string_value, syntax_error};
 mod git_policy;
 pub use git_policy::GitPolicyInputs;
-pub mod images;
+/// The planner's (`program_text` keeps its images); the store they are kept in is `images_store`, here.
+pub use rerail_planner::code_rule_dsl::logic::rr::images;
 pub mod module_image;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
 /// The text tests `.rerail` names, and the engine's test each lowers to (the coverage gate probes each).
 pub use rerail_rr::code_rule_dsl::logic::rr::lower::TESTS as RR_TESTS;
 pub use rerail_rr::code_rule_dsl::logic::rr::print::{self};
 // The parser and the tape's tree, the `.rerail` parser crate's (`rerail_rr_syntax`).
+use rerail_store::Canonical as _;
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
 use from_tape::{RrFile, S, Stmt};
@@ -77,13 +79,7 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
     }
     let Ok(file) = RrFile::read(src) else { return Vec::new() };
     let statements = file.statements();
-    let policy = statements
-        .iter()
-        .find_map(|s| match s.what()? {
-            S::Setting { key: "policy", text } => text.split('"').nth(1).map(str::to_owned),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let policy = policy_settings(&statements).next().unwrap_or_default();
     statements
         .iter()
         .filter_map(|s| match s.what()? {
@@ -96,6 +92,22 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
         })
         .map(|(clause, template)| (policy.clone(), clause, template))
         .collect()
+}
+
+/// The `.policy` IDs a text's own statements declare, in order, read without its includes or its lowering: what a
+/// policy whose program does not load (a setting its lowering refuses) names in its failure. Empty when the text
+/// does not parse.
+pub fn declared_policies(src: &str) -> Vec<String> {
+    let Ok(file) = RrFile::read(src) else { return Vec::new() };
+    policy_settings(&file.statements()).collect()
+}
+
+/// The names the `.policy` settings among `statements` give, in order.
+fn policy_settings(statements: &[Stmt]) -> impl Iterator<Item = String> + '_ {
+    statements.iter().filter_map(|s| match s.what()? {
+        S::Setting { key: "policy", text } => text.split('"').nth(1).map(str::to_owned),
+        _ => None,
+    })
 }
 
 /// A `.message` setting's clause and template (`B101 "…"`).
@@ -131,7 +143,7 @@ pub use super::front::Error;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use lower::drop_unread_core;
 pub use lower::is_core;
-pub use lower::findings::{is_diagnostic, HEAD as DIAGNOSTIC_HEAD, UNPLACED};
+pub use lower::findings::{is_diagnostic, FOUND_NODE, FOUND_THROUGH, HEAD as DIAGNOSTIC_HEAD, PLACED_AT, PLACED_LINE, UNPLACED};
 pub use lower::{FILE_SYSTEM, WORLD};
 pub use print::print_version;
 pub use syntax::quote;
@@ -152,15 +164,8 @@ pub fn core_shape() -> &'static std::collections::BTreeSet<String> {
     SHAPE.get_or_init(|| core_names().iter().filter(|r| !lower::made_on_request(r)).cloned().collect())
 }
 
-/// The library `#include` reads from.
-pub fn library() -> PathBuf {
-    // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
-    std::env::var_os("RERAIL_RR_LIB")
-        .map(PathBuf::from)
-        // From the checkout's root, with no `..` in the path: a path the engine reads is named one way, so the file
-        // observer keeps one answer and one journal root for each directory (`native/../docs` and `docs` were two).
-        .unwrap_or_else(rerail_store::source_tree::rule_library)
-}
+/// The library `#include` reads from (`rerail-rr`'s: the JSON rules' translator reads it too, under the language).
+pub use rerail_rr::code_rule_dsl::logic::rr::library::library;
 
 /// The directory whose include resolution is part of a program read. Preserve a missing root as a distinct input.
 pub fn library_root() -> PathBuf {
@@ -172,7 +177,7 @@ pub fn library_root() -> PathBuf {
 /// them: `core.rerail` first unless the text is in T's shape, each file once, includes first. A text that includes nothing
 /// is read as it is, without `core.rerail`.
 pub fn parse_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    read_text(src)?.lower_version(true)
+    super::contexts::passes(&read_text(src)?.lower_version(true)?)
 }
 
 /// A program's `.rerail` text as `parse_version` reads it, but with only its libraries' declarations, not their clauses:
@@ -278,6 +283,7 @@ impl Text {
         if asked.is_empty() {
             return Ok(Some(own));
         }
+        let _cone = crate::code_rule_dsl::logic::profile::span(|| "the library's cone copied".to_owned());
         super::plan::corpus::cone_on_version(&own, &library.version, &asked, &declared).map(Some).map_err(Error::Syntax)
     }
 
@@ -357,7 +363,13 @@ impl Text {
             return Ok(Some(version));
         }
         let Some(version) = self.lowered_in_version(library, scoped)? else { return Ok(None) };
-        let version = if version.base_bytes().is_some() { version } else { version.fold().map_err(Error::Syntax)? };
+        let version = if version.base_bytes().is_some() {
+            version
+        } else {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's version folded".into());
+            version.fold().map_err(Error::Syntax)?
+        };
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's image kept".into());
         if keep_image(store, "a program image", key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
             crate::code_rule_dsl::prof::count("rr.program_image_written", 1);
         }
@@ -572,6 +584,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
             None => {
                 // Linked on versions (decision 0377): the modules' rules are never a tree.
                 let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "a linked library's image kept, its kind sets".into());
                 if keep_image(store, "a linked library's image", key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
                     crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
                 }
@@ -754,9 +767,70 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
     Ok((modules, units.iter().map(|members| members.iter().map(|&i| paths[i].clone()).collect()).collect(), keys))
 }
 
-/// The store rule images are read from and kept in (`images::store`), unless `RERAIL_MODULE_IMAGES=off`.
-pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
-    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { images::store() } else { None }
+/// The store rule images are read from and kept in (`images_store`), unless `RERAIL_MODULE_IMAGES=off`.
+/// The store the run's rule images are kept in (decision 0264, `images`): the engine build's, shared by every project
+/// (`RERAIL_IMAGE_STORE`: a path, or `project` for the run's own store); a test's own store under test.
+fn images_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+    let project = || crate::code_rule_dsl::logic::plan::corpus::phases::reading_store();
+    if cfg!(any(test, feature = "test-hooks")) {
+        return project();
+    }
+    let path: std::path::PathBuf = match std::env::var("RERAIL_IMAGE_STORE") {
+        Ok(v) if v == "project" => return project(),
+        Ok(v) => std::path::PathBuf::from(v),
+        Err(_) => crate::code_rule_dsl::logic::plan::corpus::build_store("rerail-images", None),
+    };
+    crate::content_store::ContentStore::open_images(&path).ok().map(std::sync::Arc::new)
+}
+
+pub fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { held_image_store(images_store) } else { None }
+}
+
+/// The image store a run opened, held while the run's call runs (`HoldImages`, one of the run's own values, decision
+/// 0442): opened at each ask, it was opened and closed once a program text (phase 0's graphs, a text's header, its
+/// guests' asks), and each close of its last connection made SQLite delete and make again its write-ahead log (1.9 s
+/// of a 90 s run). Outside a run's call, opened at each ask. Held past the call, a test's store stayed open after its
+/// run (`a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test`).
+#[derive(Default)]
+struct HeldImageStore {
+    store: std::sync::Mutex<Option<Option<std::sync::Arc<crate::content_store::ContentStore>>>>,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+pub fn held_image_store(open: impl FnOnce() -> Option<std::sync::Arc<crate::content_store::ContentStore>>) -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+    if crate::code_rule_dsl::logic::profile::run_own().is_none() {
+        return open();
+    }
+    let held = crate::code_rule_dsl::logic::profile::local::<HeldImageStore>();
+    if held.calls.load(std::sync::atomic::Ordering::Acquire) == 0 {
+        return open();
+    }
+    held.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(open).clone()
+}
+
+/// The image store held while a run's call runs (`held_image_store`): the outermost call's guard lets it go.
+pub struct HoldImages(Option<std::sync::Arc<HeldImageStore>>);
+
+impl HoldImages {
+    pub fn enter() -> HoldImages {
+        if crate::code_rule_dsl::logic::profile::run_own().is_none() {
+            return HoldImages(None);
+        }
+        let held = crate::code_rule_dsl::logic::profile::local::<HeldImageStore>();
+        held.calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        HoldImages(Some(held))
+    }
+}
+
+impl Drop for HoldImages {
+    fn drop(&mut self) {
+        if let Some(held) = &self.0 {
+            if held.calls.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
+                held.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+            }
+        }
+    }
 }
 
 /// How long a module's or program's image stays in the store after the last run that read or wrote it
@@ -1025,6 +1099,7 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
     let seeds = &scoped.seeds;
     let lower::Linked { lowered, stated, own_stated, .. } = linked;
     let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered, library)?;
+    let _unseeding = crate::code_rule_dsl::logic::profile::span(|| "the scope's seeds taken out".to_owned());
     let mut b = Builder::on(&v);
     lower::unseed(&mut b.fields(), seeds, core, library.map(|l| &*l.version));
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
@@ -1042,6 +1117,7 @@ pub fn lower_statements_version(statements: Vec<Stmt>) -> Result<std::sync::Arc<
 pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let linked = lower::link_versions(modules)?;
     let version = lowering_tail_on(linked.first, linked.appended, false, linked.lowered, None)?;
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "a library's version folded".into());
     if version.base_bytes().is_some() { Ok(version) } else { version.fold().map_err(Error::Syntax) }
 }
 
@@ -1086,6 +1162,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
             break;
         }
     }
+    let _finishing = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: its version made".to_owned());
     let (v, _) = p.finish().map_err(Error::Syntax)?;
     Ok(v)
 }
@@ -1316,7 +1393,7 @@ fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>
 
 /// The program's module graph's digest (`phase0::Graph::digest`): what its text is a function of besides itself.
 /// `None` for a text that includes nothing.
-pub(in crate::code_rule_dsl) fn graph_digest(src: &str) -> Result<Option<[u8; 32]>, Error> {
+pub fn graph_digest(src: &str) -> Result<Option<[u8; 32]>, Error> {
     match text_seed(src)? {
         Some(seed) => Ok(Some(super::plan::corpus::phase0::graph(&seed)?.digest())),
         None => Ok(None),
@@ -2212,7 +2289,13 @@ mod key_tests {
     fn an_image_lowered_under_a_lowering_switch_is_keyed_apart() {
         let scope = [crate::content_store::HashKey::sha256(b"a module")];
         let files = [[7u8; 32]];
-        let default = (program_key("x(1).", &scope), module_key(files.iter(), scope.iter()), linked_key(&scope));
+        // The unset switches' keys, read as a run reads the switches (`reading`): a test of this binary that sets one
+        // (aggregate_demand's `RERAIL_ASOF`) waits until they are read.
+        let unset = || {
+            let _reading = crate::code_rule_dsl::logic::plan::corpus::switches::reading();
+            (program_key("x(1).", &scope), module_key(files.iter(), scope.iter()), linked_key(&scope))
+        };
+        let default = unset();
         // The keys as they were before switches were keyed: an unset switch adds nothing.
         let mut bytes = format!("rerail linked library {}\0{}\0", crate::code_rule_dsl::logic::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
         bytes.extend_from_slice(&scope[0].sha256_bytes().unwrap_or_default());
@@ -2223,6 +2306,6 @@ mod key_tests {
             assert_ne!(module_key(files.iter(), scope.iter()), default.1, "{switch}");
             assert_ne!(linked_key(&scope), default.2, "{switch}");
         }
-        assert_eq!((program_key("x(1).", &scope), module_key(files.iter(), scope.iter()), linked_key(&scope)), default);
+        assert_eq!(unset(), default);
     }
 }

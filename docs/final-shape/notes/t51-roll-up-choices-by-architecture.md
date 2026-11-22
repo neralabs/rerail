@@ -478,10 +478,15 @@ Tests (spark2, `RERAIL_GPU=cpu`):
 - `plan::corpus`, `vtab::syntax` and `rr::tests`: 422 of 422.
 - Clippy over the engine is clean.
 
-Found, not fixed: the warm edit still makes the unchanged host files when it plans, for the statistics of `kind`, a
-view of `node` held in place (`InPlaceView`). `node`'s statistics are patched by the edit, 74 rows to 78. The kind
-totals (`Own`, from the hits' kept rows and the 0096 keeper's arithmetic) still sum to 74. `view_stats_held` needs them
-to agree, so it counts the view off every document. The Python warm edit tests do not hit this.
+Found, then fixed: the warm edit of a host file made every document of the run's batch, 10 of 10, to plan with the
+statistics of `kind`, a view of `node` held in place (`InPlaceView`). `view_stats_held` takes `kind`'s values from
+the tree's kind counts and needs them to sum to `node`'s rows. `node`'s rows are exact, kept and patched by the edit
+(0458). The kind counts were `Own`'s, a sample of a chunk scaled up, then each document's share of it scaled by its
+nodes and rounded into its memo entry. The shares summed to 67 nodes and 11 documents where the batch has 71 and 10.
+The cross part's kind counts are now `node`'s kind column's own value counts (`Stats::kinds_counted`), had with
+`node`'s statistics, so the two agree by construction. `Own` keeps what only it measures: subtree sizes, edges and
+fields. `a_warm_edit_of_a_host_file_reads_as_a_cold_run` now checks it: no document built from its tape, and the
+changed file's three documents (its text, its tree, its script's) the only ones made.
 
 **The identity file** (`repository-identity.ts`) is theirs' whole now (0497: "a bare repository is a folder"). Ours
 had no decision against it, and theirs' tests are the catalog's. Its one call of `runGit(..., { output: "bytes" })`
