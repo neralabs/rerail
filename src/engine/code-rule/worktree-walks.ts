@@ -182,7 +182,7 @@ export interface WorktreeWatcher {
   /**
    * Called before each walk begins, before {@link WorktreeWatcher.start}: what `start` would ask Git, learnt through `git`
    * as processes no thread waits on, so `start` finds it kept; undefined, with nothing started, when `start` would ask
-   * Git nothing. Never rejects.
+   * Git nothing. Never rejects; a throw is taken as nothing to learn.
    */
   prepare?(git: GitReads): Promise<void> | undefined;
   /** Called as each walk begins, before it reads anything; undefined once the session has closed or cannot say. */
@@ -398,6 +398,18 @@ async function listedFor(
   checkouts: ReadonlySet<string>,
 ): Promise<Map<string, readonly string[] | undefined>> {
   return firstSeen.has(root) ? await listChanged(git, checkouts) : new Map<string, readonly string[] | undefined>();
+}
+
+/**
+ * What `watcher` learns before a walk begins ({@link WorktreeWatcher.prepare}), through `git`. A throw is taken as nothing
+ * to learn, as a walk takes a throw of `start`: the walk begins, and its start meets what failed.
+ */
+function preparedBy(watcher: WorktreeWatcher, git: GitReads): Promise<void> | undefined {
+  try {
+    return watcher.prepare?.(git);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -684,7 +696,7 @@ export class WorktreeWalks {
   /** Each watching session's {@link WorktreeWatcher.prepare} that learns something, through the walks' Git reads, which stop with the last session. */
   #prepare(): Promise<void>[] {
     const git = this.#git;
-    return this.#watching.flatMap(({ watcher }) => watcher.prepare?.(git) ?? []);
+    return this.#watching.flatMap(({ watcher }) => preparedBy(watcher, git) ?? []);
   }
 
   /** Each open session's part in the walk beginning now; one that cannot say has its request dropped. */

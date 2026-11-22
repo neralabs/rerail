@@ -1210,6 +1210,31 @@ describe("the walks of each repository", () => {
   });
 });
 
+describe("what a session learns before a walk lists the other worktrees", () => {
+  it("takes a throw of a session's learn step as nothing to learn, and walks once while the event loop turns", async () => {
+    const { worktrees } = await repository(["w1"]);
+    const scans: string[] = [];
+    let learnt = 0;
+    const watcher: WorktreeWatcher = {
+      ...watcherOf([worktrees[0]!], scans),
+      // Throws at its first 49 calls only, so walks begun again at each throw still end.
+      prepare: () => {
+        learnt += 1;
+        if (learnt < 50) throw new Error("the checkout's placement cannot be read");
+        return undefined;
+      },
+    };
+    const watch = new WorktreeWalks({ gapMs: 0 }).watch(watcher);
+    watch.request();
+    const atFirstTurn = await new Promise<number>(turned => {
+      setImmediate(() => turned(learnt));
+    });
+    await watch.settled();
+    expect({ atFirstTurn, learnt, scans }).toEqual({ atFirstTurn: 1, learnt: 1, scans: [worktrees[0]] });
+    await watch.close();
+  });
+});
+
 describe("walks of sessions out of step", () => {
   it("reads a worktree for the first time once, though a session asks for a walk while another's walk reads it", async () => {
     const { worktrees, checkouts } = await repository();
