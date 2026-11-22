@@ -217,7 +217,7 @@ So:
   - In most of Boost they come within 10%.
   - `tuple.c` and `array.c` stay about 2 times above it. Their tuples are calls whose commas come from an argument's
     expansion, so the call's shape needs that expansion.
-  - Against waiting for whole arguments (holes), references are 5 to 11 times shorter in Boost.
+  - Against waiting for whole arguments (holes), references are 5 to 12 times shorter in Boost.
 - **Waits are few:** 21,195 continuations over 4.4 M requests.
 - **The slowest corpus piece.** References reach the free bound there: 43 model steps against 155 serially. Scaled
   by the device's 393 steps, that is about 0.37 ms of the loop, against 1.32 ms today.
