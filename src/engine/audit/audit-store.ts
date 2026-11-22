@@ -96,8 +96,8 @@ function ruleProvenanceText(): SQL<string> {
 }
 
 /**
- * The JSON lists an audit record reads from the database, in the order the failures that mark them follow the audit's
- * own: each one's column, its name in that failure and in the log, and whether that name is plural.
+ * The JSON lists an audit record reads from the database, in the order the failures that mark them come before the
+ * audit's own: each one's column, its name in that failure and in the log, and whether that name is plural.
  */
 const STORED_LISTS = {
   ruleRevisions: { column: "rule_revisions_json", clauseId: "rule-revisions", name: "rule revisions", plural: true },
@@ -126,7 +126,7 @@ type AuditReadRow = Omit<AuditRow, StoredList> & Record<StoredList, string> & { 
 type AuditLists = Pick<AuditRecord, StoredList>;
 
 /**
- * The failure an audit lists after its own when the text the database holds for `list` is not a JSON array: the CHECK
+ * The failure an audit lists before its own when the text the database holds for `list` is not a JSON array: the CHECK
  * on each table that holds one refuses such text on insert, so only a damaged file or a hand edit leaves it.
  */
 function unreadable(list: StoredList): AuditFailure {
@@ -172,8 +172,10 @@ function sayUnreadable(database: RerailDatabase, row: AuditReadRow, list: Stored
 }
 
 /**
- * `row`'s stored lists, its failures followed by one for each list whose text is no JSON array: such a list reads as
- * none, rather than failing every read of a page that holds the audit, and its failure and `sayUnreadable` say so.
+ * `row`'s stored lists, its failures after one for each list whose text is no JSON array: such a list reads as none,
+ * rather than failing every read of a page that holds the audit, and its failure and `sayUnreadable` say so. Those
+ * failures come first, so the support bundle, which keeps an audit's first 100, keeps them; every other reader of the
+ * record keeps every failure, and the session's summary only counts them.
  */
 function readLists(database: RerailDatabase, row: AuditReadRow): AuditLists {
   const marks: AuditFailure[] = [];
@@ -190,7 +192,7 @@ function readLists(database: RerailDatabase, row: AuditReadRow): AuditLists {
   const paths = read("paths") as AuditLists["paths"];
   const violations = read("violations") as AuditLists["violations"];
   const failures = read("failures") as AuditLists["failures"];
-  return { ruleRevisions, ruleProvenance, paths, violations, failures: [...failures, ...marks] };
+  return { ruleRevisions, ruleProvenance, paths, violations, failures: [...marks, ...failures] };
 }
 
 /**

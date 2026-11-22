@@ -1479,7 +1479,7 @@ describe("audit rule provenance", () => {
 });
 
 /**
- * The failure an audit lists after its own when the rule provenance the database holds for it is not a JSON array, so
+ * The failure an audit lists before its own when the rule provenance the database holds for it is not a JSON array, so
  * it reads as none.
  */
 const UNREADABLE_PROVENANCE = {
@@ -1654,7 +1654,7 @@ const STORED_LISTS = {
 type StoredList = keyof typeof STORED_LISTS;
 const LISTS = Object.keys(STORED_LISTS) as StoredList[];
 
-/** The failure an audit lists after its own when the text the database holds for its `list` is not a JSON array. */
+/** The failure an audit lists before its own when the text the database holds for its `list` is not a JSON array. */
 function unreadableList(list: StoredList): AuditFailure {
   return {
     clauseId: STORED_LISTS[list].clauseId, code: "adapter-error", stage: "persistence",
@@ -1724,7 +1724,7 @@ describe("an audit whose other stored lists do not read", () => {
       ruleRevisions: [{ ruleId: "typescript/rule-000", revision: 1 }], paths: ["src/a.ts"], violations: [{ id: "violation-1" }], failures: [FAILURE],
     });
     damageList(path, auditIds[1]!, list, '[{"ruleId":"typescript/broken"');
-    const failures = list === "failures" ? [unreadableList(list)] : [FAILURE, unreadableList(list)];
+    const failures = list === "failures" ? [unreadableList(list)] : [unreadableList(list), FAILURE];
     const stderr = spyOnStderr();
     const store = new SqliteAuditStore(path);
     const reader = new SqliteAuditReader(path);
