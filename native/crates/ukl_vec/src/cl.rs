@@ -615,6 +615,10 @@ struct Cg<'a, 'b> {
     /// The lanes values that are their chunk's first lane's value and a constant step per lane (`Steps`): a thread's
     /// id in its group's first dimension, and the sums, products and casts of it, to the addresses made of them.
     steps: HashMap<V, Steps>,
+    /// The blocks' immediate dominators, and the bounds the branches give: a value at most the bound in the blocks
+    /// the branch's side dominates (`bound`).
+    idom: Vec<usize>,
+    below: HashMap<V, Vec<(u64, usize)>>,
     /// Splats and 64-bit masks made in the block being made.
     splats: HashMap<(V, u32), Vec<Value>>,
     masks64: HashMap<V, Vec<Value>>,
@@ -659,6 +663,8 @@ impl<'a, 'b> Cg<'a, 'b> {
             raw: HashMap::new(),
             frame_of: HashMap::new(),
             steps: HashMap::new(),
+            idom: Vec::new(),
+            below: HashMap::new(),
             splats: HashMap::new(),
             masks64: HashMap::new(),
             fail: None,
@@ -736,6 +742,8 @@ impl<'a, 'b> Cg<'a, 'b> {
                 args.push(r);
             }
         }
+        self.idom = crate::ssa::idoms(f);
+        self.bounds_of_branches();
         let order = crate::ssa::rpo(f);
         for &bk in &order {
             if bk != 0 {
@@ -1587,15 +1595,115 @@ impl<'a, 'b> Cg<'a, 'b> {
         if wide(m) { self.narrow_mask(&out) } else { out }
     }
 
+    /// The bounds each branch on an unsigned comparison with a constant gives the value compared, in the blocks its
+    /// sides dominate (`below`).
+    fn bounds_of_branches(&mut self) {
+        let f = self.f;
+        for blk in &f.blocks {
+            let t = *f.inst(*blk.insts.last().expect("a terminator"));
+            if t.op != O::Br {
+                continue;
+            }
+            let mut c = t.a;
+            while f.inst(c).op == O::Cast && f.inst(c).shape == Shape::Uniform {
+                c = f.inst(c).a;
+            }
+            let i = *f.inst(c);
+            if i.op != O::Bin || i.shape != Shape::Uniform {
+                continue;
+            }
+            let om = M(i.d);
+            if om.float() || om.signed() || om.is_agg() {
+                continue;
+            }
+            let (a, b) = (self.konst(i.a), self.konst(i.b));
+            // `x < k` (`k > x`) where true, `x >= k` (`k <= x`) where false: `x` at most `k - 1`; with `<=`, `k`.
+            let fact = match (Op::of(u32::from(i.sub)), a, b) {
+                (Op::Lt, None, Some(k)) => k.checked_sub(1).map(|k| (i.a, k, t.b)),
+                (Op::Le, None, Some(k)) => Some((i.a, k, t.b)),
+                (Op::Gt, Some(k), None) => k.checked_sub(1).map(|k| (i.b, k, t.b)),
+                (Op::Ge, Some(k), None) => Some((i.b, k, t.b)),
+                (Op::Ge, None, Some(k)) => k.checked_sub(1).map(|k| (i.a, k, t.c)),
+                (Op::Gt, None, Some(k)) => Some((i.a, k, t.c)),
+                (Op::Le, Some(k), None) => k.checked_sub(1).map(|k| (i.b, k, t.c)),
+                (Op::Lt, Some(k), None) => Some((i.b, k, t.c)),
+                _ => None,
+            };
+            if let Some((x, k, side)) = fact {
+                self.below.entry(x).or_default().push((k, side as usize));
+            }
+        }
+    }
+
+    fn dominates(&self, a: usize, mut b: usize) -> bool {
+        loop {
+            if a == b {
+                return true;
+            }
+            if b == 0 || self.idom[b] == usize::MAX {
+                return false;
+            }
+            b = self.idom[b];
+        }
+    }
+
+    /// The most an unsigned integer value `x` can be, in the block being made (every lane's, for lanes): `None` where
+    /// its operations may wrap, or nothing bounds it.
+    fn bound(&self, x: V) -> Option<u64> {
+        self.bound_at(x, 12)
+    }
+
+    fn bound_at(&self, x: V, depth: u32) -> Option<u64> {
+        let i = *self.f.inst(x);
+        let max = |m: M| if m.bytes() >= 8 { u64::MAX } else { (1u64 << (8 * m.bytes())) - 1 };
+        let int = |m: M| !m.float() && !m.is_agg() && !m.signed() && m.bytes() > 0;
+        let fact = self.below.get(&x).and_then(|fs| fs.iter().filter(|&&(_, b)| self.dominates(b, self.cur_block)).map(|&(k, _)| k).min());
+        if depth == 0 || !int(i.m) {
+            return fact;
+        }
+        let d = depth - 1;
+        let fits = |v: u128, m: M| (v <= u128::from(max(m))).then_some(v as u64);
+        let of = match i.op {
+            O::Const => self.konst(x),
+            O::Cast => {
+                let from = M(i.b);
+                if int(from) { self.bound_at(i.a, d).and_then(|a| fits(u128::from(a), i.m)) } else { None }
+            }
+            O::Bin => {
+                let om = M(i.d);
+                let (a, b) = (self.bound_at(i.a, d), self.bound_at(i.b, d));
+                match Op::of(u32::from(i.sub)) {
+                    _ if !int(om) => None,
+                    Op::Add => fits(u128::from(a?) + u128::from(b?), om),
+                    Op::Mul => fits(u128::from(a?) * u128::from(b?), om),
+                    Op::Shl => self.konst(i.b).filter(|&k| k < 64).and_then(|k| fits(u128::from(a?) << k, om)),
+                    Op::Shr => self.konst(i.b).filter(|&k| k < 64).map(|k| a.unwrap_or(max(om)) >> k),
+                    Op::Div => self.konst(i.b).filter(|&k| k > 0).map(|k| a.unwrap_or(max(om)) / k),
+                    Op::Rem => self.konst(i.b).filter(|&k| k > 0).map(|k| k - 1),
+                    Op::And => Some(a.unwrap_or(max(om)).min(b.unwrap_or(max(om)))),
+                    Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => Some(1),
+                    _ => None,
+                }
+            }
+            // A thread's id in its group: under its dimension's threads (`exec::run`: at most `MAX_DIM`).
+            O::Lid => Some(u64::from(crate::exec::MAX_DIM) - 1),
+            _ => None,
+        };
+        match (of, fact) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
     /// `a op x`'s steps, when `a` or `x` has them and the other is uniform (a sum) or a constant (a product, a shift).
-    fn stepped(&mut self, op: Op, m: M, a: V, x: V) -> Option<Steps> {
+    fn stepped(&mut self, op: Op, m: M, a: V, x: V, r: V) -> Option<Steps> {
         if m.float() || m.bytes() < 4 {
             return None;
         }
         let konst = |g: &Self, v: V| g.konst(v).map(|k| k as i64);
-        // A 64-bit value's bits are its integer's, mod 2^64 as the addresses made of it; a 32-bit one's only while
-        // nothing has added or multiplied.
-        let exact = m.bytes() == 8;
+        // A 64-bit value's bits are its integer's, mod 2^64 as the addresses made of it; a 32-bit one's where no lane
+        // can wrap (`bound`).
+        let exact = m.bytes() == 8 || self.bound(r).is_some();
         match op {
             Op::Add => {
                 for (s, u) in [(a, x), (x, a)] {
@@ -2319,7 +2427,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                     let (a, b) = (self.u(i.a), self.u(i.b));
                     Rp::U(self.u_bin(op, om, a, b))
                 } else {
-                    if let Some(st) = self.stepped(op, om, i.a, i.b) {
+                    if let Some(st) = self.stepped(op, om, i.a, i.b, x) {
                         self.steps.insert(x, st);
                     }
                     let (r, k) = self.bin_lanes(op, om, i.a, i.b, i.c);
@@ -2535,6 +2643,24 @@ impl<'a, 'b> Cg<'a, 'b> {
                     }
                 });
                 Rp::None
+            }
+            O::Lid | O::Gid if i.shape == Shape::Uniform => {
+                // The SIMD group's (a dimension past the first): its first lane's.
+                let dim = self.u(i.a);
+                let off = self.b.ins().imul_imm(dim, 4 * 32);
+                let row = self.b.ins().iadd(self.sg, off);
+                let l4 = self.b.ins().imul_imm(self.lane0, 4);
+                let at = self.b.ins().iadd(row, l4);
+                let mut x = self.b.ins().uload32(mf(), at, self.pl.lid);
+                if i.op == O::Gid {
+                    let d4 = self.b.ins().imul_imm(dim, 4);
+                    let e = self.b.ins().iadd(self.env, d4);
+                    let g = self.b.ins().uload32(mf(), e, self.pl.group);
+                    let bl = self.b.ins().uload32(mf(), e, self.pl.block);
+                    let gb = self.b.ins().imul(g, bl);
+                    x = self.b.ins().iadd(x, gb);
+                }
+                Rp::U(norm_u(&mut self.b, m, x))
             }
             O::Lid | O::Gid => {
                 // The first dimension's: the chunk's first lane's and the lane (`exec::run` takes only groups whose

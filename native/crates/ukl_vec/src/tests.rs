@@ -670,3 +670,39 @@ fn a_per_lane_atomic_of_a_sum_adds_it_in_each_lane() {
         assert_eq!(out[l as usize], if l % 3 == 0 { s } else { 0 }, "lane {l}");
     }
 }
+
+/// A matrix product: `c = a b` of 32 by 32 matrices of `float`, one group of 32 by 32 threads, each thread its row's
+/// (`i`, its id in the second dimension) and column's (`j`, the first) element: a SIMD group a row, its lanes the
+/// row's columns. The values are small integers, so each sum is exact: the same on the interpreter and on the compiled
+/// SSA at every width.
+#[test]
+fn a_matrix_product_is_each_rows_columns_in_lanes() {
+    const N: usize = 32;
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\nDEFINE_KERNEL2(rule, t_mm,\n               ROBUFFER, float, a, \"[1024]\",\n               ROBUFFER, float, b, \"[1024]\",\n               RWBUFFER, float, c, \"[1024]\",\n               LID0,     uint32_t, j, ,\n               LID1,     uint32_t, i, )\n{\n    float s = 0.0f;\n    for (uint32_t k = 0; k < 32u; ++k)\n        s += a[i * 32u + k] * b[k * 32u + j];\n    c[i * 32u + j] = s;\n}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_mm").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let a: Vec<f32> = (0..N * N).map(|x| (x % 7) as f32 - 3.0).collect();
+    let b: Vec<f32> = (0..N * N).map(|x| (x % 5) as f32 + 1.0).collect();
+    let mut want = vec![0f32; N * N];
+    for i in 0..N {
+        for j in 0..N {
+            want[i * N + j] = (0..N).map(|k| a[i * N + k] * b[k * N + j]).sum();
+        }
+    }
+    let run = |k: &super::vector::Kernel, exec| {
+        let mut c = vec![0f32; N * N];
+        let ptr = |p: *const f32| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args = [ptr(a.as_ptr()), ptr(b.as_ptr()), ptr(c.as_mut_ptr()), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [32, 32, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        c
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+    }
+}

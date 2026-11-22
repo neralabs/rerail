@@ -1857,7 +1857,8 @@ impl<'a, 't> Fb<'a, 't> {
             Builtin::LocalId | Builtin::GlobalId => {
                 let dim = self.scalar(args[0]);
                 let x = self.ins(if b == Builtin::LocalId { O::Lid } else { O::Gid }, m, dim, 0, 0, 0);
-                set(self, x, Shape::Lanes)
+                // The second or third dimension's: the SIMD group's (`vector`'s `Level::SimdGroup`).
+                set(self, x, if v.level(n) <= Level::SimdGroup { Shape::Uniform } else { Shape::Lanes })
             }
             Builtin::SubGroupLocalId => {
                 let x = self.ins(O::Lane, M::U32, 0, 0, 0, 0);
@@ -2442,30 +2443,7 @@ pub fn verify(f: &Func) -> Result<(), String> {
             _ => {}
         }
     }
-    let rpo = rpo(f);
-    let mut idom = vec![usize::MAX; nb];
-    let mut order = vec![usize::MAX; nb];
-    for (k, &b) in rpo.iter().enumerate() {
-        order[b] = k;
-    }
-    idom[0] = 0;
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for &b in &rpo[1..] {
-            let mut new = usize::MAX;
-            for &p in &preds[b] {
-                if idom[p] == usize::MAX {
-                    continue;
-                }
-                new = if new == usize::MAX { p } else { intersect(&idom, &order, p, new) };
-            }
-            if new != idom[b] {
-                idom[b] = new;
-                changed = true;
-            }
-        }
-    }
+    let idom = idoms(f);
     let dominates = |a: usize, mut b: usize| {
         loop {
             if a == b {
@@ -2619,6 +2597,45 @@ fn post_dominators(succs: &[Vec<u32>]) -> Vec<Option<usize>> {
         }
     }
     (0..nb).map(|b| if idom[b] == usize::MAX || idom[b] == exit { None } else { Some(idom[b]) }).collect()
+}
+
+/// Each block's immediate dominator (the entry's itself; `usize::MAX` a block no path reaches): the iterative
+/// algorithm, over the blocks in reverse postorder.
+pub fn idoms(f: &Func) -> Vec<usize> {
+    let nb = f.blocks.len();
+    let mut preds = vec![Vec::new(); nb];
+    for b in 0..nb {
+        for s in f.succs(b) {
+            if (s as usize) < nb {
+                preds[s as usize].push(b);
+            }
+        }
+    }
+    let rpo = rpo(f);
+    let mut idom = vec![usize::MAX; nb];
+    let mut order = vec![usize::MAX; nb];
+    for (k, &b) in rpo.iter().enumerate() {
+        order[b] = k;
+    }
+    idom[0] = 0;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for &b in &rpo[1..] {
+            let mut new = usize::MAX;
+            for &p in &preds[b] {
+                if idom[p] == usize::MAX {
+                    continue;
+                }
+                new = if new == usize::MAX { p } else { intersect(&idom, &order, p, new) };
+            }
+            if new != idom[b] {
+                idom[b] = new;
+                changed = true;
+            }
+        }
+    }
+    idom
 }
 
 pub fn rpo(f: &Func) -> Vec<usize> {

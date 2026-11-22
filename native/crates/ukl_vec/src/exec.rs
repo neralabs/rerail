@@ -153,6 +153,9 @@ fn width() -> u32 {
     std::env::var("RERAIL_UKL_WIDTH").ok().and_then(|s| s.parse().ok()).unwrap_or(0)
 }
 
+/// The most threads a group has in each dimension: the compiled code bounds a thread's id by it (`cl`'s `bound`).
+pub const MAX_DIM: u32 = 65_535;
+
 /// Kernel `k`'s SSA compiled: on its first launch, then kept with it.
 pub fn compiled<'k>(p: &Program, k: &'k Kernel) -> R<&'k Compiled> {
     compiled_kept(p, k, || None, |_| {})
@@ -195,6 +198,9 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
     let params = &words[HEADER..HEADER + 2 * n_params];
     if args.len() != n_params {
         return Err(Error(format!("{} takes {n_params} arguments, given {}", k.name, args.len())));
+    }
+    if block.iter().any(|&d| d > MAX_DIM) {
+        return Err(Error(format!("{}: a group of {block:?} threads: over {MAX_DIM} in a dimension", k.name)));
     }
     if k.lid && !(block[1] == 1 && block[2] == 1) && !(block[0] as usize).is_multiple_of(W) {
         return Err(Error(format!("{} takes a thread's id in its group as its SIMD group's and lane's: a group of {block:?} is not one", k.name)));
