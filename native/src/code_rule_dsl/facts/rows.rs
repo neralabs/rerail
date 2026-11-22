@@ -135,7 +135,17 @@ impl Facts {
                 Life::Run if shared => Some(Arc::from("the open block of run-life arrays (indexes, joins' and sorts' scratch) made from then on")),
                 _ => None,
             };
-            m.push((block.meter(), rerail_prof::heap::span(), life as u8, maker));
+            // The open run-life block is the chunk's, whichever span asked for its first array (a measure's, which
+            // freed its own when it ended): charged to the chunk, not to that span.
+            // So is a batch's open block of sources: every group of the batch is made in it, the first by whichever
+            // read wanted it (a measure's sample: "measure pkg/relations", 108 MB, none of it the measure's but its
+            // sample's documents).
+            let span = match life {
+                Life::Run if shared => rerail_prof::heap::intern("a chunk's open block of run-life arrays"),
+                Life::Source if shared => rerail_prof::heap::intern("a batch's open block of sources (its groups' relations, decision 0494)"),
+                _ => rerail_prof::heap::span(),
+            };
+            m.push((block.meter(), span, life as u8, maker));
             let _ = crate::code_rule_dsl::logic::profile::machine::<crate::code_rule_dsl::logic::profile::memory::BlocksBySpan>().0.set(held_by_span);
         }
         Facts { block: Arc::new(block), ix: Mutex::new(Vec::new()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life, shared }
