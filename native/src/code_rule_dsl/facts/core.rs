@@ -20,7 +20,7 @@ pub trait SourceFile: Send + Sync {
     /// Its dialect's label (`language::dialect_by_label`).
     fn language(&self) -> &str;
     /// Its text.
-    fn source(&self) -> &Arc<String>;
+    fn source(&self) -> &Arc<crate::code_rule_dsl::tape::Text>;
     /// The file as its implementation's own type (the engine's request file).
     fn as_any(&self) -> &dyn std::any::Any;
 }
@@ -28,14 +28,14 @@ pub trait SourceFile: Send + Sync {
 /// A file that is no request's (a rule program, a library, a guest): its dialect's label and its text.
 pub struct Source {
     pub language: String,
-    pub source: Arc<String>,
+    pub source: Arc<crate::code_rule_dsl::tape::Text>,
 }
 
 impl SourceFile for Source {
     fn language(&self) -> &str {
         &self.language
     }
-    fn source(&self) -> &Arc<String> {
+    fn source(&self) -> &Arc<crate::code_rule_dsl::tape::Text> {
         &self.source
     }
     fn as_any(&self) -> &dyn std::any::Any {
@@ -142,7 +142,7 @@ pub fn facts_tag(f: &Facts) -> u8 {
 pub struct Facts {
     /// The tape tag of the file's dialect, which every kind atom is of.
     pub tag: u8,
-    pub source: Arc<String>,
+    pub source: Arc<crate::code_rule_dsl::tape::Text>,
     pub lines: Arc<LineTable>,
     /// The tape, its ids the facts' (decision 0293); `None` for a text-only document, which has no nodes.
     pub tape: Option<Arc<crate::code_rule_dsl::tape::formats::DocTape>>,
@@ -725,7 +725,7 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> 
 
 /// The facts of an admitted image: checked against its source and grammar (the matcher's restore checks the same,
 /// `tape::validated`), then held, moved in, and read in place.
-pub fn from_image(source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>,
+pub fn from_image(source: Arc<crate::code_rule_dsl::tape::Text>, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>,
     image: crate::code_rule_dsl::tape::TapeImage, lines: Arc<LineTable>) -> Result<Facts, String> {
     let tag = tape_tag(grammar.dialect()).ok_or("the tape's dialect has no tape tag")?;
     let check = crate::code_rule_dsl::logic::profile::span(|| "tape check".into());
@@ -735,7 +735,7 @@ pub fn from_image(source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape:
 }
 
 /// The facts of `tape` (checked), of `source` in `grammar`'s dialect.
-fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, tag: u8, lines: Arc<LineTable>) -> Facts {
+fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<crate::code_rule_dsl::tape::Text>, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, tag: u8, lines: Arc<LineTable>) -> Facts {
     Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
@@ -744,7 +744,7 @@ pub const TEXT: u8 = u8::MAX;
 
 /// The facts of a file read as text only (core.rerail's `.scope text`): its source and lines, no tree. Its lines are W's
 /// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
-pub fn text(source: Arc<String>) -> Facts {
+pub fn text(source: Arc<crate::code_rule_dsl::tape::Text>) -> Facts {
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
     Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }

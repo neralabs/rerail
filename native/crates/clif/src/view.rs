@@ -3,7 +3,7 @@
 //! host), its format, its widths. One definition: the device's `DocView` is this, and its MSL is
 //! written from it ([`ukl`]), with each field's offset asserted against Rust's.
 
-/// A document's view (128 bytes, u32s; the device's `DocView`, `device_tape.h`).
+/// A document's view (136 bytes, u32s; the device's `DocView`, `device_tape.h`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TapeView {
@@ -54,8 +54,14 @@ pub struct TapeView {
     pub presence: u32,
     /// `at`'s high word (`at` and this, an i64: `TapeView::offset`).
     pub at_high: u32,
+    /// `source`'s high word: `source` and this, an i64 from the document's first byte (`source_offset`). A source in
+    /// a room of its own (decision 0353 step 7, row 13: loaded there, read where it lies) may be in another slab, before
+    /// the document or past 4 GiB of it, reached by the slabs' GPU addresses as a document in another slab is.
+    pub source_high: u32,
+    /// Unused: the view is a whole number of words (8 bytes), as its high words make it.
+    pub spare: u32,
 }
-const _: () = assert!(std::mem::size_of::<TapeView>() == 128);
+const _: () = assert!(std::mem::size_of::<TapeView>() == 136);
 
 impl TapeView {
     /// The document's first byte from its batch's bound block: `at` and `at_high`, an i64.
@@ -67,13 +73,23 @@ impl TapeView {
     pub fn set_offset(&mut self, offset: i64) {
         (self.at, self.at_high) = (offset as u32, (offset >> 32) as u32);
     }
+
+    /// The source's first byte from the document's: `source` and `source_high`, an i64.
+    pub fn source_offset(&self) -> i64 {
+        (u64::from(self.source_high) << 32 | u64::from(self.source)) as i64
+    }
+
+    /// Sets the source's first byte from the document's (`source_offset`).
+    pub fn set_source_offset(&mut self, offset: i64) {
+        (self.source, self.source_high) = (offset as u32, (offset >> 32) as u32);
+    }
 }
 
 /// The view in UKL: `struct TapeView`, `DocView` its name in the kernels, and each field's offset and
 /// the size asserted against this definition's, so the kernels cannot read a layout of their own.
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 22] = [
+    let fields: [(&str, &str, usize); 24] = [
         ("uint32_t", "at", offset_of!(TapeView, at)),
         ("uint32_t", "nodes", offset_of!(TapeView, nodes)),
         ("uint32_t", "node_base", offset_of!(TapeView, node_base)),
@@ -96,6 +112,8 @@ pub fn ukl() -> String {
         ("uint32_t", "tape", offset_of!(TapeView, tape)),
         ("uint32_t", "presence", offset_of!(TapeView, presence)),
         ("uint32_t", "at_high", offset_of!(TapeView, at_high)),
+        ("uint32_t", "source_high", offset_of!(TapeView, source_high)),
+        ("uint32_t", "spare", offset_of!(TapeView, spare)),
     ];
     let mut s = String::from("#include <ukl/backend.h>\ntypedef struct TapeView {\n");
     for (ty, name, _) in fields.iter() {
@@ -136,7 +154,7 @@ pub const F16Z_PIECES: u32 = 4;
 /// copies past its end).
 pub mod z {
     pub const SLOT_VIEW: i32 = 16;
-    pub const SLOT_BYTES: i32 = 144;
+    pub const SLOT_BYTES: i32 = 160;
     /// The room past a block's bytes: its side lists' parts (32 bytes) and the decode's copies past its end.
     pub const SLACK: usize = 64;
     const _: () = assert!(SLOT_VIEW as usize + std::mem::size_of::<super::TapeView>() <= SLOT_BYTES as usize);
@@ -427,8 +445,8 @@ pub struct Reader {
     len: usize,
 }
 
-/// Where a reader's cache starts, from its view.
-const READER_CACHE: usize = 128;
+/// Where a reader's cache starts, from its view: past it, at 16 bytes.
+const READER_CACHE: usize = std::mem::size_of::<TapeView>().next_multiple_of(16);
 
 impl Reader {
     /// `view`'s reader over `tape` (the bytes its offsets count from): the view alone for format 15 or 16; for 16z,

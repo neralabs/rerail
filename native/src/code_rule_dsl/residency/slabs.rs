@@ -136,27 +136,82 @@ pub fn admit(
     resident(digests)
 }
 
-/// The documents of in-memory tapes, resident, in order: hits from the residency, misses copied
-/// from each document's image and source (a batch whose tapes were restored before it ran).
+/// The documents of in-memory tapes, resident, in order: hits from the residency, misses taken where their tapes and
+/// sources lie (decision 0353 step 7, row 13): each in a slab's room (`TapeDoc::in_place`, a document's constructor
+/// houses both, `TapeImage::housed` and `placed::housed`), its view naming them there. Nothing is copied: a document
+/// held apart (no device room, or format 15) is refused, and read where it is, on the CPU.
 pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Arc<Resident>>, Error> {
-    // A digest not known yet serializes the image: a miss's admission copies those bytes.
-    let (digests, mut images): (Vec<_>, Vec<_>) = docs.iter().map(|doc| doc.tape_digest_and_image().map_err(invalid)).collect::<Result<Vec<_>, _>>()?.into_iter().unzip();
+    let digests = docs.iter().map(|doc| doc.tape_digest_and_image().map(|(digest, _)| digest).map_err(invalid)).collect::<Result<Vec<_>, _>>()?;
     let missing = misses(&digests)?;
     if !missing.is_empty() {
-        let mut owned = Vec::with_capacity(missing.len());
+        let mut lying = Vec::with_capacity(missing.len());
         for digest in &missing {
             let at = digests.iter().position(|candidate| candidate == digest).expect("a miss is one of the digests");
-            let (image, source, grammar) = docs[at].resident_parts(images[at].take()).map_err(invalid)?;
-            let stored = resident::stored(&image).map_err(invalid)?;
-            let lines = if stored == resident::Stored::F15 { 1 + source.bytes().filter(|&byte| byte == b'\n').count() } else { 0 };
-            let plan = planned(&image, image.len(), source.len(), lines)?;
-            owned.push((*digest, plan, Arc::clone(grammar), image, source));
+            let doc = &docs[at];
+            let Some((room, stored, source)) = doc.in_place() else {
+                crate::code_rule_dsl::prof::count("residency.apart", 1);
+                return Err(Error::BackendCapacity);
+            };
+            let (Some((slab, _, _)), Some(source_room)) = (crate::code_rule_dsl::tape::placed::slab_room(room), source.home().room().and_then(crate::code_rule_dsl::tape::placed::slab_room)) else {
+                crate::code_rule_dsl::prof::count("residency.apart", 1);
+                return Err(Error::BackendCapacity);
+            };
+            let stored_as = resident::stored(stored).map_err(invalid)?;
+            let lines = if stored_as == resident::Stored::F15 { 1 + source.bytes().filter(|&byte| byte == b'\n').count() } else { 0 };
+            let plan = planned(stored, stored.len(), source.len(), lines)?;
+            lying.push((*digest, plan, Arc::clone(doc.grammar()), slab, stored, source_room, source.as_bytes()));
         }
-        // The hits' images, serialized for their digests, are not copied.
-        drop(images);
-        insert_parts(&digests, owned.iter().map(|(digest, plan, grammar, image, source)| (*digest, plan, &**grammar, Parts::Bytes(image, source.as_bytes()))).collect())?;
+        insert_lying(
+            lying
+                .iter()
+                .map(|(digest, plan, grammar, slab, stored, (source_slab, source_at, _), source)| -> Lying<'_> {
+                    let digest = *digest;
+                    let place = move |derived: usize, table: Option<TableAt>| place_lying(slab, stored, (source_slab, *source_at, source), derived, table, &digest, plan, grammar);
+                    (digest, Arc::clone(slab), plan.derived(), plan.table, Box::new(place))
+                })
+                .collect(),
+        )?;
     }
     resident(&digests)
+}
+
+/// A document taken where its tape and source lie (`admit_docs`): `stored`, the tape as stored in `slab`, and its
+/// source in its slab at its offset. Its view names the tape at its own place (the document's first byte) and the
+/// source by its offset from there, an i64: in another slab it is the slabs' device addresses apart (0471), as a
+/// batch reaches a document in another slab. Its language's table is its slab's (`slab_table`); format 15's codes
+/// and line starts, derived, are written once in a room of its slab after it, at `derived`.
+#[allow(clippy::too_many_arguments)]
+fn place_lying(
+    slab: &Arc<Slab>,
+    stored: &[u8],
+    (source_slab, source_at, source): (&Arc<Slab>, usize, &[u8]),
+    derived: usize,
+    table: Option<TableAt>,
+    digest: &[u8; 32],
+    plan: &Plan,
+    grammar: &Grammar,
+) -> Result<Placed, Error> {
+    let offset = (stored.as_ptr() as usize).checked_sub(slab.host() as usize).filter(|&at| at + stored.len() <= slab.byte_length()).ok_or_else(|| invalid("a placed tape outside its slab"))?;
+    let source_offset = if source_slab.id == slab.id {
+        source_at as i64 - offset as i64
+    } else {
+        let (Some(from), Some(to)) = (slab.device_buffer().device_address(), source_slab.device_buffer().device_address()) else {
+            return Err(Error::BackendCapacity);
+        };
+        (to as i64).wrapping_sub(from as i64).wrapping_add(source_at as i64).wrapping_sub(offset as i64)
+    };
+    let rooms = (plan.derived() > 0).then(|| (derived, derived + aligned(24 * plan.codes)));
+    if rooms.is_some_and(|(codes, _)| codes < offset + stored.len()) {
+        return Err(invalid("a document's derived parts before it"));
+    }
+    let mut document = describe(slab, offset, stored, source, source_offset, rooms, table, plan, grammar)?;
+    document.document.digest = *digest;
+    // Its range: the tape, and its derived parts where it has them (all its view's parts but the source).
+    document.document.len = if plan.derived() > 0 { derived + plan.derived() - offset } else { stored.len() };
+    document.document.source = (source_slab.id != slab.id).then(|| Arc::clone(source_slab));
+    // Its tape and source are their rooms' (the tapes' pool): it takes no resident bytes of its own but derived ones.
+    document.document.bytes = [0, 0, plan.derived()];
+    Ok(document)
 }
 
 /// Places the misses' parts, keeping the slabs of every document `digests` reads.
@@ -170,13 +225,11 @@ fn insert_parts(digests: &[[u8; 32]], parts: Vec<([u8; 32], &Plan, &Grammar, Par
     insert(digests, placements)
 }
 
-/// Writes a document's parts into `slab` at `offset` (`plan.bytes()` of room), checked.
-/// Where a document's bytes come from: a store's frames, decompressed into the slab, or an image
-/// and source already in memory, copied.
+/// Where a document's bytes come from: a store's frames, decompressed into the slab (a document in memory is taken
+/// where it lies, `place_lying`).
 #[derive(Clone, Copy)]
 enum Parts<'a> {
     Frames(&'a crate::content_store::ResidentFrames),
-    Bytes(&'a [u8], &'a [u8]),
 }
 
 /// A format 16 document's language table is the slab's (`table`): written here where the slab does not hold it yet.
@@ -213,23 +266,32 @@ fn place(
                 return Err(invalid("a resident tape's digest"));
             }
         }
-        // A document in memory: its digest was made from these same bytes (`TapeDoc::tape_digest`), so
-        // there is nothing read to check them against.
-        // copy (0353 step 7): an in-memory tape and its source copied into a slab (row 13). It goes: a parse writes
-        // its tape into its room (step 4a), and the residency takes that room as it lies.
-        Parts::Bytes(image, text) => {
-            const INTO_SLAB: rerail_prof::copies::Site = rerail_prof::copies::Site::new(13, "7", "an in-memory tape and its source copied into a slab (residency::place)");
-            INTO_SLAB.time(|| {
-                // copy (0353 step 7): the tape (row 13).
-                tape.copy_from_slice(image);
-                // copy (0353 step 7): its source (row 13).
-                source.copy_from_slice(text);
-                ((), image.len() + text.len())
-            });
-        }
     }
-    let tape = &*tape;
-    let source = &*source;
+    let source_offset = (source_at - tape_at) as i64;
+    let mut placed = describe(slab, offset, tape, source, source_offset, Some((codes_at, lines_at)), table, plan, grammar)?;
+    placed.document.digest = *digest;
+    placed.document.bytes = [aligned(plan.tape), aligned(plan.source), plan.derived()];
+    placed.document.len = plan.bytes();
+    Ok(placed)
+}
+
+/// A document's view and record, its tape at `offset` of `slab` (its first byte) and its source `source_offset` from
+/// there; `derived` the rooms of format 15's codes and line starts (in the document's range), which only a store's
+/// frames give.
+#[allow(clippy::too_many_arguments)]
+fn describe(
+    slab: &Arc<Slab>,
+    offset: usize,
+    tape: &[u8],
+    source: &[u8],
+    source_offset: i64,
+    derived: Option<(usize, usize)>,
+    table: Option<TableAt>,
+    plan: &Plan,
+    grammar: &Grammar,
+) -> Result<Placed, Error> {
+    let base = slab.host();
+    let tape_at = offset;
     if std::str::from_utf8(source).is_err() {
         return Err(invalid("a resident source that is not UTF-8"));
     }
@@ -247,6 +309,7 @@ fn place(
     let mut new_table = None;
     match plan.stored {
         resident::Stored::F15 => {
+            let Some((codes_at, lines_at)) = derived else { return Err(invalid("a format 15 tape with no room for its codes")) };
             let layout = resident::layout(tape).map_err(invalid)?;
             if layout.source_len != source.len() || layout.nodes as usize != plan.nodes || layout.code_count != plan.codes {
                 return Err(invalid("a tape and its source disagree"));
@@ -314,17 +377,18 @@ fn place(
             view.codes = slab_table(table, lang, grammar, plan, offset, &mut new_table)?;
         }
     }
-    view.source = at(source_at)?;
+    view.set_source_offset(source_offset);
     view.source_len = count(plan.source)?;
     view.code_count = count(plan.codes)?;
     crate::code_rule_dsl::prof::count("residency.decompressed_kb", (plan.tape + plan.source) >> 10);
     let document = Resident {
-        digest: *digest,
+        digest: [0; 32],
         slab: Arc::clone(slab),
+        source: None,
         view,
         at: offset,
-        len: plan.bytes(),
-        bytes: [aligned(plan.tape), aligned(plan.source), plan.derived()],
+        len: plan.tape,
+        bytes: [0; 3],
         tape_length: plan.tape,
         table: plan.table,
     };

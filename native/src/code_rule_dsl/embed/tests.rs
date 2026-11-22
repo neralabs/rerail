@@ -89,7 +89,7 @@ fn a_blade_tape_holds_its_compiled_view_as_a_php_document() {
     let grammar = Grammar::new(GrammarDialect::Blade).expect("grammar");
     let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false)
         .expect("encodes");
-    let host = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+    let host = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false)
         .expect("restores");
     let errors = host.syntax_error_ranges();
     assert!(!errors.is_empty());

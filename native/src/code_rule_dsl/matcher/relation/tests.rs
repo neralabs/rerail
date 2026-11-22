@@ -557,7 +557,7 @@ r([1, u, 2, 3], [4, 5, u, 6]);
         let source = format!("x = [{}];\n", (0..200).map(|n| n.to_string()).collect::<Vec<_>>().join(", "));
         let grammar = Grammar::new(GrammarDialect::TypeScript).expect("grammar");
         let image = TapeImage::parse(&grammar, &source, &|| false).expect("parses").expect("encodes");
-        let tape = AstGrep::doc(TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).expect("restores"));
+        let tape = AstGrep::doc(TapeDoc::restore(Arc::new(source.clone().into()), grammar, &image, &|| false).expect("restores"));
         let full = GrammarDialect::TypeScript.ast_grep(&source);
         for relation in ["follows", "precedes"] {
             let compiled = compile_typescript_rule(json!({ "kind": "number", relation: { "stopBy": "end", "kind": "string" } }))

@@ -96,7 +96,8 @@ fn an_oversized_relation_does_not_reject_fitting_peers() {
     inputs[2].source = Arc::new(
         (0..100)
             .map(|i| format!("def f{i}(): return {i}\n"))
-            .collect(),
+            .collect::<String>()
+            .into(),
     );
     let (results, _) = run(jobs(&rule, inputs), 256, usize::MAX);
     for (index, result) in results.iter().enumerate() {

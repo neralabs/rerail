@@ -34,10 +34,10 @@ pub struct EcmaProject {
     pub manifests: BTreeMap<String, Arc<Manifest>>,
     /// The `tsconfig.json`-style configuration texts requests sent, by path: the import aliases
     /// and `jsxImportSource` of those manifests (`refresh_manifest_context`).
-    pub module_configs: BTreeMap<String, Arc<String>>,
+    pub module_configs: BTreeMap<String, Arc<crate::code_rule_dsl::tape::Text>>,
     /// The `.npmignore` and `.gitignore` texts requests sent, by path: with those manifests'
     /// `files` and `main`, which of their files npm publishes (`refresh_manifest_context`).
-    pub(crate) ignore_files: BTreeMap<String, Arc<String>>,
+    pub(crate) ignore_files: BTreeMap<String, Arc<crate::code_rule_dsl::tape::Text>>,
     /// The manifest directories whose server graph the workspace derives for files the host sent
     /// no `package` for: requests that change what the graph reads refresh them
     /// (`refresh_server_graphs`).
@@ -66,7 +66,7 @@ impl ProjectState for EcmaProject {
         let (stale, changes) = refresh_manifest_context(self, state, inputs, unhosted, removed);
         (stale, Box::new(changes))
     }
-    fn hold(&mut self, path: &str, source: &Arc<String>) {
+    fn hold(&mut self, path: &str, source: &Arc<crate::code_rule_dsl::tape::Text>) {
         if module_graph::is_module_config(path) {
             self.module_configs.insert(path.to_owned(), Arc::clone(source));
         }
@@ -482,7 +482,7 @@ fn module_config_text(
 /// The text of the file at `path` once the request applies: the request's own, else the
 /// workspace's (`stored`) unless the request removes it.
 fn request_text(
-    stored: &BTreeMap<String, Arc<String>>,
+    stored: &BTreeMap<String, Arc<crate::code_rule_dsl::tape::Text>>,
     inputs: &[FileInput],
     removed: &[String],
     path: &str,

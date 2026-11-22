@@ -326,7 +326,7 @@ fn decode_stored_tape(
     let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
     let image = tape::FileImage::single(image, &source);
     tape::TapeDoc::restore_with_lines(
-        Arc::new(source),
+        Arc::new(source.into()),
         grammar,
         &image,
         lines,

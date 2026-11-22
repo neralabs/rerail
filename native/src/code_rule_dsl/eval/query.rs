@@ -888,7 +888,7 @@ enum FileOutcome {
 #[derive(Clone)]
 struct CachedTape {
     language: GrammarDialect,
-    source: Arc<String>,
+    source: Arc<crate::code_rule_dsl::tape::Text>,
     doc: crate::code_rule_dsl::tape::TapeDoc,
     lines: Arc<LineTable>,
 }

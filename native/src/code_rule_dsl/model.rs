@@ -904,7 +904,7 @@ impl CompiledCodeRule {
 pub struct FileInput {
     pub path: String,
     pub language: String,
-    pub source: Arc<String>,
+    pub source: Arc<crate::code_rule_dsl::tape::Text>,
     /// A Python file's module path: the host's (`module`), else the file's stem.
     pub module: Option<Arc<ModulePath>>,
     /// An ECMA file's nearest `package.json` (`package`); `None` without one.
@@ -916,7 +916,7 @@ impl crate::code_rule_dsl::facts::core::SourceFile for FileInput {
     fn language(&self) -> &str {
         &self.language
     }
-    fn source(&self) -> &Arc<String> {
+    fn source(&self) -> &Arc<crate::code_rule_dsl::tape::Text> {
         &self.source
     }
     fn as_any(&self) -> &dyn std::any::Any {
@@ -934,7 +934,7 @@ impl FileInput {
     pub fn new(
         path: String,
         language: String,
-        source: Arc<String>,
+        source: Arc<crate::code_rule_dsl::tape::Text>,
         module: Option<&Value>,
         package: Option<crate::code_rule_dsl::language::FileManifest>,
         at: &str,

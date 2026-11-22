@@ -22,7 +22,7 @@ use crate::code_rule_dsl::facts::producers::python::families as py;
                 let input = FileInput::new(
                     path.clone(),
                     "python".into(),
-                    Arc::new(s.to_string()),
+                    Arc::new(s.to_string().into()),
                     None,
                     None,
                     "core",

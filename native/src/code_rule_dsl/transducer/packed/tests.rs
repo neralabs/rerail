@@ -45,7 +45,7 @@
         let native = StrDoc::new(source, SupportLang::Python);
         let image =
             TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap()
     }
 
     fn identifier_program(text: &str) -> Program {
@@ -201,7 +201,7 @@
             as_run(format, || {
                 let grammar = Grammar::new(SupportLang::Python).unwrap();
                 let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap().primary.in_format(format, source.as_bytes());
-                TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
+                TapeDoc::restore(Arc::new(source.clone().into()), grammar, &image, &|| false).unwrap()
             })
         };
         let (plain, z) = (held(Format::F15), held(Format::F16Z));
@@ -979,7 +979,7 @@
             })
             .unwrap();
         let js_tape = TapeDoc::restore(
-            Arc::new(js_source.to_owned()),
+            Arc::new(js_source.to_owned().into()),
             js_grammar,
             &js_image,
             &|| false,
@@ -1043,7 +1043,7 @@
         let image =
             TapeImage::encode(native_doc.tree.root_node(), &grammar, source, &|| false).unwrap();
         let tape =
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+            TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
         let actual = program
             .execute(&tape)
             .unwrap()
@@ -2328,7 +2328,7 @@
             let started = Instant::now();
             let image =
                 TapeImage::encode(doc.tree.root_node(), &grammar, &source, &|| false).unwrap();
-            let tape = TapeDoc::restore(Arc::new(source), Arc::clone(&grammar), &image, &|| false)
+            let tape = TapeDoc::restore(Arc::new(source.into()), Arc::clone(&grammar), &image, &|| false)
                 .unwrap();
             encode_restore_time += started.elapsed();
             native.push(AstGrep::doc(doc));
@@ -2534,7 +2534,7 @@
                             }
                         };
                     let tape =
-                        TapeDoc::restore(Arc::new(source), Arc::clone(&grammar), &image, &|| false)
+                        TapeDoc::restore(Arc::new(source.into()), Arc::clone(&grammar), &image, &|| false)
                             .unwrap();
                     let document = search_index_document(
                         crate::content_store::TapeId::for_benchmark(next_id),
@@ -2555,7 +2555,7 @@
                     transaction
                         .execute(
                             "INSERT INTO search_text_fts(rowid,token) VALUES(?1,?2)",
-                            rusqlite::params![next_id, document.source_text],
+                            rusqlite::params![next_id, document.source_text.as_str()],
                         )
                         .unwrap();
                     transaction
@@ -3043,7 +3043,7 @@
             let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
             tape_ids.push(store.put_tape(source_id, 1, 1, 2, &tape_bytes).unwrap());
             tapes.push(
-                TapeDoc::restore(Arc::new(source), Arc::clone(&grammar), &image, &|| false)
+                TapeDoc::restore(Arc::new(source.into()), Arc::clone(&grammar), &image, &|| false)
                     .unwrap(),
             );
         }
@@ -3174,7 +3174,7 @@
             let image =
                 TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
             tapes.push(
-                TapeDoc::restore(Arc::new(source), Arc::clone(&grammar), &image, &|| false)
+                TapeDoc::restore(Arc::new(source.into()), Arc::clone(&grammar), &image, &|| false)
                     .unwrap(),
             );
         }

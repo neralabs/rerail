@@ -391,11 +391,11 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 10 | Gone (2026-11-20): a device fixpoint's total copied into a run's block at its end, and each round's total made anew with the last round's rows copied into it (rounds × rows). A set head's relation is now one relation in a block of the run's life from its first round, each round's new rows written past its rows, its indexes forgotten as it grows, taken by the store as it lies (`SetHead`), as a lattice head's is (decision 0384 step 5). Measured before: 187.4 MB in 225 copies at the end on the M3's 300-file run (ab109); the rounds' copies were not counted | `device.rs` (0325 step 4) | 0 | Done |
 | 11 | Gone (step 7, 2026-11-22): the transducer's packed batch's copies of the tape. Its node records and child lists went first (every executor reads the tape, decisions 0310, 0324); its sources and line starts, the last, are read where the documents hold them: a batch shares each file's source (`PackedBatch::sources`, read by `source_of` in the batch's numbering), and the CPU JIT's context points at the document's own source and tree-sitter line starts (`TapeDoc::transducer_rows`, made once with the document), `line_start_at` adding the file's `source_base` | — | — | Done |
 | 12 | Gone (step 8, 2026-11-22): findings, frames and memo entries copied into rows of their own. The kept writer packs every put's rows where they lie (`packed::RowsIn`); granules, views, inputs and a stratum's relations are lent; the documents' entries, the statistics' words and the documents' table are read where they lie; a request's rows reach its answerer as a handle on its relation's rows (`component::Asked`), and a request's answers are held after the rows the engine holds, shared (`retain_with`) | — | — | Done |
-| 13 | The transducer's residency: every tape it reads copied into slabs of its own. (Documents copied between slabs, `gather`, are gone, 0471: a batch reads each document in its own slab, by the slabs' GPU addresses.) | `residency::slabs::admit_docs`, `insert`'s `place` | Each tape a Metal batch reads | Step 7 |
+| 13 | Gone (step 7, 2026-11-22): the transducer's residency's copy of an in-memory tape and its source into slabs of its own. A document's tape and source are each in a slab's room (a loader reads the source into one, `placed::read_text`; a document's constructor houses what it is given, `TapeImage::housed`, `placed::housed`), and the residency takes both as they lie (`insert_lying`): its view names the tape at its own place and the source by an i64 offset from it (`TapeView::source_high`), in another slab by the slabs' device addresses. A document held apart is refused (`residency.apart`), never copied | — | — | Done |
 | 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 0: gone | Done (step 4, 2026-11-22) |
 | 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
 | 16 | Gone (0446, 2026-11-19): a label level's fact rows, uploaded as `(node, label)` pairs for the pattern kernels (`Pass::Fact`). The host writes the findings once into the batch's fact block, and the CPU and the kernels read them there | — | — | Done |
-| 17 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`); a queued tape not in a room read into a vector (`queued_image`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image` | 4.1 MB a run on hogql 16z | Step 4a |
+| 17 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`, and `TapeImage::housed` for an image restored from a vector); a queued tape not in a room read into a vector (`queued_image`); a source made in memory (a test's literal, an edit's text) written into its room (`placed::housed`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image`; `tape/placed.rs`, `housed` | 4.1 MB a run on hogql 16z | Step 4a |
 
 ## The plan
 
@@ -1198,11 +1198,36 @@ starts, made again for every batch (`build_tapes`, about one word a line). Now:
 Tests: the transducer crates' libraries on Linux (251) and their Metal and in-place tests on the M1 Max (232). Cold
 hogql: 1,629 findings with the CPU run's digest (its rule set runs no transducer batch, so row 11 was 0 there).
 
-Row 13, the residency's copy of an in-memory tape into a slab, is left: a document parsed this run holds its source
-as a heap string and its tape as an image serialized for its digest (`tape_digest_and_image`), so neither lies in
-device memory to be taken as it lies. It goes with the parse writing its tape into its room (step 4a) and the
-reader loading the source into a room beside it; the document's view already reads each part at an offset from the
-document's first byte (`tape_doc`), so the residency then binds those rooms with no copy.
+### Step 7, row 13: the residency takes a document as it lies (2026-11-22)
+
+Row 13 was the residency's copy of an in-memory document into a slab: its tape serialized for its digest and
+copied, its source copied beside it. Neither lay in device memory. Now both do, and the residency binds them:
+
+- A source is a room-backed text (`tape_format::home::Text`, a `Home` known to be UTF-8, read as `&str`), held as
+  `Arc<Text>` everywhere a `Arc<String>` was: documents, facts, the store's queue, the workspace. The corpus's one
+  read of each file (the observer's digest read, decision 0300, and a builder's read of a file it holds no text for)
+  writes it straight into a slab's room (`snapshot::read_placed` with the engine's `placed::placer`; a Git blob is
+  decoded into it), and every reader shares that text (`texts::Sources` holds `Arc<Text>`).
+- A document's constructor (`TapeDoc::restore_tree`) houses what it is given where a device reads tapes: an image
+  held in a vector is written into its room in place of the clone it made (`TapeImage::housed`, row 17's
+  `place_stored`), and a source made in memory is written into a room (`placed::housed`, row 17). A loader's text is
+  shared as it is.
+- `admit_docs` hashes a tape in its room (`tape_digest_and_image` serializes nothing for it) and takes the document
+  where it lies (`TapeDoc::in_place`, `insert_lying`): its first byte is its tape's, its language's table its slab's,
+  format 15's codes and line starts derived once into a room of its slab after it, and its source an i64 offset from
+  its first byte (`TapeView::source_high`; the view is 136 bytes, the 16z slot 160). A source in another slab is the
+  slabs' device addresses apart, as a batch reaches a document in another slab (0471); the document holds that slab
+  (`Resident::source`) and its batch makes it resident (`DocTable::slabs`). A tapes' slab held only by the pool and
+  its residents retires as other slabs do. A document held apart (no device room) is refused, counted
+  `residency.apart`, and read on the CPU.
+- The kernels read the source through `tape_source` (`device_tape.h`), the batch's entry included.
+
+Tests: the residency's (a batch over two slabs reads each tape and source at the very bytes its document reads), the
+transducer's Metal and in-place tests on the M1 Max (232), and the tape, text, store-read and view tests on Linux
+(213). Measured on the M1 Max, cold: hogql 1,629 findings with the CPU run's digest, copies 6.6 MB (row 17: 565
+tapes placed by their parse, 5 sources in hand housed; row 7: 2,018 node-row calls, 0.0 MB); the 300-file bench 463
+violations, copies 52.9 MB (row 7's node rows 49.9 MB; row 17 3.0 MB, 20 sources housed). Row 13 copies nothing:
+its site is deleted. The copies left are rows 7 (step 3) and 17 (step 4a).
 
 ## What it replaces
 

@@ -53,7 +53,7 @@ impl FileVersion {
 pub struct Document {
     /// P's syntax facts, shared by P's relational inputs (test-only, open item O18).
     pub(super) syntax: std::sync::OnceLock<Arc<crate::code_rule_dsl::relational::syntax::Facts>>,
-    pub source: Arc<String>,
+    pub source: Arc<crate::code_rule_dsl::tape::Text>,
     pub(super) image: tape::FileImage,
     language: GrammarDialect,
     bytes: std::sync::atomic::AtomicUsize,
@@ -255,7 +255,7 @@ pub(super) fn current_version(state: &WorkspaceState, path: &str) -> Option<File
 
 /// The exact current version of `path`, loaded from the resident copy, the document cache, the
 /// store, or a reparse of the stored source.
-pub(super) fn source(state: &mut WorkspaceState, path: &str) -> Result<Arc<String>> {
+pub(super) fn source(state: &mut WorkspaceState, path: &str) -> Result<Arc<crate::code_rule_dsl::tape::Text>> {
     let version = current_version(state, path)
         .ok_or_else(|| invalid(format!("{path} is not a file of this workspace")))?;
     if let Some(document) = state.documents.get(&version) {
@@ -287,7 +287,7 @@ pub(super) fn source(state: &mut WorkspaceState, path: &str) -> Result<Arc<Strin
         )));
     }
     Ok(Arc::new(
-        String::from_utf8(bytes).map_err(|_| invalid(format!("{path} is not UTF-8")))?,
+        String::from_utf8(bytes).map_err(|_| invalid(format!("{path} is not UTF-8")))?.into(),
     ))
 }
 
@@ -402,10 +402,10 @@ pub(super) fn load_many(
                     version.path
                 )));
             }
-            let source = Arc::new(
+            let source = Arc::new(crate::code_rule_dsl::tape::Text::from(
                 String::from_utf8(raw.clone())
                     .map_err(|_| invalid(format!("{} is not UTF-8", version.path)))?,
-            );
+            ));
             // A tape that derives documents (`file_documents`) is read with them, never without:
             // the primary alone comes from the batch's bulk read.
             let image = objects.tapes.get(&version.grammar).and_then(|&id| {
@@ -444,7 +444,7 @@ fn install_document(
     state: &mut WorkspaceState,
     version: FileVersion,
     language: GrammarDialect,
-    source: Arc<String>,
+    source: Arc<crate::code_rule_dsl::tape::Text>,
     image: tape::FileImage,
 ) -> (FileVersion, Arc<Document>) {
     let document = Arc::new(Document {
@@ -481,7 +481,7 @@ fn released_source(
     state: &WorkspaceState,
     path: &str,
     version: &FileVersion,
-) -> Option<Arc<String>> {
+) -> Option<Arc<crate::code_rule_dsl::tape::Text>> {
     state
         .files
         .get(path)
@@ -497,7 +497,7 @@ fn released_source(
     if HashKey::sha256(&bytes) != version.source {
         return None;
     }
-    String::from_utf8(bytes).ok().map(Arc::new)
+    String::from_utf8(bytes).ok().map(|s| Arc::new(s.into()))
 }
 
 fn parse(source: &str, grammar: &Arc<tape::Grammar>) -> Result<tape::FileImage> {

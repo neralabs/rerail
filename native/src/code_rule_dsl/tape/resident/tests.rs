@@ -26,7 +26,7 @@
             let grammar = Grammar::new(lang).unwrap();
             let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
             let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
-            let tape = TapeDoc::restore(Arc::new(source.to_owned()), Arc::clone(&grammar), &image, &|| false).unwrap();
+            let tape = TapeDoc::restore(Arc::new(source.to_owned().into()), Arc::clone(&grammar), &image, &|| false).unwrap();
             let bytes = tape.resident_parts(None).unwrap().0;
             let layout = layout(&bytes).unwrap();
             for column in [layout.code, layout.size, layout.base, layout.off, layout.tail] {

@@ -97,7 +97,7 @@ pub trait ProjectState: Send + Sync {
         removed: &[String],
     ) -> (Vec<StaleContext>, Box<dyn std::any::Any + Send>);
     /// Holds the text of a file a request sent (a project configuration, an ignore file), as its context reads it.
-    fn hold(&mut self, path: &str, source: &Arc<String>);
+    fn hold(&mut self, path: &str, source: &Arc<crate::code_rule_dsl::tape::Text>);
     /// Stops holding the text of a removed path.
     fn release(&mut self, path: &str);
     /// Applies the changes `refresh` gave.
@@ -125,7 +125,7 @@ impl ProjectState for NoProject {
     ) -> (Vec<StaleContext>, Box<dyn std::any::Any + Send>) {
         (Vec::new(), Box::new(()))
     }
-    fn hold(&mut self, _: &str, _: &Arc<String>) {}
+    fn hold(&mut self, _: &str, _: &Arc<crate::code_rule_dsl::tape::Text>) {}
     fn release(&mut self, _: &str) {}
     fn apply(&mut self, _: Box<dyn std::any::Any + Send>) {}
     fn as_any(&self) -> &dyn std::any::Any {
@@ -275,7 +275,7 @@ impl WireFile {
         FileInput::new(
             self.path,
             self.language,
-            Arc::new(self.source),
+            Arc::new(self.source.into()),
             self.module.as_ref(),
             self.package,
             &format!("files/{index}"),
@@ -453,7 +453,7 @@ fn module_under(input: &FileInput, is_package: impl Fn(&str) -> bool) -> Result<
     FileInput::new(
         input.path.clone(),
         input.language.clone(),
-        Arc::new(String::new()),
+        Arc::new(String::new().into()),
         python_module_in(&input.path, is_package).as_ref(),
         None,
         &input.path,
@@ -486,7 +486,7 @@ impl WorkspaceState {
     /// Holds `path`'s `source` for import target resolution (`import_target::fs::HeldFiles`): a
     /// change disk below the root does not already show moves `import_generation`. A workspace
     /// whose clauses read no import targets (they are fixed before its first apply) holds none.
-    pub(super) fn hold_import_file(&mut self, path: &str, source: &Arc<String>) {
+    pub(super) fn hold_import_file(&mut self, path: &str, source: &Arc<crate::code_rule_dsl::tape::Text>) {
         if self.import_clauses.is_empty() {
             return;
         }

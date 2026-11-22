@@ -2,13 +2,13 @@ use super::*;
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label};
 
 /// A file as facts read it, with no request around it.
-struct Text(String, Arc<String>);
+struct Text(String, Arc<crate::code_rule_dsl::tape::Text>);
 
 impl SourceFile for Text {
     fn language(&self) -> &str {
         &self.0
     }
-    fn source(&self) -> &Arc<String> {
+    fn source(&self) -> &Arc<crate::code_rule_dsl::tape::Text> {
         &self.1
     }
     fn as_any(&self) -> &dyn std::any::Any {
@@ -17,7 +17,7 @@ impl SourceFile for Text {
 }
 
 fn facts(path: &str, language: &str, source: &str) -> Facts {
-    let file = Text(language.to_owned(), Arc::new(source.to_owned()));
+    let file = Text(language.to_owned(), Arc::new(crate::code_rule_dsl::tape::Text::from(source)));
     match build(&file).unwrap() {
         Built::Facts(facts) => facts,
         Built::Unparsed => panic!("{path} did not parse"),
@@ -104,7 +104,7 @@ fn every_format_reads_the_same_facts_off_the_tape() {
         let lang = dialect_by_label(label).unwrap();
         let grammar = Grammar::new(lang).unwrap();
         let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
-        let source = Arc::new(source.to_owned());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
         let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
         let doc = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &image.primary, &|| false).unwrap();
         let old = from_tape(&doc, Arc::clone(&lines)).unwrap();
@@ -154,7 +154,7 @@ fn a_stored_tape_holds_the_presence_its_writer_made() {
         let dir = tempfile::tempdir().unwrap();
         let cache = crate::content_store::ContentStore::open(&dir.path().join("p.sqlite")).unwrap();
         // Past two blocks of nodes: the class is in the first alone.
-        let file = Text("python".into(), Arc::new(format!("class A:\n    def f(self):\n        return g(1)\n{}", "x = 1\n".repeat(500))));
+        let file = Text("python".into(), Arc::new(format!("class A:\n    def f(self):\n        return g(1)\n{}", "x = 1\n".repeat(500)).into()));
         let (_, _, parsed) = build_cached_with_tape(&file, &cache, None, true).unwrap();
         let parsed = parsed.expect("the tape");
         assert!(parsed.has_presence(), "{at}: a parse lays its presence in the tape's home");

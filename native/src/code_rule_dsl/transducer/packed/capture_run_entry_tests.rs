@@ -19,7 +19,7 @@ pub(super) fn tape(source: &str) -> TapeDoc {
     let grammar = Grammar::new(SupportLang::Python).unwrap();
     let native = StrDoc::new(source, SupportLang::Python);
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-    TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+    TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap()
 }
 
 fn calls(doc: &TapeDoc) -> Vec<u32> {

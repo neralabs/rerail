@@ -5478,7 +5478,7 @@ fn run_observed_within(
         stat: Option<crate::content_store::FileStat>,
         content: Option<memo::Content>,
         found: Option<memo::Found>,
-        text: Option<String>,
+        text: Option<std::sync::Arc<crate::code_rule_dsl::tape::Text>>,
         /// The content's SHA-256, when it was read to look it up.
         digest: Option<[u8; 32]>,
         /// Its tape, when the memo has no entry for it and the store has the tape (decision 0104): read before the
@@ -5609,7 +5609,7 @@ fn run_observed_within(
         let rest: Vec<usize> = (0..window.len()).filter(|i| found[*i].is_none()).collect();
         // The run on each job's thread (`run_state::Carry`, decision 0442): a job's span and work are the run's.
         let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-        let read: Vec<Option<String>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        let read: Vec<Option<std::sync::Arc<crate::code_rule_dsl::tape::Text>>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
             rest
                 .par_iter()
                 .map(|i| {
@@ -5621,8 +5621,9 @@ fn run_observed_within(
                     if let Some(source) = source_texts.text(&root.join(path), keep) {
                         return Ok(Some(source));
                     }
-                    let source = match crate::git_workspace::snapshot::read_to_string(root.join(path)) {
-                        Ok(source) => source,
+                    // Read straight into its home: a slab's room where a device reads sources (decision 0353 step 7).
+                    let source = match crate::code_rule_dsl::tape::placed::read_text(&root.join(path)) {
+                        Ok(source) => std::sync::Arc::new(source),
                         // A text file that is not UTF-8 (an image, an archive) is no document: its wave finds it so.
                         Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(root, path, label) => return Ok(None),
                         Err(e) => return Err(Error::Plan(format!("{path}: {e}"))),
@@ -5632,7 +5633,7 @@ fn run_observed_within(
                 })
                 .collect::<Result<_>>()
         })?;
-        let (rest, texts): (Vec<usize>, Vec<String>) = rest.into_iter().zip(read).filter_map(|(i, t)| t.map(|t| (i, t))).unzip();
+        let (rest, texts): (Vec<usize>, Vec<std::sync::Arc<crate::code_rule_dsl::tape::Text>>) = rest.into_iter().zip(read).filter_map(|(i, t)| t.map(|t| (i, t))).unzip();
         if let (true, Some(memo)) = (looking, memo) {
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, texts.iter().map(|t| t.len() as u64).sum());
@@ -5743,7 +5744,7 @@ fn run_observed_within(
                 }
             }
         }
-        let mut texts: HashMap<usize, String> = if keep { rest.into_iter().zip(texts).collect() } else { HashMap::new() };
+        let mut texts: HashMap<usize, std::sync::Arc<crate::code_rule_dsl::tape::Text>> = if keep { rest.into_iter().zip(texts).collect() } else { HashMap::new() };
         Ok(stats
             .into_iter()
             .zip(content)
@@ -6184,7 +6185,7 @@ fn run_observed_within(
     /// A file to build: its text, its content as the memo knows it, the text's digest and its tape, when they are
     /// known.
     struct Unbuilt {
-        text: String,
+        text: std::sync::Arc<crate::code_rule_dsl::tape::Text>,
         content: Option<memo::Content>,
         digest: Option<[u8; 32]>,
         tape: Option<crate::content_store::TapeFrame>,
@@ -6241,7 +6242,8 @@ fn run_observed_within(
                         let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
                         // Held from the run's digests (decision 0300), as of the stat it was read at.
                         let held = source_texts.text(&root.join(path), true);
-                        let text = match held.map_or_else(|| crate::git_workspace::snapshot::read_to_string(root.join(path)), Ok) {
+                        // Read straight into its home: a slab's room where a device reads sources (decision 0353 step 7).
+                        let text = match held.map_or_else(|| crate::code_rule_dsl::tape::placed::read_text(&root.join(path)).map(std::sync::Arc::new), Ok) {
                             Ok(text) => text,
                             // A text file that is not UTF-8 (an image, an archive) is no document.
                             Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(root, path, label) => return Ok(None),
@@ -6319,12 +6321,12 @@ fn run_observed_within(
         // A file of no grammar is here because `.scope text` reads it (`scoped`): text only, no tree, its lines W's
         // for a file of no language (`core::text`).
         if text_document(root, path, label) && !host(path) {
-            let facts = Arc::new(core::text(Arc::new(source)));
+            let facts = Arc::new(core::text(source));
             let digest = core::digest(&facts);
             return Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape: None, unpackaged: unpackaged.contains(path) }));
         }
         let own = if host(path) { crate::code_rule_dsl::language::label_of_path(path).unwrap_or(label) } else { label };
-        let file = core::Source { language: own.to_owned(), source: Arc::new(source) };
+        let file = core::Source { language: own.to_owned(), source };
         let source_digest = digest.unwrap_or_else(|| {
             use sha2::{Digest as _, Sha256};
             Sha256::digest(file.source.as_bytes()).into()
@@ -11960,10 +11962,10 @@ fn hit_document(how: &HitBuild<'_>, key: i64, path: &str, module: Option<Arc<str
     // A host file's tree is in its own language; any other file of another grammar is text alone.
     let language = match how.split {
         Some(_) => crate::code_rule_dsl::language::label_of_path(path).unwrap_or(how.label),
-        None if text_document(how.root, path, how.label) => return Ok(vec![document(Arc::new(core::text(Arc::new(source))), None)]),
+        None if text_document(how.root, path, how.label) => return Ok(vec![document(Arc::new(core::text(Arc::new(source.into()))), None)]),
         None => how.label,
     };
-    let file = core::Source { language: language.to_owned(), source: Arc::new(source) };
+    let file = core::Source { language: language.to_owned(), source: Arc::new(source.into()) };
     let built = match (how.tapes, frame) {
         (Some(cache), Some(frame)) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, None, Some(frame), true, how.keep_tapes),
         (None, Some(frame)) if cfg!(feature = "tape-cache") => core::build_with_frame(&file, frame, how.keep_tapes),

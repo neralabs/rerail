@@ -539,7 +539,7 @@ pub struct QueuedDocument {
     pub parent_ordinal: i64,
     pub role_id: i64,
     pub via_id: i64,
-    pub source: std::sync::Arc<String>,
+    pub source: std::sync::Arc<rerail_tape_format::home::Text>,
     pub grammar_id: i64,
     pub tape: Vec<u8>,
     pub source_map: Vec<u8>,

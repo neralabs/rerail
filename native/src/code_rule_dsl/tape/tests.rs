@@ -29,7 +29,7 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
 
     let persisted = TapeImage::from_bytes(&bytes, &grammar).unwrap();
     let restored = TapeDoc::restore(
-        Arc::new(source.to_owned()),
+        Arc::new(source.to_owned().into()),
         Arc::clone(&grammar),
         &persisted,
         &|| false,
@@ -41,7 +41,7 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     );
 
     // Memberships live in the codes: corrupt ones are rejected, in memory and in bytes.
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let reject = |candidate: &TapeImage| {
         assert!(
             TapeDoc::restore(
@@ -140,7 +140,7 @@ fn scala_contextual_aliases_preserve_native_node_identity() {
     assert!(image.aliased_nodes() > 0);
     let persisted = TapeImage::from_bytes(&image.to_bytes().unwrap(), &grammar).unwrap();
     let tape =
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &persisted, &|| false).unwrap();
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &persisted, &|| false).unwrap();
 
     fn native_nodes<'a>(node: TsNode<'a>, output: &mut Vec<TsNode<'a>>) {
         output.push(node);
@@ -229,7 +229,7 @@ fn fixture(
         .unwrap()
         .primary;
     let tape = TapeDoc::restore(
-        Arc::new(source.to_owned()),
+        Arc::new(source.to_owned().into()),
         Arc::clone(&grammar),
         &image,
         &|| false,
@@ -321,7 +321,7 @@ fn persisted_image_round_trips_without_parsing() {
     let decoded = TapeImage::from_bytes(&bytes, &grammar).unwrap();
     assert_eq!(decoded.to_bytes().unwrap(), bytes);
     let restored =
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &decoded, &|| false).unwrap();
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &decoded, &|| false).unwrap();
     assert_eq!(
         matches(native, "call($A)", GrammarDialect::TypeScript),
         matches(restored, "call($A)", GrammarDialect::TypeScript)
@@ -392,7 +392,7 @@ fn file_documents_persist_apart_and_are_checked() {
     let tape = document.tape.to_bytes().unwrap();
     assert_eq!(read.derived[0].tape.to_bytes().unwrap(), tape);
     let restored = TapeDoc::restore(
-        Arc::new(source.to_owned()),
+        Arc::new(source.to_owned().into()),
         Arc::clone(&grammar),
         &read,
         &|| false,
@@ -526,7 +526,7 @@ fn persisted_image_rejects_wrong_grammar_and_noncanonical_bytes() {
     let decoded = TapeImage::from_bytes(&bytes, &grammar).unwrap();
     assert!(
         TapeDoc::restore(
-            Arc::new("x = 22 # extra\n".to_owned()),
+            Arc::new("x = 22 # extra\n".to_owned().into()),
             grammar,
             &decoded,
             &|| false,
@@ -652,7 +652,7 @@ fn positions_count_only_line_feeds_in_every_dialect() {
             .unwrap()
             .unwrap();
         let tape =
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+            TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
         let tree_sitter_point = |byte: usize| {
             let before = &source.as_bytes()[..byte];
             let row = before.iter().filter(|&&b| b == b'\n').count();
@@ -987,7 +987,7 @@ fn malformed_and_mismatched_images_are_not_negative_matches() {
     format_15();
     let source = "a = foo(1)\n";
     let (_, _, image, grammar) = fixture(source, GrammarDialect::Python);
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let reject = |candidate: &TapeImage, grammar: Arc<Grammar>| {
         assert!(TapeDoc::restore(Arc::clone(&source), grammar, candidate, &|| false).is_err());
     };
@@ -1035,7 +1035,7 @@ fn malformed_and_mismatched_images_are_not_negative_matches() {
     let mut broken = image.clone();
     broken.codes[0].alias = 7;
     reject(&broken, Arc::clone(&grammar));
-    let altered = Arc::new("a = foo(2)\n".to_owned());
+    let altered = Arc::new(crate::code_rule_dsl::tape::Text::from("a = foo(2)\n"));
     assert!(TapeDoc::restore(altered, Arc::clone(&grammar), &image, &|| false).is_err());
 }
 
@@ -1050,7 +1050,7 @@ fn restore_rejects_child_subtree_escaping_parent() {
     broken.edit(Columns15::SIZE, |c| {
         c[2..4].copy_from_slice(&2u16.to_le_bytes())
     });
-    assert!(TapeDoc::restore(Arc::new(source.to_owned()), grammar, &broken, &|| false).is_err());
+    assert!(TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &broken, &|| false).is_err());
 }
 
 #[test]
@@ -1149,7 +1149,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
             matches(StrDoc::new(source, lang), pattern, lang),
             matches(tape.clone(), pattern, lang)
         );
-        let source = Arc::new(source.to_owned());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
         let reject = |candidate: &TapeImage| {
             assert!(
                 TapeDoc::restore(
@@ -1201,7 +1201,7 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
     // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
     let nodes = native.tree.root_node().descendant_count();
-    let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    let doc = TapeDoc::restore(Arc::new(source.into()), grammar, &image, &|| false).unwrap();
     assert_eq!(doc.transducer_len(), doc.image.node_count());
     assert_eq!(image.primary.node_count(), doc.transducer_len());
     assert!(doc.transducer_len() < nodes);
@@ -1219,7 +1219,7 @@ fn cancellation_interrupts_mid_restore_after_hashing() {
     };
     assert!(
         TapeDoc::restore(
-            Arc::new(source.clone()),
+            Arc::new(source.clone().into()),
             Arc::clone(&grammar),
             &image,
             &interrupt
@@ -1227,7 +1227,7 @@ fn cancellation_interrupts_mid_restore_after_hashing() {
         .is_err()
     );
     assert_eq!(calls.get(), 5, "restore must poll after the source digest");
-    let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    let doc = TapeDoc::restore(Arc::new(source.into()), grammar, &image, &|| false).unwrap();
     assert_eq!(doc.transducer_len(), doc.image.node_count());
 }
 
@@ -1365,7 +1365,7 @@ fn large_file_roundtrips_parent_and_subtree_overflow() {
     broken.edit(Columns15::SIZE, |c| {
         c[0..4].copy_from_slice(&u32::MAX.to_le_bytes())
     });
-    assert!(TapeDoc::restore(Arc::new(source), grammar, &broken, &|| false).is_err());
+    assert!(TapeDoc::restore(Arc::new(source.into()), grammar, &broken, &|| false).is_err());
 }
 
 #[test]
@@ -1417,7 +1417,7 @@ fn sentinel_edges_preserve_native_root_children_and_last_parent() {
             missing_parent.widths[0] = 2;
             assert!(
                 TapeDoc::restore(
-                    Arc::new(source.clone()),
+                    Arc::new(source.clone().into()),
                     Arc::clone(&grammar),
                     &missing_parent,
                     &|| false
@@ -1430,7 +1430,7 @@ fn sentinel_edges_preserve_native_root_children_and_last_parent() {
                 c[0..4].copy_from_slice(&65_535_u32.to_le_bytes())
             });
             assert!(
-                TapeDoc::restore(Arc::new(source), grammar, &missing_size, &|| false).is_err(),
+                TapeDoc::restore(Arc::new(source.into()), grammar, &missing_size, &|| false).is_err(),
                 "root size short of the node count"
             );
         }
@@ -1447,7 +1447,7 @@ fn restore_rejects_noncanonical_side_tables_and_checkpoint_boundaries() {
     let reject = |label: &str, candidate: &TapeImage| {
         assert!(
             TapeDoc::restore(
-                Arc::new(source.clone()),
+                Arc::new(source.clone().into()),
                 Arc::clone(&grammar),
                 candidate,
                 &|| false
@@ -1495,7 +1495,7 @@ fn restore_rejects_overwide_spans_and_non_utf8_or_parent_ranges() {
     let reject = |label: &str, candidate: &TapeImage| {
         assert!(
             TapeDoc::restore(
-                Arc::new(source.to_owned()),
+                Arc::new(source.to_owned().into()),
                 Arc::clone(&grammar),
                 candidate,
                 &|| false
@@ -1528,7 +1528,7 @@ fn restore_rejects_overwide_spans_and_non_utf8_or_parent_ranges() {
     });
     assert!(
         TapeDoc::restore(
-            Arc::new(source.to_owned()),
+            Arc::new(source.to_owned().into()),
             Arc::clone(&grammar),
             &image,
             &|| false
@@ -1550,7 +1550,7 @@ fn restore_rejects_overwide_spans_and_non_utf8_or_parent_ranges() {
         c[0..2].copy_from_slice(&(tail as u16).to_le_bytes())
     });
     assert!(
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &broken, &|| false).is_err(),
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &broken, &|| false).is_err(),
         "child span escapes shortened parent but remains within source"
     );
 }
@@ -1659,7 +1659,7 @@ fn a_php_template_tapes_its_php_view() {
             .unwrap()
             .unwrap();
         let tape =
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+            TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
         assert_eq!(
             tape.syntax_error_ranges(),
             Vec::<Range<usize>>::new(),
@@ -1769,7 +1769,7 @@ fn a_blade_tapes_errors_are_blades_reading() {
         let image = TapeImage::parse(&grammar, source, &|| false)
             .expect("parses")
             .expect("encodes");
-        let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+        let tape = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false)
             .expect("restores");
         assert_eq!(
             tape.syntax_error_ranges(),
@@ -1868,7 +1868,7 @@ fn supertype_memberships_against_lookups() {
             .unwrap()
             .primary;
         let tape = TapeDoc::restore(
-            Arc::new(doc.source.clone()),
+            Arc::new(doc.source.clone().into()),
             Arc::clone(&grammar),
             &image,
             &|| false,
@@ -1979,7 +1979,7 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
         };
         let image = TapeImage::from_bytes(&encoded.primary.to_bytes().unwrap(), &grammar).unwrap();
         let tape = TapeDoc::restore(
-            Arc::new(source.clone()),
+            Arc::new(source.clone().into()),
             Arc::clone(&grammar),
             &image,
             &|| false,
@@ -2070,7 +2070,7 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
             code.class_count -= 1;
             code.classes[usize::from(code.class_count)] = 0;
             let restored = TapeDoc::restore(
-                Arc::new(source.clone()),
+                Arc::new(source.clone().into()),
                 Arc::clone(&grammar),
                 &altered,
                 &|| false,
@@ -2711,7 +2711,7 @@ fn simdjson_tapes_over_files() {
 fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     format_15();
     use crate::code_rule_dsl::facts::core;
-    let source = Arc::new("é = foo(1)\n".to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from("é = foo(1)\n"));
     let (_, _, image, grammar) = fixture(&source, GrammarDialect::Python);
     let lines = Arc::new(LineTable::new(
         &source,
@@ -4228,7 +4228,7 @@ fn using_as_a_name_reads_without_an_error_on_the_products_path() {
                 .expect("read to its end")
                 .unwrap_or_else(|e| panic!("{gd:?}: {source:?}: {e}"));
             let doc = TapeDoc::restore(
-                Arc::new(source.to_owned()),
+                Arc::new(source.to_owned().into()),
                 Arc::clone(&grammar),
                 &product.primary,
                 &|| false,
@@ -5595,7 +5595,7 @@ fn html_css_and_markdown_files_are_read_by_their_grammars() {
             .round_trip(&grammar)
             .unwrap();
         let doc = TapeDoc::restore(
-            Arc::new(source.to_owned()),
+            Arc::new(source.to_owned().into()),
             Arc::clone(&grammar),
             &image,
             &|| false,
@@ -7417,7 +7417,7 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         assert_eq!(placed.placed(), crate::code_rule_dsl::tape::placed::device().is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
-        let text = Arc::new(source.clone());
+        let text = Arc::new(crate::code_rule_dsl::tape::Text::from(source.clone()));
         let (own, placed) = (super::formats::DocTape::new(Arc::new(own), Arc::clone(&text)), super::formats::DocTape::new(Arc::new(placed), text));
         let (a, b) = (own.tape(), placed.tape());
         rerail_tape_format::with_tape!(a, |a| {
@@ -7516,7 +7516,7 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
             "the tests' run stores format 15"
         );
         let reference = TapeDoc::restore(
-            Arc::new(source.clone()),
+            Arc::new(source.clone().into()),
             Arc::clone(&grammar),
             &image,
             &|| false,
@@ -7536,7 +7536,7 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
                 );
             }
             let doc = TapeDoc::restore(
-                Arc::new(source.clone()),
+                Arc::new(source.clone().into()),
                 Arc::clone(&grammar),
                 &stored,
                 &|| false,
@@ -7780,7 +7780,7 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
             let grammar = Grammar::new(*lang).unwrap();
             let doc = as_run(format, || {
                 let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary.in_format(format, source.as_bytes());
-                TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
+                TapeDoc::restore(Arc::new(source.clone().into()), grammar, &image, &|| false).unwrap()
             });
             assert_eq!(
                 doc.doc_tape().image().format(),
@@ -8123,7 +8123,7 @@ fn a_file_that_embeds_code_is_read_by_its_lean_parser() {
 fn call_argument_programs(source: &str) -> Vec<(String, usize)> {
     let grammar = Grammar::new(GrammarDialect::Python).unwrap();
     let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
-    let doc = TapeDoc::restore(std::sync::Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+    let doc = TapeDoc::restore(std::sync::Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
     crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start)).collect()
 }
 

@@ -29,6 +29,8 @@ pub const TAPE_FORMAT_VERSION: u32 = rerail_tape_format::FORMAT_VERSION;
 /// (decision 0140), and an image is one byte string however it was made.
 pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded};
 pub use rerail_tape_format::CODE_EXTRA;
+/// A document's source, read where it lies (decision 0353 step 7, row 13).
+pub use rerail_tape_format::home::{Home, Text};
 /// Format 16's writer and tables, for the parsers the engine's crates compile (JSON's kernels: `encode_16`).
 pub use rerail_tape_format::f16;
 pub const NONE: u32 = u32::MAX;
@@ -611,7 +613,7 @@ pub struct DerivedImage {
     /// The document it was derived from: 0 the primary, `i` the `i`-th derived one. Embedders run
     /// on the primary only; the field makes nesting representable.
     pub parent: u32,
-    pub text: Arc<String>,
+    pub text: Arc<Text>,
     /// Where its text stands in its parent's (`embed::segments`).
     pub(super) source_map: Arc<SegmentMap>,
     /// The parent's bytes it cannot be read through (`embed::Program::host_errors`).
@@ -673,7 +675,7 @@ impl DerivedImage {
                     .collect(),
             ),
             at: program.at.map(|at| (at.start as u32, at.end as u32)),
-            text: Arc::new(program.text),
+            text: Arc::new(program.text.into()),
             source_map: Arc::new(program.segments),
             tape,
         })
@@ -723,7 +725,7 @@ impl DerivedImage {
             role,
             via,
             parent,
-            text: Arc::new(text),
+            text: Arc::new(text.into()),
             source_map: Arc::new(source_map),
             host_errors: Arc::new(host_errors),
             tape,
@@ -799,7 +801,7 @@ impl DerivedImage {
     }
 
     fn estimated_bytes(&self) -> usize {
-        self.text.capacity()
+        self.text.len()
             + self.source_map.estimated_bytes()
             + self.host_errors.capacity() * std::mem::size_of::<(u32, u32)>()
             + self.tape.estimated_bytes()
@@ -1445,6 +1447,33 @@ impl TapeImage {
     /// Whether its bytes are placed in a room (a slab's, decision 0353 step 4a), not its own.
     pub fn placed(&self) -> bool {
         self.room().is_some()
+    }
+
+    /// The tape as stored, where it lies in its room (`placed`): format 16's and 16z's extent, read there (`emit`
+    /// writes the same bytes), and format 15's room, its stored image (`from_home`). `None` for a tape held apart.
+    pub fn stored_in_room(&self) -> Option<(&std::sync::Arc<dyn rerail_tape_format::home::Room>, &[u8])> {
+        let room = self.room()?;
+        match &self.held {
+            Held::F15(_) => Some((room, room.bytes())),
+            Held::F16(t) => Some((room, t.extent())),
+            Held::F16Z(t) => Some((room, t.extent())),
+        }
+    }
+
+    /// The image in a room where a device reads tapes (`placed::device`), as a parse's is (`place_stored`): itself
+    /// where it is placed already or there is no device.
+    pub fn housed(&self, grammar: &Arc<Grammar>) -> Result<Self, String> {
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        if !self.placed() && placed::device().is_some() {
+            let home = self.place_stored()?;
+            if home.placed() {
+                let mut placed = Self::from_home(home, grammar)?;
+                placed.source_digest = self.source_digest;
+                return Ok(placed);
+            }
+        }
+        let _ = grammar;
+        Ok(self.clone())
     }
 
     /// The room the tape is placed in (`placed`), which says where the device reads it.
@@ -2434,7 +2463,7 @@ pub struct TapeDoc {
     // P's: the source's digest, read by P's anchor corpus (`matcher::p_anchors`, test-only).
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     source_digest: [u8; 32],
-    pub source: Arc<String>,
+    pub source: Arc<Text>,
     grammar: Arc<Grammar>,
     lines: Arc<LineTable>,
     points: Arc<Points>,
@@ -2591,7 +2620,7 @@ pub type KindPostings = rustc_hash::FxHashMap<u16, Vec<u32>>;
 /// positions keep their own table, built on first use: violations place spans with the line table,
 /// and nothing but parity with the native tree reads a tape node's position.
 struct Points {
-    source: Arc<String>,
+    source: Arc<Text>,
     rows: std::sync::OnceLock<LineTable>,
 }
 
@@ -2610,7 +2639,7 @@ impl Points {
 /// this file is packed or its result page is normalized.
 #[derive(Clone)]
 pub struct TapeSource {
-    pub source: Arc<String>,
+    pub source: Arc<Text>,
     pub grammar: Arc<Grammar>,
     pub image: Arc<FileImage>,
     pub lines: Arc<LineTable>,
@@ -2656,14 +2685,14 @@ impl TapeDoc {
     /// test-only). W's tape keeps no digest, so it is computed.
     /// G's: the shared source (G's literal anchors, test-only).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn transducer_source_arc(&self) -> Arc<String> {
+    pub fn transducer_source_arc(&self) -> Arc<Text> {
         Arc::clone(&self.source)
     }
 
     /// The documents `image` encodes over `source`: the file's own, with the guests derived from
     /// it.
     pub fn restore_with_lines(
-        source: Arc<String>,
+        source: Arc<Text>,
         grammar: Arc<Grammar>,
         image: &FileImage,
         lines: Arc<LineTable>,
@@ -2732,7 +2761,7 @@ impl TapeDoc {
 
     /// The document of `image`'s own tree over `source`.
     fn restore_tree(
-        source: Arc<String>,
+        source: Arc<Text>,
         grammar: Arc<Grammar>,
         image: &TapeImage,
         lines: Arc<LineTable>,
@@ -2744,7 +2773,10 @@ impl TapeDoc {
         // 0293), so nothing is copied out of it.
         let (digest, _) = validated::visit(&source, &grammar, image, budget, |_, _| {})?;
         checked(budget)?;
-        let image = Arc::new(image.clone());
+        // Held where a device reads it, the source and the tape alike: the residency takes both as they lie (decision
+        // 0353 step 7, row 13). A placed image is shared, not copied.
+        let source = placed::housed(source);
+        let image = Arc::new(image.housed(&grammar)?);
         let held = Arc::new(formats::DocTape::new(Arc::clone(&image), Arc::clone(&source)));
         Ok(Self {
             held,
@@ -2827,12 +2859,12 @@ impl TapeDoc {
     }
 
     /// This document's own text, which its spans index.
-    pub fn document_source(&self) -> &Arc<String> {
+    pub fn document_source(&self) -> &Arc<Text> {
         &self.source
     }
 
     /// The file's source: a guest's host's, else this document's own.
-    pub fn file_source(&self) -> &Arc<String> {
+    pub fn file_source(&self) -> &Arc<Text> {
         self.host
             .as_ref()
             .map_or(&self.source, |link| &link.host.source)
@@ -2865,7 +2897,7 @@ impl TapeDoc {
     /// or a lone tape (a file that derives none).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn restore(
-        source: Arc<String>,
+        source: Arc<Text>,
         grammar: Arc<Grammar>,
         image: &impl Documents,
         budget: &impl Fn() -> bool,
@@ -2918,6 +2950,11 @@ impl TapeDoc {
         if let Some(digest) = self.digest.get() {
             return Ok((*digest, None));
         }
+        // A tape in its room is hashed there: the residency takes it as it lies (`in_place`), nothing serialized.
+        if let Some((_, stored)) = self.image.stored_in_room() {
+            let digest = tape_identity(&self.source_digest, stored);
+            return Ok((*self.digest.get_or_init(|| digest), None));
+        }
         let image = self.image.to_bytes()?;
         let digest = tape_identity(&self.source_digest, &image);
         Ok((*self.digest.get_or_init(|| digest), Some(image)))
@@ -2938,6 +2975,13 @@ impl TapeDoc {
     /// The SHA-256 of this document's stored bytes, the residency's key (decision 0032).
     pub fn resident_key(&self) -> Result<[u8; 32], String> {
         self.tape_digest()
+    }
+
+    /// This document's tape as stored where it lies in its room, and its source, where both are in rooms (`housed`):
+    /// what the residency takes as they lie (decision 0353 step 7, row 13).
+    pub fn in_place(&self) -> Option<(&Arc<dyn rerail_tape_format::home::Room>, &[u8], &Arc<Text>)> {
+        let (room, stored) = self.image.stored_in_room()?;
+        self.source.home().placed().then_some((room, stored, &self.source))
     }
 
     /// This document's image as stored (`image`, when the caller has it already), its source and
@@ -3510,16 +3554,16 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
 }
 
 impl Doc for TapeDoc {
-    type Source = String;
+    type Source = Text;
     type Lang = GrammarDialect;
     type Node<'a> = TapeNode<'a>;
     fn get_lang(&self) -> &GrammarDialect {
         &self.grammar.lang
     }
-    fn get_source(&self) -> &String {
+    fn get_source(&self) -> &Text {
         &self.source
     }
-    fn do_edit(&mut self, _edit: &Edit<String>) -> Result<(), String> {
+    fn do_edit(&mut self, _edit: &Edit<Text>) -> Result<(), String> {
         Err("replace the source-bound tape after editing".into())
     }
     fn root_node(&self) -> Self::Node<'_> {
@@ -3614,7 +3658,7 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
         }
         stack.extend(kept.into_iter().rev());
     }
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(Text::from(source));
     let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
     let doc = TapeDoc::restore_tree(source, grammar, &image, lines, &|| false)?;
     if ends.len() != doc.transducer_len() {
@@ -3647,3 +3691,4 @@ pub mod v9np;
 // cratify: `tests` is rerail-engine's (it mounts it)
 
 // cratify: `corpus_parity` is rerail-lang-php's (it mounts it)
+

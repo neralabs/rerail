@@ -159,7 +159,7 @@ fn persisted_tree_parity(source: &str, language: GrammarDialect) -> Result<usize
     if decoded.primary.to_bytes()? != bytes {
         return Err("serialized tape did not round-trip canonically".into());
     }
-    let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &decoded, &|| false)?;
+    let tape = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &decoded, &|| false)?;
     tree_parity(&native, source, &tape)
 }
 
@@ -390,7 +390,7 @@ fn blade_tape_parity(source: &str) -> Result<(usize, usize), String> {
     if decoded.primary.to_bytes()? != bytes {
         return Err("serialized tape did not round-trip canonically".into());
     }
-    let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &decoded, &|| false)?;
+    let tape = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &decoded, &|| false)?;
     let tree = parse_tree(source.as_bytes()).map_err(|error| format!("{error:?}"))?;
     blade_tree_parity(&tree, source, &tape)
 }
@@ -1087,7 +1087,7 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
             failures.push(json!({"path":path_name,"error":"nonCanonicalTape"}));
         }
         let t = Instant::now();
-        let tape = TapeDoc::restore(Arc::new(source.clone()), grammar.clone(), &decoded, &|| {
+        let tape = TapeDoc::restore(Arc::new(source.clone().into()), grammar.clone(), &decoded, &|| {
             false
         })
         .unwrap();

@@ -10,7 +10,7 @@
         let grammar = Grammar::new(GrammarDialect::Python).unwrap();
         let native = StrDoc::new(source, GrammarDialect::Python);
         let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap()
     }
 
     /// Set mode's output is exact mode's as a set of (start, label) keys, each once, on the

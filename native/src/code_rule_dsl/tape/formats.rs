@@ -10,7 +10,7 @@
 //! A language without format 16's table (`f16::lang`), or an image with a code the table lacks, keeps format 15,
 //! and the profile counts it (`tape.keeps_15.<language>`); a run that set `RERAIL_TAPE` is told once a language.
 
-use super::{Code, Columns15, FileImage, Grammar, Held, SENTINEL, TAIL_FROM_START, TapeDoc, TapeImage};
+use super::{Code, Columns15, FileImage, Grammar, Held, SENTINEL, TAIL_FROM_START, TapeDoc, TapeImage, Text};
 use crate::code_rule_dsl::language::GrammarDialect;
 use rerail_tape_format::{Redo, Writer};
 use rerail_tape_format::f16::{self, Lang};
@@ -494,12 +494,12 @@ pub struct DocTape {
     reader: AnyTape<'static>,
     image: Arc<TapeImage>,
     /// The document's source, which another format's tape is written over (`tape_in`: format 16 holds its newlines).
-    source: Arc<String>,
+    source: Arc<Text>,
     other: [OnceLock<TapeImage>; 3],
 }
 
 impl DocTape {
-    pub fn new(image: Arc<TapeImage>, source: Arc<String>) -> Self {
+    pub fn new(image: Arc<TapeImage>, source: Arc<Text>) -> Self {
         let reader = image.tape();
         // SAFETY: the reader borrows the image's bytes and code table, and the language tables (static). The image
         // is in the `Arc`'s allocation, which does not move, and is never changed once held; this holds the `Arc`
@@ -520,7 +520,7 @@ impl DocTape {
     }
 
     /// The source the tape is over.
-    pub fn source(&self) -> &Arc<String> {
+    pub fn source(&self) -> &Arc<Text> {
         &self.source
     }
 

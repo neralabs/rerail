@@ -14,7 +14,7 @@ pub fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)>
         source.push(' ');
     }
     source.push('\n');
-    let input = FileInput::new("a.py".into(), "python".into(), Arc::new(source), None, None, "core").unwrap();
+    let input = FileInput::new("a.py".into(), "python".into(), Arc::new(source.into()), None, None, "core").unwrap();
     let Built::Facts(facts) = core::build(&input).unwrap() else { panic!("literal test failed to parse") };
     let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(&facts)).unwrap();
     let p = Projected::new(0, Arc::new(facts), Some(&dialect), super::Shape::Core, false, None);

@@ -280,7 +280,7 @@ fn a_file_set_without_a_root_resolves_among_its_own_files() {
         ("src/index.ts", ""),
         ("package.json", r#"{ "name": "x" }"#),
     ] {
-        held.hold(path, &Arc::new(text.to_owned()), None);
+        held.hold(path, &Arc::new(text.to_owned().into()), None);
     }
     let view = View::new(Arc::new(held), None);
     assert_eq!(
@@ -464,7 +464,7 @@ fn holding_a_file_changes_resolution_only_where_disk_below_the_root_differs() {
     directory.write("src/a.js", "export {}");
     directory.write("package.json", r#"{ "name": "x" }"#);
     let root = Some(directory.0.as_path());
-    let text = |text: &str| Arc::new(text.to_owned());
+    let text = |text: &str| Arc::new(crate::code_rule_dsl::tape::Text::from(text));
     let mut held = HeldFiles::default();
     // A source disk holds reads only as present, whatever its text.
     assert!(!held.hold("src/a.js", &text("export const a = 1"), root));

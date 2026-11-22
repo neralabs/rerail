@@ -5399,6 +5399,7 @@ dependencies = [
  "rerail-clif",
  "rerail-prof",
  "rerail-store",
+ "rerail-tape-format",
  "rusqlite",
  "same-file",
  "serde",
@@ -5423,6 +5424,7 @@ dependencies = [
 name = "rerail-tape-format"
 version = "0.1.0"
 dependencies = [
+ "ast-grep-core",
  "lz4-sys",
  "memchr",
  "rerail-clif",

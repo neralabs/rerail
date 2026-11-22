@@ -228,7 +228,7 @@ pub(super) struct Item {
     grammar_id: i64,
     grammar_version: i64,
     tape_format_version: i64,
-    source: Arc<String>,
+    source: Arc<rerail_tape_format::home::Text>,
     tape: TapeBytes,
     tape_identity: HashKey,
     /// Whether the run's manifest names the source once written (`ContentStore::name_sources`).
@@ -363,7 +363,7 @@ impl ContentStore {
     /// written (`name_sources`).
     /// Where the queue is full a lone write is dropped, and the next run parses the file again.
     #[allow(clippy::too_many_arguments)]
-    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<String>, tape: TapeBytes, named: bool, documents: Option<Arc<[super::QueuedDocument]>>) -> StoreResult<()> {
+    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<rerail_tape_format::home::Text>, tape: TapeBytes, named: bool, documents: Option<Arc<[super::QueuedDocument]>>) -> StoreResult<()> {
         let tape_identity = HashKey::tape_identity(canonical, (*tape).as_ref());
         let mut item = Some(Item { key, canonical, grammar_id, grammar_version, tape_format_version, source: Arc::clone(source), tape, tape_identity, named, documents });
         let dir = object_dir(&self.database_path);
@@ -763,7 +763,7 @@ mod tests {
     }
 
     /// A test's files: its sources, each with its tape.
-    type Files = [(Arc<String>, Arc<Vec<u8>>)];
+    type Files = [(Arc<rerail_tape_format::home::Text>, Arc<Vec<u8>>)];
 
     fn key(i: usize) -> Key {
         Key::of(&[b"a test's tape", &[i as u8]])
@@ -807,7 +807,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
         let big = write_back::gather_cap() + 1;
-        let files: Vec<(Arc<String>, Arc<Vec<u8>>)> = (0..4).map(|i| (Arc::new(format!("source {i}\n")), Arc::new(vec![i as u8 + 1; if i == 3 { big } else { 100 + i }]))).collect();
+        let files: Vec<(Arc<rerail_tape_format::home::Text>, Arc<Vec<u8>>)> = (0..4).map(|i| (Arc::new(format!("source {i}\n").into()), Arc::new(vec![i as u8 + 1; if i == 3 { big } else { 100 + i }]))).collect();
         queue(&store, &files);
         store.written().unwrap();
         let ids: Vec<SourceId> = files.iter().map(|(source, _)| store.source_by_hash(HashKey::sha256(source.as_bytes())).unwrap().expect("stored")).collect();

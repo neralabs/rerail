@@ -62,7 +62,7 @@ struct Doc {
 
 fn census(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u32, String>) -> Option<Doc> {
     let source = std::fs::read_to_string(path).ok()?;
-    let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source), None, None, "core").ok()?;
+    let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source.into()), None, None, "core").ok()?;
     let Ok(Built::Facts(f)) = core::build(&file) else { return None };
     // The engine's ids: named, non-extra (comment) nodes in preorder. rank[id] = kept nodes before id.
     let n = f.len();
@@ -228,7 +228,7 @@ struct DocSets {
 
 fn doc_sets(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u32, String>) -> Option<DocSets> {
     let source = std::fs::read_to_string(path).ok()?;
-    let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source), None, None, "core").ok()?;
+    let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source.into()), None, None, "core").ok()?;
     let Ok(Built::Facts(f)) = core::build(&file) else { return None };
     let n = f.len();
     let keep: Vec<bool> = (0..n).map(|i| f.flags(i as u32) & 1 == 1 && f.flags(i as u32) & 2 == 0).collect();

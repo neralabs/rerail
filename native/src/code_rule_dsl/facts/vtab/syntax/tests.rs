@@ -434,7 +434,7 @@ fn modules_and_packages_follow_t() {
 
 /// One document of `source` in `label`'s dialect, keyed `key`, with its tape (W's values read it).
 fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
-    let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
+    let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
     let (core::Built::Facts(facts), Some(tape)) = core::build_with_tape(&file, true).unwrap() else { panic!("{path} did not parse") };
     let facts = Arc::new(facts);
     Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, Arc::new(file))), guest: None, module: None, unpackaged: false }
@@ -1117,7 +1117,7 @@ fn span_ids_census() {
                         let mut most: [(usize, String); 6] = Default::default();
                         for (path, shown) in files.iter().skip(t).step_by(threads) {
                             let Ok(src) = std::fs::read_to_string(path) else { continue };
-                            let Ok(file) = FileInput::new(shown.clone(), "python".to_owned(), Arc::new(src.clone()), None, None, "core") else { continue };
+                            let Ok(file) = FileInput::new(shown.clone(), "python".to_owned(), Arc::new(src.clone().into()), None, None, "core") else { continue };
                             let Ok(Built::Facts(facts)) = core::build(&file) else { continue };
                             let facts = Arc::new(facts);
                             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
@@ -1325,7 +1325,7 @@ fn definition_ids_census() {
                         let row = by.entry(*l).or_default();
                         row.files += 1;
                         let Ok(src) = std::fs::read_to_string(path) else { row.failed += 1; continue };
-                        let Ok(file) = FileInput::new(path.display().to_string(), (*l).to_owned(), Arc::new(src), None, None, "core") else { row.failed += 1; continue };
+                        let Ok(file) = FileInput::new(path.display().to_string(), (*l).to_owned(), Arc::new(src.into()), None, None, "core") else { row.failed += 1; continue };
                         let t_parse = cpu_now();
                         let Ok(Built::Facts(facts)) = core::build(&file) else { row.failed += 1; continue };
                         let facts = Arc::new(facts);
@@ -1790,7 +1790,7 @@ fn node_ids_in_place_equal_the_numbered_ones() {
     for &(label, source) in cases {
         let lang = dialect_by_label(label).unwrap_or_else(|| panic!("no dialect {label}"));
         let grammar = Grammar::new(lang).unwrap();
-        let source = Arc::new(source.to_owned());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
         let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
             let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
@@ -2006,7 +2006,7 @@ fn id_read_cases() -> Vec<(String, Projected, u32)> {
     for &(label, source) in cases {
         let lang = dialect_by_label(label).unwrap();
         let grammar = Grammar::new(lang).unwrap();
-        let source = Arc::new(source.to_owned());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
         let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
             let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
@@ -2228,7 +2228,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     for &(label, source) in cases {
         let lang = dialect_by_label(label).unwrap();
         let grammar = Grammar::new(lang).unwrap();
-        let source = Arc::new(source.to_owned());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
         let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
             let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
@@ -2654,7 +2654,7 @@ fn the_views_read_through_the_directory_are_the_projections() {
                 .map(|(k, &(label, path, source))| {
                     let lang = dialect_by_label(label).unwrap();
                     let grammar = Grammar::new(lang).unwrap();
-                    let source = Arc::new(source.to_owned());
+                    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
                     let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
                     let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
                     let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.in_format(format, source.as_bytes()), lines).unwrap());

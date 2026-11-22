@@ -760,7 +760,7 @@ pub struct FileAnchorIndex<'tree, D: Doc> {
 
 impl<'tree, D> FileAnchorIndex<'tree, D>
 where
-    D: Doc<Source = String, Lang = GrammarDialect>,
+    D: Doc<Lang = GrammarDialect, Source: std::ops::Deref<Target = str>>,
     D::Node<'tree>: AnchorNode<'tree>,
 {
     pub fn build(

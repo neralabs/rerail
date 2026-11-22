@@ -6,31 +6,36 @@
 //! phase 1's run (`Texts::sources`), whose builder borrows each text, and its own builder takes it. A text is used
 //! only while its file's stat is the one taken before it was read: a file changed since is read again.
 
+use crate::code_rule_dsl::tape::Text;
 use crate::content_store::FileStat;
+use crate::code_rule_dsl::tape::Home;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// The texts one run read, by the path it read each at: the run's, gone with it.
 #[derive(Default)]
-pub struct Sources(parking_lot::Mutex<HashMap<PathBuf, (Option<FileStat>, String)>>);
+/// Each is held where it was read into (`placed::placer`: a slab's room where a device reads sources), and every
+/// reader shares it there (decision 0353 step 7).
+pub struct Sources(parking_lot::Mutex<HashMap<PathBuf, (Option<FileStat>, Arc<Text>)>>);
 
 impl Sources {
     /// Keeps the text read at `path` while the file's stat is `stat`. Bytes that are not UTF-8 are no text: a
     /// builder reads and refuses them itself.
-    pub fn keep(&self, path: &Path, stat: FileStat, bytes: Vec<u8>) {
-        let Ok(text) = String::from_utf8(bytes) else { return };
-        self.0.lock().insert(path.to_path_buf(), (Some(stat), text));
+    pub fn keep(&self, path: &Path, stat: FileStat, bytes: Home) {
+        let Ok(text) = Text::new(bytes) else { return };
+        self.0.lock().insert(path.to_path_buf(), (Some(stat), Arc::new(text)));
     }
 
-    /// A Git source's path includes its immutable object identity, so it needs no filesystem stat.
-    pub fn keep_git(&self, path: &Path, bytes: &[u8]) {
-        let Ok(text) = std::str::from_utf8(bytes) else { return };
-        self.0.lock().insert(path.to_path_buf(), (None, text.to_owned()));
+    /// A Git source's path includes its immutable object identity, so it needs no filesystem stat. Several paths of
+    /// one blob share its text.
+    pub fn keep_git(&self, path: &Path, text: &Arc<Text>) {
+        self.0.lock().insert(path.to_path_buf(), (None, Arc::clone(text)));
     }
 
     /// The text kept for `path`, if its file is as it was read (else it is dropped): taken, by its last reader,
-    /// or a copy.
-    fn text(&self, path: &Path, take: bool) -> Option<String> {
+    /// or shared.
+    fn text(&self, path: &Path, take: bool) -> Option<Arc<Text>> {
         let mut all = self.0.lock();
         let (stat, _) = all.get(path)?;
         if stat.is_some() && crate::git_workspace::snapshot::file_stat(path) != *stat {
@@ -58,7 +63,7 @@ pub struct Given<'a> {
 impl Given<'_> {
     /// `path`'s text where the run holds it as the file is now; else `None`, and the caller reads the file.
     /// `take`: the caller is its last reader (its wave), not a look before it.
-    pub fn text(&self, path: &Path, take: bool) -> Option<String> {
+    pub fn text(&self, path: &Path, take: bool) -> Option<Arc<Text>> {
         self.own.text(path, take).or_else(|| self.handed?.text(path, false))
     }
 }
@@ -76,15 +81,15 @@ mod tests {
         std::fs::write(&b, "y = 2\n").unwrap();
         let stat = |p: &Path| FileStat::of(&std::fs::metadata(p).unwrap());
         let outer = Sources::default();
-        outer.keep(&a, stat(&a), b"x = 1\n".to_vec());
-        outer.keep(&b, stat(&b), b"y = 2\n".to_vec());
-        outer.keep(&dir.join("c.bin"), stat(&a), vec![0xff, 0xfe]);
+        outer.keep(&a, stat(&a), Home::Own(b"x = 1\n".to_vec()));
+        outer.keep(&b, stat(&b), Home::Own(b"y = 2\n".to_vec()));
+        outer.keep(&dir.join("c.bin"), stat(&a), Home::Own(vec![0xff, 0xfe]));
         let inner_own = Sources::default();
         let inner = Given { own: &inner_own, handed: Some(&outer) };
         let mine = Given { own: &outer, handed: None };
-        assert_eq!(inner.text(&a, true).as_deref(), Some("x = 1\n"), "a run handed the texts borrows");
-        assert_eq!(mine.text(&a, false).as_deref(), Some("x = 1\n"), "a look before the wave leaves it");
-        assert_eq!(mine.text(&a, true).as_deref(), Some("x = 1\n"), "the run's wave takes it");
+        assert_eq!(inner.text(&a, true).as_deref().map(Text::as_str), Some("x = 1\n"), "a run handed the texts borrows");
+        assert_eq!(mine.text(&a, false).as_deref().map(Text::as_str), Some("x = 1\n"), "a look before the wave leaves it");
+        assert_eq!(mine.text(&a, true).as_deref().map(Text::as_str), Some("x = 1\n"), "the run's wave takes it");
         assert_eq!(mine.text(&a, true), None, "taken");
         assert_eq!(inner.text(&dir.join("c.bin"), false), None, "not UTF-8: not kept");
         // Changed since it was read: not used, and dropped.
@@ -92,7 +97,7 @@ mod tests {
         std::fs::write(&b, "y = 3\n").unwrap();
         assert_eq!(mine.text(&b, true), None);
         std::fs::write(&b, "y = 2\n").unwrap();
-        outer.keep(&b, stat(&b), b"y = 2\n".to_vec());
+        outer.keep(&b, stat(&b), Home::Own(b"y = 2\n".to_vec()));
         assert_eq!(outer.release(), (1, 6), "what no wave took");
         assert_eq!(inner.text(&b, false), None, "released");
         let _ = std::fs::remove_dir_all(&dir);

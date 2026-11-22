@@ -33,7 +33,7 @@ fn files(directory: &Path, extension: &str, found: &mut Vec<PathBuf>) {
 }
 
 fn python_tape(source: &str) -> TapeDoc {
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")
@@ -1994,7 +1994,7 @@ fn presence_bitmap_census() {
 #[test]
 fn ast_pattern_end_of_children_meets_implied_tokens() {
     use ast_grep_core::matcher::MatcherExt as _;
-    let source = Arc::new("switch (x) { case 1: f(); break; }\nf(a);\nf(a, b);\n".to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from("switch (x) { case 1: f(); break; }\nf(a);\nf(a, b);\n"));
     let grammar = Grammar::new(GrammarDialect::TypeScript).expect("TypeScript grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false).expect("parser completed").expect("tape image");
     let tape = TapeDoc::restore(source, grammar, &image, &|| false).expect("restored tape");

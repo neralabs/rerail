@@ -315,7 +315,7 @@ impl Facts {
 
 type PoolKey = (usize, GrammarDialect);
 struct PoolEntry {
-    source: Arc<String>,
+    source: Arc<crate::code_rule_dsl::tape::Text>,
     facts: Arc<Facts>,
 }
 #[derive(Default)]

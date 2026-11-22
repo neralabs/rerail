@@ -65,7 +65,7 @@ pub(super) struct SearchIndexDraft {
     node_count: u32,
     kind_tokens: Arc<String>,
     value_tokens: Arc<String>,
-    source_text: Arc<String>,
+    source_text: Arc<crate::code_rule_dsl::tape::Text>,
 }
 
 impl SearchIndexDraft {
@@ -85,7 +85,7 @@ impl SearchIndexDraft {
     }
 
     pub(super) fn from_observed<'a>(
-        source_text: Arc<String>,
+        source_text: Arc<crate::code_rule_dsl::tape::Text>,
         kind_tokens: String,
         values: impl IntoIterator<Item = (u16, &'a [u8])>,
         node_count: u32,

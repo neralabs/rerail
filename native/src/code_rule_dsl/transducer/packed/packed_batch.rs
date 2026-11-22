@@ -81,7 +81,7 @@ pub struct PackedBatch {
     pub header: MetalBatchHeader,
     /// Each file's source, where its document holds it (shared, never copied: decision 0353 step 7). A file's
     /// bytes are numbered from its `source_start` (`source_of`).
-    pub(super) sources: Vec<Arc<String>>,
+    pub(super) sources: Vec<Arc<crate::code_rule_dsl::tape::Text>>,
     /// The batch's rows over its nodes, `derived_words` words of bits each: the files' derived classes
     /// (`TapeDoc::with_labels`, per class from `DERIVED_CLASS_BASE`, `derived_classes` rows), then each contains
     /// test's row (`contains_rows`).
@@ -3036,7 +3036,7 @@ pub mod tests {
             batch.global_arenas.arenas[kind as usize].capacity = 1;
         }
         batch.evaluations.push(evaluation);
-        batch.sources.push(Arc::new("x".to_owned()));
+        batch.sources.push(Arc::new("x".to_owned().into()));
         batch.root_spans.push(1);
         batch.header.node_count = 1;
         batch

@@ -866,7 +866,7 @@ impl Pending {
             });
             made.unwrap_or_else(|why| {
                 let _ = self.failed.set(why);
-                let facts = Arc::new(crate::code_rule_dsl::facts::core::text(Arc::new(String::new())));
+                let facts = Arc::new(crate::code_rule_dsl::facts::core::text(Arc::new(String::new().into())));
                 Document { key: self.key, path: self.path.clone(), core: format!("/c#core:{}", self.path), digest: self.digest, facts, tape: None, guest: None, module: None, unpackaged: false }
             })
         })
@@ -3499,7 +3499,7 @@ impl Batch {
             let mut out: Vec<Vec<Option<Vec<u64>>>> = vec![vec![None; rx_spans.len()]; documents.len()];
             if !filters.is_empty() && !documents.is_empty() {
                 let mut at = Vec::new();
-                let mut sources: Vec<Arc<String>> = Vec::new();
+                let mut sources: Vec<Arc<crate::code_rule_dsl::tape::Text>> = Vec::new();
                 let mut files: Vec<(usize, usize)> = Vec::new();
                 for (j, d) in documents.iter().enumerate().filter(|(_, d)| d.guest.is_none()) {
                     sources.push(Arc::clone(&d.facts.source));

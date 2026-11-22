@@ -71,7 +71,7 @@ thread_local! {
 
 /// The patched Python grammar the native engine parses with (field codes and names).
 pub static GRAMMAR: LazyLock<Arc<crate::code_rule_dsl::tape::Grammar>> = LazyLock::new(|| {
-    let file = FileInput::new("g.py".into(), "python".into(), Arc::new(String::new()), None, None, "grammar")
+    let file = FileInput::new("g.py".into(), "python".into(), Arc::new(String::new().into()), None, None, "grammar")
         .unwrap_or_else(|e| panic!("{}", e.reason));
     let language = eval::file_language(&file).expect("python grammar");
     crate::code_rule_dsl::tape::Grammar::new(language).expect("grammar")
@@ -83,7 +83,7 @@ pub fn field_name(code: u16) -> String {
 
 /// One file's facts. Columns are indexed by node id.
 pub struct Facts {
-    pub source: Arc<String>,
+    pub source: Arc<crate::code_rule_dsl::tape::Text>,
     pub lines: Arc<LineTable>,
     /// node(id, kind, parent, start, end, start_line, end_line) + subtree_end, flags, field.
     pub kind: Vec<u32>,
@@ -125,7 +125,7 @@ thread_local! {
     static KIND_CACHE: std::cell::RefCell<rustc_hash::FxHashMap<String, u32>> = Default::default();
 }
 
-pub fn build(path: &str, source: Arc<String>) -> Result<Built, String> {
+pub fn build(path: &str, source: Arc<crate::code_rule_dsl::tape::Text>) -> Result<Built, String> {
     build_timed(path, source, &mut BuildNs::default())
 }
 
@@ -137,7 +137,7 @@ pub struct BuildNs {
     pub extract: u64,
 }
 
-pub fn build_timed(path: &str, source: Arc<String>, ns: &mut BuildNs) -> Result<Built, String> {
+pub fn build_timed(path: &str, source: Arc<crate::code_rule_dsl::tape::Text>, ns: &mut BuildNs) -> Result<Built, String> {
     let t0 = std::time::Instant::now();
     let file = FileInput::new(
         path.to_owned(),
@@ -171,7 +171,7 @@ fn kind_sym(name: &str) -> u32 {
     })
 }
 
-pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<String>) -> Facts {
+pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<crate::code_rule_dsl::tape::Text>) -> Facts {
     let n = doc.transducer_len();
     let mut f = Facts {
         source,

@@ -58,8 +58,8 @@ UKL_COLD uint32_t tape_next_named(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t
 UKL_COLD uint32_t tape_first_child(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_first_child(TAPE_READ(s,d),i);}
 UKL_COLD uint32_t tape_child_count(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_child_count(TAPE_READ(s,d),i);}
 UKL_COLD uint32_t tape_child(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t k){return clif_tape_child(TAPE_READ(s,d),i,k);}
-UKL_COLD uint8_t tape_byte(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t at){return (tape_doc(s,d)+d.source)[at];}
-UKL_COLD UKL_GLOBAL const uint8_t* tape_source(UKL_GLOBAL const uint8_t* s,DocView d){return tape_doc(s,d)+d.source;}
+UKL_COLD UKL_GLOBAL const uint8_t* tape_source(UKL_GLOBAL const uint8_t* s,DocView d){return tape_doc(s,d)+(int64_t)(((uint64_t)d.source_high<<32)|(uint64_t)d.source);}
+UKL_COLD uint8_t tape_byte(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t at){return tape_source(s,d)[at];}
 // Lines (decision 0336 §6): format 16's newline index, format 15's line starts. A byte's line (from 0), and a
 // line's first byte, document-local.
 UKL_COLD uint32_t tape_line(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t at){return clif_tape_line(TAPE_READ(s,d),at);}

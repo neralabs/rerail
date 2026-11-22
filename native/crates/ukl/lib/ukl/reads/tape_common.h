@@ -52,7 +52,7 @@
 #define CLIF_T_Z_PIECES 4u
 // In an entry: the block's view at SLOT_VIEW, its bytes from SLOT_BYTES, and SLACK bytes of room after them.
 #define CLIF_T_SLOT_VIEW 16u
-#define CLIF_T_SLOT_BYTES 144u
+#define CLIF_T_SLOT_BYTES 160u
 #define CLIF_T_SLACK 64u
 // A piece's kind: its bytes, one LZ4 block, or a repeat of the piece its payload names.
 #define CLIF_T_RAW 0u

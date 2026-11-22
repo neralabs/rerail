@@ -13,7 +13,7 @@ typedef struct ViewRow {
     uint32_t homes[2];
     uint32_t key;
     uint32_t rows[13];
-    uint32_t view[32];
+    uint32_t view[34];
     uint32_t bytes;
 } ViewRow;
 typedef struct ViewHome {
@@ -31,7 +31,7 @@ typedef struct ViewDir {
     uint32_t counted;
     uint32_t pad;
 } ViewDir;
-UKL_STATIC_ASSERT(sizeof(ViewRow) == 224, "ViewRow: size");
+UKL_STATIC_ASSERT(sizeof(ViewRow) == 232, "ViewRow: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, homes) == 24, "ViewRow.homes");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == 88, "ViewRow.view");
 UKL_STATIC_ASSERT(sizeof(ViewHome) == 16, "ViewHome: size");

@@ -107,7 +107,7 @@ impl Family {
 /// starts[ns], ne, ends[ne]]`. A projection's are a derived fact, written once into its block where they are first
 /// read (decision 0353 step 4d): the `Loc` views' reads read them there (`rerail_clif::view_reads`).
 pub struct Lines {
-    source: std::sync::Arc<String>,
+    source: std::sync::Arc<crate::code_rule_dsl::tape::Text>,
     python: bool,
     block: Option<std::sync::Arc<super::cells::Block>>,
     index: std::sync::OnceLock<Words>,
@@ -160,15 +160,15 @@ impl Lines {
         let (ns, ne, _) = Self::shape(src, python);
         let mut w = vec![0u32; 2 + ns + ne];
         Self::fill(&mut w, src, python, ns, ne);
-        Self { source: std::sync::Arc::new(String::new()), python, block: None, index: std::sync::OnceLock::from(Words::Own(w)) }
+        Self { source: std::sync::Arc::new(String::new().into()), python, block: None, index: std::sync::OnceLock::from(Words::Own(w)) }
     }
     /// The lines of `source`, indexed on their first read into `block` (a projection's).
-    pub(super) fn shared(source: std::sync::Arc<String>, python: bool, block: &std::sync::Arc<super::cells::Block>) -> Self {
+    pub(super) fn shared(source: std::sync::Arc<crate::code_rule_dsl::tape::Text>, python: bool, block: &std::sync::Arc<super::cells::Block>) -> Self {
         Self { source, python, block: Some(std::sync::Arc::clone(block)), index: Default::default() }
     }
     /// The lines of `source`, indexed on their first read into words of their own (a read apart from any
     /// projection: a verdict's first error).
-    pub(super) fn apart(source: std::sync::Arc<String>, python: bool) -> Self {
+    pub(super) fn apart(source: std::sync::Arc<crate::code_rule_dsl::tape::Text>, python: bool) -> Self {
         Self { source, python, block: None, index: Default::default() }
     }
     /// The words, `[ns, starts[ns], ne, ends[ne]]`, where the views' reads read them.
@@ -655,7 +655,7 @@ pub(super) struct CoreRows {
     pub(super) skip: Skip,
     /// The values of the format string document being read (decision 0176: `literal::format_tape::values`), by
     /// node id, with the document's source they were read off: one parse a document, not one a node.
-    format_values: Option<(std::sync::Arc<String>, Vec<Option<(String, &'static str)>>)>,
+    format_values: Option<(std::sync::Arc<crate::code_rule_dsl::tape::Text>, Vec<Option<(String, &'static str)>>)>,
     /// The node kinds whose `text` is made at any length (`Projection::long_text`).
     pub(super) long_text: BTreeSet<String>,
     /// Every node's `text` at any length (`Projection::long_text_any`).
