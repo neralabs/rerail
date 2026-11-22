@@ -1235,9 +1235,9 @@ fn json_utf8_is_simdjsons_lookup() {
     }
 }
 
-/// Tier 2 in `walk`'s shape (page 40, fixes 8, 9 and 12; decision 0599): each container's cycle one loop, its opener
-/// taken in its arm, a pair closed where its value ends, a value's byte matched once, a string with no escape written
-/// as its node and its content at once.
+/// Tier 2 in `walk`'s shape (page 40, fixes 8, 9 and 12; decisions 0599, 0602): each container's cycle one loop, its
+/// opener taken in its arm, a pair closed where its value ends, a value's primitives one method called from each
+/// place, a string with no escape written as its node and its content at once.
 #[test]
 fn json_tier2_is_walks_shape() {
     let (_, tier2) = json_rust();
@@ -1252,20 +1252,20 @@ fn json_tier2_is_walks_shape() {
     assert_eq!(tier2.lines().filter(|l| l.strip_suffix(" => {").and_then(|p| p.split_once(" | ")).is_some_and(|(a, b)| a.parse::<usize>().is_ok() && b.parse::<usize>().is_ok())).count(), 2, "a begin and its loop one arm, each container");
     // No place that only closes a node and goes on: a pair is closed where its value ends.
     assert!(!tier2.contains("=> {\nclose(d, e as u64);\nst = "), "a place of a pair's close alone");
-    // A value's byte matched once: at each of its three places (the root, a pair's value, an element), one `match` on
-    // the byte whose arms are the containers', the string's, the atoms' and the number's; no method that matches it
-    // again.
-    assert!(!tier2.contains("fn value("), "no method of the value's alternatives");
-    let sites: Vec<&str> = tier2.split("match src[s] {\n").skip(1).collect();
-    assert_eq!(sites.len(), 3, "a value's decision a place");
-    for site in &sites {
-        let arms = site.split("\n_ => {\nreturn Err(at(src, starts, i));\n}\n}\n").next().expect("the match");
-        for arm in ["0x7b => {", "0x5b => {", "0x22 => {\ne = unsafe { string::<S>(", "0x74 if src[s..s + 4] == *b\"true\"", "let end = number_end(src, s)?;\ne = token(d, &mut i, "] {
-            assert!(arms.contains(arm), "`{arm}` an arm of the one match:\n{arms}");
-        }
-        assert!(!arms.contains("match peek("), "the byte matched again:\n{arms}");
+    // A value as `walk` decides it (decision 0602): at each of its three places (the root, a pair's value, an element)
+    // a `match` on the byte with the containers' arms, and the rest one method's (`walk`'s `primitive`), its `_`. The
+    // method is written once: the string's, the atoms' and the number's arms there alone.
+    assert_eq!(tier2.matches("fn value_primitive<S").count(), 1, "the primitive written once");
+    let calls: Vec<&str> = tier2.split("match peek(src, starts, i) {\n").skip(1).filter(|m| m.contains("value_primitive::<S>(")).collect();
+    let places: Vec<&str> = tier2.split("let s = starts[i] as usize;\nmatch src[s] {\n0x7b => {").skip(1).collect();
+    assert_eq!(places.len() + calls.len(), 3, "a value's decision at three places");
+    assert_eq!(tier2.matches("_ => {\ne = unsafe { value_primitive::<S>(src, len, starts, d, &mut i, [").count(), 3, "each place's `_` the primitive");
+    let primitive = tier2.split("fn value_primitive<S").nth(1).expect("the primitive").split("\nOk(e)\n}").next().expect("its body");
+    for arm in ["0x22 => {\ne = unsafe { string::<S>(", "0x74 if src[s..s + 4] == *b\"true\"", "0x66 if src[s..s + 5] == *b\"false\"", "0x6e if src[s..s + 4] == *b\"null\"", "let end = number_end(src, s)?;\ne = token(d, &mut i, "] {
+        assert!(primitive.contains(arm), "`{arm}` the primitive's:\n{primitive}");
+        assert_eq!(tier2.matches(arm).count(), 1, "`{arm}` written once");
     }
-    // Each primitive's arm a call of code written once (`token`, `number_end`, `string`), as `walk` calls `primitive`.
+    assert!(!primitive.contains("0x7b") && !primitive.contains("0x5b"), "a container is the place's");
     assert_eq!(tier2.matches("fn number_end(").count(), 1, "a number's end written once");
     assert!(!tier2.contains("i += 1;\ne = end;\nleaf("), "a token's leaf written out at a place");
     // The nodes stored through the walk's hold on the tape, a local of `run` (`Cursor`, the lean parser's `Walk`), not

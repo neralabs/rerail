@@ -718,7 +718,7 @@ Tier 2 against `walk`:
 | | `walk` | `tier2.rs` |
 |---|---|---|
 | A string's read | `backslash_quote`, 32 bytes a step | the same: `S::marks32`, `x += 32`, the backend chosen once (`run_best`) |
-| A primitive | `primitive`, called from each place | `token` and `number_end`, called from each place's arm; the byte matched once |
+| A primitive | `primitive`, called from each place's `_` | the same: `value_primitive`, written once, each place's `_` (the byte matched at the place, then in it, as `walk`'s) |
 | `\u`'s digits and surrogates | the four digits a number; the surrogates its ranges; a high one's low one checked and marked (`low_checked`) | the four digits a number (`cp`, `HEX_VALUE`); `high` and `low` ranges of it; a high one's pair from its next escape's two digits, a number too; a low one's high one one position (`after2`) |
 | A node's write | the columns' stores, through pointers in `Walk`'s locals | the cells' stores through `Cursor`, `run`'s local; the state's op only at a block's first node, a close of a block before, or a bound that fails |
 

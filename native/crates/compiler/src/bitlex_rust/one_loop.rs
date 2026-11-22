@@ -116,6 +116,9 @@ struct Lp<'g, 'a> {
     making: RefCell<Vec<Numbers>>,
     /// Each place made of code (`to_place`), by its code.
     placed: RefCell<BTreeMap<String, usize>>,
+    /// The methods that decide every byte themselves (a choice's alternatives that call no level, `walk`'s
+    /// `primitive`), refusing what none takes as a decision does: a decision's arm calling one is its `_`.
+    deciding: RefCell<std::collections::BTreeSet<String>>,
 }
 
 /// A set of bytes.
@@ -439,7 +442,21 @@ impl Lp<'_, '_> {
             }
             arm_bytes.entry(a).or_default().push(b);
         }
-        let otherwise = none.to_owned();
+        // An arm that calls a method deciding every byte itself is the `_`, where none passing is refused, as `walk`'s
+        // `_ => primitive`: the method written once, called from each place.
+        let err = "return Err(at(src, starts, i));\n";
+        let mut otherwise = none.to_owned();
+        if none == err && split.is_empty() {
+            let deciding = self.deciding.borrow().clone();
+            for &a in arm_bytes.keys() {
+                let c = code(a, T::Byte)?;
+                if deciding.iter().any(|m| c.starts_with(&format!("e = unsafe {{ {m}::<S>(src, len, starts, d, &mut i, ["))) {
+                    otherwise = c;
+                    arm_bytes.remove(&a);
+                    break;
+                }
+            }
+        }
         // One `match` on the token's first byte: a split kind's words its arms too, each a guard on its bytes, and the
         // kind's own arm its row's bytes after them (simdjson's `primitive`: one `switch`).
         let mut out = if split.is_empty() { String::from("match peek(src, starts, i) {\n") } else { String::from("let s = starts[i] as usize;\nmatch src[s] {\n") };
@@ -652,8 +669,30 @@ impl Lp<'_, '_> {
     /// among them; each other alternative is an arm of its own.
     fn alt_arms<'s>(&'s self, h: Heads, k: K) -> Result<Vec<Arm<'s>>, String> {
         let mut arms: Vec<Arm<'s>> = Vec::new();
-        // Each alternative its own arm of the decision: the byte matched once, by the place's `match`, a container's
-        // and a primitive's alike (page 40, fix 9).
+        // The alternatives that call no level, one method (`walk`'s `primitive`), written once and called from each
+        // place: its arm the place's `_`. The level calls' alternatives are the place's arms of their own.
+        let plain: Vec<&Gram> = h.alts.iter().filter(|a| !self.calls(a)).collect();
+        if let Some((name, at)) = &h.choice
+            && plain.len() > 1
+        {
+            let alts: Vec<Gram> = plain.iter().map(|a| (*a).clone()).collect();
+            let first: Vec<First> = alts.iter().map(|a| self.g.first(a).map(|f| f.0)).collect::<Result<Vec<_>, _>>()?.concat();
+            let mname = format!("{}_primitive", ident(name));
+            let ns = self.method(&mname, &format!("`{name}`'s alternatives that call no level (`walk`'s `primitive`)"), |place| {
+                let Some(hp) = self.heads(&Gram::Sym(name.clone()), place)? else { return self.err(format!("`{name}`: no alternatives")) };
+                let mine: Vec<Gram> = hp.alts.into_iter().filter(|a| !self.calls(a)).collect();
+                self.plain(&Gram::Alt(mine), &hp.key, T::No)
+            })?;
+            self.deciding.borrow_mut().insert(mname.clone());
+            let (call, k2) = (self.call(&mname, &ns, at)?, k.clone());
+            arms.push((first, Box::new(move |_| Ok(format!("{call}{}", Self::jump(&k2))))));
+            for a in h.alts.into_iter().filter(|a| self.calls(a)) {
+                let (first, _) = self.g.first(&a)?;
+                let (akey, k) = (h.key.clone(), k.clone());
+                arms.push((first, Box::new(move |t| self.walk(&a, &akey, k.clone(), t))));
+            }
+            return Ok(arms);
+        }
         for a in h.alts {
             let (first, _) = self.g.first(&a)?;
             let (akey, k) = (h.key.clone(), k.clone());
@@ -1231,7 +1270,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             _ => {}
         }
     }
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()) };
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), deciding: RefCell::new(std::collections::BTreeSet::new()) };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {

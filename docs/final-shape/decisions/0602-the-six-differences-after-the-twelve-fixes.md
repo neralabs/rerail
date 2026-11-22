@@ -36,11 +36,15 @@ Page 40's reading after 0599 found these differences from the lean parser (`rera
      pairwise adds), Haswell with one load and two `movemask`s, Westmere with two loads, and the fallback.
    - Tier 2's walk and its methods are generic over the backend, chosen once (`run_best`). `marks` is a direct call
      of `S::marks32`, and the string loop steps `x += 32`.
-3. **A primitive's arm is a call of code written once.**
-   - A token's leaf is `token(d, &mut i, number, s, end)`.
-   - A checked run's end is `number_end(src, s)`, the lean parser's `number_end`: the check's match, with the byte
-     after it outside the row.
-   - Each place's arms call these, as `walk` calls `primitive`. The byte is still matched once (0599).
+3. **A value's primitives are one method, `value_primitive`, called from each place**, as `walk` calls `primitive`.
+   - Each value place's `match` on the byte has the containers' arms (`{`, `[`), and its `_` is the call. The
+     method's one `match` has the string's, the atoms' and the number's arms, each written once.
+   - In it, a token's leaf is `token(d, &mut i, number, s, end)`, and a checked run's end is `number_end(src, s)`
+     (the lean parser's `number_end`: the check's match, with the byte after it outside the row).
+   - This is 0582's method, which 0599 had removed so the byte was matched once. For a primitive the byte is now
+     matched twice, at the place and in the method, as in `walk` (`match *v`, then `primitive`).
+   - Later, the same day: a first version kept every arm at each place and made only their bodies calls. The stop
+     hook found the arms still written three times, and this replaced it.
 4. **`\u`'s digits are one number** (`bitlex_piece_checks`), as `escaped_string` reads them.
    - The digits the first anchored error requires (one to four hex digits at consecutive bytes) are read as `cp`,
      through `HEX_VALUE` (simdjson's `digit_to_val32`). A byte that is not hex puts bits past the digits, so the error
@@ -94,6 +98,8 @@ Implementer's choices:
   - `json_rusts_tapes_are_the_jits`, with the `\u` inputs of 0599, 16 and 16z, the UTF-8 files and the deep nests,
     some of them several blocks of nodes.
   - `json_tier2_is_walks_shape`, which now also checks:
+    - `value_primitive` written once, each of the three places' `_` its call, and each of its arms (the string's,
+      `true`, `false`, `null`, the number's) written once in all of `tier2.rs`, with no container arm in it;
     - `number_end` written once, and no leaf written out at a place;
     - `x += 32` with `S::marks32` and `run_best`;
     - one `Cursor::<Cells>::begin(state)`, and no `w_*_with` or `d: *mut u8`.
@@ -116,7 +122,9 @@ Implementer's choices:
   cursor's, at five width sets, 16 and 16z, with nodes of one leaf.
   - Its trees were 23 ops, within one block, though its doc said many blocks.
   - They now pass 4096 ops, with more than 1000 nodes of one leaf and a length past two bytes, both asserted.
-- **On an aarch64 Linux host:**
+- **On an aarch64 Linux host,** after the primitive method: 78 of 78 of `rerail-bitlex`, `rerail-compiler`,
+  `rr_parser`'s and Kotlin's Rust tests and JSON's.
+- **On an aarch64 Linux host,** before it:
   - 131 of 132 pass: `rerail-bitlex`, `rerail-compiler`, `rerail-tape-format`, `rerail-simd8`, `rr_parser`, and
     Kotlin's and JSON's Rust tests.
   - The one failure is `block_tests::stage1_utf8_equals_std_on_every_executor`: the host's device refused to map host
