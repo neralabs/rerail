@@ -1,6 +1,6 @@
 # Git: Rerail's own Git calls start no program a repository's config names
 
-For [pull request #978](https://github.com/neralabs/rerail/pull/978), head bbcdd72d8. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #978](https://github.com/neralabs/rerail/pull/978), head 114e1105e. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -12,7 +12,7 @@ For [pull request #978](https://github.com/neralabs/rerail/pull/978), head bbcdd
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 4,771 lines in 24 files: 1,772 ship, 2,999 are tests and text | Maintainer approves. It changes what Rerail's own Git calls start. | Nothing. It stands on main alone. | 4 |
+| 4,923 lines in 24 files: 1,805 ship, 3,118 are tests and text | Maintainer approves. It changes what Rerail's own Git calls start. | Nothing. It stands on main alone. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -34,7 +34,7 @@ Found in November 2026 on Linux x64 and Windows 11 machines, with a stand-in pro
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Submodules asked through the guard, medium risk, 1,058 lines; B, Drivers set for each call, medium risk, 714 lines. Read first: submodule-state.ts, git.ts, filter-drivers.ts. To skim: 2,956 lines of tests and 43 lines of the threat model and a release note.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Submodules asked through the guard, medium risk, 1,089 lines; B, Drivers set for each call, medium risk, 716 lines. Read first: submodule-state.ts, git.ts, filter-drivers.ts. To skim: 3,075 lines of tests and 43 lines of the threat model and a release note.">
 
 1. **Read first**, 15 min: `submodule-state.ts`: `withChangedSubmodules`, `submoduleChanged`, `worktreeIndex`. Does each diff list the submodules Git's own diff lists?
 2. **Read first**, 15 min: `git.ts`: `runGit`, `runGitWithoutBlocking`, `guardedBy`, `submoduleOpener`. Can a call that reads worktree files still start a repository's driver?
@@ -149,10 +149,11 @@ The description on GitHub is the record: "How you tested it" holds the failing r
 |---|---|---|
 | Linux x64 | The five calls, at main and here | All five fail at main and pass here. |
 | Windows 11 | The five calls, at main and here | All five fail at main and pass here. |
-| Linux x64 | 28 test files importing a changed module | 953 passed, 31 skipped; main's 25 files: 810 passed, 30 skipped. |
-| Windows 11 | The same 28 files | 925 passed, 64 skipped, with the engine built for this tree; main's: 807 passed, 38 skipped. |
+| Linux x64 | 31 test files importing git.ts or submodule-state.ts | 1090 passed, 33 skipped; main's 27 files: 881 passed, 32 skipped. |
+| Windows 11 | The same 31 files | 1076 passed, 68 skipped, 2 failed (two rows whose Git 2.56.0 message the head now takes), with the engine built for this tree; main's: 897 passed, 39 skipped. |
+| Linux x64 | The third review's 11 new or changed cases at bbcdd72d8, and 15 lines changed one at a time | 10 of 11 fail at bbcdd72d8, the eleventh holding behaviour it had; each change fails its case. |
 | Linux x64 | Each line of the review's answer taken out, 11 runs | With nothing changed the cases pass; each of the 8 changes fails its case. |
 
-**Sources.** The branch and its diff against main, read on 21 November 2026; Git 2.53 and 2.56 for Git's own answers.
+**Sources.** The branch and its diff against main, read on 22 November 2026; Git 2.53 and 2.56 for Git's own answers.
 
 </details>
