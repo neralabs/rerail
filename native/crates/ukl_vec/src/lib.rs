@@ -2,11 +2,11 @@
 //!
 //! A kernel's way here is passes from tape to tape, each one reading its input in place and writing its output once:
 //!
-//! 1. **The source** (`source`): the kernel preprocessed as the OpenCL backend's is, OpenCL C with the device's
-//!    32-lane sub-groups (`UKL_OPENCL_SUBGROUPS`). One C dialect for the GPU drivers and this path: the library's
-//!    intrinsics are OpenCL's builtins (`get_local_id`, `barrier`, `sub_group_*`, `atomic_*`), which the lowering
-//!    knows by name. OpenCL's address spaces are written as attributes (`__global` as `__attribute__((ukl_global))`),
-//!    which C's grammar reads where a qualifier goes.
+//! 1. **The source** (`source`): the kernel preprocessed for the `Vec` backend (`rerail_ukl::Backend::Vec`): plain C
+//!    whose every operation of the machine is one intrinsic, `__ukl_*` (`ukl_vec_shim.h`, `ukl/backend.h`'s `UKL_VEC`
+//!    section: `__ukl_local_id(d)`, `__ukl_barrier()`, `__ukl_sg_shuffle(v, l)`, `__ukl_atomic_add(p, v)`, ...),
+//!    which the lowering knows by name. Pointers have no address space, types are C's fixed-width ones, a
+//!    threadgroup's storage and a kernel's entry are attributes (`ukl_local`, `ukl_kernel`).
 //! 2. **The C tape** (`c_tape`): tree-sitter-c's, by `rerail-c-lean`.
 
 use rerail_c_lean::{Dialect, Tape};
@@ -37,25 +37,6 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
-
-/// OpenCL C's words that C's grammar has no place for, as what it has. A pointer here has no address space: the CPU's
-/// memory is one, so `__global`, `__local`, `__constant` and `__private` are nothing. A threadgroup's own storage is
-/// marked where it is declared (`__UKL_LOCAL_STORAGE`, the shim's `SHARED` rows), and a kernel's entry by an
-/// attribute.
-const SPELLINGS: &[(&str, &str)] = &[
-    ("__global", ""),
-    ("__local", ""),
-    ("__constant", ""),
-    ("__private", ""),
-    ("__UKL_LOCAL_STORAGE", "__attribute__((ukl_local))"),
-    ("__kernel", "__attribute__((ukl_kernel))"),
-    // OpenCL's scalar names, which C's grammar cannot tell are types (`(uchar)x` is a cast only to one that knows):
-    // its fixed-width types, which it reads as types.
-    ("uchar", "uint8_t"),
-    ("ushort", "uint16_t"),
-    ("uint", "uint32_t"),
-    ("ulong", "uint64_t"),
-];
 
 /// A kernel preprocessed for this path: the expanded text, its tokens and their origins (`rerail_c_pp::tokens`), and
 /// the paths of the files the origins name.
@@ -94,17 +75,12 @@ impl Source {
     }
 }
 
-/// The preprocessing of this path: OpenCL C, its sub-groups 32 lanes, OpenCL's words spelled as C's grammar reads
-/// them (`SPELLINGS`).
+/// The preprocessing of this path: the `Vec` backend's, its SIMD groups 32 lanes.
 pub fn preprocess() -> rerail_ukl::Preprocess {
-    let mut p = rerail_ukl::Preprocess::new(rerail_ukl::Backend::OpenCl).define("UKL_OPENCL_SUBGROUPS", None).define("UKL_SIMD_WIDTH", Some("32u")).define("__UKL_VEC", None)
+    rerail_ukl::Preprocess::new(rerail_ukl::Backend::Vec).define("UKL_SIMD_WIDTH", Some("32u"))
         // A scan's tile is 16 values a thread, as the CPU backend's (decision 0527 §3): a group's operation is many
         // of the vector tape's nodes, a thread's fold of a value a few.
-        .define("UKL_SCAN_VT", Some("16u"));
-    for (word, spelled) in SPELLINGS {
-        p = p.define(word, Some(spelled));
-    }
-    p
+        .define("UKL_SCAN_VT", Some("16u"))
 }
 
 /// The kernel `text` at `path` preprocessed for this path (`preprocess`), with `dirs` searched for its own includes.

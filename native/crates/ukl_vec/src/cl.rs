@@ -4085,7 +4085,8 @@ impl<'a, 'b> Cg<'a, 'b> {
             Builtin::AtomicAnd => self.b.ins().band(old, x),
             Builtin::AtomicOr => self.b.ins().bor(old, x),
             Builtin::AtomicXor => self.b.ins().bxor(old, x),
-            Builtin::AtomicXchg => x,
+            Builtin::AtomicXchg | Builtin::AtomicStore => x,
+            Builtin::AtomicLoad => old,
             Builtin::AtomicInc => self.b.ins().iadd_imm(old, 1),
             Builtin::AtomicDec => self.b.ins().iadd_imm(old, -1),
             Builtin::AtomicMin | Builtin::AtomicMax => {
@@ -4709,8 +4710,8 @@ impl<'a, 'b> Cg<'a, 'b> {
                     _ => None,
                 }
                 .filter(|_| unread && i.shape == Shape::Lanes && !m.float() && matches!(self.vals[i.a as usize], Rp::U(_)));
-                if self.leaves_word(bi, i.b) {
-                    // A poll (`atomic_or(p, 0)`: OpenCL 1.2's atomic load) leaves its word: a load, each lane's.
+                if bi == Builtin::AtomicLoad || self.leaves_word(bi, i.b) {
+                    // A load, or an atomic that leaves its word (`or 0`): a load, each lane's.
                     match self.vals[i.a as usize].clone() {
                         Rp::U(a) => {
                             let a = if i.shape == Shape::Uniform { a } else { self.guarded(a, i.d) };
@@ -4718,7 +4719,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                         }
                         _ => Rp::L(self.load_lanes(m, i.a, i.d)),
                     }
-                } else if unread && bi == Builtin::AtomicXchg {
+                } else if unread && matches!(bi, Builtin::AtomicXchg | Builtin::AtomicStore) {
                     self.store_of(m, i.a, i.b, i.d);
                     Rp::None
                 } else if let Some(rb) = combined {

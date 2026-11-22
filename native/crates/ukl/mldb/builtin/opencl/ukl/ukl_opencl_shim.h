@@ -37,9 +37,7 @@
 #define UKL_TG_MAX 1024u
 #endif
 
-// The fixed-width integers by OpenCL's own. The CPU's vector path (`rerail-ukl-vec`, decision 0567) reads C, whose
-// grammar has them as types already.
-#if !defined(__UKL_VEC)
+// The fixed-width integers by OpenCL's own.
 typedef uint uint32_t;
 typedef int int32_t;
 typedef ushort uint16_t;
@@ -48,7 +46,6 @@ typedef uchar uint8_t;
 typedef char int8_t;
 typedef ulong uint64_t;
 typedef long int64_t;
-#endif
 // A word the atomics take: a plain integer, as OpenCL 1.2's atomic functions (`atomic_or`, ...) do. OpenCL C 2.0
 // and later have types of these names (C11's `_Atomic`, which 1.2's functions do not take, and which a private
 // variable cannot be), so there the names are the integers' by macro; 1.2's functions remain in 3.0. The source is
@@ -77,10 +74,7 @@ static inline uint __ukl_cl_lid(void)
 #endif
 
 // A threadgroup's own storage, declared in a kernel's entry (a `SHARED` row, the SIMD group's scratch): `__local`.
-// The CPU's vector path (decision 0567), whose pointers have no address space, marks the declaration instead.
-#ifndef __UKL_LOCAL_STORAGE
 #define __UKL_LOCAL_STORAGE __local
-#endif
 
 #if UKL_SIMD_WIDTH > 1 && !defined(UKL_OPENCL_SUBGROUPS)
 #define UKL_OPENCL_EMULATED_SG 1
@@ -353,11 +347,6 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
     (__ukl_out[__ukl_k++] = (ulong)((char *)&__ukl_v.Field - (char *)&__ukl_v), \
      __ukl_out[__ukl_k++] = sizeof(__ukl_v.Field), \
      __ukl_out[__ukl_k++] = __UKL_SCALAR_KIND(__ukl_v.Field))
-#if defined(__UKL_VEC)
-// The CPU's vector path (decision 0567) has every layout from its own types: a structure's fields and a kernel's rows
-// are named in constants it reads.
-#define UKL_REFLECT_STRUCT(Type, ...) static const char Type ## __ukl_fields[] = #__VA_ARGS__;
-#else
 #define UKL_REFLECT_STRUCT(Type, ...) \
     __kernel void Type ## __ukl_layout(__global ulong * __ukl_out) \
     { \
@@ -370,7 +359,6 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
         __ukl_out[0] = __ukl_k - 1u; \
         __ukl_cl_text(__ukl_out, __ukl_k, __ukl_names); \
     }
-#endif
 
 // A kernel: its info kernel (the rows' layout, three numbers a row after their count, then the rows' text), its
 // body (inner), and its entry, which declares the threadgroup memory and the SIMD group's scratch.
@@ -392,9 +380,6 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
 #else
 #define DEFINE_KERNEL2(Library, Name, ...) __UKL_DEFINE_KERNEL2(Library, Name, __VA_ARGS__)
 #endif
-#if defined(__UKL_VEC)
-#define __UKL_KERNEL_INFO(Name, ...) static const char Name ## __ukl_params[] = #__VA_ARGS__;
-#else
 #define __UKL_KERNEL_INFO(Name, ...) \
     __kernel void Name ## __ukl_info(__global ulong * __ukl_out) \
     { \
@@ -404,7 +389,6 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
         __ukl_out[0] = __ukl_k - 1u; \
         __ukl_cl_text(__ukl_out, __ukl_k, __ukl_text); \
     }
-#endif
 #define __UKL_DEFINE_KERNEL2(Library, Name, ...) \
     __UKL_KERNEL_INFO(Name, __VA_ARGS__) \
     static void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) __UKL_PARAMS ); \

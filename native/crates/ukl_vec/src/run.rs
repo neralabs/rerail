@@ -554,6 +554,8 @@ impl Cx<'_> {
             Builtin::AtomicXchg => x,
             Builtin::AtomicInc => old.wrapping_add(1),
             Builtin::AtomicDec => old.wrapping_sub(1),
+            Builtin::AtomicLoad => old,
+            Builtin::AtomicStore => x,
             Builtin::AtomicMin | Builtin::AtomicMax => {
                 let less = ops::bin(Op::Lt, m, x, old).unwrap_or(0) != 0;
                 if less == (b == Builtin::AtomicMin) { x } else { old }

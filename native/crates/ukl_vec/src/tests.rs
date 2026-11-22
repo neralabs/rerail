@@ -1,11 +1,11 @@
 /// The UKL library's test kernels (`gpu/src/library_tests.uglykl`), the first gate (decision 0567, step 1).
 const LIBRARY_TESTS: &str = include_str!("../../../../gpu/src/library_tests.uglykl");
 
-/// The library's test kernels preprocess as OpenCL C with 32-lane sub-groups, and C's parser reads them whole.
+/// The library's test kernels preprocess for the `Vec` backend, its intrinsics `__ukl_*`, and C's parser reads them whole.
 #[test]
 fn the_library_tests_are_one_c_tape() {
     let src = super::source("/<kernels>/library_tests.uglykl", LIBRARY_TESTS, &[]).unwrap();
-    assert!(src.text().contains("sub_group_ballot"), "the sub-groups' builtins");
+    assert!(src.text().contains("__ukl_sg_ballot") && !src.text().contains("sub_group_"), "the SIMD group's intrinsics, not OpenCL's");
     let tape = super::c_tape(&src).unwrap();
     assert!(tape.code.len() / 2 > 10_000, "a tape of the whole source");
 }
@@ -233,10 +233,10 @@ fn uniform_values_read_for_their_low_bits_are_each_32_bit_value() {
         "    out[40] = g;\n",
         "    uint8_t d = (uint8_t)g;\n",
         "    uint16_t h = (uint16_t)(g + 9u);\n",
-        "    float f = as_float(g | 1u);\n",
+        "    float f = __ukl_as_float(g | 1u);\n",
         "    int32_t s = (int32_t)(out[62] + 3u) * -0x7654321;\n",
         "    int32_t t = s - 1;\n",
-        "    uint32_t r = lid == 0u ? b >> 3 : lid == 1u ? (uint32_t)d : lid == 2u ? as_uint(f) : lid == 3u ? (uint32_t)(t >> 2)\n",
+        "    uint32_t r = lid == 0u ? b >> 3 : lid == 1u ? (uint32_t)d : lid == 2u ? __ukl_as_uint32_t(f) : lid == 3u ? (uint32_t)(t >> 2)\n",
         "        : lid == 4u ? (uint32_t)(t / 3) : lid == 5u ? (c < b ? 1u : 2u) : lid == 6u ? (uint32_t)((int64_t)t >> 40)\n",
         "        : lid == 7u ? (uint32_t)h : lid == 8u ? (uint32_t)((uint64_t)c >> 31) : lid;\n",
         "    if (lid < 40u)\n",
@@ -811,7 +811,7 @@ fn a_matrix_product_is_each_rows_columns_in_lanes() {
 /// fraction 3 bytes; its result stored the same way, each row's signs one SIMD group's ballot.
 fn split_floats() -> (super::lower::Program, super::vector::Kernel) {
     let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\n\
-#define UNPACK(sg, ex, mt, x) as_float(((sg[(x) >> 5u] >> ((x) & 31u)) << 31) | ((uint32_t)ex[x] << 23) | (uint32_t)mt[3u * (x)] | ((uint32_t)mt[3u * (x) + 1u] << 8) | ((uint32_t)mt[3u * (x) + 2u] << 16))\n\
+#define UNPACK(sg, ex, mt, x) __ukl_as_float(((sg[(x) >> 5u] >> ((x) & 31u)) << 31) | ((uint32_t)ex[x] << 23) | (uint32_t)mt[3u * (x)] | ((uint32_t)mt[3u * (x) + 1u] << 8) | ((uint32_t)mt[3u * (x) + 2u] << 16))\n\
 DEFINE_KERNEL2(rule, t_mms,\n\
                ROBUFFER, uint32_t, asg, \"[32]\",\n\
                ROBUFFER, uint8_t, aex, \"[1024]\",\n\
@@ -831,13 +831,13 @@ DEFINE_KERNEL2(rule, t_mms,\n\
         uint32_t y = k * 32u + j;\n\
         s += UNPACK(asg, aex, amt, x) * UNPACK(bsg, bex, bmt, y);\n\
     }\n\
-    uint32_t r = as_uint(s);\n\
+    uint32_t r = __ukl_as_uint32_t(s);\n\
     uint32_t z = i * 32u + j;\n\
     cex[z] = (uint8_t)(r >> 23);\n\
     cmt[3u * z] = (uint8_t)r;\n\
     cmt[3u * z + 1u] = (uint8_t)(r >> 8);\n\
     cmt[3u * z + 2u] = (uint8_t)((r >> 16) & 0x7fu);\n\
-    uint32_t sign = sub_group_ballot((r >> 31) != 0u).x;\n\
+    uint32_t sign = ukl_sg_ballot((r >> 31) != 0u __UKL_ARGS);\n\
     if (j == 0u)\n\
         csg[i] = sign;\n\
 }\n";
@@ -1124,7 +1124,7 @@ DEFINE_KERNEL2(rule, t_bytes,\n\
 /// product first (to `b`) would give 0. Also `+=` of a product, and `fma` called by name.
 #[test]
 fn a_floating_multiply_add_is_rounded_once() {
-    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\nDEFINE_KERNEL2(rule, t_fma,\n               ROBUFFER, float, a, \"[32]\",\n               ROBUFFER, float, b, \"[32]\",\n               RWBUFFER, float, c, \"[96]\",\n               LID0,     uint32_t, j, )\n{\n    c[j] = a[j] * a[j] - b[j];\n    float s = -b[j];\n    s += a[j] * a[j];\n    c[32u + j] = s;\n    c[64u + j] = fma(a[j], a[j], -b[j]);\n}\n";
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\nDEFINE_KERNEL2(rule, t_fma,\n               ROBUFFER, float, a, \"[32]\",\n               ROBUFFER, float, b, \"[32]\",\n               RWBUFFER, float, c, \"[96]\",\n               LID0,     uint32_t, j, )\n{\n    c[j] = a[j] * a[j] - b[j];\n    float s = -b[j];\n    s += a[j] * a[j];\n    c[32u + j] = s;\n    c[64u + j] = __ukl_fma(a[j], a[j], -b[j]);\n}\n";
     let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));

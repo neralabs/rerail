@@ -31,13 +31,15 @@ fn tokens(text: &str) -> Vec<String> {
 fn clang(backend: Backend, main: &str) -> Option<String> {
     let f = forest();
     let mut c = Command::new("clang");
-    if backend == Backend::OpenCl {
+    if backend.is_c() {
         c.args(["-x", "c", "-std=gnu99", "-undef", "-nostdinc", "-E", "-P", "-w"]);
     } else {
         c.args(["-x", "c++", "-std=gnu++20", "-undef", "-nostdinc", "-E", "-P", "-w"]);
     }
-    c.arg(format!("-I{f}")).arg(format!("-I{f}/mldb/builtin/{}/ukl", backend.dir())).arg(format!("-I{f}/mldb/block/ukl"));
-    c.arg(format!("-I{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
+    // The carried headers' directories on disk: this crate's (`carried.rs`).
+    let here = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    c.arg(format!("-I{f}")).arg(format!("-I{here}/mldb/builtin/{}/ukl", backend.dir())).arg(format!("-I{here}/mldb/block/ukl"));
+    c.arg(format!("-I{here}/lib")).arg(format!("-I{here}"));
     for (n, v) in backend.predefines() {
         c.arg(format!("-D{n}={}", v.unwrap_or_default()));
     }
@@ -66,7 +68,7 @@ fn same_as_clang(backend: Backend, main: &str, min_tokens: usize) {
 #[test]
 fn every_library_header_stands_alone_on_every_backend() {
     let dir = format!("{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Cpu, Backend::OpenCl] {
+    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Cpu, Backend::OpenCl, Backend::Vec] {
         // A body is included by its header, with its parameters, and refuses to stand alone.
         for (name, _) in LIBRARY.iter().filter(|(n, _)| !n.starts_with("ukl/body/")) {
             // The shim's tokens, at least, and the header's own.

@@ -680,6 +680,8 @@ pub fn is_atomic(b: Builtin) -> bool {
             | Builtin::AtomicCmpxchg
             | Builtin::AtomicInc
             | Builtin::AtomicDec
+            | Builtin::AtomicLoad
+            | Builtin::AtomicStore
     )
 }
 
@@ -1254,7 +1256,7 @@ impl Analysis {
                         _ => Level::Varying,
                     },
                     _ if is_atomic(x) => {
-                        if k.len() == 2 && identity(b, x, k[1]) && a[0] <= Level::SimdGroup {
+                        if (x == Builtin::AtomicLoad || k.len() == 2 && identity(b, x, k[1])) && a[0] <= Level::SimdGroup {
                             a[0].join(Level::Agreed)
                         } else {
                             Level::Varying

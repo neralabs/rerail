@@ -11,6 +11,7 @@ const HEADERS: &[(&str, &str)] = &[
     ("mldb/builtin/cuda/ukl/ukl_cuda_shim.h", include_str!("../mldb/builtin/cuda/ukl/ukl_cuda_shim.h")),
     ("mldb/builtin/cpu/ukl/ukl_cpu_shim.h", include_str!("../mldb/builtin/cpu/ukl/ukl_cpu_shim.h")),
     ("mldb/builtin/opencl/ukl/ukl_opencl_shim.h", include_str!("../mldb/builtin/opencl/ukl/ukl_opencl_shim.h")),
+    ("mldb/builtin/vec/ukl/ukl_vec_shim.h", include_str!("../mldb/builtin/vec/ukl/ukl_vec_shim.h")),
 ];
 
 /// The library's headers, by the name a kernel includes them by (`#include <ukl/memory.h>`), each after the ones it

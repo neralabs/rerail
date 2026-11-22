@@ -21,6 +21,10 @@
 #  define UKL_METAL 1
 #  define UKL_IMPL metal
 #  define UKL_PLATFORM_INCLUDE(x) UKL_PASTE_6(<,ukl_metal_,x,.,h,>)
+#elif defined(__UKL_VEC_PREPROCESSING)
+#  define UKL_VEC 1
+#  define UKL_IMPL vec
+#  define UKL_PLATFORM_INCLUDE(x) UKL_PASTE_6(<,ukl_vec_,x,.,h,>)
 #elif defined(__OPENCL_VERSION__)
 #  define UKL_OPENCL 1
 #  define UKL_IMPL opencl

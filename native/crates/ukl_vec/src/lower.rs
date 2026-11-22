@@ -302,18 +302,19 @@ fn decay(t: Ty) -> Ty {
     }
 }
 
-/// OpenCL's builtins' fixed results.
+/// A reinterpretation's result (`__ukl_as_<type>`, `k::as_type`).
 fn as_target(name: &str) -> Ty {
-    match name {
-        "as_int" => I32,
-        "as_uint" => U32,
-        "as_long" => I64,
-        "as_ulong" => U64,
-        "as_short" => Ty::Int { bits: 16, signed: true },
-        "as_ushort" => Ty::Int { bits: 16, signed: false },
-        "as_char" => Ty::Int { bits: 8, signed: true },
-        "as_uchar" => Ty::Int { bits: 8, signed: false },
-        "as_double" => Ty::Float(64),
+    let int = |bits, signed| Ty::Int { bits, signed };
+    match crate::k::as_type(name).unwrap_or("float") {
+        "int8_t" => int(8, true),
+        "uint8_t" => int(8, false),
+        "int16_t" => int(16, true),
+        "uint16_t" => int(16, false),
+        "int32_t" => I32,
+        "uint32_t" => U32,
+        "int64_t" => I64,
+        "uint64_t" => U64,
+        "double" => Ty::Float(64),
         _ => Ty::Float(32),
     }
 }
@@ -1131,7 +1132,6 @@ impl L<'_> {
             "string_literal" => Ty::Array(Box::new(Ty::Int { bits: 8, signed: true }), self.string(e)?.len() as u64 + 1),
             "identifier" => match self.lookup(self.c.text(e)) {
                 Some(v) => v.ty.clone(),
-                None if fence_flag(self.c.text(e)) => U32,
                 None => return self.err(e, "an unknown name"),
             },
             "parenthesized_expression" => {
@@ -1185,7 +1185,7 @@ impl L<'_> {
                 } else {
                     a
                 };
-                if s == Ty::Uint4 { U32 } else { self.field_of(e, &s)?.0 }
+                self.field_of(e, &s)?.0
             }
             "assignment_expression" => self.ty(self.c.child(e, "left").expect("an lvalue"))?,
             "update_expression" => decay(self.ty(self.c.child(e, "argument").expect("an operand"))?),
@@ -1228,11 +1228,9 @@ impl L<'_> {
         let (ret, params) = match b {
             Builtin::LocalId | Builtin::LocalSize | Builtin::GlobalId | Builtin::GlobalSize | Builtin::GroupId | Builtin::NumGroups => (U64, vec![U32]),
             Builtin::SubGroupLocalId => (U32, vec![]),
-            Builtin::Barrier | Builtin::SubGroupBarrier => (Ty::Void, vec![U32]),
-            // `mem_fence(flags)`, or OpenCL C 3.0's `atomic_work_item_fence(flags, order, scope)`: flags all.
-            Builtin::MemFence => (Ty::Void, vec![U32; tys.len().max(1)]),
+            Builtin::Barrier | Builtin::SubGroupBarrier | Builtin::MemFence => (Ty::Void, vec![]),
             Builtin::Yield => (Ty::Void, vec![]),
-            Builtin::SubGroupBallot => (Ty::Uint4, vec![I32]),
+            Builtin::SubGroupBallot => (U32, vec![I32]),
             Builtin::SubGroupShuffle | Builtin::SubGroupShuffleUp | Builtin::SubGroupShuffleDown | Builtin::SubGroupShuffleXor => {
                 let t = arg(0).promoted();
                 (t.clone(), vec![t, U32])
@@ -1245,11 +1243,11 @@ impl L<'_> {
                 let t = arg(0).pointee().cloned().unwrap_or(U32);
                 (t.clone(), vec![arg(0), t.clone(), t])
             }
-            Builtin::AtomicInc | Builtin::AtomicDec => {
+            Builtin::AtomicInc | Builtin::AtomicDec | Builtin::AtomicLoad => {
                 let t = arg(0).pointee().cloned().unwrap_or(U32);
                 (t, vec![arg(0)])
             }
-            Builtin::AtomicAdd | Builtin::AtomicSub | Builtin::AtomicAnd | Builtin::AtomicOr | Builtin::AtomicXor | Builtin::AtomicXchg | Builtin::AtomicMin | Builtin::AtomicMax => {
+            Builtin::AtomicAdd | Builtin::AtomicSub | Builtin::AtomicAnd | Builtin::AtomicOr | Builtin::AtomicXor | Builtin::AtomicXchg | Builtin::AtomicMin | Builtin::AtomicMax | Builtin::AtomicStore => {
                 let t = arg(0).pointee().cloned().unwrap_or(U32);
                 (t.clone(), vec![arg(0), t])
             }
@@ -1422,15 +1420,6 @@ impl L<'_> {
             }
             "true" => self.konst(&I32, 1),
             "false" => self.konst(&I32, 0),
-            "identifier" if self.lookup(self.c.text(e)).is_none() && fence_flag(self.c.text(e)) => {
-                // OpenCL's fence flags, orders and scopes: no fence on the CPU's coherent memory.
-                let v = match self.c.text(e) {
-                    "CLK_LOCAL_MEM_FENCE" => 1,
-                    "CLK_GLOBAL_MEM_FENCE" => 2,
-                    _ => 0,
-                };
-                self.konst(&U32, v);
-            }
             "identifier" | "subscript_expression" | "string_literal" => self.load(e, &t)?,
             "pointer_expression" if self.operator(e) == "*" => self.load(e, &t)?,
             "pointer_expression" => {
@@ -1438,19 +1427,7 @@ impl L<'_> {
             }
             "field_expression" => {
                 let a = self.c.child(e, "argument").expect("a structure");
-                if self.ty(a)? == Ty::Uint4 {
-                    // A ballot's mask: its first word, the others zero at 32 lanes.
-                    if self.c.text(self.c.child(e, "field").expect("a field")) == "x" {
-                        self.rv(a)?;
-                    } else {
-                        let n = self.b.open(Kind::Comma, &[]);
-                        self.rv(a)?;
-                        self.konst(&U32, 0);
-                        self.b.close(n);
-                    }
-                } else {
-                    self.load(e, &t)?;
-                }
+                self.load(e, &t)?;
             }
             "parenthesized_expression" => {
                 let x = self.inner(e)?;
@@ -1705,8 +1682,3 @@ enum Callee {
     Builtin(Builtin, Vec<Ty>),
 }
 
-/// A name OpenCL gives a fence's argument: its flags (`CLK_GLOBAL_MEM_FENCE`), and OpenCL C 3.0's orders and scopes
-/// (`memory_order_seq_cst`, `memory_scope_device`).
-fn fence_flag(name: &str) -> bool {
-    name.starts_with("CLK_") || name.starts_with("memory_order_") || name.starts_with("memory_scope_")
-}
