@@ -100,3 +100,30 @@ fn a_context_or_read_naming_what_is_not_there_is_refused() {
     let e = refusal(&PROGRAM.replace("exports ann_names", "exports ann_names, nothing"));
     assert!(e.contains("nothing: no rule derives it"), "{e}");
 }
+
+/// 0597 step 2, rung 2.1: the passes are made once. Their program, printed and read again, is itself: what is made
+/// holds `.pass` settings (each context, its host and its roots), and no `.context` or `.from` to make again.
+#[test]
+fn the_passes_printed_and_read_again_are_themselves() {
+    let v = parse_version(PROGRAM).unwrap();
+    let settings = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&*v);
+    assert!(!settings.iter().any(|(k, _)| k == "context" || k == "from"), "{settings:?}");
+    assert!(settings.iter().any(|(k, t)| k == "pass" && t.split_whitespace().collect::<Vec<_>>() == ["annotation", "of", "python", "roots", "ann_root", "exports", "ann_names"]), "{settings:?}");
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&v).unwrap();
+    let again = parse_version(&printed).unwrap();
+    assert!(crate::code_rule_dsl::logic::program_image::same_program(&v, &again), "{}", crate::code_rule_dsl::logic::program_image::differences(&v, &again));
+    assert_eq!(super::made(&again), super::made(&v));
+    assert_eq!(super::made(&v).iter().map(|p| (p.name.as_str(), p.host.as_str(), p.roots.as_str())).collect::<Vec<_>>(), [("annotation", "python", "ann_root")]);
+}
+
+/// A read of a pass made already resolves to its instance: a pack's policy reads the library's context, made when
+/// the library was (`.pass`), and two policies may read the same relation under the same name.
+#[test]
+fn a_read_of_a_pass_made_already_reads_its_instance() {
+    let made = crate::code_rule_dsl::logic::rr::print_version(&parse_version(PROGRAM).unwrap()).unwrap();
+    let text = format!("{made}\n.decl late(x: symbol)\nlate(x) :- names(x).\n.output late\n.from annotation ann_names as names\n.from annotation ann_names as names\n");
+    let v = parse_version(&text).unwrap();
+    assert!(rules_of(&v, "late").iter().all(|r| r.contains("rr_cx_annotation_ann_names(")), "{}", v.show());
+    let e = refusal(&format!("{made}\n.from python bound for annotation\n"));
+    assert!(e.contains("annotation is made already"), "{e}");
+}

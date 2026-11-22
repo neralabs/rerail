@@ -47,6 +47,8 @@ pub struct Context {
     pub roots: String,
     /// What other passes may read of it (`exports`).
     pub exports: BTreeSet<String>,
+    /// Made already (a `.pass`): its instance is in the program, and a read of it is resolved to that.
+    pub made: bool,
 }
 
 /// A read of one pass by another (`.from`): `local` in `reader`'s rules is `rel` of `source`.
@@ -68,9 +70,9 @@ pub struct Declared {
 }
 
 impl Declared {
-    /// Whether the program declares a context or a read.
+    /// Whether the program declares a context to make or a read to resolve.
     pub fn any(&self) -> bool {
-        !self.contexts.is_empty() || !self.reads.is_empty()
+        self.contexts.values().any(|c| !c.made) || !self.reads.is_empty()
     }
 
     /// The relation `reader` reads under `local`, where it is another pass's (`.from`).
@@ -131,7 +133,7 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
     let language = settings.iter().find(|(k, _)| k == "language").map(|(_, t)| t.trim().trim_matches('"').to_owned()).unwrap_or_default();
     let mut d = Declared { language, ..Declared::default() };
     let shape = |text: &str| Error::Syntax(format!(".context {}: expected `NAME of HOST roots RELATION exports RELATION, …`", text.trim()));
-    for (key, text) in settings.iter().filter(|(k, _)| k == "context") {
+    for (key, text) in settings.iter().filter(|(k, _)| k == "context" || k == "pass") {
         let w = words(text);
         let [name, of, host, roots, rel, exports, rest @ ..] = w.as_slice() else { return Err(shape(text)) };
         if of != "of" || roots != "roots" || exports != "exports" {
@@ -141,7 +143,7 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
         if !left.is_empty() || rels.is_empty() || rels.iter().any(|(r, l)| r != l) {
             return Err(shape(text));
         }
-        let c = Context { name: name.clone(), host: host.clone(), roots: rel.clone(), exports: rels.into_iter().map(|(r, _)| r).collect() };
+        let c = Context { name: name.clone(), host: host.clone(), roots: rel.clone(), exports: rels.into_iter().map(|(r, _)| r).collect(), made: key == "pass" };
         if d.contexts.insert(name.clone(), c).is_some() {
             return bad(format!(".{key} {name}: declared twice"));
         }
@@ -167,18 +169,27 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
         if c.name == d.language {
             return bad(format!(".context {}: the program's language is its own pass", c.name));
         }
-        match v.columns_of(&c.roots) {
+        match v.columns_of(&c.roots).or_else(|| c.made.then(|| v.columns_of(&instance(&c.host, &c.roots))).flatten()) {
             Some(cols) if cols.first().is_some_and(|(_, t)| t == "node") => {}
             Some(_) => return bad(format!(".context {}: its roots {} have no node as their first column", c.name, c.roots)),
             None => return bad(format!(".context {}: its roots {} are not declared", c.name, c.roots)),
         }
         for e in &c.exports {
-            if v.rel(e).is_none_or(|r| v.heads(r).next().is_none()) {
+            let derived = if c.made { instance(&c.name, e) } else { e.clone() };
+            if v.rel(&derived).is_none_or(|r| v.heads(r).next().is_none()) {
                 return bad(format!(".context {} exports {e}: no rule derives it", c.name));
             }
         }
     }
-    let mut seen = BTreeSet::new();
+    let mut seen: BTreeMap<(String, String), (String, String)> = BTreeMap::new();
+    // The same read twice (two policies of a pack) is one.
+    let mut kept = Vec::new();
+    for r in std::mem::take(&mut d.reads) {
+        if !kept.contains(&r) {
+            kept.push(r);
+        }
+    }
+    d.reads = kept;
     for r in &d.reads {
         for p in [&r.reader, &r.source] {
             if !pass(p) {
@@ -195,8 +206,11 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
         } else if v.rel(&r.rel).is_none() && !v.declares(&r.rel) {
             return bad(format!(".from {} {}: no such relation", r.source, r.rel));
         }
-        if !seen.insert((r.reader.clone(), r.local.clone())) {
-            return bad(format!(".from {}: {} reads a relation named {} twice", r.source, r.reader, r.local));
+        if d.contexts.get(&r.reader).is_some_and(|c| c.made) {
+            return bad(format!(".from {} {} for {}: {} is made already, its reads with it", r.source, r.rel, r.reader, r.reader));
+        }
+        if seen.insert((r.reader.clone(), r.local.clone()), (r.source.clone(), r.rel.clone())).is_some() {
+            return bad(format!(".from {}: {} names two relations {}", r.source, r.reader, r.local));
         }
     }
     Ok(d)
@@ -208,6 +222,7 @@ fn held(v: &Version, d: &Declared) -> BTreeMap<String, BTreeSet<String>> {
     let derived = |x: &str| v.rel(x).is_some_and(|r| v.heads(r).next().is_some());
     d.contexts
         .values()
+        .filter(|c| !c.made)
         .map(|c| {
             let mut set: BTreeSet<String> = c.exports.clone();
             let mut todo: Vec<String> = set.iter().cloned().collect();
@@ -311,9 +326,38 @@ pub fn passes(v: &Arc<Version>) -> Result<Arc<Version>, Error> {
             b.fields().undeclare(rel);
         }
     }
+    // The declarations made: each context as a `.pass` (its roots as its host names them), none to make again.
+    let mut settings: Vec<(String, String)> = ProgramFields::settings(&**v).into_iter().filter(|(k, _)| k != "context" && k != "from").collect();
+    for c in d.contexts.values().filter(|c| !c.made) {
+        let exports: Vec<&str> = c.exports.iter().map(String::as_str).collect();
+        settings.push(("pass".to_owned(), format!("{} of {} roots {} exports {}", c.name, c.host, d.name_in(&c.host, &c.roots), exports.join(", "))));
+    }
+    b.fields().set_field(super::program_facts::Field::Settings(&settings));
     let out = b.finish().map_err(Error::Syntax)?.0;
     refuse_crossing_cycles(&out, &d)?;
     Ok(out)
+}
+
+/// A pass made (`passes`): a context, its host and its roots, as the made program's `.pass` settings hold them
+/// (`.pass annotation of python roots ann_root exports ann_type, …`: the roots as the made program names them).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Made {
+    pub name: String,
+    pub host: String,
+    /// The host's relation of its roots, as the made program names it.
+    pub roots: String,
+}
+
+/// The passes program `v` was made into (`passes`), from its `.pass` settings.
+pub fn made(v: &Version) -> Vec<Made> {
+    ProgramFields::settings(v)
+        .into_iter()
+        .filter(|(k, _)| k == "pass")
+        .filter_map(|(_, text)| match words(&text).as_slice() {
+            [name, of, host, roots, rel, exports, ..] if of == "of" && roots == "roots" && exports == "exports" => Some(Made { name: name.clone(), host: host.clone(), roots: rel.clone() }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// A cycle through relations of two passes is refused, naming the passes and its relations.

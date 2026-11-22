@@ -137,6 +137,25 @@ The template's findings stand at the file's lines.
    earlier pass's blocks; the strata of every pass in one order, on the CPU and the device (one launch per pass's
    stratum, bounded). Tests: a context's rules see its roots' nodes alone; a host stratum after the pass reads its
    exports.
+
+   Built on the integration's preparation (merged first, ca7e1c18a6: 0563's reach by kind, 0575's diffed narrow
+   copies, the corpus's preparation in its own crate), so the passes replace what the branches have, not a tree they
+   left. The ladder, each rung a test written red before its code, in the order the mechanism needs:
+
+   | Rung | Test (run-level unless said) | Locks |
+   |---|---|---|
+   | 2.1 | the passes made of a program, printed and read again, are the same program (`same_program`); the lowered form holds `.pass` settings, not `.context` or `.from` (unit) | made once, on any path that reads a printed program |
+   | 2.2 | a program whose host reads a context's export runs, through `guests_run` (`parse_file_version`, a printed program, `corpus::run`) and a pack (`run_all`) | every reading path makes the passes |
+   | 2.3 | the context's `kind`, `child`, `text` give its roots' nodes alone: `x: "List[int]"`'s export is `List`, `int`, never `x` | a context's views bounded to its documents, read in place |
+   | 2.4 | the host's views give the host's nodes alone in a program with a context: its identifiers are `x`, never `List`; the prepared program holds no `rr_in_annotation_` copy and no `rr_narrow_` relation for the rules the context holds | no widening, no narrow copy, for what a context holds |
+   | 2.5 | a context reads its host's finished rows: `class Foo: ...` then `x: "Foo"` resolves `Foo`, `x: "Bar"` does not | `.from` read in place, ordered before the reader |
+   | 2.6 | host, context, host: classes no code and no annotation names (`.from python defined for annotation`, `.from annotation ann_used`) | the three-step order in one plan |
+   | 2.7 | an annotation inside an annotation (`q: "Opt['Baz']"`): the context's own roots relation adds its roots | a pass's roots are its host's and its own |
+   | 2.8 | a finding at a context's node stands at its string's line and column in the file | placement through `guest_place` (0431 §3) |
+   | 2.9 | two policies, one with a context, find together what each finds alone | #923 by construction |
+   | 2.10 | a run over files with no root makes no stratum of the context | 0563 A: no rule can fill it |
+   | 2.11 | a maintained edit that changes no root and no `.from` relation runs none of the context's strata; renaming the class an annotation names runs them | 0563 B: reach by its inputs alone |
+   | 2.12 | 2.3 and 2.5 on Metal (a farm Mac), the same rows | one mechanism on the CPU and the device |
 3. **The Python annotation context.** `lib/python/annotation.rerail` from the annotation rules of `names.rerail`,
    `typing` and `ann_*`; the host's readers of annotation facts read `annotation.*`. Tests, kept and passing:
    `quoted_annotations_are_read_as_their_code`, #923's `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone`,
