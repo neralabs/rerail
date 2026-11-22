@@ -595,15 +595,18 @@ fn a_tail_is_the_strings_whose_template_it_ends() {
 /// parser's.
 #[test]
 fn a_string_with_templates_is_one_record() {
-    let grammar = crate::GRAMMAR.replace(" after str\n", " resumes str\n").replace(" after rstr\n", " resumes rstr\n");
-    assert_ne!(grammar, crate::GRAMMAR, "the tails' `after`s");
-    let c = crate::compile_text(&grammar).unwrap_or_else(|e| panic!("the grammar compiles: {e}"));
+    let c = compiled().unwrap_or_else(|e| panic!("the grammar compiles: {e}"));
     let texts = [
         "val a = \"x ${b} y\"\n",
         "val a = \"${b}${c}\" + d\n",
         "val a = \"${f(\"x\", 'y')} $z ${g}\"\nval b = \"\"\"${h(\"i\")} j\"\"\"\n",
         "val h = \"${f(\"\"\"a\"\"\")} b ${c}\" + \"\"\"${d}\"\"\"\n",
         "val h = \"\"\"a ${f(\"b\")} \"c\" ${'d'}e\"\"\"\n",
+        "val a = \"${ b }\"\nval c = \"${ d } e\"\n.f()\n",
+        "fun f() = \"${ a }\"",
+        // A tail read across a block's edge: the loop reads it again where its block is final.
+        "fun q() = \"${a} ${b} xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n",
+        "fun q() = \"\"\"\n    SELECT * FROM ${t.name} WHERE a = ${b + 1}\n    AND c = '$d'\n\"\"\".trimIndent()\n",
     ];
     // A template at a block's edge (bytes 64, 65, 128): its `$`, its code and its `}` each
     // across a block from the string's opener.
@@ -653,6 +656,26 @@ fn a_string_with_templates_is_one_record() {
             }
             at += 1;
         }
+        // The records' masks, as a device without the token loop reads them (Metal): the loop's
+        // records, a region tier 2 splits its opener alone, and none at a template's `}`.
+        let bits = |o: u16| -> Vec<u32> {
+            let words = &run.outputs[program.extract_outputs()[usize::from(o)]];
+            (0..words.len() * 64).filter(|&b| b < bytes.len() && words[b / 64] >> (b % 64) & 1 == 1).map(|b| b as u32).collect()
+        };
+        let opened: Vec<u32> = starts.iter().zip(lasts.iter()).map(|(&s, &l)| if matches!(bytes[s as usize], b'"' | b'\'') { s } else { l }).collect();
+        assert_eq!((bits(r.starts), bits(r.lasts)), (starts.clone(), opened), "the records' masks, {text:?}");
+        // Tier 2 over them, coded by the record pass, as over a device's records.
+        let table = rerail_compiler::records::WordTable::new(&r.words).expect("the words fit a table");
+        let (ms, ml) = (bits(r.starts), bits(r.lasts));
+        let (codes, bad) = rerail_compiler::records::pass(r, &table, bytes, &ms, &ml, &run.outputs);
+        assert!(!bad, "the record pass refuses the masks' records, {text:?}");
+        let mut device = run.clone();
+        device.positions[usize::from(r.starts)] = ms;
+        device.positions[usize::from(r.lasts)] = ml;
+        device.codes = codes;
+        let nodes = c.parser.tier2.run(bytes, &device).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses the masks' records of {text:?}: {why:?}"));
+        let over = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, bytes);
+        assert_eq!(image_text(&over).expect("a tape image"), want, "the CPU's tier 2 over the masks' records, {text:?}");
         let nodes = rerail_compiler::stream::run(&c.program, bytes, &run).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why:?}"));
         let interp = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, bytes);
         assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
@@ -667,6 +690,9 @@ fn a_string_with_templates_is_one_record() {
         assert_eq!(image_text(&over).expect("a tape image"), want, "the CPU's tier 2 over the interpreter's tier 1, {text:?}");
         let image = c.parser.image(bytes).unwrap_or_else(|why| panic!("the CPU refuses {text:?}: {why:?}\n{}", c.explain(text)));
         assert_eq!(image_text(&image).expect("a tape image"), want, "the CPU, {text:?}");
+        // Tier 1 and tier 2 as Rust.
+        assert_eq!(tier1_differs(c, text), None, "tier 1 as Rust, {text:?}");
+        assert_eq!(aot_text(text).ok().as_ref(), Some(&want), "the parser as Rust, {text:?}");
     }
 }
 
@@ -1620,3 +1646,4 @@ fn walk_lemmas_keep_the_tapes() {
         assert_eq!(with.parser.image(t.as_bytes()).ok(), without.parser.image(t.as_bytes()).ok(), "{t:?}");
     }
 }
+

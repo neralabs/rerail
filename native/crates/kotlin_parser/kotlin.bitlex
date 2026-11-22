@@ -99,8 +99,8 @@ regions hidden {
   str   = dq & ~dq3 .. dq_close or t_dollar
   chr   = sq .. sq_close
   tick  = bt .. bt
-  tail  = t_close .. dq_close or t_dollar after str
-  rtail = t_close .. rclose bytes 3 or t_dollar after rstr
+  tail  = t_close .. dq_close or t_dollar resumes str
+  rtail = t_close .. rclose bytes 3 or t_dollar resumes rstr
 }
 # Where a token in a region starts: a string's, a character's or a backtick name's opener.
 mask opens      = o_str | o_chr | o_tick | o_tail | o_rstr | o_rtail

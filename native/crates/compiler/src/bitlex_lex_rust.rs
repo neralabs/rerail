@@ -382,6 +382,9 @@ struct RowArm {
     /// Its code up to its record's marks, and the marks it always has.
     body: String,
     bits: u32,
+    /// A row whose regions resume a string's (decision 0600): in place of its record, its last
+    /// the open record's, and the loop on past it.
+    resume: Option<String>,
 }
 
 /// `dispatch`'s choices, by the first byte's group: the region opened, and the row.
@@ -3709,7 +3712,11 @@ impl Gen<'_> {
         let named = self.kinds.iter().any(|q| q.after.iter().any(|a| a == kind));
         let Some((c2, _)) = self.kinds[k].or.clone().filter(|_| named && self.kinds[k].after.is_empty()) else { return Ok(found) };
         let c2 = self.val(&c2)?;
-        Ok(format!("{{\n                    if bit(&{c2}, c) {{\n                        template = {k};\n                    }}\n                    {}\n                }}", found.trim_start_matches(' ')))
+        // Resumed (decision 0600): this token's record, the next pushed, stays open; one open
+        // already (a template in a template's code) refuses.
+        let resumed = self.kinds.iter().any(|q| q.resumes && q.after.iter().any(|a| a == kind));
+        let open = if resumed { "\n                        if held.is_some() {\n                            refused = true;\n                            break;\n                        }\n                        held = Some(starts.len());" } else { "" };
+        Ok(format!("{{\n                    if bit(&{c2}, c) {{\n                        template = {k};{open}\n                    }}\n                    {}\n                }}", found.trim_start_matches(' ')))
     }
 
     fn closer_last(&mut self, r: &Region, closes: &[(String, Expr, u8)]) -> Result<String, String> {
@@ -4320,7 +4327,20 @@ impl Gen<'_> {
                 }
             }
             let tail = if matches!(rule, Some(TokenRule::Read(_) | TokenRule::ReadParts(..))) { [true; 256] } else { self.row_tail_bytes(kind, rule, last) };
-            row_arms.push(RowArm { row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n            //~passed\n{hits}            (l, {k}, {extra}, "), bits });
+            // A read that resumes a string's record (decision 0600): no record, its last the open
+            // one's, which a close at its template keeps open, as the lean lexer's string reader
+            // goes on after the template's code; then the loop on past it, as after a record.
+            let resume = match rule {
+                Some(TokenRule::ReadParts(rs, _)) if rs.iter().all(|r| r.resumes) => {
+                    let again = match rs.first().and_then(|r| r.or.clone()) {
+                        Some((c2, _)) => format!("if !bit(&{}, close) {{\n                        held = None;\n                    }}", self.val(&c2)?),
+                        None => "held = None;".to_owned(),
+                    };
+                    Some(format!("            // Resumes the open string's record: no record of its own.\n            match held {{\n                Some(o) => {{\n                    lasts[o] = l as u32;\n                    {again}\n                }}\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}\n            at = l + 1;\n            if at >= base + 64 {{\n                b = at / 64;\n                continue 'tokens;\n            }}\n            firsts &= !0u64 << (at - base);\n            continue;\n        }}"))
+                }
+                _ => None,
+            };
+            row_arms.push(RowArm { resume, row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n            //~passed\n{hits}            (l, {k}, {extra}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -4559,7 +4579,11 @@ impl Gen<'_> {
                 return Err(format!("tier 1 as Rust: row {} reads the region opened, which the rows' pick does not make", arm.row));
             }
         }
-        let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no token begins with.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&format!("{}{:#x})\n        }}", a.body, a.bits), "        ").trim_start())).collect::<String>());
+        let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no token begins with.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&match &a.resume {
+            // The body up to its record's tuple, then the resume.
+            Some(r) => format!("{}{r}", a.body.rsplit_once("            (l, ").map_or(a.body.as_str(), |x| x.0)),
+            None => format!("{}{:#x})\n        }}", a.body, a.bits),
+        }, "        ").trim_start())).collect::<String>());
         let mut fill_top = String::new();
         let mut fill_end = String::new();
         let nf = self.fills.len();
@@ -4769,6 +4793,8 @@ impl Gen<'_> {
         out.push_str(&self.stage1());
         out.push_str(&tables);
         out.push_str("/// `src`'s records.\npub fn lex(src: &[u8]) -> Lexed {\n    let n = src.len();\n    let nw = n.div_ceil(64);\n    // Each word's bits inside the file.\n    let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();\n");
+        let open_decl = if self.kinds.iter().any(|q| q.resumes) { "    // The string's record a template left open (decision 0600), over the template's code.\n    let mut held: Option<usize> = None;\n" } else { "" };
+        let span_decl = format!("{open_decl}{span_decl}");
         let plain_decl_text = format!("{}{span_decl}", if self.opens.is_some() { "    // The kind of string the template is in, as the lean lexer's string reader keeps it over the template's code: the region read last that closed at its second closer (a template's `$`), of the kinds with no `after`.\n    let mut template = usize::MAX;\n" } else { "" });
         let kept: Vec<String> = self.nodes.iter().filter(|n| n.kept).map(|n| n.name.clone()).chain(self.nodes.iter().flat_map(|n| &n.also).map(|a| format!("mut {a}"))).collect();
         let _ = writeln!(out, "    // Stage 1: the masks the regions and the tokens read, and whether an escape holds.\n    let Stage1 {{ {}, refused: escapes }} = stage1_best(src);", kept.join(", "));

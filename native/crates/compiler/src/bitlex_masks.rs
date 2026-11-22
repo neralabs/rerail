@@ -659,14 +659,29 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         // opener, and tier 1 records the region's opener alone.
         let late = records.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2);
         let recorded: Vec<&(String, Val, Val)> = token_rows.iter().enumerate().filter(|&(r, _)| !(late && low.inside.get(r).copied().unwrap_or(false))).map(|(_, t)| t).collect();
-        let mut starts = recorded[0].1;
-        for (_, s, _) in &recorded[1..] {
-            starts = low.or(starts, *s)?;
+        // A string with templates is one record (decision 0600): tier 2 reads it from its
+        // opener, its templates' code the records after it, and goes on at a template's `}`
+        // itself, so a read that resumes a string has no record. The loop's records nest (the
+        // string's last after its code's); the masks' are in order, a region's its opener alone.
+        if !late && !low.token_resumes.is_empty() {
+            return Err("a region that resumes another, read with no tier 2 split: its records nest, which no mask holds".into());
         }
-        let mut lasts = recorded[0].2;
-        for (_, _, l) in &recorded[1..] {
-            lasts = low.or(lasts, *l)?;
+        let mut starts: Option<Val> = None;
+        let mut lasts: Option<Val> = None;
+        for (k, s, l) in &recorded {
+            if low.token_resumes.contains(k) {
+                continue;
+            }
+            starts = Some(match starts {
+                Some(a) => low.or(a, *s)?,
+                None => *s,
+            });
+            lasts = Some(match lasts {
+                Some(a) => low.or(a, *l)?,
+                None => *l,
+            });
         }
+        let (starts, lasts) = (starts.ok_or("no row records")?, lasts.ok_or("no row records")?);
         vals.push((STREAM_START.to_owned(), starts));
         vals.push((STREAM_LAST.to_owned(), lasts));
         stream = Some((vals.len() - 2, vals.len() - 1));

@@ -673,6 +673,9 @@ pub struct P<'a> {
     /// its kind and, once its token is taken, that token's start: a pending extra of no width.
     gone: Vec<usize>,
     lost: Option<(u16, Option<u32>)>,
+    /// The strings open over a template's code (decision 0600): their parts go on at the next
+    /// opener of a reader that resumes them (`advance`).
+    strings: usize,
 }
 
 #[allow(dead_code)]
@@ -680,7 +683,7 @@ impl<'a> P<'a> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
         let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);
         let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None };
+        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, strings: 0 };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -876,14 +879,12 @@ impl<'a> P<'a> {
             }
             self.sub.clear();
             self.k = 0;
-            self.i = self.next_tok(self.i + 1);
-            self.arrive()?;
+            self.advance(l as usize + 1)?;
             self.last_end = l + 1;
             return Ok((s, l + 1));
         }
         let (s, e) = (self.starts[self.i], self.lasts[self.i] + 1);
-        self.i = self.next_tok(self.i + 1);
-        self.arrive()?;
+        self.advance(e as usize)?;
         self.last_end = e;
         Ok((s, e))
     }
@@ -9183,18 +9184,20 @@ impl P<'_> {
                         (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 18)
                     };
                     self.piece(c, l, kind);
+                    if bit(&m.t_dollar, c) {
+                        self.strings += 1;
+                    }
                     return Ok(());
                 }
             }
         }
     }
 
-    /// `interpolation_expression_end`'s region (`read tail | rtail parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.
-    fn split_1(&mut self, j: usize) -> R {
-        let s = self.starts[j] as usize;
+    /// `interpolation_expression_end`'s region (`read tail | rtail parts`), at byte `s`, no record of its own: the string's parts after its template's `}`: its opener's byte, each part, each run of the bytes between, its closer.
+    fn resume_1(&mut self, s: usize) -> R {
         self.sub.clear();
         self.k = 0;
-        self.sub.push((s as u32, s as u32, self.codes[j]));
+        self.piece(s, s, 1);
         let m = self.m;
         let mut at = s + 1;
         loop {
@@ -9264,6 +9267,9 @@ impl P<'_> {
                         (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 10)
                     };
                     self.piece(c, l, kind);
+                    if !(bit(&m.t_dollar, c)) {
+                        self.strings = self.strings.saturating_sub(1);
+                    }
                     return Ok(());
                 }
             }
@@ -9328,15 +9334,23 @@ impl P<'_> {
         }
     }
 
+    /// Past the token, to the next grammar token's record, or the string's parts a template's `}` resumes, at the record before the next (decision 0600).
+    #[inline(always)]
+    fn advance(&mut self, from: usize) -> R {
+        if self.strings > 0 && let Some(p) = first_bit(&self.m.rd1_open, from).filter(|&p| self.i + 1 >= self.n || p < self.starts[self.i + 1] as usize) {
+            self.known = 0;
+            return self.resume_1(p);
+        }
+        self.i = self.next_tok(self.i + 1);
+        self.arrive()
+    }
+
     /// Record `j` split where its first byte opens a region tier 2 reads in parts.
     #[inline(always)]
     fn split(&mut self, j: usize) -> R {
         let s = self.starts[j] as usize;
         if bit(&self.m.rd0_open, s) {
             return self.split_0(j);
-        }
-        if bit(&self.m.rd1_open, s) {
-            return self.split_1(j);
         }
         if bit(&self.m.o_chr, s) {
             return self.split_2(j);

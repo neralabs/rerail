@@ -1860,6 +1860,8 @@ pub fn lex(src: &[u8]) -> Lexed {
     let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);
     // The kind of string the template is in, as the lean lexer's string reader keeps it over the template's code: the region read last that closed at its second closer (a template's `$`), of the kinds with no `after`.
     let mut template = usize::MAX;
+    // The string's record a template left open (decision 0600), over the template's code.
+    let mut held: Option<usize> = None;
     // Whether a gap mask (`lf & code`) held since the grammar token before, and since the record before.
     let mut acc_0 = false;
     let mut rec_0 = false;
@@ -2384,6 +2386,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             close = c;
                             if bit(&m_t_dollar, c) {
                                 template = 3;
+                                if held.is_some() {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                held = Some(starts.len());
                             }
                             {
                             let last = if bit(&m_t_dollar, c) { c + 1 } else { c + 0 };
@@ -2466,6 +2473,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             close = c;
                             if bit(&m_t_dollar, c) {
                                 template = 2;
+                                if held.is_some() {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                held = Some(starts.len());
                             }
                             {
                             let last = if bit(&m_t_dollar, c) { c + 1 } else { if bit(&m_t_dollar, c) { c + 0 } else { c + 2 } };
@@ -2657,7 +2669,26 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, 1, false, 0x0)
+                    // Resumes the open string's record: no record of its own.
+                    match held {
+                        Some(o) => {
+                            lasts[o] = l as u32;
+                            if !bit(&m_t_dollar, close) {
+                                held = None;
+                            }
+                        }
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    }
+                    at = l + 1;
+                    if at >= base + 64 {
+                        b = at / 64;
+                        continue 'tokens;
+                    }
+                    firsts &= !0u64 << (at - base);
+                    continue;
                 }
 ,
                 10 => {
@@ -2750,7 +2781,26 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, 1, false, 0x0)
+                    // Resumes the open string's record: no record of its own.
+                    match held {
+                        Some(o) => {
+                            lasts[o] = l as u32;
+                            if !bit(&m_t_dollar, close) {
+                                held = None;
+                            }
+                        }
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    }
+                    at = l + 1;
+                    if at >= base + 64 {
+                        b = at / 64;
+                        continue 'tokens;
+                    }
+                    firsts &= !0u64 << (at - base);
+                    continue;
                 }
 ,
                 11 => {

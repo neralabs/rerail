@@ -6965,6 +6965,10 @@ const TEMPLATE_FLAG: i64 = 2;
 /// record, and ends the open one.
 const RESUME_FLAG: i64 = 4;
 
+/// In the open record's slot (`open_slot`): its string ended, its cursor kept for a read of
+/// its tail again (decision 0600).
+const STRING_ENDED: i64 = 1 << 62;
+
 /// In the marks so far (`pending`): the cursor's block has a gap mark's bit (`loop_marks`'
 /// lift), set by the refill. A token whose `pending` and hits are zero then takes no merge of
 /// the marks, and its gap test reads no word (`record_tokens`). Past every mark's bit.
@@ -8428,21 +8432,33 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let open = f.ins().stack_load(types::I64, slot, 0);
         let res = f.ins().band_imm(fl, RESUME_FLAG);
         f.ins().brif(res, resume, &[], opens, &[]);
+        // The loop may read a token again (a wait, a refill's block read again): each read
+        // leaves the slot as one does. A string ended keeps its record's cursor, marked
+        // (`STRING_ENDED`), so a read of its tail again patches the same record.
         f.switch_to_block(resume);
         f.ins().brif(open, patch, &[], nested, &[]);
         f.switch_to_block(patch);
-        let cur = f.ins().iadd_imm(open, -1);
+        let rec = f.ins().band_imm(open, !STRING_ENDED);
+        let cur = f.ins().iadd_imm(rec, -1);
         let (a, o) = c.at(f, crate::records::FIELD_LAST, cur);
         f.ins().istore32(stores, l, a, o);
         let again = f.ins().band_imm(fl, TEMPLATE_FLAG);
-        let keep = f.ins().select(again, open, zero);
+        let ended = f.ins().bor_imm(rec, STRING_ENDED);
+        let keep = f.ins().select(again, rec, ended);
         f.ins().stack_store(keep, slot, 0);
         f.ins().jump(join, &[cv[0].into(), cv[3].into(), cv[4].into(), cv[5].into()]);
-        // A template's close: none open, its cursor; a template in a template's code refuses.
+        // A template's close: its cursor, where no string is open or this token's is (read
+        // again); a template in a template's code refuses.
         f.switch_to_block(opens);
-        f.ins().brif(open, nested, &[], set, &[]);
-        f.switch_to_block(set);
         let cur1 = f.ins().iadd_imm(cv[0], 1);
+        let ended = f.ins().band_imm(open, STRING_ENDED);
+        let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+        let this = f.ins().icmp(IntCC::Equal, open, cur1);
+        let free = f.ins().bor(none, this);
+        let ended = f.ins().icmp_imm(IntCC::NotEqual, ended, 0);
+        let free = f.ins().bor(free, ended);
+        f.ins().brif(free, set, &[], nested, &[]);
+        f.switch_to_block(set);
         f.ins().stack_store(cur1, slot, 0);
         f.ins().jump(join, &[k1.into(), pending.into(), from.into(), word_before.into()]);
         f.switch_to_block(nested);

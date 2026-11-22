@@ -1,6 +1,6 @@
 # 0600: A string with templates is one token
 
-Status: in progress (the user, 2026-11-21: "go ahead with the full change", on "Template code is still read as
+Status: done (the user, 2026-11-21: "go ahead with the full change", on "Template code is still read as
 separate tokens, where lean reads the whole string, interpolations included, as one token"). Follows 0598.
 
 ## Intro
@@ -67,3 +67,31 @@ template's code where it reaches the `${` (`parse/expr.rs`, `string_literal`, `i
     record. The opener's code is the reader's tag.
 - The test also checks the CPU's records and codes, and its tier 2 over both tier 1s, with templates across
   blocks' edges.
+
+## What changed (steps 3 to 5)
+
+- Kotlin's grammar: `tail … resumes str`, `rtail … resumes rstr`. The test reads the crate's grammar, out of the
+  slow tier.
+- Tier 1 as Rust (`bitlex_lex_rust`): a string's row that closes at a template keeps its record's index (`held`).
+  A row that resumes writes its last there and goes on past its token with no record of its own.
+- Tier 2 as Rust (`bitlex_rust`): `P::strings` counts the strings open, set by the closer of a split.
+  - `advance`, past each token, enters the resuming reader (`resume_R`) at its opener where that comes before the
+    next record. Its pieces stand at the record before that one, so the next token's is as after any split.
+  - A reader that resumes has no `split_R`, as it has no record.
+- The JIT's tier 1 reads a token again where the loop does (a wait, a block read again), so the open record's
+  slot is left as one read leaves it. A string ended keeps its record's cursor, marked (`STRING_ENDED`): a second
+  read of its tail patches the same record. A template's close finds no string open, or its own.
+- The masks' records, which a device reads (Metal: its record pass codes them, and the JIT's tier 2 reads them):
+  - A region's record is its opener alone (page 40). A reader that resumes has none, start or last.
+  - The loop's records nest, the string's last after its code's records, which no mask holds. So a grammar that
+    resumes a region with no tier 2 split is refused.
+  - `split_enter` enters a split region at its opener, the record whole or its opener alone. The parts end at the
+    closer's own last (`closer_last`), as `records::read_parts` ends them, not at the record's last. Until now
+    the masks' records of a Kotlin string were tokens as they were, and tier 2 refused them, with or without
+    templates.
+- Metal's code is unchanged: its record pass codes the masks' records, and its tier 2 is the JIT's. The test
+  runs that path on the CPU: the masks' positions, coded by `records::pass`, then the JIT's tier 2. Kotlin has no
+  Metal test.
+- The test: every tier on every text: the interpreter, the JIT's tier 1 and tier 2, the masks' records, and tier 1
+  and tier 2 as Rust. The texts include a gap before a template's `}`, a file that ends at a string, and tails
+  read across a block's edge.
