@@ -1,7 +1,7 @@
 //! `kernels/f16_parent.uglykl` on the process's GPU (Metal on macOS, CUDA on Linux; `RERAIL_GPU=cpu` the UKL CPU
-//! backend), against the host's read on every node: the walk (`parent_all`, each thread its node's walk) and, where
-//! the source has them, one step a node and the chase of its links (`parent_step`, then `parent_link`). Each is timed
-//! by the GPU's own clock: the median of 9 runs after a first, the tape and view uploaded once before (not timed).
+//! backend), against the host's read on every node: `parent_group`, one launch of each group's steps and the chase
+//! of their links in its threadgroup memory. It is timed by the GPU's own clock: the median of 9 runs after a first,
+//! the tape and view uploaded once before (not timed).
 //!
 //! `cargo run -p rerail-ukl-aot --profile profiling --example parent_gpu [records|numbers|random] [SIZE]`
 
@@ -64,9 +64,9 @@ fn main() {
     // SAFETY: the view is plain u32s.
     let words = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(&d.view).cast::<u32>(), size_of::<rerail_clif::view::TapeView>() / 4) };
     let (tb, vb) = (buffer_of(&bytes).unwrap(), buffer_of(words).unwrap());
-    let (out, res) = (alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap());
+    let out = alloc::<u32>(n).unwrap();
     let groups = [n.div_ceil(256) as u64];
-    let args = |_: u32| Args { nodes: n as u32, pad0: 0, pad1: 0, pad2: 0 };
+    let args = Args { nodes: n as u32, pad0: 0, pad1: 0, pad2: 0 };
     let median = |mut v: Vec<f64>| {
         v.sort_by(f64::total_cmp);
         v[v.len() / 2]
@@ -88,20 +88,8 @@ fn main() {
         let ms = median(t);
         println!("{backend}: {name:>12}: {ms:>8.3} ms, {:.2} ns a node", ms * 1e6 / n as f64);
     };
-    if let Ok(f) = p.function("parent_all") {
-        time("walk", &|q| {
-            launch(q, f).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).value("args", &args(0)).run(&groups, &[256]).unwrap();
-        });
-    }
-    if let (Ok(step), Ok(link)) = (p.function("parent_step"), p.function("parent_link")) {
-        time("step + links", &|q| {
-            launch(q, step).buffer("tape", &tb).buffer("view", &vb).buffer("steps", &res).value("args", &args(0)).run(&groups, &[256]).unwrap();
-            launch(q, link).buffer("tape", &tb).buffer("view", &vb).buffer("steps", &res).buffer("out", &out).value("args", &args(0)).run(&groups, &[256]).unwrap();
-        });
-    }
-    if let Ok(f) = p.function("parent_group") {
-        time("group", &|q| {
-            launch(q, f).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).value("args", &args(0)).run(&groups, &[256]).unwrap();
-        });
-    }
+    let f = p.function("parent_group").unwrap_or_else(|e| panic!("{backend}: parent_group: {e}"));
+    time("group", &|q| {
+        launch(q, f).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).value("args", &args).run(&groups, &[256]).unwrap();
+    });
 }

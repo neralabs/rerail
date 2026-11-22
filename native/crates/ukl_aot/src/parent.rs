@@ -52,26 +52,24 @@ pub struct ParentArgs {
     pub pad2: u32,
 }
 
-/// `f16_parent`'s kernels as Rust (`step`: `parent_step`, `link`: `parent_link`) over `d`'s nodes in groups of
-/// `block` threads: one step a node into `steps`, then each linked node's chase of its links. Each node's parent.
+/// `f16_parent`'s kernel of one launch as Rust (`parent_group`) over `d`'s nodes in groups of `block` threads (at
+/// most 256, its threadgroup memory's steps): each group's steps, then each linked node's chase of them. Each
+/// node's parent.
 ///
 /// # Safety
 ///
-/// `step` and `link` are kernels of `parent_step`'s and `parent_link`'s arguments.
-pub unsafe fn run(step: crate::Kernel, link: crate::Kernel, d: &Doc, block: u32) -> Vec<u32> {
+/// `group` is a kernel of `parent_group`'s arguments.
+pub unsafe fn run(group: crate::Kernel, d: &Doc, block: u32) -> Vec<u32> {
+    assert!(block <= 256, "a group of {block} threads: parent_group's steps are 256");
     let n = d.nodes() as usize;
-    let (mut out, mut steps) = (vec![0u32; n], vec![0u32; n]);
+    let mut out = vec![0u32; n];
     let (tp, vp) = (d.bytes.as_ptr(), (&raw const d.view).cast::<u8>());
-    let (sp, op) = (steps.as_mut_ptr().cast::<u8>().cast_const(), out.as_mut_ptr().cast::<u8>().cast_const());
+    let op = out.as_mut_ptr().cast::<u8>().cast_const();
     let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
     let args = ParentArgs { nodes: d.nodes(), pad0: 0, pad1: 0, pad2: 0 };
     let p = |x: &*const u8| (&raw const *x).cast::<u8>();
     let (a, c, f) = ((&raw const args).cast::<u8>(), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>());
-    let groups = d.nodes().div_ceil(block);
-    unsafe {
-        crate::launch(step, &[p(&tp), p(&vp), p(&sp), a, c, f], groups, block);
-        crate::launch(link, &[p(&tp), p(&vp), p(&sp), p(&op), a, c, f], groups, block);
-    }
+    unsafe { crate::launch(group, &[p(&tp), p(&vp), p(&op), a, c, f], d.nodes().div_ceil(block), block) };
     out
 }
 

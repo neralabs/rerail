@@ -354,7 +354,7 @@ should also improve the speed on Metal, but please verify that it is true".
 2. **A walk's first step is a read of its own** (`parent_step`, host Rust and UKL; `parent` is a loop of it). A walk's
    only state is its node, so a node whose step goes on from a previous sibling's node `j` has `j`'s parent: no
    walk, a chain of at most K - 1 = 7 links (`every_chain_of_links_is_at_most_seven`).
-3. **The kernel is one step a node and a chase of the links** (`parent_step`, `parent_link`: its Rust checked in).
+3. **The kernel is one step a node and a chase of the links**, as one launch (`parent_group`, its Rust checked in: below).
 
 Metal, an M3, the GPU's clock, the median of 9 (`examples/parent_gpu`); every node checked against the host's:
 
@@ -363,7 +363,7 @@ Metal, an M3, the GPU's clock, the median of 9 (`examples/parent_gpu`); every no
 | The walk, the halving search (before) | 0.474 ms | 0.382 ms | 0.069 ms |
 | The walk, the count search | 0.509 ms | 0.231 ms | 0.070 ms |
 | Step, 3 rounds of pointer jumping (4 launches) | 1.027 ms | 0.197 ms | 0.061 ms |
-| Step, then the links' chase (2 launches, kept) | 0.581 ms | 0.120 ms | 0.037 ms |
+| Step, then the links' chase (2 launches, removed) | 0.581 ms | 0.120 ms | 0.037 ms |
 | One launch: steps in threadgroup memory, a barrier, the chase there | 0.400 ms | 0.127 ms | 0.049 ms |
 
 - **Not faster everywhere as first built.** Pointer jumping reads and writes two arrays of every node each round:
@@ -372,12 +372,52 @@ Metal, an M3, the GPU's clock, the median of 9 (`examples/parent_gpu`); every no
   walk's speed where escapes and long sibling runs are, but its second launch's 8 bytes a node keep it 23% behind the
   walk on records.
 - **One launch is faster than the walk on all three** (1.2, 3.0 and 1.4 times): a group's links mostly stay in it,
-  and a link that leaves it is the walk from that node. Its Rust needs the threadgroup barrier in `rs.rs` (refused
-  today), so it runs on the GPU only, beside the two-launch form that the CPU's Rust is.
+  and a link that leaves it is the walk from that node. It is the one kernel now; the two-launch form is removed.
 
-The written kernels' Rust on the CPU (instructions and cycles a node, this Mac at load 10–50, `PARENT_ONLY` with
+The two-launch kernels' Rust on the CPU (instructions and cycles a node, this Mac at load 10–50, `PARENT_ONLY` with
 `/usr/bin/time -l`): records 167 → 71 and 52 → 17 cycles; numbers 1,525 → 345 and 558 → 89; random 258 → 92 and
-101 → 23. The host's scalar read now 18, 95 and 33 cycles: the written kernel is at or under it on each.
+101 → 23. The host's scalar read then 18, 95 and 33 cycles.
+
+## Step 3, a barrier's Rust: phases (the user's, 2026-11-22)
+
+The user, of `parent_group`'s barrier: "implement it as phase splits". `rs.rs` writes a kernel whose function has
+threadgroup barriers at its top as phases:
+
+- **The group's threadgroup memory is an array of the kernel's function** (`let mut tg = [0u64; bytes / 8]`), named
+  as one more buffer argument (`arg{k}`, after the launch's), so its reads and writes are a buffer's: consecutive
+  lanes' a register's, others a gather.
+- **The function's top-level statements between barriers are its phases.** Its Rust takes the phase and its chunk's
+  state: `if phase == j { 'phase: { ... } }` for each, a return that ends every lane `live = 0; break 'phase`. A
+  phase's end saves the chunk's lanes that go on (`live`) and each variable (a slot of the widest lanes each, 32 P
+  bytes); the next phase's start reads them, and a chunk with no lane left returns. That is what the GPU's threads
+  keep in their registers across the barrier. A later phase is written for a mask of lanes, whatever its instance's.
+- **The kernel runs each phase's loop of the chunks in turn**, the phase a constant there (the function inlined in
+  it is that phase's), every chunk's phase before any chunk's next: the barrier's meaning, with no thread waiting.
+  The state is the group's chunks' (`Vec::with_capacity`, written before it is read).
+- **A barrier elsewhere is refused**: in a branch or a loop, or in a function the kernel's function calls
+  (`a_barrier_not_at_the_top_of_the_kernels_function_is_refused`); so is a function with barriers that returns a
+  value.
+
+`parent_group_w8.rs` is checked in (`the_f16_parent_kernels_rust_is_the_checked_in_one`), and matches the host's
+parents on every node of the test documents, at groups of 8, 20, 32, 36 and 256 threads
+(`the_kernels_rust_parent_is_the_hosts`). `parent_step` and `parent_link` are removed, with their Rust.
+
+On the CPU, the same counts (this Mac at load 30–45, its cycles ±3 a node; the host's read 105, 479 and 133
+instructions, 17–21, 93 and 20–29 cycles):
+
+| Document | Two launches (removed) | One launch, in phases |
+|---|---|---|
+| 40,000 records | 71 instr, 17 cycles | 114 instr, 32–34 cycles |
+| 40,000 numbers | 345, 89 | 377, 94 |
+| random values | 92, 23 | 130, 36 |
+
+- **The phases' cost is not the difference**: the saved state is 256 bytes a chunk of 8, a load and a store of 16
+  registers. A loop of both phases with the phase a value (not a constant) was 5 instructions a node more.
+- **The links that leave a group are the difference**: each is the walk, which the two launches never took (their
+  steps were every node's, in device memory). A record's elements of the top-level array are 35 nodes apart, so a chain of 7
+  links spans about 245, and nearly every element's leaves its group of 256; with the walk skipped (wrong parents,
+  for the count only) records took 36 instructions a node fewer. On the CPU a chunk with one such lane runs the walk
+  masked for all 8. On the GPU the same kernel is 1.45 times the two launches' speed on records.
 
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 

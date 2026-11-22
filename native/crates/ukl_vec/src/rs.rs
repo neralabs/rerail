@@ -10,8 +10,12 @@
 //! element (`ldr w, [x, w, uxtw #2]`), consecutive lanes' a register's (`vld1q_u32`).
 //!
 //! A kernel is a function of a launch's group: its threads, `W` at a time (`W` lanes, `P = W / 4` registers), each
-//! chunk of its first dimension. Kernels with a SIMD-group operation or a threadgroup barrier (whose lanes meet the
-//! group's others) are refused, as are a thread's variables whose address is taken: their Rust is the next step.
+//! chunk of its first dimension. A threadgroup barrier at the top of the kernel's function parts it in phases: the
+//! kernel runs every chunk's phase before any chunk's next (as the group's threads all meet at the barrier), each
+//! chunk's lanes that go on and its variables saved at a phase's end and read at the next's start, and its
+//! threadgroup memory is the group's array (`tg`). A barrier elsewhere (in a branch, a loop, a function the kernel's
+//! calls), a SIMD-group operation, and a thread's variables whose address is taken are refused: their Rust is the
+//! next step.
 
 use crate::Error;
 use crate::k::{Builtin, Kind, M, NO_SLOT, Op, View};
@@ -175,6 +179,9 @@ struct Cx {
     region: Option<usize>,
     /// Whether the statements are a chunk's of the kernel's own (a return of its lanes ends the chunk).
     chunk: bool,
+    /// Whether the statements are a phase's, between a function's barriers (a return of its lanes ends the phase,
+    /// whose end saves the lanes that go on).
+    phased: bool,
 }
 
 /// A function's instance: its number, its parameters' shapes, whether all its lanes run (`_f`, else `_p`), and the
@@ -219,6 +226,9 @@ struct Em<'a> {
     ind: usize,
     n: u32,
     vars: BTreeMap<(u32, u32), Var>,
+    /// The kernel's threadgroup memory, if it has any: the argument number it is named by (`arg{k}`, after the
+    /// launch's), as a buffer.
+    shared: Option<u32>,
 }
 
 /// Kernel `name`'s vector tape `k` as Rust at `w` lanes (4, 8, 16 or 32): a module's text, its entry
@@ -234,7 +244,10 @@ pub fn kernel(k: &crate::vector::Kernel, w: u32) -> R<String> {
             bodies.insert(v.w(i, 0), i);
         }
     }
-    let mut e = Em { v, w, p: w / 4, bodies, lanes: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new() };
+    let mut e = Em { v, w, p: w / 4, bodies, lanes: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new(), shared: None };
+    if e.v.len() > 0 && e.v.kind(0) == Kind::Func && e.v.w(0, 2) > 0 {
+        e.shared = Some(e.v.w(0, 4));
+    }
     // Each pass finds lanes the one before did not (a variable written a lane's value, or apart); until none. A
     // pass finds at least a function's instances a call deeper than the last's (format 16's parent read, through
     // its slot, its array's value and column, the window load: 17 passes).
@@ -390,7 +403,7 @@ impl Em<'_> {
         self.line("let n = l.block[0] * l.block[1] * l.block[2];");
         self.top = self.out.len();
         self.hoisted.clear();
-        let cx = Cx { cur: "live".into(), divergent: false, live: "live".into(), res: None, brk: None, cont: None, kernel: true, ctx: u32::MAX, body: u32::MAX, full: false, looped: None, region: None, chunk: false };
+        let cx = Cx { cur: "live".into(), divergent: false, live: "live".into(), res: None, brk: None, cont: None, kernel: true, ctx: u32::MAX, body: u32::MAX, full: false, looped: None, region: None, chunk: false, phased: false };
         self.stmt(0, &cx)?;
         self.ind -= 1;
         self.line("}");
@@ -428,6 +441,93 @@ impl Em<'_> {
         self.ind -= 1;
         self.line("}");
         Ok(())
+    }
+
+    /// The kernel's statement `n` for each chunk; if it calls a function with barriers, once a phase of it: every
+    /// chunk's phase before any chunk's next, as every thread of a group meets the others at a barrier. A chunk's
+    /// lanes that go on and its variables are saved at a phase's end (in `st`, a slot of each), and read again at
+    /// the next's start: what the GPU keeps in its threads' registers across a barrier.
+    fn phased_chunks(&mut self, n: usize, cx: &Cx) -> R<()> {
+        let called = (n..n + self.v.size(n)).filter(|&i| self.v.kind(i) == Kind::Call).find_map(|i| self.phases(self.v.w(i, 3)).map(|p| (self.v.w(i, 3), p.len())));
+        let Some((id, np)) = called else { return self.chunks(n, cx) };
+        let bytes = self.state_bytes(id);
+        let w = self.w;
+        self.line("// Phases: each chunk's, then the next phase's (its barriers).");
+        self.line(format!("let mut state: Vec<u8> = Vec::with_capacity(n.div_ceil({w}) as usize * {bytes});"));
+        self.line("let st: *mut u8 = state.as_mut_ptr();");
+        // Each phase's own loop of the chunks, its number a constant: the function inlined there is that phase's.
+        for j in 0..np {
+            self.line("{");
+            self.ind += 1;
+            self.line(format!("let phase = {j}u32;"));
+            self.chunks(n, cx)?;
+            self.ind -= 1;
+            self.line("}");
+        }
+        Ok(())
+    }
+
+    /// Whether statement `s` is a barrier of the group's threads (a call of a function that is only one).
+    fn is_barrier(&self, s: usize) -> bool {
+        if self.v.kind(s) != Kind::Expr {
+            return false;
+        }
+        let e = self.v.child(s, 0);
+        let only = |a: usize, b: usize| {
+            (a..b).any(|i| self.v.kind(i) == Kind::Builtin && Builtin::of(self.v.w(i, 0)) == Builtin::Barrier)
+                && (a..b).all(|i| match self.v.kind(i) {
+                    Kind::Block | Kind::Expr | Kind::Empty => true,
+                    Kind::Return => self.v.w(i, 0) == 0,
+                    Kind::Builtin => Builtin::of(self.v.w(i, 0)) == Builtin::Barrier,
+                    Kind::Const => true,
+                    _ => false,
+                })
+        };
+        match self.v.kind(e) {
+            Kind::Builtin => only(e, e + self.v.size(e)),
+            Kind::Call => self.bodies.get(&self.v.w(e, 3)).is_some_and(|&b| self.v.w(b, 6) == 0 && only(b + 1, b + self.v.size(b))),
+            _ => false,
+        }
+    }
+
+    /// Function `id`'s statements in phases, if barriers part them: its top-level statements between them.
+    fn phases(&self, id: u32) -> Option<Vec<Vec<usize>>> {
+        let &b = self.bodies.get(&id)?;
+        let block = self.v.child(b, 0);
+        if self.v.kind(block) != Kind::Block {
+            return None;
+        }
+        let mut out = vec![Vec::new()];
+        for c in self.v.children(block) {
+            if self.is_barrier(c) {
+                out.push(Vec::new());
+            } else {
+                out.last_mut().unwrap().push(c);
+            }
+        }
+        // A function that is only a barrier (`ukl_tg_barrier`) is one, not phases: a call of it elsewhere is refused.
+        (out.len() > 1 && out.iter().any(|p| !p.is_empty())).then_some(out)
+    }
+
+    /// A slot of a phase's saved value: the bytes of the widest lanes, `[uint64x2_t; 2P]`.
+    fn slot(&self) -> usize {
+        32 * self.p as usize
+    }
+
+    /// The variables function `id` keeps (its locals but its parameters), by offset.
+    fn kept(&self, id: u32) -> Vec<u32> {
+        let b = self.bodies[&id];
+        let np = self.v.w(b, 6) as usize;
+        let params: Vec<u32> = (0..np).map(|k| self.v.w(b, 7 + 2 * k)).collect();
+        let mut offs: Vec<u32> = (b + 1..b + self.v.size(b)).filter(|&i| self.v.kind(i) == Kind::Local).map(|i| self.v.w(i, 0)).filter(|o| !params.contains(o)).collect();
+        offs.sort();
+        offs.dedup();
+        offs
+    }
+
+    /// A chunk's saved state of function `id`'s phases: its lanes that go on, then each variable kept.
+    fn state_bytes(&self, id: u32) -> usize {
+        (1 + self.kept(id).len()) * self.slot()
     }
 
     /// Whether statement `n` reads the lanes' ids or calls a function (of the lanes' mask).
@@ -502,6 +602,14 @@ impl Em<'_> {
             };
             self.vars.insert((ctx, off), var);
         }
+        let phases = self.phases(id);
+        if phases.is_some() {
+            if ret != M::VOID {
+                return err("a function with barriers that returns a value");
+            }
+            ps.push("phase: u32".into());
+            ps.push("st: *mut u8".into());
+        }
         let rl = self.rets.get(&ctx).copied().unwrap_or(false);
         let rt = if ret == M::VOID { String::new() } else { format!(" -> {}", self.ty(ret, rl)?) };
         self.line("#[inline(always)]");
@@ -529,9 +637,46 @@ impl Em<'_> {
             self.line(format!("let mut res: {} = {init};", self.ty(ret, rl)?));
             Some(("res".to_string(), ret, rl))
         };
-        let cx = Cx { cur: "live".into(), divergent: false, live: "live".into(), res: res.clone(), brk: None, cont: None, kernel: false, ctx, body: id, full, looped: None, region: None, chunk: false };
+        let cx = Cx { cur: "live".into(), divergent: false, live: "live".into(), res: res.clone(), brk: None, cont: None, kernel: false, ctx, body: id, full, looped: None, region: None, chunk: false, phased: false };
         self.risky = false;
-        self.stmt(self.v.child(n, 0), &cx)?;
+        if let Some(phases) = phases {
+            // Its phases, between its barriers: the one the kernel runs now, its state the last phase's.
+            let slot = self.slot();
+            let p = self.p;
+            self.line("if phase > 0 {");
+            self.ind += 1;
+            self.line(format!("live = (st as *const [uint32x4_t; {p}]).read_unaligned();"));
+            for (j, var) in locals.iter().enumerate() {
+                let t = self.ty(var.m, var.lanes)?;
+                self.line(format!("{} = (st.add({}) as *const {t}).read_unaligned();", var.name, (j + 1) * slot));
+            }
+            self.line(format!("if !{} {{ return; }}", self.any("live")));
+            self.ind -= 1;
+            self.line("}");
+            for (j, stmts) in phases.iter().enumerate() {
+                self.line(format!("if phase == {j} {{"));
+                self.ind += 1;
+                self.line("'phase: {");
+                self.ind += 1;
+                // A later phase's lanes are those that went on: a mask, whatever the instance's.
+                self.seq(stmts, &Cx { phased: true, full: full && j == 0, ..cx.clone() }, None)?;
+                self.ind -= 1;
+                self.line("}");
+                self.ind -= 1;
+                self.line("}");
+            }
+            self.line(format!("if phase + 1 < {} {{", phases.len()));
+            self.ind += 1;
+            self.line(format!("(st as *mut [uint32x4_t; {p}]).write_unaligned(live);"));
+            for (j, var) in locals.iter().enumerate() {
+                let t = self.ty(var.m, var.lanes)?;
+                self.line(format!("(st.add({}) as *mut {t}).write_unaligned({});", (j + 1) * slot, var.name));
+            }
+            self.ind -= 1;
+            self.line("}");
+        } else {
+            self.stmt(self.v.child(n, 0), &cx)?;
+        }
         if self.risky != self.risky_insts.contains(&ctx) {
             if self.risky { self.risky_insts.insert(ctx) } else { self.risky_insts.remove(&ctx) };
             self.again = true;
@@ -664,6 +809,12 @@ impl Em<'_> {
                     self.line(format!("let {name}: {} = {val};", self.ty(if m.is_agg() { M::PTR } else { m }, false)?));
                     self.vars.insert((u32::MAX, off), Var { name, m: if m.is_agg() { M::PTR } else { m }, lanes: false, fixed: None });
                 }
+                if let Some(k) = self.shared {
+                    // The group's threadgroup memory: its threads', as a buffer of the launch's.
+                    let words = self.v.w(n, 2).div_ceil(8);
+                    self.line(format!("let mut tg = [0u64; {words}];"));
+                    self.line(format!("let arg{k}: *const u8 = tg.as_mut_ptr() as *const u8;"));
+                }
                 self.top = self.out.len();
                 // Its statements: one the lanes run, for each chunk of them; one of none (the launch's checks), once.
                 let stmts: Vec<usize> = kids.into_iter().filter(|&c| self.v.kind(c) != Kind::Body).collect();
@@ -671,11 +822,11 @@ impl Em<'_> {
                 let inner: Vec<usize> = if block { self.v.children(stmts[0]).collect() } else { stmts.clone() };
                 if block && !(stmts[0]..stmts[0] + self.v.size(stmts[0])).any(|i| self.v.kind(i) == Kind::Local && !self.vars.contains_key(&(u32::MAX, self.v.w(i, 0)))) {
                     for c in inner {
-                        if self.of_lanes(c) { self.chunks(c, cx)? } else { self.stmt(c, cx)? }
+                        if self.of_lanes(c) { self.phased_chunks(c, cx)? } else { self.stmt(c, cx)? }
                     }
                 } else {
                     for c in stmts {
-                        self.chunks(c, cx)?;
+                        self.phased_chunks(c, cx)?;
                     }
                 }
             }
@@ -798,6 +949,11 @@ impl Em<'_> {
                     self.line(format!("{live} = [{}];", (0..self.p).map(|r| format!("vbicq_u32({live}[{r}], {cur}[{r}])")).collect::<Vec<_>>().join(", ")));
                 } else if let Some((res, ..)) = &cx.res {
                     self.line(format!("return {res};"));
+                } else if cx.phased {
+                    // Its lanes end: none goes on to the next phase.
+                    let live = cx.live.clone();
+                    self.line(format!("{live} = {};", self.zeros()));
+                    self.line("break 'phase;");
                 } else {
                     self.line("return;");
                 }
@@ -1394,6 +1550,11 @@ impl Em<'_> {
                 if !cx.full {
                     args.push(cx.cur.clone());
                 }
+                // A function with barriers: the kernel's phase of it, and the chunk's state.
+                let phased = self.phases(id).is_some();
+                if phased && !cx.kernel {
+                    return err(format!("a barrier in function {id}, which the kernel's function calls (barriers part only the kernel's)"));
+                }
                 let mut vals = Vec::new();
                 for &c in kids.iter().take(np) {
                     vals.push(self.expr(c, cx)?);
@@ -1443,6 +1604,10 @@ impl Em<'_> {
                         (sh, a) => return err(format!("{a:?} passed as {sh:?}")),
                     }
                 }
+                if phased {
+                    args.push("phase".into());
+                    args.push(format!("st.add((lid0 / {}) as usize * {})", self.w, self.state_bytes(id)));
+                }
                 let call = format!("{}({})", fname(id, &shapes, cx.full, &valid), args.join(", "));
                 let r = if ret == M::VOID {
                     self.line(format!("{call};"));
@@ -1467,6 +1632,11 @@ impl Em<'_> {
             Kind::Comma => {
                 self.expr(kids[0], cx)?;
                 return self.expr(kids[1], cx);
+            }
+            Kind::Shared => {
+                // The group's threadgroup memory, the kernel's (`tg`), as a buffer.
+                let Some(k) = self.shared else { return err("threadgroup memory of a kernel with none") };
+                V::S(if p[0] == 0 { format!("arg{k}") } else { format!("arg{k}.wrapping_add({})", p[0]) }, M::PTR)
             }
             k => return err(format!("a {k:?} value")),
         })

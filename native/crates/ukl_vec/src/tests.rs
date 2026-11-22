@@ -1478,16 +1478,32 @@ fn f16_parent_rust(kernel: &str) -> Result<String, super::Error> {
     super::rs::kernel(&k, 8).map_err(|e| super::Error(format!("{}\n{}", e.0, super::k::View::new(&k.tape).listing())))
 }
 
-/// `f16_parent`'s two kernels' Rust at 8 lanes (one step a node, the chase of its links), as checked in.
+/// `f16_parent`'s kernel of one launch as Rust at 8 lanes, as checked in: its barrier parts it in two phases, each
+/// chunk's first phase (its steps, in the group's threadgroup memory) before any chunk's second (the chase of
+/// their links there), each chunk's lanes that go on and its variables saved between them.
 #[test]
 fn the_f16_parent_kernels_rust_is_the_checked_in_one() {
-    for kernel in ["parent_step", "parent_link"] {
-        let rust = f16_parent_rust(kernel).unwrap_or_else(|e| panic!("{kernel}: {}", e.0));
-        let at = format!("{}/../ukl_aot/src/{kernel}_w8.rs", env!("CARGO_MANIFEST_DIR"));
-        if std::env::var_os("UKL_RS_WRITE").is_some() {
-            std::fs::write(&at, &rust).unwrap();
-        }
-        let kept = std::fs::read_to_string(&at).unwrap_or_default();
-        assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+    let rust = f16_parent_rust("parent_group").unwrap_or_else(|e| panic!("{}", e.0));
+    assert!(rust.contains("let mut tg = [0u64; 128];") && rust.contains("let phase = 1u32;") && !rust.contains("let phase = 2u32;"), "no group's memory, or not two phases:\n{rust}");
+    assert!(rust.contains("if phase == 0 {") && rust.contains("if phase == 1 {") && !rust.contains("Barrier"), "the phases:\n{rust}");
+    let at = format!("{}/../ukl_aot/src/parent_group_w8.rs", env!("CARGO_MANIFEST_DIR"));
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(&at, &rust).unwrap();
     }
+    let kept = std::fs::read_to_string(&at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}
+
+/// A barrier only parts a kernel's function at its top: one in a branch (or in a function it calls) is refused.
+#[test]
+fn a_barrier_not_at_the_top_of_the_kernels_function_is_refused() {
+    let text = "#include <ukl/backend.h>\n\
+        DEFINE_KERNEL2(t, branch, RWBUFFER, uint32_t, out, \"[64]\", SHARED, uint32_t, s, 64, GID0, uint32_t, i, , LID0, uint32_t, lid, )\n\
+        { s[lid] = i; if (i > 3u) { ukl_tg_barrier(); } out[i] = s[63u - lid]; }\n";
+    let src = super::source("/<kernels>/branch.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("branch").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let e = super::rs::kernel(&k, 8).expect_err("a barrier in a branch");
+    assert!(e.0.contains("Barrier"), "{}", e.0);
 }
