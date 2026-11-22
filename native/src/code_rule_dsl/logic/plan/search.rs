@@ -2895,7 +2895,7 @@ impl Model {
         // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
         if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes) {
             self.log_assumed(line_key(b, first));
-            super::super::profile::decision("prepared plans (decision 0361 step 5)", || "a live plan taken as prepared: not searched or priced".to_owned());
+            super::super::profile::decision("prepared plans (decision 0361 step 5)", || format!("{}: a live plan taken as prepared, not searched or priced", b.rel(b.head())));
             return Ok((plan, None));
         }
         let misses = self.delta_misses(b, first);
@@ -3381,7 +3381,7 @@ impl Model {
             && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes)
         {
             self.log_assumed(line_key(b, first));
-            super::super::profile::decision("prepared plans (decision 0361 step 5)", || "a line's plan taken as prepared: not searched".to_owned());
+            super::super::profile::decision("prepared plans (decision 0361 step 5)", || format!("{}: a line's plan taken as prepared, not searched", b.rel(b.head())));
             if std::env::var("RERAIL_PLAN_SHOW").is_ok_and(|r| r.split(',').any(|name| name == b.rel(b.head()))) {
                 eprintln!("plan show {} prepared: work {:.1} rows {:.1}: {}", b.show_head(), plan.1, plan.2, b.shown(&plan.0).join(" , "));
             }

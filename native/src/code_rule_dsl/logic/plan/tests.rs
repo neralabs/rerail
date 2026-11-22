@@ -3557,9 +3557,10 @@ fn prepared_plans_are_stored_with_the_image_and_read_back() {
     assert_eq!(prepared::Prepared::of_rows(&v, &rows).as_ref(), Some(&*prep));
 }
 
-/// Decision 0361 step 5, end to end: a policy whose rule reads only shaped relations (`kind`, `child`) runs over
-/// three files through `run_policies`, its strata planned from the prepared plans (the lines taken counted), and its
-/// findings are what the rule says: a statement at a module's top.
+/// Decision 0361 step 5, end to end: a policy whose rule reads only shaped relations (`child`) runs over three files
+/// through `run_policies`, its rule's line planned from the prepared plans (the profile names it taken), and its findings
+/// are what the rule says: a statement at a module's top, the module the node with no parent. No literal tests a
+/// constant on a `values` column (`kind`'s), which Q242 plans at run time and does not prepare.
 #[test]
 fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-plans");
@@ -3571,13 +3572,17 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     std::fs::write(
         &policy,
         ".language python\n.violation hit(at: node) code \"X1\" \"a statement at a module's top\"\n\
-         hit(n) :- kind(n, \"expression_statement\"), child(p, n, _), kind(p, \"module\").\n",
+         hit(n) :- child(p, n, _), !child(_, p, _).\n",
     )
     .unwrap();
-    // The test's run holds the policy run (it joins it), so the plans counted taken are this run's alone.
+    // The test's run holds the policy run (it joins it): the decisions are this run's. They name the line taken, so
+    // a line of another program the run plans (phase 0's) is not counted as the policy's.
     let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    crate::code_rule_dsl::logic::profile::set(true);
+    crate::code_rule_dsl::logic::profile::reset();
     let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
-    let taken = prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed);
+    let taken: Vec<String> = crate::code_rule_dsl::logic::profile::decisions().into_keys().filter(|(t, _)| t == "prepared plans (decision 0361 step 5)").map(|(_, x)| x).collect();
+    crate::code_rule_dsl::logic::profile::set(false);
     drop(run);
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&policy);
@@ -3588,8 +3593,8 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
         .map(|d| (d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start_line"].as_i64()).unwrap_or(-1)))
         .collect();
     hits.sort();
-    assert_eq!(hits, [("a.py".to_owned(), 1), ("c.py".to_owned(), 1), ("c.py".to_owned(), 2)], "{report:#}");
-    assert!(taken > 0, "no line was taken from the prepared plans");
+    assert_eq!(hits, [("a.py".to_owned(), 1), ("b.py".to_owned(), 1), ("c.py".to_owned(), 1), ("c.py".to_owned(), 2)], "{report:#}");
+    assert!(taken.iter().any(|x| x.starts_with("hit: ")), "the policy's line was not taken from the prepared plans: {taken:?}");
 }
 
 /// A version kept with no prepared plan is read back as one (its id alone): else the next process makes it again, and
