@@ -134,6 +134,32 @@ describe("submoduleChanged", () => {
     expect([changed, read <= 1024 * 1024 + 1]).toEqual([{ status: 128, stdout: "", stderr: `fatal: too large to be a .git file: 'linked/.git'\n` }, true]);
   });
 
+  it("reads a `.git` file put in place of a larger one after its stat to its end, and opens the folder it names", async () => {
+    const root = await folder();
+    const { linked } = repositories(root);
+    const found = gitFolderFound(linked);
+    const gitfile = join(linked, ".git");
+    const text = realFs.readFileSync(gitfile, "utf8");
+    // Git takes off every line end after the path. Git for Windows hides the file, which Windows refuses to open for writing.
+    realFs.unlinkSync(gitfile);
+    realFs.writeFileSync(gitfile, text.padEnd(4096, "\n"));
+    vi.mocked(openSync).mockImplementation((path, flags, mode) => {
+      if (path === gitfile) {
+        realFs.unlinkSync(gitfile);
+        realFs.writeFileSync(gitfile, text);
+      }
+      return realFs.openSync(path, flags, mode);
+    });
+    const opened: string[] = [];
+
+    const changed = await submoduleChanged({ top: root, path: "linked" }, false, async (_folder, gitFolder) => {
+      opened.push(gitFolder);
+      return await Promise.resolve(UNASKED);
+    }, 1);
+
+    expect([changed, opened]).toEqual([true, [found]]);
+  });
+
   it("reads a `.git` file that grew after its stat to Git's 1 MiB and one byte at most, and fails as too large", async () => {
     const root = await folder();
     const { linked } = repositories(root);
