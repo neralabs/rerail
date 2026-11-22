@@ -490,7 +490,9 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::syn
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("fold own guests", v);
     let mut fold = FoldOwn { label, folded: 0, diffed: BTreeSet::new() };
     p.program(&mut fold);
-    if !fold.diffed.is_empty() {
+    // `RERAIL_UNNARROW=off` keeps every diffed copy as its relation (read in one literal; the engine starts it from
+    // its original's rows, `plan::based_rule`).
+    if !fold.diffed.is_empty() && !std::env::var("RERAIL_UNNARROW").is_ok_and(|x| x == "off") {
         p.program(&mut Unnarrow { diffed: std::mem::take(&mut fold.diffed), kept: 0 });
     }
     if fold.folded > 0 {

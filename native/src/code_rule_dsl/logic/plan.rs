@@ -5953,6 +5953,33 @@ pub(crate) fn input_view_shape(v: &super::program_image::Version, rule: super::p
 }
 
 
+/// `n(xs) :- x(xs), !g(xs)`: the rule's head, `x` and `g`, where `xs` are distinct variables in one order, `x` and `g`
+/// relations the engine holds (`held_rel`) and `g` has at most an eighth of `x`'s rows (`rows`; `Rel::based`'s bound
+/// on the rows it marks dead). `None` for any other rule.
+fn based_rule(vs: &body::Versions, r: RuleKey, held_rel: &dyn Fn(&str) -> bool, rows: &dyn Fn(&str) -> Option<usize>) -> Option<(String, String, String, RuleKey)> {
+    let (v, rule) = vs.rule_at(r);
+    let head: Vec<TermRef<'_>> = rule.head().args().collect();
+    let mut vars = HashSet::new();
+    if head.is_empty() || !head.iter().all(|t| matches!(t, TermRef::Var(x) if vars.insert(*x))) {
+        return None;
+    }
+    let mut body = rule.body();
+    let (Some(p), Some(q), None) = (body.next(), body.next(), body.next()) else { return None };
+    let (Lit::Atom(p), Lit::Atom(q)) = (p.view(), q.view()) else { return None };
+    let (x, g) = match (p.neg(), q.neg()) { (false, true) => (p, q), (true, false) => (q, p), _ => return None };
+    let vars_of = |a: AtomRef<'_>| a.args().map(|t| t.var()).collect::<Vec<_>>();
+    let want: Vec<_> = head.iter().map(|t| t.var()).collect();
+    if vars_of(x) != want || vars_of(g) != want {
+        return None;
+    }
+    let (xn, gn) = (v.rel_name(x.rel()), v.rel_name(g.rel()));
+    if xn == gn || !held_rel(xn) || !held_rel(gn) {
+        return None;
+    }
+    let (Some(xr), Some(gr)) = (rows(xn), rows(gn)) else { return None };
+    (xr > 0 && gr * 8 <= xr).then(|| (v.rel_name(rule.head().rel()).to_owned(), xn.to_owned(), gn.to_owned(), r))
+}
+
 /// How many strata the process held as views of an input's columns, for tests and profiles.
 pub fn input_views() -> u64 {
     run_counts().input_views.load(std::sync::atomic::Ordering::Relaxed)
@@ -8788,14 +8815,19 @@ impl<'a> Run<'a, '_> {
             let fillable: BTreeSet<&str> = f.answers().iter().map(|&(_, p)| f.rel_name(p)).flat_map(|p| [Some(p), f.request_of(p)]).flatten().collect();
             let mut empty: HashMap<String, bool> = HashMap::new();
             let mut is_empty = |rel: &str| -> bool {
-                // An input may be bound when its first reader runs, so it is not taken as empty.
-                if scc.contains(rel) || fillable.contains(rel) || !native_rels.contains(rel) {
+                // An input may be bound when its first reader runs, so it is not taken as empty unless it is held
+                // already, with no rows: one the per-file part handed on (a copy's rows added, decision 0575, which
+                // most runs have none of; each rule reading it ran from its recursive delta before finding none).
+                if scc.contains(rel) || fillable.contains(rel) {
                     return false;
                 }
                 if let Some(&e) = empty.get(rel) {
                     return e;
                 }
-                let e = super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0);
+                let e = match super::native::component::held(self.db, rel) {
+                    Some(h) => h.rows() == 0,
+                    None => !native_rels.contains(rel) && crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| s.len() == 0),
+                };
                 empty.insert(rel.to_owned(), e);
                 e
             };
@@ -8923,6 +8955,18 @@ impl<'a> Run<'a, '_> {
             let b = vs.at(r);
             recursive(&b, scc).is_empty()
         }).collect();
+        // A relation that is another less a few rows (`n(xs) :- x(xs), !g(xs)`, both held by the engine, `g` the
+        // smaller by far: a narrow copy and its rows gone, decision 0575) starts as `x`'s rows and orders, shared, `g`'s
+        // marked dead in place (`Rel::based`); its other rules add to it. Its readers read it in one literal, and no
+        // row of `x` is copied or derived again.
+        let based: Option<(String, String, String, RuleKey)> = (rels.len() == 1 && !f.has_facts(rels[0]) && !f.produced(rels[0])
+            && std::env::var_os("RERAIL_NO_BASED").is_none())
+            .then(|| seeds.iter().find_map(|&r| based_rule(&vs, r, &|rel: &str| native_rels.contains(rel) && !scc.contains(rel), &|rel: &str| super::native::component::held(self.db, rel).map(|h| h.rows()))))
+            .flatten();
+        let seeds: Vec<RuleKey> = seeds.into_iter().filter(|&r| based.as_ref().is_none_or(|b| b.3 != r)).collect();
+        if let Some((h, x, g, _)) = &based {
+            super::profile::decision("a relation started from another's rows", || format!("{h}: {x}'s rows and orders, less {g}'s, marked dead in place"));
+        }
         // A rule's planning, as a span named by its number and body size (`plan #0009 violation, 15 literals`).
         let rule_no = |r: RuleKey| r.number();
         let planning = |r: RuleKey, what: &str| {
@@ -9030,6 +9074,8 @@ impl<'a> Run<'a, '_> {
                 let cols = (0..f.width(r)).map(|c| self.model.col(r, c)).collect::<Vec<_>>().join(", ");
                 let sql = format!("SELECT {cols} FROM {}", self.model.relation(pf, r, false).render());
                 rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::From(sql) });
+            } else if let Some((_, x, g, _)) = based.as_ref().filter(|b| b.0 == **r) {
+                rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::Base { old: x.clone(), gone: g.clone(), seeded: sql_seeded.contains(*r) } });
             } else {
                 let empty = !f.has_facts(r) && !sql_seeded.contains(*r);
                 rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: if empty { Start::Empty } else { Start::Rows } });

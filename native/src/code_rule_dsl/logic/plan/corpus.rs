@@ -121,8 +121,11 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
     "RERAIL_RULE_ORDER",
-    // Guests' copies kept unfolded (`combining::FoldOwn`).
+    // Guests' copies kept unfolded (`combining::FoldOwn`); their narrow copies derived again, or kept as relations
+    // rather than read in place (decision 0575).
     "RERAIL_SHOWN_COPIES",
+    "RERAIL_NARROW_DIFF",
+    "RERAIL_UNNARROW",
 ];
 
 pub mod phase0;
