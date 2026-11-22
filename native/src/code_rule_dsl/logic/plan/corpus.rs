@@ -9366,9 +9366,10 @@ fn run_observed_within(
         // Each relation counted on the pool, side by side: they read the batch alone, which makes a document once,
         // for whichever reads it first (0494). On the run's thread they took 0.6 s of hogql's cold run, one at a time.
         enum Counted {
-            /// A semi-join's rows at the held nodes (`SemijoinCounts`): their number and statistics, the rows, and how
-            /// many nodes the kept rows answered for.
-            Looked(usize, Vec<Stat>, retain::SemijoinRows, usize),
+            /// A semi-join's rows at the held nodes (`SemijoinCounts`): their number and statistics, the rows (none:
+            /// the kept ones, of the same documents and exports, stand as they are), and how many nodes the kept rows
+            /// answered for.
+            Looked(usize, Vec<Stat>, Option<retain::SemijoinRows>, usize),
             /// A semi-join's every row, its keyed walk refused: counted as a base relation's are (`base_counted`), kept
             /// beside the documents' table and patched by the changed documents, not measured whole each run, which
             /// made every document (`docof`, `end_line`, `visit_index` on ep2's edit).
@@ -9394,6 +9395,18 @@ fn run_observed_within(
                     let input = super::super::sql::select::input_columns(&c.rel)?;
                     let at: Vec<usize> = input.iter().map(|n| c.columns.iter().position(|h| h == n)).collect::<Option<_>>()?;
                     let n_at = input.iter().position(|n| *n == "n")?;
+                    // Kept of these documents and taken at these exports' nodes, the kept rows' statistics are this
+                    // run's: none counted.
+                    if let Some((k, None)) = semijoin_given(&c.rel)
+                        && k.width == at.len()
+                        && k.stats.len() == c.columns.len()
+                        && k.exports.is_some()
+                        && k.exports == exports_now
+                        && k.held.len() == held_nodes.len()
+                    {
+                        let st: Vec<Stat> = c.columns.iter().zip(&k.stats).map(|(n, s)| (n.clone(), s[0], s[1], s[2], s[3])).collect();
+                        return Some(Counted::Looked(st.first().map_or(0, |s| s.1 as usize), st, None, held_nodes.len()));
+                    }
                     let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{}'s rows at the held nodes, counted", c.rel));
                     let mut counts = keptstats::SemijoinCounts::default();
                     let mut rows: Vec<i64> = Vec::new();
@@ -9429,7 +9442,7 @@ fn run_observed_within(
                     let st = counts.statistics(input, &c.columns)?;
                     let mut held: Vec<i64> = held_nodes.iter().copied().collect();
                     held.sort_unstable();
-                    Some(Counted::Looked(st.first().map_or(0, |s| s.1 as usize), st, retain::SemijoinRows { exports: None, width: at.len(), held, rows }, answered))
+                    Some(Counted::Looked(st.first().map_or(0, |s| s.1 as usize), st.clone(), Some(retain::SemijoinRows { exports: None, stats: st.iter().map(|s| [s.1, s.2, s.3, s.4]).collect(), width: at.len(), held, rows }), answered))
                 })();
                 looked.unwrap_or_else(|| {
                     let held: BTreeSet<&str> = c.held.iter().map(String::as_str).collect();
@@ -9480,12 +9493,14 @@ fn run_observed_within(
                     // run's kept route (`kept_input_stats`): kept of these rows, a warm run reads them and measures
                     // nothing. Its rows are kept beside the documents' table, for a run of another program's
                     // (`semijoin_kept`).
-                    crate::code_rule_dsl::logic::profile::decision("a semi-join's rows at the held nodes", || format!("{rel}: {answered} of {} nodes answered by kept rows, the rest walked", held_nodes.len()));
+                    crate::code_rule_dsl::logic::profile::decision("a semi-join's rows at the held nodes", || format!("{rel}: {answered} of {} nodes answered by kept rows, {}", held_nodes.len(), if kept.is_some() { "the rest walked" } else { "their statistics kept" }));
                     semijoin_stats.insert(rel.clone(), st.clone());
                     // Kept again when walked, or of other documents or nodes; else when of other exports, which off the
                     // kept route are digested only when bound (`exports_now` none), so they are compared as written.
-                    let was = semijoin_kept.get(&rel).filter(|(d, k)| answered == held_nodes.len() && *d == base_digest(&rel) && k.held == kept.held).map(|(_, k)| k.exports);
-                    semijoin_out.push((rel.clone(), base_digest(&rel), kept, was));
+                    if let Some(kept) = kept {
+                        let was = semijoin_kept.get(&rel).filter(|(d, k)| answered == held_nodes.len() && *d == base_digest(&rel) && k.held == kept.held && k.stats == kept.stats).map(|(_, k)| k.exports);
+                        semijoin_out.push((rel.clone(), base_digest(&rel), kept, was));
+                    }
                     (rows, st)
                 }
                 Counted::Measured(st, how, keep) => {

@@ -1487,7 +1487,7 @@ pub mod tests {
     #[test]
     fn a_semijoins_kept_rows_read_back_as_written() {
         let node = |d: i64, i: i64| d << 32 | i;
-        let kept = SemijoinRows { exports: None, width: 3, held: vec![node(1, 0), node(1, 1), node(2, 4)], rows: vec![1 << 32, node(1, 0), 7, 1 << 32, node(1, 1), 9] };
+        let kept = SemijoinRows { exports: None, stats: vec![[3, 2, 5, 5], [3, 3, 3, 3]], width: 3, held: vec![node(1, 0), node(1, 1), node(2, 4)], rows: vec![1 << 32, node(1, 0), 7, 1 << 32, node(1, 1), 9] };
         assert_eq!(SemijoinRows::decode(&kept.encode()), Some(kept.clone()));
         let known = SemijoinRows { exports: Some(u64::MAX - 3), ..kept.clone() };
         assert_eq!(SemijoinRows::decode(&known.encode()), Some(known.clone()));
@@ -1497,7 +1497,8 @@ pub mod tests {
         let mut flag = known.encode();
         flag[0] = 2;
         assert_eq!(SemijoinRows::decode(&flag), None);
-        assert_eq!(SemijoinRows::decode(&[0, 0, 0, 0]), None);
+        assert_eq!(SemijoinRows::decode(&[0, 0, 0, 0, 0]), None);
+        assert_eq!(SemijoinRows::decode(&[0, 0, 9, 1]), None);
     }
 
     /// The exports' digest is of each export's digest in the exports' order, and none when one has no digest.
@@ -2224,7 +2225,7 @@ pub(in crate::code_rule_dsl) fn put_base_stats(store: &ContentStore, was: &InKep
 }
 
 fn semijoin_rows_name(rel: &str) -> String {
-    format!("#semijoin-held-rows/{rel}")
+    format!("#semijoin-at-held/{rel}")
 }
 
 /// The digest of the exports `exports` as `digests` gives them (each its kept input's, decision 0117 step 1), in
@@ -2245,37 +2246,45 @@ pub(in crate::code_rule_dsl) fn exports_digest(exports: &[String], digests: &Has
 /// rows of its held nodes from them and walks only the nodes they do not answer for, where reading every held node's
 /// document again made all of them (ep2's edit: 300 documents, 1.1 s). With the digest of the exports the nodes were
 /// taken of (`exports_digest`): a next run whose exports have it takes its held nodes from `held`, where visiting
-/// every export's rows for them took 1.6 s of ep2's edit.
+/// every export's rows for them took 1.6 s of ep2's edit. With the statistics counted of them (`stats`, each column's
+/// rows, distinct values and the two sums of squares, in the order of the relation's columns): a run of the same
+/// documents and exports takes them as they are, where counting every row again took 0.1 s of ep2's edit.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct SemijoinRows {
     pub(in crate::code_rule_dsl) exports: Option<u64>,
+    pub(in crate::code_rule_dsl) stats: Vec<[i64; 4]>,
     pub(in crate::code_rule_dsl) width: usize,
     pub(in crate::code_rule_dsl) held: Vec<i64>,
     pub(in crate::code_rule_dsl) rows: Vec<i64>,
 }
 
 impl SemijoinRows {
-    /// As words: whether the exports' digest is known and the digest, the width, the held nodes' number and the
-    /// nodes, then the rows.
+    /// As words: whether the exports' digest is known and the digest, the statistics' number and theirs, the width,
+    /// the held nodes' number and the nodes, then the rows.
     fn encode(&self) -> Vec<i64> {
-        let mut words = Vec::with_capacity(4 + self.held.len() + self.rows.len());
-        words.extend([i64::from(self.exports.is_some()), self.exports.unwrap_or(0) as i64, self.width as i64, self.held.len() as i64]);
+        let mut words = Vec::with_capacity(5 + 4 * self.stats.len() + self.held.len() + self.rows.len());
+        words.extend([i64::from(self.exports.is_some()), self.exports.unwrap_or(0) as i64, self.stats.len() as i64]);
+        words.extend(self.stats.iter().flatten());
+        words.extend([self.width as i64, self.held.len() as i64]);
         words.extend_from_slice(&self.held);
         words.extend_from_slice(&self.rows);
         words
     }
 
     fn decode(words: &[i64]) -> Option<Self> {
-        let [known, exports, width, n, ..] = *words else { return None };
+        let [known, exports, n_stats, ..] = *words else { return None };
         let exports = match known {
             0 => None,
             1 => Some(exports as u64),
             _ => return None,
         };
+        let at = 3 + 4 * usize::try_from(n_stats).ok()?;
+        let stats = words.get(3..at)?.chunks_exact(4).map(|s| [s[0], s[1], s[2], s[3]]).collect();
+        let [width, n] = *words.get(at..at + 2)? else { return None };
         let (width, n) = (usize::try_from(width).ok().filter(|&w| w > 0)?, usize::try_from(n).ok()?);
-        let held = words.get(4..4 + n)?.to_vec();
-        let rows = words[4 + n..].to_vec();
-        (rows.len() % width == 0).then_some(SemijoinRows { exports, width, held, rows })
+        let held = words.get(at + 2..at + 2 + n)?.to_vec();
+        let rows = words[at + 2 + n..].to_vec();
+        (rows.len() % width == 0).then_some(SemijoinRows { exports, stats, width, held, rows })
     }
 }
 
