@@ -830,9 +830,9 @@ function takeFirstSightListings(findings: WorktreeFindings, listed: Map<string, 
  * Whether `edit`, of the file at `path` in its checkout, is one the walk's listings (`listed`) leave out: a file there
  * that holds what its index holds, where the index holds what `HEAD` holds. A deletion they leave out is of a path
  * neither the index nor `HEAD` has, which a reading with no `HEAD` known before takes for Git's too (`removedByGit`).
- * Where the session knows a `HEAD` of the checkout (`headKnown`: a worktree it saw before Git removed it and added it
- * again), a reading that finds `HEAD` unmoved takes the deletion for no Git command's, so it is asked as before. So is
- * a file with a read error, which has no verdict of Git's.
+ * Where the session knows a `HEAD` of the checkout (`headKnown`), kept from before Git removed its worktree and added
+ * it again, a deletion goes to Git's reading, which judges it against that `HEAD`. So does a file with a read error,
+ * which has no verdict of Git's.
  */
 function listedUnchanged(edit: CodeRuleEdit, path: string, listed: ReadonlySet<string>, headKnown: boolean): boolean {
   if (edit.readError !== undefined || listed.has(path)) return false;

@@ -1587,7 +1587,8 @@ export interface FirstSightListing {
    * the index what `head` holds. Undefined when any listing failed, ran past its time limit or passed
    * `MAX_LISTED_PATH_BYTES`, without `head`, and when `HEAD`'s newest move is a commit (`headMovedOnlyByCommits` with no
    * `from`): that commit may hold what a command wrote. A reflog Git cannot read counts as a newest move that is no
-   * commit, as the session's reading of `HEAD`'s moves takes it.
+   * commit, as the session's reading of `HEAD`'s moves takes it. `markedListing` prints the whole index under that
+   * bound (64 MiB, about a million paths), so the checkout of a larger index goes to Git's reading.
    */
   readonly notAtHead: string[] | undefined;
 }

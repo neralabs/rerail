@@ -5391,9 +5391,9 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.finish("write-1");
   }
 
-  // The session keeps the `HEAD` it last saw of a worktree Git removed. Added again at that commit, the worktree's `HEAD`
-  // has not moved, so a file the session saw there that is gone at the walk's next first sight of it was deleted by no
-  // Git command, which only a reading that knows that `HEAD` can say.
+  // The session keeps the `HEAD` it read of a worktree before Git removed it, and never read the `HEAD` of the worktree
+  // added there again. Knowing a `HEAD` of the checkout, a first sight sends a deletion there to Git's reading, which
+  // judges it against the kept `HEAD`: here the worktree was added again at that commit, so it records the deletion.
   it("records a file it saw in a worktree removed and added again at one commit that a command deleted before the next walk", async () => {
     const root = await twoBranches();
     const place = join(await workspace(), "w");
