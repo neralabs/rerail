@@ -836,6 +836,13 @@ pub struct StoredDerived<'a> {
 }
 
 impl FileImage {
+    /// A cache for its documents' 16z tapes' blocks, one batch's (decision 0569 §6): a reader outside every batch reads
+    /// the file's documents in it. None where no tape is 16z.
+    pub fn z_cache(&self) -> Option<Arc<rerail_tape_format::f16::ZCache>> {
+        let tapes: Vec<&rerail_tape_format::f16::Tape16Z> = std::iter::once(&self.primary).chain(self.derived.iter().map(|d| &d.tape)).filter_map(TapeImage::z_tape).collect();
+        (!tapes.is_empty()).then(|| Arc::new(rerail_tape_format::f16::ZCache::of(tapes)))
+    }
+
     /// The documents of a file that derives none.
     /// The documents of the host tape `primary` of `source`: itself, and the programs its
     /// embedders build from it, one per `via` its dialect embeds. The tape is read in place
@@ -2575,7 +2582,10 @@ impl TapeDoc {
         lines: Arc<LineTable>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
-        let mut host = Self::restore_tree(source, grammar, &image.primary, lines, budget)?;
+        // The file's documents are read outside every batch until one takes them (`TapeDoc::in_batch`): a batch of
+        // their own, one cache for their 16z tapes' blocks (decision 0569 §6).
+        let cache = image.z_cache();
+        let mut host = Self::restore_tree(source, grammar, &image.primary, lines, cache.clone(), budget)?;
         if image.derived.is_empty() {
             return Ok(host);
         }
@@ -2592,7 +2602,7 @@ impl TapeDoc {
             };
             let mut restored = Vec::with_capacity(image.derived.len());
             for guest in &image.derived {
-                match Self::restore_guest(&linked, guest, budget) {
+                match Self::restore_guest(&linked, guest, cache.clone(), budget) {
                     Ok(doc) => restored.push(Guest {
                         via: guest.via,
                         doc,
@@ -2616,6 +2626,7 @@ impl TapeDoc {
     fn restore_guest(
         host: &Self,
         guest: &DerivedImage,
+        cache: Option<Arc<rerail_tape_format::f16::ZCache>>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
         let grammar = Grammar::embedded(guest.tape.language)?;
@@ -2624,7 +2635,7 @@ impl TapeDoc {
         guest.source_map.check(&guest.text, &host.source)?;
         let lines = Arc::new(LineTable::new(&guest.text, Terminators::of(grammar.lang)));
         let mut doc =
-            Self::restore_tree(Arc::clone(&guest.text), grammar, &guest.tape, lines, budget)?;
+            Self::restore_tree(Arc::clone(&guest.text), grammar, &guest.tape, lines, cache, budget)?;
         checked(budget)?;
         doc.host = Some(Arc::new(HostLink {
             via: guest.via,
@@ -2635,12 +2646,13 @@ impl TapeDoc {
         Ok(doc)
     }
 
-    /// The document of `image`'s own tree over `source`.
+    /// The document of `image`'s own tree over `source`, a 16z tape's blocks decoded into `cache`: its file's batch's.
     fn restore_tree(
         source: Arc<String>,
         grammar: Arc<Grammar>,
         image: &TapeImage,
         lines: Arc<LineTable>,
+        cache: Option<Arc<rerail_tape_format::f16::ZCache>>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
         read!("docs restored");
@@ -2650,7 +2662,7 @@ impl TapeDoc {
         let (digest, _) = validated::visit(&source, &grammar, image, budget, |_, _| {})?;
         checked(budget)?;
         let image = Arc::new(image.clone());
-        let held = Arc::new(formats::DocTape::new(Arc::clone(&image), Arc::clone(&source)));
+        let held = Arc::new(formats::DocTape::in_batch(Arc::clone(&image), Arc::clone(&source), cache));
         Ok(Self {
             held,
             source_digest: digest,
@@ -3564,7 +3576,8 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
     }
     let source = Arc::new(source.to_owned());
     let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
-    let doc = TapeDoc::restore_tree(source, grammar, &image, lines, &|| false)?;
+    let cache = image.own_cache().map(Arc::new);
+    let doc = TapeDoc::restore_tree(source, grammar, &image, lines, cache, &|| false)?;
     if ends.len() != doc.transducer_len() {
         return Err("a pattern's records disagree with its tree".into());
     }

@@ -641,10 +641,11 @@ impl Guests {
             for via in vias {
                 let embedder = crate::code_rule_dsl::embed::embedder(via);
                 // An embedder that reads the file's scope table reads it from a document over the host's tape, read in
-                // place (decision 0470); another reads the host's nodes.
+                // place (decision 0470), in a batch of its own (its 16z blocks decoded into a cache made for it, 0569 §6);
+                // another reads the host's nodes.
                 let doc = || {
                     let (tape, grammar) = (host.facts.tape.as_ref()?, host.facts.grammar()?);
-                    Some(crate::code_rule_dsl::tape::TapeDoc::over(Arc::clone(tape), Arc::clone(grammar), Arc::clone(&host.facts.lines)))
+                    Some(crate::code_rule_dsl::tape::TapeDoc::over(Arc::clone(tape), Arc::clone(grammar), Arc::clone(&host.facts.lines)).alone())
                 };
                 let programs = if embedder.reads_scope() {
                     host.tape.as_ref().map(|(doc, _)| doc.clone()).or_else(doc).map_or_else(Vec::new, |doc| embedder.build_in_doc(&doc, &|| false))

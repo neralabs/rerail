@@ -273,12 +273,8 @@ fn with_programs(built: Built, grammar: &Arc<crate::code_rule_dsl::tape::Grammar
             continue;
         }
         let Some(tape) = facts.tape.as_ref() else { continue };
-        let doc = TapeDoc::over(Arc::clone(tape), Arc::clone(grammar), Arc::clone(&facts.lines));
         // The host read in a batch of its own: its 16z blocks decoded into a cache made for it.
-        let doc = match tape.image().own_cache() {
-            Some(cache) => doc.in_batch(&Arc::new(cache)),
-            None => doc,
-        };
+        let doc = TapeDoc::over(Arc::clone(tape), Arc::clone(grammar), Arc::clone(&facts.lines)).alone();
         for program in embedder.build_in_doc(&doc, &|| false) {
             let image = crate::code_rule_dsl::tape::DerivedImage::encode(via, program, 0, grammar, &facts.source, &|| false)?;
             programs.push(image.in_format(crate::code_rule_dsl::tape::formats::Format::of_run()));
