@@ -2078,7 +2078,15 @@ fn the_waves_labels_on_metal_are_the_cpus() {
     let every: Vec<Vec<u32>> = tapes.iter().map(|tape| (0..tape.transducer_len() as u32).collect()).collect();
     let jobs = crate::code_rule_dsl::transducer::packed::RootJobs { programs: programs.iter().collect(), starts: vec![every; programs.len()] };
     drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
+    // The evaluation's launches, by kernel, from its ledger (decision 0540).
+    let scope = crate::code_rule_dsl::transducer::packed::metal_backend::launch::LaunchScope::enter();
     let (metal, outcome) = wave.labelled_metal(&tapes, &active, Some(&jobs)).unwrap();
+    let mut kernels = std::collections::BTreeMap::<String, usize>::new();
+    for record in scope.snapshot().iter().filter(|record| record.encoded) {
+        *kernels.entry(record.kernel.clone()).or_default() += 1;
+    }
+    drop(scope);
+    eprintln!("launches by kernel: {kernels:?}");
     // Under `RERAIL_PROF`: the device formulas' text tests, read from a row or not.
     for (name, (_, calls)) in crate::code_rule_dsl::prof::stages().iter().filter(|(name, _)| name.starts_with("gpu.anchor") || name.starts_with("gpu.formula")) {
         eprintln!("  prof {name}: {calls}");
