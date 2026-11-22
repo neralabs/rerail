@@ -5363,6 +5363,28 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(editModes(auditGeneratedEdits)).toContainEqual([repositoryPath(root, join(worktree, "src", "a.py")), "log"]);
   });
 
+  // Only a worktree the session sees for the first time takes the walk's listings: a worktree it knew is read by Git,
+  // from the `HEAD` it last saw there, also where its walk is the first to read a folder.
+  it("asks Git of the files of a worktree it knew that Git lists as unchanged, where its walk is the first to read a folder there", async () => {
+    const root = await twoBranches();
+    git(root, "switch", "--quiet", "other");
+    await mkdir(join(root, "deep"));
+    await writeFile(join(root, "deep", "d.py"), "d\n");
+    git(root, "add", "deep/d.py");
+    git(root, "commit", "--quiet", "-m", "deep");
+    git(root, "switch", "--quiet", "main");
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    await writeFile(join(worktree, "src", "a.py"), "old\n");
+    await awaitClockAfter(join(worktree, "deep", "d.py"), join(worktree, "src", "a.py"));
+    const failing = async () => { throw new Error("EMFILE: too many open files"); };
+    discovery.directories.set(join(worktree, "deep"), Array.from({ length: 20 }, () => failing));
+    const { bridge } = await opened(root, extra);
+    discovery.directories.delete(join(worktree, "deep"));
+    asyncGitCalls.args.length = 0;
+    await shellInWorktree(bridge, () => { git(worktree, "checkout", "--", "src/a.py"); });
+    expect(asyncGitCalls.args.filter(args => args.includes("cat-file")).length).toBeGreaterThan(0);
+  });
+
   /** Has the session observe the file at `path` through a write tool call that leaves it as it was: it audits nothing. */
   async function observedByCall(bridge: CodeRuleBridge, path: string): Promise<void> {
     await bridge.begin("write-1", "write", { path });
