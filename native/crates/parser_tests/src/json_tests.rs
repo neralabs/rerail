@@ -1289,6 +1289,12 @@ fn json_escape_checks_are_tier2s() {
     for why in ["// \\u without four hex digits", "// a lone high surrogate", "// a lone low surrogate"] {
         assert!(at.contains(why), "{why}");
     }
+    // As `escaped_string`: the four digits read as one number, the surrogates ranges of it, and a low one's high one
+    // the escape before, one position (`low_checked`), not a word of the string's escapes.
+    for part in ["let cp = HEX_VALUE[usize::from(src[y + 1])] << 12 |", "if cp > 0xffff {", "let m2 = (0xd800..=0xdbff).contains(&cp);", "let m3 = (0xdc00..=0xdfff).contains(&cp);", "after2 = y + 6;", "if m3 && after2 != y {"] {
+        assert!(at.contains(part), "no `{part}`:\n{at}");
+    }
+    assert!(!string.contains("w2") && !at.contains("matches!(src[y + 1]"), "a digit's class tested, or the escapes kept:\n{at}");
 }
 
 /// Tier 1's masks are its block's locals (page 40, fix 11; decision 0599): no ring, the block before's word kept only

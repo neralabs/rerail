@@ -559,6 +559,9 @@ impl Lp<'_, '_> {
         let state = match crate::bitlex_piece_checks::piece_checks(self.g.x.lexer, part_start) {
             Ok(pc) => {
                 check.push_str(&pc.at_piece);
+                if !self.method_code.borrow().contains(&pc.statics) {
+                    self.method_code.borrow_mut().push(pc.statics);
+                }
                 pc.state
             }
             Err(_) => String::new(),

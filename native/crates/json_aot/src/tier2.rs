@@ -177,6 +177,9 @@ _ => Err(s as u32),
 }
 }
 
+/// Each byte's hex digit value, or bits past four digits' where it is none (simdjson's `digit_to_val32`).
+static HEX_VALUE: [u32; 256] = [0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 10, 11, 12, 13, 14, 15, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 10, 11, 12, 13, 14, 15, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_0000];
+
 /// `string`, its pieces leaves, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its
 /// caller's key, as each place gives them.
 ///
@@ -206,8 +209,8 @@ open(d, n[0], s as u64);
 // The content from `p`, read from `x` 32 bytes at a time (`backslash_quote`): its pieces' first bytes and its closers.
 let (mut p, mut x) = (s + 1, s + 1);
 let (mut lead, mut quote) = (lead, quote);
-// `high` at the string's pieces before, a bit a byte back from the last one's second byte (`y2`).
-let (mut w2, mut y2) = (0u64, 0usize);
+// The second byte 6 after the string's last `high` piece: the only one a piece reads it at (0: none).
+let mut after2 = 0usize;
 loop {
 // A closer before every piece: the end (simdjson's `(bs - 1) & quote`).
 if lead.wrapping_sub(1) & quote != 0 {
@@ -237,24 +240,28 @@ return Err(p as u32);
 // The grammar's errors at an escape, from its bytes: its second byte `y`.
 let y = p + 1;
 if matches!(src[y], 0x75) {
-let h2 = if y - y2 < 64 { w2 << (y - y2) } else { 0 };
+// The 4 digits as a number (simdjson's `hex_to_u32_nocheck`): a byte not hex puts bits past them.
+let cp = HEX_VALUE[usize::from(src[y + 1])] << 12 | HEX_VALUE[usize::from(src[y + 2])] << 8 | HEX_VALUE[usize::from(src[y + 3])] << 4 | HEX_VALUE[usize::from(src[y + 4])];
+let n7 = HEX_VALUE[usize::from(src[y + 7])] << 4 | HEX_VALUE[usize::from(src[y + 8])];
 // mask high
-let m2 = matches!(src[y + 1], 0x44 | 0x64) && matches!(src[y + 2], 0x38..=0x39 | 0x41..=0x42 | 0x61..=0x62);
+let m2 = (0xd800..=0xdbff).contains(&cp);
 // mask low
-let m3 = matches!(src[y + 1], 0x44 | 0x64) && matches!(src[y + 2], 0x43..=0x46 | 0x63..=0x66);
+let m3 = (0xdc00..=0xdfff).contains(&cp);
 // \u without four hex digits
-if !(matches!(src[y + 1], 0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66) && matches!(src[y + 2], 0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66) && matches!(src[y + 3], 0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66) && matches!(src[y + 4], 0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+if cp > 0xffff {
 return Err(y as u32);
 }
 // a lone high surrogate
-if m2 && !(matches!(src[y + 5], 0x5c) && matches!(src[y + 6], 0x75) && matches!(src[y + 7], 0x44 | 0x64) && matches!(src[y + 8], 0x43..=0x46 | 0x63..=0x66)) {
+if m2 && !(matches!(src[y + 5], 0x5c) && matches!(src[y + 6], 0x75) && (0xdc..=0xdf).contains(&n7)) {
 return Err(y as u32);
 }
 // a lone low surrogate
-if m3 && !(h2 >> 6 & 1 != 0) {
+if m3 && after2 != y {
 return Err(y as u32);
 }
-(w2, y2) = (h2 | u64::from(m2), y);
+if m2 {
+after2 = y + 6;
+}
 }
 leaf(d, 6, p as u64, (p + 2) as u64);
 p += 2;
