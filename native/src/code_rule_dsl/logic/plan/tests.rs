@@ -4024,3 +4024,22 @@ fn a_walk_past_a_bound_head_reads_every_row_where_none_is_a_witness() {
     assert!(x.work > 10.0 * work, "the walk is priced over the finding's row first: {} against {work}", x.work);
     assert!(x.steps[1].rows >= 69_000.0, "`node` by `$d` makes a document's nodes: {:?}", x.steps.iter().map(|s| (&s.literal, s.rows)).collect::<Vec<_>>());
 }
+
+/// Decision 0592: a relation goes when the last of its readers to finish does, whatever their order; a stratum still
+/// asking holds what it reads until it is not.
+#[test]
+fn a_relation_goes_when_its_last_reader_to_finish_does() {
+    let reads = |rs: &[&str]| rs.iter().map(|r| (*r).to_owned()).collect::<Vec<String>>();
+    // Stratum 0 makes `a` and `b`; 1 and 3 read `a`, 2 reads `b`, 4 reads `c`.
+    let mut rl = ReadsLeft::of(vec![reads(&[]), reads(&["a"]), reads(&["b"]), reads(&["a"]), reads(&["c"])]);
+    // 3's job ends first: `a` has a reader left.
+    assert!(rl.finished([3]).is_empty());
+    // Then 2's: `b` goes, though the loop is at 1.
+    assert_eq!(rl.finished([2]), reads(&["b"]));
+    // The loop passes 1 and 2; 1 is suspended on its requests, so `a` stays.
+    assert!(rl.passed(3, &|j| j == 1).is_empty());
+    // Once 1 is not asking, `a` goes; a stratum finished twice counts once.
+    assert_eq!(rl.passed(3, &|_| false), reads(&["a"]));
+    assert!(rl.finished([2, 3]).is_empty());
+    assert_eq!(rl.passed(5, &|_| false), reads(&["c"]));
+}

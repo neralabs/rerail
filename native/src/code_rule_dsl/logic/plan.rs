@@ -12899,6 +12899,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let (mut clean_strata, mut held_again, mut held_rows) = (0usize, 0usize, 0usize);
     // Decision 0113: native strata issued ahead, as components on the executor's host stream, retired here in order.
     let mut board = (issue::on() && native.contains("program") && strata_kept.is_none() && maintaining.is_none()).then(|| issue::Board::new(&sccs, &deps));
+    // Decision 0592: with strata issued ahead, a relation goes when its last reader to finish does.
+    let mut reads_left = board.as_ref().filter(|_| release_finished()).map(|_| ReadsLeft::new(f0, &run_vs, &sccs, &by_stratum, &run.views));
+    let mut early = Early::default();
     if maintaining.is_some() {
         slots = (0..sccs.len()).map(|_| Slot::Base).collect();
     }
@@ -12938,6 +12941,13 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             }
         }
         let held = if asked.is_empty() { HashSet::new() } else { held_by_asked(&asked) };
+        if let Some(rl) = reads_left.as_mut() {
+            let mut gone = rl.passed(at, &|j| asked.iter().any(|a| a.at == j));
+            if let Some(b) = board.as_mut() {
+                gone.extend(rl.finished(b.take_finished()));
+            }
+            release_unread(db, &mut run, gone, &pinned, &held, &input_set, &last, at, &mut early);
+        }
         if !waiting.is_empty() {
             let reads_waiting = || {
                 let theirs: HashSet<&str> = waiting.iter().flat_map(|w| sccs[w.0].iter().map(String::as_str)).collect();
@@ -13715,7 +13725,14 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     };
                     b.collect(&mut run, stream)?;
                     b.issue(at, &mut run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient)?;
-                    b.retire_at(at, &mut run, stream, &ambient, &mut |b, run| b.issue(at, run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient))?
+                    b.retire_at(at, &mut run, stream, &ambient, &mut |b, run| {
+                        // What the jobs that ended while the loop waits finished reading goes now (decision 0592).
+                        if let Some(rl) = reads_left.as_mut() {
+                            let gone = rl.finished(b.take_finished());
+                            release_unread(db, run, gone, &pinned, &held, &input_set, &last, at, &mut early);
+                        }
+                        b.issue(at, run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient)
+                    })?
                 }
                 None => issue::Got::Not,
             };
@@ -13950,6 +13967,11 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     }
     if let Some(b) = &board {
         super::profile::decision("strata issued ahead (decision 0113)", || format!("{:?}", b.counts));
+        if reads_left.is_some() {
+            super::profile::decision("relations released when their last reader finished (decision 0592)", || {
+                format!("{} released so, {} of them before the loop passed their last reader, {} strata ahead in all", early.released, early.ahead, early.strata_ahead)
+            });
+        }
         if std::env::var_os("RERAIL_STRATA_COUNTS").is_some() {
             let r = std::sync::atomic::Ordering::Relaxed;
             eprintln!(
@@ -14355,6 +14377,112 @@ pub fn keys_by_stratum(p: &body::Placed, sccs: &[BTreeSet<String>]) -> Vec<Vec<R
         }
     }
     by
+}
+
+/// Each relation's readers that have not finished (decision 0592): a relation is released when the last of its readers
+/// to finish does, not when the in-order loop passes its last reader by position. Strata are issued ahead and their
+/// jobs end out of order (decision 0114 §1), so a slow stratum at the loop's position held every relation made after
+/// it, though their readers had all run.
+pub struct ReadsLeft {
+    /// Per stratum, the relations it is counted a reader of.
+    reads: Vec<Vec<String>>,
+    left: HashMap<String, usize>,
+    done: Vec<bool>,
+    /// The strata below it the loop passed.
+    upto: usize,
+    /// Passed, but suspended on their requests: they read again when they resume.
+    deferred: Vec<usize>,
+}
+
+impl ReadsLeft {
+    fn new(f: Fields<'_>, vs: &body::Versions, sccs: &[BTreeSet<String>], by: &[Vec<RuleKey>], views: &HashSet<String>) -> Self {
+        let reads: Vec<BTreeSet<String>> = sccs.iter().enumerate().map(|(j, scc)| stratum_reads(f, vs, scc, &by[j])).collect();
+        // A stratum of views is read where its readers read it (`last_reads`): what it reads stays to the in-order loop.
+        let lazy: HashSet<&String> = sccs.iter().zip(&reads).filter(|(scc, _)| scc.iter().all(|r| views.contains(r))).flat_map(|(_, rs)| rs).collect();
+        Self::of(reads.iter().map(|rs| rs.iter().filter(|r| !lazy.contains(r)).cloned().collect()).collect())
+    }
+
+    /// Over each stratum's counted reads.
+    pub fn of(reads: Vec<Vec<String>>) -> Self {
+        let mut left: HashMap<String, usize> = HashMap::new();
+        for r in reads.iter().flatten() {
+            *left.entry(r.clone()).or_default() += 1;
+        }
+        ReadsLeft { done: vec![false; reads.len()], reads, left, upto: 0, deferred: Vec::new() }
+    }
+
+    /// Strata `js` read all they read: the relations no reader is left for.
+    pub fn finished(&mut self, js: impl IntoIterator<Item = usize>) -> Vec<String> {
+        let mut out = Vec::new();
+        for j in js {
+            if std::mem::replace(&mut self.done[j], true) {
+                continue;
+            }
+            for r in &self.reads[j] {
+                let n = self.left.get_mut(r).expect("a counted read");
+                *n -= 1;
+                if *n == 0 {
+                    out.push(r.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// The loop is at `at`: each stratum before it finished, but one still asking (`asking`), which finishes once it is
+    /// not.
+    pub fn passed(&mut self, at: usize, asking: &dyn Fn(usize) -> bool) -> Vec<String> {
+        let mut now: Vec<usize> = Vec::new();
+        for j in self.upto..at {
+            if asking(j) { self.deferred.push(j) } else { now.push(j) }
+        }
+        self.upto = self.upto.max(at);
+        let (still, back): (Vec<usize>, Vec<usize>) = std::mem::take(&mut self.deferred).into_iter().partition(|&j| asking(j));
+        self.deferred = still;
+        now.extend(back);
+        self.finished(now)
+    }
+}
+
+/// How many relations went when their readers finished, and how many of them before the loop at `at` passed their
+/// last reader (`last`), by how many strata in all.
+#[derive(Default)]
+struct Early {
+    released: usize,
+    ahead: usize,
+    strata_ahead: usize,
+}
+
+/// Whether relations go when their last reader to finish does (decision 0592): on, unless `RERAIL_RELEASE_FINISHED=off`
+/// (for comparison: the loop's in-order release alone).
+fn release_finished() -> bool {
+    std::env::var("RERAIL_RELEASE_FINISHED").as_deref() != Ok("off")
+}
+
+/// Releases `gone`, the relations whose readers all finished (`ReadsLeft`), where the in-order loop would at their last
+/// reader: a native relation the run made, not one that stays (`pinned`), an input, a view, or one a stratum still
+/// asking reads (`held`). Each is then not native, so the loop's own release passes it by.
+#[allow(clippy::too_many_arguments)]
+fn release_unread(db: &Connection, run: &mut Run<'_, '_>, gone: Vec<String>, pinned: &BTreeSet<String>, held: &HashSet<String>, inputs: &BTreeSet<&str>, last: &HashMap<String, usize>, at: usize, early: &mut Early) {
+    let done: Vec<String> = gone
+        .into_iter()
+        .filter(|r| run.native_rels.contains(r) && !pinned.contains(r) && !held.contains(r) && !inputs.contains(r.as_str()) && !run.views.contains(r))
+        .collect();
+    if done.is_empty() {
+        return;
+    }
+    super::native::component::release(db, &done);
+    for r in &done {
+        run.native_rels.remove(r);
+        run.demands.forget(r);
+        if let Some(&l) = last.get(r)
+            && l >= at
+        {
+            early.ahead += 1;
+            early.strata_ahead += l + 1 - at;
+        }
+    }
+    early.released += done.len();
 }
 
 /// Per relation, the last stratum (an index into `sccs`) whose rules read it (`first_reads`' reading).
