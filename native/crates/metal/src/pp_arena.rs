@@ -312,10 +312,11 @@ impl Sort {
 /// The persistent grid's groups with no core count (decision 0468 §4).
 pub const GROUPS_UNKNOWN: u64 = 8;
 
-/// The persistent grid's groups at most: a preprocessor unit is small, and a barrier costs more with
-/// every group, so past 32 groups a run is slower (decision 0468: 80 groups took 168 ms of GPU time
-/// over the corpus, 32 took 147 ms).
-pub const GROUPS_MOST: u64 = 32;
+/// The persistent grid's groups at most: a barrier costs more with every group (decision 0468: 80
+/// groups took 168 ms of GPU time over the corpus, 32 took 147 ms). Since the loop (0588) a phase's
+/// work is latency's, and more threads hide it: the corpus batch on the GB10 (2026-11-22) took
+/// 5.95 ms at 16 groups, 4.78 at 32, 4.23 at 64 and 4.19 at 96.
+pub const GROUPS_MOST: u64 = 64;
 
 /// The persistent grid's groups dispatched (decision 0468 §4, 0568): its kernel's resident groups (`residency`), at
 /// most `GROUPS_MOST`; 1 on the CPU.
@@ -326,9 +327,9 @@ pub fn groups() -> u64 {
     if matches!(device, lane::Device::Cpu(_)) {
         return 1;
     }
-    // `RERAIL_PP_GROUPS`: at most that many, a measurement aid.
+    // `RERAIL_PP_GROUPS`: that many at most in place of `GROUPS_MOST`, a measurement aid.
     let most = std::env::var("RERAIL_PP_GROUPS").ok().and_then(|g| g.parse().ok()).unwrap_or(GROUPS_MOST);
-    residency().groups.min(GROUPS_MOST).min(most)
+    residency().groups.min(most)
 }
 
 /// `ukl/grid.h`'s `UKL_GRID_SMALL`: at most this many values, a grid primitive is group 0's alone.

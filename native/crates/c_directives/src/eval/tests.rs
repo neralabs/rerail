@@ -1342,6 +1342,74 @@ fn boost_preprocessor_is_the_serial_passes() {
 /// 0485 §1).
 const LAUNCHES: usize = 2;
 
+/// Decision 0588's Tests: the serial pass over the corpus batch (`the_corpus_preprocesses_on_the_device`'s units,
+/// `RERAIL_PP_FIRST` and `RERAIL_PP_COUNT` alike), a thread a core, each taking the next unit: its wall time, best
+/// and median of 5, the files read into memory first (the device's time is its GPU time, the files placed). Run in
+/// the optimized build (`--profile profiling`).
+#[test]
+#[ignore = "a measurement over the corpus (~/orca/rerail-shared/lean-corpus)"]
+fn measure_the_serial_pass_on_all_cores() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::{DirKind, Search};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Count(usize);
+    impl rerail_c_pp::sink::Sink for Count {
+        fn token(&mut self, _t: &rerail_c_pp::macros::Tk, _text: &[u8], _at: Option<rerail_c_pp::sink::At>, _off: u32) {
+            self.0 += 1;
+        }
+    }
+    let root = corpus_root();
+    let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(40);
+    let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let mut units: Vec<(String, bool)> = Vec::new();
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<String> = rd.flatten().map(|e| e.path().to_string_lossy().into_owned()).collect();
+        paths.sort();
+        units.extend(paths.into_iter().skip(first).take(count).map(|p| (p, cpp)));
+    }
+    assert!(!units.is_empty(), "no corpus at {}", root.display());
+    let files: std::sync::Arc<std::collections::HashMap<String, Vec<u8>>> =
+        std::sync::Arc::new(units.iter().filter_map(|(p, _)| std::fs::read(p).ok().map(|b| (p.clone(), b))).collect());
+    let cfgs = [Config::new(crate::pp::options(false)), Config::new(crate::pp::options(true))];
+    let dirs = vec![("<stub>".to_string(), DirKind::After)];
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let run = |threads: usize| -> (f64, usize) {
+        let next = AtomicUsize::new(0);
+        let tokens = AtomicUsize::new(0);
+        let t0 = std::time::Instant::now();
+        std::thread::scope(|sc| {
+            for _ in 0..threads {
+                sc.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((path, cpp)) = units.get(i) else { break };
+                        let f = std::sync::Arc::clone(&files);
+                        let mut io = Search::new(dirs.clone(), move |q: &str| f.get(q).cloned().or_else(|| q.starts_with("<stub>").then(Vec::new)));
+                        let mut sink = Count(0);
+                        let mut pp = rerail_c_pp::Pp::new(cfgs[usize::from(*cpp)].clone(), &mut io, &mut sink);
+                        pp.run(path);
+                        drop(pp);
+                        tokens.fetch_add(sink.0, Ordering::Relaxed);
+                    }
+                });
+            }
+        });
+        (t0.elapsed().as_secs_f64() * 1e3, tokens.load(Ordering::Relaxed))
+    };
+    for t in [1, threads] {
+        let mut ms: Vec<f64> = Vec::new();
+        let mut tokens = 0;
+        for _ in 0..5 {
+            let (m, k) = run(t);
+            ms.push(m);
+            tokens = k;
+        }
+        ms.sort_by(f64::total_cmp);
+        eprintln!("SERIAL {} units, {tokens} tokens, {t} threads: best {:.2} ms, median {:.2} ms", units.len(), ms[0], ms[2]);
+    }
+}
+
 /// What `against_serial` found.
 struct Against {
     same_units: usize,

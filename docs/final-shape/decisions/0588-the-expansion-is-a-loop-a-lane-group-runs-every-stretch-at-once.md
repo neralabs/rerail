@@ -64,7 +64,10 @@ The device's design today spends about 45 ns a token. The loop spends 0.13 ns, w
   same for chains of object-like and function-like macros 1, 8 and 20 deep. Deeper is refused for depth.
 - **New:** `a_piece_read_past_its_end_takes_the_pieces_it_reads`: a body's call left open (`#define C F(`), its
   arguments in the text past the next pieces' starts. The pass runs again without the pieces it took.
-- **Measured:** the corpus batch's GPU time against the serial pass on all cores, on CUDA and Metal.
+- **New:** `a_long_if_line_is_read_by_its_group`: `#if` lines past the group's window, a token the window does not
+  read at each place about its edges.
+- **Measured** (`measure_the_serial_pass_on_all_cores`): the corpus batch's GPU time against the serial pass on all
+  cores, on CUDA and Metal.
 
 ## Built (2026-11-21, `pp_loop.uglykl`)
 
@@ -131,15 +134,29 @@ the GB10 and 78.4 ms on the M3 Max, against the serial pass's 54.6 and 61.3 ms i
 | The group looks ahead (935e8ab7f4) | 13.4 ms | 38.9 ms |
 | A plain run one step (7b3883d058) | 10.7 ms | 29.4 ms |
 | Windows; no tape for a punctuator, a top name's rows or a `#` (9c18715582) | 7.6 ms | 18.8 ms |
-| One pass (cb23f84a49) | 4.9 ms | |
+| One pass (cb23f84a49) | 4.9 ms | 13.6 ms |
+| The stacks in the group's memory; a long `#if` line the group's (c6565cf20f) | 4.8 ms | 12.8 to 17.2 ms |
+| 64 groups at most, from 32 | 4.2 ms | (3 resident) |
 
-The mini ran the one pass at 37.3 ms; the M3 was off the network.
+The mini ran the one pass at 37.3 ms. The M3's runs spread widely (13.8 and 15.2 ms for the stacks alone, under
+a load of 4 to 13).
+
+- **The loop's stacks in the group's memory** (`LpRun`, a slot a SIMD group in `PpTg`, beside the sorts' words: the
+  loop's phase runs no sort or scan). Metal keeps a thread's arrays indexed at run time in device memory.
+- **A long `#if` line is its SIMD group's** (`p1_if_line`, past 64 tokens): the lanes read the next 32 tokens, one
+  each, and the run before the first that needs the line's own step (`defined`, `__has_include`, a test's mark)
+  feeds the evaluation at once. An object-like body read in place asks the group as a span does.
+- **Beats each 256 steps**: a step may be 32 tokens, and on Metal a barrier that gave up halves the group count kept
+  for the machine, for good. A run at 3 groups fell to 1 that way.
+- **The serial pass on all cores** (`measure_the_serial_pass_on_all_cores`, the optimized build, the files in
+  memory): 2.62 ms on the GB10's 20 cores (10.7 ms on one), 2.0 to 2.4 ms on the M3 Max's 16. The device is
+  slower: 1.6 times on the GB10, 6 times on the M3 Max.
 
 **What is left.**
-- **Metal's step.** One piece of 16,383 output pieces (`a_line_past_its_room_runs_again_larger`'s `#if` line) takes
-  0.86 s at rung 0 and 5 to 8 s at rung 1 on the mini, against 5 to 44 ms under CUDA on the GB10. With the other tests
-  running, its command buffer is stopped each time; alone it passes. The loop's stacks
-  (`LpRun`'s 64 frames and 32 calls) are private arrays indexed at run time, which Metal keeps in device memory. A
-  piece is a SIMD group's, so its stacks fit in threadgroup memory: about 3 KB a piece, 25 KB a group of 256 threads.
-- **§6, the front and P1**, now a minor share of a batch.
-- **The Tests' measure**, against the optimized serial pass on all cores, is not yet taken.
+- **§6, the front and P1: now the most of a batch.** On the GB10 the loop is 15% of a run; the rest is about 170
+  phases of the front and P1, each a grid barrier, most of them tens of µs over little work. A unit's work in its
+  own team, its barriers the team's, is the lever, and what the serial pass on all cores sets as the bar.
+- **One serial line.** `a_line_past_its_room_runs_again_larger`'s `#if` line (131,071 tokens from one piece) is one
+  group's: 78, 259 and 389 ms a run on the GB10, 207, 730 and 1,083 ms on the M3 Max. P1's second iteration expands
+  and evaluates it again, though nothing before it changed. On the mini, with every test running at once, macOS's
+  display watchdog stops each of its runs; alone it passes.
