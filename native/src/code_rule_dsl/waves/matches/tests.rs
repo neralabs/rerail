@@ -567,7 +567,7 @@ fn findings_gate(store: &ContentStore, paths: &[String], policies: &[(String, cr
     assert!(outcome.changed.is_empty(), "{:?}", outcome.changed);
 }
 
-/// List step 20: the wave's planned program is kept in `compiled_plans` under a `CompiledPlanId`,
+/// List step 20: the wave's planned program is kept (`compiled_plan`) under a `CompiledPlanId`,
 /// reused while its decisions hold, and planned again in a store whose atom ids differ (its SQL
 /// holds them).
 #[test]
@@ -575,12 +575,8 @@ fn the_wave_program_is_a_compiled_plan() {
     let (clauses, _) = clauses();
     let wave = Wave::new(&clauses, ExecutionBackend::CpuInterpreter).unwrap();
     let rows = |store: &ContentStore| -> Vec<(Vec<u8>, String)> {
-        store
-            .candidate_transaction(false, |db| {
-                let mut statement = db.prepare("SELECT plan, decisions FROM compiled_plans WHERE compiler = 2 AND decisions <> '' ORDER BY plan")?;
-                statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()
-            })
-            .unwrap()
+        let kept = crate::code_rule_dsl::stats::plans::kept_plans(store);
+        kept.plans.into_iter().filter(|(_, c)| !c.decisions.is_empty()).map(|(plan, c)| (plan.to_vec(), c.decisions)).collect()
     };
     let digest = |program: &Program| program.steps.iter().map(|step| step.sql.clone()).collect::<Vec<_>>();
     let first = ContentStore::open(&temp("plans-a").with_extension("sqlite")).unwrap();

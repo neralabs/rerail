@@ -243,7 +243,7 @@ impl Wave {
         self.emit(store, true)
     }
 
-    /// The planned program, from `compiled_plans` while its decisions hold (list step 20): it is
+    /// The planned program, from the store's compiled plans while its decisions hold (list step 20): it is
     /// keyed by a `CompiledPlanId` over the planner's inputs, and it reads each batch input's row
     /// estimate, valid while each stays in its log2 bucket. Otherwise it is planned and recorded.
     fn emit(&self, store: &ContentStore, kept: bool) -> StoreResult<Program> {
@@ -267,7 +267,8 @@ impl Wave {
             identity = identity.text(name);
         }
         let id = *identity.finish().as_bytes();
-        let held = store.candidate_transaction(false, |db| crate::code_rule_dsl::logic::profile::shared::<WavePlans>().0.lock().expect("wave plans mutex poisoned").valid(db, &[id], &reads))?;
+        let kept = crate::code_rule_dsl::stats::plans::Plans::open(store)?;
+        let held = crate::code_rule_dsl::logic::profile::shared::<WavePlans>().0.lock().expect("wave plans mutex poisoned").valid(store.database_path(), kept.as_ref(), &[id], &reads);
         if let Some(held) = held.get(&id) {
             // The SQL holds this store's atom ids: a plan is reused only where the atoms it was
             // planned with have the same ids here (its decisions record them).
@@ -292,10 +293,13 @@ impl Wave {
         atoms.sort();
         atoms.dedup();
         let decisions = serde_json::to_string(&atoms).map_err(|error| invalid(error.to_string()))?;
-        store.candidate_transaction(true, |db| {
-            let compiled = crate::code_rule_dsl::stats::plans::Compiled { decisions: decisions.clone(), program: bytes.clone() };
-            crate::code_rule_dsl::logic::profile::shared::<WavePlans>().0.lock().expect("wave plans mutex poisoned").put(db, id, compiled, &reads).map(|_| ())
-        })?;
+        {
+            let compiled = crate::code_rule_dsl::stats::plans::Compiled { decisions, program: bytes };
+            let shared = crate::code_rule_dsl::logic::profile::shared::<WavePlans>();
+            let mut plans = shared.0.lock().expect("wave plans mutex poisoned");
+            plans.put(store.database_path(), id, compiled, &reads);
+            plans.flush(store);
+        }
         crate::code_rule_dsl::prof::count("wave.plan.compiled", 1);
         Ok(program)
     }

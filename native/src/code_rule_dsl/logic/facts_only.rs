@@ -152,9 +152,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("corpus_state", "3"),
     ("corpus_decided", "3"),
     ("corpus_swept", "3"),
-    ("compiled_plans", "6"),
-    ("compiled_plan_reads", "6"),
-    ("plan_feedback", "6"),
     ("stat_blob", "6"),
     ("fact_stats", "6"),
     ("fact_value_stats", "6"),
@@ -190,8 +187,9 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// `corpus_stats` went, a corpus file's content the observer's answer (t33 K2, 2026-11-21); 54 when the observer's
 /// answers and settings (`observed`, `observer_meta`) became kept facts of the content store (t33 K2); 49 when the
 /// slice's last run per scope became kept facts of the scope's space (t33 step 3), and `slice_fresh` was found to be
-/// the run's scratch; 48 when the Neural Engine's compiled models became kept facts, their archives sources (t33 step 6).
-const NOT_YET_TABLES_PIN: usize = 48;
+/// the run's scratch; 48 when the Neural Engine's compiled models became kept facts, their archives sources (t33 step 6); 45 when
+/// the compiled plans, the statistics they read and their feedback became kept facts (t33 step 6).
+const NOT_YET_TABLES_PIN: usize = 45;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.

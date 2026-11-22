@@ -63,7 +63,7 @@ const NOT_YET_MOVED: &[&str] = &[
     "term_node_freq", "term_coverage", "edge_freq", "text_matcher", "text_pending", "text_term", "vocabulary_literal",
     "vocabulary_pending", "vocabulary_predicate", "vocabulary_term", "tree_pages", "kind_size", "search_index_sets",
     // The per-file memo and its plans.
-    "facts_results", "facts_plan_sets", "facts_completions", "compiled_plans", "compiled_plan_reads", "plan_feedback",
+    "facts_results", "facts_plan_sets", "facts_completions",
     // The whole run's record.
     "run_record",
     // The cross part's statistics, checks, completed trees.

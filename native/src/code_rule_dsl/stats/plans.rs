@@ -1,15 +1,15 @@
 //! Compiled plans, the statistics their decisions read, run-time feedback and SQLite's own
 //! statistics (docs/final-shape/03 §6, 02 "stat-driven compiler"; 05 Phase 3 row 8). Written new:
 //! no source has these. The rules come from PIAT spec §4.9 and §11 (notes/t1-piat-spec.md):
-//! - **`compiled_plans`** keeps each plan under its identity (`identity::CompiledPlanId`, N's
+//! - **`compiled_plan`** keeps each plan under its identity (`identity::CompiledPlanId`, N's
 //!   `SemanticId` in its own domain) with its decisions and the program they produced.
 //!   Every statistic a decision read is stored with its validity interval: the log2 bucket of the
 //!   value read (§4.9's "log2 buckets of every statistic read"). A plan stays valid while every
 //!   statistic stays in its bucket, so a refresh re-plans only when a decision could change (§11
 //!   :273), and nothing counts rows at run time (DLRE trap T18).
-//! - **Validity is re-checked by one batched lookup** (§11 :283): [`Plans::valid`] reads the
-//!   intervals of many plans in one statement and compares them with the values the caller read
-//!   in its own one batched statement (`inputs::Statistics::reads`).
+//! - **Validity is re-checked in place** (§11 :283): [`Plans::valid`] reads the intervals of many
+//!   plans where they are kept and compares them with the values the caller read in its own one
+//!   batched statement (`inputs::Statistics::reads`).
 //! - **`plan_feedback`** holds, per plan and backend, an EWMA of the observed selectivity and cost
 //!   per root (§2.5b, §4.8: "sel from `plan_feedback` EWMA, else the prior"). It also answers H4:
 //!   a regex's matched-term count enters the estimate after its first fill.
@@ -17,23 +17,41 @@
 //!   by `ANALYZE` over the data (02 "SQL join order"); `ANALYZE sqlite_schema` only creates the
 //!   table and reloads the planner's copy.
 //!
+//! The three are kept facts of the store (t33 step 6, decisions 0104 and 0456), where three SQLite
+//! tables held them: one space, a partition per plan, `compiled_plan(p0..p3, compiler, decisions
+//! bytes, program bytes)`, `compiled_plan_bytes(p0..p3, at, word)` (both byte strings, eight bytes a
+//! word, read where they lie), `compiled_plan_read(p0..p3, stat, lo, hi)` and `plan_feedback(p0..p3,
+//! backend, selectivity, ns per root, samples, at)`, a statistic's and a backend's name kept as its
+//! hash. A read takes a space opened before it (`Plans::open`), and a write is staged until it is
+//! flushed (`Plans::flush`), so either may run inside a candidate transaction, which holds the
+//! store's connection; the write is queued behind the run.
+//!
 //! Compiled programs also live in memory, in the bounded cache copied from Data-layer-rule-
 //! expressivity (`cache.rs`), keyed the same way and by the store they were read from or written
 //! to: the store is their durable copy, so a plan another store holds is read from this one or
 //! compiled into it, never answered from memory alone.
 
 use super::cache::Cache;
+use crate::content_store::kept_facts::{KeptPut, KeptSpace, KeptWhat};
+use crate::content_store::{ContentStore, StoreResult};
+use rerail_blocks::kept::{FactKey, KeptRead as _};
 use rusqlite::{Connection, OptionalExtension, Result, params};
-use std::collections::{BTreeMap, btree_map};
+use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// The version of the decisions and programs `compiled_plans` holds; a plan compiled by another is
+/// The version of the decisions and programs `compiled_plan` holds; a plan compiled by another is
 /// not read.
 pub const COMPILER_VERSION: i64 = 2;
 /// Bytes of compiled programs kept in memory.
 const MEMORY: usize = 16 * 1024 * 1024;
 /// Weight of the newest observation in `plan_feedback`.
 const FEEDBACK_WEIGHT: f64 = 0.25;
+
+const PLAN: &str = "compiled_plan";
+const BYTES: &str = "compiled_plan_bytes";
+const READ: &str = "compiled_plan_read";
+const FEEDBACK: &str = "plan_feedback";
 
 /// The bytes of a plan's `identity::CompiledPlanId`.
 pub type PlanId = [u8; 32];
@@ -56,116 +74,173 @@ pub struct Compiled {
 }
 
 /// A plan in memory: the store's file (its main database) and the plan.
-type Key = (String, PlanId);
+type Key = (std::path::PathBuf, PlanId);
 
-fn key(db: &Connection, plan: &PlanId) -> Key {
-    (db.path().unwrap_or_default().to_owned(), *plan)
+fn space() -> [u8; 32] {
+    Sha256::digest(b"rerail.compiled-plans-space/v1").into()
+}
+
+fn ident(rel: &str) -> [u8; 32] {
+    Sha256::digest(format!("rerail.compiled-plans/v1\0{rel}").as_bytes()).into()
+}
+
+fn words(plan: &PlanId) -> [i64; 4] {
+    std::array::from_fn(|i| i64::from_le_bytes(plan[i * 8..i * 8 + 8].try_into().expect("8 bytes")))
+}
+
+fn part(plan: &PlanId) -> i64 {
+    words(plan)[0] & i64::MAX
+}
+
+/// A name's hash, as a statistic or a backend is kept.
+fn name(text: &str) -> i64 {
+    i64::from_le_bytes(Sha256::digest(text.as_bytes())[..8].try_into().expect("8 bytes"))
+}
+
+/// The rows of `plan`'s partition in `rel`, of `plan` alone (its first four columns).
+fn rows_of(kept: &KeptSpace, rel: &str, plan: &PlanId) -> Vec<Vec<i64>> {
+    let chain = kept.view();
+    let Some(entry) = chain.get(&FactKey { rel, ident: &ident(rel), part: part(plan) }) else { return Vec::new() };
+    let w = words(plan);
+    (0..entry.rows.len()).map(|i| entry.row(i)).filter(|r| r[..4] == w).collect()
+}
+
+fn put(rel: &str, plan: &PlanId, types: usize, flat: Vec<i64>) -> KeptPut {
+    let what = if flat.is_empty() {
+        KeptWhat::Gone
+    } else {
+        let n = flat.len() / types;
+        KeptWhat::Flat { widths: vec![8; types], rows: flat, n, levels: None, given: true }
+    };
+    let digest = match &what {
+        KeptWhat::Flat { rows, .. } => {
+            let mut h = Sha256::new();
+            for v in rows {
+                h.update(v.to_le_bytes());
+            }
+            u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes"))
+        }
+        _ => 0,
+    };
+    KeptPut { rel: rel.to_owned(), ident: ident(rel), part: part(plan), digest, reads: Vec::new(), types: vec![b'i'; types], what }
+}
+
+/// `bytes` as words, eight bytes each, the last padded with zeros.
+fn to_words(bytes: &[u8]) -> impl Iterator<Item = i64> + '_ {
+    bytes.chunks(8).map(|c| {
+        let mut w = [0u8; 8];
+        w[..c.len()].copy_from_slice(c);
+        i64::from_le_bytes(w)
+    })
 }
 
 struct Held {
     compiled: Arc<Compiled>,
-    bounds: Vec<(String, u64, u64)>,
+    bounds: Vec<(i64, u64, u64)>,
 }
 
-fn holds(bounds: &[(String, u64, u64)], current: &BTreeMap<String, u64>) -> bool {
+fn holds(bounds: &[(i64, u64, u64)], current: &BTreeMap<i64, u64>) -> bool {
     bounds.iter().all(|(stat, low, high)| current.get(stat).is_some_and(|value| (low..=high).contains(&value)))
+}
+
+/// `plan` as kept: its decisions and program, and its statistics' intervals; `None` when none is
+/// kept, or one of another compiler.
+fn read(kept: &KeptSpace, plan: &PlanId) -> Option<Held> {
+    let head = rows_of(kept, PLAN, plan).pop()?;
+    if head[4] != COMPILER_VERSION {
+        return None;
+    }
+    let (decisions, program) = (usize::try_from(head[5]).ok()?, usize::try_from(head[6]).ok()?);
+    let mut bytes: Vec<u8> = Vec::with_capacity(decisions + program + 8);
+    let mut words = rows_of(kept, BYTES, plan);
+    words.sort_by_key(|r| r[4]);
+    for r in &words {
+        bytes.extend_from_slice(&r[5].to_le_bytes());
+    }
+    if bytes.len() < decisions + program {
+        return None;
+    }
+    let decisions_text = String::from_utf8(bytes[..decisions].to_vec()).ok()?;
+    let program_bytes = bytes[decisions..decisions + program].to_vec();
+    let bounds = rows_of(kept, READ, plan).into_iter().map(|r| (r[4], r[5] as u64, r[6] as u64)).collect();
+    Some(Held { compiled: Arc::new(Compiled { decisions: decisions_text, program: program_bytes }), bounds })
 }
 
 /// Compiled plans, in memory and in the store.
 pub struct Plans {
     memory: Cache<Key, Held>,
+    /// The kept writes of plans `put` since the last `flush`.
+    pending: Vec<KeptPut>,
 }
 
 impl Default for Plans {
     fn default() -> Self {
-        Self { memory: Cache::new(MEMORY) }
+        Self { memory: Cache::new(MEMORY), pending: Vec::new() }
     }
 }
 
 impl Plans {
+    /// The store's kept plans, opened for reads (`valid`) that may run where the store's connection is held.
+    pub fn open(store: &ContentStore) -> StoreResult<Option<KeptSpace>> {
+        store.kept_space(&space())
+    }
+
     /// The plans among `plans` whose stored decisions still hold for `current` (statistic →
-    /// value, as read now), with their programs. One statement reads every stored interval.
-    pub fn valid(
-        &mut self,
-        db: &Connection,
-        plans: &[PlanId],
-        current: &BTreeMap<String, u64>,
-    ) -> Result<BTreeMap<PlanId, Arc<Compiled>>> {
+    /// value, as read now), with their programs: from memory, else as `kept` (`open`) holds them.
+    pub fn valid(&mut self, store: &std::path::Path, kept: Option<&KeptSpace>, plans: &[PlanId], current: &BTreeMap<String, u64>) -> BTreeMap<PlanId, Arc<Compiled>> {
+        let current: BTreeMap<i64, u64> = current.iter().map(|(k, v)| (name(k), *v)).collect();
         let mut valid = BTreeMap::new();
-        let mut missing = Vec::new();
         for plan in plans {
-            match self.memory.get(&key(db, plan)) {
-                Some(entry) if holds(&entry.bounds, current) => {
+            let key = (store.to_path_buf(), *plan);
+            if let Some(entry) = self.memory.get(&key) {
+                if holds(&entry.bounds, &current) {
                     valid.insert(*plan, Arc::clone(&entry.compiled));
                 }
-                Some(_) => {}
-                None => missing.push(*plan),
+                continue;
             }
-        }
-        if missing.is_empty() {
-            return Ok(valid);
-        }
-        let wanted = serde_json::to_string(&missing.iter().map(hex).collect::<Vec<_>>()).expect("hex strings serialise");
-        let mut loaded = BTreeMap::<PlanId, Held>::new();
-        let mut statement = db.prepare_cached(
-            "SELECT p.plan, p.decisions, p.program, r.stat, r.lo, r.hi FROM json_each(?1) w \
-             JOIN compiled_plans p ON p.plan = unhex(w.value) AND p.compiler = ?2 \
-             LEFT JOIN compiled_plan_reads r ON r.plan = p.plan",
-        )?;
-        let mut rows = statement.query(params![wanted, COMPILER_VERSION])?;
-        while let Some(row) = rows.next()? {
-            let plan: PlanId = row.get(0)?;
-            let entry = match loaded.entry(plan) {
-                btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                btree_map::Entry::Vacant(entry) => entry.insert(Held {
-                    compiled: Arc::new(Compiled { decisions: row.get(1)?, program: row.get(2)? }),
-                    bounds: Vec::new(),
-                }),
-            };
-            if let Some(stat) = row.get::<_, Option<String>>(3)? {
-                entry.bounds.push((stat, row.get::<_, i64>(4)? as u64, row.get::<_, i64>(5)? as u64));
-            }
-        }
-        for (plan, entry) in loaded {
-            if holds(&entry.bounds, current) {
-                valid.insert(plan, Arc::clone(&entry.compiled));
+            let Some(entry) = kept.and_then(|kept| read(kept, plan)) else { continue };
+            if holds(&entry.bounds, &current) {
+                valid.insert(*plan, Arc::clone(&entry.compiled));
             }
             let bytes = entry.compiled.program.len() + entry.compiled.decisions.len();
-            self.memory.insert(key(db, &plan), entry, bytes);
+            self.memory.insert(key, entry, bytes);
         }
-        Ok(valid)
+        valid
     }
 
     /// Records `plan`, compiled from statistics `read` (statistic → value), replacing any earlier
-    /// compilation.
-    pub fn put(
-        &mut self,
-        db: &Connection,
-        plan: PlanId,
-        compiled: Compiled,
-        read: &BTreeMap<String, u64>,
-    ) -> Result<Arc<Compiled>> {
-        db.execute(
-            "INSERT OR REPLACE INTO compiled_plans(plan, compiler, decisions, program) VALUES (?1, ?2, ?3, ?4)",
-            params![plan, COMPILER_VERSION, compiled.decisions, compiled.program],
-        )?;
-        db.execute("DELETE FROM compiled_plan_reads WHERE plan = ?1", [plan])?;
-        let mut insert = db.prepare_cached("INSERT INTO compiled_plan_reads(plan, stat, lo, hi) VALUES (?1, ?2, ?3, ?4)")?;
+    /// compilation of the store at `store`: in memory now, in the store once `flush`ed. Touches no
+    /// connection, so it may run inside a candidate transaction.
+    pub fn put(&mut self, store: &std::path::Path, plan: PlanId, compiled: Compiled, read: &BTreeMap<String, u64>) -> Arc<Compiled> {
+        let w = words(&plan);
+        let mut head = w.to_vec();
+        head.extend([COMPILER_VERSION, compiled.decisions.len() as i64, compiled.program.len() as i64]);
+        let mut bytes = Vec::new();
+        let joined: Vec<u8> = compiled.decisions.as_bytes().iter().chain(&compiled.program).copied().collect();
+        for (at, word) in to_words(&joined).enumerate() {
+            bytes.extend(w);
+            bytes.extend([at as i64, word]);
+        }
+        let mut reads = Vec::new();
         let mut bounds = Vec::with_capacity(read.len());
         for (stat, &value) in read {
             let (low, high) = interval(value);
-            insert.execute(params![plan, stat, low as i64, high.min(i64::MAX as u64) as i64])?;
-            bounds.push((stat.clone(), low, high));
+            let high = high.min(i64::MAX as u64);
+            reads.extend(w);
+            reads.extend([name(stat), low as i64, high as i64]);
+            bounds.push((name(stat), low, high));
         }
-        let bytes = compiled.program.len() + compiled.decisions.len();
+        self.pending.extend([put(PLAN, &plan, 7, head), put(BYTES, &plan, 6, bytes), put(READ, &plan, 7, reads)]);
+        let size = compiled.program.len() + compiled.decisions.len();
         let compiled = Arc::new(compiled);
-        self.memory.insert(key(db, &plan), Held { compiled: Arc::clone(&compiled), bounds }, bytes);
-        Ok(compiled)
+        self.memory.insert((store.to_path_buf(), plan), Held { compiled: Arc::clone(&compiled), bounds }, size);
+        compiled
     }
-}
 
-fn hex(plan: &PlanId) -> String {
-    plan.iter().map(|byte| format!("{byte:02x}")).collect()
+    /// Queues the plans `put` since the last flush, behind the run: outside any candidate transaction.
+    pub fn flush(&mut self, store: &ContentStore) {
+        store.queue_kept(space(), std::mem::take(&mut self.pending));
+    }
 }
 
 /// A plan's observed behaviour on one backend.
@@ -176,26 +251,77 @@ pub struct Feedback {
     pub samples: i64,
 }
 
-/// Folds one run of `plan` on `backend` into its feedback.
-pub fn observe(db: &Connection, plan: PlanId, backend: &str, selectivity: f64, ns_per_root: f64) -> Result<()> {
-    db.execute(
-        "INSERT INTO plan_feedback(plan, backend, selectivity, ns_per_root, samples, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, 1, unixepoch()) \
-         ON CONFLICT(plan, backend) DO UPDATE SET \
-         selectivity = selectivity + ?5 * (excluded.selectivity - selectivity), \
-         ns_per_root = ns_per_root + ?5 * (excluded.ns_per_root - ns_per_root), \
-         samples = samples + 1, updated_at = excluded.updated_at",
-        params![plan, backend, selectivity, ns_per_root, FEEDBACK_WEIGHT],
-    )?;
+/// Folds one run of `plan` on `backend` into its feedback, behind the run.
+pub fn observe(store: &ContentStore, plan: PlanId, backend: &str, selectivity: f64, ns_per_root: f64) -> StoreResult<()> {
+    let backend = name(backend);
+    let mut rows = match store.kept_space(&space())? {
+        Some(kept) => rows_of(&kept, FEEDBACK, &plan),
+        None => Vec::new(),
+    };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    match rows.iter_mut().find(|r| r[4] == backend) {
+        Some(r) => {
+            let (s, n) = (f64::from_bits(r[5] as u64), f64::from_bits(r[6] as u64));
+            r[5] = (s + FEEDBACK_WEIGHT * (selectivity - s)).to_bits() as i64;
+            r[6] = (n + FEEDBACK_WEIGHT * (ns_per_root - n)).to_bits() as i64;
+            r[7] += 1;
+            r[8] = now;
+        }
+        None => {
+            let mut r = words(&plan).to_vec();
+            r.extend([backend, selectivity.to_bits() as i64, ns_per_root.to_bits() as i64, 1, now]);
+            rows.push(r);
+        }
+    }
+    let flat: Vec<i64> = rows.into_iter().flatten().collect();
+    store.queue_kept(space(), vec![put(FEEDBACK, &plan, 9, flat)]);
     Ok(())
 }
 
-pub fn feedback(db: &Connection, plan: PlanId, backend: &str) -> Result<Option<Feedback>> {
-    db.prepare_cached("SELECT selectivity, ns_per_root, samples FROM plan_feedback WHERE plan = ?1 AND backend = ?2")?
-        .query_row(params![plan, backend], |row| {
-            Ok(Feedback { selectivity: row.get(0)?, ns_per_root: row.get(1)?, samples: row.get(2)? })
-        })
-        .optional()
+/// `plan`'s feedback on `backend`, as kept.
+pub fn feedback(store: &ContentStore, plan: PlanId, backend: &str) -> StoreResult<Option<Feedback>> {
+    let Some(kept) = store.kept_space(&space())? else { return Ok(None) };
+    let backend = name(backend);
+    Ok(rows_of(&kept, FEEDBACK, &plan).into_iter().find(|r| r[4] == backend).map(|r| Feedback {
+        selectivity: f64::from_bits(r[5] as u64),
+        ns_per_root: f64::from_bits(r[6] as u64),
+        samples: r[7],
+    }))
+}
+
+/// What the store keeps of its compiled plans: each plan with its decisions and program, the
+/// statistics their decisions read, and each feedback row's samples (a test's view).
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Debug, Default)]
+pub struct KeptPlans {
+    pub plans: Vec<(PlanId, Compiled)>,
+    pub reads: usize,
+    pub samples: Vec<i64>,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn kept_plans(store: &ContentStore) -> KeptPlans {
+    let mut out = KeptPlans::default();
+    let Ok(Some(kept)) = Plans::open(store) else { return out };
+    let chain = kept.view();
+    for entry in chain.of(PLAN) {
+        for i in 0..entry.rows.len() {
+            let r = entry.row(i);
+            let mut plan = [0u8; 32];
+            for (c, w) in r.iter().take(4).enumerate() {
+                plan[c * 8..c * 8 + 8].copy_from_slice(&w.to_le_bytes());
+            }
+            if let Some(held) = read(&kept, &plan) {
+                out.reads += held.bounds.len();
+                out.plans.push((plan, (*held.compiled).clone()));
+            }
+        }
+    }
+    for entry in chain.of(FEEDBACK) {
+        out.samples.extend((0..entry.rows.len()).map(|i| entry.row(i)[7]));
+    }
+    out.plans.sort_by_key(|p| p.0);
+    out
 }
 
 /// Writes `sqlite_stat1` rows for `indexes` ((table, index, columns)) from `fact_stats`, and makes
