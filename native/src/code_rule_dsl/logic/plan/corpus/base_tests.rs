@@ -124,7 +124,7 @@ count(p, k) :- doc(d, p, _), line_count(d, k).
 "#;
     let got = run(&dir, program, &["lines", "split", "count"]);
     let table = |path: &str, source: &str| {
-        let t = LineTable::new(source, Terminators::of(GrammarDialect::Python));
+        let t = LineTable::new(source, crate::code_rule_dsl::lines::terminators(GrammarDialect::Python));
         (0..t.starts().len()).map(|i| r![path, i + 1, &source[t.start(i)..t.end(i)]]).collect::<Vec<_>>()
     };
     let want = sorted(table("a.py", LINES).into_iter().chain(table("b.py", "x = 1\n")));
@@ -211,7 +211,7 @@ lines(l, s) :- src_line(_, l, sp), text(sp, s).
 .output lines
 "#;
     let got = run(&dir, program, &["lines"]);
-    let table = LineTable::new(source, Terminators::of(GrammarDialect::Python));
+    let table = LineTable::new(source, crate::code_rule_dsl::lines::terminators(GrammarDialect::Python));
     let want = sorted((0..table.starts().len()).map(|i| r![i + 1, &source[table.start(i)..table.end(i)]]));
     assert_eq!(got[0], want);
     assert!(want[0] == ["1", "a = 1"] && want.contains(&r!["4", ""]), "{want:?}");
@@ -451,7 +451,7 @@ hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), 
         let t = LineTable::new(source, Terminators::Eslint);
         (0..t.starts().len()).map(|i| r![path, i + 1, &source[t.start(i)..t.end(i)]]).collect::<Vec<_>>()
     };
-    let python = LineTable::new("f(needle)\n", Terminators::of(GrammarDialect::Python));
+    let python = LineTable::new("f(needle)\n", crate::code_rule_dsl::lines::terminators(GrammarDialect::Python));
     let python = (0..python.starts().len()).map(|i| r!["pkg/m.py", i + 1, &"f(needle)\n"[python.start(i)..python.end(i)]]);
     assert_eq!(got[3], sorted(texts.iter().flat_map(|(p, s)| table(p, s)).chain(python)));
     assert!(got[3].contains(&r!["docs/l9700_graph_query.rst", "5", "needle here"]), "U+2028 ends a line: {:?}", got[3]);

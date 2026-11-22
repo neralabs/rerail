@@ -293,6 +293,8 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     // A named-only tape (RER-131) leaves out the tokens its grammar's automata recognize: the
     // automata, and the grammars they are built from, decide what a stored tape means.
     view_sources.push(manifest.join("src/code_rule_dsl/tape/tokens.rs"));
+    // A stored tape's line index holds its language's terminators (decision 0612): their definition is the tape's.
+    view_sources.push(manifest.join("crates/tape_format/src/newlines.rs"));
     view_sources.push(manifest.join("grammars/token-grammars/rust/grammar.json"));
     view_sources.push(manifest.join("grammars/token-grammars/php/grammar.json"));
     view_sources.push(manifest.join("grammars/token-grammars/java/grammar.json"));

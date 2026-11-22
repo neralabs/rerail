@@ -153,7 +153,7 @@ pub(super) fn project<D: Doc>(
                             crate::code_rule_dsl::matcher::file_lines(
                                 &file.source,
                                 super::query::file_language(file)
-                                    .map_or(crate::code_rule_dsl::lines::Terminators::Eslint, crate::code_rule_dsl::lines::Terminators::of),
+                                    .map_or(crate::code_rule_dsl::lines::Terminators::Eslint, crate::code_rule_dsl::lines::terminators),
                             )
                             .span(r.start, r.end)
                             .start_line as i64,

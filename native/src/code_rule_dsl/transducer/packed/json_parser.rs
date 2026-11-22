@@ -45,7 +45,7 @@ fn compile() -> Result<Compiled, String> {
     let stmts = ::bitlex::syntax::parse(GRAMMAR)?;
     let kind = |n: &str| kind_id(&language, n);
     let field = |n: &str| language.field_id_for_name(n.trim_start_matches("field ")).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: crate::code_rule_dsl::lines::terminators(GrammarDialect::Json) };
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
     let program = rir::assemble(&compiled.text())?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;

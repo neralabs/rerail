@@ -499,7 +499,7 @@ impl<'a> Leaf<'a> {
                     LineTable::new(
                         &file.source,
                         file_language(file)
-                            .map(Terminators::of)
+                            .map(crate::code_rule_dsl::lines::terminators)
                             .unwrap_or(Terminators::Eslint),
                     )
                 });
@@ -999,7 +999,7 @@ fn restore_file_tape(
     use crate::code_rule_dsl::tape;
     let never = || false;
     let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
-    let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
+    let lines = Arc::new(LineTable::new(&file.source, crate::code_rule_dsl::lines::terminators(language)));
     #[cfg(any(test, feature = "test-hooks"))]
     crate::code_rule_dsl::matcher::note_line_table_construction();
     let doc = tape::TapeDoc::restore_with_lines(

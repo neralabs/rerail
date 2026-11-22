@@ -75,6 +75,21 @@ Ruff's. The old `Loc` view read `line(e - 1)` instead. It is now `line(e)`, the 
 - The granules' `ExtraSpan` kinds are `Line`, `Comment` and `Match`. `MATCH_SLOTS` is 14, so `EXTRA_SLOTS` stays 16
   and node ids do not move. Line positions moved by one per file: the empty final line is a line.
   `definition_ids_are_pinned` records the new digest and why.
+- The tape's line index is the language's lines. Before, it held each `\n` alone. `Terminators` is now
+  `rerail_tape_format::newlines`'s, and the engine re-exports it. The index records the last byte of each
+  terminator of the document's set, so a terminator's bytes belong to the line they end. A line's text end is
+  that byte, less the terminator's length, which comes from the bytes before it (`length_ending_at`).
+  - Every producer passes the set it writes for: the format 16 writer and its reference, `Sixteen`, the engine's
+    tree ops, the JSON parser and the C preprocessor. The preprocessor's is `LINE_ENDS`, the C adapter's
+    `TERMINATORS`.
+  - Bitlex's tier 1 marks the bytes a terminator of its grammar's set can end with (`last_bytes`), as one class.
+    The index keeps each one where it ends a terminator (`ends_at`). The set is carried on the grammar's
+    `Symbols` and recorded with the output (`BlockProgram::newlines`). A parser uses those bits only for that
+    set, and otherwise scans. A single class leaves the hot loop's registers as they were
+    (`the_hot_loop_keeps_simdjsons_utf8_and_error_registers`).
+  - A token loop's tier 1 (`.rr`'s) makes no mask of its own. Its line ends are among `records_made`, and its
+    index is the scan's.
+  - `newlines.rs` is part of the grammar build id, so stored tapes are made again.
 - The data-layer pack's test data follows. The overlays were edited, the converter's output was regenerated
   (`convert_the_data_layer_pack`), and the 50 changed files were staged in the lint tool-pack's `publish/`
   (`npm run fixtures:stage`).
@@ -83,6 +98,9 @@ Ruff's. The old `Loc` view read `line(e - 1)` instead. It is now `line(e)`, the 
 
 - `lines_end_at_each_ecosystem_s_terminators` checks each set's lines over one source holding every terminator.
   `a_place_is_read_off_the_lines` checks `place`.
+- `a_terminator_is_known_by_its_last_byte` checks each set's terminators, their lengths from the last byte, and
+  the candidates `ends_at` keeps. `the_newline_output_is_every_newline` checks tier 1's candidates on every grammar,
+  over lone `\r`, `\r\n` and `\n\r`.
 - `a_files_lines_are_its_languages` runs a program per language (Python, JavaScript, Rust) over files holding each
   ambiguous ending. It checks `src_line` and the line of a call.
 - `source_lines_are_the_languages_lines` checks `src_line` against the `LineTable`, `py_line` against W's

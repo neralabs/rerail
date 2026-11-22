@@ -98,7 +98,7 @@ fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> 
         let language = file_language(&file.input).expect("eligible AST source");
         let lines = Arc::new(LineTable::new(
             &file.input.source,
-            Terminators::of(language),
+            crate::code_rule_dsl::lines::terminators(language),
         ));
         #[cfg(any(test, feature = "test-hooks"))]
         crate::code_rule_dsl::matcher::note_line_table_construction();
@@ -618,7 +618,7 @@ pub fn evaluate_file(
         });
     let line_index_started = Instant::now();
     let terminators = file_language(&file.input)
-        .map(Terminators::of)
+        .map(crate::code_rule_dsl::lines::terminators)
         .unwrap_or(Terminators::Eslint);
     let prepared_lines = file
         .prepared

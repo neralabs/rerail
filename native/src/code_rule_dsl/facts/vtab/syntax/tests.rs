@@ -1708,7 +1708,7 @@ fn granule_kinds_are_a_table_by_kind_code() {
 /// `Table::node` inverts it; the scan gives the same ids in preorder; and no other tape node has one.
 #[test]
 fn node_ids_in_place_equal_the_numbered_ones() {
-    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::lines::LineTable;
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
     use ranks::Item;
     if !definition_ids() {
@@ -1736,7 +1736,7 @@ fn node_ids_in_place_equal_the_numbered_ones() {
         let source = Arc::new(source.to_owned());
         let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
-            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
             let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
             let f = &*facts;
             let dialect = Dialect::new(core::facts_tag(f)).unwrap();
@@ -1898,7 +1898,7 @@ fn an_axis_counts_its_rows_without_its_solve() {
 /// The numbering reads' cases: a projection of each source, in each format, whole, as T and narrowed, with the tape
 /// nodes to read (every one, and 64 past the last).
 fn id_read_cases() -> Vec<(String, Projected, u32)> {
-    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::lines::LineTable;
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
     let mut out = Vec::new();
     let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
@@ -1914,7 +1914,7 @@ fn id_read_cases() -> Vec<(String, Projected, u32)> {
         let source = Arc::new(source.to_owned());
         let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
-            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
             let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
@@ -2068,7 +2068,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn the_view_reads_are_the_hosts_rows() {
-    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::lines::LineTable;
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
     use ranks::Item;
     use rerail_clif::view::TapeView;
@@ -2136,7 +2136,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
         let source = Arc::new(source.to_owned());
         let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
-            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
             let words: Vec<u32> = lines.words().to_vec();
             let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();

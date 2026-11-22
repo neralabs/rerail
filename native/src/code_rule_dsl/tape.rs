@@ -2716,7 +2716,7 @@ impl TapeDoc {
         // Positions read through the segments slice both texts: a map that does not fit them is
         // refused here, so the tape is encoded again, never read wrong.
         guest.source_map.check(&guest.text, &host.source)?;
-        let lines = Arc::new(LineTable::new(&guest.text, Terminators::of(grammar.lang)));
+        let lines = Arc::new(LineTable::new(&guest.text, crate::code_rule_dsl::lines::terminators(grammar.lang)));
         let mut doc =
             Self::restore_tree(Arc::clone(&guest.text), grammar, &guest.tape, lines, budget)?;
         checked(budget)?;
@@ -2870,7 +2870,7 @@ impl TapeDoc {
         image: &impl Documents,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
-        let lines = Arc::new(LineTable::new(&source, Terminators::of(grammar.lang)));
+        let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(grammar.lang)));
         Self::restore_with_lines(source, grammar, &image.file_image(), lines, budget)
     }
 
@@ -3610,7 +3610,7 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
         stack.extend(kept.into_iter().rev());
     }
     let source = Arc::new(source.to_owned());
-    let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
     let doc = TapeDoc::restore_tree(source, grammar, &image, lines, &|| false)?;
     if ends.len() != doc.transducer_len() {
         return Err("a pattern's records disagree with its tree".into());

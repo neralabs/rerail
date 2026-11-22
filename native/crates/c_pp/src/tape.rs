@@ -166,7 +166,7 @@ pub fn image(src: &[u8], opts: Options) -> Vec<u8> {
 pub fn image_16(src: &[u8], opts: Options) -> Tape16 {
     let nodes = nodes(src, opts);
     let mut widths = Widths::guess(src.len());
-    let target = Target::F16(Sixteen { lang: lang(), tag: TAG, z: false, blocks: false, number: std::sync::Arc::new(number) });
+    let target = Target::F16(Sixteen { lang: lang(), terminators: LINE_ENDS, tag: TAG, z: false, blocks: false, number: std::sync::Arc::new(number) });
     loop {
         match write(&nodes, src, widths, target.clone()).and_then(|mut w| w.finish_16()) {
             Ok(Ok(f)) => match f.tape {
@@ -182,6 +182,9 @@ pub fn image_16(src: &[u8], opts: Options) -> Tape16 {
 /// The tape's tag (its language's; the preprocessor tape is no grammar's, so its language is
 /// given to every reader, `lang`, never looked up by tag).
 pub const TAG: u8 = 0;
+/// C's line terminators, clang's and GCC's: `\r\n`, `\r` and `\n` (decision 0612, the C adapter's), which the
+/// tape's line index holds and `__LINE__` counts.
+pub const LINE_ENDS: rerail_tape_format::newlines::Terminators = rerail_tape_format::newlines::Terminators::Newlines;
 
 /// The tape's format 16 language: a code a kind with no field first (its number is its kind's,
 /// below the one-byte cut), then each kind with each field (`number`).

@@ -18,42 +18,12 @@ pub struct Span {
     pub start_line: usize,
 }
 
-/// The line terminators of a language's ecosystem: its compiler's, its linters' and its editors' (decision 0612), the one
-/// definition of a line (`LineTable`) and of every place on it. A `\n\r` is two of them wherever `\r` is one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Terminators {
-    /// ESLint's `\r\n|[\r\n  ]` (`astUtils.createGlobalLinebreakMatcher`), TypeScript's: ECMAScript's line
-    /// terminators. And a file of no language's.
-    Eslint,
-    /// `\r\n`, `\r` and `\n`: CPython's tokenizer and Ruff's (`ruff_source_file`), the JVM languages' lexers, PHP's,
-    /// clang's, Swift's, HTML's and CommonMark's, and the Language Server Protocol's.
-    Newlines,
-    /// `\n` alone, a `\r` before it left out of the line's text: rustc's (`SourceFile::lines`) and Go's (`go/token`),
-    /// which their linters report on. A lone `\r` stays inside a line.
-    Lf,
-    /// Roslyn's (`SyntaxFacts::IsNewLine`): `\r\n`, `\r`, `\n`, U+0085, U+2028 and U+2029.
-    Roslyn,
-    /// CSS Syntax's (§3.3, its preprocessing): `\r\n`, `\r`, `\n` and a form feed.
-    Css,
-}
+/// The line terminators of a language's ecosystem, the tape's (`rerail_tape_format::newlines`, decision 0612).
+pub use rerail_tape_format::newlines::Terminators;
 
-impl Terminators {
-    /// The linter a language's ports follow (`Adapter::TERMINATORS`).
-    pub fn of(language: GrammarDialect) -> Self {
-        crate::code_rule_dsl::language::base(Family::of(language)).terminators()
-    }
-
-    /// The sets' number: `COUNT` of them.
-    pub const fn index(self) -> usize {
-        match self {
-            Self::Eslint => 0,
-            Self::Newlines => 1,
-            Self::Lf => 2,
-            Self::Roslyn => 3,
-            Self::Css => 4,
-        }
-    }
-    pub const COUNT: usize = 5;
+/// The terminators a language's ecosystem ends a line at (`Adapter::TERMINATORS`, decision 0612).
+pub fn terminators(language: GrammarDialect) -> Terminators {
+    crate::code_rule_dsl::language::base(Family::of(language)).terminators()
 }
 
 /// Where each line of a file starts, and where its text ends before its terminator: u32s, `[n, starts[n], ends[n]]`
@@ -70,59 +40,11 @@ enum Words {
     Placed(std::sync::Arc<dyn rerail_tape_format::home::Room>),
 }
 
-/// Each terminator of `bytes` as `terminators` reads them, `(at, length)`, in order: a chunked search for their
-/// first bytes (`memchr`), never a byte at a time.
-fn terminators_of(bytes: &[u8], terminators: Terminators, mut each: impl FnMut(usize, usize)) {
-    let mut skip = usize::MAX;
-    let mut one = |at: usize| {
-        if at == skip {
-            return;
-        }
-        let length = match bytes[at] {
-            // `\n` alone ends a line there: a `\r` before it is the terminator's, out of the line's text.
-            b'\n' if terminators == Terminators::Lf && at > 0 && bytes[at - 1] == b'\r' => {
-                each(at - 1, 2);
-                return;
-            }
-            b'\n' => 1,
-            b'\r' if bytes.get(at + 1) == Some(&b'\n') => {
-                skip = at + 1;
-                2
-            }
-            b'\r' => 1,
-            0x0C => 1,
-            // U+0085: C2 85.
-            0xC2 if bytes.get(at + 1) == Some(&0x85) => 2,
-            // U+2028 and U+2029: E2 80 A8 and E2 80 A9.
-            0xE2 if bytes.get(at + 1) == Some(&0x80) && matches!(bytes.get(at + 2), Some(0xA8 | 0xA9)) => 3,
-            _ => return,
-        };
-        each(at, length);
-    };
-    match terminators {
-        Terminators::Eslint => memchr::memchr3_iter(b'\n', b'\r', 0xE2, bytes).for_each(&mut one),
-        Terminators::Newlines => memchr::memchr2_iter(b'\n', b'\r', bytes).for_each(&mut one),
-        Terminators::Lf => memchr::memchr_iter(b'\n', bytes).for_each(&mut one),
-        Terminators::Css => memchr::memchr3_iter(b'\n', b'\r', 0x0C, bytes).for_each(&mut one),
-        // Four first bytes: two searches, merged in order.
-        Terminators::Roslyn => {
-            let mut wide = memchr::memchr_iter(0xC2, bytes).peekable();
-            for at in memchr::memchr3_iter(b'\n', b'\r', 0xE2, bytes) {
-                while let Some(c) = wide.next_if(|&c| c < at) {
-                    one(c);
-                }
-                one(at);
-            }
-            wide.for_each(&mut one);
-        }
-    }
-}
-
 impl LineTable {
     pub fn new(source: &str, terminators: Terminators) -> Self {
         let bytes = source.as_bytes();
         let mut n = 1;
-        terminators_of(bytes, terminators, |_, _| n += 1);
+        terminators.each(bytes, |_, _| n += 1);
         let mut words = vec![0u32; 1 + 2 * n];
         Self::fill(&mut words, bytes, terminators, n);
         Self { words: Words::Own(words) }
@@ -133,7 +55,7 @@ impl LineTable {
     pub fn placed(source: &str, terminators: Terminators) -> Self {
         let bytes = source.as_bytes();
         let mut n = 1;
-        terminators_of(bytes, terminators, |_, _| n += 1);
+        terminators.each(bytes, |_, _| n += 1);
         let len = 4 * (1 + 2 * n);
         let home = crate::code_rule_dsl::tape::placed::place(len, |out| {
             // SAFETY: the room is 16-byte aligned (`tape_room`), `len` bytes of it this fill's alone.
@@ -154,7 +76,7 @@ impl LineTable {
         words[0] = word(n);
         words[1] = 0;
         let mut line = 0;
-        terminators_of(bytes, terminators, |at, length| {
+        terminators.each(bytes, |at, length| {
             words[1 + n + line] = word(at);
             line += 1;
             words[1 + line] = word(at + length);

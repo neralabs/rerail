@@ -40,7 +40,8 @@ fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
 impl Adapter for C {
     const FAMILY: Family = Family::C;
     const LABEL: &'static str = "c";
-    const TERMINATORS: Terminators = Terminators::Newlines;
+    // The preprocessor's tape's, one constant: `__LINE__` counts the lines a finding is on.
+    const TERMINATORS: Terminators = rerail_c_pp::tape::LINE_ENDS;
     const PACKAGES: bool = false;
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;

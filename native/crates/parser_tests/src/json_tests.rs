@@ -523,9 +523,9 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         let t = rerail_tape_format::tape::F15::new(&image, columns, &table).expect("reads");
         let number = rerail_tape_format::f16::numbers(&lang, &table).expect("numbers");
         for z in [false, true] {
-            let reference = rerail_tape_format::f16::write_from_with_presence(&lang, &t, &number, f, tag16, z).expect("the writer's tape").tape;
-            let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
-            let got = aot.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
+            let reference = rerail_tape_format::f16::write_from_with_presence(&lang, &t, &number, f, rerail_tape_format::newlines::Terminators::Newlines, tag16, z).expect("the writer's tape").tape;
+            let want = jit.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, z).map(|w| bytes_of(&w));
+            let got = aot.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, z).map(|w| bytes_of(&w));
             assert!(want.is_ok(), "file {k}: the JIT's format 16 run: {want:?}");
             assert!(want.as_ref().ok() == Some(&reference.extent().to_vec()), "file {k} (16z {z}): the JIT's format 16 home is not the writer's of its format 15 tape");
             if got != want {
@@ -559,14 +559,14 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     for (f, why) in cases {
         let text = rerail_compiler::native_cpu_stream::refusal::NAMES.iter().find(|n| n.0 == why).expect("a reason").1;
         assert!(jit.parser.image(f).is_err(), "{:?}: the JIT refuses it", String::from_utf8_lossy(&f[..f.len().min(20)]));
-        let got = aot.parser.image16(f, &lang, &numbers, false).map(|_| ());
+        let got = aot.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, false).map(|_| ());
         assert!(got.as_ref().err().is_some_and(|e| e.contains(text)), "{:?}: refused for {why} ({text}): {got:?}", String::from_utf8_lossy(&f[..f.len().min(20)]));
     }
     // Empty containers, at the top, in arrays, as values in objects and at the depth's edge: the Rust's tapes the JIT's.
     for f in [&b"[]"[..], b"{}", b"[[]]", b"[{}]", b"{\"a\":[]}", b"{\"a\":{}}", b"[[],{},[[]],{\"b\":[]}]", b"{\"a\":[],\"b\":{},\"c\":1}", b"[ ]", b"{ }"] {
         for z in [false, true] {
-            let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
-            let got = aot.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
+            let want = jit.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, z).map(|w| bytes_of(&w));
+            let got = aot.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, z).map(|w| bytes_of(&w));
             assert!(want.is_ok() && got == want, "{:?} (16z {z}): the Rust's tape is the JIT's", String::from_utf8_lossy(f));
         }
     }
@@ -576,8 +576,8 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // each, as the JIT does (whose refusal names its word, not the reason). Ends of 0, as before, would read the
     // file's first byte as the next token's.
     for f in [&b"["[..], b"{", b"[1", b"[1,", b"[\"a\"", b"[\"a\",", b"{\"a\"", b"{\"a\":", b"{\"a\":1", b"{\"a\":1,", b"[[", b"[[1,", b"{\"a\":[", b"{\"a\":{\"b\":", b"", b"[1] 2", b"{} {}", b"\"a\" \"b\"", b"1 2", b"[]]", b"{}}"] {
-        let want = jit.parser.image16(f, &lang, &numbers, false).map(|_| ());
-        let got = aot.parser.image16(f, &lang, &numbers, false).map(|_| ());
+        let want = jit.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, false).map(|_| ());
+        let got = aot.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, false).map(|_| ());
         assert!(want.is_err() && got.is_err(), "{:?}: the Rust refuses it as the JIT does: {got:?}, {want:?}", String::from_utf8_lossy(f));
     }
 }
@@ -623,13 +623,13 @@ fn simdjson_form_against_simdjson() {
     for (name, f) in &files {
         jit.parser.image(f).unwrap_or_else(|e| panic!("{name}: the simdjson form refuses it: {e:?}"));
         let numbers = aot.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
-        let want = jit.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).expect("the JIT's format 16 run");
-        assert_eq!(aot.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).ok(), Some(want), "{name}: the Rust's tape is the JIT's");
+        let want = jit.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, false).map(|w| w.extent().to_vec()).expect("the JIT's format 16 run");
+        assert_eq!(aot.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, false).map(|w| w.extent().to_vec()).ok(), Some(want), "{name}: the Rust's tape is the JIT's");
         // Ours as simdjson's caller runs simdjson: one writer, kept from one document to the next (simdjson's parser is
         // kept by `structurals`), each tape given back as the next one's room.
         let mut w = rerail_tape_format::f16::Writer::empty();
         let mut ours = || {
-            let t = aot.parser.image16_in(&mut w, f, &lang, &numbers, false).expect("parses");
+            let t = aot.parser.image16_in(&mut w, f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, false).expect("parses");
             w.recycle(std::hint::black_box(t));
         };
         // `RERAIL_SPIN`: ours alone, for that many seconds, for a profiler (the process's id printed first).
@@ -644,7 +644,7 @@ fn simdjson_form_against_simdjson() {
         let (oi, on) = measure(&mut ours);
         // And with a writer made for each document, as `image16` makes one.
         let (fi, _) = measure(&mut || {
-            std::hint::black_box(aot.parser.image16(f, &lang, &numbers, false).expect("parses"));
+            std::hint::black_box(aot.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, false).expect("parses"));
         });
         let (si, sn) = measure(&mut || {
             std::hint::black_box(rerail_simdjson_native::structurals(f, |i| i.len()).expect("simdjson parses it"));

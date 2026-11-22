@@ -301,7 +301,7 @@ fn grammars_rust_tapes_are_the_jits() {
                 docs.iter()
                     .map(|doc| {
                         let image = c.parser.image(doc).ok();
-                        let runs: Vec<_> = [false, true].into_iter().map(|z| c.parser.image16(doc, &lang, &numbers, z)).collect();
+                        let runs: Vec<_> = [false, true].into_iter().map(|z| c.parser.image16(doc, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, z)).collect();
                         let why = runs.iter().map(|r| r.as_ref().err().cloned()).collect();
                         (image, runs.into_iter().map(|r| r.ok().map(|w| home(&w))).collect(), why)
                     })

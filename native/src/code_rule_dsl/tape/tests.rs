@@ -1124,7 +1124,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
         );
         let tape_errors =
             super::super::soundness::SyntaxErrors::from_ranges(tape.syntax_error_ranges());
-        let lines = LineTable::new(source, Terminators::of(lang));
+        let lines = LineTable::new(source, crate::code_rule_dsl::lines::terminators(lang));
         assert_eq!(
             native_errors.partial_message(&lines),
             tape_errors.partial_message(&lines)
@@ -2837,7 +2837,7 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     let (_, _, image, grammar) = fixture(&source, GrammarDialect::Python);
     let lines = Arc::new(LineTable::new(
         &source,
-        Terminators::of(GrammarDialect::Python),
+        crate::code_rule_dsl::lines::terminators(GrammarDialect::Python),
     ));
     let reject = |image: &TapeImage| {
         assert!(

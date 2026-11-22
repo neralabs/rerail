@@ -737,7 +737,8 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "mask" {
                 program.masks.push(line.number("%")?);
             } else if first == "newlines" {
-                program.newlines = Some(line.number("%")?);
+                let (v, k): (u16, usize) = (line.number("%")?, line.number("")?);
+                program.newlines = Some((v, rerail_tape_format::newlines::Terminators::of_index(k).ok_or(format!("block {at} line ends of no terminators {k}"))?));
             } else if first == "records" {
                 let (starts, lasts): (u16, u16) = (line.number("")?, line.number("")?);
                 let kinds = line.word()?;

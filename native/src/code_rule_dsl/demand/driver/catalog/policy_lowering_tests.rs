@@ -3,7 +3,7 @@ use super::relational_ir::qualified_row_columns;
 use super::{PackedFileInput, SqlPlans};
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::model::Anchor;
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
@@ -24,7 +24,7 @@ fn file_metadata(files: &[(String, String)], dialect: GrammarDialect) -> String 
                 serde_json::json!({
                     "path": path,
                     "source": source,
-                    "lineStarts": LineTable::new(source, Terminators::of(dialect)).starts(),
+                    "lineStarts": LineTable::new(source, crate::code_rule_dsl::lines::terminators(dialect)).starts(),
                 })
             })
             .collect(),

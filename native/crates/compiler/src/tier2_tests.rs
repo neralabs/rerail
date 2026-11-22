@@ -64,7 +64,7 @@ fn every_grammar_compiles_here_and_equals_the_interpreters() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: compiles: {e}"));
         let text = compiled.text();
         let words = rir_asm::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
@@ -96,7 +96,7 @@ fn a_tape_past_two_byte_columns_is_read_at_four() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
         let words = rir_asm::assemble(&compiled.text()).expect("assembles");
         let structure = native_ir::lower(&words, 0, 0).expect("lowers");
@@ -148,7 +148,7 @@ fn tier2_writes_format_16_by_the_ops() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
         let words = rir_asm::assemble(&compiled.text()).expect("assembles");
         let structure = native_ir::lower(&words, 0, 0).expect("lowers");
@@ -164,8 +164,8 @@ fn tier2_writes_format_16_by_the_ops() {
             let number = f16::numbers(&lang, &table).expect("numbers");
             let numbers = sixteen.numbers(&lang);
             for z in [false, true] {
-                let want = f16::write_from_with_presence(&lang, &t, &number, bytes, structure.tag, z).expect("the writer's tape").tape;
-                let got = parser.image16(bytes, &lang, &numbers, z).unwrap_or_else(|e| panic!("{name}: {shown:?} (16z {z}): {e}"));
+                let want = f16::write_from_with_presence(&lang, &t, &number, bytes, rerail_tape_format::newlines::Terminators::Newlines, structure.tag, z).expect("the writer's tape").tape;
+                let got = parser.image16(bytes, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, z).unwrap_or_else(|e| panic!("{name}: {shown:?} (16z {z}): {e}"));
                 assert!(got.presence_bytes().is_some() && home_of(&got) == home_of(&want), "{name}: {shown:?} (16z {z}): the presence, the document's and each block's");
                 let (got, want) = (bytes_of(&got), bytes_of(&want));
                 let first = (0..got.len().min(want.len())).find(|&k| got[k] != want[k]);
@@ -201,7 +201,7 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
         let words = rir_asm::assemble(&compiled.text()).expect("assembles");
         let structure = native_ir::lower(&words, 0, 0).expect("lowers");
@@ -667,27 +667,33 @@ fn a_mask_leaves_its_vector_where_it_is_read() {
     assert!(checked > 30, "{checked} masks");
 }
 
-/// Decision 0529: tier 1's newline output holds a bit at every `\n` of the file, short files (the edge path alone)
-/// too: the interpreter's always, the compiled tier 1's where it stores them (JSON's forms). A token loop's tier 1
-/// (`.rr`'s, 0177) makes no mask: it offers no newlines, and the index is the scan's.
+/// Decision 0529: tier 1's line-end output holds a bit at every byte a line terminator of the file can end with, the
+/// terminators its grammar's language reads (decision 0612: here `\r\n`, a lone `\r` and `\n`), and those kept by
+/// `ends_at` are their last bytes; short files (the edge path alone) too: the interpreter's always, the compiled tier
+/// 1's where it stores them (JSON's forms). A token loop's tier 1 (`.rr`'s, 0177) makes no mask: it offers no line
+/// ends, and the index is the scan's.
 #[test]
 fn the_newline_output_is_every_newline() {
     let rr = ("rr".to_owned(), include_str!("../../rr_parser/rr.bitlex").to_owned());
-    let docs: [&[u8]; 8] = [b"\n", b"\n\n", b"a\n", b" \n ", b"\r\n", b"// c\n", b"[1,\n2]\n", b"r(x).\n// c\n.decl r(a: number)\n"];
+    let docs: [&[u8]; 11] = [b"\n", b"\n\n", b"a\n", b" \n ", b"\r\n", b"a\rb", b"\n\r\r\r\n", b"\r", b"// c\n", b"[1,\r\n2]\r", b"r(x).\n// c\n.decl r(a: number)\n"];
     let mut differ = Vec::new();
     for (name, source) in crate::ladder::grammars().into_iter().chain([rr]) {
         let c = crate::ladder::compile_step(&name, &source);
         let o = c.parser.tier1.newlines;
-        assert_eq!(o.is_none(), name == "rr", "{name}: tier 1's newlines where its body stores them");
+        assert_eq!(o.is_none(), name == "rr", "{name}: tier 1's line ends where its body stores them");
         let program = &c.program.block_programs[0];
-        let po = program.newline_output().expect("the program's newline output");
+        let (po, set) = program.newline_output().expect("the program's line-end output");
+        assert_eq!(set, rerail_tape_format::newlines::Terminators::Newlines, "{name}: the grammar's terminators");
         for doc in docs {
             let long = [doc, &[b' '; 200][..], doc].concat();
             for d in [doc, &long[..]] {
-                let want: Vec<usize> = (0..d.len()).filter(|&p| d[p] == b'\n').collect();
+                let mut ends = Vec::new();
+                set.each(d, |at, length| ends.push(at + length - 1));
+                let want: Vec<usize> = (0..d.len()).filter(|&p| set.last_bytes().contains(&d[p])).collect();
+                assert_eq!(want.iter().copied().filter(|&p| set.ends_at(d, p)).collect::<Vec<_>>(), ends, "{name}: the candidates kept are the line ends");
                 let bits = |words: &[u64]| (0..d.len()).filter(|&p| words.get(p / 64).is_some_and(|w| w >> (p % 64) & 1 == 1)).collect::<Vec<usize>>();
                 let interpreted = bits(&program.run(d).outputs[po]);
-                let compiled = o.map_or(want.clone(), |o| bits(&c.parser.tier1.extract(d).outputs[o]));
+                let compiled = o.map_or(want.clone(), |(o, _)| bits(&c.parser.tier1.extract(d).outputs[o]));
                 if interpreted != want || compiled != want {
                     differ.push(format!("{name} {:?}: want {want:?}, interpreter {interpreted:?}, compiled {compiled:?}", String::from_utf8_lossy(d).chars().take(40).collect::<String>()));
                 }

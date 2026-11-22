@@ -251,7 +251,7 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else { return Ok((Built::Unparsed, None)); };
     let image = image?;
     drop(parse);
-    let (built, doc) = facts_of_image(file, &grammar, image.primary, Terminators::of(language), keep)?;
+    let (built, doc) = facts_of_image(file, &grammar, image.primary, crate::code_rule_dsl::lines::terminators(language), keep)?;
     Ok((with_programs(built, &grammar, image.derived)?, doc))
 }
 
@@ -305,7 +305,7 @@ pub fn build_fragment(file: &dyn SourceFile, fragment: Fragment) -> Result<Built
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
     let grammar = Grammar::embedded(language)?;
     let Some(image) = TapeImage::parse_from(&grammar, file.source(), fragment.start, &|| false) else { return Ok(Built::Unparsed) };
-    facts_of_image(file, &grammar, image?.primary, Terminators::of(language), false).map(|(built, _)| built)
+    facts_of_image(file, &grammar, image?.primary, crate::code_rule_dsl::lines::terminators(language), false).map(|(built, _)| built)
 }
 
 /// [`build_with_tape`] of an embedded program (decision 0431 §4), read off the tape or tree its embedder parsed
@@ -318,7 +318,7 @@ pub fn build_parsed(file: &dyn SourceFile, parse: crate::code_rule_dsl::embed::P
         crate::code_rule_dsl::embed::Parse::Tape(image) => image,
         crate::code_rule_dsl::embed::Parse::Tree(tree) => TapeImage::encode_tree_image(tree.root_node(), &grammar, file.source(), None, &|| false)?,
     };
-    facts_of_image(file, &grammar, primary, Terminators::of(language), keep)
+    facts_of_image(file, &grammar, primary, crate::code_rule_dsl::lines::terminators(language), keep)
 }
 
 /// The facts of `file` read off its parsed tape `primary`, with the tape where `keep`.
@@ -411,7 +411,7 @@ pub fn restore_tape(file: &dyn SourceFile, cache: &crate::content_store::Content
     };
     let grammar = Arc::new(Grammar::new(language).map_err(StoreError::Invalid)?);
     let primary = TapeImage::from_bytes(&bytes, &grammar).map_err(StoreError::Invalid)?;
-    let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
+    let lines = Arc::new(LineTable::new(file.source(), crate::code_rule_dsl::lines::terminators(language)));
     kept_tape(true, file, &grammar, &primary, &lines).map_err(StoreError::Invalid)
 }
 
@@ -549,7 +549,7 @@ fn build_in_wave_as(
             primary
         }
     };
-    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
+    let lines = Arc::new(LineTable::placed(file.source(), crate::code_rule_dsl::lines::terminators(language)));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
@@ -634,7 +634,7 @@ pub fn build_cached_with_tape(
             let held = held.map_err(|e| e.to_string())?;
             let grammar = tape::Grammar::embedded(language)?;
             let primary = queued_image(&held, &grammar)?;
-            let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
+            let lines = Arc::new(LineTable::placed(file.source(), crate::code_rule_dsl::lines::terminators(language)));
             let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
             return Ok((Built::Facts(read_off(doc.as_ref(), file, &grammar, primary, lines)?), known, doc));
         }
@@ -689,7 +689,7 @@ pub fn build_cached_with_tape(
             primary
         }
     };
-    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
+    let lines = Arc::new(LineTable::placed(file.source(), crate::code_rule_dsl::lines::terminators(language)));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;

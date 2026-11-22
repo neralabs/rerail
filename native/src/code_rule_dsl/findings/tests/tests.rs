@@ -608,7 +608,7 @@ fn complete_async_family_producer_profile() {
     use crate::code_rule_dsl::{
         facts::{core, producers::python::families},
         language::tape_tag,
-        lines::{LineTable, Terminators},
+        lines::LineTable,
     };
     use std::sync::Arc;
     let root = std::env::var("RERAIL_SHARED_CORPUS").expect("RERAIL_SHARED_CORPUS");
@@ -626,7 +626,7 @@ fn complete_async_family_producer_profile() {
         let tape = parsed(std::slice::from_ref(&source));
         parse_ns += cpu_ns() - started;
         let started = cpu_ns();
-        let facts = core::from_tape(tape[0].root().get_doc(), Arc::new(LineTable::new(&source, Terminators::of(GrammarDialect::Python)))).unwrap();
+        let facts = core::from_tape(tape[0].root().get_doc(), Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(GrammarDialect::Python)))).unwrap();
         core_ns += cpu_ns() - started;
         nodes += facts.len();
         let roots = [(0, tape[0].root())];

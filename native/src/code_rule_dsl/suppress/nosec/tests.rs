@@ -1,5 +1,4 @@
     use super::*;
-    use crate::code_rule_dsl::lines::Terminators;
 
     #[test]
     fn nosec_comments_parse_as_bandit_parses_them() {
@@ -35,7 +34,7 @@
     fn read(source: &str) -> (NosecIndex, LineTable) {
         let lines = LineTable::new(
             source,
-            Terminators::of(crate::code_rule_dsl::language::GrammarDialect::Python),
+            crate::code_rule_dsl::lines::terminators(crate::code_rule_dsl::language::GrammarDialect::Python),
         );
         let mut index = NosecIndex::default();
         for (at, _) in source.match_indices('#') {

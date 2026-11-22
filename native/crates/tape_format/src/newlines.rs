@@ -1,6 +1,8 @@
-//! A document's newline index, part of its format 16 tape (decision 0156 §1.6, 0336 §1): the offsets of its
-//! source's `\n` bytes in Elias–Fano form. A node's line is the rank of its start among them (`tape_line`); a line's
-//! first byte is the one past the newline before it (`tape_line_start`). The reads are the tape's, written once in
+//! A document's line index, part of its format 16 tape (decision 0156 §1.6, 0336 §1): the offset of each line
+//! terminator's last byte, the terminators its language's ecosystem reads (`Terminators`, decision 0612), in
+//! Elias–Fano form. A byte's line is the rank of its offset among them (`tape_line`), so a terminator's bytes are
+//! the line's they end; a line's first byte is the one past the terminator before it (`tape_line_start`); its text
+//! ends at that terminator's first byte, `length_ending_at` bytes before. The reads are the tape's, written once in
 //! CLIF (`rerail_clif::reads`); this module writes the index and says where its parts lie.
 //!
 //! The index, all little-endian:
@@ -15,23 +17,157 @@
 //!
 //! A word's load past the low parts reads the region's 8 bytes of room.
 
+/// The line terminators of a language's ecosystem: its compiler's, its linters' and its editors' (decision 0612), the
+/// one definition of a line and of every place on it. A `\n\r` is two of them wherever `\r` is one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Terminators {
+    /// ESLint's `\r\n|[\r\n\u2028\u2029]` (`astUtils.createGlobalLinebreakMatcher`), TypeScript's: ECMAScript's
+    /// line terminators. And a file of no language's.
+    Eslint,
+    /// `\r\n`, `\r` and `\n`: CPython's tokenizer and Ruff's (`ruff_source_file`), the JVM languages' lexers, PHP's,
+    /// clang's, Swift's, HTML's and CommonMark's, and the Language Server Protocol's.
+    Newlines,
+    /// `\n` alone, a `\r` before it left out of the line's text: rustc's (`SourceFile::lines`) and Go's (`go/token`),
+    /// which their linters report on. A lone `\r` stays inside a line.
+    Lf,
+    /// Roslyn's (`SyntaxFacts::IsNewLine`): `\r\n`, `\r`, `\n`, U+0085, U+2028 and U+2029.
+    Roslyn,
+    /// CSS Syntax's (§3.3, its preprocessing): `\r\n`, `\r`, `\n` and a form feed.
+    Css,
+}
+
+impl Terminators {
+    /// The sets' number: `COUNT` of them.
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Eslint => 0,
+            Self::Newlines => 1,
+            Self::Lf => 2,
+            Self::Roslyn => 3,
+            Self::Css => 4,
+        }
+    }
+    pub const COUNT: usize = 5;
+
+    /// The set numbered `k` (`index`).
+    pub const fn of_index(k: usize) -> Option<Self> {
+        match k {
+            0 => Some(Self::Eslint),
+            1 => Some(Self::Newlines),
+            2 => Some(Self::Lf),
+            3 => Some(Self::Roslyn),
+            4 => Some(Self::Css),
+            _ => None,
+        }
+    }
+
+    /// Each terminator of `bytes`, `(at, length)`, in order: a chunked search for their first bytes (`memchr`),
+    /// never a byte at a time.
+    pub fn each(self, bytes: &[u8], mut each: impl FnMut(usize, usize)) {
+        let mut skip = usize::MAX;
+        let mut one = |at: usize| {
+            if at == skip {
+                return;
+            }
+            let length = match bytes[at] {
+                // `\n` alone ends a line there: a `\r` before it is the terminator's, out of the line's text.
+                b'\n' if self == Self::Lf && at > 0 && bytes[at - 1] == b'\r' => {
+                    each(at - 1, 2);
+                    return;
+                }
+                b'\n' => 1,
+                b'\r' if bytes.get(at + 1) == Some(&b'\n') => {
+                    skip = at + 1;
+                    2
+                }
+                b'\r' => 1,
+                0x0C => 1,
+                // U+0085: C2 85.
+                0xC2 if bytes.get(at + 1) == Some(&0x85) => 2,
+                // U+2028 and U+2029: E2 80 A8 and E2 80 A9.
+                0xE2 if bytes.get(at + 1) == Some(&0x80) && matches!(bytes.get(at + 2), Some(0xA8 | 0xA9)) => 3,
+                _ => return,
+            };
+            each(at, length);
+        };
+        match self {
+            Self::Eslint => memchr::memchr3_iter(b'\n', b'\r', 0xE2, bytes).for_each(&mut one),
+            Self::Newlines => memchr::memchr2_iter(b'\n', b'\r', bytes).for_each(&mut one),
+            Self::Lf => memchr::memchr_iter(b'\n', bytes).for_each(&mut one),
+            Self::Css => memchr::memchr3_iter(b'\n', b'\r', 0x0C, bytes).for_each(&mut one),
+            // Four first bytes: two searches, merged in order.
+            Self::Roslyn => {
+                let mut wide = memchr::memchr_iter(0xC2, bytes).peekable();
+                for at in memchr::memchr3_iter(b'\n', b'\r', 0xE2, bytes) {
+                    while let Some(c) = wide.next_if(|&c| c < at) {
+                        one(c);
+                    }
+                    one(at);
+                }
+                wide.for_each(&mut one);
+            }
+        }
+    }
+}
+
+impl Terminators {
+    /// The bytes a terminator of the set can end with: a producer's candidates (tier 1's class), each kept where
+    /// `ends_at` says it ends one.
+    pub const fn last_bytes(self) -> &'static [u8] {
+        match self {
+            Self::Lf => b"\n",
+            Self::Newlines => b"\n\r",
+            Self::Eslint => &[b'\n', b'\r', 0xA8, 0xA9],
+            Self::Roslyn => &[b'\n', b'\r', 0xA8, 0xA9, 0x85],
+            Self::Css => &[b'\n', b'\r', 0x0C],
+        }
+    }
+
+    /// Whether `bytes[at]`, one of `last_bytes`, is the last byte of one of the set's terminators: a `\r` not before
+    /// a `\n`, U+2028's and U+2029's `A8`/`A9` after `E2 80`, U+0085's `85` after `C2`; a `\n` or a form feed alone.
+    pub fn ends_at(self, bytes: &[u8], at: usize) -> bool {
+        let before = |k: usize| at.checked_sub(k).and_then(|i| bytes.get(i).copied());
+        match bytes[at] {
+            b'\n' => true,
+            b'\r' => self != Self::Lf && bytes.get(at + 1) != Some(&b'\n'),
+            0xA8 | 0xA9 => matches!(self, Self::Eslint | Self::Roslyn) && before(1) == Some(0x80) && before(2) == Some(0xE2),
+            0x85 => self == Self::Roslyn && before(1) == Some(0xC2),
+            0x0C => self == Self::Css,
+            _ => false,
+        }
+    }
+}
+
+/// The length of the terminator whose last byte is `bytes[last]`, the line index's offset: its bytes alone say it,
+/// whatever the set (a set's terminators never end alike), so a line's end is read off the index and the source.
+pub fn length_ending_at(bytes: &[u8], last: usize) -> usize {
+    let before = |k: usize| last.checked_sub(k).and_then(|at| bytes.get(at).copied());
+    match bytes[last] {
+        b'\n' if before(1) == Some(b'\r') => 2,
+        0x85 if before(1) == Some(0xC2) => 2,
+        0xA8 | 0xA9 if before(1) == Some(0x80) && before(2) == Some(0xE2) => 3,
+        _ => 1,
+    }
+}
+
 /// Every `SAMPLE`-th zero and one of the high bits is sampled.
 pub const SAMPLE_SHIFT: u32 = 8;
 pub const SAMPLE: usize = 1 << SAMPLE_SHIFT;
 /// The index's first fields, u32s: `m`, `L`, zero samples, one samples, high words.
 pub const HEAD: usize = 20;
 
-/// The index of `source`'s newlines: its bytes, without the room a region keeps after them.
-pub fn index(source: &[u8]) -> Vec<u8> {
+/// The index of `source`'s lines as `terminators` end them: its bytes, without the room a region keeps after them.
+pub fn index(source: &[u8], terminators: Terminators) -> Vec<u8> {
     let mut out = Vec::new();
-    index_into(&mut out, source);
+    index_into(&mut out, source, terminators);
     out
 }
 
-/// `index`, into `out` (its bytes replaced): a scan of the source for its newlines.
-pub fn index_into(out: &mut Vec<u8>, source: &[u8]) {
-    let m = memchr::memchr_iter(b'\n', source).count() as u64;
-    index_of(out, source.len() as u64, m, memchr::memchr_iter(b'\n', source).map(|at| at as u64));
+/// `index`, into `out` (its bytes replaced): a scan of the source for its terminators, each one's last byte.
+pub fn index_into(out: &mut Vec<u8>, source: &[u8], terminators: Terminators) {
+    let mut ends = Vec::new();
+    terminators.each(source, |at, length| ends.push((at + length - 1) as u64));
+    index_of(out, source.len() as u64, ends.len() as u64, ends.into_iter());
 }
 
 /// The index of `m` newlines at `offsets` (ascending) in a source of `u` bytes, into `out` (its bytes replaced, its
@@ -182,7 +318,7 @@ pub(crate) mod tests {
     #[test]
     fn an_index_from_bits_is_the_scans() {
         for s in sources() {
-            let want = index(&s);
+            let want = index(&s, Terminators::Lf);
             for delay in [0u32, 1, 5, 63] {
                 let total = s.len() + delay as usize;
                 let words = total.div_ceil(64) + 1;
@@ -206,10 +342,39 @@ pub(crate) mod tests {
         }
     }
 
+    /// Each set's terminators (decision 0612), and each one's length read back off its last byte, the index's
+    /// offset, by the bytes alone: what a line's end is found from.
+    #[test]
+    fn a_terminator_is_known_by_its_last_byte() {
+        let source = "a\r\nb\rc\n\rd\u{85}e\u{2028}f\u{2029}g\x0ch\n".as_bytes();
+        let sets = [Terminators::Eslint, Terminators::Newlines, Terminators::Lf, Terminators::Roslyn, Terminators::Css];
+        let mut all = Vec::new();
+        for set in sets {
+            let mut found = Vec::new();
+            set.each(source, |at, length| found.push((at, length)));
+            for &(at, length) in &found {
+                assert_eq!(length_ending_at(source, at + length - 1), length, "{set:?}: the terminator at {at}");
+            }
+            // The candidates a producer marks (`last_bytes`), kept by `ends_at`, are the terminators' last bytes.
+            let kept: Vec<usize> = (0..source.len()).filter(|&p| set.last_bytes().contains(&source[p]) && set.ends_at(source, p)).collect();
+            assert_eq!(kept, found.iter().map(|&(at, l)| at + l - 1).collect::<Vec<_>>(), "{set:?}: the candidates kept");
+            let index = index(source, set);
+            check(&index, source.len() as u64).unwrap();
+            assert_eq!(count(&index), Some(found.len() as u32), "{set:?}");
+            all.push(found.into_iter().map(|(at, l)| std::str::from_utf8(&source[at..at + l]).unwrap().to_owned()).collect::<Vec<_>>());
+        }
+        let s = |t: &[&str]| t.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert_eq!(all[0], s(&["\r\n", "\r", "\n", "\r", "\u{2028}", "\u{2029}", "\n"]), "ESLint's");
+        assert_eq!(all[1], s(&["\r\n", "\r", "\n", "\r", "\n"]), "the newlines");
+        assert_eq!(all[2], s(&["\r\n", "\n", "\n"]), "rustc's and Go's");
+        assert_eq!(all[3], s(&["\r\n", "\r", "\n", "\r", "\u{85}", "\u{2028}", "\u{2029}", "\n"]), "Roslyn's");
+        assert_eq!(all[4], s(&["\r\n", "\r", "\n", "\r", "\x0c", "\n"]), "CSS's");
+    }
+
     #[test]
     fn every_index_checks_against_its_source() {
         for s in sources() {
-            let index = index(&s);
+            let index = index(&s, Terminators::Lf);
             check(&index, s.len() as u64).unwrap();
             assert_eq!(count(&index), Some(s.iter().filter(|&&b| b == b'\n').count() as u32));
             assert!(check(&index[..index.len() - 1], s.len() as u64).is_err(), "a short index");

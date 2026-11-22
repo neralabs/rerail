@@ -741,7 +741,7 @@ pub(super) fn summarize_file(
                     image,
                     Arc::new(LineTable::new(
                         &file.input.source,
-                        Terminators::of(language),
+                        crate::code_rule_dsl::lines::terminators(language),
                     )),
                     &matcher_budget_exhausted,
                 ),
