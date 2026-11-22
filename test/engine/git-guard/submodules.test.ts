@@ -105,6 +105,13 @@ const MARKED_STATES: ReadonlyArray<readonly [string, (work: string, named: strin
     writeFileSync(join(work, ".gitmodules"), "[submodule\n");
     return () => undefined;
   }],
+  // The scan's diff names it, as its commit changed, and its rule leaves it out of Git's own.
+  ["whose commit changed in the index, with `ignore = all` in `.gitmodules`", work => {
+    git(join(work, "sub"), "commit", "--quiet", "--allow-empty", "-m", "moved");
+    git(work, "add", "sub");
+    setGitmodules(work, "all");
+    return () => undefined;
+  }],
 ];
 
 describe("Rerail's diffs start no program a submodule's config names", () => {
@@ -562,8 +569,8 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
       const { work, gitfile, named } = await submoduleGitfile(root);
       await writeFile(gitfile, `${named}\n`);
       await writeFile(join(work, "sub", "inner.txt"), "two\n");
-      git(work, "update-index", `--${mark}`, "sub");
       const giveBack = made(work, named);
+      git(work, "update-index", `--${mark}`, "sub");
       try {
         const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
 
@@ -572,6 +579,29 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
         giveBack();
       }
     }, 60_000);
+
+  // The `git status` Git's diff runs in a submodule reads no rule of a submodule inside it that is marked.
+  it("and answer as Git's own diff for a submodule whose one submodule is marked and whose `.gitmodules` Git cannot read", async () => {
+    const root = await folder();
+    const lib = await repository(root, "lib", { "a.txt": "a\n" });
+    const middle = await repository(root, "middle", { "m.txt": "m\n" });
+    git(middle, "submodule", "add", "--quiet", lib, "leaf");
+    git(middle, "commit", "--quiet", "-m", "leaf");
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", middle, "sub");
+    git(work, "submodule", "update", "--quiet", "--init", "--recursive");
+    git(work, "commit", "--quiet", "-m", "sub");
+    const sub = join(work, "sub");
+    git(sub, "update-index", "--assume-unchanged", "leaf");
+    await writeFile(join(sub, ".gitmodules"), "[submodule\n");
+    git(sub, "commit", "--quiet", "-m", "unreadable", "--", ".gitmodules");
+    git(work, "add", "sub");
+    await writeFile(join(sub, "leaf", "a.txt"), "changed\n");
+
+    const audit = await runGitWithoutBlocking(work, AUDIT_DIFF);
+
+    expect([audit.status, audit.stdout]).toEqual([0, git(work, ...AUDIT_DIFF)]);
+  }, 60_000);
 
   it.skipIf(process.platform === "win32")("in the Git folder a submodule's `.git` named when Rerail looked, though it names a placed one by the status", async () => {
     const root = await folder();
