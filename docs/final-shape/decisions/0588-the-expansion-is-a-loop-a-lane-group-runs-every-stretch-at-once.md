@@ -189,9 +189,26 @@ a team is slower on the M3 (a group for each 4,096 of a unit's work: 13.7 ms for
   unit with no `#if` left to settle.
 
 **What is left.**
-- **A step of the loop is too slow.** The 1,070-step piece is the GB10's floor for its run. Each step's name
-  lookups (`visible_walk`'s binary searches, in device memory) are the lever, and so is the share of the steps a
-  SIMD group's lanes take ahead.
+- **A step of the loop is too slow** (measured 2026-11-22, the device's clock a step, on the GB10). The
+  1,070-step piece's own name lookups were 29 µs of its 2.0 ms: they are not the cost, and a hash would not
+  help. Its body and top tokens' rows are found when the rows are sorted, and a lookup walks a name's few rows.
+  The cost is the chain of dependent reads in device memory a step takes, about 1 to 3 µs each, and how many
+  steps a piece takes. The piece read argument lists an entry at a time: a span's first token lexed and looked
+  up by its thread, a look ahead for the rest, then a run, about 4 µs a span. Built since:
+  - **The group looks at a list's next entries** (`LQ_LIST`). The lanes lay the entries' tokens out in a row (a
+    prefix sum of their lengths) and look up a token each. The entries whose tokens are all plain go to the
+    thread by shuffles, and it takes them in one step (`lp_list_take`).
+  - **A call's argument is one step.** The thread walks the window's `(`, `)` and `,` bits in registers,
+    keeping the depth, and collects everything before the `,` or `)` that ends the argument as one run.
+  - **Tried and dropped:** a window of the look ahead's answers for the thread's next token (its next token is
+    nearly always another frame's: 10 hits of 386). Collecting from a list a lane an entry (46 looks took 10
+    entries: its spans hold the delimiters).
+
+  The slowest piece is now another one (libtiff's `tif_ojpeg.c`, top tokens 7872..7984): 387 steps (from
+  1,173) and 1.42 ms. Of that, 224 look aheads take 514 µs (2.3 µs each, one lookup's chain), 138 main steps
+  take 433 µs (12 of them macros), and 243 collecting steps take 217 µs. The corpus's first round's run is 3.50
+  ms (from 4.45). What is left is the chain itself: a look ahead started before the thread needs it (the lanes
+  wait for the thread now), and fewer dependent reads in a lookup.
 - **A unit's barriers.** P1's iterations each re-run the whole `#if` pass. Iterating only the lines whose inputs
   changed, and fusing the phases that do little work, cut the chain on every device, most on the M3.
 - **One serial line.** `a_line_past_its_room_runs_again_larger`'s `#if` line (131,071 tokens from one piece) is one
