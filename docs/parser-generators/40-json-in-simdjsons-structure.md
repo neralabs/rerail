@@ -762,8 +762,9 @@ Tier 1 against `index`:
 | The records' write | `bit_indexer::write`, the block before's at each block, the last after the loop | the same (`write_indexes`, `prev_structurals`) |
 
 What still differs:
-- **Format 16's blocks.** Tier 2 writes blocks of nodes, with the state's op at a block's first node and at a close of
-  a node in a block before. `walk` writes simdjson's columns.
+- **Format 16's blocks.** Tier 2 writes blocks of nodes. A close of a node in a block before stores in place, as
+  `walk`'s at `ord`, and only the block's settle is the state's. The state's op makes a block at its first node: its
+  room, table entry, side area and presence, which `walk`'s simdjson columns do not have. The format is the tape's.
 - **The numbers accepted.** `number_end` keeps no value, but works one out where it decides the answer: it refuses a
   float past the doubles' range (`1e400`) and an integer past 64 bits. The grammar states neither bound, so tier 2
   and the JIT accept those numbers. This is the user's choice (2026-11-22): JSON accepts them, as RFC 8259 states it.

@@ -1948,9 +1948,23 @@ impl<X: CellWidths> Cursor<X> {
                 }
                 return;
             }
-            let r = self.give().close_x::<X>(end);
-            debug_assert!(r.is_ok(), "the writer's close, its room reserved");
-            self.take();
+            // A node in a block before (`walk`'s close at `ord`): its cells stored in its block, made already; then
+            // the block final once a node past it is made and its nodes are closed (`settle`, format 16's).
+            self.open_len -= 1;
+            let (b, j) = (i / Z, i % Z);
+            let st = &mut *self.s;
+            let block = st.block(b);
+            st.put_at_x::<X>(2, j, end - start, block);
+            let size = self.n - i;
+            if size > 1 {
+                st.put_at_x::<X>(0, j, u64::from(size) << 1, block);
+            }
+            if self.n > (b + 1) * Z {
+                self.give();
+                let r = (*self.s).settle(b);
+                debug_assert!(r.is_ok(), "the writer's settle, its room reserved");
+                self.take();
+            }
         }
     }
 }

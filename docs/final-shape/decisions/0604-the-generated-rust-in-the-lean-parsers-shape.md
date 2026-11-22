@@ -114,6 +114,12 @@ Later, the same day, a second and a third reading found six more differences, do
       (`run_end_covers`), is then tier 2's. JSON's "a string right after a scalar" leaves tier 1, whose errors are
       now `index`'s: the control byte, the UTF-8 checks and the open string. The grammar keeps the error, for the
       JIT.
+17. **A close of a node in a block before is stored in place** (`writer16::Cursor::close`), as `walk`'s close stores
+    at `ord`. Its length and size go into its block's cells, which the block's table gives. The state's op is then
+    only format 16's settle: the block is final once a node past it is made and its nodes are closed.
+    - What stays the state's is format 16's own work: a block's first node makes the block (its room, its table
+      entry, its side area, its presence), and settles blocks. `walk` writes simdjson's columns, which have no blocks,
+      side lists or presence bits. The tape's format is not changed here.
 
 Implementer's choices:
 - **The string's start.** It stays `q & ~string_tail`, not `structural_start & q`: the JIT's split of a region read
@@ -172,6 +178,11 @@ Implementer's choices:
     it may not end before; and where one does, the grammar refuses the file. It also checks that `ends_after_run`
     is simdjson's structural or whitespace, and that this error is the only one covered.
   - 83 of 83 pass on an aarch64 Linux host.
+- **After item 17:** the writer test passes, and JSON's 14 tests pass.
+  - `rerail-tape-format`'s `f16::tests::the_device_reads_read_every_node_as_the_crate_does` fails on the M3 and on
+    this Mac, at HEAD without item 17 too: the device's reads of a 16z tape through its cache give another child
+    count for node 0 than the crate's reads (1 against 6862 on the M3). The test does not use the writer's cursor.
+    It was not looked into further (decision 0540's cache lookup).
 - **New unit tests** in `bitlex_lex_rust`:
   - the records proof holds for JSON's grammar, and fails without the new error;
   - `without_lv`'s rewrites;
