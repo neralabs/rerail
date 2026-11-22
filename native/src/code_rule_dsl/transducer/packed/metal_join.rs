@@ -828,13 +828,14 @@ struct CopyParams {
     dst_stride: u32,
     dst_off: u32,
     count_slot: u32,
-    pad: [u32; 2],
+    /// Where its rows go past `dst_off` when `flags & 1`: a word an earlier phase wrote (`Batch::append_rows`).
+    off: u64,
     src_at: u64,
     dst_rows_at: u64,
     /// A source view read in place (`Stage::v_dir`, `r_view`; 0: none).
     v_dir: u64,
     r_view: u32,
-    v_pad: u32,
+    flags: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<CopyParams>() == 256);
@@ -951,6 +952,8 @@ struct Building {
     /// The relation's descriptor as it was once the index was reserved (Q265): checked before the index is marked
     /// built, so a descriptor something overwrote meanwhile names what changed instead of being followed.
     before: Vec<u8>,
+    /// Whether it was queued after a gate (`Batch::gate`): not built when the gate stopped its program.
+    gated: bool,
 }
 
 impl Building {
@@ -1170,6 +1173,8 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) levels: u32,
     /// Stages screened by their relation's kept filter (`Stage::screen`, decision 0488).
     pub(in crate::code_rule_dsl) screened: u32,
+    /// Whether a gate stopped its program (`Batch::gate`): the work after it is undone.
+    pub(in crate::code_rule_dsl) stopped: bool,
 }
 
 /// Work encoded into one submission at a time, committed at `commit_open` and `finish`; every submission runs on the
@@ -1190,8 +1195,11 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// The texts its jobs' text functions make, made the first time a job asks.
     arena: Option<std::rc::Rc<Arena>>,
     arena_cap: usize,
-    /// The indexes its work builds, marked built when it is done.
+    /// The indexes its work builds, marked built when it is done: those queued before a gate that stopped
+    /// (`gated` then) alone.
     building: Vec<Building>,
+    /// Whether a gate was queued since the last `finish`.
+    gated: bool,
     /// The atoms directory its text kernels read symbols' bytes through (decision 0478 step 2e), made the first
     /// time a stage reads a symbol's text and made again when the store's atoms have grown past it.
     atoms: Option<std::rc::Rc<DevAtoms>>,
@@ -1247,6 +1255,7 @@ impl Batch {
             queued: Vec::new(),
             program: Program::default(),
             programs: Vec::new(),
+            gated: false,
             committed: Vec::new(),
             done: Done::default(),
             dummy: Held::new(64)?,
@@ -1386,7 +1395,12 @@ impl Batch {
             self.building.clear();
             return Err(Error::BackendFailure);
         }
+        let stopped = self.done.stopped;
+        self.gated = false;
         for b in self.building.drain(..) {
+            if stopped && b.gated {
+                continue;
+            }
             let _g = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
             b.check("its batch done");
             // SAFETY: the batch's work, which built it, has completed; `home` keeps the relation.
@@ -1520,7 +1534,7 @@ impl Batch {
         }
         let index = room.index as u32;
         let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before });
+        self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, gated: self.gated });
         Ok(DevIndex { index, rows: n, moved: None, built: true, walk: 0, buffer })
     }
 
@@ -1741,7 +1755,7 @@ impl Batch {
     /// `n` rows of `src` into `dst` at row `dst_off`, column k of `dst` as `cols[k]` says (a column of `src`, or a
     /// constant): a head's rows into its union, a union's new rows onto its relation.
     pub(in crate::code_rule_dsl) fn copy_rows(&mut self, src: Rows<'_>, n: usize, cols: &[Col], dst: Rows<'_>, dst_off: usize) -> Result<(), Error> {
-        self.copy(src, n, None, cols, dst, dst_off)
+        self.copy(src, n, None, cols, dst, dst_off, None)
     }
 
     /// A head's rows written in place (decision 0325 step 4): `src`'s first rows (as many as slot `count` of `totals`
@@ -1750,15 +1764,15 @@ impl Batch {
     /// is a column of `src` or a constant (`cols`). The batch keeps `dst`'s block until its work completes.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], dst: DevRel, at: usize) -> Result<(), Error> {
-        self.copy(src, cap, count.map(|c| (c, totals)), cols, Rows::Rel(&dst), at)?;
+        self.copy(src, cap, count.map(|c| (c, totals)), cols, Rows::Rel(&dst), at, None)?;
         Ok(())
     }
 
     /// `n` rows of `src` (as many as slot `count.0` of `count.1` holds, at most `n`), each column of `dst` a column of
-    /// `src` or a constant (`cols`), into `dst`'s rows `dst_off..`: `rows_copy`, either side a table or a relation in
-    /// its block.
+    /// `src` or a constant (`cols`), into `dst`'s rows `dst_off..` (past the word at address `off` too, when given):
+    /// `rows_copy`, either side a table or a relation in its block.
     #[allow(clippy::too_many_arguments)]
-    fn copy(&mut self, src: Rows<'_>, n: usize, count: Option<(usize, &Words)>, cols: &[Col], dst: Rows<'_>, dst_off: usize) -> Result<(), Error> {
+    fn copy(&mut self, src: Rows<'_>, n: usize, count: Option<(usize, &Words)>, cols: &[Col], dst: Rows<'_>, dst_off: usize, off: Option<u64>) -> Result<(), Error> {
         if n == 0 {
             return Ok(());
         }
@@ -1776,7 +1790,7 @@ impl Batch {
         assert!(dst_off + n <= dst_rows, "a copy of {n} rows at {dst_off} into a destination of {dst_rows}");
         let mut p = CopyParams {
             konst: [0; 16], src: [NONE; 16], n: n as u32, ncols: cols.len() as u32, src_stride: src_rows as u32, dst_stride: dst_rows as u32,
-            dst_off: dst_off as u32, count_slot: count.map_or(NONE, |c| c.0 as u32), pad: [0; 2], src_at, dst_rows_at, v_dir: 0, r_view: 0, v_pad: 0,
+            dst_off: dst_off as u32, count_slot: count.map_or(NONE, |c| c.0 as u32), off: off.unwrap_or(0), src_at, dst_rows_at, v_dir: 0, r_view: 0, flags: u32::from(off.is_some()),
         };
         let view = match src {
             Rows::Rel(r) => r.view.as_ref().map(|_| r),
@@ -1809,8 +1823,69 @@ impl Batch {
         job.span = Some((job.desc.o, dst_off, dst_off + n));
         let mut reads = vec![job.desc.l];
         reads.extend(count.map(|_| job.desc.totals));
+        reads.extend(off);
         job.order(&reads, &[job.desc.o]);
         self.queue(job)
+    }
+
+    /// The rows of `srcs` end to end into `dst` (a union): each source's first rows, as many as slot `slot` of its
+    /// `words` holds (at most `cap`), its columns `cols`, past the rows of the sources before it; their total into
+    /// slot `total.1` of `total.0`. Every count is the device's, read where an earlier phase wrote it: the offsets
+    /// are a phase (`sum_one`), then the copies.
+    pub(in crate::code_rule_dsl) fn append_rows(&mut self, srcs: &[(&Table, usize, &Words, usize, &[Col])], dst: &Table, total: (&Words, usize)) -> Result<(), Error> {
+        if srcs.is_empty() {
+            total.0.set(total.1, 0);
+            return Ok(());
+        }
+        assert!(srcs.iter().map(|s| s.1).sum::<usize>() <= dst.cap, "a union's room for its sources' rows");
+        let offs = Held::new(4 * srcs.len())?;
+        let mut job = Job::new(JobKind::Sum, 0, Stage::default());
+        let oa = job.reach(&offs.buffer, 0, true)?;
+        let ta = job.reach(&total.0.buffer.buffer, 0, true)?;
+        let mut p: Vec<u64> = vec![srcs.len() as u64, ta + 4 * total.1 as u64];
+        let mut reads = Vec::new();
+        for (i, (_, _, w, slot, _)) in srcs.iter().enumerate() {
+            let wa = job.reach(&w.buffer.buffer, 0, false)?;
+            reads.push(wa);
+            p.extend([wa + 4 * *slot as u64, oa + 4 * i as u64]);
+        }
+        job.p = Some(as_bytes(&p).to_vec());
+        job.count = 1;
+        job.order(&reads, &[oa, ta]);
+        self.queue(job)?;
+        for (i, (src, cap, w, slot, cols)) in srcs.iter().enumerate() {
+            self.copy(Rows::Table(src), *cap, Some((*slot, *w)), cols, Rows::Table(dst), 0, Some(oa + 4 * i as u64))?;
+        }
+        self.program.hold.push(offs);
+        Ok(())
+    }
+
+    /// A gate (decision 0540's rerun, decision 0603 point 4): the program stops here when slot `slot` of a `words`
+    /// holds more than its `cap`, before any later phase reads the short table (`gate_one`). `finish` then says it
+    /// stopped (`Done::stopped`), and the work after the gate is left undone: the caller grows the tables and
+    /// encodes the work again.
+    pub(in crate::code_rule_dsl) fn gate(&mut self, checks: &[(&Words, usize, usize)]) -> Result<(), Error> {
+        if checks.is_empty() {
+            return Ok(());
+        }
+        let mut job = Job::new(JobKind::Gate, 0, Stage::default());
+        let mut p: Vec<u64> = vec![checks.len() as u64, 0];
+        let mut reads = Vec::new();
+        for (w, slot, cap) in checks {
+            let wa = job.reach(&w.buffer.buffer, 0, false)?;
+            reads.push(wa);
+            p.extend([wa + 4 * *slot as u64, u64::try_from(*cap).ok().filter(|&c| c <= u64::from(u32::MAX)).unwrap_or(u64::from(u32::MAX))]);
+        }
+        job.p = Some(as_bytes(&p).to_vec());
+        job.count = checks.len();
+        job.order(&reads, &[]);
+        // Alone in its level: everything queued before it runs before it (an index queued before a gate is built
+        // whether it stops or not), and nothing queued after it runs before it.
+        self.flush()?;
+        self.queue(job)?;
+        self.flush()?;
+        self.gated = true;
+        Ok(())
     }
 
     /// Sets slots of `table` in place (`stage`'s binds: program columns of the binding's slots, or parameters), queued
@@ -1949,6 +2024,7 @@ impl Batch {
             }
             prog.phase(items);
         };
+        job_phase(prog, &[(JobKind::Gate, PK_GATE, |j| j.count), (JobKind::Sum, PK_SUM, |j| j.count)]);
         job_phase(prog, &[(JobKind::Copy, PK_COPY, |j| j.count)]);
         if let (Some((a, b, hist, tiles)), Some(f)) = (&sort, sorted) {
             job_phase(prog, &[(JobKind::Index, PK_IX_KEY, |j| j.count)]);
@@ -2094,6 +2170,11 @@ impl Batch {
         let mut whole = true;
         for r in self.programs.drain(..) {
             let (overflow, done) = (r.ctl.get(6) & 1 != 0 || r.ctl.get(3) != 0, r.ctl.get(8 + r.last));
+            // A gate stopped it: its phases after the gate are undone, as the caller asked.
+            if !overflow && r.ctl.get(6) & 2 != 0 {
+                self.done.stopped = true;
+                continue;
+            }
             if overflow || done != r.items {
                 eprintln!("rerail: a join program left undone (decision 0603): its last phase {done} of {} items, overflow {overflow}", r.items);
                 whole = false;
@@ -2140,6 +2221,8 @@ const PK_LAT_CLEAR: u32 = 22;
 const PK_LAT_CLAIM: u32 = 23;
 const PK_LAT_BEST: u32 = 24;
 const PK_LAT_MERGE: u32 = 25;
+const PK_SUM: u32 = 26;
+const PK_GATE: u32 = 27;
 
 /// A batch's program (decision 0603): the levels flushed since its last launch, as phases of items (`Item`: a group
 /// of a job's, a scan level's or a sort pass's work), run by one launch of `join_run`. A phase's items follow the
@@ -2295,10 +2378,11 @@ struct JobDesc {
     p: u64,
     base: u32,
     n: u32,
-    /// An index's first bucket and first key in the level's sort (`ix_bucket_all`).
+    /// An index's first bucket and first key in the level's sort (`ix_key_one`).
     kb: u32,
     eb: u32,
-    pad: [u32; 2],
+    /// A count an earlier phase wrote, by address (a lattice fold's rows).
+    cnt: u64,
 }
 
 const _: () = assert!(std::mem::size_of::<JobDesc>() == 192);
@@ -2327,6 +2411,10 @@ enum JobKind {
     /// A lattice relation's round (`Batch::lattice_fold`): its key map emptied and grown, its places emptied, claimed,
     /// the best row a key, merged (`lat_*_one`), after the level's scatters.
     Lattice,
+    /// A union's sources' offsets and total (`sum_one`), first in its level.
+    Sum,
+    /// A gate (`gate_one`), alone in its level.
+    Gate,
 }
 
 impl JobKind {
@@ -2950,7 +3038,7 @@ pub(in crate::code_rule_dsl) enum MapFirst<'a> {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, level: u32, omask: u32, pad: u32,
+struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, level: u32, omask: u32, counted: u32,
                    r_at: u64, r_rows_at: u64, h_at: u64, h0_at: u64 }
 
 const _: () = assert!(std::mem::size_of::<LatParams>() == 80);
@@ -2965,13 +3053,13 @@ impl Batch {
     #[allow(clippy::too_many_arguments)]
     /// Code 3 compares its values' texts in `arena`, which holds every value the fold reads.
     pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, r: &DevRel, had: usize, nkeys: usize, lat: LatCode, map: LatMap<'_>,
-                                                 first: MapFirst<'_>, counters: &Words, delta: &Table, arena: Option<&Arena>, level: Option<u32>) -> Result<(), Error> {
+                                                 first: MapFirst<'_>, counters: &Words, delta: &Table, arena: Option<&Arena>, level: Option<u32>, count: Option<(&Words, usize)>) -> Result<(), Error> {
         assert!(lat.code != 3 || arena.is_some(), "a shortlex fold reads its values' texts");
         assert!(nkeys < MAX_KEYS && u.cap == n && delta.cap == n);
         assert!(map.places.is_power_of_two() && 2 * n <= map.places, "a key map of {} slots for {n} rows", map.places);
         let pplaces = (2 * n).next_power_of_two().max(16);
         let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32,
-                                hmask: (map.places - 1) as u32, level: level.unwrap_or(0), omask: 0, pad: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 0 };
+                                hmask: (map.places - 1) as u32, level: level.unwrap_or(0), omask: 0, counted: u32::from(count.is_some()), r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 0 };
         // Its rows are written by the fold, through the writer (decision 0463): checked when the batch is done.
         self.writes(r, "a lattice's held rows");
         // The map's block as it is now (reaching its slots), kept until the work completes.
@@ -3007,9 +3095,15 @@ impl Batch {
             }
         }
         job.desc.g = if job.desc.g == 0 { job.desc.l } else { job.desc.g };
+        let mut reads = vec![job.desc.l, job.desc.v];
+        if let Some((w, slot)) = count {
+            let wa = job.reach(&w.buffer.buffer, 0, false)?;
+            job.desc.cnt = wa + 4 * slot as u64;
+            reads.push(wa);
+        }
         job.p = Some(lat_bytes(&p).to_vec());
         (job.count, job.clear, job.lattice) = (n, pplaces, maps);
-        job.order(&[job.desc.l, job.desc.v], &[job.desc.s, job.desc.vc, job.desc.o, job.desc.counters, job.desc.v]);
+        job.order(&reads, &[job.desc.s, job.desc.vc, job.desc.o, job.desc.counters, job.desc.v]);
         job.own.extend([places, chosen, flags, hb]);
         self.queue(job)
     }

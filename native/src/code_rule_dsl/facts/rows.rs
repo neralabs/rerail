@@ -1208,13 +1208,26 @@ impl Part {
     /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for
     /// `indexes` indexes of its rows.
     fn claimed(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
-        let cap = rows.next_power_of_two().max(1);
-        let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;
-        let index = indexes.max(1) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
-        let part = Part::try_new_with(life, k, rows, index, false)?;
+        let part = Part::reserved(life, k, rows, indexes)?;
         // SAFETY: rows `0..rows` are reserved; the caller writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };
         Ok(part)
+    }
+
+    /// `for_device_indexed` with its `rows` rows reserved, none claimed: the device writes as many as its own count
+    /// says (a recursive component's delta, its rows a round's, counted on the device: decision 0603), and the host
+    /// claims them once its work is done (`written`), so its indexes are of those rows.
+    pub fn for_device_writes(k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        Part::reserved(Life::Device, k, rows, indexes)
+    }
+
+    /// A relation of `k` columns, room for `rows` rows reserved (none claimed) alone in a block of `life`'s, with room
+    /// for `indexes` indexes of them.
+    fn reserved(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        let cap = rows.next_power_of_two().max(1);
+        let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;
+        let index = indexes.max(1) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
+        Part::try_new_with(life, k, rows, index, false)
     }
 
     /// Whether nothing else holds its relation (no other part, reader or borrowed array of it).

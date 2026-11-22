@@ -93,3 +93,32 @@ lattice head is now its program's launches alone. Measured: spark2's CPU backend
 parity, the lattice and join tests); the mini's Metal 32 of 32 (the setfix device and join tests), the three
 recursive strata among them, each within the budget. Step 3 (the rounds on the device, not the host's turns) and
 step 5 are open.
+
+## Done (2026-11-22): step 3, a round in one launch
+
+A recursive stratum's round is one batch and one program (`setfix::device::fixpoint_here`): its joins, a gate, then its
+heads' new rows (`encode_tail`), with no count read by the host between them. Before, a round was three batches (the
+joins; the union, its dedup and the anti-join or the fold; the place and the delta), each sized from counts the host
+read after the one before.
+
+- **Sizes are bounds.** A head's union has room for its rules' head tables (`Table::cap`); its dedup, anti-join,
+  place and delta are as many. The counts are the device's: `Batch::append_rows` writes each source's offset and the
+  union's total in a phase (`sum_one`), and the copies take their offset from it (`Copy::off`). The fold takes its
+  rows from the same word (`LatP::counted`, `Job::cnt`), and the place and the delta copy take theirs from the
+  anti-join's or the dedup's.
+- **A delta is reserved, not claimed** (`Part::for_device_writes`): the device writes as many rows as its count, and
+  the host claims them once the round is done. A set head's relation reserves its bound past its rows. A lattice
+  head's new key map is the head's only once its round is done.
+- **The gate** (`Batch::gate`, `gate_one`, point 4): after the joins, every stage's total against its table's room. Past
+  it, the program stops there (`ctl[6]` bit 2) and pushes no later phase; `finish` says so (`Done::stopped`), the
+  tables grow to the counts seen, and the stages from the first short one run again, then the heads. The gate is
+  alone in its level: an index queued before it is built whether it stops or not. The anti-join's index on a set
+  head's relation is built before the gate (`round_index`), so nothing after a gate builds one; an index queued after
+  one is not marked built when it stops.
+- **Measured** (the setfix device tests): spark2's CPU backend, 45 of 45 (53 s, from 161 s at step 4); the mini's
+  Metal, 32 of 32.
+
+Open in step 3: the rounds as a loop on the device. The host still turns between rounds: it claims the rows, binds
+the next round's relations by their counts (a stage's `nr`, an index's rows) and decides whether to go on. The loop
+needs each of those as a word: a relation's rows read from its descriptor on the device, its indexes built from that
+count, and a round's last phase that resets the round's words and pushes its first again.

@@ -1157,11 +1157,13 @@ UKL_INLINE void row_scatter_one(Longs L, Longs V, JSPACE uint32_t* totals, JSPAC
 typedef struct Copy {
     int64_t konst[16];
     uint32_t src[16];
-    uint32_t n, ncols, src_stride, dst_stride, dst_off, count_slot, pad0, pad1;
+    uint32_t n, ncols, src_stride, dst_stride, dst_off, count_slot;
+    // Where its rows go past `dst_off` when `flags & 1`: a word an earlier phase wrote (`sum_one`, rows end to end).
+    JSPACE const uint32_t* off;
     uint64_t src_at, dst_rows_at;
     UKL_GLOBAL const ViewDir* v_dir;
     uint32_t r_view;
-    uint32_t v_pad;
+    uint32_t flags;
 } Copy;
 UKL_STATIC_ASSERT(sizeof(Copy) == 256, "Copy: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(Copy, v_dir) == 240, "Copy.v_dir");
@@ -1170,14 +1172,15 @@ UKL_INLINE void rows_copy_one(JSPACE const uint8_t* S, JSPACE uint8_t* D, JSPACE
 {
     uint32_t n = c->count_slot == NONE ? c->n : ukl_min(totals[c->count_slot], c->n);
     if (t >= n) return;
+    uint32_t at = c->dst_off + ((c->flags & 1u) != 0u ? *c->off : 0u) + t;
     for (uint32_t k = 0; k < c->ncols && k < 16; k++) {
         uint32_t from = c->src[k];
         int64_t v = from == NONE ? c->konst[k]
                   : c->r_view != 0u ? vread(c->r_view, c->v_dir, t, from)
                   : c->src_at == 0ul ? ((JSPACE const int64_t*)S)[(uint64_t)from * c->src_stride + t]
                   : (int64_t)clif_rel_get(S, c->src_at, t, from);
-        if (c->dst_rows_at == 0ul) ((JSPACE int64_t*)D)[(uint64_t)k * c->dst_stride + c->dst_off + t] = v;
-        else clif_rows_put((JSPACE const uint8_t*)D, c->dst_rows_at, c->dst_off + t, k, (uint64_t)v);
+        if (c->dst_rows_at == 0ul) ((JSPACE int64_t*)D)[(uint64_t)k * c->dst_stride + at] = v;
+        else clif_rows_put((JSPACE const uint8_t*)D, c->dst_rows_at, at, k, (uint64_t)v);
     }
 }
 
@@ -1323,7 +1326,8 @@ typedef struct Job {
     uint32_t base, n;
     // An index's first bucket and first key in its level's sort (`ix_key_one`).
     uint32_t kb, eb;
-    uint32_t pad[2];
+    // A count an earlier phase wrote (a lattice fold's rows: `LatP::pad & 1`).
+    JSPACE const uint32_t* cnt;
 } Job;
 UKL_STATIC_ASSERT(sizeof(Job) == 192, "Job: size");
 
@@ -1395,8 +1399,8 @@ UKL_INLINE void ix_place_one(JSPACE const uint32_t* keys, JSPACE const uint32_t*
 // `D`, the next round's delta: `counters[0]` of them, `counters[1]` new. `level`: the round, written to a changed or
 // new key's slot where the relation keeps levels (decision 0311); 0: none.
 typedef struct LatP { int64_t top; uint32_t n; uint32_t had; uint32_t nkeys; uint32_t code; uint32_t after; uint32_t pmask; uint32_t hmask; uint32_t level;
-                      uint32_t omask; uint32_t pad; uint64_t r_at, r_rows_at, h_at, h0_at; } LatP;
-UKL_REFLECT_STRUCT(LatP, top, n, had, nkeys, code, after, pmask, hmask, level, omask, pad, r_at, r_rows_at, h_at, h0_at)
+                      uint32_t omask; uint32_t counted; uint64_t r_at, r_rows_at, h_at, h0_at; } LatP;
+UKL_REFLECT_STRUCT(LatP, top, n, had, nkeys, code, after, pmask, hmask, level, omask, counted, r_at, r_rows_at, h_at, h0_at)
 UKL_STATIC_ASSERT(sizeof(LatP) == 80, "LatP: size");
 
 // The relation `R`'s row `row` in column `c`, and the place to write it: `R` is a relation in its block
@@ -1462,10 +1466,11 @@ UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB
     }
 }
 
-UKL_INLINE void lat_claim_one(Longs U, JSPACE uint32_t* P, JSPACE const LatP* pp, uint32_t x)
+UKL_INLINE void lat_claim_one(Longs U, JSPACE uint32_t* P, JSPACE const uint32_t* cnt, JSPACE const LatP* pp, uint32_t x)
 {
     LatP p = *pp;
-    if (x >= p.n) return;
+    // Its rows: `n` (the stride of `U`'s columns), or as many as the word an earlier phase wrote (`counted`).
+    if (x >= (p.counted != 0u ? ukl_min(*cnt, p.n) : p.n)) return;
     int64_t key[8];
     for (uint32_t c = 0; c < p.nkeys && c < 8; c++) key[c] = U[(uint64_t)c * p.n + x];
     uint32_t at = lat_hash(key, p.nkeys, p.pmask);
@@ -1520,10 +1525,12 @@ UKL_INLINE bool lat_better(UKL_PRIVATE const LatP* p, JSPACE uint32_t* A, int64_
     return p->code == 0 ? a < b : a > b;
 }
 
-UKL_INLINE void lat_best_one(Longs U, JSPACE const uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE uint32_t* A, JSPACE const LatP* pp, uint32_t x)
+UKL_INLINE void lat_best_one(Longs U, JSPACE const uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE uint32_t* A, JSPACE const uint32_t* cnt,
+                         JSPACE const LatP* pp, uint32_t x)
 {
     LatP p = *pp;
-    if (x >= p.n) return;
+    // Its rows: `n` (the stride of `U`'s columns), or as many as the word an earlier phase wrote (`counted`).
+    if (x >= (p.counted != 0u ? ukl_min(*cnt, p.n) : p.n)) return;
     uint32_t s = lat_place(U, P, &p, x);
     if (s == 0xffffffffu) return;
     int64_t v = U[(uint64_t)p.nkeys * p.n + x];
@@ -1615,6 +1622,32 @@ UKL_INLINE void lat_merge_one(Longs U, JSPACE const uint32_t* P, JSPACE const ui
     D[(uint64_t)p.nkeys * p.n + d] = v;
 }
 
+// Rows of several sources end to end (`Batch::append_rows`): each source's count (`src`) and its offset (`off`, the
+// counts before it), and their total (`total`). One thread: a union has a source a rule.
+typedef struct SumPart { JSPACE const uint32_t* src; JSPACE uint32_t* off; } SumPart;
+typedef struct SumP { uint32_t m, pad; JSPACE uint32_t* total; SumPart part[1]; } SumP;
+UKL_INLINE void sum_one(JSPACE const SumP* p, uint32_t t)
+{
+    if (t != 0u) return;
+    uint32_t at = 0u;
+    for (uint32_t i = 0u; i < p->m; i++) {
+        *p->part[i].off = at;
+        at += *p->part[i].src;
+    }
+    *p->total = at;
+}
+
+// A program's gate (`Batch::gate`): a table's rows (`count`) past its room (`cap`) stops the program at this phase
+// (`ctl[6]`'s bit 2), before any phase after it writes what it would make from the short table: the host grows the
+// table and runs the work again (decision 0540's rerun). A thread a table.
+typedef struct GateCheck { JSPACE const uint32_t* count; uint32_t cap, pad; } GateCheck;
+typedef struct GateP { uint32_t m, pad0, pad1, pad2; GateCheck check[1]; } GateP;
+UKL_INLINE void gate_one(JSPACE const GateP* p, UKL_GLOBAL uint32_t* ctl, uint32_t t)
+{
+    if (t >= p->m) return;
+    if (*p->check[t].count > p->check[t].cap) ukl_atomic_or(&ctl[6], 2u);
+}
+
 #ifdef JOIN_PROGRAM
 // A batch's program (`metal_join::Program`, decision 0603): its levels' work in one launch, a work queue whose items
 // are continuations. Its scans and its indexes' sorts are phases too: the library's tile passes over its memory.
@@ -1657,6 +1690,8 @@ UKL_INLINE void lat_merge_one(Longs U, JSPACE const uint32_t* P, JSPACE const ui
 #define PK_LAT_CLAIM 23u
 #define PK_LAT_BEST 24u
 #define PK_LAT_MERGE 25u
+#define PK_SUM 26u
+#define PK_GATE 27u
 
 // An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase.
 typedef struct Item { uint32_t what; uint32_t group; uint32_t phase; uint32_t pad; } Item;
@@ -1691,7 +1726,7 @@ typedef struct ProgLocal {
 
 // Item `it`'s work, a group of `JOIN_TG` threads (`l` this one's). The group runs one item at a time, so a tile
 // pass's barriers are the group's.
-UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel* scans, UKL_GLOBAL const SortPass* sorts, JSPACE uint32_t* counts, Item it, uint32_t l,
+UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel* scans, UKL_GLOBAL const SortPass* sorts, JSPACE uint32_t* counts, UKL_GLOBAL uint32_t* ctl, Item it, uint32_t l,
                           ProgLocal m __UKL_PARAMS)
 {
     uint32_t kind = it.what >> 24, x = it.what & 0xffffffu, g = it.group, t = g * JOIN_TG + l;
@@ -1741,8 +1776,10 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         case PK_LAT_HCLEAR: lat_hclear_one(j->VC, (JSPACE const LatP*)j->P, t); break;
         case PK_LAT_REHASH: lat_rehash_one((JSPACE const uint8_t*)j->S, j->G, j->VC, (JSPACE const LatP*)j->P, t); break;
         case PK_LAT_CLEAR: lat_clear_one(j->A, j->totals, j->H, (JSPACE const LatP*)j->P, t); break;
-        case PK_LAT_CLAIM: lat_claim_one(j->L, j->A, (JSPACE const LatP*)j->P, t); break;
-        case PK_LAT_BEST: lat_best_one(j->L, j->A, j->totals, j->H, (JSPACE uint32_t*)j->V, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_CLAIM: lat_claim_one(j->L, j->A, j->cnt, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_BEST: lat_best_one(j->L, j->A, j->totals, j->H, (JSPACE uint32_t*)j->V, j->cnt, (JSPACE const LatP*)j->P, t); break;
+        case PK_SUM: sum_one((JSPACE const SumP*)j->P, t); break;
+        case PK_GATE: gate_one((JSPACE const GateP*)j->P, ctl, t); break;
         case PK_LAT_MERGE:
             lat_merge_one(j->L, j->A, j->totals, j->H, j->S, j->VC, j->O, j->counters, (JSPACE uint32_t*)j->V, (JSPACE const LatP*)j->P, t);
             break;
@@ -1756,7 +1793,7 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
 // group that finds nothing to take ends. No group waits for another.
 //
 // `ctl`: 0-4 the queue's control (head, tail, active, overflow, base), 5 the seeds taken, 6 the program's flags (1:
-// a push past the queue's capacity), 7 unused, then each phase's items done. `phases`: each phase's first item and
+// a push past the queue's capacity; 2: a gate stopped it), 7 unused, then each phase's items done. `phases`: each phase's first item and
 // its items. Ordering: a group's writes, a device barrier and fence, then its count; the pusher's fence, then its
 // pushes; the taker's fence after its take.
 DEFINE_KERNEL2(join, join_run,
@@ -1812,7 +1849,7 @@ DEFINE_KERNEL2(join, join_run,
         ukl_tg_barrier();
         if (got == 0u) return;
         Item it = items[item];
-        prog_item(jobs, scans, sorts, (JSPACE uint32_t*)counts, it, l, m __UKL_ARGS);
+        prog_item(jobs, scans, sorts, (JSPACE uint32_t*)counts, ctl, it, l, m __UKL_ARGS);
         // The group's writes, then the item counted: the one that brings its phase's count to its items pushes the
         // next phase's.
         ukl_tg_barrier_device();
@@ -1820,7 +1857,8 @@ DEFINE_KERNEL2(join, join_run,
             ukl_fence_device();
             uint32_t p = it.phase;
             uint32_t finished = ukl_atomic_add(&done[p], 1u) + 1u;
-            took[2] = finished == phases[2u * p + 1u] && p + 1u < a.phases ? p + 2u : 0u;
+            // A gate that stopped the program (`ctl[6]`'s bit 2): no phase after it.
+            took[2] = finished == phases[2u * p + 1u] && p + 1u < a.phases && (ukl_atomic_poll(&ctl[6]) & 2u) == 0u ? p + 2u : 0u;
             ukl_fence_device();
         }
         ukl_tg_barrier();
