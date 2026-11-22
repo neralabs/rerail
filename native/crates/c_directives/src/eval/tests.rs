@@ -1,4 +1,4 @@
-use rerail_c_pp::tape::{IDENTIFIER, image};
+use rerail_c_pp::tape::{IDENTIFIER, PUNCT, image};
 use rerail_metal::pp_eval::{Unit, evaluate, name_key};
 use rerail_tape_format::View;
 
@@ -84,8 +84,8 @@ fn the_arena_is_one_block() {
 }
 
 /// The device's reader gives every node of every file as `View` does, and each identifier leaf's
-/// key is its bytes' (`name_key`), every other node's 0; the unit's node bases are the files'
-/// counts' prefix sum.
+/// key is its bytes' (`name_key`), a one-byte punctuator's its byte under `0x100`, every other
+/// node's 0; the unit's node bases are the files' counts' prefix sum.
 #[test]
 fn the_names_pass_reads_the_tapes_in_place() {
     let mut files = vec![
@@ -106,7 +106,12 @@ fn the_names_pass_reads_the_tapes_in_place() {
         for i in 0..v.len() {
             let want = [v.key(i), v.start(i), v.end(i), v.size(i) as u32];
             same(got.nodes[g], want, format!("file {f} node {i}"));
-            let key = if (v.key(i) & 0x3ff) as u16 == IDENTIFIER { name_key(&src[v.start(i) as usize..v.end(i) as usize]) } else { 0 };
+            let text = &src[v.start(i) as usize..v.end(i) as usize];
+            let key = match (v.key(i) & 0x3ff) as u16 {
+                IDENTIFIER => name_key(text),
+                PUNCT if text.len() == 1 => 0x100 | u64::from(text[0]),
+                _ => 0,
+            };
             same(got.keys[g], key, format!("file {f} node {i}'s key"));
             g += 1;
         }
@@ -167,10 +172,10 @@ fn the_directives_pass_gives_the_spikes_tables() {
 /// device (`pp_expand::definitions`: S1 a thread a row, S2 a thread a parameter list's leaf, S4 a
 /// thread a body leaf), is the serial pass's (`Pp::parse_define`, through the spike's
 /// `parallel::tables`): malformed or not, function-like, variadic, the parameters' names, and each
-/// body token's spelling, parameter, paste operator and white space before it.
+/// body token's spelling, parameter, paste operator, white space before it, and whether it is `#`.
 #[test]
 fn the_definitions_are_the_serial_passes() {
-    use rerail_metal::pp_expand::{D_BAD, D_DEFINE, D_FNLIKE, D_VARIADIC, I_PASTE, I_SPACE, NO_PARAM, definitions};
+    use rerail_metal::pp_expand::{D_BAD, D_DEFINE, D_FNLIKE, D_VARIADIC, I_HASH, I_PASTE, I_SPACE, NO_PARAM, definitions};
     let shapes: [&[u8]; 13] = [
         b"#define A\n#define B 1\n#define C (1)\n#define D(x) x\n",
         b"#define F(a, b) a ## b # a b##a\n#define G(...) __VA_ARGS__\n#define H(a, ...) a __VA_ARGS__\n",
@@ -234,6 +239,7 @@ fn the_definitions_are_the_serial_passes() {
                 let p = item & 0xffff;
                 same(&*spelled, text.as_slice(), format!("{at}: body token {j}'s spelling"));
                 same((if p == NO_PARAM { None } else { Some(p as usize) }, item & I_PASTE != 0, item & I_SPACE != 0), (*param, *paste, *space), format!("{at}: body token {j} {:?}", String::from_utf8_lossy(text)));
+                same(item & I_HASH != 0, text.as_slice() == b"#" || text.as_slice() == b"%:", format!("{at}: body token {j} {:?} is `#`", String::from_utf8_lossy(text)));
             }
         }
         rows += tables.dirs.len();

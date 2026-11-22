@@ -69,7 +69,7 @@
               AT(uint32_t, TOKENS), AT(uint32_t, OUT), AT(uint32_t, CTL), AT(const uint32_t, WORDS), AT(PxScratch, SCRATCH), AT(const uint32_t, FLOORS), W(N_UNITS), \
               AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), \
               AT(uint32_t, CNT), W(CNT_CAP), AT(const uint32_t, LDELTA), AT(const uint32_t, LCTL)[0], &xu, &xa); \
-    xu.vai = AT(const uint32_t, VAI); xu.irows = AT(const uint32_t, IROWS);                         \
+    xu.vai = AT(const uint32_t, VAI); xu.irows = AT(const uint32_t, IROWS); xu.trows = AT(const uint32_t, TROWS);                         \
     xu.tnode = is_if ? AT(const uint32_t, IF_NODES) : AT(const uint32_t, TOPNODE)
 
 // The arena made ready for another top: its fronts back to the file literals' (`CTL` 6 and 7 keep
@@ -135,7 +135,7 @@
 #define IF_UX(u)                                                                                       \
     Ux u;                                                                                              \
     u.files = files; u.data = data; u.bases = AT(const uint32_t, BASES); u.n_files = nf; u.keys = AT(const uint64_t, KEYS); \
-    u.defs = AT(const PpDef, DEFS); u.items = AT(const uint32_t, ITEMS); u.vai = AT(const uint32_t, VAI); u.irows = AT(const uint32_t, IROWS); u.tnode = AT(const uint32_t, IF_NODES); u.sorted = AT(const uint64_t, SORT_KEYS);          \
+    u.defs = AT(const PpDef, DEFS); u.items = AT(const uint32_t, ITEMS); u.vai = AT(const uint32_t, VAI); u.irows = AT(const uint32_t, IROWS); u.trows = AT(const uint32_t, TROWS); u.tnode = AT(const uint32_t, IF_NODES); u.sorted = AT(const uint64_t, SORT_KEYS);          \
     u.perm = AT(const uint32_t, SORT_VA); u.n_rows = N(N_ROWS); u.name_keys = AT(const uint64_t, NAME_KEYS);                 \
     u.values = AT(const uint32_t, VALUES); u.text_nodes = AT(const uint32_t, IF_NODES); u.gat = AT(const uint32_t, IF_AT);  \
     u.n_gaps = N(N_DIRS); u.firsts = AT(const uint32_t, IF_AT); u.n_toks = N(IF_TOTAL);                                     \
@@ -480,7 +480,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
             {
                 IF_UX(u);
                 EACH(s, nt) p1_if_tokens(u, AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_FIRST), AT(const uint32_t, IF_KIND), AT(const uint32_t, IF_AT), AT(const uint32_t, N_DIRS), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, DSLOT), defined_key,
-                                         AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(uint32_t, IF_NODES), AT(uint32_t, IF_OPS), AT(uint32_t, LOOKUPS), AT(uint32_t, P1_FLAGS), AT(uint32_t, VBAD), s);
+                                         AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(uint32_t, IF_NODES), AT(uint32_t, IF_OPS), AT(uint32_t, LOOKUPS), AT(uint32_t, TROWS), AT(uint32_t, P1_FLAGS), AT(uint32_t, VBAD), s);
             }
             BARRIER();
             LP_LOOP_CALL(true);
@@ -584,7 +584,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         ONE(x) AT(uint32_t, P1_NEED)[NEED_TEXT_TOP] = ukl_max(AT(uint32_t, P1_NEED)[NEED_TEXT_TOP], N(GTOTAL));
         if (N(GTOTAL) > W(TC)) { ONE(x) ukl_atomic_or(AT(uint32_t, P1_FLAGS), P1_ROOM); break; }
         EACH(p, N(N_GAPS)) p1_unit_firsts(AT(const uint32_t, SSLOT), AT(const uint32_t, N_GAPS), AT(const uint32_t, FLOORS), W(N_UNITS), AT(uint32_t, P1_UFIRST), p);
-        EACH(s, N(GTOTAL)) pe_lookups(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, SSLOT), AT(const uint32_t, GTOTAL), AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), AT(const uint32_t, VALUES), AT(const uint32_t, FLOORS), W(N_UNITS), AT(uint32_t, LOOKUPS), AT(uint32_t, TOPNODE), AT(uint32_t, VBAD), nf, s);
+        EACH(s, N(GTOTAL)) pe_lookups(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, SSLOT), AT(const uint32_t, GTOTAL), AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), AT(const uint32_t, VALUES), AT(const uint32_t, FLOORS), W(N_UNITS), AT(uint32_t, LOOKUPS), AT(uint32_t, TOPNODE), AT(uint32_t, TROWS), AT(uint32_t, VBAD), nf, s);
         BARRIER();
         // The top level: depth, the close table, the calls, the outermost, the lists.
         PX_RESET();

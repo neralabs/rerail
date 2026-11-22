@@ -10,7 +10,8 @@
 // leaf (`pd_params`, `pd_items`), placed by scans of the rows' counts. Their stores have the
 // rung's room (decision 0448 §2): a leaf past it sets `room`, and the unit runs again larger.
 
-#define K_PUNCT (31u)
+#define K_DIGRAPH (32u)
+#define K_HASH (33u)
 #define K_HASHHASH (34u)
 #define K_PARAMS (36u)
 #define K_OPERANDS (39u)
@@ -31,6 +32,9 @@
 // An item's flags (above its parameter's 16 bits): a paste operator, white space before it.
 #define I_PASTE (1u << 16)
 #define I_SPACE (1u << 17)
+// The item is `#` (or `%:`): its body's stringizings and their operands (`lp_is_hash`), the tape
+// not read again.
+#define I_HASH (1u << 18)
 
 // A definition: the unit's nodes of its name, its `params` node (0: none) and its body's first
 // leaf; the leaves of each; its flags; and its first parameter slot and first item (scans).
@@ -170,7 +174,10 @@ UKL_INLINE void pd_items(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_
     if (k == 0u) defs[r].ifirst = ifirst[r];
     uint32_t i = d.body - bases[f] + k;
     uint32_t item = param_of(d, pkeys, keys[d.body + k]);
-    if (node_kind(t, i) == K_HASHHASH && k > 0u && k + 1u < d.n_body) item |= I_PASTE;
+    uint32_t kind = node_kind(t, i);
+    if (kind == K_HASHHASH && k > 0u && k + 1u < d.n_body) item |= I_PASTE;
+    if (kind == K_HASH || (kind == K_DIGRAPH && node_end(t, i) - node_start(t, i) == 2u && data[pf_src(files[f]) + node_start(t, i)] == ((uint8_t)('%'))
+                           && data[pf_src(files[f]) + node_start(t, i) + 1u] == ((uint8_t)(':')))) item |= I_HASH;
     if (k > 0u && gap_is_space(data, files[f], node_end(t, i - 1u), node_start(t, i))) item |= I_SPACE;
     items[s] = item;
 }
@@ -224,8 +231,6 @@ UKL_INLINE void pd_va_opt(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8
 
 #define K_NUMBER (29u)
 #define K_LITERAL (30u)
-#define K_DIGRAPH (32u)
-#define K_HASH (33u)
 // The relexer's answer where the spelling is no one token, and where the device refuses it.
 #define RELEX_NONE (0u)
 #define RELEX_REFUSED (0xffffu)
@@ -693,7 +698,7 @@ UKL_INLINE void pe_run_ends(PP_GLOBAL const uint32_t* gat, PP_GLOBAL const uint3
 
 // Each active stretch token's meaning where it stands (R4's test): `L_NOT_NAME` where it is no
 // identifier, else what its key means at its stretch's slot.
-UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint64_t* keys, PP_GLOBAL const uint32_t* text_nodes, PP_GLOBAL const uint32_t* gap_at, PP_GLOBAL const uint32_t* n_gaps, PP_GLOBAL const uint32_t* firsts, PP_GLOBAL const uint32_t* gslot, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const uint32_t* perm, PP_GLOBAL const uint32_t* n_rows, PP_GLOBAL const uint64_t* name_keys, PP_GLOBAL const uint32_t* values, PP_GLOBAL const uint32_t* floors, uint32_t n_units, PP_GLOBAL uint32_t* out, PP_GLOBAL uint32_t* tnode, PP_GLOBAL uint32_t* bad, uint32_t n_files, uint32_t s) {
+UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint64_t* keys, PP_GLOBAL const uint32_t* text_nodes, PP_GLOBAL const uint32_t* gap_at, PP_GLOBAL const uint32_t* n_gaps, PP_GLOBAL const uint32_t* firsts, PP_GLOBAL const uint32_t* gslot, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const uint32_t* perm, PP_GLOBAL const uint32_t* n_rows, PP_GLOBAL const uint64_t* name_keys, PP_GLOBAL const uint32_t* values, PP_GLOBAL const uint32_t* floors, uint32_t n_units, PP_GLOBAL uint32_t* out, PP_GLOBAL uint32_t* tnode, PP_GLOBAL uint32_t* trows, PP_GLOBAL uint32_t* bad, uint32_t n_files, uint32_t s) {
     if (s >= n_toks[0]) return;
     uint32_t j = pb_item_of(gap_at, n_gaps[0], s);
     uint32_t g = text_nodes[firsts[j] + (s - gap_at[j])];
@@ -702,9 +707,13 @@ UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint
     Tape t = tape_at(data, files, f);
     if (node_kind(t, g - bases[f]) != K_IDENTIFIER) {
         out[s] = L_NOT_NAME;
+        trows[2u * s] = IR_NONE; trows[2u * s + 1u] = IR_NONE;
         return;
     }
-    out[s] = visible(sorted, perm, n_rows[0], name_keys, values, floors, n_units, keys[g], gslot[j] + (s - gap_at[j]), bad);
+    uint32_t n = n_rows[0], lo = name_rows_lo(sorted, n, keys[g]), hi = name_rows_hi(sorted, n, keys[g]);
+    trows[2u * s] = lo; trows[2u * s + 1u] = hi;
+    uint32_t slot = gslot[j] + (s - gap_at[j]);
+    out[s] = visible_at(sorted, perm, name_keys, values, lo, hi, keys[g], slot, unit_floor(floors, n_units, slot), bad);
 }
 
 // --- Expansion -----------------------------------------------------------------------------------
@@ -828,6 +837,8 @@ typedef struct Ux {
     PP_GLOBAL const uint64_t* keys; PP_GLOBAL const PpDef* defs; PP_GLOBAL const uint32_t* items;
     // Each body leaf's place in a `__VA_OPT__` (`pd_va_opt`), and its name's rows (`pd_item_rows`).
     PP_GLOBAL const uint32_t* vai; PP_GLOBAL const uint32_t* irows;
+    // A top token's name's rows (`TROWS`, as `IROWS` a body item's), the text's or the tests' lines'.
+    PP_GLOBAL const uint32_t* trows;
     // Each top token's node (`TOPNODE`, `pe_lookups`; a line's are `IF_NODES`): `top_ref` without a
     // search of the stretches.
     PP_GLOBAL const uint32_t* tnode;
@@ -889,6 +900,16 @@ UKL_INLINE Span ref_span(Ux u, uint32_t g) {
 }
 
 // A name's key: a tape node's, or a scratch token's bytes' (a paste's).
+// Token `g`'s byte if it is a one-byte punctuator, else 0: its key's (`KEY_PUNCT`), no read of the
+// tape; a scratch token's its bytes'.
+UKL_INLINE uint8_t ref_punct(Ux u, uint32_t g) {
+    if ((g & SCRATCH) != 0u) {
+        PxScratch t = u.stoks[g & ~SCRATCH];
+        return t.kind == K_PUNCT && t.end - t.start == 1u ? u.sbytes[t.start] : ((uint8_t)(0));
+    }
+    uint64_t k = u.keys[g];
+    return (k >> 8) == (KEY_PUNCT >> 8) ? (uint8_t)(k & 0xfful) : ((uint8_t)(0));
+}
 UKL_INLINE uint64_t ref_key(Ux u, uint32_t g) {
     if ((g & SCRATCH) == 0u) return u.keys[g];
     PxScratch t = u.stoks[g & ~SCRATCH];

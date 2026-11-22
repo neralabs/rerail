@@ -92,14 +92,16 @@ UKL_INLINE bool p1_defined_operand(Ux u, uint32_t g, uint32_t s, uint32_t lo, ui
 // as `in_if` reads it (an operator or a raw operand is no name).
 UKL_INLINE void p1_if_tokens(Ux u, PP_GLOBAL const uint32_t* count, PP_GLOBAL const uint32_t* first, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_dirs,
                              PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* dslot, uint64_t defined_key, PP_GLOBAL const uint64_t* op_keys, PP_GLOBAL const uint32_t* op_kinds, uint32_t n_ops,
-                             PP_GLOBAL uint32_t* if_nodes, PP_GLOBAL uint32_t* ops, PP_GLOBAL uint32_t* lookups, PP_GLOBAL uint32_t* flags, PP_GLOBAL uint32_t* bad, uint32_t s) {
+                             PP_GLOBAL uint32_t* if_nodes, PP_GLOBAL uint32_t* ops, PP_GLOBAL uint32_t* lookups, PP_GLOBAL uint32_t* trows, PP_GLOBAL uint32_t* flags, PP_GLOBAL uint32_t* bad, uint32_t s) {
     if (s >= total[0]) return;
     uint32_t j = pb_item_of(at, n_dirs[0], s);
     uint32_t lo = at[j], g = first[j] + (s - lo), end = lo + count[j];
     if_nodes[s] = g;
     ops[s] = 0u;
     lookups[s] = L_NOT_NAME;
+    trows[2u * s] = IR_NONE; trows[2u * s + 1u] = IR_NONE;
     if (ref_kind(u, g) != K_IDENTIFIER) return;
+    trows[2u * s] = name_rows_lo(u.sorted, u.n_rows, u.keys[g]); trows[2u * s + 1u] = name_rows_hi(u.sorted, u.n_rows, u.keys[g]);
     // An include's name is expanded as text is.
     if (kinds[j] != IL_TEST) {
         lookups[s] = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, u.keys[g], dslot[j], bad);

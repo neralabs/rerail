@@ -19,6 +19,7 @@ UKL_INLINE int64_t pf_at(PpFile f) { return (int64_t)(((uint64_t)f.at_high << 32
 
 // The tape's kinds the passes read (`rerail_c_pp::tape`).
 #define K_IDENTIFIER (28u)
+#define K_PUNCT (31u)
 
 // --- A format 16 tape, read through the CLIF reads ---------------------------------------------
 
@@ -152,7 +153,10 @@ UKL_INLINE uint64_t name_key(PP_GLOBAL const uint64_t* d, uint32_t a, uint32_t l
     return h ^ (h >> 29);
 }
 
-// Each identifier leaf's key, 0 for every other node: one thread a node of the unit.
+// A one-byte punctuator's key: its byte under this tag (no name's key is so small).
+#define KEY_PUNCT (0x100ul)
+// Each identifier leaf's key, a one-byte punctuator's its byte's (`KEY_PUNCT`), 0 for every other
+// node: one thread a node of the unit.
 UKL_INLINE void pp_names(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint32_t* total, PP_GLOBAL uint64_t* keys, uint32_t n_files, uint32_t g) {
     if (g >= total[0]) return;
     uint32_t f = file_of(bases, n_files, g);
@@ -163,6 +167,9 @@ UKL_INLINE void pp_names(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_
         uint32_t s = node_start(t, i);
         // From the document's first byte, 16-byte aligned in its slab.
         key = name_key(pf_words(data, files[f]), files[f].source + s, node_end(t, i) - s);
+    } else if (node_kind(t, i) == K_PUNCT) {
+        uint32_t s = node_start(t, i);
+        if (node_end(t, i) - s == 1u) key = KEY_PUNCT | (uint64_t)(data[pf_src(files[f]) + s]);
     }
     keys[g] = key;
 }

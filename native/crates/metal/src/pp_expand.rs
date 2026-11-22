@@ -29,6 +29,8 @@ pub const D_BAD: u32 = 8;
 pub const NO_PARAM: u32 = 0xffff;
 pub const I_PASTE: u32 = 1 << 16;
 pub const I_SPACE: u32 = 1 << 17;
+/// A body item that is `#` (or `%:`): what a stringizing reads, the tape not read again.
+pub const I_HASH: u32 = 1 << 18;
 
 /// The setup's definitions on the device: one a directive row, each parameter list's leaves'
 /// keys (a parameter's at its leaf, 0 elsewhere), and each body leaf's item.
@@ -717,6 +719,8 @@ pub struct Vis {
     pub lookups: Buf,
     /// Each top token's node (`pe_lookups`): the loop's reads of the top level, without a search.
     topnode: Buf,
+    /// Each top token's name's rows (`pe_lookups`, `p1_if_tokens`; `IROWS` a body item's), two words a token.
+    trows: Buf,
     pub bad: Buf,
 }
 
@@ -885,6 +889,7 @@ impl Vis {
             gscan: Scan::new(arena)?,
             lookups: zeroed(top)?,
             topnode: zeroed(top)?,
+            trows: zeroed(2 * top)?,
             tc: top as u32,
             bad: zeroed(1)?,
         })
@@ -922,7 +927,7 @@ impl Vis {
         l.at("SORT_KB", &self.sort.keys_b).at("SORT_VA", &self.sort.vals_a).at("SORT_VB", &self.sort.vals_b).at("SORT_HIST", &self.sort.hist);
         l.at("GCOUNTS", &self.gcounts).at("GFIRSTS", &self.gfirsts).at("GKEYS", &self.gkeys);
         l.at("GSORT_KB", &self.gsort.keys_b).at("GSORT_VA", &self.gsort.vals_a).at("GSORT_VB", &self.gsort.vals_b).at("GSORT_HIST", &self.gsort.hist);
-        l.at("SSLOT", &self.sslot).at("SINST", &self.sinst).at("GAT", &self.gat).at("GTOTAL", &self.gscan.total).at("LOOKUPS", &self.lookups).at("TOPNODE", &self.topnode).at("VBAD", &self.bad);
+        l.at("SSLOT", &self.sslot).at("SINST", &self.sinst).at("GAT", &self.gat).at("GTOTAL", &self.gscan.total).at("LOOKUPS", &self.lookups).at("TOPNODE", &self.topnode).at("TROWS", &self.trows).at("VBAD", &self.bad);
     }
 
     /// The layout P1 made on the device (decision 0467 §2), read back for tests: each directive's
