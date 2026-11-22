@@ -914,6 +914,13 @@ pub struct Held {
     /// Rows of a continuation's base it took when it moved (`grow`, `moved_room`): its rows start at id 0 then, and the
     /// `Rows` holding it drops the base's segment (`Rows::absorbed`).
     absorbed: u32,
+    /// The span it was made in, under `RERAIL_WIDTH_CENSUS` (`width_census::by_span`).
+    made_in: Option<Box<str>>,
+}
+
+/// The span a part is made in, for the width census only.
+fn made_in() -> Option<Box<str>> {
+    crate::code_rule_dsl::logic::profile::memory::width_census::on().then(|| crate::code_rule_dsl::logic::profile::here().unwrap_or_else(|| "(no span)".into()).into_boxed_str())
 }
 
 /// Room past a relation's rows lent to another writer (the device, `Part::room`): rows `at..` of it, which the writer
@@ -992,6 +999,7 @@ impl Drop for Held {
             let rel = unsafe { &*self.rel };
             let n = rel.len_all();
             if n > 0 {
+                width_census::by_span(self.made_in.as_deref().unwrap_or("(no span)"), u64::from(n) * u64::from(rel.arity) * 8);
                 for c in 0..rel.arity as usize {
                     let (mut lo, mut hi, mut dlo, mut dhi, mut low) = (i64::MAX, i64::MIN, i64::MAX, i64::MIN, 0u64);
                     for id in 0..n {
@@ -1125,6 +1133,10 @@ impl Drop for FactsBloom {
 }
 
 impl Part {
+    /// The span it was made in, under the width census.
+    pub fn made_in(&self) -> Option<&str> {
+        self.held.made_in.as_deref()
+    }
     /// An empty relation of `k` columns with room for `rows` rows, in the open block or a new one.
     fn new(life: Life, k: usize, rows: usize) -> Part {
         Part::try_new(life, k, rows).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
@@ -1180,7 +1192,7 @@ impl Part {
                 }
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0 }), cap: u32::MAX });
+                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0, made_in: made_in() }), cap: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -1472,7 +1484,7 @@ impl Part {
         let rel = Relation::try_continue(&base.facts.block, &spec(k), base.rel(), base.reads())?;
         let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
         let held = Held { facts: base.facts.clone(), life: base.life, rel: std::ptr::from_ref(rel), cols, lent: std::sync::atomic::AtomicU32::new(0),
-                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0 };
+                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0, made_in: made_in() };
         Some(Part { held: Arc::new(held), cap: u32::MAX })
     }
 

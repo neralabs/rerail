@@ -4652,8 +4652,16 @@ pub fn adopted(conn: &Connection) -> std::collections::BTreeSet<String> {
 impl Drop for InRel {
     fn drop(&mut self) {
         if crate::code_rule_dsl::logic::profile::memory::width_census::on() && self.view.is_none() && self.n > 0 {
-            let name = self.name.get().map_or("(unnamed)", String::as_str);
-            crate::code_rule_dsl::logic::profile::memory::width_census::relation(name, self.n as u64, (self.n * self.k) as u64);
+            // An unnamed relation by the span its first block was made in, and whether its rows are its own block's.
+            let unnamed = || {
+                let first = self.rows.parts().next();
+                let span = first.and_then(|p| p.made_in()).unwrap_or("(no span)");
+                let span: String = span.split('/').map(|p| p.split(" (").next().unwrap_or(p)).collect::<Vec<_>>().join("/");
+                let segs = self.rows.parts().count();
+                format!("(unnamed, {} parts) {span}", if segs > 1 { "several" } else { "one" })
+            };
+            let name = self.name.get().cloned().unwrap_or_else(unnamed);
+            crate::code_rule_dsl::logic::profile::memory::width_census::relation(&name, self.n as u64, (self.n * self.k) as u64);
         }
     }
 }

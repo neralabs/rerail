@@ -346,6 +346,9 @@ pub(super) fn sampled_report(r: &mut String) {
     let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
     if let Some(census) = width_census::report() {
         let _ = writeln!(r, "  {census}");
+        for line in width_census::top_spans(30) {
+            let _ = writeln!(r, "    {line}");
+        }
         for line in width_census::top(40) {
             let _ = writeln!(r, "    {line}");
         }
@@ -441,6 +444,30 @@ pub mod width_census {
             }
             None => by.push((name.to_owned(), rows, values, 1)),
         }
+    }
+
+    /// Each released part's bytes (8 a value), by the span it was made in, its path's numbers and file names folded.
+    static BY_SPAN: std::sync::Mutex<Vec<(String, u64, u64)>> = std::sync::Mutex::new(Vec::new());
+
+    pub fn by_span(span: &str, bytes: u64) {
+        // A span's path less its per-item detail: a stratum's name kept, a chunk's or file's number dropped.
+        let key: String = span.split('/').map(|p| p.split(" (").next().unwrap_or(p)).collect::<Vec<_>>().join("/");
+        let mut by = BY_SPAN.lock().unwrap_or_else(|e| e.into_inner());
+        match by.iter_mut().find(|e| e.0 == key) {
+            Some(e) => {
+                e.1 += bytes;
+                e.2 += 1;
+            }
+            None => by.push((key, bytes, 1)),
+        }
+    }
+
+    pub fn top_spans(n: usize) -> Vec<String> {
+        let mut by = BY_SPAN.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        by.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut out = vec![format!("parts released, by the span that made them ({} spans):", by.len())];
+        out.extend(by.iter().take(n).map(|(span, bytes, times)| format!("{:>8} MB {times:>7}x  {}", bytes >> 20, super::super::short(span, 170))));
+        out
     }
 
     /// The relations that held the most values, with their rows and how many times one was let go.
