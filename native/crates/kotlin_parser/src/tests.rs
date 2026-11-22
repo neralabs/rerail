@@ -830,12 +830,47 @@ fn braces_in_templates_are_the_lean_parsers() {
     refused(&["val s = \"${a {{{{ b }}}} }\"\n"]);
 }
 
+/// Templates and comments in a template's code (decision 0621): each string's record open over
+/// its template's code, innermost last, as the lean lexer's `interpolation_end` recurses into a
+/// string and a comment; across a block's edge too.
+#[test]
+fn templates_and_comments_in_templates_are_the_lean_parsers() {
+    let texts = [
+        "val s = \"${f(\"${x}\")}\"\n",
+        "val s = \"a ${f(\"b ${x} c\")} d\"\n",
+        "val s = \"${\"${\"${x}\"}\"}\"\n",
+        "val s = \"\"\"${f(\"${x}\")} y\"\"\"\n",
+        "val s = \"${f(\"\"\"${x}\"\"\")} y\"\n",
+        "val s = \"${a { \"${b}\" }} c\"\n",
+        "val s = \"${f(\"${x}\") + g(\"${y}\")} z\"\n",
+        "val s = \"${f(\"${x}\")}\" + \"${y}\"\n",
+        "val s = \"${f(\"${x} $y\")} ${z}\"\n",
+        // Comments in a template's code, after a template in it too.
+        "val s = \"${f(\"${x}\") /* c */} z\"\n",
+        "val s = \"${f(\"${x}\") // c\n} z\"\n",
+        "val s = \"${f(x) /* c */} z\"\n",
+        "val s = \"${f(x) // c\n} z\"\n",
+        "val s = \"${/* c */ x}\"\n",
+        "val s = \"${f(x, /* c */ y)} z\"\n",
+        "val s = \"${f(\n    // c\n    x\n)} z\"\n",
+        "val s = \"${a { /* c */ b }} z\"\n",
+        "val s = \"${x /* } */} z\"\n",
+        "val s = \"${x // }\n} z\"\n",
+        "val s = \"\"\"${x /* c */} y\"\"\"\n",
+        "val s = \"${x /* a */ /* b */} z\"\n",
+        "val s = \"${x\n// c\n} z\"\n",
+        "val s = \"${if (a) b /* c */ else c}\"\n",
+    ];
+    let line = "val v = \"a ${f(\"b ${x} c\")} d\"";
+    let edges: Vec<String> = (58..70).map(|q| format!("//{}\n{line}\n", "x".repeat(q))).collect();
+    same(&texts.iter().copied().chain(edges.iter().map(String::as_str)).collect::<Vec<_>>());
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
         "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
-        "val s = \"${f(\"${x}\")}\"\n",
         "val s = 'x\n",
         "val s = \"${}\"\n",
         "val s = \"open\n",
@@ -1458,7 +1493,7 @@ fn program_size() {
         Ok(p) => std::fs::read_to_string(p).expect("the grammar file"),
         Err(_) => crate::GRAMMAR.to_owned(),
     };
-    let c = crate::compile_text(&text).expect("the grammar compiles");
+    let c = crate::compile_timed(&text, crate::shipped_answers(), &mut |_, _| {}).expect("the grammar compiles");
     let lines: Vec<&str> = c.words.lines().collect();
     let mut by_op: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for l in &lines {
@@ -1616,7 +1651,7 @@ fn tier1_cones() {
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
-    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
+    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, crate::shipped_answers()).expect("compiles");
     let b = &c.program;
     let n = b.ops.len();
     let cone = |v: u16| {
@@ -1866,7 +1901,7 @@ fn token_level_probe() {
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
-    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
+    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, crate::shipped_answers()).expect("compiles");
     let mut by: HashMap<String, usize> = HashMap::new();
     for o in &c.origin {
         if let Some(m) = o.strip_prefix("mask ") {

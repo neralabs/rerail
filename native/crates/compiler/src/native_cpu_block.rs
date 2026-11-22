@@ -3530,13 +3530,14 @@ fn gap_last(
     f.block_params(done)[0]
 }
 
-/// The record a template left open (`RecPart::open`, decision 0600): a word of its own, zero,
+/// The records templates left open (`RecPart::open`, decisions 0600 and 0621): a stack of its
+/// own, its depth in its first word (zero) and its records' cursors after, innermost last,
 /// where a reader resumes a string's record; none else.
 fn open_slot(f: &mut FunctionBuilder<'_>, r: &crate::records::Records) -> Option<cranelift_codegen::ir::StackSlot> {
     if !r.readers.iter().any(|x| x.resumes) {
         return None;
     }
-    let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8, 3));
+    let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * (1 + OPEN_DEPTH as u32), 3));
     let zero = f.ins().iconst(types::I64, 0);
     f.ins().stack_store(zero, slot, 0);
     Some(slot)
@@ -6965,9 +6966,13 @@ const TEMPLATE_FLAG: i64 = 2;
 /// record, and ends the open one.
 const RESUME_FLAG: i64 = 4;
 
-/// In the open record's slot (`open_slot`): its string ended, its cursor kept for a read of
-/// its tail again (decision 0600).
+/// In the open records' stack (`open_slot`): its string ended, its cursor kept for a read of
+/// its tail again (decision 0600). Only the innermost is.
 const STRING_ENDED: i64 = 1 << 62;
+
+/// The open records' stack's depth (`open_slot`): the strings open at once, one in another's
+/// template (decision 0621). A grammar's nest bounds them; past this many the file is refused.
+const OPEN_DEPTH: i64 = 16;
 
 /// In the marks so far (`pending`): the cursor's block has a gap mark's bit (`loop_marks`'
 /// lift), set by the refill. A token whose `pending` and hits are zero then takes no merge of
@@ -8429,43 +8434,97 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         f.ins().brif(fl, cold, &[], join, &[k1.into(), pending.into(), from.into(), word_before.into()]);
         f.switch_to_block(cold);
         f.set_cold_block(cold);
-        let open = f.ins().stack_load(types::I64, slot, 0);
+        // The stack (`open_slot`): its depth, and its entry `k` at `base + 8 k`.
+        let base = f.ins().stack_addr(types::I64, slot, 0);
+        let entry = |f: &mut FunctionBuilder<'_>, n: Value| {
+            let at = f.ins().ishl_imm(n, 3);
+            f.ins().iadd(base, at)
+        };
+        let n0 = f.ins().load(types::I64, MemFlags::trusted(), base, 0);
+        let cur1 = f.ins().iadd_imm(cv[0], 1);
         let res = f.ins().band_imm(fl, RESUME_FLAG);
+        // A template's close first drops the records from its own on: the loop reads this token
+        // again (a wait, a refill's block read again), and those are written again.
+        let (later, later_pop) = (f.create_block(), f.create_block());
+        f.append_block_param(later, types::I64);
+        let clean = f.create_block();
+        f.append_block_param(clean, types::I64);
+        // Both loops pop the stack: at most what was pushed.
+        heads.push((later, Step::Pop));
+        heads.push((clean, Step::Pop));
+        f.ins().brif(res, clean, &[n0.into()], later, &[n0.into()]);
+        f.switch_to_block(later);
+        let n = f.block_params(later)[0];
+        let top = entry(f, n);
+        let top = f.ins().load(types::I64, MemFlags::trusted(), top, 0);
+        let rec = f.ins().band_imm(top, !STRING_ENDED);
+        let is_later = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, rec, cur1);
+        let some = f.ins().icmp_imm(IntCC::NotEqual, n, 0);
+        let pop = f.ins().band(some, is_later);
+        f.ins().brif(pop, later_pop, &[], clean, &[n.into()]);
+        f.switch_to_block(later_pop);
+        let n1 = f.ins().iadd_imm(n, -1);
+        f.ins().jump(later, &[n1.into()]);
+        // Then a string ended before this token is done: its tail is not read again. One ended
+        // after it (the loop reading again inside it) is open here.
+        let (ended_q, ended_pop, after) = (f.create_block(), f.create_block(), f.create_block());
+        f.append_block_param(after, types::I64);
+        f.switch_to_block(clean);
+        let n = f.block_params(clean)[0];
+        let top_at = entry(f, n);
+        let top = f.ins().load(types::I64, MemFlags::trusted(), top_at, 0);
+        let ended = f.ins().band_imm(top, STRING_ENDED);
+        let some = f.ins().icmp_imm(IntCC::NotEqual, n, 0);
+        let ended = f.ins().icmp_imm(IntCC::NotEqual, ended, 0);
+        let ended = f.ins().band(some, ended);
+        f.ins().brif(ended, ended_q, &[], after, &[n.into()]);
+        f.switch_to_block(ended_q);
+        let rec = f.ins().band_imm(top, !STRING_ENDED);
+        let cur = f.ins().iadd_imm(rec, -1);
+        let (a, o) = c.at(f, crate::records::FIELD_LAST, cur);
+        let last = f.ins().uload32(MemFlags::trusted(), a, o);
+        let done = f.ins().icmp(IntCC::UnsignedLessThan, last, s);
+        f.ins().brif(done, ended_pop, &[], after, &[n.into()]);
+        f.switch_to_block(ended_pop);
+        let n1 = f.ins().iadd_imm(n, -1);
+        f.ins().jump(clean, &[n1.into()]);
+        f.switch_to_block(after);
+        let n = f.block_params(after)[0];
         f.ins().brif(res, resume, &[], opens, &[]);
-        // The loop may read a token again (a wait, a refill's block read again): each read
-        // leaves the slot as one does. A string ended keeps its record's cursor, marked
-        // (`STRING_ENDED`), so a read of its tail again patches the same record.
+        // A read that resumes: its last into the innermost open record, which stays open where
+        // it closed at a template again, and is ended else, its cursor kept. None open refuses.
         f.switch_to_block(resume);
-        f.ins().brif(open, patch, &[], nested, &[]);
+        let none = f.ins().icmp_imm(IntCC::Equal, n, 0);
+        f.ins().brif(none, nested, &[], patch, &[]);
         f.switch_to_block(patch);
-        let rec = f.ins().band_imm(open, !STRING_ENDED);
+        let top_at = entry(f, n);
+        let top = f.ins().load(types::I64, MemFlags::trusted(), top_at, 0);
+        let rec = f.ins().band_imm(top, !STRING_ENDED);
         let cur = f.ins().iadd_imm(rec, -1);
         let (a, o) = c.at(f, crate::records::FIELD_LAST, cur);
         f.ins().istore32(stores, l, a, o);
         let again = f.ins().band_imm(fl, TEMPLATE_FLAG);
         let ended = f.ins().bor_imm(rec, STRING_ENDED);
         let keep = f.ins().select(again, rec, ended);
-        f.ins().stack_store(keep, slot, 0);
+        f.ins().store(MemFlags::trusted(), keep, top_at, 0);
+        f.ins().store(MemFlags::trusted(), n, base, 0);
         f.ins().jump(join, &[cv[0].into(), cv[3].into(), cv[4].into(), cv[5].into()]);
-        // A template's close: its cursor, where no string is open or this token's is (read
-        // again); a template in a template's code refuses.
+        // A template's close: the innermost open (an ended one is open here) and this token's
+        // pushed. Past the stack's depth the file is refused.
         f.switch_to_block(opens);
-        let cur1 = f.ins().iadd_imm(cv[0], 1);
-        let ended = f.ins().band_imm(open, STRING_ENDED);
-        let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
-        let this = f.ins().icmp(IntCC::Equal, open, cur1);
-        let free = f.ins().bor(none, this);
-        let ended = f.ins().icmp_imm(IntCC::NotEqual, ended, 0);
-        let free = f.ins().bor(free, ended);
-        // A record after this token's open: the loop reads this token again (a refill's block
-        // read again from before a later string's template), and the records from here on are
-        // written again, that one's too. A template in a template's code finds an earlier one.
-        let rec = f.ins().band_imm(open, !STRING_ENDED);
-        let later = f.ins().icmp(IntCC::UnsignedGreaterThan, rec, cur1);
-        let free = f.ins().bor(free, later);
-        f.ins().brif(free, set, &[], nested, &[]);
+        let full = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, n, OPEN_DEPTH);
+        f.ins().brif(full, nested, &[], set, &[]);
         f.switch_to_block(set);
-        f.ins().stack_store(cur1, slot, 0);
+        let top_at = entry(f, n);
+        let top = f.ins().load(types::I64, MemFlags::trusted(), top_at, 0);
+        let open = f.ins().band_imm(top, !STRING_ENDED);
+        let some = f.ins().icmp_imm(IntCC::NotEqual, n, 0);
+        let top = f.ins().select(some, open, top);
+        f.ins().store(MemFlags::trusted(), top, top_at, 0);
+        let n1 = f.ins().iadd_imm(n, 1);
+        let at = entry(f, n1);
+        f.ins().store(MemFlags::trusted(), cur1, at, 0);
+        f.ins().store(MemFlags::trusted(), n1, base, 0);
         f.ins().jump(join, &[k1.into(), pending.into(), from.into(), word_before.into()]);
         f.switch_to_block(nested);
         let all = f.ins().iconst(types::I64, -1);

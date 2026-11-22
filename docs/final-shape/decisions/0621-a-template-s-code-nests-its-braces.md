@@ -59,3 +59,34 @@ corpus has no template deeper than 2.
 
 The corpus: 489 the same, 2 refused, 0 differ (two more files the same). The two left are templates with
 templates in their code, which need the string's held record (0600) to become a stack.
+
+## What changed (step 2): templates and comments in a template's code
+
+The regions' levels already nest a string's template in another's code. The records did not: each tier
+kept one string's record open over a template's code (0600), and refused a second.
+
+- **The interpreter** (`records::walk`) kept a stack already; it no longer refuses a second open record.
+  Its pass (`around`) and tier 2 (`stream.rs`, a count of the strings open) nest as they were.
+- **The JIT's tier 1** (`native_cpu_block`): the open record's slot is a stack (`open_slot`, its depth in its
+  first word, then up to `OPEN_DEPTH` cursors, innermost last). The loop may read a token again (a wait, a
+  block read again), and each read leaves the stack as one does:
+  - a template's close drops the records from its own on, which are written again, then pushes its own;
+  - a string ended (`STRING_ENDED`, only the innermost) is popped once a token after its last comes, and
+    is open again where the loop reads again inside it;
+  - a read that resumes writes its last into the innermost record.
+
+  Both pops are `Step::Pop` loops (at most what was pushed).
+- **Tier 1 as Rust**: `held` is a stack of the nest's depth (`held[..opened]`).
+- **Tier 2 as Rust** (`bitlex_rust`): `advance` looks for the template's `}` before the next grammar token,
+  not the next record, and stands the string's pieces at the last record before it: a comment in the code
+  is written before the `}`, as before any `}` (`before`, the bound of the extras pending). The JIT's tier 2
+  looks at each record it fetches, the same.
+- **Kotlin**: the escape "a template with a template or a comment" goes, and with it `t_code`. An empty
+  `${}` is a tail opened right after a `{` (`(o_tail | o_rtail) & prev(lbrace)`): a brace's `{` would close
+  at that `}`.
+- `tiers_rust` and the tools that compile the crate's grammar (`program_size`, `tier1_cones`,
+  `token_level_probe`) take the shipped answers, which are the cold compile's own; `compile_time` alone
+  compiles cold, as it measures that.
+- Tests: `templates_and_comments_in_templates_are_the_lean_parsers` (strings in templates' code to three
+  levels, raw and plain, comments of both kinds before and after an inner template, a `}` in a comment,
+  across a block's edge).

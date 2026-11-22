@@ -798,6 +798,13 @@ impl<'a> P<'a> {
         Ok(())
     }
 
+    /// One past the records before the token: the token's own, or, where a template's `}` resumes
+    /// a string's parts past a comment in its code (`advance`), past that comment too.
+    #[inline(always)]
+    fn before(&self) -> usize {
+        if self.i < self.n && is_extra(self.codes[self.i]) { self.i + 1 } else { self.i }
+    }
+
     /// The comments before the token, written into the node open: the one a mark lost first.
     #[inline(always)]
     fn flush(&mut self) {
@@ -806,7 +813,7 @@ impl<'a> P<'a> {
             let at = self.w.push(u32::from(kind) | 1 << 16, s);
             self.w.close(at, s);
         }
-        while self.pend < self.i {
+        while self.pend < self.before() {
             let j = self.pend;
             self.pend += 1;
             let c = self.codes[j];
@@ -829,7 +836,7 @@ impl<'a> P<'a> {
     /// `loses since`: the first extra pending of no width at the next one's start (the lean
     /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).
     fn move_first(&mut self) {
-        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j));
+        let mut pending = (self.pend..self.before()).filter(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j));
         if let (Some(a), Some(b)) = (pending.next(), pending.next()) {
             self.moved = Some((a, self.starts[b]));
         }
@@ -840,9 +847,9 @@ impl<'a> P<'a> {
     fn settle(&mut self, bit: u32) {
         // An extra a `loses since` moved and the one after it go with those before: the lean
         // lexer's semicolon is past that one.
-        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);
-        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.codes[k]) && !self.gone.contains(&k)));
-        while self.pend < self.i {
+        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.before());
+        let through = moved.and_then(|m| (m + 1..self.before()).find(|&k| is_extra(self.codes[k]) && !self.gone.contains(&k)));
+        while self.pend < self.before() {
             let j = self.pend;
             let c = self.codes[j];
             if is_extra(c) && c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
@@ -860,7 +867,7 @@ impl<'a> P<'a> {
 
     /// The extra pending last before the token (not yet written, not dropped or lost).
     fn pending_last(&self) -> Option<usize> {
-        (self.pend..self.i).rev().find(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j))
+        (self.pend..self.before()).rev().find(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j))
     }
 
     /// `drops`: the extra pending last gone; with none left pending, the nodes closed next end
@@ -11003,9 +11010,15 @@ impl P<'_> {
     /// Past the token, to the next grammar token's record, or the string's parts a template's `}` resumes, at the record before the next (decision 0600).
     #[inline(always)]
     fn advance(&mut self, from: usize) -> R {
-        if self.strings > 0 && let Some(p) = first_bit(&self.m.rd1_open, from).filter(|&p| self.i + 1 >= self.n || p < self.starts[self.i + 1] as usize) {
-            self.known = 0;
-            return self.resume_1(p);
+        if self.strings > 0 && let Some(p) = first_bit(&self.m.rd1_open, from) {
+            let j = self.next_tok(self.i + 1);
+            if j >= self.n || p < self.starts[j] as usize {
+                while self.i + 1 < j && (self.starts[self.i + 1] as usize) < p {
+                    self.i += 1;
+                }
+                self.known = 0;
+                return self.resume_1(p);
+            }
         }
         self.i = self.next_tok(self.i + 1);
         self.arrive()

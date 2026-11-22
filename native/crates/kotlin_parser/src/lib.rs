@@ -100,7 +100,8 @@ pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
-    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default())?;
+    // The shipped answers: the compile's own, so the same Rust, with no cold proofs.
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, shipped_answers())?;
     let tier1 = compiled.lexer_rust.ok_or_else(|| "no tree section".to_owned())??;
     let tier2 = compiled.rust.ok_or_else(|| "no tree section".to_owned())??;
     Ok((tier1, tier2))

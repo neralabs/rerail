@@ -3802,10 +3802,10 @@ impl Gen<'_> {
         let named = self.kinds.iter().any(|q| q.after.iter().any(|a| a == kind));
         let Some((c2, _)) = self.kinds[k].or.clone().filter(|_| named && self.kinds[k].after.is_empty()) else { return Ok(found) };
         let c2 = self.val(&c2)?;
-        // Resumed (decision 0600): this token's record, the next pushed, stays open; one open
-        // already (a template in a template's code) refuses.
+        // Resumed (decision 0600): this token's record, the next pushed, stays open, over any
+        // open already (a template in a template's code, decision 0621) as deep as the nest.
         let resumed = self.kinds.iter().any(|q| q.resumes && q.after.iter().any(|a| a == kind));
-        let open = if resumed { "\n                        if held.is_some() {\n                            refused = true;\n                            break;\n                        }\n                        held = Some(starts.len());" } else { "" };
+        let open = if resumed { "\n                        if opened == held.len() {\n                            refused = true;\n                            break;\n                        }\n                        held[opened] = starts.len();\n                        opened += 1;" } else { "" };
         let push = match &self.nest {
             Some((_, _, d, _)) => format!("\n                        if depth == {d} {{\n                            refused = true;\n                            break;\n                        }}\n                        nest[depth] = {k};\n                        depth += 1;"),
             None => String::new(),
@@ -4483,12 +4483,12 @@ impl Gen<'_> {
                         Some((c2, _)) => match (self.nest.clone(), Self::row_region(start, rs).and_then(|r| r.after.first()).and_then(|a| self.kinds.iter().position(|q| q.kind == *a))) {
                             // With a nest the `}` closed its template's level (before the row); a
                             // close at its `$` opens its string's next.
-                            (Some((_, _, d, _)), Some(q)) => format!("if bit(&{}, close) {{\n                        if depth == {d} {{\n                            refused = true;\n                            break 'tokens;\n                        }}\n                        nest[depth] = {q};\n                        depth += 1;\n                        template = {q};\n                    }} else {{\n                        held = None;\n                    }}", self.val(&c2)?),
-                            _ => format!("if !bit(&{}, close) {{\n                        held = None;\n                        template = usize::MAX;\n                    }}", self.val(&c2)?),
+                            (Some((_, _, d, _)), Some(q)) => format!("if bit(&{}, close) {{\n                        if depth == {d} {{\n                            refused = true;\n                            break 'tokens;\n                        }}\n                        nest[depth] = {q};\n                        depth += 1;\n                        template = {q};\n                    }} else {{\n                        opened -= 1;\n                    }}", self.val(&c2)?),
+                            _ => format!("if !bit(&{}, close) {{\n                        opened -= 1;\n                        template = usize::MAX;\n                    }}", self.val(&c2)?),
                         },
-                        None => "held = None;".to_owned(),
+                        None => "opened -= 1;".to_owned(),
                     };
-                    Some(format!("            // Resumes the open string's record: no record of its own.\n            match held {{\n                Some(o) => {{\n                    lasts[o] = l as u32;\n                    {again}\n                }}\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}\n            at = l + 1;\n            if at >= base + 64 {{\n                b = at / 64;\n                continue 'tokens;\n            }}\n            firsts &= !0u64 << (at - base);\n            continue;\n        }}"))
+                    Some(format!("            // Resumes the open string's record: no record of its own.\n            match opened {{\n                0 => {{\n                    refused = true;\n                    break;\n                }}\n                _ => {{\n                    lasts[held[opened - 1]] = l as u32;\n                    {again}\n                }}\n            }}\n            at = l + 1;\n            if at >= base + 64 {{\n                b = at / 64;\n                continue 'tokens;\n            }}\n            firsts &= !0u64 << (at - base);\n            continue;\n        }}"))
                 }
                 _ => None,
             };
@@ -4975,7 +4975,12 @@ impl Gen<'_> {
         out.push_str(&self.stage1());
         out.push_str(&tables);
         out.push_str("/// `src`'s records.\npub fn lex(src: &[u8]) -> Lexed {\n    let n = src.len();\n    let nw = n.div_ceil(64);\n    // Each word's bits inside the file.\n    let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();\n");
-        let open_decl = if self.kinds.iter().any(|q| q.resumes) { "    // The string's record a template left open (decision 0600), over the template's code.\n    let mut held: Option<usize> = None;\n" } else { "" };
+        let open_decl = if self.kinds.iter().any(|q| q.resumes) {
+            let d = self.nest.as_ref().map_or(1, |n| n.2);
+            format!("    // The strings' records templates left open (decisions 0600 and 0621), over their templates' code: the first `opened`, innermost last.\n    let mut held = [0usize; {d}];\n    let mut opened = 0usize;\n")
+        } else {
+            String::new()
+        };
         let nest_decl = match &self.nest {
             Some((_, _, d, _)) => format!("    // The nest (decision 0621): its levels, each a template's kind or a bracket's `usize::MAX`, innermost last, as the lean lexer's `interpolation_end` counts a template's braces.\n    let mut nest = [usize::MAX; {d}];\n    let mut depth = 0usize;\n"),
             None => String::new(),

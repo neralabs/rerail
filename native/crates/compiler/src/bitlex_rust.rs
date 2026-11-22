@@ -1187,7 +1187,10 @@ impl<'a> G<'a> {
                 // Its opener's kind: its own row's.
                 let rows = self.x.lexer.iter().filter(|s| matches!(s, ::bitlex::syntax::Stmt::Token { .. }));
                 let own = rows.enumerate().find(|(_, s)| matches!(s, ::bitlex::syntax::Stmt::Token { kind, .. } if *kind == rd.kind)).and_then(|(i, _)| self.x.row_kinds.get(i).copied().flatten());
-                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from).filter(|&p| self.i + 1 >= self.n || p < self.starts[self.i + 1] as usize) {{\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
+                // Before the next grammar token: its pieces at the last record before the `}`, a
+                // comment in the template's code too (`before`), as the JIT's tier 2 looks at each
+                // record it fetches.
+                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from) {{\n            let j = self.next_tok(self.i + 1);\n            if j >= self.n || p < self.starts[j] as usize {{\n                while self.i + 1 < j && (self.starts[self.i + 1] as usize) < p {{\n                    self.i += 1;\n                }}\n                self.known = 0;\n                return self.resume_{r}(p);\n            }}\n        }}\n", rd.open);
                 (format!("resume_{r}"), "at byte `s`, no record of its own: the string's parts after its template's `}`", format!("s: usize) -> R {{\n        self.sub.clear();\n        self.k = 0;\n        self.piece(s, s, {});", kind_or(own, "s")))
             } else {
                 (format!("split_{r}"), "record `j`", "j: usize) -> R {\n        let s = self.starts[j] as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.codes[j]));".to_owned())
@@ -1532,6 +1535,13 @@ impl<'a> P<'a> {
         Ok(())
     }
 
+    /// One past the records before the token: the token's own, or, where a template's `}` resumes
+    /// a string's parts past a comment in its code (`advance`), past that comment too.
+    #[inline(always)]
+    fn before(&self) -> usize {
+        if self.i < self.n && is_extra(self.codes[self.i]) { self.i + 1 } else { self.i }
+    }
+
     /// The comments before the token, written into the node open: the one a mark lost first.
     #[inline(always)]
     fn flush(&mut self) {
@@ -1540,7 +1550,7 @@ impl<'a> P<'a> {
             let at = self.w.push(u32::from(kind) | 1 << 16, s);
             self.w.close(at, s);
         }
-        while self.pend < self.i {
+        while self.pend < self.before() {
             let j = self.pend;
             self.pend += 1;
             let c = self.codes[j];
@@ -1563,7 +1573,7 @@ impl<'a> P<'a> {
     /// `loses since`: the first extra pending of no width at the next one's start (the lean
     /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).
     fn move_first(&mut self) {
-        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j));
+        let mut pending = (self.pend..self.before()).filter(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j));
         if let (Some(a), Some(b)) = (pending.next(), pending.next()) {
             self.moved = Some((a, self.starts[b]));
         }
@@ -1574,9 +1584,9 @@ impl<'a> P<'a> {
     fn settle(&mut self, bit: u32) {
         // An extra a `loses since` moved and the one after it go with those before: the lean
         // lexer's semicolon is past that one.
-        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);
-        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.codes[k]) && !self.gone.contains(&k)));
-        while self.pend < self.i {
+        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.before());
+        let through = moved.and_then(|m| (m + 1..self.before()).find(|&k| is_extra(self.codes[k]) && !self.gone.contains(&k)));
+        while self.pend < self.before() {
             let j = self.pend;
             let c = self.codes[j];
             if is_extra(c) && c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
@@ -1594,7 +1604,7 @@ impl<'a> P<'a> {
 
     /// The extra pending last before the token (not yet written, not dropped or lost).
     fn pending_last(&self) -> Option<usize> {
-        (self.pend..self.i).rev().find(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j))
+        (self.pend..self.before()).rev().find(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j))
     }
 
     /// `drops`: the extra pending last gone; with none left pending, the nodes closed next end
