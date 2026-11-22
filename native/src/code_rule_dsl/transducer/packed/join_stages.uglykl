@@ -1237,8 +1237,9 @@ UKL_INLINE void scan_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSPA
 {
     // Its offsets are its own: the level's scan's, less its first (`Batch::level`).
     uint32_t o0 = offsets[0];
-    if (r == 0) totals[s->out_slot] = (offsets[s->nr] - o0);
-    if (r >= stage_rows(s, R)) return;
+    uint32_t rows = stage_rows(s, R);
+    if (r == 0) totals[s->out_slot] = (offsets[rows] - o0);
+    if (r >= rows) return;
     uint32_t at = (offsets[r] - o0);
     if ((offsets[r + 1] - o0) > at && at < s->cap_out) write_row(s, L, 0, R, r, O, at);
 }
@@ -1300,8 +1301,10 @@ UKL_INLINE void dedup_scatter_one(Longs T, JSPACE uint32_t* totals, JSPACE const
 {
     // Its offsets are its own: the level's scan's, less its first (`Batch::level`).
     uint32_t o0 = offsets[0];
-    if (x == 0) totals[d->out_slot] = (offsets[d->cap] - o0);
-    if (x >= d->cap) return;
+    // Its rows' counts alone: past them, a slot may hold another round's (a phase's items are its rows', 0603 step 5).
+    uint32_t n = ukl_min(totals[d->in_slot], d->cap);
+    if (x == 0) totals[d->out_slot] = (offsets[n] - o0);
+    if (x >= n) return;
     uint32_t at = (offsets[x] - o0);
     if ((offsets[x + 1] - o0) == at) return;
     for (uint32_t c = 0; c < d->ncols && c < 16; c++) O[(uint64_t)c * d->cap + at] = T[(uint64_t)d->cols[c] * d->cap + x];
@@ -1858,6 +1861,18 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
     }
 }
 
+// A job's items in its phase, as many as a count on the device needs (decision 0603 step 5): `ceil((*count + plus) /
+// per)` of its `items` from `first`, at most them; all of them where `per` is 0 (a job of no count). A phase of
+// segments pushes theirs, at least one item in all.
+typedef struct Seg { JSPACE const uint32_t* count; uint32_t first, items, per, plus; } Seg;
+UKL_STATIC_ASSERT(sizeof(Seg) == 24, "Seg: size");
+UKL_INLINE uint32_t seg_items(UKL_GLOBAL const Seg* g)
+{
+    if (g->per == 0u) return g->items;
+    uint64_t need = ((uint64_t)*g->count + g->plus + g->per - 1u) / g->per;
+    return need < (uint64_t)g->items ? (uint32_t)need : g->items;
+}
+
 // The program, one launch (decision 0603; 0540 step 6's scheme): a group of `JOIN_TG` threads an item. The first
 // phase's items are there from the start (the seeds, taken from a counter); the group that finishes a phase's last
 // item pushes the next phase's, the continuation, and takes items on: a pushed item has a worker that is running. A
@@ -1866,16 +1881,19 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
 // `ctl`: 0-4 the queue's control (head, tail, active, overflow, base), 5 the seeds taken, 6 the program's flags (1:
 // a push past the queue's capacity; 2: a gate stopped it; 4, 8, 16: a round's end stopped it past its rounds,
 // yielded, ended it), 7 a round's end's jump, 8 the rounds this launch ran, 9 where a yield goes on (the phase and
-// one), then each phase's items done (emptied as the phase is pushed: a round runs a phase again). `phases`: each phase's first item and
+// one), then each phase's items done (emptied as the phase is pushed: a round runs a phase again), then each phase's
+// items as pushed (0: all of them; a phase of segments, theirs). `phases`: each phase's first item, its items, its
+// first segment and its segments (`segs`). `phases`: each phase's first item and
 // its items. Ordering: a group's writes, a device barrier and fence, then its count; the pusher's fence, then its
 // pushes; the taker's fence after its take.
 DEFINE_KERNEL2(join, join_run,
                ROBUFFER, Job,       jobs,    "[jobs]",
                ROBUFFER, Item,      items,   "[items]",
-               ROBUFFER, uint32_t,  phases,  "[2 * phases]",
+               ROBUFFER, uint32_t,  phases,  "[4 * phases]",
+               ROBUFFER, Seg,       segs,    "[segs]",
                ROBUFFER, ScanLevel, scans,   "[scans]",
                ROBUFFER, SortPass,  sorts,   "[sorts]",
-               RWBUFFER, uint32_t,  ctl,     "[10 + phases]",
+               RWBUFFER, uint32_t,  ctl,     "[10 + 2 * phases]",
                RWBUFFER, uint32_t,  slots,   "[capacity]",
                RWBUFFER, uint32_t,  counts,  "[counts]",
                ARGS,     ProgP,     a,       ,
@@ -1902,6 +1920,7 @@ DEFINE_KERNEL2(join, join_run,
     m.base = base;
     m.digits = digits;
     UKL_GLOBAL uint32_t* done = ctl + 10u;
+    UKL_GLOBAL uint32_t* target = ctl + 10u + a.phases;
     // Bounded: each turn does an item or ends the group.
     for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
         if (l == 0u) {
@@ -1910,7 +1929,7 @@ DEFINE_KERNEL2(join, join_run,
             if (ukl_atomic_poll(&ctl[5]) < a.seeds) {
                 item = ukl_atomic_add(&ctl[5], 1u);
                 got = item < a.seeds ? 1u : 0u;
-                item += phases[2u * a.first];
+                item += phases[4u * a.first];
             }
             if (got == 0u && ukl_wq_take(q, &item)) got = 2u;
             // What the phase before wrote, seen after the take (the pusher's fence before its push).
@@ -1931,22 +1950,40 @@ DEFINE_KERNEL2(join, join_run,
             ukl_fence_device();
             uint32_t p = it.phase;
             uint32_t finished = ukl_atomic_add(&done[p], 1u) + 1u;
+            uint32_t want = ukl_atomic_poll(&target[p]);
+            bool all = finished == (want != 0u ? want : phases[4u * p + 1u]);
             // A round's end's jump (`ctl[7]`: the phase and one, or the end), else the next phase; a gate that stopped
             // the program (`ctl[6]`'s bit 2): no phase after it.
-            uint32_t jump = finished == phases[2u * p + 1u] ? ukl_atomic_poll(&ctl[7]) : 0u;
+            uint32_t jump = all ? ukl_atomic_poll(&ctl[7]) : 0u;
             if (jump != 0u) ukl_atomic_store(&ctl[7], 0u);
             took[2] = jump != 0u ? (jump == 0xFFFFFFFFu ? 0u : jump)
-                    : finished == phases[2u * p + 1u] && p + 1u < a.phases && (ukl_atomic_poll(&ctl[6]) & 2u) == 0u ? p + 2u : 0u;
-            // The phase pushed again by a round: its count emptied before its items are (its last run's all counted).
-            if (took[2] != 0u) ukl_atomic_store(&done[took[2] - 1u], 0u);
+                    : all && p + 1u < a.phases && (ukl_atomic_poll(&ctl[6]) & 2u) == 0u ? p + 2u : 0u;
+            took[3] = 0u;
+            if (took[2] != 0u) {
+                // The phase pushed (again, by a round): its count emptied before its items are (its last run's all
+                // counted), and its items as its segments' counts need them, at least one.
+                uint32_t q = took[2] - 1u, s0 = phases[4u * q + 2u], ns = phases[4u * q + 3u], m = 0u;
+                for (uint32_t g = 0u; g < ns; g++) m += seg_items(&segs[s0 + g]);
+                took[3] = ns != 0u && m == 0u ? 1u : 0u;
+                ukl_atomic_store(&target[q], ns == 0u ? 0u : ukl_max(m, 1u));
+                ukl_atomic_store(&done[q], 0u);
+            }
             ukl_fence_device();
         }
         ukl_tg_barrier();
-        uint32_t next = took[2];
+        uint32_t next = took[2], none = took[3];
         if (next != 0u) {
-            uint32_t first = phases[2u * (next - 1u)], count = phases[2u * (next - 1u) + 1u];
-            for (uint32_t i = l; i < count; i += JOIN_TG)
-                if (!ukl_wq_push(q, first + i)) ukl_atomic_or(&ctl[6], 1u);
+            uint32_t pq = next - 1u, first = phases[4u * pq], count = phases[4u * pq + 1u], s0 = phases[4u * pq + 2u], ns = phases[4u * pq + 3u];
+            if (ns == 0u) {
+                for (uint32_t i = l; i < count; i += JOIN_TG)
+                    if (!ukl_wq_push(q, first + i)) ukl_atomic_or(&ctl[6], 1u);
+            }
+            for (uint32_t g = 0u; g < ns; g++) {
+                // A segment's items: its count's, the first segment's first where none needs any (the phase goes on).
+                uint32_t m = none != 0u && g == 0u ? 1u : seg_items(&segs[s0 + g]);
+                for (uint32_t i = l; i < m; i += JOIN_TG)
+                    if (!ukl_wq_push(q, segs[s0 + g].first + i)) ukl_atomic_or(&ctl[6], 1u);
+            }
         }
         ukl_tg_barrier_device();
         if (l == 0u && got == 2u) ukl_wq_done(q);

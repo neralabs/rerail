@@ -1884,6 +1884,7 @@ impl Batch {
         job.desc.l = job.reach(&s, 0, false)?;
         job.desc.o = job.reach(&d, 0, true)?;
         job.desc.totals = job.reach(&totals, 0, false)?;
+        job.rows = count.map(|(slot, _)| (job.desc.totals + 4 * slot as u64, 0));
         job.count = n;
         job.span = Some(if at_len || live { (job.desc.o, 0, dst_rows.max(dst_off + n)) } else { (job.desc.o, dst_off, dst_off + n) });
         let mut reads = vec![job.desc.l];
@@ -2172,16 +2173,28 @@ impl Batch {
         let rows_a_group = rerail_accel::gpu::join::GROUP as usize / simd_group();
         let job_phase = |prog: &mut Program, kinds: &[(JobKind, u32, fn(&Job) -> usize)]| {
             let mut items = Vec::new();
+            let mut segs = Vec::new();
             for (i, j) in jobs.iter().enumerate() {
                 for &(k, what, threads) in kinds {
                     // A fold's map left as it is has no pass to empty or grow it.
                     if j.kind == k && !(k == JobKind::Lattice && threads(j) == 0) {
                         let n = if what == PK_ROW_TEXT { threads(j).div_ceil(rows_a_group).max(1) } else { groups(threads(j)) };
+                        // Its items as many as its rows' count needs, where its kernel's threads past them do nothing;
+                        // else all of them (`per` 0).
+                        let (count, per, plus) = match j.rows_word().filter(|_| ROWS_ITEMS.contains(&what)) {
+                            Some((count, plus)) => (count, rerail_accel::gpu::join::GROUP as u32, plus),
+                            None => (0, 0, 0),
+                        };
+                        segs.push(SegAt { first: items.len() as u32, items: n as u32, count, per, plus });
                         items.extend((0..n).map(|g| (what, (first_job + i) as u32, g as u32)));
                     }
                 }
             }
-            prog.phase(items);
+            // A phase whose jobs all take every item pushes them as a phase without segments does.
+            if segs.iter().all(|g| g.per == 0) {
+                segs.clear();
+            }
+            prog.phase_of(items, segs);
         };
         job_phase(prog, &[(JobKind::Gate, PK_GATE, |j| j.count), (JobKind::Sum, PK_SUM, |j| j.count), (JobKind::Round, PK_ROUND, |j| j.count)]);
         job_phase(prog, &[(JobKind::Copy, PK_COPY, |j| j.count)]);
@@ -2285,6 +2298,7 @@ impl Batch {
         let descs = bytes(as_bytes(&prog.descs))?;
         let items = bytes(as_bytes(&prog.items))?;
         let phases = bytes(as_bytes(&prog.phases))?;
+        let segs = bytes(as_bytes(&prog.segs))?;
         let scan_levels = bytes(as_bytes(&scans))?;
         let sorts = bytes(as_bytes(&prog.sorts))?;
         // A group an item at most, a few rounds' where it runs rounds (`round_end`): a group that finds nothing to
@@ -2295,14 +2309,14 @@ impl Batch {
         let capacity = rounds * prog.phases.iter().map(|p| p[1] as usize).sum::<usize>() + workers;
         let format = prog.format.unwrap_or_else(run_view_format);
         self.done.levels += prog.levels;
-        let kit = Kit { descs, items, phases, scans: scan_levels, sorts, counts, phase_items: prog.phases, capacity, workers, format, uses: prog.uses, hold: prog.hold };
+        let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, counts, phase_items: prog.phases, capacity, workers, format, uses: prog.uses, hold: prog.hold };
         self.launch(kit, 0)
     }
 
     /// One launch of `join_run` over `kit`'s program from its phase `first` (its first, or where a round yielded).
     fn launch(&mut self, kit: Kit, first: usize) -> Result<(), Error> {
         let nphases = kit.phase_items.len();
-        let ctl = Words::zeroed(10 + nphases)?;
+        let ctl = Words::zeroed(10 + 2 * nphases)?;
         let slots = Words::zeroed(kit.capacity)?;
         let pipe = program_pipe(kit.format)?;
         let args: Vec<u8> = [nphases as u32, kit.capacity as u32, kit.phase_items[first][1], first as u32].iter().flat_map(|w| w.to_ne_bytes()).collect();
@@ -2324,11 +2338,11 @@ impl Batch {
         pass.use_read_write(&kit.counts.buffer);
         pass.run_bytes_at(
             &pipe,
-            &[(&kit.descs.buffer, 0), (&kit.items.buffer, 0), (&kit.phases.buffer, 0), (&kit.scans.buffer, 0), (&kit.sorts.buffer, 0), (&ctl.buffer.buffer, 0), (&slots.buffer.buffer, 0), (&kit.counts.buffer, 0)],
+            &[(&kit.descs.buffer, 0), (&kit.items.buffer, 0), (&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&kit.scans.buffer, 0), (&kit.sorts.buffer, 0), (&ctl.buffer.buffer, 0), (&slots.buffer.buffer, 0), (&kit.counts.buffer, 0)],
             &args,
             kit.workers,
         );
-        self.programs.push(Ran { ctl, last: nphases - 1, items: kit.phase_items[nphases - 1][1], kit });
+        self.programs.push(Ran { ctl, last: nphases - 1, phases: nphases, items: kit.phase_items[nphases - 1][1], kit });
         Ok(())
     }
 
@@ -2338,6 +2352,11 @@ impl Batch {
         for r in std::mem::take(&mut self.programs) {
             let flags = r.ctl.get(6);
             let (overflow, done) = (flags & 1 != 0 || r.ctl.get(3) != 0, r.ctl.get(10 + r.last));
+            // Its last phase's items as pushed: its segments' (0: all of them).
+            let want = match r.ctl.get(10 + r.phases + r.last) {
+                0 => r.items,
+                w => w,
+            };
             // A gate stopped it: its phases after the gate are undone, as the caller asked.
             if !overflow && flags & 2 != 0 {
                 self.done.stopped = true;
@@ -2353,8 +2372,8 @@ impl Batch {
                 }
                 continue;
             }
-            if overflow || done != r.items {
-                eprintln!("rerail: a join program left undone (decision 0603): its last phase {done} of {} items, overflow {overflow}", r.items);
+            if overflow || done != want {
+                eprintln!("rerail: a join program left undone (decision 0603): its last phase {done} of {want} items, overflow {overflow}");
                 whole = false;
             }
         }
@@ -2414,11 +2433,12 @@ struct Kit {
     descs: Held,
     items: Held,
     phases: Held,
+    segs: Held,
     scans: Held,
     sorts: Held,
     counts: Held,
-    /// Each phase's first item and its items.
-    phase_items: Vec<[u32; 2]>,
+    /// Each phase's first item, its items and its segments (`Program::phases`).
+    phase_items: Vec<[u32; 4]>,
     capacity: usize,
     workers: usize,
     format: u32,
@@ -2462,6 +2482,24 @@ const PK_LAT_MERGE: u32 = 25;
 const PK_SUM: u32 = 26;
 const PK_GATE: u32 = 27;
 const PK_ROUND: u32 = 28;
+/// The phases whose items are their jobs' rows' (`Job::rows_word`): each kernel's threads past its rows do nothing.
+/// Not a row's text (its SIMD groups stride its rows), an index (its sort is of every key), a clear, a fold's map or
+/// places, a scan's or a sort's tiles.
+const ROWS_ITEMS: [u32; 13] = [PK_COPY, PK_MAP, PK_DEDUP_CLAIM, PK_STAGE_COUNT, PK_SCAN_COUNT, PK_WITNESS_COUNT, PK_DEDUP_MARK, PK_STAGE_SCATTER, PK_SCAN_SCATTER,
+                               PK_ROW_SCATTER, PK_DEDUP_SCATTER, PK_LAT_CLAIM, PK_LAT_BEST];
+
+/// A job's items in a phase as many as a count on the device needs (`join_stages`' `Seg`).
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SegAt {
+    count: u64,
+    first: u32,
+    items: u32,
+    per: u32,
+    plus: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<SegAt>() == 24);
 
 /// A batch's program (decision 0603): the levels flushed since its last launch, as phases of items (`Item`: a group
 /// of a job's, a scan level's or a sort pass's work), run by one launch of `join_run`. A phase's items follow the
@@ -2470,8 +2508,10 @@ const PK_ROUND: u32 = 28;
 struct Program {
     descs: Vec<JobDesc>,
     items: Vec<[u32; 4]>,
-    /// Each phase's first item and its items.
-    phases: Vec<[u32; 2]>,
+    /// Each phase's first item, its items, its first segment and its segments.
+    phases: Vec<[u32; 4]>,
+    /// The phases' segments (`SegAt`): a job's items as many as its rows need.
+    segs: Vec<SegAt>,
     scans: Vec<ScanAt>,
     sorts: Vec<SortPass>,
     /// Its counts' words: each level's, and one past each for its total.
@@ -2490,11 +2530,18 @@ struct Program {
 impl Program {
     /// A phase of `items` (`(kind, which, group)`), after the ones before; none for no items.
     fn phase(&mut self, items: Vec<(u32, u32, u32)>) {
+        self.phase_of(items, Vec::new());
+    }
+
+    /// `phase`, with segments of its items (`SegAt`, their firsts its own): pushed as many as their counts need.
+    fn phase_of(&mut self, items: Vec<(u32, u32, u32)>, segs: Vec<SegAt>) {
         if items.is_empty() {
             return;
         }
         let p = self.phases.len() as u32;
-        self.phases.push([self.items.len() as u32, items.len() as u32]);
+        let base = self.items.len() as u32;
+        self.phases.push([base, items.len() as u32, self.segs.len() as u32, segs.len() as u32]);
+        self.segs.extend(segs.into_iter().map(|g| SegAt { first: base + g.first, ..g }));
         self.items.extend(items.into_iter().map(|(kind, which, group)| [kind << 24 | which, group, p, 0]));
     }
 
@@ -2584,6 +2631,7 @@ const _: () = assert!(std::mem::size_of::<SortPass>() == 64);
 struct Ran {
     ctl: Words,
     last: usize,
+    phases: usize,
     items: u32,
     kit: Kit,
 }
@@ -2701,6 +2749,8 @@ struct Job {
     lattice: [usize; 2],
     /// A copy's rows written: its destination's address, and its rows from and to.
     span: Option<(u64, usize, usize)>,
+    /// A copy's or a fold's rows' count on the device, and the threads past it its grids take (`Job::rows_word`).
+    rows: Option<(u64, u32)>,
     /// The buffers it reaches by address, each with whether it writes them.
     uses: Vec<(Buffer, bool)>,
     /// The tables it reads and writes, by address: its order against the jobs queued before it.
@@ -2729,6 +2779,7 @@ impl Job {
             buckets: 0,
             lattice: [0; 2],
             span: None,
+            rows: None,
             uses: Vec::new(),
             reads: Vec::new(),
             writes: Vec::new(),
@@ -2741,6 +2792,20 @@ impl Job {
         let a = address(b)?;
         self.uses.push((b.clone(), write));
         Ok(a + at)
+    }
+
+    /// Where its rows' count lies on the device, and the threads past it its grids take: its phases' items are that
+    /// count's (`Seg`, decision 0603 step 5). Its input table's (`totals[in]`), a live relation's length (a scan of
+    /// it), a copy's or a fold's count; none where its grids are its bound's.
+    fn rows_word(&self) -> Option<(u64, u32)> {
+        match self.kind {
+            JobKind::Stage | JobKind::Witness | JobKind::Row => Some((self.desc.totals + 4 * u64::from(self.stage.in_slot), 1)),
+            JobKind::Map => Some((self.desc.totals + 4 * u64::from(self.stage.in_slot), 0)),
+            JobKind::Scan if self.stage.r_len != 0 => Some((self.desc.r + self.stage.r_at + REL_ROWS + ROWS_LEN, 1)),
+            JobKind::Dedup => self.dedup.map(|d| (self.desc.totals + 4 * u64::from(d[1]), 1)),
+            JobKind::Copy | JobKind::Lattice => self.rows,
+            _ => None,
+        }
     }
 
     /// The tables it reads and writes (their addresses).
@@ -3363,6 +3428,7 @@ impl Batch {
         if let Some((w, slot)) = count {
             let wa = job.reach(&w.buffer.buffer, 0, false)?;
             job.desc.cnt = wa + 4 * slot as u64;
+            job.rows = Some((job.desc.cnt, 0));
             reads.push(wa);
         }
         job.p = Some(lat_bytes(&p).to_vec());

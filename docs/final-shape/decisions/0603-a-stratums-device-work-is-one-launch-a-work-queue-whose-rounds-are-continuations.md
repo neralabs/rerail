@@ -179,3 +179,44 @@ rows double each round) stops at a gate about once a round. The fix is to read a
 device, not from the host's bounds: the finisher pushes the items the count needs, at most the phase's. A dedup's
 places come from the same count. Then a program's tables and relations can hold its launch's rounds (their room is
 address space), and the work is the rows'.
+
+## Step 5: a program's sizes are the device's (decided 2026-11-22)
+
+The user's choice, over sizing tables for the rounds ahead from the growth seen (a model, with host reruns kept) and
+over leaving the reruns as they were. A program's tables and its phases' work are sized on the device by the counts
+its phases just made, not by bounds the host chose when it encoded the program. Its memory and its work follow the
+rows. The only room left to run out of is its arena's, the one gate.
+
+- **A phase's items are a count's** (5a). Each job of a phase pushes as many of its items as a count on the device
+  needs: its input table's rows (`totals[in]`), its relation's rows as claimed, or its copy's count. At most the
+  items encoded, and at least one, so the phase goes on. The finisher pushes them, and the phase's target is their
+  sum (`ctl`). A phase without a count pushes all its items, as now.
+- **A level's counts lie at offsets the device gives** (5b). Each job's counts start at a scan tile, and the level's
+  scan runs the tiles its jobs' counts need. A job reads its offsets less its first, so tiles past its rows, which
+  hold another round's sums, never change them.
+- **Tables are allocated on the device** (5c). A program has an arena. At each level, a phase after the scan claims
+  each table's room from its total: its rows, and so its columns' stride. Each table has a descriptor (its offset and
+  its stride) that every kernel reads, in place of a host's `cap`. The arena is emptied at each round's end. The
+  tables' gate becomes one on the arena's room. Past it, the host makes the arena larger and runs again from the
+  round, the one rerun left.
+- **A dedup's and a fold's places are a count's** (5d): a power of two of twice the rows, and their mask with it.
+- **A live relation's index sorts its rows as claimed** (5e): the radix passes' tiles and its keys a count's.
+
+Each sub-step keeps the setfix device tests passing on the CPU backend and on Metal. The closure test then asserts
+its launches: fewer than its rounds.
+
+### Done (2026-11-22): 5a, a phase's items are a count's
+
+- **A phase's jobs carry segments** (`SegAt`, `join_stages`' `Seg`, the program's `segs` buffer). Each segment is a
+  job's items, with where its rows' count lies (`Job::rows_word`):
+  - a stage's, a witness's, a map's, a row scatter's or a dedup's input table (`totals[in]`);
+  - a scan's live relation's length;
+  - a copy's or a fold's count.
+
+  Its finisher pushes `ceil((count + plus) / GROUP)` of a segment's items, at most them. A job of no count (a row's
+  text, whose SIMD groups stride its rows; an index; a clear) takes all its items (`per` 0). A phase of no counts has
+  no segments. The phase's target is what was pushed (`ctl[10 + phases + p]`), at least one item.
+- **A kernel's counts past its rows may be another round's.** A job reads its offsets less its first, so they never
+  change its own. Its total is its rows' offsets (`dedup_scatter_one` and `scan_scatter_one` now read at their rows,
+  not their caps).
+- **Measured:** spark2's CPU backend, 45 of 45 (76 s); the mini's Metal, 32 of 32.
