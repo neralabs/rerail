@@ -1582,9 +1582,11 @@ export interface FirstSightListing {
   /**
    * The files whose text may differ from what the commit `head` holds: those `ls-files --modified --others` printed,
    * which compares each file with the index, and those whose index entry differs from `head`'s tree (`diff-index
-   * --cached`). Every other file holds what the index holds, and the index what `head` holds. Undefined when either
-   * listing failed or ran past its time limit, without `head`, and when `HEAD`'s newest move is a commit
-   * (`headMovedOnlyByCommits` with no `from`): that commit may hold what a command wrote.
+   * --cached`). Every other file holds what the index holds, and the index what `head` holds, but a file marked
+   * assume-unchanged or skip-worktree: the first listing leaves it out whatever it holds. Undefined when either listing
+   * failed or ran past its time limit, without `head`, and when `HEAD`'s newest move is a commit
+   * (`headMovedOnlyByCommits` with no `from`): that commit may hold what a command wrote. A reflog Git cannot read counts
+   * as a newest move that is no commit, as the session's reading of `HEAD`'s moves takes it.
    */
   readonly notAtHead: string[] | undefined;
 }
