@@ -324,6 +324,7 @@ native/crates/registry/src/lib.rs::FORMAT	stays	a test's own slot (the slot type
 native/crates/registry/src/lib.rs::GPU	stays	a zero-sized provider (the GPU device's name): a constant, registered at load
 native/crates/corpus_memo/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/corpus_prep/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/device_metal/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/planner/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/setfix/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/typing/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)

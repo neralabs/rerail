@@ -450,6 +450,10 @@ impl Source for LongTexts {
     fn len(&self) -> usize {
         self.nodes.len()
     }
+    /// The nodes' estimate, made of no rows (`Source::estimated_len`'s default is `len`, which makes them).
+    fn estimated_len(&self) -> usize {
+        self.nodes.estimated_len()
+    }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.nodes.estimated_matches(column, batch)
     }
@@ -3642,6 +3646,12 @@ impl Batch {
             }
             _ => Vec::new(),
         };
+        // What each of the batch's relations holds (0353 step 3's row 7 is these rows): its bytes of values, by name.
+        if crate::code_rule_dsl::logic::profile::on() {
+            for (name, r) in &relations {
+                crate::code_rule_dsl::prof::count_named(format!("batch relation {name} (bytes of values)"), 8 * Source::len(r) * Source::columns(r).len());
+            }
+        }
         Ok(made::Made { relations, matched, waved, read: made, strings_from })
     }
 

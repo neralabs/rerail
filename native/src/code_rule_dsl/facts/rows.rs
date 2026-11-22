@@ -2464,9 +2464,155 @@ impl std::fmt::Debug for Row {
     }
 }
 
+/// A set of row ids found by their rows' hashes, in a block (decision 0353): what keeps a relation's each row once
+/// (an export's rows, `plan::corpus::exports`), as a `hashbrown::HashTable<u32>` does, with no entry on the heap. The
+/// caller gives each hash: a row's when it is looked up or put in, an id's (`hash_of`) when the set grows or moves an
+/// entry back past a removed one. Open addressing by linear probes, at most three quarters full; a slot holds its id
+/// plus one (0: empty).
+#[derive(Clone, Default)]
+pub struct IdSet {
+    slots: BlockVec<u32>,
+    len: usize,
+}
+
+impl IdSet {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// How many ids it holds.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The slot a hash starts its probe at.
+    fn home(&self, h: u64) -> usize {
+        let bits = self.slots.len().trailing_zeros();
+        (h.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - bits)) as usize
+    }
+
+    /// The slot of the id hashed `h` that `eq` takes.
+    fn position(&self, h: u64, eq: impl Fn(u32) -> bool) -> Option<usize> {
+        if self.slots.is_empty() {
+            return None;
+        }
+        let mask = self.slots.len() - 1;
+        let mut i = self.home(h);
+        loop {
+            match self.slots[i] {
+                0 => return None,
+                s if eq(s - 1) => return Some(i),
+                _ => i = (i + 1) & mask,
+            }
+        }
+    }
+
+    /// The id hashed `h` that `eq` takes, if it holds one.
+    pub fn find(&self, h: u64, eq: impl Fn(u32) -> bool) -> Option<u32> {
+        self.position(h, eq).map(|i| self.slots[i] - 1)
+    }
+
+    /// Puts in `id`, hashed `h`, which it does not hold.
+    pub fn insert_unique(&mut self, h: u64, id: u32, hash_of: impl Fn(u32) -> u64) {
+        assert!(id < u32::MAX, "an id past the set's");
+        if 4 * (self.len + 1) > 3 * self.slots.len() {
+            self.grow(&hash_of);
+        }
+        let mask = self.slots.len() - 1;
+        let mut i = self.home(h);
+        while self.slots[i] != 0 {
+            i = (i + 1) & mask;
+        }
+        self.slots[i] = id + 1;
+        self.len += 1;
+    }
+
+    /// Twice the slots (16 at first), each id put in again by its hash.
+    fn grow(&mut self, hash_of: &impl Fn(u32) -> u64) {
+        let n = (2 * self.slots.len()).max(16);
+        let mut slots = BlockVec::with_capacity_in(None, n);
+        slots.resize(n, 0);
+        let old = std::mem::replace(&mut self.slots, slots);
+        let mask = n - 1;
+        for &s in old.iter().filter(|&&s| s != 0) {
+            let mut i = self.home(hash_of(s - 1));
+            while self.slots[i] != 0 {
+                i = (i + 1) & mask;
+            }
+            self.slots[i] = s;
+        }
+    }
+
+    /// Takes out the id hashed `h` that `eq` takes: the ids probed past it move back so that each is found from its
+    /// hash's slot. The id, if it held one.
+    pub fn remove(&mut self, h: u64, eq: impl Fn(u32) -> bool, hash_of: impl Fn(u32) -> u64) -> Option<u32> {
+        let mut gap = self.position(h, eq)?;
+        let id = self.slots[gap] - 1;
+        let mask = self.slots.len() - 1;
+        let mut j = gap;
+        loop {
+            j = (j + 1) & mask;
+            let s = self.slots[j];
+            if s == 0 {
+                break;
+            }
+            // An id whose probe starts in (gap, j] stays; any other was probed past the gap, and moves into it.
+            let k = self.home(hash_of(s - 1));
+            let stays = if gap <= j { gap < k && k <= j } else { gap < k || k <= j };
+            if !stays {
+                self.slots[gap] = s;
+                gap = j;
+            }
+        }
+        self.slots[gap] = 0;
+        self.len -= 1;
+        Some(id)
+    }
+
+    /// The id hashed `h` that `eq` takes, now `id` (a row moved to another id): whether it held it.
+    pub fn replace(&mut self, h: u64, eq: impl Fn(u32) -> bool, id: u32) -> bool {
+        match self.position(h, eq) {
+            Some(i) => {
+                self.slots[i] = id + 1;
+                true
+            }
+            None => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An id set in a block (`IdSet`) finds each id by its row's hash through growth, removals that move ids probed
+    /// past the removed one back, and an id replaced; ids whose hashes collide are told apart by their rows.
+    #[test]
+    fn an_id_set_finds_each_id_through_growth_and_removals() {
+        // Rows are their ids' values; a hash of 8 values only, so many collide.
+        let row = |id: u32| u64::from(id) * 7 + 1;
+        let hash = |id: u32| row(id) % 8;
+        let mut set = IdSet::new();
+        for id in 0..3000u32 {
+            assert_eq!(set.find(hash(id), |i| row(i) == row(id)), None);
+            set.insert_unique(hash(id), id, hash);
+        }
+        assert_eq!(set.len(), 3000);
+        for id in (0..3000u32).step_by(3) {
+            assert_eq!(set.remove(hash(id), |i| row(i) == row(id), hash), Some(id));
+        }
+        assert_eq!(set.len(), 2000);
+        for id in 0..3000u32 {
+            let want = (id % 3 != 0).then_some(id);
+            assert_eq!(set.find(hash(id), |i| row(i) == row(id)), want, "id {id}");
+        }
+        assert!(set.replace(hash(1), |i| i == 1, 1));
+        assert!(!set.replace(hash(0), |i| i == 0, 0), "a removed id is not held");
+    }
 
     thread_local! {
         /// The allocator's net counter, for these tests: a test moves it as its "work" allocates.
