@@ -126,8 +126,10 @@ type AuditReadRow = Omit<AuditRow, StoredList> & Record<StoredList, string> & { 
 type AuditLists = Pick<AuditRecord, StoredList>;
 
 /**
- * The failure an audit lists before its own when the text the database holds for `list` is not a JSON array: the CHECK
- * on each table that holds one refuses such text on insert, so only a damaged file or a hand edit leaves it.
+ * The failure an audit lists before its own when the text the database holds for `list` is not a JSON array. A CHECK
+ * refuses such text for the rule provenance (in `audits` and in `audit_rule_provenances`), the paths, the violations and
+ * the failures; none holds the rule revisions, which Rerail only ever writes as an array. So only a damaged file or a
+ * hand edit leaves it.
  */
 function unreadable(list: StoredList): AuditFailure {
   const { clauseId, name, plural } = STORED_LISTS[list];
@@ -155,8 +157,10 @@ function parsedList(text: string): unknown[] | string {
 const NAMED_UNREADABLE = new Set<string>();
 
 /**
- * The line that names `row`'s audit and where its damaged `list` text is, once for each such text: the daemon's stderr
- * is `daemon.log`. Every audit naming a damaged stored copy of a rule provenance reads it, so the line names the copy's row.
+ * The line that names `row`'s audit and where its damaged `list` text is, once for each such text, on the stderr of the
+ * process that read it: `daemon.log` for the API and a coding agent's `audits_list`, the command's own error output for
+ * `rerail support-bundle`. Every audit naming a damaged stored copy of a rule provenance reads it, so the line names the
+ * copy's row.
  */
 function sayUnreadable(database: RerailDatabase, row: AuditReadRow, list: StoredList, why: string): void {
   const copy = list === "ruleProvenance" ? row.ruleProvenanceId : null;
