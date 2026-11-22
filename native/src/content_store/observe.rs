@@ -2816,10 +2816,12 @@ mod tests {
         aged(&source);
         let content = root.join("store.sqlite");
         let out = root.join("out");
-        // What a run writes of its own: the store and the files beside it, and its outputs.
+        // What a run writes of its own: the store and the files beside it (a real store's: the observer keeps its
+        // answers in it, t33 K2), and its outputs.
         let own_writes = |n: u32| {
-            std::fs::write(&content, format!("store {n}")).unwrap();
-            std::fs::write(root.join("store.sqlite-wal"), format!("wal {n}")).unwrap();
+            let written = crate::content_store::ContentStore::open(&content).unwrap();
+            written.put_source(format!("store {n}").as_bytes(), &[]).unwrap();
+            drop(written);
             std::fs::write(root.join("store.sqlite.upkeep"), format!("frames\t{n}\n")).unwrap();
             std::fs::create_dir_all(&out).unwrap();
             std::fs::write(out.join("rr_diagnostic.csv"), format!("{n}\n")).unwrap();
@@ -2999,7 +3001,6 @@ mod tests {
         assert_eq!((kept(&file), kept(&other), canon), (1, 1, 1), "the files' answers and the canonical form are kept");
         let cursors = meta_keys(&store, "journal:");
         assert!(cursors.iter().all(|k| !k.ends_with("/lib")), "one cursor, the outer root's: {cursors:?}");
-        drop(db);
         let _ = std::fs::remove_dir_all(&base);
     }
 
