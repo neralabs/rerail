@@ -2874,6 +2874,9 @@ export class CodeRuleBridge {
 
   /** One walk of the session folder; the other worktrees' walk is shared (`#scheduleWorktreeWalk`), and neither changes what the other owns. */
   async #walkSources(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): Promise<void> {
+    const auditor = this.#auditor;
+    // What the worktrees' list asks Git is learnt first, as a process no thread waits on, so the list below starts none.
+    if (auditor.learnWorktreeRoots !== undefined) await discovery.git.run(async signal => await auditor.learnWorktreeRoots?.(signal));
     const worktrees = this.#syncWorktrees(discovery);
     const walk: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
