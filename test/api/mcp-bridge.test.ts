@@ -256,7 +256,7 @@ describe("Rerail MCP bridge", () => {
     const restarted = async (machine: Machine): Promise<Response> => {
       machine.listeners.delete(51_234);
       machine.listeners.set(52_345, process.pid);
-      await recordDaemon(machine.home, { pid: process.pid, port: 52_345, startedAt: 1 });
+      await recordDaemon(machine.home, { pid: process.pid, port: 52_345, startedAt: 2 });
       throw new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) });
     };
     const run = await runBridge([first, second], [restarted, new Response(pong, { status: 200 })], {
@@ -314,7 +314,7 @@ describe("Rerail MCP bridge", () => {
     const second = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
     const pongs = [1, 2].map(id => JSON.stringify({ jsonrpc: "2.0", id, result: {} }));
     const restartedInPlace = async (machine: Machine): Promise<Response> => {
-      await recordDaemon(machine.home, { pid: process.pid, port: 4321, startedAt: 1 });
+      await recordDaemon(machine.home, { pid: process.pid, port: 4321, startedAt: 2 });
       return new Response(pongs[0], { status: 200 });
     };
     const run = await runBridge([first, second], [restartedInPlace, new Response(pongs[1], { status: 200 })]);
