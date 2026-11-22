@@ -218,21 +218,29 @@ describe("Rerail daemon control", () => {
   }
 
   /**
-   * A daemon of this process's pid that daemon.json records and that holds the home in its start (`holdHomeStarting`):
-   * its health answers 503, as one in its start does not answer, until `answer()`.
+   * A daemon of this process's pid that daemon.json records, with `state` over what it says, and that holds the home in
+   * its start (`holdHomeStarting`): its health answers 503, as one in its start does not answer, until `answer(pid)`,
+   * after which daemon.json names `pid`, this process's unless given, and its health answers as `pid`.
    */
-  async function recordedStartingDaemon(): Promise<{ answer: () => void; close: () => void }> {
-    let answers = false;
+  async function recordedStartingDaemon(state: Partial<DaemonState> = {}): Promise<{ answer: (pid?: number) => void; close: () => void }> {
+    let answers: number | undefined;
     const server = createHttpServer((_request, response) => {
-      response.writeHead(answers ? 200 : 503, { "content-type": "application/json" });
-      response.end(JSON.stringify({ status: "ok", pid: process.pid }));
+      response.writeHead(answers === undefined ? 503 : 200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ status: "ok", pid: answers ?? process.pid }));
     });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
-    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: process.pid, url: `http://127.0.0.1:${port}/`, port })));
+    const record = (pid: number): void => writeFileSync(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid, url: `http://127.0.0.1:${port}/`, port, ...state })));
+    record(process.pid);
     await holdHomeStarting(process.pid);
-    return { answer: () => { answers = true; }, close: () => server.close() };
+    return {
+      answer: (pid = process.pid) => {
+        record(pid);
+        answers = pid;
+      },
+      close: () => server.close(),
+    };
   }
 
   /** The home's lock as a daemon that takes it between a start's looks: free for the first `free` asks, held after. */
@@ -349,6 +357,58 @@ describe("Rerail daemon control", () => {
       await startDaemon({ home, packageRoot: "/nowhere/rerail", onWaiting }, { dev: true }, { ...posix, homeDaemonLockHeld: () => true });
       expect(claimed).toEqual([String(process.pid)]);
       expect(existsSync(claim)).toBe(false);
+    } finally {
+      daemon.close();
+    }
+  });
+
+  // The start a hook makes before it sends its settings replaces a running daemon of another package. One found in its
+  // start that answers as another package's is replaced the same way, once it answers, never used.
+  it("replaces a daemon of another package found in its start once it answers, as it replaces a running one", async () => {
+    const daemon = await recordedStartingDaemon({ packageRoot: "/older/rerail" });
+    let stopped = false;
+    const signals: string[] = [];
+    const kill = (pid: number, signal?: string | number): true => {
+      if (pid === process.pid && stopped) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      if (signal === "SIGTERM") signals.push(`${pid} ${signal}`);
+      stopped ||= signal === "SIGTERM";
+      return true;
+    };
+    const launched: number[] = [];
+    const launch = (): StartedChild => {
+      const child = Object.assign(new EventEmitter(), { pid: 4242, unref() {} });
+      launched.push(child.pid);
+      setImmediate(() => child.emit("exit", 3, null));
+      return child;
+    };
+    const machine = fakeMachine("linux", { kill, homeDaemonLockHeld: () => !stopped, spawn: launch });
+    const control = { home, packageRoot: "/nowhere/rerail", onWaiting: () => daemon.answer(), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    try {
+      await expect(startDaemonForPackage(control, { dev: true }, machine)).rejects.toThrow("Rerail daemon exited with code 3 before it was ready");
+      expect(signals).toEqual([`${process.pid} SIGTERM`]);
+      expect(launched).toEqual([4242]);
+    } finally {
+      daemon.close();
+    }
+  });
+
+  // A start looks again once the daemon it found in its start answers, and waits for one in its start that look finds,
+  // but for no more: daemons that take the home one after another cannot keep it waiting.
+  it("waits for one more daemon found in its start once the first answers, and for no third", async () => {
+    const daemon = await recordedStartingDaemon();
+    const following = [process.pid + 1, process.pid + 2];
+    const told: number[] = [];
+    const onWaiting = (pid: number): void => {
+      told.push(pid);
+      daemon.answer(pid);
+      // By the next look another daemon holds the home in its start, while one follows.
+      const next = following.shift();
+      writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify(next === undefined ? { pid } : { pid: next, starting: true }));
+    };
+    try {
+      const result = await startDaemon({ home, packageRoot: "/nowhere/rerail", onWaiting }, { dev: true }, fakeMachine("linux", { kill: () => true, homeDaemonLockHeld: () => true }));
+      expect(told).toEqual([process.pid, process.pid + 1]);
+      expect(result).toMatchObject({ started: false, daemon: { state: { pid: process.pid + 1 } } });
     } finally {
       daemon.close();
     }
