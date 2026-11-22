@@ -2575,3 +2575,20 @@ v(n) :- kind(n, \"assert_statement\").
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(got, [("c1".to_owned(), 1), ("c2".to_owned(), 1), ("c3".to_owned(), 1), ("v".to_owned(), 1)]);
 }
+
+/// The engine's Git programs (`git::SOURCE_CHECKS`, `ROOT_TREE`, `INVENTORY`) each read as one program, their library
+/// modules included by name and each read once: what each derives is declared, and so are the trailers `git.rerail`
+/// includes (`git/messages.rerail`, which includes `git.rerail` again).
+#[test]
+fn the_git_programs_read_their_library_once() {
+    for (name, text, derives) in [
+        ("source checks", super::git::SOURCE_CHECKS, "git_selected_source_blob"),
+        ("root tree", super::git::ROOT_TREE, "git_root_tree_error"),
+        ("inventory", super::git::INVENTORY, "inventory_error"),
+    ] {
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        for rel in [derives, "git_trailer", "git_tree_entry"] {
+            assert!(v.decl_of(rel).is_some(), "{name}: {rel} is not declared");
+        }
+    }
+}

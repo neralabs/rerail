@@ -406,16 +406,27 @@ struct SourceObservation {
 
 type SourceChecks = (std::collections::HashMap<String, SourceObservation>, std::collections::HashMap<String, String>);
 
+// The Git programs the engine runs. Each includes the library's modules by name, as a policy does (the library ships
+// beside the addon, `source_tree::rule_library`): a module pasted as text and also included by path, through another
+// module's include, is read twice.
+/// The selected sources' blobs checked against the pinned inventory (`source_checks`).
+pub const SOURCE_CHECKS: &str =
+    concat!("#include \"core.rerail\"\n#include \"git.rerail\"\n", include_str!("../../../typing/programs/git-source-objects.rerail"));
+/// A root's pinned tree, its settings and ignore files read from it (`prime_root`).
+pub const ROOT_TREE: &str =
+    concat!("#include \"core.rerail\"\n#include \"git.rerail\"\n", include_str!("../../../typing/programs/git-root-tree.rerail"));
+/// The filtered tree walk and each file's language (`inventory`).
+pub const INVENTORY: &str = concat!(
+    "#include \"core.rerail\"\n#include \"git.rerail\"\n#include \"source-language.rerail\"\n#include \"git/selected-tree.rerail\"\n",
+    include_str!("../../../typing/programs/git-inventory.rerail"),
+);
+
 fn source_checks(root: &Path, paths: &[String]) -> super::Result<SourceChecks> {
     use crate::code_rule_dsl::logic::plan::output::{Outputs, Value as Cell};
     if paths.is_empty() {
         return Ok(Default::default());
     }
-    let program = concat!(
-        include_str!("../../../../../../docs/rule-syntax/lib/core.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/git.rerail"), "\n",
-        include_str!("../../../typing/programs/git-source-objects.rerail"),
-    );
+    let program = SOURCE_CHECKS;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [], "gitSourcePaths": paths });
     let image = super::run_fact_image(program, root, &options)?;
     let outputs = Outputs::of(&image).map_err(super::Error::Plan)?;
@@ -520,11 +531,7 @@ pub fn prime_root(root: &Path) -> super::Result<Vec<[u8; 32]>> {
     if !snapshot::contains(root) || reads.as_deref().is_some_and(|reads| snapshot::root_observed(root, reads)) {
         return Ok(Vec::new());
     }
-    let program = concat!(
-        include_str!("../../../../../../docs/rule-syntax/lib/core.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/git.rerail"), "\n",
-        include_str!("../../../typing/programs/git-root-tree.rerail"),
-    );
+    let program = ROOT_TREE;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
     let (image, plans) = super::run_fact_image_planned(program, root, &options)?;
     let outputs = Outputs::of(&image).map_err(super::Error::Plan)?;
@@ -561,14 +568,7 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>, own
         super::Error::Cache(error) => InventoryError::Cache(error),
         other => InventoryError::Source(other.to_string()),
     })?;
-    // Installed addons have no source checkout. Embed the same library used by .rerail policies.
-    let program = concat!(
-        include_str!("../../../../../../docs/rule-syntax/lib/core.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/git.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/source-language.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/git/selected-tree.rerail"), "\n",
-        include_str!("../../../typing/programs/git-inventory.rerail"),
-    );
+    let program = INVENTORY;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
     let (image, mut plans) = super::run_fact_image_planned(program, root, &options).map_err(|error| match error {
         super::Error::Cache(error) => InventoryError::Cache(error),
