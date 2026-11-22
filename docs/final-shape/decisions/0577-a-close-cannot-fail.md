@@ -1,10 +1,9 @@
-# 0557: A close cannot fail where the room is reserved and every close is its open's
+# 0577: A close cannot fail where the room is reserved and every close is its open's
 
-Numbered 0547 where it was written (Parser-generators-final-shape); 0557 here, the hub's 0547 being another.
+Numbered 0547 where it was written (this branch); renumbered at the merge of the hub, which holds its own 0547.
 
 Status: done by the implementer. The item is the user's (2026-11-21, "please do these", the first): "an infallible
 close". How it is done is the implementer's choice. Follows 0544, which did `open` and `leaf`. Page 40, step 51.
-Numbered 0547 where it was written (Parser-generators-final-shape); 0557 here, the hub's 0547 being another.
 
 ## What was there
 

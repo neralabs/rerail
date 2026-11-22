@@ -1,8 +1,9 @@
-# 0559: The document's closer is checked before the walk
+# 0579: The document's closer is checked before the walk
+
+Numbered 0549 where it was written (this branch); renumbered at the merge of the hub, which holds its own 0549.
 
 Status: done by the implementer. The item is the user's (2026-11-21, "please do these", the fourth): "a test before
 the walk". How it is done is the implementer's choice. Follows 0546. Page 40, step 53.
-Numbered 0549 where it was written (Parser-generators-final-shape); 0559 here, the hub's 0549 being another.
 
 ## Correction to 0546
 

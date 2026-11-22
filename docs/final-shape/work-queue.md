@@ -10267,3 +10267,10 @@ A semi-join's statistics at its held nodes are theirs' kept rows beside the docu
 (`held_counted`, `held_stats_name`) is reversed, its gap closed by theirs. Theirs' worklist runs ours' `covered` and
 anchor fixpoints. The image store's `where_kept` joins ours' `images_store` in `rr.rs`, above the corpus it reads
 (`notes/roll-up-54-rr-align.md`).
+
+### Q476. Roll-up 55 (Parser-generators-final-shape d558cc0919 onto Pulling-it-all-together): what the merge chose
+
+Theirs' removal of the IR-to-Rust lowerings goes whole (`rerail-rust-stream`, `rerail-pp-aot`), and tier 2's facts
+and analyses are in theirs' place: the JIT's `native_cpu_facts` and `native_cpu_stream`. Engine-crating's
+`stream_analysis` and `stream_facts` were moves for the removed lowering's sake, so they go. The parser decisions
+are numbered as theirs, 0577-0579. Theirs' 0561 and 0570 become 0562 and 0569 (`notes/roll-up-55-parser-generators.md`).
