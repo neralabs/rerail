@@ -82,7 +82,11 @@ impl Room for AnonRoom {
         {
             return region_of(r, None);
         }
-        let b = Arc::new(Block::anon(crate::block::kind::FACTS, ANON_BLOCK.max(2 * bytes + 4096 + align)).with_free_list());
+        // Room for the chunk the free list takes for `bytes` (its class, a power of two), aligned to its size up to
+        // `ALIGN_MAX` past the block's first byte, and a page.
+        let size = crate::free::class_of(bytes).1;
+        let need = size + align.max(size.min(crate::free::ALIGN_MAX)) + 4096;
+        let b = Arc::new(Block::anon(crate::block::kind::FACTS, ANON_BLOCK.max(need)).with_free_list());
         let r = Mutable::alloc_aligned(&b, bytes, align, name).unwrap_or_else(|| panic!("a new block holds no {bytes} bytes for {name}"));
         *open = Some(b);
         region_of(r, None)
@@ -1292,6 +1296,17 @@ mod tests {
 
     fn room() -> Arc<dyn Room> {
         Arc::new(InBlock(Arc::new(Block::anon(kind::FACTS, 1 << 24).with_free_list())))
+    }
+
+    /// A region past half a new block's size, just over a power of two (the strings' table: 33,554,500 bytes), takes
+    /// a block of its own that holds the free list's chunk for it, aligned to its size.
+    #[test]
+    fn an_anonymous_room_holds_a_region_past_a_power_of_two() {
+        let room = AnonRoom::default();
+        for bytes in [(32 << 20) + 68, (64 << 20) + 1, 100] {
+            let r = room.region(bytes, 8, "a test's region");
+            assert_eq!(r.len(), bytes);
+        }
     }
 
     #[test]
