@@ -313,6 +313,35 @@ than x lanes of the group's are still running.
   lane's scalar one, high (3–4 of 8) for a loop of gathers. The first measure: the hand-vectorized `nearest_jump`
   going scalar at 2 lanes or fewer, on the deep forest.
 
+## Step 3, format 16's parent: written, by hand, measured
+
+`kernels/f16_parent.uglykl` is `clif_f16_parent` for every node; `parent_all_w8.rs` its Rust at 8 lanes, its values
+of 64 bits two registers of 2 lanes a register of 4 (`the_f16_parent_kernels_rust_is_the_checked_in_one`). The tests
+(`crates/ukl_aot`) read real tapes: JSON documents parsed by `rerail-json-aot` into the engine's format 16 writer,
+the host's `reads::f16::parent` the reference, every node of each, the written kernel at 5 group sizes. By hand
+(`hand.rs`): `parent_all`, the kernel's walks 8 lanes in lock-step, and `parent_all_scan`, not the kernel's
+algorithm: a walk's only state is its `j`, so a node whose walk steps to a sibling `j'` has `j'`'s parent, an answer
+made before (or a lane to its left, by 3 rounds of pointer jumping in registers); one slot read a node.
+
+What the documents' walks are: short (1.7 to 4.5 steps on average, never more than 8: a checkpoint every 8
+siblings steps to the parent), and at width 1 a checkpoint's step is escaped (its side list's, a binary search):
+a long array's walks visit one each. Times (`examples/parent_bench`, profiling build, M-series Mac at load 10–15):
+
+| Document | Nodes | Host | Walks by hand | Scan by hand | Written, W=8 |
+|---|---|---|---|---|---|
+| 40,000 records | 1.4 M | 6.1 ms | 10.7 ms | 3.0 ms | 18.9 ms |
+| 200,000 numbers | 200 k | 5.2 ms | 4.1 ms | 0.66 ms | 34.5 ms |
+| random values | 53 k | 0.41 ms | 0.67 ms | 0.18 ms | 1.25 ms |
+
+- **The walks don't pay in lock-step.** A walk is a few dependent steps; 8 lanes wait for the longest (1.8–2.3
+  times the steps), and a vector round's gathers are a load a lane anyway.
+- **The escape is the cost, and its search is where lanes run alone.** A chunk's lanes reach the same checkpoint in
+  different rounds, so each side read is one lane's. By hand: only live lanes' escapes (a done lane reads node 0's,
+  the root's, escaped), one lane's search the host's read, several lanes' searches interleaved (`side8`), and the
+  checkpoint read last kept in a register. Written: the call is under `if any` of live and escaped lanes, right, but
+  its search runs 8 lanes' loads for one lane, 8 times a chunk, the 7 times the host's time on the numbers. That is
+  the idea above (a scalar version below x lanes), its first case outside `nearest_jump`.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
