@@ -1202,6 +1202,8 @@ fn json_rusts_tapes_are_the_jits() {
         inputs.push(bom(format!("[\"{}\", 12, \"b\\n\"]", "x".repeat(k)).as_bytes()));
         inputs.push(bom(format!("[{}1\"a\"]", " ".repeat(k)).as_bytes()));
         inputs.push(bom(format!("[\"{}", "x".repeat(k)).as_bytes()));
+        inputs.push(format!("[\"{}", "x".repeat(k)).into_bytes());
+        inputs.push(format!("[\"{}\"]", "x".repeat(k)).into_bytes());
     }
     let (mut same, mut refused) = (0, 0);
     for (k, f) in inputs.iter().enumerate() {
@@ -1342,9 +1344,10 @@ fn json_tier1_masks_are_block_locals() {
     assert!(!stage1.contains("lv"), "a mask of the file's bits:\n{stage1}");
     assert!(stage1.contains("let off = if src.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };\n    let nw = (n - off).div_ceil(64);"), "the blocks after the mark");
     // The words read past their block's code: `nonquote_scalar`, for the block before's (`follows`; a local of its
-    // code there), and the string open at the end's `in_string` (the region's `f_str`, as the grammar names it).
+    // code there). The string open at the end is the toggle's carry out of the last block (simdjson's `finish`,
+    // `prev_in_string != 0`): `in_string`'s word, as the grammar names the region's `f_str`, is its block's.
     let outer: Vec<&str> = stage1.lines().filter(|l| l.starts_with("    let mut v_") || l.starts_with("    let mut p_")).collect();
-    assert_eq!(outer, ["    let mut v_m_in_string = 0u64;", "    let mut v_m_nonquote_scalar = 0u64;"]);
+    assert_eq!(outer, ["    let mut v_m_nonquote_scalar = 0u64;"]);
     assert!(stage1.contains("            let p_m_nonquote_scalar = v_m_nonquote_scalar;\n"), "the block before's `nonquote_scalar`, a local");
     // The string and token masks are `index`'s (`json_scanner`, `json_string_scanner`): `scalar`, `nonquote_scalar`,
     // `follows`, `string_tail`, and the records `structural_start` itself (proved equal to the tokens' starts but where
@@ -1365,7 +1368,7 @@ fn json_tier1_masks_are_block_locals() {
         assert!(!stage1.contains(name), "stage 1 still makes `{name}`");
     }
     let after = stage1.split("\n    }\n").nth(1).expect("after the pass");
-    assert!(after.contains("// a string open at the end of the file: at the file's last byte, once"), "the end's test after the pass:\n{after}");
+    assert!(after.contains("// a string open at the end of the file: the toggle carried out of the file's last block, once (simdjson's `finish`).\n    refused |= c_m_in_string != 0;"), "the end's test after the pass:\n{after}");
     assert!(!stage1.contains("last_byte"), "no mask of the last byte");
     // The errors' bits ORed into one word, tested once after the pass (`index`'s `unescaped_chars_error`).
     assert!(stage1.contains("            errors |= v_t2;\n") && after.contains("    refused |= errors != 0;\n"), "the errors tested once");

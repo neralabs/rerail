@@ -395,6 +395,8 @@ struct Gen<'a> {
     /// What stage 1 writes from each block's bits: the records' mask and each error ORed (`sinks`), where none holds
     /// at the padding's byte past the end, its masks need not be the file's bits (`lv`).
     outputs: Vec<Expr>,
+    /// Each toggle's node and the mask it toggles on.
+    toggles: HashMap<usize, Expr>,
     /// The byte-pair errors in simdjson's `utf8_checker` form (`bitlex_pair_lookup`), in simdjson's stage 1.
     lookup: Option<crate::bitlex_pair_lookup::Lookup>,
 }
@@ -596,7 +598,10 @@ impl Gen<'_> {
                     let a = self.ring(a, "q");
                     // Each byte's parity of `a`'s bits up to it, the block before's carried (simdjson's `prefix_xor`).
                     let code = format!("{{\n        let mut x = {a};\n        x ^= x << 1;\n        x ^= x << 2;\n        x ^= x << 4;\n        x ^= x << 8;\n        x ^= x << 16;\n        x ^= x << 32;\n        let x = x ^ 0u64.wrapping_sub(c_{name});\n        c_{name} = x >> 63;\n        x & lv\n    }}");
-                    return Ok(self.push_node(key, name, what, code, lag, true));
+                    let operand = ea(0)?.clone();
+                    let id = self.push_node(key, name, what, code, lag, true);
+                    self.toggles.insert(id, operand);
+                    return Ok(id);
                 }
                 "text" => {
                     let Some(Arg::S(t)) = args.first() else { return Err("tier 1 as Rust: `text` needs a string".into()) };
@@ -765,7 +770,15 @@ impl Gen<'_> {
             }
         }
         let rings = needs_ring.iter().any(|r| *r);
-        let mut outer: Vec<bool> = (0..self.nodes.len()).map(|i| needs_p[i] || (most == 0 && self.end_sinks.iter().any(|(_, s)| *s == i))).collect();
+        // No mask holds the file's bits (`lv`) where each block is the file's or the padding (no stage behind, the
+        // source padded) and no output holds at the padding's byte, whatever the masks carried hold: a bit past the
+        // end reaches no byte before it (shifts, toggles and carries go up), and no block follows the last. The
+        // `prefix` is then skipped as simdjson skips a byte order mark: the blocks start after it.
+        let bare = most == 0 && self.index.is_some() && self.outputs.iter().all(|e| false_at(e, b' ', self.x.stmts));
+        // An end test of a toggle whose mask holds at no padding byte: its carry out of the last block is its value at
+        // the file's last byte (simdjson's `finish`, `prev_in_string != 0`).
+        let carried = |i: usize| bare && self.toggles.get(&i).is_some_and(|op| false_at(op, b' ', self.x.stmts));
+        let mut outer: Vec<bool> = (0..self.nodes.len()).map(|i| needs_p[i] || (most == 0 && !carried(i) && self.end_sinks.iter().any(|(_, s)| *s == i))).collect();
         for i in (0..self.nodes.len()).filter(|&i| live[i]) {
             for (x, off) in ring_reads(&codes[i], &by_name) {
                 if self.nodes[i].lag != self.nodes[x].lag && age(self.nodes[i].lag, self.nodes[x].lag, off).is_some() {
@@ -774,11 +787,6 @@ impl Gen<'_> {
             }
         }
         let ring = (most as usize + 2).next_power_of_two();
-        // No mask holds the file's bits (`lv`) where each block is the file's or the padding (no stage behind, the
-        // source padded) and no output holds at the padding's byte, whatever the masks carried hold: a bit past the
-        // end reaches no byte before it (shifts, toggles and carries go up), and no block follows the last. The
-        // `prefix` is then skipped as simdjson skips a byte order mark: the blocks start after it.
-        let bare = most == 0 && self.index.is_some() && self.outputs.iter().all(|e| false_at(e, b' ', self.x.stmts));
         let off = |q: &str| if bare && self.prefix.is_some() { format!("off + 64 * {q}") } else { format!("64 * {q}") };
         let _ = writeln!(
             out,
@@ -941,6 +949,10 @@ impl Gen<'_> {
         // The tests at the file's last byte, once.
         for (why, id) in &self.end_sinks {
             let word = if most == 0 { format!("v_{}", self.nodes[*id].name) } else { format!("e_{}", self.nodes[*id].name) };
+            if carried(*id) {
+                let _ = writeln!(out, "    // {why}: the toggle carried out of the file's last block, once (simdjson's `finish`).\n    refused |= c_{} != 0;", self.nodes[*id].name);
+                continue;
+            }
             if bare && self.prefix.is_some() {
                 let _ = writeln!(out, "    // {why}: at the file's last byte, once (its block's word, the pass's last).\n    refused |= n > off && {word} >> ((n - 1 - off) % 64) & 1 != 0;");
                 continue;
@@ -2508,7 +2520,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), lookup: None }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None }.source()
 }
 
 #[cfg(test)]

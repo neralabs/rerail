@@ -44,7 +44,6 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
     let si = starts.as_mut_ptr();
     let mut count = 0usize;
     let mut c_m_escaped = 0u64;
-    let mut v_m_in_string = 0u64;
     let mut c_m_in_string = 0u64;
     let mut v_m_nonquote_scalar = 0u64;
     // The byte-pair errors' check, simdjson's `utf8_checker`: the block before, the errors, and whether the block before left
@@ -102,7 +101,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
             // mask q = quote & ~escaped
             let v_m_q = v_m_quote & !v_m_escaped;
             // in_string: the region `str`'s opener to its closer, `toggle(q)`
-            v_m_in_string = {
+            let v_m_in_string = {
                     let mut x = v_m_q;
                     x ^= x << 1;
                     x ^= x << 2;
@@ -159,8 +158,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
     }
     // The errors, once.
     refused |= errors != 0;
-    // a string open at the end of the file: at the file's last byte, once (its block's word, the pass's last).
-    refused |= n > off && v_m_in_string >> ((n - 1 - off) % 64) & 1 != 0;
+    // a string open at the end of the file: the toggle carried out of the file's last block, once (simdjson's `finish`).
+    refused |= c_m_in_string != 0;
     // The byte-pair errors (simdjson's `errors()`), and a sequence the file's last block leaves open (`check_eof`).
     refused |= unsafe { S::nonzero(S::or(error, prev_incomplete)) } != 0;
     // SAFETY: `count` records written, and room for three more.
