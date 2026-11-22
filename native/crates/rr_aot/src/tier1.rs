@@ -2032,7 +2032,6 @@ pub const ASKED: u32 = 0x1402;
 /// word), as the lean parser asks whether a token is on a line.
 #[inline]
 pub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {
-    let _ = before;
     match b {
         // `line`
         1 => src[from..to].contains(&0x0a),

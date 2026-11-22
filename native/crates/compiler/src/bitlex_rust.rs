@@ -1441,7 +1441,7 @@ impl<'a> G<'a> {
         let _ = writeln!(extras, "/// An extra's node kind: a later extra kind's by its bit, else the first's.\nfn extra_kind(code: u32) -> u16 {{\n{kind}    {first}\n}}\n");
         let mut out = String::new();
         out.push_str(header);
-        out.push_str("use rerail_tape_format::{Widths, Writer};\n\n");
+        out.push_str("use rerail_tape_format::{Layout, Narrow, Widths, Writer};\n\n");
         out.push_str("/// The tape's kinds, by the grammar's names.\n#[allow(dead_code)]\npub mod k {\n");
         for (c, id) in self.kinds.borrow().iter() {
             let _ = writeln!(out, "    pub const {c}: u16 = {id};");
@@ -1464,7 +1464,7 @@ impl<'a> G<'a> {
         }
         out.push_str(&extras);
         out.push_str(RUNTIME);
-        out.push_str("\n#[allow(clippy::all, unused_parens, dead_code)]\nimpl P<'_> {\n");
+        out.push_str("\n#[allow(clippy::all, unused_parens, dead_code)]\nimpl<L: Layout> P<'_, L> {\n");
         out.push_str(rules);
         out.push_str(&marks);
         out.push_str(&kinds);
@@ -1544,7 +1544,7 @@ impl<'a> G<'a> {
         // The helpers only some grammars' rules call, each written where it is called.
         let used: Vec<&str> = MORE.iter().filter(|(name, _)| rules.contains(&format!("self.{name}("))).map(|(_, code)| *code).collect();
         if !used.is_empty() {
-            out.push_str("\n#[allow(clippy::all, dead_code)]\nimpl P<'_> {\n");
+            out.push_str("\n#[allow(clippy::all, dead_code)]\nimpl<L: Layout> P<'_, L> {\n");
             out.push_str(&used.join("\n"));
             out.push_str("}\n");
         }
@@ -1568,7 +1568,7 @@ impl<'a> G<'a> {
             out = one_loop::drop_uncalled(out, &parts);
         }
         let masks = if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() { "" } else { " and masks (those a region's parts are found by)" };
-        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code){masks}, or the byte it was refused at.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        let mut p = P::new(src, lx, widths)?;\n        p.{entry}()?;\n        match p.w.finish_columns() {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}");
+        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code){masks}, or the byte it was refused at.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        // Nearly every file is parsed at the narrow widths, fixed in the parser's code, as the lean parser's.\n        let at = if widths == Narrow::WIDTHS {{ parse_at(src, lx, Narrow)? }} else {{ parse_at(src, lx, widths)? }};\n        match at {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}\n\n/// `parse` at `layout`'s widths: the tape, or the widths to parse at again; or the byte it was refused at.\nfn parse_at<L: Layout>(src: &[u8], lx: &crate::tier1::Lexed, layout: L) -> R<Result<rerail_tape_format::Columns, rerail_tape_format::Redo>> {{\n    let mut p = P::new(src, lx, layout)?;\n    p.{entry}()?;\n    Ok(p.w.finish_columns())\n}}");
         Ok(out)
     }
 }
@@ -1710,7 +1710,7 @@ const UNSET: u16 = 0x3ff;
 const DEPTH: u32 = 400;
 
 /// The parser: tier 1's records (the tokens and the comments), the token read next, the tree.
-pub struct P<'a> {
+pub struct P<'a, L: Layout> {
     src: &'a [u8],
     /// Tier 1's records, one a token: its first and last byte and its code (the lean parser's `Tok`).
     recs: &'a [crate::tier1::Rec],
@@ -1725,7 +1725,7 @@ pub struct P<'a> {
     sub: Vec<(u32, u32, u32)>,
     k: usize,
     pend: usize,
-    w: Writer<Widths>,
+    w: Writer<L>,
     /// The nodes open, and the node made last at each.
     open: Vec<u32>,
     made: Vec<u32>,
@@ -1755,8 +1755,8 @@ pub struct P<'a> {
 }
 
 #[allow(dead_code)]
-impl<'a> P<'a> {
-    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
+impl<'a, L: Layout> P<'a, L> {
+    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L) -> R<Self> {
         let (recs, m) = (&lx.recs[..], &lx.masks);
         let n = recs.len();
         let mut p = P { src, recs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };

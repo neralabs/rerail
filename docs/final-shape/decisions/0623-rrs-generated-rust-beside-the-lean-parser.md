@@ -164,3 +164,12 @@ mark: the few statements that ask whether a token is on a line read the bytes fr
 
 `rr_parser`'s 51 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes and records included. The records
 test leaves the asked bits out of what it compares (`tier2_asked_marks`); the tapes test them.
+
+## Step 6: tier 2 at `Narrow` where the widths are narrow (done)
+
+Tier 2's parser is generic over the tape's layout (`P<'a, L: Layout>`, `Writer<L>`), as the lean parser's
+`tape_at<L>`. `parse` parses at `Narrow` when the widths it guesses are `Narrow::WIDTHS`: the writer's `push` and `close`
+are then written for constant widths. Otherwise it parses at the widths read at run time, and again at wider ones
+where the writer asks (`Redo`). Kotlin's tier 2 takes the same form.
+
+`rr_parser`'s 51 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes included.

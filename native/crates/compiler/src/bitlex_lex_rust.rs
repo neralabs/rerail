@@ -6023,7 +6023,10 @@ impl Gen<'_> {
         if asked.is_empty() {
             out.push_str("    let _ = (src, from, to, before, b);\n    false\n}\n");
         } else {
-            out.push_str("    let _ = before;\n    match b {\n");
+            if asked.iter().all(|a| a.2.is_empty()) {
+                out.push_str("    let _ = before;\n");
+            }
+            out.push_str("    match b {\n");
             for (bit, byte, unless, name) in &asked {
                 let _ = writeln!(out, "        // `{name}`\n        {bit} => src[from..to].contains(&{byte:#04x}){unless},");
             }
