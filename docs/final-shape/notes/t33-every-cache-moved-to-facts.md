@@ -247,7 +247,14 @@ held through eponymous virtual tables of the same names and columns, over the ke
 - **Kept in canonical order** (`kept_facts::sorted_put`): a tape's or a run's rows are probed by their leading
   columns, so they are written sorted, unlike `filled_put`'s rows as given.
 - **Not moved, gone:** `edge_freq` and the set's `edges` (nothing but their tests and the trigger read them).
-- **The search indexes** (`search_index_sets`, the FTS tables): next, on their own.
+- **The search index** (`search_index_sets`, `search_kind_fts`, `search_kind_vocab`): kept facts of the store
+  (`content_store/search_index.rs`): a tape's partition holds its set (`index_version`, `node_count`, `complete`,
+  `has_errors`) and its distinct kind tokens (the store's atoms), put whole at publication and gone with the tape. A
+  presence lookup probes the tape's tokens; the backlog reads tape ids by keyset and keeps those without a set. Only
+  presence was ever read of the kind stream, so its positions and the token frequencies that ordered the FTS query
+  went; `search_index_sets` reads through SQL as a virtual table. The predecessor's positional index (test-only, O21)
+  keeps its own kind stream (`positional_kind_fts`, beside its value and text streams) and writes W's index of its
+  tapes in its publication's transaction.
 
 ### Step 8: the workspace pipeline
 

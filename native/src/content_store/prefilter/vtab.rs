@@ -9,7 +9,10 @@
 //! - `kind_size(kind, n, size)`, `term_kind_freq(kind, n)`, `term_node_freq(lang, term, kind, n)`,
 //!   `term_freq(lang, term, n)`: the store-wide counts. `term_freq.n` is the (tape, kind) rows that carry the term, as
 //!   the table's was.
-//! - `vocabulary_term(lang, expression, term)`: a regex's matching terms (`super::vocabulary`), as kept.
+//! - `vocabulary_term(lang, expression, term)`: a regex's matching terms (`super::vocabulary`), as kept, less those no
+//!   tape holds.
+//! - `search_index_sets(tape_id, index_version, node_count, complete, has_errors)`: the search index's sets
+//!   (`content_store::search_index`).
 //!
 //! `tape_id = ?` (and `kind = ?`, `term = ?`, `lang = ?`) choose the rows; a table without `tape_id` reads every
 //! tape, one at a time. SQLite rechecks every constraint. Values are as the store numbers them: a term is the store's
@@ -39,6 +42,7 @@ enum Which {
     TermNodeFreq,
     TermFreq,
     Vocabulary,
+    SearchSets,
 }
 
 impl Which {
@@ -53,13 +57,14 @@ impl Which {
             Which::TermNodeFreq => c"CREATE TABLE x(lang INTEGER, term INTEGER, kind INTEGER, n INTEGER)",
             Which::TermFreq => c"CREATE TABLE x(lang INTEGER, term INTEGER, n INTEGER)",
             Which::Vocabulary => c"CREATE TABLE x(lang INTEGER, expression TEXT, term INTEGER)",
+            Which::SearchSets => c"CREATE TABLE x(tape_id INTEGER, index_version INTEGER, node_count INTEGER, complete INTEGER, has_errors INTEGER)",
         }
     }
 
     /// The columns an equality chooses rows by, each with how much it narrows.
     fn keys(self) -> &'static [(c_int, f64)] {
         match self {
-            Which::Sets | Which::Covers => &[(0, 10_000.0)],
+            Which::Sets | Which::Covers | Which::SearchSets => &[(0, 10_000.0)],
             Which::Kinds => &[(0, 10_000.0), (1, 100.0)],
             Which::Terms => &[(2, 10_000.0), (1, 1000.0), (0, 2.0)],
             Which::KindSize | Which::TermKindFreq => &[(0, 1000.0)],
@@ -70,7 +75,11 @@ impl Which {
     }
 
     fn space(self) -> [u8; 32] {
-        if self == Which::Vocabulary { super::vocabulary::space() } else { kept::space() }
+        match self {
+            Which::Vocabulary => super::vocabulary::space(),
+            Which::SearchSets => super::super::search_index::space(),
+            _ => kept::space(),
+        }
     }
 }
 
@@ -90,6 +99,7 @@ pub(in crate::content_store) fn install(connection: &Connection, store: &Path) -
         (c"term_node_freq", Which::TermNodeFreq),
         (c"term_freq", Which::TermFreq),
         (c"vocabulary_term", Which::Vocabulary),
+        (c"search_index_sets", Which::SearchSets),
     ] {
         connection.create_module(name, &MODULE, Some((store.to_path_buf(), which)))?;
     }
@@ -202,7 +212,7 @@ fn int(v: &Option<Value>) -> Option<Option<i64>> {
 
 impl Cursor {
     fn per_tape(&self) -> bool {
-        matches!(self.which, Which::Sets | Which::Kinds | Which::Terms | Which::Covers)
+        matches!(self.which, Which::Sets | Which::Kinds | Which::Terms | Which::Covers | Which::SearchSets)
     }
 
     /// The key slot's integer constraint: `Some(None)` none given, `None` one that matches nothing.
@@ -226,6 +236,7 @@ impl Cursor {
     fn unit_rows(&self, view: &rerail_blocks::kept::KeptChain<'_>, unit: i64) -> Vec<Vec<Value>> {
         let blob = |t: &kept::Tape<'_>, at: i64, len: i64| Value::Blob(t.bytes(at, len));
         match self.which {
+            Which::SearchSets => super::super::search_index::set(view, unit).map(|s| vec![std::iter::once(unit).chain(s).map(Value::Integer).collect()]).unwrap_or_default(),
             Which::Sets => kept::tape(view, unit).map(|t| vec![vec![Value::Integer(unit), Value::Integer(t.version), Value::Integer(t.nodes)]]).unwrap_or_default(),
             Which::Kinds => {
                 let Some(t) = kept::tape(view, unit) else { return Vec::new() };
@@ -351,6 +362,7 @@ unsafe impl VTabCursor for Cursor {
                 match self.key(0) {
                     None => Vec::new(),
                     Some(Some(tape)) => vec![tape],
+                    Some(None) if self.which == Which::SearchSets => super::super::search_index::tapes(&space.view()).collect(),
                     Some(None) => kept::tapes(&space.view()).collect(),
                 }
             }

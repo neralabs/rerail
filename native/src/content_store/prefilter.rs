@@ -284,17 +284,18 @@ impl ContentStore {
         Ok(copied?)
     }
 
-    /// Deletes a tape, as collection does (its prefilter rows counted out and gone with it), for tests of the
+    /// Deletes a tape, as collection does (its prefilter rows counted out and gone with it, and its search index), for tests of the
     /// collection.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn delete_tape_for_test(&self, tape: TapeId) -> StoreResult<()> {
         self.working_set().clear();
         let path = self.database_path.clone();
-        let written = self.immediate_transaction(|transaction| {
+        let (written, search) = self.immediate_transaction(|transaction| {
             transaction.execute("DELETE FROM tape_objects WHERE tape_id=?1", [tape.row()])?;
-            forget_tapes(&path, transaction, &[tape.row()])
+            Ok((forget_tapes(&path, transaction, &[tape.row()])?, super::search_index::forget_tapes(&path, transaction, &[tape.row()])?))
         })?;
         self.note_kept(&kept::space(), written);
+        self.note_kept(&super::search_index::space(), search);
         Ok(())
     }
 

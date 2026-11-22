@@ -384,7 +384,8 @@ impl ContentStore {
         let current_generation = generation(&transaction)?;
         // Tapes leave in bulk, and their ids may be reused: the working set holds none of them.
         self.working_set().clear();
-        // The tapes' prefilter facts leave in the same transaction (t33 step 6): an id reused names a new tape.
+        // The tapes' prefilter facts and search indexes leave in the same transaction (t33 steps 6 and 7): an id
+        // reused names a new tape.
         let tapes: Vec<i64> = transaction
             .prepare(collect_sql(
             "DELETE FROM tape_objects WHERE tape_id IN (SELECT t.tape_id FROM tape_objects t \
@@ -401,6 +402,7 @@ impl ContentStore {
             .collect::<Result<_, _>>()?;
         report.tapes = tapes.len();
         let prefilter = super::prefilter::forget_tapes(&self.database_path, &transaction, &tapes)?;
+        let search = super::search_index::forget_tapes(&self.database_path, &transaction, &tapes)?;
         execute_collect(
             &transaction,
             "DELETE FROM source_aliases WHERE source_id IN (SELECT s.source_id FROM source_objects s \
@@ -503,6 +505,7 @@ impl ContentStore {
         )?;
         self.commit(transaction)?;
         self.note_kept(&super::prefilter::kept::space(), prefilter);
+        self.note_kept(&super::search_index::space(), search);
         Ok(report)
     }
 }

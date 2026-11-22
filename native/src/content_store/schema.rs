@@ -398,25 +398,8 @@ DROP TABLE IF EXISTS candidate_catalogs;
 DROP TABLE IF EXISTS completed_directory_reuse;
 DROP TABLE IF EXISTS completed_workspace_revisions;
 
--- A query-independent search index. The kind stream contains one token per preorder node, so an
--- FTS5 instance offset is the preorder ordinal; terminal transducers confirm its candidates.
--- Contentless FTS stores no second copy of source. A tape with syntax errors must never be
--- skipped undecoded, so its index records them.
-CREATE TABLE IF NOT EXISTS search_index_sets (
-    tape_id INTEGER PRIMARY KEY REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
-    index_version INTEGER NOT NULL CHECK(index_version >= 0),
-    node_count INTEGER NOT NULL CHECK(node_count > 0),
-    complete INTEGER NOT NULL CHECK(complete IN (0,1)),
-    has_errors INTEGER NOT NULL DEFAULT 0 CHECK(has_errors IN (0,1))
-) STRICT;
-CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_fts USING fts5(
-    token, content='', contentless_delete=1, detail=full, tokenize='ascii'
-);
--- Physical rule planning reads exact term frequencies from SQL instead of estimating them in Rust.
-CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_vocab USING fts5vocab(search_kind_fts, 'row');
-CREATE TRIGGER IF NOT EXISTS delete_tape_search_index BEFORE DELETE ON tape_objects BEGIN
-    DELETE FROM search_kind_fts WHERE rowid=OLD.tape_id;
-END;
+-- The query-independent search index is kept facts of the store (t33 step 7, `search_index`): `RETIRED_TABLES`.
+DROP TRIGGER IF EXISTS delete_tape_search_index;
 
 -- The facts engine's memo (facts_results, its completions and plan sets) went (t33 step 3): its users keep their
 -- entries as kept facts of the store (`kept_facts::HOLDER`), and a store made before loses the tables.
@@ -771,8 +754,8 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 ///   and 0295 §4): the kept facts are blocks (decision 0439). A floor-7 store made where frames were still kept as
 ///   metadata beside the chain (decision 0456 step 6a) has them.
 /// - The prefilter's per-tape access paths, its store-wide counts and its vocabularies, and the text layer's
-///   vocabulary (t33 steps 6 and 7): kept facts (`prefilter::kept`, `prefilter::vocabulary`), read through virtual
-///   tables of the same names (`prefilter::vtab`). Children first; their triggers go with them. A name a virtual table
+///   vocabulary, and the search index (t33 steps 6 and 7): kept facts (`prefilter::kept`, `prefilter::vocabulary`,
+///   `search_index`), read through virtual tables of the same names (`prefilter::vtab`; the FTS tables none). Children first; their triggers go with them. A name a virtual table
 ///   has is dropped only while the store holds a table of it: SQLite refuses to drop an eponymous virtual table.
 const RETIRED_TABLES: &[&str] = &[
     "frames", "frame_segments", "frame_part_used", "frame_spaces", "frame_confirmed", "frame_used", "frame_program_used",
@@ -792,6 +775,9 @@ const RETIRED_TABLES: &[&str] = &[
     "edge_freq",
     "kind_size",
     "prefilter_sets",
+    "search_kind_vocab",
+    "search_kind_fts",
+    "search_index_sets",
 ];
 
 /// Whether the store holds a table of `RETIRED_TABLES`.

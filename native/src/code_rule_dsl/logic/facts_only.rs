@@ -144,7 +144,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("corpus_live", "3"),
     ("corpus_state", "3"),
     ("corpus_decided", "3"),
-    ("search_index_sets", "7"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
 /// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
@@ -160,8 +159,9 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// when the fact relations' column statistics went, which nothing wrote but the demand's terminal estimate, now a kept
 /// fact (t33 step 6); 30 when the corpus path's statistics (`stat_blob`) became kept relations, one partition a memo
 /// plan (t33 step 6); 14 when the prefilter's per-tape access paths, its store-wide counts and both vocabularies became
-/// kept facts of the store, read through virtual tables of their names (t33 steps 6 and 7).
-const NOT_YET_TABLES_PIN: usize = 14;
+/// kept facts of the store, read through virtual tables of their names (t33 steps 6 and 7); 13 when the search index
+/// did (t33 step 7).
+const NOT_YET_TABLES_PIN: usize = 13;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
