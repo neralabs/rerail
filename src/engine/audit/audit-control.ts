@@ -36,12 +36,21 @@ function isScanLimitMarker(failure: { stage?: string | undefined; code: string; 
 /**
  * Whether the failures `text` holds are some and each one a failed audit tolerates today. They are read as an audit
  * record reads them (`parsedList`): text that holds no JSON array of failures is a damaged record, left for a person to
- * mend rather than audited again at every session.
+ * mend rather than audited again at every session. So is a failure with no string `code` or `message`.
  */
 function onlyToleratedFailures(text: string): boolean {
   const failures = parsedList(text, "failures");
   return Array.isArray(failures) && failures.length > 0
-    && (failures as AuditFailure[]).every(item => isScanLimitMarker(item) || isOmittedFailuresSummary(item) || isSourceGap(item));
+    && failures.every(item => hasCodeAndMessage(item) && (isScanLimitMarker(item) || isOmittedFailuresSummary(item) || isSourceGap(item)));
+}
+
+/**
+ * Whether a stored failure, an object as `parsedList` reads it, has the string `code` and `message` every failure Rerail
+ * writes has. The tests of a tolerated failure call string methods on `message`; its other fields they only compare.
+ */
+function hasCodeAndMessage(item: unknown): item is AuditFailure {
+  const { code, message } = item as Record<string, unknown>; // an object: `parsedList` reads no other item as a failure
+  return typeof code === "string" && typeof message === "string";
 }
 
 function gitPaths(workspaceRoot: string, args: readonly string[]): string[] {
