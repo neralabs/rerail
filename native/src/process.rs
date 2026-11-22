@@ -394,6 +394,11 @@ mod windows {
     }
 
     pub(super) fn end_process_started_by(pid: u32, started_at: f64, wait_ms: u32) -> &'static str {
+        // Every creation time compares no later than Infinity, and not later than NaN: a start that is not a finite
+        // number names no process, and nothing is ended.
+        if !started_at.is_finite() {
+            return "unread";
+        }
         let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE;
         let Some(handle) = open_process(access, pid) else {
             return "unread";
@@ -535,6 +540,12 @@ mod tests {
         let later =
             end_process_started_by(child.id(), started - 1.0, 5_000).expect("the call runs");
         assert_eq!(later, "later");
+        assert!(child.try_wait().expect("the child is asked").is_none());
+        // A start that is no finite number names no process: it runs on.
+        for nonsense in [f64::INFINITY, f64::NAN] {
+            let end = end_process_started_by(child.id(), nonsense, 0).expect("the call runs");
+            assert_eq!(end, "unread");
+        }
         assert!(child.try_wait().expect("the child is asked").is_none());
         let ended = end_process_started_by(child.id(), started, 5_000).expect("the call runs");
         assert_eq!(ended, "ended");

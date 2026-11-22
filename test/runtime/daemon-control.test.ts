@@ -90,7 +90,7 @@ function stateFor(overrides: Partial<DaemonState>): DaemonState {
     databasePath: "/nowhere/rerail.sqlite",
     kernelSocketPath: "/nowhere/engine.sock",
     ui: "dev",
-    startedAt: 0,
+    startedAt: 1,
     packageRoot: "/nowhere/rerail",
     ...overrides,
   };
@@ -146,6 +146,24 @@ describe("Rerail daemon control", () => {
     await writeFile(stateFile, JSON.stringify({ pid: "1" }));
     expect(await readDaemonState(stateFile)).toBeUndefined();
     expect(await findRunningDaemon(home)).toBeUndefined();
+  });
+
+  // Signal 0 answers for a pid of 0 or below (a process group; on Windows 0 is the caller), and a start of Infinity, which
+  // JSON.parse makes of 1e400, comes after every process's start: either makes whatever holds the pid read as the daemon.
+  it.each([
+    ["a pid of 0", `"pid":${DEAD_PID}`, `"pid":0`],
+    ["a pid below 0", `"pid":${DEAD_PID}`, `"pid":-1`],
+    ["a start of Infinity", `"startedAt":1`, `"startedAt":1e400`],
+    ["a start of -Infinity", `"startedAt":1`, `"startedAt":-1e400`],
+    ["a start of 0", `"startedAt":1`, `"startedAt":0`],
+  ])("takes a state file with %s for no record", async (_what, field, written) => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    // The state names a Unix socket, which only a macOS or Linux reader takes.
+    const state = stateFor({});
+    await writeFile(stateFile, JSON.stringify(state));
+    expect(await readDaemonState(stateFile, "linux")).toEqual(state);
+    await writeFile(stateFile, JSON.stringify(state).replace(field, written));
+    expect(await readDaemonState(stateFile, "linux")).toBeUndefined();
   });
 
   it("removes a stale state file whose process is gone", async () => {

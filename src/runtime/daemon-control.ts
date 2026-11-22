@@ -423,9 +423,17 @@ export function processAlive(pid: number, kill?: ProcessSignal): boolean {
 const isString = (value: unknown): boolean => typeof value === "string";
 const isOptionalString = (value: unknown): boolean => value === undefined || typeof value === "string";
 
+/**
+ * A finite number above 0, as a pid and a start time must be to name a process. Signal 0 answers for a pid of 0 or
+ * below, which POSIX `kill` reads as a process group and libuv's Windows `uv_kill` reads 0 as the caller, so such a
+ * record would read as a live daemon. A `startedAt` of Infinity, which `JSON.parse` makes of 1e400, comes after every
+ * process's start, so any process at the pid would read as the daemon that wrote the record.
+ */
+const isPositiveFinite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
+
 /** The check each field of daemon.json passes; `kernelSocketPath` is checked for the platform (`isDaemonState`). */
 const DAEMON_STATE_FIELDS: Readonly<Record<string, (value: unknown) => boolean>> = {
-  pid: Number.isInteger,
+  pid: value => isPositiveFinite(value) && Number.isInteger(value),
   url: isString,
   host: isString,
   port: Number.isInteger,
@@ -435,7 +443,7 @@ const DAEMON_STATE_FIELDS: Readonly<Record<string, (value: unknown) => boolean>>
   accessToken: isOptionalString,
   tlsFingerprint256: isOptionalString,
   remoteRefused: isOptionalString,
-  startedAt: value => typeof value === "number",
+  startedAt: isPositiveFinite,
   packageRoot: isString,
   workspaceRoot: isOptionalString,
 };

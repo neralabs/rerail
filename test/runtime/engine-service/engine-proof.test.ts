@@ -314,7 +314,7 @@ function daemonState(pid: number, kernelSocketPath: string): DaemonState {
     databasePath: join(tmpdir(), "rerail.sqlite"),
     kernelSocketPath,
     ui: "dev",
-    startedAt: 0,
+    startedAt: 1,
     packageRoot: tmpdir(),
     accessToken: "capability",
   };

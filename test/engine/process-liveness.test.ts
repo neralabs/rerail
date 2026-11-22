@@ -218,6 +218,14 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
     }
   }, 30_000);
 
+  // A start that is no finite number names no time a process started: the uninstall's end answers as the engine's does,
+  // ends nothing and starts no PowerShell.
+  it.each([Infinity, -Infinity, Number.NaN])("ends nothing through PowerShell for a start of %s, and starts no PowerShell", startedAt => {
+    const calls = vi.mocked(childProcess.spawnSync).mock.calls.length;
+    expect(endProcessStartedByPowerShell(process.pid, startedAt, 5_000)).toBe("unread");
+    expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(calls);
+  });
+
   it("reads nothing from a PowerShell the machine cannot run, and starts none with no time left", async () => {
     await standIn(join(tmpdir(), "rerail-no-such-powershell", "powershell.exe"), []);
     expect(processStartedAt(process.pid, 30_000, "win32")).toBeUndefined();

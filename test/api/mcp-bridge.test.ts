@@ -92,7 +92,7 @@ async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void>
     databasePath: join(home, "rerail.sqlite"),
     kernelSocketPath,
     ui: "bundled",
-    startedAt: daemon.startedAt ?? 0,
+    startedAt: daemon.startedAt ?? 1,
     packageRoot: "/tmp/rerail-bridge-test-package",
     ...(daemon.accessToken === undefined ? {} : { accessToken: daemon.accessToken }),
   }));

@@ -168,6 +168,8 @@ export function endProcessStartedBy(
  * ended before it, or one that cannot run, ends nothing it reports: `unread`.
  */
 export function endProcessStartedByPowerShell(pid: number, startedAt: number, waitMs: number): ProcessEnd {
+  // A start that is not a finite number names no time a process started: nothing is ended, as the engine's end answers.
+  if (!Number.isFinite(startedAt)) return "unread";
   const latest = (BigInt(Math.floor(startedAt)) + BigInt(FILETIME_EPOCH_MS)) * 10_000n + 9_999n;
   const script = `$p = Get-Process -Id ${pid} -ErrorAction Stop; $null = $p.Handle; `
     + `if ($p.StartTime.ToFileTimeUtc() -gt ${latest}) { 'later' } else { Stop-Process -InputObject $p -Force -ErrorAction Stop; `
