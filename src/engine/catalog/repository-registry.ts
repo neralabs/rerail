@@ -344,7 +344,8 @@ export function lookupCheckoutAt(db: Reader, location: RepositoryIdentityLocatio
 
 function lookupAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
   const { id, marked } = checkoutIdentity(location);
-  const cloneId = id ?? null;
+  // A worktree whose Git folder is gone has no id to read: the one recorded at its path, as its start takes it.
+  const cloneId = id ?? refusedCheckoutCloneId(db, location) ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
   const knownClone = cloneId === null ? undefined : recordedRepositoryAt(db, checkoutPath, cloneId) ?? cloneRepository(db, cloneId);
   const repositoryKey = knownClone ?? remoteRepository(db, location);
