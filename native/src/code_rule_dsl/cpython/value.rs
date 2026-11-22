@@ -163,7 +163,7 @@ pub(crate) fn float_repr(f: f64) -> String {
 
 /// A Python int of any size: its sign and its magnitude, in base 10^9 limbs, least significant first.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Int {
+pub struct Int {
     negative: bool,
     limbs: Vec<u32>,
 }

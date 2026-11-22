@@ -247,7 +247,13 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::code_rule_dsl::language::adapter::pack as language_pack;
     }
-    pub mod cpython;
+    #[path = "cpython"]
+    pub mod cpython {
+        pub use rerail_cpython::code_rule_dsl::cpython::*;
+        // Parity with real CPython (ignored tests): it reads the facts and the pack, so it is the pack's.
+        #[cfg(any(test, feature = "test-hooks"))]
+        pub mod parity;
+    }
     pub use rerail_rules::code_rule_dsl::crypto;
     #[path = "embed"]
     pub mod embed {
@@ -1065,3 +1071,21 @@ pub mod code_rule_dsl {
     use std::sync::Arc;
 }
 // cratify: mounts end
+
+/// This crate's own test binary, which the engine does not load: Python's language pack is registered as the binary
+/// loads, as the engine registers it (`boot::install_languages`), so its tests and the parity tests parse Python here.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        use crate::code_rule_dsl::language::{self, Family, adapter::{pack::{Pack, register}, python::Python}};
+        register(Family::Python, &Pack::<Python>::NEW);
+        language::register_base(Family::Python, &Pack::<Python>::NEW);
+        // A Python file's tape reads its strings' embedder (decision 0470), which the engine installs as it loads.
+        use crate::code_rule_dsl::embed::{call_argument::CallArgument, install_embedders};
+        install_embedders(vec![(language::Via::CallArgument, &CallArgument)]);
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}

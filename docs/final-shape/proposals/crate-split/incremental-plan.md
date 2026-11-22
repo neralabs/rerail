@@ -1067,3 +1067,17 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   - Tests:
     - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the two crates.
     - On a Linux host, lang-php's own tests and rerail-tests-compile's Blade, Forte and PHP-view tests: 61 of 61.
+- **Step 7f** (2026-11-22): the Python pack, 23.4k production lines, is now two crates.
+  - **rerail-cpython** (`native/crates/cpython`, 4.8k, a provider): CPython's facts about Python source (`cpython`:
+    `ast.parse`'s verdict, `literal_eval`, the `ast` tree, `unparse`, `dump`), computed over Ruff's parser.
+    - It reads only `identifier::nfkc` (rerail-adapters').
+    - Its own tests (`cpython::tests`) run in its test binary.
+  - **rerail-lang-python** (18.6k) keeps the rest. It re-exports the crate under `cpython`, and mounts these two
+    there, because they read the facts and the pack:
+    - the parity oracle (`cpython::parity`, ignored tests that run real CPython);
+    - the test load that registers the Python pack for its test binary.
+  - The types the pack reads were widened to `pub`: `Literal`, `Class`, `Located`, `Raised`, `Const`, `Int`,
+    `VERSION`, `explain` and `is_expr`.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the two crates.
+    - On a Linux host, both crates' tests: 36 of 36 (the 5 parity tests ignored).
