@@ -416,10 +416,12 @@ impl LoadedRrPolicies {
                 let inspection = read()?;
                 // The load is a command (decision 0441): what it queued for the store (its program's version) is in
                 // the store as it returns, not applied behind a later command, whose store may by then be another file.
-                if let Ok(handle) = content_store::ContentStore::open(store)
+                // The store the load ran under (`tape_cache_path`): none for `:memory:`, which names no file to open.
+                if let Some(path) = code_rule_dsl::logic::plan::corpus::tape_cache_path()
+                    && let Ok(handle) = content_store::ContentStore::open(&path)
                     && let Err(error) = handle.written()
                 {
-                    eprintln!("rerail: {}: the policy load's writes: {error}", store.display());
+                    eprintln!("rerail: {}: the policy load's writes: {error}", path.display());
                 }
                 Ok(inspection)
             }),
