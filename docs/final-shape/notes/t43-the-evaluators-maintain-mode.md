@@ -490,7 +490,8 @@ After the hub's merge (Q208's head-bound recheck, 0401's kept facts), on the sam
 At 2,410 files the edits took 477–579 s at first. With the session memo fixed, they took 79–83 s. The memo now
 keeps each file's current entry and the one before it (`HeldEntries`); its 4,096-entry cap had wiped it partway
 through the session. After the merge they take 55–65 s. At 334 files the edits are slower than before the merge
-(6.4, 9.9, 8.4 s); the cause is not yet known. A 2,410-file edit is still about 5× a 334-file edit, at 7× the
+(6.4, 9.9, 8.4 s). Step 21 found the cause: it is not the code. Built optimized, the two engines are the same;
+these were debug builds on a loaded host. A 2,410-file edit is still about 5× a 334-file edit, at 7× the
 files.
 
 ## Step 10: the measure's key in the cross part (R6)
@@ -756,7 +757,8 @@ on the new-process path too.
 
 What a new process still decodes is counted apart: `shape::rows_decoded`, the kept rows and the changed inputs' old
 rows decoded from the frames (0353's frames copy), 1,162,276 rows at O125 step 05. A test asserting it is 0 is
-ignored with its reason until the reads bind the kept blocks (0401 step 7, on the branches being aligned).
+ignored with its reason until the reads bind the kept blocks (0401 step 7, on the branches being aligned). Since 0439
+the kept entries are bound in place and the counter is gone; the test is live (2026-11-22, below).
 
 O125 kept, M1 Max (loaded, 10-15): 01 171.7 G, 02 154.9, 03 209.9, 04 143.2, 05 320.9, 06 160.6, 07 173.6, 08 229.7,
 findings equal to cold at every step. Step 05's matching went from 1.60 s to 0.96 s.
@@ -836,3 +838,62 @@ the steps built on the frames:
 - **Open (Q457)**: R8 and step 13's entries check fail on this line. A phase's run is in memory here (a429546488),
   no session's, and binds its kept part from the store at each edit. At the cycle cut, no input the session asks
   is read from the entries. Both tests are ignored with Q457.
+
+## Step 21: what an edit pays per corpus (2026-11-22)
+
+The data layer's history (`dl-history.sh`) as a session, on the M1 Max, profiling builds, the step-02 edit profiled.
+CPU of the process over each step (`repeat line`), seconds:
+
+| Engine | Files | 00 (first) | 01 | 02 (profiled) | 03 |
+|---|---|---|---|---|---|
+| before step 9's hub merge (b5a135e149) | 334 | 9.13 | 0.95 | 1.90 | 1.14 |
+| after it (b3cc153f2a) | 334 | 9.26 | 0.95 | 1.86 | 1.19 |
+| the hub's roll-ups 38-49 merged (83c9cd2e4e) | 334 | 24.01 | 4.20 | 7.12 | 5.54 |
+| the same | 2,410 | 136.64 | 28.02 | 31.80 | 29.46 |
+| a phase runs only for an output (bc43f5c906) | 334 | 17.27 | 2.19 | 4.63 | 3.24 |
+| the same | 2,410 | 88.07 | 13.66 | 16.05 | 15.24 |
+
+At bc43f5c906 the session's findings equal a cold run's at every step (334 files: 3 findings at each).
+
+**Step 9's slowdown is not the code's.** Step 9 measured debug test-hooks builds (`maintain-remote.sh`) on a loaded
+M3: 6.4, 9.9, 8.4 s before the merge, 9.0, 13.2, 11.5 s after. Built optimized, the two engines are the same (rows 1
+and 2). Built as step 9 built them, on one host: 8.15, 18.75 (profiled), 10.69 s before, 10.02, 18.08, 11.47 s after.
+Step 01 is 1.9 s slower in the debug build alone; the rest of step 9's 33-40% was the host.
+
+**An edit's cost follows the corpus.** From 334 to 2,410 files (7.2×), an edit went from 4.2-7.1 s to 28-32 s at
+83c9cd2e4e. The step-02 profiles at both sizes, span by span (CPU s, and calls where they count documents):
+
+| Work at one 3-file edit | 334 files | 2,410 files | Pays for |
+|---|---|---|---|
+| every document's rows made again (`document rows`, `node rows`) | 0.93 (810 calls) | 6.63 (6,286) | the corpus |
+| each unchanged document digested (`document rows/digests`) | 0.22 (331) | 1.48 (2,407) | the corpus |
+| a semi-join's input counted whole (`col`, `line`, `op`, `docof`, `def_digest`, `visit_index`) | 0.35 | 2.42 | the corpus |
+| semi-join inputs counted at the held nodes (`line`, `docof`, `node`) | 0.16 | 1.42 | the corpus |
+| `child`'s statistics counted off the corpus batch | 0.17 | 1.17 | the corpus |
+| the base relations' versions (decision 0458, `projected`) | 0.24 (595) | 0.74 (3,994) | the corpus |
+| phases `struct` (twice) and `types`, which no output reads | 1.13 | 4.27 | nothing |
+| the cross part's plan and evaluate | 0.55 | 3.21 | both |
+
+Two causes make most of it.
+
+- **The phases.** `phases::wanted_in` ran every phase any rule of the program read. The policy includes
+  python/calls.rerail for `call_arg`, and since 396f6f9426 calls.rerail includes points-to.rerail, which reads
+  `struct__…` and `types__…`. So `struct` and `types` ran at every edit for an output that reads neither. Now only
+  the reads an output reaches start a phase (bc43f5c906): 334 files, edits 4.2-7.1 s to 2.2-4.6 s; 2,410 files,
+  28-32 s to 14-16 s; the same findings.
+- **A semi-join input's statistics are counted, not patched.** At step 9 an edit's statistics were the changed
+  files' (0096 §3: "3 files counted in, 3 out; the base relations' statistics are read as kept, none measured").
+  0458 reads the base relations off the corpus batch, and patches a base relation's kept statistics by the changed
+  documents' old and new rows (`base_counted`). A semi-join's input (Q396: its statistics are its rows at the held
+  nodes) has no patch: its kept statistics stand only while the relation's digest is unchanged, which no edit
+  keeps. So it is counted at the held nodes by a keyed walk, and the corpus batch's rows (`MadeRows`) have no keyed
+  walk, so it is counted whole. Reading it whole makes every document's rows: the profile's "a batch's every
+  document made by a whole read" names `col`, `docof`, `line`, `visit_index` (479 of 518 documents) and
+  `def_digest`, `op` (331 of 334). That is the table's first four rows: 12.0 s of a 2,410-file edit's 31.8 s, and
+  1.66 s of a 334-file edit's 7.1 s.
+
+**Next**: a semi-join input's held statistics patched by the changed documents as a base relation's are: the changed
+documents' old rows at their old held nodes counted out and their new rows at their new held nodes in. An unchanged
+document's held nodes are its exports', which are memo hits, so its part stands. Then `MadeRows` needs no keyed walk
+for statistics, and an edit makes the changed documents' rows alone. `child` counted off the batch (one run's
+`child: counted`) and the 0458 versions' per-document pass are the next two.

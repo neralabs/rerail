@@ -6950,6 +6950,8 @@ Open:
   guests stratified by their nesting (a string's names never decide whether its host is a type context); or
   `type_ctx` asks for every string in an annotation place, without its negations, and filters after the parse.
 - **Done when**: both tests pass, unignored.
+- **Done** (2026-11-22, 83c9cd2e4e): both pass after the hub's merges of roll-ups 38-49 (Linux, CPU only), and
+  are un-ignored.
 
 ### Q323. Five tests red at rr-align's pin on macOS (roll-up 4)
 
@@ -9480,6 +9482,8 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Here** (roll-up 25, Q422): the test is not ignored, and it passes (`rerail-engine`'s `plan::corpus` tests on a
   Linux DGX Spark, held to the CPU). Its third edit's rows are a full run's.
 
+- **Here again** (2026-11-22): a later merge brought the sync branch's ignore back ("Q407"). The test passes, and the
+  ignore is removed (83c9cd2e4e).
 ### Q421. (Q287 on final-rerail-shape-phased-facts; Q361 on sync-integration-hub-tape) An edit keeps the rows of the cross part's `kind`, a view of `node` (done)
 
 Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one-file edit).
@@ -9569,8 +9573,10 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
     packages unresolved), over the 49 changed files. That found the three merge errors above (the scope audit,
     the duplicate `globalSetup`, an optional `sourcePaths`). The vitest suites were not run: no farm host has the
     project's packages installed.
-- **Open**: Q421 is theirs, as they left it. `r2_a_new_process_reads_its_kept_rows_in_place` stays ignored, as on
-  ours (19 kept rows decoded: 0401 step 7).
+- **Open**: Q421 is theirs, as they left it. `r2_a_new_process_reads_its_kept_rows_in_place` stayed ignored, as on
+  ours (19 kept rows decoded: 0401 step 7). That was the merge's miss: theirs at b4222a2d6f had 0439's form, the
+  kept entries bound in place and no row decoded. Taken 2026-11-22 (83c9cd2e4e), with `shape::rows_decoded` removed
+  as theirs removed it; the test passes.
 ### Q440. (Q414 on investigate-bend-vs-datalog; Q383 on rr-align) Roll-up 22 (final-rerail-shape-phased-facts onto rr-align): what the merge chose
 
 - **Here** (the hub's merge of rr-align at 48ce04a06b): this record keeps the numbers of its time. Its 0513 is
