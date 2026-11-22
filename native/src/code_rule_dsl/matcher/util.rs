@@ -4,82 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-/// `matches` recursion deeper than this fails the clause for the file instead of risking the stack.
-/// Utilities recurse only through relations, so real rules recurse as deep as the syntax they walk.
-pub const MAX_UTIL_DEPTH: u32 = 256;
-
-/// Stack a root's `matches` recursion may use, measured from `begin_clause`. A level's frames grow
-/// with how much rule it nests and with the build (a small recursive rule takes about 2 KiB per
-/// level in release, 15 KiB in debug), so bytes back up the level count. Every thread matching runs
-/// on has room for this on top of its callers: Node's main thread and libuv workers (8 MiB) and
-/// Rust test threads (2 MiB).
-pub const MAX_UTIL_STACK_BYTES: usize = 1 << 20;
-
-thread_local! {
-    pub static UTIL_DEPTH: Cell<u32> = const { Cell::new(0) };
-    /// The stack address `begin_clause` started at; 0 outside one (no stack limit applies).
-    pub static UTIL_STACK_BASE: Cell<usize> = const { Cell::new(0) };
-    pub static UTIL_STEPS_LEFT: Cell<usize> = const { Cell::new(usize::MAX) };
-    pub static UTIL_EXCEEDED: Cell<Option<UtilLimit>> = const { Cell::new(None) };
-    /// The matcher's Unknown flag: set when a rule failed because a verdict it read was unknown
-    /// rather than false (a value it could not decide). A matcher that returns a match leaves it
-    /// as it found it; one that fails leaves it set if it was set on entry or its own failure is
-    /// unknown. Readers (`not`, relations, `count`) clear it before the sub-rule they read and
-    /// restore it after.
-    pub static UNKNOWN: Cell<bool> = const { Cell::new(false) };
-    /// Whether the root being matched can reach an unknown verdict (it reads values). Without one,
-    /// no matcher touches `UNKNOWN`, so rules that read no values match exactly as they did.
-    pub static THREE_VALUED: Cell<bool> = const { Cell::new(false) };
-}
+/// A clause's limits, its budget and the matcher's Unknown flag are the clause's steps (`steps`), below the matcher:
+/// the file context it resolves names in (`resolve`) and the argument slots (`arguments`) spend them too.
+pub use super::steps::*;
 
 pub use crate::code_rule_dsl::language::adapter::{is_comment_kind, is_paren_kind};
-
-/// An address in the current stack frame.
-#[inline(always)]
-pub fn stack_address() -> usize {
-    let marker = 0u8;
-    std::hint::black_box(&marker) as *const u8 as usize
-}
-
-/// A limit `matches` recursion hit. The root's verdict is then unknown (a `not` above the cut-off
-/// reference would read its failure as a non-match), so the clause fails for the file.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum UtilLimit {
-    /// `MAX_UTIL_DEPTH` or `MAX_UTIL_STACK_BYTES`.
-    Depth,
-    /// More utility evaluations and counted nodes than the query's `maxVisitedNodes` in one file.
-    Work,
-    /// The file's scope table (`resolves`) could not be built within `maxVisitedNodes`, the time
-    /// budget, or its nesting limit.
-    Scope,
-    /// Decoding values (`value`, `compare` over values) spent the rest of `maxVisitedNodes`.
-    Value,
-    /// The parser stopped at a limit (Forte's nesting depth or step budget) before it read the
-    /// file: no clause reads it.
-    Parse,
-}
-
-impl UtilLimit {
-    pub fn message(self) -> &'static str {
-        match self {
-            Self::Depth => {
-                "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)"
-            }
-            Self::Work => {
-                "`matches` and `count` exceeded their work budget (maxVisitedNodes utility evaluations and counted nodes per file)"
-            }
-            Self::Scope => {
-                "`resolves` could not build the file's scope table within its budget (maxVisitedNodes nodes, the time budget, or 2,000 nesting levels)"
-            }
-            Self::Value => {
-                "decoding values exceeded the work budget (maxVisitedNodes decoded nodes, with utility evaluations and counted nodes, per file)"
-            }
-            Self::Parse => {
-                "the parser stopped at a limit (its nesting depth or step budget) before it read the file"
-            }
-        }
-    }
-}
 
 /// Distinct parameterized calls (a utility and a mapping of its parameters) one query may make per
 /// grammar. Each is compiled once, as a frame plan over the utility's one compiled rule.

@@ -1096,6 +1096,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, StoreResult};
     }
+    pub use rerail_classic::code_rule_dsl::file_input;
     // Wired to the findings layer in a later slice; until then only tests call it.
     pub mod findings {
         pub use rerail_classic::code_rule_dsl::findings::*;
@@ -1202,7 +1203,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Refusal, Refused};
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::matcher::Style;
+                use crate::code_rule_dsl::literal::Grammar;
                 #[allow(unused_imports)]
                 use std::borrow::Cow;
             }
@@ -1244,7 +1245,9 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Adapter, Refusal};
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module, file_source_type_for};
+                use crate::code_rule_dsl::scope::ScopeName;
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::matcher::{Unresolved, file_module, file_source_type_for};
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::module_path::ModulePath;
                 #[allow(unused_imports)]
@@ -1300,8 +1303,6 @@ pub mod code_rule_dsl {
                 use crate::code_rule_dsl::language::adapter::Refusal;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::Family;
-                #[allow(unused_imports)]
-                use crate::code_rule_dsl::matcher::SemanticText;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::value::structure::{Equality, Tok};
                 #[allow(unused_imports)]
@@ -1374,7 +1375,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::matcher::{file_index};
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
+            use crate::code_rule_dsl::file_input::python_module_path_on_disk;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::suppress::{Suppress, root};
             #[allow(unused_imports)]

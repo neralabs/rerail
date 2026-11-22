@@ -53,31 +53,7 @@ pub fn install_format_preparers(preparers: Vec<(Style, &'static dyn FormatPrepar
     let _ = PREPARERS.set(preparers);
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Style {
-    /// `str.format` templates (`braceFormat`).
-    Brace,
-    /// printf-style formats (`percentFormat`).
-    Percent,
-    /// PHP's printf-family formats (`printfFormat`).
-    Printf,
-    /// PHP's `sscanf`/`fscanf` formats (`scanfFormat`).
-    Scanf,
-    /// Rust's `format_args!`-family macro calls (`rustFormat`).
-    Rust,
-}
-
-impl Style {
-    pub fn grammar(self) -> Grammar {
-        match self {
-            Self::Brace => Grammar::expect("braceFormat"),
-            Self::Percent => Grammar::expect("percentFormat"),
-            Self::Printf => Grammar::expect("printfFormat"),
-            Self::Scanf => Grammar::expect("scanfFormat"),
-            Self::Rust => Grammar::expect("rustFormat"),
-        }
-    }
-}
+pub use crate::code_rule_dsl::language::adapter::format_args::Style;
 
 #[derive(Clone)]
 pub struct FormatArgs {

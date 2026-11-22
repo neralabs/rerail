@@ -190,7 +190,7 @@ impl<'a> Native<'a> {
                             || !grammar.file.as_ref().is_none_or(|condition| {
                                 condition.holds(path, file.module.as_deref(), None, &file.source)
                             })
-                            || !gates.admit(grammar)
+                            || !grammar.admits(&gates)
                             || !grammar.admits_source(
                                 &file.source,
                                 &errors,

@@ -94,6 +94,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, StoreResult};
     }
+    pub use rerail_classic::code_rule_dsl::file_input;
     pub use rerail_classic::code_rule_dsl::findings;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;

@@ -598,7 +598,7 @@ impl Layer {
                     *entry = Coverage::Unknown(INCOMPLETE.to_owned());
                     continue;
                 }
-                if !gates.admit(grammar) {
+                if !grammar.admits(&gates) {
                     continue;
                 }
                 if gated && errors.incomplete(grammar) {

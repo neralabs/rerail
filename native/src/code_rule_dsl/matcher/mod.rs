@@ -9,7 +9,7 @@ pub mod p_anchors;
 pub use p_anchors::sql::{Corpus, CorpusSlot};
 #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
 pub use p_anchors::sql::{anchor_plans, anchor_plans_for_file};
-pub mod arguments;
+pub use rerail_adapters::code_rule_dsl::matcher::arguments;
 /// D's anchors module and SQL anchor engine as copied (bb79b40a), test-only: the closure of D's
 /// plan-input statistics (O19).
 #[cfg(any(test, feature = "test-hooks"))]
@@ -37,9 +37,10 @@ pub mod nth_child;
 pub mod parse;
 // cratify: `python_facts` is rerail-lang-python's (it mounts it)
 pub mod relation;
-pub mod resolve;
+pub use rerail_adapters::code_rule_dsl::matcher::resolve;
 pub mod run;
 pub mod semantic;
+pub use rerail_adapters::code_rule_dsl::matcher::steps;
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 pub mod transform;
 pub mod util;
@@ -221,6 +222,19 @@ impl GrammarMatcher {
             Some(file) => types.contains(&file),
             None => types.contains(&SourceType::Module) || types.contains(&SourceType::CommonJs),
         })
+    }
+
+    /// Whether this matcher's file gates (its `when.sourceType`, its `file.jsxRuntime`) admit the file `gates`
+    /// reads, as `run_clause` reads them. A file they exclude matches nothing, so its syntax errors cannot leave the
+    /// clause's result incomplete.
+    pub fn admits<D: Doc>(&self, gates: &FileGates<'_, '_, D>) -> bool {
+        let source_type = self.source_types.as_ref().map(|_| gates.source_type(self.package_type_gate));
+        self.may_apply_to(source_type)
+            && self
+                .file
+                .as_ref()
+                .and_then(|condition| condition.jsx_runtime.as_ref())
+                .is_none_or(|runtimes| runtimes.contains(gates.jsx_runtime()))
     }
 
     /// This matcher's rule (with its constraints) at one root of the clause `begin_clause` set up:
@@ -917,48 +931,7 @@ pub fn clauses_begun() -> u64 {
     CLAUSES_BEGUN.get()
 }
 
-thread_local! {
-    static FILL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// Runs `fill`, which fills a cache later evaluations read for free (a file's scope table and
-/// usage, a parent's counted siblings), counting the steps it spends apart
-/// (`fill_steps`): a memoized verdict whose computation filled one replays only the rest, which
-/// is what computing it again would spend.
-pub fn filling<T>(fill: impl FnOnce() -> T) -> T {
-    let (steps, fills) = (UTIL_STEPS_LEFT.get(), FILL_STEPS.get());
-    let result = fill();
-    // Fills within this one are part of it.
-    FILL_STEPS.set(fills + steps.saturating_sub(UTIL_STEPS_LEFT.get()));
-    result
-}
-
-/// Counts `steps` a cache fill spent directly (`filling`).
-fn filled(steps: usize) {
-    FILL_STEPS.set(FILL_STEPS.get() + steps);
-}
-
-/// Steps cache fills have spent on this thread (`filling`).
-pub fn fill_steps() -> usize {
-    FILL_STEPS.get()
-}
-
-thread_local! {
-    static CLAUSE_STATE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// Notes that the clause in progress read state kept for it alone: a cache keyed by one of its
-/// terms (`nthChild`'s counted siblings, a same-key walk's classes) or a file table charged to
-/// each clause once (scopes, usage, PHP names). What a computation spends then depends on the
-/// clause, so its verdict is that clause's alone (`memo`).
-pub fn read_clause_state() {
-    CLAUSE_STATE_READS.set(CLAUSE_STATE_READS.get() + 1);
-}
-
-/// How many reads of a clause's own state this thread has noted (`read_clause_state`).
-pub fn clause_state_reads() -> u64 {
-    CLAUSE_STATE_READS.get()
-}
+pub use steps::{clause_state_reads, fill_steps, filling, read_clause_state};
 
 /// Ends `begin_clause`: the work left, and the limit a term hit, if any.
 pub fn end_clause() -> (usize, Option<UtilLimit>) {

@@ -12,8 +12,8 @@ use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{ScopeName, Unresolved};
-use crate::code_rule_dsl::model::ViolationSpec;
+use crate::code_rule_dsl::scope::ScopeName;
+use crate::code_rule_dsl::matcher::Unresolved;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
@@ -68,7 +68,7 @@ impl Adapter for Java {
 
     /// No linter's suppression comments are read for Java yet (the registry lists none).
     fn suppresses<D: Doc>(
-        _: &ViolationSpec,
+        _: &str,
         _: &Suppress,
         _: &Node<'_, D>,
         _: &str,
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn scope_and_value_hooks_are_not_supported_yet() {
         use super::{Java, Refusal, ScopeFeature, ScopeRules, ValueFeature, ValueRules};
-        use crate::code_rule_dsl::matcher::SemanticText;
+        use crate::code_rule_dsl::language::adapter::value::SemanticText;
         for feature in [
             ScopeFeature::This,
             ScopeFeature::Occurrence,

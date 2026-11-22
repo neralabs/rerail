@@ -645,3 +645,37 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   and read from the combined memo (`combined::{record_version, read_before_the_run}`), and the reader takes the
   stores (`phases::reading_store`, `build_store`), the lowering's switches (`COMBINING`) and a cone's copy
   (`cone_on_version`). About 40 references.
+  Step 5h, the cut of that cycle (the runner's reads behind a trait the corpus registers), is left open.
+- **Step 6a** (2026-11-21): `rerail-adapters` (`native/crates/adapters`), 17.2k lines below classic (W): the adapter
+  frameworks (`scope`, `value`, `literal`, `calls`, `suppress`), `language::adapter` (the traits, the generated
+  `pack`, and the adapters classic itself mounted: `format`, `rr`), `origin`, `identifier`, and what the traits
+  name, moved down:
+  - `matcher::resolve` (a file's scopes, names and tables, the file gates) and `matcher::arguments` (the argument
+    slots), whole. Their reads of the matcher's root became `matcher::steps`, a new file: a clause's limits, its
+    budget (`spend_step`, `filled`, `read_clause_state`), its fill and state counters and the Unknown flag, out of
+    `util`, `value` and the matcher's root, which re-export them. `FileGates::admit` read the matcher's own fields,
+    so it is the matcher's now (`GrammarMatcher::admits(&gates)`); the gates give the file's source type and JSX
+    runtime.
+  - `compile::config` and `compile::options` (the documents' options and `when`s), whole, with
+    `is_identifier`/`MAX_RESOLVE_NAME_BYTES` out of `compile::resolve`.
+  - `FileInput` and Ruff's module paths (`python_module_path*`, `python_module_in`, `package_marker_directory`):
+    `file_input.rs`, a new file, out of `model`, which re-exports them.
+  - `ScopeName` (to `scope`), `SemanticText` (to `language::adapter::value`) and `Style` (to
+    `language::adapter::format_args`): the enums alone, which the matcher re-exports.
+  - The packs' `suppresses` took the whole compiled `ViolationSpec` (compiled matchers and transforms inside) to
+    read its code: it takes the code (`code: &str`).
+
+  The table's `model` and `stats` are not in it: `model` holds compiled rules (`GrammarMatcher`, `Transform`, the
+  admission's plans), `stats` the anchor plans; both are above the matcher. The language packs still depend on
+  classic: they mount the matcher's and compile's extensions (`matcher::arguments::lang_php`, `compile::import_target`)
+  and read the workspace's `model`, `violations` and `residency`.
+  - Found on the way: on a host with no device (a Linux host without a GPU) nextest's setup script (`kernels
+    compile`, from the hub) failed, so no test of the engine's packages ran there. `kernels compile` with no device
+    now says so and succeeds. On such a host four of the demand driver's contract tests are refused
+    (`UnsupportedBackend`): production's backend there is the CPU JIT, which has no code for their programs' forms;
+    they pass on a Mac (an M3).
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on it and
+    classic): on a Linux host, the tests of suppressions, source types, JSX runtimes, module paths, format arguments,
+    arguments, `resolves`, scopes and options in adapters, classic, the packs and the matcher, compile, demand,
+    transducer and logic test crates: 499 pass, and the suppression contract test on a Mac. The rest are pack data
+    tests (`fixtures:pull`) and the four above.

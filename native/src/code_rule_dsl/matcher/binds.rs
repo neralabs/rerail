@@ -16,13 +16,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-/// A scope a filter names: a table scope kind, or (TypeScript) eslint-scope's global scope, a
-/// script's top level, told apart from a module's (`ScopeKind::Module`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ScopeName {
-    Kind(ScopeKind),
-    Global,
-}
+pub use crate::code_rule_dsl::scope::ScopeName;
 
 /// Filters over a binding: how and where it binds, and whether it is read.
 #[derive(Clone, Default)]

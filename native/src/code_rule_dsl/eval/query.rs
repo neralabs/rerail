@@ -648,7 +648,7 @@ impl<'a> Leaf<'a> {
                 };
                 // A file the query's file gates exclude matches nothing, errors or not, as
                 // `run_clause` reads it without them.
-                if gated && !read.is_empty() && !FileGates::new(file, target.root()).admit(grammar)
+                if gated && !read.is_empty() && !grammar.admits(&FileGates::new(file, target.root()))
                 {
                     return Ok(FileStep::Read {
                         witnesses,
@@ -676,7 +676,7 @@ impl<'a> Leaf<'a> {
                 // Admission must also bypass matching; an omitted SQL plan is not a request
                 // to fall back to a full root walk for a known-empty file.
                 if !grammar.admits_source(&file.source, read, &mut rustc_hash::FxHashMap::default())
-                    || !FileGates::new(file, target.root()).admit(grammar)
+                    || !grammar.admits(&FileGates::new(file, target.root()))
                 {
                     return Ok(FileStep::Read {
                         witnesses,

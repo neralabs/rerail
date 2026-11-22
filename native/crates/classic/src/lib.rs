@@ -22,7 +22,7 @@ extern crate self as rerail_classic;
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
-    pub mod calls;
+    pub use rerail_adapters::code_rule_dsl::calls;
     pub mod compile;
     pub mod crypto;
     pub use rerail_lang::code_rule_dsl::embed;
@@ -63,40 +63,15 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, StoreResult};
     }
+    pub use rerail_adapters::code_rule_dsl::file_input;
     pub mod findings;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
     pub mod hooks;
-    pub mod identifier;
+    pub use rerail_adapters::code_rule_dsl::identifier;
     pub use rerail_lang::code_rule_dsl::json;
     pub use rerail_lang::code_rule_dsl::regexes;
-    #[path = "language"]
-    pub mod language {
-        pub use rerail_lang::code_rule_dsl::language::*;
-        pub mod adapter;
-        #[allow(unused_imports)]
-        #[cfg(any(test, feature = "test-hooks"))]
-        use crate::code_rule_dsl::tree::Tree;
-        #[allow(unused_imports)]
-        use rerail_rr_syntax::tape as rr_tree;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::module_path::ModulePath;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::semver::Range;
-        #[allow(unused_imports)]
-        use ast_grep_core::{
-            AstGrep,
-            language::Language,
-            matcher::{Pattern, PatternBuilder, PatternError},
-            tree_sitter::{StrDoc, TSLanguage},
-        };
-        #[allow(unused_imports)]
-        use ast_grep_language::{LanguageExt, SupportLang};
-        #[allow(unused_imports)]
-        use std::borrow::Cow;
-        #[allow(unused_imports)]
-        use std::sync::LazyLock;
-    }
+    pub use rerail_adapters::code_rule_dsl::language;
     pub mod lines {
         pub use rerail_lang::code_rule_dsl::lines::*;
         // eslint: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
@@ -107,7 +82,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use serde::{Deserialize, Serialize};
     }
-    pub mod literal;
+    pub use rerail_adapters::code_rule_dsl::literal;
     pub mod logic {
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
@@ -148,7 +123,7 @@ pub mod code_rule_dsl {
     pub mod matcher;
     pub mod model;
     pub use rerail_lang::code_rule_dsl::module_path;
-    pub mod origin;
+    pub use rerail_adapters::code_rule_dsl::origin;
     pub use rerail_prof::code_rule_dsl::phase_clock;
     pub mod placement;
     pub use rerail_facts::code_rule_dsl::producers;
@@ -164,14 +139,14 @@ pub mod code_rule_dsl {
     }
     pub mod resolution;
     pub mod rule_api;
-    pub mod scope;
+    pub use rerail_adapters::code_rule_dsl::scope;
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
     pub mod soundness;
     pub use rerail_facts::code_rule_dsl::sql_profile;
     pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats;
-    pub mod suppress;
+    pub use rerail_adapters::code_rule_dsl::suppress;
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[cfg(test)]
@@ -236,7 +211,7 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::search_index::persist_search_index_batch;
     }
     pub use rerail_lang::code_rule_dsl::tree;
-    pub mod value;
+    pub use rerail_adapters::code_rule_dsl::value;
     pub mod violations;
     #[cfg(any(test, feature = "test-hooks"))]
     pub mod walks;

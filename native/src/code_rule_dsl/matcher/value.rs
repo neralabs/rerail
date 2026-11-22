@@ -195,23 +195,7 @@ impl Reading {
     }
 }
 
-/// Spends one step of the root's utility budget for a decode; false once it or the deadline ran
-/// out (the budget then fails the clause for the file with `UtilLimit::Value`).
-pub fn spend_step() -> bool {
-    if UTIL_EXCEEDED.get().is_some() || budget::matcher_call_budget_exhausted() {
-        return false;
-    }
-    match UTIL_STEPS_LEFT.get().checked_sub(1) {
-        Some(left) => {
-            UTIL_STEPS_LEFT.set(left);
-            true
-        }
-        None => {
-            UTIL_EXCEEDED.set(Some(UtilLimit::Value));
-            false
-        }
-    }
-}
+pub use super::steps::spend_step;
 
 /// A bound on a number: `gt`, `ge`, `lt` or `le`.
 #[derive(Clone, Copy)]
