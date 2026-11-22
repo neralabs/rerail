@@ -23,6 +23,10 @@ use ::bitlex::syntax::{Arg, Expr, PartLen, Region, Stmt, TokenRule, TokenTest};
 use std::collections::HashMap;
 use std::fmt::Write;
 
+// Mounted by `rerail-bitlex` from the compiler's folder (`#[path]`): its submodule is found beside it.
+#[path = "bitlex_lex_rust/bytes.rs"]
+mod bytes;
+
 /// What the generator reads: the lexer's statements and the compiler's tables.
 pub struct Input<'a> {
     pub stmts: &'a [Stmt],
@@ -661,6 +665,8 @@ struct Node {
     carry: bool,
     /// A class's bytes: its code is made again where stage 1 writes it, in the tables of the classes it reads.
     class: Option<std::boxed::Box<[bool; 256]>>,
+    /// The expression it is, where the loop may read it from the bytes instead (decision 0623, `bytes`).
+    expr: Option<Expr>,
 }
 
 /// A row of the token loop, for `dispatch`: its start, the test build's checks where the loop
@@ -1212,7 +1218,7 @@ impl Gen<'_> {
     /// A stage-1 mask of its own, `name`'s, with its word's code and lag.
     fn push_node(&mut self, key: String, name: String, what: String, code: String, lag: u32, carry: bool) -> usize {
         let id = self.nodes.len();
-        self.nodes.push(Node { name, what, code, lag, kept: false, carry, class: None, also: Vec::new() });
+        self.nodes.push(Node { name, what, code, lag, kept: false, carry, class: None, also: Vec::new(), expr: None });
         self.node_of.insert(key, id);
         id
     }
@@ -1224,6 +1230,7 @@ impl Gen<'_> {
         let local = format!("m_{}", ident(name));
         let id = self.push_node(format!("={name}"), local, format!("class {name}"), code, 0, false);
         self.nodes[id].class = Some(std::boxed::Box::new(*set));
+        self.nodes[id].expr = Some(Expr::Name(name.to_owned()));
         id
     }
 
@@ -1295,6 +1302,12 @@ impl Gen<'_> {
 
     /// Stage 1's mask `name` of `e`: a carried operation's step, else its word.
     fn make_node(&mut self, key: String, name: String, what: String, e: &Expr) -> Result<usize, String> {
+        let id = self.make_node_of(key, name, what, e)?;
+        self.nodes[id].expr = Some(e.clone());
+        Ok(id)
+    }
+
+    fn make_node_of(&mut self, key: String, name: String, what: String, e: &Expr) -> Result<usize, String> {
         if let Expr::Call(f, args) = e {
             let ea = |i: usize| match args.get(i) {
                 Some(Arg::E(e)) => Ok(e),
@@ -5850,11 +5863,8 @@ impl Gen<'_> {
         }
         out.push_str(&tables);
         if fused {
-            let _ = write!(
-                out,
-                "/// `src`'s records, in one pass over its blocks (decision 0619): stage 1 makes each block's masks as the token loop\n/// comes to need them, and the token loop reads its tokens from them, as the lean lexer's `lex_blocks` reads its\n/// blocks' masks.\n#[inline(always)]\nunsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {{\n    let nw = n.div_ceil(64);\n{}    let mut refused = false;\n    // Stage 1's next step, the blocks whose masks it has made, and those the token loop waits for.\n    let mut t = 0usize;\n    let mut made = 0usize;\n    let mut wait = nw.min(1);\n",
-                s1.decls
-            );
+            // Its head once the loop's form is known (`from_bytes`, below).
+            out.push_str(LEX_HEAD);
         } else {
             out.push_str(&self.lex_head());
         }
@@ -5869,10 +5879,56 @@ impl Gen<'_> {
         // A refusal in the token loop leaves both its loops.
         let tokens = |t: &str| t.replace("break;\n", "break 'tokens;\n");
         let (open_code, branches, token_code, own_code, gap_code, acc_after) = (tokens(&open_code), tokens(&branches), tokens(&token_code), tokens(&own_code), tokens(&gap_code), tokens(&acc_after));
+        // The one pass with its masks read from the bytes where the loop reads them (decision 0623 step 1), as the lean
+        // lexer's window: no stage 1, no mask of the whole file, and so no block to wait for. Where stage 1 tests
+        // nothing of its own and every mask the loop reads has that form.
+        let from_bytes = if fused && self.stage1_parts(true).finals.trim().is_empty() && !self.body.lines().any(|l| l.trim_start().starts_with("refused |=")) {
+            let locals: HashMap<String, Expr> = self.nodes.iter().filter_map(|n| n.expr.clone().map(|e| (n.name.clone(), e))).collect();
+            let mut by = bytes::Bytes::new(x.stmts, locals);
+            let mut go = || -> Result<_, String> {
+                let mut pieces = Vec::new();
+                for t in [&open_code, &branches, &token_code, &own_code, &gap_code, &acc_after] {
+                    let t = by.rewrite(&bytes::strip_pauses(t))?;
+                    if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
+                        return Err("a pause the loop still reads".into());
+                    }
+                    pieces.push(t);
+                }
+                let starts = by.starts(&skip)?;
+                Ok((pieces, starts))
+            };
+            go().ok().map(|(p, st)| (p, st, by.code()))
+        } else {
+            None
+        };
+        let (open_code, branches, token_code, own_code, gap_code, acc_after) = match &from_bytes {
+            Some((p, ..)) => (p[0].clone(), p[1].clone(), p[2].clone(), p[3].clone(), p[4].clone(), p[5].clone()),
+            None => (open_code, branches, token_code, own_code, gap_code, acc_after),
+        };
         let walk = gate_walk(&self.body, &rest);
         // The counts' words over the tokens.
         let scan_decl: String = token_scans.iter().map(|(name, ..)| format!("    let mut c_{} = 0u32;\n", ident(name))).collect();
-        let (walk, loop_head, pass_end) = if fused {
+        if fused {
+            let head = if from_bytes.is_some() {
+                String::from("/// `src`'s records, in one pass over its blocks (decisions 0619, 0623): each block's token starts from its 64 bytes, and\n/// each mask a token reads from the bytes where it reads it, as the lean lexer reads its window's.\n#[inline(always)]\nunsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {\n    let nw = n.div_ceil(64);\n    let mut refused = false;\n")
+            } else {
+                format!(
+                    "/// `src`'s records, in one pass over its blocks (decision 0619): stage 1 makes each block's masks as the token loop\n/// comes to need them, and the token loop reads its tokens from them, as the lean lexer's `lex_blocks` reads its\n/// blocks' masks.\n#[inline(always)]\nunsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {{\n    let nw = n.div_ceil(64);\n{}    let mut refused = false;\n    // Stage 1's next step, the blocks whose masks it has made, and those the token loop waits for.\n    let mut t = 0usize;\n    let mut made = 0usize;\n    let mut wait = nw.min(1);\n",
+                    s1.decls
+                )
+            };
+            out = out.replacen(LEX_HEAD, &head, 1);
+        }
+        let (walk, loop_head, pass_end) = if fused && from_bytes.is_some() {
+            // No stage 1: the test build's walk alone, of its own stage 1 over the file.
+            let walk = walk.replacen("    let mut refused = escapes;\n", "", 1);
+            let walk = walk.replacen(
+                " = {\n",
+                &format!(" = {{\n        let Stage1 {{ {}, refused: _ }} = stage1_best(&src[..n]);\n        // Each word's bits inside the file.\n        let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n {{ !0 }} else {{ (1u64 << (n % 64)) - 1 }}).collect();\n", kept.join(", ")),
+                1,
+            );
+            (walk, "    'tokens: while b < nw {\n".to_owned(), "")
+        } else if fused {
             // Stage 1 to the blocks the token loop waits for (every one, once it waits for the file's end), then its
             // tests once after its last step; a test build's walk; then the token loop, to a token in a block not made.
             let walk = walk.replacen("    let mut refused = escapes;\n", "", 1);
@@ -5903,14 +5959,21 @@ impl Gen<'_> {
         }
         let _ = write!(
             out,
-            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}{scan_decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).\n    let mut b = at / 64;\n{stage}{loop_head}        let base = b * 64;\n        let mut firsts = !{skip}[b] & (!0u64 << at.saturating_sub(base));\n        while firsts != 0 {{\n        let s = base + firsts.trailing_zeros() as usize;\n        if s >= n {{\n            break 'tokens;\n        }}\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches};\n        let word = if extra {{ 0 }} else {{ word(&src[s..=l]) }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n        if at >= base + 64 {{\n            b = at / 64;\n            continue 'tokens;\n        }}\n        firsts &= !0u64 << (at - base);\n        }}\n        b += 1;\n    }}\n{pass_end}{unplaced_code}    let _ = (from, from_record, before, pending);\n{span_after}    Lexed {{\n        starts,\n        lasts,\n        codes,\n{masks_init}        refused,\n    }}\n}}\n",
+            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}{scan_decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).\n    let mut b = at / 64;\n{stage}{loop_head}        let base = b * 64;\n        let mut firsts = {block_starts} & (!0u64 << at.saturating_sub(base));\n        while firsts != 0 {{\n        let s = base + firsts.trailing_zeros() as usize;\n        if s >= n {{\n            break 'tokens;\n        }}\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches};\n        let word = if extra {{ 0 }} else {{ word(&src[s..=l]) }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n        if at >= base + 64 {{\n            b = at / 64;\n            continue 'tokens;\n        }}\n        firsts &= !0u64 << (at - base);\n        }}\n        b += 1;\n    }}\n{pass_end}{unplaced_code}    let _ = (from, from_record, before, pending);\n{span_after}    Lexed {{\n        starts,\n        lasts,\n        codes,\n{masks_init}        refused,\n    }}\n}}\n",
             own = own_code,
             plain_decl = plain_decl_text,
             stage = if fused { walk.as_str() } else { "" },
+            block_starts = match &from_bytes {
+                Some((_, st, _)) => st.clone(),
+                None => format!("!{skip}[b]"),
+            },
             masks_init = if fields.is_empty() { String::new() } else { format!("        masks: Masks {{\n{fields_init}        }},\n") },
         );
         if fused {
             out.push_str("\nrerail_simd8::dispatch! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].iter().all(|&b| b == b' '), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
+        }
+        if let Some((_, _, code)) = &from_bytes {
+            out.push_str(code);
         }
         out.push_str(HELPERS);
         if self.body.contains("toggle(&") {
@@ -5919,6 +5982,9 @@ impl Gen<'_> {
         Ok(out)
     }
 }
+
+/// Where the one pass's head goes, until its form is known.
+const LEX_HEAD: &str = "\u{0}lex_on's head\u{0}";
 
 /// The byte-pair errors' check of block `q` (its bytes `b`, its vector `v`), as simdjson's `utf8_checker::check_next_input`.
 fn lookup_code(l: &crate::bitlex_pair_lookup::Lookup) -> String {

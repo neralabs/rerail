@@ -69,3 +69,30 @@ corpus). Tier 1 first, since tier 2 reads its records:
 6. Tier 2 at `Narrow` where the widths are narrow (tier 2's 1).
 7. Tier 2 reads one record, with no split string where the grammar splits none (tier 2's 2, 3).
 8. Tier 2 finishes into the image, with no copy (tier 2's 4).
+
+## Step 1: the one pass reads its masks from the bytes (done)
+
+Steps 1 and 2 of the order are one change. Once no mask is kept for the file, nothing is made ahead of the loop, so a
+token has no block to wait for. `bitlex_lex_rust/bytes.rs` writes each read of the loop from the bytes where it reads
+them:
+
+- **A test at a byte** (`bit(&M, i)`: the dispatch's `//`, `/*` and backtick tests, a bracket in a token) is a test of
+  the bytes there, as lean's `c == b'/' && d == b'/'`.
+- **A search or a count** (a closer's `first_bit`, a string's checks' `count_in`, a run's end, a number's dot, the
+  depth's brackets, a gap's newline) reads its mask 64 bytes at a time from its first byte. Each window is made of the
+  bytes loaded where they are: a class by its byte ranges, `prev` and `next` as the window a byte back or on, and
+  `escaped` word by word, its carry from the search's first byte. A mask that reads escapes is read only from a
+  token's first byte or the one after: a start is never escaped.
+- **A block's token starts** are the block's window of `skip`.
+
+`lex_on` is one loop over the blocks, as lean's `lex`: no stage 1, no `'pass`, no `made` or `wait`, no vector of
+masks. The test build's walk keeps its own stage 1 over the file (`stage1_best`), which only its checks read. The form
+applies where stage 1 tests nothing of its own (no error tested over the blocks, none after the last) and every mask
+the loop reads has a form of the bytes. Elsewhere the pass keeps stage 1. Kotlin's and JSON's files are unchanged.
+
+`rr_parser`'s 51 library tests pass, the corpus's tapes and records included.
+
+The reads are lean's in where they read, not yet in what they read. A run or a closer search makes a window per 64
+bytes of its mask, and a test at a token's start reads each byte with a bound. The next steps make them lean's: the
+common token's one table load (3), the word's one load (4), and the region readers as lean's micro-lexers (2's
+other half).
