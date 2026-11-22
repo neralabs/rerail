@@ -6,6 +6,9 @@
 //!
 //! A lookup by id goes to the side that holds the id. A node's id never reaches the spans, so a probe of a node's
 //! place makes no document (the made rows' probes made a node's document and every relation of its group).
+//!
+//! The device reads it in place too (`device_view`): the view through the views' reads, the spans' rows in their
+//! block, one relation to a stage (`PlacedDir`, the kernels' `vread` of a kind with `VIEW_PLACED`).
 
 use super::granules;
 use crate::code_rule_dsl::facts::vtab::Source;
@@ -17,6 +20,37 @@ pub(super) struct Placed {
     pub view: Arc<dyn Source>,
     /// `Extra`'s rows of the place, its spans' alone.
     pub spans: Arc<dyn Source>,
+    /// Where the device reads it, made on the first ask (`device_view`); `None` where it cannot.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub device: std::sync::OnceLock<Option<OnDevice>>,
+}
+
+/// The kernels' `PlacedDir`: the view's directory, the spans' relation where it lies (its block's address and its
+/// descriptor's offset), and the view's rows, which the spans' follow.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PlacedDir {
+    dir: u64,
+    tail: u64,
+    at: u64,
+    rows: u32,
+    pad: u32,
+}
+
+/// The kernels' `VIEW_PLACED`: a kind's bit for a placed relation, whose directory is a `PlacedDir`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub const VIEW_PLACED: u32 = 16;
+
+/// A placed relation on the device: its `PlacedDir` (a buffer of its own: addresses, no rows), the buffers its reads
+/// reach past the view's (the spans' block), the spans' relation held while it is read, and its relation of no
+/// columns, which its indexes go in (decision 0478 step 3).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(super) struct OnDevice {
+    dir: rerail_device::device::Buffer,
+    tail: rerail_device::device::Buffer,
+    _spans: crate::code_rule_dsl::facts::rows::InBlock,
+    home: crate::code_rule_dsl::facts::rows::Part,
 }
 
 /// Whether id `id` is one of `Extra`'s spans (`granules::ExtraSpan`), not a node, token or position.
@@ -25,6 +59,22 @@ fn is_span(id: i64) -> bool {
 }
 
 impl Placed {
+    /// The view's directory and the spans' rows where they lie, in a `PlacedDir` (`view_dir`: the view's, read in
+    /// place). `None` where the spans' rows are in no block, or the device's buffers have no addresses.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn on_device(&self, view_dir: u64) -> Option<OnDevice> {
+        let device = crate::code_rule_dsl::tape::placed::device()?;
+        let spans = self.spans.in_block()?;
+        let tail = spans.facts.block.device_buffer(device).ok()?;
+        let base = tail.device_address()?;
+        let dir = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, std::mem::size_of::<PlacedDir>());
+        let placed = PlacedDir { dir: view_dir, tail: base, at: spans.at as u64, rows: self.view.len() as u32, pad: 0 };
+        // SAFETY: the buffer's bytes, shared with the host, `PlacedDir`'s size, read by no stage yet.
+        unsafe { dir.contents().cast::<PlacedDir>().write_unaligned(placed) };
+        let home = crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()?;
+        Some(OnDevice { dir, tail, _spans: spans, home })
+    }
+
     /// The spans' first row: past the view's.
     fn at(&self) -> usize {
         self.view.len()
@@ -40,6 +90,25 @@ impl Placed {
 impl Source for Placed {
     fn python_batch(&self) -> Option<Arc<super::Batch>> {
         self.view.python_batch()
+    }
+    /// The view read in place, its rows then the spans' where they lie (`OnDevice`). With no spans, the view's. Where
+    /// the view is not read in place, none: the stage reads its rows from the host (0353 step 6's upload).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
+        let mut d = self.view.device_view()?;
+        if self.spans.len() == 0 {
+            return Some(d);
+        }
+        let v = d.in_place.as_mut()?;
+        let on = self.device.get_or_init(|| self.on_device(v.dir)).as_ref()?;
+        let dir = on.dir.device_address()?;
+        v.dir = dir;
+        v.kind |= VIEW_PLACED;
+        v.buffers.push(on.dir.clone());
+        v.buffers.push(on.tail.clone());
+        d.rows = self.len();
+        d.home = Some(on.home.clone());
+        Some(d)
     }
     fn columns(&self) -> Vec<String> {
         self.view.columns()

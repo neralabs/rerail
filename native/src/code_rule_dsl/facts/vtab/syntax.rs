@@ -4432,7 +4432,12 @@ fn placed<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<Batch>) {
     for (name, view) in named_views(Shape::Core).into_iter().filter(|(name, view)| matches!(view, View::Loc(_)) && batch.made.contains(name)) {
         if let Some((_, source)) = out.iter_mut().find(|(n, _)| n.as_ref() == name) {
             let view: Arc<dyn Source> = Arc::new(Viewed { batch: Arc::clone(batch), view, home: std::sync::OnceLock::new() });
-            *source = Arc::new(places::Placed { view, spans: Arc::clone(source) });
+            *source = Arc::new(places::Placed {
+                view,
+                spans: Arc::clone(source),
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                device: std::sync::OnceLock::new(),
+            });
         }
     }
 }

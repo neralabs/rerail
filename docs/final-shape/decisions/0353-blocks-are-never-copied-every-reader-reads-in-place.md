@@ -307,7 +307,11 @@ findings 1,629 in each; 73.5 B instructions (median) against 80.2 B.
 makes place rows for its spans alone (`Extra::spans_only`): a match, a comment no node is, `source` and `src_line`.
 A span is a derived fact, placed once where it is made (`LineTable::place`). Each place relation is bound as the
 `Loc` view's rows, then those (`places::Placed`). A lookup by id goes to the side that holds the id
-(`granules::is_extra`), so a probe of a node's place reads the tape and makes no document. Before, such a probe
+(`granules::is_extra`), so a probe of a node's place reads the tape and makes no document. The device reads it in
+place as one relation: the kernels' `vread` of a placed kind reads a row below the view's count through the views'
+reads, and a row past it from the spans' relation where it lies in its block (`PlacedDir`: the view's directory,
+the spans' block and descriptor, the view's rows). `views_made_on_the_device_are_the_hosts_rows` copies and indexes
+each place relation of a span-reading program on the device. Before, such a probe
 made the node's document and its group: on ep2's `body` edit, 38 unchanged documents, about 0.09 s of 4.0 s.
 `a_span_reader_s_places_are_the_view_s_then_the_spans` checks the made rows (spans' alone), the view's rows first,
 and each line span's place.
