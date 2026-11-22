@@ -3339,12 +3339,30 @@ DEFINE_KERNEL2(tests, t_random,
             ops.extend(std::iter::repeat_n(Op::Close(len), open));
             ops
         }
-        fn both<X: CellWidths>(widths: [usize; 3]) {
+        fn both<X: CellWidths>(widths: [usize; 3]) -> [usize; 4] {
             let entries = (0..300).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
             let lang = Lang::new(CodeTable::new(entries), widths, 1).unwrap();
             let source = source_of(300_000);
-            for seed in [1, 2, 3] {
+            // The block edges the cursor meets (`Z` rows a block): an open, a leaf and a node of one leaf at a
+            // block's first row, and a node of one leaf whose child is at it.
+            let mut edges = [0usize; 4];
+            for seed in [1, 2, 3, 4, 5, 6, 7, 8] {
                 let ops = tree(source.len() as u64, 300, seed);
+                let mut n = 0u32;
+                for o in &ops {
+                    let at = n % crate::writer16::Z;
+                    match o {
+                        Op::Open(..) | Op::Leaf(..) if n != 0 && at == 0 => edges[usize::from(matches!(o, Op::Leaf(..)))] += 1,
+                        Op::LeafIn(..) if at == 0 => edges[2] += 1,
+                        Op::LeafIn(..) if at == crate::writer16::Z - 1 => edges[3] += 1,
+                        _ => {}
+                    }
+                    n += match o {
+                        Op::Close(_) => 0,
+                        Op::LeafIn(..) => 2,
+                        _ => 1,
+                    };
+                }
                 assert!(ops.iter().any(|o| matches!(*o, Op::Leaf(_, s, e) if e - s > 0xffff)), "a length past two bytes");
                 assert!(ops.len() > 4 * 1024 && ops.iter().filter(|o| matches!(o, Op::LeafIn(..))).count() > 1000, "many blocks, and nodes of one leaf: {} ops, {} of one leaf", ops.len(), ops.iter().filter(|o| matches!(o, Op::LeafIn(..))).count());
                 for z in [false, true] {
@@ -3403,11 +3421,13 @@ DEFINE_KERNEL2(tests, t_random,
                     assert!(a.tape.extent() == c.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the cursor's bytes");
                 }
             }
+            edges
         }
-        both::<Fixed<1, 1, 1>>([1, 1, 1]);
-        both::<Fixed<2, 1, 4>>([2, 1, 4]);
-        both::<Fixed<1, 2, 2>>([1, 2, 2]);
-        both::<Fixed<4, 4, 8>>([4, 4, 8]);
-        both::<Fixed<3, 1, 1>>([3, 1, 1]);
+        let edges = both::<Fixed<1, 1, 1>>([1, 1, 1]);
+        assert!(edges.iter().all(|&e| e > 0), "every block edge met (an open, a leaf, a node of one leaf, its child): {edges:?}");
+        _ = both::<Fixed<2, 1, 4>>([2, 1, 4]);
+        _ = both::<Fixed<1, 2, 2>>([1, 2, 2]);
+        _ = both::<Fixed<4, 4, 8>>([4, 4, 8]);
+        _ = both::<Fixed<3, 1, 1>>([3, 1, 1]);
     }
 }

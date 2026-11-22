@@ -743,6 +743,8 @@ Tier 2 against `walk`:
 | A run of closers | `ScopeEnd`'s loop, `object[d]` deciding | the places returned to one arm, `'ret: loop { match st { … } }`, a closer `continue 'ret` |
 | A separator, an opener, a `:` | `take!()` | `i += 1` alone; a closer's end kept, its node's |
 | A record's byte | `*v` | `peek`, a `u8` |
+| A stride's or a block's first node | `base[n / STRIDE] = start`, inline | the cursor makes the block inline (`start_block`), then writes the node in its own path; the block before settled |
+| A close of a node in a block before | stored at `ord` | stored in its block's cells; the block settled once final |
 | A string's end bound | none: stage 1 refused an open string | none (tier 1 refuses it, `c_m_in_string`) |
 | An escape's second byte | one branch: `u`, else `ESCAPE_MAP` | one `match src[y]`: `0x75` the checks, the other words, else refused |
 | A number's first byte | a digit or `-` | `0x2d \| 0x30..=0x39`, else refused |
@@ -761,10 +763,7 @@ Tier 1 against `index`:
 | A string open at the end | `prev_in_string != 0` (`finish`) | `c_m_in_string != 0` |
 | The records' write | `bit_indexer::write`, the block before's at each block, the last after the loop | the same (`write_indexes`, `prev_structurals`) |
 
-What still differs:
-- **Format 16's blocks.** Tier 2 writes blocks of nodes. A close of a node in a block before stores in place, as
-  `walk`'s at `ord`, and only the block's settle is the state's. The state's op makes a block at its first node: its
-  room, table entry, side area and presence, which `walk`'s simdjson columns do not have. The format is the tape's.
+The files accepted differ in one way, which is not shape:
 - **The numbers accepted.** `number_end` keeps no value, but works one out where it decides the answer: it refuses a
   float past the doubles' range (`1e400`) and an integer past 64 bits. The grammar states neither bound, so tier 2
   and the JIT accept those numbers. This is the user's choice (2026-11-22): JSON accepts them, as RFC 8259 states it.

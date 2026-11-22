@@ -117,9 +117,14 @@ Later, the same day, a second and a third reading found six more differences, do
 17. **A close of a node in a block before is stored in place** (`writer16::Cursor::close`), as `walk`'s close stores
     at `ord`. Its length and size go into its block's cells, which the block's table gives. The state's op is then
     only format 16's settle: the block is final once a node past it is made and its nodes are closed.
-    - What stays the state's is format 16's own work: a block's first node makes the block (its room, its table
-      entry, its side area, its presence), and settles blocks. `walk` writes simdjson's columns, which have no blocks,
-      side lists or presence bits. The tape's format is not changed here.
+18. **A block's first node is the cursor's own**, as `walk` stores `base[n / STRIDE]` inline at a stride's first
+    node. The format is unchanged: the same bytes.
+    - At a node whose row is 0 (`n % Z == 0`), the cursor makes the block (`start_block`: `new_block`'s room, table
+      entry, side area and presence) and holds it. It writes the node in its own path (`node::<true>`, the node
+      before's slot stored in the block before), then settles the block before (`settle_before`). This is the order of
+      the state's `open_node_x`.
+    - A node of one leaf whose child is a block's first row makes the child's block the same way.
+    - The state's op is left only at the file's first node, where no node is open (`walk`'s document).
 
 Implementer's choices:
 - **The string's start.** It stays `q & ~string_tail`, not `structural_start & q`: the JIT's split of a region read
@@ -179,6 +184,9 @@ Implementer's choices:
     is simdjson's structural or whitespace, and that this error is the only one covered.
   - 83 of 83 pass on an aarch64 Linux host.
 - **After item 17:** the writer test passes, and JSON's 14 tests pass.
+- **After item 18:** the writer test runs 8 seeds and asserts that the cursor meets each block edge: an open, a leaf
+  and a node of one leaf at a block's first row, and a node of one leaf whose child is at it. The cursor's bytes
+  equal the state's ops' in 16 and 16z at five width sets, under the debug checks. JSON's 14 tests pass.
   - `rerail-tape-format`'s `f16::tests::the_device_reads_read_every_node_as_the_crate_does` fails on the M3 and on
     this Mac, at HEAD without item 17 too: the device's reads of a 16z tape through its cache give another child
     count for node 0 than the crate's reads (1 against 6862 on the M3). The test does not use the writer's cursor.
