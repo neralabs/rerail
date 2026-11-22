@@ -102,6 +102,9 @@ typedef struct LpRun {
     // Region 0's lowest mark of a frame left while a call's arguments are read: what is above it is
     // that call's, and its substitution gives it back.
     uint32_t cfree;
+    // The look ahead's (`lp_run`): the tokens next that are plain (no lookup), and none asked for
+    // the next token (its run was none).
+    uint32_t run; bool noask;
     // The second pass (`lp_run`'s `write`): the givings are counted in the first.
     bool write;
     // A directive's line (`#if`'s, an include's), not the text: its tokens' states (`STATE`: 2 read in a
@@ -119,6 +122,8 @@ typedef struct LpRun {
     // unit's slots (`[fl_lo, fl_hi)`): a piece reads a few of each, so a name's slot and floor are
     // not a search each (`lp_slot_of`, `lp_floor`).
     uint32_t sl_lo, sl_hi, sl_base, fl_lo, fl_hi;
+    // The file of the last token `lp_punct` read: its nodes `fb_lo..fb_hi`.
+    uint32_t fb_lo, fb_hi, fb_f;
     // 0 going on; else why the run stopped (`LP_*`).
     uint32_t stop;
 } LpRun;
@@ -185,6 +190,25 @@ UKL_INLINE uint32_t lp_ref(Ux u, LpTok t) {
     if (k == P_TOP) return u.tnode[t.st];
     if (k == P_BODY) return u.defs[t.src & ~P_KIND].body + t.st;
     return t.st;
+}
+
+// Token `g`'s byte if it is a one-byte punctuator, else 0: its kind read first, its bytes for a
+// punctuator alone; its file the last one's when it is in it.
+UKL_INLINE uint8_t lp_punct(UKL_PRIVATE LpRun* r, Ux u, uint32_t g) {
+    if ((g & SCRATCH) != 0u) {
+        PxScratch t = u.stoks[g & ~SCRATCH];
+        return t.kind == K_PUNCT && t.end - t.start == 1u ? u.sbytes[t.start] : ((uint8_t)(0));
+    }
+    if (g < r->fb_lo || g >= r->fb_hi) {
+        uint32_t f = file_of(u.bases, u.n_files, g);
+        r->fb_f = f; r->fb_lo = u.bases[f]; r->fb_hi = f + 1u < u.n_files ? u.bases[f + 1u] : LP_NONE;
+    }
+    Tape t = tape_at(u.data, u.files, r->fb_f);
+    uint32_t i = g - r->fb_lo;
+    if (node_kind(t, i) != K_PUNCT) return (uint8_t)(0);
+    uint32_t st = node_start(t, i);
+    if (node_end(t, i) - st != 1u) return (uint8_t)(0);
+    return u.data[pf_src(*t.v) + st];
 }
 
 // `n` tokens of region `x`: their offset there, or `LP_NONE` where the store has no room (the run
@@ -891,13 +915,13 @@ UKL_INLINE bool lp_collect(UKL_PRIVATE LpRun* r, Ux u, Ar a, PP_GLOBAL uint32_t*
     uint32_t nargs = 1u, depth = 0u, astart = r->mem[0].top, org = LP_NONE;
     for (;;) {
         if (!lp_lex(r, a, obase, write, vat, &t, &at_stop)) { lp_unclosed(r, a, at_stop); return false; }
-        uint32_t g = lp_ref(u, t);
-        if (ref_is(u, g, '(')) {
+        uint8_t c = lp_punct(r, u, lp_ref(u, t));
+        if (c == ((uint8_t)('('))) {
             depth++;
-        } else if (ref_is(u, g, ')')) {
+        } else if (c == ((uint8_t)(')'))) {
             if (depth == 0u) { org = t.org; break; }
             depth--;
-        } else if (depth == 0u && ref_is(u, g, ',') && !(variadic && nargs == n)) {
+        } else if (depth == 0u && c == ((uint8_t)(',')) && !(variadic && nargs == n)) {
             uint32_t e = lp_alloc(r, a, 1u, 1u);
             if (e == LP_NONE) return false;
             a.psrc[r->mem[1].base + e] = r->mem[0].top;
@@ -1030,165 +1054,231 @@ UKL_INLINE void lp_overruns(PP_GLOBAL const uint32_t* ovr, PP_GLOBAL const uint3
     if (s < n_toks[0] && ovr[s] != 0u) at[xat[s]] = s;
 }
 
-// The piece that starts at top token `s0` (any other token does nothing), one pass: the first
-// (`write` false) counts (`trn[13]` the pieces), the second writes.
-UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t* lookups, PP_GLOBAL const uint32_t* start, PP_GLOBAL uint32_t* v, PP_GLOBAL uint32_t* opv, PP_GLOBAL uint32_t* obase, PP_GLOBAL const uint32_t* opbase,
-                       PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL uint32_t* grid, bool write, uint32_t s0) {
-    if (s0 >= u.n_toks || start[s0] == 0u) return;
+// One lane's look ahead (`lp_run`): whether token `p` of span `def` is plain, its name no macro
+// visible at `slot` (nor popped there). A walk past its rows is not plain: the step refuses it.
+UKL_INLINE bool lp_ahead(Ux u, Ar a, uint32_t def, uint32_t p, uint32_t slot, uint32_t floor) {
+    LpTok t; t.src = lp_span_src(def); t.st = p; t.flags = 0u; t.org = 0u;
+    uint32_t g = lp_ref(u, t);
+    uint32_t lo = IR_NONE, hi = IR_NONE;
+    uint64_t key = ref_key(u, g);
+    if ((t.src & P_KIND) == P_BODY) {
+        uint32_t it = u.defs[t.src & ~P_KIND].ifirst + p;
+        lo = u.irows[2u * it]; hi = u.irows[2u * it + 1u];
+    } else if (ref_kind(u, g) == K_IDENTIFIER) {
+        lo = name_rows_lo(u.sorted, u.n_rows, key); hi = name_rows_hi(u.sorted, u.n_rows, key);
+    }
+    if (lo == IR_NONE) return true;
+    bool over = false;
+    uint32_t m = visible_walk(u.sorted, u.perm, u.name_keys, u.values, lo, hi, key, slot, floor, &over);
+    if (over || px_pops_at(u, a.tf, lo, hi, key, slot)) return false;
+    return m == L_NOT_NAME || m == L_NONE || m == L_IDENT;
+}
+
+// The piece that starts at top token `s0`, one pass: the first (`write` false) counts (`trn[13]`
+// the pieces), the second writes. Its thread (`me`) runs it; the SIMD group's other lanes (lane
+// `ln`, the thread lane `lead`) look ahead for it: at a span, each looks up a token of the next 32,
+// and the tokens before the first that may act are the thread's next steps without a lookup.
+UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t* lookups, PP_GLOBAL const uint32_t* start, PP_GLOBAL uint32_t* v, PP_GLOBAL uint32_t* opv, PP_GLOBAL uint32_t* obase, PP_GLOBAL const uint32_t* opbase,
+                         PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL uint32_t* grid, bool write, uint32_t s0,
+                         bool me, uint32_t ln, uint32_t lead __UKL_PARAMS) {
     // The piece reads to the next piece's start `e`; a call it reads past `e` (a body's call left open,
     // `#define C F(`, its arguments in the text after it) goes on, and the piece ends at the first
     // start it reaches back at the top (`ee`): the pieces between are its (`lp_swallow`).
-    uint32_t re = lp_run_end(u, s0), e = s0 + 1u, ee = re;
-    while (e < re && start[e] == 0u) e++;
+    uint32_t re = 0u, e = 0u, ee = 0u, step = 0u;
     LpOut o;
-    o.src = 0u; o.st = 0u; o.len = 0u; o.fl = 0u; o.np = 0u; o.nv = 0u; o.nf = 0u; o.head = 0u; o.ext = 0u; o.s0 = s0;
-    o.write = write; o.skip = write && joined[s0] != 0u; o.out = a.out; o.cap = a.out_cap;
-    o.pbase = write ? opbase[s0] : 0u; o.vbase = write ? obase[s0] : 0u;
     LpRun r;
-    r.fr[(0) & (LP_DEPTH - 1u)].kind = FK_TOP; r.fr[(0) & (LP_DEPTH - 1u)].def = LP_NONE; r.fr[(0) & (LP_DEPTH - 1u)].at = s0; r.fr[(0) & (LP_DEPTH - 1u)].end = re; r.fr[(0) & (LP_DEPTH - 1u)].mark = 0u; r.fr[(0) & (LP_DEPTH - 1u)].nsp = 0u; r.fr[(0) & (LP_DEPTH - 1u)].org = LP_NONE;
-    r.sp = 1u; r.nc = 0u; r.last = s0; r.s0 = s0; r.collecting = false; r.stop = 0u;
-    r.line = u.sc.runs == 0u; r.state = state; r.ops = ops; r.raw = 0u; r.clast = LP_NONE; r.crank = 0u;
-    r.cfree = 0u; r.write = write;
-    r.sl_lo = 1u; r.sl_hi = 0u; r.sl_base = 0u; r.fl_lo = 1u; r.fl_hi = 0u;
-    for (uint32_t x = 0u; x < 3u; x++) { r.mem[x].base = 0u; r.mem[x].cap = 0u; r.mem[x].top = 0u; }
-    uint32_t step = 0u;
-    for (; r.stop == 0u; step++) {
-        if (step == LP_WORK) { px_refuse(a.ctl, X_WORK); r.stop = LP_REFUSED; break; }
-        // A long piece: the groups waiting at the phase's barrier see it progress (`ukl_grid_beat`).
-        if ((step & 4095u) == 4095u) ukl_grid_beat(grid);
-        // Back at the top: the regions start again; at or past `e`, at a piece's start, the piece ends.
-        if (r.nc == 0u) {
-            uint32_t at = r.fr[(0) & (LP_DEPTH - 1u)].at;
-            if (at >= e && (at >= re || start[at] != 0u) && lp_at_top(&r)) { ee = at; break; }
-            if (r.sp == 1u) { r.mem[0].top = 0u; r.mem[1].top = 0u; r.mem[2].top = 0u; }
-        }
-        LpTok t; bool at_stop = false;
-        if (!lp_lex(&r, a, obase, write, o.vbase + o.nv, &t, &at_stop)) {
-            if (!at_stop) break;
-            // An argument's end: its expansion is the call's, and the call goes on.
-            UKL_PRIVATE LpCall* c = &r.calls[(r.nc - 1u) & (LP_CALLS - 1u)];
-            uint32_t e1 = r.mem[1].base + c->tab + c->p;
-            a.pst[e1] = c->ocur; a.pn[e1] = r.mem[1].top - c->ocur;
-            r.mem[0].top = r.fr[(r.sp - 1u) & (LP_DEPTH - 1u)].mark;
-            r.sp--;
-            lp_call_next(&r, u, a);
-            continue;
-        }
-        uint32_t g = lp_ref(u, t);
-        uint32_t m = L_NOT_NAME;
-        // An `#if` line's test's operand, from its `(` to its `)`, read raw (`p1_if_mask`'s).
-        bool raw = false;
-        if (r.line && r.sp == 1u) {
-            if (r.raw != 0u) {
-                raw = true;
-                uint32_t d = paren_delta(u, g);
-                if (d == 1u) r.raw++;
-                else if (d == 0xffffffffu && r.raw > 1u && --r.raw == 1u) r.raw = 0u;
-            } else if (ops[t.st] >= IO_HAS && lp_test_raw(u, t.st, ops[t.st] - IO_HAS)) {
-                r.raw = 1u;
-            }
-        }
-        if ((t.flags & T_NOEXP) == 0u && !raw) {
-            if (r.sp == 1u) {
-                m = lookups[t.st];
-            } else {
-                // A body's name: its rows found when the rows were sorted (`IROWS`); any other's
-                // searched.
-                uint32_t lo = IR_NONE, hi = IR_NONE;
-                uint64_t key = ref_key(u, g);
-                if ((t.src & P_KIND) == P_BODY) {
-                    uint32_t it = u.defs[t.src & ~P_KIND].ifirst + t.st;
-                    lo = u.irows[2u * it]; hi = u.irows[2u * it + 1u];
-                } else if (ref_kind(u, g) == K_IDENTIFIER) {
-                    lo = name_rows_lo(u.sorted, u.n_rows, key); hi = name_rows_hi(u.sorted, u.n_rows, key);
+    if (me) {
+        re = lp_run_end(u, s0); e = s0 + 1u; ee = re;
+        while (e < re && start[e] == 0u) e++;
+        o.src = 0u; o.st = 0u; o.len = 0u; o.fl = 0u; o.np = 0u; o.nv = 0u; o.nf = 0u; o.head = 0u; o.ext = 0u; o.s0 = s0;
+        o.write = write; o.skip = write && joined[s0] != 0u; o.out = a.out; o.cap = a.out_cap;
+        o.pbase = write ? opbase[s0] : 0u; o.vbase = write ? obase[s0] : 0u;
+        r.fr[(0) & (LP_DEPTH - 1u)].kind = FK_TOP; r.fr[(0) & (LP_DEPTH - 1u)].def = LP_NONE; r.fr[(0) & (LP_DEPTH - 1u)].at = s0; r.fr[(0) & (LP_DEPTH - 1u)].end = re; r.fr[(0) & (LP_DEPTH - 1u)].mark = 0u; r.fr[(0) & (LP_DEPTH - 1u)].nsp = 0u; r.fr[(0) & (LP_DEPTH - 1u)].org = LP_NONE;
+        r.sp = 1u; r.nc = 0u; r.last = s0; r.s0 = s0; r.collecting = false; r.stop = 0u;
+        r.line = u.sc.runs == 0u; r.state = state; r.ops = ops; r.raw = 0u; r.clast = LP_NONE; r.crank = 0u;
+        r.cfree = 0u; r.write = write;
+        r.sl_lo = 1u; r.sl_hi = 0u; r.sl_base = 0u; r.fl_lo = 1u; r.fl_hi = 0u; r.run = 0u; r.noask = false;
+        r.fb_lo = 1u; r.fb_hi = 0u; r.fb_f = 0u;
+        for (uint32_t x = 0u; x < 3u; x++) { r.mem[x].base = 0u; r.mem[x].cap = 0u; r.mem[x].top = 0u; }
+    }
+    bool live = me;
+    for (;;) {
+        bool ask = false;
+        uint32_t q_def = 0u, q_at = 0u, q_end = 0u, q_slot = 0u, q_floor = 0u;
+        if (live) {
+            for (; r.stop == 0u; step++) {
+                if (step == LP_WORK) { px_refuse(a.ctl, X_WORK); r.stop = LP_REFUSED; break; }
+                // A long piece: the groups waiting at the phase's barrier see it progress (`ukl_grid_beat`).
+                if ((step & 4095u) == 4095u) ukl_grid_beat(grid);
+                // Back at the top: the regions start again; at or past `e`, at a piece's start, the piece ends.
+                if (r.nc == 0u) {
+                    uint32_t at = r.fr[(0) & (LP_DEPTH - 1u)].at;
+                    if (at >= e && (at >= re || start[at] != 0u) && lp_at_top(&r)) { ee = at; break; }
+                    if (r.sp == 1u) { r.mem[0].top = 0u; r.mem[1].top = 0u; r.mem[2].top = 0u; }
                 }
-                if (lo != IR_NONE) {
-                    uint32_t slot = lp_slot_of(&r, u, r.last);
-                    m = visible_at(u.sorted, u.perm, u.name_keys, u.values, lo, hi, key, slot, lp_floor(&r, u, slot), a.ctl + 2);
-                    // A name the invocation pops: the serial pass reads it after the pop or before.
-                    if (!r.line && px_pops_at(u, a.tf, lo, hi, key, slot)) px_refuse(a.ctl, X_PRAGMA);
+                // A span next, its tokens not looked ahead: the group looks.
+                if (r.run == 0u && !r.noask) {
+                    UKL_PRIVATE LpFrame* f = &r.fr[(r.sp - 1u) & (LP_DEPTH - 1u)];
+                    if (f->kind == FK_SPAN && f->at + 1u < f->end) {
+                        ask = true; q_def = f->def; q_at = f->at; q_end = ukl_min(f->end, f->at + UKL_SIMD_WIDTH);
+                        q_slot = lp_slot_of(&r, u, r.last); q_floor = lp_floor(&r, u, q_slot);
+                        break;
+                    }
                 }
-            }
-        }
-        bool plain = m == L_NOT_NAME || m == L_NONE || m == L_IDENT;
-        if (!plain && m >= L_DEFS) {
-            // A built-in (`Pp::builtin`): one token, a configuration's test, or `_Pragma`; any other the
-            // device does not know is refused.
-            plain = true;
-            if (m == L_BUILTIN) {
-                px_refuse(a.ctl, X_BUILTIN);
-            } else if (px_one_token(m)) {
-                t = lp_builtin(&r, u, a, m, t);
-            } else if (lp_next_is_lparen(&r, u, a)) {
-                if (m == L_FEATURE) {
-                    t = lp_feature(&r, u, a, obase, write, o.vbase + o.nv, t);
-                } else {
-                    lp_pragma(&r, u, a, obase, write, o.vbase + o.nv, lp_space(u, t));
-                    if (r.stop != 0u) break;
+                r.noask = false;
+                bool known = r.run != 0u;
+                if (known) r.run--;
+                LpTok t; bool at_stop = false;
+                if (!lp_lex(&r, a, obase, write, o.vbase + o.nv, &t, &at_stop)) {
+                    if (!at_stop) break;
+                    // An argument's end: its expansion is the call's, and the call goes on.
+                    UKL_PRIVATE LpCall* c = &r.calls[(r.nc - 1u) & (LP_CALLS - 1u)];
+                    uint32_t e1 = r.mem[1].base + c->tab + c->p;
+                    a.pst[e1] = c->ocur; a.pn[e1] = r.mem[1].top - c->ocur;
+                    r.mem[0].top = r.fr[(r.sp - 1u) & (LP_DEPTH - 1u)].mark;
+                    r.sp--;
+                    lp_call_next(&r, u, a);
                     continue;
                 }
+                uint32_t g = lp_ref(u, t);
+                uint32_t m = L_NOT_NAME;
+                // An `#if` line's test's operand, from its `(` to its `)`, read raw (`p1_if_mask`'s).
+                bool raw = false;
+                if (r.line && r.sp == 1u) {
+                    if (r.raw != 0u) {
+                        raw = true;
+                        uint32_t d = paren_delta(u, g);
+                        if (d == 1u) r.raw++;
+                        else if (d == 0xffffffffu && r.raw > 1u && --r.raw == 1u) r.raw = 0u;
+                    } else if (ops[t.st] >= IO_HAS && lp_test_raw(u, t.st, ops[t.st] - IO_HAS)) {
+                        r.raw = 1u;
+                    }
+                }
+                if ((t.flags & T_NOEXP) == 0u && !raw && !known) {
+                    if (r.sp == 1u) {
+                        m = lookups[t.st];
+                    } else {
+                        // A body's name: its rows found when the rows were sorted (`IROWS`); any other's
+                        // searched.
+                        uint32_t lo = IR_NONE, hi = IR_NONE;
+                        uint64_t key = ref_key(u, g);
+                        if ((t.src & P_KIND) == P_BODY) {
+                            uint32_t it = u.defs[t.src & ~P_KIND].ifirst + t.st;
+                            lo = u.irows[2u * it]; hi = u.irows[2u * it + 1u];
+                        } else if (ref_kind(u, g) == K_IDENTIFIER) {
+                            lo = name_rows_lo(u.sorted, u.n_rows, key); hi = name_rows_hi(u.sorted, u.n_rows, key);
+                        }
+                        if (lo != IR_NONE) {
+                            uint32_t slot = lp_slot_of(&r, u, r.last);
+                            m = visible_at(u.sorted, u.perm, u.name_keys, u.values, lo, hi, key, slot, lp_floor(&r, u, slot), a.ctl + 2);
+                            // A name the invocation pops: the serial pass reads it after the pop or before.
+                            if (!r.line && px_pops_at(u, a.tf, lo, hi, key, slot)) px_refuse(a.ctl, X_PRAGMA);
+                        }
+                    }
+                }
+                bool plain = m == L_NOT_NAME || m == L_NONE || m == L_IDENT;
+                if (!plain && m >= L_DEFS) {
+                    // A built-in (`Pp::builtin`): one token, a configuration's test, or `_Pragma`; any other the
+                    // device does not know is refused.
+                    plain = true;
+                    if (m == L_BUILTIN) {
+                        px_refuse(a.ctl, X_BUILTIN);
+                    } else if (px_one_token(m)) {
+                        t = lp_builtin(&r, u, a, m, t);
+                    } else if (lp_next_is_lparen(&r, u, a)) {
+                        if (m == L_FEATURE) {
+                            t = lp_feature(&r, u, a, obase, write, o.vbase + o.nv, t);
+                        } else {
+                            lp_pragma(&r, u, a, obase, write, o.vbase + o.nv, lp_space(u, t));
+                            if (r.stop != 0u) break;
+                            continue;
+                        }
+                    }
+                    if (r.stop != 0u) break;
+                }
+                if (!plain && lp_disabled(&r, a, m)) { t.flags |= T_NOEXP; plain = true; }
+                PpDef d = u.defs[0];
+                if (!plain) {
+                    d = u.defs[m];
+                    if ((d.flags & D_FNLIKE) != 0u && !lp_next_is_lparen(&r, u, a)) plain = true;
+                }
+                uint32_t nsp = plain ? 0u : lp_space(u, t);
+                if (!plain && (d.flags & D_FNLIKE) != 0u) {
+                    if (!lp_collect(&r, u, a, obase, write, o.vbase + o.nv, m, nsp)) {
+                        if (r.stop != 0u) break;
+                        // The wrong count of arguments: the name alone, painted.
+                        t.flags |= T_NOEXP; plain = true;
+                    } else {
+                        continue;
+                    }
+                }
+                if (plain) {
+                    if (r.nc == 0u) {
+                        lp_emit(&o, u, t);
+                    } else {
+                        if (!lp_push(&r, a, 1u, r.calls[(r.nc - 1u) & (LP_CALLS - 1u)].ocur, t)) break;
+                    }
+                    continue;
+                }
+                // An object-like macro: its body read in place, or, with a `##`, substituted (its pastes).
+                bool pastes = false;
+                for (uint32_t i = 0u; i < d.n_body; i++) pastes = pastes || (u.items[d.ifirst + i] & I_PASTE) != 0u;
+                if (pastes) {
+                    if (r.nc == LP_CALLS) { r.stop = LP_DEEP; break; }
+                    UKL_PRIVATE LpCall* c = &r.calls[(r.nc++) & (LP_CALLS - 1u)];
+                    c->def = m; c->nargs = 0u; c->tab = r.mem[1].top; c->cstart = r.mem[0].top; c->o1 = r.mem[1].top; c->p = LP_NONE; c->ocur = 0u; c->nsp = nsp; c->cfree = r.mem[0].top; c->org = t.org; c->bi = 0u;
+                    lp_substitute(&r, u, a, nsp);
+                    continue;
+                }
+                if (r.sp == LP_DEPTH) { r.stop = LP_DEEP; break; }
+                UKL_PRIVATE LpFrame* f = &r.fr[(r.sp++) & (LP_DEPTH - 1u)];
+                f->kind = FK_BODY; f->def = m; f->at = 0u; f->end = d.n_body; f->mark = r.mem[0].top; f->nsp = nsp; f->org = t.org;
             }
-            if (r.stop != 0u) break;
-        }
-        if (!plain && lp_disabled(&r, a, m)) { t.flags |= T_NOEXP; plain = true; }
-        PpDef d = u.defs[0];
-        if (!plain) {
-            d = u.defs[m];
-            if ((d.flags & D_FNLIKE) != 0u && !lp_next_is_lparen(&r, u, a)) plain = true;
-        }
-        uint32_t nsp = plain ? 0u : lp_space(u, t);
-        if (!plain && (d.flags & D_FNLIKE) != 0u) {
-            if (!lp_collect(&r, u, a, obase, write, o.vbase + o.nv, m, nsp)) {
-                if (r.stop != 0u) break;
-                // The wrong count of arguments: the name alone, painted.
-                t.flags |= T_NOEXP; plain = true;
-            } else {
-                continue;
+            if (!ask) {
+                // The last piece top text to the end, inside the run: the next pieces' heads may continue it.
+                bool tail = r.stop == 0u && o.len != 0u && (o.src & P_KIND) == P_TOP && (o.fl & PF_NOEXP) == 0u && o.st + o.len == ee && ee < re;
+                if (write && tail) {
+                    for (uint32_t x = ee; x < re && joined[x] != 0u;) {
+                        uint32_t h = pjoin[x] & LJ_HEAD;
+                        o.ext += h;
+                        if (h != pend[x] - x) break;
+                        x = pend[x];
+                    }
+                }
+                lp_flush(&o);
+                if (r.stop == LP_ROOM) px_refuse(a.ctl, X_ROOM);
+                if (r.stop == LP_DEEP) px_refuse(a.ctl, X_DEPTH);
+                if (!write) {
+                    pend[s0] = ee; pjoin[s0] = o.head | (tail ? LJ_TAIL : 0u); joined[s0] = 0u;
+                    ukl_atomic_add(&trn[13], 1u);
+                    // The longest piece's steps (`TRN` 16), its start, its end read and its tokens out (17 to 19), for measurements.
+                    if (ukl_atomic_max(&trn[16], step) < step) { trn[17] = s0; trn[18] = ee; trn[19] = o.nv; }
+                    v[s0] = o.nv; opv[s0] = o.np;
+                    for (uint32_t s = s0 + 1u; s < e; s++) { v[s] = 0u; opv[s] = 0u; ovr[s] = 0u; }
+                    ovr[s0] = ee > e ? 1u : 0u;
+                    if (ee > e) ukl_atomic_add(&trn[15], 1u);
+                }
+                live = false;
             }
         }
-        if (plain) {
-            if (r.nc == 0u) {
-                lp_emit(&o, u, t);
-            } else {
-                if (!lp_push(&r, a, 1u, r.calls[(r.nc - 1u) & (LP_CALLS - 1u)].ocur, t)) break;
-            }
-            continue;
-        }
-        // An object-like macro: its body read in place, or, with a `##`, substituted (its pastes).
-        bool pastes = false;
-        for (uint32_t i = 0u; i < d.n_body; i++) pastes = pastes || (u.items[d.ifirst + i] & I_PASTE) != 0u;
-        if (pastes) {
-            if (r.nc == LP_CALLS) { r.stop = LP_DEEP; break; }
-            UKL_PRIVATE LpCall* c = &r.calls[(r.nc++) & (LP_CALLS - 1u)];
-            c->def = m; c->nargs = 0u; c->tab = r.mem[1].top; c->cstart = r.mem[0].top; c->o1 = r.mem[1].top; c->p = LP_NONE; c->ocur = 0u; c->nsp = nsp; c->cfree = r.mem[0].top; c->org = t.org; c->bi = 0u;
-            lp_substitute(&r, u, a, nsp);
-            continue;
-        }
-        if (r.sp == LP_DEPTH) { r.stop = LP_DEEP; break; }
-        UKL_PRIVATE LpFrame* f = &r.fr[(r.sp++) & (LP_DEPTH - 1u)];
-        f->kind = FK_BODY; f->def = m; f->at = 0u; f->end = d.n_body; f->mark = r.mem[0].top; f->nsp = nsp; f->org = t.org;
+        // The group's lanes look ahead for the piece's thread.
+        if (ukl_sg_shuffle(ask ? 1u : 0u, lead __UKL_ARGS) == 0u) break;
+        q_def = ukl_sg_shuffle(q_def, lead __UKL_ARGS); q_at = ukl_sg_shuffle(q_at, lead __UKL_ARGS); q_end = ukl_sg_shuffle(q_end, lead __UKL_ARGS);
+        q_slot = ukl_sg_shuffle(q_slot, lead __UKL_ARGS); q_floor = ukl_sg_shuffle(q_floor, lead __UKL_ARGS);
+        uint32_t p = q_at + ln;
+        bool plain = p < q_end && lp_ahead(u, a, q_def, p, q_slot, q_floor);
+        uint32_t k = ukl_min(ukl_ctz64((uint64_t)(ukl_sg_ballot(!plain __UKL_ARGS))), q_end - q_at);
+        if (me) { r.run = k; r.noask = k == 0u; }
     }
-    // The last piece top text to the end, inside the run: the next pieces' heads may continue it.
-    bool tail = r.stop == 0u && o.len != 0u && (o.src & P_KIND) == P_TOP && (o.fl & PF_NOEXP) == 0u && o.st + o.len == ee && ee < re;
-    if (write && tail) {
-        for (uint32_t x = ee; x < re && joined[x] != 0u;) {
-            uint32_t h = pjoin[x] & LJ_HEAD;
-            o.ext += h;
-            if (h != pend[x] - x) break;
-            x = pend[x];
-        }
-    }
-    lp_flush(&o);
-    if (r.stop == LP_ROOM) px_refuse(a.ctl, X_ROOM);
-    if (r.stop == LP_DEEP) px_refuse(a.ctl, X_DEPTH);
-    if (!write) {
-        pend[s0] = ee; pjoin[s0] = o.head | (tail ? LJ_TAIL : 0u); joined[s0] = 0u;
-        ukl_atomic_add(&trn[13], 1u);
-        // The longest piece's steps (`TRN` 16), its start, its end read and its tokens out (17 to 19), for measurements.
-        if (ukl_atomic_max(&trn[16], step) < step) { trn[17] = s0; trn[18] = ee; trn[19] = o.nv; }
-        v[s0] = o.nv; opv[s0] = o.np;
-        for (uint32_t s = s0 + 1u; s < e; s++) { v[s] = 0u; opv[s] = 0u; ovr[s] = 0u; }
-        ovr[s0] = ee > e ? 1u : 0u;
-        if (ee > e) ukl_atomic_add(&trn[15], 1u);
+}
+// The pieces a SIMD group's lanes start (`lp_piece`), one at a time, every lane with each.
+UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t* lookups, PP_GLOBAL const uint32_t* start, PP_GLOBAL uint32_t* v, PP_GLOBAL uint32_t* opv, PP_GLOBAL uint32_t* obase, PP_GLOBAL const uint32_t* opbase,
+                       PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL uint32_t* grid, bool write, uint32_t s0, uint32_t ln __UKL_PARAMS) {
+    bool mine = s0 < u.n_toks && start[s0] != 0u;
+    uint64_t todo = (uint64_t)(ukl_sg_ballot(mine __UKL_ARGS));
+    while (todo != 0u) {
+        uint32_t lead = ukl_ctz64(todo);
+        todo &= todo - 1u;
+        lp_piece(u, a, ops, state, lookups, start, v, opv, obase, opbase, pend, pjoin, joined, trn, ovr, grid, write, s0, ln == lead, ln, lead __UKL_ARGS);
     }
 }

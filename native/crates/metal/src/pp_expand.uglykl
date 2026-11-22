@@ -497,8 +497,10 @@ UKL_INLINE uint32_t unit_floor(PP_GLOBAL const uint32_t* floors, uint32_t n_unit
 // earlier unit sends the walk to the built-ins' rows at once.
 // `visible` within the rows of `key`'s upper 32 bits (`sorted[lo..hi)`, `name_rows`), the slot's
 // unit's first slot `floor`.
-UKL_INLINE uint32_t visible_at(PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const uint32_t* perm, PP_GLOBAL const uint64_t* name_keys, PP_GLOBAL const uint32_t* values,
-                               uint32_t lo, uint32_t hi, uint64_t key, uint32_t slot, uint32_t floor, PP_GLOBAL uint32_t* bad) {
+// The walk past `WALK` rows sets `over` (`visible_at` refuses it).
+UKL_INLINE uint32_t visible_walk(PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const uint32_t* perm, PP_GLOBAL const uint64_t* name_keys, PP_GLOBAL const uint32_t* values,
+                                 uint32_t lo, uint32_t hi, uint64_t key, uint32_t slot, uint32_t floor, UKL_PRIVATE bool* over) {
+    *over = false;
     uint64_t kh = key & 0xffffffff00000000ul;
     uint32_t c = pb_lower_bound_in(sorted, lo, hi, kh | ((uint64_t)(slot)));
     for (uint32_t k = 0u; k < WALK; k++) {
@@ -516,8 +518,15 @@ UKL_INLINE uint32_t visible_at(PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const
             return v == V_UNDEF ? L_NONE : v;
         }
     }
-    ukl_atomic_or(bad, 1u << 29);
+    *over = true;
     return L_NONE;
+}
+UKL_INLINE uint32_t visible_at(PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const uint32_t* perm, PP_GLOBAL const uint64_t* name_keys, PP_GLOBAL const uint32_t* values,
+                               uint32_t lo, uint32_t hi, uint64_t key, uint32_t slot, uint32_t floor, PP_GLOBAL uint32_t* bad) {
+    bool over = false;
+    uint32_t m = visible_walk(sorted, perm, name_keys, values, lo, hi, key, slot, floor, &over);
+    if (over) ukl_atomic_or(bad, 1u << 29);
+    return m;
 }
 
 // The rows of `key`'s upper 32 bits: `[lo, hi)` of the sorted rows.

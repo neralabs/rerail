@@ -267,11 +267,14 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
         {
             PX_UA(DR);
             // A thread a token, the pieces' starts running: a start about every 32 tokens, so a SIMD group
-            // mostly holds one piece. Packed in a list, a group's pieces branch apart and it runs each
-            // one's path in turn (twice the time on GB10, 2026-11-21).
-            EACH(s, nt) lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),
-                               AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, OBASE), AT(const uint32_t, OPBASE),
-                               AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, pass == 1u, s);
+            // mostly holds one piece, and its other lanes look ahead for it (`lp_piece`). Packed in a
+            // list, a group's pieces branch apart and it runs each one's path in turn (twice the time
+            // on GB10, 2026-11-21). Whole SIMD groups: every lane takes each of its group's turns.
+            EACH(s, (nt + UKL_SIMD_WIDTH - 1u) & ~(UKL_SIMD_WIDTH - 1u))
+                lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),
+                       AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, OBASE), AT(const uint32_t, OPBASE),
+                       AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, pass == 1u, s,
+                       g.lid & (UKL_SIMD_WIDTH - 1u) __UKL_ARGS);
         }
         BARRIER();
     }
