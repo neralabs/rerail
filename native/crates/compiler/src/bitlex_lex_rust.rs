@@ -685,7 +685,7 @@ struct Gen<'a> {
     fill_proofs: std::cell::RefCell<HashMap<String, bool>>,
     opener_at: [[bool; 256]; 4],
     /// The escapes tested at each token's start; at the file's end, of a fill the loop keeps.
-    start_checks: Vec<(String, String)>,
+    start_checks: Vec<(String, Expr, [bool; 256])>,
     /// The escapes tested over each stretch of code between region tokens (`stretch_escape`):
     /// each term's shift and stage 1's mask of it.
     stretch_checks: Vec<(String, Vec<(i64, String)>)>,
@@ -1186,7 +1186,7 @@ impl Gen<'_> {
                 (Some(a), Some(b)) => Some(match (regions_of(&a), regions_of(&b)) {
                     (Some(x), Some(y)) if y.len() == 1 && x.contains(&y[0]) => b,
                     (Some(x), Some(y)) if x.len() == 1 && y.contains(&x[0]) => a,
-                    _ => format!("({a} && {b})"),
+                    _ => absorb(&a, &b),
                 }),
                 _ => None,
             },
@@ -2989,7 +2989,8 @@ impl Gen<'_> {
         }
         let Some(here) = self.at_start(e)? else { return Ok(false) };
         if here != "false" {
-            self.start_checks.push((why.to_owned(), here));
+            // Tested in each row it may hold at the start of, as the row's bytes read it.
+            self.start_checks.push((why.to_owned(), e.clone(), at));
         }
         self.tail_checks.extend(tails);
         Ok(true)
@@ -4180,7 +4181,23 @@ impl Gen<'_> {
                 let _ = write!(hits, "            // {why}\n            if {holds} {{\n                refused = true;\n                break;\n            }}\n");
             }
             let _ = &st;
-            row_arms.push(RowArm { row: *row, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            let l = {l};\n            let l = l.max(s);\n{hits}            (l, {k}, {extra}, "), bits });
+            // The escapes at a token's start that may hold at this row's, as its bytes read them.
+            let mut first = String::new();
+            let sb = self.bytes_at(start, 0, &mut HashMap::new());
+            let sb: [bool; 256] = std::array::from_fn(|i| sb[i] && !self.skipped[i]);
+            for (why, e, at) in self.start_checks.clone() {
+                if !(0..256).any(|i| sb[i] && at[i]) {
+                    continue;
+                }
+                self.start_in = Some(sb);
+                let t = self.at_start(&e);
+                self.start_in = None;
+                let Some(t) = t? else { return Err(format!("tier 1 as Rust: the escape `{why}` at a start of `{kind}`")) };
+                if t != "false" {
+                    let _ = write!(first, "            // {why}\n            if {t} {{\n                refused = true;\n                break;\n            }}\n");
+                }
+            }
+            row_arms.push(RowArm { row: *row, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n{first}            let l = {l};\n            let l = l.max(s);\n{hits}            (l, {k}, {extra}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -4400,9 +4417,6 @@ impl Gen<'_> {
                     }
                 }
             }
-        }
-        for (why, t) in &self.start_checks {
-            let _ = write!(open_code, "        // {why}\n        if {t} {{\n            refused = true;\n            break;\n        }}\n");
         }
         // The bytes outside the region tokens, for the escapes made of `code`.
         if !self.code_after.is_empty() {
@@ -4660,6 +4674,78 @@ fn regions_of(t: &str) -> Option<Vec<usize>> {
 }
 
 /// `s`'s lines at `p`.
+/// The parts of `t` split at `op` (` && ` or ` || `) outside parentheses, its own outer ones
+/// taken off.
+fn parts_of<'a>(t: &'a str, op: &str) -> Vec<&'a str> {
+    let inner = |t: &'a str| -> &'a str {
+        if !(t.starts_with('(') && t.ends_with(')')) {
+            return t;
+        }
+        // The outer parentheses are one pair where the depth is above 0 to the last byte.
+        let mut depth = 0i32;
+        for (i, c) in t.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+            if depth == 0 && i + 1 < t.len() {
+                return t;
+            }
+        }
+        &t[1..t.len() - 1]
+    };
+    let mut out = Vec::new();
+    let mut todo = vec![inner(t)];
+    while let Some(t) = todo.pop() {
+        let (mut depth, mut from, mut split) = (0i32, 0usize, false);
+        let b = t.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            match b[i] {
+                b'(' | b'{' | b'[' => depth += 1,
+                b')' | b'}' | b']' => depth -= 1,
+                _ if depth == 0 && t[i..].starts_with(op) => {
+                    todo.push(inner(&t[from..i]));
+                    from = i + op.len();
+                    i = from;
+                    split = true;
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if split {
+            todo.push(inner(&t[from..]));
+        } else {
+            out.push(t);
+        }
+    }
+    out.reverse();
+    out
+}
+
+/// `a && b`, each conjunct once, less a disjunction one of the others is a part of (`x && (x ||
+/// y)` is `x`).
+fn absorb(a: &str, b: &str) -> String {
+    let mut cs: Vec<&str> = Vec::new();
+    for c in parts_of(a, " && ").into_iter().chain(parts_of(b, " && ")) {
+        if !cs.contains(&c) {
+            cs.push(c);
+        }
+    }
+    let keep: Vec<&str> = cs.iter().copied().filter(|c| {
+        let ds = parts_of(c, " || ");
+        !(ds.len() > 1 && cs.iter().any(|o| o != c && ds.contains(o)))
+    }).collect();
+    let mut out = String::new();
+    for (i, c) in keep.iter().enumerate() {
+        out = if i == 0 { (*c).to_owned() } else { format!("({out} && {c})") };
+    }
+    out
+}
+
 /// `if a { x } else if b { y } else { none }` of `chain`, to its first test that is `true`.
 fn if_chain(chain: &[(String, String)], none: &str, at: &str) -> String {
     let mut out = String::new();

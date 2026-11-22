@@ -1989,7 +1989,7 @@ pub fn lex(src: &[u8]) -> Lexed {
             acc_1 = true;
             rec_1 = true;
         }
-        let here_1 = ((open == usize::MAX && bit(&m_rbrace, s)) && (fs_2 || xs_2));
+        let here_1 = ((open == usize::MAX && bit(&m_rbrace, s)) && fs_2 || xs_2);
         // The skipped bytes before the token, for the gap masks.
         if s > at && any_in(&m_ws, at, s - 1) {
             acc_2 = true;
@@ -2027,16 +2027,6 @@ pub fn lex(src: &[u8]) -> Lexed {
                 refused = true;
                 break;
             }
-        }
-        // a `;` that starts a line
-        if ((open == usize::MAX && bit(&m_semicolon, s)) && ((open == usize::MAX || (((((open == 3 || open == 4) || open == 5) || open == 6) || open == 2) || open == 7)) && fs_3)) {
-            refused = true;
-            break;
-        }
-        // a dotted type after `as` before a `<`
-        if ((open == usize::MAX && bit(&t79, s)) && fs_6) {
-            refused = true;
-            break;
         }
         let mut hits = 0u32;
         let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {
@@ -2822,6 +2812,16 @@ pub fn lex(src: &[u8]) -> Lexed {
 ,
                 13 => {
                     // `punct`: pair
+                    // a `;` that starts a line
+                    if ((open == usize::MAX && bit(&m_semicolon, s)) && fs_3) {
+                        refused = true;
+                        break;
+                    }
+                    // a dotted type after `as` before a `<`
+                    if ((open == usize::MAX && bit(&t79, s)) && fs_6) {
+                        refused = true;
+                        break;
+                    }
                     let l = pair_52(src, s);
                     let l = l.max(s);
                     // `assume … at ends t_brace`, not proved: a test build checks it.
