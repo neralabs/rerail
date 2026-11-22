@@ -1,7 +1,7 @@
 // Block programs' interpreter (block_program.rs), in UKL (decision 0440 step C; was block_program.metal): a batch of
 // files, each under its own program, in one launch (decision 0066). Each lane owns BW / 8 consecutive bytes of a file
-// (BW = 16, 32 or 64: one compile each) and its BW-bit word of every value, so a group of 32 lanes works on 32 words
-// at once. A group's values are slots of lane words in its worker's scratch, in device memory (decision 0034). Each
+// (BW = 16, 32 or 64: one compile each) and its BW-bit word of every value, so a group's `GROUP_LANES` lanes work on
+// as many words at once. A group's values are slots of lane words in its worker's scratch, in device memory (decision 0034). Each
 // step runs once; a carried step resolves its carry by look-back (`look_back`, `halo_exchange`) before the next.
 // Compiled after `block_common.uglykl`.
 
@@ -28,14 +28,14 @@ UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, u
     ProgramRow pr = programs[f.program];
     uint32_t chunks = (uint32_t)BW / 16u;
     uint32_t W = (uint32_t)BW;
-    uint32_t gl = g * 32u + l;
-    uint32_t lanes = f.groups * 32u;
+    uint32_t gl = g * GROUP_LANES + l;
+    uint32_t lanes = f.groups * GROUP_LANES;
     for (uint32_t at = 0u; at < pr.steps; at++) {
         BlockStep s = steps[pr.step0 + at];
         // Operands are earlier values. Steps without one hold other things in a and b (const's pattern), so the
         // reads are clamped to slots already defined.
-        BM a = slots[ukl_min(s.a, at) * 32u + l];
-        BM b = slots[ukl_min(s.b, at) * 32u + l];
+        BM a = slots[ukl_min(s.a, at) * GROUP_LANES + l];
+        BM b = slots[ukl_min(s.b, at) * GROUP_LANES + l];
         UKL_GLOBAL uint32_t* state = states + f.state_base + s.b * f.groups;
         BM v = BMC(0);
         // The step is the group's: every lane takes the same case, as the SIMD-group operations in it need.
@@ -71,7 +71,7 @@ UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, u
             }
             case 12u: {
                 // `fill`: its ends are in imm (b is the carry's index).
-                BM e = slots[ukl_min(s.imm, at) * 32u + l];
+                BM e = slots[ukl_min(s.imm, at) * GROUP_LANES + l];
                 uint32_t o0 = 0u, o1 = 0u, cin = 0u;
                 BM f0 = fill_word(a, e, BMC(0), &o0), f1 = fill_word(a, e, BMC(1), &o1);
                 if (!look_back(state, g, l, (o0 & 1u) | ((o1 & 1u) << 1), spins, &cin __UKL_ARGS)) return false;
@@ -105,19 +105,19 @@ UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, u
             }
             default: break;
         }
-        slots[at * 32u + l] = v;
+        slots[at * GROUP_LANES + l] = v;
     }
     // The sinks: each output at its delay (its value and delay in `outs`), then each counted output: its output, its
     // extract (0xff: a total only), its delay.
     for (uint32_t k = 0u; k < pr.outs; k++) {
         uint32_t x = outs[pr.out0 + k];
-        write_output(out, f.out_base + k * lanes, gl, f.len, x >> 24, slots[(x & 0xffffffu) * 32u + l]);
+        write_output(out, f.out_base + k * lanes, gl, f.len, x >> 24, slots[(x & 0xffffffu) * GROUP_LANES + l]);
     }
     uint32_t capacity = ukl_max(f.len, 1u);
     for (uint32_t c = 0u; c < pr.exts; c++) {
         uint32_t x = outs[pr.ext0 + c];
         uint32_t e = (x >> 16) & 0xffu;
-        BM v = slots[(outs[pr.out0 + (x & 0xffffu)] & 0xffffffu) * 32u + l];
+        BM v = slots[(outs[pr.out0 + (x & 0xffffu)] & 0xffffffu) * GROUP_LANES + l];
         if (!count_sink(v, gl, g, l, f.groups, f.len, x >> 24, ext_states + f.ext_base + c * f.groups, positions + f.pos_base + e * capacity,
                         capacity, e != 0xffu, counts + f.tot_base + c, spins * 64u __UKL_ARGS))
             return false;
@@ -126,7 +126,7 @@ UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, u
 }
 
 // Persistent workers (decision 0027): each takes group numbers in launch order and interprets its file's program
-// over the group, reading the file in its slab (decision 0067). A threadgroup is a worker: one group of 32 lanes.
+// over the group, reading the file in its slab (decision 0067). A threadgroup is a worker: one group of `GROUP_LANES` lanes.
 DEFINE_KERNEL2(block, block_batch,
                ROBUFFER, uint32_t,   s0,         "[slab]",
                RWBUFFER, BM,         out,        "[outputs]",
@@ -142,7 +142,7 @@ DEFINE_KERNEL2(block, block_batch,
                ROBUFFER, ProgramRow, programs,   "[programs]",
                ROBUFFER, BlockStep,  steps,      "[steps]",
                ROBUFFER, uint32_t,   outs,       "[outs]",
-               RWBUFFER, BM,         scratch,    "[workers * most * 32]",
+               RWBUFFER, BM,         scratch,    "[workers * most * GROUP_LANES]",
                ROBUFFER, uint32_t,   s1,         "[slab]",
                ROBUFFER, uint32_t,   s2,         "[slab]",
                ROBUFFER, uint32_t,   s3,         "[slab]",
@@ -150,7 +150,7 @@ DEFINE_KERNEL2(block, block_batch,
                TGID0,    uint32_t,   w,          ,
                LANE,     uint32_t,   l,          )
 {
-    UKL_GLOBAL BM* slots = scratch + (uint64_t)w * p.most * 32u;
+    UKL_GLOBAL BM* slots = scratch + (uint64_t)w * p.most * GROUP_LANES;
     for (uint32_t round = 0u; round < p.groups; round++) {
         // Lane 0 takes the ticket and reads whether its group is done, and the group takes both from it: lanes need
         // not run in lockstep (the CPU's threads, CUDA's), and a lane that read `done` after lane 0 had finished the

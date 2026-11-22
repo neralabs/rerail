@@ -105,7 +105,7 @@ UKL_INLINE int64_t lane_of(int64_t v, uint32_t w) {
 
 // A value of the probed relation: row `r`'s in column `col`, read in its block through the generated reads (`r_at`,
 // decision 0325). Every relation the device reads lies in a block (step 5).
-UKL_COLD int64_t rget(StageP s, Longs R, uint32_t r, uint32_t col) {
+UKL_SHARED int64_t rget(StageP s, Longs R, uint32_t r, uint32_t col) {
     // A `has` walk's candidate is the node of the column not probed (`by_has`): either column reads its id.
     if (s->v_has != 0u) return vread(1u, s->v_dir, r, 1u);
     if (s->r_view != 0u) return vread(s->r_view, s->v_dir, r, col);
@@ -157,7 +157,7 @@ UKL_INLINE bool arith(StageP s, uint32_t j, Longs L, uint32_t t, Longs R, uint32
 }
 
 // Whether every arithmetic bind of the stage has a value for this row.
-UKL_COLD bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
+UKL_SHARED bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
     for (uint32_t b = 0; b < s->nbinds && b < 16; b++) {
         if (s->bind_kind[b] != 3) continue;
         int64_t v = 0;
@@ -167,7 +167,7 @@ UKL_COLD bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
 }
 
 // The row program's operations for one row: bit x of the result is operation x's value.
-UKL_COLD uint64_t eval(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
+UKL_LARGE uint64_t eval(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
     uint64_t v = 0;
     for (uint32_t x = 0; x < s->nops && x < 64; x++) {
         UKL_GLOBAL const uint32_t* o = s->ops[x];
@@ -341,7 +341,7 @@ UKL_INLINE void probe(StageP s, Longs R, UKL_PRIVATE const int64_t* kv, UKL_PRIV
 // A binding's candidates (`probe`), and its key values.
 // A key the probed relation's screen refuses (`Stage::screen`, a column's kept filter: decision 0488) has none, and
 // its index group is not read. `F` is the screen's buffer.
-UKL_COLD void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL const uint8_t* F, UKL_PRIVATE int64_t* kv,
+UKL_LARGE void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL const uint8_t* F, UKL_PRIVATE int64_t* kv,
                            UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     *how = 0u;
     if (s->mode == 3) { *lo = 0; *hi = 1; return; }
@@ -360,7 +360,7 @@ UKL_INLINE bool row_live(StageP s, Longs R, uint32_t r) {
 }
 
 // Whether row r matches the binding's keys and the relation's column tests.
-UKL_COLD bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
+UKL_SHARED bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
     // A `has` walk's candidates hold its key by their making (`by_has`); a descendant is a row where it is in the set.
     // Its two columns are never one node (an ancestor is strict), so a test of them holds for no row.
     if (s->v_has != 0u) return s->ntests == 0u && (s->v_has == 1u || has_member(s, r));
@@ -372,7 +372,7 @@ UKL_COLD bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* 
 
 // An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
 // or max of no rows, or a tested value that differs), 2 when a sum passes 64 bits.
-UKL_COLD uint32_t aggregate(StageP s, Longs L, uint32_t t, Longs R, uint32_t lo, uint32_t hi, uint32_t how,
+UKL_LARGE uint32_t aggregate(StageP s, Longs L, uint32_t t, Longs R, uint32_t lo, uint32_t hi, uint32_t how,
                               UKL_PRIVATE const int64_t* kv, UKL_PRIVATE int64_t* v) {
     uint32_t kind = s->agg[0] & 0xff;
     int64_t cnt = 0, sum = 0, mn = 0, mx = 0;
@@ -429,8 +429,8 @@ UKL_INLINE uint64_t txt_word(Txt x, uint32_t at, uint32_t end) {
     return w;
 }
 
-// Whether n bytes of x from xs are those of y from ys: a word of eight at a time. One body, called.
-UKL_COLD bool txt_same(Txt x, uint32_t xs, Txt y, uint32_t ys, uint32_t n) {
+// Whether n bytes of x from xs are those of y from ys: a word of eight at a time.
+UKL_SHARED bool txt_same(Txt x, uint32_t xs, Txt y, uint32_t ys, uint32_t n) {
     for (uint32_t at = 0; at < n; at += 8) if (txt_word(x, xs + at, xs + n) != txt_word(y, ys + at, ys + n)) return false;
     return true;
 }
@@ -482,7 +482,7 @@ UKL_INLINE bool textop_one(uint32_t op, Txt x, uint32_t xs, uint32_t lx, Txt y, 
 // `strings::test` splits it): Y passes when any one does. The separators are found a word of eight at a time (an exact
 // mask of the bytes equal to 0x1f), each member compared as one pattern. A bound pattern (`TEXT_BOUND`, agg[0] bit 6)
 // that holds the separator is no set: `host` set, and the stratum runs on the host. A constant set is split.
-UKL_COLD bool textop_pass(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D, UKL_GLOBAL uint32_t* A, UKL_PRIVATE bool* unheld,
+UKL_LARGE bool textop_pass(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D, UKL_GLOBAL uint32_t* A, UKL_PRIVATE bool* unheld,
                             UKL_PRIVATE bool* host) {
     Txt x = txt_of(s, L, t, D, A, 0, s->agg[1] & 15, unheld), y = txt_of(s, L, t, D, A, 2, s->agg[1] >> 4, unheld);
     uint32_t lx = txt_len(x), ly = txt_len(y);
@@ -601,7 +601,7 @@ DEFINE_KERNEL2(join, stage_count,
     }
 }
 
-UKL_COLD void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, UKL_GLOBAL int64_t* O, uint32_t at) {
+UKL_LARGE void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, UKL_GLOBAL int64_t* O, uint32_t at) {
     for (uint32_t k = 0; k < s->nslots; k++) O[(uint64_t)k * s->cap_out + at] = L[(uint64_t)k * s->cap_in + t];
     for (uint32_t b = 0; b < s->nbinds && b < 16; b++) {
         uint32_t kind = s->bind_kind[b];
@@ -676,7 +676,7 @@ DEFINE_KERNEL2(join, stage_scatter,
 
 // A witness's probe (decision 0277): whether relation R has a row of `b`'s keys (a binding's slots, constants or the
 // candidate's columns) and column tests; an anti-join's, whether it has none. One loop over the keys' run.
-UKL_COLD bool witness_probe(StageP b, Longs L, uint32_t t, uint32_t cap_in, StageP a, Longs RA, uint32_t ra, Longs R) {
+UKL_LARGE bool witness_probe(StageP b, Longs L, uint32_t t, uint32_t cap_in, StageP a, Longs RA, uint32_t ra, Longs R) {
     int64_t kv[8];
     for (uint32_t i = 0; i < b->nkeys && i < 8; i++) {
         uint32_t k = b->key_kind[i];

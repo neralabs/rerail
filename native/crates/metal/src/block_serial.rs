@@ -33,6 +33,20 @@ pub struct Segments {
     pub warm: usize,
 }
 
+impl Segments {
+    /// The segments a run in lanes form takes on groups of `group` lanes (`group_lanes`): a
+    /// segment, its warm-up and the block after it for the delayed outputs each a lane, so a
+    /// segment asked longer is cut to the group's (29 blocks at 32 lanes, 13 at 16). A segment's
+    /// length sets how much a wrong start runs again, never what a run gives.
+    fn within(self, group: usize) -> Segments {
+        if !lanes_on() {
+            return self;
+        }
+        let most = group.saturating_sub(2 * self.warm + 1).max(2 * self.warm + 1);
+        Segments { blocks: self.blocks.min(most), warm: self.warm }
+    }
+}
+
 /// A serial batch's results: the files', and how the speculation went.
 pub struct SerialRun {
     pub run: BatchRun,
@@ -1460,7 +1474,7 @@ DEFINE_KERNEL2(serial, serial_count,
   }}
 }}
 
-// A file's segments' bases: one SIMD group a file, 32 segments at a time.
+// A file's segments' bases: one SIMD group a file, a segment a lane (`GROUP_LANES` at a time).
 DEFINE_KERNEL2(serial, serial_prefix,
                ROBUFFER, FileRow,  files,  "[files]",
                ROBUFFER, uint32_t, counts, "[counted * segments]",
@@ -1476,7 +1490,7 @@ DEFINE_KERNEL2(serial, serial_prefix,
   }}
   for (uint32_t e = 0u; e < e_count; e++) {{
     uint32_t run = 0u;
-    for (uint32_t s = 0u; s < f.halo_base; s += 32u) {{
+    for (uint32_t s = 0u; s < f.halo_base; s += GROUP_LANES) {{
       const uint32_t j = f.group0 + s + l;
       const uint32_t c = s + l < f.halo_base ? counts[j * {counted}u + e] : 0u;
       const uint32_t before = ukl_sg_exclusive_sum(c, l __UKL_ARGS);
@@ -1528,7 +1542,7 @@ DEFINE_KERNEL2(serial, serial_write,
 }}
 "#,
         r = 2 * sw,
-        tgs = PREFIX_THREADS / GROUP,
+        tgs = format!("{PREFIX_THREADS}u / GROUP_LANES"),
         states = GROUP_STATES,
     ));
     out.push_str(&records_source(programs));
@@ -2022,6 +2036,7 @@ fn run_split_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: 
 
 /// The files' bytes admitted once a run, every pass of it reading them where they are.
 fn run_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], digests: Option<&[[u8; 32]]>, segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
+    let segments = segments.within(group_lanes()?);
     let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
     let sources = match digests {
         Some(d) if d.len() == files.len() => crate::slabs::admit_sources_digested(&bytes, d)?,
@@ -2352,6 +2367,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     // parity's first listed and first total; and its tokens coded before the first refused, as
     // `~n` (`records_source`).
     let refusal = crate::pool::zeroed::<u32>(rows.len() * 6)?;
+    let group = group_lanes()?;
     assert!(2 * segments.warm < segments.blocks, "a segment is longer than its two warm-ups");
     let cone = kernel(source_key, source, if lanes_on() { "lanes_cone" } else { "serial_cone" })?;
     let cone_prefix = kernel(source_key, source, "serial_cone_prefix")?;
@@ -2359,7 +2375,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let lanes = lanes_on();
     if lanes {
         // The lanes: the warm-up, the segment, and the block after it for the delayed outputs.
-        assert!(segments.warm >= 1 && segments.blocks + 2 * segments.warm < GROUP, "a segment and its two warm-ups fit a SIMD group");
+        assert!(segments.warm >= 1 && segments.blocks + 2 * segments.warm < group, "a segment and its two warm-ups fit a SIMD group");
     }
     let lanes_run = kernel(source_key, source, "lanes_run").inspect_err(|e| eprintln!("lanes: pipeline: {e:?}"))?;
     let lanes_again = kernel(source_key, source, "lanes_again").inspect_err(|e| eprintln!("lanes: again: {e:?}"))?;
@@ -2405,17 +2421,17 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let mut first = Vec::new();
     for l in 1..=depth {
         if lanes_on() {
-            first.push(pass("lanes_cone", &cone, args(fit(total)?, fit(l)?), total, GROUP));
+            first.push(pass("lanes_cone", &cone, args(fit(total)?, fit(l)?), total, group));
         } else {
             first.push(pass("serial_cone", &cone, args(fit(total)?, fit(l)?), groups(total), THREADS));
         }
         if with_groups.contains(&l) {
-            first.push(pass("lanes_group", &group_pass, args(fit(total)?, fit(l)?), total * GROUP_STATES, GROUP));
+            first.push(pass("lanes_group", &group_pass, args(fit(total)?, fit(l)?), total * GROUP_STATES, group));
         }
         first.push(pass("serial_cone_prefix", &cone_prefix, args(0, fit(l)?), files.len(), PREFIX_THREADS));
     }
     if lanes {
-        first.push(pass("lanes_run", &lanes_run, args(fit(total)?, 0), total, GROUP));
+        first.push(pass("lanes_run", &lanes_run, args(fit(total)?, 0), total, group));
     } else {
         first.push(pass("serial_run", &run, args(fit(total)?, 0), groups(total), THREADS));
     }
@@ -2512,7 +2528,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         unsafe { std::ptr::write_bytes(listed.host().cast::<u32>(), 0, 1) };
         // The list and the starts it gives are read by the run before the check writes them.
         let again = [
-            if lanes { pass("lanes_again", &lanes_again, at_round(fit(n)?, 1, rounds - 1), n, GROUP) } else { pass("serial_run", &run, at_round(fit(n)?, 1, rounds - 1), groups(n), THREADS) },
+            if lanes { pass("lanes_again", &lanes_again, at_round(fit(n)?, 1, rounds - 1), n, group) } else { pass("serial_run", &run, at_round(fit(n)?, 1, rounds - 1), groups(n), THREADS) },
             pass("serial_check", &check, at_round(fit(total)?, 0, rounds), groups(total), THREADS),
         ];
         rerun_seconds += encode_passes(&again)?;
@@ -2523,9 +2539,9 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     if !lanes {
         sinks.push(pass("serial_count", &count, args(fit(total)?, 0), groups(total), THREADS));
     }
-    sinks.push(pass("serial_prefix", &prefix, args(0, 0), files.len(), GROUP));
+    sinks.push(pass("serial_prefix", &prefix, args(0, 0), files.len(), group));
     if lanes {
-        sinks.push(pass("lanes_write", &lanes_write, args(fit(total)?, 0), total, GROUP));
+        sinks.push(pass("lanes_write", &lanes_write, args(fit(total)?, 0), total, group));
     } else {
         sinks.push(pass("serial_write", &write, args(fit(total)?, 0), groups(total), THREADS));
     }

@@ -8,11 +8,11 @@
 //!   written out straight-line, and one kernel that calls the file's.
 //!
 //! Both are compiled after `block_common.uglykl`, for one lane width each. A group is a SIMD group
-//! of 32 lanes, its ballots 32-bit words: where the device's SIMD width is not 32 a batch is
-//! refused (`ready`), and the CPU's executors run it.
+//! of the device's width, 16 or 32 lanes (`group_lanes`): elsewhere a batch is refused (`ready`),
+//! and the CPU's executors run it.
 //!
 //! Each lane owns `W` consecutive bytes of a file and builds its own `W`-bit word of every value
-//! (`LaneWidth`: 16, 32 or 64), so a SIMD group's 32 lanes work on 32 words at once. A group of
+//! (`LaneWidth`: 16, 32 or 64), so a SIMD group's lanes work on as many words at once. A group of
 //! lanes holds one file, so it runs one program. Files are read in place through a file table
 //! (`FileRow`), as zero outside them.
 //!
@@ -85,17 +85,34 @@ fn poll_rmw() -> bool {
     })
 }
 
-/// The device the batches run on, where they can: a group is a SIMD group of 32 lanes, so a
-/// device without SIMD groups of 32 refuses them (`UnsupportedBackend`), and the CPU runs them.
+/// The device the batches run on, where they can: a group is one of its SIMD groups, so a device
+/// whose groups are not 16 or 32 lanes refuses them (`UnsupportedBackend`), and the CPU runs them.
 pub fn ready() -> Result<&'static rerail_device::device::Device, Error> {
     let device = lane::device()?;
-    if !device.offers_simd_width(GROUP as u32) {
-        return Err(Error::UnsupportedBackend);
-    }
+    group_of(device).ok_or(Error::UnsupportedBackend)?;
     Ok(device)
 }
-/// Lanes per threadgroup: one SIMD group.
-const GROUP: usize = 32;
+
+/// A group's lanes on `device`: its SIMD group, where that is 16 or 32 lanes (`GROUP_LANES` in
+/// `block_common.uglykl`: a ballot is a word of the group's lanes, and the borrow's
+/// carry-lookahead adds two of them in 64 bits). A threadgroup is one group.
+fn group_of(device: &rerail_device::device::Device) -> Option<usize> {
+    match device.simd_width() {
+        w @ (16 | 32) => Some(w as usize),
+        _ => None,
+    }
+}
+
+/// The lanes of a group on the process's device (`group_of`).
+pub fn group_lanes() -> Result<usize, Error> {
+    ready().map(|d| group_of(d).expect("a ready device's group"))
+}
+
+/// The lanes a source is generated for: the device's group, or 32 where no device runs block
+/// programs (a source written to be read).
+fn source_lanes() -> usize {
+    group_lanes().unwrap_or(32)
+}
 
 /// The bytes each lane owns, and so the width of its mask words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -263,7 +280,7 @@ pub fn run_split(
 /// compile starts on a thread of its own and this is false at once: the caller runs the batch on the interpreter's
 /// pipeline (compiled once for every program) meanwhile, never waiting on the compiler (`kernels::ready_behind_function`).
 pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
-    ready().is_ok() && rerail_accel::gpu::kernels::ready_behind_function(&generate_forms(programs, width), "tempo_batch", None).is_some()
+    ready().is_ok() && rerail_accel::gpu::kernels::ready_behind_function(&generate_forms(programs, width, source_lanes()), "tempo_batch", None).is_some()
 }
 
 /// The rows of a batch's slabs (`MAX_SLABS`), in every kernel that reads a file's bytes.
@@ -302,9 +319,9 @@ pub fn run_batch(
         rerail_accel::forms::missing("metal-form", "block program", "block program", reason, files.len() as u64);
         return Err(Error::UnsupportedBackend);
     }
-    ready()?;
+    let group = group_lanes()?;
     let word = width.bytes() / 8;
-    let span = width.bytes() * GROUP;
+    let span = width.bytes() * group;
     // The form each executor runs: `class` by lookups only in generated UKL's `Lookup`.
     let forms: Vec<BlockNative> = programs
         .iter()
@@ -335,7 +352,15 @@ pub fn run_batch(
         // Generated UKL's groups each start with `warm_lanes` lanes whose sinks write nothing.
         let span = match executor {
             Executor::Interpreter => span,
-            Executor::Generated(_) => width.bytes() * (GROUP - warm_lanes(n, width)),
+            Executor::Generated(_) => {
+                // A group's warm-up lanes leave it at least one useful lane, else the device's
+                // groups are too narrow for the program.
+                let warm = warm_lanes(n, width);
+                if warm >= group {
+                    return Err(Error::UnsupportedBackend);
+                }
+                width.bytes() * (group - warm)
+            }
         };
         let groups = (len + usize::from(n.delay)).div_ceil(span).max(1);
         rows.push(FileRow {
@@ -355,7 +380,7 @@ pub fn run_batch(
         });
         group_file.extend(std::iter::repeat_n(fit(i)?, groups));
         group0 += groups;
-        out_base += n.outputs.len() * groups * GROUP;
+        out_base += n.outputs.len() * groups * group;
         // The interpreter's look-back states, a word per carried instruction; generated UKL's
         // exchange records (`record_words`).
         state_base += records[file.program] * groups;
@@ -435,8 +460,8 @@ pub fn run_batch(
                 crate::pool::upload(&table)?,
                 crate::pool::upload(&steps)?,
                 crate::pool::upload(&outs)?,
-                // Each worker's values: a slot of 32 lane words per step (decision 0034).
-                crate::pool::zeroed::<u8>((workers * most * GROUP * word).max(1))?,
+                // Each worker's values: a slot of a group's lane words per step (decision 0034).
+                crate::pool::zeroed::<u8>((workers * most * group * word).max(1))?,
             ];
             for (name, block) in ["programs", "steps", "outs", "scratch"].into_iter().zip(&interpreter) {
                 buffers.push((name, block.device_buffer().clone()));
@@ -445,10 +470,10 @@ pub fn run_batch(
         }
         Executor::Generated(_) => {
             let refs: Vec<&BlockNative> = forms.iter().collect();
-            ("tempo_batch", lane::kernel(&generate_forms(&refs, width), "tempo_batch", None))
+            ("tempo_batch", lane::kernel(&generate_forms(&refs, width, group), "tempo_batch", None))
         }
     };
-    let pass = Pass { name, kernel, buffers, args: vec![("p", params)], groups: workers, threads: GROUP };
+    let pass = Pass { name, kernel, buffers, args: vec![("p", params)], groups: workers, threads: group };
     // Each launch finishes at least the first unfinished group, whose predecessors are all done.
     let (mut seconds, mut launches) = (0.0, 0);
     loop {
@@ -473,7 +498,7 @@ pub fn run_batch(
     for row in &rows {
         let n = &forms[row.program as usize];
         let (len, groups) = (row.len as usize, row.groups as usize);
-        let lanes = groups * GROUP;
+        let lanes = groups * group;
         // The kernel wrote the stream's words, at their delays and cut to the stream: read back.
         let words = len.div_ceil(64);
         let outputs: Vec<Vec<u64>> = (0..n.outputs.len())
@@ -611,14 +636,15 @@ pub fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStra
         ClassStrategy::Lookup => native.clone(),
         ClassStrategy::Planes => native.planes_form(),
     };
-    generate_forms(&[&form], width)
+    generate_forms(&[&form], width, source_lanes())
 }
 
 /// A group of programs (each already in the form it runs) as one kernel, `tempo_batch`: a function
 /// per program, `program_P`, that computes each instruction once, in order, with a look-back for
 /// each carried one, and writes the file's outputs and extracts; and persistent workers that take
-/// the batch's groups in order and call their file's program (decision 0066).
-fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
+/// the batch's groups in order and call their file's program (decision 0066). A group is `group`
+/// lanes (`group_lanes`).
+fn generate_forms(programs: &[&BlockNative], width: LaneWidth, group: usize) -> String {
     let mut out = head(width);
     for (p, native) in programs.iter().enumerate() {
         if native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. } | BlockInst::Pair { .. })) {
@@ -626,7 +652,7 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
                 out.push_str(&lookup_helper(p, t, table));
             }
         }
-        let plan = Plan::new(native).at(native, width);
+        let plan = Plan::new(native).at(native, width, group);
         out.push_str(&program_function(p, native, &plan, width));
     }
     let cases: String = (0..programs.len())
@@ -641,7 +667,7 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
          typedef struct BatchP {{ uint32_t groups, spins, most, pad; }} BatchP;\n\
          UKL_REFLECT_STRUCT(BatchP, groups, spins, most, pad)\n\
          // Persistent workers (decision 0027): each takes group numbers in launch order and runs its\n\
-         // file's program over the group. A threadgroup is a worker: one group of 32 lanes.\n\
+         // file's program over the group. A threadgroup is a worker: one group of GROUP_LANES lanes.\n\
          DEFINE_KERNEL2(block, tempo_batch,\n\
          \x20   ROBUFFER, uint32_t, s0, \"[slab]\", RWBUFFER, BM, out, \"[outputs]\", ROBUFFER, FileRow, files, \"[files]\",\n\
          \x20   ROBUFFER, uint32_t, group_file, \"[2 * groups]\", RWBUFFER, uint32_t, states, \"[states]\",\n\
@@ -719,6 +745,8 @@ struct Plan {
     halos: Vec<usize>,
     /// The warm-up lanes of each group at the lane width (`warm_lanes`); 0 until `at`.
     warm: usize,
+    /// A group's lanes (`group_lanes`); 0 until `at`.
+    group: usize,
     /// Each local value's reach: the bytes before it that it reads, through its local `prev`s.
     reach: Vec<usize>,
     /// Each instruction's level: the exchanges between groups it waits on. A carried
@@ -731,7 +759,7 @@ impl Plan {
     fn new(native: &BlockNative) -> Self {
         let n = native.insts.len();
         let mut local = vec![true; n];
-        let mut plan = Plan { windowed: Vec::new(), scanned: Vec::new(), halos: Vec::new(), warm: 0, reach: vec![0; n], level: vec![0; n] };
+        let mut plan = Plan { windowed: Vec::new(), scanned: Vec::new(), halos: Vec::new(), warm: 0, group: 0, reach: vec![0; n], level: vec![0; n] };
         for at in 0..n {
             let ops = operands(&native.insts[at]);
             let ops_local = ops.iter().all(|&a| local[a]);
@@ -762,10 +790,11 @@ impl Plan {
         plan
     }
 
-    /// The plan at lane width `width`: with its warm-up lanes.
-    fn at(mut self, native: &BlockNative, width: LaneWidth) -> Self {
+    /// The plan at lane width `width`, in groups of `group` lanes: with its warm-up lanes.
+    fn at(mut self, native: &BlockNative, width: LaneWidth, group: usize) -> Self {
         let _ = native;
         self.warm = self.windowed.iter().map(|&at| self.reach[at].div_ceil(width.bytes())).max().unwrap_or(0);
+        self.group = group;
         self
     }
 
@@ -796,10 +825,11 @@ impl Plan {
 /// threads a threadgroup.
 pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, Error> {
     let form = native.planes_form();
-    let plan = Plan::new(&form).at(&form, width);
-    let exchanges: Vec<String> = plan.exchanges().iter().map(|(h, s)| format!("{}h+{}s", h.len(), s.len())).collect();
-    let source = generate_forms(&[&form], width);
     let device = ready()?;
+    let group = group_lanes()?;
+    let plan = Plan::new(&form).at(&form, width, group);
+    let exchanges: Vec<String> = plan.exchanges().iter().map(|(h, s)| format!("{}h+{}s", h.len(), s.len())).collect();
+    let source = generate_forms(&[&form], width, group);
     let kernel = lane::kernel(&source, "tempo_batch", None);
     // Metal's pipeline reports its limits; elsewhere the device's.
     let (threads, simd, memory) = match lane::limits(&kernel) {
@@ -807,7 +837,7 @@ pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, E
         None => (u64::from(device.max_threadgroup()), u64::from(device.simd_width()), 0),
     };
     Ok(format!(
-        "{} instructions; {} local prevs ({} warm-up lanes a group), {} halos, {} scans; exchanges [{}] + counts {}, totals {}; record {} words a group; UKL {} lines; kernel: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {GROUP}",
+        "{} instructions; {} local prevs ({} warm-up lanes a group), {} halos, {} scans; exchanges [{}] + counts {}, totals {}; record {} words a group; UKL {} lines; kernel: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {group}",
         form.insts.len(),
         plan.windowed.len(),
         plan.warm,
@@ -830,7 +860,7 @@ pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, E
 /// useful lane read. A group's useful lanes start after them, so that groups overlap by these
 /// lanes and no lane recomputes the bytes before it.
 fn warm_lanes(native: &BlockNative, width: LaneWidth) -> usize {
-    Plan::new(native).at(native, width).warm
+    Plan::new(native).at(native, width, 0).warm
 }
 
 /// The persistent workers of a launch over `groups` groups: `RERAIL_WORKERS`, or `WORKERS`.
@@ -882,7 +912,7 @@ fn operands(inst: &BlockInst) -> Vec<usize> {
 }
 
 /// Tables of `m`-bit carry vectors: apply, compose (`a` then `b`), the identity, and the group's
-/// exclusive scan (Hillis-Steele over shuffles, five steps) with the group's total. The 1-bit
+/// exclusive scan (Hillis-Steele over shuffles, a step a doubling) with the group's total. The 1-bit
 /// tables are `block_common.uglykl`'s (`tapply1`, ...); this writes the others.
 fn table_helpers(m: usize) -> String {
     assert!(m > 1, "the 1-bit tables are the common code's");
@@ -890,7 +920,8 @@ fn table_helpers(m: usize) -> String {
     let n = 1usize << m;
     let compose: Vec<String> = (0..n).map(|c| format!("(tapply{m}(b, tapply{m}(a, {c}u)) << {}u)", c * m)).collect();
     let identity: u32 = (0..n as u32).map(|c| c << (c as usize * m)).sum();
-    let steps: String = [1, 2, 4, 8, 16].iter().map(|d| format!("\x20 u = ukl_sg_shuffle_up(x, {d}u __UKL_ARGS); x = SEL(x, tcompose{m}(u, x), l >= {d}u);\n")).collect();
+    let step = |d: u32| format!("\x20 u = ukl_sg_shuffle_up(x, {d}u __UKL_ARGS); x = SEL(x, tcompose{m}(u, x), l >= {d}u);\n");
+    let steps: String = [1, 2, 4, 8].into_iter().map(step).collect::<String>() + "#if GROUP_LANES > 16\n" + &step(16) + "#endif\n";
     format!(
         "UKL_INLINE uint32_t tapply{m}(uint32_t t, uint32_t c) {{ return (t >> (c * {m}u)) & {mask}u; }}\n\
          UKL_INLINE uint32_t tcompose{m}(uint32_t a, uint32_t b) {{ return {}; }}\n\
@@ -919,14 +950,15 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
          \x20 const uint32_t gl = U32(ukl_max(glw, 0));\n\
          \x20 const bool keep = l >= {h}u;\n\
          \x20 const bool before_file = glw < 0;\n\
-         \x20 const uint32_t lanes = f.groups * {GROUP}u;\n\
+         \x20 const uint32_t lanes = f.groups * {group}u;\n\
          \x20 const uint32_t len = f.len;\n",
         h = plan.warm,
-        useful = GROUP - plan.warm,
+        useful = plan.group - plan.warm,
+        group = plan.group,
     );
     // A full group's body (`full_form`): the same in every lane of the group. Then the general one.
     let full = full_form(native);
-    let span = w * (GROUP - plan.warm);
+    let span = w * (plan.group - plan.warm);
     // In a full group, a group of ASCII bytes takes a third body (`ascii_form`): each lane's bytes
     // and the 16 before them below 0x80, the warm-up lanes' included, so every byte a byte-local
     // value reads.
@@ -948,16 +980,16 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
 /// group's record of `record` words: the first `halo_words` are halo words, the rest scan
 /// tables. Gives each word's result as an expression read by every lane.
 #[allow(dead_code)]
-fn exchange(out: &mut String, name: &str, words: &[String], halo_words: usize, offset: usize, record: usize) -> Vec<String> {
-    exchange_kinds(out, name, words, |j| if j < halo_words { "0u".to_owned() } else { "1u".to_owned() }, offset, record)
+fn exchange(out: &mut String, name: &str, words: &[String], halo_words: usize, offset: usize, record: usize, group: usize) -> Vec<String> {
+    exchange_kinds(out, name, words, |j| if j < halo_words { "0u".to_owned() } else { "1u".to_owned() }, offset, record, group)
 }
 
-/// `exchange` with each word's kind (`exchange_word`): lane `j` of a pass owns word `32 * pass +
-/// j`. A group that a predecessor keeps waiting returns unfinished.
-fn exchange_kinds(out: &mut String, name: &str, words: &[String], kind: impl Fn(usize) -> String, offset: usize, record: usize) -> Vec<String> {
+/// `exchange` with each word's kind (`exchange_word`): lane `j` of a pass owns word `group * pass
+/// + j` (a group of `group` lanes). A group that a predecessor keeps waiting returns unfinished.
+fn exchange_kinds(out: &mut String, name: &str, words: &[String], kind: impl Fn(usize) -> String, offset: usize, record: usize, group: usize) -> Vec<String> {
     let mut got = Vec::with_capacity(words.len());
-    for (pass, chunk) in words.chunks(GROUP).enumerate() {
-        let base = pass * GROUP;
+    for (pass, chunk) in words.chunks(group).enumerate() {
+        let base = pass * group;
         let mut mine = "0u".to_owned();
         let mut kinds = "0u".to_owned();
         for (j, w) in chunk.iter().enumerate() {
@@ -1029,7 +1061,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
         // A halo word whose halos are all known in this body is published, for a general group
         // after, and not waited on.
         let known = |j: usize| j < halo_count && packed[j].iter().all(|p| !matches!(values.insts[p.at], BlockInst::Prev(..)));
-        let got = exchange_kinds(&mut out, &format!("x{level}"), &words, |j| if known(j) { "3u" } else if j < halo_count { "0u" } else { "1u" }.to_owned(), offset, record);
+        let got = exchange_kinds(&mut out, &format!("x{level}"), &words, |j| if known(j) { "3u" } else if j < halo_count { "0u" } else { "1u" }.to_owned(), offset, record, plan.group);
         for &at in halos {
             let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
             if !matches!(values.insts[at], BlockInst::Prev(..)) {
@@ -1063,8 +1095,11 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
     // the counted outputs' counts, exchanged together, their positions and their totals.
     for (k, v) in native.outputs.iter().enumerate() {
         match native.output_delays[k] {
-            // A warm-up lane's word goes to the output's last word, which no stream reaches.
-            0 => out.push_str(&format!("  out[f.out_base + {k}u * lanes + SEL(lanes - 1u, gl, keep)] = stream_cut(v{v}, gl, len, 0u);\n")),
+            // A warm-up lane writes zeros to the output's last word, which no useful lane holds (a group's last
+            // lanes are its next group's warm-up) and whose bytes are past the file: zero is its word. The
+            // stream's last 64-bit word can reach it (a file of one group, its last word partly filled: at 16 lanes
+            // of 16 bytes, a file of 200), so a warm-up lane's own word there read as the stream's bits.
+            0 => out.push_str(&format!("  out[f.out_base + {k}u * lanes + SEL(lanes - 1u, gl, keep)] = SEL(BMC(0), stream_cut(v{v}, gl, len, 0u), keep);\n")),
             d => out.push_str(&format!("  write_output(out, f.out_base + {k}u * lanes, gl, len, {d}u, SEL(BMC(0), v{v}, keep));\n")),
         }
     }
@@ -1084,7 +1119,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
             ));
             words.push(format!("ca{c}"));
         }
-        let got = exchange_kinds(&mut out, "xc", &words, |_| "2u".to_owned(), offset, record);
+        let got = exchange_kinds(&mut out, "xc", &words, |_| "2u".to_owned(), offset, record, plan.group);
         for (c, &k) in native.extracts.iter().enumerate() {
             out.push_str(&format!(
                 "  count_finish(cw{c}, cn{c}, ca{c}, {}, gl, g, l, f.groups, {}u, positions + f.pos_base + {c}u * ukl_max(len, 1u), ukl_max(len, 1u), true, counts + f.tot_base + {c}u __UKL_ARGS);\n",
@@ -1385,8 +1420,8 @@ fn group_loop(native: &BlockNative, g: usize, lanes: bool, one: &mut dyn FnMut(u
         let BlockInst::Carry(init) = native.insts[c] else { unreachable!("a carry") };
         out.push_str(&format!("  BM gc{g}_{k} = v{init};\n"));
     }
-    let bound = rerail_compiler::block::MAX_ROUNDS * GROUP;
-    out.push_str(&format!("  for (uint32_t r{g} = 0u; r{g} < {bound}u; r{g}++) {{\n"));
+    let rounds = rerail_compiler::block::MAX_ROUNDS;
+    out.push_str(&format!("  for (uint32_t r{g} = 0u; r{g} < {rounds}u * GROUP_LANES; r{g}++) {{\n"));
     for (k, &(c, _)) in group.carries.iter().enumerate() {
         out.push_str(&format!("    v{c} = gc{g}_{k};\n"));
     }

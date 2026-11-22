@@ -291,7 +291,7 @@ fn prefix(defines: &str) -> String {
 /// 0576). A run places its tapes in format 15 or 16 (a 16z tape as 16), so its interpreter and sweep hold one
 /// format's reads, and no 16z read.
 fn resident_prefix(format: u32) -> String {
-    format!("{}#define RERAIL_RESIDENT 1\n{}", simd_group_free(format), tape_view(format))
+    format!("#define RERAIL_RESIDENT 1\n{}", tape_view(format))
 }
 
 /// The device's tape view (decision 0032), which the label and pattern kernels read: the
@@ -319,14 +319,6 @@ pub(super) static VIEW_PIECES: std::sync::LazyLock<[String; 2]> = std::sync::Laz
 /// Whether a batch of tapes in `format` (0: mixed) reads 16z ([`VIEW_PIECES`]).
 pub(super) fn reads_z(format: u32) -> bool {
     format != 15 && format != 16
-}
-/// What a source says first when its kernels, over tapes in `format`, use no SIMD group (`UKL_SIMD_GROUP_FREE`,
-/// `ukl/backend.h`, decision 0576 §14): the interpreters', the sweep's and the join view kernels' over format 15 or
-/// 16. On OpenCL they then require no sub-group size, which Intel's compiler builds 2-5x faster than 32 lanes; a
-/// kernel that reaches a SIMD-group operation is refused at its build. A batch of 16z or of mixed formats reads 16z,
-/// whose block decode is a SIMD group's.
-pub(super) fn simd_group_free(format: u32) -> &'static str {
-    if reads_z(format) { "" } else { "#define UKL_SIMD_GROUP_FREE 1\n" }
 }
 /// The tape view for a batch of tapes in `format` (0: mixed).
 pub(super) fn tape_view(format: u32) -> &'static str {
@@ -699,7 +691,7 @@ fn interpreter_kernel(format: u32) -> Result<lane::Kernel, Error> {
         return Ok(kernel.clone());
     }
     lane::device()?;
-    let kernel = lane::kernel_fixed(&format!("{}{}{}", simd_group_free(format), tape_view(format), kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch", Some(format));
+    let kernel = lane::kernel_fixed(&format!("{}{}", tape_view(format), kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch", Some(format));
     cached.insert(format, kernel.clone());
     Ok(kernel)
 }

@@ -4,16 +4,15 @@
 // block_serial.rs) are compiled after it.
 //
 // Compiled for one lane word: `BW` its bits (16, 32 or 64) and `BM` its type, defined in front of the source; and
-// `BLOCK_POLL_RMW` (0 or 1), how a poll reads (`poll`). A group is one SIMD group of 32 lanes, each owning `BW / 8`
-// bytes of a file: its ballots are 32-bit words (`UKL_SIMD_WIDTH_NEEDED`), and the host runs block programs only where
-// the device offers SIMD groups of 32 (`block_program::ready`; an Arc's sub-groups of 32 where its own width is 16).
+// `BLOCK_POLL_RMW` (0 or 1), how a poll reads (`poll`). A group is one SIMD group of the device's width
+// (`GROUP_LANES`: 16 or 32 lanes), each lane owning `BW / 8` bytes of a file; the host lays a batch out for the same
+// width (`block_program::group_lanes`).
 //
 // Carries (`docs/parser-generators/06-block-parallel.md` §2, §5): each carried operation has a lane summary, an
 // associative combine and an apply. A group combines its lanes' summaries with SIMD-group operations; between
 // groups the combined summaries pass through look-back states. Kinds: 0 parity (`toggle`), 1 borrow (`escaped`,
 // `fill`: bit 0 generate, bit 1 propagate). `prev` needs no scan: its carry is a halo, the 64 bits before a lane,
 // from the lanes before it in the group and the group before's last 64 bits.
-#define UKL_SIMD_WIDTH_NEEDED 32u
 #include <ukl/backend.h>
 #include <ukl/bits.h>
 #include <ukl/simd.h>
@@ -28,8 +27,12 @@
 #define U32(x) ((uint32_t)(x))
 #define U64(x) ((uint64_t)(x))
 #define I32(x) ((int32_t)(x))
-// A group's lanes.
-#define GROUP_LANES 32u
+// A group's lanes: the device's SIMD group, 16 or 32 lanes (a ballot is a word of its lanes' bits, and the borrow's
+// carry-lookahead adds two of them in 64 bits).
+#define GROUP_LANES UKL_SIMD_WIDTH
+#if GROUP_LANES != 16 && GROUP_LANES != 32
+#  error "block_common: a group is a SIMD group of 16 or 32 lanes"
+#endif
 
 // The lane code is straight-line (parser_tests' `check_lowering`): selects, never branches.
 UKL_INLINE int32_t clamp_i32(int32_t x, int32_t lo, int32_t hi) { return SEL(SEL(x, hi, x > hi), lo, x < lo); }
@@ -88,7 +91,7 @@ UKL_INLINE B4 b4_ands(B4 a, uint32_t s) { return b4(a.x & s, a.y & s, a.z & s, a
 UKL_INLINE uint32_t b4_any(B4 a) { return a.x | a.y | a.z | a.w; }
 
 // A file of the batch (decision 0066). Lane words are indexed in the file: output k of lane gl at
-// out_base + k * groups * 32 + gl; carry j of group g at state_base + j * groups + g (a halo's three words from
+// out_base + k * groups * GROUP_LANES + gl; carry j of group g at state_base + j * groups + g (a halo's three words from
 // halo_base + (j * groups + g) * 3); counted output c's state of group g at ext_base + c * groups + g, and its total
 // at tot_base + c; extract e's positions from pos_base + e * max(len, 1); in passes, block b's slot k at
 // slot_base + b * SLOTS + k.
@@ -184,17 +187,14 @@ UKL_INLINE uint32_t combine_borrow(uint32_t a, uint32_t b)
 }
 UKL_INLINE uint32_t combine_carry(uint32_t kind, uint32_t a, uint32_t b) { return SEL(combine_parity(a, b), combine_borrow(a, b), kind == 1u); }
 
-// The group's aggregate of its lanes' summaries. The borrow's carry-lookahead is a 32-lane add: a group of 32 lanes
-// at most.
-#if UKL_SIMD_WIDTH > 32
-#  error "block_common: the borrow's carry-lookahead adds 32 lanes' masks"
-#endif
+// The group's aggregate of its lanes' summaries. The borrow's: carry-lookahead, an add of its lanes' masks, the carry
+// out of the group's top lane.
 UKL_INLINE uint32_t reduce_parity(uint32_t s __UKL_PARAMS) { return ukl_mask_count(ukl_sg_ballot((s & 1u) != 0u __UKL_ARGS)) & 1u; }
 UKL_INLINE uint32_t reduce_borrow(uint32_t s __UKL_PARAMS)
 {
     uint32_t G = ukl_sg_ballot((s & 1u) != 0u __UKL_ARGS), P = ukl_sg_ballot((s & 2u) != 0u __UKL_ARGS);
-    uint32_t g = (uint32_t)(((uint64_t)(G | P) + (uint64_t)G) >> 32);
-    return g | ((uint32_t)(P == 0xffffffffu) << 1);
+    uint32_t g = (uint32_t)((((uint64_t)(G | P) + (uint64_t)G) >> GROUP_LANES) & 1u);
+    return g | ((uint32_t)((uint64_t)P == ukl_mask64(GROUP_LANES)) << 1);
 }
 // A lane's carry in: the group's exclusive prefix `e` combined with the lanes before it. One bit's prefix parity:
 // the parity of the ballot below the lane.
@@ -204,7 +204,7 @@ UKL_INLINE uint32_t lane_in_parity(uint32_t s, uint32_t e, uint32_t l __UKL_PARA
 }
 UKL_INLINE uint32_t lane_in_borrow(uint32_t s, uint32_t e, uint32_t l __UKL_PARAMS)
 {
-    // Carry-lookahead as a 32-bit add: lane l generates when G, propagates when P; the carry into bit l of
+    // Carry-lookahead as an add of the lanes' masks: lane l generates when G, propagates when P; the carry into bit l of
     // (G | P) + G + carry-in is lane l's carry in.
     uint32_t G = ukl_sg_ballot((s & 1u) != 0u __UKL_ARGS), P = ukl_sg_ballot((s & 2u) != 0u __UKL_ARGS);
     uint32_t A = G | P;
@@ -234,8 +234,8 @@ UKL_INLINE uint64_t halo_before(BM a, uint32_t l, uint64_t P __UKL_PARAMS)
 UKL_INLINE uint64_t halo_last(BM a __UKL_PARAMS)
 {
     uint32_t x = (uint32_t)a;
-    return ((uint64_t)(ukl_sg_shuffle(x, 31u __UKL_ARGS) & 0xffffu) << 48) | ((uint64_t)(ukl_sg_shuffle(x, 30u __UKL_ARGS) & 0xffffu) << 32) |
-           ((uint64_t)(ukl_sg_shuffle(x, 29u __UKL_ARGS) & 0xffffu) << 16) | (uint64_t)(ukl_sg_shuffle(x, 28u __UKL_ARGS) & 0xffffu);
+    return ((uint64_t)(ukl_sg_shuffle(x, GROUP_LANES - 1u __UKL_ARGS) & 0xffffu) << 48) | ((uint64_t)(ukl_sg_shuffle(x, GROUP_LANES - 2u __UKL_ARGS) & 0xffffu) << 32) |
+           ((uint64_t)(ukl_sg_shuffle(x, GROUP_LANES - 3u __UKL_ARGS) & 0xffffu) << 16) | (uint64_t)(ukl_sg_shuffle(x, GROUP_LANES - 4u __UKL_ARGS) & 0xffffu);
 }
 #elif BW == 32
 UKL_INLINE uint64_t halo_before(BM a, uint32_t l, uint64_t P __UKL_PARAMS)
@@ -243,19 +243,19 @@ UKL_INLINE uint64_t halo_before(BM a, uint32_t l, uint64_t P __UKL_PARAMS)
     uint64_t m = 0xfffffffful;
     return ((halo_word(ukl_sg_shuffle_up(a, 1u __UKL_ARGS), 1u, l, P, 32u) & m) << 32) | (halo_word(ukl_sg_shuffle_up(a, 2u __UKL_ARGS), 2u, l, P, 32u) & m);
 }
-UKL_INLINE uint64_t halo_last(BM a __UKL_PARAMS) { return ((uint64_t)ukl_sg_shuffle(a, 31u __UKL_ARGS) << 32) | (uint64_t)ukl_sg_shuffle(a, 30u __UKL_ARGS); }
+UKL_INLINE uint64_t halo_last(BM a __UKL_PARAMS) { return ((uint64_t)ukl_sg_shuffle(a, GROUP_LANES - 1u __UKL_ARGS) << 32) | (uint64_t)ukl_sg_shuffle(a, GROUP_LANES - 2u __UKL_ARGS); }
 #else
 UKL_INLINE uint64_t halo_before(BM a, uint32_t l, uint64_t P __UKL_PARAMS)
 {
     uint64_t up = sg_up64(a, 1u __UKL_ARGS);
     return SEL(up, P, l == 0u);
 }
-UKL_INLINE uint64_t halo_last(BM a __UKL_PARAMS) { return sg_bcast64(a, 31u __UKL_ARGS); }
+UKL_INLINE uint64_t halo_last(BM a __UKL_PARAMS) { return sg_bcast64(a, GROUP_LANES - 1u __UKL_ARGS); }
 #endif
 // `prev` by k (1..63): the word shifted up, the newest k bits of the halo below.
 UKL_INLINE BM apply_prev(BM a, uint32_t k, uint64_t before) { return BMC(lane_bits(BMC(((uint64_t)a << k) | (before >> (64u - k))))); }
 
-// An XOR prefix scan of a word across the group (Hillis-Steele, five shuffles): for scans of more than one bit; one
+// An XOR prefix scan of a word across the group (Hillis-Steele, a shuffle a doubling): for scans of more than one bit; one
 // bit's parity is a ballot's popcount (`lane_in_parity`).
 UKL_INLINE uint32_t sg_prefix_inclusive_xor32(uint32_t v, uint32_t l __UKL_PARAMS)
 {
@@ -264,7 +264,9 @@ UKL_INLINE uint32_t sg_prefix_inclusive_xor32(uint32_t v, uint32_t l __UKL_PARAM
     u = ukl_sg_shuffle_up(v, 2u __UKL_ARGS); v ^= SEL(0u, u, l >= 2u);
     u = ukl_sg_shuffle_up(v, 4u __UKL_ARGS); v ^= SEL(0u, u, l >= 4u);
     u = ukl_sg_shuffle_up(v, 8u __UKL_ARGS); v ^= SEL(0u, u, l >= 8u);
+#if GROUP_LANES > 16
     u = ukl_sg_shuffle_up(v, 16u __UKL_ARGS); v ^= SEL(0u, u, l >= 16u);
+#endif
     return v;
 }
 
@@ -371,7 +373,9 @@ UKL_INLINE uint32_t texclusive1(uint32_t t, uint32_t l, UKL_PRIVATE uint32_t* to
     u = ukl_sg_shuffle_up(x, 2u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 2u);
     u = ukl_sg_shuffle_up(x, 4u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 4u);
     u = ukl_sg_shuffle_up(x, 8u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 8u);
+#if GROUP_LANES > 16
     u = ukl_sg_shuffle_up(x, 16u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 16u);
+#endif
     *total = ukl_sg_shuffle(x, GROUP_LANES - 1u __UKL_ARGS);
     u = ukl_sg_shuffle_up(x, 1u __UKL_ARGS);
     return SEL(u, TID1, l == 0u);
@@ -463,8 +467,8 @@ UKL_INLINE bool exchange_word(UKL_GLOBAL uint32_t* rec, uint32_t g, uint32_t str
 }
 
 // The sinks, each lowered from the IR (`native_ir::BlockNative`): the output masks at their delays, the extracts'
-// positions and the totals. Written in the same launch as the masks. A chunk is one group's span of a file (32
-// lanes of BW / 8 bytes).
+// positions and the totals. Written in the same launch as the masks. A chunk is one group's span of a file
+// (`GROUP_LANES` lanes of BW / 8 bytes).
 
 // A lane's word cut to the stream at delay `d`: the bits `d <= gl * BW + i < len + d`.
 UKL_INLINE BM stream_cut(BM v, uint32_t gl, uint32_t len, uint32_t d)

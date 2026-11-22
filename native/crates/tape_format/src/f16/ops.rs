@@ -583,8 +583,6 @@ impl Lz {
 /// `finish`. A writer's ops are one thread's, in a group of its own; the writers are many groups.
 #[cfg(any(test, feature = "test-hooks"))]
 pub const REPLAY: &str = r#"
-// Its kernel uses no SIMD group (ukl/backend.h, decision 0576 §14).
-#define UKL_SIMD_GROUP_FREE 1
 #include <ukl/writer.h>
 
 typedef struct ReplayArgs {

@@ -351,9 +351,7 @@ fn view_source(format: u32) -> String {
         return SOURCE.to_owned();
     }
     let at = std::mem::offset_of!(rerail_clif::view::TapeView, format);
-    // The view kernels use no SIMD group, but over 16z (its block decode is a SIMD group's).
-    let free = super::metal_program_backend::simd_group_free(format);
-    format!("{free}#define clif_view(v,a) (((a)=={at}u)?{format}u:(v)[(a)/4u])\n{}", *SOURCE)
+    format!("#define clif_view(v,a) (((a)=={at}u)?{format}u:(v)[(a)/4u])\n{}", *SOURCE)
 }
 
 /// The format a run's views are of, as it stores its tapes (`Format::of_run`): the view kernels compiled ahead.

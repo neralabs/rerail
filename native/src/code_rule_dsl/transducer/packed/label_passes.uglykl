@@ -175,7 +175,7 @@ UKL_INLINE bool micro_class(Tree t,UKL_GLOBAL const uint32_t* head,uint32_t node
 }
 
 // A test of the node alone, as a walk's word reads it (kind, field, flags, class, text).
-UKL_COLD bool micro_test(Tree t,UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const uint32_t* texts,uint32_t textStart,uint32_t labelWords,uint32_t word,uint32_t node){
+UKL_LARGE bool micro_test(Tree t,UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const uint32_t* texts,uint32_t textStart,uint32_t labelWords,uint32_t word,uint32_t node){
   uint32_t op=word&255u,mode=(word>>8u)&255u,arg=word>>16u;
   switch(op){
     case 1u:return tape_kind(t.s,t.d,tree_local(t,node))==arg;
@@ -437,7 +437,7 @@ UKL_INLINE uint32_t sibling_pass(Tree t,UKL_PRIVATE MicroFrame* f,WalkRead r,Sca
 // budgets of nodes (2,048 at the budget of 512) is halved into the work queue (`scan_cut`) before it starts, until
 // its piece fits, so its pieces run side by side. A step is a window. 0: the scan is done; 1: the walk is (its start marked, as every emit's in the pass);
 // 2: past the step bound, or a load of a node never saved.
-UKL_COLD uint32_t scan_marks(Tree t,UKL_PRIVATE MicroFrame* f,WalkRead r,MicroPass pass,UKL_GLOBAL uint32_t* scratch,UKL_GLOBAL uint32_t* counts,UKL_GLOBAL uint32_t* flags,Shape shape,uint32_t start,UKL_PRIVATE uint32_t* fired,UKL_PRIVATE uint32_t* steps,MicroQ q,bool straight){
+UKL_LARGE uint32_t scan_marks(Tree t,UKL_PRIVATE MicroFrame* f,WalkRead r,MicroPass pass,UKL_GLOBAL uint32_t* scratch,UKL_GLOBAL uint32_t* counts,UKL_GLOBAL uint32_t* flags,Shape shape,uint32_t start,UKL_PRIVATE uint32_t* fired,UKL_PRIVATE uint32_t* steps,MicroQ q,bool straight){
   ScanTail x;scan_tail(r,pass,f->pc,&x);
   bool pack=(pass.targets&4u)!=0u,named=(f->named&1u)!=0u;
   uint32_t label=r.words[x.emit]>>16u;
