@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import { type Dirent, existsSync, readdirSync } from "node:fs";
-import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
+import { appendFile, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -5577,6 +5577,97 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     // The session checkout's alone, at every walk after the one that found the worktree gone.
     expect((await gitReads(bothWalks)).heads).toBe(1);
     expect((await gitReads(bothWalks)).heads).toBe(1);
+  });
+
+  // Git lists a worktree again under the same path after `git worktree add` there, or once a `.git` entry that was away
+  // is back: the session sees it as a worktree new to it, reads its `HEAD` again and records a write in it.
+  it("walks again a worktree Git lists again under the same path after it stopped listing it", async () => {
+    const root = await twoBranches();
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const bothWalks = async () => {
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+    };
+    git(root, "worktree", "remove", "--force", worktree);
+    roots.length = 0;
+    await bothWalks();
+    expect((await gitReads(bothWalks)).heads).toBe(1);
+    git(root, "worktree", "add", "--quiet", worktree, "other");
+    roots.push(worktree);
+    await bothWalks();
+    expect((await gitReads(bothWalks)).heads).toBe(2);
+    await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "again.py"), "violation\n"));
+    const recorded = auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => [edit.path, batch.mode]));
+    expect(recorded).toContainEqual([repositoryPath(root, join(worktree, "src", "again.py")), "log"]);
+  });
+
+  // A walk that began before `git worktree remove` can hand the session the removed worktree's snapshot after the session
+  // let go of it, and a checkout inside the session folder can be deleted: whichever way a kept checkout's `.git` entry
+  // went, the walks after read no `HEAD` of it.
+  it("reads no `HEAD` of a checkout it kept once that checkout's `.git` entry is gone", async () => {
+    const { root, nested, extra } = await nestedCheckout();
+    const { bridge } = await opened(root, extra);
+    await shell(bridge, () => writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n"));
+    const walk = async () => {
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+    };
+    // The session checkout's `HEAD` and the one inside it.
+    expect((await gitReads(walk)).heads).toBe(2);
+    await removeFolder(nested);
+    await walk();
+    expect((await gitReads(walk)).heads).toBe(1);
+    // A file where its folder stood leaves no `.git` entry there either.
+    await writeFile(nested, "a file now\n");
+    await walk();
+    expect((await gitReads(walk)).heads).toBe(1);
+  });
+
+  // A `.git` entry moved aside for a while (a tool that swaps it, a restore) leaves the checkout's folder standing: the
+  // walks ask Git nothing of it meanwhile and keep its `HEAD` and unmerged entries as the last walk read them, so once
+  // the entry is back they read it as before.
+  it("asks Git nothing of a kept checkout while its `.git` entry is away, and reads it again once the entry is back", async () => {
+    const { root, nested, extra } = await nestedCheckout();
+    const { bridge } = await opened(root, extra);
+    await shell(bridge, () => writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n"));
+    const walk = async () => {
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+    };
+    expect((await gitReads(walk)).heads).toBe(2);
+    // The walk that finds the entry gone or back takes the checkout's files again, which its Git verdicts read once
+    // each; the kept snapshot adds no read, nor do the walks after.
+    await rename(join(nested, ".git"), join(nested, "git-away"));
+    expect(await gitReads(walk)).toEqual({ heads: 2, entries: 1 });
+    expect(await gitReads(walk)).toEqual({ heads: 1, entries: 0 });
+    await rename(join(nested, "git-away"), join(nested, ".git"));
+    await walk();
+    expect((await gitReads(walk)).heads).toBe(2);
+  });
+
+  // A `.git` entry the walk may not look at (a folder whose permissions shut it out for a while) is no absent one: its
+  // `HEAD` is read as before, and once the folder opens again the walks still read it.
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("reads the `HEAD` of a kept checkout whose `.git` entry it may not look at for a while", async () => {
+    const { root, nested, extra } = await nestedCheckout();
+    const { bridge } = await opened(root, extra);
+    await shell(bridge, () => writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n"));
+    const walk = async () => {
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+    };
+    expect((await gitReads(walk)).heads).toBe(2);
+    await chmod(nested, 0o000);
+    try {
+      // The walk that finds the folder shut reads what it can; the one after reads both kept `HEAD`s, the shut one too.
+      await walk();
+      expect((await gitReads(walk)).heads).toBe(2);
+    } finally {
+      await chmod(nested, 0o755);
+    }
+    // The walk that opens the folder again reads its files, as a first read; the walks after read both `HEAD`s.
+    await walk();
+    expect((await gitReads(walk)).heads).toBe(2);
   });
 
   // A walk of a worktree the session already knew that reads Git once `git worktree remove` has deleted the worktree's
