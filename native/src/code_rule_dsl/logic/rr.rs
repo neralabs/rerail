@@ -50,13 +50,10 @@ pub fn message_masked(src: &str) -> std::borrow::Cow<'_, str> {
         return std::borrow::Cow::Borrowed(src);
     }
     let message = tape::Field::Message as u16;
-    // The messages' spans, read off the lean parser's image in place (`tape_format::View`).
-    let image = tape(src);
-    let Ok(v) = rerail_rr_syntax::tape_format::View::new(&image) else { return std::borrow::Cow::Borrowed(src) };
-    let mut spans: Vec<(usize, usize)> = (0..v.len())
-        .filter(|&i| matches!(tape::kind_field(v.key(i)), (kind, field) if field == message && kind != tape::ERROR))
-        .map(|i| (v.start(i) as usize, v.end(i) as usize))
-        .collect();
+    // The messages' spans, read off the file's tape in place.
+    let Ok(file) = RrFile::parsed(src) else { return std::borrow::Cow::Borrowed(src) };
+    let t = file.tape();
+    let mut spans: Vec<(usize, usize)> = (0..t.len()).filter(|&i| t.field(i) == message && t.kind(i) != tape::ERROR).map(|i| (t.start(i), t.end(i))).collect();
     spans.sort();
     let mut out = String::with_capacity(src.len());
     let mut at = 0;

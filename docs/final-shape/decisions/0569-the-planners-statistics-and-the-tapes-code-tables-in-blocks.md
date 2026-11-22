@@ -119,3 +119,28 @@ The user's choices, 2026-11-21: the cache is the one "which owns the GPU version
 - A 16z tape is not walked when it is loaded: its reads are bounded (0463), so a malicious tape cannot reach
   memory outside its block. The user's rule: "The requirement is not that we validate every tape on every
   decompression, it's to stop a malicious tape from reading or writing memory it shouldn't".
+
+## 7. A `.rerail` file is read as every document is
+
+The user's rule, 2026-11-22: "I do hate the idea of having many data structures representing the same thing and
+many ways to solve the same problem"; then, of moving rule files onto the documents' tape: "do it". The user's
+choice for its 16z reads' cost: "Faster 16z reads".
+
+- A rule file (`rr::from_tape::RrFile`) holds a `DocTape`, as a document does: the tape `TapeImage::encode_rr`
+  writes in the run's format (the one the engine's documents of `.rerail` files have), its reader made once, and in
+  16z its batch's cache. A file is kept for the process by itself (`rr::read_shared`), so it is read in a batch of
+  its own (`TapeImage::own_cache`). Its reads go through the tape API (`tape::Tape`): a code's kind, field and flags
+  from the table, a child's code and subtree end in one read (`Tape::code_and_end`), a span in one (`Tape::span`), a
+  line from the tape's newline index (`F16::line`, `F16Z::line`; format 15 holds none, so a run that stores it counts
+  the newlines). An ERROR is looked for among the faults the writer listed (§5).
+- Gone: format 15's own reader of a rule file (`tape_format::View` over `rerail_rr_syntax::tape`'s image), the code
+  keys it decoded into a column of their own, and the line starts (`syntax::Lines`) a read made. `rr::message_masked`
+  reads the same tape (`RrFile::parsed`). The format 15 writer stays the parser's own target and its oracle tests'.
+- A 16z read probes its batch's shared cache, a lookup of several atomics and fences, and a rule file's reader reads a
+  node's fields one after another. A 16z tape keeps the entry its last read found (`Hint`: the entry's address and
+  completion epoch), and a read of the same block reads it again with no lookup while it still holds the block
+  (`cache::still`: its generation not turned, its key and completion unchanged), checked again after the read, as a
+  lookup's readers check. `a_hinted_read_answers_while_the_cache_turns` reads through a cache of two entries a
+  generation from four threads.
+- What stays a list: a program's statements (`Vec<Stmt>`, `rr::Files`), which name the nodes of its files it reads,
+  in its order, includes resolved. They are a program's choice across files, not one file's nodes.

@@ -1319,6 +1319,27 @@ pub struct Tape16Z {
     buf: crate::home::Home,
     /// Where its own regions lie (`ZPARTS` …).
     zat: [usize; ZS],
+    /// The cache entry its last read found (`F16Z::with`).
+    hint: Hint,
+}
+
+/// A 16z tape's last read's cache entry: its address and the epoch it was complete in. The next read of the same
+/// block reads it again if it still holds the block (`cache::still`), with no lookup: a reader of a node's fields one
+/// after another (a `.rerail` file's, `rr::from_tape`) reads one block many times. Not data: an entry of the batch's
+/// cache, found again. A clone starts with none.
+#[derive(Default)]
+struct Hint([std::sync::atomic::AtomicU64; 2]);
+
+impl Clone for Hint {
+    fn clone(&self) -> Self {
+        Hint::default()
+    }
+}
+
+impl std::fmt::Debug for Hint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Hint")
+    }
 }
 
 impl Tape16Z {
@@ -1396,7 +1417,7 @@ impl Tape16Z {
         fits(&p, &buf, std::array::from_fn(|k| at_parts + 4 * k * (count + 1)))?;
         let source_len = u64_at(&buf, head::SOURCE_LEN)?;
         check_lines(&buf[zat[ZLINES]..zat[ZLINES] + lines], &p, source_len)?;
-        let mut t = Tape16Z { id: next_id(), entry: 0, mark: buf[head::MARK], p, source_len, buf, zat };
+        let mut t = Tape16Z { id: next_id(), entry: 0, mark: buf[head::MARK], p, source_len, buf, zat, hint: Hint::default() };
         let largest = (0..t.p.block_count()).map(|b| t.entry_bytes(b)).max().unwrap_or(0);
         t.entry = (rerail_clif::view::z::SLOT_BYTES as usize + largest + rerail_clif::view::z::SLACK).next_power_of_two();
         let payload = at_parts - HEAD16;
@@ -1704,6 +1725,13 @@ pub struct F16Z<'a> {
 }
 
 impl F16Z<'_> {
+    /// The line (from 0) byte `x` of the source lies in, by the newline index its home holds raw: read where it lies,
+    /// as format 16's (`F16::line`), with no block decoded.
+    pub fn line(&self, x: u32) -> u32 {
+        let view = self.t.view(self.lang).expect("a 16z tape's view: its reader's language is its own");
+        reads::line(&self.t.buf, &view, x)
+    }
+
     /// `f` over block `b`'s bytes and view in its batch's cache entry, decoded on a miss. The entry is checked again
     /// after `f` read it, as the reads written once check it where the cache is shared (`in_block`): its completion
     /// stamp and key unchanged, else (another thread's turn took it) read again, and past `TRIES`, decoded apart.
@@ -1714,6 +1742,27 @@ impl F16Z<'_> {
         let c = self.cache.expect("a 16z tape is read through its batch's cache (`TapeDoc::in_batch`)");
         let key = (self.t.id << 22) | b as u64;
         let size = self.t.entry;
+        // The entry the last read found, where it still holds this block: read with no lookup, and checked again after
+        // (`cache::still`). A hint of another cache's (the tape read in another batch) lies outside this one.
+        let (hinted, hint_stamp) = (self.t.hint.0[0].load(SeqCst) as usize, self.t.hint.0[1].load(SeqCst) as u32);
+        let at = c.at() as usize;
+        if hinted >= at + rerail_clif::view::cache::HEAD && hinted + size <= at + c.bytes {
+            let e = hinted as *mut u8;
+            // SAFETY: an entry `get` gave of this live cache (in its range, as the hint holds only those).
+            if unsafe { cache::still(c.at(), e, key, hint_stamp) } {
+                // SAFETY: as `get`'s entry's below.
+                let (bytes, view) = unsafe {
+                    let view = e.add(z::SLOT_VIEW as usize).cast::<TapeView>().read_unaligned();
+                    (std::slice::from_raw_parts(e.add(z::SLOT_BYTES as usize), size - z::SLOT_BYTES as usize), view)
+                };
+                let r = f(bytes, &view);
+                fence(SeqCst);
+                // SAFETY: as above.
+                if unsafe { cache::still(c.at(), e, key, hint_stamp) } {
+                    return r;
+                }
+            }
+        }
         for _ in 0..cache::TRIES {
             // SAFETY: the batch's live cache; the fill writes its entry's `size` bytes only.
             let e = unsafe { cache::get(c.at(), key, size as u32, &|e| self.fill(b, e, size)) };
@@ -1732,6 +1781,10 @@ impl F16Z<'_> {
             let r = f(bytes, &view);
             fence(SeqCst);
             if stamp & cache::WRITING == 0 && ready.load(SeqCst) == stamp && held.load(SeqCst) == key {
+                if (hinted, hint_stamp) != (e as usize, stamp) {
+                    self.t.hint.0[0].store(e as u64, SeqCst);
+                    self.t.hint.0[1].store(u64::from(stamp), SeqCst);
+                }
                 return r;
             }
         }
@@ -1855,6 +1908,22 @@ impl Tape for F16Z<'_> {
             j -= (v >> 2) as usize;
         }
         None
+    }
+    #[inline(always)]
+    fn code_and_end(&self, i: usize) -> (u32, usize) {
+        let (code, size) = self.with(i / Z, |r, v| {
+            let x = (i % Z) as u32;
+            (reads::number(r, v, x), reads::size(r, v, x))
+        });
+        (code, i + size as usize)
+    }
+    #[inline(always)]
+    fn span(&self, i: usize) -> (u64, u64) {
+        let (start, end) = self.with(i / Z, |r, v| {
+            let x = (i % Z) as u32;
+            (reads::start(r, v, x), reads::end(r, v, x))
+        });
+        (u64::from(start), u64::from(end))
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
@@ -2036,6 +2105,11 @@ mod tests {
             let mut decoded = vec![0u8; z.decoded_len()];
             z.decode_into(&mut decoded).unwrap();
             assert_eq!(decoded, t.as_bytes(), "16z holds the newline index");
+            // And reads a byte's line from it in place, as format 16 does.
+            let (plain, zr) = (back.reader(&lang).unwrap(), z.reader(&lang, None).unwrap());
+            for x in 0..=source.len() as u32 {
+                assert_eq!(zr.line(x), plain.line(x), "16z: byte {x}'s line");
+            }
         }
     }
 
@@ -2910,6 +2984,56 @@ mod tests {
         assert_eq!(silent, 0, "reads wrong with no failure counted yet: {:?}", counts.named());
         assert!(counts.rotated > 0, "the cache turned: {:?}", counts.named());
         assert!(wrong <= u64::from(counts.failed), "{wrong} reads wrong, {} failures", counts.failed);
+    }
+
+    /// A read through the entry the last read found (`Hint`) answers as a lookup does while the cache turns under
+    /// it: a cache of two entries a generation, read by four threads in orders that cross blocks, so a hinted entry's
+    /// generation turns and its room is taken for other blocks. Every answer is the one a cache that holds the whole
+    /// tape gives.
+    #[test]
+    fn a_hinted_read_answers_while_the_cache_turns() {
+        use rerail_clif::view::cache;
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        assert!(z.p.block_count() > 2, "a tape of more blocks than a generation holds");
+        let whole = ZCache::host(z.block_count(), z.entry_size());
+        let read = |t: &F16Z<'_>, i: usize| [t.code(i), t.start(i) as u32, t.end(i) as u32, t.parent(i).map_or(u32::MAX, |p| p as u32), t.subtree_end(i) as u32];
+        let want: Vec<[u32; 5]> = {
+            let t = z.reader(&lang, Some(&whole)).unwrap();
+            (0..t.len()).map(|i| read(&t, i)).collect()
+        };
+        let spec = cache::Spec::new(3, 2, z.entry_size());
+        let mut words = vec![0u128; spec.bytes().div_ceil(16)].into_boxed_slice();
+        let at = words.as_mut_ptr().cast::<u8>();
+        // SAFETY: the words just made, `spec.bytes()` of them and more.
+        spec.init(unsafe { std::slice::from_raw_parts_mut(at, spec.bytes()) }).unwrap();
+        // SAFETY: the cache just made, which the owner holds (its words do not move with the box).
+        let small = unsafe { ZCache::over(at, &spec, Box::new(words)) };
+        let n = want.len();
+        std::thread::scope(|scope| {
+            for k in 0..4usize {
+                let (z, lang, small, want, read) = (&z, &lang, &small, &want, &read);
+                scope.spawn(move || {
+                    let t = z.reader(lang, Some(small)).unwrap();
+                    // A stride past a block, so each read but a few is in another block than the one before, then
+                    // runs within one block, so the hint is taken.
+                    for step in [Z + 7 + k, 1] {
+                        let mut i = k;
+                        for _ in 0..4 * n {
+                            assert_eq!(read(&t, i), want[i], "node {i}, thread {k}, step {step}");
+                            i = (i + step) % n;
+                        }
+                    }
+                });
+            }
+        });
+        // SAFETY: the live cache the reads used.
+        let counts = unsafe { cache::Counts::read(small.at()) };
+        assert!(counts.rotated > 0, "the cache turned: {:?}", counts.named());
     }
 
     /// One cache shared by the host and the JIT (a batch's, `ZCache`): the host's reads decode each block into it,

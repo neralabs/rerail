@@ -1,8 +1,11 @@
-//! A `.rerail` file's statements, read off its tape (decision 0062). The tape is the lean parser's image
-//! (`rerail_rr_syntax::tape`, decision 0140) and what the content store keeps; lowering reads the statements this
-//! module gives, so a rule file's program is a function of its stored tape. The image is read where it is
-//! (`tape_format::View`): each node's kind, field and span from its columns, its children by their subtree sizes,
-//! with no node decoded ahead and no index of children made.
+//! A `.rerail` file's statements, read off its tape (decision 0062). The tape is the one every document has: the
+//! `.rerail` parser's (`rerail_rr_syntax::lean`, decision 0140), written in the run's format as the parse goes
+//! (`TapeImage::encode_rr`), and what the content store keeps. Lowering reads the statements this module gives, so a
+//! rule file's program is a function of its tape. The tape is read where it is, through the tape API every reader
+//! uses (`rerail_tape_format::tape::Tape`, decision 0293): each node's code, span and subtree from its columns, its
+//! children by their subtree ends, a byte's line from the tape's newline index, with no node decoded ahead and no
+//! index of children made. A 16z tape's blocks are decoded into its batch's cache: a file is kept for the process
+//! by itself (`rr::read_shared`), so it is read in a batch of its own (`TapeDoc::alone`'s).
 //!
 //! A statement is a node (`Stmt`), read by what it is (`S`) and its readers here; a clause is read by `clause::Reads`.
 //! No statement or term is made into another form (decision 0276, stage 6 A). Texts come from the source by the
@@ -12,63 +15,66 @@
 use rerail_blocks::vector::Vector;
 use super::Error;
 use super::syntax;
-use super::syntax::Lines;
 use super::tape::{ERROR, Field, Kind};
-use rerail_rr_syntax::tape_format::{CODE_EXTRA, View};
+use crate::code_rule_dsl::tape::formats::DocTape;
+use rerail_rr_syntax::tape_format::tape::{AnyTape, EntryRef, Tape as _};
+use rerail_rr_syntax::tape_format::{CODE_ERROR, CODE_EXTRA};
 
-/// A `.rerail` tape read in place: its source and its image's columns.
+/// A `.rerail` tape read in place: its source and its reader.
 pub struct Tape<'a> {
     src: &'a str,
-    lines: &'a Lines,
-    v: View<'a>,
+    t: AnyTape<'a>,
 }
 
-/// A `.rerail` file as a run holds it: its text and its tape, the lean parser's image of it (decision 0140), checked
-/// once when read; and the text's line starts. A statement of it is a node of the tape (`Stmt`), read in place.
+/// A `.rerail` file as a run holds it: its text and its tape, as any document holds them (`DocTape`: the image, its
+/// reader made once, and its batch's cache for a 16z tape), checked once when read. A statement of it is a node of
+/// the tape (`Stmt`), read in place.
 pub struct RrFile {
-    src: std::sync::Arc<str>,
-    image: Vector<u8>,
-    keys: Vector<u32>,
-    lines: Lines,
+    doc: DocTape,
 }
 
 impl std::fmt::Debug for RrFile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RrFile({} bytes)", self.src.len())
+        write!(f, "RrFile({} bytes)", self.doc.source().len())
     }
 }
 
 impl RrFile {
     /// `src` and its tape. A tape with an ERROR gives the error running the file gives (`syntax_error`).
-    pub fn read(src: impl Into<std::sync::Arc<str>>) -> Result<std::sync::Arc<RrFile>, Error> {
-        let src: std::sync::Arc<str> = src.into();
-        let image = rerail_rr_syntax::tape(&src);
-        let mut keys = Vector::new();
-        keys.resize(View::code_count(&image).map_err(|e| Error::Syntax(format!("tape: {e}")))?, 0u32);
-        View::checked_into(&image, &mut keys).map_err(|e| Error::Syntax(format!("tape: {e}")))?;
-        let lines = Lines::of(&src);
-        let file = RrFile { src, image, keys, lines };
-        if file.tape().has_error() {
-            let (_, message) = syntax_error(&file.src).unwrap_or((0, "a statement that does not parse".to_owned()));
+    pub fn read(src: impl Into<String>) -> Result<std::sync::Arc<RrFile>, Error> {
+        let file = RrFile::parsed(src)?;
+        if file.tape().has_error(file.doc.image_arc().faults()) {
+            let (_, message) = syntax_error(file.src()).unwrap_or((0, "a statement that does not parse".to_owned()));
             return Err(Error::Syntax(message));
         }
         Ok(std::sync::Arc::new(file))
     }
 
+    /// `src` and its tape, ERRORs and all: a reader that reads a file that may not parse (`rr::message_masked`).
+    pub fn parsed(src: impl Into<String>) -> Result<RrFile, Error> {
+        use crate::code_rule_dsl::tape::{Grammar, TapeImage};
+        let src = std::sync::Arc::new(src.into());
+        let grammar = Grammar::embedded(crate::code_rule_dsl::language::GrammarDialect::Rr).map_err(Error::Syntax)?;
+        let image = TapeImage::encode_rr(&grammar, &src, &|| false).map_err(|e| Error::Syntax(format!("tape: {e}")))?;
+        // Its own batch's cache: the file is read alone (`TapeDoc::alone`'s).
+        let cache = image.own_cache().map(std::sync::Arc::new);
+        Ok(RrFile { doc: DocTape::in_batch(std::sync::Arc::new(image), src, cache) })
+    }
+
     /// Its text.
     pub fn src(&self) -> &str {
-        &self.src
+        self.doc.source()
     }
 
     /// Its tape, read in place.
     pub fn tape(&self) -> Tape<'_> {
-        Tape { src: &self.src, lines: &self.lines, v: View::with_keys(&self.image, &self.keys) }
+        Tape { src: self.doc.source(), t: *self.doc.reader() }
     }
 
     /// Its statements, in order.
     pub fn statements(self: &std::sync::Arc<Self>) -> Vec<Stmt> {
         let t = self.tape();
-        if t.v.is_empty() {
+        if t.t.is_empty() {
             return Vec::new();
         }
         t.kids(0).map(|node| Stmt { file: std::sync::Arc::clone(self), node }).collect()
@@ -183,51 +189,97 @@ fn bad<T>(what: &str) -> Result<T, Error> {
 }
 
 impl<'a> Tape<'a> {
+    /// Code `code`, as the language's table (or format 15's own) holds it: the parser's kind, field and flags.
+    fn entry(&self, code: u32) -> EntryRef<'_> {
+        self.t.table().entry(code)
+    }
+
+    /// A code's kind and field: ERROR (no field) for a node flagged as one (`tape::kind_field`).
+    fn kind_field(&self, code: u32) -> (u16, u16) {
+        let e = self.entry(code);
+        if e.flags & CODE_ERROR != 0 { (ERROR, 0) } else { (e.kind, e.field) }
+    }
+
     pub fn kind(&self, n: u32) -> u16 {
-        super::tape::kind_field(self.v.key(n as usize)).0
+        self.kind_field(self.t.code(n as usize)).0
     }
 
     pub fn field(&self, n: u32) -> u16 {
-        super::tape::kind_field(self.v.key(n as usize)).1
+        self.kind_field(self.t.code(n as usize)).1
     }
 
     pub fn extra(&self, n: u32) -> bool {
-        self.v.key(n as usize) >> 16 & u32::from(CODE_EXTRA) != 0
+        self.entry(self.t.code(n as usize)).flags & CODE_EXTRA != 0
     }
 
     /// How many nodes node `n`'s subtree holds, `n` included.
     pub fn size(&self, n: u32) -> u32 {
-        self.v.size(n as usize) as u32
+        (self.t.subtree_end(n as usize) - n as usize) as u32
     }
 
     pub fn is(&self, n: u32, kind: Kind) -> bool {
         self.kind(n) == kind as u16
     }
 
+    /// How many nodes the tape holds.
+    pub fn len(&self) -> u32 {
+        self.t.len() as u32
+    }
+
+    pub fn start(&self, n: u32) -> usize {
+        self.t.start(n as usize) as usize
+    }
+
     pub fn end(&self, n: u32) -> usize {
-        self.v.end(n as usize) as usize
+        self.t.end(n as usize) as usize
     }
 
     pub fn text(&self, n: u32) -> &'a str {
-        &self.src[self.v.start(n as usize) as usize..self.end(n)]
+        let (start, end) = self.t.span(n as usize);
+        &self.src[start as usize..end as usize]
     }
 
+    /// Its line, from 1: the newlines before its first byte, by the tape's newline index. Format 15 holds none (a run
+    /// that stores it, a measurement's), so there they are counted.
     pub fn line(&self, n: u32) -> usize {
-        self.lines.line(self.v.start(n as usize) as usize)
+        let x = self.start(n);
+        1 + match self.t {
+            AnyTape::F16(t) => t.line(x as u32) as usize,
+            AnyTape::F16Z(t) => t.line(x as u32) as usize,
+            AnyTape::F15(_) => self.src.as_bytes()[..x].iter().filter(|&&b| b == b'\n').count(),
+        }
+    }
+
+    /// `n`'s children in order, each with its code, extras (comments) left out: a child's code and subtree end are
+    /// one read (`code_and_end`).
+    fn coded_kids(&self, n: u32) -> impl Iterator<Item = (u32, u32)> + '_ {
+        let end = self.t.subtree_end(n as usize);
+        let mut c = n as usize + 1;
+        std::iter::from_fn(move || {
+            while c < end {
+                let (at, (code, next)) = (c, self.t.code_and_end(c));
+                c = next;
+                if self.entry(code).flags & CODE_EXTRA == 0 {
+                    return Some((at as u32, code));
+                }
+            }
+            None
+        })
     }
 
     /// `n`'s children in order, extras (comments) left out.
     pub fn kids(&self, n: u32) -> impl Iterator<Item = u32> + '_ {
-        self.v.children(n as usize).map(|c| c as u32).filter(move |&c| !self.extra(c))
+        self.coded_kids(n).map(|(c, _)| c)
     }
 
     /// The names node `n`'s subtree reads, `n` included: each relation and function named (an atom's, a head's, a
     /// call's), each variable, and each identifier in a string, a JSON object or a backtick literal that is not a
     /// pattern's or a selector's (a relation may be an argument: `nearest(n, p, block_node)`, a set of nodes).
     pub fn names_in(&self, n: u32, out: &mut std::collections::BTreeSet<String>) {
-        for i in n..n + self.v.size(n as usize) as u32 {
-            let (kind, field) = (self.kind(i), self.field(i));
-            if self.extra(i) || field == Field::Pattern as u16 || field == Field::Selector as u16 {
+        for i in n..n + self.size(n) {
+            let code = self.t.code(i as usize);
+            let (kind, field) = self.kind_field(code);
+            if self.entry(code).flags & CODE_EXTRA != 0 || field == Field::Pattern as u16 || field == Field::Selector as u16 {
                 continue;
             }
             if field == Field::Relation as u16 || field == Field::Function as u16 || kind == Kind::Variable as u16 {
@@ -239,13 +291,17 @@ impl<'a> Tape<'a> {
         }
     }
 
-    /// Whether a node of the tape is an ERROR: a statement that does not parse.
-    fn has_error(&self) -> bool {
-        (0..self.v.len() as u32).any(|i| self.kind(i) == ERROR)
+    /// Whether a node of the tape is an ERROR: a statement that does not parse. Format 16's writer lists its faults
+    /// in the tape's home as it writes (`TapeImage::faults`), so only those are read; format 15's are looked for.
+    fn has_error(&self, faults: Option<&[u32]>) -> bool {
+        match faults {
+            Some(faults) => faults.iter().any(|&i| self.kind(i) == ERROR),
+            None => (0..self.t.len() as u32).any(|i| self.kind(i) == ERROR),
+        }
     }
 
     pub fn all(&self, n: u32, field: Field) -> impl Iterator<Item = u32> + '_ {
-        self.kids(n).filter(move |&c| self.field(c) == field as u16)
+        self.coded_kids(n).filter(move |&(_, code)| self.kind_field(code).1 == field as u16).map(|(c, _)| c)
     }
 
     pub fn get(&self, n: u32, field: Field) -> Option<u32> {
@@ -262,7 +318,7 @@ impl<'a> Tape<'a> {
 
     /// An anonymous child written `text`.
     pub fn has_token(&self, n: u32, text: &str) -> bool {
-        self.kids(n).any(|c| self.kind(c) >= super::tape::FIRST_ANONYMOUS && self.text(c) == text)
+        self.coded_kids(n).any(|(c, code)| self.kind_field(code).0 >= super::tape::FIRST_ANONYMOUS && self.text(c) == text)
     }
 
     pub fn string(&self, n: u32) -> Result<String, Error> {
@@ -392,7 +448,7 @@ impl<'a> Tape<'a> {
         let name = self.one(s, Field::Name)?;
         let first = self.kids(s).skip_while(|&c| c != name).nth(1);
         let end = self.end(s);
-        let text = first.map_or("", |f| &self.src[self.v.start(f as usize) as usize..end]);
+        let text = first.map_or("", |f| &self.src[self.start(f)..end]);
         Ok((self.text(name), text))
     }
 

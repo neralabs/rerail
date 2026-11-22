@@ -403,6 +403,22 @@ pub unsafe fn get(cache: *mut u8, key: u64, size: u32, fill: &dyn Fn(*mut u8) ->
     unsafe { lookup(cache, key, size, Some(fill)) as *mut u8 }
 }
 
+/// Whether `e`, an entry `get` gave for `key` complete at epoch `stamp`, still holds it: its generation still stamped
+/// `stamp` (not turned, so its arena unchanged: no entry made over `e`), its key `key` and its completion `stamp`. A
+/// reader that found the entry before reads it again without a lookup, and asks this again after its read (a turn or
+/// a writer between them changes one of the three: a writer marks the completion before it writes the key).
+///
+/// # Safety
+/// `cache` is a live cache, and `e` an entry `get` gave of it (`ALIGN`-aligned, in a generation's arena).
+pub unsafe fn still(cache: *const u8, e: *const u8, key: u64, stamp: u32) -> bool {
+    // SAFETY: the caller's: the header's words, and `e`'s generation's and its own.
+    unsafe {
+        let stride = word(cache, GEN_STRIDE).load(SeqCst) as usize;
+        let g = (e as usize - cache as usize - HEAD) / stride * stride;
+        word(cache, (HEAD + g + STAMP as usize) as i32).load(SeqCst) == stamp && key_of(e).load(SeqCst) == key && word(e, READY).load(SeqCst) == stamp
+    }
+}
+
 /// Whether `e` is `cache`'s dead entry (`get` found no room).
 ///
 /// # Safety

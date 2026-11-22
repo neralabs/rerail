@@ -504,6 +504,17 @@ pub trait Tape {
     }
     fn start(&self, i: usize) -> u64;
     fn end(&self, i: usize) -> u64;
+    /// `i`'s code and the id just past its subtree, together: a format that reads a node where its block lies (16z,
+    /// through its batch's cache) reads them in one lookup of the block.
+    #[inline(always)]
+    fn code_and_end(&self, i: usize) -> (u32, usize) {
+        (self.code(i), self.subtree_end(i))
+    }
+    /// `i`'s start and end, together (as `code_and_end`).
+    #[inline(always)]
+    fn span(&self, i: usize) -> (u64, u64) {
+        (self.start(i), self.end(i))
+    }
     /// A cursor's step in preorder: `i`'s start, given the start of the node before it (unused for the first). A
     /// format that stores starts relatively answers with one gap.
     #[inline(always)]
@@ -908,6 +919,14 @@ impl Tape for AnyTape<'_> {
     #[inline]
     fn end_with_start(&self, i: usize, start: u64) -> u64 {
         with_tape!(self, |t| t.end_with_start(i, start))
+    }
+    #[inline(always)]
+    fn code_and_end(&self, i: usize) -> (u32, usize) {
+        with_tape!(self, |t| t.code_and_end(i))
+    }
+    #[inline(always)]
+    fn span(&self, i: usize) -> (u64, u64) {
+        with_tape!(self, |t| t.span(i))
     }
     fn match_groups(&self, set: &CodeSet, f: impl FnMut(usize, u64)) {
         with_tape!(self, |t| t.match_groups(set, f))
