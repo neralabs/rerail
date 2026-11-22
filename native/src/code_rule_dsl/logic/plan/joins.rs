@@ -303,13 +303,9 @@ pub fn file_ops(mut ops: Vec<Op>) {
     }
 }
 
-/// The memo of the chunk whose planning runs here (Q261), as `plan::in_view` binds it in the run's context, beside
-/// the chunk's kept plans: its jobs carry it. `None` outside a chunk's view.
-#[derive(Clone, Default)]
-pub struct InView(pub Option<Arc<ChunkMemo>>);
-
+/// The memo of the chunk whose planning runs here (Q261): its view's, in the run's kept plans (`super::KeptPlans`).
 fn in_view() -> Option<Arc<ChunkMemo>> {
-    rerail_prof::code_rule_dsl::logic::profile::with_bound(|m: &InView| m.0.clone())
+    super::kept_plans(|p| p.and_then(|p| p.chunk_memo()))
 }
 
 /// The memo this thread reads: its chunk's, where a chunk's planning runs here, else the run's.

@@ -38,12 +38,6 @@ use std::path::Path;
 use super::sql::select::{Cte, FromItem, Join, Query, Relation, Select, Source};
 use super::sql::sql_ast::{SqlBinaryOperator as Op, SqlExpression as Expr, SqlUnaryOperator, SqlValue as Value_};
 
-
-
-
-
-
-
 // cratify: the planner's base is rerail-plan-base's (its facade of `plan` mounts the vocabulary, `base`, and the
 // children the search reads: the forms, joins, outputs, placement, tables and emission), and its search is
 // rerail-plan-search's (its facade mounts `search`, with `choices`, `demand`, `keeps`, `prepared`, `replanning` and
@@ -69,7 +63,7 @@ impl KeepPlans {
     pub fn start(across: Option<u64>) -> Self {
         compose::clear();
         let (kept, orders) = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _, _)| *k == g).map(|(_, p, o)| (p, o)))).unwrap_or_default();
-        let plans = rerail_prof::code_rule_dsl::logic::profile::bind(KeptPlans(Some(SharedPlans { run: Arc::new(RunPlans::new(kept, orders, Default::default())), view: None })));
+        let plans = rerail_prof::code_rule_dsl::logic::profile::bind(KeptPlans(Some(Box::new(SharedPlans { run: Arc::new(RunPlans::new(kept, orders, Default::default())), view: None }))));
         keeps::observing(true);
         KeepPlans(across, Some(plans))
     }
@@ -93,7 +87,7 @@ impl Drop for KeepPlans {
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
-        let plans = with_plans(Option::clone);
+        let plans = with_plans(|p| p.cloned());
         drop(self.1.take());
         keeps::observing(false);
         let published = run_counts().published.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
@@ -111,7 +105,6 @@ impl Drop for KeepPlans {
         }
     }
 }
-
 
 /// What a run derived: the chosen plans, each output's rows (sorted, tab-separated), and the rounds per recursive
 /// component.
@@ -440,7 +433,6 @@ pub trait Asking {
     fn arrived(&mut self, wait: std::time::Duration) -> Result<Vec<(u64, Vec<(String, Vec<Vec<i64>>)>)>>;
 }
 
-
 fn answer_pending(db: &Connection, direct: bool, answer: &mut Option<Answer<'_>>, answered: &mut BTreeMap<String, Vec<Vec<i64>>>, log: Option<&mut BTreeMap<String, BTreeSet<Vec<i64>>>>, name: &str, scc: &BTreeSet<String>) -> Result<()> {
     if !direct {
         return Err(Error::Plan(format!("{name}: requests are answered only over atoms (the in-process engine)")));
@@ -481,8 +473,6 @@ fn add_answers(db: &Connection, answered: &mut BTreeMap<String, Vec<Vec<i64>>>, 
     }
     Ok(())
 }
-
-
 
 /// A changed read's versions as a stratum reads them: a row gone and a row added that agree on every column it reads
 /// (`used`, its source's) are no change to it, and neither is in its delta. Each is a set of rows picked where they lie
@@ -667,9 +657,6 @@ impl<'a> Run<'a, '_> {
     fn count(&self, sql: &str) -> Result<i64> {
         Ok(self.db.query_row(sql, [], |r| r.get(0))?)
     }
-
-
-
 
     /// The rows `select` added to `head`'s relation (keys changed, for a lattice).
     fn insert_rows(&self, head: &str, select: &str) -> Result<usize> {
@@ -1427,9 +1414,6 @@ fn text_test_defined(vs: &body::Versions, rules: &[body::RuleKey], input: &str) 
     matches!(rules, [k] if { let (v, r) = vs.rule_at(*k); r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).eq([input]) })
 }
 
-
-
-
 /// Adds a native join's step counts ("in:out" per step, `set_fixpoint_steps`) to the observed fanouts of the binding
 /// patterns its positive atoms were read with (T's `observe`). The first step (the delta, or a seed's anchor) is
 /// skipped.
@@ -1507,17 +1491,12 @@ fn sym_char(inputs: &Inputs, t: &str) -> char {
     if t == "sym" && inputs.atoms.is_none() { 's' } else { 'i' }
 }
 
-
-
-
 /// A recursive relation's statistics measured before this run, when the caller gave them under its name
 /// (`Stats::measured`: the cross-file rounds give each hop relation's rows of the round before): its rows, and its
 /// columns' distinct counts and fanouts, which otherwise start at 1 until the first replan.
 fn prior_stats(model: &mut Model, f: Fields<'_>, r: &str) -> Option<f64> {
     prior_now(model, f, r, false)
 }
-
-
 
 /// A plan's step strings, which say whether a replan changed it.
 /// A stratum's name in the profile: its relations, cut at 80 characters.
@@ -1679,7 +1658,6 @@ fn shown(order: Order<'_, '_>) -> Vec<String> {
     order.b.shown(order.steps)
 }
 
-
 /// The relations rule `k`'s atoms and aggregates read, in body order, by its handles in `vs`.
 fn reads_of(vs: &body::Versions, k: RuleKey) -> impl Iterator<Item = &str> + '_ {
     let (v, rule) = vs.rule_at(k);
@@ -1759,8 +1737,6 @@ fn cyclic_in<'a>(scc: &BTreeSet<String>, edges: impl Iterator<Item = (&'a str, &
     }
     names.iter().zip(cyclic).filter(|(_, c)| *c).map(|(r, _)| (*r).to_owned()).collect()
 }
-
-
 
 /// Term `t` of `v`'s rule `r`, to write into a builder of another version: its names by their text.
 fn term_text<'v>(v: &'v Version, r: super::program_image::RuleRef<'v>, t: TermRef<'v>) -> super::program_image::T<'v> {
@@ -1939,8 +1915,6 @@ impl<'a> Run<'a, '_> {
         }, arena, (0, 0), keep))
     }
 
-
-
     /// Takes back a strand of the stratum `scc` that ran: its relations, and what its model learnt of them and of
     /// its rules (`rules`, their digests).
     fn absorb(&mut self, s: Strand<'a>, scc: &BTreeSet<String>, rules: &[u64]) {
@@ -1950,7 +1924,6 @@ impl<'a> Run<'a, '_> {
         self.native_rels.extend(run.native_rels.into_iter().filter(|r| scc.contains(r)));
     }
 }
-
 
 impl<'a> Strand<'a> {
 
@@ -5211,7 +5184,6 @@ impl<'a> Run<'a, '_> {
         Ok(true)
     }
 
-
 }
 
 /// Evaluates program `v` over the facts database at `facts` (T's `run_sql`, pure SQL mode): views for projections of
@@ -5357,8 +5329,6 @@ pub trait Maintain {
     }
 }
 
-
-
 /// Holds `rel`'s kept rows `o` as the run's relation, with its cardinality (a quiet stratum's, decision 0117 step 3).
 fn hold_quiet(run: &mut Run, f: Fields<'_>, db: &Connection, rel: &str, o: Arc<super::native::component::InRel>) {
     let card = quiet_card(&mut run.model, &run.quiet, f, rel, &o);
@@ -5400,7 +5370,6 @@ enum Slot {
     /// Maintained by the evaluator's mode (decision 0364 stage 3): its rules, the reads that changed, its kept rows.
     Mode { rules: Vec<RuleKey>, moved: BTreeSet<String>, olds: BTreeMap<String, Arc<super::native::component::InRel>>, ins: ModeInputs },
 }
-
 
 /// What an earlier run of a program kept of its strata, and what this run gives back (decision 0077 §4).
 pub trait KeptStrata {
@@ -5690,11 +5659,6 @@ fn kept_strata_rows(ks: &mut dyn KeptStrata, f: Fields<'_>, rel: &str) -> Result
     Ok(held.live_rows().unwrap_or_default().chunks_exact(k).map(<[i64]>::to_vec).collect())
 }
 
-
-
-
-
-
 /// `rows_digest` of a relation of `n` rows whose digest was `digest`, after its rows `gone` went and `added` came
 /// (decision 0117 step 4): its rows are not read.
 pub fn rows_digest_patched(cells: &Cells, digest: u64, n: usize, gone: &[i64], added: &[i64]) -> u64 {
@@ -5867,8 +5831,6 @@ fn plan_views(f: Fields<'_>, vs: &body::Versions, model: &mut Model, rules_by: &
     Ok(views)
 }
 
-
-
 /// States that the runs on `db` have documents whose nodes are `d << 32 | index` (the corpus runner's): a range read
 /// computes a document's interval, so no table of them is written or read in the run's waves.
 pub fn docs_by_shift(db: &Connection) {
@@ -5878,7 +5840,6 @@ pub fn docs_by_shift(db: &Connection) {
 pub fn by_shift_of(db: &Connection) -> bool {
     by_shift(db)
 }
-
 
 /// `temp_store` in memory, set once a connection.
 fn temp_in_memory(db: &Connection) -> Result<()> {
@@ -7727,7 +7688,6 @@ struct Asked {
     since: std::time::Instant,
 }
 
-
 /// Takes the answers that have come (waiting up to `wait` for one when none has), and resumes each stratum whose
 /// requests are all answered: it runs on, finishes, waits on its wave, or asks again.
 #[allow(clippy::too_many_arguments)]
@@ -8008,9 +7968,6 @@ fn decoded_outputs(
     Ok((outputs, all_nodes))
 }
 
-
-
-
 // cratify: `tests` is rerail-engine's (it mounts it)
 
 /// Whether the SQL text `sql` names the identifier `name` (as a whole word, outside string literals).
@@ -8062,9 +8019,6 @@ impl SqlKey {
         }
     }
 }
-
-
-
 
 // cratify: `search_tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus)
 
@@ -8486,7 +8440,6 @@ pub struct Starts {
     pub hot: Option<(Vec<Vec<i64>>, f64)>,
 }
 
-
 /// its column of that variable with the lead's.
 fn heavy_link(b: &Body<'_>, lead: usize, has: &dyn Fn(&str, usize) -> bool) -> Option<(String, usize, Option<(usize, usize)>)> {
     let Lit::Atom(la) = b.view(lead) else { return None };
@@ -8773,8 +8726,6 @@ impl Walker<'_, '_> {
     }
 }
 
-
-
 #[cfg(test)]
 mod ordered_tests {
     use super::*;
@@ -8786,7 +8737,7 @@ mod ordered_tests {
     fn a_chunk_sees_the_plans_filed_before_its_window_never_a_neighbours() {
         let _plans = KeepPlans::start(None);
         let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
-        let put = |key: PlanKey, w: f64| with_plans(|p| plans_put(p.as_ref().unwrap(), key, (Arc::from(Vec::<Step>::new()), w, None, 1.0, None, None)));
+        let put = |key: PlanKey, w: f64| with_plans(|p| plans_put(p.unwrap(), key, (Arc::from(Vec::<Step>::new()), w, None, 1.0, None, None)));
         let get = |key: PlanKey| plans_get(&key).map(|k| k.1);
         let (v0, v1) = (ordered.next_view(), ordered.next_view());
         let ((), m0) = in_view(&v0, || put(1, 10.0));

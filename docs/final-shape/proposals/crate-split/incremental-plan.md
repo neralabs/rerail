@@ -814,3 +814,51 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     crates in full, `rerail-run`'s run-state tests and `rerail-logic`'s `plan::` tests: 270 of 270 pass. Then
     `rerail-tests-logic`'s `logic::plan::` tests: 278 of 279 pass. The one failure,
     `programs_hidden_alone_keep_their_attribute_copies_declared`, reads pack test data the host has not pulled.
+- **Step 5h** (2026-11-22): the language's root and the corpus, out of one crate. rerail-logic was 29.9k production
+  lines. `rr.rs` and the corpus root (`corpus.rs`) read each other:
+  - The language's loading reads phase 0's import graph (`phase0::graphs`, `Seed`, `Graph`), the observer of the
+    files read (`observe`), the phases' and the combined programs' stores, and `COMBINING`.
+  - Phase 0 builds that graph by running the bootstrap program through the corpus runner (`run_handed`), which reads
+    the language.
+
+  Now **`rerail-rr-root`** (`native/crates/rr_root`, 11.9k) holds the language's root (`rr.rs` with its children,
+  `settings.rs`) and the corpus's modules it reads with it:
+  - `phase0`, `phases`, `combined`, `constants`, `reuse`, `git`, `git_content`, `world`, `switches`,
+    `import_closure`, `link`, `kept_link`, `analysis_history`, `inputs`, `source_languages` and `test_store`;
+  - the corpus's base, `corpus/base.rs`: the store and its selection (`ThreadStore`, `tape_cache_path`,
+    `build_store`, `use_store`), the observer, the programs combined (`combine*`, `Combined`, `Tail`), the report
+    and summary (`Report`, `Summary`, `changes_of`), `cone_on_version` and the runner's thin entries
+    (`run_with_options`, `run_read_handing`, `run_fact_image`).
+
+  **`rerail-logic`** (18.2k) keeps the runner, `corpus.rs`: `run_observed_within` and what it alone calls, with
+  `retain`, the inputs' deltas, the cone's rounds, the kept strata, the prepared programs, the maintained part, the
+  connections and the session. It re-exports the new crate's `corpus`, `rr` and `settings`, so no path changed.
+  - **The runner is a registered trait.** `base::Runner` has one method, `run_handed`. `RUNNER` is a
+    `rerail_registry::Slot` that boot registers (`corpus::Corpus`), as rerail-logic's test binary does. The base's
+    `run_handed` calls it, and phase 0, `run_with_options` and the rest call that. `corpus.rs`'s own `run_handed`
+    shadows it in the crate above.
+  - **Found on the way:**
+    - The device registries of 5i (`device::DEVICE`, `device::solver::SOLVER`) were `OnceLock`s. The census of kept
+      maps (`facts_only::every_kept_map_is_state_or_listed`) counts those as maps. They are slots now, as every
+      other registry is, and its stale entry for `device.rs`'s `SOLVER` is gone.
+    - The memo binding of 5j (`joins::InView`) was a new bound type, which the census counts too, and the list of
+      caches not yet facts is pinned. The joins read their chunk's memo through the kept plans again: `KeptPlans`
+      is the base's (`plan/base.rs`) and holds the search's plans behind `KeptView` (`chunk_memo`, and a downcast
+      for `search::with_plans`, which hands `Option<&SharedPlans>`, not a clone). One binding, as before 5j.
+    - The census's entries for 5j's moves (`OWN_PLANS`, `OWN_PLANNED`, `KeptPlans`) and this step's
+      (`TEST_TAPE_CACHE`, `PATH`, `UseStore`, `SelectedStore`) name their new files. Neither 5i's nor 5j's test
+      runs included that test.
+    - The freshness-call list (`cache_architecture`) names `base.rs` for `inputs::still(`, and its entry for
+      `corpus.rs`'s `.still(` is gone, as it had no calls even before. The switch classification
+      (`every_switch_lowering_reads_is_classified`) reads the combining regions from `base.rs`.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; rerail-logic and
+    rerail-rr-root with `code-rule-profile,p-anchor-corpus,test-hooks`; clippy clean on the run, setfix, the three
+    planner crates, rerail-rr-root, rerail-logic and, on a Mac, device-metal). On a Linux host:
+    - `rerail-rr-root` in full and `rerail-logic`'s corpus, rr, settings, run-state, `facts_only` and
+      `cache_architecture` tests pass, after the fixes above.
+    - `rerail-tests-logic`'s corpus, rr and settings tests: 381 of 383, before the switch test's fix. Then its
+      `logic::plan::` tests: 278 of 279, the switch test among them.
+    - The one failure each time is `programs_hidden_alone_keep_their_attribute_copies_declared`, which reads pack
+      test data the host has not pulled.
+
+    On a Mac (a mini), device-metal's lattice, join, nearest, fixpoint and statistics tests: 21 of 21.

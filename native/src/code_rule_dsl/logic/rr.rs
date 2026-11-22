@@ -765,7 +765,7 @@ fn images_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> 
     crate::content_store::ContentStore::open_images(&path).ok().map(std::sync::Arc::new)
 }
 
-pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+pub fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
     if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { images_store() } else { None }
 }
 
@@ -1326,7 +1326,7 @@ fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>
 
 /// The program's module graph's digest (`phase0::Graph::digest`): what its text is a function of besides itself.
 /// `None` for a text that includes nothing.
-pub(in crate::code_rule_dsl) fn graph_digest(src: &str) -> Result<Option<[u8; 32]>, Error> {
+pub fn graph_digest(src: &str) -> Result<Option<[u8; 32]>, Error> {
     match text_seed(src)? {
         Some(seed) => Ok(Some(super::plan::corpus::phase0::graph(&seed)?.digest())),
         None => Ok(None),

@@ -28,13 +28,14 @@ pub mod run_state {
 #[cfg(test)]
 pub mod facts_only;
 /// This crate's own test binary, which the engine does not load: strict mode on every connection, as the engine's
-/// loader sets it (the store sends its SQL hazards to the profile itself, `content_store::hazards`), and what a job
-/// carries of its run, as boot registers it.
+/// loader sets it (the store sends its SQL hazards to the profile itself, `content_store::hazards`), what a job
+/// carries of its run, and the corpus runner (`plan::corpus::RUNNER`), as boot registers them.
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
         crate::code_rule_dsl::logic::profile::strict_on_every_connection();
         crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-logic's tests", crate::code_rule_dsl::logic::CARRIERS);
+        crate::code_rule_dsl::logic::plan::corpus::RUNNER.register("rerail-logic's tests", &crate::code_rule_dsl::logic::plan::corpus::Corpus);
         crate::code_rule_dsl::logic::plan::keeps::CORE_NAMES.register("rerail-logic's tests", crate::code_rule_dsl::logic::rr::core_names);
     }
     // Run as the binary loads, before any test opens a store (as the engine's `module_init` runs).
@@ -388,8 +389,10 @@ pub use rerail_logic_core::code_rule_dsl::logic::version_trace;
 /// Main's JSON rules translated to `.rerail` on read (decision 0175): `rerail-json-rules`'s.
 pub use rerail_json_rules::code_rule_dsl::logic::json_rules;
 #[allow(dead_code)]
-pub mod rr;
-pub mod settings;
+// cratify: the language's root (`rr`: reading, the libraries, lowering's tail) and the settings are rerail-rr-root's,
+// with the corpus's base they read (the corpus runner is behind its registered `plan::corpus::RUNNER`).
+pub use rerail_rr_root::code_rule_dsl::logic::rr;
+pub use rerail_rr_root::code_rule_dsl::logic::settings;
 pub use rerail_logic_core::code_rule_dsl::logic::sql;
 /// The reach index's form found in a program (decision 0119).
 pub use rerail_logic_core::code_rule_dsl::logic::reach_form;

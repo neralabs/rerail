@@ -340,3 +340,23 @@ pub fn row_digest(row: &[i64]) -> u64 {
     h.wrapping_mul(0x9e37_79b9_7f4a_7c15)
 }
 
+/// Plans kept across a corpus run's chunks, in the run's context (decision 0442: its jobs plan with them): per rule
+/// (head, body, delta, the component solved), its order and its work per node when planned. `None` outside a corpus
+/// run: every plan is searched. When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it
+/// with its own work and rows. The planner's search binds them (`search::SharedPlans`, `in_view`, `KeepPlans`) and
+/// reads its own (`with_plans`); the joins read their chunk's memo (`KeptView::chunk_memo`).
+#[derive(Default)]
+pub struct KeptPlans(pub Option<Box<dyn KeptView>>);
+
+/// What the planner's base reads of the run's kept plans; the search's (`SharedPlans`) are the ones there are.
+pub trait KeptView: std::any::Any + Send + Sync {
+    /// The joins' memo of the chunk being planned (Q261): its view's, where the run is in one.
+    fn chunk_memo(&self) -> Option<Arc<joins::ChunkMemo>>;
+    /// The kept plans as their own type, for the search that bound them.
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+/// `f` of the run's kept plans (`KeptPlans`), if a corpus run keeps them.
+pub fn kept_plans<R>(f: impl FnOnce(Option<&dyn KeptView>) -> R) -> R {
+    rerail_prof::code_rule_dsl::logic::profile::with_bound(|p: &KeptPlans| f(p.0.as_deref()))
+}

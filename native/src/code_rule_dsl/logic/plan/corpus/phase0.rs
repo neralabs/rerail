@@ -71,7 +71,7 @@ pub struct Graph {
     /// The candidates that were not there.
     pub(in crate::code_rule_dsl) absent: Vec<PathBuf>,
     /// Each module's digest, as phase 0's observer gives it.
-    pub(in crate::code_rule_dsl) digests: BTreeMap<PathBuf, [u8; 32]>,
+    pub digests: BTreeMap<PathBuf, [u8; 32]>,
     /// For each text or module, the phase programs its declarations name (`p0_phase`): (phase, candidate file). A
     /// candidate in `absent` is not there.
     pub(in crate::code_rule_dsl) phases: BTreeMap<String, Vec<(String, PathBuf)>>,
@@ -83,7 +83,7 @@ pub struct Graph {
     /// The plans the run of `bootstrap.rerail` that derived it used (`Report::plans`): the run that reads the graph
     /// names them in its record, so they stay live. A graph kept as an image keeps them (`Images`, Q150), so a run
     /// that reads it names what the run that derived it named. Not part of the graph's digest.
-    pub(in crate::code_rule_dsl) plans: Vec<[u8; 32]>,
+    pub plans: Vec<[u8; 32]>,
 }
 
 impl Graph {

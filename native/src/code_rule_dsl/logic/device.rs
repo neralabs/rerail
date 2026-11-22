@@ -6,7 +6,6 @@
 //! ancestors' targets. This is the device as the run's own solvers use it (`Device`); setfix's joins and fixpoints
 //! over its store, and the column statistics the planner reads, are the solver's interface over it
 //! (`SolverDevice`, `device::solver`, setfix's), and registering a solver device registers both.
-use std::sync::OnceLock;
 
 /// The run's binding: the CPU only, or the device too.
 pub mod binding;
@@ -36,17 +35,18 @@ pub trait Device: Send + Sync {
     fn install_launch_guard(&self);
 }
 
-static DEVICE: OnceLock<&'static dyn Device> = OnceLock::new();
+/// The logic's device, as the program's composition registers it (boot's `install_devices`): a solver device
+/// registers here through `device::solver::register`. None in a program with no device.
+pub static DEVICE: rerail_registry::Slot<&'static dyn Device> = rerail_registry::Slot::new("the logic's device (logic::device::DEVICE)");
 
-/// Registers the logic's device; the first registration holds. A solver device registers here through
-/// `device::solver::register`.
-pub fn register_device(device: &'static dyn Device) {
-    let _ = DEVICE.set(device);
+/// Registers the logic's device, by `provider`.
+pub fn register_device(provider: &'static str, device: &'static dyn Device) {
+    DEVICE.register(provider, device);
 }
 
 /// The registered device, if any.
 pub fn device() -> Option<&'static dyn Device> {
-    DEVICE.get().copied()
+    DEVICE.try_get()
 }
 
 /// The report of the last stratum the device ran or refused on this thread, when there is a device.

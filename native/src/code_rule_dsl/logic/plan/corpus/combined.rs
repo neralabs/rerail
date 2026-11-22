@@ -133,7 +133,7 @@ pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32]
 /// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded; or,
 /// where the store has none, the one the engine ships (decision 0264). Opened from its image as its version (decision
 /// 0281's path, step 7a-1).
-pub(super) fn lookup_version(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
+pub fn lookup_version(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
     let Some((digest, _)) = entry_read(store, key)? else { return Ok(None) };
     Ok(program_text::load_image(store, &digest)?.map(|(v, _)| v))
 }
@@ -217,7 +217,7 @@ pub(in crate::code_rule_dsl) fn read_before_the_run(key: [u8; 32]) {
 }
 
 /// The rule file entries this thread read since the last outermost run took them.
-pub(super) fn take_read_before() -> Vec<[u8; 32]> {
+pub fn take_read_before() -> Vec<[u8; 32]> {
     READ_BEFORE.with_borrow_mut(std::mem::take)
 }
 
@@ -331,13 +331,13 @@ fn owner(key: &[u8; 32]) -> String {
 /// `remember`'s pins of texts `key`'s entry, held by the run that names it (`named`, `name_program`) and released
 /// when that run ends: queued after its manifest, which names the entry by then, as the run's own hold is
 /// (`HeldPlan`).
-pub(super) struct Pins<'a> {
+pub struct Pins<'a> {
     cache: &'a ContentStore,
     key: [u8; 32],
 }
 
 impl<'a> Pins<'a> {
-    pub(super) fn new(cache: &'a ContentStore, key: &[u8; 32]) -> Self {
+    pub fn new(cache: &'a ContentStore, key: &[u8; 32]) -> Self {
         Pins { cache, key: *key }
     }
 }
@@ -351,7 +351,7 @@ impl Drop for Pins<'_> {
 /// Names the program text of texts `key`'s entry, when the store keeps it, among the run's late sources (the
 /// manifest's), so collection keeps it while it keeps the run: queued on the store's writer, after the entry's own
 /// write when this process queued one.
-pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
+pub fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
     // Stored already (decision 0228): named now, kept meanwhile by the run's collection lease (decision 0306 step 4).
     // The writer finds what a write queued before it stores.
     if let Some(found) = program_source(cache, key).ok().flatten() {
@@ -417,13 +417,13 @@ fn image_sources(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Vec<crate:
 }
 
 /// What the write of texts `key`'s program is queued under (`write_back`, decision 0102).
-pub(in crate::code_rule_dsl) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
+pub fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"facts_memo/combined", key])
 }
 
 /// The source and plan the entry of texts `key` lives under, when the store keeps it: for the run's manifest. A
 /// queued write of it first.
-pub(super) fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
+pub fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
     (source_text(key), plan().plans[0])
 }
 

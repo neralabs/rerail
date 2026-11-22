@@ -52,7 +52,6 @@ impl Inputs {
     }
 }
 
-
 fn sql_constant(v: &SqlValue) -> Option<Constant> {
     match v {
         SqlValue::Integer(i) => Some(Constant::Int(*i)),
@@ -76,11 +75,6 @@ pub fn text(v: &SqlValue) -> String {
     }
 }
 
-
-
-
-
-
 /// A plan's rows after each of its steps, every row walked (`StepPlan::all`): what the device sizes its stages' tables
 /// by before they have run (`JoinSpec::est`).
 pub fn step_estimates(x: &super::super::profile::RulePlan) -> super::super::native::setfix::spec::Est {
@@ -100,7 +94,6 @@ pub fn expect_axis_lookups(db: impl crate::code_rule_dsl::facts::vtab::Scoped, p
         into = step.rows;
     }
 }
-
 
 /// The positive atoms of a body: a body of one has one order.
 pub fn positive_atoms(b: &Body<'_>) -> usize {
@@ -1115,16 +1108,19 @@ pub fn search_rows(b: &Body<'_>, first: Option<usize>) -> f64 {
     SEARCH_FIXED_ROWS + candidates
 }
 
-/// Plans kept across a corpus run's chunks, in the run's context (decision 0442: its jobs plan with them): per rule
-/// (head, body, delta, the component solved), its order and its work per node when planned. `None` outside a corpus
-/// run: every plan is searched. When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it
-/// with its own work and rows.
-#[derive(Clone, Default)]
-pub struct KeptPlans(pub Option<SharedPlans>);
+/// `f` of the run's kept plans (`KeptPlans`, the base's binding of them): this search's (`SharedPlans`), the one
+/// kind there is.
+pub fn with_plans<R>(f: impl FnOnce(Option<&SharedPlans>) -> R) -> R {
+    kept_plans(|p| f(p.map(|p| p.as_any().downcast_ref::<SharedPlans>().expect("the run's kept plans are the search's"))))
+}
 
-/// `f` of the run's kept plans (`KeptPlans`).
-pub fn with_plans<R>(f: impl FnOnce(&Option<SharedPlans>) -> R) -> R {
-    rerail_prof::code_rule_dsl::logic::profile::with_bound(|p: &KeptPlans| f(&p.0))
+impl KeptView for SharedPlans {
+    fn chunk_memo(&self) -> Option<Arc<joins::ChunkMemo>> {
+        self.view.as_ref().map(|v| Arc::clone(&v.memo))
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 thread_local! {
@@ -1258,8 +1254,6 @@ pub enum Learnt {
     Priced(Arc<Priced>),
     Ran(f64),
 }
-
-
 
 /// A kept plan: its order, its work per node when searched, when profiling its EXPLAIN, its work over its body's
 /// cheapest start (`SEED`) when searched, its last price with the sizes it was priced at (`Priced`), and the work
@@ -1419,8 +1413,7 @@ pub fn in_view<R>(view: &Arc<ChunkView>, f: impl FnOnce() -> R) -> (R, ChunkPlan
     let r = {
         // The chunk's plans are the run's context's while `f` runs (and its jobs', which carry the context), and
         // what it plans is put into the view as the job's own end (`enter_plans`), before the binding goes.
-        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptPlans(Some(shared.clone())));
-        let _memo = rerail_prof::code_rule_dsl::logic::profile::bind(joins::InView(Some(Arc::clone(&view.memo))));
+        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptPlans(Some(Box::new(shared.clone()))));
         let _plans = enter_plans(Some(shared));
         let _observed_at = view.observed.clone().map(keeps::bind_observed);
         let _observed = view.observed.clone().map(keeps::enter_observed);
@@ -1439,10 +1432,9 @@ pub fn in_view<R>(view: &Arc<ChunkView>, f: impl FnOnce() -> R) -> (R, ChunkPlan
 /// The planning choices kept in the process, as a chunk begins from them (`choices::snapshot`).
 type ChoicesAt = Arc<std::collections::HashMap<[u8; 32], choices::Chosen>>;
 
-
 /// The planning choices a chunk's planning reads and makes (Q261): its view's, where the run is in one (`in_view`).
 pub fn chunk_choices() -> Option<Arc<choices::ChunkChoices>> {
-    with_plans(|p| p.as_ref().and_then(|s| s.view.as_ref()).map(|v| Arc::clone(&v.choices)))
+    with_plans(|p| p.and_then(|s| s.view.as_ref()).map(|v| Arc::clone(&v.choices)))
 }
 
 /// A kept plan as the run shares it (decision 0301): its order and what its search found of it (work per node,
@@ -1538,7 +1530,6 @@ impl FromIterator<(PlanKey, Arc<Entry>)> for Plans {
     }
 }
 
-
 /// A run's plans: those it made or took (`kept`), and those the store kept from earlier processes (`stored`,
 /// decision 0116 step 2), taken into `kept` when a rule is first planned. Decision 0301: each part shared as it is
 /// used. `kept` is read with no lock (RCU: an immutable map, a new one published for new plans), its entries'
@@ -1583,7 +1574,7 @@ pub fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
 
 /// The order last kept for line `line` (`RunPlans::orders`).
 fn orders_get(line: u128) -> Option<Arc<[Step]>> {
-    with_plans(|p| p.as_ref().and_then(|s| s.orders.load().get(&line).cloned()))
+    with_plans(|p| p.and_then(|s| s.orders.load().get(&line).cloned()))
 }
 
 /// Keeps `order` as line `line`'s last (`RunPlans::orders`).
@@ -1610,7 +1601,7 @@ fn source_orders() -> bool {
 /// Whether `key` was planned in this thread's run (`RunPlans::planned_now`).
 fn planned_now(key: &PlanKey) -> bool {
     OWN_PLANNED.with(|o| o.borrow().as_ref().is_some_and(|o| o.contains(key)))
-        || with_plans(|p| p.as_ref().is_some_and(|s| s.planned_now.lock().contains(key)))
+        || with_plans(|p| p.is_some_and(|s| s.planned_now.lock().contains(key)))
 }
 
 /// Notes `key` as planned in this run (`planned_now`): in this thread's job's set, else the run's.
@@ -1699,7 +1690,6 @@ impl RunPlans {
         Some(k)
     }
 }
-
 
 /// A kept plan as the store keeps it across processes (decision 0116 step 2): `Kept` without its literals (they
 /// are the body's, by position) or its EXPLAIN. Plans are kept per prepared program, under the engine's build.
@@ -1833,7 +1823,7 @@ pub fn take_stored_plans(stored: Arc<StoredPlans>) {
 #[doc(hidden)]
 /// Whether this thread's run searches line `line` rather than take its prepared plan: it ran heavy (`prepared_heavy`).
 pub fn prepared_searched(line: u128) -> bool {
-    with_plans(|p| p.as_ref().is_some_and(|p| p.prepared_searched.lock().contains(&line)))
+    with_plans(|p| p.is_some_and(|p| p.prepared_searched.lock().contains(&line)))
 }
 
 pub fn run_holds_plans() -> bool {
@@ -1843,7 +1833,7 @@ pub fn run_holds_plans() -> bool {
 /// The prepared plans the store kept of the version whose identity is `id` (Q228).
 #[doc(hidden)]
 pub fn prepared_stored(id: &[u8; 32]) -> Option<Arc<prepared::Prepared>> {
-    with_plans(|p| p.as_ref().and_then(|p| p.prepared.load().get(id).cloned()))
+    with_plans(|p| p.and_then(|p| p.prepared.load().get(id).cloned()))
 }
 
 /// Keeps `made`, the prepared plans this run made of the version whose identity is `id`, for the store. A version
@@ -1878,18 +1868,18 @@ pub fn take_stored_prepared(stored: prepared::ByVersion) {
 
 /// This thread's run's prepared plans for the store, the stored with the made: `None` where it made none.
 pub fn prepared_to_store() -> Option<Arc<prepared::ByVersion>> {
-    with_plans(|p| p.as_ref().filter(|p| p.prepared_new.load(std::sync::atomic::Ordering::Relaxed)).map(|p| p.prepared.load_full()))
+    with_plans(|p| p.filter(|p| p.prepared_new.load(std::sync::atomic::Ordering::Relaxed)).map(|p| p.prepared.load_full()))
 }
 
 /// The prepared plans held for this thread's run, as read and made.
 pub fn prepared_held() -> Arc<prepared::ByVersion> {
-    with_plans(|p| p.as_ref().map(|p| p.prepared.load_full()).unwrap_or_default())
+    with_plans(|p| p.map(|p| p.prepared.load_full()).unwrap_or_default())
 }
 
 /// This thread's run's plans for the store: the stored ones with the run's over them, or `None` where the run
 /// changed none.
 pub fn plans_to_store() -> Option<StoredPlans> {
-    let plans = with_plans(|p| p.clone())?;
+    let plans = with_plans(|p| p.cloned())?;
     let (kept, stored) = (plans.kept.load(), plans.stored.load());
     let mut out: Option<StoredPlans> = None;
     for (key, e) in kept.iter() {
@@ -1933,17 +1923,17 @@ pub fn lines_push(runs: Vec<joins::LineRun>) {
 
 /// The lines run since the last call.
 pub fn lines_take() -> Vec<joins::LineRun> {
-    with_plans(|p| p.as_ref().map(|p| p.lines.1.lock().try_iter().flatten().collect()).unwrap_or_default())
+    with_plans(|p| p.map(|p| p.lines.1.lock().try_iter().flatten().collect()).unwrap_or_default())
 }
 
 /// The plans the store kept for this thread's run, as read (the join memo's write, where no plan changed).
 pub fn stored_plans() -> Option<StoredPlans> {
-    with_plans(|p| p.as_ref().map(|p| StoredPlans::clone(&p.stored.load())))
+    with_plans(|p| p.map(|p| StoredPlans::clone(&p.stored.load())))
 }
 
 /// This thread's kept plans, for a job on another thread to enter.
 fn share_plans() -> Option<SharedPlans> {
-    with_plans(|p| p.clone())
+    with_plans(|p| p.cloned())
 }
 
 /// While the guard lives, this thread's job plans into plans of its own (`OWN_PLANS`: new keys and new orders),
@@ -2028,7 +2018,6 @@ pub fn near(then: &[f64], now: &[f64]) -> bool {
             a <= b * PRICE_DRIFT && b <= a * PRICE_DRIFT
         })
 }
-
 
 /// Whether a plan is explained step by step whether or not the run is profiled (`explaining`): the choice of what a
 /// relation keeps re-prices each step of its plans (decision 0099).
@@ -3228,7 +3217,7 @@ impl Model {
     #[doc(hidden)]
     pub fn prepared_heavy(&self, b: &Body<'_>, firsts: &[Option<usize>], running: &[Step]) -> Option<u128> {
         let (line, p) = firsts.iter().map(|f| line_key(b, *f)).find_map(|k| self.stats.prepared.0.get(&k).filter(|p| same_order(&p.order, running)).map(|p| (k, p)))?;
-        let fresh = with_plans(|s| s.as_ref().is_some_and(|s| s.prepared_searched.lock().insert(line)));
+        let fresh = with_plans(|s| s.is_some_and(|s| s.prepared_searched.lock().insert(line)));
         if !fresh {
             return None;
         }
@@ -5318,7 +5307,6 @@ pub fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
 //
 // A rule body is built as a typed query (`sql::select`), checked against the program's relations and the
 // columns in scope, then rendered (list step 20).
-
 
 pub fn col(alias: &str, column: &str) -> Expr {
     Expr::Qualified { alias: alias.to_owned(), column: column.to_owned() }

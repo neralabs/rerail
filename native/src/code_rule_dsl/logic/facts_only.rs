@@ -200,7 +200,6 @@ const NOT_YET_TABLES_PIN: usize = 57;
 const STATE: &[(&str, &str)] = &[
     // What a crate above registers at load, as the crate split made them (a function or a device, set once).
     ("code_rule_dsl/logic/costs/join_steps.rs", "INSTALL"),
-    ("code_rule_dsl/logic/device.rs", "SOLVER"),
     ("code_rule_dsl/logic/strings.rs", "FUNCTORS"),
     ("code_rule_dsl/logic/strings/functions.rs", "PY_REPR"),
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
@@ -245,7 +244,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
-    ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
+    ("code_rule_dsl/logic/plan/corpus/base.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     // core.rerail's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
@@ -253,7 +252,7 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/compression.rs", "DECODER"),
     // The store handles open in this process, by path (RER-131): a registry of open things.
     ("code_rule_dsl/logic/plan/choices.rs", "DurableSide"),
-    ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
+    ("code_rule_dsl/logic/plan/corpus/base.rs", "TEST_TAPE_CACHE"),
     // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files
     // the tests' stores are, not results.
     // The caller's options for its runs' inputs (`--facts`, `--require-facts`, `--base`; decision 0442).
@@ -312,7 +311,7 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
     // A switch: testing mode's store (decision 0130).
-    ("code_rule_dsl/logic/plan/corpus.rs", "UseStore"),
+    ("code_rule_dsl/logic/plan/corpus/base.rs", "UseStore"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "BatchUnderWay"),
     // A registry of an open thing: the holders of the rule files' shared tape-cache handle, and the handle.
@@ -320,8 +319,8 @@ const STATE: &[(&str, &str)] = &[
     // The journal's open streams, one a root (decision 0105): open things.
     // A job's own plans and observations (decisions 0113, 0116), taken into the run's as the job ends: the run's own
     // state on the job's thread, gone with it.
-    ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
-    ("code_rule_dsl/logic/plan.rs", "OWN_PLANNED"),
+    ("code_rule_dsl/logic/plan/search.rs", "OWN_PLANS"),
+    ("code_rule_dsl/logic/plan/search.rs", "OWN_PLANNED"),
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
@@ -333,7 +332,7 @@ const STATE: &[(&str, &str)] = &[
     // The evaluation of a Git revision the run reads (`strings::git::Evaluation`), bound by its scope.
     ("code_rule_dsl/logic/strings/git.rs", "GitEvaluation"),
     // The invoking audit's store path while its inventory program runs.
-    ("code_rule_dsl/logic/plan/corpus.rs", "SelectedStore"),
+    ("code_rule_dsl/logic/plan/corpus/base.rs", "SelectedStore"),
     // The engine's own answers (`rr::lower::World`), listed once from its constants.
     ("code_rule_dsl/logic/rr/lower.rs", "ENGINE"),
 ];
@@ -343,7 +342,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "InSession", "3"),
-    ("code_rule_dsl/logic/plan.rs", "KeptPlans", "6"),
+    ("code_rule_dsl/logic/plan/base.rs", "KeptPlans", "6"),
     ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),
     ("code_rule_dsl/logic/derived.rs", "Memoized", "6"),
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),

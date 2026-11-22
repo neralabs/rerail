@@ -13,7 +13,7 @@ pub(crate) static METAL: Metal = Metal;
 
 /// Registers Metal as the logic's and the transducer's device.
 pub fn register() {
-    crate::code_rule_dsl::logic::device::register(&METAL);
+    crate::code_rule_dsl::logic::device::register("rerail-device-metal", &METAL);
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
     // Kind-set axes solved on the device in a batch's chunk block (decision 0289 §2).
     crate::code_rule_dsl::facts::nearest::install_chunk_axis(packed::metal_join::axis_in_chunk);

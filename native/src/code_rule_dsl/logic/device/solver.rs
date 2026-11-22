@@ -2,7 +2,7 @@
 //! columns' statistics, which the planner reads. A solver device is a device (`Device`, the run's solvers'), and
 //! registering it registers both (`register`).
 use std::any::Any;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use super::{Device, Refused};
 use crate::code_rule_dsl::logic::native::setfix::{Fresh, InRel, Interner, JoinRule, Store};
@@ -65,15 +65,16 @@ pub struct ColumnStats {
     pub top: Vec<(i64, u64)>,
 }
 
-static SOLVER: OnceLock<&'static dyn SolverDevice> = OnceLock::new();
+/// The logic's solver device, as the program's composition registers it (`register`).
+pub static SOLVER: rerail_registry::Slot<&'static dyn SolverDevice> = rerail_registry::Slot::new("the logic's solver device (logic::device::solver::SOLVER)");
 
-/// Registers the logic's solver device, as the logic's device too (`register_device`); the first registration holds.
-pub fn register(device: &'static dyn SolverDevice) {
-    let _ = SOLVER.set(device);
-    super::register_device(device);
+/// Registers the logic's solver device, by `provider`, as the logic's device too (`register_device`).
+pub fn register(provider: &'static str, device: &'static dyn SolverDevice) {
+    SOLVER.register(provider, device);
+    super::register_device(provider, device);
 }
 
 /// The registered solver device, if any.
 pub fn solver() -> Option<&'static dyn SolverDevice> {
-    SOLVER.get().copied()
+    SOLVER.try_get()
 }
