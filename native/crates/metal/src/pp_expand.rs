@@ -1155,6 +1155,17 @@ pub struct Exp {
     /// level, `trie_lv` levels of 4 words a list.
     trie: Buf,
     trie_lv: u32,
+    /// The exits' calls by their parent and `)` (`px_hx_*`): `hx_mask + 1` slots, three words
+    /// each (the call + 1, its parent, its `)`), twice the lists' room at least.
+    hx: Buf,
+    hx_mask: u32,
+    /// The chains of a parent's calls (`px_ch_*`): nine stores a scanned token (the walks', the
+    /// pauses'), and nine a top token (the top level's places, `tch_cap` of them), and their
+    /// nexts' counts (the walks', the top's, the pauses').
+    ch: Buf,
+    tch: Buf,
+    tch_cap: u32,
+    chw: Buf,
 }
 
 /// A round's substitutions' columns a list (`SB_COLS` in `pp_expand.uglykl`).
@@ -1313,6 +1324,12 @@ impl Exp {
             sc_cap: x.sc as u32,
             trie: zeroed(lists * 4 * trie_lv as usize)?,
             trie_lv,
+            hx: zeroed(3 * (2 * lists).next_power_of_two())?,
+            hx_mask: ((2 * lists).next_power_of_two() - 1) as u32,
+            ch: zeroed(9 * x.sc.max(1))?,
+            tch: zeroed(9 * top.max(1))?,
+            tch_cap: top.max(1) as u32,
+            chw: zeroed(4)?,
         })
     }
 
@@ -1332,6 +1349,7 @@ impl Exp {
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("ARGS", &self.args).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
         l.word("LIST_CAP", self.list_cap).word("OUT_CAP", self.out_cap).word("Q_CAP", self.q_cap);
         l.at("TRIE", &self.trie).word("TRIE_LV", self.trie_lv);
+        l.at("HX", &self.hx).word("HX_MASK", self.hx_mask).at("CH", &self.ch).at("CHW", &self.chw).at("TCH", &self.tch).word("TCH_CAP", self.tch_cap);
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
         l.at("CU_SLOT", &self.cu_slot).at("CU_SUB", &self.cu_sub).at("CU_UNIT", &self.cu_unit).at("TRN", &self.trn).at("LREAD", &self.lread);

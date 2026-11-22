@@ -28,7 +28,8 @@ pub use rerail_rr::code_rule_dsl::logic::rr::clause;
 pub use from_tape::{code_body, string_value, syntax_error};
 mod git_policy;
 pub use git_policy::GitPolicyInputs;
-pub mod images;
+/// The planner's (`program_text` keeps its images); the store they are kept in is `images_store`, here.
+pub use rerail_planner::code_rule_dsl::logic::rr::images;
 pub mod module_image;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
 /// The text tests `.rerail` names, and the engine's test each lowers to (the coverage gate probes each).
@@ -763,9 +764,24 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
     Ok((modules, units.iter().map(|members| members.iter().map(|&i| paths[i].clone()).collect()).collect(), keys))
 }
 
-/// The store rule images are read from and kept in (`images::store`), unless `RERAIL_MODULE_IMAGES=off`.
+/// The store rule images are read from and kept in (`images_store`), unless `RERAIL_MODULE_IMAGES=off`.
+/// The store the run's rule images are kept in (decision 0264, `images`): the engine build's, shared by every project
+/// (`RERAIL_IMAGE_STORE`: a path, or `project` for the run's own store); a test's own store under test.
+fn images_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+    let project = || crate::code_rule_dsl::logic::plan::corpus::phases::reading_store();
+    if cfg!(any(test, feature = "test-hooks")) {
+        return project();
+    }
+    let path: std::path::PathBuf = match std::env::var("RERAIL_IMAGE_STORE") {
+        Ok(v) if v == "project" => return project(),
+        Ok(v) => std::path::PathBuf::from(v),
+        Err(_) => crate::code_rule_dsl::logic::plan::corpus::build_store("rerail-images", None),
+    };
+    crate::content_store::ContentStore::open_images(&path).ok().map(std::sync::Arc::new)
+}
+
 pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
-    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { held_image_store(images::store) } else { None }
+    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { held_image_store(images_store) } else { None }
 }
 
 /// The image store a run opened, held while the run's call runs (`HoldImages`, one of the run's own values, decision

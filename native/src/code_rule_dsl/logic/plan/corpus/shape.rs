@@ -9,19 +9,19 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The combined program's rules, as the readers before preparation ask of them.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Shape {
+pub struct Shape {
     /// The relations some rule makes.
-    pub(crate) made: BTreeSet<String>,
+    pub made: BTreeSet<String>,
     /// The relations some rule's body reads (an atom, negated or not, or an aggregate's).
-    pub(crate) read: BTreeSet<String>,
+    pub read: BTreeSet<String>,
     /// The relations some rule's body reads positively (not negated: a plain atom, or an aggregate's).
-    pub(crate) positive: BTreeSet<String>,
+    pub positive: BTreeSet<String>,
     /// Each made relation's reads, over its rules.
-    pub(crate) reads_of: BTreeMap<String, BTreeSet<String>>,
+    pub reads_of: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Shape {
-    pub(crate) fn of(v: &Version) -> Shape {
+    pub fn of(v: &Version) -> Shape {
         let mut s = Shape::default();
         for r in v.rules() {
             let head = v.rel_name(r.head().rel()).to_owned();

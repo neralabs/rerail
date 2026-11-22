@@ -37,7 +37,7 @@ fn an_export_named_like_an_input_is_read_in_place_by_the_inputs_column_names() {
     let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
     let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(vec![4, 7]), Some(vec![40, 70])]);
     modules.bind(&db, "value", source).unwrap();
-    let (n, v) = (crate::code_rule_dsl::logic::plan::sql_col("value", 0), crate::code_rule_dsl::logic::plan::sql_col("value", 1));
+    let (n, v) = (crate::code_rule_dsl::logic::sql::select::sql_col("value", 0), crate::code_rule_dsl::logic::sql::select::sql_col("value", 1));
     assert_eq!((n.as_str(), v.as_str()), ("n", "v"), "the statement names `value`'s columns as the input's");
     let all = view(&db, "main.value", &format!("{n}, {v}")).expect("read in place");
     assert_eq!(all.cols, [0, 1]);

@@ -59,7 +59,7 @@ struct Rank {
 }
 
 /// What the form reads of a program besides its rules: the version's (`corpus::preparation::rank`).
-pub(crate) trait Of {
+pub trait Of {
     /// `rel`'s columns' types, where it is declared.
     fn types(&self, rel: &str) -> Option<Vec<String>>;
     /// Whether `rel` is held as rows whatever its rule: made natively, a lattice, an input, or `no_rank`.
@@ -68,14 +68,14 @@ pub(crate) trait Of {
 
 /// The form planned over a version (`plan`): each reader's counts it rewrites (the reader, and each literal's place
 /// with its rank), and the ranks.
-pub(crate) struct Plan {
+pub struct Plan {
     readers: BTreeMap<RuleId, Vec<(usize, usize)>>,
     ranks: Vec<Rank>,
 }
 
 impl Plan {
     /// How many readers' counts it rewrites.
-    pub(crate) fn found(&self) -> usize {
+    pub fn found(&self) -> usize {
         self.readers.values().map(Vec::len).sum()
     }
 }
@@ -86,12 +86,12 @@ pub(crate) fn counts(r: RuleRef<'_>) -> bool {
 }
 
 /// Whether the form is looked for (`RERAIL_RANK_FORM=off`: not, a measurement aid).
-pub(crate) fn on() -> bool {
+pub fn on() -> bool {
     !std::env::var("RERAIL_RANK_FORM").is_ok_and(|v| v == "off")
 }
 
 /// The form over `v`'s readers (the rules with a count, `counts`), in the program's order.
-pub(crate) fn plan(v: &Version, of: &dyn Of) -> Plan {
+pub fn plan(v: &Version, of: &dyn Of) -> Plan {
     let mut plan = Plan { readers: BTreeMap::new(), ranks: Vec::new() };
     let mut placed: BTreeMap<(String, Vec<bool>), Option<usize>> = BTreeMap::new();
     for r in v.rules().filter(|r| counts(*r)) {
@@ -207,7 +207,7 @@ fn shape(h: RuleRef<'_>, grouped: &[bool]) -> Option<Shape> {
 /// Writes `plan` on `b`, a derivation of `v`: each rank's relations declared, `v`'s rules (each reader's counts read
 /// as a sum over its rank, `n = sum m : rr_rank(…, m)`: 0 where no row is asked), then the ranks' rules, in order.
 /// The ranks' natives, by relation: `(rank, asked rows, counted rows, group's width, op)`.
-pub(crate) fn write(v: &Version, of: &dyn Of, plan: &Plan, b: &mut Builder<'_>) -> Result<Vec<(String, String, String, usize, &'static str)>, String> {
+pub fn write(v: &Version, of: &dyn Of, plan: &Plan, b: &mut Builder<'_>) -> Result<Vec<(String, String, String, usize, &'static str)>, String> {
     for rank in &plan.ranks {
         let h = v.rule(rank.h).expect("the counted rule");
         let s = &rank.shape;

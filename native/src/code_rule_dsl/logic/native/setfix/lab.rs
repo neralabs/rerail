@@ -50,13 +50,13 @@ fn captures() -> Arc<Captured> {
 
 /// A stratum being captured: where, and its relations (the run's table, the capture's, the column types, and
 /// whether it started empty).
-pub(in crate::code_rule_dsl) struct Capture {
+pub struct Capture {
     path: PathBuf,
     rels: Vec<(String, String, Vec<u8>, bool)>,
 }
 
 /// Where stratum `name`, of planned work `work`, is captured, when the lab is on and wants it.
-pub(in crate::code_rule_dsl) fn wanted(name: &str, work: f64) -> Option<PathBuf> {
+pub fn wanted(name: &str, work: f64) -> Option<PathBuf> {
     let dir = PathBuf::from(std::env::var_os("RERAIL_RELATIONAL_LAB")?);
     if captures().written.load(Ordering::Relaxed) >= BUDGET {
         return None;
@@ -116,7 +116,7 @@ fn table_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner)
 }
 
 /// Captures stratum `name`'s sources and seeds before it opens with `spec`, or says why it is not taken.
-pub(in crate::code_rule_dsl) fn capture_inputs(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) -> Option<Capture> {
+pub fn capture_inputs(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) -> Option<Capture> {
     match capture_(conn, name, spec, path) {
         Ok(c) => Some(c),
         Err(why) => {
@@ -261,7 +261,7 @@ fn atoms(conn: &Connection, dir: &Path) -> Result<(), String> {
 }
 
 /// Writes the stratum's relations as the run left them (`out<k>`), and closes the capture.
-pub(in crate::code_rule_dsl) fn capture_outputs(conn: &Connection, cap: Capture) {
+pub fn capture_outputs(conn: &Connection, cap: Capture) {
     let done = (|| -> Result<(), String> {
         let shared = symbols(conn).map_err(|e| e.to_string())?;
         let mut syms = Interner::for_loading(&shared);

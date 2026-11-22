@@ -180,8 +180,7 @@ fn directives_read_as_the_lean_scan_reads_them() {
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
         let files: Vec<&[u8]> = cases.iter().map(|s| s.as_bytes()).collect();
-        let metal = c.metal_read(&files).unwrap_or_else(|e| panic!("the device runs the batch: {e:?}"));
-        for (src, m) in cases.iter().zip(metal) {
+        for (src, m) in cases.iter().zip(on_device(c, &files, "the batch").unwrap_or_default()) {
             assert_eq!(m, c.read(src.as_bytes()), "Metal, {src:?}");
         }
     }

@@ -10151,3 +10151,62 @@ Each choice is read by both sides' invariants in `notes/roll-up-40-cuda-support.
 > complete now, and once it is complete it is not recorded here at all: the commit says what was done. An "Open:",
 > "Next:" or "left for later" line written instead of doing the work is a failure, not a record. The only things that
 > may go here are items the user has decided to defer, or a choice that is the user's to make, with the evidence.
+
+### Q462. Roll-up 41 (final-rerail-shape-rr-align ae1421e5c0 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-41-rr-align.md`:
+
+- **Narrow copies**: theirs' copies (within one document, diffed, beside a twin, 0575) over ours' reads (only an
+  atom that feeds a shown column). One per-atom predicate, `Redirect::narrows`, for the fold and the copies'
+  analyses, where theirs had a rule-wide bool. One `Narrowing::declare`.
+- **The push**: ours' `Readers`. Theirs' hunks were the same fix.
+- **The manifest's root**: theirs' `manifest_root`, on ours' `Canonical` trait.
+- **A reader record in a wave**: the gather unions two puts of one record. Found by the warm-run tests.
+- **The Bitlex writers**: mounted by `rerail-bitlex`. `rust_block` and the old Kotlin build go, as theirs removed
+  them.
+- **Device gates**: theirs' arms (only no device is skipped) on ours' platforms (Windows too).
+- **The preprocessor grid**: theirs' state words, ours' join.
+
+### Q463. Roll-up 42 (engine-crating bd146745ab onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-42-engine-crating.md`:
+
+- **The Rust lowering's crate**: `rerail-rust-stream` mounts `rust_stream` only, marked deprecated (0550).
+  `rust_block` stays removed.
+- **Moved code**: theirs' homes (`stream_analysis`, `stream_facts`, `profile/memory.rs`, `hide/tests.rs`), with ours'
+  changes made there: `root_number` (0558), the split readers and their two slots (0509), Windows' memory readings,
+  and the narrow copy's hide test.
+- **Mirrors**: the split crates re-export what ours added (`rr::UNPLACED`, `rerail_store::Canonical`).
+- **State lists**: `Device` and `INSTALL` in 0104's STATE list. The split's eight load-time registrations go in
+  the global-state list.
+
+### Q464. Roll-up 43 (main 1609ac3a30 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-43-main.md`:
+
+- **Compile off the daemon's thread** (#973): the one body stays in `rule_api` (`compile_rule`). Theirs'
+  `compile_contained`, `compile_async` and `CompileTask` call it.
+- **Owners**: ours' `refreshOwners()` (one look-again point), then theirs' `prepareRules(paths)`.
+- **Identity** (#977): theirs' lazy candidate, and ours' bare-folder ids and `checkoutIdentity`.
+
+### Q465. Roll-up 44 (CUDA-support 949511d462 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-44-cuda-support.md`:
+
+- **Tape reads**: theirs' per-format files (0576), with ours' 16z cache polls and the take's `own` (0540) in
+  `tape_f16z.h`.
+- **Large reads cold** (0548): `CLIF_TAPE_READ` takes its linkage. Ours' six large reads are `UKL_COLD`.
+- **The launch**: ours' `dispatch_batch`, with theirs' choice of the batch format's interpreter.
+- **Generated view reads**: written again from the merged generator.
+
+### Q466. Roll-up 45 (build-and-test-loop-time c4d091a46f onto Pulling-it-all-together): what the merge chose
+
+The farm tooling (farm 54–57) is taken whole. In `test-remote`'s main, theirs' one line takes the new
+`--arch`/`--memory`/`--cpu-feature` results and keeps the single `pack_data` trees line both sides added
+(`notes/roll-up-45-build-and-test-loop-time.md`).
+
+### Q467. Roll-up 46 (final-rerail-shape-phased-facts 1c87fb5754 onto Pulling-it-all-together): what the merge chose
+
+0494 step 7 (key-run columns, 8-byte solves, shared axis solves) is taken whole. Its `solve` takes ours' Windows
+device gate. The manifests are ours', with one `rerail-clif` dev-dependency. 0494's section appears once
+(`notes/roll-up-46-phased-facts.md`).

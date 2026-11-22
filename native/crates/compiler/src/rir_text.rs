@@ -222,9 +222,6 @@ pub fn name_rows(out: &mut String, names: &crate::program::Names) {
     for (k, n) in &names.marks {
         let _ = writeln!(out, "  name mark {k} {}", quote(n.as_bytes()));
     }
-    for (f, n) in &names.fields {
-        let _ = writeln!(out, "  name field {f} {}", quote(n.as_bytes()));
-    }
 }
 
 pub fn rule_rows(out: &mut String, rules: &[u16]) {

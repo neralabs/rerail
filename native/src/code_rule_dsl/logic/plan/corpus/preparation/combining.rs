@@ -18,15 +18,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 type Result<T> = std::result::Result<T, String>;
 
 /// The guards and the canonical relations of the policies combined (`scoping`'s module says what each is).
-pub(in crate::code_rule_dsl::logic::plan::corpus) struct FactSpaces<'a> {
+pub struct FactSpaces<'a> {
     pub(in crate::code_rule_dsl::logic::plan::corpus) policies: &'a [Policy],
-    pub(in crate::code_rule_dsl::logic::plan::corpus) report: Report,
+    pub report: Report,
     /// What `again` reads back (decision 0393): the canonical and shared relations, when guards were written.
     kept: Option<(BTreeSet<String>, BTreeSet<String>)>,
 }
 
 impl<'a> FactSpaces<'a> {
-    pub(in crate::code_rule_dsl::logic::plan::corpus) fn new(policies: &'a [Policy]) -> Self {
+    pub fn new(policies: &'a [Policy]) -> Self {
         FactSpaces { policies, report: Report::default(), kept: None }
     }
 
@@ -466,7 +466,7 @@ impl Guards<'_> {
 /// does not keep a relation from its twin. The merge's renaming can make rules repeat; they are dropped after it, and
 /// make nothing more mergeable. (A loop of merges until no rule repeated was 2-3 congruences a call, 1.5 s of the dl1
 /// batch's 13.8 s CPU.) `RERAIL_SAME=off` keeps them apart.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn same_relations(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<()> {
+pub fn same_relations(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<()> {
     if std::env::var("RERAIL_SAME").is_ok_and(|x| x == "off") {
         return Ok(());
     }
@@ -486,7 +486,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn same_relations(p: &mut crat
 /// The copies of `label`'s own guests folded into their originals (`FoldOwn`), and then the rules that repeat another
 /// dropped and the relations that are one merged, as `preparation::run` merges (decision 0058): the run's edit, once
 /// its language is known.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::sync::Arc<Version>, label: &str) -> Result<std::sync::Arc<Version>> {
+pub fn fold_own_guests(v: std::sync::Arc<Version>, label: &str) -> Result<std::sync::Arc<Version>> {
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("fold own guests", v);
     let mut fold = FoldOwn { label, folded: 0, diffed: BTreeSet::new() };
     p.program(&mut fold);
@@ -517,11 +517,11 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::syn
 /// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
 /// `DropRepeated`.
 /// `folded`: how many copies and kind sets it folded. `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
-pub(in crate::code_rule_dsl::logic::plan::corpus) struct FoldOwn<'a> {
-    pub(in crate::code_rule_dsl::logic::plan::corpus) label: &'a str,
-    pub(in crate::code_rule_dsl::logic::plan::corpus) folded: usize,
+pub struct FoldOwn<'a> {
+    pub label: &'a str,
+    pub folded: usize,
     /// The originals whose narrow copies it wrote as differences (`Diffed`): `Unnarrow` reads them in place.
-    pub(in crate::code_rule_dsl::logic::plan::corpus) diffed: BTreeSet<String>,
+    pub diffed: BTreeSet<String>,
 }
 
 impl ProgramPass for FoldOwn<'_> {
@@ -668,7 +668,7 @@ impl ProgramPass for FoldOwn<'_> {
         diffed.declare(b);
         if !diffed.of.is_empty() {
             crate::code_rule_dsl::logic::profile::decision("a narrow copy as its original less the annotations' change (decision 0165 §3)", || {
-                format!("{} of {} copies diffed: {}", diffed.of.len(), read.len(), diffed.of.iter().cloned().collect::<Vec<_>>().join(", "))
+                format!("{} of {} copies diffed ({} within one document): {}", diffed.of.len(), read.len(), within.len(), diffed.of.iter().cloned().collect::<Vec<_>>().join(", "))
             });
         }
         // The request record's readers (`hiding::fold_own`'s `rename_readers`, decision 0331).
@@ -1779,8 +1779,8 @@ impl Rewrite for Fold<'_, '_> {
 
 /// `one_document` over `v` as hiding left it, each of `read` an original kept narrow, each copy of `folded` folded into
 /// its original (decision 0165's tests): the filters, and the originals whose narrow rows are their rows.
-#[cfg(test)]
-pub(super) fn filters_of(v: &std::sync::Arc<Version>, read: &BTreeSet<String>, folded: &HashMap<String, String>) -> (BTreeSet<String>, BTreeSet<String>) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn filters_of(v: &std::sync::Arc<Version>, read: &BTreeSet<String>, folded: &HashMap<String, String>) -> (BTreeSet<String>, BTreeSet<String>) {
     let narrow = i64::from(crate::code_rule_dsl::facts::vtab::syntax::RUN_VALUE_KEYS);
     let p = crate::code_rule_dsl::logic::plan::body::Placed::whole(v.clone());
     let f = p.fields().unwrap();
@@ -1828,6 +1828,9 @@ pub(super) struct Diffed {
     doc: Option<(String, String)>,
     /// Each diffed original's recursive component (its own included): the originals it reads that read it.
     scc: HashMap<String, BTreeSet<String>>,
+    /// The copies within one document (`one_document`) a diffed rule reads, each with its columns and its node
+    /// columns: a change point as a diffed copy is, its rows gone those of a node past the narrow bound, none added.
+    within: Vec<(String, Vec<(String, String)>, Vec<usize>)>,
     /// The program as written, each copy a node: who reads whom.
     edges: HashMap<String, BTreeSet<String>>,
 }
@@ -1919,7 +1922,7 @@ impl Diffed {
     fn new(v: &Version, folded: &HashMap<String, String>, read: &BTreeSet<String>, within: &BTreeSet<String>, narrowing: &Narrowing<'_>, requests: &BTreeSet<String>, narrow: i64) -> Diffed {
         let node = v.columns_of("kind").and_then(|c| c.first().cloned());
         let doc = v.columns_of("docof").and_then(|c| c.get(1).cloned());
-        let mut out = Diffed { of: BTreeSet::new(), read: read.clone(), cols: HashMap::new(), node, doc, scc: HashMap::new(), edges: HashMap::new() };
+        let mut out = Diffed { of: BTreeSet::new(), read: read.clone(), cols: HashMap::new(), node, doc, scc: HashMap::new(), within: Vec::new(), edges: HashMap::new() };
         if std::env::var("RERAIL_NARROW_DIFF").is_ok_and(|x| x == "off") || out.node.is_none() || out.doc.is_none() || read.is_empty() {
             return out;
         }
@@ -2042,7 +2045,7 @@ impl Diffed {
                     scc[x.as_str()].iter().any(|y| !of.contains(y))
                         || rules_of[x.as_str()].iter().any(|r| r.body().filter_map(|l| l.atom()).any(|a| {
                             let rel = v.rel_name(a.rel());
-                            read.contains(rel) && !of.contains(rel)
+                            read.contains(rel) && !of.contains(rel) && !within.contains(rel)
                         }))
                 })
                 .cloned()
@@ -2052,11 +2055,28 @@ impl Diffed {
             }
             for x in gone {
                 if debug {
-                    eprintln!("NDIFF {x}: reads {:?}", rules_of[x.as_str()].iter().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()))).filter(|r| read.contains(*r) && !of.contains(*r)).collect::<BTreeSet<_>>());
+                    eprintln!("NDIFF {x}: reads {:?}", rules_of[x.as_str()].iter().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()))).filter(|r| read.contains(*r) && !of.contains(*r) && !within.contains(*r)).collect::<BTreeSet<_>>());
                 }
                 of.remove(&x);
             }
         }
+        // The copies within one document the diffed rules read: change points too (rr-align, 0575).
+        let reads_within: BTreeSet<&str> = of
+            .iter()
+            .flat_map(|x| rules_of[x.as_str()].iter().flat_map(|r| r.body().filter_map(|l| match l.view() {
+                Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(v.rel_name(a.rel())),
+                _ => None,
+            })))
+            .filter(|rel| within.contains(*rel))
+            .collect();
+        out.within = reads_within
+            .into_iter()
+            .filter_map(|rel| {
+                let cols = v.columns_of(rel)?;
+                let nodes = (0..cols.len()).filter(|&c| cols[c].1 == "node").collect();
+                Some((rel.to_owned(), cols, nodes))
+            })
+            .collect();
         out.cols = of.iter().map(|x| (x.clone(), v.columns_of(x).expect("shaped"))).collect();
         out.scc = scc.into_iter().filter(|(x, _)| of.contains(x)).collect();
         out.of = of;
@@ -2185,6 +2205,16 @@ impl Diffed {
         if self.of.is_empty() {
             return Ok(());
         }
+        // A copy within one document, as a change point: its original's rows with a node past the narrow bound are
+        // gone from it, one rule a node column; none is added (`rr_added_` declared, with no rule).
+        for (w, cols, nodes) in &self.within {
+            let names: Vec<String> = (0..cols.len()).map(|i| format!("rr_x{i}")).collect();
+            let xs: Vec<T<'_>> = names.iter().map(|n| T::Var(n)).collect();
+            let g = gone_name(w);
+            for &c in nodes {
+                b.rule().head(g.as_str(), &xs).atom(w.as_str(), &xs).cmp(T::Var(&names[c]), CmpOp::Ge, T::Int(narrow << 32)).finish()?;
+            }
+        }
         for x in &self.of {
             let names: Vec<String> = (0..self.cols[x].len()).map(|i| format!("rr_x{i}")).collect();
             let xs: Vec<T<'_>> = names.iter().map(|n| T::Var(n)).collect();
@@ -2203,8 +2233,8 @@ impl Diffed {
         // copy is in a request's cone (`Diffed::new`), so these are outside every cone too, and run after the requests
         // (`plan::requests_first` gives every stratum outside a cone an edge to its request).
         let (nv, dv) = (T::Var("rr_n"), T::Var("rr_d"));
-        b.rule().head(ANN_NODE, &[nv.clone()]).atom("kind", &[nv.clone(), T::Wild]).cmp(nv.clone(), CmpOp::Ge, T::Int(narrow << 32)).cmp(nv.clone(), CmpOp::Lt, T::Int(wide << 32)).finish()?;
-        b.rule().head(ANN_DOC, &[dv.clone()]).atom(ANN_NODE, &[nv.clone()]).cmp(dv.clone(), CmpOp::Eq, T::Call("doc", vec![nv])).finish()?;
+        b.rule().head(ANN_NODE, std::slice::from_ref(&nv)).atom("kind", &[nv.clone(), T::Wild]).cmp(nv.clone(), CmpOp::Ge, T::Int(narrow << 32)).cmp(nv.clone(), CmpOp::Lt, T::Int(wide << 32)).finish()?;
+        b.rule().head(ANN_DOC, std::slice::from_ref(&dv)).atom(ANN_NODE, std::slice::from_ref(&nv)).cmp(dv.clone(), CmpOp::Eq, T::Call("doc", vec![nv])).finish()?;
         Ok(())
     }
 
@@ -2216,6 +2246,12 @@ impl Diffed {
         for x in &self.of {
             let pairs: Vec<(&str, &str)> = self.cols[x].iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
             for name in [cand_name(x), gone_name(x), added_name(x), recheck_name(x)] {
+                b.fields().declare(&name, &pairs);
+            }
+        }
+        for (w, cols, _) in &self.within {
+            let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+            for name in [gone_name(w), added_name(w)] {
                 b.fields().declare(&name, &pairs);
             }
         }

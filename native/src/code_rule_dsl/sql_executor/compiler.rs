@@ -162,7 +162,7 @@ impl CodeRuleSqlExecutor {
                 .map_err(error)?;
         use sha2::Digest;
         let key = crate::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(format!("{:016x}:{}:{dialect:?}", program.digest(), program.size())));
-        lattices::transfers(&mut emitted, &tops);
+        plan::emit::transfers(&mut emitted, &tops);
         emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
         walks::optimize(&mut emitted);
         emitted.program.lattice_operations = lattice_operations;

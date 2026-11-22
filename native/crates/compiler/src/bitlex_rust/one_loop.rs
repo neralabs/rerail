@@ -741,7 +741,6 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     }
     let readers = crate::bitlex_lex_rust::readers(x.lexer);
     let mut ends = BTreeMap::new();
-    let mut row = 0usize;
     let mut row_of: [Option<u8>; 256] = [None; 256];
     let mut checked = Vec::new();
     let mut checks = Vec::new();
@@ -750,10 +749,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             Stmt::Token { kind, start, rule, last, .. } => {
                 let k = ident(kind);
                 let end = match (rule, last) {
-                    (Some(TokenRule::Inside(..)), _) => {
-                        row += 1;
-                        continue;
-                    }
+                    (Some(TokenRule::Inside(..)), _) => continue,
                     (Some(TokenRule::Run(_)), _) => End::Run(format!("run_{k}")),
                     (Some(TokenRule::Pair(Expr::Empty)), _) | (None, None) => End::One,
                     (Some(TokenRule::Pair(_)), _) => End::Pair(format!("pair_{k}")),
@@ -773,7 +769,6 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
                     }
                 }
                 ends.insert(kind.clone(), (rk, end));
-                row += 1;
             }
             Stmt::Check { kind, body } => {
                 checked.push(kind.clone());

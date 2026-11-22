@@ -202,7 +202,7 @@ pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &
 /// `build_for`, and with `z` a 16z tape too (decision 0353 step 4b) where the body reads either format: its block
 /// decoded into the reader's slot (`tape_z_block`) and read as format 16. The JIT's reads read 16z; the tape crate's
 /// Rust reads a block at a time itself (`F16Z`). The kernels' reads of the same are written by hand (decision 0524):
-/// `<ukl/reads/tape_body.h>`.
+/// `<ukl/reads/tape_f16z.h>` (decision 0576).
 pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>, z: bool) -> Function {
     let mut func = Function::with_name_signature(name, signature(read, call_conv));
     let mut context = FunctionBuilderContext::new();
@@ -240,9 +240,10 @@ fn generated(function: &str, decision: &str, test: &str) -> String {
 }
 
 /// The views' reads as UKL (decision 0353 step 4c), after their entry's declaration (`view_reads::ukl`):
-/// `<ukl/reads/view.h>`, over the tape's reads that read 16z too and the numbering's (whose functions they call),
-/// made again by `the_view_kernels_reads_are_these`.
-pub fn view_ukl_source() -> Result<String, String> {
+/// `<ukl/reads/view.h>`, over the tape's reads that read 16z too and the numbering's (whose functions they call), and
+/// the body it includes once per tape format (`<ukl/body/view_reads.h>`, decision 0576), made again by
+/// `the_view_kernels_reads_are_these`.
+pub fn view_ukl_source() -> Result<(String, String), String> {
     let funcs: Vec<(u32, Function, &str)> = READS
         .iter()
         .enumerate()
@@ -250,13 +251,10 @@ pub fn view_ukl_source() -> Result<String, String> {
         .map(|(k, read)| (k as u32, build_for(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None)))
         .map(|(k, f)| (k, f, READS[k as usize].name))
         .collect();
-    let body = crate::ukl::translate_reads(&funcs, "clif_", Family::View)?;
-    let (head, rest) = body.split_at(crate::ukl::HELPERS.len());
-    Ok(format!(
-        "{}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/ids.h>\n{}{rest}",
-        generated("view_ukl_source", "the views' reads in CLIF (decision 0353 step 4c)", "the_view_kernels_reads_are_these"),
-        crate::view_reads::ukl()
-    ))
+    let (header, body) = crate::ukl::translate_view_reads(&funcs, "clif_")?;
+    let (head, rest) = header.split_at(crate::ukl::HELPERS.len());
+    let made = generated("view_ukl_source", "the views' reads in CLIF (decision 0353 step 4c, 0576)", "the_view_kernels_reads_are_these");
+    Ok((format!("{made}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/ids.h>\n{}{rest}", crate::view_reads::ukl()), format!("{made}{body}")))
 }
 
 /// Where a read's calls of other reads go when it is translated: by its place in `READS`, as the translators name
@@ -2600,13 +2598,14 @@ mod tests {
     /// The views' kernels' reads are these, as UKL (`<ukl/reads/view.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_view_kernels_reads_are_these() {
-        let path = format!("{}/view.h", super::ukl_reads());
-        let source = super::view_ukl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(&path, &source).unwrap();
+        let (header, body) = super::view_ukl_source().unwrap();
+        for (path, source) in [(format!("{}/view.h", super::ukl_reads()), header), (format!("{}/../body/view_reads.h", super::ukl_reads()), body)] {
+            if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+                std::fs::write(&path, &source).unwrap();
+            }
+            let held = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these");
         }
-        let held = std::fs::read_to_string(&path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these");
     }
 }
 
@@ -2616,11 +2615,11 @@ mod tests {
 mod ukl_header {
     use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, at, cache as c, z};
 
-    /// `<ukl/reads/tape_body.h>`'s `CLIF_T_*` constants are the view's field offsets, the formats' numbers, the 16z
+    /// `<ukl/reads/tape_common.h>`'s `CLIF_T_*` constants are the view's field offsets, the formats' numbers, the 16z
     /// entry's layout and the rolling cache's (`view::cache`), and it defines no other.
     #[test]
     fn the_tape_headers_constants_are_the_views() {
-        let header = include_str!("../../ukl/lib/ukl/reads/tape_body.h");
+        let header = include_str!("../../ukl/lib/ukl/reads/tape_common.h");
         let defined: std::collections::HashMap<&str, u64> = header
             .lines()
             .filter_map(|line| line.strip_prefix("#define CLIF_T_"))

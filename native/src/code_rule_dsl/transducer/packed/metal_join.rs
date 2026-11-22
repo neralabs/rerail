@@ -43,6 +43,7 @@
 use super::Error;
 use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, encode_sort, groups, pipeline, scratch, simd_group};
 use rerail_device::device::Buffer;
+use std::sync::Arc;
 
 
 /// No output or step: `Stage::last`, `Stage::passed`.
@@ -311,7 +312,16 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
         };
         (format!("{variant} {name}"), Box::new(make))
     };
-    let mut v: Vec<_> = JOIN.into_iter().map(|name| made("join", name, || SOURCE.to_owned())).collect();
+    let mut v: Vec<_> = JOIN.into_iter().filter(|name| !VIEW_KERNELS.contains(name)).map(|name| made("join", name, || SOURCE.to_owned())).collect();
+    // The view kernels for the run's views' format.
+    v.extend(VIEW_KERNELS.map(|name| -> super::device::KernelAhead {
+        let make = move || {
+            let mut made = Ok(());
+            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = view_pipe(name, run_view_format()).map(drop)))?;
+            made
+        };
+        (format!("join {name}"), Box::new(make))
+    }));
     v.extend(["axis_count", "axis_write", "view_expand"].map(|name| made("chunk_views", name, chunk_views_source)));
     v
 }
@@ -332,6 +342,53 @@ static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         include_str!("join_stages.uglykl")
     )
 });
+
+/// The join kernels that read a view (`vread`): each compiled for the tape format of the views it reads (decision 0576),
+/// the view's format field a constant, so it holds that format's reads alone. On an Arc 140V `stage_count` compiled in
+/// 36 s over every format, 16 s over format 16's and 7 s over format 15's.
+const VIEW_KERNELS: [&str; 7] = ["ix_bucket", "stage_count", "stage_scatter", "scan_count", "scan_scatter", "witness_count", "rows_copy"];
+
+/// The join kernels' source for views of tape format `format` (0: of several, each view read tells its own).
+fn view_source(format: u32) -> String {
+    if format == 0 {
+        return SOURCE.to_owned();
+    }
+    let at = std::mem::offset_of!(rerail_clif::view::TapeView, format);
+    format!("#define clif_view(v,a) (((a)=={at}u)?{format}u:(v)[(a)/4u])\n{}", *SOURCE)
+}
+
+/// The format a run's views are of, as it stores its tapes (`Format::of_run`): the view kernels compiled ahead.
+pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
+    match crate::code_rule_dsl::tape::formats::Format::of_run() {
+        crate::code_rule_dsl::tape::formats::Format::F15 => 15,
+        crate::code_rule_dsl::tape::formats::Format::F16 => 16,
+        crate::code_rule_dsl::tape::formats::Format::F16Z => rerail_clif::view::F16Z_FORMAT,
+    }
+}
+
+/// The view kernel `name` for views of `format` (0: several).
+fn view_pipe(name: &str, format: u32) -> Result<Arc<rerail_accel::gpu::join::Pipe>, String> {
+    pipeline(&format!("join{format}"), name, || view_source(format))
+}
+
+/// The tape format of the views `rels` read (`ViewInPlace::format`), one for them all: a relation reads none, and with
+/// no view the run's format is taken, whose kernels are made already.
+fn views_format<'a>(rels: impl IntoIterator<Item = &'a DevRel>) -> u32 {
+    let mut found: Option<u32> = None;
+    for v in rels.into_iter().filter_map(|r| r.view.as_ref()) {
+        found = Some(match found {
+            None => v.format,
+            Some(f) if f == v.format => f,
+            Some(_) => 0,
+        });
+    }
+    found.unwrap_or_else(run_view_format)
+}
+
+/// The relation a probe reads: its index's (`DevIndex::of`), else itself.
+fn probed<'r>(rel: &'r DevRel, index: Option<&'r DevIndex>) -> &'r DevRel {
+    index.map_or(rel, |ix| ix.of(rel))
+}
 
 /// Whether the process has the device the stages run on.
 pub fn available() -> bool {
@@ -389,8 +446,39 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
     }
     let total: usize = each.iter().map(|e| e.2).sum();
     let first_start = each.first().map_or(0, |e| e.1);
-    // Alone in its block, with room for an index by each key strata probe an axis by (`AXIS_KEYS`).
-    let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, crate::code_rule_dsl::facts::rows::AXIS_KEYS);
+    // Each document's first row where it has rows (a chunk's rows past the ones' before): the runs of its ids' keys
+    // (decision 0494 step 7), read off the scanned starts where they lie.
+    let runs_of = |put: &mut dyn FnMut(u32, u32)| {
+        let mut past = 0u32;
+        for (chunk, &(_, start_at, len)) in chunks.iter().zip(&each) {
+            let b = &chunk.block;
+            // SAFETY: the chunk's root and documents, which `device_chunk::build` wrote; its starts, scanned above.
+            unsafe {
+                let root = &*b.ptr::<ChunkRoot>(chunk.root);
+                let n = root.nodes as usize;
+                let starts = std::slice::from_raw_parts(b.ptr::<u32>(start_at), n + 1);
+                let docs = root.docs.as_slice();
+                for (i, d) in docs.iter().enumerate() {
+                    let end = docs.get(i + 1).map_or(n, |e| e.node_row as usize);
+                    let (from, to) = (starts[d.node_row as usize], starts[end]);
+                    if to > from {
+                        put(past + from, d.key);
+                    }
+                }
+            }
+            past += len as u32;
+        }
+    };
+    let mut runs = 0;
+    runs_of(&mut |_, _| runs += 1);
+    // Alone in its block, with room for an index by each key strata probe an axis by (`AXIS_KEYS`). Each column
+    // its ids' low bits, under the documents' keys.
+    let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, crate::code_rule_dsl::facts::rows::AXIS_KEYS, runs);
+    let mut k = 0;
+    runs_of(&mut |first, key| {
+        keys.put(k, first, key);
+        k += 1;
+    });
     if total > 0 {
         let needed = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
         let rows_at = rows.rows_at() as i64;
@@ -1503,7 +1591,7 @@ impl Batch {
         let buffer = bound(&home)?;
         assert!(room.rows as u64 + 4 * n as u64 <= buffer.buffer.length(), "the index's room within the buffer bound");
         if n > 0 {
-            let bucket = pipeline("join", "ix_bucket", || SOURCE.to_owned())?;
+            let bucket = view_pipe("ix_bucket", views_format([rel]))?;
             let place = pipeline("join", "ix_place", || SOURCE.to_owned())?;
             let bits = (u64::BITS - room.mask.leading_zeros()).max(8).div_ceil(8) * 8;
             assert!(cols.len() <= 8, "an index of {} columns", cols.len());
@@ -1562,8 +1650,9 @@ impl Batch {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn stage(&mut self, mut stage: Stage, left: &Table, right: Option<(&DevRel, Option<&DevIndex>)>, screen: Option<&Screen>, in_slot: usize, out_slot: usize,
                                           totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
-        let count = pipeline("join", "stage_count", || SOURCE.to_owned())?;
-        let scatter = pipeline("join", "stage_scatter", || SOURCE.to_owned())?;
+        let format = views_format(right.map(|(rel, index)| probed(rel, index)));
+        let count = view_pipe("stage_count", format)?;
+        let scatter = view_pipe("stage_scatter", format)?;
         stage.cap_in = left.cap as u32;
         stage.cap_out = out.cap as u32;
         stage.in_slot = in_slot as u32;
@@ -1582,8 +1671,8 @@ impl Batch {
         let fbuf = self.screen(&mut stage, screen);
         if left.cap == 1 && stage.mode == JOIN && right.is_some() {
             // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
-            let scount = pipeline("join", "scan_count", || SOURCE.to_owned())?;
-            let sscatter = pipeline("join", "scan_scatter", || SOURCE.to_owned())?;
+            let scount = view_pipe("scan_count", format)?;
+            let sscatter = view_pipe("scan_scatter", format)?;
             let n = stage.nr as usize + 1;
             let counts = scratch(FREE, 4 * (n + 1))?;
             let scan = Scan::new(n)?;
@@ -1652,8 +1741,9 @@ impl Batch {
     pub(in crate::code_rule_dsl) fn witness(&mut self, mut stage: Stage, left: &Table, right: (&DevRel, Option<&DevIndex>), screen: Option<&Screen>, rest: &[(Stage, &DevRel, Option<&DevIndex>)],
                                             in_slot: usize, out_slot: usize, totals: &Words, out: &Table) -> Result<(), Error> {
         assert!(rest.len() <= WITNESS_PROBES, "a witness of more probes than it takes");
-        let count = pipeline("join", "witness_count", || SOURCE.to_owned())?;
-        let scatter = pipeline("join", "stage_scatter", || SOURCE.to_owned())?;
+        let format = views_format(std::iter::once(probed(right.0, right.1)).chain(rest.iter().map(|(_, rel, index)| probed(rel, *index))));
+        let count = view_pipe("witness_count", format)?;
+        let scatter = view_pipe("stage_scatter", format)?;
         stage.cap_in = left.cap as u32;
         stage.cap_out = out.cap as u32;
         stage.in_slot = in_slot as u32;
@@ -1812,7 +1902,10 @@ impl Batch {
             return Ok(());
         }
         assert!(cols.len() <= 16);
-        let copy = pipeline("join", "rows_copy", || SOURCE.to_owned())?;
+        let copy = view_pipe("rows_copy", views_format(match src {
+            Rows::Rel(r) => Some(r),
+            Rows::Table(_) => None,
+        }))?;
         let (s, src_rows, src_at, _) = src.of();
         let (d, dst_rows, _, dst_rows_at) = dst.of();
         let src_from = match src {

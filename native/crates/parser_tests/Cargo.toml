@@ -7,13 +7,15 @@ description = "The parsers' tests that need no engine: the .rerail ladder agains
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-compiler/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-tape-format/test-hooks"]
+test-hooks = ["rerail-compiler/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-rust-stream/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
 rerail-bitlex = { path = "../bitlex" }
 rerail-cpu-block = { path = "../cpu_block" }
 rerail-cpu-stream = { path = "../cpu_stream" }
+# Tier 2 as Rust, against the JIT (`aot_tests`, `json_tests`).
+rerail-rust-stream = { path = "../rust_stream" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 # Format 16's tapes, which the JSON suite compares (decision 0434).
 rerail-tape-format = { path = "../tape_format" }

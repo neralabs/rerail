@@ -1458,3 +1458,54 @@ fn a_dead_runs_lease_neither_blocks_a_deletion_nor_survives_it() {
     store.delete_analysis_scope("named:dead").unwrap();
     assert!(!dir.join("41").exists());
 }
+
+/// A run an analysis run owns is read under the owner's lease (decision 0547), which holds every collection off while
+/// it lasts: the run leaves its collection to the owner, which collects as it finishes (`collect_after`). Each of
+/// ep2's runs started its own and found the lease held: no decision in 13 runs, every program's plans live.
+#[test]
+fn an_analysis_run_collects_as_it_finishes() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, store) = store("analysis-run-collects");
+    let check = ContentStore::open(&path).unwrap();
+    let mut run = AnalysisRun::begin(store, "named:review", "test").unwrap();
+    let root = "/virtual/repository";
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    // Three programs over the root, one after another: the first past the root's two protected runs, so a decision
+    // is worth making.
+    for (i, plan) in [[1u8; 32], [2u8; 32], [3u8; 32]].into_iter().enumerate() {
+        assert!(check.record_corpus_run_retaining(root, &[], 1, 1, plan, &[], None, None, now - 3 + i as i64, None, Some(&run.owner)).unwrap());
+    }
+    let decided = || -> i64 { check.connection.lock().unwrap().query_row("SELECT coalesce((SELECT run FROM corpus_decided WHERE singleton=1), 0)", [], |r| r.get(0)).unwrap() };
+    let live = |plan: [u8; 32]| -> bool { check.connection.lock().unwrap().query_row("SELECT coalesce((SELECT live FROM corpus_plans WHERE plan_digest=?1), 0)", [&plan[..]], |r| r.get::<_, i64>(0)).unwrap() == 1 };
+    let pass = check.collect_corpus_pass(&CorpusPolicy::default(), now).unwrap();
+    assert!(pass.kept.is_none() && decided() == 0, "the owner's lease holds a pass off");
+    run.finish(true).unwrap();
+    assert!(decided() > 0, "decided as the owner finished");
+    assert!(live([1; 32]) && live([2; 32]) && live([3; 32]), "under the history's high water, the decision keeps all three");
+}
+
+/// A whole-run cutoff's hit under an analysis run (decision 0547) records nothing new: it re-owns the manifests the
+/// recorded run wrote, which the owner publishes as it finishes. Skipped instead, each `logic` command's warm run
+/// evaluated again.
+#[test]
+fn a_cutoff_under_an_analysis_run_owns_the_recorded_manifests() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, store) = store("cutoff-owns-recorded");
+    let check = ContentStore::open(&path).unwrap();
+    let root = "/virtual/repository";
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    let mut first = AnalysisRun::begin(store, "named:review", "test").unwrap();
+    assert!(check.record_corpus_run_retaining(root, &[], 1, 1, [1; 32], &[[2; 32]], None, None, now - 1, None, Some(&first.owner)).unwrap());
+    first.finish(true).unwrap();
+    let owned_by = |acquisition: i64| -> i64 {
+        check.connection.lock().unwrap().query_row("SELECT count(*) FROM analysis_scope_manifest WHERE acquisition=?1", [acquisition], |r| r.get(0)).unwrap()
+    };
+    let last_run = || -> i64 { check.connection.lock().unwrap().query_row("SELECT max(last_run) FROM corpus_manifests", [], |r| r.get(0)).unwrap() };
+    let before = last_run();
+    let mut second = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:review", "test").unwrap();
+    assert_eq!(check.own_recorded_manifests("/virtual/elsewhere", &[[1; 32], [2; 32]], &second.owner, now).unwrap(), 0, "another root's are not this run's");
+    assert_eq!(check.own_recorded_manifests(root, &[[1; 32], [2; 32]], &second.owner, now).unwrap(), 1, "the recorded run's manifest");
+    assert_eq!(owned_by(second.owner.acquisition), 1, "staged under this run's acquisition");
+    assert!(last_run() > before, "its run moved: protected as the newest");
+    second.finish(true).unwrap();
+}

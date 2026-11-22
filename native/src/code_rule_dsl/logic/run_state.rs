@@ -34,7 +34,7 @@ use std::any::Any;
 
 /// How a job on another thread treats a thread-local ([module docs](self)).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Class {
+pub enum Class {
     Carried,
     Thread,
     Call,
@@ -45,7 +45,7 @@ use Class::*;
 
 /// Every thread-local outside the tests: `(file under native/, name, class, why)` (Carried ones need no why: they
 /// are carried).
-pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
+pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
     ("crates/c_directives/src/expand.rs", "JIT", Thread, "this thread's Cranelift code of the process's pp words (0348), without a rustc build of them; the same on any thread"),
     ("crates/clif/src/rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
@@ -199,54 +199,51 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
 ];
 
 /// How many thread-locals are run context not carried yet ([`NotYet`]): lowered as each is carried, never raised.
-const NOT_YET_PINNED: usize = 0;
+pub const NOT_YET_PINNED: usize = 0;
 
 /// One carried piece of the run's context, taken on the caller's thread: entering it on another thread returns a
 /// guard that puts back what that thread had.
-pub(crate) trait Part: Send + Sync {
+pub trait Part: Send + Sync {
     fn enter(&self) -> Box<dyn Any>;
 }
 
 /// What [`Carry::here`] takes, by the names of the thread-locals each part carries.
-pub(crate) struct Capture(Vec<(&'static [&'static str], Box<dyn Part>)>);
+pub struct Capture(Vec<(&'static [&'static str], Box<dyn Part>)>);
 
 impl Capture {
     /// Carries the thread-locals `names` by `part` (shared state, merged back as the job ends).
-    pub(crate) fn part(&mut self, names: &'static [&'static str], part: impl Part + 'static) {
+    pub fn part(&mut self, names: &'static [&'static str], part: impl Part + 'static) {
         self.0.push((names, Box::new(part)));
     }
 }
 
 /// A part built from a pair of the owning module's functions: what to take, and how to enter it.
-pub(crate) struct Shared<T: Clone + Send + Sync + 'static, G: 'static>(pub(crate) T, pub(crate) fn(T) -> G);
+pub struct Shared<T: Clone + Send + Sync + 'static, G: 'static>(pub T, pub fn(T) -> G);
 impl<T: Clone + Send + Sync + 'static, G: 'static> Part for Shared<T, G> {
     fn enter(&self) -> Box<dyn Any> {
         Box::new((self.1)(self.0.clone()))
     }
 }
 
-/// The modules whose thread-locals are carried, each taking its own.
-const CARRIERS: &[fn(&mut Capture)] = &[
-    // The run first: entered first, it is put back last, so every other part's guard drops inside it (a plans
-    // guard's drop counts into the run).
-    super::run::carried,
-    super::plan::carried,
-    super::plan::keeps::carried,
-    // A job's scope of the run's chunk (Q203 item 3).
-    super::native::setfix::carried,
-    #[cfg(any(test, feature = "test-hooks"))]
-    super::plan::corpus::test_store::carried,
-];
+/// The modules whose thread-locals are carried, each taking its own, in the order they are entered. The program's
+/// composition registers them (boot, or a crate's own test binary as it loads): they are the run's, the planner's
+/// and setfix's, and the planner is a crate above this one (`logic::CARRIERS`). The run comes first: entered first,
+/// it is put back last, so every other part's guard drops inside it (a plans guard's drop counts into the run).
+pub static CARRIERS: rerail_registry::Slot<&'static [fn(&mut Capture)]> = rerail_registry::Slot::new("the run's carried context (run_state::CARRIERS)");
+
+/// The carriers of a program without the planner (setfix's own test binary): the run's, then a job's scope of the
+/// run's chunk.
+pub const RUN_CARRIERS: &[fn(&mut Capture)] = &[super::run::carried, super::native::setfix::carried];
 
 /// The run's context on the caller's thread, for a job on another to enter ([module docs](self)).
-pub(crate) struct Carry {
+pub struct Carry {
     parts: Vec<(&'static [&'static str], Box<dyn Part>)>,
     /// The profile's span open where the job was started: the job's span is under it, on whichever thread runs it.
     under: Option<String>,
 }
 
 /// While it lives, a job's thread is in its caller's context; dropped, the thread's own is back.
-pub(crate) struct Entered(Vec<Box<dyn Any>>);
+pub struct Entered(Vec<Box<dyn Any>>);
 impl Drop for Entered {
     fn drop(&mut self) {
         // Put back in the reverse order of entry.
@@ -258,30 +255,30 @@ impl Drop for Entered {
 
 impl Carry {
     /// Takes the run's context on this thread.
-    pub(crate) fn here() -> Carry {
+    pub fn here() -> Carry {
         let mut c = Capture(Vec::new());
-        for f in CARRIERS {
+        for f in CARRIERS.get().unwrap_or_else(|missing| panic!("{missing}: no program registered what a job carries")) {
             f(&mut c);
         }
         Carry { parts: c.0, under: super::profile::here() }
     }
 
     /// Puts the context on this thread while the guard lives.
-    pub(crate) fn enter(&self) -> Entered {
+    pub fn enter(&self) -> Entered {
         Entered(self.parts.iter().map(|(_, p)| p.enter()).collect())
     }
 
     /// The profile's span open where it was taken.
-    pub(crate) fn under(&self) -> Option<&str> {
+    pub fn under(&self) -> Option<&str> {
         self.under.as_deref()
     }
 
     /// The thread-locals it carries.
-    #[cfg(test)]
-    fn names(&self) -> Vec<&'static str> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn names(&self) -> Vec<&'static str> {
         self.parts.iter().flat_map(|(n, _)| n.iter().copied()).collect()
     }
 }
 
-#[cfg(test)]
-mod tests;
+// Its tests read every thread-local of the tree and what the whole program carries (`logic::CARRIERS`):
+// `rerail-logic`'s facade of this module mounts `tests.rs`.

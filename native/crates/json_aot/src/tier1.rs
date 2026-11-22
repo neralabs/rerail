@@ -107,8 +107,6 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut m_f_str = vec![0u64; nw];
     {
         let mut at = 0usize;
-        // The region opened last of the kinds with no `after`.
-        let mut plain = usize::MAX;
         // Each kind's next opener, at or after where it was looked for (`n`: none).
         let mut nx = [first_bit(&m_q, 0).unwrap_or(n)];
         loop {
@@ -138,7 +136,6 @@ pub fn lex(src: &[u8]) -> Lexed {
                             at = n;
                         }
                     }
-                    plain = 0;
                 }
                 _ => break,
             }

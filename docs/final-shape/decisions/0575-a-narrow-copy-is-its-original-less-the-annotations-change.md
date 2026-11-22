@@ -100,6 +100,14 @@ as its own rules again (781 G: the work moves into its readers).
 | 7, twins | 781 G | 1.51 GB |
 | 8, bounds handed on | 775 G | 1.53 GB |
 | 6, read in place | 761 G | 1.52 GB |
+## Beside the copies within one document (rr-align, 2026-11-21)
+
+On rr-align this sits beside 15e8c73191 (0165, from cost-classifier-metal-rf): a copy whose original holds rows of
+one document (`one_document`) is its original's rows whose node columns are under the narrow bound, a filter. Such a
+copy is not diffed. A diffed rule that reads one reads it as a change point, as it reads another diffed copy: its
+rows gone are its original's with a node column past the bound (`rr_gone_<orig>`, one rule a node column), and none
+is added (`rr_added_<orig>`, declared with no rule). So an original that reads a copy within one document is still
+diffed. The rest are derived again, as before.
 
 ## Not done
 

@@ -1519,6 +1519,27 @@
             // The device's solve, its answer as ids too: read where it lies.
             read_in_place("the device's solve", &dev, &[0, 1]);
         }
+        // The axes over one set share its solves (decision 0494 step 7): a set that nests nowhere (each document's root
+        // kind, which no node of it is below) gives `inside` its `nearest`'s relation, read in place; a set that nests
+        // gives each its own, the rows an axis alone makes. Either solved first, on either binding.
+        let roots: Vec<i64> = vec![node.value(0, 2)];
+        for (set, binding, inside_first) in [(&roots, Binding::Cpu, true), (&roots, Binding::Metal, false), (&kinds, Binding::Cpu, true), (&kinds, Binding::Cpu, false)] {
+            let shared = std::sync::Arc::new(crate::code_rule_dsl::facts::vtab::syntax::within::Solves::default());
+            let near = Within::axis(Arc::clone(&batch), Axis::Nearest, set, binding).sharing(Arc::clone(&shared));
+            let ins = Within::axis(Arc::clone(&batch), Axis::Inside, set, binding).sharing(Arc::clone(&shared));
+            let (a, b) = if inside_first { (ins.in_block().unwrap(), near.in_block().unwrap()) } else { (near.in_block().unwrap(), ins.in_block().unwrap()) };
+            let alone = Within::axis(Arc::clone(&batch), Axis::Inside, set, Binding::Cpu);
+            let n = alone.len();
+            assert_eq!(ins.len(), n, "{binding:?}: inside's rows, shared or not");
+            for c in 0..2 {
+                assert_eq!((0..n).map(|r| ins.value(r, c)).collect::<Vec<_>>(), (0..n).map(|r| alone.value(r, c)).collect::<Vec<_>>(), "{binding:?}: inside's column {c}");
+            }
+            let one = Arc::ptr_eq(&a.facts, &b.facts) && a.at == b.at;
+            assert_eq!(one, n == near.len(), "{binding:?}, {} kinds: one relation exactly where inside's rows are nearest's", set.len());
+            if set.len() == 1 {
+                assert!(one, "{binding:?}: the roots' set nests nowhere");
+            }
+        }
         // Containment over every kind: a relation of exactly the total's rows, as many as the host's containment, and
         // the same rows on a second solve.
         let chunk = batch.chunk();

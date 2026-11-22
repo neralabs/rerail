@@ -246,7 +246,7 @@ fn r2_a_new_process_reads_its_kept_rows_in_place() {
 }
 
 /// R1 in the source: no engine code outside tests names a maintenance relation. The names live in one list
-/// (`maintain::shape::MAINTENANCE_SUFFIXES`), which this reads.
+/// (`maintain::shape::MAINTENANCE_SUFFIXES`, the run's `run::shape`), which this reads.
 #[test]
 fn r1_the_engine_source_names_no_maintenance_relation() {
     let root = crate::source_tree::native().join("src/code_rule_dsl/logic");
@@ -259,7 +259,7 @@ fn r1_the_engine_source_names_no_maintenance_relation() {
             let name = p.file_name().unwrap().to_string_lossy().into_owned();
             if p.is_dir() {
                 stack.push(p);
-            } else if name.ends_with(".rs") && !name.contains("tests") && !p.ends_with("corpus/maintain.rs") {
+            } else if name.ends_with(".rs") && !name.contains("tests") && !p.ends_with("logic/run/shape.rs") {
                 for (i, line) in std::fs::read_to_string(&p).unwrap().lines().enumerate() {
                     let code = line.split("//").next().unwrap_or("");
                     if shape::MAINTENANCE_SUFFIXES.iter().any(|s| code.contains(s)) {

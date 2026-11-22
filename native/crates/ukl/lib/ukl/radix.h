@@ -48,9 +48,6 @@
 #define UKL_RADIX_VT_MAX 1u
 #endif
 #endif
-#if UKL_RADIX_VT_MAX != 1u && !UKL_RADIX_MATCHED
-#error "ukl/radix.h: UKL_RADIX_VT_MAX above 1 needs SIMD groups of 32 lanes or more"
-#endif
 
 typedef struct UklRadixArgs {
     uint32_t n;

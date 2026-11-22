@@ -89,6 +89,11 @@ impl Source {
 
 pub use crate::code_rule_dsl::facts::core::input_columns;
 
+/// An input's column names (`input_columns`); any other relation's columns are `c0`, `c1`, ….
+pub fn sql_col(rel: &str, col: usize) -> String {
+    input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
+}
+
 impl Relation {
     /// The relation the program names, if it is one (`Input`, `Derived`, `Batch`, `Bound`).
     pub fn program_relation(&self) -> Option<&str> {
@@ -294,7 +299,7 @@ impl Query {
 
     /// The statement reads only relations `declared` accepts, CTEs before or while they are defined, and
     /// columns its FROM items have, in scope.
-    pub(in crate::code_rule_dsl) fn check(&self, declared: &dyn Fn(&Relation) -> bool) -> Result<(), String> {
+    pub fn check(&self, declared: &dyn Fn(&Relation) -> bool) -> Result<(), String> {
         let mut ctes = BTreeMap::<&str, Vec<Option<String>>>::new();
         for cte in &self.ctes {
             if ctes.contains_key(cte.name.as_str()) {

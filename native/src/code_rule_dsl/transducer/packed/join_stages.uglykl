@@ -111,7 +111,7 @@ UKL_INLINE int64_t lane_of(int64_t v, uint32_t w) {
 
 // A value of the probed relation: row `r`'s in column `col`, read in its block through the generated reads (`r_at`,
 // decision 0325). Every relation the device reads lies in a block (step 5).
-UKL_INLINE int64_t rget(StageP s, Longs R, uint32_t r, uint32_t col) {
+UKL_COLD int64_t rget(StageP s, Longs R, uint32_t r, uint32_t col) {
     // A `has` walk's candidate is the node of the column not probed (`by_has`): either column reads its id.
     if (s->v_has != 0u) return vread(1u, s->v_dir, r, 1u);
     if (s->r_view != 0u) return vread(s->r_view, s->v_dir, r, col);
@@ -163,7 +163,7 @@ UKL_INLINE bool arith(StageP s, uint32_t j, Longs L, uint32_t t, Longs R, uint32
 }
 
 // Whether every arithmetic bind of the stage has a value for this row.
-UKL_INLINE bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
+UKL_COLD bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
     for (uint32_t b = 0; b < s->nbinds && b < 16; b++) {
         if (s->bind_kind[b] != 3) continue;
         int64_t v = 0;
@@ -173,7 +173,7 @@ UKL_INLINE bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
 }
 
 // The row program's operations for one row: bit x of the result is operation x's value.
-UKL_INLINE uint64_t eval(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
+UKL_COLD uint64_t eval(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
     uint64_t v = 0;
     for (uint32_t x = 0; x < s->nops && x < 64; x++) {
         UKL_GLOBAL const uint32_t* o = s->ops[x];
@@ -347,7 +347,7 @@ UKL_INLINE void probe(StageP s, Longs R, UKL_PRIVATE const int64_t* kv, UKL_PRIV
 // A binding's candidates (`probe`), and its key values.
 // A key the probed relation's screen refuses (`Stage::screen`, a column's kept filter: decision 0488) has none, and
 // its index group is not read. `F` is the screen's buffer.
-UKL_INLINE void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL const uint8_t* F, UKL_PRIVATE int64_t* kv,
+UKL_COLD void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL const uint8_t* F, UKL_PRIVATE int64_t* kv,
                            UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     *how = 0u;
     if (s->mode == 3) { *lo = 0; *hi = 1; return; }
@@ -366,7 +366,7 @@ UKL_INLINE bool row_live(StageP s, Longs R, uint32_t r) {
 }
 
 // Whether row r matches the binding's keys and the relation's column tests.
-UKL_INLINE bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
+UKL_COLD bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
     // A `has` walk's candidates hold its key by their making (`by_has`); a descendant is a row where it is in the set.
     // Its two columns are never one node (an ancestor is strict), so a test of them holds for no row.
     if (s->v_has != 0u) return s->ntests == 0u && (s->v_has == 1u || has_member(s, r));
@@ -378,7 +378,7 @@ UKL_INLINE bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t
 
 // An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
 // or max of no rows, or a tested value that differs), 2 when a sum passes 64 bits.
-UKL_INLINE uint32_t aggregate(StageP s, Longs L, uint32_t t, Longs R, uint32_t lo, uint32_t hi, uint32_t how,
+UKL_COLD uint32_t aggregate(StageP s, Longs L, uint32_t t, Longs R, uint32_t lo, uint32_t hi, uint32_t how,
                               UKL_PRIVATE const int64_t* kv, UKL_PRIVATE int64_t* v) {
     uint32_t kind = s->agg[0] & 0xff;
     int64_t cnt = 0, sum = 0, mn = 0, mx = 0;
@@ -602,7 +602,7 @@ DEFINE_KERNEL2(join, stage_count,
     }
 }
 
-UKL_INLINE void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, UKL_GLOBAL int64_t* O, uint32_t at) {
+UKL_COLD void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, UKL_GLOBAL int64_t* O, uint32_t at) {
     for (uint32_t k = 0; k < s->nslots; k++) O[(uint64_t)k * s->cap_out + at] = L[(uint64_t)k * s->cap_in + t];
     for (uint32_t b = 0; b < s->nbinds && b < 16; b++) {
         uint32_t kind = s->bind_kind[b];
