@@ -827,7 +827,10 @@ impl KeptGather {
     /// `space`'s puts, each key once: a later put replaces an earlier one of its key, but a retag (`Reads`) keeps the
     /// rows an earlier put of this wave gave it, and their digest, with its reads. A retag has no digest of its own
     /// (its rows are the entry's): taken over, it gave a relation handed off with its rows (its digest known then) and
-    /// retagged at the run's end digest 0, and every reader of it ran again in the next run.
+    /// retagged at the run's end digest 0, and every reader of it ran again in the next run. A program's reader record
+    /// joins its earlier one, as the space's record only grows (decision 0401 step 8): each names what its own puts
+    /// did, and replaced, the wave's last record was the program's, so the next run asked the others' entries again,
+    /// and wrote its record (a warm run's write).
     fn add(&mut self, space: [u8; 32], puts: Vec<KeptPut>) {
         let (list, at) = self.spaces.entry(space).or_default();
         for p in puts {
@@ -836,7 +839,10 @@ impl KeptGather {
             match at.get(&key) {
                 Some(&i) => {
                     let was = &mut list[i];
-                    if matches!(p.what, KeptWhat::Reads) && !matches!(was.what, KeptWhat::Reads | KeptWhat::Gone) {
+                    if p.rel == READERS {
+                        let all: BTreeSet<[u8; 32]> = put_idents(was).into_iter().chain(put_idents(&p)).collect();
+                        *was = readers_put(p.ident, &all);
+                    } else if matches!(p.what, KeptWhat::Reads) && !matches!(was.what, KeptWhat::Reads | KeptWhat::Gone) {
                         was.reads = p.reads;
                     } else if p.rel == READERS {
                         // A reader record only grows (decision 0401 step 8): two of a wave are one, naming both's.

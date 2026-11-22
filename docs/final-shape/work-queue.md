@@ -10260,3 +10260,10 @@ Theirs' picked puts taken: no kept put holds a heap vector, and ours' new puts (
 prepared facts, models) are blocks. A source's structure statistics keep ours' one patchable form; theirs'
 unpatchable `of_structure` and format 4 go. `source_rows` moves to the planner, which reads it
 (`notes/roll-up-53-final-rerail-shape.md`).
+
+### Q475. Roll-up 54 (final-rerail-shape-rr-align 00c113cfcd onto Pulling-it-all-together): what the merge chose
+
+A semi-join's statistics at its held nodes are theirs' kept rows beside the documents' table. Ours' t51 item 2
+(`held_counted`, `held_stats_name`) is reversed, its gap closed by theirs. Theirs' worklist runs ours' `covered` and
+anchor fixpoints. The image store's `where_kept` joins ours' `images_store` in `rr.rs`, above the corpus it reads
+(`notes/roll-up-54-rr-align.md`).
