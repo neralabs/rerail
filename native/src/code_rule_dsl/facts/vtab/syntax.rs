@@ -1949,6 +1949,8 @@ pub struct Batch {
     by_module: OnceLock<Option<HashMap<i64, Vec<u32>>>>,
     /// Each host's guests' keys (`Batch::guests_of`), once a read by a host's node asked.
     guests_of: OnceLock<Option<HashMap<u32, Vec<u32>>>>,
+    /// Its documents' keys by the document key their `docof` rows give (`keys_of_documents`), once a read by it asked.
+    by_file_key: OnceLock<HashMap<u32, Vec<u32>>>,
     /// What every group of the batch, and of the batches it grows into, makes its rows with (`Shared`).
     shared: Arc<parking_lot::Mutex<Shared>>,
     /// A tape value's batch alone (decision 0431 §8): the chunk's batch it is admitted to, whose documents hold its
@@ -3216,6 +3218,7 @@ impl Batch {
             given_rows: OnceLock::new(),
             by_path: OnceLock::new(),
             guests_of: OnceLock::new(),
+            by_file_key: OnceLock::new(),
             by_module: OnceLock::new(),
             shared: Arc::clone(&grown.shared),
             outer: if alone { last.clone() } else { None },

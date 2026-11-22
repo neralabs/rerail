@@ -2505,6 +2505,33 @@ fn a_made_relations_estimates_make_no_document() {
     }
 }
 
+/// A probe of a made relation by its document column (`docof(n, d)` by `d`, as a maintained join's lead reads it)
+/// makes the documents that key names alone: it made the whole batch (`target`), every one of the data layer's 518
+/// documents at an edit (t43 step 21). Its rows are the eager batch's.
+#[test]
+fn a_probe_by_a_document_key_makes_that_document_alone() {
+    let store = ContentStore::open(&temp("by-key")).unwrap();
+    let docs = || -> Vec<Document> {
+        (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y={k}):\n    return g(x)\n\nclass C{k}:\n    pass\n"))).collect()
+    };
+    // A span read (`src_line`) makes `docof` rows of the batch's documents, not a view of the tape.
+    let reads = ["node", "child", "docof", "src_line", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let eager = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let counts: HashMap<u32, made::ViewCounts> = eager.view_counts().into_iter().collect();
+    let totals: HashMap<String, usize> = made_sources(&eager).into_iter().map(|(n, _, s)| (n.to_owned(), s.len())).collect();
+    let lazy = Batch::new(&store, docs(), &projection, &[], &[], false, None, &counts).unwrap();
+    lazy.give_totals(&totals);
+    let of = |b: &Arc<Batch>| Arc::clone(&made_sources(b).into_iter().find(|(n, _, _)| *n == "docof").expect("docof made as rows").2);
+    let (want, got) = (of(&eager), of(&lazy));
+    let key = i64::from(lazy.docs.key(2));
+    let rows = |s: &Arc<dyn Source>, found: Vec<usize>| -> BTreeSet<(i64, i64)> { found.into_iter().map(|r| (s.value(r, 0), s.value(r, 1))).collect() };
+    let found = rows(&got, got.lookup(1, &[key]).unwrap());
+    assert!(!found.is_empty(), "the document's nodes");
+    assert_eq!(lazy.docs.made_count(), 1, "the probe made its document alone");
+    assert_eq!(found, rows(&want, want.lookup(1, &[key]).unwrap()), "its rows are the eager batch's");
+}
+
 /// A tape value admitted into the batch (decision 0431 §8) runs no `ast` matcher: the files the batch was started
 /// with are matched once, and are not matched again (a value alone is no file, `Grower::admit`). Each round of guests
 /// ran the wave over every file of the chunk again, 17 s of 131 s of CPU on `all` once the reference graph's rules

@@ -428,6 +428,9 @@ pub(super) struct Rows {
     path_column: Vec<Option<usize>>,
     /// The same for its document's module (`doc(d, _, module)`, `Batch::keys_of_modules`).
     module_column: Vec<Option<usize>>,
+    /// Each relation's column of its row's document's key, beside the node that routes it (`docof(n, d)`'s `d`): a
+    /// read of it by a key is routed to the documents whose rows hold that key (`Batch::keys_of_documents`).
+    key_column: Vec<Option<usize>>,
     /// How many of `names` are the batch's relations (`Made::relations`), which a program's derived relations replace;
     /// the `match_all` and the matchers' follow.
     pub(super) relations: usize,
@@ -518,6 +521,13 @@ impl ByDocument {
     fn module_column(name: &str, columns: &[String]) -> Option<usize> {
         Self::named_column(name, columns, "module")
     }
+    /// The column of a row's document's key in a relation routed by its node (`docof(n, d)`).
+    fn key_column(name: &str, columns: &[String]) -> Option<usize> {
+        match Self::of(name, columns) {
+            Self::Id(c) => columns.iter().enumerate().position(|(i, n)| i != c && n == "d"),
+            _ => None,
+        }
+    }
     fn named_column(name: &str, columns: &[String], column: &str) -> Option<usize> {
         match Self::of(name, columns) {
             Self::Key(_) => columns.iter().position(|c| c == column),
@@ -591,8 +601,9 @@ impl Rows {
         let distinct = names.iter().map(|_| OnceLock::new()).collect();
         let path_column = names.iter().zip(&template).map(|(n, t)| ByDocument::path_column(n, &Source::columns(t.as_ref()))).collect();
         let module_column = names.iter().zip(&template).map(|(n, t)| ByDocument::module_column(n, &Source::columns(t.as_ref()))).collect();
+        let key_column = names.iter().zip(&template).map(|(n, t)| ByDocument::key_column(n, &Source::columns(t.as_ref()))).collect();
         let also = names.iter().zip(&by).map(|(n, b)| node_columns.get(n).map_or_else(Vec::new, |cs| cs.iter().copied().filter(|&c| Some(c) != b.column()).collect())).collect();
-        Self { state: parking_lot::Mutex::new(state), made: parking_lot::Condvar::new(), makes: Default::default(), names, template, by, also, path_column, module_column, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new(), distinct }
+        Self { state: parking_lot::Mutex::new(state), made: parking_lot::Condvar::new(), makes: Default::default(), names, template, by, also, path_column, module_column, key_column, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new(), distinct }
     }
     /// The groups made.
     pub(super) fn groups(&self) -> usize {
@@ -805,6 +816,19 @@ impl Batch {
         Some(values.iter().filter_map(|v| by.get(v)).flatten().copied().collect())
     }
 
+    /// The keys of the documents whose rows name document key `values` (`docof`'s `d`): the document of each key, and
+    /// the guests made of a file's code, whose `d` is their file's (`Docs::file`, decision 0431 §4). None made.
+    fn keys_of_documents(&self, values: &[i64]) -> Vec<u32> {
+        let by = self.by_file_key.get_or_init(|| {
+            let mut by: HashMap<u32, Vec<u32>> = HashMap::new();
+            for i in 0..self.docs.len() {
+                by.entry(self.docs.file(i)).or_default().push(self.docs.key(i));
+            }
+            by
+        });
+        values.iter().filter_map(|&v| u32::try_from(v).ok()).filter_map(|v| by.get(&v)).flatten().copied().collect()
+    }
+
     /// Each host's guests, by key (decision 0055), from the documents' places, none made: what a probe of a guest's
     /// row by its host's node makes (`ByDocument::Host`). `None` where a tape value is among them (decision 0431),
     /// whose rows stand at places in many hosts.
@@ -902,6 +926,8 @@ impl MadeRows {
             // A node of the row's own document: every value must name one of the batch's, or the read is not routed
             // (a row of a document left unmade could hold it).
             values.iter().map(|&v| ByDocument::Id(column).document(v).filter(|&k| self.batch.docs.position(k).is_some())).collect::<Option<_>>()?
+        } else if self.batch.rows.key_column[self.rel] == Some(column) {
+            self.batch.keys_of_documents(values)
         } else if self.batch.rows.path_column[self.rel] == Some(column) {
             self.batch.keys_of_paths(values)?
         } else if self.batch.rows.module_column[self.rel] == Some(column) {
