@@ -89,6 +89,65 @@ impl<'a> Executors<'a> {
         out
     }
 
+    /// [`every`](Self::every) over each of `inputs`, the device's executors each over all of them in one batch.
+    pub fn every_of(&self, inputs: &[Vec<u8>]) -> Vec<Runs> {
+        Self::every_of_all(&[self], inputs).remove(0)
+    }
+
+    /// [`every_of`](Self::every_of) for several programs at once: each program's runs over each of `inputs`. The
+    /// device's executors run every program over every input as one batch (decision 0066), so a test of eleven
+    /// programs builds each executor's kernel once, with the eleven in it, not eleven times: on an Arc 140V a build is
+    /// 0.3-3 s, and a test of eleven programs built 44 batch kernels and 11 serial programs, 80 s cold.
+    pub fn every_of_all(programs: &[&Executors<'_>], inputs: &[Vec<u8>]) -> Vec<Vec<Runs>> {
+        let mut out: Vec<Vec<Runs>> = programs
+            .iter()
+            .map(|ex| inputs.iter().map(|bytes| vec![("cpu interpreter".to_owned(), ex.block.interpret(bytes)), ("cranelift".to_owned(), ex.cranelift.run(bytes))]).collect())
+            .collect();
+        Self::device_of(programs, inputs, &mut out);
+        out
+    }
+
+    /// The device's executors over every program and input, each executor in one batch (split only for capacity),
+    /// into each program's runs of each input.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn device_of(programs: &[&Executors<'_>], inputs: &[Vec<u8>], out: &mut [Vec<Runs>]) {
+        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_split};
+        use rerail_compiler::Error;
+        let files: Vec<block::BatchFile<'_>> =
+            (0..programs.len()).flat_map(|program| inputs.iter().map(move |bytes| block::BatchFile { bytes, program })).collect();
+        let mut keep = |name: String, got: Result<Vec<Vec<Vec<u64>>>, Error>| match got {
+            Ok(got) => {
+                assert_eq!(got.len(), files.len(), "{name}: a run per program and input");
+                for (runs, got) in out.iter_mut().flat_map(|p| p.iter_mut()).zip(got) {
+                    runs.push((name.clone(), got));
+                }
+            }
+            Err(Error::BackendLaunchLimit) => panic!("{name}: over the launch budget"),
+            // A device whose SIMD groups are neither 16 nor 32 lanes runs no block program (`block_program::ready`).
+            Err(Error::UnsupportedBackend) if metal_program_backend::block_program::ready().is_err() => {}
+            Err(e) => panic!("{name} runs: {e:?}"),
+        };
+        let outputs = |run: metal_program_backend::block_program::BatchRun| run.files.into_iter().map(|f| f.outputs).collect::<Vec<_>>();
+        let interpreted: Vec<_> = programs.iter().map(|ex| rerail_compiler::block_native::BlockNative::lower(ex.block)).collect();
+        let interpreted: Vec<_> = interpreted.iter().collect();
+        let natives: Vec<_> = programs.iter().map(|ex| &ex.native).collect();
+        for width in LaneWidth::ALL {
+            let w = width.bytes();
+            keep(format!("device interpreter, {w}-byte lanes"), run_split(&interpreted, &files, width, Executor::Interpreter, SPINS).map(outputs));
+            for strategy in ClassStrategy::ALL {
+                keep(format!("generated ukl, {w}-byte lanes, {strategy:?}"), run_split(&natives, &files, width, Executor::Generated(strategy), SPINS).map(outputs));
+            }
+        }
+        // The forward carry (`metal_block_serial`): segments of three blocks, so that a file of
+        // a few blocks has segments that speculate their start and run again.
+        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        keep("device forward carry, segments of 3".to_owned(), run_serial_split(&natives, &files, Segments { blocks: 3, warm: 1 }).map(|r| outputs(r.run)));
+    }
+
+    /// No device executors off the device layer's targets.
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    fn device_of(_programs: &[&Executors<'_>], _inputs: &[Vec<u8>], _out: &mut [Vec<Runs>]) {}
+
     /// Every executor's outputs over `bytes` (the Metal ones when `metal`), without a Metal
     /// executor whose run would take more launches than the budget (`metal_launch_budget`):
     /// those are named in the second list.

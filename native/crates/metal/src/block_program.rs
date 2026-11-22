@@ -941,7 +941,7 @@ fn table_helpers(m: usize) -> String {
 fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidth) -> String {
     let w = width.bytes();
     let mut out = format!(
-        "UKL_INLINE bool program_{p}(Bytes bytes, FileRow f, uint32_t g, uint32_t l, uint32_t spins, UKL_GLOBAL BM* out,\n\
+        "UKL_LARGE bool program_{p}(Bytes bytes, FileRow f, uint32_t g, uint32_t l, uint32_t spins, UKL_GLOBAL BM* out,\n\
          \x20                              UKL_GLOBAL uint32_t* states, UKL_GLOBAL uint32_t* halos, UKL_GLOBAL uint32_t* ext_states,\n\
          \x20                              UKL_GLOBAL uint32_t* positions, UKL_GLOBAL uint32_t* counts __UKL_PARAMS) {{\n\
          \x20 // The group's first {h} lanes warm up (`warm_lanes`): they make the bytes before its\n\

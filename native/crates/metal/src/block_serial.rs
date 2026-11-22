@@ -131,7 +131,7 @@ impl State {
 /// and the ASCII one inside where the block and the 16 bytes before it are ASCII.
 fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option<&Levels>, stores: &[u16]) -> String {
     let mut out = format!(
-        "UKL_INLINE void serial_{p}(Bytes bytes, FileRow f, uint32_t first, uint32_t last, bool again, uint32_t warm,\n\
+        "UKL_LARGE void serial_{p}(Bytes bytes, FileRow f, uint32_t first, uint32_t last, bool again, uint32_t warm,\n\
          \x20                          UKL_GLOBAL uint64_t* out, UKL_GLOBAL uint64_t* rec, UKL_PRIVATE const uint64_t* given, uint64_t cin, uint64_t cw) {{\n"
     );
     for &(at, .., scan) in &state.parts {
@@ -230,7 +230,7 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
 /// lane's bits: the block after the segment is run too.
 fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<&Levels>, stores: &[u16]) -> String {
     let mut out = format!(
-        "UKL_INLINE void lanes_{p}(Bytes bytes, FileRow f, uint32_t first, uint32_t last, bool again, uint32_t warm, uint32_t l,\n\
+        "UKL_LARGE void lanes_{p}(Bytes bytes, FileRow f, uint32_t first, uint32_t last, bool again, uint32_t warm, uint32_t l,\n\
          \x20                          UKL_GLOBAL uint64_t* out, UKL_GLOBAL uint64_t* rec, UKL_PRIVATE const uint64_t* given, uint64_t cin, uint64_t cw, UKL_GLOBAL uint32_t* counts __UKL_PARAMS) {{\n\
          \x20 // `aw` the levels' segment start, where `cin` holds; `a` a warm-up before it, where `cw` holds.\n\
          \x20 const uint32_t aw = first - ukl_min(first, warm);\n\
@@ -391,7 +391,7 @@ fn lanes_cone_function(p: usize, native: &BlockNative, levels: &Levels, lv: usiz
     }
     let cone = cone_of(native, inside);
     let out = format!(
-        "UKL_INLINE void lcone_{p}_{lv}(Bytes bytes, UKL_GLOBAL const uint64_t* out, FileRow f, uint32_t a, uint32_t a_next, uint32_t warm, uint32_t l, uint64_t cin, uint64_t cw, UKL_GLOBAL uint32_t* tab __UKL_PARAMS) {{\n\
+        "UKL_LARGE void lcone_{p}_{lv}(Bytes bytes, UKL_GLOBAL const uint64_t* out, FileRow f, uint32_t a, uint32_t a_next, uint32_t warm, uint32_t l, uint64_t cin, uint64_t cw, UKL_GLOBAL uint32_t* tab __UKL_PARAMS) {{\n\
          \x20 const uint32_t start = a - ukl_min(a, warm);\n\
          \x20 const uint64_t from = start < a ? cw : cin;\n\
          \x20 const uint32_t b = start + l;\n\
@@ -607,7 +607,7 @@ fn lanes_group_function(p: usize, native: &BlockNative, levels: &Levels, lv: usi
     }
     let cone = cone_of(native, inside);
     let mut out = format!(
-        "UKL_INLINE void lgroup_{p}_{lv}(Bytes bytes, UKL_GLOBAL const uint64_t* out, FileRow f, uint32_t a, uint32_t a_next, uint32_t warm, uint32_t l, uint32_t c, uint64_t cin, uint64_t cw, UKL_GLOBAL uint32_t* tab __UKL_PARAMS) {{\n\
+        "UKL_LARGE void lgroup_{p}_{lv}(Bytes bytes, UKL_GLOBAL const uint64_t* out, FileRow f, uint32_t a, uint32_t a_next, uint32_t warm, uint32_t l, uint32_t c, uint64_t cin, uint64_t cw, UKL_GLOBAL uint32_t* tab __UKL_PARAMS) {{\n\
          \x20 const uint32_t start = a - ukl_min(a, warm);\n\
          \x20 const uint64_t from = start < a ? cw : cin;\n\
          \x20 const uint32_t b = start + l;\n\
@@ -860,7 +860,7 @@ fn cone_function(p: usize, native: &BlockNative, levels: &Levels, l: usize) -> S
     }
     let cone = cone_of(native, inside);
     let mut out = format!(
-        "UKL_INLINE void cone_{p}_{l}(Bytes bytes, UKL_GLOBAL const uint64_t* out, FileRow f, uint32_t a, uint32_t a_next, uint32_t warm, uint64_t cin, uint64_t cw, UKL_GLOBAL uint32_t* tab) {{\n\
+        "UKL_LARGE void cone_{p}_{l}(Bytes bytes, UKL_GLOBAL const uint64_t* out, FileRow f, uint32_t a, uint32_t a_next, uint32_t warm, uint64_t cin, uint64_t cw, UKL_GLOBAL uint32_t* tab) {{\n\
          \x20 const uint32_t start = a - ukl_min(a, warm);\n\
          \x20 const uint64_t from = start < a ? cw : cin;\n"
     );
@@ -975,7 +975,7 @@ fn kept_programs() -> std::sync::Arc<Programs> {
 #[derive(Default)]
 pub(crate) struct Kernels(pub(crate) std::sync::Mutex<std::collections::HashMap<(u64, &'static str), lane::Kernel>>);
 
-pub(crate) fn kernels() -> std::sync::Arc<Kernels> {
+pub(crate) fn kernels_held() -> std::sync::Arc<Kernels> {
     rerail_context::machine::<Kernels>()
 }
 
@@ -990,7 +990,7 @@ pub fn compiles() -> usize {
 }
 
 fn kernel(key: u64, source: &str, name: &'static str) -> Result<lane::Kernel, Error> {
-    let st_ = kernels();
+    let st_ = kernels_held();
     if let Some(hit) = st_.0.lock().ok().and_then(|m| m.get(&(key, name)).cloned()) {
         return Ok(hit);
     }
@@ -1000,6 +1000,27 @@ fn kernel(key: u64, source: &str, name: &'static str) -> Result<lane::Kernel, Er
         m.insert((key, name), made.clone());
     }
     Ok(made)
+}
+
+/// The kernels `names` of `source`, kept by `key` and name: made together where any is not yet held
+/// (`lane::kernels`: one program on OpenCL).
+fn kernels<const N: usize>(key: u64, source: &str, names: [&'static str; N]) -> Result<[lane::Kernel; N], Error> {
+    let st_ = kernels_held();
+    let held: Option<Vec<lane::Kernel>> = st_.0.lock().ok().and_then(|m| names.iter().map(|name| m.get(&(key, *name)).cloned()).collect());
+    let made = match held {
+        Some(made) => made,
+        None => {
+            rerail_context::with_local::<Compiles, _>(|c| c.0.fetch_add(names.len(), std::sync::atomic::Ordering::Relaxed));
+            let made = lane::kernels(source, &names, None);
+            if let Ok(mut m) = st_.0.lock() {
+                for (name, k) in names.iter().zip(&made) {
+                    m.insert((key, *name), k.clone());
+                }
+            }
+            made
+        }
+    };
+    made.try_into().map_err(|_| Error::BackendFailure)
 }
 
 /// `generate_serial`'s sources by what they are made from: each program, the pass's stores and
@@ -1655,7 +1676,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20 (void)len; (void)on;\n\
              \x20 return hits;\n\
              }}\n\
-             UKL_INLINE void records_{p}(Bytes bytes, FileRow f, uint32_t lane, UKL_GLOBAL const uint64_t* out, UKL_GLOBAL uint32_t* positions, UKL_GLOBAL const uint32_t* tot, UKL_GLOBAL uint32_t* flag, UKL_GLOBAL uint32_t* stop) {{\n\
+             UKL_LARGE void records_{p}(Bytes bytes, FileRow f, uint32_t lane, UKL_GLOBAL const uint64_t* out, UKL_GLOBAL uint32_t* positions, UKL_GLOBAL const uint32_t* tot, UKL_GLOBAL uint32_t* flag, UKL_GLOBAL uint32_t* stop) {{\n\
              \x20 const uint32_t cap = ukl_max(f.len, 1u);{refused}\n\
              \x20 UKL_GLOBAL const uint32_t* starts = positions + f.pos_base + {se}u * cap;\n\
              \x20 UKL_GLOBAL const uint32_t* lasts = positions + f.pos_base + {le}u * cap;\n\
@@ -2205,7 +2226,7 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std
                     ("back", fills, passes.slots).hash(&mut h);
                     h.finish()
                 };
-                let made = |name| match kernels().0.lock().ok().and_then(|m| m.get(&(key, name)).cloned()) {
+                let made = |name| match kernels_held().0.lock().ok().and_then(|m| m.get(&(key, name)).cloned()) {
                     Some(hit) => Ok(hit),
                     None => kernel(key, &back_kernels(fills, passes.slots), name),
                 };
@@ -2369,23 +2390,30 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let refusal = crate::pool::zeroed::<u32>(rows.len() * 6)?;
     let group = group_lanes()?;
     assert!(2 * segments.warm < segments.blocks, "a segment is longer than its two warm-ups");
-    let cone = kernel(source_key, source, if lanes_on() { "lanes_cone" } else { "serial_cone" })?;
-    let cone_prefix = kernel(source_key, source, "serial_cone_prefix")?;
-    let group_pass = kernel(source_key, source, "lanes_group")?;
+    // Every pass's kernel, made together (one program on OpenCL).
+    let [cone, cone_prefix, group_pass, lanes_run, lanes_again, run, check, count, prefix, write, lanes_write, records_pass] = kernels(
+        source_key,
+        source,
+        [
+            if lanes_on() { "lanes_cone" } else { "serial_cone" },
+            "serial_cone_prefix",
+            "lanes_group",
+            "lanes_run",
+            "lanes_again",
+            "serial_run",
+            "serial_check",
+            "serial_count",
+            "serial_prefix",
+            "serial_write",
+            "lanes_write",
+            "serial_records",
+        ],
+    )?;
     let lanes = lanes_on();
     if lanes {
         // The lanes: the warm-up, the segment, and the block after it for the delayed outputs.
         assert!(segments.warm >= 1 && segments.blocks + 2 * segments.warm < group, "a segment and its two warm-ups fit a SIMD group");
     }
-    let lanes_run = kernel(source_key, source, "lanes_run").inspect_err(|e| eprintln!("lanes: pipeline: {e:?}"))?;
-    let lanes_again = kernel(source_key, source, "lanes_again").inspect_err(|e| eprintln!("lanes: again: {e:?}"))?;
-    let run = kernel(source_key, source, "serial_run").inspect_err(|e| eprintln!("serial: pipeline: {e:?}"))?;
-    let check = kernel(source_key, source, "serial_check").inspect_err(|e| eprintln!("serial: check: {e:?}"))?;
-    let count = kernel(source_key, source, "serial_count")?;
-    let prefix = kernel(source_key, source, "serial_prefix")?;
-    let write = kernel(source_key, source, "serial_write")?;
-    let lanes_write = kernel(source_key, source, "lanes_write")?;
-    let records_pass = kernel(source_key, source, "serial_records")?;
     // Every buffer of the run by its row name: each pass's kernel binds those of its rows (`Launch::buffer_if`).
     let mut all: Vec<(&'static str, Buffer)> = vec![("out", out.device_buffer().clone()), ("files", table.device_buffer().clone()), ("segs", seg_table.device_buffer().clone())];
     for (k, name) in SLAB_BUFFERS.iter().enumerate() {

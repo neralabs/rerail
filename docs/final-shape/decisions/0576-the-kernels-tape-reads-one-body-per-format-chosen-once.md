@@ -191,6 +191,23 @@ format 16's reads alone.
    interpreter calls it. That kernel 45.8 → 11.2 s (`clc build`, cold); the test cold 200 → about 88 s on the Arc,
    on CUDA 41 → 10 s, on Metal (M3) 18 s, on the CPU 6.9 s. A JIT kernel is the interpreter's runtime and 3-4 s more;
    the runtime's own compile is what is left (§9-§21).
+24. **A test's block programs run as one batch; a program's body is a large function.** A block test checked each of
+   its programs alone (`check_all` in a loop: `prev` at eleven distances, the binary operators eight ways, the delays
+   nine) and each input alone, so each program built its own kernels at every lane width and strategy, and its own
+   serial program: on the Arc, 55 builds for `prev`, 80 s cold and past the 240 s budget for the operators. The batch
+   kernels and the serial passes take a batch of programs (decision 0066), and the programs differed by a few bytes
+   of their sources: `Executors::every_of_all` (and `check_each`) runs every program over every input in one batch
+   for each device executor, so `prev` builds 7 programs, not 55. Its serial program with the eleven in it was
+   176 KB and 20.2 s: each program's bodies (`serial_P`, `lanes_P`, the cones, the groups, the records) were
+   `UKL_INLINE`, and `lanes_P` inlined into two kernels; and `tempo_batch`'s `program_P` the same. They are
+   `UKL_LARGE` now (§22: inlined on Metal and the CPU, a call on CUDA and OpenCL), one body a program per segment or
+   group: 20.2 → 13.3 s, and `tempo_batch` 6.6 → 5.1 s. The 12 serial kernels are made in one build
+   (`kernels::functions`: on OpenCL one program with each name's `__UKL_ONLY_*`, as `UKL_ONE_KERNEL`'s one kernel,
+   since Intel's compiler builds every kernel of a program). Cold on the Arc (no kernel store, the driver's cache
+   off): `prev` 26 s, the binary operators 20 s, the delays 38 s; with the kernels stored, `prev` 2.6 s. On the CPU
+   (16 and 32 lanes), Metal (M3) and CUDA the eight batched block and compile tests pass, in 8-9 s, 15 s and 9 s.
+   What is left is the compiler's slowdown within a process (above, "Measured"): the same 47 KB interpreter source
+   builds in 0.7, 0.4 and 1.6 s as the test goes on, `tempo_batch` in 1.0, 2.8 and 5.1 s.
 
 ## Measured
 

@@ -406,7 +406,7 @@ pub fn evaluation_scope() -> launch::LaunchScope {
 /// (`rerail_accel::gpu::kernels`, decision 0395).
 pub fn drop_pipelines() {
     rerail_accel::gpu::kernels::release();
-    if let Ok(mut kernels) = crate::block_program::serial::kernels().0.lock() {
+    if let Ok(mut kernels) = crate::block_program::serial::kernels_held().0.lock() {
         kernels.clear();
     }
 }
