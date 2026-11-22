@@ -127,7 +127,7 @@ pub fn process_started_at(pid: u32) -> Result<Option<f64>> {
 /// and waits through that one handle, so the process ended is the one whose start was read: a pid Windows gives to
 /// another process between two calls is never ended for the one that held it. It answers `ended`, `running` (ended,
 /// still running after the wait), `later` (started after `started_at`, let alone) or `unread` (not opened, as when no
-/// process holds `pid`, or its start not read).
+/// process holds `pid`, its start not read, the wait for its exit failed, or `started_at` no finite number).
 #[napi]
 pub fn end_process_started_by(pid: u32, started_at: f64, wait_ms: u32) -> Result<String> {
     #[cfg(windows)]
@@ -154,7 +154,7 @@ mod windows {
     use std::sync::{Mutex, PoisonError};
     use windows_sys::Win32::Foundation::{
         CloseHandle, FILETIME, GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
-        WAIT_OBJECT_0,
+        WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -410,11 +410,17 @@ mod windows {
         }
         // SAFETY: `handle` is open with PROCESS_TERMINATE. A process already ending refuses it, and the wait tells.
         unsafe { TerminateProcess(handle.0, 1) };
-        // SAFETY: `handle` is open with PROCESS_SYNCHRONIZE.
-        if unsafe { WaitForSingleObject(handle.0, wait_ms) } == WAIT_OBJECT_0 {
-            "ended"
-        } else {
-            "running"
+        exit_within(&handle, wait_ms)
+    }
+
+    /// Whether the process `handle` names exits within `wait_ms`: `ended`, `running` once the wait timed out, or
+    /// `unread` when the wait fails, as it does on a handle opened without PROCESS_SYNCHRONIZE.
+    fn exit_within(handle: &OwnedHandle, wait_ms: u32) -> &'static str {
+        // SAFETY: `handle` is an open process handle; one without the right to wait makes the wait fail.
+        match unsafe { WaitForSingleObject(handle.0, wait_ms) } {
+            WAIT_OBJECT_0 => "ended",
+            WAIT_TIMEOUT => "running",
+            _ => "unread",
         }
     }
 
@@ -433,6 +439,32 @@ mod windows {
         (ticks / 10_000)
             .checked_sub(FILETIME_EPOCH_MS)
             .map(|ms| ms as f64)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, exit_within, open_process,
+        };
+        use std::process::{Command, Stdio};
+
+        #[test]
+        fn a_wait_that_fails_reads_as_unread_and_one_that_times_out_as_running() {
+            let mut child = Command::new("ping")
+                .args(["-n", "120", "127.0.0.1"])
+                .stdout(Stdio::null())
+                .spawn()
+                .expect("ping starts");
+            // A handle without PROCESS_SYNCHRONIZE cannot be waited on: the wait fails.
+            let unwaitable = open_process(PROCESS_QUERY_LIMITED_INFORMATION, child.id())
+                .expect("the child opens");
+            assert_eq!(exit_within(&unwaitable, 0), "unread");
+            let waitable = open_process(PROCESS_SYNCHRONIZE, child.id()).expect("the child opens");
+            assert_eq!(exit_within(&waitable, 0), "running");
+            child.kill().expect("the child ends");
+            child.wait().expect("the child exits");
+            assert_eq!(exit_within(&waitable, 0), "ended");
+        }
     }
 }
 

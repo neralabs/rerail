@@ -129,8 +129,8 @@ function reportEngineReadFailure(error: unknown): void {
 /**
  * What ending a daemon of a release before the engine's proof through its process came to ({@link endProcessStartedBy}):
  * it exited (`ended`), it was ended and still runs after the wait (`running`), the process holding the pid started
- * after the record's `startedAt` and was let alone (`later`), or the process could not be opened or its start read, as
- * when no process holds the pid (`unread`).
+ * after the record's `startedAt` and was let alone (`later`), or the process could not be opened, its start read or
+ * waited on, as when no process holds the pid, or `startedAt` is no finite number (`unread`).
  */
 export type ProcessEnd = "ended" | "running" | "later" | "unread";
 
