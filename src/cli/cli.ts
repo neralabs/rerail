@@ -474,13 +474,14 @@ function hookHealthLines(home: string): string[] {
 
 /**
  * What `rerail status` says of a daemon still in its start that does not answer yet, with the exit code of a daemon that
- * does not answer: that it is starting, never to stop it. Undefined when the lookup found it answering, or none is in
- * its start.
+ * does not answer: that it is starting, never to stop it, after the note that the lookup removed a daemon.json naming
+ * another process when it did. Undefined when the lookup found it answering, or none is in its start.
  */
 function printStartingDaemon(home: string, lookup: DaemonLookup): number | undefined {
   if (lookup.status === "running" || lookup.status === "refused") return undefined;
   const pid = homeDaemonInStart(home);
   if (pid === undefined) return undefined;
+  if (lookup.status === "absent" && lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
   process.stdout.write(`Rerail daemon (pid ${pid}) is still starting and does not answer yet. See ${join(home, DAEMON_LOG_FILE)}\n`);
   return 4;
 }
