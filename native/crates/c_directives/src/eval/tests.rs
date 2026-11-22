@@ -1416,6 +1416,90 @@ fn measure_the_serial_pass_on_all_cores() {
     }
 }
 
+/// What a memo and waves of expansions would find in the corpus (decision 0613; `RERAIL_PP_FIRST`,
+/// `RERAIL_PP_COUNT` as above): each unit's macro invocations through the serial pass, keyed by what
+/// their expansions depend on (`Sink::entered`). The keys bound a memo's hits: `key` (the spellings
+/// and the disabled names) from above, `epoch_key` (no definition changed since) from below. The
+/// depth a miss is entered at is a wave its expansion waits for.
+#[test]
+#[ignore = "a measurement over the corpus (~/orca/rerail-shared/lean-corpus)"]
+fn measure_what_expansions_repeat() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::{DirKind, Search};
+    use std::collections::{HashMap, HashSet};
+    #[derive(Default)]
+    struct Rec(Vec<rerail_c_pp::sink::Entered>);
+    impl rerail_c_pp::sink::Sink for Rec {
+        fn wants_entries(&self) -> bool {
+            true
+        }
+        fn entered(&mut self, e: rerail_c_pp::sink::Entered) {
+            self.0.push(e);
+        }
+    }
+    let root = corpus_root();
+    let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
+    let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let mut units: Vec<(String, bool)> = Vec::new();
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<String> = rd.flatten().map(|e| e.path().to_string_lossy().into_owned()).collect();
+        paths.sort();
+        units.extend(paths.into_iter().skip(first).take(count).map(|p| (p, cpp)));
+    }
+    assert!(!units.is_empty(), "no corpus at {}", root.display());
+    let cfgs = [Config::new(crate::pp::options(false)), Config::new(crate::pp::options(true))];
+    let dirs = vec![("<stub>".to_string(), DirKind::After)];
+    // Across the units: the keys seen, and their invocations' sizes.
+    let mut all_keys: HashSet<u64> = HashSet::new();
+    let (mut n_all, mut n_unit_key, mut n_unit_epoch, mut n_cross) = (0usize, 0usize, 0usize, 0usize);
+    let (mut size_all, mut size_unit_epoch_miss) = (0u64, 0u64);
+    let mut depth_hist = [0usize; 12];
+    let mut rows: Vec<(usize, usize, usize, u32, u32, String)> = Vec::new();
+    for (path, cpp) in &units {
+        let mut io = Search::new(dirs.clone(), |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new)));
+        let mut rec = Rec::default();
+        {
+            let mut pp = rerail_c_pp::Pp::new(cfgs[usize::from(*cpp)].clone(), &mut io, &mut rec);
+            pp.run(path);
+        }
+        let e = rec.0;
+        let (mut keys, mut epochs): (HashSet<u64>, HashMap<u64, u32>) = (HashSet::new(), HashMap::new());
+        let (mut miss_key, mut miss_epoch, mut waves, mut deepest) = (0usize, 0usize, 0u32, 0u32);
+        for x in &e {
+            n_all += 1;
+            size_all += u64::from(x.size);
+            depth_hist[(x.depth as usize).min(11)] += 1;
+            deepest = deepest.max(x.depth);
+            if !all_keys.contains(&x.key) && !keys.contains(&x.key) {
+                n_cross += 1;
+            }
+            if keys.insert(x.key) {
+                miss_key += 1;
+            }
+            if epochs.insert(x.epoch_key, x.depth).is_none() {
+                miss_epoch += 1;
+                size_unit_epoch_miss += u64::from(x.size);
+                waves = waves.max(x.depth);
+            }
+        }
+        all_keys.extend(keys.iter().copied());
+        n_unit_key += miss_key;
+        n_unit_epoch += miss_epoch;
+        rows.push((e.len(), miss_key, miss_epoch, waves, deepest, path.rsplit('/').next().unwrap_or(path).to_string()));
+    }
+    let pct = |a: usize, b: usize| 100.0 * a as f64 / b.max(1) as f64;
+    eprintln!("EXPANSIONS {} units: {n_all} invocations, {size_all} tokens substituted", units.len());
+    eprintln!("EXPANSIONS a unit's memo: distinct by spelling {n_unit_key} ({:.1}% of the invocations), by spelling and no definition changed {n_unit_epoch} ({:.1}%; {:.1}% of the tokens substituted)", pct(n_unit_key, n_all), pct(n_unit_epoch, n_all), 100.0 * size_unit_epoch_miss as f64 / size_all.max(1) as f64);
+    eprintln!("EXPANSIONS one memo for the batch, by spelling: {} distinct ({:.1}% of the invocations); {n_cross} invocations new to the batch", all_keys.len(), pct(all_keys.len(), n_all));
+    eprintln!("EXPANSIONS invocations by depth entered (0, 1, .., 11+): {depth_hist:?}");
+    rows.sort_by_key(|r| std::cmp::Reverse(r.0));
+    let only = std::env::var("RERAIL_PP_NAME").ok();
+    for (n, mk, me, w, d, name) in rows.iter().filter(|r| only.as_deref().is_none_or(|o| r.5.contains(o))).take(12) {
+        eprintln!("EXPANSIONS {name}: {n} invocations, {mk} distinct by spelling, {me} with no definition changed; the deepest miss {w}, the deepest {d}");
+    }
+}
+
 /// What `against_serial` found.
 struct Against {
     same_units: usize,
