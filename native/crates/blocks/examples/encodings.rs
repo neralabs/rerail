@@ -7,7 +7,8 @@
 //! ```
 
 use rerail_blocks::block::{Block, kind};
-#[cfg(target_os = "macos")]
+// The device's columns (macOS, Linux and Windows, decision 0440 step C) are its only readers.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use rerail_blocks::col;
 use rerail_blocks::packed;
 use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
@@ -142,13 +143,13 @@ fn main() {
     println!("in place: {} bytes ({:.1} B/row); packed: {} bytes ({:.1} B/row, index {} B); cols {:?}", in_place, in_place as f64 / st.live as f64, ps.bytes, ps.bytes as f64 / st.live as f64, ps.index_bytes, ps.cols);
     println!("{}", m.lines.join("\n"));
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     gpu();
 }
 
 /// The kernels, in UKL, on the process's device (`RERAIL_GPU` chooses its backend; decision 0440 step C). `BITS` and
 /// `PB` are compiled in, each value a program of its own (`program_with`'s defines).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 const SRC: &str = r#"
 #include <ukl/backend.h>
 #include <ukl/simd.h>
@@ -398,7 +399,7 @@ DEFINE_KERNEL2(enc, gather_packed, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint3
 "#;
 
 /// Every kernel's parameters (the source's `P`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct P {
@@ -416,22 +417,22 @@ struct P {
     pad1: u32,
 }
 // SAFETY: `#[repr(C)]` u32s.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 unsafe impl rerail_gpu::Pod for P {}
 
 /// The device the kernels run on, and their programs by their compiled-in widths.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct Dev {
     shared: &'static rerail_gpu::shared::Shared,
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 type Buf = rerail_device::device::Buffer;
 /// A kernel's launch: the kernel, its buffers by name, its parameters, its threadgroups and their size.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 type Launch<'a> = (&'a rerail_gpu::device::ComputeFunction, &'a [(&'a str, &'a Buf)], P, u64, u64);
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl Dev {
     /// The kernel `name`, `BITS` and `PB` compiled in where given.
     fn kernel(&self, name: &str, bits: Option<u32>, pb: Option<u32>) -> &'static rerail_gpu::device::ComputeFunction {
@@ -469,32 +470,32 @@ impl Dev {
 
 /// The device half's columns divided by 2^`ENCODINGS_GPU_SHIFT` (default 0): for a slow device (the CPU's) or a
 /// quick look; at most 6, so a threadgroup's 8,192 values divide every column.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn shift() -> u32 {
     std::env::var("ENCODINGS_GPU_SHIFT").ok().and_then(|v| v.parse().ok()).unwrap_or(0u32).min(6)
 }
 
 /// A count as the lab prints it: in M, or in K under a million.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn count(k: u64) -> String {
     if k >= 1 << 20 { format!("{}M", k >> 20) } else { format!("{}K", k >> 10) }
 }
 
 /// A buffer of `k` u32s.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn words(k: u64) -> Buf {
     rerail_gpu::kernels::alloc::<u32>(k as usize).unwrap()
 }
 
 /// Sets the first u32s of `b`.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn set(b: &Buf, v: &[u32]) {
     // SAFETY: the buffer's host view, at least `v.len()` u32s, no command running.
     unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), b.contents().cast::<u32>(), v.len()) };
 }
 
 /// Zeroes the first `k` u32s of `b`.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn zero(b: &Buf, k: u64) {
     // SAFETY: the buffer's host view, at least `k` u32s, no command running.
     unsafe { std::ptr::write_bytes(b.contents().cast::<u32>(), 0, k as usize) };
@@ -502,7 +503,7 @@ fn zero(b: &Buf, k: u64) {
 
 /// A column of 64M values under 2^18 on the GPU: 4 bytes a value plain, 18 bits packed. A scan reads every value
 /// once; a gather reads 16M values at scattered positions.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn gpu() {
     let dev = Dev { shared: rerail_gpu::shared::get().expect("a device") };
     let read = |b: &Buf, k: usize| -> Vec<u32> { rerail_gpu::kernels::read(b, k) };
@@ -607,7 +608,7 @@ fn gpu() {
 
 /// RUNS and LINE packed on the GPU, each against the CPU's encoder word for word: the choice's statistics (range,
 /// runs, the line's residuals) as threadgroup partials folded on the host, then the writes.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn runs_and_line(dev: &Dev, one: &rayon::ThreadPool) {
     let n: u32 = (32 << 20) >> shift();
     let mut x = 0x2545_F491_4F6C_DD1Du64;

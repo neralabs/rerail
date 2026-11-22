@@ -182,10 +182,11 @@ impl<'v> Rule<'v> {
                 self.vars(l, &mut out);
                 self.vars(r, &mut out);
             }
-            Lit::Agg { var, over, atom, .. } => {
+            Lit::Agg { var, op, over, atom } => {
                 out = self.atom_vars(atom);
                 out.insert(self.name(var).to_owned());
                 out.extend(over.map(|o| self.name(o).to_owned()));
+                out.extend(op.bound().map(|b| self.name(b).to_owned()));
             }
             Lit::Nearest { n, a, .. } => out.extend([self.name(n).to_owned(), self.name(a).to_owned()]),
             Lit::Ast { document, node, captures, .. } => {

@@ -51,6 +51,16 @@ pub fn configure() {
     MADE.get_or_init(crate::blocks::install);
 }
 
+/// Whether this is one of the pool's threads running a job: on the pool, and not the main thread the machine took
+/// into it (`Machine::here`, which records it: `rerail_context::MainThread`, on every platform).
+fn in_a_job() -> bool {
+    on_pool() && !rerail_context::is_main_thread()
+}
+
+/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory. A
+/// thread that runs a job's work off the pool (`rerail_engine`'s `threads::beside`) takes the same.
+pub use rerail_context::POOL_STACK;
+
 /// The stack a wait keeps free before it runs another's job on its frames ([`help_once`]).
 const HELP_STACK_MARGIN: usize = 4 << 20;
 
@@ -451,9 +461,15 @@ impl Bell {
     }
 
     /// Waits until `poll` gives a value, recorded under `site` ([`waits`]), running no job: it polls each time the
-    /// bell rings, and at least every millisecond (a ring is never needed for the wait to end).
+    /// bell rings, and at least every millisecond (a ring is never needed for the wait to end). On one of the pool's
+    /// threads running a job (a run nested in one, as the typing run `bridge::facts` starts) it runs the pool's jobs
+    /// instead ([`help_until_as`]): a job that waited running none would hold its pool thread for the whole nested run,
+    /// and with 2 threads the main thread and the typing run's both waited for chunks no thread was left to build.
     pub fn wait_as<T>(&self, site: &'static str, mut poll: impl FnMut() -> Option<T>) -> T {
         assert_no_uncommitted(site);
+        if in_a_job() {
+            return help_until_as(site, poll);
+        }
         let mut wait = Waiting::new(site);
         loop {
             let seen = *self.rung.lock().unwrap_or_else(|p| p.into_inner());
@@ -1216,14 +1232,14 @@ impl Executor {
     pub fn new() -> Self {
         configure();
         let present = lanes::present();
-        // The device lanes are macOS's: elsewhere the two are all.
-        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+        // SME and the Neural Engine are macOS's; the GPU lane is any device's (decision 0440 step E).
+        #[cfg_attr(not(any(target_os = "macos", gpu_lane)), allow(unused_mut))]
         let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(crate::sql::SqlBackend)];
-        #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
+        #[cfg(sme_lane)]
         if present[Lane::Sme.index()] {
             backends.extend(crate::sme::backend());
         }
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        #[cfg(gpu_lane)]
         if present[Lane::Gpu.index()] {
             backends.extend(crate::gpu::backend());
         }
@@ -1466,7 +1482,7 @@ impl Executor {
             self.board.plan(lane, per_lane[lane.index()] as i64, est);
         }
         // The engine's launch budget, checked on the submitting thread (decision 0100 §2).
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        #[cfg(gpu_lane)]
         if per_lane[Lane::Gpu.index()] > 0 {
             crate::gpu::shared::guard().map_err(|e| format!("gpu lane: {e}"))?;
         }
@@ -1497,8 +1513,13 @@ impl Executor {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
                         // The launches run in their submitter's run, on whichever pool thread takes them.
                         let run = rerail_context::job_run();
+                        // `in_run`: the claims (the batch's kernels, their columns and device leases) may be the last
+                        // holder's, and a lease goes back to its pool in the run (Q337).
                         rerail_context::cores_spawn_fifo(move || {
                             let _run = rerail_context::enter(run);
+                            // Moved in after the run is entered, so they drop before it is left: the last claims
+                            // drop their kernels' buffers into the machine's pool (decision 0442).
+                            let (claims, backend) = (claims, backend);
                             as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend))
                         });
                     }
@@ -1884,36 +1905,21 @@ impl Backend for CpuBackend {
     }
 }
 
-/// The rayon pool's CPU seconds: every worker's thread clock, summed.
-/// This thread's CPU seconds (`CLOCK_THREAD_CPUTIME_ID`; 0 where there is none).
+/// This thread's CPU seconds: the device layer's clock (`rerail_device::os`, macOS, Linux and Windows); 0 where there
+/// is none.
 pub fn thread_cpu() -> f64 {
-    #[cfg(unix)]
-    {
-        let mut t: libc::timespec = unsafe { std::mem::zeroed() };
-        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) } != 0 {
-            return 0.0;
-        }
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    }
-    #[cfg(not(unix))]
-    {
-        0.0
-    }
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    return rerail_device::os::thread_cpu();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    0.0
 }
 
-/// The process's user + system CPU seconds (0 where there is no `getrusage`).
+/// The process's user + system CPU seconds: the device layer's clock, as [`thread_cpu`]; 0 where there is none.
 pub fn process_cpu() -> f64 {
-    #[cfg(unix)]
-    {
-        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
-        s(u.ru_utime) + s(u.ru_stime)
-    }
-    #[cfg(not(unix))]
-    {
-        0.0
-    }
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    return rerail_device::os::process_cpu();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    0.0
 }
 
 #[cfg(all(test, target_os = "macos"))]

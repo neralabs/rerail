@@ -1,17 +1,19 @@
-//! Kotlin's parser in Bitlex: the grammar of `bitlex_ladder/`'s last step, compiled once per
+//! Kotlin's parser in Bitlex: the grammar `kotlin.bitlex`, compiled once per
 //! process through the Bitlex compiler to tier 1 and tier 2 on Cranelift.
 //!
 //! Its tape is tree-sitter-kotlin's, as the lean parser (`rerail_kotlin_lean`) writes it: the
 //! grammar names the lean parser's kinds and fields, so a key here is the lean parser's key. A
-//! file the compiled parser refuses (a construct the ladder does not reach yet, or any syntax
+//! file the compiled parser refuses (a construct the grammar does not read yet, or any syntax
 //! error) goes to the lean parser, and from there to tree-sitter.
 
-use rerail_compiler::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+use rerail_compiler::{native_ir, rir_asm as rir};
+use rerail_compiler::native_cpu_clusters;
+use rerail_cpu_stream::native_cpu_stream;
 use rerail_kotlin_lean as lean;
 
-/// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/36-no-back-fills.bitlex");
+/// The grammar.
+pub const GRAMMAR: &str = include_str!("../kotlin.bitlex");
 
 /// The tape's tag: Kotlin's in the registry (`languages/kotlin.json`).
 pub const TAG: u8 = 24;
@@ -25,22 +27,47 @@ pub struct Compiled {
     pub words: String,
     pub machine: String,
     /// The provers' answers the compile made, for the next (`compile_timed`'s `known`).
-    pub proofs: Vec<(Vec<u8>, rerail_compiler::bitlex_prove::Answer)>,
+    pub proofs: Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>,
+    /// Tier 2 as Rust, written by the Bitlex compiler from the tree rules (`bitlex_rust`).
+    pub rust: Option<Result<String, String>>,
 }
 
 /// The provers' answers by question (decision 0414).
-pub type Proofs = rerail_compiler::bitlex_prove::Known;
+pub type Proofs = rerail_bitlex::bitlex_prove::Known;
 
 // SAFETY: nothing changes a compiled parser once it is made (as `rerail_rr_parser::Compiled`):
 // `image` takes `&self` and writes only buffers it allocates for the call.
 unsafe impl Send for Compiled {}
 unsafe impl Sync for Compiled {}
 
+/// The provers' answers to the grammar's questions, shipped beside it (`kotlin.answers`, in
+/// `bitlex_prove::encode`'s bytes: a 16-byte digest a question, 52 KB): decision 0414's seed (Q234).
+/// A compile given them proves only what an edit asks anew: 41 s cold, 1.5 s with them. Answers of
+/// another provers' version are none (`decode`), so the seed is never wrong, only slow.
+/// `tests::the_shipped_answers_answer_the_grammar` says when it lacks one, and writes it again
+/// (`RERAIL_BLESS_KOTLIN_ANSWERS=1`).
+pub const ANSWERS: &[u8] = include_bytes!("../kotlin.answers");
+
+/// [`ANSWERS`], decoded: `compile_timed`'s `known`.
+pub fn shipped_answers() -> Proofs {
+    rerail_bitlex::bitlex_prove::decode(ANSWERS)
+}
+
+/// The grammar compiled from the shipped answers and the machine's (`answers::answered`: what an
+/// edit asks anew is proved by one compile on the machine, and kept for the others).
+pub fn compile_answered(grammar: &str) -> Result<Compiled, String> {
+    rerail_bitlex::answers::answered("kotlin", grammar.as_bytes(), shipped_answers(), |known| {
+        let c = compile_timed(grammar, known, &mut |_, _| {})?;
+        let made = c.proofs.clone();
+        Ok((c, made))
+    })
+}
+
 static PARSER: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock::new();
 
-/// The process's compiled parser, compiling it the first time.
+/// The process's compiled parser, compiling it the first time ([`compile_answered`]).
 pub fn compiled() -> Result<&'static Compiled, &'static str> {
-    PARSER.get_or_init(|| compile_text(GRAMMAR)).as_ref().map_err(String::as_str)
+    PARSER.get_or_init(|| compile_answered(GRAMMAR)).as_ref().map_err(String::as_str)
 }
 
 /// Ids above the lean parser's, for the grammar's own names (marks, flags) that never reach a
@@ -61,7 +88,27 @@ fn field(name: &str) -> Option<u16> {
     lean::FIELDS.iter().position(|&f| f == name).filter(|&i| i > 0).map(|i| i as u16)
 }
 
-/// `grammar` compiled: a ladder step's text.
+/// Tier 1 and tier 2 of `grammar` as Rust, as the Bitlex compiler writes them from the lexer's
+/// statements (`bitlex_lex_rust`) and the tree rules (`bitlex_rust`), without either tier
+/// compiled.
+pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
+    let stmts = ::bitlex::syntax::parse(grammar)?;
+    let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
+    let kind = |name: &str| {
+        lean_kind(name).or_else(|| {
+            let mut own = own.borrow_mut();
+            let next = OWN_IDS + own.len() as u16;
+            Some(*own.entry(name.to_owned()).or_insert(next))
+        })
+    };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default())?;
+    let tier1 = compiled.lexer_rust.ok_or_else(|| "no tree section".to_owned())??;
+    let tier2 = compiled.rust.ok_or_else(|| "no tree section".to_owned())??;
+    Ok((tier1, tier2))
+}
+
+/// `grammar` compiled: a Bitlex grammar's text.
 pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
     compile_timed(grammar, Default::default(), &mut |_, _| {})
 }
@@ -95,17 +142,17 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     lap("native IR");
     native.tag = TAG;
     for b in &mut native.block_programs {
-        b.pad = rerail_compiler::native_cpu_block::BACK as u16;
+        b.pad = rerail_cpu_block::native_cpu_block::BACK as u16;
     }
     let cut = native_cpu_clusters::by_rules(&native);
     lap("clusters");
     let block = native.block_programs.first().ok_or("no tier 1 program")?;
-    let tier1 = rerail_compiler::native_cpu_block::compile(block).map_err(|e| format!("Cranelift: {e:?}"))?;
+    let tier1 = rerail_cpu_block::native_cpu_block::compile(block).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 1 Cranelift");
     let tier2 = native_cpu_stream::compile_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 2 Cranelift");
     let parser = native_cpu_stream::Parser::with_tiers(&native, &cut, tier1, tier2);
-    Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone() })
+    Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone(), rust: compiled.rust.clone() })
 }
 
 impl Compiled {
@@ -127,7 +174,7 @@ impl Compiled {
         out.push_str(&format!("interpreter: {:?}\n", interp.as_ref().map(|n| n.len())));
         out.push_str(&format!("compiled tier 2 over the interpreter's tier 1: {:?}\n", self.parser.tier2.run(src.as_bytes(), &run).map(|n| n.len())));
         if let Err(why) = &interp {
-            for line in self.words.lines().filter(|l| l.trim_start().split_whitespace().next().and_then(|w| w.parse::<usize>().ok()).is_some_and(|pc| pc + 6 >= why.pc && pc <= why.pc + 3)) {
+            for line in self.words.lines().filter(|l| l.split_whitespace().next().and_then(|w| w.parse::<usize>().ok()).is_some_and(|pc| pc + 6 >= why.pc && pc <= why.pc + 3)) {
                 out.push_str(line);
                 out.push('\n');
             }

@@ -29,7 +29,8 @@ Against main on the full shape (300 files, 317 rules), Datalog reported 615 find
 3. A rule that does not name a guest is bounded below `ANNOTATION_KEYS`: it never sees an annotation. A relation
    that annotations reach is copied for them (0058 §2), and `fold_own` folds those copies back into their originals,
    as it did when annotations were shown. A folded original's bounds are widened to `HIDDEN_KEYS`, so it holds what
-   its copies held. A rule nothing annotated reaches keeps the narrow bound.
+   its copies held. A rule nothing annotated reaches keeps the narrow bound, and reads such an original as hiding left
+   it, `rr_narrow_<orig>` (below, "A rule's rows are its own").
 4. What `parsed` asks for is not bounded: `rr_embed_req` and the context helpers (`rr_ctx<k>`) that only it reads
    range over every document. Asking is not seeing: a string inside an annotation (`"Opt['Baz']"`'s `'Baz'`) is asked
    for in the next round, and the rules that walk the annotation reach it.
@@ -54,3 +55,58 @@ Datalog's alone: B110 ×2 (main's quirk, t34 "Findings against main") and PYI046
 Tests: `findings_keep_their_columns_and_an_annotation_is_not_code`, `string_annotations_are_guests_at_their_host_lines`
 (round 2 reached through the annotation), `copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals`
 (an annotation's copies fold and widen their originals' bounds).
+
+## A rule's rows are its own
+
+Added 2026-11-21 (main's #923, 2026-11-20, as built here on the version). A pack's programs share the library's
+relations (decision 0089), so a rule's rows depended on what else the run held. Since decision 0431 an annotation is a
+tape value, and a finding at its node is refused (R9), so the pack failed where the program alone ran:
+
+- **Clones.** Hiding clones a rule for a variable that may be a guest's node (O110). `builtin_at` holds an
+  annotation's names beside a library that reads string annotations, so C408's own `c4_builtin` was cloned, and its
+  findings were calls inside `a: "dict()"`. Alone, C408 found none.
+- **Folding.** Folding widened an original for every reader, not only its copies' readers. Beside `anns`, which reads
+  `list_like` from a string annotation, `cmps` read `cmp` widened and found the annotation's `1 in []`.
+
+Both now hold to one line, the columns an output shows (`hide::shown_columns`, `combining::shown_columns`): an
+output's every column, a finding's place (the column `rr_unplaced` reads a node of), and each column a rule reads into
+one its head shows, transitively.
+
+- A clone whose head would hold an annotation's node at a shown column goes (`hide::shows_an_annotation`). A column
+  that may be an annotation's counts, since a clone leaves it unbounded.
+- A rule that is not a widened original's own reads it as hiding left it, `rr_narrow_<orig>`, where the atom reads a
+  variable its head shows. A narrow copy's rules read every widened original narrow.
+- A clone or a widened read used inside a rule stays. A call's target through a quoted `n: "Node"` needs the clones
+  (`quoted_annotations_are_read_as_their_code`), and main's narrowing of every read lost eleven typing tests' rows.
+
+Also: `wellfounded::classify`'s count of measures to try is a checked product. The narrow copies grew one recursive
+component until the product overflowed before its bound of 4,000.
+
+Tests: `a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone` (C408 beside its twin, and a policy that includes
+`ruff-classes.rerail`), `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone` (main's #923, its `Ann`
+placed at the string as R9 asks).
+
+### A copy within one document is its original's rows under the bound
+
+Added 2026-11-21. A narrow copy made each of its original's rules again: on corpus0 × B-now (one pack, one thread)
+the copies cost 11.6 s of the run's 92.6 s and doubled its instructions against the tree before the merge. Most
+originals keep each row in one document and make it from that document's rows alone: widened, such a rule makes in
+a document under the narrow bound exactly what it made there before. Its copy is then a filter of the widened
+original, `rr_narrow_r(c..) :- r(c..), c_node < narrow`, one rule per original, not its rules made again
+(`combining::one_document`).
+
+- A rule keeps its rows in one document when every location its head holds is joined to one document through positive
+  atoms whose rows are each in one document: a base relation's locations (`hide::located`, but a guest's reads,
+  which join documents), a relation found so, `nearest`, an equality. It has a node column to filter by.
+- Each bound of the rule's own (`$x < RUN_VALUE_KEYS`, a node's or a document's) is on that document, and each read of
+  an original kept narrow is of one found so, at a location of that document.
+- The largest such set is taken (a greatest fixpoint), then a relation whose filter would put its copy in a cycle with
+  its original once the fold is done is made again.
+- A row joined to another document by a value (`pair(n) :- e(n), text(n, t), asg(m), text(m, t)`), bounded in
+  another one, a native operator's, a lattice's and one with facts are made again, as before.
+
+Measured on corpus0 × B-now, off, one thread, on an M1 Max: one pack 1.314 T to 1.114 T instructions, the normal
+packs 3.157 T to 2.756 T; 463 findings, the same set (d067ec2ebf6f).
+
+Test: `a_narrow_copy_of_an_original_within_one_document_is_its_rows_under_the_narrow_bound`; #923's
+`a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone` passes.

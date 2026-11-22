@@ -1,4 +1,4 @@
-//! JSON's parser: the ladder's JSONC grammar (`crates/compiler/bitlex_ladder/15-jsonc.bitlex`, JSON with `//` and
+//! JSON's parser: the JSONC grammar (`crates/json_parser/jsonc.bitlex`, JSON with `//` and
 //! `/* */` comments, as tree-sitter-json reads it), compiled once per process through the Bitlex
 //! compiler to tier 1 and tier 2 on Cranelift, and shared by every thread.
 //!
@@ -7,11 +7,12 @@
 //! JSON's tape tag; supertype memberships are in its codes. A file the grammar refuses (invalid JSON,
 //! an empty file, a comment holding a quote) goes to tree-sitter-json.
 
-use rerail_compiler::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_cpu_stream, native_ir, rir_asm as rir};
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+use rerail_compiler::{native_ir, rir_asm as rir};
+use rerail_cpu_stream::native_cpu_stream;
 
-/// The grammar: the ladder's JSONC step.
-const GRAMMAR: &str = include_str!("../../../../crates/compiler/bitlex_ladder/15-jsonc.bitlex");
+/// The grammar: JSONC.
+const GRAMMAR: &str = include_str!("../../../../crates/json_parser/jsonc.bitlex");
 
 /// The compiled parser.
 struct Compiled {
@@ -59,11 +60,11 @@ fn compile() -> Result<Compiled, String> {
 // Its tape (`tape::TreeParser`).
 pub mod tape;
 // The engine's JSON parser: simdjson's stage 1 (the source hashed in it) and a stage 2 of ours, which
-// writes the tape in place (0134). Not on MSVC, which builds none of simdjson's C++: `fallback` there.
-#[cfg(not(any(target_family = "wasm", all(windows, target_env = "msvc"))))]
+// writes the tape in place (0134). On MSVC its C++ is compiled by clang-cl (`rerail-simdjson-native`).
+#[cfg(not(target_family = "wasm"))]
 pub mod simdjson;
-// JSON's parser on MSVC, which reads a file as simdjson's route does; compiled everywhere, so the tests
-// where simdjson builds compare the two.
+// What simdjson refuses: the Bitlex parser, then tree-sitter-json past trailing commas.
+#[cfg(not(target_family = "wasm"))]
 pub mod fallback;
 
 pub fn image(src: &str) -> Option<Vec<u8>> {

@@ -38,7 +38,8 @@ From the daemon:
   [mtime_ns, size] as `seen`, for the daemon to check against its own. An output that names ROOT
   (a path written into it that no remap reached, such as `env!("CARGO_MANIFEST_DIR")`) is not sent:
   code 71, and the compile runs on the build machine. A put that fails makes every later run fail
-  with code 70: the daemon then drops this agent and forgets what it sent.
+  with code 70: the daemon then drops this agent and forgets what it sent. An output the compile
+  did not write: code 72, and the compile runs on the build machine.
   With "xc": {"home", "toolchain"} (a Mac's compile on a Linux host), the compile runs in this
   host's container instead (`xc_container`), where the build machine's paths are real: ROOT's copy
   of the build machine's top directory at its own path (the daemon sends the crate's sources
@@ -511,7 +512,10 @@ def run(job):
             try:
                 data = open(at(path), "rb").read()
             except OSError:
-                continue
+                # Every output or none: the build machine compiles it itself (an output left out
+                # kept the last compile's there, beside this one's others: Q377).
+                code, stderr = 72, f"{path}: not written by the compile".encode()
+                break
             if path == job.get("depinfo"):
                 data = data.replace(root + b"/", b"/")
             if any(x in data for x in leaks):
@@ -838,6 +842,59 @@ def sweep(job):
         lock.close()
 
 
+GPU_GUARD = os.path.join(FARM, "gpu-guard")
+
+
+def ensure_gpu_guard(text):
+    """On a Mac: starts the GPU watchdog (scripts/build/farm/gpu-guard, its text sent with the job)
+    unless one runs, and holds its `users` lock shared while this command runs, so it stays. Returns
+    the lock's file (held until this process exits)."""
+    import fcntl
+    os.makedirs(GPU_GUARD, exist_ok=True)
+    path = os.path.join(GPU_GUARD, "gpu-guard.py")
+    try:
+        old = open(path).read()
+    except OSError:
+        old = None
+    if old != text:
+        with open(path + ".part", "w") as f:
+            f.write(text)
+        os.rename(path + ".part", path)
+    users = open(os.path.join(GPU_GUARD, "users"), "a+")
+    fcntl.flock(users, fcntl.LOCK_SH)
+    # This agent's pid: the guard takes every process under it for the farm's (removed at the end).
+    os.makedirs(os.path.join(GPU_GUARD, "agents"), exist_ok=True)
+    open(os.path.join(GPU_GUARD, "agents", str(os.getpid())), "w").close()
+    with open(os.path.join(GPU_GUARD, "lock"), "a+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            running = False
+        except BlockingIOError:
+            running = True
+    if not running:
+        with open(os.path.join(GPU_GUARD, "guard.err"), "a") as err:
+            subprocess.Popen(["/usr/bin/python3", "-I", path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=err, start_new_session=True)
+    return users
+
+
+def gpu_kills_of(pid, since):
+    """The GPU watchdog's kills of processes under `pid` (this command) since `since`."""
+    found = []
+    try:
+        for line in open(os.path.join(GPU_GUARD, "kills.log")):
+            try:
+                k = json.loads(line)
+            except ValueError:
+                continue
+            if k.get("time", 0) >= since and pid in k.get("ancestors", []):
+                found.append(k)
+    except OSError:
+        pass
+    return found
+
+
 def watchdog(job):
     while True:
         sweep(job)
@@ -888,6 +945,13 @@ def run_command(job):
     except (ValueError, OSError) as e:
         print(f"farm-agent: the open-file limit stays {soft}: {e}", file=sys.stderr, flush=True)
     argv = [m(a) for a in job["argv"]]
+    global GPU_USERS
+    started = time.time()
+    if MACOS and job.get("gpu_guard"):
+        try:
+            GPU_USERS = ensure_gpu_guard(job["gpu_guard"])
+        except OSError as e:
+            print(f"farm-agent: no GPU watchdog: {e}", file=sys.stderr, flush=True)
     windows = None
     if job.get("windows"):
         try:
@@ -918,6 +982,16 @@ def run_command(job):
     if job.get("target"):
         threading.Thread(target=watchdog, args=(job,), daemon=True).start()
     code = proc.wait()
+    if MACOS:
+        try:
+            os.remove(os.path.join(GPU_GUARD, "agents", str(os.getpid())))
+        except OSError:
+            pass
+        for k in gpu_kills_of(proc.pid, started):
+            print(f"farm-agent: the farm's GPU watchdog killed {os.path.basename(k['path'])} (pid {k['pid']}): "
+                  f"{k.get('why')}; macOS restarts a Mac whose WindowServer stops for 120 s "
+                  f"(scripts/build/farm/README.md, \"The GPU watchdog\")",
+                  file=sys.stderr, flush=True)
     if windows:
         for p in (windows["script"], windows["launcher"]):
             try:
@@ -1009,10 +1083,24 @@ def windows_sync(src, dst, wenv):
     """Brings the Windows drive's copy `dst` up to the copy `src` here: the files changed since
     the last sync (size or time, from its manifest) in one tar stream to Windows' own tar, which
     writes them natively (WSL's mount wrote 13 files a second); the files gone, removed. A
-    `target` directory and `.git` stay out: the mirror's compile outputs, and no build reads them."""
-    import hashlib, tarfile
-    started = time.time()
+    `target` directory and `.git` stay out: the mirror's compile outputs, and no build reads them.
+
+    One sync of a copy at a time: two commands of one checkout share its copy when their files are
+    the same, and two tars writing one folder at once failed on Windows ("Can't unlink
+    already-existing object: Permission denied", one holding a file the other replaced). The
+    second waits, then finds the manifest current and sends nothing."""
+    import fcntl, hashlib
     manifest = os.path.join(FARM, "winsync", hashlib.sha256(dst.encode()).hexdigest()[:16] + ".json")
+    os.makedirs(os.path.dirname(manifest), exist_ok=True)
+    with open(manifest + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        windows_sync_held(src, dst, wenv, manifest)
+
+
+def windows_sync_held(src, dst, wenv, manifest):
+    """`windows_sync`'s work, with the copy's lock held."""
+    import tarfile
+    started = time.time()
     try:
         old = json.load(open(manifest))
     except (OSError, ValueError):
@@ -1305,6 +1393,22 @@ def clean(target, source, relax_home):
 os.makedirs(ROOT, exist_ok=True)
 if sys.argv[1:2] == ["exec"]:
     run_command(json.loads(sys.argv[2]))
+if sys.argv[1:2] == ["fetch"]:
+    # One file of a test-remote command's target directory, to stdout (`--fetch`): a program the
+    # host built, for this Mac to run. Only a file inside that target directory.
+    base = os.path.realpath(os.path.join(TARGETS, sys.argv[2]))
+    path = os.path.realpath(os.path.join(base, sys.argv[3]))
+    if not path.startswith(base + os.sep) or not os.path.isfile(path):
+        print(f"farm-agent: no file {sys.argv[3]} in the command's target directory", file=sys.stderr, flush=True)
+        os._exit(66)
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            sys.stdout.buffer.write(chunk)
+    sys.stdout.buffer.flush()
+    os._exit(0)
 if sys.argv[1:2] == ["free"]:
     os.setpriority(os.PRIO_PROCESS, 0, 19)
     free_space(json.loads(sys.argv[2]))

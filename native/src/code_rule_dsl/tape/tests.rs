@@ -2113,7 +2113,8 @@ fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// The repository's `.rerail` files (outside `.git`, `target` and `node_modules`), with their text.
 fn rr_files() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = crate::source_tree::native()
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2309,7 +2310,6 @@ fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
 
 /// A JSON file's tape from simdjson, and from tree-sitter-json: `Err` with simdjson's reason where it
 /// refuses the file (`Ok` of each tape's bytes otherwise).
-#[cfg(not(all(windows, target_env = "msvc")))]
 fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
     let ours = crate::code_rule_dsl::transducer::packed::json_parser::simdjson::encode(
@@ -2328,9 +2328,7 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     // A trailing comma is passed over (JSONC, as TypeScript reads it): tree-sitter-json's tape of the text
     // without it, which is as long.
     let text =
-        crate::code_rule_dsl::transducer::packed::json_parser::fallback::without_trailing_commas(
-            source,
-        );
+        crate::code_rule_dsl::transducer::packed::json_parser::fallback::without_trailing_commas(source);
     let tree = parser.parse(&text, None).unwrap();
     let theirs = TapeImage::encode(tree.root_node(), &grammar, &text, &|| false)
         .unwrap()
@@ -2343,7 +2341,6 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
 /// The product reads JSON with simdjson: a JSON file's image through the engine's parse
 /// (`TapeImage::parse`, the parsers the library installs as it loads) is simdjson's, its digest the
 /// one simdjson's stage 1 computed (the source's SHA-256); a file simdjson refuses goes to tree-sitter-json.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 fn the_product_reads_json_with_simdjson() {
     format_15();
@@ -2418,7 +2415,6 @@ fn the_lean_parsers_are_their_languages_top_tier() {
 /// The parser router takes, for each dialect, the best implementation this host runs: for JSON the first
 /// kernel `Kernel::ALL` lists that this CPU runs; each other implementation this CPU runs writes the same
 /// tape, the DOM parser and the index writer included.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 fn the_router_takes_the_best_json_parser_this_cpu_runs() {
     let routes: Vec<_> = parser_routes()
@@ -2477,7 +2473,6 @@ fn the_router_takes_the_best_json_parser_this_cpu_runs() {
 /// fields, spans and the `_value` supertype, on hand-written cases and on every `.json` file of the
 /// repository simdjson accepts. What it refuses (comments, a trailing comma, invalid JSON) goes to
 /// tree-sitter-json; the refused files are only counted.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 fn json_tapes_from_simdjson_are_tree_sitters() {
     format_15();
@@ -2549,7 +2544,8 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
             "refused {source:?}"
         );
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = crate::source_tree::native()
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2611,114 +2607,6 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
     assert!(equal > 1000, "{equal} files");
 }
 
-/// MSVC's JSON parser (`json_parser::fallback`: the Bitlex parser, then tree-sitter-json past trailing commas, then
-/// tree-sitter-json) reads every file as simdjson's route does where simdjson builds: the same image, byte for byte,
-/// and the same digest, or the same refusal. Over the cases `json_tapes_from_simdjson_are_tree_sitters` reads, every
-/// `.json` file of the repository, and the files `RERAIL_JSON_FILES` lists (one path a line), when set.
-#[cfg(not(all(windows, target_env = "msvc")))]
-#[test]
-fn the_msvc_json_fallback_reads_as_simdjson_does() {
-    use crate::code_rule_dsl::transducer::packed::json_parser::fallback::Fallback;
-    assert!(
-        tree_parser(GrammarDialect::Json).is_some(),
-        "JSON's parser is installed"
-    );
-    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
-    let image = |parsed: Option<Result<FileImage, String>>| {
-        parsed.map(|r| r.map(|f| (f.primary.to_bytes().unwrap(), f.primary.source_digest)))
-    };
-    let fallback = |source: &str| match Fallback.parse(&grammar, source, &|| false) {
-        Some(Ok(image)) => Some(Ok(image)),
-        Some(Err(TemplateError::Parser(_))) => None,
-        Some(Err(TemplateError::Encode(error))) => Some(Err(error)),
-        // tree-sitter-json, as the router leaves the file to it.
-        None => {
-            let mut parser = tree_sitter::Parser::new();
-            parser
-                .set_language(&GrammarDialect::Json.get_ts_language())
-                .unwrap();
-            let tree = parser.parse(source, None)?;
-            Some(TapeImage::encode(
-                tree.root_node(),
-                &grammar,
-                source,
-                &|| false,
-            ))
-        }
-    };
-    let mut sources: Vec<(String, String)> = [
-        "{}", "[]", "null\n", "true", " -0.5e-3 ", "\"\"", "{\"a\": 1, \"b\": [true, false, null], \"c\": {\"d\": \"e\\n\\u00e9\"}}\n",
-        "[1, -2.5e10, 0, 3.0E-2]", "\u{feff}{\"bom\": true}", "{\"nested\": [[[{\"x\": [1, {\"y\": []}]}]]]}", "  \n\t{ \"spaced\" :\t[ 1 ,2 ] }  \n",
-        "[\"\\\\\", \"\\\\\\\"\", \"a\\tb\\u0041c\", \"\\ud83d\\ude00\", \"é \\/ ü\", \"  \"]", "{\"\": {\"\": []}, \"k\\\"\": \"v\"}", "[[],{},[{}],{\"a\":[]}]\r\n",
-        "// c\n{}", "// a\n{ /*b*/ \"k\" /*c*/ : /*d*/ 1 /*e*/ , /*f*/ \"j\": [ /*g*/ 2 /*h*/ , 3 /*i*/ ] /*j*/ } // k\n",
-        "{\"a\": {} /*x*/, \"b\": [ /*y*/ ], \"c\": { /*z*/ }}", "{\"a\": 1 // c\r\n}", "/* a **/ /** b */1", "\u{feff}// x\n{}", "1 // eof",
-        "[\"/*x*/\", 1] /* a \" quote */", "{\n  // The compiler's options.\n  \"compilerOptions\": {\n    \"strict\": true, // always\n    /* \"lib\": [\"dom\"], */\n    \"target\": \"es2022\"\n  }\n}\n",
-        "[1,]", "{\"a\": 1,}", "// c\n{\"a\": 1,}", "[[1,],]", "{\"a\": {\"b\": 1,},}", "[{\"a\": 1},\n]", "[\"x\", // c\n]",
-        "{\"a\": [1, 2,], \"b\": 3, /* last */ }", "{\n  \"compilerOptions\": {\n    \"strict\": true,\n    \"lib\": [\"es2022\", \"dom\",],\n  },\n}\n",
-        "{", "{\"a\" 1}", "tru", "", "[1,,]", "[,1]", "{,}", "// c\n{\"a\": 1,,}", "[1 / 2]", "/* open", "1e+2", "[1.5E+3]",
-        // A number past simdjson's range with an exponent's `+`: refused by simdjson, read by the Bitlex parser.
-        "[1e+21, -9223372036854778000]", "{\"a\": 1e+21, \"b\": [12345678901234567890123]}",
-    ]
-    .into_iter()
-    .map(|s| (format!("{s:?}"), s.to_owned()))
-    .collect();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let mut work = vec![root];
-    while let Some(dir) = work.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for e in entries.flatten() {
-            let p = e.path();
-            let skip = p.file_name().is_some_and(|n| {
-                [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref())
-            });
-            if p.is_dir() && !skip {
-                work.push(p);
-            } else if p.extension().is_some_and(|x| x == "json")
-                && e.metadata().is_ok_and(|m| m.len() <= 1 << 20)
-            {
-                sources.extend(
-                    std::fs::read_to_string(&p)
-                        .ok()
-                        .map(|s| (p.display().to_string(), s)),
-                );
-            }
-        }
-    }
-    if let Some(list) = std::env::var_os("RERAIL_JSON_FILES") {
-        for path in std::fs::read_to_string(list)
-            .unwrap()
-            .lines()
-            .filter(|l| !l.is_empty())
-        {
-            sources.extend(
-                std::fs::read_to_string(path)
-                    .ok()
-                    .map(|s| (path.to_owned(), s)),
-            );
-        }
-    }
-    let mut differ = Vec::new();
-    for (name, source) in &sources {
-        if image(TapeImage::parse(&grammar, source, &|| false)) != image(fallback(source)) {
-            differ.push(name.clone());
-        }
-    }
-    eprintln!(
-        "{} sources: {} read alike, {} differ",
-        sources.len(),
-        sources.len() - differ.len(),
-        differ.len()
-    );
-    assert!(sources.len() > 1000, "{} sources", sources.len());
-    assert!(
-        differ.is_empty(),
-        "MSVC's JSON parser reads these unlike simdjson's route:\n{}",
-        differ.join("\n")
-    );
-}
-
 /// [`json_tapes_from_the_bitlex_parser_are_tree_sitters`] over files: `RERAIL_JSON_FILES`, a file
 /// listing one path a line. Each file the Bitlex parser accepts has tree-sitter-json's tape; the
 /// refused files are counted.
@@ -2772,7 +2660,6 @@ fn json_tapes_over_files() {
 /// a line (say a `node_modules`' `.json` files, its `tsconfig.json`s with comments). Each file simdjson
 /// reads, strictly or as JSONC, has tree-sitter-json's tape; what it refuses is counted, by whether it
 /// has a comment.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 #[ignore = "needs files: run by name with RERAIL_JSON_FILES"]
 fn simdjson_tapes_over_files() {
@@ -2899,12 +2786,12 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
 /// What reading the repository's JSON costs, in instructions retired and thread CPU time, over the files
 /// both simdjson and the Bitlex parser accept: each parser's parse, and its tape (the product's path).
 /// With `RERAIL_JSON_COST_LOOP` set to a step's name, runs that step alone for 20 s (for a profiler).
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_parse_costs() {
     use crate::code_rule_dsl::transducer::packed::json_parser as jp;
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = crate::source_tree::native()
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -3085,7 +2972,8 @@ fn lean_rr_tape_is_the_engines_image() {
         rerail_tape_format::CHECKPOINT_STRIDE
     );
     let grammar = Grammar::new(GrammarDialect::Rr).expect("grammar");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = crate::source_tree::native()
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -7505,7 +7393,6 @@ fn every_tape_format_reads_the_document_as_restored() {
 /// there answers every node question as the same tape read from a buffer of its own, in each format.
 #[test]
 fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
-    format_15();
     use super::formats::Format;
     use rerail_tape_format::tape::{Tape, children};
     let source: String = (0..400).map(|i| format!("x{i} = f(a, {i})\n")).collect();
@@ -7527,7 +7414,7 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         // `in_format` keeps a tape held in another format as it is (a document's tape is format 16 now): the
         // placed tape is in the format its bytes were stored in.
         assert_eq!(placed.format(), own.format(), "held as stored");
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         assert_eq!(placed.placed(), crate::code_rule_dsl::tape::placed::device().is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
         let text = Arc::new(source.clone());
@@ -7677,7 +7564,7 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
 #[test]
 fn the_lean_parsers_write_each_format_directly() {
     use super::formats::{Format, as_run};
-    use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
+        use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
     use rerail_tape_format::tape::Tape;
     type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
     fn lean<R: std::fmt::Debug>(
@@ -7690,6 +7577,7 @@ fn the_lean_parsers_write_each_format_directly() {
     // Each language's file: a few hundred top-level items, so that the writer commits many times and its window
     // (decision 0434 §2) holds a small part of the tape. `{i}` is the item's number.
     let many = |item: &str| -> String { (0..200).map(|i| item.replace("{i}", &i.to_string())).collect() };
+    #[allow(unused_mut)]
     let cases: Vec<(GrammarDialect, String, Encode)> = vec![
         (GrammarDialect::Python, python, |g, s| lean(super::python_lean::encode(g, s, &|| false))),
         (GrammarDialect::JavaScript, js, |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::JavaScript, g, s, &|| false))),
@@ -7909,7 +7797,7 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
             assert_eq!(view.nodes, n);
             for i in 0..n {
                 let at = |what: &str| format!("{what} of {i} ({format:?}, {lang:?})");
-                let code = codes[reads.one("tape_number", tape, &view, i as usize) as usize];
+                let code = codes[reads.one("tape_number", tape, view, i as usize) as usize];
                 assert_eq!(
                     (code.kind, code.field, code.flags),
                     (
@@ -7922,52 +7810,52 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
                 );
                 let end = doc.transducer_descendants(i).end;
                 assert_eq!(
-                    reads.one("tape_end_of", tape, &view, i as usize),
+                    reads.one("tape_end_of", tape, view, i as usize),
                     end,
                     "{}",
                     at("subtree")
                 );
                 let span = doc.transducer_span(i);
                 assert_eq!(
-                    reads.one("tape_start", tape, &view, i as usize) as usize,
+                    reads.one("tape_start", tape, view, i as usize) as usize,
                     span.start,
                     "{}",
                     at("start")
                 );
                 assert_eq!(
-                    reads.one("tape_end", tape, &view, i as usize) as usize,
+                    reads.one("tape_end", tape, view, i as usize) as usize,
                     span.end,
                     "{}",
                     at("end")
                 );
                 assert_eq!(
-                    reads.one("tape_parent", tape, &view, i as usize),
+                    reads.one("tape_parent", tape, view, i as usize),
                     none(doc.transducer_parent(i)),
                     "{}",
                     at("parent")
                 );
                 assert_eq!(
-                    reads.one("tape_next", tape, &view, i as usize),
+                    reads.one("tape_next", tape, view, i as usize),
                     none(doc.transducer_next_sibling(i, false)),
                     "{}",
                     at("next")
                 );
                 let kids = doc.transducer_children(i).collect::<Vec<_>>();
                 assert_eq!(
-                    reads.one("tape_child_count", tape, &view, i as usize) as usize,
+                    reads.one("tape_child_count", tape, view, i as usize) as usize,
                     kids.len(),
                     "{}",
                     at("children")
                 );
                 assert_eq!(
-                    reads.one("tape_first_child", tape, &view, i as usize),
+                    reads.one("tape_first_child", tape, view, i as usize),
                     none(kids.first().copied()),
                     "{}",
                     at("first child")
                 );
                 for (k, &kid) in kids.iter().enumerate().take(8) {
                     assert_eq!(
-                        reads.two("tape_child", tape, &view, i as usize, k as u32),
+                        reads.two("tape_child", tape, view, i as usize, k as u32),
                         kid,
                         "{}",
                         at("a child")
@@ -7978,13 +7866,16 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
     }
 }
 
+/// A grammar's encoder of a text, stopped where its callback says: its tape, or why it refused the text.
+type Encode<E> = fn(&Grammar, &str, &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, E>;
+
 /// `dialect`'s tapes from its lean parser (`encode`) are tree-sitter's, byte for byte, on `sources`;
 /// each of `invalid` (a text tree-sitter reads with an error) the lean parser refuses. And the product
 /// reads the dialect with the lean parser: a file's image through the engine's parse is the lean
 /// parser's; a file it refuses goes to tree-sitter.
 fn lean_tapes_are_tree_sitters<E: std::fmt::Debug>(
     dialect: GrammarDialect,
-    encode: fn(&Grammar, &str, &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, E>,
+    encode: Encode<E>,
     sources: &[&str],
     invalid: &[&str],
 ) {
@@ -8233,7 +8124,7 @@ fn call_argument_programs(source: &str) -> Vec<(String, usize)> {
     let grammar = Grammar::new(GrammarDialect::Python).unwrap();
     let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
     let doc = TapeDoc::restore(std::sync::Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-    crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start as usize)).collect()
+    crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start)).collect()
 }
 
 /// Decision 0470 R2, R3: a string at a declared place is a program over its content, at its bytes; the callee is

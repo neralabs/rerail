@@ -1,14 +1,14 @@
 //! The converter's run over the data-layer pack, and checks of what it writes.
 
 use super::*;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::test_support::{CAPABILITIES, pack_test_data};
 use std::path::{Path, PathBuf};
 
 mod reference_tests;
+mod reference_stage_tests;
 
-/// The rules converted: the pack as rewritten by Pulling-it-all-together (`rules-ast`, decision 0037 step 1).
+/// The rules converted: the pack as rewritten by PIAT (`rules-ast`, decision 0037 step 1).
 const RULES: &str = "rules-ast";
 
 /// The data-layer pack's candidates, pack test data (`packs/data-layer/upstream/lint/`, not in git).
@@ -163,7 +163,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         None => false,
     };
     let configured = edited || option_values(&original) != option_values(&document);
-    // The reference graph the corpus runner binds (`logic::plan::corpus::references`): the policy's, one per policy.
+    // The reference graph `python/references.rerail` derives, under the `.references` setting: the policy's, one per policy.
     let graphs = reference_graphs(&document);
     if graphs.len() > 1 {
         return Err(Failure::Config(format!("{} configures more than one reference graph", document["id"])));
@@ -194,7 +194,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
             if let Some(c) = cache.borrow().get(text.as_str()) {
                 return Ok(c.clone());
             }
-            let c = CodeRuleDslRuntime::compile(text.clone(), "json".to_owned(), CAPABILITIES.to_owned()).map_err(|e| e.reason.to_string())?.inner;
+            let c = crate::code_rule_dsl::rule_api::compile(&text, "json", CAPABILITIES).map_err(|e| e.reason.to_string())?.inner;
             cache.borrow_mut().insert(text.clone(), c.clone());
             Ok(c)
         })
@@ -385,7 +385,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     Ok(Converted { program, clauses, approx: e.approx.clone(), configured, when })
 }
 
-/// The rules the converter reads, by id: the 60 of Pulling-it-all-together's rewrite (`rules-ast`), then the
+/// The rules the converter reads, by id: the 60 of PIAT's rewrite (`rules-ast`), then the
 /// newer rules of Data-layer-rule-expressivity (its candidates in `rules`, its certified rules in the pack's
 /// `rules`), each rule once, the first source winning.
 fn rule_files() -> Vec<PathBuf> {
@@ -697,17 +697,17 @@ fn regexes_become_exact_globs() {
         (r"\basyncio\s*\.\s*to_thread$", Text::Name, Some(&["*.asyncio.to_thread", "asyncio.to_thread"])),
         (r"^(?:materialize|assert_result|.*_post_op)$", Text::Name, Some(&["*_post_op", "assert_result", "materialize"])),
         (r"(?:^|/)tests(?:/|$)", Text::Path, Some(&["**/tests", "**/tests/**"])),
-        (r"^(?:api/)?impl/common/l2070_server_plan(?:/|$)", Text::Path, None),
-        (r"(?:^|/)l2070_batching/(?:.*/)?executor\.py$", Text::Path, None),
-        (r"(?:^|/)l9750_graphql/", Text::Path, None),
+        (r"^(?:api/)?src/core/query_plan(?:/|$)", Text::Path, None),
+        (r"(?:^|/)batching/(?:.*/)?executor\.py$", Text::Path, None),
+        (r"(?:^|/)graphql/", Text::Path, None),
         (r"(?i)cursor|^(?:db|conn)$", Text::Name, None),
         (r"^(?:ab|c)+$", Text::Name, Some(&[])),
     ];
     let samples = [
         "a_b", "_ab", "ab", "apply_x_effect", "apply__effect", "_my_cache_x", "cache", "PyResult", "Pyresult", "Py", "_Async", "__Lazy_x", "Lazy",
-        "materialize", "x_post_op", "_post_op", "tests", "a/tests", "a/tests/b.py", "tests/b", "attests/b", "a/b/tests/c/d.py", "impl/common/l2070_server_plan",
-        "api/impl/common/l2070_server_plan/x.py", "impl/common/l2070_server_planx", "l2070_batching/executor.py", "a/l2070_batching/x/y/executor.py",
-        "xl2070_batching/executor.py", "l9750_graphql/a.py", "a/l9750_graphql/b/c.py", "l9750_graphqlx/a.py", "raw_CURSOR", "db", "dbx", "conn", "asyncio.to_thread", "x.asyncio.to_thread", "xasyncio.to_thread",
+        "materialize", "x_post_op", "_post_op", "tests", "a/tests", "a/tests/b.py", "tests/b", "attests/b", "a/b/tests/c/d.py", "src/core/query_plan",
+        "api/src/core/query_plan/x.py", "src/core/query_planx", "batching/executor.py", "a/batching/x/y/executor.py",
+        "xbatching/executor.py", "graphql/a.py", "a/graphql/b/c.py", "graphqlx/a.py", "raw_CURSOR", "db", "dbx", "conn", "asyncio.to_thread", "x.asyncio.to_thread", "xasyncio.to_thread",
     ];
     for (re, text, expect) in cases {
         let got = globs(&parse(re), text);
@@ -1426,10 +1426,14 @@ fn findings(program: &str, dir: &Path) -> Result<Vec<String>, String> {
     Ok(finding_keys(program, dir)?.into_iter().map(|(path, line, code)| format!("{path}:{line}:{code}")).collect())
 }
 
-/// A program's findings over the files under `dir`: (path, line, code).
+/// A program's findings over the files under `dir`: (path, line, code). On the device as the CLI places it
+/// (`tools::cli_in`): `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can), on the process's GPU, whichever
+/// backend it is; else on the CPU.
 fn finding_keys(program: &str, dir: &Path) -> Result<Vec<(String, u64, String)>, String> {
+    use crate::code_rule_dsl::typing::file_local::Binding;
     let out = dir.join(".out");
-    super::super::plan::corpus::run(program, dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).map_err(|e| e.to_string())?;
+    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    super::super::plan::corpus::run(program, dir, None, &out, "program", binding, 1 << 18).map_err(|e| e.to_string())?;
     // Every output is in the image, empty or not: no `violation` is a program without violations.
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).map_err(|e| format!("violation: {e}"))?;
     let violation = outputs.get("violation").ok_or("violation: no such relation")?;
@@ -1457,7 +1461,7 @@ fn has_filters_the_ancestor_by_its_own_kinds() {
     let _ = std::fs::remove_dir_all(&dir);
     got.sort();
     // W, on the same source: its findings of the clauses converted (its lines 0-based).
-    let compiled = CodeRuleDslRuntime::compile(std::fs::read_to_string(&rule).unwrap(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+    let compiled = crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(&rule).unwrap(), "json", CAPABILITIES).unwrap();
     let result = crate::code_rule_dsl::test_support::evaluate_file(&compiled, "python", path, source);
     let converted: BTreeSet<&str> = c.clauses.iter().filter(|(_, r)| r.is_ok()).map(|(id, _)| id.as_str()).collect();
     let mut w: Vec<String> = result["violations"]
@@ -1481,7 +1485,7 @@ fn converted_and_w(rule: &Path, path: &str, source: &str, name: &str) -> (Vec<St
     write_files(&dir, [(path, source)]);
     let mut got = findings(&c.program, &dir).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
-    let compiled = CodeRuleDslRuntime::compile(std::fs::read_to_string(rule).unwrap(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+    let compiled = crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(rule).unwrap(), "json", CAPABILITIES).unwrap();
     let result = crate::code_rule_dsl::test_support::evaluate_file(&compiled, "python", path, source);
     let converted: BTreeSet<&str> = c.clauses.iter().filter(|(_, r)| r.is_ok()).map(|(id, _)| id.as_str()).collect();
     let mut w: Vec<String> = result["violations"]
@@ -1781,7 +1785,7 @@ struct Baseline {
 
 impl Baseline {
     fn path() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
+        crate::source_tree::native().join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
     }
 
     /// The recorded baseline, or why it does not read.
@@ -1901,6 +1905,15 @@ fn check_baseline(now: &Baseline, ran: &BTreeSet<String>, counted: &dyn Fn(&(Str
     );
 }
 
+/// A measurement's binding: `RERAIL_MEASURE_BINDING=metal` puts the file-local FIX on the process's GPU (Metal,
+/// CUDA or OpenCL), by price, or wherever it can with `RERAIL_DEVICE=always`; else the CPU.
+fn measure_binding() -> crate::code_rule_dsl::typing::file_local::Binding {
+    match std::env::var("RERAIL_MEASURE_BINDING").as_deref() {
+        Ok("metal") => crate::code_rule_dsl::typing::file_local::Binding::Metal,
+        _ => crate::code_rule_dsl::typing::file_local::Binding::Cpu,
+    }
+}
+
 /// The rules `rules` (comma-separated ids, or `*`), each check's hand-written rule replacing its converted one, as in
 /// the replay. A run binds one shape of base relations (`core.rerail`'s for the hand-written rules, T's for the converted
 /// ones), so the two sets are two runs: the converted rules of the checks with no hand-written rule, then the
@@ -1980,7 +1993,7 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
         println!("MEASURE {label}: no programs");
         return (0, 0, 0.0, 0.0);
     }
-    let r = super::super::plan::corpus::run_all(&programs, corpus, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let r = super::super::plan::corpus::run_all(&programs, corpus, &out, "program", measure_binding(), 1 << 18).unwrap();
     let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
     let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
     println!(
@@ -2043,12 +2056,7 @@ fn measure_converted_rules() {
         if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
             crate::code_rule_dsl::logic::profile::set_directory(&PathBuf::from(dir).join(id));
         }
-        // `RERAIL_MEASURE_BINDING=metal`: the file-local FIX on the device work queue.
-        let binding = match std::env::var("RERAIL_MEASURE_BINDING").as_deref() {
-            Ok("metal") => crate::code_rule_dsl::typing::file_local::Binding::Metal,
-            _ => crate::code_rule_dsl::typing::file_local::Binding::Cpu,
-        };
-        let r = super::super::plan::corpus::run(&program, &corpus, None, &out, "program", binding, 1 << 18).unwrap();
+        let r = super::super::plan::corpus::run(&program, &corpus, None, &out, "program", measure_binding(), 1 << 18).unwrap();
         let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
         let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
         println!(

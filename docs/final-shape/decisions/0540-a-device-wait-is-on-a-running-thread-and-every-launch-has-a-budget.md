@@ -5,7 +5,7 @@ busy waits. What can we do? can we make the kernels discover their order based o
 in those? Can we make a thread which wants to spin instead cooperatively take on part of the work it's waiting for?",
 then "please do 2 and 3 first": 2, the 16z cache's waits; 3, the persistent grid's and a budget for each launch.
 Amends `view::cache` (decision 0353 step 4b): "a miss waits for no thread" becomes a bounded wait for a writer.
-Follows 0518 point 5 (a wait is a turn of its function's one loop).
+Follows 0524 point 5 (a wait is a turn of its function's one loop).
 
 ## Intro
 
@@ -13,7 +13,7 @@ A GPU makes no promise that a thread which waits for another will see it go on. 
 luck, and the rest are:
 
 - **A lane of the waiter's own SIMD group.** On Apple's GPUs a group's lanes do not each go their own way: lanes
-  that go round a loop stand the rest of the group still (0518 point 5). A lane that waits for its own group waits
+  that go round a loop stand the rest of the group still (0524 point 5). A lane that waits for its own group waits
   for ever.
 - **A group that is not resident.** A group not yet running runs only when a running one ends. A group that waits
   for it, and every other one that does too, keeps it from running.
@@ -32,7 +32,7 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
 2. **The 16z cache's lookup waits for a block's writer** (`clif_tc_get`): the writer claimed the block in its own
    take, so it is resident, and from its claim to its entry's completion it decodes and stores, waiting for nothing.
    A lane of the writer's own group is never seen waiting: a group's take ends within the turn of its claim. After
-   SPIN turns it decodes an entry of its own. Neither of the ways not to wait does better, measured on spark1's GB10:
+   SPIN turns it decodes an entry of its own. Neither of the ways not to wait does better, measured on a DGX Spark's GB10:
    - **An entry of its own (a duplicate)**, through the device test's cache sized for the whole tape (7 blocks, room
      for 8): 477 failed lookups, the cache full and turned once. Waiting: none, 7 misses, no turn. A GPU's threads
      that miss one block at once are many (every group that starts on it), and their copies fill the head.
@@ -78,7 +78,7 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
    - The CLIF (the host's) has both fixes too.
    - A new device test, `the_device_reads_16z_through_a_cache_that_turns`, reads at random through a cache that
      thrashes. Each thread checks the cache's failure count after each read: no read is wrong while it is 0. It
-     passes on the Mac mini's Metal, spark1's CUDA and a Linux host's CPU. On Metal most of its lookups fail
+     passes on the Mac mini's Metal, a DGX Spark's CUDA and a Linux host's CPU. On Metal most of its lookups fail
      (a SIMD group's turn outlasts several turns of the cache, and after the first failure a pending lookup does
      not wait); on CUDA a few do. A batch's cache is sized for its blocks (`Spec::sized`), so it thrashes only past
      its budget, where its batch is refused (0463).
@@ -97,7 +97,7 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      queue's head, tail and active count (`<ukl/workqueue.h>`, `work_queue.metal`).
    - `a_grid_past_residency_fails_its_barrier` is `a_grid_past_residency_is_the_groups_that_run`: 4,096 groups of
      1,024 dispatched, 24 took part on the Mac mini (in 9.8 ms), 48 on a GB10, 1 on the CPU, and every barrier passed.
-   - The barrier, scan, segmented scan and sort tests pass on the Mac mini's Metal, spark1's CUDA and a Linux CPU.
+   - The barrier, scan, segmented scan and sort tests pass on the Mac mini's Metal, a DGX Spark's CUDA and a Linux CPU.
      They stay ignored (Q367) until the M3 and the M1 Max pass them (step 5).
 3. **The budget.**
    - **Done (2026-11-21): the queue and the lattice.**
@@ -109,7 +109,7 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      - The lattice's workers stop at it.
      - `a_work_queue_budget_ends_a_launch_and_the_next_takes_the_rest`: at a budget of 1 and 4, every node of a
        100,000-node tree is visited once, in more than one launch and within the bound. It passes on a Linux CPU,
-       spark1's CUDA and the Mac mini's Metal.
+       a DGX Spark's CUDA and the Mac mini's Metal.
    - The label passes' spill queue needs no item budget: its frames are walks' pieces, and every walk is within
      its task's step budget (decision 0334), past which it stops and goes to W or runs again.
    - **`pp_expand`'s workers:** another agent's work (2026-11-21); a budget written here for them was taken out

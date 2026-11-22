@@ -69,7 +69,7 @@ fn ret_names(terms: &Terms, callable: u32, text: &dyn Fn(u32) -> String) -> Opti
 
 /// The declarations, merged (user first, then the demanded summaries), as `declared_ret(q, t)` rows (decision 0249:
 /// rows the run adds, never text); and the report so far.
-pub(crate) fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut TypingReport) -> Result<(Vec<(String, String)>, BTreeMap<String, BTreeSet<String>>)> {
+pub fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut TypingReport) -> Result<(Vec<(String, String)>, BTreeMap<String, BTreeSet<String>>)> {
     let mut names: Vec<String> = Vec::new();
     let mut intern = |s: &str| match names.iter().position(|x| x == s) {
         Some(i) => i as u32,
@@ -89,7 +89,7 @@ pub(crate) fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut
         let installed = Installed::scan(site, None).map_err(|e| Error::Plan(format!("{}: {e}", site.display())))?;
         let mut imports = Vec::new();
         for f in files.iter().filter(|f| f.ends_with(".py")) {
-            if let Ok(text) = std::fs::read_to_string(root.join(f)) {
+            if let Ok(text) = crate::git_workspace::snapshot::read_to_string(root.join(f)) {
                 imports.extend(deps::imports(&text, false));
             }
         }
@@ -121,7 +121,7 @@ pub(crate) fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut
 
 /// After the run: `type_of` as terms, the conflicts, and (with `summarize`) the summaries.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn outputs(
+pub fn outputs(
     typing: &Typing,
     db: &Connection,
     store: &ContentStore,
@@ -204,7 +204,7 @@ pub(crate) fn outputs(
         }
     }
     for (module, id) in &installed.modules {
-        let source = std::fs::read_to_string(root.join(&id.path)).unwrap_or_default();
+        let source = crate::git_workspace::snapshot::read_to_string(root.join(&id.path)).unwrap_or_default();
         let reexported: Vec<(String, Vec<String>)> = deps::imports(&source, true).into_iter().filter(|(_, names)| !names.is_empty()).collect();
         let empty = BTreeMap::new();
         let fns = by_module.get(module.as_str()).unwrap_or(&empty);

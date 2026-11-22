@@ -194,6 +194,34 @@ fn a_waves_kept_puts_are_one_block_per_space() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// A program's reader record put twice in one wave (two of its puts in a space, decision 0401 step 8) is one put
+/// naming both's entries: a record only grows. Gathered as any key, the later replaced the earlier, the kept record
+/// named the last put's entries only, and the warm run after asked the others again and wrote its record (the
+/// corpus's `the_run_after_a_cold_one_writes_nothing`).
+#[test]
+fn a_waves_two_puts_of_a_programs_record_are_one_naming_both() {
+    let (path, c) = store("wave-readers");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let program = [0x33u8; 32];
+    let (one, two, asked) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+    let entry = |rel: &str, ident: [u8; 32], v: i64| KeptPut { ident, ..put(rel, 0, v as u64, flat(&[v, v])) };
+    let log = std::sync::Arc::new(ReaderLog::new(program));
+    {
+        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptReader(Some(std::sync::Arc::clone(&log))));
+        let _waves = crate::content_store::write_back::run_waves();
+        store.queue_kept(SPACE, vec![entry("a", one, 1)]);
+        store.queue_kept(SPACE, vec![entry("b", two, 2)]);
+        log.asked(&SPACE, &asked, |_| Vec::new());
+        log.flush(&store);
+    }
+    store.written().unwrap();
+    let rows = chain_rows(&c, &SPACE).unwrap();
+    let kept = KeptSpace::open(&path, &SPACE, &rows).unwrap();
+    let records: Vec<([u8; 32], Vec<[u8; 32]>)> = kept.view().of(READERS).map(|k| (*k.key.ident, record_idents(&k).collect())).collect();
+    assert_eq!(records, [(program, vec![one, two, asked])], "the wave's record: both puts' entries and the one asked");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// A wave's puts are gathered by space and appended as one file each: a later put of a key replaces an earlier one, a
 /// retag keeps the rows the wave gave its key with its own reads, and a gone entry stays gone. Two spaces, one
 /// write each.
@@ -240,7 +268,9 @@ fn the_kept_relations_read_through_sql_equal_their_entries() {
     crate::content_store::atoms::Atoms::attach(&c).unwrap();
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
-    let entries_of: Vec<(String, i64, i64, i64, Vec<Vec<i64>>)> = view.all().map(|k| (k.key.rel.to_owned(), k.key.part, k.digest as i64, k.rows.len() as i64, (0..k.rows.len()).map(|i| k.row(i)).collect())).collect();
+    // An entry's relation, part, digest, row count and rows.
+    type Entry = (String, i64, i64, i64, Vec<Vec<i64>>);
+    let entries_of: Vec<Entry> = view.all().map(|k| (k.key.rel.to_owned(), k.key.part, k.digest as i64, k.rows.len() as i64, (0..k.rows.len()).map(|i| k.row(i)).collect())).collect();
     let entries: Vec<(String, i64, i64, i64, String, String)> = c
         .prepare("SELECT rel, part, digest, rows, types, reads FROM kept_entries WHERE space = ?1 ORDER BY rel, part")
         .unwrap()
@@ -324,6 +354,55 @@ fn kept_facts_are_a_virtual_table() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// K3 (decision 0456), over decision 0384 steps 7 and 8: a continuation is kept with every row it reads down its
+/// chain, its base's first, and not the rows its bases' writers put past where it forked; the run's dead bits are of
+/// its ids down the chain. (Once `packed::pack_open` packed a continuation's own rows only.)
+#[test]
+fn a_continuation_is_kept_with_every_row_it_reads() {
+    let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+    let spec = Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: 4 };
+    let fill = |r: &Relation, from: u32, n: u32, tag: i64| {
+        assert!(r.rows.try_reserve(&block, u64::from(r.rows.len() + n)));
+        let at = r.rows.len();
+        // SAFETY: rows reserved just now, written before anything reads them.
+        unsafe {
+            r.rows.claim_reserved(n);
+            for i in 0..n {
+                r.rows.put(at + i, 0, i64::from((from + i) % 10));
+                r.rows.put(at + i, 1, tag + i64::from(from + i));
+            }
+        }
+    };
+    let base = Relation::try_create(&block, &spec, None).unwrap();
+    fill(base, 0, 100, 1000);
+    let fork = Relation::try_continue(&block, &spec, base, 100).expect("room in the base's block");
+    fill(fork, 100, 50, 2000);
+    // The base's writer goes on past the fork's start: rows the fork does not read.
+    fill(base, 100, 30, 9000);
+    let fork2 = Relation::try_continue(&block, &spec, fork, 120).expect("a continuation of a continuation");
+    fill(fork2, 120, 40, 3000);
+    fill(fork, 150, 5, 8000);
+    let at = block.offset_of(std::ptr::from_ref(fork2));
+    // The run killed a base row (3), one of the middle's (110) and one of its own (130).
+    let mut dead = vec![0u64; 3];
+    for id in [3u32, 110, 130] {
+        dead[id as usize / 64] |= 1 << (id % 64);
+    }
+    let (path, c) = store("continuation");
+    write(&path, &c, vec![put("p", 0, 1, KeptWhat::Rows(Box::new(Lent { block, at, dead })))]);
+    let mut want: Vec<Vec<i64>> = (0..160i64)
+        .filter(|id| ![3, 110, 130].contains(id))
+        .map(|id| vec![id % 10, if id < 100 { 1000 } else if id < 120 { 2000 } else { 3000 } + id])
+        .collect();
+    want.sort();
+    let got = read(&path, &c);
+    assert_eq!(got.len(), 1);
+    let mut rows = got[0].3.clone();
+    rows.sort();
+    assert_eq!(rows, want, "every live row down the chain, and none its bases' writers put past it");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// Decision 0456's open question, over a real store (`RERAIL_KEPT_STORE`): what each column of the chain would take
 /// under the candidate encodings. Leading columns and the rest apart; GROUPS' group widths; sample values. Run with
 /// `--ignored --nocapture`; prints its report.
@@ -338,4 +417,61 @@ fn chain_bytes_by_relation() {
     for ((rel, what), (n, r, b)) in rows.iter().take(40) {
         eprintln!("{b:>11} {:5.1}%  {what:7} {n:6} entries {r:10} rows  {rel}", *b as f64 * 100.0 / total.max(1) as f64);
     }
+}
+
+/// F-R4 (decision 0401 F4): collection writes a space's next base without the entries no live program reads. Each
+/// program's reads and puts are its reader record in the space (put with the entries, or at the run's end for what it
+/// only asked), and a record only grows. A space's entries only dead programs' records name go, with those records;
+/// those a live program's record names, or no record names, stay, read the same; a space left with none is dropped.
+#[test]
+fn collection_rewrites_without_dead_entries() {
+    let (path, c) = store("collect");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let (live, dead) = ([0x11u8; 32], [0x22u8; 32]);
+    let (mine, theirs, shared, asked, legacy) = ([1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], [5u8; 32]);
+    let entry = |rel: &str, ident: [u8; 32], v: i64| KeptPut { ident, ..put(rel, 0, v as u64, flat(&[v, v])) };
+    // A store without reader records (an older build's, a session's): its entry no record names.
+    store.queue_kept(SPACE, vec![entry("l", legacy, 5)]);
+    store.written().unwrap();
+    // Two programs' runs, each putting its entries; the live one also asks one it did not put, the dead one puts in
+    // another space too.
+    let other: [u8; 32] = [9; 32];
+    for (program, puts) in [(live, vec![entry("a", mine, 1), entry("s", shared, 3)]), (dead, vec![entry("b", theirs, 2), entry("s", shared, 3)])] {
+        let log = std::sync::Arc::new(ReaderLog::new(program));
+        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptReader(Some(std::sync::Arc::clone(&log))));
+        store.queue_kept(SPACE, puts);
+        if program == live {
+            log.asked(&SPACE, &asked, |_| Vec::new());
+        } else {
+            store.queue_kept(other, vec![entry("x", theirs, 7)]);
+        }
+        log.flush(&store);
+        store.written().unwrap();
+    }
+    let records = |c: &Connection, space: &[u8; 32]| -> Vec<([u8; 32], Vec<[u8; 32]>)> {
+        let rows = chain_rows(c, space).unwrap();
+        let kept = KeptSpace::open(&path, space, &rows).unwrap();
+        kept.view().of(READERS).map(|k| (*k.key.ident, record_idents(&k).collect())).collect()
+    };
+    assert_eq!(records(&c, &SPACE), [(live, vec![mine, shared, asked]), (dead, vec![theirs, shared])], "each program's record: what it put and asked, grown");
+    // The keep decision's: one program live, one dead.
+    c.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1), (?2, 0)", rusqlite::params![&live[..], &dead[..]]).unwrap();
+    let before = read(&path, &c);
+    assert_eq!(store.collect_kept_facts().unwrap(), 2, "the space rewritten, the other dropped");
+    let after = read(&path, &c);
+    let rels: Vec<&str> = after.iter().map(|e| e.0.as_str()).collect();
+    assert_eq!(rels, [READERS, "a", "l", "s"], "the dead program's entry and record gone");
+    assert_eq!(after.iter().filter(|e| e.0 != READERS).cloned().collect::<Vec<_>>(), before.iter().filter(|e| e.0 != READERS && e.0 != "b").cloned().collect::<Vec<_>>(), "the rest read the same");
+    assert_eq!(chain_rows(&c, &SPACE).unwrap().len(), 1, "one base");
+    assert_eq!(files(&path).len(), 1, "the replaced files removed: {:?}", files(&path));
+    assert!(chain_rows(&c, &other).unwrap().is_empty() && !space_dir(&path, &other).exists(), "a space only dead programs read, dropped");
+    // The store's reads see the new chain.
+    assert_eq!(store.kept_space(&SPACE).unwrap().unwrap().view().all().count(), 4);
+    // Nothing dead is left to collect: a second pass rewrites nothing.
+    assert_eq!(store.collect_kept_facts().unwrap(), 0);
+    // The live program dies too: what only it read goes; what no record names stays.
+    c.execute("UPDATE corpus_plans SET live=0", []).unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 1);
+    assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["l"]);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }

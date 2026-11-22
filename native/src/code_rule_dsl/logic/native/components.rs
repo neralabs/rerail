@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 const DOMAIN: &[u8] = b"rerail.components/v1\0";
 
 /// `(d, c, key)` for every document of `own` or `edge`, by document.
-pub(in crate::code_rule_dsl) fn components(edges: &[(i64, i64)], own: &[(i64, String)]) -> Vec<(i64, i64, String)> {
+pub fn components(edges: &[(i64, i64)], own: &[(i64, String)]) -> Vec<(i64, i64, String)> {
     let mut digests: BTreeMap<i64, BTreeSet<&str>> = BTreeMap::new();
     for (d, h) in own {
         digests.entry(*d).or_default().insert(h.as_str());

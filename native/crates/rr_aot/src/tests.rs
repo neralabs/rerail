@@ -4,7 +4,7 @@ use rerail_rr_syntax as rr;
 
 /// The repository's `.rerail` files.
 fn corpus() -> Vec<String> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -48,8 +48,8 @@ fn aot_tapes_are_the_jits() {
     let (mut differ, mut tier1_differ) = (Vec::new(), Vec::new());
     let mut taken = 0;
     for (i, f) in files.iter().enumerate() {
-        let mut a = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()]);
-        let mut j = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
+        let mut a = rerail_cpu_block::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()]);
+        let mut j = rerail_cpu_block::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
         a.call(&aot.parser.tier1);
         j.call(&jit.parser.tier1);
         if a.out != j.out || a.positions != j.positions || a.counts != j.counts {
@@ -72,30 +72,18 @@ fn aot_tapes_are_the_jits() {
 }
 
 /// Every corpus file, and the table's in-place cases: tier 2 ahead of time writes the JIT's format 16 tapes (16 and
-/// 16z, presence and all) by the writer's ops, and refuses where it does. The language holds every key the corpus's
-/// format 15 tapes hold, as the engine's holds its grammar's.
+/// 16z, presence and all) by the writer's ops, and refuses where it does. The language is rr's shipped table, the one
+/// the source's numbers are literals of (`crate::lang`, decision 0535).
 #[test]
 #[ignore = "the corpus: run by name"]
 fn aot_format_16_tapes_are_the_jits() {
-    use rerail_tape_format::f16::Lang;
-    use rerail_tape_format::tape::{CodeTable, f15_columns};
     let jit = rerail_rr_parser::compiled().expect("compiles");
     let aot = crate::aot(BOTH).expect("the ahead-of-time build");
     let mut files = corpus();
     for src in ["r(x) :- x = a - b - c - d.", "r(x) :- x = (a + b) * (c - d) - e / f.", "r(x) :- x = a /* c */ - b // d\n - c.", "r(n) :- n = min (a, b) : { s(a, b) }."] {
         files.push(src.to_string());
     }
-    let mut keys = Vec::new();
-    for f in &files {
-        let Ok(image) = jit.parser.image(f.as_bytes()) else { continue };
-        let (_, table) = f15_columns(&image).expect("a format 15 tape");
-        for e in table.entries() {
-            if !keys.contains(e) {
-                keys.push(e.clone());
-            }
-        }
-    }
-    let lang = Lang::new(CodeTable::new(keys), [1, 2, 2], 1).expect("a language");
+    let lang = crate::lang();
     // One program (the fingerprints): the JIT's numbers are the ahead-of-time run's.
     let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
     let (mut differ, mut written) = (Vec::new(), 0);
@@ -126,7 +114,7 @@ fn the_word_multiplier_is_a_literal() {
     let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     assert!(!src.contains("kept("), "a barrier on a constant");
     assert!(src.contains(&format!("{}i64 as u64", t.table.mult as i64)), "the multiplier a literal");
-    assert_eq!(t.rest, rerail_compiler::native_cpu_block::WordRest::Ninth, "rr's words are nine bytes at most");
+    assert_eq!(t.rest, rerail_cpu_block::native_cpu_block::WordRest::Ninth, "rr's words are nine bytes at most");
 }
 
 /// The token loop's innermost loop, the fused rules' (a word's hash in it), calls nothing: as
@@ -340,10 +328,10 @@ fn jit_against_aot() {
     let ours: Vec<&String> = files.iter().filter(|f| jit.parser.image(f.as_bytes()).is_ok()).collect();
     let nodes: usize = ours.iter().map(|f| rr::engine_tape(f).len()).sum();
     let bytes: usize = ours.iter().map(|f| f.len()).sum();
-    let batch = |p: &rerail_compiler::native_cpu_stream::Parser| -> Vec<_> {
+    let batch = |p: &rerail_cpu_stream::native_cpu_stream::Parser| -> Vec<_> {
         ours.iter()
             .map(|f| {
-                let mut b = rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()]);
+                let mut b = rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()]);
                 b.call(&p.tier1);
                 b
             })
@@ -490,9 +478,9 @@ fn aot_profile_loop() {
     let aot = (!jit1).then(|| crate::aot(BOTH).expect("the ahead-of-time build"));
     // Every file: tier 1 runs on each, and a scratch compile may refuse others.
     let ours: Vec<&String> = files.iter().collect();
-    let mut batches: Vec<_> = aot.iter().flat_map(|a| ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&a.parser.tier1, &[f.as_bytes()]))).collect();
+    let mut batches: Vec<_> = aot.iter().flat_map(|a| ours.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(&a.parser.tier1, &[f.as_bytes()]))).collect();
     let jit = rerail_rr_parser::compiled().expect("compiles");
-    let mut jit_batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()])).collect();
+    let mut jit_batches: Vec<_> = ours.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()])).collect();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let (t0, (i0, c0)) = (thread_cpu(), retired());
     let (mut rounds, mut n) = (0usize, 0usize);
@@ -551,7 +539,7 @@ fn tier1_by_kind() {
             // `RR_WHO=lean`: the lean lexer alone, for the same profile of it; `jit`: Cranelift's.
             let lean = std::env::var("RR_WHO").is_ok_and(|w| w == "lean");
             let p = if std::env::var("RR_WHO").is_ok_and(|w| w == "jit") { &jit.parser } else { &aot.parser };
-            let mut b = rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[text.as_bytes()]);
+            let mut b = rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[text.as_bytes()]);
             let t0 = thread_cpu();
             while (thread_cpu() - t0).as_secs_f64() < seconds {
                 if lean {
@@ -562,9 +550,9 @@ fn tier1_by_kind() {
             }
             continue;
         }
-        let mut b = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
+        let mut b = rerail_cpu_block::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
         b.call(&aot.parser.tier1);
-        let mut bj = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[text.as_bytes()]);
+        let mut bj = rerail_cpu_block::native_cpu_block::Batch::new(&jit.parser.tier1, &[text.as_bytes()]);
         bj.call(&jit.parser.tier1);
         let (mut ours, mut lean, mut cl) = ((u64::MAX, u64::MAX), (u64::MAX, u64::MAX), (u64::MAX, u64::MAX));
         let least = |m: (u64, u64), a: (u64, u64), b: (u64, u64)| (m.0.min(b.0 - a.0), m.1.min(b.1 - a.1));

@@ -3,8 +3,8 @@
 //! - **Overall** (`--memory-mb`, `RERAIL_MEMORY_MB`; 1 GB by default): what the process keeps resident on the host.
 //!   The parts sized from it (the write queue, the working set, what a session keeps of its cross-file part) take
 //!   a fixed share of it: `share(part_at_default)` is the part's size at the default budget, scaled.
-//! - **Metal** (`--metal-mb`, `RERAIL_METAL_MB`; half the overall budget by default): the device's buffers, on top of
-//!   the overall budget. A run with `--metal` may use the two together: 1.5 GB by default.
+//! - **Metal** (`--metal-mb`, `RERAIL_METAL_MB`; the overall budget by default, decision 0549): the device's buffers,
+//!   on top of the overall budget. A run with `--metal` may use the two together: 2 GB by default.
 //!
 //! A command line sets them (`set_memory_mb`, `set_metal_mb`) before the run starts; read before, they are the
 //! environment's or the defaults. They are read on every use, so a test may set them.
@@ -13,6 +13,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// The overall budget by default: 1 GB.
 pub const MEMORY_DEFAULT: usize = 1 << 30;
+
+/// The Metal budget its parts' sizes are given at (`metal_share`): 512 MB.
+const METAL_REFERENCE: usize = 512 << 20;
 
 /// The budgets set (`set_memory_mb`, `set_metal_mb`; 0: from the environment, or the defaults): the machine's
 /// (decision 0442), which every caller on it shares.
@@ -35,7 +38,7 @@ impl Budgets {
             return bytes;
         }
         match self.metal.load(Ordering::Relaxed) {
-            0 => env_mb("RERAIL_METAL_MB").unwrap_or_else(|| self.memory() / 2),
+            0 => env_mb("RERAIL_METAL_MB").unwrap_or_else(|| self.memory()),
             bytes => bytes,
         }
     }
@@ -68,7 +71,7 @@ thread_local! {
     pub(crate) static METAL_TEST: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// The Metal budget, in bytes: half the overall budget unless set.
+/// The Metal budget, in bytes: the overall budget unless set (decision 0549).
 pub fn metal() -> usize {
     budgets().metal()
 }
@@ -96,9 +99,10 @@ pub fn share(at_default: usize) -> usize {
     (at_default as u128 * memory() as u128 / MEMORY_DEFAULT as u128) as usize
 }
 
-/// A part of the Metal budget: `at_default` bytes of its default (half the default overall budget), in proportion.
+/// A part of the Metal budget: `at_default` bytes of a 512 MB budget (the default before decision 0549), in
+/// proportion: at the default 1 GB, twice them.
 pub fn metal_share(at_default: usize) -> usize {
-    (at_default as u128 * metal() as u128 / (MEMORY_DEFAULT / 2) as u128) as usize
+    (at_default as u128 * metal() as u128 / METAL_REFERENCE as u128) as usize
 }
 
 /// The machine's count (decision 0442: the machine's): the reader of the heap's live bytes, from the process's
@@ -171,9 +175,9 @@ impl Count {
             let (used, free) = crate::blocks::host_held();
             used.saturating_sub(free)
         };
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        #[cfg(gpu_lane)]
         let ((leased, idle), ledger) = (crate::gpu::shared::held_bytes(), crate::gpu::shared::ledger_bytes());
-        #[cfg(not(all(feature = "gpu", target_os = "macos")))]
+        #[cfg(not(gpu_lane))]
         let ((leased, idle), ledger) = ((0, 0), 0);
         let w = Written { heap, host_blocks, leased, idle, ledger };
         self.most.fetch_max(w.total(), Ordering::Relaxed);
@@ -208,14 +212,15 @@ mod tests {
         let untouched = b.used();
         assert!(untouched < 1 << 20, "a 64 MB reservation counts {untouched} bytes untouched");
         b.try_alloc_chunk(8 << 20, 1 << 14).unwrap();
-        let after = b.used();
-        assert!(after >= 8 << 20 && after < 9 << 20, "8 MB written counts {after} bytes");
+        // Less what the free list holds: the bytes skipped to align the chunk (decision 0342, amended by 0494 step 6).
+        let after = b.used() - b.free_bytes();
+        assert!((8 << 20..9 << 20).contains(&after), "8 MB written counts {after} bytes");
         assert!(written().host_blocks >= after, "the block is in the count");
         // A chunk given back (a dead relation's) is not counted (decision 0445).
         let at = b.try_alloc_chunk(4 << 20, 1 << 14).unwrap();
         b.free_chunk(at, 4 << 20);
         let counted = b.used() - b.free_bytes();
-        assert!(counted >= 8 << 20 && counted < 9 << 20, "a chunk given back counts: {counted} bytes");
+        assert!((8 << 20..9 << 20).contains(&counted), "a chunk given back counts: {counted} bytes");
         assert!(written().host_blocks >= counted, "the block is in the count, less its free list");
         assert!(limit() == memory() + metal());
         drop(b);
@@ -226,12 +231,13 @@ mod tests {
     fn budgets_default_set_and_share() {
         if std::env::var_os("RERAIL_MEMORY_MB").is_none() && std::env::var_os("RERAIL_METAL_MB").is_none() {
             assert_eq!(memory(), 1 << 30);
-            assert_eq!(metal(), 512 << 20, "Metal defaults to half the overall budget");
+            assert_eq!(metal(), 1 << 30, "Metal defaults to the overall budget (0549)");
+            assert_eq!(metal_share(64 << 20), 128 << 20, "a Metal part given at 512 MB, twice it at 1 GB");
             assert_eq!(share(192 << 20), 192 << 20);
         }
         set_memory_mb(2048).unwrap();
         assert_eq!(share(192 << 20), 384 << 20, "a part scales with the overall budget");
-        assert_eq!(metal(), 1 << 30, "unset, Metal follows the overall budget");
+        assert_eq!(metal(), 2 << 30, "unset, Metal follows the overall budget");
         METAL_TEST.with(|m| m.set(256 << 20));
         assert_eq!(metal(), 256 << 20);
         assert_eq!(metal_share(64 << 20), 32 << 20);

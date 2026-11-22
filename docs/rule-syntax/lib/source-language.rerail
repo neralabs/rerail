@@ -1,0 +1,54 @@
+// Source language selection for both inventory and document loading.
+.decl source_language_request(path: symbol) extensible
+.decl git_inventory_host_registry(version: symbol)
+.decl git_inventory_host_suffix(version: symbol, suffix: symbol, language: symbol)
+.decl git_inventory_host_name(version: symbol, name: symbol, language: symbol)
+.input git_inventory_host_registry, git_inventory_host_suffix, git_inventory_host_name
+
+.decl sl_basename(path: symbol, name: symbol)
+sl_basename(p, @ascii_lower(@replace_all(p, "(?s)^.*/", ""))) :- source_language_request(p).
+
+.decl sl_named(path: symbol, name: symbol, grammar: symbol)
+sl_named(p, name, g) :- sl_basename(p, name), git_inventory_host_name(_, name, g).
+
+.decl sl_suffix(suffix: symbol, grammar: symbol, order: number, built: number)
+sl_suffix(ext, g, order, built) :- !git_inventory_host_registry(_), source_grammar_suffix(g, ext, order, built).
+sl_suffix(ext, g, 0, 1) :- git_inventory_host_suffix(_, ext, g).
+
+// Registry decisions depend only on selector facts. A batch supplies placements separately.
+.decl sl_option(kind: symbol, selector: symbol, grammar: symbol, priority: number, built: number)
+sl_option("name", n, g, 0, 1) :- git_inventory_host_name(_, n, g).
+sl_option("suffix", s, g, i, b) :- sl_suffix(s, g, i, b).
+
+.decl sl_evidence(kind: symbol, selector: symbol, entry: symbol)
+sl_evidence(t, s, cat(@json_str(g), " ", to_string(i), " ", to_string(b))) :- sl_option(t, s, g, i, b).
+.decl sl_selector_key(kind: symbol, selector: symbol, inputs: symbol)
+sl_selector_key(t, s, @sha256(cat(t, " ", @json_str(s), " ", entries))) :-
+    sl_option(t, s, _, _, _), entries = join e by e sep "\n" : { sl_evidence(t, s, e) }.
+
+.decl source_language_classification_key(inputs: symbol, algorithm: symbol)
+source_language_classification_key(k, "basename-v5") :- sl_selector_key(_, _, k).
+
+.decl source_language_classification(inputs: symbol, grammar: symbol)
+source_language_classification(k, g) :-
+    source_language_classification_key(k, _), sl_selector_key(t, s, k),
+    i = max j : { sl_option(t, s, _, j, _) }, sl_option(t, s, g, i, 1).
+.cache source_language_classification by source_language_classification_key
+
+.decl sl_match(path: symbol, suffix: symbol, length: number)
+sl_match(p, s, strlen(s)) :- sl_basename(p, name), sl_suffix(s, _, _, _), !sl_named(p, _, _),
+    suffix(s, name), strlen(s) < strlen(name).
+
+.decl sl_placement(path: symbol, kind: symbol, selector: symbol)
+sl_placement(p, "name", name) :- sl_named(p, name, _).
+sl_placement(p, "suffix", s) :- sl_match(p, s, n), n = max len : { sl_match(p, _, len) }.
+
+.decl source_language_key(path: symbol, inputs: symbol, algorithm: symbol)
+source_language_key(p, k, "basename-v5") :- sl_placement(p, t, s), sl_selector_key(t, s, k).
+source_language_key(p, @sha256(""), "basename-v5") :- source_language_request(p), !sl_placement(p, _, _).
+
+.decl source_language_result(path: symbol, inputs: symbol, grammar: symbol)
+source_language_result(p, k, g) :- source_language_key(p, k, _), source_language_classification(k, g).
+
+.decl source_language(path: symbol, grammar: symbol)
+source_language(p, g) :- source_language_result(p, _, g).

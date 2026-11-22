@@ -12,7 +12,7 @@ fn check(src: &[u8], cpp: bool) -> Result<bool, String> {
     if interp != image {
         return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
         let m = c.metal_images(&[src]).map_err(|e| format!("the device runs it: {e:?}"))?;
         if m[0] != image {
@@ -89,10 +89,10 @@ fn the_corpus_pp_tapes() {
         let files: Vec<(std::path::PathBuf, Vec<u8>)> = paths.into_iter().skip(skip).take(limit).filter_map(|p| std::fs::read(&p).ok().map(|s| (p, s))).collect();
         for batch in files.chunks(64) {
             let images: Vec<_> = batch.iter().map(|(_, src)| c.parser.image(src)).collect();
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             let metal = c.metal_images(&batch.iter().map(|(_, s)| s.as_slice()).collect::<Vec<_>>()).unwrap_or_else(|e| panic!("the device runs the batch: {e:?}"));
             for (k, ((p, src), image)) in batch.iter().zip(&images).enumerate() {
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux", windows))]
                 if metal[k].as_ref() != image.as_ref().ok() {
                     differ.push(format!("{}: Metal's tape differs", p.display()));
                     continue;

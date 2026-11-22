@@ -17,7 +17,7 @@ pub use crate::code_rule_dsl::facts::core::ast_matches::{MOST_CAPTURES, PREFIX, 
 /// Each relation's matcher compiled for the transducer, over the program's first `.policy` (its utils), by the
 /// registered compiler (`facts::vtab::syntax::AstCompiler`), with the matchers whose roots bound its rows
 /// ([`demanded_by_roots`]). A matcher that does not lower fails the run, naming it.
-pub(in crate::code_rule_dsl) fn compiled(
+pub fn compiled(
     matchers: &[(String, String, Vec<String>)],
     demand: &[Option<Vec<usize>>],
     policies: &[serde_json::Value],
@@ -65,7 +65,7 @@ pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]
                         Lit::Agg { atom, .. } if v.rel_name(atom.rel()) == rel.as_str() => return None,
                         _ => continue,
                     };
-                    let Some(node) = atom.args().next().and_then(TermRef::var).filter(|_| !atom.neg()) else { return None };
+                    let node = atom.args().next().and_then(TermRef::var).filter(|_| !atom.neg())?;
                     read = true;
                     // Another positive atom of the body that binds the node where only matchers' roots fill it.
                     let roots = body.iter().enumerate().filter(|(other, _)| *other != at).find_map(|(_, other)| {

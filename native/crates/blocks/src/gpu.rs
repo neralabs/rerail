@@ -130,7 +130,7 @@ pub fn source() -> String {
     s
 }
 
-#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux", windows)))]
 mod tests {
     use super::*;
     use crate::block::{Block, kind};
@@ -206,7 +206,7 @@ DEFINE_KERNEL2(blocks_tests, reads_probe, ROBUFFER, uint8_t, b, "[block]", ARGS,
                 let id = rel.base_rows + i;
                 let key = rel.own(id, 1);
                 let group = rel.group(0, crate::key_hash(&[key]));
-                let start = if group.is_empty() { 0 } else { (group.as_ptr() as usize - rel.index(0).rows.as_slice().as_ptr() as usize) / 4 };
+                let start = if group.is_empty() { 0 } else { (group.as_ptr() as usize - rel.index_at(0).rows.as_slice().as_ptr() as usize) / 4 };
                 let want = [rel.own(id, 0) as u64, key as u64, u64::from(rel.dead_bit(i)), ((start as u64) << 32) | group.len() as u64];
                 assert_eq!(&got[i as usize * 4..][..4], &want, "row {id} of a relation of {n}");
             }

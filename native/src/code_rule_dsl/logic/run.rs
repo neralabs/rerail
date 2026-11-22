@@ -16,6 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
 use super::native::width;
 
+/// What a run did that decision 0364's required shape rules out, counted by the run.
+pub mod shape;
+
 /// A run's own state.
 pub struct Run {
     pub width: width::Width,
@@ -36,6 +39,13 @@ impl super::profile::RunOwn for Run {
     }
     fn any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
         self
+    }
+}
+
+/// Its values drop with its shared object on the thread, wherever its last handle drops (`RunValues::end_in`).
+impl Drop for Run {
+    fn drop(&mut self) {
+        self.values.end_in(&self.shared);
     }
 }
 
@@ -65,7 +75,7 @@ pub struct Record {
 /// Carries the run to a job on another thread (`run_state`). Its thread-local is `profile::RUN`, so the crates below
 /// this one reach it (`profile::RunOwn`).
 /// A caller with no run (a test's thread) hands its jobs a run of its own on its object (`profile::job_run`).
-pub(in crate::code_rule_dsl) fn carried(c: &mut super::run_state::Capture) {
+pub fn carried(c: &mut super::run_state::Capture) {
     c.part(&["RUN", "CONTEXT"], super::run_state::Shared(super::profile::job_run(), super::profile::enter));
 }
 

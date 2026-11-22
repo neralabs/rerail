@@ -7,10 +7,24 @@ import { WORKTREE_PACK_ID } from "../catalog/worktree-pack.js";
  * `session-presentation.js` reader must not carry.
  */
 
-/** Where a rule was added from, as a rule's provenance records it. */
+/** Where a rule was added from, as a rule's provenance records it, and the title its document gives it. */
 export interface SteerRuleSource {
   readonly kind: RuleSourceKind;
   readonly packId: string | null;
+  /** The rule document's own `title`; absent when it has none (a pack's rule takes its pack's). */
+  readonly title?: string | undefined;
+}
+
+/**
+ * The words the person's line names the rule by: its own title (`own`, its document's, as `source` records it), else
+ * the title its rule pack lists for it (looked up by rule id without a recorded source, as `steerOrigin` does);
+ * undefined when it has neither, and the id stands in. A rule of your library is in no pack.
+ */
+export function steerTitle(ruleId: string, source?: SteerRuleSource, own: string | undefined = source?.title): string | undefined {
+  if (own !== undefined) return own;
+  const packs = loadRulePacks();
+  const packId = source === undefined || source.kind === "rerail_rule" ? rulePackIdOf(ruleId, packs) : source.packId;
+  return packs.find(found => found.id === packId)?.rules.find(rule => rule.id === ruleId)?.title;
 }
 
 /**

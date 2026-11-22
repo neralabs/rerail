@@ -1,12 +1,12 @@
 """Writes schema-introspection-data-paths.tables.rerail, the linter's name, path and marker tables.
-    python3 docs/rule-syntax/data-layer/gen-schema-introspection-data-paths.py [--check]
+    DATA_LAYER_REPO=<checkout> python3 docs/rule-syntax/data-layer/gen-schema-introspection-data-paths.py [--check]
 The source is scripts/lint_schema_introspection_data_paths.py at the pinned commit of the data-layer repository.
 Each table is read from the module-level literal of the same name. --check regenerates the text and fails if the
 committed file differs, and checks the .scope include lines of the rule against DATA_PATH_PREFIXES."""
 import ast, json, os, re, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
+REPO = os.environ.get("DATA_LAYER_REPO") or sys.exit("set DATA_LAYER_REPO to a checkout of the data-layer repository")
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 LINTER = "scripts/lint_schema_introspection_data_paths.py"
 OUT = os.path.join(HERE, "schema-introspection-data-paths.tables.rerail")

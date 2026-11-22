@@ -154,8 +154,14 @@ impl Version {
                         };
                         let _ = write!(out, "${} = {op} ${over} : {{ ", var(v));
                     }
+                    AggRef::Bounded { max, .. } => {
+                        let _ = write!(out, "${} = {} ${over} : {{ ", var(v), if max { "max" } else { "min" });
+                    }
                 }
                 self.write_atom(out, r, atom, nm);
+                if let AggRef::Bounded { max, bound, strict } = op {
+                    let _ = write!(out, ", ${over} {} ${}", crate::code_rule_dsl::logic::front::ast::AggOp::bound_cmp(max, strict), var(bound));
+                }
                 out.push_str(" }");
             }
             Lit::Nearest { n, a, kindset } => {

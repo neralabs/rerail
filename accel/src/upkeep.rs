@@ -96,13 +96,17 @@ impl<'a> Slice<'a> {
     }
 }
 
+/// A probe of other processes' runs on a store: the store's path, its runs lock file (if it opened), when the probe
+/// last looked, and whether another process held the lock then.
+type ProbeHeld = (std::path::PathBuf, Option<std::fs::File>, Instant, bool);
+
 /// The machine's upkeep (decision 0442): its jobs and their scheduler, the runs under way on it, the probes of other
 /// processes' runs, the settings in force.
 #[derive(Default)]
 struct Upkeep {
     /// Runs under way on the machine ([`run_begins`]).
     runs: std::sync::atomic::AtomicUsize,
-    probes: Mutex<Vec<(std::path::PathBuf, Option<std::fs::File>, Instant, bool)>>,
+    probes: Mutex<Vec<ProbeHeld>>,
     settings: OnceLock<Mutex<Settings>>,
     jobs: Mutex<Vec<Entry>>,
     stop: AtomicBool,
@@ -129,7 +133,6 @@ impl Drop for RunGuard {
 }
 
 /// The lock file beside `file` that the runs over it hold shared (`<file>.runs.lock`).
-#[cfg(unix)]
 fn runs_lock(file: &std::path::Path) -> std::path::PathBuf {
     let mut name = file.as_os_str().to_owned();
     name.push(".runs.lock");
@@ -142,21 +145,15 @@ fn runs_lock(file: &std::path::Path) -> std::path::PathBuf {
 pub fn run_begins(files: &[&std::path::Path]) -> RunGuard {
     let on = upkeep();
     on.runs.fetch_add(1, Ordering::AcqRel);
-    #[cfg(unix)]
     let locks = files
         .iter()
         .filter_map(|f| {
-            use std::os::fd::AsRawFd as _;
             let lock = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(runs_lock(f)).ok()?;
-            // Shared: runs do not wait for each other. A probe holds the lock exclusively for an instant.
-            (unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH) } == 0).then_some(lock)
+            // Shared: runs do not wait for each other. A probe holds the lock exclusively for an instant. (`flock`;
+            // on Windows `LockFileEx`.)
+            lock.lock_shared().is_ok().then_some(lock)
         })
         .collect();
-    #[cfg(not(unix))]
-    let locks = {
-        let _ = files;
-        Vec::new()
-    };
     RunGuard { _locks: locks, on }
 }
 
@@ -168,9 +165,7 @@ pub fn runs_active(file: Option<&std::path::Path>) -> bool {
 
 /// Whether a run over `file` holds its `.runs.lock` (another process's, or this one's through [`run_begins`]).
 fn others_run_over(file: &std::path::Path) -> bool {
-    #[cfg(unix)]
     {
-        use std::os::fd::AsRawFd as _;
         let st_ = upkeep();
         let mut probes = st_.probes.lock().unwrap_or_else(|p| p.into_inner());
         let at = match probes.iter().position(|(p, ..)| p == file) {
@@ -185,9 +180,8 @@ fn others_run_over(file: &std::path::Path) -> bool {
         if asked.elapsed() >= Duration::from_millis(25) {
             *asked = Instant::now();
             *active = lock.as_ref().is_some_and(|l| {
-                let fd = l.as_raw_fd();
-                if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-                    unsafe { libc::flock(fd, libc::LOCK_UN) };
+                if l.try_lock().is_ok() {
+                    let _ = l.unlock();
                     false
                 } else {
                     true
@@ -195,11 +189,6 @@ fn others_run_over(file: &std::path::Path) -> bool {
             });
         }
         *active
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = file;
-        false
     }
 }
 
@@ -426,7 +415,7 @@ pub fn cpu_ticks() -> (u64, u64) {
         let ticks = std::slice::from_raw_parts(info as *const u32, count as usize);
         let (mut busy, mut total) = (0u64, 0u64);
         // Per core: user, system, idle, nice.
-        for c in ticks.chunks_exact(4) {
+        for c in ticks.as_chunks::<4>().0 {
             busy += c[0] as u64 + c[1] as u64 + c[3] as u64;
             total += c.iter().map(|&t| t as u64).sum::<u64>();
         }
@@ -689,6 +678,15 @@ pub fn forget_file(file: &std::path::Path) {
     drop(gone);
 }
 
+/// Retire jobs for stores that their owner is about to remove. Call after closing
+/// the users of those stores. Wait for a step that already took a job out of the list.
+pub fn retire_files_under(directory: &std::path::Path) {
+    let st_ = upkeep();
+    let _stepping = st_.stepping.lock().unwrap_or_else(|p| p.into_inner());
+    st_.jobs.lock().unwrap_or_else(|p| p.into_inner())
+        .retain(|entry| !entry.job.file().is_some_and(|file| file.starts_with(directory)));
+}
+
 /// Starts the scheduler's thread, once (when the settings have it on).
 pub fn start() {
     upkeep().scheduler.get_or_init(|| {
@@ -808,7 +806,7 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
             if upkeep().stop.load(Ordering::Acquire) || (!all && Instant::now() >= pass_end) {
                 return ran;
             }
-            // `finish_soon` holds `STEPPING` through its pass.
+            // `finish_soon` holds the stepping lock through its pass.
             let stepped = if pass == Pass::Utility { step_job_held(id, s, false, yields, None) } else { step_job(id, s, true, yields) };
             let Some((step, file)) = stepped else { break };
             ran = true;
@@ -835,7 +833,7 @@ fn step_job(id: u64, s: &Settings, pause: bool, yields: bool) -> Option<(Step, O
     step_job_held(id, s, pause, yields, Some(stepping))
 }
 
-/// `step_job`, `STEPPING` held by the caller (`finish_soon`, through its whole pass) or given to it (`stepping`,
+/// `step_job`, the stepping lock held by the caller (`finish_soon`, through its whole pass) or given to it (`stepping`,
 /// let go before the step's pause).
 fn step_job_held(id: u64, s: &Settings, pause: bool, yields: bool, stepping: Option<std::sync::MutexGuard<'_, ()>>) -> Option<(Step, Option<std::path::PathBuf>)> {
     let mut e = {
@@ -946,10 +944,8 @@ mod tests {
     }
 
     /// A job over a file: a run over the file stops it until its deadline.
-    #[cfg(unix)]
     struct OverFile(Counter, std::path::PathBuf);
 
-    #[cfg(unix)]
     impl Job for OverFile {
         fn name(&self) -> String {
             self.0.name()
@@ -1072,16 +1068,14 @@ mod tests {
 
     /// Another process's run over a file stops upkeep over it: a shared lock on its `.runs.lock` (here held through
     /// a second open file, as another process holds it), seen by the exclusive probe; released, the probe sees none.
-    #[cfg(unix)]
     #[test]
     fn a_run_in_another_process_is_seen_through_its_lock() {
-        use std::os::fd::AsRawFd as _;
         let dir = std::env::temp_dir().join(format!("rerail-upkeep-runs-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let store = dir.join("store.sqlite");
         assert!(!others_run_over(&store), "no run yet");
         let other = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(runs_lock(&store)).unwrap();
-        assert_eq!(unsafe { libc::flock(other.as_raw_fd(), libc::LOCK_SH) }, 0);
+        other.lock_shared().unwrap();
         std::thread::sleep(Duration::from_millis(30));
         assert!(others_run_over(&store), "the other run's shared lock is seen");
         let slice = Slice { until: Instant::now() + Duration::from_secs(10), memory: 0, stop: &upkeep().stop, file: Some(store.clone()), yields: true };
@@ -1171,7 +1165,6 @@ mod tests {
         assert_eq!(r.iter().find(|r| r.name == "test-a one").map(|r| r.steps), Some(3));
         // Decision 0190 §9: work over a file that another process's run holds waits for the run until its
         // deadline, counted from the job's last finish (in any process: `<file>.upkeep`), then runs through it.
-        #[cfg(unix)]
         {
             let dir = std::env::temp_dir().join(format!("rerail-upkeep-deadline-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();

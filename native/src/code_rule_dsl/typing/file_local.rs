@@ -186,7 +186,9 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
 mod on_version;
 pub use on_version::FileLocal;
 mod passes;
-pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, locate_all};
+pub use passes::{FactorCaches, FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, factorize_intermediates, locate_all};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use passes::Readers;
 pub mod export_demand;
 pub use export_demand::DemandExports;
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
@@ -194,14 +196,14 @@ use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 
 /// The inputs whose rows are the run's options (`facts::repository::options`): the same beside every chunk and the
 /// cross-file part, and named by the corpus memo's key (`corpus::memo::with_options`), so constants to the split.
-pub(crate) fn option_input(rel: &str) -> bool {
+pub fn option_input(rel: &str) -> bool {
     matches!(rel, "option" | "option_item")
 }
 
 /// An input with one value for the whole run, as a fact has: the run's options (`option_input`), or an earlier
 /// phase's export (`corpus::phases`), bound once its rows are known. A rule reading one joins no document by it.
-pub(crate) fn run_constant(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str) -> bool {
-    option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.input_names().iter().any(|i| i == rel))
+pub fn run_constant(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str) -> bool {
+    option_input(rel) || (crate::code_rule_dsl::logic::plan::phased::is_phased(rel) && prog.input_names().iter().any(|i| i == rel))
 }
 
 /// Rule `rule`'s `a = b` between two variables, and its `d = @doc(n)` (decision 0091's scope guards), by their slots:
@@ -323,16 +325,15 @@ pub fn assemble(
     // Each part's inputs and outputs; its rules and other fields are a view of the program's version (below), an
     // overlay over it (decision 0244).
     let local_outputs: Vec<String> = f.outputs().filter(|o| is_local(o)).map(str::to_owned).chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
-    // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
-    let local_inputs: Vec<String> = f.inputs().filter(|i| !matches!(*i, "reference_edge" | "reference_open")).map(str::to_owned).collect();
+    let local_inputs: Vec<String> = f.inputs().map(str::to_owned).collect();
     let cross_outputs: Vec<String> = f.outputs().filter(|o| !is_local(o)).map(str::to_owned).collect();
     let cross_inputs: Vec<String> = base_read.into_iter().chain(exports.iter().cloned()).collect();
     let versions = {
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let local_rule = |rel: &str| is_local(rel) || constants.contains(rel);
         let not_local = |rel: &str| !is_local(rel);
-        let local = version.part(&local_rule, &local_inputs, &local_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local })?;
-        let cross = version.part(&in_cross, &cross_inputs, &cross_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
+        let local = version.part(local_rule, &local_inputs, &local_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local })?;
+        let cross = version.part(in_cross, &cross_inputs, &cross_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
         Parts { local, cross }
     };
     crate::code_rule_dsl::logic::version_trace::note("split.local", &version, &versions.local);
@@ -351,7 +352,7 @@ pub fn assemble(
 
 /// Whether the factorized store is on (decision 0099): it is, unless `RERAIL_FACTORIZE=off` or the run's option
 /// `factorize: off` turns it off, for comparison. The prepared program's key names it (`corpus`'s `prepared_key`).
-pub(crate) fn factorize_on(options: &serde_json::Value) -> bool {
+pub fn factorize_on(options: &serde_json::Value) -> bool {
     std::env::var("RERAIL_FACTORIZE").map_or(true, |v| v != "off") && options.get("factorize").and_then(|v| v.as_str()) != Some("off")
 }
 
@@ -360,7 +361,7 @@ pub(crate) fn factorize_on(options: &serde_json::Value) -> bool {
 /// edit renames only the helpers of the rules it changes, where a counter renumbered every helper after them. The
 /// digits keep the shape the profile's and the run's readers parse (`fl<digits>_<head>`). A name the program already
 /// declares (`existing`), or one this round gave other content (`used`), is hashed again with a salt.
-pub(crate) fn helper_name(prefix: &str, rel: &str, content: &str, existing: impl Fn(&str) -> bool, used: &mut std::collections::HashMap<String, String>) -> String {
+pub fn helper_name(prefix: &str, rel: &str, content: &str, existing: impl Fn(&str) -> bool, used: &mut std::collections::HashMap<String, String>) -> String {
     let mut salt = 0u32;
     loop {
         // FNV-1a over the salt and the text: the same in every process and build.
@@ -457,7 +458,8 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
         let source = |a: AtomRef<'_>, tainted: &BTreeSet<String>| !a.neg() && !key.contains_key(name(a)) && (tainted.contains(name(a)) || (is_base(name(a)) && reaches_nodes(name(a))));
         for native in &natives {
             for r in native.reads.iter().map(|r| v.rel_name(*r)) {
-                if key.contains_key(r) && semi.remove(&root(r)) {
+                if key.contains_key(r) {
+                    semi.remove(&root(r));
                 }
                 if tainted.contains(r) || (is_base(r) && reaches_nodes(r)) || key.contains_key(r) {
                     tainted.insert(v.rel_name(native.rel).to_owned());
@@ -499,7 +501,8 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
                 tainted.insert(name(head).to_owned());
             }
         }
-        if outputs.iter().any(|o| tainted.contains(*o)) && semi.remove("node") {
+        if outputs.iter().any(|o| tainted.contains(*o)) {
+            semi.remove("node");
         }
         if semi.len() == semi_before && tainted.len() == tainted_before {
             break;

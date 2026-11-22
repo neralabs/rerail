@@ -819,8 +819,8 @@ impl Emitter {
 }
 
 /// The base relations every converted program reads, and those the corpus runner binds for an authored file beyond
-/// them (core.rerail's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not; and W's
-/// Python reference graph (`logic::plan::corpus::references`).
+/// them (core.rerail's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not. (W's Python
+/// reference graph is `python/references.rerail`'s, which an authored file includes: decision 0483.)
 pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
@@ -866,8 +866,6 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl dump_sha256(n: node, h: sym)
 .decl body_sha256(f: node, h: sym)
 .decl signature_sha256(f: node, h: sym)
-.decl reference_edge(src: node, dst: node, via: sym)
-.decl reference_open(n: node)
 ";
 
 const BASE_RELATIONS: [&str; 13] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error", "node_text"];
@@ -1084,19 +1082,23 @@ pub(in crate::code_rule_dsl) fn overlay(converted: &Arc<Version>, authored: &Arc
     let mut authored_clauses = BTreeSet::new();
     for r in a.rules() {
         // `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are built-ins, which the runner makes
-        // relations of (`preparation::text::TextRelations`).
-        for rel in r.reads().map(|x| a.rel_name(x.rel())).filter(|rel| !matches!(*rel, "match_all" | "match_group")) {
+        // relations of (`preparation::text::TextRelations`). The import components (`rr_cx_*`, which python/points-to
+        // reads) are `components.rerail`'s, which the runner adds to a program that reads them (decision 0076), as
+        // `front` takes them.
+        for rel in r.reads().map(|x| a.rel_name(x.rel())).filter(|rel| !matches!(*rel, "match_all" | "match_group") && !rel.starts_with("rr_cx_")) {
             if !decls.contains_key(rel) {
                 return err(format!("{rel} is read and not declared"));
             }
             // An earlier phase's export (`<phase>__<export>`, which python/points-to reads) is the runner's to give; so
             // are decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none),
             // which the library reads (`python/names.rerail`), the run's settings (`env`, core.rerail's) and the file system's
-            // answers (`file_line`, `dir_entry`), which python/conditions and python/env read.
+            // answers (`file_line`, `dir_entry`), which python/conditions and python/env read; and the `.references`
+            // setting's (decision 0483), which `python/references.rerail` reads.
             if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || a_inputs.iter().any(|i| i == rel)
                 || super::plan::corpus::phases::is_phased(rel)
                 || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY || rel == "env"
-                || crate::code_rule_dsl::logic::rr::FILE_SYSTEM.iter().any(|(answer, _)| *answer == rel)) {
+                || crate::code_rule_dsl::logic::rr::FILE_SYSTEM.iter().any(|(answer, _)| *answer == rel)
+                || crate::code_rule_dsl::logic::rr::lower::findings::REFERENCE_SETTING.contains(&rel)) {
                 return err(format!("{rel} is read, and nothing derives or inputs it"));
             }
         }

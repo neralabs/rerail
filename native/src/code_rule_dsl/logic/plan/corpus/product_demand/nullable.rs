@@ -123,20 +123,20 @@ struct Edit {
     column: usize,
 }
 
-/// The arguments of edit `e`'s atom in rule `r` of `v` (`body`: its literals), its anchor a variable.
-fn read<'a>(v: &'a crate::code_rule_dsl::logic::program_image::Version, r: RuleRef<'a>, body: &[LitRef<'a>], e: &'a Edit) -> Vec<T<'a>> {
+/// The arguments of edit `e`'s atom in rule `r` (`body`: its literals), its anchor a variable.
+fn read<'a>(r: RuleRef<'a>, body: &[LitRef<'a>], e: &'a Edit) -> Vec<T<'a>> {
     let a = body[e.index].atom().expect("an atom");
     a.args()
         .enumerate()
         .map(|(k, t)| match (&e.fresh, k == e.anchor) {
             (Some(name), true) => T::Var(name.as_str()),
-            _ => t_of(v, r, t),
+            _ => t_of(r, t),
         })
         .collect()
 }
 
 /// A reader rejects unset explicitly. Probe the same tape edge its surviving rows must have read.
-pub(super) fn restore(program: &mut Program<'_>) -> Result<usize, String> {
+pub fn restore(program: &mut Program<'_>) -> Result<usize, String> {
     let mut edits: BTreeMap<RuleId, Vec<Edit>> = BTreeMap::new();
     {
         let v = program.v();
@@ -189,16 +189,16 @@ pub(super) fn restore(program: &mut Program<'_>) -> Result<usize, String> {
             let mut rb = rewritten(first, v, r, b);
             for (i, l) in body.iter().enumerate() {
                 rb = match here.iter().find(|e| e.index == i) {
-                    Some(e) => rb.atom(v.rel_name(l.atom().expect("an atom").rel()), &read(v, r, &body, e)),
+                    Some(e) => rb.atom(v.rel_name(l.atom().expect("an atom").rel()), &read(r, &body, e)),
                     None => rb.lit(v, r, *l),
                 };
             }
             for e in here {
-                let args = read(v, r, &body, e);
+                let args = read(r, &body, e);
                 let a = body[e.index].atom().expect("an atom");
                 let mut edge = [T::Wild, T::Wild, T::Wild];
                 edge[e.witness.edge_anchor] = args[e.anchor].clone();
-                edge[e.witness.edge_value] = t_of(v, r, a.args().nth(e.column).expect("the location"));
+                edge[e.witness.edge_value] = t_of(r, a.args().nth(e.column).expect("the location"));
                 rb = rb.atom(e.witness.edge, &edge);
             }
             rb.finish().map(|_| true)
@@ -209,54 +209,4 @@ pub(super) fn restore(program: &mut Program<'_>) -> Result<usize, String> {
     Ok(count)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use super::super::tests::parse;
-
-    #[test]
-    fn a_present_location_uses_the_edge_shared_by_its_producers() {
-        let v = parse(
-            r#"
-            .decl field(p: node, name: symbol, c: node)
-            .decl missing(p: node)
-            .input field, missing
-            .decl parts(p: node, a: loc)
-            parts(p, a) :- field(p, "type", a).
-            parts(p, a) :- missing(p), unset(a).
-            .decl signature(p: node, a: loc)
-            signature(p, a) :- parts(p, a).
-            .decl present(a: loc)
-            .output present
-            present(a) :- signature(_, a), !unset(a).
-        "#,
-        )
-        .unwrap();
-        let mut p = Program::of(&v);
-        assert_eq!(restore(&mut p).unwrap(), 1);
-        let present = p.shown(Some("present")).remove(0);
-        assert!(present.contains("field($rr_present"), "{present}");
-        assert!(present.contains("signature($rr_present"), "{present}");
-    }
-
-    #[test]
-    fn an_alternative_location_without_the_edge_blocks_the_proof() {
-        let v = parse(
-            r#"
-            .decl field(p: node, name: symbol, c: node)
-            .decl other(p: node, c: node)
-            .input field, other
-            .decl parts(p: node, a: loc)
-            parts(p, a) :- field(p, "type", a).
-            parts(p, a) :- other(p, a).
-            .decl present(a: loc)
-            .output present
-            present(a) :- parts(_, a), !unset(a).
-        "#,
-        )
-        .unwrap();
-        let mut p = Program::of(&v);
-        assert_eq!(restore(&mut p).unwrap(), 0);
-        assert!(!p.changed());
-    }
-}
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)

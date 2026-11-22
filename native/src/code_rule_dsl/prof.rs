@@ -117,7 +117,6 @@ pub fn peak(stage: &str) {
     }
 }
 
-/// The process's physical footprint now, in MB (macOS; 0 elsewhere).
 /// What the heap holds live, in MB (jemalloc's allocated bytes); 0 where the system allocator runs (Windows, wasm).
 pub fn live_heap_mb() -> usize {
     #[cfg(not(any(windows, target_family = "wasm")))]
@@ -129,6 +128,18 @@ pub fn live_heap_mb() -> usize {
     0
 }
 
+/// The heap's resident pages, in MB (jemalloc's resident bytes); 0 where the system allocator runs (Windows, wasm).
+pub fn resident_heap_mb() -> usize {
+    #[cfg(not(any(windows, target_family = "wasm")))]
+    {
+        let _ = tikv_jemalloc_ctl::epoch::advance();
+        tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20
+    }
+    #[cfg(any(windows, target_family = "wasm"))]
+    0
+}
+
+/// The process's physical footprint now, in MB (macOS; 0 elsewhere).
 pub fn footprint_mb() -> usize {
     #[cfg(target_os = "macos")]
     {
@@ -182,6 +193,28 @@ pub fn register_device_memory(read: fn() -> (usize, usize)) {
 /// The device's buffers in MB (reserved, driver); none without a device.
 pub fn device_memory() -> (usize, usize) {
     DEVICE_MEMORY.get().map_or((0, 0), |read| read())
+}
+
+/// The process's CPU (user, system) seconds, every thread's.
+pub fn process_usage() -> (f64, f64) {
+    #[cfg(unix)]
+    {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: getrusage writes the struct it is given.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        (s(u.ru_utime), s(u.ru_stime))
+    }
+    #[cfg(windows)]
+    {
+        let (user, kernel) = windows_cpu(false);
+        (user.as_secs_f64(), kernel.as_secs_f64())
+    }
+    // The browser build's one thread.
+    #[cfg(target_family = "wasm")]
+    {
+        (single_thread_cpu().as_secs_f64(), 0.0)
+    }
 }
 
 /// The calling thread's CPU (user, system) seconds.

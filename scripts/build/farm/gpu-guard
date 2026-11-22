@@ -1,0 +1,275 @@
+#!/usr/bin/python3
+"""A Mac host's GPU watchdog (scripts/build/farm/README.md, "The GPU watchdog").
+
+macOS restarts a Mac whose WindowServer has not checked in for 120 s. Farm commands' Metal work
+stopped WindowServer, its main thread waiting in the GPU driver, on this Mac and on a farm Mac,
+and restarted both (2026-11-20; one test's command buffers of minutes, then seven test processes
+of three checkouts at once). Nothing on the command line says whether a command uses the GPU (the
+engine opens Metal from many places), so the watch is on the machine itself.
+
+A probe (PROBE_SWIFT, compiled here with the Xcode's swiftc on first use) checks two things every
+PROBE_PERIOD s: that the GPU finishes a one-thread compute dispatch, and that WindowServer answers
+a client (the window list). A busy GPU alone does not fail either: macOS time-slices it, and a
+dispatch filling an M3 MacBook Pro's GPU for 10 s did not delay the probe's (2026-11-20). When either has not
+finished for STALL_SECONDS, every process that holds the GPU (ioreg's AGXDeviceUserClient) and is
+the farm's (its program under FARM: a test binary in a farm target directory, a program a `--tree`
+sent; or a process under a farm-agent's command, AGENTS) is killed, and again each RETRY_SECONDS
+while the stall lasts. Nothing else is ever touched. Each kill is a line of KILLS (JSON: the
+process, its ancestors, why), which farm-agent reads to tell the command that lost it.
+
+farm-agent starts this for each command on a Mac (`ensure_gpu_guard`); one runs at a time (LOCK),
+and it ends once no command has run for IDLE_SECONDS (the agents hold USERS shared).
+"""
+import ctypes
+import fcntl
+import hashlib
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+FARM = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm")
+HOME = os.path.join(FARM, "gpu-guard")
+LOCK = os.path.join(HOME, "lock")
+USERS = os.path.join(HOME, "users")
+AGENTS = os.path.join(HOME, "agents")
+KILLS = os.path.join(HOME, "kills.log")
+LOG = os.path.join(HOME, "guard.log")
+PROBE_PERIOD = 2
+# Well inside WindowServer's 120 s: the GPU's work in flight still has to end after the kill.
+STALL_SECONDS = 15
+RETRY_SECONDS = 10
+IDLE_SECONDS = 15 * 60
+
+PROBE_SWIFT = r'''
+import CoreGraphics
+import Foundation
+import Metal
+setvbuf(stdout, nil, _IOLBF, 0)
+let source = "kernel void tick(device uint *x [[buffer(0)]]) { x[0] += 1; }"
+guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
+      let library = try? device.makeLibrary(source: source, options: nil),
+      let function = library.makeFunction(name: "tick"),
+      let pipeline = try? device.makeComputePipelineState(function: function),
+      let buffer = device.makeBuffer(length: 16, options: .storageModeShared) else {
+    print("no-device"); exit(1)
+}
+let period = Double(CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "2") ?? 2
+// When each check's step began (0: none under way). A step that blocks anywhere (making the
+// command buffer, committing it, its completion, WindowServer's reply) shows as stuck here, read
+// by the reporter thread below; no step needs to return for it to be seen.
+let lock = NSLock()
+var began: [String: Date] = [:]
+func start(_ what: String) { lock.lock(); began[what] = Date(); lock.unlock() }
+func finish(_ what: String) {
+    lock.lock(); let s = began.removeValue(forKey: what); lock.unlock()
+    if let s = s { print(String(format: "%@-ok %.3f", what, Date().timeIntervalSince(s))) }
+}
+Thread.detachNewThread {
+    while true {
+        Thread.sleep(forTimeInterval: 1)
+        lock.lock(); let now = began; lock.unlock()
+        for (what, s) in now where Date().timeIntervalSince(s) > 1 {
+            print(String(format: "%@-stuck %.1f", what, Date().timeIntervalSince(s)))
+        }
+    }
+}
+// WindowServer: the window list is its answer to a client; macOS's watchdog restarts the Mac
+// when WindowServer stops answering for 120 s.
+Thread.detachNewThread {
+    while true {
+        start("ws")
+        _ = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
+        finish("ws")
+        Thread.sleep(forTimeInterval: period)
+    }
+}
+while true {
+    start("gpu")
+    let done = DispatchSemaphore(value: 0)
+    let commands = queue.makeCommandBuffer()!
+    let encoder = commands.makeComputeCommandEncoder()!
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(buffer, offset: 0, index: 0)
+    encoder.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
+    encoder.endEncoding()
+    commands.addCompletedHandler { _ in done.signal() }
+    commands.commit()
+    done.wait()
+    finish("gpu")
+    Thread.sleep(forTimeInterval: period)
+}
+'''
+
+
+def log(text):
+    with open(LOG, "a") as f:
+        f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + text + "\n")
+
+
+def probe_binary():
+    """The probe, compiled here once per version of its source; None without a swiftc."""
+    digest = hashlib.sha256(PROBE_SWIFT.encode()).hexdigest()[:12]
+    binary = os.path.join(HOME, f"probe-{digest}")
+    if os.access(binary, os.X_OK):
+        return binary
+    source = os.path.join(HOME, f"probe-{digest}.swift")
+    with open(source, "w") as f:
+        f.write(PROBE_SWIFT)
+    out = subprocess.run(["xcrun", "swiftc", "-O", "-o", binary + ".part", source], capture_output=True, text=True)
+    if out.returncode != 0:
+        log(f"no probe: swiftc failed: {out.stderr.strip()[-400:]}")
+        return None
+    os.rename(binary + ".part", binary)
+    return binary
+
+
+def gpu_clients():
+    """The pids holding the GPU (each AGXDeviceUserClient's creator)."""
+    out = subprocess.run(["ioreg", "-r", "-l", "-c", "AGXDeviceUserClient", "-w0"], capture_output=True, text=True).stdout
+    return {int(p) for p in re.findall(r'"IOUserClientCreator" = "pid (\d+),', out)}
+
+
+LIBPROC = ctypes.CDLL("/usr/lib/libproc.dylib")
+
+
+def executable(pid):
+    """The kernel's path of `pid`'s program (proc_pidpath): `ps`'s comm is the path it was started
+    by, relative when it was, and a program started as ./engine would not be seen as the farm's."""
+    buf = ctypes.create_string_buffer(4096)
+    n = LIBPROC.proc_pidpath(pid, buf, ctypes.sizeof(buf))
+    return buf.value[:n].decode(errors="replace") if n > 0 else ""
+
+
+def processes():
+    """pid -> (ppid, executable path) for every process."""
+    out = subprocess.run(["ps", "-axo", "pid=,ppid="], capture_output=True, text=True).stdout
+    table = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            table[int(parts[0])] = (int(parts[1]), None)
+    return table
+
+
+def ancestors(pid, table):
+    chain = []
+    while pid in table and pid > 1 and len(chain) < 64:
+        pid = table[pid][0]
+        chain.append(pid)
+    return chain
+
+
+def agents():
+    """The pids of the farm-agents running commands here (each registers itself in AGENTS)."""
+    found = set()
+    try:
+        names = os.listdir(AGENTS)
+    except OSError:
+        return found
+    for n in names:
+        if not n.isdigit():
+            continue
+        try:
+            os.kill(int(n), 0)
+            found.add(int(n))
+        except ProcessLookupError:  # an agent that died without removing its file
+            try:
+                os.remove(os.path.join(AGENTS, n))
+            except OSError:
+                pass
+        except OSError:
+            pass
+    return found
+
+
+def kill_farm_gpu_users(why):
+    table = processes()
+    ours = agents()
+    killed = 0
+    for pid in sorted(gpu_clients()):
+        path = executable(pid)
+        chain = ancestors(pid, table)
+        farms = path.startswith(FARM + "/") or any(a in ours for a in chain)
+        if pid == os.getpid() or not farms or os.path.basename(path).startswith("probe-"):
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            continue
+        killed += 1
+        record = {"time": time.time(), "pid": pid, "path": path, "ancestors": chain, "why": why}
+        with open(KILLS, "a") as f:
+            f.write(json.dumps(record) + "\n")
+        log(f"killed pid {pid} {path}: {why}")
+    if not killed:
+        log(f"{why}, and no farm program holds the GPU")
+
+
+WHAT = {"gpu": "the GPU had not finished a one-thread dispatch", "ws": "WindowServer had not answered"}
+
+
+def idle(since):
+    """Whether no command has held USERS for IDLE_SECONDS (since `since`, the last time one did)."""
+    with open(USERS, "a+") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False, time.time()
+        fcntl.flock(f, fcntl.LOCK_UN)
+    return time.time() - since > IDLE_SECONDS, since
+
+
+def main():
+    os.makedirs(HOME, exist_ok=True)
+    lock = open(LOCK, "a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return  # one runs already
+    binary = probe_binary()
+    if not binary:
+        return
+    log(f"started (pid {os.getpid()})")
+    last_used = time.time()
+    while True:
+        probe = subprocess.Popen([binary, str(PROBE_PERIOD)], stdout=subprocess.PIPE, text=True)
+        stuck = {"gpu": 0.0, "ws": 0.0}  # how long each check's step has been under way
+        acted = {"gpu": 0.0, "ws": 0.0}  # the stall at the last kill for it
+
+        def read():
+            for line in probe.stdout:
+                word, _, value = line.strip().partition(" ")
+                what, _, state = word.partition("-")
+                if what not in stuck:
+                    if word == "no-device":
+                        log("no Metal device")
+                    continue
+                if state == "stuck":
+                    stuck[what] = float(value)
+                elif state == "ok":
+                    if float(value) > 2:
+                        log(f"{what}: one check took {float(value):.1f} s")
+                    stuck[what], acted[what] = 0.0, 0.0
+        threading.Thread(target=read, daemon=True).start()
+        while probe.poll() is None:
+            time.sleep(1)
+            for what, s in list(stuck.items()):
+                if s >= STALL_SECONDS and s - acted[what] >= (RETRY_SECONDS if acted[what] else 0):
+                    acted[what] = s
+                    kill_farm_gpu_users(f"{WHAT[what]} for {s:.0f} s")
+            done, last_used = idle(last_used)
+            if done and not any(stuck.values()):
+                probe.kill()
+                log("stopped: no farm command for 15 minutes")
+                return
+        log(f"the probe exited ({probe.returncode}): started again")
+        time.sleep(5)
+
+
+if __name__ == "__main__":
+    main()

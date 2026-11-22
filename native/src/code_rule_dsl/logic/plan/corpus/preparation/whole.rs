@@ -21,7 +21,7 @@ fn edit_misses(cx: &Cx<'_>, last: &Last<'_>, heads: impl Fn(&str) -> bool) -> bo
 /// `projections`) and inputs in one that does not: once one part projects them, they are no inputs of the combined
 /// program. Both would give `kind` two domains.
 #[derive(Default)]
-pub(in crate::code_rule_dsl::logic::plan::corpus) struct Projected;
+pub struct Projected;
 
 impl ProgramPass for Projected {
     const NAME: &'static str = "projected inputs";
@@ -63,7 +63,7 @@ impl ProgramPass for Projected {
 /// the node the rule's own atoms make it, which no native plan compares. A helper's symbol column every rule fills
 /// from one typed column takes that type; a column a symbol column binds stays one.
 #[derive(Default)]
-pub(in crate::code_rule_dsl::logic::plan::corpus) struct RetypeHelpers;
+pub struct RetypeHelpers;
 
 impl ProgramPass for RetypeHelpers {
     const NAME: &'static str = "retype helpers";

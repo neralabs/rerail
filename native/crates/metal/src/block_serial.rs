@@ -278,7 +278,7 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     }
     // The segment's count of each counted output (`counted_outputs`), for the positions' bases
     // and the totals.
-    // The totals' one count is every total's words OR-ed (`native_cpu_block::counted`).
+    // The totals' one count is every total's words OR-ed (`block_native::counted`).
     for (c, k) in counted_outputs(native).into_iter().enumerate() {
         let w = if c < native.extracts.len() { format!("ow{k}") } else { native.totals.iter().map(|t| format!("ow{t}")).collect::<Vec<_>>().join(" | ") };
         tail.push_str(&format!("  {{ const uint32_t n = ukl_sg_sum(ukl_popcount64({w}) __UKL_ARGS); if (l == 0u) counts[{c}u] = n; }}\n"));
@@ -982,7 +982,6 @@ fn kernel(key: u64, source: &str, name: &'static str) -> Result<lane::Kernel, Er
     }
     rerail_context::with_local::<Compiles, _>(|c| c.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let made = lane::kernel(source, name, None);
-    let st_ = kernels();
     if let Ok(mut m) = st_.0.lock() {
         m.insert((key, name), made.clone());
     }
@@ -1024,7 +1023,6 @@ fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, 
             }
             return (key, made.0, made.1, made.2);
         }
-    }
     rerail_context::with_local::<Compiles, _>(|c| c.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let (source, sw, counted) = generate_serial(programs, io);
     if let Some(path) = &disk {
@@ -1039,6 +1037,8 @@ fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, 
     (key, made.0, made.1, made.2)
 }
 
+/// The serial kernels for `programs` (each in its planes form): the segments' runs, the check, and
+/// the positions and totals from the finished words.
 fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (String, usize, usize) {
     let mut out = format!("{}{}", head(LaneWidth::W64), table_helpers(3));
     // A program in passes (`native_ir::Passes`): its slots a block, and the pass's stores.
@@ -1536,8 +1536,10 @@ DEFINE_KERNEL2(serial, serial_write,
     (out, sw, counted)
 }
 
-/// Threads a file of the record pass: each takes every `RECORD_LANES`th token.
+/// Threads a file of the record pass: each takes every `RECORD_LANES`th token. A file's lanes are
+/// one threadgroup (the pass's barrier is theirs).
 const RECORD_LANES: usize = 64;
+const _: () = assert!(RECORD_LANES == THREADS, "a file's record lanes are one threadgroup");
 
 /// The record pass (`rerail_compiler::records`) in UKL: per program with records, its tables
 /// as constants and its function; the kernel `serial_records`, a file's tokens over
@@ -1663,8 +1665,16 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20 if (bad) ukl_atomic_or(flag + f.tot_base + {x}u, 1u);\n\
              }}\n",
             // A file its totals refused (`serial_prefix`'s flag) goes to the fallback: no token
-            // of it is coded (`stop` at all of them).
-            refused = if n.totals.is_empty() { String::new() } else { format!("\n  if (tot[f.tot_base + {x}u] != 0u) {{ if (lane == 0u) ukl_atomic_store(stop, ~0u); return; }}") },
+            // of it is coded (`stop` at all of them). The pass's own refusal sets the same word
+            // (`flag` is `tot`), so every lane reads it before any lane can: a file's lanes are
+            // one threadgroup, and its barrier orders the reads first. Read as each lane started,
+            // a lane started after another refused returned uncoded: a 64th of the tokens lost
+            // each, the CPU's lanes running in turn (the rr marks test, roll-up 22).
+            refused = if n.totals.is_empty() {
+                String::new()
+            } else {
+                format!("\n  const bool before = tot[f.tot_base + {x}u] != 0u;\n  ukl_tg_barrier();\n  if (before) {{ if (lane == 0u) ukl_atomic_store(stop, ~0u); return; }}")
+            },
             kinds = list(&mut r.kinds.iter().map(|k| k.to_string())),
             // The token tests (`Records::checks`): by its first byte, the tests of a token's
             // rule, each a bit; a count over its words, a run from a window of one word or two.
@@ -1838,7 +1848,7 @@ fn group_levels(programs: &[&BlockNative]) -> std::collections::BTreeSet<usize> 
 
 /// The outputs counted per segment: the extracts', then one for all the totals (one flag).
 fn counted_outputs(native: &BlockNative) -> Vec<usize> {
-    rerail_compiler::native_cpu_block::counted(native)
+    rerail_compiler::block_native::counted(native)
 }
 
 /// Whether the exact scans are left to the runs to learn: no `RERAIL_SERIAL_EXACT`.
@@ -2355,7 +2365,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         out_base += n.outputs.len() * blocks;
         // The extracts' positions, and with records a code a token after them.
         pos_base += (n.extracts.len() + usize::from(n.records.is_some())) * len.max(1);
-        tot_base += rerail_compiler::native_cpu_block::counted(n).len();
+        tot_base += rerail_compiler::block_native::counted(n).len();
     }
     let total = segs.len();
     let table = crate::pool::upload(&rows)?;
@@ -2468,7 +2478,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
             .iter()
             .map(|p| {
                 let ms = encode_passes(std::slice::from_ref(p)).map(|s| s * 1e3).unwrap_or(f64::NAN);
-                let most = p.kernel.metal().map_or(0, |m| m.compute_pipeline_state.max_total_threads_per_threadgroup());
+                let most = crate::lane::limits(&p.kernel).map_or(0, |l| l.threads);
                 format!("{} {ms:.3} ms ({most} threads)", p.name)
             })
             .collect();
@@ -2532,7 +2542,6 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
             for (x, i) in forms[0].insts.iter().enumerate().filter(|(x, _)| inside[*x]) {
                 eprintln!("  %{x} = {i:?}");
             }
-        }
     }
     let (mut rerun_seconds, mut reruns, mut rounds, mut launches) = (0.0, 0usize, 1usize, 1usize);
     loop {

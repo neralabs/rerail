@@ -8,7 +8,7 @@
 # LOGIC_ARGS: more arguments to the engine's `logic` (`--metal`); SKIP_MAIN=1: main is not run (a second engine pass);
 # PROFILE_DIR: each step's engine profile in PROFILE_DIR/<step> (RERAIL_PROFILE; it costs CPU: attribution only).
 set -u
-SP=${SP:-${RERAIL_SHARED:-$HOME/orca/rerail-shared}/bench/step-vs-main}
+SP=${SP:-${RERAIL_SHARED:?set SP, or RERAIL_SHARED to the shared data folder}/bench/step-vs-main}
 CLI=${CLI:-$SP/main-pkg/node_modules/@neralabs/rerail/dist/cli/cli.js}
 SHAPE=$1; ENGINE=$2; shift 2; EXTRA=("RERAIL_SQL_STRICT=1" "$@")
 case $SHAPE in

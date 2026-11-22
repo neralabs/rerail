@@ -56,8 +56,9 @@ parent's raw tokens show again, with no copy and no shadow.
 
 ## 2. Memory
 
-**One arena a batch of units**, SoA columns in `MappedBuffer`s, placed once before the command
-buffer. Every allocation in a round is a prefix sum's offset from a device-held top, so there
+**One arena a batch of units:** one `rerail_blocks::Block`, leased within the GPU budget, with
+every store at an offset inside it (decision 0468 §3; until 0468 step 3, SoA columns in
+`MappedBuffer`s). It is laid out once before the command buffer. Every allocation in a round is a prefix sum's offset from a device-held top, so there
 are no per-token atomics and the placement is deterministic.
 
 | Store | Per element | Lives | Capacity at rung k |
@@ -77,18 +78,26 @@ are no per-token atomics and the placement is deterministic.
   between passes, so R5 holds.
 - **Budget.** A batch's arena stays under the Metal buffer limit (512 MB) and the GPU's pinned
   allowance. A batch past it is split in halves (`pp_on::fitted`).
-- **Threadgroup memory:** 256-thread groups use about 2 KB (scan partials, 8 SIMD sums), well
-  under 32 KB. Nothing spills.
+- **Threadgroup memory:** 256-thread groups use about 11 KB on the persistent grid (the barrier's
+  flag, the scans' scratch, and the sort's per-SIMD counts, which the segmented scans' rows
+  alias), well under 32 KB. Nothing spills.
 - **Dead lists' tokens** stay in the arena until the run ends. They are bounded by the rung.
   Rollback is rare (0 merges at top level in the corpus), so nothing is compacted within a run.
 
 ## 3. The passes and their mapping
 
-Each pass is one dispatch: 256-thread groups (8 SIMD groups of 32), **one thread an element**
-(a token, an item or a row). Each pass is sized by an indirect argument that the scan before it
-wrote.
+**Since 0468 step 5a, a pass is a phase of a persistent grid, not a dispatch.** G co-resident
+groups of 256 threads (8 SIMD groups of 32) run every pass in a grid-stride loop, **one thread an
+element** (a token, an item or a row), with `ukl_grid_barrier` between phases. Each pass reads
+its count from the arena, so there are no indirect arguments. The kernels are `pp_setup`,
+`px_expand` (encoded twice) and `pp_check`, in `pp_grid.metal` (0468 §4). Until then each pass
+was one dispatch, sized by an indirect argument that the scan before it wrote. The table below
+names the passes. Their order is `pp_setup`'s.
 
-The standard building blocks:
+The standard building blocks are now the persistent grid's, written once in UKL's library
+(`ukl/grid.h`: `ukl_grid_scan_n`, `ukl_grid_seg_scan_n`, `ukl_grid_sort_u64`). Each group takes a
+share, group 0 combines the groups' sums, and barriers sit between the phases. What follows is the
+per-level form they replaced:
 - **Scan:** each SIMD group runs `simd_prefix_exclusive_sum`; the group combines its 8 SIMD
   sums in threadgroup memory; a second level scans the group sums (one group, or recursive past
   1,024 groups); a third adds them back. These are accel's `scan_block`/`scan_add` where their
@@ -115,11 +124,17 @@ The standard building blocks:
 | S7 sort rows by (key, position) | row | the visibility table |
 | S8 stretches | (instance, directive gap) | each active stretch, compacted by a scan: its first token and its position. These are the round-0 lists, whose tokens are tape leaves (refs, not copies) |
 
-**The launch bound decides the execution's shape.** An evaluation has at most 200 launches
+**Since 0527, the queue is rounds:** the items a round makes run in the next, on the whole grid,
+and each item kind's 32-lane body becomes grid phases, a thread an element. What follows is the
+queue it replaced.
+
+**The launch bound decided the execution's shape** (0468 §4 since makes every evaluation 4
+launches, whatever its size). An evaluation has at most 200 launches
 (`KERNEL_LAUNCH_LIMIT`, the user's, 2026-11-03). Rounds as launches would need about 40 a
 round, over tens of rounds. So the recursive part runs on **0027's device work queue**:
 - **One persistent dispatch** (at most 64 groups of 256 threads), re-launched by the host only
-  as 0027's safety net.
+  as 0027's safety net. Since 0468, the queue runs on the same grid as the setup (`px_expand`),
+  its two phases separated by a grid barrier, with one re-launch at a fixed count.
 - **A worker is a SIMD group.** Lane 0 takes an item and broadcasts it; the 32 lanes share its
   tokens, 32 at a time, with SIMD scans carrying across chunks (`simd_prefix_*`, a
   `simd_shuffle_up` ladder for the segmented ones, `simd_ballot` for marks). Expansion lists are
@@ -131,7 +146,7 @@ round, over tens of rounds. So the recursive part runs on **0027's device work q
   `rerail-metal`, one definition both include.
 
 **Top level: grid passes before the queue.** The stretches' tokens (up to 600 K in a unit) get
-one thread a token, in launches: E1 classify, E2 depth, E3 reach, E4 outermost, E6 calls. Each
+one thread a token, as `pp_setup`'s last phases (in launches until 0468): E1 classify, E2 depth, E3 reach, E4 outermost, E6 calls. Each
 outermost call becomes the queue's first items.
 
 **The queue's items:**
@@ -151,8 +166,10 @@ outermost call becomes the queue's first items.
   of allocation does not matter and nothing needs determinism there.
 - **Dead work:** an item under a dead list does its work and its pushes are dropped (it checks
   its list's state when taken). Rollback is rare.
-- **Launches in all:** setup about 25, the top level about 15, the queue 1 (8 at most), so the
-  evaluation stays well under 200.
+- **Launches in all:** 4 for every unit since 0468 step 5a: `pp_setup`, `px_expand` twice and
+  `pp_check`. A grid past residency fails its barrier and runs again at half the groups. Before
+  that, a unit took 118 to 176: one dispatch for each level of every scan, segmented scan and
+  sort digit.
 
 ## Requirements, each held by a test
 
@@ -167,7 +184,7 @@ outermost call becomes the queue's first items.
 | R7 | A call past its list's end, with rollback: `f(2)(9)`, DEFER/EMPTY/OBSTRUCT, the spike's merges. | `calls_past_an_end_are_the_serial_passes` |
 | R8 | A unit past its rung's room refuses (`room`), and at the next rung gives the serial pass's tokens. | `a_unit_past_its_room_runs_again_larger` |
 | R9 | No host read between passes or rounds. | a guard over the encoder |
-| R10 | On the corpus, every unit not refused gives the serial pass's tokens; refusals are counted by reason. | `the_corpus_expands_on_the_device` (ignored) |
+| R10 | On the corpus, every unit not refused gives the serial pass's tokens; refusals are counted by reason. | `the_corpus_preprocesses_on_the_device` (ignored) |
 
 ## Built
 
@@ -321,7 +338,7 @@ outermost call becomes the queue's first items.
   splices left out. `#` and `##` of such a token are refused (`X_SPLICE`), since their spelling
   is the CPU's for now. The tests spell the device's tape tokens through `phase2` too.
 - **R10, the corpus.** Every file of both corpora is expanded on the device as its own unit,
-  with empty stubs for its headers (`the_corpus_expands_on_the_device`, run in slices). 3,099
+  with empty stubs for its headers (`the_corpus_preprocesses_on_the_device`, run in slices). 3,099
   units give the serial pass's tokens, 7.4 M in all. Refused: 33 by built-ins (`X_BUILTIN`), one
   by a call across a stretch's end (`X_ACROSS`), and 2 by the spike's P1 (`#line`). No unit runs
   out of room at the last rung. When a unit runs out of room, the test names the store

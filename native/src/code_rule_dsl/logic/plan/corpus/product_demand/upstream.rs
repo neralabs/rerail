@@ -9,13 +9,13 @@ use crate::code_rule_dsl::logic::program_facts::Field;
 use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, Lit, RuleId, RuleRef, T, TermRef, Version, t_of};
 use std::collections::{BTreeMap, BTreeSet};
 
-const PREFIX: &str = "rr_reader_demand_";
+pub(super) const PREFIX: &str = "rr_reader_demand_";
 
 fn is_demand(rel: &str) -> bool {
     rel.starts_with(PREFIX) || rel.starts_with(PRODUCT)
 }
 
-fn eligible(program: &Program<'_>, rel: &str) -> bool {
+pub(super) fn eligible(program: &Program<'_>, rel: &str) -> bool {
     let f = &program.f;
     program.columns(rel).is_some()
         && !f.outputs.iter().any(|r| r == rel)
@@ -129,15 +129,30 @@ fn demand_body(
 }
 
 /// A demand's rule `install` writes: of rule `rule`'s read at literal `read` (its key at the columns), its parts.
-struct Proof {
-    rule: RuleId,
-    read: usize,
+pub(super) struct Proof {
+    pub(super) rule: RuleId,
+    pub(super) read: usize,
     own: bool,
-    parts: Vec<Part>,
+    pub(super) parts: Vec<Part>,
 }
 
 fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTreeSet<String>, require_anchor: bool) -> Result<bool, String> {
-    let name = format!("{PREFIX}{rel}");
+    install_named(program, rel, cols, products, require_anchor, PREFIX, &|_, _| true)
+}
+
+/// `install` under another prefix: the deferred joins' pair relations (`DEFERRED_PAIRS`, decision 0488). None is
+/// installed unless `restricts` finds the demand's rules restrict the relation (a request that asks for every key
+/// costs a join of its own and restricts nothing).
+pub(super) fn install_named(
+    program: &mut Program<'_>,
+    rel: &str,
+    cols: &[usize],
+    products: &BTreeSet<String>,
+    require_anchor: bool,
+    prefix: &str,
+    restricts: &dyn Fn(&Version, &[Proof]) -> bool,
+) -> Result<bool, String> {
+    let name = format!("{prefix}{rel}");
     if program.columns(&name).is_some() {
         return Ok(false);
     }
@@ -201,7 +216,7 @@ fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTre
             proofs.push(Proof { rule: rule.id(), read: i, own, parts });
         }
     }
-    if producers.is_empty() || readers == 0 || (require_anchor && !anchored) {
+    if producers.is_empty() || readers == 0 || (require_anchor && !anchored) || !restricts(v, &proofs) {
         return Ok(false);
     }
     let columns: Vec<(String, String)> = {
@@ -218,7 +233,7 @@ fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTre
                 return Ok(false);
             }
             let key = keys(r.head(), cols).expect("a producer's plain key");
-            let guard: Vec<T<'_>> = key.iter().map(|t| t_of(v, r, *t)).collect();
+            let guard: Vec<T<'_>> = key.iter().map(|t| t_of(r, *t)).collect();
             let mut rb = rewritten(first, v, r, b).atom(name.as_str(), &guard);
             for l in r.body() {
                 rb = rb.lit(v, r, l);
@@ -235,9 +250,9 @@ fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTre
             for proof in &proofs {
                 let r = v.rule(proof.rule).expect("a reader of the version");
                 let read = r.body().nth(proof.read).and_then(|l| l.atom()).expect("the read");
-                let head: Vec<T<'_>> = keys(read, cols).expect("a plain key").iter().map(|t| t_of(v, r, *t)).collect();
+                let head: Vec<T<'_>> = keys(read, cols).expect("a plain key").iter().map(|t| t_of(r, *t)).collect();
                 let guard: Vec<T<'_>> = if proof.own {
-                    keys(r.head(), cols).expect("a producer's plain key").iter().map(|t| t_of(v, r, *t)).collect()
+                    keys(r.head(), cols).expect("a producer's plain key").iter().map(|t| t_of(r, *t)).collect()
                 } else {
                     Vec::new()
                 };
@@ -266,7 +281,7 @@ fn node_columns(program: &Program<'_>, rel: &str) -> Vec<usize> {
         .collect()
 }
 
-fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String>, tuple: bool, require_anchor: bool) -> Result<bool, String> {
+pub fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String>, tuple: bool, require_anchor: bool) -> Result<bool, String> {
     if products.contains(rel) || !eligible(program, rel) {
         return Ok(false);
     }
@@ -379,7 +394,7 @@ impl Arg {
     fn term<'v>(&self, v: &'v Version, r: RuleRef<'v>) -> T<'v> {
         let arg = |r: RuleRef<'v>, j: usize, k: usize| {
             let a = r.body().nth(j).and_then(|l| l.atom()).expect("an atom of the rule");
-            t_of(v, r, a.args().nth(k).expect("an argument of the atom"))
+            t_of(r, a.args().nth(k).expect("an argument of the atom"))
         };
         match *self {
             Arg::Rule(j, k) => arg(r, j, k),
@@ -392,7 +407,7 @@ impl Arg {
 /// Restate the witness of a node minimum or maximum after reversing its order key. Its original atom tells
 /// placement which document supplied the node. An empty group has no node_order row. Node-order keys in the tape
 /// binding are injective, so a nonempty group's returned node is a witness of the original atom.
-pub(super) fn restore_order_witnesses(program: &mut Program<'_>, narrowed: &BTreeSet<String>) -> Result<usize, String> {
+pub fn restore_order_witnesses(program: &mut Program<'_>, narrowed: &BTreeSet<String>) -> Result<usize, String> {
     let f = &program.f;
     let v = program.v();
     if !f.inputs.iter().any(|r| r == "node_order")
@@ -526,105 +541,4 @@ pub(super) fn restore_order_witnesses(program: &mut Program<'_>, narrowed: &BTre
     Ok(count)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use super::super::tests::parse;
-
-    #[test]
-    fn bound_columns_keep_wildcards_and_scope_the_point_walk() {
-        let v = parse(
-            "
-            .decl kind(n: node, k: symbol)
-            .decl child(n: node, c: node, i: number)
-            .decl chosen(x: node)
-            .input kind, child, chosen
-            .decl peel(x: node, y: node)
-            peel(x, x) :- kind(x, k), k != \"wrap\".
-            peel(x, y) :- kind(x, \"wrap\"), child(x, c, _), peel(c, y).
-            .decl missing(x: node)
-            .output missing
-            missing(x) :- chosen(x), !peel(x, _).
-        ",
-        )
-        .unwrap();
-        let mut p = Program::of(&v);
-        assert!(restrict(&mut p, "peel", &BTreeSet::new(), false, false).unwrap());
-        let specs = p.shown(Some("rr_reader_demand_peel"));
-        assert!(specs.iter().any(|r| r.contains("chosen($x)")));
-        assert!(specs.iter().any(|r| r.starts_with("rr_reader_demand_peel($c)")
-            && r.contains("rr_reader_demand_peel($x)")
-            && r.contains("child($x, $c")));
-    }
-
-    #[test]
-    fn a_negated_reader_supplies_its_filter_to_the_tuple_demand() {
-        let v = parse(
-            "
-            .decl attrs(n: node, r: node, s: symbol)
-            .decl a(n: node)
-            .decl b(n: node)
-            .input attrs, a, b
-            .decl product(r: node, n: node)
-            product(r, n) :- a(r), b(n).
-            .decl reader(r: node, n: node)
-            reader(r, n) :- attrs(n, r, _), product(r, n).
-            .decl out(n: node)
-            .output out
-            out(n) :- attrs(n, r, s), prefix(\"_\", s), !reader(r, n).
-            ",
-        )
-        .unwrap();
-        let mut p = Program::of(&v);
-        let rewritten = super::super::rewrite(&mut p, true).unwrap();
-        assert!(rewritten.products.contains("product"));
-        assert!(rewritten.readers.contains("reader"));
-        let proof = p.shown(Some("rr_reader_demand_reader")).remove(0);
-        assert!(proof.contains("@prefix"), "{proof}");
-        assert!(p.shown(Some("rr_product_demand_product")).iter().any(|r| r.contains("rr_reader_demand_reader(")));
-    }
-
-    #[test]
-    fn a_node_maximum_retains_its_group_witness() {
-        let v = parse(
-            "
-            .decl node_order(n: node, k: number)
-            .decl site(n: node, b: node)
-            .decl asked(n: node)
-            .input node_order, site, asked
-            .decl rr_ordered0(n: node, k: number)
-            rr_ordered0(n, k) :- site(n, b), node_order(b, k).
-            .decl selected(n: node, b: node)
-            .output selected
-            selected(n, b) :- asked(n), k = max r : { rr_ordered0(n, r) }, node_order(b, k).
-            ",
-        )
-        .unwrap();
-        let mut p = Program::of(&v);
-        assert_eq!(
-            restore_order_witnesses(&mut p, &BTreeSet::from(["selected".to_owned()])).unwrap(),
-            1
-        );
-        let selected = p.shown(Some("selected")).remove(0);
-        assert!(selected.ends_with("site($n, $b)"), "{selected}");
-    }
-
-    #[test]
-    fn an_open_reader_preserves_the_whole_relation() {
-        let v = parse(
-            "
-            .decl edge(x: node, y: node)
-            .input edge
-            .decl all(x: node, y: node)
-            all(x, y) :- edge(x, y).
-            .decl out(x: node, y: node)
-            .output out
-            out(x, y) :- all(x, y).
-        ",
-        )
-        .unwrap();
-        let mut p = Program::of(&v);
-        assert!(!restrict(&mut p, "all", &BTreeSet::new(), true, false).unwrap());
-        assert!(p.columns("rr_reader_demand_all").is_none());
-    }
-}
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)

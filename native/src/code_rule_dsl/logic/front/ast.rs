@@ -66,6 +66,30 @@ pub enum AggOp {
     /// `join x by (k, …) sep "s" : { … }`: the distinct `(k, …, x)` rows' `x` texts ordered by `k, …` then `x`
     /// (symbols by code point, numbers by value), separated by `sep`; `""` when there are none.
     Join { by: Vec<String>, sep: String },
+    /// `max t : { … }` with `t < r` (or `<=`), `min` with `t > r` (or `>=`), `r` bound outside the body (decision
+    /// 0511): the extreme of the body's values on `bound`'s side of it, no row when there are none. The body is the
+    /// group's values alone, read once for every probe.
+    Bounded { max: bool, bound: String, strict: bool },
+}
+
+impl AggOp {
+    /// A bounded aggregate's bound: a variable it reads from outside its body (decision 0511).
+    pub fn bound(&self) -> Option<&String> {
+        match self {
+            AggOp::Bounded { bound, .. } => Some(bound),
+            _ => None,
+        }
+    }
+
+    /// The comparison a bounded aggregate's value passes: `t op bound`.
+    pub fn bound_cmp(max: bool, strict: bool) -> &'static str {
+        match (max, strict) {
+            (true, true) => "<",
+            (true, false) => "<=",
+            (false, true) => ">",
+            (false, false) => ">=",
+        }
+    }
 }
 
 /// A relation's lattice column: the last, after `keys` key columns.

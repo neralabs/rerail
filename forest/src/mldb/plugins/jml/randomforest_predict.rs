@@ -1855,7 +1855,7 @@ mod tests {
             f.predict(&rows).unwrap();
         }
         let n = 300;
-        let thread_cpu = || { let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 }; unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) }; ts.tv_sec as f64 + ts.tv_nsec as f64 * 1e-9 };
+        let thread_cpu = rerail_gpu::os::thread_cpu;
         let wait = std::env::var("WAIT").unwrap_or("wait".into());
         let mut t = [(0.0f64, 0.0f64); 8];
         let mut tt = [0.0f64; 8];

@@ -42,11 +42,20 @@ typedef struct Stage {
     UKL_GLOBAL const ViewDir* v_dir;
     uint32_t r_view;
     uint32_t v_parent;
+    // The probed relation's screen (decision 0488): its key `screen - 1`'s column's kept filter, a `bloom::Bloom` at
+    // byte `screen_at` of the kernel's `F`; 0 for none.
+    uint32_t screen, screen_at;
+    // A `has` axis probed off the tape (decision 0353 step 5, `DevRel::has`): its set's kind atoms, ascending, how it
+    // is probed (`DevIndex::walk`: 1 by its node, a climb; 2 by its ancestor, the subtree; 0: not), and the atoms'
+    // count.
+    UKL_GLOBAL const int64_t* v_set;
+    uint32_t v_has, v_nset;
+    uint32_t has_pad[2];
 } Stage;
-UKL_STATIC_ASSERT(sizeof(Stage) == 2320, "Stage: size");
-UKL_STATIC_ASSERT(__builtin_offsetof(Stage, ops) == 208, "Stage.ops");
-UKL_STATIC_ASSERT(__builtin_offsetof(Stage, arith) == 2176, "Stage.arith");
-UKL_STATIC_ASSERT(__builtin_offsetof(Stage, v_dir) == 2304, "Stage.v_dir");
+UKL_STATIC_ASSERT(sizeof(Stage) == 2352, "Stage: size");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, ops) == 208, "Stage.ops");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, arith) == 2176, "Stage.arith");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, v_dir) == 2304, "Stage.v_dir");
 
 typedef UKL_GLOBAL const Stage* StageP;
 typedef UKL_GLOBAL const int64_t* Longs;
@@ -74,7 +83,10 @@ UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, u
         case 5u: return (int64_t)clif_view_loc_line(d->chunk, e->entry, e->tape, v, e->lines, i, col);
         case 6u: return (int64_t)clif_view_loc_end(d->chunk, e->entry, e->tape, v, e->lines, i, col);
         case 7u: return (int64_t)clif_view_loc_col(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        default: return (int64_t)clif_view_loc_docof(d->chunk, e->entry, e->tape, v, e->lines, i, col);
+        case 8u: return (int64_t)clif_view_loc_docof(d->chunk, e->entry, e->tape, v, e->lines, i, col);
+        case 9u: return (int64_t)clif_view_tape(d->chunk, e->entry, e->tape, v, e->lines, i, col);
+        case 10u: return (int64_t)clif_view_depth(d->chunk, e->entry, e->tape, v, e->lines, i, col);
+        default: return (int64_t)clif_view_order(d->chunk, e->entry, e->tape, v, e->lines, i, col);
     }
 }
 
@@ -97,7 +109,9 @@ UKL_INLINE int64_t lane_of(int64_t v, uint32_t w) {
 
 // A value of the probed relation: row `r`'s in column `col`, read in its block through the generated reads (`r_at`,
 // decision 0325). Every relation the device reads lies in a block (step 5).
-UKL_INLINE int64_t rget(StageP s, Longs R, uint32_t r, uint32_t col) {
+UKL_COLD int64_t rget(StageP s, Longs R, uint32_t r, uint32_t col) {
+    // A `has` walk's candidate is the node of the column not probed (`by_has`): either column reads its id.
+    if (s->v_has != 0u) return vread(1u, s->v_dir, r, 1u);
     if (s->r_view != 0u) return vread(s->r_view, s->v_dir, r, col);
     return (int64_t)clif_rel_get((UKL_GLOBAL const uint8_t*)R, s->r_at, r, col);
 }
@@ -147,7 +161,7 @@ UKL_INLINE bool arith(StageP s, uint32_t j, Longs L, uint32_t t, Longs R, uint32
 }
 
 // Whether every arithmetic bind of the stage has a value for this row.
-UKL_INLINE bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
+UKL_COLD bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
     for (uint32_t b = 0; b < s->nbinds && b < 16; b++) {
         if (s->bind_kind[b] != 3) continue;
         int64_t v = 0;
@@ -157,7 +171,7 @@ UKL_INLINE bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
 }
 
 // The row program's operations for one row: bit x of the result is operation x's value.
-UKL_INLINE uint64_t eval(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
+UKL_COLD uint64_t eval(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
     uint64_t v = 0;
     for (uint32_t x = 0; x < s->nops && x < 64; x++) {
         UKL_GLOBAL const uint32_t* o = s->ops[x];
@@ -208,7 +222,8 @@ UKL_INLINE void group_of(Longs R, uint64_t at, uint32_t index, UKL_PRIVATE const
 // The `child` view probed by its parent (decision 0353 step 4c, `Stage::v_parent`): the parent's children read off
 // the tape, its first child and each next sibling (`clif_view_child_first`, `clif_view_child_next`), with no index of
 // the view. A walk of a binding's candidates (`how`): 0 the rows [lo, hi), 1 an index group's entries [lo, hi), 2 a
-// parent's children from row lo, each step the next sibling's row (`NONE` ends it).
+// parent's children from row lo, each step the next sibling's row (`NONE` ends it), 3 a node's numbered ancestors
+// from row lo, each step the next one up (`has_up`; `NONE` ends it).
 UKL_INLINE UKL_GLOBAL const ViewDoc* vdoc(UKL_GLOBAL const ViewDir* d, uint32_t m) {
     return (UKL_GLOBAL const ViewDoc*)(d->chunk + d->rows[m].entry);
 }
@@ -251,29 +266,94 @@ UKL_INLINE uint32_t child_next(StageP s, uint32_t r) {
     return n == NONE ? NONE : e->rows[1] + n;
 }
 
+// `has` probed off the tape (decision 0353 step 5, `Stage::v_has`), with no rows or index of its own: a candidate is
+// a node's row in the `node` view (its document's first row there and its number). Probed by its node (1), its
+// rows are the node's numbered ancestors, by a climb (`clif_view_up`), where the node is in the set; by its ancestor
+// (2), the numbered nodes of its subtree (`clif_view_end`), those in the set (`matches`). As the host's
+// `Within::containers_on` and `contained_on`.
+
+// Whether node row `q`'s kind atom is in the set (the stage's, ascending), by bisection.
+UKL_INLINE bool has_member(StageP s, uint32_t q) {
+    int64_t k = vread(1u, s->v_dir, q, 2u);
+    uint32_t lo = 0u, hi = s->v_nset;
+    while (lo < hi) {
+        uint32_t m = (lo + hi) / 2u;
+        if (s->v_set[m] < k) lo = m + 1u; else hi = m;
+    }
+    return lo < s->v_nset && s->v_set[lo] == k;
+}
+
+// The candidates of node `key`: its document by bisection of the directory on its key, its number, then its walk.
+UKL_INLINE void by_has(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    *lo = 0u; *hi = 0u; *how = 0u;
+    if (key < 0 || d->ndocs == 0u) return;
+    uint32_t k = (uint32_t)((uint64_t)key >> 32);
+    uint32_t a = 0u, b = d->ndocs;
+    while (b - a > 1u) {
+        uint32_t m = (a + b) / 2u;
+        if (vdoc(d, m)->key <= k) a = m; else b = m;
+    }
+    if (vdoc(d, a)->key != k) return;
+    UKL_GLOBAL const ViewRow* e = &d->rows[a];
+    uint32_t l = clif_view_number(d->chunk, e->entry, e->tape, e->view, e->lines, (uint32_t)((uint64_t)key & 0xfffffffful));
+    if (l == NONE) return;
+    uint32_t first = e->rows[0];
+    if (s->v_has == 1u) {
+        if (!has_member(s, first + l)) return;
+        uint32_t u = clif_view_up(d->chunk, e->entry, e->tape, e->view, e->lines, l);
+        if (u == NONE) return;
+        *lo = first + u; *hi = NONE; *how = 3u;
+        return;
+    }
+    *lo = first + l + 1u;
+    *hi = first + clif_view_end(d->chunk, e->entry, e->tape, e->view, e->lines, l);
+}
+
+// The next numbered ancestor's row of node row `q`, or `NONE`: its document as `vread` finds it, then the climb.
+UKL_INLINE uint32_t has_up(StageP s, uint32_t q) {
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    UKL_GLOBAL const ViewRow* rows = d->rows;
+    uint32_t lo = 0u, hi = d->ndocs;
+    while (hi - lo > 1u) {
+        uint32_t m = (lo + hi) / 2u;
+        if (rows[m].rows[0] <= q) lo = m; else hi = m;
+    }
+    UKL_GLOBAL const ViewRow* e = &rows[lo];
+    uint32_t u = clif_view_up(d->chunk, e->entry, e->tape, e->view, e->lines, q - e->rows[0]);
+    return u == NONE ? NONE : e->rows[0] + u;
+}
+
 // A walk's candidate `q`: its row, and the next candidate.
 UKL_INLINE uint32_t cand_row(StageP s, Longs R, uint32_t how, uint32_t q) {
     return how == 1u ? group_row(s, R, q) : q;
 }
 UKL_INLINE uint32_t cand_next(StageP s, uint32_t how, uint32_t q) {
-    return how == 2u ? child_next(s, q) : q + 1u;
+    return how == 2u ? child_next(s, q) : (how == 3u ? has_up(s, q) : q + 1u);
 }
 
 // The candidates of keys `kv` in relation R (`s`'s): its index group, a parent's children, or every row.
 UKL_INLINE void probe(StageP s, Longs R, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi,
                       UKL_PRIVATE uint32_t* how) {
     if (s->nkeys == 0) { *lo = 0; *hi = s->nr; *how = 0u; return; }
+    if (s->v_has != 0u) { by_has(s, kv[0], lo, hi, how); return; }
     if (s->v_parent != 0u) { by_parent(s, kv[0], lo, hi, how); return; }
     *how = 1u;
     group_of(R, s->r_at, s->r_index, kv, s->nkeys, lo, hi);
 }
 
 // A binding's candidates (`probe`), and its key values.
-UKL_INLINE void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_PRIVATE int64_t* kv, UKL_PRIVATE uint32_t* lo,
-                           UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
+// A key the probed relation's screen refuses (`Stage::screen`, a column's kept filter: decision 0488) has none, and
+// its index group is not read. `F` is the screen's buffer.
+UKL_COLD void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL const uint8_t* F, UKL_PRIVATE int64_t* kv,
+                           UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     *how = 0u;
     if (s->mode == 3) { *lo = 0; *hi = 1; return; }
     for (uint32_t i = 0; i < s->nkeys && i < 8; i++) kv[i] = s->key_kind[i] == 1 ? L[(uint64_t)s->key_slot[i] * s->cap_in + t] : s->key_const[i];
+    if (s->screen != 0u && s->screen <= s->nkeys && s->screen <= 8u
+        && clif_bloom_may(F, (uint64_t)s->screen_at, clif_bloom_hash(F, 0ul, (uint64_t)kv[s->screen - 1u])) == 0u) {
+        *lo = 0; *hi = 0; return;
+    }
     probe(s, R, kv, lo, hi, how);
 }
 
@@ -284,7 +364,10 @@ UKL_INLINE bool row_live(StageP s, Longs R, uint32_t r) {
 }
 
 // Whether row r matches the binding's keys and the relation's column tests.
-UKL_INLINE bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
+UKL_COLD bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
+    // A `has` walk's candidates hold its key by their making (`by_has`); a descendant is a row where it is in the set.
+    // Its two columns are never one node (an ancestor is strict), so a test of them holds for no row.
+    if (s->v_has != 0u) return s->ntests == 0u && (s->v_has == 1u || has_member(s, r));
     if (!row_live(s, R, r)) return false;
     for (uint32_t i = 0; i < s->nkeys && i < 8; i++) if (rget(s, R, r, s->key_rcol[i]) != kv[i]) return false;
     for (uint32_t i = 0; i < s->ntests && i < 8; i++) if (rget(s, R, r, s->test_a[i]) != rget(s, R, r, s->test_b[i])) return false;
@@ -293,7 +376,7 @@ UKL_INLINE bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t
 
 // An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
 // or max of no rows, or a tested value that differs), 2 when a sum passes 64 bits.
-UKL_INLINE uint32_t aggregate(StageP s, Longs L, uint32_t t, Longs R, uint32_t lo, uint32_t hi, uint32_t how,
+UKL_COLD uint32_t aggregate(StageP s, Longs L, uint32_t t, Longs R, uint32_t lo, uint32_t hi, uint32_t how,
                               UKL_PRIVATE const int64_t* kv, UKL_PRIVATE int64_t* v) {
     uint32_t kind = s->agg[0] & 0xff;
     int64_t cnt = 0, sum = 0, mn = 0, mx = 0;
@@ -467,6 +550,7 @@ DEFINE_KERNEL2(join, stage_count,
                RWBUFFER, uint32_t, counts,   "[cap_in + 1]",
                RWBUFFER, uint32_t, A,        "[arena]",
                ROBUFFER, uint8_t,  D,        "[atoms directory]",
+               ROBUFFER, uint8_t,  F,        "[screen]",
                ROBUFFER, Stage,    s,        "[1]",
                GID0,     uint32_t, t,        )
 {
@@ -484,7 +568,7 @@ DEFINE_KERNEL2(join, stage_count,
         if (s->counter != NONE && (unheld || host)) ukl_atomic_or(&counters[s->counter], (unheld ? 4u : 0u) | (host ? 2u : 0u));
         return;
     }
-    candidates(s, L, t, R, kv, &lo, &hi, &how);
+    candidates(s, L, t, R, F, kv, &lo, &hi, &how);
     if (s->mode == 4) {
         int64_t v = 0;
         uint32_t st = aggregate(s, L, t, R, lo, hi, how, kv, &v);
@@ -516,7 +600,7 @@ DEFINE_KERNEL2(join, stage_count,
     }
 }
 
-UKL_INLINE void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, UKL_GLOBAL int64_t* O, uint32_t at) {
+UKL_COLD void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, UKL_GLOBAL int64_t* O, uint32_t at) {
     for (uint32_t k = 0; k < s->nslots; k++) O[(uint64_t)k * s->cap_out + at] = L[(uint64_t)k * s->cap_in + t];
     for (uint32_t b = 0; b < s->nbinds && b < 16; b++) {
         uint32_t kind = s->bind_kind[b];
@@ -537,6 +621,7 @@ DEFINE_KERNEL2(join, stage_scatter,
                RWBUFFER, uint32_t, A,        "[arena]",
                RWBUFFER, uint32_t, counters, "[counters]",
                ROBUFFER, uint8_t,  D,        "[atoms directory]",
+               ROBUFFER, uint8_t,  F,        "[screen]",
                ROBUFFER, Stage,    s,        "[1]",
                GID0,     uint32_t, t,        )
 {
@@ -562,7 +647,7 @@ DEFINE_KERNEL2(join, stage_scatter,
     }
     if (s->mode == 4) {
         if (offsets[t + 1] <= at) return;
-        candidates(s, L, t, R, kv, &lo, &hi, &how);
+        candidates(s, L, t, R, F, kv, &lo, &hi, &how);
         int64_t v = 0;
         aggregate(s, L, t, R, lo, hi, how, kv, &v);
         write_row(s, L, t, R, 0, O, at);
@@ -574,7 +659,7 @@ DEFINE_KERNEL2(join, stage_scatter,
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
-    candidates(s, L, t, R, kv, &lo, &hi, &how);
+    candidates(s, L, t, R, F, kv, &lo, &hi, &how);
     for (uint32_t q = lo; q < hi && at < s->cap_out; q = cand_next(s, how, q)) {
         uint32_t r = cand_row(s, R, how, q);
         if (s->mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
@@ -617,6 +702,7 @@ DEFINE_KERNEL2(join, witness_count,
                ROBUFFER, int64_t,  R0,     "[rows]",
                ROBUFFER, int64_t,  R1,     "[rows]",
                ROBUFFER, int64_t,  R2,     "[rows]",
+               ROBUFFER, uint8_t,  F,      "[screen]",
                ROBUFFER, Stage,    s,      "[1]",
                GID0,     uint32_t, t,      )
 {
@@ -625,7 +711,7 @@ DEFINE_KERNEL2(join, witness_count,
     if (t >= n) { counts[t] = 0; return; }
     int64_t kv[8];
     uint32_t lo, hi, how;
-    candidates(s, L, t, R, kv, &lo, &hi, &how);
+    candidates(s, L, t, R, F, kv, &lo, &hi, &how);
     uint32_t nb = ukl_min(s->agg[0], 3u);
     uint32_t found = 0;
     for (uint32_t q = lo; q < hi; q = cand_next(s, how, q)) {
@@ -902,7 +988,23 @@ DEFINE_KERNEL2(join, row_text,
             bool has = row < n;
             int64_t v = has ? key_value(s, L, row, 0) : -1;
             bool sym = has && v >= 0 && v <= (int64_t)0xffffffffu;
-            uint32_t got = sym ? clif_verdict_get(VC, 0ul, test, (uint32_t)v) : 1u;
+            // An entry holds 64 symbols of the test, and a lookup that misses makes it. Lanes whose symbols share
+            // one would wait on each other's making it, in their own group, which makes no progress while they
+            // spin: they run out of spins, and each takes a second entry of the key, splitting its verdicts. So one
+            // lane an entry looks first, its entry made and complete, and the lanes that share it look after.
+            uint32_t entry = sym ? (uint32_t)v >> 6 : 0xffffffffu;
+            uint32_t got = 1u;
+            uint32_t todo = ukl_sg_ballot(sym __UKL_ARGS);
+            while (todo != 0u) {
+                uint32_t first = ukl_ctz32(todo);
+                uint32_t its = ukl_sg_shuffle(entry, first __UKL_ARGS);
+                uint32_t sharing = ukl_sg_ballot(sym && entry == its __UKL_ARGS);
+                todo &= ~sharing;
+                if (lane == first) got = clif_verdict_get(VC, 0ul, test, (uint32_t)v);
+                // The entry's making, seen by the group (`todo` is the group's, so every lane is here).
+                ukl_sg_barrier();
+                if (lane != first && sym && entry == its) got = clif_verdict_get(VC, 0ul, test, (uint32_t)v);
+            }
             uint32_t miss = ukl_sg_ballot(sym && got == 0u __UKL_ARGS);
             while (miss != 0u) {
                 uint32_t l = ukl_ctz32(miss);
@@ -954,8 +1056,10 @@ DEFINE_KERNEL2(join, row_text,
             if (lane == 0) r = clif_text_find(VC, 0ul, P[5], ksym);
             r = (uint64_t)ukl_sg_shuffle((uint32_t)r, 0u __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle((uint32_t)(r >> 32), 0u __UKL_ARGS) << 32);
             if ((r & 3ul) == 0ul) {
-                UKL_GLOBAL const uint8_t* e = VC + (r & ~3ul);
-                uint32_t len = *(UKL_GLOBAL const uint32_t*)(e + 12) - 16u;
+                // Another group's writes: read coherently (`ukl/grid.h`'s rule; Q367: a plain load of them can be
+                // stale, and the text read short, zeros past what was seen).
+                UKL_COHERENT const uint8_t* e = (UKL_COHERENT const uint8_t*)(VC + (r & ~3ul));
+                uint32_t len = *(UKL_COHERENT const uint32_t*)(e + 12) - 16u;
                 uint32_t off = 0;
                 if (lane == 0) off = ukl_atomic_add(A, len);
                 off = ukl_sg_shuffle(off, 0u __UKL_ARGS);
@@ -1048,7 +1152,8 @@ DEFINE_KERNEL2(join, row_text,
             if (lane == 0) r = clif_text_open(VC, 0ul, P[5], ksym, len);
             r = (uint64_t)ukl_sg_shuffle((uint32_t)r, 0u __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle((uint32_t)(r >> 32), 0u __UKL_ARGS) << 32);
             if ((r & 3ul) == 1ul) {
-                UKL_GLOBAL uint8_t* e = VC + (r & ~3ul);
+                // Read by other groups: written coherently, as they read it.
+                UKL_COHERENT uint8_t* e = (UKL_COHERENT uint8_t*)(VC + (r & ~3ul));
                 UKL_GLOBAL const uint8_t* o = (UKL_GLOBAL const uint8_t*)A + 16 + off;
                 for (uint32_t i = lane; i < len; i += SGW) e[16 + i] = o[i];
                 ukl_sg_barrier();
@@ -1100,7 +1205,7 @@ typedef struct Copy {
     uint32_t v_pad;
 } Copy;
 UKL_STATIC_ASSERT(sizeof(Copy) == 256, "Copy: size");
-UKL_STATIC_ASSERT(__builtin_offsetof(Copy, v_dir) == 240, "Copy.v_dir");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Copy, v_dir) == 240, "Copy.v_dir");
 
 DEFINE_KERNEL2(join, rows_copy,
                ROBUFFER, uint8_t,  S,      "[source]",
@@ -1282,7 +1387,7 @@ typedef struct IxP {
     uint64_t kind;
 } IxP;
 UKL_STATIC_ASSERT(sizeof(IxP) == 72, "IxP: size");
-UKL_STATIC_ASSERT(__builtin_offsetof(IxP, dir) == 56, "IxP.dir");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(IxP, dir) == 56, "IxP.dir");
 
 DEFINE_KERNEL2(join, ix_bucket,
                ROBUFFER, uint8_t,  B,   "[block]",

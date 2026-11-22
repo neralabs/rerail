@@ -17,15 +17,15 @@
 //!   event holds the root's later work, as on Metal.
 //! - **Each thread of a threadgroup has a stack of its own** (`STACK_BYTES`, a guard page below it), from a region the
 //!   root's thread keeps across launches.
-//! - **No thread-local in a kernel library**: the running scheduler and thread are in one thread-local of the host's
-//!   (`tls`), which each launch names; the scheduler's storage is the root thread's (`SCHED_BYTES`). macOS gives each
+//! - **No thread-local in a kernel library**: the running scheduler is in one pthread key of the host's
+//!   (`tls_key`), which each launch names; the scheduler's storage is the root thread's (`SCHED_BYTES`). macOS gives each
 //!   loaded image's thread-locals a pthread key, and a process ran out of them after a few hundred libraries.
 //! - **Arguments without reflection**, as on CUDA (`rows.rs`): the shim's rows and layouts, read from the library's
 //!   symbols, and each `ARGS` structure's layout function called on the host.
 
 use crate::compute_kernel::*;
 use std::cell::RefCell;
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{c_char, c_void, CStr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
 
@@ -40,7 +40,17 @@ pub fn defines() -> Vec<(&'static str, String)> {
     if std::env::var("RERAIL_CPU_OPENCL_RULE").is_ok_and(|v| v == "1") {
         v.push(("UKL_CPU_OPENCL_RULE", "1".to_string()));
     }
+    if strict_simd() {
+        v.push(("UKL_CPU_SIMD_STRICT", "1".to_string()));
+    }
     v
+}
+
+/// `RERAIL_CPU_SIMD_STRICT=1`: a SIMD group's lanes meet only at the same operation reached by the same path
+/// (`ukl_cpu_shim.h`'s `__ukl_cpu_site`), compiled without optimization so that none is duplicated: a kernel with a
+/// SIMD-group operation some lanes skip fails, naming where each waits.
+pub fn strict_simd() -> bool {
+    std::env::var("RERAIL_CPU_SIMD_STRICT").is_ok_and(|v| v == "1")
 }
 
 /// The CPU's SIMD groups' lanes: `RERAIL_CPU_SIMD_WIDTH`, else 32.
@@ -48,8 +58,8 @@ pub fn simd_width() -> u32 {
     match std::env::var("RERAIL_CPU_SIMD_WIDTH") {
         Err(_) => 32,
         Ok(w) => match w.parse::<u32>() {
-            Ok(n) if n.is_power_of_two() && n <= 32 => n,
-            _ => panic!("RERAIL_CPU_SIMD_WIDTH={w}: a power of two from 1 to 32"),
+            Ok(n) if n.is_power_of_two() && n <= 64 => n,
+            _ => panic!("RERAIL_CPU_SIMD_WIDTH={w}: a power of two from 1 to 64"),
         },
     }
 }
@@ -61,14 +71,27 @@ const STACK_BYTES: usize = 256 << 10;
 fn compiler() -> Result<&'static str, String> {
     static CXX: OnceLock<Result<String, String>> = OnceLock::new();
     CXX.get_or_init(|| {
-        let cxx = std::env::var("RERAIL_CPU_CXX").unwrap_or_else(|_| "c++".to_string());
-        match std::process::Command::new(&cxx).arg("--version").output() {
-            Ok(o) if o.status.success() => Ok(cxx),
-            _ => Err(format!("no C++ compiler ({cxx}; set RERAIL_CPU_CXX)")),
+        let runs = |cxx: &str| std::process::Command::new(cxx).arg("--version").output().is_ok_and(|o| o.status.success());
+        if let Ok(cxx) = std::env::var("RERAIL_CPU_CXX") {
+            return if runs(&cxx) { Ok(cxx) } else { Err(format!("no C++ compiler ({cxx}, RERAIL_CPU_CXX)")) };
         }
+        // Windows: clang (the shim's assembly and builtins are clang's), on the path or Visual Studio's own.
+        let candidates: Vec<String> = if cfg!(windows) { std::iter::once("clang++".to_string()).chain(visual_studio_clang()).collect() } else { vec!["c++".to_string()] };
+        candidates.iter().find(|c| runs(c)).cloned().ok_or_else(|| format!("no C++ compiler ({}; set RERAIL_CPU_CXX)", candidates.join(", ")))
     })
     .as_deref()
     .map_err(Clone::clone)
+}
+
+/// The clang Visual Studio installs (its "C++ Clang tools" component), as its installer's `vswhere` finds it.
+fn visual_studio_clang() -> Option<String> {
+    let programs = std::env::var("ProgramFiles(x86)").ok()?;
+    let vswhere = format!("{programs}\\Microsoft Visual Studio\\Installer\\vswhere.exe");
+    let o = std::process::Command::new(vswhere)
+        .args(["-latest", "-products", "*", "-find", "VC\\Tools\\Llvm\\x64\\bin\\clang++.exe"])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&o.stdout).lines().next().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string)
 }
 
 /// The CPU device: the host, with its C++ compiler.
@@ -204,15 +227,22 @@ pub fn gpu_seconds_awaited() -> f64 {
 
 /// A compiled library: the shared object the host's compiler made of the source, loaded.
 pub struct CpuComputeFunctionLibrary {
-    handle: *mut c_void,
+    lib: crate::os::Lib,
     name: String,
 }
 
 unsafe impl Send for CpuComputeFunctionLibrary {}
 unsafe impl Sync for CpuComputeFunctionLibrary {}
 
-/// The compiler's options for a kernel library.
+/// The compiler's options for a kernel library. On Windows a DLL has no position-independent option, and no stack
+/// probes: Windows' probe walks down from the thread's own stack's limit, past which a coroutine's stack can lie.
+#[cfg(not(windows))]
 const CXX_FLAGS: [&str; 8] = ["-std=c++20", "-O1", "-g", "-fPIC", "-shared", "-fno-exceptions", "-w", "-o"];
+#[cfg(windows)]
+const CXX_FLAGS: [&str; 8] = ["-std=c++20", "-O1", "-g", "-mno-stack-arg-probe", "-shared", "-fno-exceptions", "-w", "-o"];
+
+/// A kernel library's file extension: `so` (macOS's `dlopen` takes it too), Windows' `dll`.
+const LIB_EXTENSION: &str = if cfg!(windows) { "dll" } else { "so" };
 
 /// What names the compiler's build: its `--version` (a store's key holds it, so an upgrade compiles again).
 fn compiler_version(cxx: &str) -> &'static str {
@@ -220,16 +250,11 @@ fn compiler_version(cxx: &str) -> &'static str {
     V.get_or_init(|| std::process::Command::new(cxx).arg("--version").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default())
 }
 
-/// The kernel library at `lib`, loaded.
-fn open_library(lib: &std::path::Path) -> Result<*mut c_void, String> {
-    let c = CString::new(lib.to_string_lossy().as_bytes()).unwrap();
-    // SAFETY: a shared object a compiler made from UKL; it runs no initializers of its own.
-    let handle = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    if handle.is_null() {
-        let e = unsafe { CStr::from_ptr(libc::dlerror()) }.to_string_lossy().into_owned();
-        return Err(format!("loading {}: {e}", lib.display()));
-    }
-    Ok(handle)
+/// The kernel library at `lib`, loaded, its symbols its own (`Scope::Local`): every library defines the shim's names.
+fn open_library(lib: &std::path::Path) -> Result<crate::os::Lib, String> {
+    // A library a compiler made from UKL; it runs no initializers of its own.
+    let path = lib.to_string_lossy();
+    crate::os::Lib::open(&[path.as_ref()], crate::os::Scope::Local).ok_or_else(|| format!("loading {}: {}", lib.display(), crate::os::Lib::error()))
 }
 
 impl CpuComputeFunctionLibrary {
@@ -237,23 +262,30 @@ impl CpuComputeFunctionLibrary {
     pub fn compile_from_source(_device: &CpuDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let cxx = compiler()?;
         // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
-        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), preprocessed_source.as_bytes()]);
-        let lib = match crate::store::path("cpu", &k, "so") {
+        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, preprocessed_source.as_bytes()]);
+        // The shipped library (`crate::store::shipped`), of this compiler: loaded in place.
+        if let Some(shipped) = crate::store::shipped("cpu", &k, LIB_EXTENSION)
+            && let Ok(opened) = open_library(&shipped)
+        {
+            crate::store::count(true);
+            return Ok(CpuComputeFunctionLibrary { lib: opened, name: file_name_to_appear_in_error_messages.to_string() });
+        }
+        let lib = match crate::store::path("cpu", &k, LIB_EXTENSION) {
             Some(p) => p,
             None => {
                 let dir = std::env::temp_dir().join("rerail-ukl-cpu");
                 std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-                dir.join(format!("{k}.so"))
+                dir.join(format!("{k}.{LIB_EXTENSION}"))
             }
         };
         let dir = lib.parent().expect("a library's directory").to_path_buf();
         let kept = lib.exists();
         if kept {
             match open_library(&lib) {
-                Ok(handle) => {
+                Ok(opened) => {
                     crate::store::count(true);
                     crate::store::used(&lib);
-                    return Ok(CpuComputeFunctionLibrary { handle, name: file_name_to_appear_in_error_messages.to_string() });
+                    return Ok(CpuComputeFunctionLibrary { lib: opened, name: file_name_to_appear_in_error_messages.to_string() });
                 }
                 // Damaged, or another build's: compiled again, and replaced.
                 Err(_) => _ = std::fs::remove_file(&lib),
@@ -267,32 +299,47 @@ impl CpuComputeFunctionLibrary {
             let own = format!("{k}.{}.{}", std::process::id(), crate::store::unique());
             let src = dir.join(format!("{own}.cpp"));
             std::fs::write(&src, preprocessed_source).map_err(|e| format!("{}: {e}", src.display()))?;
-            let tmp = dir.join(format!("{own}.so"));
+            let tmp = dir.join(format!("{own}.{LIB_EXTENSION}"));
+            // `-O0` last before `-o`: it overrides the flags' `-O1`.
+            let (flags, out) = CXX_FLAGS.split_at(CXX_FLAGS.len() - 1);
             let o = std::process::Command::new(cxx)
-                .args(CXX_FLAGS)
+                .args(flags)
+                .args(strict_simd().then_some("-O0"))
+                .args(out)
                 .arg(&tmp)
                 .arg(&src)
                 .output()
                 .map_err(|e| format!("{cxx}: {e}"))?;
             let _ = std::fs::remove_file(&src);
+            // The linker's import library and exports file beside a Windows DLL: nothing links against it.
+            for side in ["lib", "exp", "ilk"].iter().filter(|_| cfg!(windows)) {
+                let _ = std::fs::remove_file(tmp.with_extension(side));
+            }
             if !o.status.success() {
                 let log = String::from_utf8_lossy(&o.stderr);
                 let errors: Vec<&str> = log.lines().filter(|l| l.contains("error")).take(20).collect();
                 return Err(format!("{cxx} compiling {file_name_to_appear_in_error_messages} for the CPU: {}", errors.join("\n")));
             }
             // Another process may have made it meanwhile: either is the same library. Its debug information (macOS's
-            // `.dSYM`, beside it) goes with it, where a debugger looks.
-            let sym = |p: &std::path::Path| p.with_extension("so.dSYM");
+            // `.dSYM`, Windows' `.pdb`, beside it) goes with it, where a debugger looks.
+            let sym = |p: &std::path::Path| p.with_extension(if cfg!(windows) { "pdb" } else { "so.dSYM" });
             let _ = std::fs::rename(sym(&tmp), sym(&lib));
-            std::fs::rename(&tmp, &lib).map_err(|e| format!("{}: {e}", lib.display()))?;
+            if let Err(e) = std::fs::rename(&tmp, &lib) {
+                // Windows replaces no library a process has loaded ("Access is denied"): another process made and
+                // loaded this one meanwhile, the same library, which this process loads too.
+                if !lib.exists() {
+                    return Err(format!("{}: {e}", lib.display()));
+                }
+                let _ = std::fs::remove_file(&tmp);
+                let _ = std::fs::remove_file(sym(&tmp));
+            }
         }
-        let handle = open_library(&lib)?;
-        Ok(CpuComputeFunctionLibrary { handle, name: file_name_to_appear_in_error_messages.to_string() })
+        let opened = open_library(&lib)?;
+        Ok(CpuComputeFunctionLibrary { lib: opened, name: file_name_to_appear_in_error_messages.to_string() })
     }
 
     fn symbol(&self, name: &str) -> Result<*mut c_void, String> {
-        let c = CString::new(name).unwrap();
-        let p = unsafe { libc::dlsym(self.handle, c.as_ptr()) };
+        let p = self.lib.sym(name);
         if p.is_null() {
             return Err(format!("{}: no {name}", self.name));
         }
@@ -344,21 +391,37 @@ struct Launch {
     error_bytes: u64,
     sched: *mut u8,
     sched_bytes: u64,
-    tls: extern "C" fn() -> *mut c_void,
+    tls_key: u64,
+    resident: u32,
+    pad: u32,
 }
 
 /// The scheduler's storage a root's thread gives each launch: more than the shim's (`__ukl_cpu_sched`, which checks).
 const SCHED_BYTES: usize = 256 << 10;
 
-std::thread_local! {
-    /// The running launch's scheduler and thread (`__ukl_cpu_tls`): the one thread-local every kernel library uses. A
-    /// library has none of its own: macOS gives each loaded image's thread-locals a pthread key, and a process runs
-    /// out of them after a few hundred libraries.
-    static TLS: std::cell::UnsafeCell<[*mut c_void; 2]> = const { std::cell::UnsafeCell::new([std::ptr::null_mut(); 2]) };
+/// The pthread key whose value on a thread is its running launch's scheduler (`__ukl_cpu_sched`; its running thread is
+/// the scheduler's): the one thread-local every kernel library uses, read and written by the shim itself
+/// (`pthread_getspecific`). A library has none of its own: macOS gives each loaded image's thread-locals a pthread
+/// key, and a process runs out of them after a few hundred libraries.
+fn tls_key() -> u64 {
+    static KEY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *KEY.get_or_init(|| {
+        let mut key: libc::pthread_key_t = 0;
+        // SAFETY: a key made once for the process, with no destructor (its values are the launches', which outlive
+        // no launch).
+        let made = unsafe { libc::pthread_key_create(&mut key, None) };
+        assert_eq!(made, 0, "the CPU backend's thread key: {}", std::io::Error::from_raw_os_error(made));
+        key as u64
+    })
 }
 
-extern "C" fn tls() -> *mut c_void {
-    TLS.with(|t| t.get().cast())
+/// The threads the CPU runs at once across a launch's groups: its resident groups are these over a group's threads
+/// (at most 64), so a persistent grid of up to that many groups meets its barriers (`ukl_cpu_shim.h`).
+const RESIDENT_THREADS: usize = 8192;
+
+/// The groups of `threads` threads the CPU runs at once.
+pub fn resident_groups(threads: usize) -> usize {
+    (RESIDENT_THREADS / threads.max(1)).clamp(1, 64)
 }
 
 /// A kernel's entry: a pointer to each argument's bytes, and the launch; 0, or 1 with the launch's error written.
@@ -395,8 +458,7 @@ struct Done {
 
 /// The root's thread's own: the threads' stacks, kept across launches.
 struct Worker {
-    stacks: *mut u8,
-    stacks_len: usize,
+    stacks: Option<crate::os::Stacks>,
     page: usize,
     sched: Vec<u64>,
 }
@@ -405,21 +467,12 @@ impl Worker {
     /// Stacks for `n` threads, each `STACK_BYTES` with a guard page below it; their base and stride.
     fn stacks(&mut self, n: usize) -> (*mut u8, usize) {
         let stride = STACK_BYTES + self.page;
-        if self.stacks_len < n * stride {
-            if !self.stacks.is_null() {
-                unsafe { libc::munmap(self.stacks.cast(), self.stacks_len) };
-            }
-            let len = n.max(64) * stride;
-            // SAFETY: anonymous memory; the guards are made inaccessible below.
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
-            assert!(p != libc::MAP_FAILED, "no memory for the CPU backend's thread stacks");
-            for k in 0..len / stride {
-                unsafe { libc::mprotect(p.cast::<u8>().add(k * stride).cast(), self.page, libc::PROT_NONE) };
-            }
-            self.stacks = p.cast();
-            self.stacks_len = len;
+        if self.stacks.as_ref().is_none_or(|s| s.len() < n * stride) {
+            // The old ones first: both at once could be more than the system has.
+            self.stacks = None;
+            self.stacks = Some(crate::os::Stacks::new(n.max(64), stride).expect("no memory for the CPU backend's thread stacks"));
         }
-        (self.stacks, stride)
+        (self.stacks.as_ref().expect("made above").base(), stride)
     }
 }
 
@@ -434,8 +487,7 @@ impl CpuQueueRoot {
             .name("rerail-cpu-queue".into())
             .stack_size(8 << 20)
             .spawn(move || {
-                let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
-                let mut w = Worker { stacks: std::ptr::null_mut(), stacks_len: 0, page, sched: vec![0; SCHED_BYTES / 8] };
+                let mut w = Worker { stacks: None, page: crate::os::page_bytes(), sched: vec![0; SCHED_BYTES / 8] };
                 for b in rx {
                     let t = std::time::Instant::now();
                     let mut r = Ok(());
@@ -639,22 +691,28 @@ impl CpuBindContext<'_> {
             if grid.contains(&0) {
                 return Ok(());
             }
-            let mut local = vec![0u128; (shared as usize).div_ceil(16).max(1)];
-            let (stacks, stride) = w.stacks(threads);
+            let groups = grid.iter().map(|&g| g as usize).product::<usize>();
+            let resident = resident_groups(threads).min(groups);
+            let slot = (shared as usize).div_ceil(16) * 16;
+            let mut local = vec![0u128; (slot * resident).div_ceil(16).max(1)];
+            // A stack for each thread of each resident group, and, past one group, one for each group's own coroutine.
+            let (stacks, stride) = w.stacks(threads * resident + if resident > 1 { resident } else { 0 });
             let mut error = vec![0 as c_char; 1024];
             let ptrs: Vec<*const c_void> = params.iter().map(|p| p.as_ptr().cast::<c_void>()).collect();
             let launch = Launch {
                 grid,
                 block,
                 shared: local.as_mut_ptr().cast(),
-                shared_bytes: shared,
+                shared_bytes: slot as u64,
                 stacks,
                 stack_bytes: stride as u64,
                 error: error.as_mut_ptr(),
                 error_bytes: error.len() as u64,
                 sched: w.sched.as_mut_ptr().cast(),
                 sched_bytes: SCHED_BYTES as u64,
-                tls,
+                tls_key: tls_key(),
+                resident: resident as u32,
+                pad: 0,
             };
             if entry(ptrs.as_ptr(), &launch) != 0 {
                 let e = unsafe { CStr::from_ptr(error.as_ptr()) }.to_string_lossy().into_owned();
@@ -684,6 +742,7 @@ mod tests {
 
     const KERNELS: &str = r#"
 #include <ukl/backend.h>
+#include <ukl/simd.h>
 
 struct Args {
     uint32_t n;
@@ -706,6 +765,18 @@ DEFINE_KERNEL2(t, t_group,
     for (uint32_t d = 16u; d > 0u; d >>= 1u)
         v += ukl_sg_shuffle_xor(v, d);
     out[g * lsz + lid] = v;
+}
+
+// Lane 0 ends straight after a reduction: the CPU runs a group's lanes one after another, so the others read the
+// reduction's values after lane 0 is done, and it is in the reduction still.
+DEFINE_KERNEL2(t, t_ends_after,
+               RWBUFFER, uint32_t, out, "[32]",
+               LID0,     uint32_t, lid, )
+{
+    uint32_t m = ukl_sg_min(lid == 0u ? 7u : 100u + lid);
+    if (lid == 0u)
+        return;
+    out[lid] = m;
 }
 
 // A SIMD group split: half its lanes at a threadgroup barrier, half at a shuffle that needs them all.
@@ -755,6 +826,18 @@ DEFINE_KERNEL2(t, t_divergent,
         }
     }
 
+    /// A lane that ends after a SIMD-group reduction is in it for the lanes that read it after: each lane's minimum
+    /// is lane 0's 7, not the least of the lanes from it on.
+    #[test]
+    fn a_lane_done_after_a_reduction_is_in_it() {
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
+        let f = lib.get_function(&device, "t_ends_after").unwrap();
+        let out = alloc_uninitialized_array_sync::<u32>(&device, 32);
+        run(&device, &f, &out, None, 1, 32).unwrap();
+        let got = transfer_to_host_sync::<u32>(&out, 32);
+        assert_eq!(&got[1..], &[7u32; 31][..]);
+    }
+
     /// A barrier no thread can pass is an error that says who waits where, not a hang.
     #[test]
     fn a_barrier_no_thread_can_pass_is_an_error() {
@@ -763,7 +846,7 @@ DEFINE_KERNEL2(t, t_divergent,
         let out = alloc_uninitialized_array_sync::<u32>(&device, 1);
         let e = run(&device, &f, &out, None, 1, 64).unwrap_err();
         assert!(e.contains("no barrier can be passed"), "{e}");
-        assert!(e.contains("thread 0 at a threadgroup barrier;") && e.contains("thread 16 at a SIMD-group operation;"), "{e}");
-        assert!(!e.contains("thread 32 "), "the second SIMD group's shuffle passed, and it returned: {e}");
+        assert!(e.contains("threads 0 to 15 at a threadgroup barrier;") && e.contains("threads 16 to 31 at a SIMD-group operation;"), "{e}");
+        assert!(!e.contains("thread 32 ") && !e.contains("threads 32 "), "the second SIMD group's shuffle passed, and it returned: {e}");
     }
 }

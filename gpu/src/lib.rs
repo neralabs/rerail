@@ -4,11 +4,11 @@
 //! device-wide calls (`library`). The library's tests (`library_tests`) run each primitive on the device against its reference.
 //! The forest's trainer runs on it; the engine's GPU lane moves onto it (0440 step 3).
 
-#![cfg(any(target_os = "macos", target_os = "linux"))]
+#![cfg(any(target_os = "macos", target_os = "linux", windows))]
 
 // The device layer, below the preprocessor (`rerail-device`): its paths are this crate's too.
-pub use rerail_device::{compute_kernel, compute_kernel_cpu, compute_kernel_grid, compute_kernel_opencl, device, shared, Pod};
-#[cfg(target_os = "linux")]
+pub use rerail_device::{compute_kernel, compute_kernel_cpu, compute_kernel_grid, compute_kernel_opencl, device, os, shared, store, Pod};
+#[cfg(not(target_os = "macos"))]
 pub use rerail_device::compute_kernel_cuda;
 #[cfg(target_os = "macos")]
 pub use rerail_device::compute_kernel_metal;
@@ -35,7 +35,7 @@ impl Preprocessing for device::Device {
             device::Device::OpenCl(_) => rerail_ukl::Backend::OpenCl,
             #[cfg(target_os = "macos")]
             device::Device::Native(_) => rerail_ukl::Backend::Metal { version: 310 },
-            #[cfg(target_os = "linux")]
+            #[cfg(not(target_os = "macos"))]
             device::Device::Native(d) => rerail_ukl::Backend::Cuda { sm: d.sm },
         }
     }

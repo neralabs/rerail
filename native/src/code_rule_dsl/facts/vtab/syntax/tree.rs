@@ -86,7 +86,7 @@ impl Tree {
             for (_, id, n) in p.node_ids() {
                 for (i, &c) in f.children(id).iter().enumerate() {
                     let (a, b) = (i64::from(f.start(c)), i64::from(f.end(c)));
-                    let at = p.local_of_node(c as u32);
+                    let at = p.local_of_node(c);
                     if f.named(c) && at != NONE {
                         self.named_tokens.push([n, i as i64, p.global(at), a, b]);
                     } else {
@@ -109,7 +109,7 @@ impl Tree {
                 }
                 if self.prev_token {
                     for pair in children.windows(2) {
-                        let after = p.local_of_node(pair[1] as u32);
+                        let after = p.local_of_node(pair[1]);
                         if after != NONE {
                             self.prev_tokens.push([p.global(after), string(text(pair[0])) as i64]);
                         }
@@ -181,7 +181,7 @@ impl Order<'_> {
                 Step::Visit(id, decorators) => (id, Some(decorators)),
                 Step::Number(id) => (id, None),
             };
-            let local = self.p.local_of_node(id as u32);
+            let local = self.p.local_of_node(id);
             if local != NONE {
                 self.out.push([self.p.global(local), self.next]);
                 self.next += 1;

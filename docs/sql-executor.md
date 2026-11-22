@@ -171,7 +171,9 @@ Only cut edges and requested outputs leave SQLite. Native code stores those rows
 Independent groups run on the existing `RERAIL_THREADS` pool. Each worker owns its connection and reads pinned inputs.
 Worker completions release successors immediately, without waiting for unrelated groups.
 The session owner waits for every worker before it can change those inputs.
-Library initialization creates actual workers. The headless CLI explicitly registers its own main thread in the pool.
+Node starts the pool when it registers the addon's exports, after the operating system finishes loading the library.
+The workers can service background calls while the JavaScript thread waits, including with `RERAIL_THREADS=1`.
+The standalone CLI registers its main thread in the pool when execution starts.
 
 The default submission allowance is 100 for the complete graph. A smaller allowance combines independent work when it fits.
 Planning rejects a graph that exceeds its allowance before any group executes.

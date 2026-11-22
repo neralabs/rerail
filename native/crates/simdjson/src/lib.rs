@@ -11,9 +11,6 @@
 //! The index holds, in order, the offset of each structural byte (`{ } [ ] : ,`) and of each
 //! scalar's first byte (a string's opening quote, a number's or a literal's first byte). Each
 //! thread parses with a parser of its own.
-//!
-//! Nothing on MSVC, as `rerail-simdjson-native` (its C++ does not build there).
-#![cfg(not(all(windows, target_env = "msvc")))]
 
 pub use rerail_simdjson_native::{Error, Kernel, implementation, structurals};
 use rerail_simdjson_native::{KEEP, Sink, release_above};
@@ -561,31 +558,44 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with RERAIL_TAPE_RUN"]
+    #[cfg(target_os = "macos")]
     fn tape_cost() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let (mut files, mut work) = (Vec::new(), vec![root]);
-        while let Some(dir) = work.pop() {
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            for e in entries.flatten() {
-                let p = e.path();
-                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
-                if p.is_dir() && !skip {
-                    work.push(p);
-                } else if p.extension().is_some_and(|x| x == "json") && e.metadata().is_ok_and(|m| m.len() <= 1 << 20) {
-                    files.extend(std::fs::read(&p).ok());
-                }
+        let jsonc_run = std::env::var("RERAIL_TAPE_RUN").is_ok_and(|r| r.starts_with("jsonc"));
+        let kinds0 = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
+        let files = tape_cost_files(jsonc_run, &kinds0);
+        let nodes: usize = files.iter().map(|f| if jsonc_run { tape_jsonc_with(kernel_under_test(), f, &kinds0).unwrap().node_count() } else { tape_from_index(f, &kinds0).unwrap().node_count() }).sum();
+        eprintln!("{} bytes, {nodes} nodes", files.iter().map(Vec::len).sum::<usize>());
+        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
+        let run = std::env::var("RERAIL_TAPE_RUN").unwrap_or_default();
+        let kernel = kernel_under_test();
+        let count = tape_run(&run);
+        let mut n = 0usize;
+        let mut best = u64::MAX;
+        for _ in 0..5 {
+            let i0 = retired();
+            for f in &files {
+                n += count(kernel, f, &kinds);
             }
+            best = best.min(retired() - i0);
         }
+        eprintln!("{run}: {:.1} M instructions, {:.1} a node", best as f64 / 1e6, best as f64 / nodes as f64);
+        eprintln!("{} files, {n}, {} walked again ({})", files.len(), kernel.rewalks(), kernel.name());
+    }
+
+    /// The files `tape_cost` measures: the repository's `.json` files up to 1 MB, or a listing's, kept to those the
+    /// run reads (with `jsonc_run`, those the strict read refuses and the JSONC read takes) and to a size.
+    #[cfg(target_os = "macos")]
+    fn tape_cost_files(jsonc_run: bool, kinds: &Kinds) -> Vec<Vec<u8>> {
+        let mut files = Vec::new();
+        for_each_json_file(1 << 20, |f| files.push(f));
         // `RERAIL_TAPE_FILES`: a listing of files (one path a line) in place of the repository's; with
         // `RERAIL_TAPE_RUN=jsonc`, the files the strict read refuses and the JSONC read takes.
         if let Ok(list) = std::env::var("RERAIL_TAPE_FILES") {
             files = std::fs::read_to_string(list).unwrap().lines().filter_map(|p| std::fs::read(p).ok()).collect();
         }
-        let jsonc_run = std::env::var("RERAIL_TAPE_RUN").is_ok_and(|r| r.starts_with("jsonc"));
-        let kinds0 = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         if jsonc_run {
             let k = kernel_under_test();
-            files.retain(|f| tape_with(k, f, &kinds0).is_err() && tape_jsonc_with(k, f, &kinds0).is_ok());
+            files.retain(|f| tape_with(k, f, kinds).is_err() && tape_jsonc_with(k, f, kinds).is_ok());
         } else {
             files.retain(|f| structurals(f, |_| ()).is_ok());
         }
@@ -595,36 +605,33 @@ mod tests {
             Ok("large") => files.retain(|f| f.len() >= 52_000),
             _ => {}
         }
-        let nodes: usize = files.iter().map(|f| if jsonc_run { tape_jsonc_with(kernel_under_test(), f, &kinds0).unwrap().node_count() } else { tape_from_index(f, &kinds0).unwrap().node_count() }).sum();
-        eprintln!("{} bytes, {nodes} nodes", files.iter().map(Vec::len).sum::<usize>());
-        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
-        let run = std::env::var("RERAIL_TAPE_RUN").unwrap_or_default();
-        let kernel = kernel_under_test();
-        let mut n = 0usize;
-        let mut best = u64::MAX;
-        for _ in 0..5 {
-            let i0 = retired();
-            for f in &files {
-                n += match run.as_str() {
-                    "index" => structurals(f, <[u32]>::len).unwrap(),
-                    "tape" => tape_with(kernel, f, &kinds).unwrap().node_count(),
-                    // As the product reads a JSONC file: the strict read, refused, then the JSONC one.
-                    "jsonc" => usize::from(tape_with(kernel, f, &kinds).is_err()) + tape_jsonc_with(kernel, f, &kinds).unwrap().node_count(),
-                    "jsonc-only" => tape_jsonc_with(kernel, f, &kinds).unwrap().node_count(),
-                    "stage1" => kernel.stage1(f, false) as usize,
-                    "stage1-hashed" => kernel.stage1(f, true) as usize,
-                    "index-tape" => tape_from_index(f, &kinds).unwrap().node_count(),
-                    "sha2" => {
-                        use sha2::Digest;
-                        sha2::Sha256::digest(f)[0] as usize
-                    }
-                    _ => f.len(),
-                };
-            }
-            best = best.min(retired() - i0);
-        }
-        eprintln!("{run}: {:.1} M instructions, {:.1} a node", best as f64 / 1e6, best as f64 / nodes as f64);
-        eprintln!("{} files, {n}, {} walked again ({})", files.len(), kernel.rewalks(), kernel.name());
+        files
+    }
+
+    /// What a `tape_cost` run counts of a file on a kernel.
+    #[cfg(target_os = "macos")]
+    type TapeRun = fn(Kernel, &[u8], &Kinds) -> usize;
+
+    /// The `RERAIL_TAPE_RUN` run named `run`: what it counts of a file (nodes, structurals, a byte of the digest); a
+    /// name not listed reads the file's length.
+    #[cfg(target_os = "macos")]
+    fn tape_run(run: &str) -> TapeRun {
+        let runs: [(&str, TapeRun); 8] = [
+            ("index", |_, f, _| structurals(f, <[u32]>::len).unwrap()),
+            ("tape", |kernel, f, kinds| tape_with(kernel, f, kinds).unwrap().node_count()),
+            // As the product reads a JSONC file: the strict read, refused, then the JSONC one.
+            ("jsonc", |kernel, f, kinds| usize::from(tape_with(kernel, f, kinds).is_err()) + tape_jsonc_with(kernel, f, kinds).unwrap().node_count()),
+            ("jsonc-only", |kernel, f, kinds| tape_jsonc_with(kernel, f, kinds).unwrap().node_count()),
+            ("stage1", |kernel, f, _| kernel.stage1(f, false) as usize),
+            ("stage1-hashed", |kernel, f, _| kernel.stage1(f, true) as usize),
+            ("index-tape", |_, f, kinds| tape_from_index(f, kinds).unwrap().node_count()),
+            ("sha2", |_, f, _| {
+                use sha2::Digest;
+                sha2::Sha256::digest(f)[0] as usize
+            }),
+        ];
+        let length: TapeRun = |_, f, _| f.len();
+        runs.into_iter().find(|&(name, _)| name == run).map_or(length, |(_, count)| count)
     }
 
     /// Every kernel this CPU runs writes the index writer's tape, byte for byte, and its digest is the
@@ -636,30 +643,7 @@ mod tests {
         let kernels: Vec<Kernel> = Kernel::ALL.into_iter().filter(|k| k.runs()).collect();
         eprintln!("kernels checked: {:?}", kernels.iter().map(|k| k.name()).collect::<Vec<_>>());
         assert!(!kernels.is_empty());
-        let same = |src: &[u8]| {
-            let b = tape_from_index(src, &kinds);
-            let accepted = b.is_ok();
-            for &kernel in &kernels {
-                // The JSONC read of a file with no comment is the strict read's.
-                if let Ok(strict) = tape_with(kernel, src, &kinds) {
-                    let jsonc = tape_jsonc_with(kernel, src, &kinds).unwrap_or_else(|e| panic!("{}: JSONC refused {:?}: {e}", kernel.name(), String::from_utf8_lossy(src)));
-                    let without_slash = !src.contains(&b'/') || src.windows(2).all(|w| w != b"//" && w != b"/*");
-                    if without_slash {
-                        assert_eq!((&jsonc.code, &jsonc.codes, &jsonc.size, &jsonc.off, &jsonc.tail, jsonc.digest), (&strict.code, &strict.codes, &strict.size, &strict.off, &strict.tail, strict.digest), "{}: JSONC {:?}", kernel.name(), String::from_utf8_lossy(src));
-                    }
-                }
-                match (tape_with(kernel, src, &kinds), &b) {
-                    (Ok(a), Ok(b)) => {
-                        use sha2::Digest;
-                        assert_eq!(a.digest, Some(<[u8; 32]>::from(sha2::Sha256::digest(src))), "{}: the digest of {:?}", kernel.name(), String::from_utf8_lossy(src));
-                        assert_eq!((&a.code, &a.codes, &a.size, &a.base, &a.off, &a.tail, a.widths), (&b.code, &b.codes, &b.size, &b.base, &b.off, &b.tail, b.widths), "{}: {:?}", kernel.name(), String::from_utf8_lossy(src));
-                    }
-                    (Err(Refusal::Simdjson(_)), Err(Refusal::Simdjson(_))) => {}
-                    (a, b) => panic!("{}: {:?}: {:?} against {:?}", kernel.name(), String::from_utf8_lossy(src), a.map(|t| t.node_count()), b.as_ref().map(|t| t.node_count())),
-                }
-            }
-            accepted
-        };
+        let same = |src: &[u8]| same_on_every_kernel(&kernels, &kinds, src);
         let made: &[&[u8]] = &[
             b"1", b" -1.5e3 ", b"true", b"false", b"null", b"\"\"", b"\"a\\nb\"", b"\xef\xbb\xbf{\"a\":1}", b"{}", b"[]", b" [ ] ",
             br#"{"a": [1, true, "x\"y"], "b": null, "c": {}, "d": [], "e": {"f": [[], {}]}}"#,
@@ -687,6 +671,58 @@ mod tests {
         let refused = [1023, 1024, 1025, 1026, 2000].iter().filter(|&&n| !same(deep(n).as_bytes())).count();
         assert!(refused >= 1, "no depth refused");
         // Strings past a block of 32 bytes, with escapes on either side of one's end.
+        for s in escaped_strings() {
+            assert!(same(&s), "{:?}", String::from_utf8_lossy(&s));
+        }
+        // Past 2-byte columns: a long file, and a long string (a wide `off` and `tail`).
+        let long: String = format!("[{}]", (0..30_000).map(|i| format!("{{\"k{i}\": [{i}, \"v\\n\"]}}")).collect::<Vec<_>>().join(","));
+        assert!(same(long.as_bytes()));
+        let wide = format!("[\"{}\", 1]", "x".repeat(70_000));
+        assert!(same(wide.as_bytes()));
+        let mut checked = 0;
+        for_each_json_file(4 << 20, |f| checked += usize::from(same(&f)));
+        assert!(checked > 2000, "{checked}");
+    }
+
+    /// Whether the index writer takes `src`, each of `kernels` checked against it there: the JSONC read the strict
+    /// one's, and the index writer's tape and the `sha2` crate's digest, or the index writer's refusal.
+    fn same_on_every_kernel(kernels: &[Kernel], kinds: &Kinds, src: &[u8]) -> bool {
+        let b = tape_from_index(src, kinds);
+        let accepted = b.is_ok();
+        for &kernel in kernels {
+            jsonc_is_strict(kernel, kinds, src);
+            kernel_is_the_index_writer(kernel, kinds, src, &b);
+        }
+        accepted
+    }
+
+    /// The JSONC read of a file with no comment is the strict read's, on `kernel`.
+    fn jsonc_is_strict(kernel: Kernel, kinds: &Kinds, src: &[u8]) {
+        if let Ok(strict) = tape_with(kernel, src, kinds) {
+            let jsonc = tape_jsonc_with(kernel, src, kinds).unwrap_or_else(|e| panic!("{}: JSONC refused {:?}: {e}", kernel.name(), String::from_utf8_lossy(src)));
+            let without_slash = !src.contains(&b'/') || src.windows(2).all(|w| w != b"//" && w != b"/*");
+            if without_slash {
+                assert_eq!((&jsonc.code, &jsonc.codes, &jsonc.size, &jsonc.off, &jsonc.tail, jsonc.digest), (&strict.code, &strict.codes, &strict.size, &strict.off, &strict.tail, strict.digest), "{}: JSONC {:?}", kernel.name(), String::from_utf8_lossy(src));
+            }
+        }
+    }
+
+    /// `kernel`'s tape of `src` is the index writer's `b` with the `sha2` crate's digest, or both refuse `src`.
+    fn kernel_is_the_index_writer(kernel: Kernel, kinds: &Kinds, src: &[u8], b: &Result<Tape, Refusal>) {
+        match (tape_with(kernel, src, kinds), b) {
+            (Ok(a), Ok(b)) => {
+                use sha2::Digest;
+                assert_eq!(a.digest, Some(<[u8; 32]>::from(sha2::Sha256::digest(src))), "{}: the digest of {:?}", kernel.name(), String::from_utf8_lossy(src));
+                assert_eq!((&a.code, &a.codes, &a.size, &a.base, &a.off, &a.tail, a.widths), (&b.code, &b.codes, &b.size, &b.base, &b.off, &b.tail, b.widths), "{}: {:?}", kernel.name(), String::from_utf8_lossy(src));
+            }
+            (Err(Refusal::Simdjson(_)), Err(Refusal::Simdjson(_))) => {}
+            (a, b) => panic!("{}: {:?}: {:?} against {:?}", kernel.name(), String::from_utf8_lossy(src), a.map(|t| t.node_count()), b.as_ref().map(|t| t.node_count())),
+        }
+    }
+
+    /// Strings past a block of 32 bytes, with escapes on either side of one's end, each in an array.
+    fn escaped_strings() -> Vec<Vec<u8>> {
+        let mut docs = Vec::new();
         for n in [0, 1, 15, 16, 30, 31, 32, 33, 63, 64, 65, 100] {
             for esc in [&b""[..], b"\\n", b"\\u00e9", b"\\\\"] {
                 let mut s = b"[\"".to_vec();
@@ -694,38 +730,45 @@ mod tests {
                 s.extend_from_slice(esc);
                 s.extend(std::iter::repeat_n(b'y', n / 2));
                 s.extend_from_slice(b"\", 1]");
-                assert!(same(&s), "{:?}", String::from_utf8_lossy(&s));
+                docs.push(s);
             }
         }
-        // Past 2-byte columns: a long file, and a long string (a wide `off` and `tail`).
-        let long: String = format!("[{}]", (0..30_000).map(|i| format!("{{\"k{i}\": [{i}, \"v\\n\"]}}")).collect::<Vec<_>>().join(","));
-        assert!(same(long.as_bytes()));
-        let wide = format!("[\"{}\", 1]", "x".repeat(70_000));
-        assert!(same(wide.as_bytes()));
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let (mut checked, mut work) = (0, vec![root]);
+        docs
+    }
+
+    /// Calls `each` with every `.json` file of the repository up to `max_len` bytes (`.git`, `target` and
+    /// `node_modules` passed over).
+    fn for_each_json_file(max_len: u64, mut each: impl FnMut(Vec<u8>)) {
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
+        let mut work = vec![root];
         while let Some(dir) = work.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
             for e in entries.flatten() {
-                let p = e.path();
-                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
-                if p.is_dir() && !skip {
-                    work.push(p);
-                } else if p.extension().is_some_and(|x| x == "json")
-                    && e.metadata().is_ok_and(|m| m.len() <= 4 << 20)
-                    && let Ok(f) = std::fs::read(&p)
-                {
-                    checked += usize::from(same(&f));
-                }
+                visit_json_entry(&e, max_len, &mut work, &mut each);
             }
         }
-        assert!(checked > 2000, "{checked}");
+    }
+
+    /// One entry of `for_each_json_file`'s walk: a directory is added to `work`; a `.json` file up to `max_len`
+    /// bytes is read and given to `each`.
+    fn visit_json_entry(e: &std::fs::DirEntry, max_len: u64, work: &mut Vec<std::path::PathBuf>, each: &mut impl FnMut(Vec<u8>)) {
+        let p = e.path();
+        let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+        if p.is_dir() && !skip {
+            work.push(p);
+        } else if p.extension().is_some_and(|x| x == "json")
+            && e.metadata().is_ok_and(|m| m.len() <= max_len)
+            && let Ok(f) = std::fs::read(&p)
+        {
+            each(f);
+        }
     }
 
     /// Instructions a node by the document's shape: simdjson's DOM parse, stage 1, and the v9np stage 2.
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with --nocapture"]
+    #[cfg(target_os = "macos")]
     fn shape_costs() {
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let kernel = kernel_under_test();

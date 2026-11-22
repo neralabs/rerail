@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS slice_span(scope TEXT NOT NULL, c0 INTEGER NOT NULL, 
 
 /// The rules the slice runs: the lowered Python `ast` clauses of a pack's policies, as one wave,
 /// with the findings layer of their violation shapes; and the SQL owner kept between runs.
-pub(in crate::code_rule_dsl) struct Rules {
+pub struct Rules {
     wave: Wave,
     layer: Layer,
     backing: Backing,
@@ -53,7 +53,7 @@ pub(in crate::code_rule_dsl) struct Rules {
 
 impl Rules {
     /// The clauses of `policies` (each by its file stem) that lower (S1), with their shapes.
-    pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)], backend: ExecutionBackend) -> StoreResult<Self> {
+    pub fn lower(policies: &[(String, CompiledCodeRuleDsl)], backend: ExecutionBackend) -> StoreResult<Self> {
         Self::lower_with(policies, &crate::code_rule_dsl::waves::policies::nothing()?, backend)
     }
 
@@ -71,12 +71,12 @@ impl Rules {
 
     /// The lowered rules as `rir` (list step 18): the wave's programs and label tables, with
     /// `fused` its packs and groups, with `setplan` its set plan.
-    pub(in crate::code_rule_dsl) fn dump(&self, fused: bool, setplan: bool) -> StoreResult<String> {
+    pub fn dump(&self, fused: bool, setplan: bool) -> StoreResult<String> {
         self.wave.dump(fused, setplan)
     }
 
     /// How many clauses lowered.
-    pub(in crate::code_rule_dsl) fn clauses(&self) -> usize {
+    pub fn clauses(&self) -> usize {
         self.layer.shapes().len()
     }
 }
@@ -84,7 +84,7 @@ impl Rules {
 /// `policies` lowered and dumped as `rir` (list step 18, `rerail engine dump --rule …`): the
 /// wave of their clauses, or of the one named `clause` (its `policy/clause` name, or its clause
 /// id), with `fused` and `setplan` as `Wave::dump`'s. No store: a dump reads only the rules.
-pub(in crate::code_rule_dsl) fn dump(policies: &[(String, CompiledCodeRuleDsl)], clause: Option<&str>, fused: bool, setplan: bool) -> StoreResult<String> {
+pub fn dump(policies: &[(String, CompiledCodeRuleDsl)], clause: Option<&str>, fused: bool, setplan: bool) -> StoreResult<String> {
     let (mut clauses, _) = lowered(policies)?;
     if let Some(name) = clause {
         clauses.retain(|clause| clause.name == name || clause.name.rsplit('/').next() == Some(name));
@@ -103,7 +103,7 @@ pub(in crate::code_rule_dsl) fn lowered(policies: &[(String, CompiledCodeRuleDsl
 }
 
 /// What one run did and found.
-pub(in crate::code_rule_dsl) struct Run {
+pub struct Run {
     pub findings: Findings,
     /// Each document's path, by its key.
     pub paths: BTreeMap<u32, String>,
@@ -119,14 +119,14 @@ pub(in crate::code_rule_dsl) struct Run {
 }
 
 /// A cold audit of `scope` at `root`: every document of the root evaluated, whatever was kept.
-pub(in crate::code_rule_dsl) fn audit(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules) -> StoreResult<Run> {
+pub fn audit(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules) -> StoreResult<Run> {
     run(store, scope, root, rules, true)
 }
 
 /// `scope` after edits, as the root of the edited snapshot (S3: worktree edits reach the slice
 /// through a directory snapshot): the documents whose core facts changed since the last run
 /// evaluated, the others' matches kept. Cold where the scope has no run of these rules.
-pub(in crate::code_rule_dsl) fn apply(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules) -> StoreResult<Run> {
+pub fn apply(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules) -> StoreResult<Run> {
     run(store, scope, root, rules, false)
 }
 
@@ -134,7 +134,7 @@ pub(in crate::code_rule_dsl) fn apply(store: &ContentStore, scope: &str, root: H
 /// §20.10, decision 0032).
 fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold: bool) -> StoreResult<Run> {
     let run = execute(store, scope, root, rules, cold);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     crate::code_rule_dsl::residency::slabs::executed();
     run
 }
@@ -319,6 +319,9 @@ fn unqualified(table: &str) -> &str {
 }
 
 mod memo;
-mod napi;
+// The slice tests' fixtures: this crate's tests and the engine's napi test (`slice/napi_tests.rs`) read them.
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod fixtures;
+// `napi` (the host's entry, `napi::CodeRuleSlice`) is the engine's: it mounts it under this module (`code_rule_dsl/mod.rs`).
 #[cfg(test)]
 mod tests;

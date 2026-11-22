@@ -256,16 +256,16 @@ unsafe impl VTabCursor for Cursor {
             0 => ctx.set_result(&e.space[..]),
             1 => ctx.set_result(&e.rel),
             2 => ctx.set_result(&e.ident[..]),
-            3 => ctx.set_result(&e.part),
+            3 => ctx.set_result(e.part),
             4 => match e.rows().levels() {
-                Some(levels) => ctx.set_result(&levels.get(self.row)),
-                None => ctx.set_result(&rusqlite::types::Null),
+                Some(levels) => ctx.set_result(levels.get(self.row)),
+                None => ctx.set_result(rusqlite::types::Null),
             },
-            ID => ctx.set_result(&(self.row as i64)),
+            ID => ctx.set_result(self.row as i64),
             c => {
                 let c = (c - FIRST_VALUE) as usize;
                 let rows = e.rows();
-                if c < rows.arity as usize { ctx.set_result(&rows.get(self.row, c)) } else { ctx.set_result(&rusqlite::types::Null) }
+                if c < rows.arity as usize { ctx.set_result(rows.get(self.row, c)) } else { ctx.set_result(rusqlite::types::Null) }
             }
         }
     }
@@ -383,12 +383,12 @@ unsafe impl VTabCursor for EntriesCursor {
     fn column(&self, ctx: &mut Context, column: c_int) -> Result<()> {
         let r = &self.rows[self.at];
         match column {
-            0 => ctx.set_result(&r.space.as_slice()),
+            0 => ctx.set_result(r.space.as_slice()),
             1 => ctx.set_result(&r.rel),
-            2 => ctx.set_result(&r.ident.as_slice()),
-            3 => ctx.set_result(&r.part),
-            4 => ctx.set_result(&(r.digest as i64)),
-            5 => ctx.set_result(&(r.rows as i64)),
+            2 => ctx.set_result(r.ident.as_slice()),
+            3 => ctx.set_result(r.part),
+            4 => ctx.set_result(r.digest as i64),
+            5 => ctx.set_result(r.rows as i64),
             6 => ctx.set_result(&r.types),
             _ => ctx.set_result(&r.reads),
         }

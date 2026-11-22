@@ -33,11 +33,20 @@ pub mod sharded;
 pub mod stream;
 pub mod sql;
 
-#[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(sme_lane)]
 pub mod sme;
+
+/// The SME lane where this build has it (`sme_lane`: macOS on Apple silicon, with a C compiler that knows the M4)
+/// and the CPU has SME2; else none. Crates above read it here, as they cannot read the build's cfg.
+pub fn sme_backend() -> Option<std::sync::Arc<dyn exec::Backend>> {
+    #[cfg(sme_lane)]
+    return sme::backend();
+    #[cfg(not(sme_lane))]
+    None
+}
 pub mod upkeep;
 
-#[cfg(all(feature = "gpu", target_os = "macos"))]
+#[cfg(gpu_lane)]
 pub mod gpu;
 
 #[cfg(all(feature = "ane", target_os = "macos"))]

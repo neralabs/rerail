@@ -1,5 +1,4 @@
 use super::*;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
 use std::path::{Path, PathBuf};
 
@@ -16,7 +15,7 @@ fn files(directory: &Path, found: &mut Vec<PathBuf>) {
 
 /// A pack's compiled policies, by file stem.
 fn policies(pack: &str) -> Vec<(String, CompiledCodeRuleDsl)> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(pack);
+    let root = crate::source_tree::native().join("../packs").join(pack);
     let mut paths = Vec::new();
     files(&root.join("rules"), &mut paths);
     files(&root.join("candidates/rules"), &mut paths);
@@ -24,7 +23,7 @@ fn policies(pack: &str) -> Vec<(String, CompiledCodeRuleDsl)> {
     paths
         .into_iter()
         .filter_map(|path| {
-            let compiled = CodeRuleDslRuntime::compile(std::fs::read_to_string(&path).ok()?, "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+            let compiled = crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(&path).ok()?, "json", CAPABILITIES).ok()?;
             Some((path.file_stem()?.to_string_lossy().into_owned(), compiled))
         })
         .collect()

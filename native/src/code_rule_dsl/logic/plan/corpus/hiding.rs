@@ -4,7 +4,7 @@
 //! A run's documents are, by key (`syntax::GUEST_KEYS`, `syntax::HIDDEN_KEYS`):
 //! - files, `1..2^30`, a file read for its programs among them (its text, decision 0512);
 //! - programs in the run's language (a `<script>` in an HTML file, a JSON object in a rule file), `2^30..2^30 + 2^28`:
-//!   shown (decision 0494: always);
+//!   shown (decision 0523: always);
 //! - tape values in the run's language (a string a rule parses in it: a type expression, Python's string annotations
 //!   in a Python run), `..2^30 + 2^29` (`syntax::RUN_VALUE_KEYS`): not shown to a rule that does not name them, but
 //!   kept in a relation they reach once its copies for them are folded into it (`combining::FoldOwn`);
@@ -28,11 +28,12 @@
 /// columns, grammar column, tape column).
 /// `string_annotation(s)` is one: Ruff's strings that are type definitions, nested ones too, whose nodes are in an
 /// annotation's document (not shown, `guests::key`).
-pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
+pub const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 11] = [
     ("rr_program", &[0], Some(2), None),
     ("string_annotation", &[0], None, None),
     ("parsed", &[2], Some(1), None),
     ("sub_tape", &[], Some(1), Some(2)),
+    ("doc_grammar", &[0], Some(1), None),
     ("tape_of", &[0], None, Some(1)),
     ("host_node", &[0], None, None),
     ("guest_of", &[0], None, None),
@@ -42,30 +43,30 @@ pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] =
 ];
 
 /// Views of base relations the lowering writes as rules.
-pub(super) const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
+pub const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
 
 /// The grammar a guest's kinds are named in: a dialect label (a fragment's is its dialect's, decision 0466).
-pub(super) fn dialect_label(grammar: &str) -> &str {
+pub fn dialect_label(grammar: &str) -> &str {
     crate::code_rule_dsl::language::kinds_label(grammar)
 }
 
-/// The bound of a program's shown documents: files, and the run language's code guests (decision 0494: `.guests` is
+/// The bound of a program's shown documents: files, and the run language's code guests (decision 0523: `.guests` is
 /// retired; what a run reads of other languages' files is `.embedded`'s).
-pub(super) const BOUND: u32 = crate::code_rule_dsl::facts::vtab::syntax::RUN_VALUE_KEYS;
+pub const BOUND: u32 = crate::code_rule_dsl::facts::vtab::syntax::RUN_VALUE_KEYS;
 
 /// What the analysis knows of a variable: scoped, and its grammar (`Some("")` when two disagree). `definite`: it is
 /// a guest's node, not only maybe one (O110). A variable read from a derived column that host rows fill too is
 /// scoped (no bound on it) but not definite: it is specialized to a guest grammar only in a clone of its rule.
 /// For a derived relation's column, `definite` says every rule fills it with a definite variable.
 #[derive(Clone, Default, PartialEq, Debug)]
-pub(super) struct Fact {
-    pub(super) scoped: bool,
-    pub(super) grammar: Option<String>,
-    pub(super) definite: bool,
+pub struct Fact {
+    pub scoped: bool,
+    pub grammar: Option<String>,
+    pub definite: bool,
 }
 
 impl Fact {
-    pub(super) fn join(&mut self, other: &Fact) -> bool {
+    pub fn join(&mut self, other: &Fact) -> bool {
         let mut changed = (other.scoped && !self.scoped) || (other.definite && !self.definite);
         self.scoped |= other.scoped;
         self.definite |= other.definite;
@@ -86,8 +87,4 @@ impl Fact {
     }
 }
 
-/// `"sql:select"` as its grammar's label and the name, when the label is a registry language's.
-pub fn qualified(s: &str) -> Option<(&str, &str)> {
-    let (label, name) = s.split_once(':')?;
-    (!label.is_empty() && !name.is_empty() && crate::code_rule_dsl::language::dialect_by_label(label).is_some()).then_some((label, name))
-}
+pub use crate::code_rule_dsl::logic::plan::lower::qualified;

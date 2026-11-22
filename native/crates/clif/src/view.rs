@@ -105,7 +105,7 @@ pub fn ukl() -> String {
     s += &format!("UKL_STATIC_ASSERT(sizeof(TapeView) == {}, \"TapeView: size\");\n", std::mem::size_of::<TapeView>());
     for (_, name, at) in fields.iter() {
         let name = name.split('[').next().unwrap_or(name);
-        s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(TapeView, {name}) == {at}, \"TapeView.{name}\");\n");
+        s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(TapeView, {name}) == {at}, \"TapeView.{name}\");\n");
     }
     s
 }
@@ -159,6 +159,9 @@ pub mod z {
 /// running), then computes an entry of its own (decision 0540). Every loop is bounded; a lookup that finds no room
 /// counts a failure (`FAILED`) and reads the dead entry, so a caller that shares the cache refuses its work.
 pub mod cache {
+    mod lookup;
+    pub use lookup::{FAILS, NO, PASSES, UNKNOWN, YES, done, text_find, text_open, verdict_get, verdict_put};
+
     /// The header's u32s, from the cache's first byte.
     pub const EPOCH: i32 = 0;
     pub const GENS: i32 = 4;

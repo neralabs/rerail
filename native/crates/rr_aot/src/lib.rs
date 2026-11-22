@@ -1,3 +1,5 @@
+//! **Deprecated** (decision 0550): Rust from an intermediate form. A grammar's Rust is the Bitlex compiler's own (`bitlex_lex_rust`, `bitlex_rust`); no new use. Kept until Go-C-and-C-support and Parser-generators-final-shape remove theirs.
+//!
 //! The `.rerail` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
 //! from Rust the build script writes: tier 1's the JIT's own functions (their Cranelift IR,
 //! `clif_rust`); tier 2's the structured backend of the native IR (`rust_stream`), a function a
@@ -32,7 +34,13 @@ mod tier2_16_aot {
 const _: () = assert!(tier1_aot::STRUCTURED.0 == tier1_aot::STRUCTURED.1, "a tier 1 function is irreducible: a loop over a match");
 
 #[cfg(feature = "generated")]
-use rerail_compiler::{clif_rust, native_cpu_block, native_cpu_stream, native_ir, rust_stream};
+use rerail_compiler::native_ir;
+#[cfg(feature = "generated")]
+use rerail_cpu_block::native_cpu_block;
+#[cfg(feature = "generated")]
+use rerail_cpu_stream::{clif_rust, native_cpu_stream};
+#[cfg(feature = "generated")]
+use rerail_rust_stream::rust_stream;
 
 /// Which tiers run the ahead-of-time build.
 #[derive(Clone, Copy, Debug)]
@@ -53,7 +61,7 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     // Compiled for Rust's NEON as the source was (`rr_aot_gen`): its bit tests (`bit_test`).
     // The same meaning either way; the flag back as it was for the JIT's compiles after.
     let bit_test = options.bit_test.swap(true, std::sync::atomic::Ordering::Relaxed);
-    let c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules);
+    let c = rerail_rr_parser::compile_with(rerail_bitlex::bitlex_masks::Shape::Rules);
     options.bit_test.store(bit_test, std::sync::atomic::Ordering::Relaxed);
     let mut c = c?;
     let one = clif_rust::rust_source(&c.parser)?;
@@ -61,7 +69,7 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     let native = native_ir::lower(&c.program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     let two = rust_stream::rust_source_at(&native, widths, tag)?;
     let (widths16, tag16) = c.parser.sixteen().ok_or("no format 16 tier 2")?.widths_tag();
-    let sixteen = rust_stream::rust_source_16(&native, widths16, tag16)?;
+    let sixteen = rust_stream::rust_source_16(&native, widths16, tag16, lang())?;
     let sealed = |src: &str| src.lines().last().and_then(|l| l.strip_prefix("pub const SOURCE: u64 = 0x")?.strip_suffix(';').and_then(|h| u64::from_str_radix(h, 16).ok()));
     if sealed(&one) != Some(tier1_aot::SOURCE) || sealed(&two) != Some(tier2_aot::SOURCE) || sealed(&sixteen) != Some(tier2_16_aot::SOURCE) {
         return Err("the ahead-of-time source is of another program than the JIT compiles".into());
@@ -90,6 +98,12 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
         unsafe { c.parser.sixteen_mut().ok_or("no format 16 tier 2")?.set_entry(entry16, 4) };
     }
     Ok(c)
+}
+
+/// The language the format 16 source is generated for, rr's shipped table (`f16::lang`, decision 0535): the run's
+/// node numbers are its, literals in the source, so a format 16 run of the ahead-of-time build takes it.
+pub fn lang() -> &'static rerail_tape_format::f16::Lang {
+    rerail_tape_format::f16::lang(rerail_tape_format::RR_TAG).expect("rr's format 16 table")
 }
 
 /// Without the generated tiers there is no ahead-of-time build.

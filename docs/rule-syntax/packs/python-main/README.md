@@ -11,7 +11,7 @@ hand-written overrides: each file is what the engine itself reads from the JSON 
 badly is fixed in the translator.
 
 Every rule keeps main's logic and regexes. A rule reaches the code inside a string only through `parsed`, as main
-matches only files and never the strings inside them (decision 0494 retired the `.guests off` each rule said). No rule includes a library beyond the core relations the translator emits.
+matches only files and never the strings inside them (decision 0523 retired the `.guests off` each rule said). No rule includes a library beyond the core relations the translator emits.
 
 ## How to regenerate
 

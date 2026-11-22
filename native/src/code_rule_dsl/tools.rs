@@ -1,19 +1,15 @@
 //! The engine's text tools without Node (list step 18; P `spec-tooling.md` §2.2.1–2.2.2): the
-//! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
+//! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these. Boot's: the engine
+//! adds the napi wrapper and boots the program before a command (`code_rule_dsl/tools/napi.rs`).
 
+use rerail_store::Canonical as _;
 pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings};
 pub use super::logic::settings::process_counters;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 
-/// The package CLI's SQL tool, sharing the standalone command's request and execution path.
-#[napi_derive::napi(catch_unwind)]
-pub fn execute_sql_request(store_path: String, request_json: String) -> napi::Result<String> {
-    sql(std::path::Path::new(&store_path), &request_json).map_err(napi::Error::from_reason)
-}
 
 /// A SQL extension request for the standalone tool. The same session serves the bindings,
 /// lowered rule program and subsequent SQL queries; no AST matcher is lowered to SQL.
@@ -25,11 +21,10 @@ pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
     let span = super::logic::profile::span(||"SQL extension request".into());
     let result = sql_request(store,request);
     drop(span);
-    if profiling {
-        if let Some(directory) = super::logic::profile::directory() {
+    if profiling
+        && let Some(directory) = super::logic::profile::directory() {
             super::logic::profile::report::write(&directory,"SQL extension request").map_err(|e|e.to_string())?;
         }
-    }
     result
 }
 
@@ -181,7 +176,7 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
 }
 
 /// The capabilities rules compile against, as bundled with the engine.
-pub const CAPABILITIES: &str = include_str!("capabilities.json");
+pub const CAPABILITIES: &str = super::rule_api::CAPABILITIES;
 
 /// Read a public `.rerail` file, including its core prelude and libraries. The CLI and migration
 /// harness use the same reader as the engine; they never strip directives or run a lab interpreter.
@@ -239,7 +234,7 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
             Ok((program, _)) if let Err(error) = super::logic::plan::corpus::combine_read_program(&program)
                 .map_err(|e| e.to_string())
                 // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
-                .and_then(|combined| super::logic::plan::corpus::preparation::pruned(combined))
+                .and_then(super::logic::plan::corpus::preparation::pruned)
                 .and_then(|pruned| super::logic::plan::lower::domains_of(&pruned).map(|_| ()).map_err(|e| e.to_string())) =>
             {
                 serde_json::json!({"path": path, "status": "types-failed", "error": error})
@@ -265,22 +260,178 @@ pub fn run_rr(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use super::logic::rr;
-    let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
-    if !program.output_names().iter().any(|name| super::logic::rr::is_diagnostic(name)) {
+    let mut options = options.clone();
+    let mut run = PolicyInvocation::from_options(root, &mut options)?;
+    let (program, files) = read_policy(path)?;
+    let mut report = run.evaluate(|root| run_program_checked(program.clone(), &files, root, out, &options))?;
+    run.report(&mut report, true);
+    Ok(report)
+}
+
+pub fn read_policy(path: &Path) -> Result<(std::sync::Arc<super::logic::program_image::Version>, Vec<super::logic::rr::LibraryFile>), String> {
+    read_policy_after(path, None)
+}
+
+pub fn read_policy_after(path: &Path, inspected: Option<&[super::logic::rr::LibraryFile]>) -> Result<(std::sync::Arc<super::logic::program_image::Version>, Vec<super::logic::rr::LibraryFile>), String> {
+    let read = inspect_policy_after(path, inspected)?;
+    Ok((read.program, read.files))
+}
+
+pub fn inspect_policy_after(path: &Path, inspected: Option<&[super::logic::rr::LibraryFile]>) -> Result<super::logic::rr::ReadProgram, String> {
+    let read = super::logic::rr::inspect_file_after(path, inspected).map_err(|e| e.to_string())?;
+    if !read.program.output_names().iter().any(|name| super::logic::rr::is_diagnostic(name)) {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
-    run_program(program, &files, root, out, options)
+    Ok(read)
+}
+
+pub fn policy_inputs(files: &[super::logic::rr::LibraryFile]) -> serde_json::Value {
+    serde_json::json!(files.iter().map(|file| serde_json::json!({
+        "path": file.path,
+        "sha256": file.sha256.map(|hash| crate::content_store::observe::hex(&hash)),
+    })).collect::<Vec<_>>())
+}
+
+enum PolicySource {
+    Directory(std::path::PathBuf),
+    Revision { expression: String, snapshot: super::logic::strings::git::Snapshot },
+}
+
+struct PolicyInvocation {
+    source: PolicySource,
+    analysis: Option<crate::content_store::analysis_scope::AnalysisRun>,
+    warning: Option<String>,
+}
+
+impl PolicyInvocation {
+    fn from_options(root: &Path, options: &mut serde_json::Value) -> Result<Self, String> {
+        let revision = options.get("revision").map(|v| v.as_str().ok_or("revision must be a commit or tree string")).transpose()?;
+        if revision.is_none() && options.get("analysisScope").is_some() {
+            return Err("--analysis-scope requires --revision".into());
+        }
+        let invocation = Self::begin(root, revision, options["analysisScope"].as_str())?;
+        if let Some(fields) = options.as_object_mut() {
+            fields.remove("revision");
+            fields.remove("analysisScope");
+        }
+        Ok(invocation)
+    }
+
+    fn begin(root: &Path, revision: Option<&str>, scope: Option<&str>) -> Result<Self, String> {
+        use crate::content_store::{ContentStore, analysis_scope::{self, AnalysisRun}};
+        let (source, scope) = match revision {
+            Some(expression) => {
+                let scope = scope.ok_or("--revision requires --analysis-scope <name>")?;
+                let snapshot = super::logic::strings::git::Snapshot::scoped(root, expression, scope)?;
+                (PolicySource::Revision { expression: expression.to_owned(), snapshot },
+                 analysis_scope::named(scope).expect("snapshot validated its scope"))
+            }
+            None => {
+                let scope = crate::git_workspace::snapshot::analysis_scope(root)
+                    .unwrap_or_else(|| analysis_scope::directory(root));
+                (PolicySource::Directory(root.to_owned()), scope)
+            }
+        };
+        let mut invocation = Self { source, analysis: None, warning: None };
+        if revision.is_none() && super::logic::plan::corpus::has_analysis_owner(root) {
+            return Ok(invocation);
+        }
+        if let Some(path) = super::logic::plan::corpus::tape_cache_path() {
+            let source = match &invocation.source {
+                PolicySource::Directory(root) => analysis_scope::RunSource::directory(root),
+                PolicySource::Revision { snapshot, .. } => snapshot.run_source(),
+            };
+            match ContentStore::open(&path).and_then(|store| AnalysisRun::begin_batch(store, &scope, source)) {
+                Ok(run) => invocation.analysis = Some(run),
+                Err(error) => invocation.warning = Some(error.to_string()),
+            }
+        }
+        Ok(invocation)
+    }
+
+    fn evaluate<T>(&mut self, run: impl Fn(&Path) -> Result<T, ProgramRunError>) -> Result<T, String> {
+        let root = match &self.source {
+            PolicySource::Directory(root) => root.as_path(),
+            PolicySource::Revision { snapshot, .. } => snapshot.root(),
+        };
+        if self.warning.is_none() {
+            let result = match self.analysis.as_ref() {
+                Some(analysis) => super::logic::plan::corpus::with_tape_cache_path(
+                    analysis.store_path(), Some((root.to_owned(), analysis.owner.clone())), || run(root)),
+                None => run(root),
+            };
+            match result {
+                Ok(report) => return Ok(report),
+                Err(ProgramRunError::Cache(error)) if self.analysis.is_some() => {
+                    self.warning = Some(error.to_string());
+                }
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        super::logic::plan::corpus::with_tape_cache_path(Path::new(":memory:"), None, || run(root))
+            .map_err(|error| error.to_string())
+    }
+
+    fn finish(&mut self, succeeded: bool) -> Option<String> {
+        if let Some(mut run) = self.analysis.take() {
+            if let Err(error) = run.finish(succeeded && self.warning.is_none()) {
+                self.warning.get_or_insert_with(|| error.to_string());
+            }
+            if let Some(warning) = run.publication_warning() {
+                self.warning.get_or_insert(warning);
+            }
+        }
+        self.warning.take()
+    }
+
+    fn source_failures(&self) -> Vec<crate::git_workspace::snapshot::SourceFailure> {
+        match &self.source {
+            PolicySource::Directory(_) => Vec::new(),
+            PolicySource::Revision { snapshot, .. } => snapshot.source_failures(),
+        }
+    }
+
+    fn report(&mut self, report: &mut serde_json::Value, policies_succeeded: bool) {
+        if let PolicySource::Revision { expression, snapshot } = &self.source {
+            report["source"] = serde_json::json!({"revision": expression, "tree": snapshot.tree(), "commit": snapshot.commit()});
+        }
+        let failures = self.source_failures();
+        let complete = policies_succeeded && failures.is_empty();
+        report["status"] = if complete { "completed" } else { "failed" }.into();
+        if !failures.is_empty() {
+            report["sourceFailures"] = serde_json::json!(failures);
+        }
+        if let Some(warning) = self.finish(complete) {
+            report["cacheWarnings"] = serde_json::json!([warning]);
+        }
+    }
 }
 
 /// The findings of the run whose outputs are in `dir`, as the CLI reports them: every finding relation's rows
 /// (`rr::lower::findings`), each as its JSON object.
 pub fn diagnostics(dir: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(dir).map_err(|e| e.to_string())?;
+    diagnostic_rows(&outputs)
+}
+
+fn diagnostic_rows(outputs: &crate::code_rule_dsl::logic::plan::output::Outputs) -> Result<Vec<serde_json::Value>, String> {
+    let spans: std::collections::HashMap<_, _> = outputs.rows("rr_scan_span").iter().filter_map(|row| {
+        Some(((row.get(0).text()?, row.raw(1)), serde_json::json!({
+            "start": { "line": row.get(2).int()?, "column": row.get(3).int()? },
+            "end": { "line": row.get(4).int()?, "column": row.get(5).int()? },
+            "text": row.get(6).text()?,
+        })))
+    }).collect();
     let mut all = Vec::new();
     for rel in outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
         for row in outputs.rows(rel) {
-            all.push(diagnostic(&row)?);
+            let mut finding = diagnostic(rel, &row)?;
+            if matches!(row.get(5), crate::code_rule_dsl::logic::plan::output::Value::Node(_))
+                && let Some(span) = row.get(3).text().and_then(|path| spans.get(&(path, row.raw(5))))
+            {
+                finding["span"] = span.clone();
+            }
+            all.push(finding);
         }
     }
     Ok(all)
@@ -289,7 +440,7 @@ pub fn diagnostics(dir: &std::path::Path) -> Result<Vec<serde_json::Value>, Stri
 /// A finding's row as its JSON object: `policy`, `clause`, `code`, `path`, `line`, `at`, `tag` (`null` for none),
 /// `message`, and `parameters` by name. Each value as its column holds it: a text a string, an integer or a node a
 /// number (a node's value as the run held it), NULL `null`. Nothing is parsed.
-fn diagnostic(row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Result<serde_json::Value, String> {
+fn diagnostic(rel: &str, row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Result<serde_json::Value, String> {
     use crate::code_rule_dsl::logic::plan::output::Value;
     let value = |c: usize| -> serde_json::Value {
         match row.get(c) {
@@ -310,6 +461,19 @@ fn diagnostic(row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Resul
     let tagged = row.get(head.len() - 1).int() == Some(1);
     let mut c = head.len();
     finding.insert("tag".to_owned(), if tagged { c += 1; value(c - 1) } else { serde_json::Value::Null });
+    if rel.starts_with(super::logic::rr::lower::findings::COMMIT_PREFIX) {
+        if c + 4 > row.len() { return Err("incomplete Git commit location".to_owned()); }
+        let repo = row.get(c).text().ok_or("missing Git repository identity")?;
+        let commit = row.get(c+1).text().ok_or("missing Git commit ID")?;
+        let field = match row.get(c+2).int() {
+            Some(0) => None,
+            Some(1) => Some(row.get(c+3).text().ok_or("missing Git commit field")?),
+            _ => return Err("invalid Git commit field indicator".to_owned()),
+        };
+        finding.insert("location".into(), serde_json::json!({"kind": "git-commit", "repository": repo, "commit": commit, "field": field}));
+        for column in ["path", "line", "at"] { finding.insert(column.to_owned(), serde_json::Value::Null); }
+        c += 4;
+    }
     let mut parameters = serde_json::Map::new();
     while c + 1 < row.len() {
         let name = row.get(c).text().ok_or("a finding's parameter name: not a text")?.to_owned();
@@ -328,16 +492,92 @@ pub fn run_program(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    run_program_checked(program, files, root, out, options).map_err(|error| error.to_string())
+}
+
+#[derive(Debug)]
+pub enum ProgramRunError {
+    Evaluation(String),
+    Cache(crate::content_store::StoreError),
+}
+
+impl std::fmt::Display for ProgramRunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Evaluation(error) => f.write_str(error),
+            Self::Cache(error) => error.fmt(f),
+        }
+    }
+}
+
+impl From<String> for ProgramRunError {
+    fn from(reason: String) -> Self {
+        Self::Evaluation(reason)
+    }
+}
+
+impl From<super::logic::plan::Error> for ProgramRunError {
+    fn from(error: super::logic::plan::Error) -> Self {
+        match error {
+            super::logic::plan::Error::Cache(error) => Self::Cache(error),
+            other => Self::Evaluation(other.to_string()),
+        }
+    }
+}
+
+pub fn run_program_checked(
+    mut program: std::sync::Arc<super::logic::program_image::Version>,
+    files: &[super::logic::rr::LibraryFile],
+    root: &std::path::Path,
+    out: &std::path::Path,
+    options: &serde_json::Value,
+) -> Result<serde_json::Value, ProgramRunError> {
     use super::{
         logic::{plan::corpus, rr},
         typing::file_local::Binding,
     };
     let metadata = rr::metadata(&*program).map_err(|e| e.to_string())?;
+    // `scanSpans`: each finding at a node also gets its node's span and text (`rr_scan_span`), for a scan's report.
+    if options["scanSpans"] == true {
+        let mut rules = String::from(".decl rr_report_location(n: node, l: number, c: number, el: number, ec: number)\n.input rr_report_location\n.decl rr_scan_span(p: symbol, n: node, l: number, c: number, el: number, ec: number, matched: symbol)\n.output rr_scan_span\n");
+        let mut wanted = false;
+        for rel in program.declared_names() {
+            let Some(cols) = program.columns_of(&rel) else { continue };
+            if rr::is_diagnostic(&rel) && cols.get(5).is_some_and(|col| col.1 == "node") {
+                let tail = ", _".repeat(cols.len() - 6);
+                rules.push_str(&format!("rr_scan_span(p, n, l, c, el, ec, matched) :- {rel}(_, _, _, p, _, n{tail}), rr_report_location(n, l, c, el, ec), text(n, matched).\n"));
+                wanted = true;
+            }
+        }
+        if wanted {
+            // The spans' rules, read as a program of their own, added to the program read: an edit of its version
+            // (decision 0276 stage 6: no tree), their declarations, inputs and outputs with them.
+            let spans = rr::parse_version(&rules).map_err(|e| e.to_string())?;
+            let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&program);
+            for rel in spans.declared_names() {
+                if !program.declares(&rel) {
+                    let cols = spans.columns_of(&rel).unwrap_or_default();
+                    b.fields().declare(&rel, &cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect::<Vec<_>>());
+                }
+            }
+            for rel in spans.input_names().into_iter().filter(|r| !program.has_input(r)) {
+                b.fields().add_input(&rel);
+            }
+            for rel in spans.output_names().into_iter().filter(|r| !program.has_output(r)) {
+                b.fields().add_output(&rel);
+            }
+            for r in spans.rules() {
+                b.copy(&spans, r);
+            }
+            let (edited, _) = b.finish()?;
+            program = edited;
+        }
+    }
     // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
     // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
     // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
     // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
-    let dialects = corpus::run_dialects(root, &*program, &with_reuse(options)).map_err(|e| e.to_string())?;
+    let dialects = corpus::run_dialects(root, &program, &with_reuse(options))?;
     // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
     let runs: Vec<(Option<&str>, std::path::PathBuf)> = if dialects.is_empty() {
         vec![(None, out.to_path_buf())]
@@ -353,19 +593,31 @@ pub fn run_program(
         if let Some(dialect) = dialect {
             options["dialect"] = serde_json::json!(dialect);
         }
-        let report = corpus::run_read(&handed, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
-        rows.extend(diagnostics(dir)?);
+        let report = if out.as_os_str().is_empty() {
+            let (report, bytes) = corpus::run_policy_image(&handed, root, binding, &options)?;
+            let outputs = super::logic::plan::output::Outputs::of(&bytes)?;
+            rows.extend(diagnostic_rows(&outputs)?);
+            report
+        } else {
+            let report = corpus::run_read(&handed, root, dir, "program", binding, 1 << 18, &Default::default(), &options)?;
+            rows.extend(diagnostics(dir)?);
+            report
+        };
         files_read += report.files;
         nodes += report.nodes;
         phases.extend(report.phases);
     }
+    if crate::git_workspace::snapshot::contains(root) {
+        for row in &mut rows {
+            if let Some(path) = row["path"].as_str() {
+                row["pathIdentity"] = serde_json::json!({"encoding": "utf8", "value": path});
+            }
+        }
+    }
     Ok(
         serde_json::json!({"diagnostics": rows, "files": files_read, "nodes": nodes,
                          "metadata": metadata,
-                         "programInputs": files.iter().map(|file| serde_json::json!({
-                             "path": file.path,
-                             "sha256": file.sha256.map(|hash| hash.iter().map(|b| format!("{b:02x}")).collect::<String>())
-                         })).collect::<Vec<_>>(),
+                         "programInputs": policy_inputs(files),
                          "phases": phases.iter().map(|(phase,user,system,rss,statements)| serde_json::json!({
                              "phase": phase, "userCpuSeconds": user, "systemCpuSeconds": system,
                              "peakRssMB": rss, "submittedStatements": statements
@@ -383,45 +635,81 @@ pub fn run_policies(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    let mut options = options.clone();
+    let mut invocation = PolicyInvocation::from_options(root, &mut options)?;
+    let options = &options;
     let (mut diagnostics, mut runs) = (Vec::new(), Vec::new());
     // One run for the file observer: each root asked of the journal once for the batch.
     let _observed = super::logic::plan::corpus::ObservedBatch::begin();
-    // Every policy's includes resolved by one run of phase 0 (`bootstrap.rerail`) over all of them, each graph kept for
-    // the policy's own read: not one run a policy. A path phase 0 cannot read is the policy's own error, below.
-    let seeds: Vec<super::logic::plan::corpus::phase0::Seed> =
-        paths.iter().filter_map(|p| p.canonicalize().ok()).map(super::logic::plan::corpus::phase0::Seed::File).collect();
-    if seeds.len() > 1 && !super::logic::plan::corpus::phase0::active() {
-        let _ = super::logic::plan::corpus::phase0::graphs(&seeds);
-    }
+    invocation.evaluate(|_| { prepare_policy_graphs(paths); Ok(()) })?;
     // What the batch's runs share is kept while it runs (phase 1's runs, by their inputs), and nothing past it.
     let _batch = super::logic::plan::corpus::phases::Batch::enter();
     // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
     // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
-    // `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
-    let packed = std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
-    let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
-    let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
+    // `RERAIL_BATCH_PACK=off` runs each policy alone. With `strict`, a failed group returns its error.
+    // Grouping by default grammar inventories the source before the rules are
+    // available. Git policy runs determine their source demand individually.
+    let packed = matches!(invocation.source, PolicySource::Directory(_)) && paths.len() > 1 && !crate::git_workspace::snapshot::contains(root)
+        && std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
+    let (texts, groups) = if packed {
+        invocation.evaluate(|root| {
+            let paths: Vec<_> = paths.iter().map(|p| p.as_path()).collect();
+            let texts = program_texts(&paths).unwrap_or_default();
+            let groups = policy_groups(&texts, root, options);
+            Ok((texts, groups))
+        })?
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let mut done: Vec<Option<(Vec<serde_json::Value>, serde_json::Value)>> = paths.iter().map(|_| None).collect();
     for group in groups.iter().filter(|g| g.members.len() > 1) {
-        if let Some(each) = run_pack(paths, texts.as_deref().unwrap_or_default(), group, root, out, options)? {
+        // A failed pack can still contain policies that succeed on their own.
+        if let Ok(Some(each)) = invocation.evaluate(|root| run_pack(paths, &texts, group, root, out, options)) {
             for (&k, found) in group.members.iter().zip(each) {
                 done[k] = Some(found);
             }
         }
     }
+    let mut succeeded = true;
     for (k, path) in paths.iter().enumerate() {
-        let (found, run) = match done[k].take() {
-            Some(found) => found,
+        let result = match done[k].take() {
+            Some(run) => Ok(run),
             None => {
-                let report = run_rr(path, root, &out.join(k.to_string()), options).map_err(|e| format!("{}: {e}", path.display()))?;
-                let run = serde_json::json!({"path": path.display().to_string(), "files": report["files"], "metadata": report["metadata"], "together": 1});
-                (report["diagnostics"].as_array().cloned().unwrap_or_default(), run)
+                let dir = out.join(k.to_string());
+                let evaluated = read_policy(path).and_then(|(program, files)| {
+                    invocation.evaluate(|root| run_program_checked(program.clone(), &files, root, &dir, options))
+                });
+                evaluated.map(|report| single_policy_report(path, &report))
             }
         };
-        diagnostics.extend(found);
-        runs.push(run);
+        match result {
+            Ok((found, run)) => {
+                diagnostics.extend(found);
+                runs.push(run);
+            }
+            Err(error) => {
+                succeeded = false;
+                runs.push(serde_json::json!({"path": path.display().to_string(), "error": error}));
+            }
+        }
     }
-    Ok(serde_json::json!({"diagnostics": diagnostics, "runs": runs}))
+    let mut report = serde_json::json!({"diagnostics": diagnostics, "runs": runs});
+    invocation.report(&mut report, succeeded);
+    Ok(report)
+}
+
+/// Resolve the batch's includes together. A graph that fails is reported when its policy is read.
+fn prepare_policy_graphs(paths: &[std::path::PathBuf]) {
+    use super::logic::plan::corpus::phase0;
+    let seeds: Vec<_> = paths.iter().filter_map(|p| p.canonical().ok()).map(phase0::Seed::File).collect();
+    if seeds.len() > 1 && !phase0::active() {
+        let _ = phase0::graphs(&seeds);
+    }
+}
+
+fn single_policy_report(path: &Path, report: &serde_json::Value) -> (Vec<serde_json::Value>, serde_json::Value) {
+    let run = serde_json::json!({"path": path.display().to_string(), "files": report["files"], "metadata": report["metadata"], "together": 1});
+    (report["diagnostics"].as_array().cloned().unwrap_or_default(), run)
 }
 
 /// Policies of a batch that run as one pack: one language, the same dialects with files in scope, the same guest
@@ -493,10 +781,14 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
     groups.into_iter().map(|(_, g)| g).collect()
 }
 
+/// A pack's member's run (`run_pack`): its findings, and its run's record.
+type MemberRun = (Vec<serde_json::Value>, serde_json::Value);
+
 /// One group's policies run as one pack into `out/pack-<first>` (a dialect after the first into its own directory
 /// below it, as `run_program` places a policy's), and each one's findings written to its own `out/<k>` (its
 /// `rr_diagnostic`, in `outputs.rro`): per member, its findings and its run's record. `None` when a pack's run fails
-/// or a finding names no member's id: the group's policies then run alone, each with its own error.
+/// or a finding names no member's id: the group's policies then run alone, each with its own error (with
+/// `RERAIL_BATCH_PACK=strict`, the pack's error instead).
 fn run_pack(
     paths: &[std::path::PathBuf],
     texts: &[String],
@@ -504,15 +796,26 @@ fn run_pack(
     root: &std::path::Path,
     out: &std::path::Path,
     options: &serde_json::Value,
-) -> Result<Option<Vec<(Vec<serde_json::Value>, serde_json::Value)>>, String> {
+) -> Result<Option<Vec<MemberRun>>, ProgramRunError> {
     use super::{logic::plan::corpus, typing::file_local::Binding};
     use crate::code_rule_dsl::logic::plan::output;
     let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    let _sources = super::logic::profile::on().then(|| super::logic::rr::profile_join_sources(
+        &group.members.iter().map(|&k| paths[k].as_path()).collect::<Vec<_>>(),
+    ));
     let dir = out.join(format!("pack-{}", group.members[0]));
     crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0168)", || {
         format!("{} policies: {}", texts.len(), group.ids.join(", "))
     });
+    // `RERAIL_BATCH_PACK=strict`: a failed pack returns its error, not `None`.
+    let fallback = |reason: String| {
+        if std::env::var("RERAIL_BATCH_PACK").as_deref() == Ok("strict") {
+            Err(ProgramRunError::Evaluation(format!("combined run of {} policies failed: {reason}", texts.len())))
+        } else {
+            Ok(None)
+        }
+    };
     // Each dialect's run and its directory, its language the dialect's (the `dialect` option, as `run_program` runs
     // a policy alone): one run as written where the language has one dialect.
     let runs: Vec<(Option<&str>, std::path::PathBuf)> = if group.dialects.is_empty() {
@@ -527,8 +830,13 @@ fn run_pack(
         if let Some(dialect) = dialect {
             options["dialect"] = serde_json::json!(dialect);
         }
-        let Ok(report) = corpus::run_with_options(&texts, root, None, dir, "program", binding, 1 << 18, &Default::default(), &options) else {
-            return Ok(None);
+        let report = match corpus::run_with_options(&texts, root, None, dir, "program", binding, 1 << 18, &Default::default(), &options) {
+            Ok(report) => report,
+            // A store that fails is the invocation's to recover from (`PolicyInvocation::evaluate`): it runs again in memory.
+            Err(error) => match ProgramRunError::from(error) {
+                ProgramRunError::Evaluation(reason) => return fallback(reason),
+                cache => return Err(cache),
+            },
         };
         files += report.files;
         outputs.push(output::Outputs::open(dir).map_err(|e| e.to_string())?);
@@ -540,8 +848,10 @@ fn run_pack(
     for run in &outputs {
         for rel in run.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
             for row in run.rows(rel) {
-                let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
-                each[at].push(diagnostic(&row)?);
+                let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else {
+                    return fallback(format!("{rel} produced a finding with an unknown policy id {:?}", row.get(0).text()));
+                };
+                each[at].push(diagnostic(rel, &row)?);
                 rows[at].entry(rel.to_owned()).or_default().push(row);
             }
         }
@@ -576,7 +886,7 @@ pub fn dump(
     let compiled = policies
         .iter()
         .map(|(name, source, format)| {
-            CodeRuleDslRuntime::compile(source.clone(), format.clone(), capabilities.to_string())
+            crate::code_rule_dsl::rule_api::compile(source, format, capabilities)
                 .map(|rule| (name.clone(), rule))
                 .map_err(|error| format!("{name}: {}", error.reason))
         })
@@ -624,17 +934,14 @@ pub fn flatten_lowered(path: &std::path::Path) -> Result<String, String> {
     super::logic::rr::print_version(&program).map_err(|e| e.to_string())
 }
 
-/// `programs` (`.rerail` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
-/// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
-/// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
-/// findings. T's facts reproduce one program's run only.
-/// `settings` are `--env key=value`s ([`settings`]).
-#[allow(clippy::too_many_arguments)]
+/// A run `logic` makes (`dialect_runs`): its dialect (`None`: as written), and its programs.
+type DialectRun = (Option<&'static str>, Vec<String>);
+
 /// The runs `logic` makes of `programs`: those whose language has one dialect, or one with files in scope, run as
 /// written (the first run); a program of a language of several dialects with files (`run_dialects`) runs in each,
 /// its language set to the dialect by the run (the `dialect` option, `corpus::added`), its text as written. The
 /// corpus is listed once for all of them.
-fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json::Value) -> Result<Vec<(Option<&'static str>, Vec<String>)>, String> {
+fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json::Value) -> Result<Vec<DialectRun>, ProgramRunError> {
     use super::language::CodeRuleLanguage;
     use super::logic::plan::corpus;
     let listing: std::cell::OnceCell<corpus::CorpusFiles> = std::cell::OnceCell::new();
@@ -655,7 +962,11 @@ fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json:
         let several = named.as_deref().is_some_and(|n| CodeRuleLanguage::ALL.into_iter().any(|l| l.name() == n && l.dialects().len() > 1));
         let labels = if several {
             let prog = super::logic::rr::parse_own_version(text).map_err(|e| e.to_string())?;
-            corpus::run_dialects_in(&files, &*prog, options).map_err(|e| e.to_string())?
+            if crate::git_workspace::snapshot::contains(root) {
+                corpus::run_dialects(root, &prog, options)
+            } else {
+                corpus::run_dialects_in(&files, &*prog, options)
+            }?
         } else {
             Vec::new()
         };
@@ -685,11 +996,31 @@ fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json:
     Ok(runs)
 }
 
-pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
+/// How `logic` runs its programs: the SQL executor's modes, on Metal or the CPU, the chunk's nodes, and the
+/// `--env key=value` settings ([`settings`]).
+#[derive(Clone, Copy)]
+pub struct LogicRun<'a> {
+    pub modes: &'a str,
+    pub metal: bool,
+    pub chunk_nodes: usize,
+    pub settings: &'a [String],
+}
+
+/// `programs` (`.rerail` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
+/// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
+/// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
+/// findings. T's facts reproduce one program's run only.
+/// `run`'s settings are `--env key=value`s ([`settings`]).
+pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, String> {
+    logic_checked(programs, root, t_facts, out, run).map_err(|error| error.to_string())
+}
+
+fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, ProgramRunError> {
+    let LogicRun { modes, metal, chunk_nodes, settings } = *run;
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
     if programs.len() > 1 && t_facts.is_some() {
-        return Err("T facts reproduce one program's run, not several".into());
+        return Err(ProgramRunError::Evaluation("T facts reproduce one program's run, not several".to_owned()));
     }
     let options = serde_json::json!({ "env": settings, "reuse": true });
     let programs: Vec<&str> = programs.iter().map(String::as_str).collect();
@@ -708,8 +1039,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
         if let Some(label) = label {
             options["dialect"] = serde_json::json!(label);
         }
-        let each = super::logic::plan::corpus::run_with_options(&texts, root, t_facts, &dir, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)
-            .map_err(|error| error.to_string())?;
+        let each = super::logic::plan::corpus::run_with_options(&texts, root, t_facts, &dir, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)?;
         match &mut report {
             None => report = Some(each),
             Some(first) => {
@@ -731,7 +1061,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
             }
         }
     }
-    let report = report.ok_or("no programs")?;
+    let report = report.ok_or_else(|| "no programs".to_owned())?;
     let execution = if modes.is_empty() { "sql" } else { modes };
     let mut text = format!(
         "{} programs; {} files, {} nodes in {} chunks, {} components native ({execution}, nearest on {binding:?})\n",
@@ -803,7 +1133,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine delete-scope <store.sqlite> <name>\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>... [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -870,9 +1200,47 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
 
 /// A command of `cli_in`, within its limits.
 fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
-    // Done as the library loaded, except where nothing runs then (the browser's build).
-    crate::install_store_functions();
-    let budgets = budget_options(args)?;
+    // The program is booted before its first command: as the library loads, or by the engine's `cli`/`cli_in`
+    // (`code_rule_dsl/tools/napi.rs`) where nothing runs then (the browser's build, the CLI binary).
+    let mut budgets = budget_options(args)?;
+    for flag in ["--revision", "--analysis-scope"] {
+        if budgets.iter().filter(|a| *a == flag).count() > 1 {
+            return Err(format!("{flag} can be supplied only once"));
+        }
+    }
+    let mut revision = None;
+    if let Some(index) = budgets.iter().position(|a| a == "--revision").filter(|_| budgets.first().is_none_or(|a| a != "logic")) {
+        let root_index = match budgets.first().map(String::as_str) {
+            Some("run-rr") => 2,
+            Some("run-policies") => 1,
+            _ => return Err("--revision is supported by logic, run-rr and run-policies".into()),
+        };
+        if index <= root_index { return Err("place --revision after the corpus root".into()); }
+        revision = Some(budgets.get(index + 1).filter(|s| !s.starts_with("--")).ok_or("--revision requires a commit or tree")?.clone());
+        budgets.drain(index..=index + 1);
+    }
+    let mut analysis_scope = None;
+    if let Some(index) = budgets.iter().position(|a| a == "--analysis-scope").filter(|_| budgets.first().is_none_or(|a| a != "logic")) {
+        if !matches!(budgets.first().map(String::as_str), Some("run-rr" | "run-policies")) {
+            return Err("--analysis-scope is supported by logic, run-rr and run-policies".into());
+        }
+        analysis_scope = Some(budgets.get(index + 1).filter(|s| !s.starts_with("--")).ok_or("--analysis-scope requires a name")?.clone());
+        budgets.drain(index..=index + 1);
+    }
+    let with_revision = |mut options: serde_json::Value| {
+        if revision.is_some() || analysis_scope.is_some() {
+            if !options.is_object() {
+                options = serde_json::json!({});
+            }
+            if let Some(revision) = &revision {
+                options["revision"] = serde_json::json!(revision);
+            }
+            if let Some(scope) = &analysis_scope {
+                options["analysisScope"] = serde_json::json!(scope);
+            }
+        }
+        options
+    };
     let args = budgets.as_slice();
     // However the command ends, the cost samples it made are written (decision 0100 §14).
     struct Flush;
@@ -895,10 +1263,10 @@ fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus
         Some("facts-stamp") => facts_stamp_command(&args[1..]),
         Some("capture-tapes") => capture_tapes_command(&args[1..]),
         Some("kind-names") => kind_names_command(&args[1..]),
-        Some("run-rr") => run_rr_command(&args[1..]),
+        Some("run-rr") => run_rr_command(&args[1..], &with_revision),
         // Several policies over one repository, each over its own language's files (O105), and the tool calls it is
         // given.
-        Some("run-policies") => run_policies_command(&args[1..]),
+        Some("run-policies") => run_policies_command(&args[1..], &with_revision),
         Some("check-rr") => check_rr_command(&args[1..]),
         // Main's JSON rules as the engine reads them: each `<id>.json` to `<out>/<id>.rerail` (decision 0175).
         Some("translate-json") => translate_json_command(&args[1..]),
@@ -908,10 +1276,21 @@ fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus
         Some("flatten") => flatten_command(&args[1..]),
         Some("images") => images_command(&args[1..]),
         Some("csv") => csv_command(&args[1..]),
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Some("kernels") => kernels_command(&args[1..]),
         #[cfg(feature = "tape-cache")]
         Some("gc") => gc_command(&args[1..]),
+        Some("delete-scope") => match &args[1..] {
+            [store, name] => {
+                let scope = crate::content_store::analysis_scope::named(name).ok_or("analysis scope name must not be empty")?;
+                let path = Path::new(store);
+                if path.exists() {
+                    crate::content_store::ContentStore::open(path).and_then(|store| store.delete_analysis_scope(&scope)).map_err(|err| err.to_string())?;
+                }
+                Ok(String::new())
+            }
+            _ => Err("usage: rerail-engine delete-scope <store.sqlite> <name>".into()),
+        },
         #[cfg(feature = "tape-cache")]
         Some("upkeep") => upkeep_command(&args[1..]),
         #[cfg(not(all(feature = "dump-cli", feature = "tape-cache")))]
@@ -945,19 +1324,21 @@ fn repeat_script_command(args: &[String]) -> Result<String, String> {
 }
 
 /// `run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]`.
-fn run_rr_command(args: &[String]) -> Result<String, String> {
+/// `revision` adds the command's `--revision` and `--analysis-scope` to the options.
+fn run_rr_command(args: &[String], revision: &dyn Fn(serde_json::Value) -> serde_json::Value) -> Result<String, String> {
     let options = match args {
         [_, _, _] => serde_json::Value::Null,
         [_, _, _, file] => serde_json::from_str(&read(file)?).map_err(|e| e.to_string())?,
         _ => return Err(USAGE.into()),
     };
-    serde_json::to_string(&crate::tools::run_rr(Path::new(&args[0]), Path::new(&args[1]), Path::new(&args[2]), &options)?).map_err(|e| e.to_string())
+    policy_command_report(crate::tools::run_rr(Path::new(&args[0]), Path::new(&args[1]), Path::new(&args[2]), &revision(options))?)
 }
 
 /// `run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...`: several policies over one
 /// repository, each over its own language's files (O105). `--tool-calls`: the tool calls the run is given (`[{"id",
 /// "tool", "input"}]`, the `toolCalls` option: `corpus::added`), which `.scope tool_calls` policies read.
-fn run_policies_command(args: &[String]) -> Result<String, String> {
+/// `revision` adds the command's `--revision` and `--analysis-scope` to the options.
+fn run_policies_command(args: &[String], revision: &dyn Fn(serde_json::Value) -> serde_json::Value) -> Result<String, String> {
     let usage = "usage: rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...";
     let (mut positional, mut options) = (Vec::new(), serde_json::Value::Null);
     let mut rest = args.iter();
@@ -969,7 +1350,7 @@ fn run_policies_command(args: &[String]) -> Result<String, String> {
     }
     let [root, out, first, more @ ..] = positional.as_slice() else { return Err(usage.into()) };
     let paths: Vec<std::path::PathBuf> = std::iter::once(first).chain(more).map(|p| std::path::PathBuf::from(p.as_str())).collect();
-    serde_json::to_string(&crate::tools::run_policies(&paths, Path::new(root.as_str()), Path::new(out.as_str()), &options)?).map_err(|e| e.to_string())
+    policy_command_report(crate::tools::run_policies(&paths, Path::new(root.as_str()), Path::new(out.as_str()), &revision(options))?)
 }
 
 /// The run's options of the tool calls in `file`, once they are of their shape (`added::tool_call_rows`).
@@ -1044,6 +1425,17 @@ fn csv_command(args: &[String]) -> Result<String, String> {
     }
 }
 
+/// A partial report is still the command's JSON output. The executable maps the error to exit 1.
+fn policy_command_report(report: serde_json::Value) -> Result<String, String> {
+    let text = serde_json::to_string(&report).map_err(|error| error.to_string())?;
+    if report["status"] == "failed" {
+        println!("{text}");
+        Err("analysis failed; see the policy and source errors in the report".into())
+    } else {
+        Ok(text)
+    }
+}
+
 /// `repeat`: several commands in one process, so a session (decision 0063, `RERAIL_SESSION`) can be measured from the
 /// command line (t31 step 0.2). One command per line of `script`:
 ///
@@ -1057,12 +1449,7 @@ fn csv_command(args: &[String]) -> Result<String, String> {
 /// Each engine command prints one line to stderr: its CPU (user + sys) and the process's footprint, now and at most.
 #[cfg(not(target_family = "wasm"))]
 fn repeat_command(script: &str) -> Result<String, String> {
-    let cpu = || {
-        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-        let time = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
-        (time(usage.ru_utime), time(usage.ru_stime))
-    };
+    use crate::code_rule_dsl::logic::plan::corpus::usage;
     let mut out = String::new();
     // The session the script's commands keep (`RERAIL_SESSION`), from its first command to its last.
     let mut kept = crate::code_rule_dsl::logic::plan::corpus::session::Kept::default();
@@ -1091,9 +1478,9 @@ fn repeat_command(script: &str) -> Result<String, String> {
             }
             _ => {
                 let args: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
-                let (u0, s0) = cpu();
+                let (u0, s0, _) = usage();
                 let result = command(&args, &mut kept);
-                let (u1, s1) = cpu();
+                let (u1, s1, _) = usage();
                 eprintln!(
                     "repeat line {n}: {:.2} s CPU ({:.2} user + {:.2} sys); footprint {} MB, at most {} MB; {}",
                     (u1 - u0) + (s1 - s0),
@@ -1116,7 +1503,7 @@ fn repeat_command(_: &str) -> Result<String, String> {
 }
 
 /// The memory budgets, set by any command's `--memory-mb <n>` (the overall budget, 1 GB by default) and
-/// `--metal-mb <n>` (the Metal budget, on top of it: half the overall budget by default) (decision 0126): the
+/// `--metal-mb <n>` (the Metal budget, on top of it: the overall budget by default) (decisions 0126, 0549): the
 /// arguments without them.
 fn budget_options(args: &[String]) -> Result<Vec<String>, String> {
     let mut rest = Vec::with_capacity(args.len());
@@ -1198,9 +1585,19 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     timeline_mark("cli start");
     let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), None, false, 1_usize << 18);
     let (mut sql, mut env, mut full) = (false, Vec::new(), false);
+    let mut revision = None;
+    let mut analysis_scope = None;
     let mut args = args.iter();
     while let Some(argument) = args.next() {
         match argument.as_str() {
+            "--revision" => {
+                if revision.is_some() { return Err("--revision can be supplied only once".into()); }
+                revision = Some(args.next().filter(|s| !s.starts_with("--")).ok_or("--revision requires a commit or tree")?.clone());
+            }
+            "--analysis-scope" => {
+                if analysis_scope.is_some() { return Err("--analysis-scope can be supplied only once".into()); }
+                analysis_scope = Some(args.next().filter(|s| !s.starts_with("--")).ok_or("--analysis-scope requires a name")?.clone());
+            }
             "--sql" => sql = true,
             "--metal" => metal = true,
             // A full run in a session: compiled and evaluated afresh, as without one (decision 0063).
@@ -1232,6 +1629,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     // A directory: every `.rerail` in it, run as one program (each file parsed once for all of them); each file's
     // `#include`s are read in.
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
+    let _sources;
     let programs = if Path::new(program.as_str()).is_dir() {
         let mut files: Vec<_> = std::fs::read_dir(program)
             .map_err(|e| format!("{program}: {e}"))?
@@ -1256,17 +1654,40 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
         timeline_mark("the program files listed");
         let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        _sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
         timeline_mark("the program texts read");
         texts
     } else {
-        vec![crate::tools::program_text(Path::new(program.as_str()))?]
+        let path = Path::new(program.as_str());
+        let text = crate::tools::program_text(path)?;
+        _sources = super::logic::rr::profile_join_sources(&[path]);
+        vec![text]
     };
     drop(reading);
     if programs.is_empty() {
         return Err(format!("{program} has no .rerail programs"));
     }
-    let run = || crate::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env);
-    if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
+    if revision.is_none() && analysis_scope.is_some() {
+        return Err("--analysis-scope requires --revision".into());
+    }
+    let eval = |root: &Path| {
+        let run = || logic_checked(&programs, root, facts, Path::new(out), &crate::tools::LogicRun { modes: &modes, metal, chunk_nodes: chunk, settings: &env });
+        if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
+    };
+    let mut invocation = PolicyInvocation::begin(Path::new(root), revision.as_deref(), analysis_scope.as_deref())?;
+    let report = invocation.evaluate(eval)?;
+    let failures = invocation.source_failures();
+    for failure in &failures {
+        eprintln!("rerail: {}: {}", failure.path, failure.message);
+    }
+    if let Some(warning) = invocation.finish(failures.is_empty()) {
+        eprintln!("rerail: cache was not retained. {warning}");
+    }
+    if !failures.is_empty() {
+        print!("{report}");
+        return Err(format!("incomplete Git source coverage ({} source failures)", failures.len()));
+    }
+    Ok(report)
 }
 
 /// `facts-stamp <raw> --out <dir> --root <repository> <policy.rerail>…` (data-layer/RUN-FACTS.md section 1, `rerail facts
@@ -1350,42 +1771,129 @@ fn gc_command(args: &[String]) -> Result<String, String> {
     Ok(out)
 }
 
-/// `upkeep [STORE...] [--cpu PCT] [--jobs LIST]`: runs every upkeep job that has work to its end now, idle machine
-/// or not (decision 0190): each store's collection, search-index backlog and SQLite file, and the cost
-/// statistics' store and model. `--cpu` is the share of one core the jobs average (the setting's default, 25);
-/// `--jobs` is `RERAIL_UPKEEP_JOBS`'s list. Prints each job's steps, wall and CPU.
-#[cfg(feature = "tape-cache")]
-/// `rerail-engine kernels` (decision 0395): the store of compiled Metal kernels.
+/// Every fixed kernel of the engine (a kernel whose source is the same for every rule set), to compile ahead of its
+/// first use (decision 0395's tiers, on every backend): the GPU lane's (`rerail_accel::gpu::kernels_ahead`), the GPU
+/// runtime's (`rerail_metal::kernels_ahead`), the device's (`MatcherDevice::kernels_ahead`) and, in a build with the
+/// tests' hooks, the tape format's tests' (`rerail_tape_format::f16::kernels`). Each entry asks for its kernel
+/// as its use does, so its use finds it: in this process, in the store, or shipped.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
+    let mut v = rerail_accel::gpu::kernels_ahead();
+    v.extend(rerail_metal::kernels_ahead());
+    if let Some(device) = crate::code_rule_dsl::transducer::packed::device::matcher() {
+        v.extend(device.kernels_ahead().into_iter().map(|(name, make)| rerail_accel::gpu::ahead(name, make)));
+    }
+    #[cfg(feature = "test-hooks")]
+    v.extend(rerail_tape_format::f16::kernels().into_iter().map(|(name, text)| {
+        rerail_gpu::kernels::Ahead::new(name.clone(), move || rerail_gpu::kernels::program(&name, &text).map(drop))
+    }));
+    v
+}
+
+/// `rerail-engine kernels` (decision 0395): the compiled kernels, on every backend. The device layer's store
+/// (`rerail_device::store`: CUDA's cubins, OpenCL's binaries, the CPU's shared objects) and, on macOS, Metal's
+/// archive store (`rerail_accel::gpu::kernels`).
 ///
 /// ```text
-/// kernels [list]                   the store, the shipped kernels, and the kernels runs went without
-/// kernels compile [--all] [--idle] compiles the last run's (--all: every run's) wanted kernels now, here
+/// kernels [list]                   the stores, the shipped kernels, the device, and (Metal) the kernels runs went
+///                                  without
+/// kernels compile [--all] [--idle] [--threads <n>] [--only <text>] [--within <s>]
+///                                  compiles every fixed kernel now, here (`kernels_ahead`; --only: those whose names
+///                                  hold <text>), <n> at a time (default half the cores), none starting past <s>
+///                                  seconds and none waited for past <s> + 60 (the next goes on from the store), then
+///                                  (Metal) the last run's (--all: every run's) wanted kernels
 ///                                  (--idle: at the background priority, as after a run)
 /// kernels ship <dir> [--from <s>] [--air]
-///                                  the fixed kernels a run compiled (store <s>, else this machine's) as the
-///                                  engine's bundle: this device's archives; --air: AIR libraries too (Xcode's
-///                                  Metal Toolchain)
-/// kernels prune [--mb <n>]         the store within n MB (default RERAIL_METAL_KERNELS_MB, 2048)
+///                                  the fixed kernels as the engine's bundle: this device's forms under
+///                                  <dir>/<backend>/ by the store's keys (compiled first where the store lacks them);
+///                                  Metal: the archives a run compiled (store <s>, else this machine's); --air: AIR
+///                                  libraries too (Xcode's Metal Toolchain)
+/// kernels prune [--mb <n>]         each store within n MB (default RERAIL_GPU_KERNELS_MB and RERAIL_METAL_KERNELS_MB,
+///                                  2048)
 /// ```
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn kernels_command(args: &[String]) -> Result<String, String> {
-    use rerail_accel::gpu::kernels as k;
+    use rerail_gpu::store;
     let mut out = String::new();
+    let threads = match args.iter().position(|a| a == "--threads") {
+        Some(i) => args.get(i + 1).and_then(|v| v.parse::<usize>().ok()).filter(|&n| n > 0).ok_or("--threads takes a number")?,
+        None => rerail_gpu::kernels::ahead_threads(),
+    };
+    // `--within <s>`: no compile starts after `s` seconds (the next `kernels compile` goes on from the store).
+    let within = match args.iter().position(|a| a == "--within") {
+        Some(i) => Some(std::time::Duration::from_secs_f64(args.get(i + 1).and_then(|v| v.parse::<f64>().ok()).ok_or("--within takes seconds")?)),
+        None => None,
+    };
+    let until = within.map(|s| std::time::Instant::now() + s);
+    // `--only <text>`: the fixed kernels whose names hold it.
+    let only = match args.iter().position(|a| a == "--only") {
+        Some(i) => Some(args.get(i + 1).ok_or("--only takes a name")?.as_str()),
+        None => None,
+    };
+    // The process's device (its forms are kept under its backend's directory, in the store and in a bundle).
+    let device = || rerail_gpu::shared::get().map(|s| s.device.name());
+    // Compiles the fixed kernels, reporting each: what it loaded (shipped or from the store), compiled, and took.
+    let compile = |out: &mut String| -> Vec<rerail_gpu::kernels::Made> {
+        let started = std::time::Instant::now();
+        let list = kernels_ahead().into_iter().filter(|a| only.is_none_or(|o| a.name.contains(o))).collect();
+        // The compiles still running a minute past `--within` are left (the process ends without them).
+        let bound = rerail_gpu::kernels::Bound { start_by: until, end_by: until.map(|u| u + std::time::Duration::from_secs(60)) };
+        let made = rerail_gpu::kernels::compile_ahead(list, threads, bound);
+        for m in &made {
+            let how = match &m.result {
+                _ if m.skipped => "  not started (--within)".to_owned(),
+                _ if m.unfinished => "  still compiling, left (--within)".to_owned(),
+                Err(e) => format!("  failed: {}", e.lines().next().unwrap_or("")),
+                Ok(()) if m.compiled > 0 => format!("  compiled {}", m.compiled),
+                Ok(()) if m.loaded > 0 => format!("  loaded {}", m.loaded),
+                Ok(()) => String::new(),
+            };
+            *out += &format!("{:<40.40} {:>8.2} s{how}\n", m.name, m.seconds);
+        }
+        let (loaded, compiled): (u64, u64) = made.iter().fold((0, 0), |(l, c), m| (l + m.loaded, c + m.compiled));
+        *out += &format!(
+            "{} fixed kernels in {:.2} s ({threads} at a time): {compiled} compiled, {loaded} loaded, {} failed, {} not started, {} left compiling\n",
+            made.len(),
+            started.elapsed().as_secs_f64(),
+            made.iter().filter(|m| m.result.is_err()).count(),
+            made.iter().filter(|m| m.skipped).count(),
+            made.iter().filter(|m| m.unfinished).count()
+        );
+        made
+    };
     match args.first().map(String::as_str) {
         None | Some("list") => {
-            let s = k::size();
-            out += &format!("store    {}\n", k::store_dir().map_or("off".to_owned(), |d| d.display().to_string()));
-            out += &format!("shipped  {}\n", k::shipped_dir().map_or("none".to_owned(), |d| d.display().to_string()));
-            if let Some(device) = rerail_accel::gpu::shared::get() {
-                out += &format!("device   {}\n", k::device_tag(&device.device));
+            out += &format!("store    {}\n", store::dir().map_or("off".to_owned(), |d| d.display().to_string()));
+            out += &format!("shipped  {}\n", store::shipped_dir().map_or("none".to_owned(), |d| d.display().to_string()));
+            out += &format!("device   {} ({})\n", device().unwrap_or_else(|| "none".to_owned()), rerail_gpu::device::backend());
+            out += &format!("fixed    {} kernels\n", kernels_ahead().len());
+            if let Some(s) = rerail_gpu::shared::get() {
+                out += &format!("addresses {}\n", s.device.allocations_have_addresses());
+                if let rerail_gpu::device::Device::OpenCl(d) = &s.device {
+                    let (ext, synced) = d.describe();
+                    out += &format!("opencl   synced {synced}; extensions:\n");
+                    for x in ext.split_ascii_whitespace() {
+                        out += &format!("  {x}\n");
+                    }
+                }
             }
-            out += &format!("archives {} ({:.1} MB), sources {} ({:.1} MB), wanted lists {}\n", s.archives, s.archive_bytes as f64 / 1e6, s.sources, s.source_bytes as f64 / 1e6, s.wanted_lists);
-            for (which, label) in [(k::Which::Last, "the last run"), (k::Which::All, "every run")] {
-                let pending = k::pending(which);
-                out += &format!("not compiled, wanted by {label}: {}\n", pending.len());
-                if which == k::Which::All {
-                    for w in pending.iter().take(40) {
-                        out += &format!("  {} {}\n", &w.pipeline[..16], w.name);
+            #[cfg(target_os = "macos")]
+            {
+                use rerail_accel::gpu::kernels as k;
+                let s = k::size();
+                out += &format!("metal store    {}\n", k::store_dir().map_or("off".to_owned(), |d| d.display().to_string()));
+                out += &format!("metal shipped  {}\n", k::shipped_dir().map_or("none".to_owned(), |d| d.display().to_string()));
+                if let Some(device) = rerail_accel::gpu::shared::get() {
+                    out += &format!("metal device   {}\n", k::device_tag(&device.device));
+                }
+                out += &format!("archives {} ({:.1} MB), sources {} ({:.1} MB), wanted lists {}\n", s.archives, s.archive_bytes as f64 / 1e6, s.sources, s.source_bytes as f64 / 1e6, s.wanted_lists);
+                for (which, label) in [(k::Which::Last, "the last run"), (k::Which::All, "every run")] {
+                    let pending = k::pending(which);
+                    out += &format!("not compiled, wanted by {label}: {}\n", pending.len());
+                    if which == k::Which::All {
+                        for w in pending.iter().take(40) {
+                            out += &format!("  {} {}\n", &w.pipeline[..16], w.name);
+                        }
                     }
                 }
             }
@@ -1393,51 +1901,98 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
         }
         Some("compile") => {
             let rest = &args[1..];
-            let which = if rest.iter().any(|a| a == "--all") { k::Which::All } else { k::Which::Last };
             if rest.iter().any(|a| a == "--idle") {
                 rerail_accel::upkeep::lower_this_thread();
             }
-            let started = std::time::Instant::now();
-            let done = k::compile_wanted(which, usize::MAX);
-            for c in &done {
-                out += &format!("{:<40.40} {} {:>8.2} s{}\n", c.name, &c.pipeline[..16], c.seconds, c.skipped.as_ref().map_or(String::new(), |s| format!("  skipped: {s}")));
+            let made = compile(&mut out);
+            #[cfg(target_os = "macos")]
+            {
+                use rerail_accel::gpu::kernels as k;
+                let which = if rest.iter().any(|a| a == "--all") { k::Which::All } else { k::Which::Last };
+                let started = std::time::Instant::now();
+                // Past `--within`, none (the next run's step compiles them).
+                let done = if until.is_some_and(|u| started >= u) { Vec::new() } else { k::compile_wanted(which, usize::MAX) };
+                for c in &done {
+                    out += &format!("{:<40.40} {} {:>8.2} s{}\n", c.name, &c.pipeline[..16], c.seconds, c.skipped.as_ref().map_or(String::new(), |s| format!("  skipped: {s}")));
+                }
+                let n = k::counts();
+                out += &format!(
+                    "{} wanted kernels in {:.2} s: front end {:.2} s, back end {:.2} s\n",
+                    done.iter().filter(|c| c.skipped.is_none()).count(),
+                    started.elapsed().as_secs_f64(),
+                    n.front_end_s,
+                    n.back_end_s
+                );
+                k::prune(k::max_bytes());
             }
-            let n = k::counts();
-            out += &format!(
-                "{} kernels in {:.2} s: front end {:.2} s, back end {:.2} s\n",
-                done.iter().filter(|c| c.skipped.is_none()).count(),
-                started.elapsed().as_secs_f64(),
-                n.front_end_s,
-                n.back_end_s
-            );
-            k::prune(k::max_bytes());
-            Ok(out)
+            store::prune(store::max_bytes());
+            match made.iter().find(|m| m.result.is_err()) {
+                Some(m) => Err(format!("{out}{}: {}", m.name, m.result.as_ref().err().map_or("", String::as_str))),
+                None => Ok(out),
+            }
         }
         Some("ship") => {
-            let dir = args.get(1).ok_or("kernels ship <dir> [--from <store dir>]")?;
-            let from = match args.iter().position(|a| a == "--from") {
-                Some(i) => std::path::PathBuf::from(args.get(i + 1).ok_or("--from requires a directory")?),
-                None => k::store_dir().ok_or("no store (RERAIL_METAL_KERNELS=off): name one with --from")?,
-            };
+            let dir = Path::new(args.get(1).ok_or("kernels ship <dir> [--from <store dir>] [--air]")?);
             let started = std::time::Instant::now();
-            for line in k::ship(Path::new(dir), &from, args.iter().any(|a| a == "--air"))? {
-                out += &line;
-                out += "\n";
+            // The device layer's forms: each fixed kernel's entries as its compile looked them up (in the store,
+            // or shipped already), by their own names under the backend's directory. Metal's device layer keeps
+            // none (its archives are below).
+            let made = compile(&mut out);
+            if let Some(m) = made.iter().find(|m| m.result.is_err()) {
+                return Err(format!("{out}{}: {}", m.name, m.result.as_ref().err().map_or("", String::as_str)));
             }
-            out += &format!("shipped into {dir} in {:.2} s\n", started.elapsed().as_secs_f64());
+            let mut shipped = 0;
+            for entry in made.iter().flat_map(|m| &m.entries) {
+                let (Some(name), Some(backend)) = (entry.file_name(), entry.parent().and_then(Path::file_name)) else { continue };
+                if !entry.is_file() {
+                    continue;
+                }
+                let to = dir.join(backend).join(name);
+                if to == *entry {
+                    continue;
+                }
+                std::fs::create_dir_all(dir.join(backend)).map_err(|e| format!("{}: {e}", dir.display()))?;
+                std::fs::copy(entry, &to).map_err(|e| format!("{} -> {}: {e}", entry.display(), to.display()))?;
+                shipped += 1;
+            }
+            out += &format!("{shipped} device-layer kernels shipped into {}\n", dir.display());
+            #[cfg(target_os = "macos")]
+            {
+                use rerail_accel::gpu::kernels as k;
+                let from = match args.iter().position(|a| a == "--from") {
+                    Some(i) => std::path::PathBuf::from(args.get(i + 1).ok_or("--from requires a directory")?),
+                    None => k::store_dir().ok_or("no store (RERAIL_METAL_KERNELS=off): name one with --from")?,
+                };
+                for line in k::ship(dir, &from, args.iter().any(|a| a == "--air"))? {
+                    out += &line;
+                    out += "\n";
+                }
+            }
+            out += &format!("shipped into {} in {:.2} s\n", dir.display(), started.elapsed().as_secs_f64());
             Ok(out)
         }
         Some("prune") => {
             let mb = match args.iter().position(|a| a == "--mb") {
-                Some(i) => args.get(i + 1).and_then(|v| v.parse::<u64>().ok()).ok_or("--mb takes a number")? << 20,
-                None => k::max_bytes(),
+                Some(i) => Some(args.get(i + 1).and_then(|v| v.parse::<u64>().ok()).ok_or("--mb takes a number")? << 20),
+                None => None,
             };
-            Ok(format!("{} archives removed\n", k::prune(mb)))
+            out += &format!("{} device-layer kernels removed\n", store::prune(mb.unwrap_or_else(store::max_bytes)));
+            #[cfg(target_os = "macos")]
+            {
+                use rerail_accel::gpu::kernels as k;
+                out += &format!("{} archives removed\n", k::prune(mb.unwrap_or_else(k::max_bytes)));
+            }
+            Ok(out)
         }
         Some(other) => Err(format!("kernels {other}: not a kernels command (list, compile, ship, prune)")),
     }
 }
 
+/// `upkeep [STORE...] [--cpu PCT] [--jobs LIST]`: runs every upkeep job that has work to its end now, idle machine
+/// or not (decision 0190): each store's collection, search-index backlog and SQLite file, and the cost
+/// statistics' store and model. `--cpu` is the share of one core the jobs average (the setting's default, 25);
+/// `--jobs` is `RERAIL_UPKEEP_JOBS`'s list. Prints each job's steps, wall and CPU.
+#[cfg(feature = "tape-cache")]
 fn upkeep_command(args: &[String]) -> Result<String, String> {
     use crate::content_store::ContentStore;
     use crate::content_store::upkeep::{Collect, SqliteFile, Tables};
@@ -1661,7 +2216,8 @@ fn capture_tapes_command(args: &[String]) -> Result<String, String> {
                         refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         continue;
                     };
-                    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned();
+                    // A document's path, with `/` on every OS.
+                    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
                     let mut record = Vec::with_capacity(rel.len() + source.len() + image.len() + 16);
                     record.extend_from_slice(&(rel.len() as u16).to_le_bytes());
                     record.extend_from_slice(rel.as_bytes());
@@ -1746,5 +2302,261 @@ mod settings_tests {
             let usage = run(&args).unwrap_err();
             assert!(usage.starts_with("usage: rerail-engine run-policies [--tool-calls <calls.json>]"), "{args:?}: {usage}");
         }
+    }
+}
+
+#[cfg(test)]
+mod git_revision_tests {
+    use super::*;
+
+    #[test]
+    fn a_nested_working_tree_batch_leaves_publication_to_its_caller() {
+        use super::super::logic::plan::corpus;
+        use crate::content_store::{ContentStore, analysis_scope::AnalysisRun};
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("work");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("a.py"), "x = 1\n").unwrap();
+        let rule = fixture.path().join("policy.rerail");
+        std::fs::write(&rule, ".language python\n.violation Seen(at: node) \"identifier\"\nSeen(n) :- kind(n, \"identifier\").\n").unwrap();
+        let path = fixture.path().join("store.sqlite");
+        let mut caller = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:outer", "outer").unwrap();
+        let report = corpus::with_tape_cache_path(&path, Some((root.clone(), caller.owner.clone())), || {
+            run_policies(&[rule], &root, &fixture.path().join("out"), &serde_json::Value::Null).unwrap()
+        });
+        assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let count = |pattern: &str| db.query_row("SELECT count(*) FROM analysis_scope_manifest WHERE scope GLOB ?1", [pattern], |r| r.get::<_, i64>(0)).unwrap();
+        // A run that could not publish says why in its cache warnings.
+        assert!(count("pending:*") > 0, "no pending rows: {}", report["cacheWarnings"]);
+        assert_eq!(count("cwd:*"), 0);
+        caller.finish(false).unwrap();
+        assert_eq!(count("*"), 0);
+    }
+
+    #[test]
+    fn revision_cli_reports_results_when_the_store_cannot_open() {
+        use super::super::logic::plan::corpus;
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("repo");
+        std::fs::create_dir(&root).unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+                .arg("-C").arg(&root).args(args).output().unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-q"]);
+        git(&["-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-qm", "selected commit"]);
+        let commit = git(&["rev-parse", "HEAD"]);
+        let policy = fixture.path().join("rule.rerail");
+        std::fs::write(&policy, r#"
+#include "git.rerail"
+.policy "offline-cache" revision 1
+git_object_request(r, c) :- git_source_commit(r, c).
+.violation Seen(at: span, text: symbol) "{text}"
+Seen(@place("commit", 1), subject) :- git_source_commit(r, c), git_subject(r, c, subject).
+"#).unwrap();
+        let store = fixture.path().join("corrupt.sqlite");
+        let corrupt = b"this is not a SQLite file";
+        std::fs::write(&store, corrupt).unwrap();
+        let options = serde_json::json!({"revision": "HEAD", "analysisScope": "review"});
+        corpus::with_tape_cache_path(&store, None, || {
+            for report in [
+                run_rr(&policy, &root, &fixture.path().join("one"), &options).unwrap(),
+                run_policies(std::slice::from_ref(&policy), &root, &fixture.path().join("batch"), &options).unwrap(),
+            ] {
+                assert_eq!(report["source"]["commit"], commit);
+                assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1, "{report}");
+                assert_eq!(report["diagnostics"][0]["message"], "selected commit");
+                assert!(report["cacheWarnings"][0].as_str().unwrap().contains("file is not a database"));
+            }
+            let out = fixture.path().join("logic");
+            logic_command(&[
+                policy.display().to_string(), root.display().to_string(), out.display().to_string(),
+                "--revision".to_owned(), "HEAD".to_owned(), "--analysis-scope".to_owned(), "review".to_owned(),
+            ]).unwrap();
+            assert_eq!(diagnostics(&out).unwrap()[0]["message"], "selected commit");
+        });
+        assert_eq!(std::fs::read(&store).unwrap(), corrupt);
+
+        let durable = fixture.path().join("durable.sqlite");
+        corpus::with_tape_cache_path(&durable, None, || {
+            let mut invocation = PolicyInvocation::begin(&root, Some("HEAD"), Some("review")).unwrap();
+            let (program, files) = read_policy(&policy).unwrap();
+            let attempts = std::cell::Cell::new(0);
+            let mut report = invocation.evaluate(|source| {
+                attempts.set(attempts.get() + 1);
+                let run = || run_program_checked(program.clone(), &files, source, &fixture.path().join("retry"), &serde_json::Value::Null);
+                if attempts.get() == 1 {
+                    git(&["-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "--allow-empty", "-qm", "new commit"]);
+                    std::fs::write(&policy, "replaced while the cache fails").unwrap();
+                    corpus::with_tape_cache_path(&store, None, run)
+                } else {
+                    assert!(corpus::tape_cache_path().is_none());
+                    run()
+                }
+            }).unwrap();
+            invocation.report(&mut report, true);
+            assert_eq!(attempts.get(), 2);
+            assert_eq!(report["source"]["commit"], commit);
+            assert_eq!(report["diagnostics"][0]["message"], "selected commit");
+            assert!(report["cacheWarnings"][0].as_str().unwrap().contains("file is not a database"));
+        });
+    }
+
+    #[test]
+    fn revision_readers_use_git_objects_for_settings_inputs_and_world_queries() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("repo");
+        std::fs::create_dir_all(root.join("allow")).unwrap();
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+                .arg("-C").arg(&root).args(args).output().unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(root.join("a.py"), "committed = 1\n").unwrap();
+        std::fs::write(root.join("rerail.env"), "mark = committed\n").unwrap();
+        std::fs::write(root.join("data/value.json"), r#"{"title":"from-git"}"#).unwrap();
+        std::fs::write(root.join("allow/one.txt"), "allowed\n").unwrap();
+        git(&["add", "a.py", "rerail.env", "data/value.json", "allow/one.txt"]);
+        git(&["-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "-qm", "source"]);
+        let commit = git(&["rev-parse", "HEAD"]);
+        std::fs::write(root.join("rerail.env"), "mark = local\n").unwrap();
+        std::fs::write(root.join("data/value.json"), r#"{"title":"local"}"#).unwrap();
+        std::fs::remove_file(root.join("a.py")).unwrap();
+        std::fs::remove_file(root.join("allow/one.txt")).unwrap();
+        std::fs::write(root.join("allow/local.txt"), "local\n").unwrap();
+        let policy = fixture.path().join("rule.rerail");
+        std::fs::write(&policy, r#"
+.policy "git-readers" revision 1
+.language python
+.decl title(value: symbol)
+.input title(IO=json, filename="data/value.json", path="/title")
+.decl allowed(path: symbol, line: number, text: symbol)
+.input allowed(IO=lines, dir="allow")
+.violation Seen(at: span, key: symbol, value: symbol) "{key}:{value}"
+Seen(@place("a.py", 1), "config", value) :- env("mark", value).
+Seen(@place("a.py", 1), "json", value) :- title(value).
+Seen(@place("a.py", 1), "dirinput", value) :- allowed("allow/one.txt", 1, value).
+Seen(@place("a.py", 1), "line", value) :- file_line("allow/one.txt", 1, value).
+Seen(@place("a.py", 1), "listing", value) :- dir_entry("allow", value, 0).
+Seen(@place("a.py", 1), "source", value) :- doc(d, "a.py", _), split_line(d, 1, value).
+"#).unwrap();
+        let options = serde_json::json!({"revision": commit, "analysisScope": "review"});
+        let report = run_rr(&policy, &root, &fixture.path().join("out"), &options).unwrap();
+        let mut messages: Vec<_> = report["diagnostics"].as_array().unwrap().iter()
+            .map(|row| row["message"].as_str().unwrap()).collect();
+        messages.sort();
+        assert_eq!(messages, ["config:committed", "dirinput:allowed", "json:from-git", "line:allowed", "listing:one.txt", "source:committed = 1"]);
+        let repo = gix::discover(&root).unwrap();
+        assert!(!repo.common_dir().join("rerail-object-views").exists());
+        assert!(!root.join("a.py").exists());
+    }
+
+    #[test]
+    fn revision_cli_applies_current_policy_to_committed_files_and_metadata() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("repo");
+        std::fs::create_dir(&root).unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+                .arg("-C").arg(&root).args(args).output().unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(root.join("a.py"), "committed = 1\n").unwrap();
+        let policy = root.join("rule.rerail");
+        std::fs::write(&policy, r#"
+.policy "historical-policy" revision 1
+.language python
+.violation Old(at: span) "historical policy ran"
+Old(@place("a.py", 1)).
+"#).unwrap();
+        git(&["add", "a.py", "rule.rerail"]);
+        git(&["-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "-qm", "snapshot message"]);
+        let commit = git(&["rev-parse", "HEAD"]);
+        let tree = git(&["rev-parse", "HEAD^{tree}"]);
+        git(&["-c", "user.name=Other", "-c", "user.email=other@example.com", "commit", "--allow-empty", "-qm", "today"]);
+        std::fs::write(root.join("a.py"), "dirty = 2\n").unwrap();
+        std::fs::write(root.join("untracked.py"), "untracked = 3\n").unwrap();
+        std::fs::write(&policy, r#"
+#include "git.rerail"
+.policy "git-snapshot" revision 1
+.language python
+git_revision_request(r, "HEAD") :- git_root_repo(r).
+git_object_request(r, h) :- git_revision(r, "HEAD", h).
+git_object_request(r, p) :- git_parent(r, _, _, p).
+.violation Seen(at: span, text: symbol, message: symbol, email: symbol, head: symbol) "{text}"
+Seen(@place(p, l), text, message, email, head) :- doc(d, p, _), split_line(d, l, text),
+    git_source_commit(r, c), git_message(r, c, message), git_author(r, c, _, email, _, _),
+    git_revision(r, "HEAD", h), git_parent(r, h, 0, c), git_subject(r, h, head).
+"#).unwrap();
+        let args = vec!["run-rr".to_owned(), policy.display().to_string(), root.display().to_string(),
+            fixture.path().join("commit-out").display().to_string(), "--analysis-scope".to_owned(), "review".to_owned(), "--revision".to_owned(), commit];
+        let result: serde_json::Value = serde_json::from_str(&cli_in(&args, &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new()).0.unwrap()).unwrap();
+        let diagnostics = result["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 1, "{result}");
+        assert_eq!(diagnostics[0]["code"], "Seen");
+        assert_eq!(diagnostics[0]["path"], "a.py");
+        assert_eq!(diagnostics[0]["parameters"]["text"], "committed = 1");
+        assert_eq!(diagnostics[0]["parameters"]["message"], "snapshot message\n");
+        assert_eq!(diagnostics[0]["parameters"]["email"], "example@example.com");
+        assert_eq!(diagnostics[0]["parameters"]["head"], "today");
+        assert_eq!(result["source"]["tree"], tree);
+        std::fs::write(&policy, r#"
+.policy "git-tree" revision 1
+.language python
+.violation Seen(at: span, text: symbol, tree: symbol) "{text}"
+Seen(@place(p, l), text, tree) :- doc(d, p, _), split_line(d, l, text), git_rev("tree", tree).
+"#).unwrap();
+        let result = run_rr(&policy, &root, &fixture.path().join("tree-out"), &serde_json::json!({"revision": tree, "analysisScope": "review"})).unwrap();
+        let diagnostics = result["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 1, "{result}");
+        assert_eq!(diagnostics[0]["parameters"]["text"], "committed = 1");
+        assert_eq!(diagnostics[0]["parameters"]["tree"], tree);
+        assert_eq!(std::fs::read_to_string(root.join("a.py")).unwrap(), "dirty = 2\n");
+        assert!(root.join("untracked.py").exists());
+        let mut missing = args.clone();
+        missing.pop();
+        assert!(cli_in(&missing, &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new()).0.unwrap_err().contains("--revision requires"));
+    }
+
+    #[test]
+    fn revision_cli_reads_commit_metadata_without_its_tree() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+                .current_dir(root).args(args).output().unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-q"]);
+        let object = fixture.path().join("commit-without-tree");
+        std::fs::write(&object, format!("tree {}\nauthor Test <test@example.com> 100 +0000\ncommitter Test <test@example.com> 100 +0000\n\nmessage without a tree\n", "1".repeat(40))).unwrap();
+        let commit = git(&["hash-object", "-t", "commit", "-w", object.to_str().unwrap()]);
+        let policy = root.join("metadata.rerail");
+        std::fs::write(&policy, r#"
+#include "git.rerail"
+.language typescript
+.decl subject(s: symbol)
+git_object_request(r, c) :- git_source_commit(r, c).
+subject(s) :- git_source_commit(r, c), git_subject(r, c, s).
+.output subject
+"#).unwrap();
+        let output = fixture.path().join("metadata-out");
+        cli_in(&["logic".into(), policy.display().to_string(), root.display().to_string(), output.display().to_string(),
+            "--revision".into(), commit, "--analysis-scope".into(), "review".into()], &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new()).0.unwrap();
+        let facts = super::super::logic::plan::output::Outputs::open(&output).unwrap();
+        assert_eq!(facts.rows("subject")[0].get(0).text(), Some("message without a tree"));
     }
 }

@@ -217,7 +217,7 @@ impl Lines {
         let b = src.as_bytes();
         let mut start = 0;
         let mut one = |i: usize, next: usize| {
-            let text_end = if !python && i > 0 && b[i - 1] == b'\r' && i - 1 >= start { i - 1 } else { i };
+            let text_end = if !python && i > 0 && b[i - 1] == b'\r' && i > start { i - 1 } else { i };
             each(text_end, next);
             start = next;
         };
@@ -828,7 +828,7 @@ impl CoreRows {
                 self.structural_after.push([n, string(between(end, f.source.len() as u32)) as i64]);
             }
             for (k, &c) in children.iter().enumerate() {
-                let local_c = p.local_of_node(c as u32);
+                let local_c = p.local_of_node(c);
                 if local_c == crate::code_rule_dsl::facts::core::NONE {
                     continue;
                 }
@@ -903,7 +903,7 @@ impl CoreRows {
                     if wants_part_starts {
                         // `at` is a node id: its low bits are a preorder index only under preorder ids.
                         let Some(at_local) = p.local_of(at as u32) else { continue };
-                        let absolute = f.start(p.node(at_local as u32)) + offset as u32;
+                        let absolute = f.start(p.node(at_local)) + offset as u32;
                         let (line, _, col) = p.extra.as_ref().expect("core spans").lines.place([absolute, absolute]);
                         self.str_part_start.push([n, i as i64, i64::from(line), i64::from(col)]);
                     }
@@ -1048,7 +1048,7 @@ impl CoreRows {
                 let Some(n) = node_of(&m) else { continue };
                 let captures: Option<Vec<(i64, i64)>> = names
                     .iter()
-                    .map(|name| m.get_env().get_match(name).and_then(|c| node_of(c)).map(|c| (string(name) as i64, c)))
+                    .map(|name| m.get_env().get_match(name).and_then(node_of).map(|c| (string(name) as i64, c)))
                     .collect();
                 let Some(captures) = captures else { continue };
                 self.ast_match.push([pat, n, empty, n]);

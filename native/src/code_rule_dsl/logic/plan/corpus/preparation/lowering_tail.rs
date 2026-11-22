@@ -95,11 +95,10 @@ impl ProgramPass for WidenCyclicContexts {
                 let mut types: BTreeMap<Slot, &str> = BTreeMap::new();
                 let mut head_vars: BTreeMap<String, Slot> = BTreeMap::new();
                 for (k, t) in rule.head().args().enumerate() {
-                    if let Some(s) = t.var() {
-                        if let Some((_, ty)) = cols.as_ref().and_then(|c| c.get(k)) {
+                    if let Some(s) = t.var()
+                        && let Some((_, ty)) = cols.as_ref().and_then(|c| c.get(k)) {
                             types.insert(s, ty.as_str());
                         }
-                    }
                     let mut vs = VarSet::new();
                     crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut vs);
                     for s in vs.iter() {
@@ -435,7 +434,7 @@ fn write_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
     use crate::code_rule_dsl::logic::program_image::build::t_of;
     let mut rb = b.rule().source(r.id()).head_from(input, r, r.head());
     if let Some((demand, positions)) = p.prefix.get(&r.id()) {
-        let args: Vec<T<'_>> = r.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(input, r, t)).collect();
+        let args: Vec<T<'_>> = r.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(r, t)).collect();
         rb = rb.atom(demand.as_str(), &args);
     }
     for l in r.body() {
@@ -444,7 +443,7 @@ fn write_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
         }
         rb = match (anti.contains(&l.node()), l.view()) {
             (true, L::Agg { atom, .. }) => {
-                let args: Vec<T<'_>> = atom.args().map(|t| t_of(input, r, t)).collect();
+                let args: Vec<T<'_>> = atom.args().map(|t| t_of(r, t)).collect();
                 rb.atom_with(input.rel_name(atom.rel()), &args, true, atom.gated())
             }
             _ => rb.lit(input, r, l),
@@ -458,7 +457,7 @@ fn write_demand(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
     use crate::code_rule_dsl::logic::program_image::build::t_of;
     let src = input.rule(d.src).expect("a rule of the input");
     let L::Agg { atom, .. } = lit_at(input, d.src, d.agg).view() else { return Err("a demand's aggregate".into()) };
-    let args: Vec<T<'_>> = atom.args().enumerate().filter(|(k, _)| d.positions.contains(k)).map(|(_, t)| t_of(input, src, t)).collect();
+    let args: Vec<T<'_>> = atom.args().enumerate().filter(|(k, _)| d.positions.contains(k)).map(|(_, t)| t_of(src, t)).collect();
     let mut rb = b.rule().source(d.src).head(d.demand.as_str(), &args);
     for &i in &d.body {
         rb = match i {
@@ -466,7 +465,7 @@ fn write_demand(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
             Item::Placed(r) => {
                 let rule = input.rule(r).expect("a rule");
                 let (demand, positions) = &p.prefix[&r];
-                let args: Vec<T<'_>> = rule.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(input, rule, t)).collect();
+                let args: Vec<T<'_>> = rule.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(rule, t)).collect();
                 rb.atom(demand.as_str(), &args)
             }
         };
@@ -894,7 +893,7 @@ impl ProgramPass for OrderNodes {
             let kk = ord(*k);
             let mut head_args: Vec<T<'_>> = args.iter().map(|s| T::VarAtom(r.var(*s))).collect();
             head_args.push(T::Var(&kk));
-            let atom_args: Vec<T<'_>> = atom.args().map(|t| t_of(&input, r, t)).collect();
+            let atom_args: Vec<T<'_>> = atom.args().map(|t| t_of(r, t)).collect();
             b.rule()
                 .source(*id)
                 .head(names[*helper].as_str(), &head_args)
@@ -1027,6 +1026,7 @@ impl ProgramPass for ScopeGlobs {
 /// - `rr_anc_<s>(n, a)`, every strict ancestor a of n in s (`inside`): the chain of nearest ones;
 /// - `rr_desc_<s>(n, a)`, n in s and a any strict ancestor of it (`has`): up from each member;
 /// - `rr_above_<s>(a)`, a has a member strictly below it (`has(a, _, s)`).
+///
 /// (A set of nodes is read as climbs where it is given, `node_axis`.)
 pub struct KindSets {
     pub sets: BTreeSet<String>,
@@ -1240,7 +1240,7 @@ impl ProgramPass for KindSets {
                             (Some((n, a)), _) => vec![T::VarAtom(r.var(n)), T::VarAtom(r.var(a))],
                             (None, L::Atom(a)) => {
                                 let xs: Vec<TermRef<'_>> = a.args().collect();
-                                x.args.iter().map(|&k| t_of(&input, r, xs[k])).collect()
+                                x.args.iter().map(|&k| t_of(r, xs[k])).collect()
                             }
                             _ => return Err("an axis atom".into()),
                         };
@@ -1498,6 +1498,7 @@ impl ProgramPass for Findings {
                 L::Atom(a) => crate::code_rule_dsl::logic::rr::lower::TOOL_CALLS.into_iter().find(|t| v.rel_name(a.rel()) == *t),
                 _ => None,
             }),
+            heads: v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect(),
             reads_guests: {
                 let reads = |v: &Version| {
                     v.rules().flat_map(|r| r.body()).any(|l| match l.view() {
@@ -1528,7 +1529,7 @@ impl ProgramPass for Findings {
                 b.keep(&input, r);
                 continue;
             }
-            let mut args: Vec<T<'_>> = r.head().args().map(|t| t_of(&input, r, t)).collect();
+            let mut args: Vec<T<'_>> = r.head().args().map(|t| t_of(r, t)).collect();
             args.push(T::Int(0));
             let mut rb = b.rule().source(r.id()).head("violation", &args);
             for l in r.body() {
@@ -1675,58 +1676,4 @@ impl ProgramPass for Declared {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::code_rule_dsl::logic::program_image::{build::Builder, manager::Pipeline};
-
-    /// `Declared` on a version refuses a read of a relation not declared, and an atom with other columns than its
-    /// relation declares; it passes a program whose reads are declared.
-    #[test]
-    fn declared_on_a_version_refuses_undeclared_reads() {
-        use crate::code_rule_dsl::logic::program_image::T;
-        let text = ".decl e(x: number)\n.input e\n.decl r(x: number)\nr(x) :- e(x).\n.output r\n";
-        let check = |rel: &str, args: usize| {
-            let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
-            let mut b = Builder::on(&v);
-            b.rule().head("r", &[T::Var("x")]).atom(rel, &vec![T::Var("x"); args]).finish().unwrap();
-            let (v, _) = b.finish().unwrap();
-            let mut p = Pipeline::new("test", v);
-            p.program(&mut super::Declared);
-            p.finish().map(|_| ()).map_err(|e| e.to_string())
-        };
-        let got = check("nowhere", 1);
-        assert!(got.as_ref().err().is_some_and(|e| e.contains("nowhere")), "{got:?}");
-        let got = check("e", 2);
-        assert!(got.as_ref().err().is_some_and(|e| e.contains("relation e is declared with 1 columns and read with 2")), "{got:?}");
-        let got = check("e", 1);
-        assert!(got.is_ok(), "{got:?}");
-    }
-
-    /// `BuiltinsOut` on a version: the built-ins' and the rewritten relations' declarations and inputs go, and `within`, read by a rule, is declared and an input. (On a modular text's path
-    /// the unseeding hides this, since the library declares every built-in: so it is checked here, on its own.)
-    #[test]
-    fn builtins_out_on_a_version_takes_the_builtins_out() {
-        let text = ".decl e(x: number)\n.input e\n.decl r(x: number)\nr(x) :- e(x).\n.output r\n";
-        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
-        let mut b = Builder::on(&v);
-        for name in ["nearest", "earlier", "precedes"] {
-            crate::code_rule_dsl::logic::program_image::fields::FieldsMut::declare(&mut b.fields(), name, &[("x", "number")]);
-            crate::code_rule_dsl::logic::program_image::fields::FieldsMut::add_input(&mut b.fields(), name);
-        }
-        // A rule reading `within`, undeclared.
-        {
-            use crate::code_rule_dsl::logic::program_image::T;
-            b.rule().head("r", &[T::Var("x")]).atom("within", &[T::Var("x"), T::Wild]).finish().unwrap();
-        }
-        let (v, _) = b.finish().unwrap();
-        let rewritten = vec!["precedes".to_owned()];
-        let mut p = Pipeline::new("test", v);
-        p.program(&mut super::BuiltinsOut { rewritten: rewritten.clone() });
-        let (out, _) = p.finish().unwrap();
-        let inputs = out.input_names();
-        for gone in ["nearest", "earlier", "precedes"] {
-            assert!(!out.declares(gone) && !inputs.iter().any(|i| i == gone), "{gone}: {inputs:?}\n{}", out.show());
-        }
-        assert!(out.declares("within") && inputs.iter().any(|i| i == "within"), "{inputs:?}\n{}", out.show());
-    }
-}
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)

@@ -96,13 +96,48 @@ Each has its test before the code that meets it.
   batch's index of its first column), then the old documents' rows, read where they lie. The table is written with
   the digests it is the documents of, when one changes. On the way: a gone file had no `Minus` on the kept route
   (its old document was never made).
-- **Not yet:** the memo entries still keep base rows (copy 2, the rest of step 4); a session (0077) still digests a
-  base relation by its rows (`retain::kept_source`) and holds no corpus batch from run to run.
+- **Step 4, the memo entries' base rows** (2026-11-19). No entry keeps a base relation's rows, and none needs them
+  to be a hit: the memo writer's path fails a run whose entry would keep one (R4's guard). The keeper (0096 §3)
+  counts the exports alone. A base relation's statistics are kept beside the documents' table (`#base-stats/<rel>`),
+  with the digest of the rows they count, read before the first wave with the table in every run that keeps one (a
+  run inside another's waves too). Kept of these rows, they stand; kept of the table's documents, the changed
+  documents' old rows are counted out and their new ones in, read where they lie (`RelStats::documents_read`); else
+  they are counted off the corpus batch. A session's input delta of a base relation no longer reads entries: it is
+  the changed documents' versions, else the session's kept rows by document.
+- **Step 4 under 0431 §8, a partial hit's tape values** (2026-11-20, the hub merge). The hub's partial hit read a
+  guest's base rows from its entry (`has_base`: an entry without them was a miss). Here no entry keeps them. An
+  entry keeps the requests its file's fixpoint answered with tape values instead: each `(at, grammar)`, in order
+  (`memo::VALUES`, phased-facts' 1ba2536e5e, which a full hit's corpus batch makes them from). A chunk of partial
+  hits whose cone sees guests (`guests_seen`) admits them before its run, as far as the cone sees them. It also
+  admits those its own rules ask. A cone that reads a relation hiding widened to annotations (`FoldOwn`) and asks
+  none itself then reads their rows, as the full run did (`a_partial_hit_makes_only_the_guests_its_cone_can_see`,
+  the `ids` edit). The values are made again from their texts' shas (each parsed at most once a run), never read
+  from the entry. A partial entry keeps its old requests first and the cone's new ones after, so the next edit's
+  cone sees them all.
+- **Step 5, R6** (2026-11-19, the 50 data-layer files, against 0439's runs): 589 outputs equal across the edit,
+  the warm run after it and the edited tree's cold run; the chain's values 17.9 MB to 10.6 MB, no base relation's
+  granule left; instructions cold 198.9 G to 212.3 G, the edit 37.3 G to 35.2 G; peak memory cold 888 MB to 724 MB.
+  Two costs it found are fixed: the old version (`Before`) answered no lookup, so every stratum hashed all its rows,
+  and the corpus batch made what the cross part does not read (tree digests). Kept after an edit is still the cross
+  part's `kind`, a view of `node` the maintain mode derives (work queue Q421, Q287 on phased-facts, as before this decision).
+- **A session** (2026-11-20). A session's run digests its base relations by their documents as every run does
+  (`kept_source_digested`, the corpus batch's digest). It holds its corpus batch from run to run
+  (`session::HeldCorpus`, under the maintained cross program's key, as its kept part is): each path's documents, with
+  the content and key they were made from, the documents' digest, and the base statistics. An edit makes the changed
+  files' documents alone and takes the others' as held; the held ones of the changed paths are the base relations'
+  old version, so their `Before`, `Plus` and `Minus` and the statistics' patch come from them, as the kept route's
+  come from the old sources and tapes. Statistics of unchanged rows are taken as kept. A batch with a document of no
+  known content is not held, and the next run makes every document. Test:
+  `cross_views_tests::a_session_holds_its_corpus_batch_and_keeps_its_base_statistics` (first run: 4 documents
+  made, counted; the next: none made, kept; an edit: 1 made, patched; outputs a fresh run's).
+- **Not yet:** a document is not yet made when first read: the corpus batch makes every document (on the 50 files'
+  edit 0.45 s, most of what the batch adds over the memo's base rows); a session makes only the changed files'.
 
 ## Open
 
 - A run that lists its files inside another run's waves (a phase's, `phases::sources`) cannot read its changed
-  files' old sources there (0104): what reads a base relation in it runs again after an edit. A read of the old
+  files' old sources there (0104): what reads a base relation in it runs again after an edit, and its base
+  relations' statistics are counted again. A read of the old
   tapes and sources that is no SQL (as the kept blocks are bound) would maintain it.
 
 - A run of many files holds every file's tape mapped for the cross part. Their bytes are the tape store's, mapped,

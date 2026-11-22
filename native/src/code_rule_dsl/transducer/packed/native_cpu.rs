@@ -289,7 +289,7 @@ fn compile_failed(what: &str, error: impl std::fmt::Debug) -> ! {
 }
 
 pub fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskShell, Error> {
-    let builder = JITBuilder::new(default_libcall_names()).unwrap_or_else(|e| compile_failed("the JIT builder", e));
+    let builder = JITBuilder::with_flags(&rerail_clif::jit::flags(&[]), default_libcall_names()).unwrap_or_else(|e| compile_failed("the JIT builder", e));
     let mut module = JITModule::new(builder);
     let mut signature = module.make_signature();
     signature
@@ -2601,7 +2601,7 @@ pub(super) fn execute_batch_packed_with_result_limits(
     )
 }
 
-#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
 pub fn execute_terminal_reference_with_work_limit(
     programs: &[Program],
     files: &[TapeDoc],
@@ -2663,10 +2663,124 @@ fn execute_batch_packed_once(
         return Ok(PackedExecution::new(batch, PackedResultPage::empty()));
     }
     let totals = crate::code_rule_dsl::prof::time("jit.assign", || batch.assign_workspace_with_result_limits(programs, result_limits))?;
+    let mut prepared = prepare_run(programs, files, &batch, totals, work_limit)?;
+    let task_outputs = run_task_spans(&batch, &mut prepared.contexts, &prepared.entries)?;
+    finish_batch(batch, prepared, task_outputs)
+}
+
+/// A task's outputs copied out of its arenas, and the batch's once compacted.
+struct TaskPackedOutput {
+    results: Vec<ResultRecord>,
+    captures: Vec<FinalCaptureRecord>,
+    properties: Vec<PropertyRecord>,
+    bytes: Vec<u8>,
+}
+
+type FileTape = (*const u8, rerail_clif::view::TapeView, Arc<Vec<crate::code_rule_dsl::tape::resident::DeviceCode>>);
+
+struct PathRegions {
+    pending: DemandZeroRegion<PendingRecord>,
+    captures: DemandZeroRegion<LinkRecord>,
+    cursors: DemandZeroRegion<LinkRecord>,
+    repeats: DemandZeroRegion<RepeatRecord>,
+}
+
+impl PathRegions {
+    fn allocate(totals: super::packed_workspace::WorkspaceTotals) -> Result<Self, Error> {
+        Ok(Self {
+            pending: DemandZeroRegion::<PendingRecord>::new(totals.pending as usize)?,
+            captures: DemandZeroRegion::<LinkRecord>::new(totals.captures as usize)?,
+            cursors: DemandZeroRegion::<LinkRecord>::new(totals.cursors as usize)?,
+            repeats: DemandZeroRegion::<RepeatRecord>::new(totals.repeats as usize)?,
+        })
+    }
+}
+
+/// The arenas of a task's query, queued, greedy and value states.
+struct StateRegions {
+    query_buckets: DemandZeroRegion<QueryBucketRecord>,
+    query_members: DemandZeroRegion<QueryMemberRecord>,
+    queued_states: DemandZeroRegion<QueuedStateRecord>,
+    greedy_entries: DemandZeroRegion<GreedyEntryRecord>,
+    value_work: DemandZeroRegion<u32>,
+}
+
+impl StateRegions {
+    fn allocate(totals: super::packed_workspace::WorkspaceTotals) -> Result<Self, Error> {
+        Ok(Self {
+            query_buckets: DemandZeroRegion::<QueryBucketRecord>::new(totals.query_states as usize)?,
+            query_members: DemandZeroRegion::<QueryMemberRecord>::new(totals.query_members as usize)?,
+            queued_states: DemandZeroRegion::<QueuedStateRecord>::new(totals.queued_states as usize)?,
+            greedy_entries: DemandZeroRegion::<GreedyEntryRecord>::new(totals.greedy_entries as usize)?,
+            value_work: DemandZeroRegion::<u32>::new(totals.value_states as usize)?,
+        })
+    }
+}
+
+/// The arenas the batch's statuses and outputs are written to.
+struct OutputRegions {
+    results: DemandZeroRegion<ResultRecord>,
+    statuses: DemandZeroRegion<TaskStatus>,
+    final_captures: DemandZeroRegion<FinalCaptureRecord>,
+    properties: DemandZeroRegion<PropertyRecord>,
+    output_bytes: DemandZeroRegion<u8>,
+}
+
+impl OutputRegions {
+    fn allocate(batch: &PackedBatch, totals: super::packed_workspace::WorkspaceTotals, result_records: u32) -> Result<Self, Error> {
+        Ok(Self {
+            results: DemandZeroRegion::<ResultRecord>::new(result_records as usize)?,
+            statuses: DemandZeroRegion::<TaskStatus>::new(batch.tasks.len())?,
+            final_captures: DemandZeroRegion::<FinalCaptureRecord>::new(totals.output_captures as usize)?,
+            properties: DemandZeroRegion::<PropertyRecord>::new(totals.properties as usize)?,
+            output_bytes: DemandZeroRegion::<u8>::new(batch.header.workspace_byte_count as usize)?,
+        })
+    }
+}
+
+struct BatchRegions {
+    paths: PathRegions,
+    states: StateRegions,
+    outputs: OutputRegions,
+}
+
+impl BatchRegions {
+    fn allocate(batch: &PackedBatch, totals: super::packed_workspace::WorkspaceTotals) -> Result<Self, Error> {
+        let paths = PathRegions::allocate(totals)?;
+        let states = StateRegions::allocate(totals)?;
+        let result_records = totals
+            .candidates
+            .checked_add(totals.results)
+            .ok_or(Error::BackendCapacity)?;
+        let outputs = OutputRegions::allocate(batch, totals, result_records)?;
+        Ok(Self { paths, states, outputs })
+    }
+}
+
+/// A batch ready to run, and what its contexts point into.
+struct PreparedRun {
+    entries: Vec<NativeTaskEntry>,
+    contexts: Vec<(usize, NativeTaskContext)>,
+    _tapes: Vec<FileTape>,
+    /// The 16z tapes' readers, whose views the contexts point at: held until the tasks have run.
+    _readers: Readers,
+    workspace: BatchRegions,
+    _compiled: Vec<Arc<CompiledStraightLine>>,
+    allocation_elapsed: std::time::Duration,
+    execution_started: std::time::Instant,
+}
+
+fn prepare_run(
+    programs: &[Program],
+    files: &[TapeDoc],
+    batch: &PackedBatch,
+    totals: super::packed_workspace::WorkspaceTotals,
+    work_limit: u32,
+) -> Result<PreparedRun, Error> {
     let setup = crate::code_rule_dsl::prof::Stage::start("jit.setup");
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_PACKED_BATCH_PROFILE backend=cpu programs={} tasks={} workspaceBytes={}",
+            "RERAIL_PACKED_BATCH_PROFILE backend=cpu programs={} tasks={} workspaceBytes={}",
             programs.len(),
             batch.tasks.len(),
             batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
@@ -2682,29 +2796,22 @@ fn execute_batch_packed_once(
     }))?;
     let allocation_started = std::time::Instant::now();
     let regions = crate::code_rule_dsl::prof::Stage::start("jit.regions");
-    let mut pending = DemandZeroRegion::<PendingRecord>::new(totals.pending as usize)?;
-    let mut captures = DemandZeroRegion::<LinkRecord>::new(totals.captures as usize)?;
-    let mut cursors = DemandZeroRegion::<LinkRecord>::new(totals.cursors as usize)?;
-    let mut repeats = DemandZeroRegion::<RepeatRecord>::new(totals.repeats as usize)?;
-    let mut query_buckets =
-        DemandZeroRegion::<QueryBucketRecord>::new(totals.query_states as usize)?;
-    let mut query_members =
-        DemandZeroRegion::<QueryMemberRecord>::new(totals.query_members as usize)?;
-    let mut queued_states =
-        DemandZeroRegion::<QueuedStateRecord>::new(totals.queued_states as usize)?;
-    let mut greedy_entries =
-        DemandZeroRegion::<GreedyEntryRecord>::new(totals.greedy_entries as usize)?;
-    let mut value_work = DemandZeroRegion::<u32>::new(totals.value_states as usize)?;
-    let result_records = totals
-        .candidates
-        .checked_add(totals.results)
-        .ok_or(Error::BackendCapacity)?;
-    let mut results = DemandZeroRegion::<ResultRecord>::new(result_records as usize)?;
-    let mut statuses = DemandZeroRegion::<TaskStatus>::new(batch.tasks.len())?;
-    let mut final_captures =
-        DemandZeroRegion::<FinalCaptureRecord>::new(totals.output_captures as usize)?;
-    let mut properties = DemandZeroRegion::<PropertyRecord>::new(totals.properties as usize)?;
-    let mut output_bytes = DemandZeroRegion::<u8>::new(batch.header.workspace_byte_count as usize)?;
+    let mut workspace = BatchRegions::allocate(batch, totals)?;
+    let evaluation_starts = evaluation_arena_starts(batch)?;
+    drop(regions);
+    let (tapes, readers, contexts) = build_task_contexts(files, batch, &mut workspace, &evaluation_starts, totals, work_limit)?;
+    let allocation_elapsed = allocation_started.elapsed();
+    let entries = compiled
+        .iter()
+        .map(|compiled| compiled.entry)
+        .collect::<Vec<_>>();
+    let execution_started = std::time::Instant::now();
+    drop(setup);
+    Ok(PreparedRun { entries, contexts, _tapes: tapes, _readers: readers, workspace, _compiled: compiled, allocation_elapsed, execution_started })
+}
+
+/// Each evaluation's first record in each arena: the evaluations' quotas laid end to end.
+fn evaluation_arena_starts(batch: &PackedBatch) -> Result<Vec<[u32; ARENA_KIND_COUNT]>, Error> {
     let mut evaluation_starts = vec![[0_u32; ARENA_KIND_COUNT]; batch.evaluations.len()];
     let mut arena_cursors = [0_u32; ARENA_KIND_COUNT];
     for (evaluation_index, evaluation) in batch.evaluations.iter().enumerate() {
@@ -2715,10 +2822,12 @@ fn execute_batch_packed_once(
                 .ok_or(Error::BackendCapacity)?;
         }
     }
-    drop(regions);
-    let _contexts = crate::code_rule_dsl::prof::Stage::start("jit.contexts");
-    // Each file's tape where it is held, the view its reads take, and its codes (decision 0310); a table its files
-    // share (format 16's: its language's) made once.
+    Ok(evaluation_starts)
+}
+
+/// Each file's tape where it is held, the view its reads take, and its codes (decision 0310); a table its files
+/// share (format 16's: its language's) made once.
+fn file_tapes(files: &[TapeDoc], batch: &PackedBatch) -> Result<Vec<FileTape>, Error> {
     let mut tables: std::collections::HashMap<usize, Arc<Vec<crate::code_rule_dsl::tape::resident::DeviceCode>>> = std::collections::HashMap::new();
     let mut tapes = Vec::with_capacity(files.len());
     for (doc, file) in files.iter().zip(&batch.files) {
@@ -2735,10 +2844,34 @@ fn execute_batch_packed_once(
         };
         tapes.push((bytes.as_ptr(), view, codes));
     }
+    Ok(tapes)
+}
+
+/// A 16z tape's reader for each (evaluation, file) that reads it (0353 step 4b).
+type Readers = std::collections::HashMap<(u32, u32), rerail_clif::view::Reader>;
+
+/// Each task's context, over its evaluation's share of `workspace`; the contexts point into the tapes and the readers
+/// returned with them, which the caller holds while the tasks run (roll-up 35 dropped the readers here, as the
+/// function returned: every 16z run read freed memory).
+fn build_task_contexts(
+    files: &[TapeDoc],
+    batch: &PackedBatch,
+    workspace: &mut BatchRegions,
+    evaluation_starts: &[[u32; ARENA_KIND_COUNT]],
+    totals: super::packed_workspace::WorkspaceTotals,
+    work_limit: u32,
+) -> Result<(Vec<FileTape>, Readers, Vec<(usize, NativeTaskContext)>), Error> {
+    let _contexts = crate::code_rule_dsl::prof::Stage::start("jit.contexts");
+    let BatchRegions {
+        paths: PathRegions { pending, captures, cursors, repeats },
+        states: StateRegions { query_buckets, query_members, queued_states, greedy_entries, value_work },
+        outputs: OutputRegions { results, statuses, final_captures, properties, output_bytes },
+    } = workspace;
+    let tapes = file_tapes(files, batch)?;
     let node_count = batch.files.iter().map(|file| file.node_count).sum::<u32>();
     // A 16z tape's reader for each evaluation that reads it (0353 step 4b): its reads decode a block into the
     // reader's slots, and an evaluation's tasks run on one worker, in order.
-    let mut readers: std::collections::HashMap<(u32, u32), rerail_clif::view::Reader> = std::collections::HashMap::new();
+    let mut readers = Readers::new();
     let mut contexts = Vec::with_capacity(batch.tasks.len());
 
     for (task_index, task) in batch.tasks.iter().enumerate() {
@@ -2875,236 +3008,324 @@ fn execute_batch_packed_once(
         contexts.push((task.program as usize, context));
     }
     drop(_contexts);
-    let allocation_elapsed = allocation_started.elapsed();
-    let entries = compiled
-        .iter()
-        .map(|compiled| compiled.entry)
-        .collect::<Vec<_>>();
-    struct TaskPackedOutput {
-        results: Vec<ResultRecord>,
-        captures: Vec<FinalCaptureRecord>,
-        properties: Vec<PropertyRecord>,
-        bytes: Vec<u8>,
+    Ok((tapes, readers, contexts))
+}
+
+fn evaluation_spans<'a>(
+    batch: &PackedBatch,
+    contexts: &'a mut [(usize, NativeTaskContext)],
+) -> Result<Vec<&'a mut [(usize, NativeTaskContext)]>, Error> {
+    let mut spans = Vec::with_capacity(batch.evaluations.len());
+    let mut rest = contexts;
+    let mut offset = 0_usize;
+    for evaluation in &batch.evaluations {
+        let (start, count) = (evaluation.task_start as usize, evaluation.task_count as usize);
+        if start != offset || count > rest.len() {
+            return Err(Error::BackendFailure);
+        }
+        let (head, tail) = std::mem::take(&mut rest).split_at_mut(count);
+        spans.push(head);
+        rest = tail;
+        offset += count;
     }
-    let execution_started = std::time::Instant::now();
-    drop(setup);
+    if !rest.is_empty() {
+        return Err(Error::BackendFailure);
+    }
+    Ok(spans)
+}
+
+fn run_task_spans(
+    batch: &PackedBatch,
+    contexts: &mut [(usize, NativeTaskContext)],
+    entries: &[NativeTaskEntry],
+) -> Result<Vec<TaskPackedOutput>, Error> {
     let run = crate::code_rule_dsl::prof::Stage::start("jit.run");
     // An evaluation's tasks share its arenas, so they run in order; its tasks are contiguous
     // (`plan_shared_workspace`), so the evaluations run in parallel, each on one worker. Locking
     // each task's evaluation instead parked the pool's workers on a few hot evaluations' locks
     // (06 S7: a range's run ~4× its longest evaluation).
-    let mut spans = Vec::with_capacity(batch.evaluations.len());
-    {
-        let mut rest = &mut contexts[..];
-        let mut offset = 0_usize;
-        for evaluation in &batch.evaluations {
-            let (start, count) = (evaluation.task_start as usize, evaluation.task_count as usize);
-            if start != offset || count > rest.len() {
-                return Err(Error::BackendFailure);
-            }
-            let (head, tail) = std::mem::take(&mut rest).split_at_mut(count);
-            spans.push(head);
-            rest = tail;
-            offset += count;
-        }
-        if !rest.is_empty() {
-            return Err(Error::BackendFailure);
-        }
-    }
+    let spans = evaluation_spans(batch, contexts)?;
     let task_outputs = crate::code_rule_dsl::logic::profile::on_cores(|| {
         spans
             .into_par_iter()
-            .map(|span| span.iter_mut().map(|(program, context)| {
-                // The queue uses tombstones within a task. Keeping a full
-                // table of tombstones across roots turns each new insert into
-                // a capacity-length probe. These records reference only the
-                // current task's histories and cannot survive its execution.
-                unsafe {
-                    if context.queued_state_quota_limit != 0 {
-                        std::ptr::write_bytes(
-                            context.queued_states,
-                            0,
-                            context.queued_state_quota_limit as usize,
-                        );
-                    }
-                    if context.greedy_entry_quota_limit != 0 {
-                        std::ptr::write_bytes(
-                            context.greedy_entries,
-                            0,
-                            context.greedy_entry_quota_limit as usize,
-                        );
-                    }
-                }
-                context.most_steps = 0;
-                unsafe { entries[*program](context) };
-                // The task's steps: its total, or its longest path's or candidate's where that is more (what its
-                // budget had to hold, decision 0334).
-                unsafe {
-                    let most = context.most_steps.max(context.current_steps);
-                    (*context.status).reserved = (*context.status).reserved.max(most);
-                }
-                let status = unsafe { *context.status };
-                if status.error != 0 {
-                    return Ok(TaskPackedOutput {
-                        results: Vec::new(),
-                        captures: Vec::new(),
-                        properties: Vec::new(),
-                        bytes: Vec::new(),
-                    });
-                }
-                Ok(TaskPackedOutput {
-                    results: unsafe {
-                        std::slice::from_raw_parts(context.results, status.result_count as usize)
-                            .to_vec()
-                    },
-                    captures: unsafe {
-                        std::slice::from_raw_parts(
-                            context.final_captures,
-                            status.final_capture_count as usize,
-                        )
-                        .to_vec()
-                    },
-                    properties: unsafe {
-                        std::slice::from_raw_parts(
-                            context.properties,
-                            status.property_count as usize,
-                        )
-                        .to_vec()
-                    },
-                    bytes: unsafe {
-                        std::slice::from_raw_parts(
-                            context.output_bytes,
-                            status.output_byte_count as usize,
-                        )
-                        .to_vec()
-                    },
-                })
-            }).collect::<Result<Vec<_>, Error>>())
+            .map(|span| span.iter_mut().map(|(program, context)| run_task(entries, *program, context)).collect::<Result<Vec<_>, Error>>())
             .collect::<Result<Vec<Vec<_>>, Error>>()
     })?
     .into_iter()
     .flatten()
     .collect::<Vec<_>>();
     drop(run);
-    let _compact = crate::code_rule_dsl::prof::Stage::start("jit.compact");
-    let mut compact_results = Vec::new();
-    let mut compact_captures = Vec::new();
-    let mut compact_properties = Vec::new();
-    let mut compact_bytes = Vec::new();
-    for output in task_outputs {
-        let capture_base =
-            u32::try_from(compact_captures.len()).map_err(|_| Error::BackendCapacity)?;
-        let property_base =
-            u32::try_from(compact_properties.len()).map_err(|_| Error::BackendCapacity)?;
-        let byte_base = u32::try_from(compact_bytes.len())
-            .map_err(|_| Error::BackendCapacity)?
-            .checked_add(batch.arena_start(ArenaKind::OutputByte))
-            .ok_or(Error::BackendCapacity)?;
-        let result_base = batch
-            .arena_start(ArenaKind::Result)
-            .checked_add(u32::try_from(compact_results.len()).map_err(|_| Error::BackendCapacity)?)
-            .ok_or(Error::BackendCapacity)?;
-        let result_owners = output
-            .results
-            .iter()
-            .enumerate()
-            .map(|(index, result)| {
-                Ok((
-                    result.local_ordinal,
-                    result_base
-                        .checked_add(u32::try_from(index).map_err(|_| Error::BackendCapacity)?)
-                        .ok_or(Error::BackendCapacity)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
-        for mut record in output.results {
-            record.capture_start = record
-                .capture_start
-                .checked_add(capture_base)
-                .ok_or(Error::BackendCapacity)?;
-            record.property_start = record
-                .property_start
-                .checked_add(property_base)
-                .ok_or(Error::BackendCapacity)?;
-            record.dynamic_start = record
-                .dynamic_start
-                .checked_add(property_base)
-                .ok_or(Error::BackendCapacity)?;
-            compact_results.push(record);
+    Ok(task_outputs)
+}
+
+#[inline(always)]
+fn run_task(entries: &[NativeTaskEntry], program: usize, context: &mut NativeTaskContext) -> Result<TaskPackedOutput, Error> {
+    // The queue uses tombstones within a task. Keeping a full
+    // table of tombstones across roots turns each new insert into
+    // a capacity-length probe. These records reference only the
+    // current task's histories and cannot survive its execution.
+    unsafe {
+        if context.queued_state_quota_limit != 0 {
+            std::ptr::write_bytes(
+                context.queued_states,
+                0,
+                context.queued_state_quota_limit as usize,
+            );
         }
-        for mut capture in output.captures {
-            capture.property_start = capture
-                .property_start
-                .checked_add(property_base)
-                .ok_or(Error::BackendCapacity)?;
-            if capture.text_start != NONE {
-                capture.text_start = capture
-                    .text_start
-                    .checked_add(byte_base)
-                    .ok_or(Error::BackendCapacity)?;
-            }
-            compact_captures.push(capture);
+        if context.greedy_entry_quota_limit != 0 {
+            std::ptr::write_bytes(
+                context.greedy_entries,
+                0,
+                context.greedy_entry_quota_limit as usize,
+            );
         }
-        for mut property in output.properties {
-            if property.kind == 0 || property.kind == 2 {
-                property.owner = result_owners
-                    .iter()
-                    .find_map(|(local, global)| (*local == property.owner).then_some(*global))
-                    .ok_or(Error::BackendFailure)?;
-            }
-            if property.kind == 1 {
-                property.owner = property
-                    .owner
-                    .checked_add(capture_base)
-                    .ok_or(Error::BackendCapacity)?;
-            } else if property.kind == 2 {
-                property.key_start = property
-                    .key_start
-                    .checked_add(byte_base)
-                    .ok_or(Error::BackendCapacity)?;
-                if property.value == 1 {
-                    property.value_start = property
-                        .value_start
-                        .checked_add(byte_base)
-                        .ok_or(Error::BackendCapacity)?;
-                }
-            }
-            compact_properties.push(property);
-        }
-        compact_bytes.extend_from_slice(&output.bytes);
     }
-    let execution_elapsed = execution_started.elapsed();
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    context.most_steps = 0;
+    unsafe { entries[program](context) };
+    // The task's steps: its total, or its longest path's or candidate's where that is more (what its budget had to
+    // hold, decision 0334).
+    unsafe {
+        let most = context.most_steps.max(context.current_steps);
+        (*context.status).reserved = (*context.status).reserved.max(most);
+    }
+    let status = unsafe { *context.status };
+    if status.error != 0 {
+        return Ok(TaskPackedOutput {
+            results: Vec::new(),
+            captures: Vec::new(),
+            properties: Vec::new(),
+            bytes: Vec::new(),
+        });
+    }
+    Ok(TaskPackedOutput {
+        results: unsafe {
+            std::slice::from_raw_parts(context.results, status.result_count as usize)
+                .to_vec()
+        },
+        captures: unsafe {
+            std::slice::from_raw_parts(
+                context.final_captures,
+                status.final_capture_count as usize,
+            )
+            .to_vec()
+        },
+        properties: unsafe {
+            std::slice::from_raw_parts(
+                context.properties,
+                status.property_count as usize,
+            )
+            .to_vec()
+        },
+        bytes: unsafe {
+            std::slice::from_raw_parts(
+                context.output_bytes,
+                status.output_byte_count as usize,
+            )
+            .to_vec()
+        },
+    })
+}
+
+fn finish_batch(mut batch: PackedBatch, mut prepared: PreparedRun, task_outputs: Vec<TaskPackedOutput>) -> Result<PackedExecution, Error> {
+    let _compact = crate::code_rule_dsl::prof::Stage::start("jit.compact");
+    let compact = compact_task_outputs(&batch, task_outputs)?;
+    let allocation_elapsed = prepared.allocation_elapsed;
+    let execution_elapsed = prepared.execution_started.elapsed();
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
+            "RERAIL_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
             allocation_elapsed.as_nanos(),
             execution_elapsed.as_nanos(),
         );
     }
 
-    let result_start = batch.arena_start(ArenaKind::Result) as usize;
-    results[result_start..result_start + compact_results.len()].copy_from_slice(&compact_results);
-    final_captures[..compact_captures.len()].copy_from_slice(&compact_captures);
-    properties[..compact_properties.len()].copy_from_slice(&compact_properties);
-    let output_start = batch.arena_start(ArenaKind::OutputByte) as usize;
-    output_bytes[output_start..output_start + compact_bytes.len()].copy_from_slice(&compact_bytes);
-    batch.global_arenas.arenas[ArenaKind::Result as usize].cursor =
-        u32::try_from(compact_results.len()).map_err(|_| Error::BackendCapacity)?;
-    batch.global_arenas.arenas[ArenaKind::FinalCapture as usize].cursor =
-        u32::try_from(compact_captures.len()).map_err(|_| Error::BackendCapacity)?;
-    batch.global_arenas.arenas[ArenaKind::Property as usize].cursor =
-        u32::try_from(compact_properties.len()).map_err(|_| Error::BackendCapacity)?;
-    batch.global_arenas.arenas[ArenaKind::OutputByte as usize].cursor =
-        u32::try_from(compact_bytes.len()).map_err(|_| Error::BackendCapacity)?;
+    store_compacted(&mut batch, &mut prepared.workspace.outputs, &compact)?;
+    let OutputRegions { results, statuses, final_captures, properties, output_bytes } = &prepared.workspace.outputs;
     let page = PackedResultPage::compact(
         &batch,
-        &statuses,
-        &results,
-        &final_captures,
-        &properties,
-        &output_bytes,
+        statuses,
+        results,
+        final_captures,
+        properties,
+        output_bytes,
     )?;
     Ok(PackedExecution::new(batch, page))
+}
+
+/// Writes the compacted outputs back over the batch's output arenas, and sets each arena's cursor to its count.
+fn store_compacted(batch: &mut PackedBatch, outputs: &mut OutputRegions, compact: &TaskPackedOutput) -> Result<(), Error> {
+    let OutputRegions { results, final_captures, properties, output_bytes, .. } = outputs;
+    let result_start = batch.arena_start(ArenaKind::Result) as usize;
+    results[result_start..result_start + compact.results.len()].copy_from_slice(&compact.results);
+    final_captures[..compact.captures.len()].copy_from_slice(&compact.captures);
+    properties[..compact.properties.len()].copy_from_slice(&compact.properties);
+    let output_start = batch.arena_start(ArenaKind::OutputByte) as usize;
+    output_bytes[output_start..output_start + compact.bytes.len()].copy_from_slice(&compact.bytes);
+    batch.global_arenas.arenas[ArenaKind::Result as usize].cursor =
+        u32::try_from(compact.results.len()).map_err(|_| Error::BackendCapacity)?;
+    batch.global_arenas.arenas[ArenaKind::FinalCapture as usize].cursor =
+        u32::try_from(compact.captures.len()).map_err(|_| Error::BackendCapacity)?;
+    batch.global_arenas.arenas[ArenaKind::Property as usize].cursor =
+        u32::try_from(compact.properties.len()).map_err(|_| Error::BackendCapacity)?;
+    batch.global_arenas.arenas[ArenaKind::OutputByte as usize].cursor =
+        u32::try_from(compact.bytes.len()).map_err(|_| Error::BackendCapacity)?;
+    Ok(())
+}
+
+fn compact_task_outputs(batch: &PackedBatch, task_outputs: Vec<TaskPackedOutput>) -> Result<TaskPackedOutput, Error> {
+    let mut compact = TaskPackedOutput {
+        results: Vec::new(),
+        captures: Vec::new(),
+        properties: Vec::new(),
+        bytes: Vec::new(),
+    };
+    for output in task_outputs {
+        let bases = OutputBases::after(batch, &compact)?;
+        append_task_output(output, bases, &mut compact)?;
+    }
+    Ok(compact)
+}
+
+/// Where a task's outputs start in the compacted outputs.
+#[derive(Clone, Copy)]
+struct OutputBases {
+    capture: u32,
+    property: u32,
+    byte: u32,
+    result: u32,
+}
+
+impl OutputBases {
+    #[inline(always)]
+    fn after(batch: &PackedBatch, compact: &TaskPackedOutput) -> Result<Self, Error> {
+        let capture = u32::try_from(compact.captures.len()).map_err(|_| Error::BackendCapacity)?;
+        let property = u32::try_from(compact.properties.len()).map_err(|_| Error::BackendCapacity)?;
+        let byte = arena_index(batch.arena_start(ArenaKind::OutputByte), compact.bytes.len())?;
+        let result = arena_index(batch.arena_start(ArenaKind::Result), compact.results.len())?;
+        Ok(Self { capture, property, byte, result })
+    }
+}
+
+/// The global index `length` records into the arena at `start`.
+#[inline(always)]
+fn arena_index(start: u32, length: usize) -> Result<u32, Error> {
+    start
+        .checked_add(u32::try_from(length).map_err(|_| Error::BackendCapacity)?)
+        .ok_or(Error::BackendCapacity)
+}
+
+#[inline(always)]
+fn append_task_output(output: TaskPackedOutput, bases: OutputBases, compact: &mut TaskPackedOutput) -> Result<(), Error> {
+    let result_owners = result_owners(&output.results, bases.result)?;
+    append_results(output.results, bases, &mut compact.results)?;
+    append_captures(output.captures, bases, &mut compact.captures)?;
+    append_properties(output.properties, &result_owners, bases, &mut compact.properties)?;
+    compact.bytes.extend_from_slice(&output.bytes);
+    Ok(())
+}
+
+/// Each result's task-local ordinal, with its index in the compacted results.
+#[inline(always)]
+fn result_owners(results: &[ResultRecord], result_base: u32) -> Result<Vec<(u32, u32)>, Error> {
+    results
+        .iter()
+        .enumerate()
+        .map(|(index, result)| {
+            Ok((
+                result.local_ordinal,
+                result_base
+                    .checked_add(u32::try_from(index).map_err(|_| Error::BackendCapacity)?)
+                    .ok_or(Error::BackendCapacity)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, Error>>()
+}
+
+#[inline(always)]
+fn append_results(records: Vec<ResultRecord>, bases: OutputBases, compact_results: &mut Vec<ResultRecord>) -> Result<(), Error> {
+    for mut record in records {
+        record.capture_start = record
+            .capture_start
+            .checked_add(bases.capture)
+            .ok_or(Error::BackendCapacity)?;
+        record.property_start = record
+            .property_start
+            .checked_add(bases.property)
+            .ok_or(Error::BackendCapacity)?;
+        record.dynamic_start = record
+            .dynamic_start
+            .checked_add(bases.property)
+            .ok_or(Error::BackendCapacity)?;
+        compact_results.push(record);
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn append_captures(captures: Vec<FinalCaptureRecord>, bases: OutputBases, compact_captures: &mut Vec<FinalCaptureRecord>) -> Result<(), Error> {
+    for mut capture in captures {
+        capture.property_start = capture
+            .property_start
+            .checked_add(bases.property)
+            .ok_or(Error::BackendCapacity)?;
+        if capture.text_start != NONE {
+            capture.text_start = capture
+                .text_start
+                .checked_add(bases.byte)
+                .ok_or(Error::BackendCapacity)?;
+        }
+        compact_captures.push(capture);
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn append_properties(
+    properties: Vec<PropertyRecord>,
+    result_owners: &[(u32, u32)],
+    bases: OutputBases,
+    compact_properties: &mut Vec<PropertyRecord>,
+) -> Result<(), Error> {
+    for mut property in properties {
+        if property.kind == 0 || property.kind == 2 {
+            property.owner = result_owners
+                .iter()
+                .find_map(|(local, global)| (*local == property.owner).then_some(*global))
+                .ok_or(Error::BackendFailure)?;
+        }
+        rebase_property(&mut property, bases)?;
+        compact_properties.push(property);
+    }
+    Ok(())
+}
+
+/// Moves a kind 1 property's owner (a capture), and a kind 2 property's key and value text, past the tasks before it.
+#[inline(always)]
+fn rebase_property(property: &mut PropertyRecord, bases: OutputBases) -> Result<(), Error> {
+    if property.kind == 1 {
+        property.owner = property
+            .owner
+            .checked_add(bases.capture)
+            .ok_or(Error::BackendCapacity)?;
+    } else if property.kind == 2 {
+        rebase_property_text(property, bases.byte)?;
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn rebase_property_text(property: &mut PropertyRecord, byte_base: u32) -> Result<(), Error> {
+    property.key_start = property
+        .key_start
+        .checked_add(byte_base)
+        .ok_or(Error::BackendCapacity)?;
+    if property.value == 1 {
+        property.value_start = property
+            .value_start
+            .checked_add(byte_base)
+            .ok_or(Error::BackendCapacity)?;
+    }
+    Ok(())
 }
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

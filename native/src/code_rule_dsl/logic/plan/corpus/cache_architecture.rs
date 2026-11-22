@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 fn src() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("src")
 }
 
 /// The non-test Rust files under `dir`.
@@ -42,6 +42,10 @@ const NOT_CACHES: &[&str] = &[
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "store_sessions", "tree_pages_pending", "object_archive", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
+    // Analysis claims, release receipts, and collection work. Their rows reference results held elsewhere.
+    "analysis_scope_snapshot", "analysis_scope_workspace_snapshot", "analysis_scope_manifest",
+    "analysis_history_scope", "analysis_history_ancestor", "analysis_scope_run", "analysis_run_workspace_snapshot",
+    "analysis_scope_generation", "analysis_directory_acquisition", "analysis_scope_release", "analysis_scope_collect", "analysis_scope_pending",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
     "x", "rows", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",

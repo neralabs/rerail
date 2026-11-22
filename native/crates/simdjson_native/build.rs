@@ -6,17 +6,18 @@ use std::ffi::OsString;
 use std::process::Stdio;
 
 fn main() {
-    // MSVC compiles none of it (GCC and Clang target regions and attributes): the crate is empty there.
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
-        return;
-    }
-    let vendor = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/simdjson-5.0.5");
-    let shim = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shim.cpp");
-    let kernel = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/kernel.inc");
+    let vendor = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../vendor/simdjson-5.0.5");
+    let shim = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/shim.cpp");
+    let kernel = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/kernel.inc");
     for file in [vendor.join("simdjson.cpp"), vendor.join("simdjson.h"), shim.clone(), kernel] {
         println!("cargo:rerun-if-changed={}", file.display());
     }
     let mut build = cc::Build::new();
+    // MSVC's own compiler takes none of it (GCC and Clang target regions and attributes): Visual Studio's clang-cl
+    // compiles it there, to objects MSVC's linker links.
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") && std::env::var_os("CXX").is_none() {
+        build.compiler(clang_cl());
+    }
     build
         .cpp(true)
         .std("c++17")
@@ -29,13 +30,18 @@ fn main() {
         .file(&shim)
         .warnings(false);
     println!("cargo:rerun-if-env-changed=TARGET_SYSROOT");
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
-        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu")
-        && let Some(sysroot) = std::env::var_os("TARGET_SYSROOT").filter(|sysroot| !sysroot.is_empty())
-    {
+    if let Some(sysroot) = linux_gnu_sysroot() {
         for_sysroot(&mut build, sysroot);
     }
     build.compile("rerail_simdjson");
+}
+
+/// `TARGET_SYSROOT`, when it is set (and not empty) and the target is Linux with glibc: the one target `for_sysroot` is for.
+fn linux_gnu_sysroot() -> Option<OsString> {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") || std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("gnu") {
+        return None;
+    }
+    std::env::var_os("TARGET_SYSROOT").filter(|sysroot| !sysroot.is_empty())
 }
 
 /// The released Linux engine (`napi build --use-napi-cross`, package.yml) links against the sysroot of napi-rs's cross
@@ -80,4 +86,19 @@ fn cxx_include_dirs(build: &cc::Build) -> Vec<String> {
         .collect();
     assert!(!dirs.is_empty(), "the C++ compiler lists no C++ include directory:\n{text}");
     dirs
+}
+
+/// Visual Studio's clang-cl (its "C++ Clang tools for Windows" component), as its installer's `vswhere` finds it, for
+/// the machine this build runs on (it compiles for the target it is told).
+fn clang_cl() -> std::path::PathBuf {
+    let host = if std::env::var("HOST").is_ok_and(|h| h.starts_with("aarch64")) { "ARM64" } else { "x64" };
+    let find = format!("VC\\Tools\\Llvm\\{host}\\bin\\clang-cl.exe");
+    let found = std::env::var("ProgramFiles(x86)").ok().and_then(|programs| {
+        let vswhere = format!("{programs}\\Microsoft Visual Studio\\Installer\\vswhere.exe");
+        let o = std::process::Command::new(vswhere).args(["-latest", "-products", "*", "-find", &find]).output().ok()?;
+        String::from_utf8_lossy(&o.stdout).lines().next().map(str::trim).filter(|l| !l.is_empty()).map(std::path::PathBuf::from)
+    });
+    found.unwrap_or_else(|| {
+        panic!("simdjson needs clang on MSVC: install Visual Studio's \"C++ Clang tools for Windows\" component, or set CXX to a clang-cl")
+    })
 }

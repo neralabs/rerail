@@ -23,19 +23,23 @@
 
 #[allow(unused_imports)]
 use rerail_compiler::*;
+use rerail_cpu_block::*;
+use rerail_cpu_stream::*;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
-use rerail_compiler::bitlex_masks as bitlex_compile;
-#[cfg(target_os = "macos")]
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use rerail_metal as metal_program_backend;
 use ::bitlex::syntax::{Stmt, parse};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_corpus");
+// The corpus directory, found as the test runs: not written into its build (decision 0224).
+static DIR: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("{}/bitlex_corpus", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
 
-// The seeded xorshift and the ids by name are the compiler crate's (`rerail_compiler::ladder`).
-pub use rerail_compiler::ladder::{Ids, Rng};
+// The seeded xorshift and the ids by name are the compiler crate's (`rerail_cpu_stream::ladder`).
+pub use rerail_cpu_stream::ladder::{Ids, Rng};
 
 /// The classes most programs read: bytes the inputs hold often, a high range, `0x00`.
 const CLASSES: &str = "class quote = '\"'
@@ -400,8 +404,8 @@ fn expr(rng: &mut Rng, names: &[String], depth: u64) -> String {
 
 /// The corpus as it is on disk, in name order.
 fn on_disk() -> Vec<(String, String)> {
-    let mut files: Vec<(String, String)> = std::fs::read_dir(DIR)
-        .unwrap_or_else(|e| panic!("{DIR}: {e}"))
+    let mut files: Vec<(String, String)> = std::fs::read_dir(&*DIR)
+        .unwrap_or_else(|e| panic!("{}: {e}", *DIR))
         .map(|e| e.expect("an entry").path())
         .filter(|p| p.extension().is_some_and(|x| x == "bitlex"))
         .map(|p| (p.file_name().expect("a name").to_string_lossy().into_owned(), std::fs::read_to_string(&p).expect("reads")))
@@ -414,12 +418,12 @@ fn on_disk() -> Vec<(String, String)> {
 #[ignore = "writes the corpus; run by name with RERAIL_WRITE_CORPUS=1"]
 fn write_the_corpus() {
     assert!(std::env::var_os("RERAIL_WRITE_CORPUS").is_some(), "set RERAIL_WRITE_CORPUS=1");
-    std::fs::create_dir_all(DIR).expect("makes the directory");
+    std::fs::create_dir_all(&*DIR).expect("makes the directory");
     for (name, _) in on_disk() {
-        std::fs::remove_file(format!("{DIR}/{name}")).expect("removes an old file");
+        std::fs::remove_file(format!("{}/{name}", *DIR)).expect("removes an old file");
     }
     for (name, source) in generated() {
-        std::fs::write(format!("{DIR}/{name}"), source).expect("writes");
+        std::fs::write(format!("{}/{name}", *DIR), source).expect("writes");
     }
 }
 
@@ -611,13 +615,13 @@ fn executors_equal_the_interpreter(metal: bool) {
         natives.iter().zip(&cases).map(|(n, c)| native_cpu_block::compile(n).unwrap_or_else(|e| panic!("{}: cranelift: {e:?}", c.name))).collect();
     let refs: Vec<&native_cpu_block::CompiledBlock> = compiled.iter().collect();
     eprintln!("interpreted and compiled in {:.1} s", seconds(t));
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "linux", windows)), allow(unused_mut))]
     let mut runs: Vec<(String, Vec<Vec<Vec<u64>>>)> =
         vec![("cranelift".to_owned(), native_cpu_block::run_batch(&refs, &files).into_iter().map(|r| r.outputs).collect())];
     if metal {
         runs.extend(metal_corpus_runs(&natives, &files, t));
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     let _ = metal;
     let mut differ: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     for (executor, got) in &runs {
@@ -625,7 +629,17 @@ fn executors_equal_the_interpreter(metal: bool) {
         for ((f, got), want) in files.iter().zip(got).zip(&want) {
             let case = &cases[f.program];
             if let Some(k) = (0..want.len()).find(|&k| got[k] != want[k]) {
-                differ.entry(format!("{}, {executor}", case.name)).or_insert_with(|| format!("output {k}: {:x?} against {:x?}, {} bytes: {:?}", got[k], want[k], f.bytes.len(), String::from_utf8_lossy(f.bytes)));
+                differ.entry(format!("{}, {executor}", case.name)).or_insert_with(|| {
+                    // `RERAIL_CORPUS_CLIF`: a directory for each differing program's native values and Cranelift's
+                    // function, to read where they part.
+                    if let Some(dir) = std::env::var_os("RERAIL_CORPUS_CLIF") {
+                        let dir = std::path::Path::new(&dir);
+                        let values: String = natives[f.program].insts.iter().enumerate().map(|(x, i)| format!("%{x} = {i:?}\n")).collect();
+                        std::fs::write(dir.join(format!("{}.values", case.name)), values).expect("writes the values");
+                        std::fs::write(dir.join(format!("{}.clif", case.name)), &compiled[f.program].clif).expect("writes the CLIF");
+                    }
+                    format!("output {k}: {:x?} against {:x?}, {} bytes: {:?}", got[k], want[k], f.bytes.len(), String::from_utf8_lossy(f.bytes))
+                });
             }
         }
     }
@@ -636,9 +650,12 @@ fn executors_equal_the_interpreter(metal: bool) {
 
 /// The Metal executor's runs of the corpus' batch (`executors_equal_the_interpreter`): the forward carry in tier 1's
 /// segments, in chunks of programs.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::BatchFile<'_>], t: std::time::Instant) -> Vec<(String, Vec<Vec<Vec<u64>>>)> {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+    if crate::executors::no_device() {
+        return Vec::new();
+    }
     let forms: Vec<&block_native::BlockNative> = natives.iter().collect();
     let name = "metal forward carry".to_owned();
     // In chunks of programs: one source of every program takes Metal's compiler minutes; its time grows faster than
@@ -656,8 +673,8 @@ fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::Batc
     vec![(name, got)]
 }
 
-/// No Metal executors off macOS.
-#[cfg(not(target_os = "macos"))]
+/// No Metal executors off the device layer's targets.
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn metal_corpus_runs(_: &[block_native::BlockNative], _: &[block::BatchFile<'_>], _: std::time::Instant) -> Vec<(String, Vec<Vec<Vec<u64>>>)> {
     Vec::new()
 }
@@ -893,7 +910,7 @@ fn a_file_on_every_executor() {
         compile_case(&path, &source).unwrap_or_else(|e| panic!("{e}"))
     };
     let want = case.program.block_programs[0].interpret(&bytes);
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "linux", windows)), allow(unused_variables))]
     let native = native_ir::lower(&case.program, 0, 0).expect("lowers").block_programs.remove(0);
     for (name, k) in &case.checked {
         eprintln!("{name:>8} interpreter {:x?}", want[*k]);
@@ -903,9 +920,12 @@ fn a_file_on_every_executor() {
 
 /// The forward carry's outputs over `bytes` where they differ from the interpreter's (`want`), in segments of three
 /// blocks and of tier 1's 29, for the outputs `checked` names; `RERAIL_DUMP_MSL=<file>` writes its source.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: &[(String, usize)], want: &[Vec<u64>]) {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split, source};
+    if crate::executors::no_device() {
+        return;
+    }
     if let Some(dump) = std::env::var_os("RERAIL_DUMP_MSL") {
         std::fs::write(&dump, source(&[native])).expect("writes");
     }
@@ -920,6 +940,6 @@ fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: 
     }
 }
 
-/// No Metal executors off macOS.
-#[cfg(not(target_os = "macos"))]
+/// No Metal executors off the device layer's targets.
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn metal_differences(_: &block_native::BlockNative, _: &[u8], _: &[(String, usize)], _: &[Vec<u64>]) {}

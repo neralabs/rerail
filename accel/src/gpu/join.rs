@@ -7,11 +7,8 @@
 //! writes the offsets straight into the shared buffer (`rows_sort::span`); nothing is sorted or copied twice.
 //!
 //! **A relation sorted by its key** (`Keyed`), all of it on the device (`join_sort.uglykl`):
-//! - `sort_init`, then per 8-bit digit of the key's span `sort_hist`, a scan, and `sort_scatter`: a stable LSD radix
-//!   sort of 1,024-row tiles. A tile's digit histogram is counted in threadgroup memory; a row's place is its digit's
-//!   offset for the tile (the scan of every tile's histogram, digit-major), the rows of its digit in the tile's
-//!   earlier rounds and SIMD groups, and its rank among its SIMD group's earlier lanes of the digit (a bounded loop
-//!   of shuffles). No atomic decides an order.
+//! - `sort_init`, then the UKL library's stable LSD radix sort (`rerail_gpu::library::radix_sort_pairs_in`, decision
+//!   0440 step D), a pass per 8-bit digit of the key's span. No atomic decides an order.
 //! - `run_heads`, a scan, `run_compact`: the key's runs, each its first place and key, and their count.
 //! - `gather`: every other column in the sorted order, so a run's rows are adjacent in every column.
 //!
@@ -22,8 +19,8 @@
 //! the runs' keys, and loops over the run's rows comparing the other keys. Count, scan, scatter: the pairs in left
 //! row order, sized exactly. The work is the left rows' searches and the pairs of key 0.
 //!
-//! Every scan is the same multi-level exclusive scan (`Scan`): 1,024 values a threadgroup, the threadgroups' sums
-//! scanned again, added back. Threadgroup memory: 10 kB at most (the scatter's counts). Every loop is bounded.
+//! Every scan is the UKL library's multi-level exclusive scan (`Scan`): 1,024 values a threadgroup, the threadgroups'
+//! sums scanned again in place into their offsets. Every loop is bounded.
 //!
 //! **Launches** (`Pass`): every kernel runs threadgroups of 256 threads (`GROUP`) over its buffers, bound in the
 //! order the kernel declares them, and one parameter block, its `ARGS` row `a`: a `JoinP` (`join_common.h`) of up
@@ -32,17 +29,18 @@
 use super::shared;
 use crate::rows::{bits, span};
 use rerail_device::compute_kernel::GridComputeFunctionArgumentDisposition;
-use rerail_device::device::{Buffer, ComputeEvent, ComputeFunction, ComputeQueue, SharedEvent};
+use rerail_device::device::{Buffer, BufferRef, ComputeFunction, ComputeQueue, SharedEvent};
+use rerail_gpu::library::{radix_sort_pairs_in, scan_exclusive_u32_in, scan_sized, RadixSpace, ScanSpace, SCAN_SIZES};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 /// What every join kernel's source starts with (`join_common.h`): `JoinP`, the threadgroup's prefix sum.
 pub const COMMON: &str = include_str!("join_common.h");
 
 /// The joins' fixed kernels: the scans, the pairs' keys, the column span, the fused sort and probe.
 fn fixed_source() -> String {
-    format!("{COMMON}{}", include_str!("join.uglykl"))
+    format!("{COMMON}{}{}", screen_reads(), include_str!("join.uglykl"))
 }
 
 /// The radix sort's, the gather's and the column statistics' kernels for a column of `col`, its sort word
@@ -146,6 +144,11 @@ pub fn scratch_set(set: usize) -> usize {
 pub struct Pipe {
     function: Arc<ComputeFunction>,
     buffers: Vec<String>,
+    /// Whether the kernel may write each buffer, as it declares it (`ROBUFFER` is read-only, decision 0491 step 5):
+    /// how a launch pins what it binds.
+    writes: Vec<bool>,
+    /// Its name, as a pin names its operation.
+    op: &'static str,
     /// Whether it takes the parameter block `a`.
     args: bool,
     name: String,
@@ -172,20 +175,41 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
     let function = crate::score::phase("compile", || super::kernels::function_fixed(&source(), name, None));
     let mut args: Vec<_> = function.get_argument_info().to_vec();
     args.sort_by_key(|a| a.compute_function_arg_index);
-    let buffers = args.iter().filter(|a| a.disposition == GridComputeFunctionArgumentDisposition::Buffer && a.name != "a").map(|a| a.name.clone()).collect();
-    let pipe = Arc::new(Pipe { args: args.iter().any(|a| a.name == "a"), function, buffers, name: name.to_owned() });
+    let bound: Vec<_> = args.iter().filter(|a| a.disposition == GridComputeFunctionArgumentDisposition::Buffer && a.name != "a").collect();
+    let buffers = bound.iter().map(|a| a.name.clone()).collect();
+    let writes = bound.iter().map(|a| a.ty.access != rerail_device::compute_kernel::MemoryRegionAccess::Read).collect();
+    // One a kernel for the process (the pipes are the machine's, decision 0442): a pin's operation names it.
+    let op: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    let pipe = Arc::new(Pipe { args: args.iter().any(|a| a.name == "a"), function, buffers, writes, op, name: name.to_owned() });
     Ok(Arc::clone(pipes().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(key).or_insert(pipe)))
 }
 
-/// The radix sort's kernels of a lead column of `width`, and the gather of a column of `width`.
-fn sort_pipes(width: Width) -> Result<[Arc<Pipe>; 5], String> {
+/// A sort's kernels of a lead column of `width` around the library's radix sort: its keys and rows, and its runs.
+fn sort_pipes(width: Width) -> Result<[Arc<Pipe>; 3], String> {
     let variant = format!("sort {width:?}");
     let pipe = |name: &str| pipeline(&variant, name, || sort_source(width));
-    Ok([pipe("sort_init")?, pipe("sort_hist")?, pipe("sort_scatter")?, pipe("run_heads")?, pipe("run_compact")?])
+    rerail_gpu::library::ready()?;
+    Ok([pipe("sort_init")?, pipe("run_heads")?, pipe("run_compact")?])
+}
+
+/// The library's radix sort of `pair` (sort words of `key`, rows) by `bits` bits, `tmp` the other pair, encoded into
+/// `pass`: the rows end in `pair` after an even number of passes, else in `tmp`.
+fn radix_sort(pass: &Pass, key: Width, pair: [&Buffer; 2], tmp: [&Buffer; 2], n: usize, bits: u32, space: &RadixSpace) {
+    let (pair, tmp): ([&BufferRef; 2], [&BufferRef; 2]) = ([pair[0], pair[1]], [tmp[0], tmp[1]]);
+    pass.library(pair.iter().chain(&tmp).copied().chain(space.buffers()), |q| {
+        let sorted = if key == Width::W64 { radix_sort_pairs_in::<u64>(q, pair, tmp, n as u32, bits, space) } else { radix_sort_pairs_in::<u32>(q, pair, tmp, n as u32, bits, space) };
+        sorted.map(|(_, made)| made)
+    });
 }
 
 fn gather_pipe(width: Width) -> Result<Arc<Pipe>, String> {
     pipeline(&format!("sort {width:?}"), "gather", || sort_source(width))
+}
+
+/// A width's sort kernels and its gather, made (`kernels_ahead`).
+pub fn sort_and_gather(width: Width) -> Result<(), String> {
+    sort_pipes(width)?;
+    gather_pipe(width).map(drop)
 }
 
 /// One of the fixed kernels (`join.uglykl`).
@@ -197,7 +221,10 @@ pub fn fixed(name: &str) -> Result<Arc<Pipe>, String> {
 /// written by the host when handed out again, and no host write is ordered after a device read, so they return to
 /// the pool only once it completes.
 pub struct Submitted {
-    event: Arc<ComputeEvent>,
+    /// Its committed work, shared with its watchers (`watch`). Its fence (decision 0487) holds what the work reaches
+    /// until the work completes: at the first wait that sees it complete, or when the last of them is dropped, which
+    /// waits for it first.
+    event: Arc<shared::Flushed>,
     reads: Vec<Column>,
     /// The host clock at its commit (`host_clock`); NaN for a second watcher of a submission another waits for
     /// (`watch`), which adds no timeline.
@@ -206,7 +233,18 @@ pub struct Submitted {
     watcher: bool,
 }
 
+impl Drop for Submitted {
+    /// What it reads and reaches is held until its work completes: the owner let go unawaited waits for it here first,
+    /// before its `reads` go back to the pool, whoever else watches it.
+    fn drop(&mut self) {
+        if !self.watcher && !self.event.fence().is_complete() {
+            let _ = self.event.await_();
+        }
+    }
+}
+
 /// The host clock Metal's command buffer times are on (`mach_absolute_time`, in seconds).
+#[cfg(target_os = "macos")]
 pub fn host_clock() -> f64 {
     #[repr(C)]
     struct Timebase {
@@ -217,7 +255,7 @@ pub fn host_clock() -> f64 {
         fn mach_timebase_info(info: *mut Timebase) -> i32;
         fn mach_absolute_time() -> u64;
     }
-    static RATIO: OnceLock<f64> = OnceLock::new();
+    static RATIO: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
     let ratio = *RATIO.get_or_init(|| {
         let mut info = Timebase { numer: 0, denom: 0 };
         // SAFETY: fills the struct.
@@ -228,9 +266,16 @@ pub fn host_clock() -> f64 {
     (unsafe { mach_absolute_time() }) as f64 * ratio
 }
 
+/// The host's monotonic clock in seconds (elsewhere than macOS no device timestamp shares it).
+#[cfg(not(target_os = "macos"))]
+pub fn host_clock() -> f64 {
+    rerail_device::os::monotonic()
+}
+
 /// A completed Metal command buffer's timeline, as wall-only phases of the job (`crate::score`): commit to the
 /// system's scheduling (`kernelStartTime`), to the device's start, the device's run, and its end to the host's wait
 /// returning.
+#[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)] // `msg_send!` expands to a `cargo-clippy` cfg check.
 pub fn add_timeline(command: &metal::CommandBufferRef, committed: f64, returned: f64) {
     use objc::{msg_send, sel, sel_impl};
@@ -271,10 +316,19 @@ impl Submitted {
         if let Err(why) = &done {
             say_failure(why);
         }
-        if !self.committed.is_nan()
-            && let Some(command) = self.event.metal()
-        {
-            add_timeline(command, self.committed, host_clock());
+        if !self.committed.is_nan() {
+            let returned = host_clock();
+            // Metal's command buffers give each part of the timeline.
+            #[cfg(target_os = "macos")]
+            let parts = self.event.event().metal().map(|command| add_timeline(command, self.committed, returned)).is_some();
+            #[cfg(not(target_os = "macos"))]
+            let parts = false;
+            // Another backend's event gives only the device's seconds: the run, and the rest of the span as the wake.
+            if !parts && done.is_ok() {
+                let run = self.event.gpu_seconds();
+                crate::score::add("gpu run", 0.0, run);
+                crate::score::add("gpu wake", 0.0, (returned - self.committed - run).max(0.0));
+            }
         }
         (self.event.gpu_seconds(), done.is_ok())
     }
@@ -291,6 +345,25 @@ const SCAN: usize = 5;
 /// The first slot free for other modules' scratch (the engine's device stages): past the scan's levels.
 pub const FREE: usize = 16;
 
+/// Gives this thread's scratch back (Q203): kept on the thread, the most each thread's sorts ever took stayed leased
+/// to the end, 276 MB of a 1 GB budget on the M3's bench. To Metal, not the pool: a command buffer still running may
+/// write it (returned to the pool, a sort still running wrote into the block the pool's next lease made of it: Q265's
+/// check, `metal_join`), and Metal frees it once every command buffer that holds it completed.
+pub fn scratch_return() -> usize {
+    let n = SCRATCH.with_borrow_mut(|sets| {
+        let mut n = 0;
+        for b in sets.iter_mut().flat_map(|s| s.drain(..)).flatten() {
+            n += b.length() as usize;
+            b.release();
+        }
+        n
+    });
+    if n > 0 {
+        shared::kept_change(shared::Kept::Scratch, -(n as isize));
+    }
+    n
+}
+
 /// Scratch slot `slot`, at least `bytes` long (grown to a power of two when it is shorter).
 pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
     let set = SET.with(Cell::get);
@@ -300,13 +373,17 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
             s.resize_with(slot + 1, || None);
         }
         if s[slot].as_ref().is_none_or(|b| (b.length() as usize) < bytes) {
-            // A submission not yet completed may read the shorter one: it is released, held by the device's
-            // commands until they complete, not returned to the pool, whose next lease may be written by the host at
-            // once.
+            // The shorter one goes to Metal, not the pool: callers hold its buffer by handle (`scratch` hands out
+            // clones) and may bind it again, and Metal keeps it while one does. Its ledger holds it for the queued work.
             if let Some(old) = s[slot].take() {
+                shared::kept_change(shared::Kept::Scratch, -(old.length() as isize));
                 old.release();
             }
-            s[slot] = Some(shared::lease_for_join(bytes.max(64), true)?);
+            // Not zeroed: every kernel writes its scratch before reading it (a slot was always reused with the last
+            // sort's contents), and a lease a stratum zeroed would cost a write of it all each stratum.
+            let new = shared::lease_for_join(bytes.max(64), false)?;
+            shared::kept_change(shared::Kept::Scratch, new.length() as isize);
+            s[slot] = Some(new);
         }
         Ok(s[slot].as_ref().expect("a scratch buffer").device_buffer().clone())
     })
@@ -314,8 +391,9 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
 
 /// A device buffer of the one manager's pool (decision 0100 §2): a free one of its size class when there is one,
 /// returned when dropped. A buffer the device has seen is resident already: a new one costs its creation and its
-/// mapping at its first use, a pooled one neither. Its holder drops it only once every submission that reads it has
-/// completed (`Submitted::reads`, `Keyed`'s drop): the next lease's host writes are not ordered after a device read.
+/// mapping at its first use, a pooled one neither. Its lease is held as a block's memory is (decision 0487 step 3, by
+/// the lease's own ledger): a pass that binds it holds it, so dropped while queued work reads it, it goes back to the
+/// pool only once that work completes, and the next lease's host writes are never ordered before it.
 pub struct Held {
     _lease: Lease,
     pub buffer: Buffer,
@@ -336,20 +414,29 @@ impl Held {
         Held { _lease: Lease::Kept(keep), buffer }
     }
 
+    /// `kept`, holding the block by its own region too (`rerail_blocks::region::whole`, decision 0491 step 3): a
+    /// kernel's bind of `buffer` pins that region, read or written as the kernel declares, so the block's frozenness
+    /// and versions are its regions'.
+    pub fn of_block(buffer: Buffer, region: rerail_blocks::region::Shared<u8>, keep: Box<dyn std::any::Any + Send + Sync>) -> Held {
+        Held { _lease: Lease::Kept(Box::new((keep, region))), buffer }
+    }
+
     /// A buffer of at least `bytes` (its contents are a previous user's: every reader writes first).
     pub fn new(bytes: usize) -> Result<Held, String> {
         device()?;
-        let lease = shared::lease_for_join(bytes, false)?;
-        let buffer = lease.device_buffer().clone();
-        Ok(Held { _lease: Lease::Pooled(lease), buffer })
+        Ok(Held::pooled(shared::lease_for_join(bytes, false)?))
     }
 
     /// A buffer of at least `bytes`, its first `bytes` zero.
     pub fn zeroed(bytes: usize) -> Result<Held, String> {
         device()?;
-        let lease = shared::lease_for_join(bytes, true)?;
+        Ok(Held::pooled(shared::lease_for_join(bytes, true)?))
+    }
+
+    /// `lease`, held by its own ledger while it lives (`shared::Pooled`).
+    fn pooled(lease: shared::Pooled) -> Held {
         let buffer = lease.device_buffer().clone();
-        Ok(Held { _lease: Lease::Pooled(lease), buffer })
+        Held { _lease: Lease::Pooled(lease), buffer }
     }
 
     /// A buffer holding `values`, written by the host.
@@ -375,19 +462,20 @@ enum Grid<'a> {
 /// The launches of one submission on the process's queue, in order: each sees the last's writes. Committed by
 /// `commit`; dropped without it, nothing it holds runs.
 pub struct Pass {
-    queue: ComputeQueue,
+    /// The process's queue (`shared::Queue`): its fence holds every buffer the launches reach (decision 0487).
+    queue: shared::Queue,
     /// The launches so far (a submission's launch budget counts them).
     dispatches: Cell<usize>,
-    /// Buffers the launches after reach by address (`use_read`), bound by none.
-    resident: RefCell<Vec<Buffer>>,
+    /// Buffers the launches after reach by address (`use_read`, `use_read_write`), bound by none, each with whether
+    /// the launches write it.
+    resident: RefCell<Vec<(Buffer, bool)>>,
     /// The first launch that could not be made: the commit's error.
     error: RefCell<Option<String>>,
 }
 
 impl Pass {
     pub fn new() -> Result<Pass, String> {
-        let layer = shared::layer().ok_or("no device")?;
-        Ok(Pass { queue: ComputeQueue::new(layer.queue), dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None) })
+        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None) })
     }
 
     /// The launches made so far.
@@ -404,6 +492,9 @@ impl Pass {
         if self.error.borrow().is_some() {
             return;
         }
+        for (i, (b, _)) in buffers.iter().enumerate() {
+            self.holds(b, pipe.op, i, pipe.writes.get(i).copied().unwrap_or(true));
+        }
         let made = (|| {
             if buffers.len() != pipe.buffers.len() {
                 return Err(format!("the kernel {} takes {} buffers, given {}", pipe.name, pipe.buffers.len(), buffers.len()));
@@ -415,8 +506,8 @@ impl Pass {
             if pipe.args {
                 l = l.bytes("a", bytes);
             }
-            for b in self.resident.borrow().iter() {
-                l = l.uses(b);
+            for (b, write) in self.resident.borrow().iter() {
+                l = if *write { l.uses(b) } else { l.uses_read(b) };
             }
             match grid {
                 Grid::Groups(groups, threads) => l.run(&[groups.max(1) as u64, 1, 1], &[threads, 1, 1]),
@@ -474,16 +565,38 @@ impl Pass {
         self.launch(pipe, buffers, &join_p(params, longs), Grid::Groups(groups, GROUP));
     }
 
+    /// Launches of the UKL library's (`rerail_gpu::library`) on this pass's queue, in order with its own: `call`
+    /// returns the launches it made, which count to the submission's budget. The library's kernels read only what
+    /// they bind, `binds`: held until the work completes, as a launch's buffers are (decision 0491 step 2). An error
+    /// is the commit's, as a launch's is.
+    pub fn library<'b>(&self, binds: impl IntoIterator<Item = &'b Buffer>, call: impl FnOnce(&ComputeQueue) -> Result<usize, String>) {
+        if self.error.borrow().is_some() {
+            return;
+        }
+        for (i, b) in binds.into_iter().enumerate() {
+            // The library's kernels write their outputs and scratch: each held as written.
+            self.holds(b, "a UKL library launch", i, true);
+        }
+        match call(&self.queue) {
+            Ok(made) => self.dispatches.set(self.dispatches.get() + made),
+            Err(e) => *self.error.borrow_mut() = Some(format!("the UKL library: {e}")),
+        }
+    }
+
     /// Makes `buffers` resident for the launches after it: buffers a kernel reaches by address (a view's directory
     /// and tapes, decision 0353 step 4d), bound by none.
     pub fn use_read(&self, buffers: &[&Buffer]) {
-        self.resident.borrow_mut().extend(buffers.iter().map(|b| (*b).clone()));
+        for b in buffers {
+            self.holds(b, "a resident read", 0, false);
+        }
+        self.resident.borrow_mut().extend(buffers.iter().map(|b| ((*b).clone(), false)));
     }
 
     /// Makes `buffer` resident for the launches after it, to be read and written: a cache a kernel's reads keep (a
     /// 16z batch's blocks, decision 0353 step 4b), reached by address.
     pub fn use_read_write(&self, buffer: &Buffer) {
-        self.resident.borrow_mut().push(buffer.clone());
+        self.holds(buffer, "a resident write", 0, true);
+        self.resident.borrow_mut().push((buffer.clone(), true));
     }
 
     /// Holds the launches after it until the host signals `event` with `value` or more (a gate's, `crate::col`).
@@ -491,14 +604,25 @@ impl Pass {
         self.queue.wait_for_event(event, value);
     }
 
+    /// The block or pooled lease `b` lies in (by its contents' address), held by this submission's fence until its
+    /// work completes (decision 0491 step 2): what drops it meanwhile keeps it from the pool until then. A block's
+    /// own region, while a handle holds it, is pinned as the kernel declares the argument, read or written (step 5). Every mapped
+    /// buffer a kernel binds is one: a test build fails on one that is not, which nothing would keep.
+    fn holds(&self, b: &Buffer, kernel: &'static str, arg: usize, write: bool) {
+        let at = b.contents() as usize;
+        let known = at == 0 || rerail_blocks::region::bind_address(self.queue.fence(), at, write, kernel);
+        #[cfg(any(test, feature = "test-hooks"))]
+        assert!(known, "{kernel}'s buffer {arg} ({} bytes) lies in no block or pooled lease the ledger knows: nothing holds it while the work runs (decision 0491 step 2)", b.length());
+        let _ = (known, kernel, arg);
+    }
+
     /// Commits the launches (checked against the launch budget): what to wait for.
-    pub fn commit(mut self) -> Result<Submitted, String> {
+    pub fn commit(self) -> Result<Submitted, String> {
         if let Some(e) = self.error.take() {
             return Err(e);
         }
         crate::score::phase("gpu commit", shared::guard)?;
-        let event = self.queue.flush();
-        Ok(Submitted { event: Arc::new(event), reads: Vec::new(), committed: host_clock(), watcher: false })
+        Ok(Submitted { event: Arc::new(self.queue.flush()), reads: Vec::new(), committed: host_clock(), watcher: false })
     }
 
     /// Commits the launches and waits for them: their device seconds.
@@ -565,103 +689,70 @@ impl Column {
     }
 }
 
-/// A multi-level exclusive scan of `count` `uint`s in place, its levels' sums in scratch; the total after it in
-/// `total()`.
+/// A multi-level exclusive scan of `count` `uint`s, the UKL library's (`rerail_gpu::library`): in place, its buffer
+/// holding `count + 1` values, the total after them. Its levels are this thread's scratch (`new`) or its own
+/// (`owned`).
 pub struct Scan {
     count: usize,
-    /// Each level's threadgroups and their sums.
-    levels: Vec<(usize, Buffer)>,
+    space: ScanSpace,
     /// The levels' buffers when they are the scan's own (`owned`), not this thread's scratch.
     _owned: Vec<Held>,
 }
 
 impl Scan {
     pub fn new(count: usize) -> Result<Scan, String> {
-        let mut levels = Vec::new();
-        let mut size = count;
-        loop {
-            let groups = size.div_ceil(TILE).max(1);
-            levels.push((groups, scratch(SCAN + levels.len(), 4 * groups)?));
-            if groups == 1 {
-                break;
-            }
-            size = groups;
-        }
-        Ok(Scan { count, levels, _owned: Vec::new() })
+        let space = ScanSpace::new_in(device_count(count)?, |level, words| scratch(SCAN + level, 4 * words))?;
+        Ok(Scan { count, space, _owned: Vec::new() })
     }
 
-    /// A scan whose levels are its own: several in one submission, each total read after it completes.
+    /// A scan whose levels are its own: several in one submission.
     pub fn owned(count: usize) -> Result<Scan, String> {
-        let (mut levels, mut owned) = (Vec::new(), Vec::new());
-        let mut size = count;
-        loop {
-            let groups = size.div_ceil(TILE).max(1);
-            let h = Held::new(4 * groups)?;
-            levels.push((groups, h.buffer.clone()));
+        let mut owned = Vec::new();
+        let space = ScanSpace::new_in(device_count(count)?, |_, words| {
+            let h = Held::new(4 * words)?;
+            let b = h.buffer.clone();
             owned.push(h);
-            if groups == 1 {
-                break;
-            }
-            size = groups;
-        }
-        Ok(Scan { count, levels, _owned: owned })
+            Ok(b)
+        })?;
+        Ok(Scan { count, space, _owned: owned })
     }
 
     /// An owned scan's buffers, to keep until its submission completes.
-    fn into_held(self) -> Vec<Held> {
+    pub fn into_held(self) -> Vec<Held> {
         self._owned
     }
 
+    /// The scan of `data`'s `count` values, in place: `count + 1` values, the total last.
     pub fn encode(&self, pass: &Pass, data: &Buffer) -> Result<(), String> {
-        let block = fixed("scan_block")?;
-        let add = fixed("scan_add")?;
-        let mut inputs: Vec<(&Buffer, usize)> = vec![(data, self.count)];
-        for (k, (groups, sums)) in self.levels.iter().enumerate() {
-            let (buffer, n) = inputs[k];
-            pass.run(&block, &[buffer, sums], &[n as u32], &[], *groups);
-            inputs.push((sums, *groups));
-        }
-        // Back down: each level's blocks plus the scanned sums above them.
-        for k in (0..self.levels.len().saturating_sub(1)).rev() {
-            let (buffer, n) = inputs[k];
-            pass.run(&add, &[buffer, &self.levels[k].1], &[n as u32], &[], self.levels[k].0);
-        }
+        self.encode_into(pass, data, data)
+    }
+
+    /// The scan of `input`'s `count` values into `output` (`count + 1` values, the total last).
+    pub fn encode_into(&self, pass: &Pass, input: &Buffer, output: &Buffer) -> Result<(), String> {
+        pass.library([input, output].into_iter().chain(self.space.buffers()), |q| scan_exclusive_u32_in(q, input, output, self.count as u32, false, &self.space));
         Ok(())
     }
 
-    /// Encodes the grids of a scan sized on the device: of `min(totals[slot], cap) + 1` values (a stage's rows and
-    /// one), from the binding table's count the work before wrote, not the host's guess of its space. The scan's
-    /// levels are those of `count` values (its most). Returns the grids' words, for `encode_sized` and
-    /// `Pass::run_bytes_indirect`.
+    /// Encodes the sizes of a scan sized on the device: of `min(totals[slot], cap)` values (a stage's rows), from the
+    /// binding table's count the work before wrote, not the host's guess of its space; `cap` below `count`. Returns the
+    /// sizes, for `encode_sized` and `Pass::run_bytes_indirect` (the grid over the `n + 1` outputs at
+    /// `SCAN_OUTPUT_GRID`, `GROUP` threads a group).
     pub fn size(&self, pass: &Pass, totals: &Buffer, slot: usize, cap: usize) -> Result<Held, String> {
-        assert!(self.levels.len() <= 8 && cap < self.count);
-        let size = fixed("scan_size")?;
-        let a = Held::new(4 * 40)?;
-        pass.run(&size, &[totals, &a.buffer], &[slot as u32, cap as u32, self.levels.len() as u32], &[], 1);
-        Ok(a)
+        let sizes = Held::new(4 * SCAN_SIZES)?;
+        pass.library([totals, &sizes.buffer].into_iter().chain(self.space.buffers()), |q| self.space.size(q, totals, slot as u32, cap as u32, GROUP as u32, &sizes.buffer));
+        Ok(sizes)
     }
 
-    /// `encode`, each level's grid `size`'s.
+    /// `encode`, of `size`'s count, on its grids.
     pub fn encode_sized(&self, pass: &Pass, data: &Buffer, sizes: &Held) -> Result<(), String> {
-        let block = fixed("scan_block_sized")?;
-        let add = fixed("scan_add_sized")?;
-        let a: &Buffer = &sizes.buffer;
-        let mut inputs: Vec<&Buffer> = vec![data];
-        for (k, (groups, sums)) in self.levels.iter().enumerate() {
-            pass.run_indirect(&block, &[inputs[k], sums, a], &[k as u32], a, 4 * (8 + 3 * k as u64), *groups);
-            inputs.push(sums);
-        }
-        for k in (0..self.levels.len().saturating_sub(1)).rev() {
-            pass.run_indirect(&add, &[inputs[k], &self.levels[k].1, a], &[k as u32], a, 4 * (8 + 3 * k as u64), self.levels[k].0);
-        }
+        pass.library([data, &sizes.buffer].into_iter().chain(self.space.buffers()), |q| scan_sized(q, data, &sizes.buffer, &self.space));
         Ok(())
     }
+}
 
-    /// The scan's total, after its submission completed.
-    fn total(&self) -> u32 {
-        // SAFETY: the top level holds one sum, written by its block.
-        unsafe { *self.levels.last().expect("a level").1.contents().cast::<u32>() }
-    }
+/// A count of values the device's scans and sorts take: 32 bits.
+fn device_count(count: usize) -> Result<u32, String> {
+    u32::try_from(count).map_err(|_| format!("{count} values: past the device's scans"))
 }
 
 /// A relation sorted by its column 0 on the device: its runs, and its other columns in the sorted order.
@@ -676,11 +767,110 @@ pub struct Keyed {
     nruns: Held,
     /// Columns 1.. in the sorted order (column 0 is the runs' keys).
     others: Vec<Column>,
+    /// The screen of its keys (decision 0488): a probe tests a left key with a hash and one load before its search
+    /// of the runs, and one the screen refuses has no pairs. Made in the sort's submission from the runs where the
+    /// sort has `SCREENED_ROWS` rows, or a column's kept filter bound where it lies (`screen_by`).
+    screen: Option<Screen>,
     /// The sort's submission while it may still run (`settle`), then its runs and device time (as bits).
     pending: Mutex<Option<Submitted>>,
     runs: std::sync::atomic::AtomicUsize,
     gpu: std::sync::atomic::AtomicU64,
     pub bytes: usize,
+}
+
+/// A screen (`Keyed::screen`): a blocked Bloom filter, the host's own format and reads (`rerail_blocks::bloom`: the
+/// hash, the mask and the test written once in CLIF, `clif_bloom_*` in `<ukl/reads/relation.h>`, read by
+/// `join_common.h`'s `screen_may_hold`), its descriptor `at` bytes into `held`'s buffer. The device's own, made from a
+/// sort's runs (descriptor at 0, words at 64), or a block's: a column's kept filter, which the host's sketch keeps and
+/// the device reads where it lies.
+pub struct Screen {
+    held: Held,
+    at: u32,
+}
+
+/// No screen: a probe's `at` of none.
+pub const NO_SCREEN: u32 = u32::MAX;
+
+impl Screen {
+    /// The device's own of `words` words (a power of two), zeroed, its descriptor written.
+    fn own(words: usize) -> Result<Screen, String> {
+        let held = Held::zeroed(64 + 8 * words)?;
+        // SAFETY: the buffer's first 16 bytes, a `bloom::Bloom`'s span: its words 64 bytes on, `words` of them; the
+        // host's alone until the sort's submission is committed.
+        unsafe {
+            let p = held.buffer.contents().cast::<u64>();
+            *p = 64;
+            *p.add(1) = words as u64;
+        }
+        Ok(Screen { held, at: 0 })
+    }
+
+    /// Its words' bytes (an own screen's; a kept one is its block's).
+    fn bytes(&self) -> usize {
+        if self.at == 0 { self.held.buffer.length() as usize } else { 0 }
+    }
+}
+
+/// The screens' reads: the blocks' (`clif_bloom_*`, the host's own), a probe's test and a builder's add, in UKL:
+/// one source for every backend, after `COMMON`.
+fn screen_reads() -> String {
+    format!(
+        r#"{reads}
+// Whether the screen (a `bloom::Bloom` at byte `at` of `f`; none at NO_SCREEN) may hold `key`: a hash and one load.
+// A key it refuses is in no run (decision 0488).
+UKL_INLINE bool join_may_hold(UKL_GLOBAL const uint8_t* f, uint32_t at, uint64_t key)
+{{
+  if (at == 0xffffffffu) return true;
+  return clif_bloom_may(f, (uint64_t)at, clif_bloom_hash(f, 0ul, key)) != 0u;
+}}
+
+// Adds `key` to the screen at byte `at` of `f`: its word's two 32-bit halves set with atomics (bit b of 64-bit word
+// w is bit b & 31 of 32-bit word 2w + b / 32, the host's bytes).
+UKL_INLINE void join_screen_add(UKL_GLOBAL uint8_t* f, uint32_t at, uint64_t key)
+{{
+  uint64_t h = clif_bloom_hash(f, 0ul, key);
+  uint64_t m = clif_bloom_mask(f, 0ul, h);
+  UKL_GLOBAL const int64_t* d = (UKL_GLOBAL const int64_t*)(f + at);
+  uint32_t w = (uint32_t)(h >> 32) & (uint32_t)((uint64_t)d[1] - 1ul);
+  UKL_GLOBAL uint32_t* words = (UKL_GLOBAL uint32_t*)(f + (uint64_t)at + (uint64_t)d[0]);
+  if ((uint32_t)m != 0u) ukl_atomic_or(&words[2u * w], (uint32_t)m);
+  if ((uint32_t)(m >> 32) != 0u) ukl_atomic_or(&words[2u * w + 1u], (uint32_t)(m >> 32));
+}}
+"#,
+        reads = rerail_blocks::RELATION_READS
+    )
+}
+
+/// The kernel that makes a sort's screen: a thread a run, its key (the sort word plus `b0`) added. `p0`: the rows
+/// (a bound on the runs).
+fn screen_source(key: Width) -> String {
+    format!(
+        r#"{COMMON}{reads}
+DEFINE_KERNEL2(join, screen_bloom,
+               ROBUFFER, {k}, rkeys, "[a.p0]",
+               ROBUFFER, uint32_t, nruns, "[1]",
+               RWBUFFER, uint8_t, f, "[screen]",
+               ARGS, JoinP, a, ,
+               GID0, uint32_t, r, )
+{{
+  if (r >= a.p0 || r >= nruns[0]) return;
+  join_screen_add(f, 0u, (uint64_t)rkeys[r] + (uint64_t)a.b0);
+}}
+"#,
+        reads = screen_reads(),
+        k = key.ty()
+    )
+}
+
+/// The fewest rows a sort is screened for (`Keyed::screen`): below them a search of its runs is a few cached steps.
+pub const SCREENED_ROWS: usize = 4096;
+
+/// A sort's filter words: a byte a row (at most its distinct keys), a power of two, 256 B to 4 MiB (a sort of 4 M
+/// rows holds 64 MB). `None` past 8 M rows, where it would hold under 4 bits a key: full, it refuses little, and a
+/// probe pays its hash for nothing (4 M rows in 1 MiB: 4% slower).
+fn screen_words(rows: usize) -> Option<usize> {
+    const MOST: usize = 1 << 19;
+    (rows <= MOST * 16).then(|| (rows / 8).next_power_of_two().clamp(32, MOST))
 }
 
 pub fn groups(n: usize) -> usize {
@@ -740,6 +930,20 @@ impl Keyed {
         f64::from_bits(self.gpu.load(std::sync::atomic::Ordering::Relaxed))
     }
 
+    /// Screens its probes by a column's kept filter (decision 0488): a `bloom::Bloom` at byte `at` of `buffer` (its
+    /// block's), kept bound while `keep` lives, which must hold every key of its column 0. It takes the place of the
+    /// screen the sort made, if any: the device reads the host's filter where it lies.
+    pub fn screen_by(&mut self, buffer: Buffer, at: usize, keep: Box<dyn std::any::Any + Send + Sync>) {
+        assert!(at > 0 && at < NO_SCREEN as usize, "a filter's descriptor in a block, past its header");
+        self.bytes -= self.screen.as_ref().map_or(0, Screen::bytes);
+        self.screen = Some(Screen { held: Held::kept(buffer, keep), at: at as u32 });
+    }
+
+    /// Whether its probes are screened.
+    pub fn screened(&self) -> bool {
+        self.screen.is_some()
+    }
+
     /// `columns` sorted by column 0 on the device, in one submission, committed and not waited for: a probe of it
     /// on the process's queue runs after it. The intermediates are in scratch, the sort's order, runs and gathered
     /// columns in buffers of their own. The columns it reads are kept until it completes.
@@ -776,8 +980,18 @@ impl Keyed {
         reads.push(lead);
         let kb = parts.key.bytes();
         let bytes = 4 * n + (n + 1) * (4 + kb) + others.iter().map(Column::bytes).sum::<usize>();
+        // Its runs' keys' filter, one thread a run: read from the runs where the sort wrote them.
+        let screen = if n >= SCREENED_ROWS && let Some(words) = screen_words(n) {
+            let bloom = pipeline(&format!("screen {:?}", parts.key.bytes()), "screen_bloom", || screen_source(parts.key))?;
+            let f = Screen::own(words)?;
+            pass.run(&bloom, &[&parts.rkeys.buffer, &parts.nruns.buffer, &f.held.buffer], &[n as u32], &[base], groups(n));
+            Some(f)
+        } else {
+            None
+        };
+        let bytes = bytes + screen.as_ref().map_or(0, Screen::bytes);
         let SortParts { perm, starts, rkeys, nruns, key } = parts;
-        let keyed = Keyed { rows: n, key, base, perm, starts, rkeys, nruns, others, pending: Mutex::new(None), runs: std::sync::atomic::AtomicUsize::new(usize::MAX), gpu: std::sync::atomic::AtomicU64::new(0), bytes };
+        let keyed = Keyed { rows: n, key, base, perm, starts, rkeys, nruns, others, screen, pending: Mutex::new(None), runs: std::sync::atomic::AtomicUsize::new(usize::MAX), gpu: std::sync::atomic::AtomicU64::new(0), bytes };
         Ok((keyed, reads))
     }
 }
@@ -793,7 +1007,7 @@ pub fn encode_sorted_pairs(pass: &Pass, pairs: &Held, n: usize, first_bits: u32,
         return Ok(());
     }
     let width = if bits <= 32 { Width::W32 } else { Width::W64 };
-    let [init, hist, scatter, ..] = sort_pipes(width)?;
+    let [init, ..] = sort_pipes(width)?;
     let narrow = fixed("pair_keys")?;
     let gather = gather_pipe(Width::W64)?;
     let kb = width.bytes();
@@ -801,29 +1015,22 @@ pub fn encode_sorted_pairs(pass: &Pass, pairs: &Held, n: usize, first_bits: u32,
     let (keys_a, keys_b) = (Held::new(kb * n)?, Held::new(kb * n)?);
     let passes = bits.div_ceil(8);
     let (idx_a, idx_b) = (Held::new(4 * n)?, Held::new(4 * n)?);
-    let tiles = n.div_ceil(TILE).max(1);
-    let histogram = Held::new(4 * 256 * tiles)?;
-    let hscan = Scan::owned(256 * tiles)?;
+    let mut owned = Vec::new();
+    let space = RadixSpace::new_in(device_count(n)?, |_, words| {
+        let h = Held::new(4 * words)?;
+        let b = h.buffer.clone();
+        owned.push(h);
+        Ok(b)
+    })?;
     let nn = n as u32;
     // The words as sort keys of the sort's width (a 32-bit key when the bits fit).
     pass.run(&narrow, &[&words.buffer, &lead.buffer], &[nn, u32::from(width == Width::W64), second_bits], &[], groups(n));
     pass.run(&init, &[&lead.buffer, &keys_a.buffer, &idx_a.buffer], &[nn], &[], groups(n));
-    for p in 0..passes {
-        let (ki, ii, ko, io) = if p % 2 == 0 { (&keys_a, &idx_a, &keys_b, &idx_b) } else { (&keys_b, &idx_b, &keys_a, &idx_a) };
-        pass.run(&hist, &[&ki.buffer, &histogram.buffer], &[nn, 8 * p, tiles as u32], &[], tiles);
-        hscan.encode(pass, &histogram.buffer)?;
-        pass.run(&scatter, &[&ki.buffer, &ii.buffer, &histogram.buffer, &ko.buffer, &io.buffer], &[nn, 8 * p, tiles as u32], &[], tiles);
-    }
-    let order = if passes % 2 == 0 { &idx_a } else { &idx_b };
+    radix_sort(pass, width, [&keys_a.buffer, &idx_a.buffer], [&keys_b.buffer, &idx_b.buffer], n, bits, &space);
+    let order = if passes.is_multiple_of(2) { &idx_a } else { &idx_b };
     pass.run(&gather, &[&words.buffer, &order.buffer, &out.buffer], &[nn], &[], groups(n));
-    keep.extend([lead, keys_a, keys_b, idx_a, idx_b, histogram]);
-    keep.extend(hscan.into_held());
-    Ok(())
-}
-
-/// The pairs' sort's kernels, compiled (`prewarm`).
-pub fn prewarm_pair_sort() -> Result<(), String> {
-    fixed("pair_keys")?;
+    keep.extend([lead, keys_a, keys_b, idx_a, idx_b]);
+    keep.extend(owned);
     Ok(())
 }
 
@@ -845,36 +1052,27 @@ pub struct SortParts {
 /// buffers (`perm`, `starts`) that work already in the submission writes, back to the pool at once.
 pub fn encode_sort(pass: &Pass, lead: &Buffer, width: Width, bits: u32, n: usize) -> Result<SortParts, String> {
     let key = width.key();
-    let [init, hist, scatter, heads, compact] = sort_pipes(width)?;
+    let [init, heads, compact] = sort_pipes(width)?;
     let kb = key.bytes();
     let (keys_a, keys_b) = (scratch(KEYS_A, kb * n)?, scratch(KEYS_B, kb * n)?);
     // The order ends in `idx_a` after an even number of passes: that one is the relation's own, the other scratch.
     let passes = bits.div_ceil(8);
     let perm = Held::new(4 * n)?;
     let other = scratch(IDX, 4 * n)?;
-    let (idx_a, idx_b): (&Buffer, &Buffer) = if passes % 2 == 0 { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
-    let tiles = n.div_ceil(TILE).max(1);
+    let (idx_a, idx_b): (&Buffer, &Buffer) = if passes.is_multiple_of(2) { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
     let starts = Held::new(4 * (n + 1))?;
     let rkeys = Held::new(kb * n)?;
     let nruns = Held::new(4)?;
     if n > 0 {
-        let histogram = scratch(HIST, 4 * 256 * tiles)?;
-        let hscan = Scan::new(256 * tiles)?;
-        let heads_buf = scratch(HEADS, 4 * n)?;
-        // The heads' scan after the histograms': the two share scratch levels, one after the other in the command
-        // buffer. Made here, before any dispatch, so its levels are at their size for both.
+        // The histograms' scan and the heads' share scratch levels, one after the other in the command buffer. Both
+        // are made here, before any dispatch, so its levels are at their size for both.
+        let space = RadixSpace::new_in(device_count(n)?, |k, words| scratch(if k == 0 { HIST } else { SCAN + k - 1 }, 4 * words))?;
+        let heads_buf = scratch(HEADS, 4 * (n + 1))?;
         let rscan = Scan::new(n)?;
-        fixed("scan_block")?;
-        fixed("scan_add")?;
         let nn = n as u32;
         pass.run(&init, &[lead, &keys_a, idx_a], &[nn], &[], groups(n));
-        for p in 0..passes {
-            let (ki, ii, ko, io) = if p % 2 == 0 { (&keys_a, idx_a, &keys_b, idx_b) } else { (&keys_b, idx_b, &keys_a, idx_a) };
-            pass.run(&hist, &[ki, &histogram], &[nn, 8 * p, tiles as u32], &[], tiles);
-            hscan.encode(pass, &histogram)?;
-            pass.run(&scatter, &[ki, ii, &histogram, ko, io], &[nn, 8 * p, tiles as u32], &[], tiles);
-        }
-        let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
+        radix_sort(pass, key, [&keys_a, idx_a], [&keys_b, idx_b], n, bits, &space);
+        let keys = if passes.is_multiple_of(2) { &keys_a } else { &keys_b };
         pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
         rscan.encode(pass, &heads_buf)?;
         pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
@@ -920,7 +1118,8 @@ pub fn column_stats(cols: &[&[i64]], k: usize) -> Result<Vec<ColStats>, String> 
 /// Decision 0209 §6, the GPU batch: each column's statistics (`ColStats`) and its `k` most common values, all in one
 /// submission. Per column: the radix sort with its runs (`encode_sort`), a value's count its run's length;
 /// `col_stats` reduces the lengths a tile a threadgroup, `col_sum` the tiles'; a second sort of the lengths gives
-/// the longest runs (`col_top`). The host reads one small buffer a column. Exact, as the CPU's batch is.
+/// the longest runs (`col_top`). The host reads one small buffer a column. Exact, as the CPU's batch is. A column's
+/// keys are not made here: the statistics read the column's own (`logic::bloom::Keys`, decision 0488).
 ///
 /// A column the device holds (`StatCol::Device`) is not read by the host: its span is found on the device
 /// (`col_span`, `col_base`, `col_narrow`), and its keys sorted 32 bits wide. A column whose span passes 32 bits is made again in a second
@@ -1047,14 +1246,14 @@ fn probe_source(left: &[Width], key: Width, right: &[Width]) -> String {
     let lrows: String = left.iter().enumerate().map(|(i, w)| format!("               ROBUFFER, {}, l{i}, \"[a.p0]\",\n", w.ty())).collect();
     let rrows: String = right.iter().enumerate().map(|(i, w)| format!("               ROBUFFER, {}, r{}, \"[rows]\",\n", w.ty(), i + 1)).collect();
     let head = format!(
-        "               ROBUFFER, {kt}, rkeys, \"[runs]\",\n               ROBUFFER, uint32_t, starts, \"[runs + 1]\",\n               ROBUFFER, uint32_t, nruns, \"[1]\",\n               ROBUFFER, uint32_t, perm, \"[rows]\",\n{lrows}{rrows}"
+        "               ROBUFFER, {kt}, rkeys, \"[runs]\",\n               ROBUFFER, uint32_t, starts, \"[runs + 1]\",\n               ROBUFFER, uint32_t, nruns, \"[1]\",\n               ROBUFFER, uint32_t, perm, \"[rows]\",\n{lrows}{rrows}               ROBUFFER, uint8_t, bloom, \"[screen]\",\n"
     );
     let mut test = String::from("true");
     for i in 1..k {
         test.push_str(&format!(" && (uint64_t)l{i}[t] + (uint64_t)a.b{i} == (uint64_t)r{i}[q] + (uint64_t)a.b{}", k + i));
     }
     format!(
-        r#"{COMMON}
+        r#"{COMMON}{reads}
 // The run of a left row's key 0 (`*lo`, and whether there is one): a bounded binary search of the runs' keys.
 UKL_INLINE bool probe_find(uint64_t key, UKL_GLOBAL const {kt}* rkeys, uint32_t runs, int64_t rbase, UKL_PRIVATE uint32_t* lo)
 {{
@@ -1068,7 +1267,7 @@ UKL_INLINE bool probe_find(uint64_t key, UKL_GLOBAL const {kt}* rkeys, uint32_t 
   return l < runs && (int64_t)((uint64_t)rkeys[l] + (uint64_t)rbase) == (int64_t)key;
 }}
 
-// Each left row's pairs. p[0]: the left rows.
+// Each left row's pairs. p0: the left rows; p1: the screen's offset (`NO_SCREEN`: none).
 DEFINE_KERNEL2(join, probe_count,
 {head}               RWBUFFER, uint32_t, counts, "[a.p0]",
                ARGS, JoinP, a, ,
@@ -1076,13 +1275,14 @@ DEFINE_KERNEL2(join, probe_count,
 {{
   if (t >= a.p0) return;
   uint32_t run = 0u, c = 0u;
-  if (probe_find((uint64_t)l0[t] + (uint64_t)a.b0, rkeys, nruns[0], a.b{k}, &run)) {{
+  uint64_t key = (uint64_t)l0[t] + (uint64_t)a.b0;
+  if (join_may_hold(bloom, a.p1, key) && probe_find(key, rkeys, nruns[0], a.b{k}, &run)) {{
     for (uint32_t q = starts[run]; q < starts[run + 1u]; q++) c += (uint32_t)({test});
   }}
   counts[t] = c;
 }}
 
-// Each left row's pairs at its offset, those within the space of p[1] pairs. p[0]: the left rows.
+// Each left row's pairs at its offset, those within the space of p1 pairs. p0: the left rows; p2: the screen's offset.
 DEFINE_KERNEL2(join, probe_scatter,
 {head}               ROBUFFER, uint32_t, offsets, "[a.p0]",
                RWBUFFER, uint32_t, out, "[2 * a.p1]",
@@ -1091,7 +1291,8 @@ DEFINE_KERNEL2(join, probe_scatter,
 {{
   if (t >= a.p0) return;
   uint32_t run = 0u;
-  if (!probe_find((uint64_t)l0[t] + (uint64_t)a.b0, rkeys, nruns[0], a.b{k}, &run)) return;
+  uint64_t key = (uint64_t)l0[t] + (uint64_t)a.b0;
+  if (!join_may_hold(bloom, a.p2, key) || !probe_find(key, rkeys, nruns[0], a.b{k}, &run)) return;
   uint32_t at = offsets[t];
   for (uint32_t q = starts[run]; q < starts[run + 1u]; q++) {{
     if ({test}) {{
@@ -1100,7 +1301,8 @@ DEFINE_KERNEL2(join, probe_scatter,
     }}
   }}
 }}
-"#
+"#,
+        reads = screen_reads()
     )
 }
 
@@ -1145,7 +1347,14 @@ impl ProbeJob {
         let mut inputs: Vec<&Buffer> = vec![&right.rkeys.buffer, &right.starts.buffer, &right.nruns.buffer, &right.perm.buffer];
         inputs.extend(left.iter().map(|c| &c.buffer.buffer));
         inputs.extend(right.others.iter().map(|c| &c.buffer.buffer));
+        // The screen, or (none: its offset is `NO_SCREEN`) a buffer the kernels do not read.
+        inputs.push(right.screen.as_ref().map_or(&right.rkeys.buffer, |f| &f.held.buffer));
         inputs
+    }
+
+    /// The screen's descriptor's offset (`NO_SCREEN`: none).
+    fn screen(right: &Keyed) -> u32 {
+        right.screen.as_ref().map_or(NO_SCREEN, |f| f.at)
     }
 
     /// The probe of `right` by `left`, encoded after whatever `pass` holds (a sort of `right` in it is read in order).
@@ -1164,24 +1373,29 @@ impl ProbeJob {
         let count = pipeline(&variant, "probe_count", || probe_source(&lw, right.key, &rw))?;
         let scatter = pipeline(&variant, "probe_scatter", || probe_source(&lw, right.key, &rw))?;
         let bases: Vec<i64> = left.iter().map(|c| c.base).chain([right.base]).chain(right.others.iter().map(|c| c.base)).collect();
-        let counts = Held::new(4 * nl)?;
+        let counts = Held::new(4 * (nl + 1))?;
         let scan = Scan::owned(nl)?;
         let cap = expect.max(2 * nl).min(u32::MAX as usize / 2);
         let space = Held::new(8 * cap)?;
         let inputs = Self::inputs(left, right);
         let mut with = inputs.clone();
         with.push(&counts.buffer);
-        pass.run(&count, &with, &[nl as u32], &bases, groups(nl));
+        let screen = Self::screen(right);
+        pass.run(&count, &with, &[nl as u32, screen], &bases, groups(nl));
         scan.encode(pass, &counts.buffer)?;
         let mut with = inputs;
         with.extend([&counts.buffer, &space.buffer]);
-        pass.run(&scatter, &with, &[nl as u32, cap as u32], &bases, groups(nl));
+        pass.run(&scatter, &with, &[nl as u32, cap as u32, screen], &bases, groups(nl));
         Ok(ProbeJob { nl, cap, counts: Some(counts), scan: Some(scan), space: Some(space), bases, scatter: Some(scatter), empty: false })
     }
 
-    /// The pairs, after the submission completed.
+    /// The pairs, after the submission completed: the scan's total, after the counts.
     pub fn total(&self) -> usize {
-        self.scan.as_ref().map_or(0, |s| s.total() as usize)
+        match (&self.scan, &self.counts) {
+            // SAFETY: `nl + 1` counts, the last the scan's total, read after its submission completed.
+            (Some(_), Some(counts)) => unsafe { *counts.buffer.contents().cast::<u32>().add(self.nl) as usize },
+            _ => 0,
+        }
     }
 
     /// Whether the pairs outgrew their space (after the submission completed).
@@ -1198,7 +1412,7 @@ impl ProbeJob {
         };
         let mut with = Self::inputs(left, right);
         with.extend([&counts.buffer, &out.buffer]);
-        pass.run(scatter, &with, &[self.nl as u32, total as u32], &self.bases, groups(self.nl));
+        pass.run(scatter, &with, &[self.nl as u32, total as u32, Self::screen(right)], &self.bases, groups(self.nl));
         self.space = Some(out);
         self.cap = total;
         Ok(self)
@@ -1240,32 +1454,20 @@ impl Column {
 }
 
 
-/// Compiles every pipeline a batch's joins use ahead of their first use, as a job on the pool: the small path's,
-/// the scans', the radix sort's of each width with the gathers, and the tile pairs' sort. A job that needs one
-/// still being compiled waits for it (`pipeline wait`) rather than compiling it again. A panic leaves them to be
-/// compiled where they are needed (a job's panic would end the process).
+/// Compiles the lane's kernels ahead of their first use (`super::kernels_ahead`: the UKL library, the joins' small
+/// path, the scans', the radix sort's of each width with the gathers, the tile pairs' sort, and the relational
+/// kernels), as a job on the pool, one at a time. A job that needs one still being compiled waits for it rather than
+/// compiling it again. A kernel that fails is left to its use, which fails saying why (each entry catches its panic:
+/// a job's panic would end the process).
 pub fn prewarm() {
     crate::exec::configure();
     // In its caller's run (decision 0442): the pipelines are the caller's machine's, and the job's wall its run's
-    // (`as_job` reads it), so the run is entered first.
+    // (`as_job` reads it), so the run is entered first. Each entry carries the run too (`super::ahead`).
     let run = rerail_context::job_run();
+    let list = super::kernels_ahead();
     rerail_context::cores_spawn(move || {
         let _run = rerail_context::enter(run);
-        crate::exec::as_job("the GPU's prewarm", || {
-            let _ = std::panic::catch_unwind(|| objc::rc::autoreleasepool(|| {
-                if Fused::can() {
-                    let _ = fixed("sort_all");
-                    let _ = fixed("probe_all");
-                }
-                let _ = fixed("scan_block");
-                let _ = fixed("scan_add");
-                for w in [Width::W64, Width::W32, Width::W16] {
-                    let _ = sort_pipes(w);
-                    let _ = gather_pipe(w);
-                }
-                super::tile::prewarm();
-            }));
-        })
+        crate::exec::as_job("the GPU's prewarm", || _ = rerail_gpu::kernels::compile_ahead(list, 1, Default::default()));
     });
 }
 
@@ -1372,7 +1574,8 @@ impl ProbeOne {
 //
 // Each job's buffers are reached through device addresses in a table the host writes (`Buffer::device_address`),
 // and made resident with the launches: a batch of any number of joins costs the host two launches. A device without
-// addresses (OpenCL 1.2) takes the radix sort and the probe join instead (`Fused::can`).
+// addresses for its allocations (OpenCL without Intel's unified shared memory) takes the radix sort and the probe
+// join instead (`Fused::can`).
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -1389,6 +1592,7 @@ struct SortDesc {
     pad: u32,
 }
 
+/// `join.uglykl`'s `ProbeJob`, byte for byte (its `UKL_STATIC_ASSERT`).
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct ProbeDesc {
@@ -1398,16 +1602,19 @@ struct ProbeDesc {
     perm: u64,
     l: [u64; 3],
     r: [u64; 2],
+    screen: u64,
     lbase: [i64; 3],
     kbase: i64,
     rbase: [i64; 2],
     nl: u32,
     k: u32,
     kw: u32,
-    pad: u32,
+    screen_at: u32,
     rw: [u32; 2],
     pad2: [u32; 2],
 }
+
+const _: () = assert!(std::mem::size_of::<ProbeDesc>() == 160);
 
 
 /// A batch's small sorts and probes, described as they are encoded and dispatched together at the end
@@ -1423,9 +1630,10 @@ pub struct Fused {
 }
 
 impl Fused {
-    /// Whether the process's device can run the fused sorts and probes: their tables hold device addresses.
+    /// Whether the process's device can run the fused sorts and probes: their tables hold the addresses of leased
+    /// buffers, which the device allocated (`Device::allocations_have_addresses`).
     pub fn can() -> bool {
-        device().is_ok_and(|d| d.has_addresses())
+        device().is_ok_and(|d| d.allocations_have_addresses())
     }
 
     fn addr(&mut self, b: &Buffer) -> u64 {
@@ -1468,6 +1676,7 @@ impl Fused {
             rkeys,
             nruns,
             others,
+            screen: None,
             pending: std::sync::Mutex::new(None),
             runs: std::sync::atomic::AtomicUsize::new(usize::MAX),
             gpu: std::sync::atomic::AtomicU64::new(0),
@@ -1497,6 +1706,11 @@ impl Fused {
         d.starts = self.addr(&right.starts.buffer);
         d.nruns = self.addr(&right.nruns.buffer);
         d.perm = self.addr(&right.perm.buffer);
+        d.screen_at = NO_SCREEN;
+        if let Some(f) = &right.screen {
+            d.screen = self.addr(&f.held.buffer);
+            d.screen_at = f.at;
+        }
         for (i, c) in left.iter().enumerate() {
             d.l[i] = self.addr(&c.buffer.buffer);
             d.lbase[i] = c.base;
@@ -1586,7 +1800,7 @@ mod tests {
             let mut keep = Vec::new();
             encode_sorted_pairs(&pass, &pairs, n, fb, sb, &out, &mut keep).unwrap();
             pass.commit_wait().unwrap();
-            let got: Vec<(u32, u32)> = read(&out, 2 * n).chunks_exact(2).map(|p| (p[0], p[1])).collect();
+            let got: Vec<(u32, u32)> = read(&out, 2 * n).as_chunks::<2>().0.iter().map(|p| (p[0], p[1])).collect();
             let mut want: Vec<(u32, u32)> = want_in.iter().map(|p| (p[0], p[1])).collect();
             want.sort_unstable();
             assert_eq!(got, want, "{n} pairs of {fb} and {sb} bits");
@@ -1632,6 +1846,147 @@ mod tests {
         assert!(!want.is_empty());
         assert_eq!(got, want);
     }
+
+    /// Decision 0488, one format: the device's screen of a sort's keys is, word for word, the filter the host makes of
+    /// them in a block (`rerail_blocks::bloom`), and a sort screened by that host filter, bound where it lies, gives a
+    /// probe the host join's pairs, alone and in the fused dispatch (which tests a sort's screen too), as does the
+    /// sort's own screen.
+    #[test]
+    fn the_devices_screen_is_the_hosts_filter() {
+        let Ok(dev) = device() else { return };
+        use rerail_blocks::bloom::{Bloom, hash};
+        let right: Vec<i64> = (0..20_000i64).map(|i| i * 6 - 50_000).collect();
+        let left: Vec<i64> = (0..60_000i64).map(|i| i * 3 - 80_000).collect();
+        // copy: not block data (a test's literal keys)
+        let own = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
+        own.settle();
+        let words = screen_words(right.len()).unwrap();
+        let block = std::sync::Arc::new(rerail_blocks::Block::anon(rerail_blocks::block::kind::FACTS, 1 << 20).with_free_list());
+        let at = Bloom::try_create(&block, words).unwrap();
+        // SAFETY: the descriptor just made in `block`.
+        let host = unsafe { &*block.ptr::<Bloom>(at) };
+        for &k in &right {
+            host.add_hashed(hash(k));
+        }
+        let f = own.screen.as_ref().expect("a screened sort");
+        // SAFETY: the screen's words, 64 bytes on, written by its sort's submission, which completed.
+        let on_device = unsafe { std::slice::from_raw_parts(f.held.buffer.contents().cast::<u8>().add(64).cast::<u64>(), words) };
+        assert!((0..words).all(|i| on_device[i] == host.word(i)), "the device's screen is the host's filter");
+        // copy: not block data (a test's literal keys)
+        let mut kept = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
+        kept.screen_by(block.device_buffer(dev).unwrap(), at, Box::new(block.clone()));
+        let mut want = crate::rows::join(&[&left], &[&right]);
+        want.sort_unstable();
+        assert!(!want.is_empty());
+        let raw = crate::col::Col::from(left.clone());
+        for right in [&own, &kept] {
+            // copy: not block data (a test's literal keys)
+            let mut got = probe(&[Column::upload(&left).unwrap()], right, 0).unwrap().pairs;
+            got.sort_unstable();
+            assert_eq!(got, want, "a probe");
+            if !Fused::can() {
+                continue;
+            }
+            let pass = Pass::new().unwrap();
+            let mut fused = Fused::default();
+            let mut arena = Arena::new(2 * left.len(), probe_blocks(left.len())).unwrap();
+            // The probed column is held until the dispatch binds it (decision 0491 step 2: the tables hold its
+            // address alone, so a column dropped here would give its lease back while the kernel reads it).
+            let probed = [Column::raw(&raw).unwrap()];
+            let one = fused.probe(&probed, right, &mut arena).unwrap();
+            let mut keep = Vec::new();
+            fused.dispatch(&pass, &arena, &mut keep).unwrap();
+            pass.commit_wait().unwrap();
+            let mut got = one.pairs(&arena).expect("the pairs fit");
+            got.sort_unstable();
+            assert_eq!(got, want, "a fused probe");
+        }
+    }
+
+    /// Decision 0488: a sort of `SCREENED_ROWS` rows or more is screened by its runs' filter, made on the device from
+    /// its runs. A probe whose keys mostly miss (60,000 left keys, 1% of them among 8,192 or 65,536 right ones, the
+    /// others between them; 16 and 64-bit sorts) finds the host join's pairs with the filter and without it. The
+    /// filter at its most words (`screen_words`' clamp, 4,000,000 rows) is the same kernel at another size: its sizes
+    /// are held below, not sorted here (a sort of millions on the CPU backend took 155 s, a test's seconds many times).
+    #[test]
+    fn a_screened_probe_finds_the_hosts_pairs() {
+        assert_eq!(screen_words(4_000_000), Some(1 << 19));
+        assert_eq!(screen_words(65_536), Some(8192));
+        assert_eq!(screen_words(1 << 23 | 1), None);
+        screened_probes(0);
+    }
+
+    /// The probe's GPU time with the filter and without it, interleaved, the median of 20 each (a probe's GPU time
+    /// moves by a fifth between runs at a millisecond). A measurement: run it alone with `--ignored --nocapture`.
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn a_screened_probes_gpu_time() {
+        screened_probes(20);
+    }
+
+    /// The probes of [`a_screened_probe_finds_the_hosts_pairs`], each shape's checked against the host join, then
+    /// `timed` more of each, interleaved, their median GPU time printed.
+    fn screened_probes(timed: usize) {
+        if device().is_err() {
+            return;
+        }
+        for (nr, modulus, high) in [(8192, 60_000, 0), (8192, 1 << 50, -(1 << 55)), (65_536, 1 << 50, -(1 << 55))] {
+            // The right's keys even, the left's misses odd and among them: a miss's search ends anywhere in the runs.
+            let right: Vec<i64> = rows(nr, 21, modulus, high).into_iter().map(|v| v & !1).collect();
+            let mut left: Vec<i64> = rows(60_000, 22, modulus, high).into_iter().map(|v| v | 1).collect();
+            for (i, l) in left.iter_mut().enumerate().filter(|(i, _)| i % 100 == 0) {
+                *l = right[i % right.len()];
+            }
+            let screened = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
+            let mut plain = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
+            plain.screen = None;
+            assert!(screened.screen.is_some());
+            let column = || vec![Column::upload(&left).unwrap()];
+            let (with, without) = (probe(&column(), &screened, 0).unwrap(), probe(&column(), &plain, 0).unwrap());
+            let mut want = crate::rows::join(&[&left], &[&right]);
+            want.sort_unstable();
+            let (mut a, mut b) = (with.pairs, without.pairs);
+            a.sort_unstable();
+            b.sort_unstable();
+            assert!(want.len() >= 600, "{} pairs", want.len());
+            assert_eq!(a, want);
+            assert_eq!(b, want);
+            if timed == 0 {
+                continue;
+            }
+            let (mut gpu_with, mut gpu_without) = (Vec::new(), Vec::new());
+            for _ in 0..timed {
+                gpu_with.push(probe(&column(), &screened, 0).unwrap().gpu_seconds);
+                gpu_without.push(probe(&column(), &plain, 0).unwrap().gpu_seconds);
+            }
+            let median = |v: &mut Vec<f64>| { v.sort_by(f64::total_cmp); v[v.len() / 2] * 1e6 };
+            println!("{nr} right rows, modulus {modulus}: {} pairs; probe GPU (median of {timed}) with the filter {:.0} us, without {:.0} us", want.len(), median(&mut gpu_with), median(&mut gpu_without));
+        }
+        // Two keys, the second of another span on each side; a left key no right row has.
+        let (a0, a1) = (rows(9000, 1, 2000, 1 << 32), rows(9000, 2, 3, 0));
+        let (b0, b1) = (rows(7000, 3, 2000, 1 << 32), rows(7000, 4, 5, -1));
+        let right = Keyed::sort(vec![Column::upload(&b0).unwrap(), Column::upload(&b1).unwrap()]).unwrap();
+        let got = probe(&[Column::upload(&a0).unwrap(), Column::upload(&a1).unwrap()], &right, 0).unwrap();
+        assert_eq!(got.submissions, 1);
+        // On key 0 alone, about 3.5 pairs a left row: past the space a probe expects unless told more, so a second
+        // scatter; told, one submission. The same pairs.
+        let alone = Keyed::sort(vec![Column::upload(&b0).unwrap()]).unwrap();
+        let over = probe(&[Column::upload(&a0).unwrap()], &alone, 0).unwrap();
+        let told = probe(&[Column::upload(&a0).unwrap()], &alone, 1 << 16).unwrap();
+        assert_eq!((over.submissions, told.submissions), (2, 1));
+        assert_eq!(over.pairs, told.pairs);
+        let mut want0 = crate::rows::join(&[&a0], &[&b0]);
+        want0.sort_unstable();
+        let mut over = over.pairs;
+        over.sort_unstable();
+        assert_eq!(over, want0);
+        let mut got = got.pairs;
+        got.sort_unstable();
+        let mut want = crate::rows::join(&[&a0, &a1], &[&b0, &b1]);
+        want.sort_unstable();
+        assert!(!want.is_empty());
+        assert_eq!(got, want);
+    }
 }
 
 /// The host's part of the device's work, each piece alone: what a sort and a probe cost the CPU.
@@ -1641,11 +1996,7 @@ mod host_costs {
 
     /// The process's CPU, user and system: the device layer's own threads' too.
     fn cpu() -> f64 {
-        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-        // SAFETY: a valid rusage out.
-        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-        let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
-        t(u.ru_utime) + t(u.ru_stime)
+        rerail_device::os::process_cpu()
     }
 
     /// Microseconds of this thread's CPU per run of `f`, over `n` runs.
@@ -1666,13 +2017,12 @@ mod host_costs {
         let empty = per(300, || {
             Pass::new().unwrap().commit_wait().unwrap();
         });
-        let block = fixed("scan_block").unwrap();
-        let data = Held::zeroed(4096).unwrap();
-        let sums = Held::zeroed(4).unwrap();
+        let keys = fixed("pair_keys").unwrap();
+        let (words, out) = (Held::zeroed(8 * 256).unwrap(), Held::zeroed(8 * 256).unwrap());
         let dispatch = per(100, || {
             let pass = Pass::new().unwrap();
             for _ in 0..50 {
-                pass.run(&block, &[&data.buffer, &sums.buffer], &[1024], &[], 1);
+                pass.run(&keys, &[&words.buffer, &out.buffer], &[256], &[], 1);
             }
             pass.commit_wait().unwrap();
         });
@@ -1707,106 +2057,5 @@ mod host_costs {
                 probe_gpu / runs as f64 * 1e6
             );
         }
-    }
-}
-
-/// Decision 0440 step 5's speed gate: the UKL library's scan and radix sort (`rerail_gpu::library`) against this
-/// lane's own kernels on the same input: device time of the submission, warmed, the median of nine runs taken in
-/// turn. A measurement: `--ignored`.
-#[cfg(test)]
-mod library_speed {
-    use super::*;
-    use rerail_gpu::kernels::{alloc, buffer_of};
-    use rerail_gpu::library::{radix_sort_pairs, scan_exclusive_u32};
-
-    fn median(mut v: Vec<f64>) -> f64 {
-        v.sort_by(f64::total_cmp);
-        v[v.len() / 2]
-    }
-
-    /// The lane's time and the library's, in ms, of `lane` and `lib` (each returns its device seconds).
-    fn race(what: &str, mut lane: impl FnMut() -> f64, mut lib: impl FnMut() -> f64) -> (f64, f64) {
-        for _ in 0..3 {
-            lane();
-            lib();
-        }
-        let (mut a, mut b) = (Vec::new(), Vec::new());
-        for _ in 0..9 {
-            a.push(lane());
-            b.push(lib());
-        }
-        let (a, b) = (median(a) * 1e3, median(b) * 1e3);
-        eprintln!("{what}: lane {a:.3} ms, UKL library {b:.3} ms ({:.2}x)", b / a);
-        (a, b)
-    }
-
-    #[test]
-    #[ignore = "a measurement"]
-    fn the_library_is_no_slower_than_the_lane() {
-        let layer = shared::layer().expect("a device");
-        let mut x = 0x9e37_79b9_7f4a_7c15u64;
-        let mut next = move || {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            x
-        };
-
-        // A scan of 16M values.
-        let n = 1usize << 24;
-        let vals: Vec<u32> = (0..n).map(|_| (next() % 7) as u32).collect();
-        let data = Held::of(vals.iter().copied()).unwrap();
-        let lane_scan = Scan::owned(n).unwrap();
-        let (inb, out) = (buffer_of(&vals).unwrap(), alloc::<u32>(n + 1).unwrap());
-        let (a, b) = race(
-            "scan of 16M u32",
-            || {
-                let pass = Pass::new().unwrap();
-                lane_scan.encode(&pass, &data.buffer).unwrap();
-                pass.commit_wait().unwrap()
-            },
-            || {
-                let mut q = ComputeQueue::new(layer.queue);
-                scan_exclusive_u32(&q, &inb, &out, n as u32).unwrap();
-                let e = q.flush();
-                e.await_().unwrap();
-                e.gpu_seconds()
-            },
-        );
-        assert!(b <= a * 1.1, "the library's scan is slower than the lane's");
-
-        // A radix sort of 4M 32-bit keys with their rows: four passes of histogram, scan and scatter each.
-        let n = 1usize << 22;
-        let keys: Vec<u32> = (0..n).map(|_| next() as u32).collect();
-        let rows: Vec<u32> = (0..n as u32).collect();
-        let [_, hist, scatter, ..] = sort_pipes(Width::W32).unwrap();
-        let (ka, kb) = (Held::of(keys.iter().copied()).unwrap(), Held::new(4 * n).unwrap());
-        let (ia, ib) = (Held::of(rows.iter().copied()).unwrap(), Held::new(4 * n).unwrap());
-        let tiles = n.div_ceil(TILE);
-        let histogram = Held::new(4 * 256 * tiles).unwrap();
-        let hscan = Scan::owned(256 * tiles).unwrap();
-        let (lk, lv) = (buffer_of(&keys).unwrap(), buffer_of(&rows).unwrap());
-        let (tk, tv) = (alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap());
-        let (a, b) = race(
-            "radix sort of 4M u32 keys and rows",
-            || {
-                let pass = Pass::new().unwrap();
-                for p in 0..4u32 {
-                    let (ki, ii, ko, io) = if p % 2 == 0 { (&ka, &ia, &kb, &ib) } else { (&kb, &ib, &ka, &ia) };
-                    pass.run(&hist, &[&ki.buffer, &histogram.buffer], &[n as u32, 8 * p, tiles as u32], &[], tiles);
-                    hscan.encode(&pass, &histogram.buffer).unwrap();
-                    pass.run(&scatter, &[&ki.buffer, &ii.buffer, &histogram.buffer, &ko.buffer, &io.buffer], &[n as u32, 8 * p, tiles as u32], &[], tiles);
-                }
-                pass.commit_wait().unwrap()
-            },
-            || {
-                let mut q = ComputeQueue::new(layer.queue);
-                radix_sort_pairs::<u32>(&q, &lk, &lv, &tk, &tv, n as u32, 32).unwrap();
-                let e = q.flush();
-                e.await_().unwrap();
-                e.gpu_seconds()
-            },
-        );
-        assert!(b <= a * 1.1, "the library's sort is slower than the lane's");
     }
 }

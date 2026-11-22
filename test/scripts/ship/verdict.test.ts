@@ -17,6 +17,7 @@ import {
   median,
   missingRules,
   needsConfirmation,
+  netWalls,
   newRuleFailures,
   percentile,
   type PhaseRun,
@@ -25,6 +26,7 @@ import {
   scoreFindings,
   SLICES_TOLERANCE_PERCENT,
   TOLERANCE_PERCENT,
+  translationGate,
   withinTolerance,
 } from "../../../scripts/ship/verdict.js";
 
@@ -309,5 +311,32 @@ describe("slice C: three files of the real-code corpus", () => {
 
   it("refuses a pack with no declared source extensions", () => {
     expect(() => pickFiles("cobol", [])).toThrow(/no source extensions declared for pack cobol/);
+  });
+});
+
+describe("the .rerail side's slice B time", () => {
+  it("is each cold wall less the empty rule set's median, never below zero", () => {
+    expect(netWalls([900, 1000, 700], [750, 800, 760])).toEqual([140, 240, 0]);
+  });
+
+  it("is not known without an empty rule set's run", () => {
+    expect(netWalls([900], [])).toEqual([]);
+  });
+});
+
+describe("the .rerail side's gate", () => {
+  const declaration = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ format: "rerail.translation-equivalence/v1", pack: "rerail", equivalent: true, untranslated: {}, different: {}, ...over });
+
+  it("counts a pack whose equivalence.json says equivalent, naming the rules declared different", () => {
+    expect(translationGate("rerail", declaration())).toEqual({ counted: true, reason: "counted: docs/rule-syntax/packs/rerail/equivalence.json says equivalent" });
+    expect(translationGate("rerail", declaration({ different: { "rerail-a": { reason: "r", right: "original", counts: {} } } })).reason).toBe("counted: docs/rule-syntax/packs/rerail/equivalence.json says equivalent (1 rule declared different)");
+  });
+
+  it("reports only a pack with no declaration, a non-equivalent one, or one that is not a declaration of the pack", () => {
+    expect(translationGate("rerail", undefined)).toEqual({ counted: false, reason: "reported only: no docs/rule-syntax/packs/rerail/equivalence.json" });
+    expect(translationGate("rerail", declaration({ equivalent: false })).counted).toBe(false);
+    expect(translationGate("rerail", declaration({ pack: "python" })).counted).toBe(false);
+    expect(translationGate("rerail", declaration({ format: "v0" })).counted).toBe(false);
+    expect(translationGate("rerail", null).counted).toBe(false);
   });
 });

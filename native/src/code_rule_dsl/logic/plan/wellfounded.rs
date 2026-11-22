@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 /// How a node relates to another through a rule's body: the same node, strictly below (`D`), below or the same
 /// (`Dq`), strictly above (`U`), above or the same (`Uq`), after in document order (`S`), or no one way (`X`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
-enum Step {
+pub enum Step {
     Same,
     D,
     Dq,
@@ -131,8 +131,10 @@ fn rules_of(v: &Version) -> Vec<Rule> {
         .collect()
 }
 
-/// A helper's step from its column `i` to its column `j`, read off its own rules (`summarize`).
-type Helpers = HashMap<(String, usize, usize), Step>;
+/// A helper's step from its column `i` to its column `j`, read off its own rules (`summarize`), by the helper: an atom's
+/// steps are one lookup of its relation. Kept as one map of every (relation, i, j), each atom of each rule `order` read
+/// scanned all of them: 83,170 rules on main's Python pack, past 31 s.
+type Helpers = HashMap<String, BTreeMap<(usize, usize), Step>>;
 
 /// How `y` relates to `x` through `rule`'s tree atoms, helpers and equalities: `None` where no one way is read.
 fn order(rule: &Rule, helpers: &Helpers, x: u32, y: u32) -> Option<Step> {
@@ -160,10 +162,8 @@ fn order(rule: &Rule, helpers: &Helpers, x: u32, y: u32) -> Option<Step> {
                 e.entry(b).or_default().push((u, Step::U));
             }
         } else {
-            for ((hr, i, j), k) in helpers {
-                if *hr == at.rel
-                    && let (Some(a), Some(b)) = (col(*i), col(*j))
-                {
+            for (&(i, j), k) in helpers.get(&at.rel).into_iter().flatten() {
+                if let (Some(a), Some(b)) = (col(i), col(j)) {
                     e.entry(a).or_default().push((b, *k));
                 }
             }
@@ -249,7 +249,7 @@ fn summarize(rules: &[Rule], types: &dyn Fn(&str) -> Vec<String>) -> Helpers {
                     }
                     let d = *dirs.iter().next().expect("one direction");
                     let strict = Step::of(d, false);
-                    helpers.insert(((*rel).to_owned(), i, j), if ks == BTreeSet::from([strict]) { strict } else { Step::of(d, true) });
+                    helpers.entry((*rel).to_owned()).or_default().insert((i, j), if ks == BTreeSet::from([strict]) { strict } else { Step::of(d, true) });
                 }
             }
         }
@@ -352,19 +352,34 @@ impl Analysis for Proofs {
     const NAME: &'static str = "well-founded components";
     const READS: Reads = Reads::RULES.or(Reads::DECLS).or(Reads::ABOUT);
     fn compute(cx: &Cx<'_>) -> Result<Proofs, String> {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "well-founded components (decision 0364 §5)".into());
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(cx.v(), &d);
         let types = |r: &str| f.types(r).into_iter().map(str::to_owned).collect::<Vec<_>>();
         let rules = rules_of(cx.v());
+        let summarized = crate::code_rule_dsl::logic::profile::span(|| format!("the rules' helpers summarized ({} rules)", rules.len()));
         let helpers = summarize(&rules, &types);
+        drop(summarized);
         let comps = cx.get::<Components>()?;
-        let recursive = |c: &BTreeSet<String>| rules.iter().any(|r| c.contains(&r.head.rel) && r.atoms.iter().any(|a| c.contains(&a.rel)));
-        let comps = comps.0.iter().filter(|c| recursive(c)).map(|c| (c.clone(), classify(&rules, &helpers, &types, c))).collect();
+        // A component is recursive when a rule of it reads it: found in one pass over the rules, by each relation's
+        // component. A pass over every rule for each component took 0.16 s of the data layer's 6,842 rules (R7
+        // against 0458); checking the recursive ones takes under 1 ms.
+        let of: HashMap<&str, usize> = comps.0.iter().enumerate().flat_map(|(i, c)| c.iter().map(move |r| (r.as_str(), i))).collect();
+        let mut recursive = vec![false; comps.0.len()];
+        for r in &rules {
+            if let Some(&c) = of.get(r.head.rel.as_str())
+                && r.atoms.iter().any(|a| of.get(a.rel.as_str()) == Some(&c))
+            {
+                recursive[c] = true;
+            }
+        }
+        let comps = comps.0.iter().zip(&recursive).filter(|(_, r)| **r).map(|(c, _)| (c.clone(), classify(&rules, &helpers, &types, c))).collect();
         Ok(Proofs { comps })
     }
 }
 
 fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<String>, comp: &BTreeSet<String>) -> Result<Measure, String> {
+    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("a recursive component classified ({} relations)", comp.len()));
     let rs: Vec<&Rule> = rules.iter().filter(|r| comp.contains(&r.head.rel) && r.atoms.iter().any(|a| comp.contains(&a.rel))).collect();
     let rels: Vec<&String> = comp.iter().collect();
     let cols: Vec<Vec<usize>> = rels.iter().map(|r| types(r).iter().enumerate().filter(|(_, t)| *t == "node").map(|(i, _)| i).collect()).collect();
@@ -372,10 +387,12 @@ fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<Strin
         return Err("a relation with no node column".into());
     }
     let mut why: BTreeMap<String, usize> = BTreeMap::new();
-    let total: usize = cols.iter().map(Vec::len).product();
-    if total > 4000 {
+    // The measures to try: one node column of each relation, every choice. Stopped at the bound as it is multiplied:
+    // a component of many relations (python/calls with the typing run, about 2^64 choices) overflowed the product.
+    const MEASURES: usize = 4000;
+    let Some(total) = cols.iter().try_fold(1usize, |n, c| n.checked_mul(c.len()).filter(|&n| n <= MEASURES)) else {
         return Err("too many measures to try".into());
-    }
+    };
     for n in 0..total {
         let (mut rest, mut m) = (n, BTreeMap::new());
         for (r, c) in rels.iter().zip(&cols) {
@@ -486,114 +503,4 @@ fn ranked(comp: &BTreeSet<String>, eq: &BTreeMap<String, BTreeSet<String>>) -> O
     (rank.len() == indeg.len()).then_some(rank)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const DECLS: &str = r#"
-.decl node(d: number, n: node, kind: symbol, start: number, end_: number)
-.decl child(p: node, c: node, idx: number)
-.decl edge(a: symbol, b: symbol)
-.decl link(a: node, b: node)
-"#;
-
-    fn check_of(text: &str, comp: &[&str]) -> Result<Measure, String> {
-        let p = crate::code_rule_dsl::logic::rr::parse_version(&format!("{DECLS}{text}")).expect("parses");
-        let placed = super::super::body::Placed::whole(p.clone());
-        let f = placed.fields().expect("fields");
-        let comp: BTreeSet<String> = comp.iter().map(|s| (*s).to_owned()).collect();
-        check(&placed.v, &|r: &str| f.types(r).into_iter().map(str::to_owned).collect(), &comp)
-    }
-
-    /// A walk down the tree is proved: each row is read from its parent's, ancestors first.
-    #[test]
-    fn a_walk_down_the_tree_cannot_cycle() {
-        let m = check_of(
-            ".decl top(a: node)\ntop(a) :- node(_, a, \"function_definition\", _, _).\n\
-             .decl below(a: node, c: node)\nbelow(a, c) :- top(a), child(a, c, _).\nbelow(a, c) :- below(a, b), child(b, c, _).\n",
-            &["below"],
-        )
-        .expect("proved");
-        assert_eq!((m.order, m.col["below"]), (Order::Down, 1));
-    }
-
-    /// A step through a helper the check summarizes from its own rules (`desc`: column 1 below column 0).
-    #[test]
-    fn a_step_through_a_summarized_helper() {
-        let m = check_of(
-            ".decl desc(a: node, c: node)\ndesc(a, c) :- child(a, c, _).\ndesc(a, c) :- desc(a, b), child(b, c, _).\n\
-             .decl seed(a: node)\nseed(a) :- node(_, a, \"module\", _, _).\n\
-             .decl t(c: node)\nt(c) :- seed(c).\nt(c) :- t(a), desc(a, c).\n",
-            &["t"],
-        )
-        .expect("proved");
-        assert_eq!(m.order, Order::Down);
-    }
-
-    /// A graph that can cycle is not: its relation has no node column, or its step is a relation the check does not
-    /// read as a tree step.
-    #[test]
-    fn graphs_that_can_cycle_are_not_proved() {
-        let reach = check_of(".decl reach(a: symbol, b: symbol)\nreach(a, b) :- edge(a, b).\nreach(a, c) :- reach(a, b), edge(b, c).\n", &["reach"]);
-        assert_eq!(reach, Err("a relation with no node column".into()));
-        let linked = check_of(".decl r(a: node, b: node)\nr(a, b) :- link(a, b).\nr(a, c) :- r(a, b), link(b, c).\n", &["r"]);
-        assert!(linked.unwrap_err().starts_with("an unknown step: link"));
-    }
-
-    /// Steps both ways, and a cycle at one node, fail.
-    #[test]
-    fn both_ways_or_a_cycle_at_one_node_fail() {
-        let both = check_of(
-            ".decl w(a: node)\nw(a) :- node(_, a, \"call\", _, _).\nw(c) :- w(a), child(a, c, _).\nw(a) :- w(c), child(a, c, _).\n",
-            &["w"],
-        );
-        assert_eq!(both, Err("steps both ways".into()));
-        let cycle = check_of(
-            ".decl a(n: node)\n.decl b(n: node)\na(n) :- node(_, n, \"call\", _, _).\na(n) :- b(n).\nb(n) :- a(n).\n",
-            &["a", "b"],
-        );
-        assert_eq!(cycle, Err("a cycle at one node".into()));
-    }
-
-    /// `nearest(n, a, set)` as the engine lowers it (`rr_nearest_<set>(n, a)`) is a step up: a walk out through
-    /// scopes (calls.rerail's `walk`) is proved, nearer scopes first.
-    #[test]
-    fn a_walk_out_through_lowered_nearest_scopes() {
-        let m = check_of(
-            ".decl rr_nearest_fscope(n: node, a: node)\n.decl start(n: node, s: node)\nstart(n, s) :- rr_nearest_fscope(n, s).\n\
-             .decl walk(n: node, s: node)\nwalk(n, s) :- start(n, s).\nwalk(n, p) :- walk(n, s), rr_nearest_fscope(s, p).\n",
-            &["walk"],
-        )
-        .expect("proved");
-        assert_eq!((m.order, m.col["walk"]), (Order::Up, 1));
-    }
-
-    /// The program's proofs answer for its components, and for no set that is not one.
-    #[test]
-    fn the_programs_proofs_answer_by_component() {
-        let p = crate::code_rule_dsl::logic::rr::parse_version(&format!(
-            "{DECLS}.decl below(a: node, c: node)\nbelow(a, c) :- child(a, c, _).\nbelow(a, c) :- below(a, b), child(b, c, _).\n\
-             .decl reach(a: symbol, b: symbol)\nreach(a, b) :- edge(a, b).\nreach(a, c) :- reach(a, b), edge(b, c).\n.output below\n.output reach\n"
-        ))
-        .expect("parses");
-        let placed = super::super::body::Placed::whole(p.clone());
-        let proofs = crate::code_rule_dsl::logic::program_image::manager::analysis::<Proofs>(&placed.v).expect("proofs");
-        let set = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
-        assert_eq!(proofs.counts(), (1, 1));
-        assert_eq!(proofs.of(&set(&["below"])).map(|m| m.order), Ok(Order::Down));
-        assert!(proofs.of(&set(&["reach"])).is_err());
-        assert_eq!(proofs.of(&set(&["below", "reach"])), Err("not the program's component".into()));
-    }
-
-    /// Same-node steps without a cycle are ranked: a relation after the ones it reads at its node.
-    #[test]
-    fn same_node_steps_are_ranked() {
-        let m = check_of(
-            ".decl a(n: node)\n.decl b(n: node)\na(n) :- node(_, n, \"call\", _, _).\nb(n) :- a(n).\na(c) :- b(p), child(p, c, _).\n",
-            &["a", "b"],
-        )
-        .expect("proved");
-        assert_eq!(m.order, Order::Down);
-        assert!(m.rank["a"] < m.rank["b"], "{m:?}");
-    }
-}
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus)

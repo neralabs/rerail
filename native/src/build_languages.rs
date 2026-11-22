@@ -857,9 +857,14 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     }
     out.push_str("            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => &[],\n        }\n    }\n}\n\n");
 
+    let mut source_suffixes = Vec::new();
     out.push_str("const DIALECTS: &[Dialect] = &[\n");
     for entry in &supported {
+        let built = !omitted.contains(&entry.id);
         for dialect in &entry.dialects {
+            for suffix in &dialect.suffixes {
+                source_suffixes.push((&dialect.label, suffix, source_suffixes.len(), built));
+            }
             let _ = writeln!(
                 out,
                 "    Dialect {{ lang: {}, label: {:?}, suffixes: &{:?}, tape_tag: {} }},",
@@ -871,6 +876,11 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         }
     }
     out.push_str("];\n\n");
+    use sha2::{Digest, Sha256};
+    let registry_bytes = serde_json::to_vec(&source_suffixes).expect("ordered source suffixes");
+    let digest = Sha256::digest(registry_bytes);
+    let version: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    writeln!(out, "pub const SOURCE_GRAMMAR_REGISTRY: &str = {version:?};").unwrap();
 
     out.push_str("/// The registry's fragment grammars (decisions 0082, 0466): name, dialect, start kind, tape tag.\n");
     out.push_str("const FRAGMENTS: &[(&str, GrammarDialect, &str, u8)] = &[\n");
@@ -1426,7 +1436,7 @@ mod tests {
 
     #[test]
     fn a_language_left_out_of_the_build_keeps_its_tables_but_no_grammar() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = crate::source_tree::native();
         let vendored = [
             "python",
             "sql",
@@ -1469,7 +1479,7 @@ mod tests {
 
     #[test]
     fn the_repository_registry_generates_the_engine_tables() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = crate::source_tree::native();
         let vendored = [
             "python",
             "sql",
@@ -1520,7 +1530,7 @@ mod tests {
 
     #[test]
     fn the_test_only_registry_holds_the_exemplar_and_changes_no_identity() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = crate::source_tree::native();
         let out = Registry::new("exemplar", &[]);
         let read = |test_directory: Option<&Path>| {
             generate(

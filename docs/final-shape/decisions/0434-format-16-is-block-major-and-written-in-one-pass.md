@@ -308,7 +308,7 @@ them through the UKL translator the reads use, into the library's `<ukl/writer.h
 `the_tape_crates_writer_kernels_are_these`); `writer.metal` and the MSL translator are gone. R15's test runs the
 replay kernel on the process's device (`rerail_gpu`), whatever its backend.
 
-**Since 2026-11-20: the device's ops are written by hand (decision 0518).** `<ukl/writer.h>` is the same ops as
+**Since 2026-11-20: the device's ops are written by hand (decision 0524).** `<ukl/writer.h>` is the same ops as
 functions written by hand, not the translator's output; `writer::ukl_source` and its check are gone. R15's test holds
 them to the reference, and `the_writer_headers_constants_are_the_ops` holds their layout constants to `writer.rs`'s.
 

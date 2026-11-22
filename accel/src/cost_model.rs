@@ -221,13 +221,13 @@ mod on {
             cpu.1.push((s.host_estimate, s.cpu));
             // The medians' job: the lane's submission and launches, and the rate times the units (`fit_rates`).
             let name = s.forms.split(',').next().unwrap_or("");
-            if s.forms.split(',').all(|f| f == name) {
-                if let Some(r) = rates.iter().find(|r| r.lane == s.lane && r.name == name) {
-                    let f = prices.fixed[s.lane.index()];
-                    rated.0.push((p.wall, s.wall));
-                    rated.1.push((f.submission + (f.launch + r.per_launch) * f64::from(s.launches) + r.per_unit * s.units, s.wall));
-                    rated.2.push((s.estimate, s.wall));
-                }
+            if s.forms.split(',').all(|f| f == name)
+                && let Some(r) = rates.iter().find(|r| r.lane == s.lane && r.name == name)
+            {
+                let f = prices.fixed[s.lane.index()];
+                rated.0.push((p.wall, s.wall));
+                rated.1.push((f.submission + (f.launch + r.per_launch) * f64::from(s.launches) + r.per_unit * s.units, s.wall));
+                rated.2.push((s.estimate, s.wall));
             }
         }
         let c = Comparison {

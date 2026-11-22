@@ -4,7 +4,7 @@ use std::process::Command;
 
 /// `forest/src`, where MLDB's tree is.
 fn forest() -> String {
-    format!("{}/../../../forest/src", env!("CARGO_MANIFEST_DIR"))
+    format!("{}/../../../forest/src", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
 }
 
 /// The tokens of preprocessed text, its `#` lines (line markers, pragmas) left out.
@@ -37,7 +37,7 @@ fn clang(backend: Backend, main: &str) -> Option<String> {
         c.args(["-x", "c++", "-std=gnu++20", "-undef", "-nostdinc", "-E", "-P", "-w"]);
     }
     c.arg(format!("-I{f}")).arg(format!("-I{f}/mldb/builtin/{}/ukl", backend.dir())).arg(format!("-I{f}/mldb/block/ukl"));
-    c.arg(format!("-I{}/lib", env!("CARGO_MANIFEST_DIR")));
+    c.arg(format!("-I{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
     for (n, v) in backend.predefines() {
         c.arg(format!("-D{n}={}", v.unwrap_or_default()));
     }
@@ -65,7 +65,7 @@ fn same_as_clang(backend: Backend, main: &str, min_tokens: usize) {
 /// Each library header alone, for each backend: it takes what it needs by `#include`, and preprocesses as clang does.
 #[test]
 fn every_library_header_stands_alone_on_every_backend() {
-    let dir = format!("{}/lib", env!("CARGO_MANIFEST_DIR"));
+    let dir = format!("{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Cpu, Backend::OpenCl] {
         // A body is included by its header, with its parameters, and refuses to stand alone.
         for (name, _) in LIBRARY.iter().filter(|(n, _)| !n.starts_with("ukl/body/")) {
@@ -79,7 +79,7 @@ fn every_library_header_stands_alone_on_every_backend() {
 /// front end accepts: with the SIMD group emulated (width 32), and at width 1.
 #[test]
 fn every_library_header_is_opencl_c_1_2() {
-    let dir = format!("{}/lib", env!("CARGO_MANIFEST_DIR"));
+    let dir = format!("{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let tmp = std::env::temp_dir().join(format!("rerail-ukl-cl-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     for width in ["32u", "8u", "1u"] {
@@ -162,6 +162,20 @@ fn a_metal_kernel_takes_the_tapes_reads() {
     assert!(crate::takes_library(k) && !crate::takes_library("#include <metal_stdlib>\n"));
     let both = "#include <ukl/reads/tape.h>\n#include <ukl/reads/tape_z.h>\n";
     assert!(crate::metal_source("both.metal", both).is_err(), "one set of the tape's reads");
+}
+
+/// Windows' LLP64: an integer literal's `long` suffix is written `long long`, so `(1ul << 39) - 1` and `~0ul` are the
+/// 64-bit values UKL means; other literals are as written.
+#[test]
+fn a_long_literal_is_long_long_where_long_is_32_bits() {
+    let w = |t: &str| super::long_long(t.as_bytes()).map(|v| String::from_utf8(v).unwrap());
+    assert_eq!(w("1ul").as_deref(), Some("1ull"));
+    assert_eq!(w("0x8000000000000000UL").as_deref(), Some("0x8000000000000000ull"));
+    assert_eq!(w("7lu").as_deref(), Some("7ull"));
+    assert_eq!(w("3L").as_deref(), Some("3ll"));
+    for same in ["1ull", "2ll", "5u", "9", "1.0", "1e5", "0x1p3", "x1ul", "2.5l"] {
+        assert_eq!(w(same), None, "{same}");
+    }
 }
 
 /// The fingerprint computed when the crate is compiled is the hash it was computed as at each call: FNV-1a over each

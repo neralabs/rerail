@@ -3,7 +3,7 @@
 Status: decided (the user, 2026-11-18: "please figure out how we can also implement a proof
 cache so that we don't do the heavy work over and over"). Follows 0264 (images by content), 0092
 and 0103 (a cache is a key and a result, nothing more).
-Numbered 0402 where it was written.
+Numbered 0402 where it was written, then 0404.
 
 ## Intro
 
@@ -44,6 +44,10 @@ made as an output. It keeps nothing itself.
   `decode` as bytes). The caller keeps `made` where it keeps compiled images: the engine build's
   content store, with a shipped bundle as its seed (Q234). A test passes them from one compile to
   the next.
+- **Kept by digest** (2026-11-20, Q234). A question's text stays its key's content; what is kept is
+  the first 16 bytes of the text's SHA-256 (`bitlex_prove::Key`). The texts were 4.7 KB each, and
+  Kotlin's answers were 14 MB; as digests they are 52 KB. Two questions share a digest with odds of
+  about 2^-128 a pair, as two contents share a content store's key.
 - **The same program.** A compile with every answer known makes the same program as one with
   none (`compile_time`'s fingerprint, and a test).
 

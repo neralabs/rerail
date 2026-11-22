@@ -24,7 +24,7 @@ after:  each value at its own delay; outputs and fallback masks never aligned;
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike ran no block programs. Its rule of measuring against
+- **SQL index prototype indexes:** the spike ran no block programs. Its rule of measuring against
   the real reference holds: simdjson's stage 1 and full parse, timed on this machine, on the same
   files (`fixtures/simdjson-stage1/stage1_indexes.cpp`).
 - **Lessons ledger #28** (proxies are not the cost; only end-to-end CPU time counts). **Agrees,

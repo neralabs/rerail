@@ -1,4 +1,4 @@
-// ukl/writer.h: format 16's writer on the device, its ops (decisions 0434 §6 R15, 0440, 0518). Written by hand.
+// ukl/writer.h: format 16's writer on the device, its ops (decisions 0434 §6 R15, 0440, 0524). Written by hand.
 //
 // The ops are `rerail_clif::writer`'s, written once in CLIF for the host (its Rust and its JIT); these are the same
 // ops written for the kernels, one function each, under the CLIF op's name (`clif_w_open` is `w_open`). They write

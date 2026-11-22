@@ -34,11 +34,11 @@ use crate::content_store::atoms::Sym;
 
 /// A module file's identity: what its summary is cached under.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(crate) struct Identity {
+pub struct Identity {
     pub(crate) package: String,
     pub(crate) version: String,
     /// The file, relative to the site directory (`RECORD`'s path).
-    pub(crate) path: String,
+    pub path: String,
     /// `RECORD`'s digest of the file (`sha256=…`).
     pub(crate) digest: String,
 }
@@ -98,17 +98,17 @@ pub(crate) fn lock_versions(text: &str) -> BTreeMap<String, String> {
 
 /// What is installed in one site directory: each module's file and identity.
 #[derive(Debug, Default)]
-pub(crate) struct Installed {
+pub struct Installed {
     pub(crate) root: PathBuf,
     /// Module name (`a.b`) → identity. A stub (`.pyi`) is preferred to its source.
-    pub(crate) modules: BTreeMap<String, Identity>,
+    pub modules: BTreeMap<String, Identity>,
     /// Lockfile versions that differ from the installed ones: (package, locked, installed).
     pub(crate) mismatches: Vec<(String, String, String)>,
 }
 
 impl Installed {
     /// Reads every `*.dist-info/RECORD` under `site` (no code runs), checked against `lock` if given.
-    pub(crate) fn scan(site: &Path, lock: Option<&BTreeMap<String, String>>) -> std::io::Result<Self> {
+    pub fn scan(site: &Path, lock: Option<&BTreeMap<String, String>>) -> std::io::Result<Self> {
         let mut out = Installed { root: site.to_owned(), ..Default::default() };
         let mut entries: Vec<_> = std::fs::read_dir(site)?.filter_map(Result::ok).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
         entries.sort();
@@ -144,8 +144,8 @@ fn module_of(path: &str) -> Option<String> {
 }
 
 /// Summaries by content address, machine-wide (`~/.cache/rerail/summaries` by default).
-pub(crate) struct Cache {
-    pub(crate) dir: PathBuf,
+pub struct Cache {
+    pub dir: PathBuf,
 }
 
 impl Cache {
@@ -155,7 +155,7 @@ impl Cache {
     pub(crate) fn get(&self, id: &Identity) -> Option<String> {
         std::fs::read_to_string(self.path(&id.key())).ok()
     }
-    pub(crate) fn put(&self, id: &Identity, summary: &str) -> std::io::Result<()> {
+    pub fn put(&self, id: &Identity, summary: &str) -> std::io::Result<()> {
         let p = self.path(&id.key());
         std::fs::create_dir_all(p.parent().expect("a cache path has a parent"))?;
         // Written whole, then renamed: a reader never sees half a summary.
@@ -167,7 +167,7 @@ impl Cache {
 
 /// A module's state in the universe.
 #[derive(Debug)]
-pub(crate) enum State {
+pub enum State {
     Ready(Declarations),
     /// Installed, no summary yet: requested (`Universe::requested`). Not ⊤.
     Pending,
@@ -208,8 +208,8 @@ pub(crate) fn reexports(module: &str, package: bool, summary: &str) -> Vec<(Stri
 
 /// The universe as one run demands it.
 #[derive(Debug, Default)]
-pub(crate) struct Universe {
-    pub(crate) modules: BTreeMap<String, State>,
+pub struct Universe {
+    pub modules: BTreeMap<String, State>,
     /// Pending modules whose summaries were requested, by identity.
     pub(crate) requested: BTreeSet<Identity>,
     /// `reexport(M, x, M2)` rows met.
@@ -220,7 +220,7 @@ impl Universe {
     /// `demand module(M2) :- module(M), reexport(M, _, M2).` from the repository's imports `roots`: each
     /// demanded module's summary is read from `cache`, its re-exports demanded in turn, at most `budget`
     /// modules per package.
-    pub(crate) fn demand(roots: &[&str], installed: &Installed, cache: &Cache, budget: usize, terms: &mut Terms, intern: &mut dyn FnMut(&str) -> Sym) -> Self {
+    pub fn demand(roots: &[&str], installed: &Installed, cache: &Cache, budget: usize, terms: &mut Terms, intern: &mut dyn FnMut(&str) -> Sym) -> Self {
         let mut out = Universe::default();
         let mut per_package: BTreeMap<String, usize> = BTreeMap::new();
         let mut queue: VecDeque<String> = roots.iter().map(|r| (*r).to_owned()).collect();
@@ -261,7 +261,7 @@ impl Universe {
 /// A Python source's absolute imports, from its import statements (syntax only): `import a.b, c as d` gives
 /// (`a.b`, []) and (`c`, []); `from a.b import x, y` gives (`a.b`, [x, y]). Relative imports (the corpus's own) are
 /// kept only if `relative`.
-pub(crate) fn imports(text: &str, relative: bool) -> Vec<(String, Vec<String>)> {
+pub fn imports(text: &str, relative: bool) -> Vec<(String, Vec<String>)> {
     let mut out = Vec::new();
     for l in text.lines() {
         let l = l.trim();
@@ -285,7 +285,7 @@ pub(crate) fn imports(text: &str, relative: bool) -> Vec<(String, Vec<String>)> 
 
 /// The modules a corpus's imports demand: each imported module, and `m.x` for each `from m import x` (a
 /// submodule, when one is installed).
-pub(crate) fn roots(imports: &[(String, Vec<String>)]) -> Vec<String> {
+pub fn roots(imports: &[(String, Vec<String>)]) -> Vec<String> {
     let mut out = BTreeSet::new();
     for (m, names) in imports {
         out.insert(m.clone());
@@ -298,7 +298,7 @@ pub(crate) fn roots(imports: &[(String, Vec<String>)]) -> Vec<String> {
 
 /// A module's summary: its functions' return types (the member names the program derived; none is `Any`) and the
 /// `from` imports it re-exports, as a `rerail.types/v1` file.
-pub(crate) fn summary(module: &str, functions: &BTreeMap<String, BTreeSet<String>>, reexported: &[(String, Vec<String>)]) -> String {
+pub fn summary(module: &str, functions: &BTreeMap<String, BTreeSet<String>>, reexported: &[(String, Vec<String>)]) -> String {
     let mut out = format!("{}\n# module: {module}\n", declare::HEADER);
     for (m, names) in reexported {
         if !names.is_empty() {

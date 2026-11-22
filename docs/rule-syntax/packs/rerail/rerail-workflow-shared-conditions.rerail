@@ -1,0 +1,100 @@
+.policy "rerail-workflow-shared-conditions" revision 2
+.description "Decide the release pull request skip once per workflow, in one job output every job reads, instead of repeating the branch test in each job."
+.mode log
+.scope include ".github/workflows/**/*.yml", ".github/workflows/**/*.yaml", ".github/actions/**/*.yml", ".github/actions/**/*.yaml"
+.scope text ".github/workflows/**/*.yml", ".github/workflows/**/*.yaml", ".github/actions/**/*.yml", ".github/actions/**/*.yaml"
+// A workflow decides once whether a run is the release pull request's, in a job output every job reads (ci.yml's
+// changes job); a branch test repeated in each job drifts when the branch or the test changes. A branch test is
+// `!= 'changeset-release…'`, `!startsWith(…'changeset-release…')` or `!= vars.RELEASE_BRANCH` (or env.), on a line
+// where no `#` comes before it:
+//   if: github.head_ref != 'changeset-release/main'     the file's first: not reported
+//   if: github.head_ref != 'changeset-release/main'     each later line with one: RELEASE_PR_SKIP_REPEATED
+//   if: needs.changes.outputs.release-pr != 'true'      not reported
+// A line counts once, at its first test. The JSON has one clause per repeat, release-skip-2 to release-skip-12, the
+// n-th line's test; a 13th line and later are not reported, and are not here either: a line is reported when 1 to 11
+// earlier lines hold a test. The test is the JSON's, searched line by line (`^[^#\n]*?` before it, as there).
+
+// skip_test(d, t): t is the first branch test on its line in file d.
+.decl skip_test(d: number, t: span)
+skip_test(d, t) :- source(d, sp), match_group("(?m)^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))", sp, _, "again", t).
+.decl skip_line(d: number, l: number)
+skip_line(d, l) :- skip_test(d, t), line(t, l).
+
+.violation RELEASE_PR_SKIP_REPEATED(at: span) "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+RELEASE_PR_SKIP_REPEATED(t) :- skip_test(d, t), line(t, l), k = count : { skip_line(d, e), e < l }, k > 0, k < 12.
+
+// The pack's examples (packs/rerail/pack.json).
+.test a_repeated_branch_test_is_reported exactly
+    .fixture ".github/workflows/ci.yml" ```
+          rust:
+            if: github.head_ref != 'changeset-release/main'
+          build:
+            if: github.head_ref != 'changeset-release/main'
+        ```
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/ci.yml":4
+.end
+
+.test reading_one_output_passes exactly
+    .fixture ".github/workflows/ci.yml" ```
+          changes:
+            outputs:
+              release-pr: ${{ github.head_ref == 'changeset-release/main' }}
+          build:
+            needs: changes
+            if: needs.changes.outputs.release-pr != 'true'
+        ```
+.end
+
+// Each form counts; a comment does not, and a line counts once.
+.test every_form_counts_once_a_line exactly
+    .fixture ".github/actions/release/action.yaml" ```
+        jobs:
+          a:
+            # skipped when github.head_ref != 'changeset-release/main'
+            if: "!startsWith(github.head_ref, 'changeset-release/')"
+          b:
+            if: github.head_ref != vars.RELEASE_BRANCH && github.head_ref != 'changeset-release/main'
+          c:
+            if: github.head_ref != env.RELEASE_BRANCH
+        ```
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/actions/release/action.yaml":6
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/actions/release/action.yaml":8
+.end
+
+// The JSON's last clause is release-skip-12: the 13th line is not reported.
+.test the_twelfth_line_is_the_last_reported exactly
+    .fixture ".github/workflows/many.yml" ```
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main'
+        ```
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/many.yml":2
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/many.yml":3
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/many.yml":4
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/many.yml":5
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/many.yml":6
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/many.yml":7
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/many.yml":8
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/many.yml":9
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/many.yml":10
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/many.yml":11
+    .expect RELEASE_PR_SKIP_REPEATED at ".github/workflows/many.yml":12
+.end
+
+// Outside the workflows and actions.
+.test other_yaml_is_out_of_scope exactly
+    .fixture ".github/dependabot.yml" ```
+        a: github.head_ref != 'changeset-release/main'
+        b: github.head_ref != 'changeset-release/main'
+        ```
+.end

@@ -58,6 +58,7 @@ thread_local! {
 
 /// Left out in a test build: the driver's figure is the process's, every test's buffers. A test of what the driver's
 /// figure decides reads it (`measure_driver`).
+#[cfg(target_os = "macos")]
 pub fn driver_bytes(device: &metal::DeviceRef) -> u64 {
     if MEASURED.get() { device.current_allocated_size() } else { 0 }
 }

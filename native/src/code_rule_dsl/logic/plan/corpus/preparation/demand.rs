@@ -18,7 +18,7 @@ type Result<T> = std::result::Result<T, String>;
 
 /// Native about rows `name` with the rows of `drop`'s relations left out and `add` added, in `program_facts::
 /// write_field`'s order: by the native's name (column 1), then by column 2 where it is a number.
-pub(super) fn edit_native_rows(b: &mut Builder<'_>, name: &str, drop: &HashSet<String>, add: Vec<Vec<Cell>>) {
+pub fn edit_native_rows(b: &mut Builder<'_>, name: &str, drop: &HashSet<String>, add: Vec<Vec<Cell>>) {
     let mut rows = b.about_rows(name);
     let rel_of = |b: &Builder<'_>, r: &[Cell]| match r.get(1) {
         Some(Cell::Str(a)) => b.text(*a).to_owned(),
@@ -40,11 +40,11 @@ pub(super) fn edit_native_rows(b: &mut Builder<'_>, name: &str, drop: &HashSet<S
 }
 
 /// The program's name cell of an about row (column 0).
-pub(super) fn about_p(b: &mut Builder<'_>) -> Cell {
+pub fn about_p(b: &mut Builder<'_>) -> Cell {
     Cell::Str(b.atom(crate::code_rule_dsl::logic::program_image::ABOUT))
 }
 
-pub(super) fn qualified(v: &Version, about: &About, rel: &str, word: &str) -> bool {
+pub fn qualified(v: &Version, about: &About, rel: &str, word: &str) -> bool {
     about.qualifiers.iter().any(|(r, w)| v.text(*r) == rel && v.text(*w) == word)
 }
 
@@ -52,7 +52,7 @@ fn facts_nonempty(v: &Version, rel: &str) -> bool {
     v.find(rel).and_then(|a| v.facts(a)).is_some_and(|f| f.rows().len() > 0)
 }
 
-pub(super) fn is_input(v: &Version, rel: &str) -> bool {
+pub fn is_input(v: &Version, rel: &str) -> bool {
     v.inputs().any(|a| v.text(a) == rel)
 }
 
@@ -545,7 +545,7 @@ impl ProgramPass for NegatedDemand {
             match names.get(input.rel_name(r.head().rel())) {
                 Some(name) => {
                     let key = r.head().args().next().ok_or("a demanded relation of no columns")?;
-                    let mut wr = b.rule().head_from(&input, r, r.head()).atom(name.as_str(), &[t_of(&input, r, key)]);
+                    let mut wr = b.rule().head_from(&input, r, r.head()).atom(name.as_str(), &[t_of(r, key)]);
                     for l in r.body() {
                         wr = wr.lit(&input, r, l);
                     }
@@ -569,7 +569,7 @@ impl ProgramPass for NegatedDemand {
             for body in bodies.into_values() {
                 let mut wr = b.rule().head(name.as_str(), &[T::Var("k")]);
                 for (a, args, r, key) in body {
-                    let terms: Vec<T<'_>> = args.iter().map(|t| if t.var() == Some(*key) { T::Var("k") } else { t_of(&input, *r, *t) }).collect();
+                    let terms: Vec<T<'_>> = args.iter().map(|t| if t.var() == Some(*key) { T::Var("k") } else { t_of(*r, *t) }).collect();
                     wr = wr.atom(a.as_str(), &terms);
                 }
                 wr.finish()?;

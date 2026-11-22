@@ -5,14 +5,18 @@
 //! straight bit operations.
 
 // The IR text's helpers, tier 1's (`rerail_compiler::clif_text`).
-pub use rerail_compiler::clif_text::{body_of, carried_params, carried_words, hot_loop, loop_costs, machine_loop, opcode, sink_params, state_bits};
+pub use rerail_compiler::clif_text::{body_of, carried_words, hot_loop, opcode, state_bits};
+// The machine code's, which the AArch64 budgets below read.
+#[cfg(target_arch = "aarch64")]
+pub use rerail_compiler::clif_text::{carried_params, loop_costs, machine_loop, sink_params};
 #[allow(unused_imports)]
 use rerail_compiler::*;
+use rerail_cpu_block::*;
 use rerail_compiler::block::BlockRun;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
 pub use crate::executors::{Executors, inputs, runs};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use rerail_metal as metal_program_backend;
 
 /// What a program's digest covers of its block programs: their canonical bytes (the engine's
@@ -86,7 +90,7 @@ fn eq_equals_reference_on_every_executor() {
         for bytes in inputs() {
             let want = reference(&bytes, |b| b == byte);
             for (name, got) in ex.every(&bytes) {
-                assert_eq!(got, [want.clone()], "{name}, eq {byte:#04x}, {} bytes", bytes.len());
+                assert_eq!(got, std::slice::from_ref(&want), "{name}, eq {byte:#04x}, {} bytes", bytes.len());
             }
         }
     }
@@ -183,12 +187,12 @@ fn check_lowering(name: &str, p: &Program) {
 }
 
 /// The forward carry's UKL of the program (its planes form, from its first line, the shared code included).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn metal_program_backend_generate(native: &block_native::BlockNative) -> Vec<(String, String)> {
     vec![("Planes".to_owned(), metal_program_backend::block_program::serial::source(&[native]))]
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn metal_program_backend_generate(_native: &block_native::BlockNative) -> Vec<(String, String)> {
     vec![]
 }
@@ -258,7 +262,8 @@ fn not_equals_reference_on_every_executor() {
 
 #[test]
 fn binary_operators_equal_reference_on_every_executor() {
-    let cases: [(&str, fn(u64, u64) -> u64); 4] =
+    type Op = fn(u64, u64) -> u64;
+    let cases: [(&str, Op); 4] =
         [("and", |x, y| x & y), ("or", |x, y| x | y), ("xor", |x, y| x ^ y), ("andnot", |x, y| x & !y)];
     for (name, f) in cases {
         // Each operator on the two masks, and on a mask with itself.
@@ -688,8 +693,11 @@ fn back_fill_equals_reference_on_the_cpu_and_the_forward_carry() {
     assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
     // On Metal, the forward carry in passes: the batch, with a file of many segments whose
     // fills cross them, at segments of three blocks.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
+        if crate::executors::no_device() {
+            return;
+        }
         use metal_program_backend::block_program::serial::{Segments, run_serial_split};
         let long: Vec<u8> = (0..9000u32).map(|i| match i % 701 { 0 => b'"', k if k % 97 == 0 => b'\\', k if k % 5 == 0 => b'a', _ => b'b' }).collect();
         let mut refs = refs;
@@ -801,7 +809,7 @@ pub const STAGE1: &str = include_str!("../../../../fixtures/simdjson-stage1/stag
 pub(crate) const STAGE1_EXPECTED: &str = include_str!("../../../../fixtures/simdjson-stage1/expected.txt");
 
 pub(crate) fn repo_file(path: &str) -> Vec<u8> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     std::fs::read(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
@@ -841,9 +849,12 @@ fn extract_executors(p: &Program, bytes: &[u8]) -> Vec<(String, BlockRun)> {
 
 /// The Metal executors' runs with the extract pass (`extract_executors`): the forward carry in segments of three
 /// blocks (a file of a few blocks speculates and runs again) and of tier 1's 29.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn metal_extract_runs(_block: &block::BlockProgram, native: &block_native::BlockNative, bytes: &[u8]) -> Vec<(String, BlockRun)> {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+    if crate::executors::no_device() {
+        return Vec::new();
+    }
     let file = [block::BatchFile { bytes, program: 0 }];
     [3, 29]
         .into_iter()
@@ -851,23 +862,26 @@ fn metal_extract_runs(_block: &block::BlockProgram, native: &block_native::Block
         .collect()
 }
 
-/// No Metal executors off macOS.
-#[cfg(not(target_os = "macos"))]
+/// No Metal executors off the device layer's targets.
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn metal_extract_runs(_: &block::BlockProgram, _: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
     Vec::new()
 }
 
 /// The forward carry's run with the extract pass, tier 1's segments (a large file's, `extract_executors` for the
 /// rest).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn metal_extract_generated(native: &block_native::BlockNative, bytes: &[u8]) -> Vec<(String, BlockRun)> {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+    if crate::executors::no_device() {
+        return Vec::new();
+    }
     let file = [block::BatchFile { bytes, program: 0 }];
     vec![("metal forward carry".to_owned(), run_serial_split(&[native], &file, Segments { blocks: 29, warm: 1 }).expect("runs").run.files.remove(0))]
 }
 
-/// No Metal executors off macOS.
-#[cfg(not(target_os = "macos"))]
+/// No Metal executors off the device layer's targets.
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn metal_extract_generated(_: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
     Vec::new()
 }
@@ -1054,7 +1068,7 @@ fn stage1_cost_per_block() {
     println!("cranelift: {per_block} machine instructions in the loop body (one block)");
     let s = compiled.cpu_seconds(&bytes, 20);
     println!("cranelift: {:.3} ns per block (CPU time, best of 20)", s / blocks * 1e9);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
         use metal_program_backend::block_program::serial::{Segments, run_serial_split};
         // The mask passes alone, and with the extract pass, in tier 1's segments: the forward carry's launches (the
@@ -1136,6 +1150,7 @@ fn within_lowers_to_straight_bit_operations() {
 
 /// Stage 1's loop's stack loads and stores (a ratchet, to reach 0). 3 when the body makes its
 /// constants at its head and a class is one `cmtst` (0381).
+#[cfg(target_arch = "aarch64")]
 const STAGE1_LOOP_STACK: usize = 3;
 
 /// Stage 1 compiles to a loop with little stack traffic and no vector `mvn`: its values and
@@ -1299,8 +1314,11 @@ fn rounds_equal_the_interpreter() {
     // On Metal, the forward carry: each lane a block, the group's rounds over all its lanes at
     // once, in segments of three blocks that speculate their start; and a long file of many
     // segments.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
+        if crate::executors::no_device() {
+            return;
+        }
         use metal_program_backend::block_program::serial::{Segments, run_serial_split};
         let mut seed = 0x2545_f491_4f6c_dd1du64;
         let long: Vec<u8> = (0..20_000)

@@ -138,7 +138,7 @@ impl Delta {
         Some((f.w, unsafe { std::slice::from_raw_parts(f.at, f.len) }))
     }
     fn rows(&self, e: u32) -> u32 {
-        self.flat(e).map_or(0, |(w, f)| if w == 0 { 0 } else { (f.len() / w) as u32 })
+        self.flat(e).map_or(0, |(w, f)| f.len().checked_div(w).unwrap_or(0) as u32)
     }
     /// Input column `c` of entry `e`'s row `r`.
     fn value(&self, (e, r): (u32, u32), c: usize) -> i64 {
@@ -295,13 +295,19 @@ pub(super) struct Before {
     now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,
     skip: Vec<u32>,
     was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>,
-    kept: usize,
+    kept: std::sync::OnceLock<usize>,
 }
 
 impl Before {
     pub(super) fn new(now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, skip: Vec<u32>, was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>) -> Before {
-        let kept = now.len() - skip.len();
-        Before { now, skip, was, kept }
+        Before { now, skip, was, kept: std::sync::OnceLock::new() }
+    }
+
+    /// Its rows of `now`, the skipped ones but: read when it is first read, not when it is made, as the corpus batch
+    /// counts its rows by the totals it is given after the versions are made (decision 0494), and before them made
+    /// every document to count them (Q332).
+    fn kept(&self) -> usize {
+        *self.kept.get_or_init(|| self.now.len() - self.skip.len())
     }
 
     /// The id in `now` of its `r`-th row not skipped: `r` plus the skipped ids before it (`skip[j] - j` counts the rows
@@ -314,6 +320,12 @@ impl Before {
         }
         r + lo
     }
+
+    /// The row of `now`'s id `id`: its rank among the rows not skipped, `None` for a skipped one.
+    fn before_row(&self, id: usize) -> Option<usize> {
+        let at = self.skip.partition_point(|&s| (s as usize) < id);
+        (self.skip.get(at).copied() != Some(id as u32)).then_some(id - at)
+    }
 }
 
 impl crate::code_rule_dsl::facts::vtab::Source for Before {
@@ -321,22 +333,35 @@ impl crate::code_rule_dsl::facts::vtab::Source for Before {
         self.now.columns()
     }
     fn len(&self) -> usize {
-        self.kept + self.was.as_ref().map_or(0, |w| w.len())
+        self.kept() + self.was.as_ref().map_or(0, |w| w.len())
     }
-    fn estimated_matches(&self, _column: usize, _batch: bool) -> usize {
-        self.len()
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        self.now.estimated_matches(column, batch)
     }
-    fn indexed(&self, _column: usize) -> bool {
-        false
+    fn lookup_cost(&self, column: usize) -> f64 {
+        self.now.lookup_cost(column)
     }
-    fn lookup(&self, _column: usize, _values: &[i64]) -> Option<Vec<usize>> {
-        None
+    fn indexed(&self, column: usize) -> bool {
+        self.now.indexed(column)
+    }
+    /// The corpus batch's lookup, the changed documents' rows dropped, then the old documents' rows: by their own
+    /// lookup, else read (they are the changed documents' alone).
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        let mut out: Vec<usize> = self.now.lookup(column, values)?.into_iter().filter_map(|id| self.before_row(id)).collect();
+        if let Some(was) = &self.was {
+            match was.lookup(column, values) {
+                Some(ids) => out.extend(ids.into_iter().map(|r| r + self.kept())),
+                None => out.extend((0..was.len()).filter(|&r| values.contains(&was.value(r, column))).map(|r| r + self.kept())),
+            }
+        }
+        out.sort_unstable();
+        Some(out)
     }
     fn value(&self, row: usize, column: usize) -> i64 {
-        if row < self.kept {
+        if row < self.kept() {
             self.now.value(self.now_row(row), column)
         } else {
-            self.was.as_ref().expect("a row past the kept ones is an old document's").value(row - self.kept, column)
+            self.was.as_ref().expect("a row past the kept ones is an old document's").value(row - self.kept(), column)
         }
     }
 }
@@ -356,6 +381,11 @@ mod before_tests {
         let before = Before::new(now, vec![0, 2, 3], Some(was));
         let rows: Vec<i64> = (0..before.len()).map(|r| before.value(r, 0)).collect();
         assert_eq!(rows, vec![11, 14, 15, 99, 98]);
+        // Looked up, the same rows by their place in the old version.
+        for v in [10, 11, 14, 99, 7] {
+            let want: Vec<usize> = (0..before.len()).filter(|&r| before.value(r, 0) == v).collect();
+            assert_eq!(before.lookup(0, &[v]).expect("the rows now are looked up"), want, "{v}");
+        }
         let none = Before::new(col(vec![1, 2]), vec![], None);
         assert_eq!((0..none.len()).map(|r| none.value(r, 0)).collect::<Vec<_>>(), vec![1, 2]);
         let _ = Arc::new(none);

@@ -1,21 +1,25 @@
-//! The parsers on Metal, against the CPU: every ladder step's tier 1 in the forward carry equals
-//! the interpreter (`every_step_on_metal_equals_the_interpreter`), and the JSON forms' Metal
+//! The parsers on Metal, against the CPU: every JSON grammar's tier 1 in the forward carry equals
+//! the interpreter (`every_grammar_on_metal_equals_the_interpreter`), and the JSON forms' Metal
 //! measurement over a corpus (`json_metal_serial_bench`, run by name). The backend is the Metal
 //! crate's (`rerail_metal::block_program::serial`).
 
 use crate::json::{base, files_in, form};
-use rerail_compiler::ladder::*;
+use rerail_cpu_stream::ladder::*;
 use rerail_compiler::{block, block_native as native_ir};
 use rerail_metal::block_program;
 
-/// Every step's tier 1 on Metal, in the forward carry (tier 1's segments), equals the CPU
+/// Each JSON grammar's tier 1 on Metal, in the forward carry (tier 1's segments), equals the CPU
 /// interpreter on every document: outputs, totals, and the extracted positions of the files no
-/// total refuses. The steps run as one batch, but those with back fills or loads, which run in
+/// total refuses. The grammars run as one batch, but those with back fills or loads, which run in
 /// passes one program at a time (`run_passes`): each alone.
 #[test]
-fn every_step_on_metal_equals_the_interpreter() {
+fn every_grammar_on_metal_equals_the_interpreter() {
+    // No device here: nothing of this test's to run (`executors::no_device`).
+    if crate::executors::no_device() {
+        return;
+    }
     use block_program::serial::{Segments, run_serial_split};
-    let steps = steps_in(&dir());
+    let steps = grammars();
     let compiled: Vec<Compiled> = steps.iter().map(|(n, s)| compile_step(n, s)).collect();
     let docs: Vec<Vec<Vec<u8>>> = compiled.iter().zip(&steps).map(|(c, (n, _))| documents(&Lang::of(&c.stmts), seed(n), &|b| reference(c, b).is_some()).0).collect();
     let all: Vec<&native_ir::BlockNative> = compiled.iter().map(|c| &c.native.block_programs[0]).collect();
@@ -66,6 +70,10 @@ fn every_step_on_metal_equals_the_interpreter() {
 /// semi's bit, and the codes and positions equal the interpreter's over texts of line breaks between and inside its comments.
 #[test]
 fn an_extra_keeps_its_blank_marks_on_metal() {
+    // No device here: nothing of this test's to run (`executors::no_device`).
+    if crate::executors::no_device() {
+        return;
+    }
     use block_program::serial::{Segments, run_serial_split};
     let c = compile_step("blanks", BLANKS_STEP);
     let texts: [&[u8]; 8] = [b"a\nb\n", b"a /* x\ny */ b\n", b"a // x\nb\n", b"k(\"x\ny\")\nb", b"a /* x */\n/* y */ b\n", b"a\n\n// x\n\nb", b"k /* \n */ (b)\n", BLANKS_TEXT];
@@ -104,7 +112,7 @@ fn json_metal_serial_bench() {
     let segments = Segments { blocks: env("RERAIL_SEG", 29), warm: env("RERAIL_SEG_WARM", 1) };
     println!("{} files, {} bytes, {segments:?}", files.len(), total);
     println!("form\tgpu_ms\tGB/s\tfirst_ms\tagain_ms\tsinks_ms\tsegments\treruns\trounds");
-    for name in ["14-json", "15-jsonc"] {
+    for name in ["json-rfc", "jsonc"] {
         if std::env::var("RERAIL_FORM").is_ok_and(|f| !name.starts_with(&f)) {
             continue;
         }
@@ -145,6 +153,10 @@ fn json_metal_serial_bench() {
 /// lengths over the lanes' and blocks' edges.
 #[test]
 fn a_files_start_on_metal_is_the_interpreters() {
+    // No device here: nothing of this test's to run (`executors::no_device`).
+    if crate::executors::no_device() {
+        return;
+    }
     use block_program::serial::{Segments, run_serial};
     // The BOM as masks (0330's form): its bytes, two bytes late, cut from a mask at delay 0
     // by an `early`.
@@ -174,7 +186,7 @@ escape \"l\" when lone
         }
     }
     let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
-    let forms = [("early", compile_step("early", EARLY)), ("14-json", form("14-json")), ("15-jsonc", form("15-jsonc"))];
+    let forms = [("early", compile_step("early", EARLY)), ("json-rfc", form("json-rfc")), ("jsonc", form("jsonc"))];
     for (name, c) in &forms {
         let native = &c.native.block_programs[0];
         let late = native.insts.iter().any(|i| matches!(i, native_ir::BlockInst::Early(..) | native_ir::BlockInst::Prefix(..)));

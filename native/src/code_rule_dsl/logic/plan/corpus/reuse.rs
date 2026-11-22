@@ -69,18 +69,26 @@ fn switches() -> Vec<u8> {
     out
 }
 
-fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
+fn key(given: &super::Texts<'_>, added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
     // v4: the run's settings keyed as the rows it adds (decision 0249), the texts as the files'.
     h.update(b"rerail.run-reuse/v4\0");
-    for p in programs {
+    for p in given.programs {
         h.update((p.len() as u64).to_le_bytes());
         h.update(p.as_bytes());
+    }
+    // A handed program's plan key omits message text. These outputs contain rendered messages.
+    if let Some(read) = given.read {
+        for (_, template) in crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&**read).iter().filter(|(key, _)| key == crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE) {
+            h.update(b"rendered-message\0");
+            h.update((template.len() as u64).to_le_bytes());
+            h.update(template.as_bytes());
+        }
     }
     added.hash(&mut h);
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
@@ -268,10 +276,17 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 
 /// The kept outputs written into `out`, when every read of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
+pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
+    if crate::git_workspace::snapshot::contains(root) {
+        return Ok(None);
+    }
+    // A run an analysis run owns (decision 0547) publishes what it recorded as the owner finishes: a hit re-owns the
+    // manifests the recorded run wrote (`own_recorded_manifests`), below. Skipped instead, every `logic` command's
+    // warm run evaluated again (each begins an analysis run).
+    let owner = super::ThreadStore::owner(root).filter(|owner| owner.is_staged());
     let programs = given.programs;
     let checking = super::thread_usage();
-    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
+    let key = key(given, &settings(root, options)?, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
         miss(&format!("no record under the run's key {} (programs {}; {})", &key[..CUTOFF.len() + 12], programs.len(), key_parts(programs, root, options, typing)));
         return Ok(None);
@@ -321,14 +336,29 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         miss("a consulted file or read changed");
         return Ok(None);
     }
+    if let Some(owner) = &owner {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        let owned = crate::code_rule_dsl::logic::profile::around_the_run(|| -> Result<usize> {
+            let Some(store) = super::tape_cache().map_err(|e| Error::Plan(format!("the tape cache: {e}")))? else { return Ok(0) };
+            store.own_recorded_manifests(&super::manifest_root(root), &plans, owner, now).map_err(|e| Error::Plan(format!("the recorded run's manifests: {e}")))
+        })?;
+        if owned == 0 {
+            miss("the recorded run's manifests are gone, or its owner may no longer publish");
+            return Ok(None);
+        }
+    }
     crate::code_rule_dsl::logic::profile::decision("whole-run cutoff (t23 §4)", || "every read as it was: the kept outputs written, nothing evaluated".into());
-    std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?;
+    if captured.is_none() { std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?; }
     let mut report = Report { plans, ..Report::default() };
     for (name, bytes) in &outputs {
         if name != crate::code_rule_dsl::logic::plan::output::FILE {
             return Err(Error::Plan(format!("{name}: no output file of this run's")));
         }
-        crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        if let Some(target) = captured.as_deref_mut() {
+            target.extend_from_slice(bytes);
+        } else {
+            crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        }
         let image = crate::code_rule_dsl::logic::plan::output::Image::one(bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
         for rel in image.names() {
             report.rows.insert(rel.to_owned(), image.rel(rel).expect("named").rows);
@@ -339,7 +369,7 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     // The documents the run read: the workspace's and those its requests loaded, each once. Phase 1 loads a
     // workspace document by its absolute path, which the run lists by its path from the root: counted twice, a warm
     // run of one file reported two.
-    let base = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let base = crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let read: std::collections::BTreeSet<std::path::PathBuf> =
         rest.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").map(|c| base.join(&c.1)).collect();
     report.files = read.len();
@@ -362,7 +392,10 @@ fn miss(why: &str) {
     }
 }
 
-pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
+pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report, captured: Option<&[u8]>) -> Result<()> {
+    if crate::git_workspace::snapshot::contains(root) {
+        return Ok(());
+    }
     let programs = given.programs;
     // Every phase's program is among the rule files (`rule_files`), and what each phase consulted is the record's
     // too: a phase's exports are a function of its program and what it consulted, so a run whose every read, its
@@ -372,7 +405,7 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         miss("not recorded: nothing consulted");
         return Ok(());
     }
-    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
+    let key = key(given, &settings(root, options)?, root, options, modes, typing);
     let mut consulted = rule_files(given, options)?;
     let mut read: Vec<(String, String, String)> = report.consulted.iter().cloned().chain(report.phase_runs.iter().flat_map(|r| r.report.consulted.iter().cloned())).collect();
     read.sort();
@@ -386,7 +419,11 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     if let Some(summary) = super::Summary::of(programs, &given.graphs, given.read, root, options)?.encode().and_then(|b| String::from_utf8(b).ok()) {
         consulted.push((SUMMARY.to_owned(), String::new(), summary));
     }
-    let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));
+    let files = match captured {
+        Some(bytes) => vec![(crate::code_rule_dsl::logic::plan::output::FILE.to_owned(), bytes.to_vec())],
+        None => outputs_of(out, report.rows.keys().map(String::as_str)),
+    };
+    let outputs = encode_outputs(&files);
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
         eprintln!("rerail: whole-run cutoff: recorded under {} ({} consulted)", &key[..CUTOFF.len() + 12], consulted.len());
     }

@@ -43,8 +43,9 @@ also kept tier 2 bigger than it needs to be, because the fact went unproved.
    tier 2 grew past its 65,533 words. Read as dead, step 35's tier 2 is 15,424 words; it was
    23,146 before the lemmas.
 
-3. **The lowering and the provers hash with a fixed seed** (`foldhash::fast::FixedState`, in
-   `bitlex_masks`, `bitlex_prove`, `bitlex_tier2` and `grammar`). A proof's search order comes
+3. **The lowering and the provers hash with a fixed hasher** (`rustc_hash`'s `FxHashMap`, which
+   has no seed, in `bitlex_masks`, `bitlex_prove`, `bitlex_tier2` and `grammar`; it was
+   `foldhash::fast::FixedState` where it was written, and the hub's 0414 had brought `rustc_hash`). A proof's search order comes
    from map iteration. With std's random seed, one grammar compiled to programs of 15,420,
    15,422 or 15,424 words from run to run. Now one grammar compiles to one program.
 
@@ -88,9 +89,12 @@ The four changes were measured together, not one by one.
 
 - Kotlin's 47 tests against the lean parser pass. The corpus (495 files) gives 429 the same,
   62 refused, 0 differ, as with the walk lemmas off and no runs.
-- `kotlin_parser::tests::a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes` checks
-  three things on step 09: the step compiles twice to the same program; the lemmas make it
-  smaller; and with the lemmas off (`bitlex_masks::NO_WALK_LEMMAS`) it reads each text the same.
+- `kotlin_parser::tests::a_cold_compile_makes_the_shipped_answers_program`: the grammar compiles
+  twice to the same program, cold and with its shipped answers (`kotlin.answers`, 0414; Q371).
+- `kotlin_parser::tests::walk_lemmas_keep_the_tapes` checks that the lemmas make the program
+  smaller, and that with them off (`bitlex_masks::NO_WALK_LEMMAS`) it reads each text the same.
+  Without the lemmas the grammar takes minutes to compile, so the test is in nextest's slow tier,
+  where Q371 put the step test it replaces; it is not ignored.
 - The compiler's prover, SAT and grammar tests pass, as do `parser_tests`' compile, JSON, block
   and `.rerail` tests.
 
@@ -102,3 +106,12 @@ The four changes were measured together, not one by one.
   Step 22's Cranelift compile takes 23.6 s of it.
   `rr_tests::rr_steps_parse_as_the_reference_and_the_engine` takes 173 s: 59 s of Bitlex compile, 42 s of Cranelift.
   Both tests are in the quick tier, past its 20 s line.
+
+## Kotlin's ladder removed
+
+The user, 2026-11-20: "stop keeping the whole ladder ... I said stop keeping them at all". Steps
+01 to 34 are deleted (steps 1 to 35 here, where 0422 had kept step 36 alone). The last step is the
+grammar, `kotlin_parser/kotlin.bitlex`: step 36's grammar under the grammar's header. The AOT test
+takes it as Kotlin's only step: 82 s, most of it rustc's build. The nine
+`what_step_N_does_not_read_is_refused` tests are one, `what_the_grammar_does_not_read_is_refused`.
+The step timings above are from before the removal.

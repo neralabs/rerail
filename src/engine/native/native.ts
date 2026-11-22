@@ -102,6 +102,13 @@ export interface NativeCompiledCodeRuleDsl {
   readsServerGraph(): boolean;
   /** Whether the code rule reads text: some clause, however nested, is a `regex` or `file` query, so files no language lists are read for it. */
   readsText(): boolean;
+  /**
+   * Whether a finding of the code rule in one file can depend on another file's text: a clause the engine evaluates over
+   * many files (any but a `regex`, `ast` or `file` forbid, and an `llm` clause, which reads no file), a `calls` or
+   * `importTarget` term, or a `report_when` gate.
+   * The engine routes each clause by the same predicates, so the answer cannot drift from what it evaluates.
+   */
+  readsOtherFiles(): boolean;
 }
 
 export interface NativeCodeRuleDslEditor {
@@ -116,6 +123,7 @@ export interface NativeCodeRuleDslEditor {
 export interface NativeStorageAttachment {
   attached: boolean;
   reason?: string;
+  cacheUnavailable?: boolean;
   /** Wall time the attach spent discovering the Git checkout (0 if it did not get that far). */
   discoveryMilliseconds: number;
   /** Wall time the attach spent opening the store and publishing the checkout's snapshot (0 if that phase did not run). */
@@ -145,7 +153,7 @@ export interface NativeCodeRuleDslWorkspace {
    * binding never chooses a store itself and refuses an empty path. A file `secretNames` names is evaluated but never
    * written to the store (not its source, syntax trees or results): it stays in the workspace's memory instead.
    */
-  enableStorageAsync(root: string, storePath: string, secretNames: NativeSecretNames): Promise<NativeStorageAttachment>;
+  enableStorageAsync(root: string, storePath: string, secretNames: NativeSecretNames, analysis?: NativeAnalysisScopeRun, generation?: number, home?: string, expectedStore?: string): Promise<NativeStorageAttachment>;
   /**
    * `placement`, when given, is a JSON `CodeRulePlacement` (repository-model.ts): this workspace runs the code rule per folder
    * at the entry's mode (`null` is off there), and a linter's suppression comment silences its violations there unless the
@@ -167,12 +175,14 @@ export interface NativeCodeRuleDslWorkspace {
   applyAsync(requestJson: string): Promise<string>;
   applyBufferAsync(request: Buffer): Promise<string>;
   /** One bounded chunk of a repository index over the attached Git worktree; call until `done`. */
+  enableRevisionStorageAsync(source: NativeGitRevisionSource, storePath: string, secretNames: NativeSecretNames, analysis?: NativeAnalysisScopeRun): Promise<NativeStorageAttachment>;
   indexRepositoryAsync(options: NativeRepositoryIndexOptions): Promise<string>;
   /** Records the current revision as reusable in the content store, off the JS thread. */
   completeStorageRevisionAsync(): Promise<void>;
+  retainAnalysisScopeAsync(): Promise<void>;
   memoryProfile(): string;
   /** One page of ordered results, computed off the JS thread; the last page releases the result index. */
-  resultPageAsync(cursor: number, maximumBytes: number): Promise<string>;
+  resultPageAsync(cursor: number, maximumBytes: number, includeMatchText?: boolean): Promise<string>;
   evictInactive(): boolean;
   /** A snapshot-qualified reference to the deepest node spanning exactly the range, or null. */
   nodeReference(path: string, startByte: number, endByte: number): string | null;
@@ -185,10 +195,33 @@ export interface NativeCodeRuleDslWorkspace {
    * targets resolve among the files the workspace holds.
    */
   setRoot(root: string): void;
+  setScanFingerprintPrefix(prefix: string): void;
   close(): void;
 }
 
-/** The bounds of one repository index; every chunk call carries the same. */
+export type GitPathSkipReason = "absent" | "symlink" | "gitlink" | "not-directory" | "unsupported-mode";
+export interface GitPathIdentity { encoding: "utf8" | "hex"; value: string }
+
+/** One pinned Git tree, with its optional commit and source selection. */
+export interface NativeGitRevisionSource {
+  restrictPaths(paths: string[]): void;
+  setSourceLanguages(json: string): void;
+  readonly tree: string;
+  readonly commit: string | null;
+  containsPath(path: string): boolean;
+  pathStatus(path: string): { status: "selected" | GitPathSkipReason; mode?: number };
+  invalidPaths(): string[];
+  sourceFailures(): { path: string; message: string; pathIdentity: GitPathIdentity }[];
+  /** Legacy nullable shorthand for a read with a 32,000,000-byte limit. */
+  readSource(path: string): Buffer | null;
+  /** A required Git object that is unavailable or corrupt raises an error. */
+  readSourceChecked(path: string, limit: number): { status: "ok"; bytes: Buffer } | { status: "absent" } | { status: "too-large" };
+  /** A missing directory gives no entries. An unreadable object throws. */
+  readDirectory(path: string): { name?: string; nameBytes?: Buffer; mode: number }[] | null;
+  /** A file above the byte limit gives no result. A read failure throws. */
+  readFile(path: string, limit: number): Buffer | null;
+}
+
 export interface NativeRepositoryIndexOptions {
   maxFiles: number;
   maxSourceBytes: number;
@@ -202,6 +235,7 @@ export interface NativeRepositoryIndexOptions {
   nestedCheckouts: string[];
   /** Leave out what Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`); never a tracked file. */
   followGitignore: boolean;
+  paths?: string[];
 }
 
 /**
@@ -245,6 +279,13 @@ export interface NativeGitIgnoreMatcher {
    * ignored folder names the folder's pattern. Null when Git does not ignore it; throws as `ignored` does.
    */
   ignoredBy(relativePath: string, isDirectory: boolean): NativeGitIgnoreMatch | null;
+  /**
+   * Whether a matcher opened now at this root would read the rules this one read: the configuration, read again as Git
+   * reads it (the system, global and repository files, their includes and conditions), chooses the same excludes file
+   * and pattern case, and the root `.gitignore`, `info/exclude` and the excludes file are as this matcher read them.
+   * When it would, each folder's `.gitignore` is read again as the next path enters the folder.
+   */
+  sourcesUnchanged(): boolean;
 }
 
 /** A pattern of Git's exclude stack that ignores a path (`NativeGitIgnoreMatcher.ignoredBy`). */
@@ -324,6 +365,11 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   /** Canonical CPython facts for a whole document demand batch; source is never executed. */
   pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
+  /**
+   * `compile` on a thread of Node's worker pool, so the JS thread runs other work while a rule compiles. An engine built
+   * before it lacks it.
+   */
+  compileAsync?(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): Promise<NativeCompiledCodeRuleDsl>;
   /**
    * The tests the `.rerail` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
    * `NativeRrTestResult` (`rerail-engine test-rr`).
@@ -451,7 +497,12 @@ export interface NativeTreeWatcher {
    * network or remote file system, a WSL path, past Linux's watch budget, Windows with no oplock, an OS with no
    * adapter). Watching a root already watched replaces its folder set.
    */
-  watch(root: string, folders: string[]): boolean;
+  watch(root: string, folders: readonly string[]): boolean;
+  /**
+   * Watches `root` as `watch` does, but only with room the Linux watch budget has left: a root `watch` asks for that
+   * needs the room takes it, and this root's watch ends. Elsewhere, as `watch`. An engine built before it lacks it.
+   */
+  watchSpare?(root: string, folders: readonly string[]): boolean;
   /** Stops watching `root` and releases every handle on it, so `git worktree remove` and renames work at once. */
   unwatch(root: string): void;
   /** Takes every notice since the last take, at most one per root. Never blocks on the OS. */
@@ -460,7 +511,30 @@ export interface NativeTreeWatcher {
   close(): void;
 }
 
+export interface NativeAnalysisScopeRun {
+  readonly storeIdentity: string;
+  readonly acquisition: string;
+  readonly publication: "published" | "released" | "aborted" | "unavailable" | null;
+  selectSource(root: string, source?: NativeGitRevisionSource): void;
+  finish(succeeded: boolean): string | null;
+  warn(message: string): void;
+}
+
+export interface NativeLoadedRrPolicies {
+  load(path: string, source?: NativeGitRevisionSource): string;
+}
+
 export interface NativeBinding {
+  AnalysisScopeRun: new (store: string, scope: string, directory: boolean, id: string, generation: number, home?: string, expectedStore?: string) => NativeAnalysisScopeRun;
+  prepareAnalysisStoreAsync(store: string): Promise<void>;
+  prepareAnalysisStoreRegistrationAsync(store: string, directory: string, home: string, recorded?: boolean): Promise<{ identity: string; cutoff?: number }>;
+  prepareDirectoryAnalysisStoreAsync(store: string, directory: string, home: string): Promise<number | null>;
+  collectAnalysisCacheAsync(store: string, identities?: string[]): Promise<void>;
+  inspectRrPolicy(path: string, source?: NativeGitRevisionSource): string;
+  LoadedRrPolicies: new (store?: string) => NativeLoadedRrPolicies;
+  GitRevisionSource: new (root: string, revision: string, analysisScope: string, invocation?: string) => NativeGitRevisionSource;
+  /** `target`: the policy files, the checkout's root, the content store, the output directory and the source paths the scan is held to. */
+  scanRrPoliciesAsync(target: { paths: string[]; root: string; store: string; output: string; sourcePaths?: string[] }, analysis?: NativeAnalysisScopeRun, source?: NativeGitRevisionSource, policySource?: NativeGitRevisionSource, loaded?: NativeLoadedRrPolicies): Promise<string>;
   CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
   CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
   executeSqlRequest(storePath: string, requestJson: string): string;
@@ -523,6 +597,13 @@ export interface NativeBinding {
   pathsOwnedByCurrentUser?(paths: string[]): boolean;
   /** The content-store file name this binary's store schema owns (`content-v9.sqlite` at store floor 9). */
   contentStoreFileName(): string;
+  deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string, expectedStore?: string, recorded?: boolean): void;
+  releaseNamedAnalysisScope(store: string, name: string, expectedIdentities: string[]): { identity: string; hadMembers: boolean } | null;
+  namedAnalysisAcquisitionState(store: string, name: string, identity: string, acquisition: string, scan: string): "published" | "pending" | "absent";
+  legacyNamedAnalysisRouteState(store: string, name: string, identity: string): "published" | "pending" | "absent";
+  owningDirectoryAnalysisStore(storePath: string, directory: string, home: string, recorded?: boolean): string | null;
+  existingDirectoryAnalysisOwnership(storePath: string, directory: string, home: string): boolean;
+  retireUpkeepUnder?(directory: string): void;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
   /** The owner of the engine's in-process Git reads; make it through `nativeGitAccess` (`git-access.ts`), once per process. */

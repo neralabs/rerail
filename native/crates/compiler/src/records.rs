@@ -370,6 +370,14 @@ pub struct Reader {
     /// and bytes. Its tokens are the opener's byte, each part, each run of the bytes between,
     /// and the closer (`read_parts`). None: the region is one token.
     pub parts: Vec<ReadPart>,
+    /// The kind of its region's bytes between its parts (`else K`), where it is one of its own (a
+    /// string's text beside its closer `"`, decision 0509); None: each token's first byte's. Its
+    /// rows' start masks give it too (`Records::retags`, `part`).
+    pub content: Option<u8>,
+    /// Its closers' own kinds (decision 0509): a closer that begins with byte `.0` has kind `.1`,
+    /// where its byte begins a token outside (a template's `"` and a string's opener). Their rows'
+    /// start masks give them too (`Records::retags`, `part`).
+    pub closers: Vec<(u8, u8)>,
     /// Where its parts are split (decision 0323): by tier 1's token loop (`Split::Tier1`, its
     /// records the parts'), or by tier 2's token fetch (`Split::Tier2`, tier 1's record the
     /// whole region, as a reader without parts gives it).
@@ -443,6 +451,12 @@ impl Reader {
     }
 }
 
+/// Whether retag `t` is a token's own kind that no reader gives and no part is (a `0x` beside a
+/// number, a `.5` beside the operators, decision 0509): the token loop reads its mask.
+pub fn own_retag(r: &Records, t: &Retag) -> bool {
+    !t.part && !r.readers.iter().any(|rd| rd.tags().any(|(k, _)| k == t.kind))
+}
+
 /// A part of a region read in parts (`Reader::parts`): at a bit of output `start`, `bytes`
 /// bytes, as a lexer reads an escape in a string; or, with `last`, through the first bit of that
 /// output at or after its start (`bytes` 0), as a lexer reads the name after Kotlin's `$`.
@@ -476,6 +490,9 @@ pub struct Retag {
     /// tokens begins with its byte: its word stays (a `$name`'s), and on the CPU the reader's walk
     /// says it, as the lean lexer's string reader says what it read.
     pub part: bool,
+    /// The bytes its row's tokens begin with (its own, before its kind's byte was moved): where a
+    /// token loop's arm reads it (decision 0509).
+    pub first: [u64; 4],
 }
 
 /// A region a reader reads (`Reader`): its opener's and closer's outputs; the last byte at
@@ -523,13 +540,13 @@ fn first_bit(outputs: &[Vec<u64>], o: u16, from: usize) -> Option<usize> {
 /// lasts, in order, as a lexer reads a string: the opener's byte; then from the byte after,
 /// the nearer of the closer's next bit and each part's next bit, the bytes before it a token
 /// of their own (the content's), a part its bytes, and on after it, until the closer, its
-/// bytes the last token. `Err` where the closer never comes (the file is refused).
-pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Result<Vec<(usize, usize)>, ()> {
-    let a = reader.arms.first().ok_or(())?;
+/// bytes the last token. `None` where the closer never comes (the file is refused).
+pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Option<Vec<(usize, usize)>> {
+    let a = reader.arms.first()?;
     let mut out = vec![(s, s)];
     let mut at = s + 1;
     loop {
-        let c = first_bit(outputs, a.closer, at).ok_or(())?;
+        let c = first_bit(outputs, a.closer, at)?;
         let part = reader.parts.iter().filter_map(|p| first_bit(outputs, p.start, at).filter(|&e| e < c).map(|e| (e, p.bytes, p))).min_by_key(|&(e, n, p)| (e, n, p.start));
         let to = part.map_or(c, |(e, ..)| e);
         if to > at {
@@ -537,17 +554,17 @@ pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Result<Vec
         }
         match part {
             Some((e, _, p)) => {
-                let l = p.last_at(e, outputs).ok_or(())?;
+                let l = p.last_at(e, outputs)?;
                 out.push((e, l));
                 at = l + 1;
             }
             None => {
                 let l = match a.last {
-                    Some(o) => first_bit(outputs, o, c).ok_or(())?,
+                    Some(o) => first_bit(outputs, o, c)?,
                     None => c.wrapping_add_signed(isize::from(a.off)),
                 };
                 out.push((c, l));
-                return Ok(out);
+                return Some(out);
             }
         }
     }
@@ -570,7 +587,11 @@ pub fn read_last(records: &Records, reader: &Reader, s: usize, bytes: &[u8], out
         loop {
             if x != 0 {
                 let c = 64 * q + x.trailing_zeros() as usize;
-                return Ok(c.wrapping_add_signed(isize::from(a.off)));
+                // A closer to its last (`ReadArm::last`, a `${`'s two bytes), as the walk ends it.
+                return match a.last {
+                    Some(o) => first_bit(outputs, o, c).ok_or(()),
+                    None => Ok(c.wrapping_add_signed(isize::from(a.off))),
+                };
             }
             q += 1;
             match w.get(q) {
@@ -690,7 +711,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
             let opens = reader.arms.first().is_some_and(|a| outputs.get(usize::from(a.opener)).and_then(|w| w.get(s / 64)).is_some_and(|w| w >> (s % 64) & 1 == 1));
             if reader.parts_in_tier1() && opens {
                 match read_parts(reader, s, outputs) {
-                    Ok(tokens) => {
+                    Some(tokens) => {
                         let l = tokens.last().map_or(s, |t| t.1);
                         for (a, b) in tokens {
                             starts.push(a as u32);
@@ -698,7 +719,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
                         }
                         at = l + 1;
                     }
-                    Err(()) => {
+                    None => {
                         read = true;
                         starts.push(s as u32);
                         lasts.push(s as u32);
@@ -989,4 +1010,98 @@ pub fn gap_marks(records: &Records, bytes: &[u8], starts: &[u32], lasts: &[u32],
         let words = outputs.get(usize::from(o)).map_or(0, Vec::len);
         pending >> m & 1 == 1 || records.tested_only >> m & 1 == 0 && words > 0 && any_in(outputs, o, from, 64 * words - 1)
     })
+}
+
+/// The marks the token loop sets itself (decision 0177), their masks made from the bytes
+/// (`Reads`): each `(mark, output)`. The gap marks' (`lift`), from the bytes between grammar
+/// tokens, as `records::gap_marks`; the others', at a token's first byte. A mark a reader gives
+/// (`Reader::retag`) or of tests alone is not.
+pub fn loop_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> (Vec<(u8, u16)>, Vec<(u8, u16)>) {
+    if r.skip.is_none() {
+        return (Vec::new(), Vec::new());
+    }
+    let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
+    let blank = blank_bits(r, bytewise);
+    let known = extra_known(r, bytewise);
+    let mut lift = Vec::new();
+    let mut at = Vec::new();
+    for (k, &(o, w)) in r.marks.iter().enumerate() {
+        if o == crate::records::WORD_ALONE || w != 0 || retagged >> k & 1 == 1 || r.tested_only >> k & 1 == 1 || r.alone >> k & 1 == 1 || blank >> k & 1 == 1 || !bytewise(o) {
+            continue;
+        }
+        if r.gaps >> k & 1 == 1 {
+            if known {
+                lift.push((k as u8, o));
+            }
+        } else {
+            at.push((k as u8, o));
+        }
+    }
+    (lift, at)
+}
+
+/// The gap marks tier 2 on the CPU tests itself, where a state asks (decision 0177): each
+/// `(mark, output)`, a gap mark made from the bytes (no `else escape`, not the extras'). The
+/// token loop makes none of their gaps; tier 2 reads the mask from the grammar token before to
+/// the token, as the lean parser asks whether a token is on a line only where a statement asks
+/// it (`on_line`), and reads a JSON document's bytes only where it takes one. A mark with token
+/// tests too (`lazy_coded`) keeps them in the code, as a lexer marks what it reads: tier 2
+/// takes its bit there first. Metal and the interpreter set them in the codes: the compiler
+/// chooses by the target, the GPU's tier 1 making every mark at once.
+pub fn lazy_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> Vec<(u8, u16)> {
+    // A mark with tests and an `unless after` stays the loop's: the word before holds its
+    // tests' hits too. So does one a token pattern's `without` reads (`Records::read`).
+    let coded = lazy_coded(r);
+    let held = |k: u8| coded >> k & 1 == 1 && r.unless.iter().any(|&(m, _)| m == k);
+    loop_marks(r, bytewise).0.into_iter().filter(|&(k, _)| r.tested_only >> k & 1 == 0 && r.alone >> k & 1 == 0 && r.read >> k & 1 == 0 && r.unplaced >> k & 1 == 0 && r.extra != Some(k) && !held(k)).collect()
+}
+
+/// The code bits of `block`'s gap marks tier 2 on the CPU tests itself (`lazy_marks`): the
+/// CPU's tier 1 sets none of them, where Metal and the interpreter do. None without records.
+pub fn lazy_code_bits(block: &crate::block_native::BlockNative) -> u32 {
+    let Some(r) = block.records.as_ref() else {
+        return 0;
+    };
+    let bw = crate::byte_needs::MadeFromBytes::of(block);
+    lazy_marks(r, &|o| bw.can(o)).iter().fold(0, |a, &(k, _)| a | 1 << (crate::records::MARK_SHIFT + u32::from(k)))
+}
+
+/// The marks of `lazy_marks` with token tests too: their tests' hits are in the code (the
+/// token loop's), their gaps tier 2's.
+pub fn lazy_coded(r: &crate::records::Records) -> u32 {
+    r.checks.iter().fold(0, |a, c| match c.then {
+        crate::records::CheckThen::At(k) | crate::records::CheckThen::After(k) => a | 1 << k,
+        crate::records::CheckThen::Escape | crate::records::CheckThen::Cut => a,
+    })
+}
+
+/// The gap marks the token loop reads from the blanks (`Records::blanks`, decision 0430): each
+/// `(mark, class output)`, the class read from the bytes. While it passes the blank run before
+/// each token, the loop tests the class there, as the lean lexer's `skip` notes `nl`; an
+/// extra's run goes on to the grammar token after it. No mask of the mark is made.
+pub fn blank_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> Vec<(u8, u16)> {
+    if r.skip.is_none() {
+        return Vec::new();
+    }
+    if !extra_known(r, bytewise) {
+        return Vec::new();
+    }
+    r.blanks.iter().copied().filter(|&(_, o)| bytewise(o)).collect()
+}
+
+/// Whether the token loop knows an extra at its token (Q347): it tells one by the extra's mark
+/// in the code, so the mark must be the loop's there (a reader's, or its first byte's), not
+/// set after the tokens (`late_marks`). The gap marks the loop sets (`loop_marks`' lifted,
+/// `blank_marks`) go past an extra to the grammar token after it only so.
+fn extra_known(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> bool {
+    let Some(e) = r.extra else { return true };
+    let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
+    let (o, w) = r.marks[usize::from(e)];
+    let at_first = o != crate::records::WORD_ALONE && w == 0 && r.gaps >> e & 1 == 0 && r.tested_only >> e & 1 == 0 && r.alone >> e & 1 == 0 && bytewise(o);
+    retagged >> e & 1 == 1 || at_first
+}
+
+/// `blank_marks`' marks, as bits `1 << mark`.
+pub fn blank_bits(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> u32 {
+    blank_marks(r, bytewise).iter().fold(0, |a, &(k, _)| a | 1 << k)
 }

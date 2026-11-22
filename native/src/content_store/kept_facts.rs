@@ -16,7 +16,7 @@ use super::{StoreError, StoreResult};
 use rerail_blocks::kept::{FactKey, KeptChain, KeptFacts, KeptRead, KeptW, Meta, Newest};
 use rerail_blocks::relation::{Relation, View};
 use rusqlite::Connection;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Maps a forked process's atom ids to the store's, in place.
@@ -44,6 +44,10 @@ pub enum KeptWhat {
     /// (decision 0090) where its relation has them. `given`: kept in the order given, every row (an input's granule
     /// or documents' table, read by position); else in canonical order, as a relation's.
     Flat { widths: Vec<u32>, rows: Vec<i64>, n: usize, levels: Option<Vec<u32>>, given: bool },
+    /// A documents' table (`document_places`): `n` rows as the run gives them (`DOCUMENT_WORDS` each), kept in that
+    /// order with each document's places, which the writer finds as it writes them (decision 0494 step 4 part 2).
+    /// `tape`: the grammar its tapes are found in (grammar id, grammar version, tape format version).
+    Documents { rows: Vec<i64>, n: usize, tape: Option<[i64; 3]> },
     /// The kept entry's rows as they are, with these reads (a frame's retag).
     Reads,
     /// No longer kept.
@@ -65,6 +69,112 @@ pub struct KeptPut {
 impl KeptPut {
     fn key(&self) -> FactKey<'_> {
         FactKey { rel: &self.rel, ident: &self.ident, part: self.part }
+    }
+}
+
+/// The relation a space's reader records are kept under (decision 0401 step 8, F4): an entry a program (its key, the
+/// run's `prepared_key`), its rows the identities of the entries that program asked or put in the space, four words
+/// each. A record only grows: the writer adds a put of one to the record kept (`write_space`). Collection keeps what
+/// a live program's record names (`collect_kept_facts`). No relation's name starts with a NUL.
+pub const READERS: &str = "\0readers";
+
+/// A reader record's put: program `key`'s `idents`, sorted, as rows of four words, digested.
+fn readers_put(key: [u8; 32], idents: &BTreeSet<[u8; 32]>) -> KeptPut {
+    use sha2::Digest as _;
+    let mut rows = Vec::with_capacity(idents.len() * 4);
+    let mut hash = sha2::Sha256::new();
+    for id in idents {
+        hash.update(id);
+        rows.extend(id.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
+    }
+    let digest = u64::from_le_bytes(hash.finalize()[..8].try_into().expect("8 bytes"));
+    KeptPut { rel: READERS.into(), ident: key, part: 0, digest, reads: Vec::new(), types: b"iiii".to_vec(), what: KeptWhat::Flat { widths: vec![8; 4], rows, n: idents.len(), levels: None, given: true } }
+}
+
+/// The identities a kept reader record names.
+pub fn record_idents<'a>(record: &'a rerail_blocks::kept::Kept<'_>) -> impl Iterator<Item = [u8; 32]> + 'a {
+    (0..record.rows.len()).map(|i| {
+        let mut id = [0u8; 32];
+        for (c, w) in id.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+            *w = record.rows.get(i, c).to_le_bytes();
+        }
+        id
+    })
+}
+
+/// The identities a reader record's put names (`readers_put`).
+fn put_idents(p: &KeptPut) -> impl Iterator<Item = [u8; 32]> + '_ {
+    let rows: &[i64] = match &p.what {
+        KeptWhat::Flat { rows, n, .. } => &rows[..4 * *n],
+        _ => &[],
+    };
+    rows.as_chunks::<4>().0.iter().map(|r| {
+        let mut id = [0u8; 32];
+        for (w, v) in id.as_chunks_mut::<8>().0.iter_mut().zip(r) {
+            *w = v.to_le_bytes();
+        }
+        id
+    })
+}
+
+/// What a run's program asked or put of each space's entries (decision 0401 step 8), bound in the run's context
+/// (`KeptReader`) by a run whose program the store keeps: recorded in the space as the program's reader record, in
+/// the file of the puts that name them or, for what it only asked, at the run's end (`flush`), before its manifest.
+pub struct ReaderLog {
+    key: [u8; 32],
+    spaces: std::sync::Mutex<HashMap<[u8; 32], Asked>>,
+}
+
+/// A space's identities a run's program asked or put: those its record holds or will (`known`, the stored record's
+/// read at the first ask), and those asked that no write records yet.
+#[derive(Default)]
+struct Asked {
+    seeded: bool,
+    known: HashSet<[u8; 32]>,
+    pending: BTreeSet<[u8; 32]>,
+}
+
+/// The run's reader log, in its context (decision 0442: the context goes with its jobs); none for a run whose
+/// program no manifest will name.
+#[derive(Clone, Default)]
+pub struct KeptReader(pub Option<std::sync::Arc<ReaderLog>>);
+
+impl ReaderLog {
+    pub fn new(key: [u8; 32]) -> ReaderLog {
+        ReaderLog { key, spaces: Default::default() }
+    }
+
+    /// `ident` asked in `space`; `stored`: the program's record as the space keeps it, read at a space's first ask.
+    pub fn asked(&self, space: &[u8; 32], ident: &[u8; 32], stored: impl FnOnce(&[u8; 32]) -> Vec<[u8; 32]>) {
+        let mut spaces = self.spaces.lock().unwrap_or_else(|e| e.into_inner());
+        let a = spaces.entry(*space).or_default();
+        if !a.seeded {
+            a.seeded = true;
+            a.known.extend(stored(&self.key));
+        }
+        if a.known.insert(*ident) {
+            a.pending.insert(*ident);
+        }
+    }
+
+    /// The record's put to write with `idents` put in `space`: those and what was asked, when any is new.
+    fn put(&self, space: &[u8; 32], idents: impl Iterator<Item = [u8; 32]>) -> Option<KeptPut> {
+        let mut spaces = self.spaces.lock().unwrap_or_else(|e| e.into_inner());
+        let a = spaces.entry(*space).or_default();
+        let mut new = std::mem::take(&mut a.pending);
+        new.extend(idents.filter(|id| a.known.insert(*id)));
+        (!new.is_empty()).then(|| readers_put(self.key, &new))
+    }
+
+    /// What was asked and no write recorded, queued for each space: before the run's manifest, which names the key.
+    pub fn flush(&self, store: &super::ContentStore) {
+        let pending: Vec<([u8; 32], BTreeSet<[u8; 32]>)> = {
+            let mut spaces = self.spaces.lock().unwrap_or_else(|e| e.into_inner());
+            spaces.iter_mut().filter(|(_, a)| !a.pending.is_empty()).map(|(s, a)| (*s, std::mem::take(&mut a.pending))).collect()
+        };
+        for (space, idents) in pending {
+            store.queue_kept(space, vec![readers_put(self.key, &idents)]);
+        }
     }
 }
 
@@ -176,6 +286,7 @@ fn columns(what: &KeptWhat, types: &[u8], map: Option<MapIds>) -> StoreResult<Co
             (cols, *n, a, levels.clone().filter(|l| l.len() == *n))
         }
         KeptWhat::Reads | KeptWhat::Gone => unreachable!("a put with rows"),
+        KeptWhat::Documents { .. } => unreachable!("a documents' table is resolved first (`write_space`)"),
     };
     if let Some(map) = map {
         for (c, _) in types.iter().enumerate().filter(|(_, t)| **t == b's').take_while(|(c, _)| *c < a) {
@@ -193,6 +304,7 @@ fn room_of(what: &KeptWhat) -> usize {
             (rel.len_all() as usize) * (rel.arity as usize * 8 + 8) + (rel.arity as usize + 2) * 256
         }
         KeptWhat::Flat { widths, n, .. } => n * widths.len() * 8 + (widths.len() + 2) * 256,
+        KeptWhat::Documents { n, .. } => n * super::PLACED_WORDS * 8 + (super::PLACED_WORDS + 2) * 256,
         KeptWhat::Reads | KeptWhat::Gone => 0,
     }
 }
@@ -207,6 +319,7 @@ fn expected_bytes(what: &KeptWhat) -> usize {
     match what {
         KeptWhat::Rows(r) => r.relation().len_all() as usize * r.relation().arity as usize * 3,
         KeptWhat::Flat { widths, n, .. } => n * widths.len() * 3,
+        KeptWhat::Documents { n, .. } => n * super::PLACED_WORDS * 3,
         KeptWhat::Reads | KeptWhat::Gone => 0,
     }
 }
@@ -216,9 +329,42 @@ fn expected_bytes(what: &KeptWhat) -> usize {
 /// logarithmic in its bytes and a value is copied a logarithmic number of times), or with the whole chain when what
 /// it holds that newer entries replaced outweighs the rest. `map` maps a forked process's atom ids to the store's.
 pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut>, map: Option<MapIds>) -> StoreResult<Option<ChainRows>> {
-    if puts.is_empty() {
+    write_chain(store, t, space, puts, map, None)
+}
+
+/// Collection's roll-up of `space` in transaction `t` (decision 0401 F4): its next base, one file of the entries
+/// `keep` keeps, when it keeps fewer than the space holds; with none kept, the space is dropped (its rows; its files
+/// go once committed, `drop_space_files`). `None` when every entry stays.
+pub fn rewrite_space(store: &Path, t: &Connection, space: &[u8; 32], keep: &dyn Fn(&FactKey<'_>) -> bool) -> StoreResult<Option<ChainRows>> {
+    write_chain(store, t, space, Vec::new(), None, Some(keep))
+}
+
+/// The files of a space collection dropped, removed once its commit is: a process mapping one keeps reading it.
+pub fn drop_space_files(store: &Path, space: &[u8; 32]) {
+    let _ = std::fs::remove_dir_all(space_dir(store, space));
+}
+
+/// The files of `space` its committed `rows` do not name, removed (`sweep`): those a collection's roll-up replaced.
+pub fn sweep_space(store: &Path, space: &[u8; 32], rows: &ChainRows) {
+    sweep(&space_dir(store, space), rows);
+}
+
+/// `write_space`, or with `keep`, `rewrite_space`.
+fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut>, map: Option<MapIds>, keep: Option<&dyn Fn(&FactKey<'_>) -> bool>) -> StoreResult<Option<ChainRows>> {
+    if puts.is_empty() && keep.is_none() {
         return Ok(None);
     }
+    // A documents' table's places, found in this transaction: its rows as kept.
+    let mut puts = puts
+        .into_iter()
+        .map(|mut p| {
+            if let KeptWhat::Documents { rows, n, tape } = &p.what {
+                let rows = super::document_places::resolve(t, rows, *n, *tape)?;
+                p.what = KeptWhat::Flat { widths: vec![8; super::PLACED_WORDS], rows, n: *n, levels: None, given: true };
+            }
+            Ok(p)
+        })
+        .collect::<StoreResult<Vec<_>>>()?;
     let io = |e: std::io::Error| StoreError::Io(e);
     let dir = space_dir(store, space);
     private_dir(&dir).map_err(io)?;
@@ -228,6 +374,26 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     let old = KeptSpace::open(store, space, &rows)?;
     drop(opened);
     let chain = old.view();
+    if rows.is_empty() && keep.is_some() {
+        return Ok(None);
+    }
+    // A reader record only grows: a put of one is what the space keeps and what it adds (decision 0401 step 8).
+    for p in puts.iter_mut().filter(|p| p.rel == READERS) {
+        let Some(was) = chain.get(&p.key()) else { continue };
+        let all: BTreeSet<[u8; 32]> = record_idents(&was).chain(put_idents(p)).collect();
+        *p = readers_put(p.ident, &all);
+    }
+    // Collection's: the whole chain rewritten without what `keep` drops, when it drops any.
+    if let Some(keep) = keep {
+        let newest = chain.newest();
+        if newest.iter().all(|(k, _)| keep(k)) {
+            return Ok(None);
+        }
+        if !newest.iter().any(|(k, n)| keep(k) && matches!(n, Newest::Kept(_))) {
+            t.prepare_cached("DELETE FROM main.facts_chain WHERE space = ?1")?.execute([&space[..]])?;
+            return Ok(Some(Vec::new()));
+        }
+    }
     let put_keys: HashSet<FactKey<'_>> = puts.iter().map(KeptPut::key).collect();
     // The files merged into this one: the newest ones, each weighing no more than twice the bytes joining it.
     let mut from = old.files.len();
@@ -239,11 +405,11 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     // Or every file, when what the chain would hold that newer entries replaced outweighs what it reads.
     let replaced: usize = puts.iter().filter(|p| !matches!(p.what, KeptWhat::Reads)).filter_map(|p| chain.get(&p.key())).map(|k| k.bytes()).sum();
     let dropped = chain.superseded_bytes() + replaced;
-    if dropped > ROLL_FLOOR && 2 * dropped > chain.bytes() {
+    if (dropped > ROLL_FLOOR && 2 * dropped > chain.bytes()) || keep.is_some() {
         from = 0;
     }
     let (older, merged) = (KeptChain { files: &old.files[..from] }, KeptChain { files: &old.files[from..] });
-    let carried: Vec<(FactKey<'_>, Newest<'_>)> = merged.newest().into_iter().filter(|(k, _)| !put_keys.contains(k)).collect();
+    let carried: Vec<(FactKey<'_>, Newest<'_>)> = merged.newest().into_iter().filter(|(k, _)| !put_keys.contains(k) && keep.is_none_or(|keep| keep(k))).collect();
     let carried_bytes: usize = carried.iter().map(|(_, n)| if let Newest::Kept(k) = n { k.bytes() + 64 } else { 0 }).sum();
     let reads_rows: usize = puts.iter().filter(|p| matches!(p.what, KeptWhat::Reads)).filter_map(|p| chain.get(&p.key())).map(|k| k.bytes()).sum();
     let reserve = carried_bytes + reads_rows + puts.iter().map(|p| room_of(&p.what)).sum::<usize>() + (64 << 20);
@@ -286,6 +452,7 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
                 let given = if matches!(p.what, KeptWhat::Flat { given: true, .. }) { rerail_blocks::packed::Order::AsGiven } else { rerail_blocks::packed::Order::Canonical };
                 w.put_cols(meta, &cols, n, a, levels.as_deref(), given).map_err(io)?;
             }
+            KeptWhat::Documents { .. } => unreachable!("a documents' table is resolved first (above)"),
             KeptWhat::Reads => {
                 if let Some(k) = chain.get(&p.key()) {
                     // Its rows' digest and types are the entry's: a retag changes the reads alone (its put has
@@ -353,16 +520,19 @@ impl KeptWrite {
 /// A run's wave's kept puts, by space (`ContentStore::gather`): one file a space a wave, where a file a put made
 /// each write weigh the chain again, and sync its file and directory (a cold data-layer run over 50
 /// files: 2,442 blocks, 15.7 s of the writer's CPU and most of the run's wall, its queue full at 300 files).
+/// A space's puts gathered, and each one's place among them by its key (relation, digest, part).
+type Gathered = (Vec<KeptPut>, std::collections::HashMap<(String, [u8; 32], i64), usize>);
+
 #[derive(Default)]
 struct KeptGather {
-    spaces: std::collections::BTreeMap<[u8; 32], (Vec<KeptPut>, std::collections::HashMap<(String, [u8; 32], i64), usize>)>,
+    spaces: std::collections::BTreeMap<[u8; 32], Gathered>,
     bytes: usize,
 }
 
 /// The bytes a put holds until written: a flat put's rows, and a little for the rest (a relation is lent, not held).
 fn held_bytes(p: &KeptPut) -> usize {
     64 + match &p.what {
-        KeptWhat::Flat { rows, .. } => rows.len() * 8,
+        KeptWhat::Flat { rows, .. } | KeptWhat::Documents { rows, .. } => rows.len() * 8,
         _ => 0,
     }
 }
@@ -382,6 +552,10 @@ impl KeptGather {
                     let was = &mut list[i];
                     if matches!(p.what, KeptWhat::Reads) && !matches!(was.what, KeptWhat::Reads | KeptWhat::Gone) {
                         was.reads = p.reads;
+                    } else if p.rel == READERS {
+                        // A reader record only grows (decision 0401 step 8): two of a wave are one, naming both's.
+                        let all: BTreeSet<[u8; 32]> = put_idents(was).chain(put_idents(&p)).collect();
+                        *was = readers_put(p.ident, &all);
                     } else {
                         *was = p;
                     }
@@ -438,6 +612,16 @@ impl super::ContentStore {
         if puts.is_empty() {
             return;
         }
+        // The run's program reads what it puts: its reader record goes in the same file (decision 0401 step 8), so no
+        // collection sees the entries without it.
+        let mut puts = puts;
+        if puts.iter().any(|p| p.rel != READERS)
+            && let Some(record) = rerail_prof::code_rule_dsl::logic::profile::with_bound::<KeptReader, _>(|r| {
+                r.0.as_ref().and_then(|log| log.put(&space, puts.iter().filter(|p| p.rel != READERS && !matches!(p.what, KeptWhat::Gone)).map(|p| p.ident)))
+            })
+        {
+            puts.push(record);
+        }
         let mut puts = Some(puts);
         if self.gather("kept facts", KeptGather::default, |g| g.add(space, puts.take().expect("the puts"))) {
             return;
@@ -493,6 +677,58 @@ impl super::ContentStore {
         Ok(n)
     }
 
+    /// Collection's roll-up of the kept spaces (decision 0401 F4): each space whose reader records name a dead
+    /// program (a plan the keep decision marked dead, `corpus_plans.live = 0`) written again as one base without the
+    /// entries only dead programs' records name, nor those records; a space left with none is dropped. An entry no
+    /// record names (an older build's, a session's) stays; so does one a live program's record names, and one of a
+    /// program the store has not decided on. Run under the collection's lease, before the dead plans' rows go. The
+    /// spaces rewritten or dropped.
+    pub fn collect_kept_facts(&self) -> StoreResult<usize> {
+        let (dead, spaces): (HashSet<[u8; 32]>, Vec<[u8; 32]>) = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let dead = connection.prepare("SELECT plan_digest FROM corpus_plans WHERE live=0")?.query_map([], |r| r.get::<_, Vec<u8>>(0))?.filter_map(|p| p.ok().and_then(|p| <[u8; 32]>::try_from(p.as_slice()).ok())).collect();
+            let spaces = connection.prepare("SELECT DISTINCT space FROM facts_chain")?.query_map([], |r| r.get::<_, Vec<u8>>(0))?.filter_map(|s| s.ok().and_then(|s| <[u8; 32]>::try_from(s.as_slice()).ok())).collect();
+            (dead, spaces)
+        };
+        if dead.is_empty() {
+            return Ok(0);
+        }
+        let path = self.database_path.clone();
+        let mut done = 0;
+        for space in spaces {
+            let written = self.immediate_transaction(|t| {
+                let rows = chain_rows(t, &space)?;
+                let old = KeptSpace::open(&path, &space, &rows)?;
+                let chain = old.view();
+                let (mut live, mut gone) = (HashSet::new(), HashSet::new());
+                let mut any_dead = false;
+                for record in chain.of(READERS) {
+                    let is_dead = dead.contains(record.key.ident);
+                    any_dead |= is_dead;
+                    (if is_dead { &mut gone } else { &mut live }).extend(record_idents(&record));
+                }
+                if !any_dead {
+                    return Ok(None);
+                }
+                let keep = |k: &FactKey<'_>| if k.rel == READERS { !dead.contains(k.ident) } else { live.contains(k.ident) || !gone.contains(k.ident) };
+                rewrite_space(&path, t, &space, &keep)
+            })?;
+            let Some(rows) = written else { continue };
+            done += 1;
+            if rows.is_empty() {
+                drop_space_files(&path, &space);
+            } else {
+                sweep_space(&path, &space, &rows);
+            }
+            super::held::snapshot_kept(&path, |kept| {
+                if let Some(kept) = kept {
+                    kept.insert(space, rows);
+                }
+            });
+        }
+        Ok(done)
+    }
+
     /// `space`'s chain as `rows` name it, mapped.
     pub fn open_kept(&self, space: &[u8; 32], rows: &ChainRows) -> StoreResult<KeptSpace> {
         KeptSpace::open(&self.database_path, space, rows)
@@ -532,10 +768,14 @@ pub fn copy_facts(from: &Path, to: &Path) -> std::io::Result<()> {
 
 pub(in crate::content_store) mod vtab;
 
+/// A relation and part kind's entries, rows and bytes (`by_relation`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub type KeptOf = ((String, &'static str), (usize, usize, usize));
+
 /// What the store `path`'s chain keeps, by relation and part kind ("rows" for part 0, "granule" for an input's
 /// granules, part > 0, "beside" for the parts beside them, part < 0): entries, rows and bytes, largest first.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn by_relation(path: &std::path::Path) -> StoreResult<Vec<((String, &'static str), (usize, usize, usize))>> {
+pub fn by_relation(path: &std::path::Path) -> StoreResult<Vec<KeptOf>> {
     let c = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| StoreError::Invalid(e.to_string()))?;
     let spaces: Vec<Vec<u8>> = c.prepare("SELECT DISTINCT space FROM facts_chain").and_then(|mut q| q.query_map([], |r| r.get(0))?.collect()).map_err(|e| StoreError::Invalid(e.to_string()))?;
     let mut by: std::collections::HashMap<(String, &'static str), (usize, usize, usize)> = Default::default();

@@ -44,7 +44,7 @@
     /// atom rows name this store's atoms, and read so, the program is this store's (nothing to move).
     #[test]
     fn a_prepared_program_of_another_store_moves_to_this_stores_atoms() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rerail");
+        let path = crate::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rerail");
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-moved");
         std::fs::create_dir_all(&dir).unwrap();
@@ -72,7 +72,7 @@
     /// facts (decision 0155). A pack rule, prepared.
     #[test]
     fn a_prepared_program_reads_back_from_its_text_and_facts() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rerail");
+        let path = crate::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rerail");
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-facts");
         std::fs::create_dir_all(&dir).unwrap();

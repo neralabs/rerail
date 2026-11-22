@@ -39,6 +39,9 @@ const READ_PER_FORM: i64 = 2_000;
 const MIN_TRAIN: usize = 500;
 /// The samples written after a training that start another.
 pub const RETRAIN_AFTER: usize = 2_000;
+/// How far a size may move before a kept price is worked out again: the planner's kept prices (`plan::Priced`), and
+/// setfix's waves, which return for planning once a delta's statistics grew past it.
+pub const PRICE_DRIFT: f64 = 2.0;
 /// The least time between two trainings.
 pub const RETRAIN_EVERY: std::time::Duration = std::time::Duration::from_secs(600);
 
@@ -453,11 +456,15 @@ const TRAINING_THREADS: usize = 2;
 /// phases once `stop` says so (a run began, under upkeep): whether it was.
 #[cfg(target_os = "macos")]
 fn fit(path: &PathBuf, samples: &[rerail_accel::score::Sample], upkeep: bool, stop: &(dyn Fn() -> bool + Sync)) -> bool {
+        // Its threads hold the caller's object, as the engine's threads do (decision 0442): the model is the machine's.
+        let starter = crate::code_rule_dsl::logic::profile::shared_here();
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(TRAINING_THREADS)
             .thread_name(|i| format!("rerail-cost-model-{i}"))
             .start_handler(move |_| {
                 rerail_prof::code_rule_dsl::logic::profile::engine_thread();
+                // Held for the thread's life: the pool's threads end with it.
+                std::mem::forget(rerail_prof::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&starter)));
                 if upkeep {
                     rerail_accel::upkeep::lower_this_thread();
                 } else {

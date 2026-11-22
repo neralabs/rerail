@@ -3,9 +3,11 @@
  * confirms as a checkout's top level, found the same way from the file's lexical and real paths. Whether that
  * checkout judges the file with its own rules, or leaves it to the checkout around it, is the router's decision.
  */
-import { lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
+import type { RerailDatabase } from "../storage/database.js";
+import { recordedCheckoutsVersionReader, recordedPlainRoot } from "./repository-registry.js";
 import { runGit } from "../git.js";
 import { repositoryIdentityLocation } from "./repository-identity.js";
 
@@ -84,6 +86,26 @@ function gitEntryStamp(directory: string, gitFolder: string | undefined): string
   return gitFolder === undefined ? entry : `${entry} ${lstatStamp(gitFolder)}`;
 }
 
+/**
+ * What a confirmed checkout's `.git` entry is, in one string that changes when the entry, or the Git folder a `.git`
+ * file names, is moved away, replaced or rewritten: their identity, not their times, so Git writing in the Git folder
+ * (an index, a ref) leaves it as it was.
+ */
+function gitEntryIdentity(directory: string, gitFolder: string | undefined): string {
+  const entry = join(directory, ".git");
+  // A `.git` file is stamped whole (the Git folder it names is in it), the Git folder it names by its identity.
+  return gitFolder === undefined ? identityStamp(entry) : `${lstatStamp(entry)} ${identityStamp(gitFolder)}`;
+}
+
+function identityStamp(path: string): string {
+  try {
+    const stats = lstatSync(path, { throwIfNoEntry: false });
+    return stats === undefined ? "none" : `${stats.ino}:${stats.birthtimeMs}:${stats.isDirectory() ? "d" : "f"}`;
+  } catch (error) {
+    return error instanceof Error && "code" in error ? String(error.code) : "unreadable";
+  }
+}
+
 function lstatStamp(path: string): string {
   try {
     const stats = lstatSync(path, { throwIfNoEntry: false });
@@ -100,9 +122,12 @@ function within(root: string, candidate: string): boolean {
 
 /**
  * Resolves owning checkouts for one runtime. Each folder's `.git` entry is looked at once, and each candidate root
- * is confirmed once with Git, so a lookup costs a map access per file once its folders are known. When
- * `recordedVersion` is given, every answer is forgotten once it changes: a checkout Rerail records later (a folder that
- * became a checkout) then owns its files from the next lookup, without a restart.
+ * is confirmed once with Git, so a lookup costs a map access per file once its folders are known. The answers are
+ * the file system as it was at the last point (`lookAgain`): a lookup between two points takes no change, and the next
+ * point looks again at everything kept, so after it every answer is the disk's at that point. When the catalog
+ * is given, every answer is forgotten once its recorded checkouts change: a checkout Rerail records later (a folder that
+ * became a checkout) then owns its files from the next lookup, without a restart. A recorded checkout outside Git owns
+ * the files below it that no Git checkout owns while the catalog records it and its `.rerail` marker names it.
  */
 export class CheckoutOwners {
   readonly #recordedVersion: (() => string) | undefined;
@@ -111,27 +136,34 @@ export class CheckoutOwners {
   readonly #roots = new Map<string, string | undefined>();
   /** Lexical folder → its physical root when it holds `.git` and Git confirms it as a top level. */
   readonly #confirmed = new Map<string, string | undefined>();
-  /** Physical checkout root → whether the checkout around it declares it as a submodule (a gitlink). */
-  readonly #submodules = new Map<string, boolean>();
+  /**
+   * Physical checkout root → whether the checkout around it declares it as a submodule (a gitlink), with the
+   * enclosing checkout and the stamp of its `.gitmodules` and Git folder it was read under (`submoduleStamp`): a point
+   * that finds either changed asks Git again.
+   */
+  readonly #submodules = new Map<string, { declared: boolean; enclosing: string; stamp: string }>();
   /**
    * The folders `#confirm` found holding a `.git` entry that Git did not take for a top level (one naming a Git folder
    * that is gone, or one Git is still making), told apart from those that held none, each with that entry as it was:
-   * `lookAgainAt` asks Git again only once the entry, or the Git folder it names, changed, so such an entry costs one
+   * `lookAgain` asks Git again only once the entry, or the Git folder it names, changed, so such an entry costs one
    * Git process, not one per write below it, and a worktree looked up before Git finished making it is found once Git
    * has. `#confirm` keeps it in step for every folder `#confirmed` holds.
    */
   readonly #unconfirmedGitEntries = new Map<string, GitEntry>();
-  /** Recorded checkouts outside Git (identity under `.rerail`), physical. */
-  readonly #plainRoots = new Set<string>();
+  /** The folders Git confirmed as a checkout's top level, each with its `.git` entry's identity (`gitEntryIdentity`). */
+  readonly #confirmedGitEntries = new Map<string, string>();
+  readonly #database: RerailDatabase | undefined;
 
-  /** `recordedVersion` changes whenever the set of recorded checkouts does (see `CheckoutCatalogs.recordedCheckoutsVersion`). */
-  constructor(recordedVersion?: () => string) {
+  /**
+   * `database`'s recorded checkouts, read for plain roots and for the version that forgets every answer
+   * (`recordedVersion`, `database`'s own unless given).
+   */
+  constructor(
+    database?: RerailDatabase,
+    recordedVersion: (() => string) | undefined = database === undefined ? undefined : recordedCheckoutsVersionReader(database),
+  ) {
+    this.#database = database;
     this.#recordedVersion = recordedVersion;
-  }
-
-  /** A recorded checkout outside Git owns the files below it that no Git checkout owns. */
-  addPlainRoot(root: string): void {
-    this.#plainRoots.add(physicalPath(root));
   }
 
   /**
@@ -147,25 +179,28 @@ export class CheckoutOwners {
   }
 
   /**
-   * Drops the answers kept at and below each folder on the way up from `path` that a lookup found with no `.git` entry
-   * and that holds one now, or whose `.git` entry Git did not take for a top level and that changed since, so the next
-   * lookup asks the disk and Git again. `git worktree add`, from any repository, or `git init` can make a folder a
-   * session already looked up a checkout's top level, and a lookup can land between Git writing the `.git` entry and the
-   * `HEAD` that makes it one; the answers from before name the checkout around it, or none, for its files, and would
-   * stay until the recorded checkouts change. A lookup of such a folder itself drops them on its own (`#confirm`), but a
-   * file's lookup reads the answers kept for the folders above it without looking at them. Costs a stat per folder kept
-   * as plain on the way up from `path`, and from its real path when that differs, and two per unconfirmed `.git` file.
-   * Returns whether it dropped any.
+   * The point after which every answer is the file system's as it is now, and until the next one no change is taken.
+   * Drops the answers kept at and below each folder that changed since a lookup asked: one found with no `.git` entry
+   * that holds one now (`git worktree add`, from any repository, or `git init`), one whose `.git` entry Git did not take
+   * for a top level that changed since (a lookup can land between Git writing the `.git` entry and the `HEAD` that makes
+   * it one), and a confirmed checkout whose `.git` entry was moved away or replaced; and each submodule answer whose
+   * enclosing `.gitmodules` or Git folder changed (a gitlink staged or removed, the shared index moved). Costs a stat per
+   * folder kept as plain, one to three per `.git` entry kept, and two per submodule answer; Git runs only for what
+   * changed, at the next lookup. Returns whether it dropped any.
    */
-  lookAgainAt(path: string): boolean {
+  lookAgain(): boolean {
     this.#revalidate();
-    const lexical = resolve(path);
-    const real = physicalPath(lexical);
-    const outgrown = (real === lexical ? [lexical] : [lexical, real])
-      .map(start => this.#outgrownAbove(start))
-      .filter((folder): folder is string => folder !== undefined);
-    for (const folder of outgrown) this.#forgetWithin(folder);
-    return outgrown.length > 0;
+    const outgrown = [...this.#confirmed.keys()].filter(folder => this.#outgrown(folder));
+    // The highest of each changed chain: dropping it drops the answers below it.
+    const highest = outgrown.filter(folder => !outgrown.some(other => other !== folder && within(other, folder)));
+    for (const folder of highest) this.#forgetWithin(folder);
+    let dropped = highest.length > 0;
+    for (const [root, kept] of this.#submodules) {
+      if (submoduleStamp(kept.enclosing) === kept.stamp) continue;
+      this.#submodules.delete(root);
+      dropped = true;
+    }
+    return dropped;
   }
 
   /** How many folders it holds an answer for. */
@@ -189,16 +224,19 @@ export class CheckoutOwners {
 
   /**
    * Whether the checkout at `root` (a physical checkout top level) is a submodule the checkout around it declares: a
-   * gitlink in that checkout's index. Git runs only in the enclosing checkout, once per root.
+   * gitlink in that checkout's index and a path in its `.gitmodules`, as they were at the last point (`lookAgain`). Git
+   * runs only in the enclosing checkout, once per root between the points that find them changed.
    */
   isDeclaredSubmodule(root: string): boolean {
     this.#revalidate();
-    let declared = this.#submodules.get(root);
-    if (declared === undefined) {
-      const enclosing = this.ownerOf(dirname(root));
-      declared = enclosing !== undefined && this.declaredSubmodules(enclosing.checkoutRoot).includes(root);
-      this.#submodules.set(root, declared);
-    }
+    const kept = this.#submodules.get(root);
+    if (kept !== undefined) return kept.declared;
+    const enclosing = this.ownerOf(dirname(root));
+    if (enclosing === undefined) return false;
+    // Stamped before Git reads them, so a change Git has not seen shows at the next point.
+    const stamp = submoduleStamp(enclosing.checkoutRoot);
+    const declared = this.declaredSubmodules(enclosing.checkoutRoot).includes(root);
+    this.#submodules.set(root, { declared, enclosing: enclosing.checkoutRoot, stamp });
     return declared;
   }
 
@@ -211,21 +249,24 @@ export class CheckoutOwners {
     if (!holdsEntry(root, ".gitmodules")) return [];
     const configured = runGit(root, ["config", "--file", ".gitmodules", "--null", "--get-regexp", String.raw`^submodule\..*\.path$`]);
     if (configured.status !== 0) return [];
-    const paths = configured.stdout.split("\0").filter(Boolean).map(entry => entry.slice(entry.indexOf("\n") + 1));
-    if (paths.length === 0) return [];
+    const paths = new Set(configured.stdout.split("\0").filter(Boolean).map(entry => entry.slice(entry.indexOf("\n") + 1)));
+    if (paths.size === 0) return [];
     const index = runGit(root, ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...paths]);
     if (index.status !== 0) return [];
     return index.stdout.split("\0")
       .filter(entry => entry.startsWith("160000 "))
-      .map(entry => join(root, entry.slice(entry.indexOf("\t") + 1)))
+      .map(entry => entry.slice(entry.indexOf("\t") + 1))
+      .filter(path => paths.has(path))
+      .map(path => join(root, path))
       .filter(folder => within(root, folder) && this.#confirm(folder) === physicalPath(folder));
   }
 
   /** The checkout root above `path` (the path itself when it is one), searched from `path`; `real` finds plain roots. */
   #rootOf(path: string, real: string): string | undefined {
-    // Only folders are remembered: the path itself is a checkout root only when it holds `.git`.
-    const own = holdsGitEntry(path) ? this.#confirm(path) : undefined;
-    return own ?? this.#gitRoot(dirname(path)) ?? this.#plainRoot(real);
+    // Only folders are remembered: the path itself is a checkout root only when it holds `.git` (as kept, once a lookup
+    // asked: a change is the next point's).
+    const own = this.#confirmed.has(path) || holdsGitEntry(path) ? this.#confirm(path) : undefined;
+    return own ?? this.#gitRoot(dirname(path)) ?? (this.#database && recordedPlainRoot(this.#database, real));
   }
 
   /** Forget every cached answer when the recorded checkouts changed since the last lookup. */
@@ -238,14 +279,7 @@ export class CheckoutOwners {
     this.#confirmed.clear();
     this.#submodules.clear();
     this.#unconfirmedGitEntries.clear();
-  }
-
-  #plainRoot(real: string): string | undefined {
-    let owner: string | undefined;
-    for (const root of this.#plainRoots) {
-      if (within(root, real) && (owner === undefined || root.length > owner.length)) owner = root;
-    }
-    return owner;
+    this.#confirmedGitEntries.clear();
   }
 
   #gitRoot(lexical: string): string | undefined {
@@ -270,41 +304,31 @@ export class CheckoutOwners {
 
   /**
    * Whether `directory` holds a `.git` entry that Git confirms as a checkout's top level: its physical root, or
-   * undefined. A folder kept as plain that holds a `.git` entry now became a checkout after a lookup passed it, and one
-   * whose `.git` entry Git did not take changed since; the answers kept at and below it predate that, so they go and Git
-   * is asked. A lookup asks this of the folder it starts at only when that folder holds a `.git` entry, so a walk, which
-   * asks for each folder before the files in it, finds such a checkout at its folder without a stat more.
+   * undefined. Kept until a point finds the entry changed (`lookAgain`): between points a lookup takes the kept answer.
    */
   #confirm(directory: string): string | undefined {
-    if (this.#confirmed.has(directory)) {
-      if (!this.#outgrown(directory)) return this.#confirmed.get(directory);
-      this.#forgetWithin(directory);
-    }
+    if (this.#confirmed.has(directory)) return this.#confirmed.get(directory);
     const gitEntry = gitEntryAt(directory);
     const root = gitEntry === undefined ? undefined : topLevelAt(directory);
     this.#confirmed.set(directory, root);
     if (gitEntry !== undefined && root === undefined) this.#unconfirmedGitEntries.set(directory, gitEntry);
     else this.#unconfirmedGitEntries.delete(directory);
+    if (gitEntry !== undefined && root !== undefined) this.#confirmedGitEntries.set(directory, gitEntryIdentity(directory, gitEntry.gitFolder));
+    else this.#confirmedGitEntries.delete(directory);
     return root;
   }
 
-  /** The highest folder from `path` up that Git may answer for differently than when a lookup asked (`#outgrown`). */
-  #outgrownAbove(path: string): string | undefined {
-    let outgrown: string | undefined;
-    for (let folder = path; ; folder = dirname(folder)) {
-      if (this.#outgrown(folder)) outgrown = folder;
-      if (dirname(folder) === folder) return outgrown;
-    }
-  }
-
   /**
-   * Whether a lookup found `folder` with no `.git` entry and it holds one now, or found a `.git` entry there that Git
-   * did not take for a top level and it, or the Git folder it names, changed since. A stat for a folder kept as plain,
-   * one or two for an unconfirmed entry, none for the others.
+   * Whether Git may answer for `folder` differently than when a lookup asked: it held no `.git` entry and holds one now,
+   * its `.git` entry Git did not take for a top level, or the Git folder it names, changed, or Git confirmed it and its
+   * `.git` entry, or the Git folder it names, was moved away or replaced. A stat for a folder kept as plain, one to
+   * three for a kept `.git` entry.
    */
   #outgrown(folder: string): boolean {
     const unconfirmed = this.#unconfirmedGitEntries.get(folder);
     if (unconfirmed !== undefined) return gitEntryStamp(folder, unconfirmed.gitFolder) !== unconfirmed.stamp;
+    const confirmed = this.#confirmedGitEntries.get(folder);
+    if (confirmed !== undefined) return gitEntryIdentity(folder, gitEntryAt(folder)?.gitFolder) !== confirmed;
     return this.#keptAsPlain(folder) && holdsGitEntry(folder);
   }
 
@@ -315,7 +339,7 @@ export class CheckoutOwners {
 
   /** Drops every answer kept at and below `folder`. */
   #forgetWithin(folder: string): void {
-    for (const answers of [this.#roots, this.#confirmed, this.#submodules, this.#unconfirmedGitEntries]) {
+    for (const answers of [this.#roots, this.#confirmed, this.#submodules, this.#unconfirmedGitEntries, this.#confirmedGitEntries]) {
       for (const kept of answers.keys()) if (within(folder, kept)) answers.delete(kept);
     }
   }
@@ -326,4 +350,13 @@ function topLevelAt(directory: string): string | undefined {
   const location = repositoryIdentityLocation(directory);
   const top = location.git ? physicalPath(location.workspaceRoot) : undefined;
   return top !== undefined && top === physicalPath(directory) ? top : undefined;
+}
+
+/**
+ * What a checkout's submodule declarations were read from, in one string that changes when they may: its `.gitmodules`,
+ * and its Git folder, which Git writes a new index into (and a split index's shared one) by renaming it in.
+ */
+function submoduleStamp(root: string): string {
+  const gitFolder = gitEntryAt(root)?.gitFolder ?? join(root, ".git");
+  return `${lstatStamp(join(root, ".gitmodules"))} ${lstatStamp(gitFolder)}`;
 }

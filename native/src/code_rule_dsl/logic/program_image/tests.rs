@@ -70,17 +70,19 @@ fn every_part() -> Arc<Version> {
 }
 
 fn pack_files() -> Vec<std::path::PathBuf> {
-    let packs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
+    let packs = crate::source_tree::native().join("../docs/rule-syntax/packs");
     let mut files: Vec<_> = std::fs::read_dir(&packs).unwrap().flatten().filter(|d| d.path().is_dir()).flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten().map(|f| f.path())).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     files.sort();
     files
 }
 
-/// Every seventh pack program, as the text's test samples them.
+/// Every seventh pack program, as the text's test samples them, parsed a thread each: one after another they took
+/// most of a minute (two on Windows), and three tests read them.
 fn pack_programs() -> Vec<(std::path::PathBuf, Arc<Version>)> {
+    use rayon::prelude::*;
     let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
-    files.into_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect()
+    files.into_par_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect()
 }
 
 /// Every part of a program reads back from its image as written, and so does every sampled pack program: its image,
@@ -92,13 +94,14 @@ fn a_program_reads_back_from_its_image() {
     same(&back, &v);
     handles_agree(&back, &v);
     assert!(back.show().contains("$j = join $y by ($k, $sep) sep \", \" : { ast($y, $k, $sep) }"), "{}", back.show());
-    let mut n = 0;
-    for (path, prog) in pack_programs() {
+    use rayon::prelude::*;
+    let programs = pack_programs();
+    programs.par_iter().for_each(|(path, prog)| {
         let back = Version::open(prog.fold().unwrap().base_bytes().unwrap()).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        same(&back, &prog);
-        handles_agree(&back, &prog);
-        n += 1;
-    }
+        same(&back, prog);
+        handles_agree(&back, prog);
+    });
+    let n = programs.len();
     assert!(n > 50, "{n}");
 }
 
@@ -531,7 +534,7 @@ fn a_delta_is_the_size_of_its_edit() {
         for k in 0..9 {
             for r in small.rules() {
                 let head = format!("{}_{k}", small.rel_name(r.head().rel()));
-                let args: Vec<T<'_>> = r.head().args().map(|t| super::t_of(&small, r, t)).collect();
+                let args: Vec<T<'_>> = r.head().args().map(|t| super::t_of(r, t)).collect();
                 let mut w = b.rule().head(head.as_str(), &args);
                 for l in r.body() {
                     w = w.lit(&small, r, l);
@@ -610,7 +613,7 @@ fn passes_hold(v: &Arc<Version>) {
     use super::fields::ProgramFields;
     use super::passes;
     use std::collections::BTreeSet;
-    let Ok((nv, ns)) = passes::normalize(&v) else { return };
+    let Ok((nv, ns)) = passes::normalize(v) else { return };
     let names: BTreeSet<String> = ns.iter().map(|&r| nv.rel_name(r).to_owned()).collect();
     let lattice = ProgramFields::lattice(&**v);
     let nullary = ProgramFields::nullary(&**v);
@@ -626,7 +629,7 @@ fn passes_hold(v: &Arc<Version>) {
     }
     // Every derived rule came from one of `v`'s; each of `v`'s gave one rule, or a fact (a ground rule). A program
     // normalize leaves as it was is its input (the manager keeps no new base of it).
-    if !Arc::ptr_eq(&nv, &v) {
+    if !Arc::ptr_eq(&nv, v) {
         for r in nv.rules() {
             let s = r.source().expect("a derived rule's source");
             assert_eq!(v.rel_name(v.rule(s).expect("its source is the input's").head().rel()), nv.rel_name(r.head().rel()));
@@ -679,11 +682,10 @@ fn normalizable_on(b: &mut Builder<'_>) {
 /// everywhere; and a `top` of two domains is refused.
 #[test]
 fn the_planners_passes_over_a_version_hold() {
-    let mut n = 0;
-    for (_, prog) in pack_programs() {
-        passes_hold(&prog);
-        n += 1;
-    }
+    use rayon::prelude::*;
+    let programs = pack_programs();
+    programs.par_iter().for_each(|(_, prog)| passes_hold(prog));
+    let n = programs.len();
     assert!(n > 50, "{n}");
     let p = {
         let mut b = Builder::base();
@@ -915,7 +917,9 @@ fn fields_agree(v: &Arc<Version>) {
         assert!(f.request(req) && f.answer(req));
     }
     // Gates, in order.
-    let gates: Vec<(String, Option<String>, String, usize, Vec<String>, Vec<String>)> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
+    // A gate's key, source, relation, level, quiet relations and dependencies.
+    type Gate = (String, Option<String>, String, usize, Vec<String>, Vec<String>);
+    let gates: Vec<Gate> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
     let want: Vec<_> = pgates.iter().map(|(k, g)| (k.clone(), g.src.clone(), g.rel.clone(), g.level, g.quiet.clone(), g.deps.clone())).collect();
     assert_eq!(gates, want);
     for (k, _) in &pgates {
@@ -954,11 +958,10 @@ fn fields_agree(v: &Arc<Version>) {
 /// pack programs, and on programs with a field of every kind.
 #[test]
 fn a_versions_fields_say_what_its_readers_say() {
-    let mut n = 0;
-    for (_, prog) in pack_programs() {
-        fields_agree(&prog);
-        n += 1;
-    }
+    use rayon::prelude::*;
+    let programs = pack_programs();
+    programs.par_iter().for_each(|(_, prog)| fields_agree(prog));
+    let n = programs.len();
     assert!(n > 50, "{n}");
     fields_agree(&every_part());
     fields_agree(&analysed());
@@ -1154,7 +1157,7 @@ fn a_pass_that_writes_for_a_kept_rule_fails() {
     }
     let mut p = super::manager::Pipeline::new("test", managed());
     p.rules(&mut Liar);
-    let e = p.finish().err().expect("refused");
+    let e = p.finish().expect_err("refused");
     assert!(e.contains("liar") && e.contains("kept"), "{e}");
 }
 
@@ -2082,4 +2085,40 @@ fn facts_in_another_order_are_the_same_program() {
     // Other rows are another program.
     let other = with_k(&rows[..rows.len() - 1]);
     assert_ne!(Placed::whole(prog.clone()).digest(), Placed::whole(other).digest());
+}
+
+/// A made step (`Pipeline::made`: a version built whole from a program, its rules numbered anew, as the deferred
+/// joins' and node products' steps make theirs) hands on the record its program states: a rule step after it reads
+/// the record by the made version's rules, not the input's (decision 0488: every `rr_value_req` rule was then read
+/// as serving only itself).
+#[test]
+fn a_made_steps_request_record_is_carried_by_its_own_rules() {
+    use std::collections::BTreeSet;
+    struct DropFirstQ;
+    impl super::manager::ProgramPass for DropFirstQ {
+        const NAME: &'static str = "drop q's first rule";
+        fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+            let v = cx.v();
+            let first = v.heads(v.rel("q").unwrap()).next().unwrap().id();
+            w.keep(|r| r.id() != first)
+        }
+    }
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl q(x: number)\n.output q\n\
+                q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
+    let by = |r: &str| BTreeSet::from([r.to_owned()]);
+    let asked = |text: &str, record: &super::about::Asked| {
+        let base = crate::code_rule_dsl::logic::rr::parse_version(text).map_err(|e| format!("{e:?}"))?;
+        let mut b = Builder::on(&base);
+        b.fields().set_asked(record);
+        Ok::<_, String>(b.finish()?.0)
+    };
+    let v = asked(text, &super::about::Asked::from([("q".to_owned(), vec![by("r1"), by("r2"), by("r3")])])).unwrap();
+    let mut pipe = super::manager::Pipeline::new("test", v);
+    // Made again with two rules of another relation first: every rule of `q` is numbered anew.
+    let before = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl s(x: number)\n.output s\n\
+                  .decl q(x: number)\n.output q\ns(x) :- a(x).\ns(x) :- b(x).\nq(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
+    pipe.made("rules before q's", 1, &[], |v| Ok((asked(before, &v.asked())?, Vec::new())));
+    pipe.program(&mut DropFirstQ);
+    let now = pipe.current().unwrap().clone();
+    assert_eq!(now.asked().get("q"), Some(&vec![by("r2"), by("r3")]), "q's readers by its rules after the made step");
 }

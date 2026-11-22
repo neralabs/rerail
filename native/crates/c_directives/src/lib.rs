@@ -1,18 +1,20 @@
-//! C's and C++'s directives in Bitlex (decision 0327, mode (a) compiled): the grammar of
-//! `bitlex_ladder/`'s last step, compiled once a process through the Bitlex compiler to tier 1
+//! C's and C++'s directives in Bitlex (decision 0327, mode (a) compiled): the grammar
+//! `directives.bitlex`, compiled once a process through the Bitlex compiler to tier 1
 //! and tier 2 on Cranelift, as `.rerail`'s (`rerail_rr_parser`) and Kotlin's are.
 //!
 //! Its tape is the directive tape: a `directives` root and a node a directive, of its kind
 //! (`KINDS`), from its `#` to its line's last token's end, its operands fields' nodes below it.
 //! Its rows (`rows`) and operands (`operands`) are the lean scan's (`rerail_c_pp::directives`),
 //! which is its reference. A file the grammar refuses (a construct
-//! the ladder does not read yet) goes to the lean scan, so a row is never wrong.
+//! it does not read) goes to the lean scan, so a row is never wrong.
 
-use rerail_compiler::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+use rerail_compiler::{native_ir, rir_asm as rir};
+use rerail_compiler::native_cpu_clusters;
+use rerail_cpu_stream::native_cpu_stream;
 
-/// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/06-raw.bitlex");
+/// The grammar.
+pub const GRAMMAR: &str = include_str!("../directives.bitlex");
 
 /// The tape's kinds, by id: the root, the directives' kinds (their names the lean scan's
 /// `Kind::name`), then the tokens' leaves and the operands' nodes.
@@ -68,7 +70,7 @@ pub fn interpreted_read(src: &[u8]) -> Option<Read> {
     read(&rerail_compiler::stream::image(&nodes, &program.readings.extras, 0, src)).ok()
 }
 
-/// `grammar` compiled: a ladder step's text.
+/// `grammar` compiled: a grammar's text.
 pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
     compile_kinds(grammar, KINDS, FIELDS)
 }
@@ -105,7 +107,7 @@ pub(crate) fn lower_kinds(grammar: &str, kinds: &[&str], fields: &[&str]) -> Res
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     for b in &mut native.block_programs {
-        b.pad = rerail_compiler::native_cpu_block::BACK as u16;
+        b.pad = rerail_cpu_block::native_cpu_block::BACK as u16;
     }
     Ok((program, native, compiled.words.clone(), compiled.machine.clone()))
 }
@@ -153,19 +155,19 @@ impl Compiled {
 
     /// The same for each of `files`, tier 1 on Metal and tier 2 over its buffers; `None` for a
     /// file refused, and for all where the device cannot run the batch.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn metal_read(&self, files: &[&[u8]]) -> Result<Vec<Option<Read>>, rerail_compiler::Error> {
         Ok(self.metal_images(files)?.into_iter().map(|t| t.and_then(|t| read(&t).ok())).collect())
     }
 
     /// Each of `files`' tapes, tier 1 on Metal and tier 2 over its buffers; `None` for a file
     /// refused; the device's error where it cannot run the batch.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>, rerail_compiler::Error> {
         use rerail_metal::block_program::serial::{Segments, run_resident};
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
         match run_resident(&[&self.native], &batch, Segments { blocks: 29, warm: 1 }) {
-            Ok((_, run)) => Ok((0..files.len()).map(|i| rerail_metal::tier2_on::image_on(&self.parser, &run, i).ok()).collect()),
+            Ok((_, run)) => Ok((0..files.len()).map(|i| rerail_cpu_stream::tier2_on::image_on(&self.parser, &run, i).ok()).collect()),
             Err(rerail_compiler::Error::BackendCapacity) if files.len() > 1 => {
                 let (a, b) = files.split_at(files.len() / 2);
                 let mut out = self.metal_images(a)?;
@@ -278,11 +280,11 @@ pub fn read(image: &[u8]) -> Result<Read, String> {
         } else {
             groups.last().and_then(|g| g.1)
         };
-        out.rows.push(Row { kind: k, start: v.start(i) as u32, end: v.end(i) as u32, parent });
+        out.rows.push(Row { kind: k, start: v.start(i), end: v.end(i), parent });
         let end = i + v.size(i);
         // Its `#`'s leaf, then its word's (a line marker's number is its `rest`'s).
         let word = if i + 2 < end && field(i + 2).is_none() { i + 2 } else { i + 1 };
-        out.word_ends.push(v.end(word) as u32);
+        out.word_ends.push(v.end(word));
         let mut last_param = false;
         for n in i + 1..end {
             let what = match field(n) {
@@ -311,9 +313,9 @@ pub fn read(image: &[u8]) -> Result<Read, String> {
                 }
             };
             last_param = what == What::Param;
-            out.operands.push(Operand { i: d, what, start: v.start(n) as u32, end: v.end(n) as u32 });
+            out.operands.push(Operand { i: d, what, start: v.start(n), end: v.end(n) });
             if d == 0 && what == What::Expr && v.size(n) <= 6 {
-                out.first_expr = (n + 1..n + v.size(n)).map(|l| (kind(l), v.start(l) as u32, v.end(l) as u32)).collect();
+                out.first_expr = (n + 1..n + v.size(n)).map(|l| (kind(l), v.start(l), v.end(l))).collect();
             }
         }
         i = end;
@@ -382,7 +384,7 @@ pub mod pp;
 pub mod eval;
 
 /// `src`'s mode (a) facts: from the compiled grammar's tape where it reads the file, else (a
-/// construct the ladder does not read, or a grammar that does not compile) the lean scan's.
+/// construct the grammar does not read, or a grammar that does not compile) the lean scan's.
 pub fn facts(src: &[u8], opts: rerail_c_pp::Options) -> Facts {
     // The grammar reads raw strings: a configuration without them (C, not GNU) has the lean scan
     // read a file that may have one.

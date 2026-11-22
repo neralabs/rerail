@@ -81,7 +81,7 @@ fn the_cpu_runs_the_interpreter_until_its_programs_compile() {
     background(ExecutionBackend::CpuBackground, ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit, "compilation cpu");
 }
 
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn metal_runs_its_interpreter_until_its_kernel_compiles() {
     background(ExecutionBackend::MetalBackground, ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit, "compilation metal");

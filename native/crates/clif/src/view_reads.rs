@@ -76,7 +76,7 @@ pub struct ViewRow {
     pub rows: [u32; VIEWS.len()],
     pub view: crate::view::TapeView,
 }
-const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 36 + std::mem::size_of::<crate::view::TapeView>()).next_multiple_of(8));
+const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 4 * VIEWS.len() + std::mem::size_of::<crate::view::TapeView>()).next_multiple_of(8));
 
 /// A batch's documents as its views' reads find them: the batch's block's GPU address (the entries' base), its
 /// documents' rows (their GPU address), how many.
@@ -91,8 +91,9 @@ pub struct ViewDir {
 const _: () = assert!(std::mem::size_of::<ViewDir>() == 24);
 
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
-/// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`.
-pub const VIEWS: [&str; 9] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof"];
+/// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`; then `tape`, `ast_depth` and
+/// `node_order`.
+pub const VIEWS: [&str; 12] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order"];
 
 /// A field's byte offset in the entry.
 pub mod at {
@@ -128,6 +129,11 @@ pub const CORE_COLUMNS: u32 = 3;
 /// `line`'s: the node's id, the line its start is on (from 1); each `Loc` view's: the node's or span's id, its place.
 pub const LINE_COLUMNS: u32 = 2;
 pub const LOC_COLUMNS: u32 = 2;
+/// `tape`'s: the node's id, its parent's id, the numbered nodes under it, its depth; `ast_depth`'s: the node's id,
+/// its depth; `node_order`'s: the node's id, its order key (the document's key above it).
+pub const TAPE_COLUMNS: u32 = 4;
+pub const DEPTH_COLUMNS: u32 = 2;
+pub const ORDER_COLUMNS: u32 = 2;
 
 /// The entry in UKL: `struct ViewDoc`, each field's offset and the size asserted against this definition's.
 #[cfg(feature = "ir")]
@@ -160,9 +166,9 @@ pub fn ukl() -> String {
         std::mem::size_of::<crate::view::TapeView>() / 4,
     );
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
-    s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDir) == {}, \"ViewDir: size\");\n", std::mem::size_of::<ViewDir>());
-    s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
     s += "typedef struct ViewDoc {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");
@@ -170,7 +176,7 @@ pub fn ukl() -> String {
     s += "} ViewDoc;\n";
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDoc) == {}, \"ViewDoc: size\");\n", std::mem::size_of::<ViewDoc>());
     for (_, name, at) in fields.iter() {
-        s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, {name}) == {at}, \"ViewDoc.{name}\");\n");
+        s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, {name}) == {at}, \"ViewDoc.{name}\");\n");
     }
     s
 }
@@ -616,6 +622,56 @@ pub fn child_next(b: &mut B<'_, '_>) -> Value {
     })
 }
 
+#[cfg(feature = "ir")]
+/// `view_up(l)`: numbered node `l`'s nearest numbered strict tape ancestor, or `NO_ROW` (decision 0353 step 5: `has`
+/// probed by its node, a climb of the tape's parents, kept where the projection numbers them, as the host's
+/// `Within::containers_on`). The loop ends: each parent is above the last, and the root's is `NO_ROW`.
+#[cfg(feature = "ir")]
+pub fn up(b: &mut B<'_, '_>) -> Value {
+    let l = b.arg(0);
+    let x = b.tape_node(l);
+    let first = b.call_tape("tape_parent", &[x]);
+    let (head, test, step, found, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(done, I32);
+    b.f.ins().jump(head, &[first.into()]);
+    b.f.switch_to_block(head);
+    let p = b.f.block_params(head)[0];
+    let none = b.f.ins().icmp_imm(IntCC::Equal, p, i64::from(NO_ROW));
+    let no = b.c32(i64::from(NO_ROW));
+    b.f.ins().brif(none, done, &[no.into()], test, &[]);
+    b.f.switch_to_block(test);
+    let numbering = b.follow(b.tape, at::NUMBERING);
+    let node = b.c32(0);
+    let is = b.call_at("num_is", numbering, &[node, p]);
+    let numbered = b.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+    b.f.ins().brif(numbered, found, &[], step, &[]);
+    b.f.switch_to_block(found);
+    let numbering = b.follow(b.tape, at::NUMBERING);
+    let node = b.c32(0);
+    let u = b.call_at("num_rank", numbering, &[node, p]);
+    b.f.ins().jump(done, &[u.into()]);
+    b.f.switch_to_block(step);
+    let next = b.call_tape("tape_parent", &[p]);
+    b.f.ins().jump(head, &[next.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+#[cfg(feature = "ir")]
+/// `view_end(l)`: the number past numbered node `l`'s numbered descendants, which are `l + 1 .. view_end(l)` (the
+/// numbered nodes before its subtree's end on the tape; decision 0353 step 5: `has` probed by its ancestor, as the
+/// host's `Within::contained_on`).
+#[cfg(feature = "ir")]
+pub fn end(b: &mut B<'_, '_>) -> Value {
+    let l = b.arg(0);
+    let x = b.tape_node(l);
+    let end = b.call_tape("tape_end_of", &[x]);
+    let numbering = b.follow(b.tape, at::NUMBERING);
+    let node = b.c32(0);
+    b.call_at("num_rank", numbering, &[node, end])
+}
+
 /// `view_number(low)`: the numbered node whose id's low 32 bits are `low` (its document's: the key is the caller's
 /// to match), or `NO_ROW`: `low` itself where ids are local ids, else the numbering's inverse (`num_number_of`,
 /// a node's, not a token's).
@@ -638,4 +694,90 @@ pub fn number(b: &mut B<'_, '_>) -> Value {
     let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, l, n);
     let no = b.c32(i64::from(NO_ROW));
     b.f.ins().select(inside, l, no)
+}
+#[cfg(feature = "ir")]
+impl B<'_, '_> {
+    /// Numbered node `l`'s depth, the root's 0: its numbered strict tape ancestors, by a climb of the tape's parents
+    /// (`Projected::depth`). The loop ends: each parent is above the last, and the root's is `NO_ROW`.
+    fn depth_of(&mut self, l: Value) -> Value {
+        let x = self.tape_node(l);
+        let first = self.call_tape("tape_parent", &[x]);
+        let (head, test, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(done, I32);
+        let zero = self.c32(0);
+        self.f.ins().jump(head, &[first.into(), zero.into()]);
+        self.f.switch_to_block(head);
+        let (p, d) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let none = self.f.ins().icmp_imm(IntCC::Equal, p, i64::from(NO_ROW));
+        self.f.ins().brif(none, done, &[d.into()], test, &[]);
+        self.f.switch_to_block(test);
+        let numbering = self.follow(self.tape, at::NUMBERING);
+        let node = self.c32(0);
+        let is = self.call_at("num_is", numbering, &[node, p]);
+        let one = self.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+        let one = self.f.ins().uextend(I32, one);
+        let d = self.f.ins().iadd(d, one);
+        let next = self.call_tape("tape_parent", &[p]);
+        self.f.ins().jump(head, &[next.into(), d.into()]);
+        self.f.switch_to_block(done);
+        let d = self.f.block_params(done)[0];
+        self.f.ins().uextend(I64, d)
+    }
+}
+
+/// `view_tape(l, col)`: column `col` of the `tape` view's row of numbered node `l`: its id, its parent's id (-1 for
+/// the root), the numbered nodes under it (`Projected::size`: `view_end`'s past its own), its depth.
+#[cfg(feature = "ir")]
+pub fn tape(b: &mut B<'_, '_>) -> Value {
+    let (l, col) = (b.arg(0), b.arg(1));
+    let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    b.either(I64, c, |b| b.node_id(l), |b| {
+        let c = b.f.ins().icmp_imm(IntCC::Equal, col, 1);
+        b.either(I64, c, |b| {
+            let x = b.tape_node(l);
+            b.parent_id(l, x)
+        }, |b| {
+            let c = b.f.ins().icmp_imm(IntCC::Equal, col, 2);
+            b.either(I64, c, |b| {
+                let x = b.tape_node(l);
+                let end = b.call_tape("tape_end_of", &[x]);
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                let node = b.c32(0);
+                let past = b.call_at("num_rank", numbering, &[node, end]);
+                let under = b.f.ins().isub(past, l);
+                let under = b.f.ins().iadd_imm(under, -1);
+                b.f.ins().uextend(I64, under)
+            }, |b| b.depth_of(l))
+        })
+    })
+}
+
+/// `view_depth(l, col)`: column `col` of `ast_depth`'s row of numbered node `l`: its id, its depth.
+#[cfg(feature = "ir")]
+pub fn depth(b: &mut B<'_, '_>) -> Value {
+    let (l, col) = (b.arg(0), b.arg(1));
+    let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    b.either(I64, c, |b| b.node_id(l), |b| b.depth_of(l))
+}
+
+/// `view_order(l, col)`: column `col` of `node_order`'s row of numbered node `l`: its id, its order key under the
+/// document's key (`Projected::order`: `num_order_of`, its number itself where ids are local ids).
+#[cfg(feature = "ir")]
+pub fn order(b: &mut B<'_, '_>) -> Value {
+    let (l, col) = (b.arg(0), b.arg(1));
+    let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    b.either(I64, c, |b| b.node_id(l), |b| {
+        let key = b.entry_u32(at::KEY);
+        let high = b.f.ins().ishl_imm(key, 32);
+        let preorder = b.word_at(I32, b.tape, at::PREORDER);
+        let local = b.f.ins().icmp_imm(IntCC::NotEqual, preorder, 0);
+        let low = b.either(I32, local, |_| l, |b| {
+            let numbering = b.follow(b.tape, at::NUMBERING);
+            b.call_at("num_order_of", numbering, &[l])
+        });
+        let low = b.f.ins().uextend(I64, low);
+        b.f.ins().bor(high, low)
+    })
 }

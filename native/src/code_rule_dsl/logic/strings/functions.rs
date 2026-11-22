@@ -52,6 +52,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("to_precision", &[Text, Number], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
     ("lower", &[Text], Text),
+    ("ascii_lower", &[Text], Text),
     // `.rerail`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
     ("str_concat", &[Text, Text], Text),
     // `str_concat` run backwards: the text between a prefix and a suffix, none when the text has not both
@@ -80,6 +81,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_sub", &[Number, Number], Number),
     ("rr_mul", &[Number, Number], Number),
     ("rr_div", &[Number, Number], Number),
+    ("rr_admit_pairs", &[Number, Number, Number, Number], Number),
     ("rr_max", &[Number, Number], Number),
     ("rr_min", &[Number, Number], Number),
     // A flat lattice's `@flat_bin(op, a, b)` (`select::term`'s SQL form): `top` (1 << 62) when either side is, or the
@@ -270,6 +272,40 @@ pub fn install_py_repr(repr: fn(&str) -> String) {
     let _ = PY_REPR.set(repr);
 }
 
+/// Current exact factor sizes, their positive readers, and the candidate's share of the row allowance.
+#[derive(Clone, Copy, Debug)]
+pub struct PairCacheInput {
+    pub left: u64,
+    pub right: u64,
+    pub readers: u64,
+    pub allowance: u64,
+}
+
+type PairClassifier = fn(PairCacheInput) -> bool;
+
+/// A machine's pair cache admission (decision 0442: the machine's, not the process's): its pricer's choice, set with
+/// the pricer (`plan::joins::set_pricer`), which this crate cannot name.
+#[derive(Default)]
+pub struct PairAdmission(pub parking_lot::RwLock<Option<std::sync::Arc<dyn Fn(PairCacheInput) -> Option<bool> + Send + Sync>>>);
+
+/// The caller's machine's choice for a pair cache that fits, else kept.
+fn machine_admits(input: PairCacheInput) -> bool {
+    let admission = rerail_prof::code_rule_dsl::logic::profile::machine::<PairAdmission>();
+    let choose = admission.0.read().clone();
+    choose.and_then(|f| f(input)).unwrap_or(true)
+}
+
+/// Whether a pair cache that fits is kept: a cache that cannot fit never reaches `classify` (the caller's machine's
+/// pricer, `machine_admits`). SQL and native evaluation use the same guard.
+fn admit_pairs(values: &[i64], classify: Option<PairClassifier>) -> bool {
+    let [left, right, readers, allowance] = *values else { return false };
+    if left <= 0 || right <= 0 || readers < 2 || allowance < 0 || left > allowance / right {
+        return false;
+    }
+    let input = PairCacheInput { left: left as u64, right: right as u64, readers: readers as u64, allowance: allowance as u64 };
+    classify.is_none_or(|f| f(input))
+}
+
 pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
     let t = |i: usize| text[i];
     let out = match name {
@@ -293,6 +329,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_sub" => return numbers[0].checked_sub(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_mul" => return numbers[0].checked_mul(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_div" => return numbers[0].checked_div(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_admit_pairs" => return Value::Integer(i64::from(admit_pairs(numbers, Some(machine_admits)))),
         "rr_max" => return Value::Integer(numbers[0].max(numbers[1])),
         "rr_min" => return Value::Integer(numbers[0].min(numbers[1])),
         "flat_bin" => {
@@ -371,6 +408,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "min" => return Value::Integer(numbers[0].min(numbers[1])),
         "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
         "lower" => Some(t(0).to_lowercase()),
+        "ascii_lower" => Some(t(0).to_ascii_lowercase()),
         "sha256" => {
             use sha2::Digest;
             Some(sha2::Sha256::digest(t(0).as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
@@ -768,6 +806,18 @@ pub fn json_str(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pair_cache_pricer_cannot_admit_an_oversize_product() {
+        use super::admit_pairs;
+        assert!(admit_pairs(&[1, 4096, 2, 4096], None));
+        assert!(!admit_pairs(&[1, 4096, 2, 4096], Some(|_| false)));
+        for counts in [[65, 64, 2, 4096], [i64::MAX, i64::MAX, 4, i64::MAX], [1, 1, 4, 0]] {
+            assert!(!admit_pairs(&counts, Some(|_| panic!("classifier ran before admission"))));
+        }
+        assert!(admit_pairs(&[2, 4, 3, 8], Some(|input| input.readers == 3 && input.left == 2
+            && input.right == 4 && input.allowance == 8)));
+    }
+
     use super::*;
 
     /// `@shell_unquote` undoes a POSIX shell word's quoting, as a compile command's words are read (decision 0327).

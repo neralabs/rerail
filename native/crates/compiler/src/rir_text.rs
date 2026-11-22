@@ -56,6 +56,14 @@ pub fn mark_word_rows(out: &mut String, mark_words: &[(u8, u16)]) {
     }
 }
 
+/// The marks each mark passes: `markpasses K MASK` (`Words::mark_passes`).
+pub fn mark_pass_rows(out: &mut String, mark_passes: &[(u8, u64)]) {
+    use std::fmt::Write as _;
+    for &(k, m) in mark_passes {
+        let _ = writeln!(out, "  markpasses {k} {m}");
+    }
+}
+
 pub fn word_kind_rows(out: &mut String, word_kinds: &[(u16, u16)]) {
     use std::fmt::Write as _;
     for &(s, k) in word_kinds {
@@ -102,6 +110,9 @@ fn mark_rows(out: &mut String, row: &str, marks: &[crate::program::TokenMark]) {
             }
             if e.run {
                 out.push_str(" run");
+            }
+            if e.since {
+                out.push_str(" since");
             }
             if e.without != 0 {
                 let _ = write!(out, " w{:x}", e.without);
@@ -192,8 +203,8 @@ pub fn local_check_text(c: &crate::program::LocalCheck) -> String {
     out
 }
 
-/// The grammar's names (`Words::names`): `name rule R "N"`, `name kind #K "N"`, `name token K "N"`,
-/// `name mark K "N"`.
+/// The grammar's names (`Words::names`): `name rule R "N"`, `name kind #K "N"`, `name field F "N"`,
+/// `name token K "N"`, `name mark K "N"`.
 pub fn name_rows(out: &mut String, names: &crate::program::Names) {
     use std::fmt::Write as _;
     for (r, n) in &names.rules {
@@ -201,6 +212,9 @@ pub fn name_rows(out: &mut String, names: &crate::program::Names) {
     }
     for (k, n) in &names.kinds {
         let _ = writeln!(out, "  name kind #{k} {}", quote(n.as_bytes()));
+    }
+    for (f, n) in &names.fields {
+        let _ = writeln!(out, "  name field {f} {}", quote(n.as_bytes()));
     }
     for (k, n) in &names.tokens {
         let _ = writeln!(out, "  name token {k} {}", quote(n.as_bytes()));

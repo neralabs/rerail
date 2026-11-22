@@ -20,12 +20,15 @@ pub fn register() {
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 
-/// This crate's own test binary, which the engine does not load: Metal is registered as the binary loads, as the
-/// engine registers it (`crate::install_devices`), so the device's tests run on the device.
+/// This crate's own test binary, which the engine does not load: Metal and the language packs its tests read are
+/// registered as the binary loads, as the engine registers them (`crate::install_devices`, `install_languages`), so
+/// the device's tests run on the device and no test's CPU worker meets a document before its pack is registered.
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
         super::register();
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        crate::test_languages();
     }
     #[used]
     #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
@@ -165,7 +168,7 @@ pub mod matcher {
         }
 
         fn compile_background(&self, batch: &[Program]) -> Result<(), Error> {
-            programs::compile_sweep_cached()?;
+            programs::compile_sweep_cached(crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::run_format())?;
             programs::compile_jit_cached(batch).map(|_| ())
         }
 
@@ -195,6 +198,12 @@ pub mod matcher {
 
         fn warm_labels(&self) {
             matcher_metal::warm();
+        }
+
+        fn kernels_ahead(&self) -> Vec<crate::code_rule_dsl::transducer::packed::device::KernelAhead> {
+            let mut v = crate::code_rule_dsl::transducer::packed::metal_join::kernels_ahead();
+            v.extend(programs::kernels_ahead());
+            v
         }
 
         fn drop_label_pipelines(&self) {

@@ -144,7 +144,7 @@ fn encode_16(kernel: rerail_simdjson::Kernel, kinds: &rerail_simdjson::Kinds, va
         })?;
         Ok((w, digest, bad))
     };
-    let (w, digest, bad) = match walk(false) {
+    let (mut w, digest, bad) = match walk(false) {
         // Read again as JSONC (comments, trailing commas), as `encode_with` does.
         Err(rerail_simdjson::Refusal::Simdjson(why)) => {
             let t = walk(true).map_err(|_| rerail_simdjson::Refusal::Simdjson(why))?;
@@ -216,7 +216,7 @@ impl TreeParser for Simdjson {
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
                 Some(image.map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
             }
-            // A file simdjson refuses (a number past its range, nesting past 1,024) is read as MSVC's parser reads it
+            // A file simdjson refuses (a number past its range, nesting past 1,024) is read by JSON's fallback
             // (`fallback::Fallback`: the Bitlex parser, then tree-sitter-json past trailing commas), and one that
             // refuses too goes to tree-sitter-json. Straight to tree-sitter-json, an exponent's `+` (`1e+21`), which
             // its grammar refuses, was an error in a file that also held `-9223372036854778000`.

@@ -17,7 +17,7 @@
 //! binds whole (`in_block`). A view's rows are read in place through one directory of the batch's documents and the
 //! values' (`device_chunk::views_over`), made again when values are admitted after it.
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use super::super::DeviceView;
 use super::super::Source;
 use parking_lot::RwLock;
@@ -27,13 +27,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// One admitted value's rows of a relation: its source (a batch of the value alone), from row `start` of the parts.
+#[derive(Clone)]
 struct Part {
     start: usize,
     src: Arc<dyn Source>,
 }
 
-/// A relation's parts, in the order admitted, each found by the keys of the nodes it holds rows of.
-#[derive(Default)]
+/// A relation's parts, in the order admitted, each found by the keys of the nodes it holds rows of. The index of the
+/// parts' sources, not their rows: an add makes the next one from it (`Values::add`).
+#[derive(Clone, Default)]
 struct Parts {
     list: Vec<Part>,
     total: usize,
@@ -67,22 +69,27 @@ impl Parts {
 /// The chunk's admitted values: each relation's parts, shared by its layered sources.
 #[derive(Default)]
 pub struct Values {
-    parts: RwLock<FxHashMap<String, Parts>>,
+    /// Each relation's parts, as the values admitted so far make them: read without a lock, as every join's probe of a
+    /// layered source reads them, and replaced whole by `add`. Read under a read-write lock, the probes of a chunk's
+    /// jobs wrote its count of readers each time: a third of the running threads' time spun on it (R7, 0494 step 5).
+    parts: arc_swap::ArcSwap<FxHashMap<String, Arc<Parts>>>,
+    /// Held while `add` makes the next `parts` from the last.
+    adding: parking_lot::Mutex<()>,
     admitted: AtomicUsize,
     /// Each admitted value's batch, in the order admitted: the documents a view's parts are rows of.
     batches: RwLock<Vec<Arc<super::Batch>>>,
     /// The views' directory over the chunk's batch and the values' (`device_chunk::views_over`), and the values it
     /// was made with.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     dir: parking_lot::Mutex<Option<(usize, Option<Arc<Dir>>)>>,
     /// Per relation made on lookup (an axis), the device's solve of the chunk's batch and its values in one relation
     /// (`Within::solved_with`), and the parts it was made with.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     solved: parking_lot::Mutex<FxHashMap<String, (usize, Option<crate::code_rule_dsl::facts::rows::Part>)>>,
 }
 
 /// A views' directory of a chunk's batch and its values, with what its rows' entries and tapes are kept by.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub(super) struct Dir {
     pub(super) views: super::device_chunk::ViewsInPlace,
     _batches: Vec<Arc<super::Batch>>,
@@ -91,8 +98,11 @@ pub(super) struct Dir {
 impl Values {
     /// Value `keys[0]`'s sources: each relation's rows of it, a part of that relation from now on. `keys` are the
     /// keys of the nodes its rows hold: its own, and its places' hosts'.
+    /// The next `parts` is made from the last: a relation the value adds rows to is copied once (`Arc::make_mut`), the
+    /// others shared.
     pub fn add(&self, keys: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
-        let mut parts = self.parts.write();
+        let _adding = self.adding.lock();
+        let mut parts: FxHashMap<String, Arc<Parts>> = (**self.parts.load()).clone();
         if let Some(b) = sources.iter().find_map(|(_, s)| s.python_batch()) {
             self.batches.write().push(b);
         }
@@ -101,7 +111,7 @@ impl Values {
             if src.len() == 0 && !src.made_on_lookup() {
                 continue;
             }
-            let p = parts.entry(name).or_default();
+            let p = Arc::make_mut(parts.entry(name).or_default());
             let i = p.list.len();
             // Its rows past the chunk's and the parts' before, in their block relation: the device binds that whole.
             let slice = src.as_any().and_then(|a| a.downcast_ref::<Slice>());
@@ -116,6 +126,7 @@ impl Values {
                 }
             }
         }
+        self.parts.store(Arc::new(parts));
         self.admitted.fetch_add(1, Ordering::Relaxed);
     }
     /// The values admitted.
@@ -124,20 +135,20 @@ impl Values {
     }
     /// The source of relation `name` that holds rows of node `n`'s document: an admitted value's.
     pub fn source_of(&self, name: &str, n: i64) -> Option<Arc<dyn Source>> {
-        let parts = self.parts.read();
+        let parts = self.parts.load();
         let p = parts.get(name)?;
         let i = *p.by_key.get(&((n >> 32) as u32))?.first()?;
         Some(Arc::clone(&p.list[i].src))
     }
     fn total(&self, name: &str) -> usize {
-        self.parts.read().get(name).map_or(0, |p| p.total)
+        self.parts.load().get(name).map_or(0, |p| p.total)
     }
     /// The chunk's relation `name` with its values' rows, in one block relation, when every part is in it.
     fn whole(&self, name: &str) -> Option<Arc<super::Relation>> {
-        self.parts.read().get(name).and_then(|p| p.whole.clone())
+        self.parts.load().get(name).and_then(|p| p.whole.clone())
     }
     /// The views' directory of `batch` (the chunk's) and the values admitted so far: made again when more are.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn dir(&self, batch: &super::Batch) -> Option<Arc<Dir>> {
         let batches = self.batches.read().clone();
         let mut dir = self.dir.lock();
@@ -241,14 +252,14 @@ impl Layered {
         self.values.source_of(&self.name, n).unwrap_or_else(|| Arc::clone(&self.base))
     }
     fn parts<T>(&self, f: impl FnOnce(&Parts) -> T) -> Option<T> {
-        self.values.parts.read().get(&self.name).filter(|p| !p.list.is_empty()).map(f)
+        self.values.parts.load().get(&self.name).filter(|p| !p.list.is_empty()).map(|p| f(p))
     }
     fn has_parts(&self) -> bool {
         self.values.total(&self.name) > 0
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl Layered {
     /// A view's rows on the device: the chunk's batch's and its values', read in place through their directory. The
     /// base's view as the device reads it (its kind, its block), its directory that of every document.
@@ -278,7 +289,7 @@ impl Layered {
     /// numbers (a value's are made on lookup, `MADE_AT`): a reader that binds it reads every pair.
     fn solved_in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         let base = self.base.as_any()?.downcast_ref::<super::within::Within>()?;
-        let parts = self.values.parts.read();
+        let parts = self.values.parts.load();
         let p = parts.get(&self.name)?;
         let mut solved = self.values.solved.lock();
         if let Some((n, made)) = solved.get(&self.name)
@@ -389,6 +400,42 @@ impl Source for Layered {
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
         !self.has_parts() && self.base.lookup_read(column, value, columns, each)
     }
+    fn for_rows_keyed(&self, column: usize, keys: &rustc_hash::FxHashSet<i64>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
+        // The base's walk, then each part's rows of the keys (a value's rows are few: read whole where its source has
+        // no walk). Made on lookup, the values' rows are made as looked up, never walked (`for_rows_in`).
+        let mut going = true;
+        if !self.base.for_rows_keyed(column, keys, columns, &mut |r, row| {
+            going = each(r, row);
+            going
+        }) {
+            return false;
+        }
+        if !going || self.made.is_some() {
+            return true;
+        }
+        let mut row = vec![0i64; columns.len()];
+        self.parts(|p| {
+            for part in &p.list {
+                let at = self.base_len() + part.start;
+                let walked = going
+                    && part.src.for_rows_keyed(column, keys, columns, &mut |r, row| {
+                        going = each(at + r, row);
+                        going
+                    });
+                if walked || !going {
+                    continue;
+                }
+                for r in (0..part.src.len()).filter(|&r| keys.contains(&part.src.value(r, column))) {
+                    part.src.row_at(r, columns, &mut row);
+                    going = each(at + r, &row);
+                    if !going {
+                        break;
+                    }
+                }
+            }
+        });
+        true
+    }
     fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
         if self.has_parts() { None } else { self.base.lookup_eq(column, value, eqs) }
     }
@@ -477,7 +524,7 @@ impl Source for Layered {
         });
     }
     // A relation's rows on the device: the chunk's, or its and its values' in their one block relation.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         if !self.has_parts() {
             return self.base.in_block();
@@ -487,7 +534,7 @@ impl Source for Layered {
         }
         self.values.whole(&self.name).filter(|w| w.len() == self.len()).and_then(|w| w.in_block())
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         if !self.has_parts() {
             return self.base.device_view();

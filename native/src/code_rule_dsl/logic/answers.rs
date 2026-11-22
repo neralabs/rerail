@@ -12,6 +12,11 @@
 //! is sound when `N(t)` reads only answers that `t` determines: an answered request is whole, and later answers add
 //! new keys rather than rows under an old one. Import resolution is of that kind.
 //!
+//! An aggregate inside the component waits the same way (the user, 2026-11-20: "Gate aggregates per key", Q409): its
+//! key is the columns of its atom that the literals before it bind, the group it aggregates. `join x : { child(e, s,
+//! i), value(s, x) }` over a document's nodes is whole once the document is: a parsed string's (decision 0431 §8) is
+//! answered whole, as a loaded file is.
+//!
 //! Both passes are made on the program's version (decision 0241's form), reading its rules by their handles and its
 //! fields, never a tree.
 
@@ -21,18 +26,18 @@ use super::plan::body::Placed;
 use super::plan::fields::{Fields, FieldsData};
 use super::program_image::manager::{Cx, Pipeline, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
 use super::program_image::passes::{PartOf, Retain, SetAnswers};
-use super::program_image::{AtomRef, Builder, Lit, LitRef, PartFields, Rewrite, RuleRef, T, TermRef, Version};
+use super::program_image::{AtomRef, Builder, Lit, LitRef, PartFields, Rewrite, RuleBuilder, RuleRef, T, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 
 /// An answer's rows under `HELD_BACK` + a request's name are request rows the answerer holds back: asked again once
 /// the stratum is otherwise quiet (`setfix::defer`; the load budget's levels, decision 0145).
-pub(in crate::code_rule_dsl) const HELD_BACK: &str = "rr_held_back:";
+pub const HELD_BACK: &str = "rr_held_back:";
 
 /// Whether `rel` is a gate's `done` relation (`gate`): a test of keys its rule's literals bind, which the planner
 /// joins only once they are bound.
-pub(in crate::code_rule_dsl) fn is_gate(rel: &str) -> bool {
+pub fn is_gate(rel: &str) -> bool {
     rel.starts_with("done_")
 }
 
@@ -49,12 +54,12 @@ fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
     }
 }
 
-/// A negated atom copied gated.
+/// A negated atom, or an aggregate's, copied gated.
 struct Gated<'v>(&'v Version);
 
 impl Rewrite for Gated<'_> {
     fn atom_as(&mut self, a: AtomRef<'_>) -> Option<(String, bool, bool)> {
-        Some((self.0.rel_name(a.rel()).to_owned(), true, true))
+        Some((self.0.rel_name(a.rel()).to_owned(), a.neg(), true))
     }
 }
 
@@ -71,12 +76,26 @@ enum Out {
 /// relation, and the key's columns.
 type Made = (String, Option<String>, String, Vec<(String, String)>);
 
+/// Literal `o` of a gated rule, written into `rb` (`GateRules::rule`): its rule's body, or an `ask`'s.
+fn write<'b, 'p>(v: &Version, r: RuleRef<'_>, lits: &[LitRef<'_>], rb: RuleBuilder<'b, 'p>, o: &'b Out) -> RuleBuilder<'b, 'p> {
+    match o {
+        Out::Copy(i) => rb.lit(v, r, lits[*i]),
+        Out::DoneAll(done) => rb.atom(done.as_str(), &[T::Int(0)]),
+        Out::Done(done, at, i) => {
+            let args: Vec<TermRef<'_>> = lits[*i].atom().expect("a negated or aggregated atom").args().collect();
+            let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
+            rb.atom(done.as_str(), &key)
+        }
+        Out::Gated(i) => rb.lit_with(v, r, lits[*i], &mut Gated(v)),
+    }
+}
+
 /// `p`'s version (a whole program's: its rules and fields) with `answers` stated, and the negations inside each
 /// component that holds a request gated (module docs). Two passes (decision 0281): `GateRules`, a derivation of it
 /// (decision 0241's form), each rule it leaves as it was kept by its handle and each rewritten or made written from
 /// it, in order, with the declarations it adds; then `GateFields`, an overlay of the gates and the answers. Where no
 /// negation is gated, an overlay of the answers alone (`SetAnswers`).
-pub(in crate::code_rule_dsl) fn gate(p: &Placed, answers: &BTreeMap<String, Vec<String>>) -> Result<Arc<Version>, String> {
+pub fn gate(p: &Placed, answers: &BTreeMap<String, Vec<String>>) -> Result<Arc<Version>, String> {
     let mut pipe = Pipeline::new("gate", p.v.clone());
     let mut rules = GateRules { answers, produced: BTreeMap::new(), sccs: Vec::new(), comp: BTreeMap::new(), answered: BTreeSet::new(), fields: None, made: Vec::new() };
     if !answers.is_empty() {
@@ -147,24 +166,37 @@ impl RulePass for GateRules<'_> {
         let lits: Vec<LitRef<'_>> = r.body().collect();
         let in_comp = |l: &LitRef<'_>| l.atom().is_some_and(|a| comp.get(name(a.rel())) == Some(&c));
         let mut outs = Vec::new();
+        // The variables the literals before each one bind: its positive atoms' (an aggregate's own are its alone).
+        let mut bound: BTreeSet<super::program_image::Slot> = BTreeSet::new();
         for (i, l) in lits.iter().enumerate() {
             let inside = in_comp(l);
-            if inside && matches!(l.view(), Lit::Agg { .. }) {
-                let at = l.atom().map_or("?", |a| name(a.rel()));
-                return Err(super::front::Error::NotStratifiable {
-                    message: format!("{} aggregates {at} inside a component that loads (decision 0065 §2a): not supported", name(r.head().rel())),
-                    component: self.sccs[c].clone(),
-                    negated: at.to_owned(),
-                }
-                .to_string());
+            let agg = matches!(l.view(), Lit::Agg { .. });
+            let at_bound = bound.clone();
+            if let Lit::Atom(a) = l.view()
+                && !a.neg()
+            {
+                bound.extend(a.args().filter_map(|t| match t {
+                    TermRef::Var(s) => Some(s),
+                    _ => None,
+                }));
             }
-            let Some(a) = l.atom().filter(|a| inside && a.neg() && !a.gated()) else {
+            let Some(a) = l.atom().filter(|a| inside && (a.neg() || agg) && !a.gated()) else {
                 outs.push(Out::Copy(i));
                 continue;
             };
             let rel = name(a.rel());
-            // The key: the negated atom's columns that are not wild, all bound by the literals before it.
-            let at: Vec<usize> = a.args().enumerate().filter(|(_, t)| !matches!(t, TermRef::Wild)).map(|(k, _)| k).collect();
+            // The key: a negated atom's columns that are not wild, all bound by the literals before it; an
+            // aggregate's that they bind (a constant's too), its group.
+            let at: Vec<usize> = a
+                .args()
+                .enumerate()
+                .filter(|(_, t)| match t {
+                    TermRef::Wild => false,
+                    TermRef::Var(s) if agg => at_bound.contains(s),
+                    _ => true,
+                })
+                .map(|(k, _)| k)
+                .collect();
             let ad: String = (0..a.arity()).map(|k| if at.contains(&k) { 'b' } else { 'f' }).collect();
             let cols: Vec<(String, String)> = at.iter().map(|&k| (format!("c{k}"), f.column_type(rel, k).unwrap_or("int").to_owned())).collect();
             // Keyed when the literals before the negation read the component, so its keys grow with it; otherwise the
@@ -178,12 +210,13 @@ impl RulePass for GateRules<'_> {
                 outs.push(Out::DoneAll(done));
             } else {
                 let (ask, done) = (format!("ask_{rel}_{ad}"), format!("done_{rel}_{ad}"));
-                // The keys asked about: the rule's literals before the negation.
+                // The keys asked about: the rule's literals before the negation, as this rewrite writes them (an
+                // earlier negation or aggregate of the component gated, not read raw).
                 let args: Vec<TermRef<'_>> = a.args().collect();
                 let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
                 let mut rb = out.rule().head(ask.as_str(), &key);
-                for &l in &lits[..i] {
-                    rb = rb.lit(v, r, l);
+                for o in &outs {
+                    rb = write(v, r, &lits, rb, o);
                 }
                 rb.finish()?;
                 if !self.made.iter().any(|(d, ..)| *d == done) {
@@ -198,16 +231,7 @@ impl RulePass for GateRules<'_> {
         }
         let mut rb = out.rule().head_from(v, r, r.head());
         for o in &outs {
-            rb = match o {
-                Out::Copy(i) => rb.lit(v, r, lits[*i]),
-                Out::DoneAll(done) => rb.atom(done.as_str(), &[T::Int(0)]),
-                Out::Done(done, at, i) => {
-                    let args: Vec<TermRef<'_>> = lits[*i].atom().expect("a negated atom").args().collect();
-                    let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
-                    rb.atom(done.as_str(), &key)
-                }
-                Out::Gated(i) => rb.lit_with(v, r, lits[*i], &mut Gated(v)),
-            };
+            rb = write(v, r, &lits, rb, o);
         }
         rb.finish()?;
         Ok(Step::Written)
@@ -252,7 +276,7 @@ impl ProgramPass for GateFields<'_, '_> {
         let names: BTreeSet<String> = g.made.iter().map(|(d, ..)| d.clone()).collect();
         let mut reads: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for r in w_.rules() {
-            for a in r.reads().filter(|a| !((a.neg() && a.gated()) || names.contains(w_.rel_name(a.rel())))) {
+            for a in r.reads().filter(|a| !(a.gated() || names.contains(w_.rel_name(a.rel())))) {
                 reads.entry(w_.rel_name(r.head().rel()).to_owned()).or_default().insert(w_.rel_name(a.rel()).to_owned());
             }
         }
@@ -296,19 +320,19 @@ impl ProgramPass for GateFields<'_, '_> {
 /// rules, with its gates and answers), and the rest, which reads what it needs of the cone as inputs (`reads`). The
 /// cone runs first, pausing for its answers; the rest runs once over every document it loaded.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Loading {
+pub struct Loading {
     pub(in crate::code_rule_dsl) cone: BTreeSet<String>,
-    pub(in crate::code_rule_dsl) reads: BTreeSet<String>,
-    pub(in crate::code_rule_dsl) load_inputs: Vec<String>,
+    pub reads: BTreeSet<String>,
+    pub load_inputs: Vec<String>,
     pub(in crate::code_rule_dsl) load_outputs: Vec<String>,
     /// The rest's inputs: the program's, and what it reads of the cone; a caller adds what else it binds.
-    pub(in crate::code_rule_dsl) rest_inputs: Vec<String>,
+    pub rest_inputs: Vec<String>,
     pub(in crate::code_rule_dsl) rest_outputs: Vec<String>,
 }
 
 /// The relations `requests` depend on, among those `p`'s rules derive (a request no rule derives is none): the
 /// cone of requests (`split`).
-pub(in crate::code_rule_dsl) fn cone<'r>(p: &Placed, requests: impl IntoIterator<Item = &'r str>) -> BTreeSet<String> {
+pub fn cone<'r>(p: &Placed, requests: impl IntoIterator<Item = &'r str>) -> BTreeSet<String> {
     let v: &Version = &p.v;
     let rules: Vec<RuleRef<'_>> = p.rules().collect();
     let derived: BTreeSet<&str> = rules.iter().map(|r| v.rel_name(r.head().rel())).collect();
@@ -329,7 +353,7 @@ pub(in crate::code_rule_dsl) fn cone<'r>(p: &Placed, requests: impl IntoIterator
 
 /// [`Loading`] of `p` (a whole program's version, its answers stated), or `None` for a program without answers:
 /// the version's (`Split`, decision 0281 §2).
-pub(in crate::code_rule_dsl) fn split(p: &Placed) -> Option<Loading> {
+pub fn split(p: &Placed) -> Option<Loading> {
     if !p.whole {
         return None;
     }
@@ -390,7 +414,7 @@ impl Loading {
     /// The load part and the rest, of `v` (the version split): each a view of the rules its side of the cone derives,
     /// with its own inputs and outputs, and its side's lattices and gates; both keep every native, and the rest no
     /// answers.
-    pub(in crate::code_rule_dsl) fn parts(&self, v: &Arc<Version>) -> Result<(Arc<Version>, Arc<Version>), String> {
+    pub fn parts(&self, v: &Arc<Version>) -> Result<(Arc<Version>, Arc<Version>), String> {
         let cone = &self.cone;
         let (inside, outside, all) = (|rel: &str| cone.contains(rel), |rel: &str| !cone.contains(rel), |_: &str| true);
         let load = v.part(inside, &self.load_inputs, &self.load_outputs, PartFields { natives: &all, lattice: &inside, gates: &inside })?;
@@ -403,44 +427,4 @@ impl Loading {
     }
 }
 
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-
-    /// `!seen(x)` inside a component that loads waits for its key's gate; the rule asking about it is its prefix.
-    #[test]
-    fn a_negation_inside_a_loading_component_is_gated_per_key() {
-        let prog = super::super::rr::parse_version(
-            ".decl want(x: symbol)\n.decl req(x: symbol)\n.decl got(x: symbol, y: symbol)\n.decl seen(x: symbol)\n.decl fresh(x: symbol)\n\
-             want(\"a\").\nwant(y) :- got(_, y).\nseen(y) :- got(_, y).\nfresh(x) :- want(x), !seen(x).\nreq(x) :- fresh(x).\n",
-        )
-        .unwrap();
-        let answers: BTreeMap<String, Vec<String>> = [("req".to_owned(), vec!["got".to_owned()])].into();
-        let mut ungated = Builder::on(&prog);
-        ungated.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Answers(&answers));
-        let (ungated, _) = ungated.finish().unwrap();
-        assert!(Placed::whole(ungated).components().is_err(), "ungated, the negation is inside the component");
-        let gated = gate(&Placed::whole(prog.clone()), &answers).unwrap();
-        let sccs = Placed::whole(gated.clone()).components().unwrap();
-        let loading = sccs.iter().find(|s| s.contains("req")).unwrap();
-        for rel in ["got", "want", "fresh", "seen", "ask_seen_b", "done_seen_b"] {
-            assert!(loading.contains(rel), "{rel} in {loading:?}");
-        }
-        let gates = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::gates(&*gated);
-        let (done, g) = &gates[0];
-        assert_eq!((done.as_str(), g.src.as_deref(), g.rel.as_str()), ("done_seen_b", Some("ask_seen_b"), "seen"));
-        assert!(g.quiet.contains(&"req".to_owned()), "a request unanswered keeps the gate shut: {:?}", g.quiet);
-        let shown = super::super::rr::parse_version(".decl fresh(x: symbol)\n.decl shown(x: symbol)\nshown(x) :- fresh(x).\n").unwrap();
-        let mut b = Builder::on(&gated);
-        b.copy(&shown, shown.rules().next().unwrap());
-        b.fields().declare("shown", &[("x", "sym")]);
-        let (with_shown, _) = b.finish().unwrap();
-        let parts = split(&Placed::whole(with_shown.clone())).unwrap();
-        let (load, rest) = parts.parts(&with_shown).unwrap();
-        assert!(load.rules().all(|r| load.rel_name(r.head().rel()) != "shown") && rest.rules().all(|r| rest.rel_name(r.head().rel()) == "shown"));
-        assert_eq!(parts.reads.iter().collect::<Vec<_>>(), ["fresh"]);
-        let rest = Placed::whole(rest);
-        let f = Fields::of(&rest).unwrap();
-        assert!(f.is_input("fresh") && f.gates().is_empty() && f.answers().is_empty());
-    }
-}
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus)

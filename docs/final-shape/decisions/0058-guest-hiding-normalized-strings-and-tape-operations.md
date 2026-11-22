@@ -29,7 +29,7 @@ A document's key says what kind of document it is:
 | keys | documents | shown to a rule that does not name a guest |
 |---|---|---|
 | `1 .. 2^30` | files | always |
-| `2^30 .. 2^30 + 2^29` | guests in the run's language (a string annotation in a Python run) | always (`.guests` retired, 0494) |
+| `2^30 .. 2^30 + 2^29` | guests in the run's language (a string annotation in a Python run) | always (`.guests` retired, 0523) |
 | `2^30 + 2^29 .. 2^31` | every other document: guests in another grammar, values from `@parse` and `@splice` | never |
 
 A node's id is its document's key `<< 32`, plus its index. So "shown" is one comparison on a value the join already
@@ -61,13 +61,13 @@ aggregate's atom is its own scope. An aggregate over a base atom reads that atom
 `kind`, `docof` and `precedes` are views over `node` that the lowering writes as rules. They are read as base
 relations, and their own rules are left whole.
 
-(Superseded by 0494: `.guests` is retired and refused; the bound is this one always.) `.guests off` lowered the bound to files only. It no longer stops a library's `embed`s from being made: a guest is a
+(Superseded by 0523: `.guests` is retired and refused; the bound is this one always.) `.guests off` lowered the bound to files only. It no longer stops a library's `embed`s from being made: a guest is a
 fact either way, and `guest`, `doc_role` and `parsed` still reach it. This is what 0055 §5 asked for.
 
 The transform runs only when some program in the run derives a request relation (`embed`, `embed_value`, or a
 rule's own demand). It is applied to each program before a combined run renames them. The requests are shared
 across a combined run's programs (`guests::SHARED`), so there is one batch and one set of guests. Each program's
-own rules were bounded by its own `.guests` setting until 0494; now every program shows the same documents.
+own rules were bounded by its own `.guests` setting until 0523; now every program shows the same documents.
 
 ### 2. A guest's kinds are its grammar's
 

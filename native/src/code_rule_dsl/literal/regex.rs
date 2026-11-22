@@ -361,7 +361,7 @@ impl Parser<'_> {
         self.i += 1;
         let Some(c) = self.bump() else { return Err("a `\\` ends the regex") };
         match c {
-            'b' | 'B' | 'A' | 'z' | '<' | '>' => Ok(self.valued("anchor", start, &self.s[start..self.i].to_owned())),
+            'b' | 'B' | 'A' | 'z' | '<' | '>' => Ok(self.valued("anchor", start, &self.s[start..self.i])),
             '1'..='9' => {
                 while self.peek().is_some_and(|d| d.is_ascii_digit()) {
                     self.bump();
@@ -390,9 +390,9 @@ impl Parser<'_> {
                         }
                     }
                 }
-                Ok(self.valued("escape", start, &self.s[start..self.i].to_owned()))
+                Ok(self.valued("escape", start, &self.s[start..self.i]))
             }
-            c if c.is_ascii_alphanumeric() => Ok(self.valued("escape", start, &self.s[start..self.i].to_owned())),
+            c if c.is_ascii_alphanumeric() => Ok(self.valued("escape", start, &self.s[start..self.i])),
             // `\.`, `\\`, `\[`: the character itself.
             c => Ok(self.valued("literal", start, &c.to_string())),
         }

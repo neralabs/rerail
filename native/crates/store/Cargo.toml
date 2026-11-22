@@ -23,6 +23,7 @@ rerail-accel = { path = "../../../accel" }
 rerail-blocks = { path = "../blocks" }
 # The rolling cache's shape (`view::cache`) for the text tests' verdicts (decision 0478 step 2d); the view alone.
 rerail-clif = { path = "../clif", default-features = false }
+clru = "=0.6.3"
 foldhash = "=0.2.0"
 gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }
 hashbrown = { version = "=0.16.1", default-features = false }
@@ -30,6 +31,7 @@ libc = "0.2.189"
 parking_lot = { version = "0.12", features = ["arc_lock"] }
 rayon = "=1.12.0"
 regex = "=1.13.1"
+regex-automata = "=0.4.18"
 regex-syntax = "=0.8.11"
 rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab", "array"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -37,8 +39,20 @@ serde_json = "1.0"
 sha2 = "0.11"
 zstd = "=0.14.3"
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+same-file = "1.0.6"
+tempfile = "=3.27.0"
+
 [target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
 tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+onig = { version = "=6.5.3", default-features = false }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+# Exercise the Windows matcher on Unix in the same test suite.
+onig = { version = "=6.5.3", default-features = false }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

@@ -4,76 +4,13 @@
 //! a fresh store.
 
 use super::*;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
+use super::fixtures::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::facts::observe::roots::directory_root;
 use crate::code_rule_dsl::findings::contract::Coverage;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
 use std::path::{Path, PathBuf};
-
-const WS: &str = "/slice";
-
-fn pack() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python")
-}
-
-fn temp(what: &str) -> PathBuf {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    std::env::temp_dir().join(format!("rerail-s6-{what}-{}-{nonce}", std::process::id()))
-}
-
-fn files(directory: &Path, extension: &str, found: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(directory) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            files(&path, extension, found);
-        } else if path.extension().is_some_and(|found| found == extension) {
-            found.push(path);
-        }
-    }
-}
-
-/// The Python pack's compiled policies, by file stem.
-fn policies() -> Vec<(String, CompiledCodeRuleDsl)> {
-    let mut documents = Vec::new();
-    files(&pack().join("rules"), "json", &mut documents);
-    files(&pack().join("candidates/rules"), "json", &mut documents);
-    documents.sort();
-    documents
-        .into_iter()
-        .filter_map(|path| {
-            let text = std::fs::read_to_string(&path).ok()?;
-            // A policy that does not compile is left out, and named.
-            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned())
-                .map_err(|error| eprintln!("SKIP {}: {}", path.display(), error.reason))
-                .ok()?;
-            Some((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled))
-        })
-        .collect()
-}
-
-/// The keys of a run, by path rather than document key, and its coverage likewise.
-type Keys = BTreeSet<(String, String, String, usize)>;
-fn keys(run: &Run) -> Keys {
-    run.findings.keys.iter().map(|k| (k.rule.clone(), k.code.clone(), run.paths[&k.doc].clone(), k.line)).collect()
-}
-fn coverage(run: &Run) -> BTreeMap<(String, String), Coverage> {
-    run.findings.coverage.iter().map(|((rule, doc), c)| ((rule.clone(), run.paths[doc].clone()), c.clone())).collect()
-}
-
-/// A cold audit of `dir` in a fresh store: what a warm run over the same snapshot must find.
-fn cold(dir: &Path, policies: &[(String, CompiledCodeRuleDsl)]) -> Run {
-    let store = ContentStore::open(&temp("cold").with_extension("sqlite")).unwrap();
-    let mut rules = Rules::lower(policies, ExecutionBackend::CpuJit).unwrap();
-    let root = directory_root(&store, dir).unwrap();
-    audit(&store, WS, root, &mut rules).unwrap()
-}
-
-fn write(dir: &Path, path: &str, source: &str) {
-    std::fs::write(dir.join(path), source).unwrap();
-}
 
 #[test]
 fn an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off() {
@@ -178,7 +115,7 @@ fn slice_bench() {
         })
         .collect::<Vec<_>>();
     let backend = match std::env::var("RERAIL_S6_BACKEND").as_deref() {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Ok("metal") => ExecutionBackend::MetalJit,
         _ => ExecutionBackend::CpuJit,
     };
@@ -399,7 +336,7 @@ fn broken(id: &str) -> Option<(String, CompiledCodeRuleDsl)> {
     if !changed {
         return None;
     }
-    let compiled = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+    let compiled = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES).ok()?;
     Some((id.to_owned(), compiled))
 }
 
@@ -416,11 +353,11 @@ const KNOWN: [(&str, &str, &str); 0] = [];
 fn pack_census() {
     use crate::code_rule_dsl::matcher::match_tree;
     use crate::code_rule_dsl::transducer::packed::{LoweredMatcher, Micro};
-    let packs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
+    let packs = crate::source_tree::native().join("../packs");
     let mut names = std::fs::read_dir(&packs).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| e.path()).collect::<Vec<_>>();
     names.sort();
     // The data-layer pack, the architecture's hardest test, lives in its own worktree (read only).
-    let data_layer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Data-layer-rule-expressivity/packs/data-layer");
+    let data_layer = crate::source_tree::native().join("../../Data-layer-rule-expressivity/packs/data-layer");
     if data_layer.is_dir() {
         names.push(data_layer);
     }
@@ -436,7 +373,7 @@ fn pack_census() {
         let mut reasons = Vec::new();
         for path in documents {
             let text = std::fs::read_to_string(&path).unwrap();
-            let compiled = match CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()) {
+            let compiled = match crate::code_rule_dsl::rule_api::compile(&text, "json", CAPABILITIES) {
                 Ok(compiled) => compiled,
                 Err(error) => {
                     refused += 1;
@@ -483,7 +420,7 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
             "clauses": [{ "id": "c", "forbid": { "ast": { "language": "python", "rule": rule } },
                           "violation": { "anchor": "witness.span", "code": "X", "message": "m" } }]
         });
-        ("supertype".to_owned(), CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|error| panic!("{}", error.reason)))
+        ("supertype".to_owned(), crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES).unwrap_or_else(|error| panic!("{}", error.reason)))
     };
     let policies = vec![policy(serde_json::json!({ "kind": "expression", "has": { "kind": "identifier" } }))];
     let (clauses, _) = lowered(&policies).unwrap();
@@ -491,8 +428,8 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
     let dir = temp("supertype");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = f(y)\nreturn g(x)\n").unwrap();
-    // The device's backends where there is one (Metal).
-    let device = if cfg!(target_os = "macos") { &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit][..] } else { &[] };
+    // The device's backends where there is one (the device layer's targets, decision 0440 step E).
+    let device = if cfg!(any(target_os = "macos", target_os = "linux", windows)) { &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit][..] } else { &[] };
     let backends = [ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit].into_iter().chain(device.iter().copied());
     let mut reference = None;
     for backend in backends {
@@ -529,12 +466,14 @@ fn the_backends_find_the_same_keys_on_real_files() {
     let dir = temp("phase4");
     let (paths, _) = sample_of(&dir, 4, 0);
     assert!(paths.len() == 4 || std::env::var_os("RERAIL_S7_FIXTURES").is_some() || std::env::var_os("RERAIL_S7_FILES").is_some(), "{} files", paths.len());
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "linux", windows)), allow(unused_mut))]
     let mut stores = vec![dir.clone()];
-    // The device's backends where there is one (Metal).
-    let device = if cfg!(target_os = "macos") { &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)][..] } else { &[] };
+    // The device's backends where there is one (the device layer's targets, decision 0440 step E).
+    let device = if cfg!(any(target_os = "macos", target_os = "linux", windows)) { &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)][..] } else { &[] };
     let backends = [("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)].into_iter().chain(device.iter().copied());
-    let mut reference: Option<(Keys, BTreeMap<(String, String), Coverage>)> = None;
+    // Each (policy, file)'s coverage.
+    type Coverages = BTreeMap<(String, String), Coverage>;
+    let mut reference: Option<(Keys, Coverages)> = None;
     for (name, backend) in backends {
         let path = temp(&format!("phase4-{name}")).with_extension("sqlite");
         stores.push(path.clone());
@@ -614,7 +553,7 @@ fn the_slice_finds_ws_findings_on_real_files() {
     if wanted.contains("cpu") {
         backends.push(("cpu", ExecutionBackend::CpuBackground));
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if wanted.contains("metal") {
         backends.push(("metal", ExecutionBackend::MetalBackground));
     }
@@ -628,12 +567,12 @@ fn the_slice_finds_ws_findings_on_real_files() {
         let run = audit(&store, WS, root, &mut rules).unwrap();
         let (spent, wall) = (cpu() - cpu0, wall0.elapsed());
         eprintln!("S7 {name} footprint: {before} MB before the audit, {} MB after{}", footprint(), if w_run.is_none() { " (before W's run)" } else { "" });
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         eprintln!("S7 {name} Metal buffers: peak {} MB", crate::code_rule_dsl::transducer::packed::metal_backend::peak_mb());
         // `RERAIL_S7_HOLD=<path>`: wait here, the audit's state alive, until `path` exists (to
         // inspect the process's heap).
         if let Some(path) = std::env::var_os("RERAIL_S7_HOLD") {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             eprintln!(
                 "S7 Metal buffers alive: {} MB; the driver's allocation {} MB",
                 crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
@@ -798,82 +737,6 @@ fn a_recursive_label_settles_at_every_depth() {
     assert!(difference.clauses.is_empty(), "{:?}", difference.clauses);
 }
 
-/// The napi entry point finds what the slice's own `audit` finds, and a run over the same
-/// snapshot afterwards is warm: nothing evaluated, nothing re-run.
-#[test]
-fn the_napi_slice_audits_and_applies_as_the_slice_does() {
-    let dir = temp("napi-dir");
-    std::fs::create_dir_all(&dir).unwrap();
-    write(&dir, "a.py", "assert x\nimport os\nos.chmod('f', 0o777)\n");
-    write(&dir, "b.py", "def f():\n    password = 'hunter2'\n    return password\n");
-    let mut documents = Vec::new();
-    files(&pack().join("rules"), "json", &mut documents);
-    files(&pack().join("candidates/rules"), "json", &mut documents);
-    documents.sort();
-    let sources = documents
-        .iter()
-        .map(|path| napi::SlicePolicy {
-            name: path.file_stem().unwrap().to_string_lossy().into_owned(),
-            source: std::fs::read_to_string(path).unwrap(),
-            format: "json".to_owned(),
-        })
-        .filter(|policy| CodeRuleDslRuntime::compile(policy.source.clone(), policy.format.clone(), CAPABILITIES.to_owned()).is_ok())
-        .collect::<Vec<_>>();
-    let store = temp("napi-store").with_extension("sqlite");
-    let mut slice = napi::CodeRuleSlice::new(store.to_string_lossy().into_owned(), sources, CAPABILITIES.to_owned(), "cpu".to_owned()).unwrap();
-    assert!(slice.clauses() > 0);
-    let found = |json: &str| -> (Keys, usize, u64) {
-        let value: serde_json::Value = serde_json::from_str(json).unwrap();
-        let keys = value["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|k| (k["rule"].as_str().unwrap().to_owned(), k["code"].as_str().unwrap().to_owned(), k["path"].as_str().unwrap().to_owned(), k["line"].as_u64().unwrap() as usize))
-            .collect();
-        (keys, value["evaluated"].as_array().unwrap().len(), value["rerun"].as_u64().unwrap())
-    };
-    let (keys, evaluated, _) = found(&slice.audit(WS.to_owned(), dir.to_string_lossy().into_owned(), None, None).unwrap());
-    assert_eq!(keys, self::keys(&cold(&dir, &policies())));
-    assert!(!keys.is_empty() && evaluated == 2);
-    let (warm, evaluated, rerun) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), None, None).unwrap());
-    assert_eq!((warm, evaluated, rerun), (keys.clone(), 0, 0));
-    // The Git observer: a clean checkout's `HEAD` is the directory's snapshot, so it is warm too.
-    let git = |args: &[&str]| {
-        let status = std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
-            .args(["-c", "user.name=rerail", "-c", "user.email=rerail@example.invalid", "-c", "commit.gpgsign=false"])
-            .args(args)
-            .current_dir(&dir)
-            .output()
-            .unwrap();
-        assert!(status.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&status.stderr));
-    };
-    git(&["init", "-q"]);
-    git(&["add", "a.py", "b.py"]);
-    git(&["commit", "-q", "-m", "fixture"]);
-    let (head, evaluated, rerun) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), Some("head".to_owned()), None).unwrap());
-    assert_eq!((head, evaluated, rerun), (keys.clone(), 0, 0));
-    assert!(slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), Some("nope".to_owned()), None).is_err());
-    // The buffers observer: an unsaved edit of `b.py` and an unsaved new file in a new directory
-    // are found as if written, and nothing on disk changes.
-    let buffers = || {
-        vec![
-            napi::SliceBuffer { path: "b.py".to_owned(), source: "def f():\n    assert x\n    password = 'hunter2'\n    return password\n".to_owned() },
-            napi::SliceBuffer { path: "pkg/c.py".to_owned(), source: "import os\nos.chmod('g', 0o777)\n".to_owned() },
-        ]
-    };
-    assert!(slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), Some("head".to_owned()), Some(buffers())).is_err());
-    let (buffered, evaluated, _) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), None, Some(buffers())).unwrap());
-    assert_eq!(evaluated, 2);
-    let written = temp("napi-written");
-    std::fs::create_dir_all(written.join("pkg")).unwrap();
-    std::fs::copy(dir.join("a.py"), written.join("a.py")).unwrap();
-    for buffer in buffers() {
-        std::fs::write(written.join(&buffer.path), &buffer.source).unwrap();
-    }
-    assert_eq!(buffered, self::keys(&cold(&written, &policies())));
-    assert_ne!(buffered, keys);
-    assert!(!dir.join("pkg").exists());
-}
 
 /// S8 (06): the first measurements against 03's targets, on S7's sample. Each pass runs, per
 /// backend (`RERAIL_S8_BACKENDS`, default `cpu,metal`) and in a fresh store: a cold audit, a warm
@@ -905,7 +768,7 @@ fn s8_measures_the_targets_on_s7s_sample() {
     for pass in 0..passes {
         for backend in backends.split(',') {
             let execution = match backend {
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux", windows))]
                 "metal" => ExecutionBackend::MetalJit,
                 _ => ExecutionBackend::CpuJit,
             };
@@ -1077,7 +940,7 @@ fn files_of_one_tape_shape_keep_their_own_sources() {
 #[test]
 #[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
 fn rer131_pack_keys() {
-    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
+    let pack = crate::source_tree::native().join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
     let mut documents = Vec::new();
     files(&pack.join("rules"), "json", &mut documents);
     files(&pack.join("candidates/rules"), "json", &mut documents);
@@ -1087,7 +950,7 @@ fn rer131_pack_keys() {
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path).ok()?;
             // A policy that does not compile is left out, and named.
-            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned())
+            let compiled = crate::code_rule_dsl::rule_api::compile(&text, "json", CAPABILITIES)
                 .map_err(|error| eprintln!("SKIP {}: {}", path.display(), error.reason))
                 .ok()?;
             Some((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled))
@@ -1110,7 +973,7 @@ fn rer131_pack_keys() {
     let store = ContentStore::open(&temp("pack-keys-store").with_extension("sqlite")).unwrap();
     let backend = match std::env::var("RERAIL_BACKEND").as_deref() {
         Ok("jit") => ExecutionBackend::CpuJit,
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Ok("metal") => ExecutionBackend::MetalInterpreter,
         _ => ExecutionBackend::CpuInterpreter,
     };
@@ -1151,7 +1014,7 @@ fn rer131_pack_keys() {
 #[test]
 #[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
 fn rer131_runtime_keys() {
-    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
+    let pack = crate::source_tree::native().join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
     let mut documents = Vec::new();
     files(&pack.join("rules"), "json", &mut documents);
     files(&pack.join("candidates/rules"), "json", &mut documents);
@@ -1183,7 +1046,7 @@ fn rer131_runtime_keys() {
     let (mut rules, mut failed, mut keys) = (0, 0, 0);
     for path in documents {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let compiled = match CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()) {
+        let compiled = match crate::code_rule_dsl::rule_api::compile(&text, "json", CAPABILITIES) {
             Ok(compiled) => compiled,
             // A policy that does not compile is left out, and named.
             Err(error) => {

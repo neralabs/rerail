@@ -1,0 +1,14 @@
+// The caller reads settings and ignore options from the pinned tree.
+git_object_request(r, tree) :- git_source_tree(r, tree).
+
+.decl git_root_tree_storage(stamp: symbol)
+git_root_tree_storage(stamp) :-
+    git_source_tree(r, tree), git_object_kind(r, tree, "tree"),
+    git_object_of(r, tree, "storage", _, stamp, _, _, _).
+
+.decl git_root_tree_error(tree: symbol, reason: symbol)
+git_root_tree_error(tree, reason) :- git_source_tree(r, tree), git_object_of(r, tree, "error", _, reason, "", _, _).
+git_root_tree_error(tree, detail) :- git_source_tree(r, tree), git_object_of(r, tree, "error", _, _, detail, _, _), detail != "".
+git_root_tree_error(tree, "not-a-tree") :- git_source_tree(r, tree), git_object_kind(r, tree, kind), kind != "tree".
+
+.output git_root_tree_storage, git_root_tree_error, git_tree_entry, git_tree_entry_bytes

@@ -1,5 +1,7 @@
 # 0416: `back_fill` is removed from Bitlex
 
+Numbered 0406 where it was written.
+
 Status: decided (the user, 2026-11-18: "remove the back fills. Start by removing that from the
 bitlex language or marking it deprecated and making it crash with a message describing how to
 build it properly. Then make the fixes and transformations to make the grammar generate the same

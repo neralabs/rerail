@@ -132,7 +132,7 @@ fn make(path: &Path) {
 /// what a test's first run would do before it reads its own files.
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
-    let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
+    let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
     let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rerail".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
@@ -191,7 +191,7 @@ impl Drop for Store {
 /// The files under `dir` this process holds open, each named once a descriptor (macOS: `F_GETPATH`).
 #[cfg(target_vendor = "apple")]
 pub fn held_under(dir: &Path) -> Vec<String> {
-    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
+    let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
     let prefix = format!("{}/", dir.display());
     (0..8192)
         .filter_map(|fd| {
@@ -242,7 +242,7 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
     // runs read the named store.
     let mine = super::TEST_TAPE_CACHE
         .with(|p| p.borrow().clone())
-        .or_else(|| handed())
+        .or_else(handed)
         .or_else(|| (named && !super::names_its_store()).then(|| OWN.with(|own| own.get_or_init(copy).path.clone())));
     c.part(&["OWN"], crate::code_rule_dsl::logic::run_state::Shared(mine, hand));
 }
@@ -285,12 +285,10 @@ pub(super) fn is_own(path: &Path) -> bool {
 
 /// Removes the directories of test processes that have exited.
 fn sweep_copies() {
-    let me = std::process::id();
     for entry in std::fs::read_dir(copies()).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(pid) = name.split('-').next().and_then(|p| p.parse::<i32>().ok()) else { continue };
-        // SAFETY: signal 0 sends nothing; it asks whether the process exists.
-        if pid as u32 != me && unsafe { libc::kill(pid, 0) } != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+        if crate::content_store::process_gone(pid) {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
@@ -323,8 +321,7 @@ fn sweep_templates(dir: &Path, key: &str) {
         if !(name.ends_with(".build") || name.ends_with(".tmp")) {
             continue;
         }
-        // SAFETY: as in `sweep_copies`.
-        if unsafe { libc::kill(pid, 0) } != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+        if crate::content_store::process_gone(pid) {
             let path = entry.path();
             let _ = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
         }
@@ -386,11 +383,9 @@ struct Lock(std::fs::File);
 
 impl Lock {
     fn take(path: &Path) -> Lock {
-        use std::os::fd::AsRawFd as _;
         let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path).expect("the template's lock");
-        // SAFETY: the descriptor is the open file's, which outlives the lock.
-        while unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EINTR), "the template's lock");
+        while let Err(error) = file.lock() {
+            assert_eq!(error.kind(), std::io::ErrorKind::Interrupted, "the template's lock: {error}");
         }
         Lock(file)
     }

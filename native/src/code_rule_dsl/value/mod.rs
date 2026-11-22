@@ -77,11 +77,10 @@ impl NodeRef {
     /// time (0465, Q334).
     pub fn find<'r, D: Doc>(&self, root: Node<'r, D>) -> Option<Node<'r, D>> {
         let (start, end) = (self.start as usize, self.end as usize);
-        if start < end && root.parent().is_none() {
-            if let Some(found) = self.find_in_tape(&root) {
+        if start < end && root.parent().is_none()
+            && let Some(found) = self.find_in_tape(&root) {
                 return found;
             }
-        }
         let covers = |child: &Node<'r, D>| {
             let range = child.range();
             range.start <= start && end <= range.end && range.start < range.end

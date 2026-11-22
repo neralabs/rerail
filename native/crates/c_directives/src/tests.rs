@@ -1,5 +1,15 @@
 use super::*;
 
+/// The device's reads of `files`: none where there is no device (a Linux host without a GPU); any other error fails.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+fn on_device(c: &Compiled, files: &[&[u8]], what: &str) -> Option<Vec<Option<Read>>> {
+    match c.metal_read(files) {
+        Ok(m) => Some(m),
+        Err(rerail_compiler::Error::UnsupportedBackend) => None,
+        Err(e) => panic!("the device runs {what}: {e:?}"),
+    }
+}
+
 /// The lean scan's rows of `src`: its reference.
 fn lean(src: &[u8], cpp: bool) -> Vec<Row> {
     let opts = if cpp { rerail_c_pp::Options::cpp(17, true) } else { rerail_c_pp::Options::c(17, true) };
@@ -167,19 +177,18 @@ fn directives_read_as_the_lean_scan_reads_them() {
         assert_eq!(Facts::of(&got, b), lean_facts(b, false), "{src:?}\n{}", text());
         assert_eq!(c.interpreter_read(b).as_ref(), Some(&got), "the interpreter, {src:?}");
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
         let files: Vec<&[u8]> = cases.iter().map(|s| s.as_bytes()).collect();
-        let metal = c.metal_read(&files).unwrap_or_else(|e| panic!("the device runs the batch: {e:?}"));
-        for (src, m) in cases.iter().zip(metal) {
+        for (src, m) in cases.iter().zip(on_device(c, &files, "the batch").unwrap_or_default()) {
             assert_eq!(m, c.read(src.as_bytes()), "Metal, {src:?}");
         }
     }
 }
 
-/// What the step does not read is refused, never read wrong.
+/// What the grammar does not read is refused, never read wrong.
 #[test]
-fn what_the_step_does_not_read_is_refused() {
+fn what_the_grammar_does_not_read_is_refused() {
     let c = compiled_or_panic();
     for src in ["#if A\n#define X\n", "#define X 1\rx\n", "auto s = R\"x(x)x\";\n", "auto s = R\"(x\n", "auto s = R\"(a\\\nb)\";\n", "int n = '.5'a + 1;\n", "#define X \"open\n", "/* open\n", "??=define X\n", "%:define X\n", "#error don't\n"] {
         assert!(c.read(src.as_bytes()).is_none(), "{src:?}");
@@ -194,11 +203,11 @@ fn the_corpus_reads_the_same_or_is_refused() {
     let c = compiled_or_panic();
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
     let (mut same_n, mut refused, mut differ) = (0, 0, Vec::new());
-    // The other backends', against Cranelift's: files whose rows differ (the device's on macOS alone, as it runs).
+    // The other backends', against Cranelift's: files whose rows differ (the device's where the target has one).
     let mut interp = Vec::new();
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     let mut metal = Vec::new();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     let metal: Vec<String> = Vec::new();
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
@@ -210,8 +219,8 @@ fn the_corpus_reads_the_same_or_is_refused() {
             if c.interpreter_read(&src) != cl {
                 interp.push(p.display().to_string());
             }
-            #[cfg(target_os = "macos")]
-            if c.metal_read(&[&src]).unwrap_or_else(|e| panic!("the device runs {}: {e:?}", p.display()))[0] != cl {
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            if on_device(c, &[&src], &p.display().to_string()).is_some_and(|m| m[0] != cl) {
                 metal.push(p.display().to_string());
             }
             match cl {
@@ -268,21 +277,10 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
         assert_eq!(got.rows, lean(src.as_bytes(), false));
         assert!(same(&got, src.as_bytes(), false));
         assert_eq!(c.interpreter_read(src.as_bytes()), Some(got.clone()), "the interpreter");
-        #[cfg(target_os = "macos")]
-        assert_eq!(c.metal_read(&[src.as_bytes()]).unwrap_or_else(|e| panic!("the device runs it: {e:?}"))[0], Some(got), "Metal");
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        if let Some(m) = on_device(c, &[src.as_bytes()], "it") {
+            assert_eq!(m[0], Some(got), "Metal");
+        }
     }
-}
-
-/// The ladder's step compiles to the native IR, and is `GRAMMAR`, which the other tests compile
-/// through Cranelift too. The earlier steps are in git's history (decision 0422).
-#[test]
-fn every_ladder_step_compiles() {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder");
-    let mut steps: Vec<_> = std::fs::read_dir(dir).expect("the ladder").map(|e| e.expect("an entry").path()).collect();
-    steps.sort();
-    for p in &steps {
-        crate::lower_kinds(&std::fs::read_to_string(p).unwrap(), KINDS, FIELDS).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
-    }
-    assert_eq!(std::fs::read_to_string(steps.last().unwrap()).unwrap(), GRAMMAR, "the last step is the grammar");
 }
 

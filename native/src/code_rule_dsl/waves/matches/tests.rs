@@ -9,7 +9,6 @@ use super::super::findings::{Layer, PROGRAM as FINDINGS, Shape};
 use super::super::schedule::{Limits, batches::run, family_name};
 use crate::code_rule_dsl::findings::contract::Coverage;
 use super::*;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::facts::observe::roots::directory_root;
 use crate::code_rule_dsl::matcher::{GrammarMatcher, match_tree, node_at};
 use crate::code_rule_dsl::model::{ClauseKind, Query};
@@ -22,7 +21,7 @@ use std::path::{Path, PathBuf};
 const WS: &str = "/slice";
 
 fn pack() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python")
+    crate::source_tree::native().join("../packs/python")
 }
 
 fn files(directory: &Path, extension: &str, found: &mut Vec<PathBuf>) {
@@ -149,7 +148,7 @@ fn the_wave_finds_ws_matches_from_the_prefilters_candidates() {
 
 /// On Metal: the labels in one command buffer, the roots through `demand(batch)` on Metal's
 /// compiled kernel, or in the background mode its interpreter until the kernel is built.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn the_wave_finds_ws_matches_on_metal() {
     gate(8, Limits::default(), ExecutionBackend::MetalJit);
@@ -196,7 +195,7 @@ fn the_wave_dumps_as_rir_and_assembles_back() {
     }
     let tables = wave.dump(false, false).unwrap();
     assert!(!tables.contains("\nplan\n") && !tables.contains("\ngroup ") && !tables.contains("\nsetplan") && tables.contains("\nprogram "));
-    let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/waves/matches/wave.rir");
+    let golden = crate::source_tree::native().join("src/code_rule_dsl/waves/matches/wave.rir");
     if std::env::var_os("RERAIL_BLESS").is_some() {
         std::fs::write(&golden, &dump).unwrap();
     }
@@ -330,7 +329,7 @@ fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Can
 
 /// On Metal the wave is one evaluation: every clause's passes and root programs, from the same
 /// prefilter candidates, in one command buffer, with W's matches.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn the_wave_is_one_evaluation_on_metal() {
     let (store, paths) = ingested(15);
@@ -382,7 +381,7 @@ fn policies() -> Vec<(String, crate::code_rule_dsl::CompiledCodeRuleDsl)> {
         .into_iter()
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path).ok()?;
-            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+            let compiled = crate::code_rule_dsl::rule_api::compile(&text, "json", CAPABILITIES).ok()?;
             Some((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled))
         })
         .collect()
@@ -428,7 +427,7 @@ fn the_findings_follow_ws_anchors_suppressions_and_ceilings() {
         let mut document: serde_json::Value = serde_json::from_str(text).unwrap();
         document["id"] = serde_json::json!(id);
         edit(&mut document);
-        let compiled = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+        let compiled = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES).unwrap();
         (id.to_owned(), compiled)
     };
     let ceiling = |gt: u64| {

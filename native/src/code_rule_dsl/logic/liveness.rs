@@ -110,7 +110,7 @@ pub fn program(v: &Version) -> Result<Arc<Version>, String> {
             };
             wild.push(read.map(|a| a.args().map(|t| matches!(t, TermRef::Wild).then(|| { names.push(name()); names.len() - 1 })).collect()).unwrap_or_default());
         }
-        let head_args: Vec<T<'_>> = head.iter().map(|(t, n, _)| match n { Some(k) => T::Var(&names[*k]), None => t_of(v, r, t.expect("a term")) }).collect();
+        let head_args: Vec<T<'_>> = head.iter().map(|(t, n, _)| match n { Some(k) => T::Var(&names[*k]), None => t_of(r, t.expect("a term")) }).collect();
         for (i, l) in lits.iter().enumerate() {
             let (read, negated, aggregated) = match l.view() {
                 Lit::Atom(a) => (a, a.neg(), false),
@@ -121,7 +121,7 @@ pub fn program(v: &Version) -> Result<Arc<Version>, String> {
             if !declared(rel) {
                 continue;
             }
-            let args: Vec<T<'_>> = read.args().zip(&wild[i]).map(|(t, n)| match n { Some(k) => T::Var(&names[*k]), None => t_of(v, r, t) }).collect();
+            let args: Vec<T<'_>> = read.args().zip(&wild[i]).map(|(t, n)| match n { Some(k) => T::Var(&names[*k]), None => t_of(r, t) }).collect();
             let live_rel = live(rel);
             let live_h = live(h);
             let mut rule = b.rule().head(live_rel.as_str(), &args);
@@ -140,7 +140,7 @@ pub fn program(v: &Version) -> Result<Arc<Version>, String> {
             if !negated {
                 for (k, (t, n, call)) in head.iter().enumerate() {
                     if *call {
-                        rule = rule.cmp(head_args[k].clone(), CmpOp::Eq, t_of(v, r, t.expect("a call")));
+                        rule = rule.cmp(head_args[k].clone(), CmpOp::Eq, t_of(r, t.expect("a call")));
                         let _ = n;
                     }
                 }
@@ -189,16 +189,6 @@ pub fn program(v: &Version) -> Result<Arc<Version>, String> {
     Ok(b.finish()?.0)
 }
 
-/// `COUNTS`' rows, by relation, from a run's outputs: each measure's count, absent where the relation had no row.
-pub fn read_counts(outputs: &crate::code_rule_dsl::logic::plan::output::Outputs) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
-    let mut out: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> = Default::default();
-    for row in outputs.rows(COUNTS) {
-        if let (Some(rel), Some(what)) = (row.get(0).text(), row.get(1).text()) {
-            out.entry(rel.to_owned()).or_default().insert(what.to_owned(), row.get(2).int().map_or(0, |n| n as u64));
-        }
-    }
-    out
-}
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
 // engine registers as it loads (the languages, their `.rerail` libraries).

@@ -480,6 +480,10 @@ pub struct BlockProgram {
     /// the last byte of each token whose end its row does not know (`SPAN m=1`), found as the
     /// next set bit. Nothing flattens them.
     pub masks: Vec<u16>,
+    /// The value, also an output, whose bits are the stream's `\n` bytes, where the program has a tree section: the
+    /// format 16 tape's newline index is made from its words (`rerail_tape_format::newlines::index_of`), with no scan of
+    /// the source of its own.
+    pub newlines: Option<u16>,
     /// How many bytes late the outputs are (0..=63): each executor runs over the stream and
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
@@ -778,7 +782,7 @@ impl BlockProgram {
                     BlockOp::Const(_) | BlockOp::Not(_) | BlockOp::And(..) | BlockOp::Or(..) | BlockOp::Xor(..) | BlockOp::AndNot(..) => true,
                     _ => false,
                 });
-                reads && self.delay == 0 && self.output_delays.is_empty() && self.rounds.is_empty() && self.masks.is_empty()
+                reads && self.delay == 0 && self.output_delays.is_empty() && self.rounds.is_empty() && self.masks.is_empty() && self.newlines.is_none()
             }
             None => !self.ops.iter().any(|op| matches!(op, BlockOp::Cmp { .. } | BlockOp::Bit { .. })),
         };
@@ -795,7 +799,7 @@ impl BlockProgram {
             _ => true,
         });
         // The extract pass writes positions from the undelayed outputs.
-        let extracts = self.extracts.iter().chain(&self.totals).chain(&self.masks).all(|v| self.outputs.contains(v));
+        let extracts = self.extracts.iter().chain(&self.totals).chain(&self.masks).chain(&self.newlines).all(|v| self.outputs.contains(v));
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
@@ -895,6 +899,11 @@ impl BlockProgram {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
+        // Likewise the newlines, tagged.
+        if let Some(v) = self.newlines {
+            out.extend_from_slice(b"newlines");
+            out.extend_from_slice(&v.to_le_bytes());
+        }
         // Likewise the delay, tagged.
         if self.delay != 0 {
             out.extend_from_slice(b"delay");
@@ -985,6 +994,11 @@ impl BlockProgram {
             .iter()
             .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: an extract is an output"))
             .collect()
+    }
+
+    /// Each mask's output index.
+    pub fn newline_output(&self) -> Option<usize> {
+        self.newlines.map(|v| self.outputs.iter().position(|&o| o == v).expect("verified: the newlines are an output"))
     }
 
     /// Each mask's output index.
@@ -1476,13 +1490,6 @@ impl BlockProgram {
         &self.outputs
     }
 
-    /// A row program on the CPU JIT (`native_cpu_rows`).
-    pub fn compile_rows(&self) -> Result<crate::native_cpu_rows::CompiledRows, Error> {
-        self.verify()?;
-        let shape = self.rows.ok_or(Error::InvalidTarget(0))?;
-        crate::native_cpu_rows::compile(&crate::block_native::BlockNative::lower(self), usize::from(shape.columns))
-    }
-
     /// A row program's extract pass: the rows (numbers within the batch, in order) whose bit
     /// output `k` sets, appended to `out`.
     pub fn extract_rows(&self, batch: &RowBatch<'_>, k: usize, values: &mut Vec<u64>, out: &mut Vec<u32>) {
@@ -1812,6 +1819,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
     for value in &block.masks {
         let _ = writeln!(out, "  block {at} mask %{value}");
     }
+    if let Some(value) = block.newlines {
+        let _ = writeln!(out, "  block {at} newlines %{value}");
+    }
     if block.delay != 0 {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);
     }
@@ -1884,6 +1894,12 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     let kind = p.kind.map_or(String::new(), |k| format!(" kind {k}"));
                     let _ = writeln!(out, "  block {at} recpart {k} {} {}{last}{kind}", p.start, p.bytes);
                 }
+                if let Some(kind) = rd.content {
+                    let _ = writeln!(out, "  block {at} reccontent {k} {kind}");
+                }
+                for &(b, kind) in &rd.closers {
+                    let _ = writeln!(out, "  block {at} recclose {k} {b} {kind}");
+                }
                 if rd.quiet {
                     let _ = writeln!(out, "  block {at} recquiet {k}");
                 }
@@ -1892,9 +1908,11 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 }
             }
         }
-        // `block N recretag O KIND MARKS [part]`: a reader's or a part's kind and marks by its start mask.
+        // `block N recretag O KIND MARKS [part] [first W0 W1 W2 W3]`: a reader's or a part's kind and
+        // marks by its start mask, and its row's first bytes.
         for t in &r.retags {
-            let _ = writeln!(out, "  block {at} recretag {} {} {}{}", t.o, t.kind, t.marks, if t.part { " part" } else { "" });
+            let first = if t.first == [0; 4] { String::new() } else { format!(" first {:x} {:x} {:x} {:x}", t.first[0], t.first[1], t.first[2], t.first[3]) };
+            let _ = writeln!(out, "  block {at} recretag {} {} {}{}{first}", t.o, t.kind, t.marks, if t.part { " part" } else { "" });
         }
         // `block N recgaps G` the gap marks' bits, `block N recextra K` an extra's mark.
         if r.gaps != 0 {

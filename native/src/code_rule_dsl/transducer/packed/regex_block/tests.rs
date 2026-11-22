@@ -104,7 +104,7 @@
         let sources: Vec<Arc<String>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.to_owned())).collect();
         let files: Vec<(usize, usize)> = (0..sources.len()).flat_map(|d| (0..filters.len()).map(move |f| (d, f))).collect();
         let ex = |device| crate::code_rule_dsl::logic::lanes::executor_for(device);
-        let gpu = cfg!(target_os = "macos") && ex(true).lanes().contains(&rerail_accel::Lane::Gpu);
+        let gpu = cfg!(any(target_os = "macos", target_os = "linux", windows)) && ex(true).lanes().contains(&rerail_accel::Lane::Gpu);
         let mut runs = vec![(false, Some(rerail_accel::Lane::Cpu)), (true, None)];
         if gpu {
             // The set's kernels compile on a thread of their own (the cores run it meanwhile): the GPU's run is
@@ -128,7 +128,7 @@
     }
 
     /// The forward carry's kernels of `natives` (`serial::compiled`), compiled on their own threads: waited for, bounded.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn compiled(natives: &[&crate::code_rule_dsl::transducer::packed::native_ir::BlockNative]) {
         use crate::code_rule_dsl::transducer::packed::metal_program_backend::block_program::serial::compiled as ready;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
@@ -140,7 +140,7 @@
 
     /// A new set of patterns placed on the GPU runs on the cores while its kernels compile on other threads, then on
     /// those kernels: the same marks both times, and the first launch never waits on the compiler.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[test]
     fn a_new_pattern_set_runs_on_the_cores_while_its_kernels_compile() {
         use std::sync::Arc;

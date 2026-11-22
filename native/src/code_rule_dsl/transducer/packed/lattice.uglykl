@@ -95,7 +95,7 @@ DEFINE_KERNEL2(lattice, lattice_queue,
 {
   (void)worker;
   UKL_COHERENT uint8_t* cells=(UKL_COHERENT uint8_t*)values;
-  UklWorkQueue q={slots,control,args.capacity,args.budget};
+  UklWorkQueue q={slots,control,args.capacity,0u,args.budget};
   uint32_t visits=0u,retries=0u,cell=0u;
   for(uint32_t turn=0u;turn<UKL_WQ_TURNS&&!ukl_wq_spent(q,visits);turn++){
     // None to take: the worker ends (decision 0540 step 7); a cell's pusher is running and takes on.

@@ -160,7 +160,8 @@ fn r3_an_edit_reads_the_changed_files_old_and_new_rows() {
 }
 
 /// R4: no base relation's rows are kept, after a cold run and an edit's run. What 0458 keeps of one is its
-/// documents' digest (its documents' entry: one row, no granules) and its statistics beside it.
+/// documents' digest (its documents' entry: one row, no granules) and its statistics beside it. The memo writer's
+/// guard fails a run whose entries keep a base relation's rows, so the runs here passing is the memo's half.
 #[test]
 fn r4_no_base_relation_is_kept() {
     let mut c = Corpus::new("r4");
@@ -174,6 +175,81 @@ fn r4_no_base_relation_is_kept() {
         _ => true,
     }).collect();
     assert!(rows.is_empty(), "the chain keeps the base relations' rows {rows:?}");
+}
+
+/// With R4: a base relation's statistics are kept beside its documents' table, not counted from every row each run.
+/// A cold run counts them, the run after it takes them as kept, and an edit's run patches them by the changed file's
+/// old and new documents. A run inside another's waves (a phase's) cannot read its changed files' old documents there
+/// and counts them again after an edit (0458's Open item); it says so.
+#[test]
+fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
+    use crate::code_rule_dsl::logic::profile;
+    let mut c = Corpus::new("r4-stats");
+    // The decisions are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let mut inside = false;
+    let mut how = |c: &mut Corpus| {
+        // The run's scope, which the corpus run joins: its decisions are the run's (decision 0442).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::take_decisions();
+        c.run();
+        let made = profile::take_decisions();
+        inside = made.keys().any(|(t, x)| t == "the base relations' old documents (decision 0458)" && x.contains("listed inside the waves"));
+        made.into_keys().filter(|(t, _)| t == "the base relations' statistics (decision 0458)").map(|(_, x)| x).collect::<BTreeSet<String>>()
+    };
+    // Each relation's statistics, as the run took them: all the same way, `how`; a semi-join's at its held nodes
+    // (`held_counted`), `held`.
+    let all = |made: &BTreeSet<String>, how: &str, held: &str| !made.is_empty() && made.iter().all(|x| x.ends_with(&format!(": {how}")) || x.ends_with(&format!(": {held} at the held nodes")));
+    let cold = how(&mut c);
+    let warm = how(&mut c);
+    c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
+    let edit = how(&mut c);
+    profile::set(false);
+    let patched = |x: &String| x.ends_with(": patched by the changed documents");
+    assert!(all(&cold, "counted", "counted"), "a cold run counts them: {cold:?}");
+    assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
+    assert!(edit.iter().any(patched), "an edit patches them: {edit:?}");
+    // A semi-join's held rows are counted again after an edit, over the documents the run holds (`held_counted`).
+    assert!(edit.iter().all(|x| patched(x) || x.ends_with(": counted at the held nodes")) || inside, "counted again after an edit only inside another run's waves: {edit:?}");
+}
+
+/// A session (0077) holds its corpus batch from run to run, its changed files' documents replaced (decision 0458), and
+/// keeps its base relations' statistics as the kept route does: its first run counts them and makes every document,
+/// the run after it makes none and takes them as kept, and an edit makes the changed file's documents alone and patches
+/// the statistics by its old and new ones. Its outputs are a fresh run's.
+#[test]
+fn a_session_holds_its_corpus_batch_and_keeps_its_base_statistics() {
+    use crate::code_rule_dsl::logic::profile;
+    let mut c = Corpus::new("session-batch");
+    let handle = super::session::Handle::open(&c.dir.join("session")).unwrap();
+    // The decisions are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let run = |c: &mut Corpus| {
+        profile::take_decisions();
+        let (_, rows) = {
+            let _bound = handle.bind();
+            c.run()
+        };
+        let made = profile::take_decisions();
+        let of = |topic: &str| made.keys().filter(|(t, _)| t == topic).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
+        (of("the base relations' statistics (decision 0458)"), of("the corpus batch (decision 0458)"), rows)
+    };
+    let all = |made: &BTreeSet<String>, how: &str, held: &str| !made.is_empty() && made.iter().all(|x| x.ends_with(&format!(": {how}")) || x.ends_with(&format!(": {held} at the held nodes")));
+    let (cold, cold_batch, _) = run(&mut c);
+    let (warm, warm_batch, _) = run(&mut c);
+    c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
+    let (edit, edit_batch, rows) = run(&mut c);
+    profile::set(false);
+    assert!(all(&cold, "counted", "counted"), "a session's first run counts them: {cold:?}");
+    assert_eq!(cold_batch, BTreeSet::from(["4 documents made, none held".to_owned()]), "and makes every document");
+    assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
+    assert_eq!(warm_batch, BTreeSet::from(["0 documents made, 4 held from the session's last run".to_owned()]), "and makes none");
+    assert!(all(&edit, "patched by the changed documents", "counted"), "an edit patches them: {edit:?}");
+    assert_eq!(edit_batch, BTreeSet::from(["1 documents made, 3 held from the session's last run".to_owned()]), "and makes the changed file's alone");
+    every_output_has_rows(&rows);
+    assert_eq!(rows, c.fresh(), "the session's outputs after the edit are a fresh run's");
 }
 
 /// R5: the runs pass in strict mode (`RERAIL_SQL_STRICT`): no SQL inside the waves (decision 0104), for the memo

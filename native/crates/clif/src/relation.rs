@@ -1,6 +1,7 @@
 //! A relation's reads as CLIF functions, written once (decision 0325): what `rerail_blocks`' `Rows` and `Relation`
-//! read, for the host (the Rust backend: the blocks crate's `generated_reads.rs`), the kernels (the MSL backend:
-//! `<ukl/reads/relation.h>`) and the JIT (inlined where hot).
+//! read, for the kernels (the UKL backend: `<ukl/reads/relation.h>`) and the JIT (inlined where hot). The host's are
+//! written directly in the blocks crate (`Rows::get`, `Relation::get`, `Relation::dead_bit`, `Relation::group`, `mix`,
+//! `bloom::hash`, `atoms::str_in`; decision 0536), held equal to these by the tests.
 //!
 //! A read takes a descriptor's address (a `Rows`, or a `Relation`) and reaches everything else through the block's
 //! self-relative references: a span's items lie `off` bytes from the span's own address, a column's chunk `chunk[k]`
@@ -18,6 +19,7 @@ use cranelift_codegen::ir::{
     types::{I32, I64},
 };
 use rerail_blocks::refs::Span;
+use rerail_blocks::bloom::Bloom;
 use rerail_blocks::relation::{Index, Relation};
 use rerail_blocks::rows::{ColDir, Rows};
 use std::mem::{offset_of, size_of};
@@ -31,6 +33,7 @@ const ROWS_RESERVED: i32 = offset_of!(Rows, reserved) as i32;
 const ROWS_NEEDED: i32 = offset_of!(Rows, needed) as i32;
 const ROWS_NCOLS: i32 = offset_of!(Rows, ncols) as i32;
 const COL_WIDTH: i32 = offset_of!(ColDir, width) as i32;
+const COL_RUNS: i32 = offset_of!(ColDir, runs) as i32;
 const COL_CHUNK: i32 = offset_of!(ColDir, chunk) as i32;
 const COL_SIZE: i64 = size_of::<ColDir>() as i64;
 const REL_BASE_ROWS: i32 = offset_of!(Relation, base_rows) as i32;
@@ -42,6 +45,7 @@ const INDEX_MASK: i32 = offset_of!(Index, mask) as i32;
 const INDEX_OFFS: i32 = offset_of!(Index, offs) as i32;
 const INDEX_ROWS: i32 = offset_of!(Index, rows) as i32;
 const INDEX_SIZE: i64 = size_of::<Index>() as i64;
+const BLOOM_WORDS: i32 = offset_of!(Bloom, words) as i32;
 
 impl B<'_, '_> {
     /// The block's word of type `ty` at `p + offset` (aligned).
@@ -123,10 +127,12 @@ pub fn col_at(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `col_get(dir, min_log, i)`: row `i`'s value in the column whose directory is `dir` (a 4-byte column's
-/// unsigned): a reader of many rows of one column resolves its directory once (`rows::ColRead`).
+/// unsigned, over its run's high bits when it has key runs: `rows::ColDir`'s `runs`, `col_high`): a reader of many
+/// rows of one column resolves its directory once (`rows::ColRead`).
 pub fn col_get(b: &mut B<'_, '_>) -> Value {
     let (min_log, i) = (b.arg(0), b.arg(1));
-    let width = b.word_at(I32, b.tape, COL_WIDTH);
+    let dir = b.tape;
+    let width = b.word_at(I32, dir, COL_WIDTH);
     let p = b.call("col_at", &[min_log, i]);
     let four = b.f.ins().icmp_imm(IntCC::Equal, width, 4);
     b.either(
@@ -134,10 +140,62 @@ pub fn col_get(b: &mut B<'_, '_>) -> Value {
         four,
         |b| {
             let v = b.word_at(I32, p, 0);
-            b.f.ins().uextend(I64, v)
+            let low = b.f.ins().uextend(I64, v);
+            let runs = b.word_at(I32, dir, COL_RUNS);
+            let plain = b.f.ins().icmp_imm(IntCC::Equal, runs, 0);
+            b.either(
+                I64,
+                plain,
+                |_| low,
+                |b| {
+                    let high = col_high(b, dir, runs, i);
+                    let high = b.f.ins().uextend(I64, high);
+                    let high = b.f.ins().ishl_imm(high, 32);
+                    b.f.ins().bor(high, low)
+                },
+            )
         },
         |b| b.word_at(I64, p, 0),
     )
+}
+
+/// Row `i`'s high 32 bits in a column with key runs (`rows::ColDir::high`): the table `runs` words from `dir` holds
+/// its count, then each run's first row and high bits; the run is the last whose first row is not past `i`, found by
+/// a search of the table (a few runs, one a document).
+fn col_high(b: &mut B<'_, '_>, dir: Value, runs: Value, i: Value) -> Value {
+    let words = b.f.ins().sextend(I64, runs);
+    let at = b.f.ins().ishl_imm(words, 3);
+    let t = b.f.ins().iadd(dir, at);
+    let n = b.word_at(I32, t, 0);
+    let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(done, I32);
+    let zero = b.c32(0);
+    b.f.ins().jump(head, &[zero.into(), n.into()]);
+    b.f.switch_to_block(head);
+    let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+    b.f.ins().brif(more, body, &[], done, &[lo.into()]);
+    b.f.switch_to_block(body);
+    let span = b.f.ins().isub(hi, lo);
+    let half = b.f.ins().ushr_imm(span, 1);
+    let m = b.f.ins().iadd(lo, half);
+    let m64 = b.f.ins().uextend(I64, m);
+    let off = b.f.ins().ishl_imm(m64, 3);
+    let entry = b.f.ins().iadd(t, off);
+    let first = b.word_at(I32, entry, 8);
+    let le = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, first, i);
+    let next = b.f.ins().iadd_imm(m, 1);
+    let lo2 = b.f.ins().select(le, next, lo);
+    let hi2 = b.f.ins().select(le, hi, m);
+    b.f.ins().jump(head, &[lo2.into(), hi2.into()]);
+    b.f.switch_to_block(done);
+    let lo = b.f.block_params(done)[0];
+    let lo64 = b.f.ins().uextend(I64, lo);
+    let off = b.f.ins().ishl_imm(lo64, 3);
+    let entry = b.f.ins().iadd(t, off);
+    b.word_at(I32, entry, 4)
 }
 
 /// `rows_at(rows, i, c)`: the address of row `i`'s value in column `c`.
@@ -329,6 +387,74 @@ pub fn rel_key_mix(b: &mut B<'_, '_>) -> Value {
     b.f.ins().bxor(h, s)
 }
 
+/// `bloom_hash(_, key)`: the hash a Bloom filter places a key by (`rerail_blocks::bloom`), in 32-bit multiplies (the
+/// device's native ones; the host's cost the same). The key's halves folded (`lo ^ hi * φ`: keys sharing either half
+/// never collide), murmur3's finalizer, and a second word of it for the high half. It reads nothing.
+pub fn bloom_hash(b: &mut B<'_, '_>) -> Value {
+    let v = b.arg(0);
+    let lo = b.f.ins().ireduce(I32, v);
+    let hi = b.f.ins().ushr_imm(v, 32);
+    let hi = b.f.ins().ireduce(I32, hi);
+    let hi = b.f.ins().imul_imm(hi, i64::from(0x9e37_79b1_u32 as i32));
+    let h = b.f.ins().bxor(lo, hi);
+    let s = b.f.ins().ushr_imm(h, 16);
+    let h = b.f.ins().bxor(h, s);
+    let h = b.f.ins().imul_imm(h, i64::from(0x85eb_ca6b_u32 as i32));
+    let s = b.f.ins().ushr_imm(h, 13);
+    let h = b.f.ins().bxor(h, s);
+    let h = b.f.ins().imul_imm(h, i64::from(0xc2b2_ae35_u32 as i32));
+    let s = b.f.ins().ushr_imm(h, 16);
+    let h = b.f.ins().bxor(h, s);
+    let w = b.f.ins().imul_imm(h, i64::from(0x27d4_eb2f_u32 as i32));
+    let s = b.f.ins().ushr_imm(w, 15);
+    let w = b.f.ins().bxor(w, s);
+    let low = b.f.ins().uextend(I64, h);
+    let high = b.f.ins().uextend(I64, w);
+    let high = b.f.ins().ishl_imm(high, 32);
+    b.f.ins().bor(high, low)
+}
+
+/// `bloom_mask(_, h)`: the bits of its word a key of hash `h` sets: five, from 6-bit fields of `h`. It reads nothing.
+pub fn bloom_mask(b: &mut B<'_, '_>) -> Value {
+    let h = b.arg(0);
+    let mut m = b.c64(0);
+    for i in 0..5 {
+        let f = b.f.ins().ushr_imm(h, 6 * i);
+        let f = b.f.ins().band_imm(f, 63);
+        let one = b.c64(1);
+        let bit = b.f.ins().ishl(one, f);
+        m = b.f.ins().bor(m, bit);
+    }
+    m
+}
+
+/// `bloom_may(filter, h)`: 1 if the filter (a `bloom::Bloom`) may hold a key of hash `h`, 0 if it certainly does
+/// not: its word `(h >> 32) & (words - 1)` has every bit of `bloom_mask(h)`. A filter of no words holds every key.
+pub fn bloom_may(b: &mut B<'_, '_>) -> Value {
+    let h = b.arg(0);
+    let words = b.word_at(I64, b.tape, BLOOM_WORDS + SPAN_LEN);
+    let none = b.f.ins().icmp_imm(IntCC::Equal, words, 0);
+    b.either(
+        I32,
+        none,
+        |b| b.c32(1),
+        |b| {
+            let at = b.f.ins().ushr_imm(h, 32);
+            let less = b.f.ins().iadd_imm(words, -1);
+            let at = b.f.ins().band(at, less);
+            let base = b.follow(b.tape, BLOOM_WORDS);
+            let at = b.f.ins().ishl_imm(at, 3);
+            let p = b.f.ins().iadd(base, at);
+            let word = b.word_at(I64, p, 0);
+            let m = b.call("bloom_mask", &[h]);
+            let hit = b.f.ins().band(word, m);
+            let all = b.f.ins().icmp(IntCC::Equal, hit, m);
+            let (yes, no) = (b.c32(1), b.c32(0));
+            b.f.ins().select(all, yes, no)
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use rerail_blocks::block::{Block, kind};
@@ -356,6 +482,12 @@ mod tests {
             };
         let rel_dead: One = unsafe { std::mem::transmute(reads.function("rel_dead")) };
         let rel_group: Group = unsafe { std::mem::transmute(reads.function("rel_group")) };
+        // The key hash's mix: the host's (`rerail_blocks::mix`) is the read's.
+        type Mix = extern "C" fn(*const u8, u64, u64) -> u64;
+        let rel_key_mix: Mix = unsafe { std::mem::transmute(reads.function("rel_key_mix")) };
+        for (h, v) in [(0u64, 0i64), (rerail_blocks::SEED, 1), (u64::MAX, -1), (0x1234_5678_9abc_def0, i64::MIN), (7, 0x7fff_ffff_ffff_ffff)] {
+            assert_eq!(rel_key_mix(std::ptr::null(), h, v as u64), rerail_blocks::mix(h, v), "mix of {h:#x} and {v}");
+        }
 
         let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![vec![1]], min_log: 4 };
         let lock = Mutex::new(());
@@ -391,9 +523,67 @@ mod tests {
                 let h = rerail_blocks::key_hash(&[key]);
                 let group = rel.group(0, h);
                 let g = rel_group(desc, 0, h);
-                let index_rows = rel.index(0).rows.as_slice();
+                let index_rows = rel.index_at(0).rows.as_slice();
                 let start = if group.is_empty() { 0 } else { (group.as_ptr() as usize - index_rows.as_ptr() as usize) / 4 };
                 assert_eq!(g, ((start as u64) << 32) | group.len() as u64, "rel_group of row {id}'s key");
+            }
+        }
+    }
+
+    /// A column under key runs (an axis's node ids: each document's key over its nodes' low bits, `rows::ColDir`'s
+    /// `runs`) reads in the JIT as on the host: each row's value through its rows, a column resolved once and the
+    /// relation, beside an uncoded 4-byte column and an 8-byte one, with the run table before the relation and after.
+    #[test]
+    fn the_jits_key_run_reads_are_the_hosts() {
+        let reads = crate::jit::Reads::new();
+        type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+        // SAFETY: each read's signature: its descriptor's address, then its parameters.
+        let (rows_get, col_get, rel_get): (Two, Two, Two) = unsafe {
+            (
+                std::mem::transmute::<*const u8, Two>(reads.function("rows_get")),
+                std::mem::transmute::<*const u8, Two>(reads.function("col_get")),
+                std::mem::transmute::<*const u8, Two>(reads.function("rel_get")),
+            )
+        };
+        let spec = Spec { widths: vec![4, 4, 4, 8], order: vec![], indexes: vec![], min_log: 4 };
+        let block = Block::anon(kind::FACTS, 16 << 20);
+        let (firsts, keys) = ([0u32, 1, 700, 701, 3_000, 4_999], [1u32, 2, 77, 1 << 31, u32::MAX - 1, u32::MAX]);
+        let before = rerail_blocks::rows::alloc_runs(&block, firsts.len());
+        let rel = Relation::create(&block, &spec, None);
+        // One run alone after it: every row's high bits one key.
+        let after = rerail_blocks::rows::alloc_runs(&block, 1);
+        // SAFETY: tables of those runs, just allocated.
+        unsafe {
+            for (k, (&f, &key)) in firsts.iter().zip(&keys).enumerate() {
+                rerail_blocks::rows::put_run(before, k, f, key);
+            }
+            rerail_blocks::rows::put_run(after, 0, 0, 5);
+            rel.rows.set_runs(0, before);
+            rel.rows.set_runs(1, after);
+        }
+        let n = 5_000u32;
+        let run = |i: u32| firsts.iter().rposition(|&f| f <= i).unwrap();
+        let want = |i: u32| [i64::from(keys[run(i)]) << 32 | i64::from(i * 7 % 900), 5 << 32 | i64::from(i / 6), i64::from(u32::MAX - i), -i64::from(i)];
+        rel.rows.reserve(&block, u64::from(n));
+        // SAFETY: rows `0..n` reserved; this thread alone writes them.
+        unsafe {
+            rel.rows.claim_reserved(n);
+            for i in 0..n {
+                for (c, v) in want(i).into_iter().enumerate() {
+                    rel.rows.put(i, c, v);
+                }
+            }
+        }
+        let desc = std::ptr::from_ref(rel).cast::<u8>();
+        let rows = std::ptr::from_ref(&rel.rows).cast::<u8>();
+        for i in 0..n {
+            for c in 0..4u32 {
+                let w = want(i)[c as usize];
+                assert_eq!(rel.rows.get(i, c as usize), w, "host row {i} column {c}");
+                assert_eq!(rows_get(rows, i, c) as i64, w, "rows_get row {i} column {c}");
+                let dir = std::ptr::from_ref(rel.rows.col(c as usize)).cast::<u8>();
+                assert_eq!(col_get(dir, rel.rows.min_log, i) as i64, w, "col_get row {i} column {c}");
+                assert_eq!(rel_get(desc, i, c) as i64, w, "rel_get row {i} column {c}");
             }
         }
     }
@@ -454,12 +644,77 @@ mod tests {
         let rel = Relation::create(&block, &spec, None);
         RelW { block: &block, rel, lock: &lock }.extend(&(0..20_000i64).collect::<Vec<_>>());
         let dir = rel.rows.col(0);
+        let reads = crate::jit::Reads::new();
+        // SAFETY: `rows_at`'s signature: the rows' descriptor, a row, a column.
+        let rows_at: extern "C" fn(*const u8, u32, u32) -> u64 = unsafe { std::mem::transmute(reads.function("rows_at")) };
         for i in 0..rel.rows.len() {
             let (k, l) = rerail_blocks::rows::chunk_of(i, rel.rows.min_log);
             let by_host = std::ptr::from_ref(dir) as i64 + dir.chunk[k].load(std::sync::atomic::Ordering::Relaxed) + 8 * l as i64;
-            // SAFETY: a live descriptor and a reserved row.
-            let by_read = unsafe { rerail_blocks::generated_reads::rows_at(std::ptr::from_ref(&rel.rows).cast(), i, 0) } as i64;
+            let by_read = rows_at(std::ptr::from_ref(&rel.rows).cast(), i, 0) as i64;
             assert_eq!(by_read, by_host, "row {i}");
+        }
+    }
+
+    /// Decision 0536: the host's Bloom filter reads (`bloom::hash`, `mask`, `may_hold_hashed`) and its atoms read
+    /// (`atoms::str_in`), written directly, answer as the JIT's: every key's hash and mask, a filter's answer for
+    /// keys in it and not (an empty filter's too), and every id's string in a directory of two runs, a gap between
+    /// them, id 0 and ids past them.
+    #[test]
+    fn the_jits_bloom_and_atoms_reads_are_the_hosts() {
+        use rerail_blocks::atoms::{AtomsDir, AtomsW, str_in};
+        use rerail_blocks::bloom::{self, Bloom};
+        let reads = crate::jit::Reads::new();
+        type Wide = extern "C" fn(*const u8, u64) -> u64;
+        type May = extern "C" fn(*const u8, u64) -> u32;
+        type Atom = extern "C" fn(*const u8, u32) -> u64;
+        type Len = extern "C" fn(*const u8, u32) -> u32;
+        // SAFETY: each read's signature: its descriptor's address, then its parameters.
+        let (hash, mask): (Wide, Wide) = unsafe { (std::mem::transmute::<*const u8, Wide>(reads.function("bloom_hash")), std::mem::transmute::<*const u8, Wide>(reads.function("bloom_mask"))) };
+        let may: May = unsafe { std::mem::transmute::<*const u8, May>(reads.function("bloom_may")) };
+        let (at, len): (Atom, Len) = unsafe { (std::mem::transmute::<*const u8, Atom>(reads.function("atoms_at")), std::mem::transmute::<*const u8, Len>(reads.function("atoms_len"))) };
+        let keys: Vec<i64> = (0..3_000i64).map(|i| (i * 0x9E37_79B9) ^ (i << 40)).chain([0, -1, i64::MIN, i64::MAX]).collect();
+        for &k in &keys {
+            let h = bloom::hash(k);
+            assert_eq!(hash(std::ptr::null(), k as u64), h, "hash of {k}");
+            assert_eq!(mask(std::ptr::null(), h), bloom::mask(h), "mask of {h:#x}");
+        }
+        let block = Block::anon(kind::FACTS, 1 << 20);
+        for words in [0usize, 64] {
+            let f: &Bloom = if words == 0 {
+                // SAFETY: a zeroed descriptor in the block: a filter of no words.
+                unsafe { &*block.ptr::<Bloom>(block.alloc(64, 64)) }
+            } else {
+                // SAFETY: the filter just made in the block.
+                unsafe { &*block.ptr::<Bloom>(Bloom::try_create(&block, words).unwrap()) }
+            };
+            for &k in keys.iter().step_by(3) {
+                if words != 0 {
+                    f.add_hashed(bloom::hash(k));
+                }
+            }
+            for &k in &keys {
+                let h = bloom::hash(k);
+                assert_eq!(may(std::ptr::from_ref(f).cast(), h) != 0, f.may_hold_hashed(h), "a filter of {words} words, key {k}");
+            }
+        }
+        let k_hash = |s: &str| s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, c| (h ^ u64::from(c)).wrapping_mul(0x100_0000_01b3));
+        let words: Vec<String> = (0..20).map(|k| format!("w{k}{}", "z".repeat(k))).collect();
+        let mut a = AtomsW::anon(1, 8, 256);
+        for w in &words[..8] {
+            a.append(w, k_hash(w)).unwrap();
+        }
+        let mut b = AtomsW::anon(9, 16, 1024);
+        for w in &words[8..] {
+            b.append(w, k_hash(w)).unwrap();
+        }
+        let runs = [a.run_from(1), b.run_from(12)];
+        let dir = AtomsDir::host(&runs);
+        for id in 0..=22u32 {
+            // SAFETY: a host directory over blocks that live here.
+            let host = unsafe { str_in(dir.root(), id) };
+            let n = len(dir.root(), id);
+            let jit = (n != u32::MAX).then(|| unsafe { std::slice::from_raw_parts(at(dir.root(), id) as *const u8, n as usize) });
+            assert_eq!(jit, host, "id {id}");
         }
     }
 }

@@ -1,8 +1,6 @@
 //! Charge every compute dispatch before encoding it. Refuse submission after exhaustion. The engine's commands
 //! (`crate::lane`, on every backend) charge each launch here as it is asked for and check the budget at their commit.
 use crate::Error;
-use metal::CommandBufferRef;
-use metal::foreign_types::ForeignTypeRef;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -27,7 +25,6 @@ pub struct DispatchRecord {
     pub completed: bool,
     pub buffers: Vec<(usize, u64)>,
     pub application_buffer_bytes: usize,
-    pub private_buffer_bytes: usize,
     pub peak_application_buffer_bytes: usize,
 }
 
@@ -160,30 +157,29 @@ pub fn check_submission() -> Result<(), Error> {
     })
 }
 
-/// The host clock Metal's command-buffer times are in (`CACurrentMediaTime`: mach absolute time), in seconds.
+/// The host clock Metal's command-buffer times are in (mach absolute time on macOS), in seconds: `rerail_accel`'s.
 pub fn host_seconds() -> f64 {
-    #[repr(C)]
-    struct Timebase {
-        numer: u32,
-        denom: u32,
-    }
-    unsafe extern "C" {
-        fn mach_timebase_info(info: *mut Timebase) -> i32;
-        fn mach_absolute_time() -> u64;
-    }
-    static RATIO: std::sync::LazyLock<f64> = std::sync::LazyLock::new(|| {
-        let mut info = Timebase { numer: 0, denom: 0 };
-        // SAFETY: fills the struct.
-        unsafe { mach_timebase_info(&mut info) };
-        f64::from(info.numer) / f64::from(info.denom.max(1)) / 1e9
-    });
-    // SAFETY: no arguments.
-    (unsafe { mach_absolute_time() }) as f64 * *RATIO
+    rerail_accel::gpu::join::host_clock()
 }
 
-/// A completed command buffer's host-clock times, in seconds: `kernelStartTime` (the system began scheduling
-/// it), `GPUStartTime`, `GPUEndTime`.
-pub fn command_times(command: &CommandBufferRef) -> [f64; 3] {
+/// A completed command's host-clock times, in seconds: `kernelStartTime` (the system began scheduling it),
+/// `GPUStartTime`, `GPUEndTime`. Metal's command buffers have them; elsewhere zero.
+pub fn command_times(event: &rerail_device::device::ComputeEvent) -> [f64; 3] {
+    #[cfg(target_os = "macos")]
+    {
+        event.metal().map_or([0.0; 3], metal_command_times)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = event;
+        [0.0; 3]
+    }
+}
+
+/// `command_times` of a Metal command buffer.
+#[cfg(target_os = "macos")]
+fn metal_command_times(command: &metal::CommandBufferRef) -> [f64; 3] {
+    use metal::foreign_types::ForeignTypeRef;
     unsafe extern "C" {
         fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
         fn objc_msgSend();
@@ -240,7 +236,7 @@ pub(crate) fn attempt(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64;
             id
         };
         let encoded = evaluation.charge();
-        let (application_buffer_bytes, private_buffer_bytes) = crate::runtime::buffer_usage();
+        let application_buffer_bytes = crate::runtime::reserved();
         evaluation.peak_application_buffer_bytes = evaluation
             .peak_application_buffer_bytes
             .max(application_buffer_bytes);
@@ -256,7 +252,6 @@ pub(crate) fn attempt(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64;
             completed: false,
             buffers,
             application_buffer_bytes,
-            private_buffer_bytes,
             peak_application_buffer_bytes,
         });
         encoded

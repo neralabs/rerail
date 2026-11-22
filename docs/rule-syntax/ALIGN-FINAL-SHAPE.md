@@ -2,7 +2,7 @@
 
 ## Intro
 
-The final-shape engine (branch `jeremybarnes/final-rerail-shape`, worktree `wolfeel`) reads `.rerail` as its only rule
+The final-shape engine (branch `final-rerail-shape`, worktree `wolfeel`) reads `.rerail` as its only rule
 format. Its reader is `logic::rr::parse` and `parse_file`. They lower a program, with `lib/core.rerail` as its prelude,
 to the engine's `Program`. This page compares what `core.rerail` promises with what that reader and the engine's base
 relations deliver. It records which side should move, and what was changed on this branch.
@@ -290,7 +290,7 @@ In order of what it unblocks:
 
 ### Status after the engine work (2026-11-06)
 
-The work was done on the sibling branch `jeremybarnes/final-rerail-shape-rr-align`, recorded in its decision
+The work was done on the sibling branch `final-rerail-shape-rr-align`, recorded in its decision
 0046-rr-as-core-rr-states-it.md. The `op` question (O79) was settled as `core.rerail` says: `op` is every anonymous
 token, and T's narrower view is kept as `op_t` for T's parity tests.
 
@@ -370,9 +370,9 @@ The two rewrites (section 3) do not change semantics, and were checked as well:
 ## 6. Where the engine branches stand (2026-11-06)
 
 There are two engine branches:
-- **`jeremybarnes/final-rerail-shape`** at `a2667aed2`: the final-shape engine itself. Since `42af062ab` it has
+- **`final-rerail-shape`** at `a2667aed2`: the final-shape engine itself. Since `42af062ab` it has
   added steps of decisions 0044 and 0045, and copies of this branch's files.
-- **`jeremybarnes/final-rerail-shape-rr-align`** at `38d105533`: the reader work of section 4, cut from
+- **`final-rerail-shape-rr-align`** at `38d105533`: the reader work of section 4, cut from
   `42af062ab`. It is not merged into `final-rerail-shape`.
 
 How they compare:

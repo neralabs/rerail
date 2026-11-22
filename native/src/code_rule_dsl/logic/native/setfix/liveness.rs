@@ -7,6 +7,8 @@ impl Step {
         let key = |k: &Key| matches!(k,Key::Slot(s) if *s==slot);
         match self {
             Step::Atom { keys, .. } => keys.iter().any(|(_, k)| key(k)),
+            // A bounded min or max reads its bound too (decision 0511).
+            Step::Scalar { bound: Some((b, _)), .. } if key(b) => true,
             Step::Scalar {
                 keys, out, bind, ..
             }
@@ -87,9 +89,19 @@ pub(super) fn sums(steps: &mut [Step], head: &[Term]) {
                 }
             }
             Step::Scalar {
-                keys, out, bind, ..
+                keys, out, bind, bound, ..
+            } => {
+                for (_, k) in keys {
+                    read(k);
+                }
+                if let Some((b, _)) = bound {
+                    read(b);
+                }
+                if !*bind {
+                    read(&Key::Slot(*out));
+                }
             }
-            | Step::StrJoin {
+            Step::StrJoin {
                 keys, out, bind, ..
             } => {
                 for (_, k) in keys {

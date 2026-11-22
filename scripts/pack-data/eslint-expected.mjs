@@ -61,7 +61,7 @@ const escape = text => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
  * upstream test that named its file from the generator's working directory, home or temp folder (#31's filename-case
  * fixtures held `/private/tmp/claude-501/…`), which breaks Windows checkouts and leaks the maintainer's machine.
  * Pin the working directory with `withUpstreamTestCwd`, or keep only the name below the test's own fixture directory.
- * `directories` are `machineDirectories()`' form; a match is whole segments, so `/Users/jeff` never matches `/Users/jeffrey`.
+ * `directories` are `machineDirectories()`' form; a match is whole segments, so `/Users/alex` never matches `/Users/alexandra`.
  */
 export function assertPortableCase(path, code = "", directories = machineDirectories()) {
   const fixturePath = `/${path.replaceAll("\\", "/")}/`;

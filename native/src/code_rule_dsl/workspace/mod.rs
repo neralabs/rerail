@@ -21,6 +21,7 @@ pub mod ingest;
 pub mod memory;
 pub mod persisted;
 pub mod results;
+mod scan_fingerprints;
 pub mod secret_names;
 pub mod storage;
 
@@ -434,6 +435,7 @@ pub struct WorkspaceState {
     pub dirty_files: BTreeSet<String>,
     pub grammars: BTreeMap<String, Arc<tape::Grammar>>,
     pub storage: Option<StorageContext>,
+    pending_analysis: Option<(crate::content_store::analysis_scope::AnalysisOwner, String)>,
     /// Removed paths whose overlay rows a busy store kept (`ingest::apply_request`): the next
     /// apply that publishes deletes them before it publishes its files.
     pub pending_removals: BTreeSet<String>,
@@ -458,6 +460,7 @@ pub struct WorkspaceState {
     /// Ordered reporting entries, retained for the current revision so result paging does not
     /// repeatedly restore and sort the entire workspace.
     pub result_page_index: Option<ResultPageIndex>,
+    scan_fingerprints: Option<scan_fingerprints::ScanFingerprints>,
     /// Cross-file adapters and their shared derived state.
     crossfile: crossfile::CrossFileScheduler,
     /// The files requests sent, as import target resolution reads them (`import_target::fs`).
@@ -465,6 +468,10 @@ pub struct WorkspaceState {
     /// The folder on disk the workspace's paths are relative to (`setRoot`): resolution reads
     /// the files below it the workspace does not hold.
     import_root: Option<std::path::PathBuf>,
+    /// The Git revision the workspace's storage was attached from (`enableRevisionStorage`), pinned in the
+    /// workspace's shared object (decision 0442): its runs read the paths under the revision's root from it, and
+    /// another workspace's runs read that root's files.
+    pub git_source: Option<crate::git_workspace::snapshot::Pinned>,
     /// Counts the changes of what import target resolution reads that disk does not already
     /// show: held files that differ from disk below the root, and the root itself.
     import_generation: u64,

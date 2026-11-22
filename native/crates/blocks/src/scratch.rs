@@ -13,17 +13,21 @@
 //!   `install`ed. Past `KEEP` bytes, what a use touched is given back to the OS when it ends.
 //!
 //! A take's contents are whatever the last use left: a caller writes before it reads, or asks for `zeroed`.
+//!
+//! A region has a ledger (decision 0487 step 3): a kernel that binds its bytes holds it, a `reset` or the end of a use
+//! with such work queued fails (the takes after it would write what the kernel reads), and a region dropped under
+//! queued work keeps its memory until the work completes.
 
 use crate::Pod;
 use crate::block::Backing;
 use std::cell::{Cell, RefCell};
 
-/// Address space an anonymous scratch region reserves (nothing resident until written). Without a mapping
-/// (`crate::mem`) the reservation is allocated whole, and on Windows it is committed whole (counted against the
-/// commit limit), so it is a working size there.
-#[cfg(unix)]
+/// Address space an anonymous scratch region reserves (nothing resident until written; on Windows nothing committed
+/// until touched, `crate::windows`). Without a mapping (`crate::mem`) the reservation is allocated whole, so it is a
+/// working size there.
+#[cfg(any(unix, windows))]
 const ANON: usize = 1 << 36;
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 const ANON: usize = 256 << 20;
 /// Bytes of a thread's scratch kept resident between uses; past them, a use's pages are given back.
 const KEEP: usize = 64 << 20;
@@ -37,18 +41,26 @@ pub struct Scratch {
     /// The bytes `end` gave back to the OS, from and to: marked in use again (`reuse_pages`) when a take reaches them.
     given: Cell<(usize, usize)>,
     backing: Option<Box<dyn Backing>>,
+    /// Its ledger: what a kernel's bind of its bytes holds (`Fence::uses_address`).
+    ledger: std::sync::Arc<crate::ledger::Ledger>,
+}
+
+fn ledger_of(base: *mut u8, len: usize) -> std::sync::Arc<crate::ledger::Ledger> {
+    let ext = std::sync::Arc::new(crate::block::Extent { top: std::sync::atomic::AtomicUsize::new(0), free: std::sync::atomic::AtomicUsize::new(0) });
+    crate::ledger::Ledger::new(base, len.max(1), false, ext)
 }
 
 impl Scratch {
     /// An anonymous region of `reserved` bytes of address space.
     pub fn anon(reserved: usize) -> Scratch {
         let p = crate::mem::reserve(reserved);
-        Scratch { base: p, len: reserved, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None }
+        Scratch { base: p, len: reserved, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: ledger_of(p, reserved) }
     }
 
     /// The region `backing` holds (a pooled slab): it may hold an earlier use's bytes.
     pub fn over(backing: Box<dyn Backing>) -> Scratch {
-        Scratch { base: backing.base(), len: backing.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: Some(backing) }
+        let ledger = ledger_of(backing.base(), backing.len());
+        Scratch { base: backing.base(), len: backing.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: Some(backing), ledger }
     }
 
     /// `n` values of `T`, their contents whatever the last use left.
@@ -80,9 +92,21 @@ impl Scratch {
         s
     }
 
-    /// Gives every take back.
+    /// Gives every take back. Fails while GPU work that binds its bytes is queued: the next takes would write them.
     pub fn reset(&mut self) {
+        self.quiet("a reset");
         self.top.set(0);
+    }
+
+    fn quiet(&self, what: &str) {
+        if self.top.get() > 0 && !self.ledger.quiet() {
+            panic!("scratch: {what} of {} bytes taken, with GPU work that reads them queued (wait for its fence first)", self.top.get());
+        }
+    }
+
+    /// Its ledger (decision 0487): what a fence's use of its bytes holds.
+    pub fn ledger(&self) -> &std::sync::Arc<crate::ledger::Ledger> {
+        &self.ledger
     }
 
     /// The most bytes a use has taken.
@@ -92,6 +116,7 @@ impl Scratch {
 
     /// Ends a use: everything given back, and past `keep` bytes, an anonymous region's pages returned to the OS.
     fn end(&mut self, keep: usize) {
+        self.quiet("the end of a use");
         let used = self.top.get();
         self.top.set(0);
         if self.backing.is_none() && used > keep {
@@ -105,11 +130,15 @@ impl Scratch {
 }
 
 impl Drop for Scratch {
+    /// Its memory goes once no queued work binds it (R5): the mapping it made released, or its backing dropped.
     fn drop(&mut self) {
-        if self.backing.is_none() {
-            // SAFETY: the mapping this region made.
-            unsafe { crate::mem::release(self.base, self.len) };
-        }
+        let (base, len) = (self.base as usize, self.len);
+        let backing = self.backing.take();
+        self.ledger.let_go(Box::new(move || match backing {
+            Some(b) => drop(b),
+            // SAFETY: the mapping this region made, which no work reaches now.
+            None => unsafe { crate::mem::release(base as *mut u8, len) },
+        }));
     }
 }
 
@@ -132,4 +161,34 @@ pub fn with<R>(f: impl FnOnce(&Scratch) -> R) -> R {
 /// Makes `s` this thread's scratch (a pooled slab, say); returns the one it replaces.
 pub fn install(s: Scratch) -> Option<Scratch> {
     THREAD.with(|t| t.borrow_mut().replace(s))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::Fence;
+
+    /// Decision 0487 step 3 at a scratch region: a kernel's bind of its bytes holds it; a reset (or a use's end) with
+    /// that work queued fails, and passes once it completes; a region dropped under queued work keeps its memory until
+    /// then.
+    #[test]
+    fn a_scratch_reset_under_a_queued_gpu_use_fails() {
+        let fails = |f: &mut dyn FnMut()| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err();
+        let mut s = Scratch::anon(1 << 24);
+        let at = s.take::<u64>(512).as_ptr() as usize;
+        let f = Fence::new();
+        assert!(f.uses_address(at), "its bytes are found by address");
+        assert!(fails(&mut || s.reset()), "a reset under the queued work");
+        f.complete();
+        s.reset();
+        // Dropped under queued work: still found, so held, until the work completes.
+        let s = Scratch::anon(1 << 24);
+        let at = s.take::<u64>(8).as_ptr() as usize;
+        let f = Fence::new();
+        assert!(f.uses_address(at));
+        drop(s);
+        assert!(crate::ledger::of_address(at).is_some(), "its memory is held by the queued work");
+        f.complete();
+        assert!(crate::ledger::of_address(at).is_none(), "and goes once it completes");
+    }
 }

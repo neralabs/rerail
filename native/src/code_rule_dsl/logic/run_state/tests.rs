@@ -1,13 +1,14 @@
 //! The checks of [`super::STATE`] against the source, and of [`super::Carry`].
 
+use rerail_store::Canonical as _;
 use super::{Carry, Class, NOT_YET_PINNED, STATE};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// `native/`.
 fn native() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
-        .canonicalize()
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..")
+        .canonical()
         .unwrap()
 }
 

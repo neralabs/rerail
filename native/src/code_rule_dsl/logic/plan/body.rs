@@ -10,6 +10,12 @@ use super::{Constant, Error, Result};
 use std::cell::OnceCell;
 use std::sync::Arc;
 
+/// The prefix of the demand relations product demand makes (`corpus::product_demand`): a demanded relation's own
+/// demand, which bounds what its rule reads.
+pub const PRODUCT_DEMAND: &str = "rr_product_demand_";
+/// The prefix of the pair relations a deferred join's reader reads (decision 0488).
+pub const DEFERRED_PAIRS: &str = "rr_deferred_pairs_";
+
 /// A set of a rule's variables, by slot.
 #[derive(Clone, Default, PartialEq, Eq, Hash, Debug)]
 pub struct VarSet(Vec<u64>);
@@ -99,11 +105,14 @@ pub fn lit_vars(l: LitRef<'_>) -> VarSet {
             term_vars(r, &mut out);
             out
         }
-        Lit::Agg { var, over, atom, .. } => {
+        Lit::Agg { var, op, over, atom } => {
             let mut out = atom_vars(atom);
             out.insert(var);
             if let Some(o) = over {
                 out.insert(o);
+            }
+            if let Some(b) = op.bound() {
+                out.insert(b);
             }
             out
         }
@@ -234,7 +243,7 @@ impl<'v> Body<'v> {
         &self.args.get_or_init(|| self.lits.iter().map(|l| l.atom().map_or_else(Vec::new, |a| a.args().collect())).collect())[i]
     }
     /// Whether another kept read already proves this positive read, with the same bound columns.
-    pub(super) fn implied_read(&self, at: usize, kept: &[usize]) -> bool {
+    pub fn implied_read(&self, at: usize, kept: &[usize]) -> bool {
         let Some(read) = self.plain_atom(at).filter(|a| !a.neg() && !a.gated()) else { return false };
         let args = self.args(at);
         kept.iter().copied().filter(|&other| other != at).any(|other| {
@@ -264,15 +273,30 @@ impl<'v> Body<'v> {
     /// demand that bounds a Cartesian product (`product_demand::PREFIX`): the product's only bound, so it leads.
     pub fn demand_first(&self) -> Option<usize> {
         let head = self.rel(self.head());
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
-            let rel = self.rel(a);
-            !a.neg() && (rel.contains("rr_demand_agg_") || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
-        }))
+        (0..self.len()).find(|&i| {
+            self.plain_atom(i).is_some_and(|a| {
+                let rel = self.rel(a);
+                !a.neg() && (rel.contains("rr_demand_agg_")
+                    || rel.strip_prefix("rr_pair_cache_").and_then(|s| s.strip_suffix("_small")).is_some_and(|base|
+                        head.strip_prefix("rr_pair_cache_")
+                            .and_then(|s| s.strip_suffix("_pairs")) == Some(base))
+                    // A demanded relation's own demand (`demand_x`) is not one: its rule may be led by an atom a
+                    // constant restricts (Q59, `demand_bounds_lead`, which `plan_inner` keeps).
+                    || rel.strip_prefix(PRODUCT_DEMAND) == Some(head))
+            })
+        })
     }
-    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
+    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads; or a
+    /// deferred join's request (`rr_deferred_pairs_x`, decision 0488), of its producer or of the support heads
+    /// maintenance gives its rules (`wide__sup0`). Not forced to lead (Q59, `demand_bounds_lead`): forced, corpus0's
+    /// `lambda_arg` walked the arguments of 14,360 requested calls (171 k rows) where `kind($g, "lambda")` reads 229.
     pub fn own_demand(&self) -> Option<usize> {
         let head = self.rel(self.head());
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).strip_prefix("demand_").is_some_and(|r| r == head)))
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
+            let rel = self.rel(a);
+            !a.neg() && (rel.strip_prefix("demand_").is_some_and(|r| r == head)
+                || rel.strip_prefix(DEFERRED_PAIRS).is_some_and(|p| p == head))
+        }))
     }
     /// Whether an order led by literal `lead` keeps a demanded relation's rule to what its demand bounds (Q59): led
     /// by the demand, or by an atom a constant restricts (a column a constant names, or a variable an equality binds
@@ -436,6 +460,9 @@ impl<'v> Body<'v> {
                 if let AggRef::Join { by, .. } = op {
                     by.for_each(|b| need.remove(b));
                 }
+                if let Some(b) = op.bound() {
+                    need.insert(b);
+                }
                 need.is_subset(bound)
             }
             Lit::Nearest { n, a, .. } => bound.contains(n) || bound.contains(a),
@@ -470,7 +497,17 @@ impl<'v> Body<'v> {
     /// The rule written into a derived value's inputs (`logic::derived`), field by field: its head and body, the same
     /// pieces in the same order as its text, without making the text.
     pub(in crate::code_rule_dsl) fn digest(&self, d: &mut super::super::derived::Inputs) {
-        // A recheck's order is not the rule's: kept apart (Q208); nor a line's planned from given variables bound.
+        self.digest_pre(d);
+        self.digest_atom(d, self.head());
+        d.u64(self.lits.len() as u64);
+        for &l in &self.lits {
+            self.digest_lit(d, l);
+        }
+    }
+
+    /// What is bound before its first step, written into a derived value's inputs: a recheck's order is not the
+    /// rule's, kept apart (Q208); nor a line's planned from given variables bound (0364 R4).
+    pub(in crate::code_rule_dsl) fn digest_pre(&self, d: &mut super::super::derived::Inputs) {
         match &self.pre {
             None => {}
             Some(Pre::Head) => d.str("head bound"),
@@ -481,11 +518,6 @@ impl<'v> Body<'v> {
                     d.u64(*w);
                 }
             }
-        }
-        self.digest_atom(d, self.head());
-        d.u64(self.lits.len() as u64);
-        for &l in &self.lits {
-            self.digest_lit(d, l);
         }
     }
     /// The rule's digest (`digest`), made once: what every key of the rule writes (`plan_key`, `line_key`,
@@ -564,6 +596,11 @@ impl<'v> Body<'v> {
                     AggRef::Max => d.u64(2),
                     AggRef::Sum => d.u64(3),
                     AggRef::Product => d.u64(5),
+                    AggRef::Bounded { max, bound, strict } => {
+                        d.u64(6);
+                        d.u64(u64::from(max) | u64::from(strict) << 1);
+                        d.str(self.var(bound));
+                    }
                 }
                 d.str(over.map_or("\u{0}", |o| self.var(o)));
                 self.digest_atom(d, atom);
@@ -731,14 +768,14 @@ impl Placed {
     /// program leaves out of it (where it is some of its version's rules). A sum, so it
     /// does not see the rules' order.
     pub fn digest(&self) -> u64 {
-        let d = match &self.ids {
+        
+        match &self.ids {
             None => self.v.digest(),
             Some(ids) => {
                 let all = self.v.rules().fold(0u64, |a, r| a.wrapping_add(r.hash()));
                 ids.iter().fold(self.v.digest().wrapping_sub(all), |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())))
             }
-        };
-        d
+        }
     }
     /// How many rules the program has.
     pub fn len(&self) -> usize {
@@ -878,32 +915,4 @@ pub fn nth(v: &Version, k: usize) -> Body<'_> {
     Body::of(v, v.rule(RuleId(k as u32)).expect("a made rule"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::super::super::program_image::{Builder, T, Version};
-    use super::super::super::rr::parse_version;
-    use super::{Freeze as _, Placed};
-
-    /// 0276 §3: a writer frozen in an order of its own reads each rule where the pass put it, the edit folded or not.
-    /// A fold numbers the rules afresh (`Builder::finish_placing`), so the order the pass wrote is read back through it.
-    #[test]
-    fn a_frozen_edit_keeps_its_order_through_a_fold() {
-        let rels = ["a", "b", "c", "f", "g", "h", "i", "j"];
-        let text: String = rels.iter().map(|r| format!(".decl {r}(x: number)\n{r}(x) :- e(x).\n")).collect();
-        let v = parse_version(&format!(".decl e(x: number)\n.input e\n.decl d(x: number)\n{text}")).unwrap();
-        let shown = |p: &Placed| (0..p.len()).map(|k| p.v.show_rule(p.rule(k))).collect::<Vec<_>>();
-        let ids: Vec<_> = v.rules().map(|r| r.id()).collect();
-        // One rule removed and two added: an overlay of the eight. Four removed: half the program or more, folded.
-        for (remove, folds) in [(1, false), (4, true)] {
-            let mut b = Builder::on(&v);
-            for &id in &ids[..remove] {
-                b.remove(id);
-            }
-            let x = b.rule().head("d", &[T::Var("x")]).atom("a", &[T::Var("x")]).finish().unwrap();
-            let y = b.rule().head("d", &[T::Var("x")]).atom("b", &[T::Var("x")]).finish().unwrap();
-            let p = b.freeze_placed(vec![y, ids[7], x], true).unwrap();
-            assert_eq!(!matches!(&*p.v, Version::Overlay { .. }), folds, "{remove} removed: folded");
-            assert_eq!(shown(&p), ["d($x) :- b($x)", "j($x) :- e($x)", "d($x) :- a($x)"], "{remove} removed");
-        }
-    }
-}
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus)

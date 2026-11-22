@@ -64,10 +64,10 @@ pub fn callees(clif: &str) -> Vec<u32> {
             if let Some(n) = decl.split(" u0:").nth(1).and_then(|r| r.split_whitespace().next()).and_then(|n| n.parse().ok()) {
                 names.insert(name.to_owned(), n);
             }
-        } else if let Some(rest) = line.split("call ").nth(1).filter(|_| line.starts_with("call ") || line.contains(" call ")) {
-            if let Some(&n) = names.get(rest.split('(').next().unwrap_or_default()) {
-                out.push(n);
-            }
+        } else if let Some(rest) = line.split("call ").nth(1).filter(|_| line.starts_with("call ") || line.contains(" call "))
+            && let Some(&n) = names.get(rest.split('(').next().unwrap_or_default())
+        {
+            out.push(n);
         }
     }
     out
@@ -232,7 +232,7 @@ pub fn carried_params(clif: &str) -> usize {
 /// no more (a delayed output holds no word).
 pub fn sink_params(native: &crate::block_native::BlockNative) -> usize {
     // A delayed output's word is not held (`native_cpu_block::delayed_store`).
-    crate::native_cpu_block::counted(native).len()
+    crate::block_native::counted(native).len()
 }
 
 #[cfg(test)]

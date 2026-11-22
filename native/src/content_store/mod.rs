@@ -4,6 +4,7 @@
 //! The code-rule runtime will call this module through coarse Rust operations.
 
 pub mod atoms;
+pub mod analysis_scope;
 #[cfg(target_os = "macos")]
 mod accel_models;
 // Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
@@ -16,12 +17,15 @@ pub use collection_guard::CollectionLease;
 mod connection;
 pub use connection::set_connection_functions;
 mod corpus_runs;
+pub use corpus_runs::process_gone;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
 pub use connection::{flush_of, store_flush};
 pub use rerail_blocks::block::Flush;
 mod derivation;
+mod document_places;
+pub use document_places::{DOCUMENT_WORDS, DocumentPlaces, PLACED_WORDS};
 mod held;
 pub mod kept_facts;
 pub mod guest_keys;
@@ -45,11 +49,13 @@ pub use postings::segment_positions;
 pub mod prefilter;
 pub use prefilter::TapePrefilter;
 mod private_files;
+pub use private_files::prepare_cache_directory;
 mod publication;
 mod read_cache;
 mod archive;
 pub use archive::{ARCHIVED, place_archived_tape_at};
 mod reclamation;
+pub(crate) mod scope_lease;
 pub use reclamation::Ageing;
 pub mod record;
 mod relationships;
@@ -118,7 +124,6 @@ const STRING_REPOSITORY: i64 = 2;
 const STRING_OWNER: i64 = 3;
 const STRING_PATH_COMPONENT: i64 = 4;
 const STRING_CLAUSE_KEY: i64 = 5;
-/// Fact names (`derivation.rs`): bound names and derivation outputs.
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 const MAX_PUBLICATION_BATCH: usize = 64;
@@ -216,8 +221,8 @@ impl HashKey {
     pub fn sha256_bytes(self) -> Option<[u8; 32]> {
         (self.algorithm == HASH_SHA256).then(|| {
             let mut digest = [0_u8; 32];
-            for (chunk, lane) in digest.chunks_exact_mut(8).zip(self.lanes) {
-                chunk.copy_from_slice(&lane.to_be_bytes());
+            for (chunk, lane) in digest.as_chunks_mut::<8>().0.iter_mut().zip(self.lanes) {
+                *chunk = lane.to_be_bytes();
             }
             digest
         })
@@ -264,8 +269,8 @@ impl HashKey {
     pub fn git_sha1_bytes(self) -> Option<[u8; 20]> {
         (self.algorithm == HASH_GIT_SHA1).then(|| {
             let mut bytes = [0_u8; 32];
-            for (chunk, lane) in bytes.chunks_exact_mut(8).zip(self.lanes) {
-                chunk.copy_from_slice(&lane.to_be_bytes());
+            for (chunk, lane) in bytes.as_chunks_mut::<8>().0.iter_mut().zip(self.lanes) {
+                *chunk = lane.to_be_bytes();
             }
             bytes[..20].try_into().expect("twenty bytes")
         })
@@ -275,8 +280,8 @@ impl HashKey {
     pub fn key_bytes(self) -> [u8; 40] {
         let mut out = [0_u8; 40];
         out[..8].copy_from_slice(&self.algorithm.to_be_bytes());
-        for (chunk, lane) in out[8..].chunks_exact_mut(8).zip(self.lanes) {
-            chunk.copy_from_slice(&lane.to_be_bytes());
+        for (chunk, lane) in out[8..].as_chunks_mut::<8>().0.iter_mut().zip(self.lanes) {
+            *chunk = lane.to_be_bytes();
         }
         out
     }
@@ -287,8 +292,8 @@ impl HashKey {
 
     fn from_padded(algorithm: i64, bytes: [u8; 32]) -> Self {
         let mut lanes = [0_i64; 4];
-        for (index, chunk) in bytes.chunks_exact(8).enumerate() {
-            lanes[index] = i64::from_be_bytes(chunk.try_into().expect("eight-byte hash lane"));
+        for (index, chunk) in bytes.as_chunks::<8>().0.iter().enumerate() {
+            lanes[index] = i64::from_be_bytes(*chunk);
         }
         Self { algorithm, lanes }
     }
@@ -322,6 +327,9 @@ pub enum StoreError {
     /// A row a publication had resolved vanished before the publication used it, under a
     /// concurrent collection. Never a reason to proceed without the store.
     Vanished(&'static str),
+    /// A deletion or stop of an analysis scope that a running analysis holds (`scope_lease`, decision 0547): retry
+    /// once that run has finished.
+    InUse(String),
 }
 
 impl fmt::Display for StoreError {
@@ -332,6 +340,7 @@ impl fmt::Display for StoreError {
             Self::Invalid(message) => write!(formatter, "invalid content store input: {message}"),
             Self::Corrupt(message) => write!(formatter, "corrupt content store: {message}"),
             Self::Busy => formatter.write_str("content store writer is busy"),
+            Self::InUse(message) => write!(formatter, "analysis scope in use: {message}"),
             Self::Vanished(row) => write!(
                 formatter,
                 "content store {row} vanished under a concurrent collection"
@@ -706,13 +715,16 @@ pub struct StoreCapacity {
     pub state: CapacityState,
 }
 
+/// Facts plan sets, each its plans' digests, by the set's digest.
+type PlanSets = HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>;
+
 pub struct ContentStore {
     database_path: PathBuf,
     connection: ThreadConnection,
     compression_level: i32,
     local_result_cache: Mutex<LocalResultCache>,
     /// Facts plan sets by digest (immutable once written: `facts_memo`).
-    facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
+    facts_plan_sets: parking_lot::Mutex<PlanSets>,
     /// This process's atoms of the store (atoms.rs, decision 0049), shared with the planner's symbols.
     atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
@@ -814,7 +826,7 @@ impl ContentStore {
     }
 
     fn open_with(path: &Path, models: bool) -> StoreResult<Self> {
-        // Created `0600` before SQLite opens it, in a `0700` folder, so the WAL SQLite creates beside it is private too.
+        // Create the database with mode 0600 before SQLite copies its mode to the WAL.
         private_files::prepare(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
@@ -833,18 +845,35 @@ impl ContentStore {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = models;
-        Ok(Self {
-            database_path: path.to_path_buf(),
-            connection: ThreadConnection::new(path.to_path_buf(), identity, flush),
+        // A store created again at its path has atoms and a writer of its own too.
+        Ok(Self::with_connection(
+            path.to_path_buf(), ThreadConnection::new(path.to_path_buf(), identity, flush),
+            atoms::Atoms::for_database(path, Some(identity)), Some(write_back::register_store(path, identity)),
+        ))
+    }
+
+    /// The scratch store for fact-only evaluation with the durable cache disabled: in memory, so nothing is flushed
+    /// (decision 0481's `none`).
+    pub fn open_ephemeral() -> StoreResult<Self> {
+        let mut connection = Connection::open_in_memory()?;
+        let atoms = atoms::Atoms::ephemeral();
+        atoms::Atoms::share_memory(&connection, std::sync::Arc::clone(&atoms))?;
+        let flush = connection::store_flush()?;
+        let identity = Self::initialize(&mut connection, flush)?;
+        Ok(Self::with_connection(PathBuf::from(":memory:"), ThreadConnection::memory(connection, identity, flush), atoms, None))
+    }
+
+    fn with_connection(database_path: PathBuf, connection: ThreadConnection, atoms: std::sync::Arc<atoms::Atoms>, write_back: Option<std::sync::Arc<write_back::Writer>>) -> Self {
+        Self {
+            database_path,
+            connection,
             compression_level: DEFAULT_COMPRESSION_LEVEL,
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
-            // A store created again at its path, by this process or another, has atoms of its own.
-            atoms: atoms::Atoms::for_database(path, Some(identity)),
+            atoms,
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
-            // A store created again at its path has a writer of its own too.
-            write_back: Some(write_back::register_store(path, identity)),
+            write_back,
             session_ageing: reclamation::SessionAgeing::default(),
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
@@ -854,7 +883,7 @@ impl ContentStore {
             git_tree_write_count: AtomicUsize::new(0),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_transactions: AtomicUsize::new(0),
-        })
+        }
     }
 
     /// Drop process-local read caches and close every thread's idle connection to the store, with
