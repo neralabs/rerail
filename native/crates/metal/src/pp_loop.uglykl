@@ -1266,9 +1266,30 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     bool known = false;
                     if (flat && src == rp->w_src && f->at >= rp->w_at && f->at < rp->w_end) {
                         uint32_t j = f->at - rp->w_at;
-                        // The run to the window's next delimiter, in this frame (another of the source may end first).
-                        uint32_t k = ukl_min(ukl_min(ukl_ctz32((rp->w_open | rp->w_close | rp->w_comma) >> j), rp->w_end - f->at), f->end - f->at);
+                        // The run to the window's next `,` or `)` that ends the argument, in this frame (another
+                        // of the source may end first): a nested `(` .. `)` and the commas in it are the argument's
+                        // tokens, and the depth they leave is kept (`lp_collect_tok`'s), so a step is an argument.
+                        uint32_t lim = ukl_min(rp->w_end - f->at, f->end - f->at);
+                        uint32_t dm = (rp->w_open | rp->w_close | rp->w_comma) >> j;
+                        uint32_t depth = rp->cl_depth, k = lim;
+                        bool comma_in = rp->cl_var && rp->cl_nargs == rp->cl_n;
+                        while (dm != 0u) {
+                            uint32_t d = ukl_ctz32(dm);
+                            if (d >= lim) break;
+                            uint32_t bit = 1u << (j + d);
+                            if ((rp->w_open & bit) != 0u) {
+                                depth++;
+                            } else if ((rp->w_close & bit) != 0u) {
+                                if (depth == 0u) { k = d; break; }
+                                depth--;
+                            } else if (depth == 0u && !comma_in) {
+                                k = d;
+                                break;
+                            }
+                            dm &= dm - 1u;
+                        }
                         if (k != 0u) {
+                            rp->cl_depth = depth;
                             if (!lp_collect_run(rp, a, lob, o.nv, k)) break;
                             continue;
                         }
