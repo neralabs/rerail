@@ -25,6 +25,7 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/body/lz4_decode.h", include_str!("../lib/ukl/body/lz4_decode.h")),
     ("ukl/body/histogram_part.h", include_str!("../lib/ukl/body/histogram_part.h")),
     ("ukl/body/radix_tile.h", include_str!("../lib/ukl/body/radix_tile.h")),
+    ("ukl/body/scan_tile.h", include_str!("../lib/ukl/body/scan_tile.h")),
     ("ukl/body/tape_f16.h", include_str!("../lib/ukl/body/tape_f16.h")),
     ("ukl/body/tape_api.h", include_str!("../lib/ukl/body/tape_api.h")),
     ("ukl/body/tape_read.h", include_str!("../lib/ukl/body/tape_read.h")),

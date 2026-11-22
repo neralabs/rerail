@@ -58,3 +58,28 @@ levels, 9 to 14 copy levels, 6 to 12 index sorts and 59 to 120 library launches 
 - The setfix device tests on the CPU backend and on Metal, each stratum within the budget: the three recursive ones
   included, with no test changed.
 - A program's launches: one stratum, one launch and its budget's relaunches, whatever its rules and rounds.
+
+## Done (2026-11-22): steps 1 and 2
+
+- **The program.** `Batch::flush` appends each level's phases to the stratum's program (`metal_join::Program`): the
+  copies; each index's keys, its radix passes and its place; the dedups' clear and the maps; the claims; the counts;
+  the counts' scan; the scatters. A job's `base` is the program's, not the level's, so one counts buffer serves every
+  level. `run_program` makes the program's buffers (the jobs, the items, the phases, the scan levels, the sort
+  passes, the queue's control and slots, the counts) and launches `join_run` once, over as many groups as the first
+  phase has items. A group takes an item, runs its job's `_one` body for its threads (`prog_item`), and the group
+  that finishes a phase's last item pushes the next phase's items. `finish` reads the program's control word: a
+  program that did not reach its last phase is a failure.
+- **The scan and the sort as tile phases.** The bodies of `<ukl/scan.h>` and `<ukl/radix.h>` are tiles
+  (`<ukl/body/scan_tile.h>`, `<ukl/body/radix_tile.h>`), included once with global pointers for the library's
+  kernels and once with the program's for its phases. Point 2's index is the radix sort's passes (the library's
+  stable sort, as phases), not a bucket sort of its own: one sort.
+- **Coherence.** A phase reads what other groups of the same launch wrote, so on Metal the program's blocks are
+  `coherent(device)` (MSL 3.2). `<ukl/clif.h>`'s `CLIF_BLOCK_SPACE` is `UKL_COHERENT` in a kernel that defines
+  `CLIF_BLOCKS_COHERENT` (the program's variant: `JOIN_PROGRAM`), else `UKL_GLOBAL`; the reads written in CLIF
+  (`rerail_clif::ukl`) take a relation's or a line's block in it, and `<ukl/memory.h>`'s atomics take a coherent
+  base too. The views and the tape stay global: nothing in the launch writes them.
+- **Measured** (the setfix device tests): spark2's CPU backend, 35 of 36; the mini's Metal, 23 of 24. A
+  non-recursive stratum is one launch; `a_recursive_stratum_on_the_device_is_the_cpus_fixpoint` and
+  `parity_combinators` now pass within the budget (one launch a round). The one left is
+  `a_leveled_recursion_on_the_device_has_the_cpus_levels`, at 83 program launches (its rounds) and 117 of the
+  lattice's (`lat_*`): steps 3 and 4.

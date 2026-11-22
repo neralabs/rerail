@@ -43,7 +43,7 @@
 //! address) lies in a buffer of its own (`Batch::block`), which the batch keeps until its work completes.
 
 use super::Error;
-use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, encode_order, groups, pipeline, scratch, simd_group};
+use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, groups, pipeline, scratch, simd_group};
 use rerail_device::device::Buffer;
 use std::sync::Arc;
 
@@ -297,11 +297,7 @@ fn chunk_views_source() -> String {
 /// The joins' kernels (`SOURCE`) and the chunk views' (`chunk_views_source`), to compile ahead of their first use
 /// (`MatcherDevice::kernels_ahead`): each asked for as its use asks for it (`pipeline`), so its use finds it.
 pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhead> {
-    const JOIN: [&str; 21] = [
-        "ix_bucket_all", "ix_place_all", "stage_count_all", "stage_scatter_all", "stage_map_all", "scan_count_all", "scan_scatter_all", "witness_count_all", "row_text_all",
-        "row_scatter_all", "rows_copy_all", "dedup_claim_all", "dedup_clear_all", "dedup_mark_all", "dedup_scatter_all", "lat_best", "lat_claim", "lat_clear", "lat_hclear",
-        "lat_merge", "lat_rehash",
-    ];
+    const JOIN: [&str; 6] = ["lat_best", "lat_claim", "lat_clear", "lat_hclear", "lat_merge", "lat_rehash"];
     let made = |variant: &'static str, name: &'static str, source: fn() -> String| -> super::device::KernelAhead {
         let make = move || {
             let mut made = Ok(());
@@ -310,16 +306,16 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
         };
         (format!("{variant} {name}"), Box::new(make))
     };
-    let mut v: Vec<_> = JOIN.into_iter().filter(|name| !VIEW_KERNELS.contains(name)).map(|name| made("join", name, || SOURCE.to_owned())).collect();
-    // The view kernels for the run's views' format.
-    v.extend(VIEW_KERNELS.map(|name| -> super::device::KernelAhead {
+    let mut v: Vec<_> = JOIN.into_iter().map(|name| made("join", name, || SOURCE.to_owned())).collect();
+    // The programs' worker for the run's views' format.
+    v.push({
         let make = move || {
             let mut made = Ok(());
-            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = view_pipe(name, run_view_format()).map(drop)))?;
+            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = program_pipe(run_view_format()).map(drop)))?;
             made
         };
-        (format!("join {name}"), Box::new(make))
-    }));
+        ("join join_run".to_owned(), Box::new(make))
+    });
     v.extend(["axis_count", "axis_write", "view_expand"].map(|name| made("chunk_views", name, chunk_views_source)));
     v
 }
@@ -341,11 +337,6 @@ static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     )
 });
 
-/// The join kernels that read a view (`vread`): each compiled for the tape format of the views it reads (decision 0576),
-/// the view's format field a constant, so it holds that format's reads alone. On an Arc 140V `stage_count` compiled in
-/// 36 s over every format, 16 s over format 16's and 7 s over format 15's.
-const VIEW_KERNELS: [&str; 7] = ["ix_bucket_all", "stage_count_all", "stage_scatter_all", "scan_count_all", "scan_scatter_all", "witness_count_all", "rows_copy_all"];
-
 /// The join kernels' source for views of tape format `format` (0: of several, each view read tells its own).
 fn view_source(format: u32) -> String {
     if format == 0 {
@@ -364,9 +355,12 @@ pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
     }
 }
 
-/// The view kernel `name` for views of `format` (0: several).
-fn view_pipe(name: &str, format: u32) -> Result<Arc<rerail_accel::gpu::join::Pipe>, String> {
-    pipeline(&format!("join{format}"), name, || view_source(format))
+/// A program's worker (`join_run`, decision 0603) for views of `format` (0: several): the join kernels' source with
+/// the program's part, which reads its tables and blocks coherent across the device (other groups of its launch
+/// write them). Its stages read views, each compiled for the tape format of the views it reads (decision 0576): on an
+/// Arc 140V `stage_count` compiled in 36 s over every format, 16 s over format 16's and 7 s over format 15's.
+fn program_pipe(format: u32) -> Result<Arc<rerail_accel::gpu::join::Pipe>, String> {
+    pipeline(&format!("joinprog{format}"), "join_run", || format!("#define JOIN_PROGRAM 1\n#define CLIF_BLOCKS_COHERENT 1\n{}", view_source(format)))
 }
 
 /// The tape format of the views `rels` read (`ViewInPlace::format`), one for them all: a relation reads none, and with
@@ -1173,20 +1167,24 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) submissions: u32,
     pub(in crate::code_rule_dsl) dispatches: u32,
     pub(in crate::code_rule_dsl) gpu_seconds: f64,
-    /// Levels launched (`Batch::flush`): each kernel once for the jobs queued between two dependencies.
+    /// Levels run (`Batch::flush`): the jobs queued between two dependencies, their phases in a program.
     pub(in crate::code_rule_dsl) levels: u32,
     /// Stages screened by their relation's kept filter (`Stage::screen`, decision 0488).
     pub(in crate::code_rule_dsl) screened: u32,
 }
 
 /// Work encoded into one submission at a time, committed at `commit_open` and `finish`; every submission runs on the
-/// process's queue, in order. Its stages, maps, text rows and dedups are queued (`queue`) and launched a level at a
-/// time (`flush`, decision 0601): each kernel once for every job between two dependencies, so a stratum's launches
-/// are its levels', not its rules'.
+/// process's queue, in order. Its stages, maps, text rows, dedups, copies and indexes are queued (`queue`), a level
+/// at a time between two dependencies (`flush`, decision 0601), into its program (decision 0603): every level up to
+/// the next launch made at once, or the commit, in one launch.
 pub(in crate::code_rule_dsl) struct Batch {
     pass: Option<Pass>,
-    /// The level's jobs, not launched yet (`queue`).
+    /// The level's jobs, not in its program yet (`queue`).
     queued: Vec<Job>,
+    /// The levels flushed since the program last launched (`flush`, `run_program`, decision 0603).
+    program: Program,
+    /// The programs launched since the last `finish`: read when their work is done.
+    programs: Vec<Ran>,
     committed: Vec<Submitted>,
     done: Done,
     dummy: Held,
@@ -1245,7 +1243,21 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { pass: None, queued: Vec::new(), committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, arena: None, arena_cap: cap, building: Vec::new(), atoms: None, kept: None, written: Vec::new() })
+        Ok(Batch {
+            pass: None,
+            queued: Vec::new(),
+            program: Program::default(),
+            programs: Vec::new(),
+            committed: Vec::new(),
+            done: Done::default(),
+            dummy: Held::new(64)?,
+            arena: None,
+            arena_cap: cap,
+            building: Vec::new(),
+            atoms: None,
+            kept: None,
+            written: Vec::new(),
+        })
     }
 
     /// Notes that its kernels write `rel` (`what`): its rows' `needed` now, checked when the batch is done.
@@ -1302,11 +1314,11 @@ impl Batch {
         Ok(self.arena.clone().expect("the arena"))
     }
 
-    /// The open submission, for a launch made at once: the level queued before it launched first (`flush`), so it
-    /// sees their writes. Its launches are charged to the evaluation's launch budget as they are made
-    /// (`rerail_accel::gpu::launch`): past it, the hard failure (decision 0601).
+    /// The open submission, for a launch made at once: the program of the levels queued before it launched first
+    /// (`run_program`), so it sees their writes. Its launches are charged to the evaluation's launch budget as they
+    /// are made (`rerail_accel::gpu::launch`): past it, the hard failure (decision 0601).
     fn pass(&mut self) -> Result<&Pass, Error> {
-        self.flush()?;
+        self.run_program()?;
         self.open()
     }
 
@@ -1329,7 +1341,7 @@ impl Batch {
 
     /// Commits the open submission (`Pass::commit`, checked against the launch budget).
     fn submit_open(&mut self) -> Result<(), Error> {
-        self.flush()?;
+        self.run_program()?;
         let Some(pass) = self.pass.take() else { return Ok(()) };
         self.done.dispatches += pass.dispatches() as u32;
         rerail_accel::exec::command_committed();
@@ -1355,6 +1367,9 @@ impl Batch {
             let (seconds, ok) = s.wait_ok();
             self.done.gpu_seconds += seconds;
             failed += usize::from(!ok);
+        }
+        if !self.programs_done() {
+            failed += 1;
         }
         let overran = self.overran();
         self.written.clear();
@@ -1839,11 +1854,11 @@ impl Batch {
         Ok(())
     }
 
-    /// Launches the level: the jobs queued (`queue`), each kernel once for all of them (decision 0601), in the
-    /// level's order: the dedups' clears and claims; the maps and the counts; one scan of every job's counts (each
-    /// job's from its `base`); the scatters. Each launch's table says each of its threadgroups' job and its group in
-    /// the job. The level's buffers (its jobs', parameter blocks', counts', tables') are held by the submission until
-    /// its work completes.
+    /// Ends the level: the jobs queued (`queue`) into the batch's program (`Program`, decision 0603) as its phases, in
+    /// the level's order: the copies; the indexes (their keys, the sort's passes, their places); the dedups' clears
+    /// and the maps; the dedups' claims; the counts; the scan of the level's counts (each job's from its `base`); the
+    /// scatters. Nothing launches here: the program runs as one launch before the next launch made at once, and at
+    /// the commit (`run_program`).
     fn flush(&mut self) -> Result<(), Error> {
         if self.queued.is_empty() {
             return Ok(());
@@ -1872,18 +1887,31 @@ impl Batch {
             .collect();
         let params = self.block(&params)?;
         let pa = address(&params.buffer)?;
+        let prog = &mut self.program;
+        prog.uses.push((params.buffer.clone(), false));
         // The level's indexes' keys, sorted at once: each index's buckets from its first (`kb`), its rows' keys from
-        // its first (`eb`); and the sort's order of them.
+        // its first (`eb`), each key with its place; the sort's two pairs of buffers and its histograms.
         let (buckets, ix_rows) = jobs.iter().filter(|j| j.kind == JobKind::Index).fold((0usize, 0usize), |(b, e), j| (b + j.buckets, e + j.count));
-        if u32::try_from(buckets).is_err() {
+        if u32::try_from(buckets).is_err() || u32::try_from(ix_rows).is_err() {
             return Err(Error::BackendCapacity);
         }
-        let keys = Held::new(4 * ix_rows.max(1))?;
-        let perm = Held::new(4 * ix_rows.max(1))?;
-        let (ka, pa_perm) = (address(&keys.buffer)?, address(&perm.buffer)?);
-        let (mut kb, mut eb) = (0usize, 0usize);
-        let mut total = 0usize;
-        let mut descs = Vec::with_capacity(jobs.len());
+        let sort = if ix_rows > 0 {
+            let pair = || -> Result<[Held; 2], Error> { Ok([Held::new(4 * ix_rows)?, Held::new(4 * ix_rows)?]) };
+            let (a, b) = (pair()?, pair()?);
+            let tiles = ix_rows.div_ceil(SORT_TILE).max(1);
+            let hist = Held::new(4 * (256 * tiles + 1))?;
+            Some((a, b, hist, tiles))
+        } else {
+            None
+        };
+        // Every index's buckets in one span; whole bytes, as the sort's passes are a byte each.
+        let bits = (usize::BITS - buckets.saturating_sub(1).leading_zeros()).max(8).div_ceil(8) * 8;
+        let passes = bits / 8;
+        // Where the sorted keys and places end: in the first pair after an even number of passes.
+        let sorted = sort.as_ref().map(|(a, b, ..)| if passes % 2 == 0 { a } else { b });
+        let level_base = prog.counts;
+        let (mut kb, mut eb, mut total) = (0usize, 0usize, 0usize);
+        let first_job = prog.descs.len();
         for (j, at) in jobs.iter().zip(&placed) {
             let mut d = j.desc;
             let s = pa + at[0].expect("a job's stage");
@@ -1892,124 +1920,335 @@ impl Batch {
             d.bs = at[2].map_or(s, |b| pa + b);
             d.dd = at[3].map_or(s, |b| pa + b);
             d.p = at[4].map_or(s, |b| pa + b);
-            d.base = u32::try_from(total).map_err(|_| Error::BackendCapacity)?;
+            d.base = u32::try_from(level_base + total).map_err(|_| Error::BackendCapacity)?;
             d.n = j.n as u32;
             total += j.n;
-            if j.kind == JobKind::Index {
+            if let (JobKind::Index, Some((a, _, _, _)), Some(f)) = (j.kind, &sort, sorted) {
                 (d.kb, d.eb) = (kb as u32, eb as u32);
-                (d.h, d.s) = (ka, pa_perm + 4 * eb as u64);
+                (d.h, d.s) = (address(&a[0].buffer)?, address(&a[1].buffer)?);
+                (d.v, d.vc) = (address(&f[0].buffer)?, address(&f[1].buffer)?);
                 kb += j.buckets;
                 eb += j.count;
             }
-            descs.push(d);
+            prog.descs.push(d);
         }
-        // SAFETY: `JobDesc` is `repr(C)` integers with no padding (its size asserted).
-        let desc_bytes = unsafe { std::slice::from_raw_parts(descs.as_ptr().cast::<u8>(), std::mem::size_of_val(descs.as_slice())) };
-        let descs = self.block(desc_bytes)?;
-        let counts = Held::new(4 * (total + 1))?;
-        let scan = if total > 0 { Some(Scan::new(total)?) } else { None };
-        // The launches, before the scan and after it: each its kernel, whether it binds the counts, whether its
-        // threadgroups are SIMD groups, its table's first word and its threadgroups.
-        let mut formats: Vec<u32> = Vec::new();
-        for j in &jobs {
-            if matches!(j.kind, JobKind::Stage | JobKind::Scan | JobKind::Witness | JobKind::Copy | JobKind::Index) && !formats.contains(&j.format) {
-                formats.push(j.format);
-            }
-        }
-        let plain = |name: &'static str| pipeline("join", name, || SOURCE.to_owned());
-        type Launch = (Arc<rerail_accel::gpu::join::Pipe>, bool, bool, usize, usize);
-        let mut table: Vec<u32> = Vec::new();
-        let mut add = |to: &mut Vec<Launch>, pipe: Arc<rerail_accel::gpu::join::Pipe>, with_counts: bool, simd: bool, of: &dyn Fn(&Job) -> Option<usize>| {
-            // Each launch's table at 256 bytes, as a buffer's offset is bound on every backend.
-            table.resize(table.len().next_multiple_of(64), 0);
-            let at = table.len();
+        prog.counts += total + 1;
+        prog.levels += 1;
+        let groups = |threads: usize| threads.div_ceil(rerail_accel::gpu::join::GROUP as usize).max(1);
+        // A row stage's SIMD groups, a worker's group of them an item.
+        let rows_a_group = rerail_accel::gpu::join::GROUP as usize / simd_group();
+        let job_phase = |prog: &mut Program, kinds: &[(JobKind, u32, fn(&Job) -> usize)]| {
+            let mut items = Vec::new();
             for (i, j) in jobs.iter().enumerate() {
-                if let Some(threads) = of(j) {
-                    let groups = if simd { threads.max(1) } else { threads.div_ceil(rerail_accel::gpu::join::GROUP as usize).max(1) };
-                    for g in 0..groups {
-                        table.extend([i as u32, g as u32]);
+                for &(k, what, threads) in kinds {
+                    if j.kind == k {
+                        let n = if what == PK_ROW_TEXT { threads(j).div_ceil(rows_a_group).max(1) } else { groups(threads(j)) };
+                        items.extend((0..n).map(|g| (what, (first_job + i) as u32, g as u32)));
                     }
                 }
             }
-            let groups = (table.len() - at) / 2;
-            if groups > 0 {
-                to.push((pipe, with_counts, simd, at, groups));
-            }
+            prog.phase(items);
         };
-        let kind = |k: JobKind, f: Option<u32>, threads: fn(&Job) -> usize| move |j: &Job| (j.kind == k && f.is_none_or(|f| f == j.format)).then(|| threads(j));
-        let (mut copies, mut bucket, mut place) = (Vec::new(), Vec::new(), Vec::new());
-        for &f in &formats {
-            add(&mut copies, view_pipe("rows_copy_all", f)?, false, false, &kind(JobKind::Copy, Some(f), |j| j.count));
-            add(&mut bucket, view_pipe("ix_bucket_all", f)?, false, false, &kind(JobKind::Index, Some(f), |j| j.count));
+        job_phase(prog, &[(JobKind::Copy, PK_COPY, |j| j.count)]);
+        if let (Some((a, b, hist, tiles)), Some(f)) = (&sort, sorted) {
+            job_phase(prog, &[(JobKind::Index, PK_IX_KEY, |j| j.count)]);
+            let (mut from, mut to) = (a, b);
+            let ha = address(&hist.buffer)?;
+            for pass in 0..passes {
+                let x = prog.sorts.len() as u32;
+                prog.sorts.push(SortPass {
+                    keys: address(&from[0].buffer)?,
+                    values: address(&from[1].buffer)?,
+                    hist: ha,
+                    out_keys: address(&to[0].buffer)?,
+                    out_values: address(&to[1].buffer)?,
+                    n: ix_rows as u32,
+                    shift: 8 * pass,
+                    tiles: *tiles as u32,
+                    pad: 0,
+                    pad2: 0,
+                });
+                prog.phase((0..*tiles).map(|g| (PK_RADIX_HIST, x, g as u32)).collect());
+                prog.scan(ScanData::At(ha), 256 * tiles)?;
+                prog.phase((0..*tiles).map(|g| (PK_RADIX_SCATTER, x, g as u32)).collect());
+                std::mem::swap(&mut from, &mut to);
+            }
+            debug_assert!(std::ptr::eq(from, f), "the sort ends where `sorted` says");
+            job_phase(prog, &[(JobKind::Index, PK_IX_PLACE, |j| j.count)]);
         }
-        add(&mut place, plain("ix_place_all")?, false, false, &kind(JobKind::Index, None, |j| j.count));
-        let (mut before, mut after): (Vec<Launch>, Vec<Launch>) = (Vec::new(), Vec::new());
-        add(&mut before, plain("dedup_clear_all")?, false, false, &kind(JobKind::Dedup, None, |j| j.clear));
-        add(&mut before, plain("dedup_claim_all")?, false, false, &kind(JobKind::Dedup, None, |j| j.claim));
-        add(&mut before, plain("stage_map_all")?, false, false, &kind(JobKind::Map, None, |j| j.count));
-        for &f in &formats {
-            add(&mut before, view_pipe("stage_count_all", f)?, true, false, &kind(JobKind::Stage, Some(f), |j| j.count));
-            add(&mut before, view_pipe("scan_count_all", f)?, true, false, &kind(JobKind::Scan, Some(f), |j| j.count));
-            add(&mut before, view_pipe("witness_count_all", f)?, true, false, &kind(JobKind::Witness, Some(f), |j| j.count));
+        job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLEAR, |j| j.clear), (JobKind::Map, PK_MAP, |j| j.count)]);
+        job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLAIM, |j| j.claim)]);
+        job_phase(prog, &[
+            (JobKind::Stage, PK_STAGE_COUNT, |j| j.count),
+            (JobKind::Scan, PK_SCAN_COUNT, |j| j.count),
+            (JobKind::Witness, PK_WITNESS_COUNT, |j| j.count),
+            (JobKind::Row, PK_ROW_TEXT, |j| j.count),
+            (JobKind::Dedup, PK_DEDUP_MARK, |j| j.count),
+        ]);
+        if total > 0 {
+            prog.scan(ScanData::Counts(level_base), total)?;
+            job_phase(prog, &[
+                (JobKind::Stage, PK_STAGE_SCATTER, |j| j.scatter),
+                (JobKind::Witness, PK_STAGE_SCATTER, |j| j.scatter),
+                (JobKind::Scan, PK_SCAN_SCATTER, |j| j.scatter),
+                (JobKind::Row, PK_ROW_SCATTER, |j| j.scatter),
+                (JobKind::Dedup, PK_DEDUP_SCATTER, |j| j.scatter),
+            ]);
         }
-        add(&mut before, plain("row_text_all")?, true, true, &kind(JobKind::Row, None, |j| j.count));
-        add(&mut before, plain("dedup_mark_all")?, true, false, &kind(JobKind::Dedup, None, |j| j.count));
-        for &f in &formats {
-            let (stage, witness) = (kind(JobKind::Stage, Some(f), |j| j.scatter), kind(JobKind::Witness, Some(f), |j| j.scatter));
-            add(&mut after, view_pipe("stage_scatter_all", f)?, true, false, &|j: &Job| stage(j).or_else(|| witness(j)));
-            add(&mut after, view_pipe("scan_scatter_all", f)?, true, false, &kind(JobKind::Scan, Some(f), |j| j.scatter));
-        }
-        add(&mut after, plain("row_scatter_all")?, true, false, &kind(JobKind::Row, None, |j| j.scatter));
-        add(&mut after, plain("dedup_scatter_all")?, true, false, &kind(JobKind::Dedup, None, |j| j.scatter));
-        let tables = self.block(&table.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>())?;
-        self.done.levels += 1;
-        let pass = self.open()?;
-        // What the jobs reach by address: resident for the launches, and held until their work completes.
-        pass.use_read(&[&params.buffer]);
-        if ix_rows > 0 {
-            pass.use_read_write(&keys.buffer);
-            pass.use_read_write(&perm.buffer);
-        }
-        let mut seen = std::collections::HashSet::new();
+        // The view format its worker is compiled for: the jobs' one, else several (0).
         for j in &jobs {
-            for (b, write) in &j.uses {
-                if seen.insert((b.contents() as usize, b.length(), *write)) {
-                    if *write {
-                        pass.use_read_write(b);
-                    } else {
-                        pass.use_read(&[b]);
-                    }
-                }
+            if matches!(j.kind, JobKind::Stage | JobKind::Scan | JobKind::Witness | JobKind::Copy | JobKind::Index) {
+                prog.format = Some(match prog.format {
+                    None => j.format,
+                    Some(f) if f == j.format => f,
+                    Some(_) => 0,
+                });
             }
         }
-        let run = |launches: &[Launch]| {
-            for (pipe, with_counts, simd, at, groups) in launches {
-                let mut bufs: Vec<(&Buffer, u64)> = vec![(&descs.buffer, 0), (&tables.buffer, 4 * *at as u64)];
-                if *with_counts {
-                    bufs.push((&counts.buffer, 0));
-                }
-                if *simd {
-                    pass.run_bytes_simd_at(pipe, &bufs, &[], *groups);
-                } else {
-                    pass.run_bytes_at(pipe, &bufs, &[], *groups);
-                }
-            }
-        };
-        run(&copies);
-        if ix_rows > 0 {
-            run(&bucket);
-            // Every index's buckets in one span; whole bytes, as the sort's passes are a byte each.
-            let bits = (usize::BITS - (buckets - 1).leading_zeros()).max(8).div_ceil(8) * 8;
-            encode_order(pass, &keys.buffer, Width::W32, bits, ix_rows, &perm.buffer)?;
-            run(&place);
+        // What the jobs reach by address: resident at the launch; their own buffers, and the sort's, held to it.
+        for mut j in jobs {
+            prog.uses.append(&mut j.uses);
+            prog.hold.append(&mut j.own);
         }
-        run(&before);
-        if let Some(scan) = &scan {
-            scan.encode(pass, &counts.buffer)?;
+        prog.hold.push(params);
+        if let Some((a, b, hist, _)) = sort {
+            prog.hold.extend(a.into_iter().chain(b).chain([hist]));
         }
-        run(&after);
         Ok(())
     }
+
+    /// Launches the batch's program (`Program`, decision 0603): every level flushed since its last launch, one launch
+    /// of `join_run`, a group an item. Its control words are read when the batch is done (`finish`): a phase left
+    /// undone, or a push past the queue's room, fails the batch.
+    fn run_program(&mut self) -> Result<(), Error> {
+        self.flush()?;
+        if self.program.phases.is_empty() {
+            return Ok(());
+        }
+        let prog = std::mem::take(&mut self.program);
+        let counts = Held::new(4 * (prog.counts + 1))?;
+        let ca = address(&counts.buffer)?;
+        let scans: Vec<ScanLevel> = prog
+            .scans
+            .iter()
+            .map(|l| {
+                let data = match l.data {
+                    ScanData::Counts(at) => ca + 4 * at as u64,
+                    ScanData::At(a) => a,
+                };
+                ScanLevel { data, sums: l.sums.unwrap_or(data), n: l.n, offsets: u32::from(l.sums.is_some() && l.offsets), pad: 0 }
+            })
+            .collect();
+        // Each in a buffer of its own (an empty one of a few bytes: a buffer is never empty).
+        let bytes = |v: &[u8]| -> Result<Held, Error> { Held::of(if v.is_empty() { vec![0u8; 16] } else { v.to_vec() }.into_iter()).map_err(|_| Error::BackendCapacity) };
+        let descs = bytes(as_bytes(&prog.descs))?;
+        let items = bytes(as_bytes(&prog.items))?;
+        let phases = bytes(as_bytes(&prog.phases))?;
+        let scan_levels = bytes(as_bytes(&scans))?;
+        let sorts = bytes(as_bytes(&prog.sorts))?;
+        let nphases = prog.phases.len();
+        let seeds = prog.phases[0][1];
+        // A group an item at most; the queue's room, the continuations and a slot a group gives up at most.
+        let workers = prog.items.len().max(1);
+        let capacity = prog.phases[1..].iter().map(|p| p[1] as usize).sum::<usize>() + workers;
+        let ctl = Words::zeroed(8 + nphases)?;
+        let slots = Words::zeroed(capacity)?;
+        let format = prog.format.unwrap_or_else(run_view_format);
+        let pipe = program_pipe(format)?;
+        let args: Vec<u8> = [nphases as u32, capacity as u32, seeds, 0].iter().flat_map(|w| w.to_ne_bytes()).collect();
+        let pass = self.open()?;
+        // What its jobs reach by address, and its own buffers: resident for the launch.
+        let mut seen = std::collections::HashSet::new();
+        for (b, write) in &prog.uses {
+            if seen.insert((b.contents() as usize, b.length(), *write)) {
+                if *write {
+                    pass.use_read_write(b);
+                } else {
+                    pass.use_read(&[b]);
+                }
+            }
+        }
+        for h in &prog.hold {
+            pass.use_read_write(&h.buffer);
+        }
+        pass.use_read_write(&counts.buffer);
+        pass.run_bytes_at(
+            &pipe,
+            &[(&descs.buffer, 0), (&items.buffer, 0), (&phases.buffer, 0), (&scan_levels.buffer, 0), (&sorts.buffer, 0), (&ctl.buffer.buffer, 0), (&slots.buffer.buffer, 0), (&counts.buffer, 0)],
+            &args,
+            workers,
+        );
+        self.done.levels += prog.levels;
+        self.programs.push(Ran { ctl, last: prog.phases.len() - 1, items: prog.phases[nphases - 1][1] });
+        Ok(())
+    }
+
+    /// The programs run since the last `finish`, each whole: its last phase done and nothing pushed past its room.
+    fn programs_done(&mut self) -> bool {
+        let mut whole = true;
+        for r in self.programs.drain(..) {
+            let (overflow, done) = (r.ctl.get(6) & 1 != 0 || r.ctl.get(3) != 0, r.ctl.get(8 + r.last));
+            if overflow || done != r.items {
+                eprintln!("rerail: a join program left undone (decision 0603): its last phase {done} of {} items, overflow {overflow}", r.items);
+                whole = false;
+            }
+        }
+        whole
+    }
+}
+
+/// The values of `v` as bytes: a `repr(C)` type's, integers with no padding.
+fn as_bytes<T: Copy>(v: &[T]) -> &[u8] {
+    // SAFETY: every `T` here is `repr(C)` integers with no padding (`JobDesc`, `SortPass`, `ScanLevel`, `[u32; N]`).
+    unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), std::mem::size_of_val(v)) }
+}
+
+/// The radix sort's tile (`UKL_RADIX_TILE`): a group's rows of a pass.
+const SORT_TILE: usize = 1024;
+/// The scan's tile (`UKL_SCAN_TILE`): a group's values.
+const SCAN_TILE: usize = 1024;
+
+// What a program's item runs (`join_stages.uglykl`'s `PK_*`).
+const PK_COPY: u32 = 1;
+const PK_IX_KEY: u32 = 2;
+const PK_RADIX_HIST: u32 = 3;
+const PK_RADIX_SCATTER: u32 = 4;
+const PK_IX_PLACE: u32 = 5;
+const PK_DEDUP_CLEAR: u32 = 6;
+const PK_DEDUP_CLAIM: u32 = 7;
+const PK_MAP: u32 = 8;
+const PK_STAGE_COUNT: u32 = 9;
+const PK_SCAN_COUNT: u32 = 10;
+const PK_WITNESS_COUNT: u32 = 11;
+const PK_ROW_TEXT: u32 = 12;
+const PK_DEDUP_MARK: u32 = 13;
+const PK_SCAN_SUMS: u32 = 14;
+const PK_SCAN_TILES: u32 = 15;
+const PK_STAGE_SCATTER: u32 = 16;
+const PK_SCAN_SCATTER: u32 = 17;
+const PK_ROW_SCATTER: u32 = 18;
+const PK_DEDUP_SCATTER: u32 = 19;
+
+/// A batch's program (decision 0603): the levels flushed since its last launch, as phases of items (`Item`: a group
+/// of a job's, a scan level's or a sort pass's work), run by one launch of `join_run`. A phase's items follow the
+/// phase before's, all of them: the group that finishes a phase pushes the next.
+#[derive(Default)]
+struct Program {
+    descs: Vec<JobDesc>,
+    items: Vec<[u32; 4]>,
+    /// Each phase's first item and its items.
+    phases: Vec<[u32; 2]>,
+    scans: Vec<ScanAt>,
+    sorts: Vec<SortPass>,
+    /// Its counts' words: each level's, and one past each for its total.
+    counts: usize,
+    /// The view format its jobs read (0: several); none read a view.
+    format: Option<u32>,
+    levels: u32,
+    /// What its jobs reach by address, each with whether they write it.
+    uses: Vec<(Buffer, bool)>,
+    /// Its levels' own buffers: parameter blocks, the jobs' own, the scans' sums, the sorts'.
+    hold: Vec<Held>,
+}
+
+impl Program {
+    /// A phase of `items` (`(kind, which, group)`), after the ones before; none for no items.
+    fn phase(&mut self, items: Vec<(u32, u32, u32)>) {
+        if items.is_empty() {
+            return;
+        }
+        let p = self.phases.len() as u32;
+        self.phases.push([self.items.len() as u32, items.len() as u32]);
+        self.items.extend(items.into_iter().map(|(kind, which, group)| [kind << 24 | which, group, p, 0]));
+    }
+
+    /// An exclusive scan of the `n` values at `data` in place, with their total after them, as phases: each level's
+    /// tiles' sums up to a level of one tile, that tile scanned, then each level's tiles from their offsets
+    /// (`ukl/scan.h`'s plan, its passes `ukl/body/scan_tile.h`'s).
+    fn scan(&mut self, data: ScanData, n: usize) -> Result<(), Error> {
+        let mut levels: Vec<(ScanData, usize, Option<(u64, usize)>)> = Vec::new();
+        let (mut d, mut m) = (data, n);
+        loop {
+            let tiles = m.div_ceil(SCAN_TILE).max(1);
+            if tiles == 1 {
+                levels.push((d, m, None));
+                break;
+            }
+            let sums = Held::new(4 * (tiles + 1))?;
+            let sa = address(&sums.buffer)?;
+            self.hold.push(sums);
+            levels.push((d, m, Some((sa, tiles))));
+            (d, m) = (ScanData::At(sa), tiles);
+        }
+        let mut at = Vec::with_capacity(levels.len());
+        for &(d, m, sums) in &levels {
+            at.push(self.scans.len() as u32);
+            self.scans.push(ScanAt { data: d, sums: sums.map(|s| s.0), n: m as u32, offsets: sums.is_some() });
+        }
+        for (k, &(_, _, sums)) in levels.iter().enumerate() {
+            if let Some((_, tiles)) = sums {
+                self.phase((0..tiles).map(|g| (PK_SCAN_SUMS, at[k], g as u32)).collect());
+            }
+        }
+        for (k, &(_, _, sums)) in levels.iter().enumerate().rev() {
+            let tiles = sums.map_or(1, |s| s.1);
+            self.phase((0..tiles).map(|g| (PK_SCAN_TILES, at[k], g as u32)).collect());
+        }
+        Ok(())
+    }
+}
+
+/// Where a scan level's values lie: in the program's counts (from a word), or at an address.
+#[derive(Clone, Copy)]
+enum ScanData {
+    Counts(usize),
+    At(u64),
+}
+
+/// A program's scan level, as it is built: its values, its tiles' sums (none for one tile), whether they offset it.
+struct ScanAt {
+    data: ScanData,
+    sums: Option<u64>,
+    n: u32,
+    offsets: bool,
+}
+
+/// `join_stages.uglykl`'s `ScanLevel`, byte for byte.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ScanLevel {
+    data: u64,
+    sums: u64,
+    n: u32,
+    offsets: u32,
+    pad: u64,
+}
+
+const _: () = assert!(std::mem::size_of::<ScanLevel>() == 32);
+
+/// `join_stages.uglykl`'s `SortPass`, byte for byte.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SortPass {
+    keys: u64,
+    values: u64,
+    hist: u64,
+    out_keys: u64,
+    out_values: u64,
+    n: u32,
+    shift: u32,
+    tiles: u32,
+    pad: u32,
+    pad2: u64,
+}
+
+const _: () = assert!(std::mem::size_of::<SortPass>() == 64);
+
+/// A program launched (`Batch::run_program`): its control words, its last phase and that phase's items.
+struct Ran {
+    ctl: Words,
+    last: usize,
+    items: u32,
 }
 
 /// A buffer's address for the device's kernels (decision 0601's jobs): a device whose buffers have none
@@ -2052,25 +2291,26 @@ struct JobDesc {
 
 const _: () = assert!(std::mem::size_of::<JobDesc>() == 192);
 
-/// What a queued job launches (`Batch::flush`'s order).
+/// What a queued job runs (`Batch::flush`'s phases; `join_stages.uglykl`'s `*_one` bodies).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum JobKind {
-    /// `stage_count_all`, the scan, `stage_scatter_all`.
+    /// Its count, the level's scan, its scatter (`stage_count_one`, `stage_scatter_one`).
     Stage,
-    /// A join from one binding (a rule's first table), a thread per candidate row: `scan_count_all`, the scan,
-    /// `scan_scatter_all`.
+    /// A join from one binding (a rule's first table), a thread per candidate row (`scan_count_one`,
+    /// `scan_scatter_one`).
     Scan,
-    /// `witness_count_all`, the scan, `stage_scatter_all` of its write (a semi-join's).
+    /// Its count (`witness_count_one`), the scan, the scatter of its write (a semi-join's).
     Witness,
-    /// `row_text_all` (a SIMD group a row), the scan, `row_scatter_all`.
+    /// `row_text_one` (a SIMD group a row), the scan, `row_scatter_one`.
     Row,
-    /// `stage_map_all`.
+    /// `stage_map_one`.
     Map,
-    /// `dedup_clear_all`, `dedup_claim_all`, `dedup_mark_all`, the scan, `dedup_scatter_all`.
+    /// Its places cleared, claimed, its rows marked, the scan, scattered (`dedup_*_one`).
     Dedup,
-    /// `rows_copy_all`, first in its level.
+    /// `rows_copy_one`, first in its level.
     Copy,
-    /// `ix_bucket_all`, one sort of the level's keys, `ix_place_all`: after the copies, before the rest.
+    /// Its keys (`ix_key_one`), the level's one sort of them, its places (`ix_place_one`): after the copies, before
+    /// the rest.
     Index,
 }
 

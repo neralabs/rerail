@@ -1109,27 +1109,6 @@ pub fn encode_sort(pass: &Pass, lead: &Buffer, width: Width, bits: u32, n: usize
     Ok(SortParts { perm, starts, rkeys, nruns, key })
 }
 
-/// Encodes into `pass` a stable LSD radix sort of the `n` values of `lead` (each `width` wide, their span `bits`
-/// bits): each sorted place's row into `perm` (`4 * n` bytes), and nothing more (`encode_sort` finds the runs too).
-/// `lead` is left as it is, so a reader finds a place's value as `lead[perm[place]]`. Every allocation is made
-/// before the first dispatch, as `encode_sort`'s.
-pub fn encode_order(pass: &Pass, lead: &Buffer, width: Width, bits: u32, n: usize, perm: &Buffer) -> Result<(), String> {
-    if n == 0 {
-        return Ok(());
-    }
-    let key = width.key();
-    let [init, _, _] = sort_pipes(width)?;
-    let kb = key.bytes();
-    let (keys_a, keys_b) = (scratch(KEYS_A, kb * n)?, scratch(KEYS_B, kb * n)?);
-    // The order ends in `idx_a` after an even number of passes.
-    let other = scratch(IDX, 4 * n)?;
-    let (idx_a, idx_b): (&Buffer, &Buffer) = if bits.div_ceil(8).is_multiple_of(2) { (perm, &other) } else { (&other, perm) };
-    let space = RadixSpace::new_in(device_count(n)?, |k, words| scratch(if k == 0 { HIST } else { SCAN + k - 1 }, 4 * words))?;
-    pass.run(&init, &[lead, &keys_a, idx_a], &[n as u32], &[], groups(n));
-    radix_sort(pass, key, [&keys_a, idx_a], [&keys_b, idx_b], n, bits, &space);
-    Ok(())
-}
-
 /// A column's statistics made on the device (decision 0209 §6): its rows, distinct values, the sums of its values'
 /// counts squared and cubed, and its `k` most common values with their counts, most common first.
 #[derive(Clone, Debug, Default, PartialEq)]
