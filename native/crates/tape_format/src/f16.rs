@@ -618,8 +618,16 @@ DEFINE_KERNEL2(tests, t_reads,
 /// (`rerail_gpu::kernels::program`; this crate is below the device layer, so its callers compile it).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn device_reads_kernel(header: &str) -> (String, String) {
-    (format!("tape_reads_{header}"), DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>")))
+    // Formats 15's and 16's reads use no SIMD group; 16z's block decode is a SIMD group's (`UKL_SIMD_GROUP_FREE`,
+    // ukl/backend.h).
+    let free = if header == "tape.h" { SIMD_GROUP_FREE } else { "" };
+    (format!("tape_reads_{header}"), format!("{free}{}", DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>"))))
 }
+
+/// What a source says first when its kernels use no SIMD group (ukl/backend.h, decision 0576 §14): on OpenCL they
+/// then require no sub-group size, and a kernel that reaches a SIMD-group operation is refused at its build.
+#[cfg(any(test, feature = "test-hooks"))]
+const SIMD_GROUP_FREE: &str = "#define UKL_SIMD_GROUP_FREE 1\n";
 
 /// The tape format's kernels, by name and text (`rerail_gpu::kernels::program` compiles each): its tests' (the
 /// writer's replay, the reads' two programs), which the engine's `kernels compile` compiles ahead of them.

@@ -81,6 +81,22 @@ format 16's reads alone.
    `candidates`, `eval`, `defined`, `matches` and `aggregate` are called: `stage_scatter` 43.7 → 12.6 s,
    `witness_count` 19.1 → 11.9 s (`clc build`, 3 at a time). In the label walks (`label_group`, `label_micro`)
    `scan_marks` (3 copies, each 21 KB expanded) and `micro_test` (25) are called: `label_group` 18.4 → 8.0 s.
+13. **The interpreter's four largest opcode cases are called** (`step_child`: `CHILD`, `DESCEND`; `step_next`:
+   `NEXT`, `FOLLOWING`; `step_fork`; `step_emit`): 6.9 KB of the switch's 10.7, and with them stubbed the interpreter
+   compiled in 4.0 s against 13.5 s (the whole switch stubbed: 1.6 s). Each is written in the names the case was, and
+   works on copies of the task's state it changes, written back when it goes on: as the JIT's steps (which paste the
+   case, now a call) already work. The interpreter alone 13.5 → 10.3 s.
+14. **A kernel that uses no SIMD group requires no sub-group size.** UKL's OpenCL shim required 32 lanes of every
+   kernel (`intel_reqd_sub_group_size(32)`, as Metal's SIMD groups); Intel's compiler builds a kernel required to
+   run 32 wide 2-5x slower than at its own 16 (the interpreter 10.4 → 5.5 s, `stage_scatter` 11.1 → 2.4 s,
+   `witness_count` 12.2 → 4.1 s, `label_group` 8.0 → 3.9 s, each the same source). A source whose kernels reach no
+   SIMD-group operation and read no lane says so before its includes (`UKL_SIMD_GROUP_FREE`); on OpenCL it then
+   requires no size, and the driver chooses. What it says is checked where it matters: every SIMD-group operation,
+   and the lane, then call a function nothing defines, so a kernel that reaches one is refused at its build ("unresolved
+   external symbol"), and the library's functions no kernel reaches are not built. The sources that say it: the
+   interpreters', the sweep's and the join view kernels' over format 15 or 16 (`simd_group_free`), and the tape
+   tests' writer and format 15's and 16's reads. Over 16z they do not: its block decode is a SIMD group's. The label
+   walks (`label_group`, `label_micro`, `label_phase`) and the sorts use SIMD groups.
 
 ## Measured
 
@@ -111,5 +127,11 @@ With the row helpers called (§12), 4 at a time, the host's CPU 98% busy with ot
 not, slower than before: `rows_copy` alone 2.5 → 7.4 s, the interpreters 26 → 34 s): `stage_scatter` 59 → 24 s,
 the label passes 49 → 28 s (15) and 65 → 34 s (16); every fixed kernel in 164 s.
 
-None of this is yet a kernel compiled in seconds: the join kernels, the label passes and the interpreter's own body
-(its opcodes' switch, 27 KB) are next.
+With the opcode cases called and no sub-group size where no SIMD group is used (§13, §14), alone: `rows_copy` 1.5 s
+(17.6 s at §11's start), the interpreter over format 15's tapes 5.8 s (132 s at §9's), the resident interpreter
+12.5 s; 4 at a time (the host loaded by other work): `stage_scatter` 7.8 s, `witness_count` 14.6 s,
+`tape_writer_replay` 19.6 → 11.5 s; every fixed kernel in 110 s.
+
+Not yet every kernel in seconds: the resident interpreter (12.5 s alone, twice the interpreter over tapes), the
+sweep, the label passes' walks (which use SIMD groups), `stage_count` and `witness_count`, and the tape tests' reads
+of 16z are next.
