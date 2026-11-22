@@ -76,6 +76,11 @@ format 16's reads alone.
    reads, the view's format field a constant (`clif_view` at its offset), so the other formats' reads are dead. A
    kernel over views of several formats takes the source of every format, as before; the kernels compiled ahead are
    the run's format's (`Format::of_run`).
+12. **The join stages and the label walks call their row helpers.** In `stage_scatter` the relation's column read
+   (`rget`, through the generated `clif_rel_get`) was inlined 31 times, and `write_row` 5; `rget`, `write_row`,
+   `candidates`, `eval`, `defined`, `matches` and `aggregate` are called: `stage_scatter` 43.7 → 12.6 s,
+   `witness_count` 19.1 → 11.9 s (`clc build`, 3 at a time). In the label walks (`label_group`, `label_micro`)
+   `scan_marks` (3 copies, each 21 KB expanded) and `micro_test` (25) are called: `label_group` 18.4 → 8.0 s.
 
 ## Measured
 
@@ -101,6 +106,10 @@ interpreter 28 s and 29 s, the sweep 29 s and 38 s, the label passes 50 s and 69
 With the join kernels per format (§11), 4 at a time: `rows_copy` alone 17.6 → 2.5 s; `ix_bucket` 7 s,
 `stage_count` 24 s, `stage_scatter` 59 s, `scan_count` 12 s, `witness_count` 28 s, `rows_copy` 8 s; every fixed
 kernel in 155 s.
+
+With the row helpers called (§12), 4 at a time, the host's CPU 98% busy with other work (so every kernel, changed or
+not, slower than before: `rows_copy` alone 2.5 → 7.4 s, the interpreters 26 → 34 s): `stage_scatter` 59 → 24 s,
+the label passes 49 → 28 s (15) and 65 → 34 s (16); every fixed kernel in 164 s.
 
 None of this is yet a kernel compiled in seconds: the join kernels, the label passes and the interpreter's own body
 (its opcodes' switch, 27 KB) are next.
