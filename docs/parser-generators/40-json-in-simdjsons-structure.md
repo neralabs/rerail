@@ -709,6 +709,27 @@ Tier 1 against `index`:
 | A control byte in a string | ORed into the error word, tested after the loop | the same (`errors \|= v_t2`) |
 | UTF-8 | `utf8_checker` | `utf8_checker`, derived from the grammar (0591); a block's end tested by three byte compares, not a vector compare |
 
+### The six differences after the twelve fixes: done (decision 0602, 2026-11-22)
+
+The same reading, after 0602.
+
+Tier 2 against `walk`:
+
+| | `walk` | `tier2.rs` |
+|---|---|---|
+| A string's read | `backslash_quote`, 32 bytes a step | the same: `S::marks32`, `x += 32`, the backend chosen once (`run_best`) |
+| A primitive | `primitive`, called from each place | `token` and `number_end`, called from each place's arm; the byte matched once |
+| `\u`'s digits and surrogates | the four digits a number; the surrogates its ranges; a high one's low one checked and marked (`low_checked`) | the four digits a number (`cp`, `HEX_VALUE`); `high` and `low` ranges of it; a high one's pair from its next escape's two digits, a number too; a low one's high one one position (`after2`) |
+| A node's write | the columns' stores, through pointers in `Walk`'s locals | the cells' stores through `Cursor`, `run`'s local; the state's op only at a block's first node, a close of a block before, or a bound that fails |
+
+Tier 1 against `index`:
+
+| | `index` | `tier1.rs` |
+|---|---|---|
+| The masks made of the strings | `scalar`, `follows`, `in_string`, `string_tail` | the same names and expressions; `body` too, for the escapes |
+| The structurals | `(op \| scalar & ~follows) & ~string_tail` | `((q \| op) \| nonquote_scalar & ~follows) & ~string_tail`: the quote outside `~follows`, as the grammar refuses `1"a"` in tier 2's tree, not in a number's end |
+| UTF-8's end | `is_incomplete`: one compare against `max_value` | the same (`gt_bits`, `MAX_VALUE`) |
+
 ## Step 58, done: the benchmark on the generated Rust, `rust_stream`'s tests gone (decision 0555)
 
 `simdjson_form_against_simdjson` now times `rerail-json-aot` (tier 1 and tier 2 from the grammar) against simdjson.
