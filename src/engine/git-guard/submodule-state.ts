@@ -683,7 +683,7 @@ function namesNoDriver(path: string): boolean {
 function configText(path: string): string | undefined {
   const file = openedFile(path);
   if (typeof file !== "number") return file === "absent" ? "" : undefined;
-  return readClosing(file, opened => readWithin(opened, MAX_READ_CONFIG_BYTES)?.toString("latin1"));
+  return readClosing(file, opened => readWithin(opened, MAX_READ_CONFIG_BYTES, fstatSync(opened).size)?.toString("latin1"));
 }
 
 /**
@@ -730,13 +730,13 @@ function isFile(file: number): boolean {
 }
 
 /**
- * The bytes of the open file `file` to its end; undefined past `most`. The buffer is sized from the file's own size,
- * at most `most` and one byte, and grows to that bound where the file holds more by the read, so one that grew after
- * its stat is still read to its end. A read that gives fewer bytes than it asked for met the end of the file, as a
- * read of a regular file does, so a file of the size its stat gave takes one read.
+ * The bytes of the open file `file` to its end; undefined past `most`. The buffer is sized from `size`, the file's size
+ * by its stat, at most `most` and one byte, and grows to that bound where the file holds more by the read, so one that
+ * grew or was put in its place after its stat is still read to its end. A read that gives fewer bytes than it asked
+ * for met the end of the file, as a read of a regular file does, so a file of the size its stat gave takes one read.
  */
-function readWithin(file: number, most: number): Buffer | undefined {
-  let bytes = Buffer.alloc(Math.min(fstatSync(file).size, most) + 1);
+function readWithin(file: number, most: number, size: number): Buffer | undefined {
+  let bytes = Buffer.alloc(Math.min(size, most) + 1);
   let read = 0;
   let wanted: number;
   let got: number;
@@ -813,7 +813,7 @@ function linkOf(path: string): string | undefined {
  */
 function namedGitFolder(folder: string, dotGit: string, stats: Stats): string | GitFailure | undefined {
   if (!stats.isFile()) return undefined;
-  const text = gitfileText(dotGit);
+  const text = gitfileText(dotGit, stats.size);
   if (typeof text !== "string") return text;
   if (!text.startsWith("gitdir: ")) return fatal(`invalid gitfile format: ${dotGit}`);
   const named = text.slice("gitdir: ".length).replace(/[\r\n]+$/u, "");
@@ -830,16 +830,16 @@ function statOf(path: string): Stats | undefined {
 }
 
 /**
- * The text of the `.git` file at `path`, read from the file opened ({@link openedFile}) to at most
- * {@link MAX_GITFILE_BYTES}, so a file put in its place after its stat is not read past that; how Git's diff fails when
- * it holds more. Undefined when it went, is no regular file by then, or cannot be opened or read. Git's diff opens a
+ * The text of the `.git` file at `path`, of `size` bytes by its stat, read from the file opened ({@link openedFile}) to
+ * at most {@link MAX_GITFILE_BYTES}, so a file put in its place after its stat is not read past that; how Git's diff
+ * fails when it holds more. Undefined when it went, is no regular file by then, or cannot be opened or read. Git's diff opens a
  * submodule's `.git` to find its commit before it asks the submodule, and a `.git` it cannot open or read fails that
  * diff, Rerail's included, with Git's message; so Rerail meets one only where it became so after Git's diff read it.
  */
-function gitfileText(path: string): string | GitFailure | undefined {
+function gitfileText(path: string, size: number): string | GitFailure | undefined {
   const file = openedFile(path);
   if (typeof file !== "number") return undefined;
-  return readClosing(file, opened => readWithin(opened, MAX_GITFILE_BYTES)?.toString("utf8") ?? fatal(`too large to be a .git file: '${path}'`));
+  return readClosing(file, opened => readWithin(opened, MAX_GITFILE_BYTES, size)?.toString("utf8") ?? fatal(`too large to be a .git file: '${path}'`));
 }
 
 /** The text of the file at `path`, opened without waiting ({@link openedFile}); undefined when it is no file that can be read. */
