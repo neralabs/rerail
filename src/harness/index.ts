@@ -6,6 +6,7 @@
  */
 export { bindSteerReceipt, type HookInput, type HookOptions, type HookOutput, hookRerailStarted, serveHook } from "./hook-host.js";
 export { withPendingFileLock } from "./hook-adapter.js";
+export { hookFailureLines } from "./hook-failures.js";
 export { NativeSessionClient } from "./native-session-client.js";
 export { MANAGED_SKILL_MARKER } from "./rerail-command-files.js";
 export { registerHostCommands, type HostCommandContext, type HostCommandHost } from "./host-commands.js";

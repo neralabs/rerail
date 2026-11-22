@@ -516,21 +516,26 @@ export class SqliteSessionStore {
   }
 
   /**
-   * Marks the session's history incomplete over `lost`, oldest first: events it recorded whose rows a power cut or an
-   * operating system crash took (`LostEvents`). One record for the stretch, at the time of its last event, so what reads
-   * when the newest event was recorded (`lastObservedEventAt`, `rerail status`) reads that time. Its id names the
-   * stretch's last event: the next open finds the same stretch until a later event's row is written, and adds no copy.
-   * The write counts only the events of `lost` whose rows the history still lacks when it is made. It is made behind
-   * every record write this process asked for before it, so an event whose row waited for another process's lock past
-   * the bound of `lastRecordedEvent`'s wait is on disk by then and is not counted; when every row arrived, it writes
-   * nothing.
+   * Marks the session's history incomplete over `lost`, the ledger's events after the last recorded one, oldest first:
+   * events it recorded whose rows a power cut or an operating system crash took (`LostEvents`). One record for the
+   * stretch. Its id names the stretch's last event and it takes that event's time, whether that event's row is there
+   * or not: the record commits after every row of the stretch that was made, so the next open's walk
+   * (`lastRecordedEvent`) starts after the whole stretch, and what reads when the newest event was recorded
+   * (`lastObservedEventAt`, `rerail status`) reads the newest event's time.
+   * The record counts only the events whose rows the history lacks when its write is made, after the last event an
+   * earlier record of the session named (`uncountedLostEvents`). The write is made behind every record write this
+   * process asked for before it: an event whose row waited for another process's lock past the bound of
+   * `lastRecordedEvent`'s wait is on disk by then and is not counted, and an event whose row never came is counted by
+   * one record, however often the session opened while rows waited. When it would count none it writes nothing, and,
+   * when no write waits, takes no write lock (`writeUnless`).
    */
   recordLostEvents(session: AdapterSession, lost: readonly LostEvent[]): void {
     const whole = lostEventsRow(session.sessionId, lost);
     if (whole === undefined) return;
+    const uncounted = (database: RerailDatabase): LostEvent[] => uncountedLostEvents(database, session.sessionId, lost);
     const restore = this.#sessionRestore(session);
-    this.#records.write(database => {
-      const row = lostEventsRow(session.sessionId, lost.filter(event => !holdsEvent(database, session.sessionId, event.eventId)));
+    this.#records.writeUnless(() => uncounted(this.#database).length === 0, database => {
+      const row = lostEventsRow(session.sessionId, lost, uncounted(database));
       if (row !== undefined) this.#eventWrite([row], restore)(database);
     }, rowBytes(whole));
   }
@@ -732,19 +737,45 @@ function eventRow(event: SessionEvent, happenedAt?: number): EventRow {
 }
 
 /**
- * The record of lost events (`recordLostEvents`) over `lost`, oldest first, at the time of its last event, its id naming
- * that event; undefined when `lost` is empty.
+ * The record of lost events (`recordLostEvents`) over the stretch `stretch`, oldest first, counting `counted`, the
+ * events of it whose rows are gone: its id names the stretch's last event and it takes that event's time. Undefined
+ * when it counts none.
  */
-function lostEventsRow(sessionId: string, lost: readonly LostEvent[]): EventRow | undefined {
-  const [first, last] = [lost[0], lost.at(-1)];
-  if (first === undefined || last === undefined) return undefined;
-  const kinds: Record<string, number> = {};
-  for (const event of lost) kinds[event.kind] = (kinds[event.kind] ?? 0) + 1;
+function lostEventsRow(sessionId: string, stretch: readonly LostEvent[], counted: readonly LostEvent[] = stretch): EventRow | undefined {
+  const [end, first, last] = [stretch.at(-1), counted[0], counted.at(-1)];
+  if (end === undefined || first === undefined || last === undefined) return undefined;
   const payload: LostEvents = {
-    count: lost.length, kinds, firstEventId: first.eventId, lastEventId: last.eventId,
+    count: counted.length, kinds: kindCounts(counted), firstEventId: first.eventId, lastEventId: last.eventId,
     firstObservedAt: first.observedAt, lastObservedAt: last.observedAt,
   };
-  return eventRow({ sessionId, eventId: `${LOST_EVENTS_ID}${last.eventId}`, kind: LOST_EVENTS_KIND, observedAt: last.observedAt, payload });
+  return eventRow({ sessionId, eventId: `${LOST_EVENTS_ID}${end.eventId}`, kind: LOST_EVENTS_KIND, observedAt: end.observedAt, payload });
+}
+
+/** How many of `lost` there are of each kind. */
+function kindCounts(lost: readonly LostEvent[]): Record<string, number> {
+  const kinds: Record<string, number> = {};
+  for (const event of lost) kinds[event.kind] = (kinds[event.kind] ?? 0) + 1;
+  return kinds;
+}
+
+/**
+ * The events of `lost`, a stretch of the session's ledger oldest first, that no record of lost events has counted and
+ * whose rows the history lacks. A record names the last event of the stretch it looked over, and an open's stretch
+ * ends at the ledger's end, so the session's newest record names the furthest: its write looked at every event up to
+ * that one, and only those after it are left.
+ */
+function uncountedLostEvents(database: RerailDatabase, sessionId: string, lost: readonly LostEvent[]): LostEvent[] {
+  const countedThrough = newestLostEventsEnd(database, sessionId);
+  const from = lost.findIndex(event => event.eventId === countedThrough) + 1;
+  return lost.slice(from).filter(event => !holdsEvent(database, sessionId, event.eventId));
+}
+
+/** The event the session's newest record of lost events names (one read on `events_session_kind_sequence`). */
+function newestLostEventsEnd(database: RerailDatabase, sessionId: string): string | undefined {
+  const row = database.select({ eventId: events.eventId }).from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, LOST_EVENTS_KIND)))
+    .orderBy(desc(events.sequence)).limit(1).get();
+  return row?.eventId.slice(LOST_EVENTS_ID.length);
 }
 
 /** Whether the session's history holds the row of `eventId` (one lookup on `events_session_event`). */
