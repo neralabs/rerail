@@ -17,7 +17,7 @@ pub struct Lookup {
 
 impl ScopeTable {
     /// `ScopeTable::binding` under `lookup`: `None` where `only` does not hold.
-    pub(crate) fn binding_by(
+    pub fn binding_by(
         &self,
         reference: &Reference,
         name: &str,

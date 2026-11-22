@@ -19,10 +19,9 @@ use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::arguments_sql::{SQL_CALL_KINDS, SqlArguments as _};
-use crate::code_rule_dsl::matcher::{
-    Arguments, Passed, ScopeName, SemanticText, Unresolved, file_index,
-};
-use crate::code_rule_dsl::model::ViolationSpec;
+use crate::code_rule_dsl::scope::ScopeName;
+use crate::code_rule_dsl::language::adapter::value::SemanticText;
+use crate::code_rule_dsl::matcher::{Arguments, Passed, Unresolved, file_index};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::usage::lang_sql::SqlUsage as _;
@@ -87,7 +86,7 @@ impl Adapter for Sql {
     /// SQLFluff reads a `-- noqa` directive on the violation's line, and `noqa: disable=` /
     /// `enable=` ranges before it.
     fn suppresses<D: Doc>(
-        _: &ViolationSpec,
+        _: &str,
         suppress: &Suppress,
         node: &Node<'_, D>,
         source: &str,

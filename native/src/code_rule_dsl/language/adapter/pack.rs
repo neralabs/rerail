@@ -39,9 +39,9 @@ pub trait LanguagePack: Send + Sync {
     fn name<'e>(&self, text: std::borrow::Cow<'e, str>) -> std::borrow::Cow<'e, str>;
     fn parse_input<'e>(&self, source: &'e str) -> std::borrow::Cow<'e, str>;
     fn module_path(&self, file: &std::path::Path) -> Option<serde_json::Value>;
-    fn suppresses_tape(&self, violation: &crate::code_rule_dsl::model::ViolationSpec, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool;
-    fn suppresses_sub(&self, violation: &crate::code_rule_dsl::model::ViolationSpec, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool;
-    fn suppresses_str(&self, violation: &crate::code_rule_dsl::model::ViolationSpec, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool;
+    fn suppresses_tape(&self, code: &str, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool;
+    fn suppresses_sub(&self, code: &str, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool;
+    fn suppresses_str(&self, code: &str, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool;
     fn source_type(&self, _path: &str, _package: Option<crate::code_rule_dsl::language::PackageType>) -> Option<crate::code_rule_dsl::language::SourceType>;
     fn path_module(&self, _path: &str) -> Option<String>;
     fn cooked_template(&self, _chunk: &str) -> Option<String>;
@@ -68,7 +68,7 @@ pub trait LanguagePack: Send + Sync {
     fn scope_this_kinds(&self) -> &'static [ &'static str ];
     fn scope_private_name_kinds(&self) -> &'static [ &'static str ];
     fn scope_forms(&self) -> &'static [ (&'static str, crate::code_rule_dsl::scope::Form) ];
-    fn scope_scopes(&self) -> &'static [ (&'static str, crate::code_rule_dsl::matcher::ScopeName) ];
+    fn scope_scopes(&self) -> &'static [ (&'static str, crate::code_rule_dsl::scope::ScopeName) ];
     fn scope_refused_filters(&self) -> &'static [ &'static str ];
     fn scope_import_paths(&self) -> bool;
     fn scope_visit_tape(&self, builder: &mut crate::code_rule_dsl::scope::Builder<'_>, root: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, reading: crate::code_rule_dsl::scope::Reading) -> Result<(), crate::code_rule_dsl::scope::BuildError>;
@@ -239,14 +239,14 @@ impl<A: Adapter + SyntaxRules> LanguagePack for Pack<A> {
     fn module_path(&self, file: &std::path::Path) -> Option<serde_json::Value> {
         <A as Adapter>::module_path(file)
     }
-    fn suppresses_tape(&self, violation: &crate::code_rule_dsl::model::ViolationSpec, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool {
-        <A as Adapter>::suppresses::<crate::code_rule_dsl::tape::TapeDoc>(violation, suppress, node, source, lines, anchored, witness)
+    fn suppresses_tape(&self, code: &str, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool {
+        <A as Adapter>::suppresses::<crate::code_rule_dsl::tape::TapeDoc>(code, suppress, node, source, lines, anchored, witness)
     }
-    fn suppresses_sub(&self, violation: &crate::code_rule_dsl::model::ViolationSpec, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool {
-        <A as Adapter>::suppresses::<crate::code_rule_dsl::literal::SubDoc>(violation, suppress, node, source, lines, anchored, witness)
+    fn suppresses_sub(&self, code: &str, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool {
+        <A as Adapter>::suppresses::<crate::code_rule_dsl::literal::SubDoc>(code, suppress, node, source, lines, anchored, witness)
     }
-    fn suppresses_str(&self, violation: &crate::code_rule_dsl::model::ViolationSpec, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool {
-        <A as Adapter>::suppresses::<ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>(violation, suppress, node, source, lines, anchored, witness)
+    fn suppresses_str(&self, code: &str, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool {
+        <A as Adapter>::suppresses::<ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>(code, suppress, node, source, lines, anchored, witness)
     }
     fn source_type(&self, _path: &str, _package: Option<crate::code_rule_dsl::language::PackageType>) -> Option<crate::code_rule_dsl::language::SourceType> {
         <A as Adapter>::source_type(_path, _package)
@@ -322,7 +322,7 @@ impl<A: Adapter + SyntaxRules> LanguagePack for Pack<A> {
     fn scope_forms(&self) -> &'static [ (&'static str, crate::code_rule_dsl::scope::Form) ] {
         <<A as Adapter>::Scope as ScopeRules>::FORMS
     }
-    fn scope_scopes(&self) -> &'static [ (&'static str, crate::code_rule_dsl::matcher::ScopeName) ] {
+    fn scope_scopes(&self) -> &'static [ (&'static str, crate::code_rule_dsl::scope::ScopeName) ] {
         <<A as Adapter>::Scope as ScopeRules>::SCOPES
     }
     fn scope_refused_filters(&self) -> &'static [ &'static str ] {
@@ -651,21 +651,21 @@ unsafe fn same<A, B>(a: A) -> B {
 }
 
 /// `Adapter::suppresses` of `pack`, for `D`.
-pub(crate) fn suppresses<D: Doc>(pack: &dyn LanguagePack, violation: &crate::code_rule_dsl::model::ViolationSpec, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, D>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool {
+pub fn suppresses<D: Doc>(pack: &dyn LanguagePack, code: &str, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, D>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool {
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
-        return unsafe { pack.suppresses_tape(violation, suppress, same(node), source, lines, anchored, witness) };
+        return unsafe { pack.suppresses_tape(code, suppress, same(node), source, lines, anchored, witness) };
     }
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::literal::SubDoc>() {
-        return unsafe { pack.suppresses_sub(violation, suppress, same(node), source, lines, anchored, witness) };
+        return unsafe { pack.suppresses_sub(code, suppress, same(node), source, lines, anchored, witness) };
     }
     if TypeId::of::<D>() == TypeId::of::<ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>() {
-        return unsafe { pack.suppresses_str(violation, suppress, same(node), source, lines, anchored, witness) };
+        return unsafe { pack.suppresses_str(code, suppress, same(node), source, lines, anchored, witness) };
     }
     unreachable!("suppresses: a document type no language pack takes: {}", std::any::type_name::<D>())
 }
 
 /// `SyntaxRules::parse_literal` of `pack`, for `D`.
-pub(crate) fn syntax_parse_literal<D: Doc>(pack: &dyn LanguagePack, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, D>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed> {
+pub fn syntax_parse_literal<D: Doc>(pack: &dyn LanguagePack, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, D>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed> {
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
         return unsafe { pack.syntax_parse_literal_tape(grammar, same(node), interpolation, spend) };
     }
@@ -777,7 +777,7 @@ pub(crate) fn scope_resolves<D: Doc>(pack: &dyn LanguagePack, resolves: &crate::
 }
 
 /// `ValueRules::to_str` of `pack`, for `D`.
-pub(crate) fn value_to_str<D: Doc>(pack: &dyn LanguagePack, value: &crate::code_rule_dsl::value::Value, node: &ast_grep_core::Node<'_, D>) -> Option<String> {
+pub fn value_to_str<D: Doc>(pack: &dyn LanguagePack, value: &crate::code_rule_dsl::value::Value, node: &ast_grep_core::Node<'_, D>) -> Option<String> {
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
         return unsafe { pack.value_to_str_tape(value, same(node)) };
     }
@@ -791,7 +791,7 @@ pub(crate) fn value_to_str<D: Doc>(pack: &dyn LanguagePack, value: &crate::code_
 }
 
 /// `ValueRules::decode` of `pack`, for `D`.
-pub(crate) fn value_decode<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'_, D>, context: &mut crate::code_rule_dsl::value::Context<'_>) -> crate::code_rule_dsl::value::Value {
+pub fn value_decode<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'_, D>, context: &mut crate::code_rule_dsl::value::Context<'_>) -> crate::code_rule_dsl::value::Value {
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
         return unsafe { pack.value_decode_tape(same(node), context) };
     }
@@ -819,7 +819,7 @@ pub fn value_structure<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::No
 }
 
 /// `ValueRules::spelled` of `pack`, for `D`.
-pub(crate) fn value_spelled<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'_, D>) -> bool {
+pub fn value_spelled<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'_, D>) -> bool {
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
         return unsafe { pack.value_spelled_tape(same(node)) };
     }
@@ -833,7 +833,7 @@ pub(crate) fn value_spelled<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_cor
 }
 
 /// `ValueRules::node_name` of `pack`, for `D`.
-pub(crate) fn value_node_name<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'_, D>) -> Option<Vec<u16>> {
+pub fn value_node_name<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'_, D>) -> Option<Vec<u16>> {
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
         return unsafe { pack.value_node_name_tape(same(node)) };
     }
@@ -847,7 +847,7 @@ pub(crate) fn value_node_name<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_c
 }
 
 /// `ValueRules::key_name` of `pack`, for `D`.
-pub(crate) fn value_key_name<'r, D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'r, D>, value: &mut dyn FnMut (&ast_grep_core::Node<'r, D>) -> crate::code_rule_dsl::value::Value) -> Option<Vec<u16>> {
+pub fn value_key_name<'r, D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'r, D>, value: &mut dyn FnMut (&ast_grep_core::Node<'r, D>) -> crate::code_rule_dsl::value::Value) -> Option<Vec<u16>> {
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
         return unsafe { pack.value_key_name_tape(same(node), same(value)) };
     }
@@ -861,7 +861,7 @@ pub(crate) fn value_key_name<'r, D: Doc>(pack: &dyn LanguagePack, node: &ast_gre
 }
 
 /// `ValueRules::member_name` of `pack`, for `D`.
-pub(crate) fn value_member_name<'r, D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'r, D>, value: &mut dyn FnMut (&ast_grep_core::Node<'r, D>) -> crate::code_rule_dsl::value::Value) -> Option<Vec<u16>> {
+pub fn value_member_name<'r, D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'r, D>, value: &mut dyn FnMut (&ast_grep_core::Node<'r, D>) -> crate::code_rule_dsl::value::Value) -> Option<Vec<u16>> {
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
         return unsafe { pack.value_member_name_tape(same(node), same(value)) };
     }
@@ -875,7 +875,7 @@ pub(crate) fn value_member_name<'r, D: Doc>(pack: &dyn LanguagePack, node: &ast_
 }
 
 /// `ValueRules::same_reference` of `pack`, for `D`.
-pub(crate) fn value_same_reference<D: Doc>(pack: &dyn LanguagePack, left: &ast_grep_core::Node<'_, D>, right: &ast_grep_core::Node<'_, D>, static_keys: bool) -> Option<bool> {
+pub fn value_same_reference<D: Doc>(pack: &dyn LanguagePack, left: &ast_grep_core::Node<'_, D>, right: &ast_grep_core::Node<'_, D>, static_keys: bool) -> Option<bool> {
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
         return unsafe { pack.value_same_reference_tape(same(left), same(right), static_keys) };
     }

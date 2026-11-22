@@ -5,13 +5,15 @@
 //
 // Compiled for one lane word: `BW` its bits (16, 32 or 64) and `BM` its type, defined in front of the source; and
 // `BLOCK_POLL_RMW` (0 or 1), how a poll reads (`poll`). A group is one SIMD group of 32 lanes, each owning `BW / 8`
-// bytes of a file: its ballots are 32-bit words, and the host runs block programs only where the SIMD width is 32.
+// bytes of a file: its ballots are 32-bit words (`UKL_SIMD_WIDTH_NEEDED`), and the host runs block programs only where
+// the device offers SIMD groups of 32 (`block_program::ready`; an Arc's sub-groups of 32 where its own width is 16).
 //
 // Carries (`docs/parser-generators/06-block-parallel.md` §2, §5): each carried operation has a lane summary, an
 // associative combine and an apply. A group combines its lanes' summaries with SIMD-group operations; between
 // groups the combined summaries pass through look-back states. Kinds: 0 parity (`toggle`), 1 borrow (`escaped`,
 // `fill`: bit 0 generate, bit 1 propagate). `prev` needs no scan: its carry is a halo, the 64 bits before a lane,
 // from the lanes before it in the group and the group before's last 64 bits.
+#define UKL_SIMD_WIDTH_NEEDED 32u
 #include <ukl/backend.h>
 #include <ukl/bits.h>
 #include <ukl/simd.h>

@@ -111,17 +111,17 @@ impl<'t> InFile<'t> {
     }
 
     /// The file's whole text.
-    pub(crate) fn source(&self) -> &'t str {
+    pub fn source(&self) -> &'t str {
         self.source
     }
 
     /// The file's dialect.
-    pub(crate) fn dialect(&self) -> GrammarDialect {
+    pub fn dialect(&self) -> GrammarDialect {
         self.dialect
     }
 
     /// The file's lines.
-    pub(crate) fn lines(&self) -> &LineTable {
+    pub fn lines(&self) -> &LineTable {
         match &self.lines {
             Lines::Taped(lines) => lines,
             Lines::Read(lines) => lines,
@@ -141,7 +141,7 @@ impl<'t> InFile<'t> {
     }
 
     /// The file ranges a range of the document stands for.
-    pub(crate) fn places(&self, range: Range<usize>) -> FileRanges {
+    pub fn places(&self, range: Range<usize>) -> FileRanges {
         self.origin
             .of_range(range)
             .expect("a document's range lies in its file")
@@ -186,7 +186,7 @@ impl<'t> InFile<'t> {
     }
 
     /// The diagnostic span of file bytes `range`.
-    pub(crate) fn span(&self, range: Range<usize>) -> Span {
+    pub fn span(&self, range: Range<usize>) -> Span {
         self.lines().span(range.start, range.end)
     }
 }

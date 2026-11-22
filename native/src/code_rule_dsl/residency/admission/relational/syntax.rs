@@ -17,33 +17,7 @@ use std::{
     },
 };
 
-#[derive(Clone, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Owner {
-    pub kind: String,
-    #[serde(default)]
-    pub outermost: bool,
-}
-#[derive(Clone, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Spec {
-    pub name: String,
-    pub gate: String,
-    #[serde(default)]
-    pub fields: Vec<String>,
-    #[serde(default)]
-    pub columns: Vec<String>,
-    #[serde(skip)]
-    pub field_codes: BTreeMap<String, u16>,
-    #[serde(default, rename = "excludeKinds")]
-    pub exclude_kinds: Vec<String>,
-    #[serde(default, rename = "emptyTextKinds")]
-    pub empty_text_kinds: Vec<String>,
-    pub edges: Option<String>,
-    pub ownership: Option<String>,
-    #[serde(default)]
-    pub owners: BTreeMap<String, Owner>,
-}
+pub use super::base::syntax::{Owner, Spec};
 
 pub trait Source: Send + Sync {
     fn columns(&self) -> Vec<String>;
@@ -213,7 +187,7 @@ impl Facts {
         cache.insert(key, Arc::clone(&selected));
         Ok(selected)
     }
-    pub(in crate::code_rule_dsl) fn estimated_bytes(&self) -> usize {
+    pub fn estimated_bytes(&self) -> usize {
         self.doc.transducer_len() * 64 + self.len() * 320
     }
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
@@ -326,9 +300,9 @@ struct PoolState {
     bytes: usize,
 }
 thread_local! { static POOL: RefCell<PoolState> = RefCell::new(PoolState::default()); }
-pub(in crate::code_rule_dsl) struct Pool(bool);
+pub struct Pool(bool);
 impl Pool {
-    pub(in crate::code_rule_dsl) fn install() -> Self {
+    pub fn install() -> Self {
         Self(POOL.with(|p| {
             let mut p = p.borrow_mut();
             let outer = !p.active;
@@ -342,7 +316,7 @@ impl Pool {
             eval::file_language(file).ok_or_else(|| invalid("syntax source has no grammar"))?,
         ))
     }
-    pub(in crate::code_rule_dsl) fn seed(file: &FileInput, facts: Arc<Facts>) {
+    pub fn seed(file: &FileInput, facts: Arc<Facts>) {
         let Ok(key) = Self::key(file) else {
             return;
         };
@@ -375,7 +349,7 @@ impl Pool {
             );
         });
     }
-    pub(in crate::code_rule_dsl) fn get(file: &FileInput) -> Result<Arc<Facts>> {
+    pub fn get(file: &FileInput) -> Result<Arc<Facts>> {
         let key = Self::key(file)?;
         if let Some(facts) = POOL.with(|p| {
             p.borrow()

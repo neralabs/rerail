@@ -27,7 +27,7 @@
 //! `language-not-supported`; a `refused` capability is refused as invalid, never answered by
 //! another family's code.
 
-// cratify: `adapter` is rerail-classic's (it mounts it)
+// cratify: `adapter` is rerail-adapters' (it mounts it)
 
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::semver::Range;

@@ -5382,7 +5382,7 @@ fn a_host_files_own_nodes_are_not_shown() {
 
 /// Q324 (decision 0431 §4, "a program is named by its file and place"): where a program declares `docof` over nodes
 /// as T's programs do, it is `node`'s projection, and `node`'s document column is a program's file, so `docof` of a
-/// script's node is the HTML file that holds it, as core.rr's `docof` is.
+/// script's node is the HTML file that holds it, as core.rerail's `docof` is.
 #[test]
 fn a_t_programs_docof_of_a_programs_node_is_its_file() {
     let html = "<p>x</p>\n<script>f(1)</script>\n";

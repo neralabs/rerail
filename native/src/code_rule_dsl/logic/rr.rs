@@ -164,15 +164,8 @@ pub fn core_shape() -> &'static std::collections::BTreeSet<String> {
     SHAPE.get_or_init(|| core_names().iter().filter(|r| !lower::made_on_request(r)).cloned().collect())
 }
 
-/// The library `#include` reads from.
-pub fn library() -> PathBuf {
-    // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
-    std::env::var_os("RERAIL_RR_LIB")
-        .map(PathBuf::from)
-        // From the checkout's root, with no `..` in the path: a path the engine reads is named one way, so the file
-        // observer keeps one answer and one journal root for each directory (`native/../docs` and `docs` were two).
-        .unwrap_or_else(rerail_store::source_tree::rule_library)
-}
+/// The library `#include` reads from (`rerail-rr`'s: the JSON rules' translator reads it too, under the language).
+pub use rerail_rr::code_rule_dsl::logic::rr::library::library;
 
 /// The directory whose include resolution is part of a program read. Preserve a missing root as a distinct input.
 pub fn library_root() -> PathBuf {
@@ -782,7 +775,7 @@ fn images_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> 
     crate::content_store::ContentStore::open_images(&path).ok().map(std::sync::Arc::new)
 }
 
-pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+pub fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
     if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { images_store() } else { None }
 }
 
@@ -1343,7 +1336,7 @@ fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>
 
 /// The program's module graph's digest (`phase0::Graph::digest`): what its text is a function of besides itself.
 /// `None` for a text that includes nothing.
-pub(in crate::code_rule_dsl) fn graph_digest(src: &str) -> Result<Option<[u8; 32]>, Error> {
+pub fn graph_digest(src: &str) -> Result<Option<[u8; 32]>, Error> {
     match text_seed(src)? {
         Some(seed) => Ok(Some(super::plan::corpus::phase0::graph(&seed)?.digest())),
         None => Ok(None),
@@ -2239,7 +2232,13 @@ mod key_tests {
     fn an_image_lowered_under_a_lowering_switch_is_keyed_apart() {
         let scope = [crate::content_store::HashKey::sha256(b"a module")];
         let files = [[7u8; 32]];
-        let default = (program_key("x(1).", &scope), module_key(files.iter(), scope.iter()), linked_key(&scope));
+        // The unset switches' keys, read as a run reads the switches (`reading`): a test of this binary that sets one
+        // (aggregate_demand's `RERAIL_ASOF`) waits until they are read.
+        let unset = || {
+            let _reading = crate::code_rule_dsl::logic::plan::corpus::switches::reading();
+            (program_key("x(1).", &scope), module_key(files.iter(), scope.iter()), linked_key(&scope))
+        };
+        let default = unset();
         // The keys as they were before switches were keyed: an unset switch adds nothing.
         let mut bytes = format!("rerail linked library {}\0{}\0", crate::code_rule_dsl::logic::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
         bytes.extend_from_slice(&scope[0].sha256_bytes().unwrap_or_default());
@@ -2250,6 +2249,6 @@ mod key_tests {
             assert_ne!(module_key(files.iter(), scope.iter()), default.1, "{switch}");
             assert_ne!(linked_key(&scope), default.2, "{switch}");
         }
-        assert_eq!((program_key("x(1).", &scope), module_key(files.iter(), scope.iter()), linked_key(&scope)), default);
+        assert_eq!(unset(), default);
     }
 }

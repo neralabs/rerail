@@ -214,20 +214,20 @@ impl Row {
             .get()
             .expect("projection scope publishes before consumption")
     }
-    pub(crate) fn published(&self) -> bool {
+    pub fn published(&self) -> bool {
         self.data.get().is_some()
     }
 
-    pub(crate) fn identity(&self) -> usize {
+    pub fn identity(&self) -> usize {
         Arc::as_ptr(&self.data) as usize
     }
-    pub(crate) fn schema_identity(&self) -> usize {
+    pub fn schema_identity(&self) -> usize {
         self.data().names.as_ptr() as usize
     }
-    pub(crate) fn index(&self, name: &str) -> Option<usize> {
+    pub fn index(&self, name: &str) -> Option<usize> {
         self.data().names.iter().position(|n| n == name)
     }
-    pub(crate) fn sql(&self, column: usize) -> ValueRef<'_> {
+    pub fn sql(&self, column: usize) -> ValueRef<'_> {
         match &self.data().columns[column][self.row] {
             Cell::Null => ValueRef::Null,
             Cell::Integer(v) => ValueRef::Integer(*v),
@@ -304,7 +304,7 @@ impl Row {
         builder.seal();
         row
     }
-    pub(crate) fn memory(&self) -> (usize, usize, usize, usize) {
+    pub fn memory(&self) -> (usize, usize, usize, usize) {
         let d = self.data();
         let bytes = d.columns.capacity() * std::mem::size_of::<Vec<Cell>>()
             + d.columns

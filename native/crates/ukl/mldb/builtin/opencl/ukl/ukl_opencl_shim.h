@@ -18,9 +18,9 @@
       reaches a SIMD-group operation takes it (`__UKL_PARAMS`) and passes it on (`__UKL_ARGS`). OpenCL 1.2's only
       wait is the workgroup's barrier, so under emulation every SIMD-group operation must be reached by every
       live thread of the threadgroup (the CPU backend checks this rule: `RERAIL_CPU_OPENCL_RULE=1`). At width 1
-      the group is the thread: no memory, no barrier. A device whose sub-groups are 32 lanes (the host defines
-      `UKL_OPENCL_SUBGROUPS`, and builds as OpenCL C 3.0) has them natively: each kernel requires 32 lanes
-      (`intel_reqd_sub_group_size`), and the operations are its `sub_group_*` functions (`ukl/backend.h`).
+      the group is the thread: no memory, no barrier. A device with sub-groups (the host defines
+      `UKL_OPENCL_SUBGROUPS`, and builds as OpenCL C 3.0) has them natively: each kernel requires its native width,
+      `UKL_SIMD_WIDTH` lanes (`intel_reqd_sub_group_size`), and the operations are its `sub_group_*` functions (`ukl/backend.h`).
     - reflection: OpenCL cannot read a program's constants back, so each kernel has a one-thread kernel beside it
       (`Name__ukl_info`) that writes its rows' layout and their text, and each reflected structure one that writes
       its fields' layout and names (`Type__ukl_layout`). The host runs them once per program.
@@ -30,6 +30,13 @@
 #include "ukl_auto_macros.h"
 #include "ukl_macros.h"
 
+// A source written for one width (`UKL_SIMD_WIDTH_NEEDED`, defined before its includes: the block programs' 32) takes
+// it from the device's sub-groups, whose sizes the host checked offer it (`Device::offers_simd_width`). Emulated, the
+// width is the host's, and `ukl/backend.h` refuses a source it does not fit.
+#if defined(UKL_SIMD_WIDTH_NEEDED) && defined(UKL_OPENCL_SUBGROUPS)
+#undef UKL_SIMD_WIDTH
+#define UKL_SIMD_WIDTH UKL_SIMD_WIDTH_NEEDED
+#endif
 #ifndef UKL_SIMD_WIDTH
 #define UKL_SIMD_WIDTH 32u
 #endif
@@ -65,8 +72,8 @@ static inline uint __ukl_cl_lid(void)
 }
 #if defined(UKL_OPENCL_SUBGROUPS)
 #define __UKL_CL_LANE ((uint)get_sub_group_local_id())
-// Every kernel's sub-groups are its SIMD groups: 32 lanes, the device's required size.
-#define __UKL_SG_ATTR __attribute__((intel_reqd_sub_group_size(32)))
+// Every kernel's sub-groups are its SIMD groups: `UKL_SIMD_WIDTH` lanes (the device's native width), required.
+#define __UKL_SG_ATTR __attribute__((intel_reqd_sub_group_size(UKL_SIMD_WIDTH)))
 #else
 #define __UKL_CL_LANE (__ukl_cl_lid() & (UKL_SIMD_WIDTH - 1u))
 #define __UKL_SG_ATTR

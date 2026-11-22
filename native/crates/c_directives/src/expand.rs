@@ -3,7 +3,7 @@
 //! preprocessor (`rerail-c-pp`).
 
 use crate::tokens::{self, BOL, SPACE};
-use rerail_compiler::pp_words::{self, Bounds, File, Tok};
+use rerail_rir::pp_words::{self, Bounds, File, Tok};
 use rerail_compiler::program::Words;
 
 pub const EXPAND: &str = include_str!("../expand/expand.rir");
@@ -13,7 +13,7 @@ static PROGRAM: std::sync::OnceLock<Result<Words, String>> = std::sync::OnceLock
 /// The process's expansion program, assembled and verified the first time: one for C and C++,
 /// the dialect a run's (`pp_words::Env::cpp`).
 pub fn program() -> Result<&'static Words, &'static str> {
-    PROGRAM.get_or_init(|| rerail_compiler::rir_asm::assemble(EXPAND)).as_ref().map_err(String::as_str)
+    PROGRAM.get_or_init(|| rerail_rir::rir_asm::assemble(EXPAND)).as_ref().map_err(String::as_str)
 }
 
 /// A token tape's kind, as the words know it.

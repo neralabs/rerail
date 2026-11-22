@@ -15,7 +15,6 @@ use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::language::{Family, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::file_index;
-use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::suppress::Suppress;
 use crate::code_rule_dsl::suppress::vue::{
@@ -66,7 +65,7 @@ impl Adapter for Vue {
     /// applies them to the problems eslint-plugin-vue reports, or eslint-plugin-vue's
     /// `<!-- eslint-disable -->` template comments (`vue/comment-directive`).
     fn suppresses<D: Doc>(
-        _: &ViolationSpec,
+        _: &str,
         suppress: &Suppress,
         node: &Node<'_, D>,
         source: &str,

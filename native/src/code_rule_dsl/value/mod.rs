@@ -291,13 +291,13 @@ impl<'a> Context<'a> {
     }
 
     /// Follows constants to their declarations' values (`value.follow`).
-    pub(crate) fn following_constants(mut self, constant: &'a mut ConstantLookup<'a>) -> Self {
+    pub fn following_constants(mut self, constant: &'a mut ConstantLookup<'a>) -> Self {
         self.constant = Some(constant);
         self
     }
 
     /// Follows names through the file's scope table (`value.follow`).
-    pub(crate) fn following_table(mut self, table: &'a mut TableLookup<'a>) -> Self {
+    pub fn following_table(mut self, table: &'a mut TableLookup<'a>) -> Self {
         self.table = Some(table);
         self
     }
@@ -554,7 +554,7 @@ impl Value {
 
     /// Whether the value is of the named type (`type_name`). A RegExp is also an `object`: its
     /// `typeof`, which `regexp` refines without replacing (unlike `null` and `array`).
-    pub(crate) fn is_type(&self, lang: Family, name: &str) -> bool {
+    pub fn is_type(&self, lang: Family, name: &str) -> bool {
         self.type_name(lang)
             .is_some_and(|own| own == name || (own == "regexp" && name == "object"))
     }

@@ -6798,6 +6798,11 @@ struct WalksWhole(bool);
 
 /// Enters a scope of the run's chunk in a job of the run (`rows::enter_chunk`, Q203 item 3): what the job holds is
 /// the chunk's. The chunk itself is the run's context's, which the job carries.
+/// The carriers of a program without the planner (setfix's own test binary): the run's, then a job's scope of the
+/// run's chunk.
+pub const RUN_CARRIERS: &[fn(&mut crate::code_rule_dsl::logic::run_state::Capture)] =
+    &[crate::code_rule_dsl::logic::run::carried, carried];
+
 pub fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     c.part(&["TOP"], crate::code_rule_dsl::logic::run_state::Shared(crate::code_rule_dsl::facts::rows::current_chunk(), crate::code_rule_dsl::facts::rows::enter_chunk));
 }
@@ -9578,4 +9583,57 @@ pub mod fresh_tests {
             }
         }
     }
+}
+
+/// Registers the logic's native functions and virtual tables on `db`: the lattices' (`native::register_lattices`),
+/// then the set engine's (`set_fixpoint_*`, the `set_rel` and `set_derived` tables). The logic's
+/// `native::register`.
+pub fn register(db: &rusqlite::Connection) -> rusqlite::Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    use rusqlite::vtab::Module;
+    super::register_lattices(db)?;
+    db.create_scalar_function(c"set_fixpoint_open", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let spec: String = ctx.get(0)?;
+        let conn = unsafe { ctx.get_connection()? };
+        open(&conn, &spec)
+    })?;
+    for n in [1, 2] {
+        db.create_scalar_function(c"set_fixpoint_run", n, FunctionFlags::SQLITE_UTF8, |ctx| {
+            let name: String = ctx.get(0)?;
+            let max_waves: i64 = if ctx.len() > 1 { ctx.get(1)? } else { 0 };
+            let conn = unsafe { ctx.get_connection()? };
+            run(&conn, &name, max_waves as u32)
+        })?;
+    }
+    db.create_scalar_function(c"set_fixpoint_materialize", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let table: String = ctx.get(0)?;
+        let conn = unsafe { ctx.get_connection()? };
+        materialize(&conn, &table)
+    })?;
+    db.create_scalar_function(c"set_fixpoint_steps", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let name: String = ctx.get(0)?;
+        let conn = unsafe { ctx.get_connection()? };
+        steps(&conn, &name)
+    })?;
+    db.create_scalar_function(c"set_fixpoint_loads", 0, FunctionFlags::SQLITE_UTF8, |_| Ok(loads()))?;
+    db.create_scalar_function(c"set_fixpoint_stats", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let name: String = ctx.get(0)?;
+        let conn = unsafe { ctx.get_connection()? };
+        stats(&conn, &name)
+    })?;
+    db.create_scalar_function(c"set_fixpoint_reprobe", 4, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let (name, i, kind, body): (String, i64, String, String) = (ctx.get(0)?, ctx.get(1)?, ctx.get(2)?, ctx.get(3)?);
+        let conn = unsafe { ctx.get_connection()? };
+        reprobe(&conn, &name, i as usize, &kind, &body).map(|_| 1i64)
+    })?;
+    db.create_scalar_function(c"set_fixpoint_close", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let name: String = ctx.get(0)?;
+        let conn = unsafe { ctx.get_connection()? };
+        close(&conn, &name).map(|_| 1i64)
+    })?;
+    const SETREL: Module<RelTab> = Module::read_only_module();
+    db.create_module(c"set_rel", &SETREL, None)?;
+    const DERIVED: Module<DerivedTab> = Module::eponymous_only_module();
+    db.create_module(c"set_derived", &DERIVED, None)?;
+    Ok(())
 }

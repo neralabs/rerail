@@ -86,10 +86,10 @@ fn poll_rmw() -> bool {
 }
 
 /// The device the batches run on, where they can: a group is a SIMD group of 32 lanes, so a
-/// device of another SIMD width refuses them (`UnsupportedBackend`), and the CPU runs them.
+/// device without SIMD groups of 32 refuses them (`UnsupportedBackend`), and the CPU runs them.
 pub fn ready() -> Result<&'static rerail_device::device::Device, Error> {
     let device = lane::device()?;
-    if device.simd_width() != GROUP as u32 {
+    if !device.offers_simd_width(GROUP as u32) {
         return Err(Error::UnsupportedBackend);
     }
     Ok(device)

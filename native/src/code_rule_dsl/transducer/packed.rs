@@ -2382,7 +2382,7 @@ impl Program {
     }
 
     pub fn label_name(&self, label: u16) -> Option<&str> {
-        rerail_compiler::rir_asm::label_name(self, label)
+        rerail_rir::rir_asm::label_name(self, label)
     }
 
     pub fn string_value(&self, string: u16) -> Option<&str> {

@@ -224,7 +224,7 @@ mod lowering_time {
             let compile = t.elapsed();
             let t = std::time::Instant::now();
             let text = compiled.text();
-            let program = rerail_compiler::rir_asm::assemble(&text).unwrap();
+            let program = rerail_rir::rir_asm::assemble(&text).unwrap();
             let assemble = t.elapsed();
             let t = std::time::Instant::now();
             let _native = rerail_compiler::native_ir::lower(&program, 0, 0).unwrap();

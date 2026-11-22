@@ -22,7 +22,7 @@ fn reads(image: &Version, r: crate::code_rule_dsl::logic::program_image::RuleRef
 /// program does not hold already, and what they need of its declarations, natives, qualifiers, facts and inputs.
 /// Core's relations and rules are the engine's, taken once. A view the program held as an input it did not read
 /// (`kind`, core.rerail's) is a rule now: no longer an input, as its lowering would have made it.
-pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
+pub fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
     use crate::code_rule_dsl::logic::program_facts::Field;
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
     let image = parsed()?;

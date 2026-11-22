@@ -1901,6 +1901,15 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
         }
         Some("compile") => {
             let rest = &args[1..];
+            // A machine with no device (a Linux host without a GPU) has no form of a fixed kernel to make: there is
+            // nothing to compile, and nextest's setup script (`kernels compile`) goes on to the tests.
+            #[cfg(target_os = "macos")]
+            let metal = rerail_accel::gpu::shared::get().is_some();
+            #[cfg(not(target_os = "macos"))]
+            let metal = false;
+            if device().is_none() && !metal {
+                return Ok(format!("no device ({}): no kernels to compile\n", rerail_gpu::device::backend()));
+            }
             if rest.iter().any(|a| a == "--idle") {
                 rerail_accel::upkeep::lower_this_thread();
             }

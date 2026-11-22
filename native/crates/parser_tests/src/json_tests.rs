@@ -1475,7 +1475,7 @@ fn jsonc_refusals_by_reason() {
         eprintln!("{n:5} {reason}: {path}");
     }
     if let Ok(out) = std::env::var("RERAIL_DISASM") {
-        std::fs::write(out, rerail_compiler::rir_asm::disassemble(&c.program)).expect("writes");
+        std::fs::write(out, rerail_rir::rir_asm::disassemble(&c.program)).expect("writes");
     }
 }
 

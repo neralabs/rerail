@@ -13,7 +13,8 @@
 //! on purpose: a run of four backticks or more, braces nested past 127.
 
 use rerail_bitlex::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_ir, rir_asm as rir};
+use rerail_compiler::native_ir;
+use rerail_rir::rir_asm as rir;
 use rerail_cpu_stream::native_cpu_stream;
 use rerail_rr_syntax as rr;
 use std::cell::RefCell;
@@ -3304,7 +3305,7 @@ mod json_probe {
         let field = |n: &str| Some(id(n.trim_start_matches("field ")));
         let symbols = rerail_bitlex::bitlex_masks::Symbols { kind: &kind, field: &field };
         let compiled = rerail_bitlex::bitlex_masks::compile_shaped(&stmts, &[rerail_bitlex::bitlex_masks::FALLBACK], Some(&symbols), rerail_bitlex::bitlex_masks::Shape::Rules)?;
-        rerail_compiler::rir_asm::assemble(&compiled.text())
+        rerail_rir::rir_asm::assemble(&compiled.text())
     }
 
     /// A probe (JSON step 1): the token-loop JSON (`json_parser/json.bitlex`) against the ladder's

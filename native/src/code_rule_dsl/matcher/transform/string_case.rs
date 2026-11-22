@@ -24,7 +24,7 @@ pub enum StringCase {
 }
 
 impl StringCase {
-    pub(crate) const NAMES: [(&'static str, Self); 7] = [
+    pub const NAMES: [(&'static str, Self); 7] = [
         ("lowerCase", Self::LowerCase),
         ("upperCase", Self::UpperCase),
         ("capitalize", Self::Capitalize),
@@ -60,7 +60,7 @@ pub enum Separator {
 }
 
 impl Separator {
-    pub(crate) const NAMES: [(&'static str, Self); 6] = [
+    pub const NAMES: [(&'static str, Self); 6] = [
         ("caseChange", Self::CaseChange),
         ("dash", Self::Dash),
         ("dot", Self::Dot),

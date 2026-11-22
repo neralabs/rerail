@@ -2094,13 +2094,17 @@ fn every_switch_lowering_reads_is_classified() {
         }
         all
     };
-    // `corpus.rs` itself: its preparation (`run_observed` up to the prepared program) and `combine_tail`.
+    // `corpus.rs` itself: its preparation (`run_observed` up to the prepared program); and the corpus's base
+    // (`corpus/base.rs`, rerail-rr-root's), whose `combine_tail` combines the texts.
     let corpus = std::fs::read_to_string(root.join("logic/plan/corpus.rs")).unwrap();
-    let region = |from: &str, to: &str| -> String {
-        let a = corpus.find(from).unwrap_or_else(|| panic!("corpus.rs has no {from:?}"));
-        let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
-        corpus[a..b].to_owned()
+    let base = std::fs::read_to_string(root.join("logic/plan/corpus/base.rs")).unwrap();
+    let region_of = |file: &str, text: &str, from: &str, to: &str| -> String {
+        let a = text.find(from).unwrap_or_else(|| panic!("{file} has no {from:?}"));
+        let b = a + text[a..].find(to).unwrap_or_else(|| panic!("{file} has no {to:?} after {from:?}"));
+        text[a..b].to_owned()
     };
+    let region = |from: &str, to: &str| region_of("corpus.rs", &corpus, from, to);
+    let base_region = |from: &str, to: &str| region_of("corpus/base.rs", &base, from, to);
     // Combining: `combine_tail` (its link, `combine_linked_as`, and its tail, `tail_version`), what it calls that
     // reads a switch (`scoping`, the tail's passes), and the `.rerail` lowering its `rr::parse` runs
     // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
@@ -2108,10 +2112,10 @@ fn every_switch_lowering_reads_is_classified() {
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
         "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
     ]);
-    combining.push(("corpus.rs, combine_tail".to_owned(), region("\nfn combine_tail(", "\n}\n")));
-    combining.push(("corpus.rs, the combine's tail".to_owned(), region("\nenum Tail {", "\n/// The programs `programs` linked into one")));
+    combining.push(("corpus/base.rs, combine_tail".to_owned(), base_region("\npub fn combine_tail(", "\n}\n")));
+    combining.push(("corpus/base.rs, the combine's tail".to_owned(), base_region("\npub enum Tail {", "\n/// The programs `programs` linked into one")));
     // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).
-    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies, kept }))")));
+    combining.push(("corpus/base.rs, combine_linked_as".to_owned(), base_region("\npub fn combine_linked_as<", "Ok((all, Tail::Many { hide, policies, kept }))")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`combining::FoldOwn`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under

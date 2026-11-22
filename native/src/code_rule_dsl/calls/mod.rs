@@ -104,20 +104,20 @@ pub struct CallsTest {
     /// The dialect the term's rule is in: the one its files' tables are read in.
     pub language: GrammarDialect,
     /// The grammar's call kinds: the only nodes the term holds at.
-    pub(crate) call_kinds: Box<[u16]>,
+    pub call_kinds: Box<[u16]>,
     /// `chain`: the capture a reaching call binds to its chain of definitions
     /// (`a.fetch -> b.pause`), for messages.
-    pub(crate) chain: Option<String>,
+    pub chain: Option<String>,
     pub(crate) definition: bool,
 }
 
 /// A term found while compiling a query's rules, before its seed query is compiled.
-pub(crate) struct FoundTerm {
-    pub(crate) key: Arc<str>,
-    pub(crate) seed_key: Arc<str>,
-    pub(crate) through: Mode,
-    pub(crate) inner: Value,
-    pub(crate) path: String,
+pub struct FoundTerm {
+    pub key: Arc<str>,
+    pub seed_key: Arc<str>,
+    pub through: Mode,
+    pub inner: Value,
+    pub path: String,
 }
 
 /// Collects the `calls` terms of one query while its rules compile.
@@ -131,7 +131,7 @@ pub struct CallsCollector {
 }
 
 impl CallsCollector {
-    pub(crate) fn new(salt: String, seed: bool, max_pattern: usize) -> Self {
+    pub fn new(salt: String, seed: bool, max_pattern: usize) -> Self {
         Self {
             salt,
             seed,
@@ -141,7 +141,7 @@ impl CallsCollector {
     }
 
     /// The terms found, each key once, in the order first found.
-    pub(crate) fn take(&self) -> Vec<FoundTerm> {
+    pub fn take(&self) -> Vec<FoundTerm> {
         let mut found = self.found.take();
         let mut seen = std::collections::HashSet::new();
         found.retain(|term| seen.insert(Arc::clone(&term.key)));
@@ -150,7 +150,7 @@ impl CallsCollector {
 
     /// Records the `calls` value at `path` and returns its test, in `language`, at `call_kinds`
     /// nodes.
-    pub(crate) fn term(
+    pub fn term(
         &self,
         value: &Value,
         path: &str,
@@ -228,14 +228,14 @@ fn through_name(through: Through) -> &'static str {
 }
 
 /// A `calls` value's parts: its own keys and its inner rule (every other key).
-pub(crate) struct Split {
-    pub(crate) through: Through,
-    pub(crate) chain: Option<String>,
-    pub(crate) inner: Value,
-    pub(crate) references: bool,
-    pub(crate) definition: bool,
-    pub(crate) links: Option<Value>,
-    pub(crate) constructor: Option<Value>,
+pub struct Split {
+    pub through: Through,
+    pub chain: Option<String>,
+    pub inner: Value,
+    pub references: bool,
+    pub definition: bool,
+    pub links: Option<Value>,
+    pub constructor: Option<Value>,
 }
 
 /// The keys of a `calls` value that are its own; the rest is its inner rule.
@@ -248,7 +248,7 @@ const OWN_KEYS: [&str; 6] = [
     "constructorFields",
 ];
 
-pub(crate) fn split(value: &Value, path: &str) -> Result<Split> {
+pub fn split(value: &Value, path: &str) -> Result<Split> {
     let calls = object(value, path)?;
     let references = match calls.get("graph").and_then(Value::as_str) {
         None if !calls.contains_key("graph") => false,
@@ -362,7 +362,7 @@ fn body_rule(inner: &Value, function_kinds: &[&str]) -> Option<(Value, SeedScope
 /// inner rule holds or reaches one itself. The seed runs in the family's seed language
 /// (`CallRules::SEED_LANGUAGE`) over the definitions a call may reach
 /// (`CallRules::FUNCTION_KINDS`).
-pub(crate) fn seed_query(
+pub fn seed_query(
     inner: &Value,
     ast: &Map<String, Value>,
     path: &str,
@@ -456,14 +456,14 @@ fn calls_util(matches: &Value, utils: &std::collections::BTreeSet<String>) -> bo
 }
 
 /// A term's index among a workspace's (or a stateless evaluation's) `calls` terms.
-pub(crate) type TermId = u32;
+pub type TermId = u32;
 
 /// One file's seeds: the terms whose seed query matched each definition (by node start), and
 /// those whose query is unknown for the whole file (it failed, or read around syntax errors).
 /// Each list is sorted.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FileSeeds {
-    pub(crate) matched: BTreeMap<u32, Vec<TermId>>,
+    pub matched: BTreeMap<u32, Vec<TermId>>,
     pub unknown: Vec<TermId>,
 }
 
@@ -609,7 +609,7 @@ impl CallsView {
         )
     }
 
-    pub(crate) fn build_modes(
+    pub fn build_modes(
         terms: Vec<(Arc<str>, Mode)>,
         summaries: Vec<(Arc<str>, Arc<Summary>)>,
         seeds: &HashMap<Arc<str>, FileSeeds>,
@@ -803,7 +803,7 @@ impl CallsView {
 
     /// Swaps in `path`'s new summary, which reads the same as its linked one but for where its
     /// definitions start.
-    pub(crate) fn resummarize(&mut self, path: &str, summary: Arc<Summary>) {
+    pub fn resummarize(&mut self, path: &str, summary: Arc<Summary>) {
         for (links, graph) in &mut self.references {
             graph.resummarize(path, Arc::new(summary.as_references(*links)));
         }
@@ -908,7 +908,7 @@ impl CallsView {
     /// reaches their seeds. A callee that may reach them leaves the term unknown there, which a
     /// rule reading `calls` only positively (the only one this answers for: `CallsState::quiet`)
     /// matches nowhere either.
-    pub(crate) fn silent(&self, summary: &Summary, terms: &[TermId]) -> Vec<TermId> {
+    pub fn silent(&self, summary: &Summary, terms: &[TermId]) -> Vec<TermId> {
         if summary.open {
             return Vec::new();
         }
@@ -1128,12 +1128,12 @@ thread_local! {
 }
 
 /// Installs a file's closure and summary for the `calls` terms of its evaluation.
-pub(crate) struct FileCallsSlot {
+pub struct FileCallsSlot {
     previous: Option<FileCalls>,
 }
 
 impl FileCallsSlot {
-    pub(crate) fn install(view: Arc<CallsView>, summary: Arc<Summary>) -> Self {
+    pub fn install(view: Arc<CallsView>, summary: Arc<Summary>) -> Self {
         let previous = FILE_CALLS.replace(Some(FileCalls {
             view,
             summary,
@@ -1143,7 +1143,7 @@ impl FileCallsSlot {
     }
 
     /// The slot of `path` in the evaluation `EvaluationCalls` installed, if it has a summary.
-    pub(crate) fn for_path(path: &str) -> Option<Self> {
+    pub fn for_path(path: &str) -> Option<Self> {
         let (view, summary) = EVALUATION.with_borrow(|evaluation| {
             let evaluation = evaluation.as_ref()?;
             Some((
@@ -1162,9 +1162,9 @@ impl Drop for FileCallsSlot {
 }
 
 /// A stateless evaluation's closure and every file's summary, which each file's slot reads.
-pub(crate) struct EvaluationCalls {
-    pub(crate) view: Arc<CallsView>,
-    pub(crate) summaries: HashMap<String, Arc<Summary>>,
+pub struct EvaluationCalls {
+    pub view: Arc<CallsView>,
+    pub summaries: HashMap<String, Arc<Summary>>,
 }
 
 thread_local! {
@@ -1189,7 +1189,7 @@ pub struct EvaluationSlot {
 }
 
 impl EvaluationSlot {
-    pub(crate) fn install(calls: EvaluationCalls) -> Self {
+    pub fn install(calls: EvaluationCalls) -> Self {
         Self {
             previous: EVALUATION.replace(Some(calls)),
         }
@@ -1216,7 +1216,7 @@ pub const MAX_TABLE_NODES: usize = 5_000_000;
 
 /// Whether `calls` follows the calls of files in `language`: those of a family whose calls join
 /// the call graph (`CallRules::SUPPORTED`).
-pub(crate) fn summarizes(language: GrammarDialect) -> bool {
+pub fn summarizes(language: GrammarDialect) -> bool {
     {
         let pack = language_pack::pack(Family::of(language));
         pack.calls_supported()
@@ -1226,7 +1226,7 @@ pub(crate) fn summarizes(language: GrammarDialect) -> bool {
 /// The document a `language` file's calls are read from, and its dialect: of a file that embeds
 /// code (`embed`), the embedded program whose dialect's calls join the call graph (a Blade
 /// template's view; `None` where it has none: it calls nothing); else the file's own.
-pub(crate) fn calls_document(
+pub fn calls_document(
     doc: crate::code_rule_dsl::tape::TapeDoc,
     language: GrammarDialect,
 ) -> Option<(crate::code_rule_dsl::tape::TapeDoc, GrammarDialect)> {
@@ -1309,7 +1309,7 @@ pub fn seed_starts<'s>(
 }
 
 /// A `calls` verdict at a node.
-pub(crate) enum Reach {
+pub enum Reach {
     /// The call reaches a definition the inner rule matches, through `chain`'s definitions (when
     /// the term binds it).
     Reaches(Option<String>),
@@ -1329,7 +1329,7 @@ pub struct FileTables {
 
 /// The `calls` verdict at `node`; `tables` gives what `calls` reads in `node`'s file for its
 /// dialect (`None`: it could not be built).
-pub(crate) fn holds<'t, D: Doc>(
+pub fn holds<'t, D: Doc>(
     test: &CallsTest,
     node: &Node<'t, D>,
     tables: impl FnOnce(&Node<'t, D>, GrammarDialect) -> Option<FileTables>,

@@ -20,7 +20,7 @@ use sha2::{Digest as _, Sha256};
 use std::path::Path;
 
 /// Whether the cutoff applies to a run with these options and typing inputs.
-pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Path>) -> bool {
+pub fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Path>) -> bool {
     let asked = options.get("reuse").and_then(serde_json::Value::as_bool).unwrap_or(false);
     // A run asked for a debugging dump runs: kept outputs carry none. A profile does not turn the cutoff off: a
     // profiled warm run is measured as it runs, and its profile says the cutoff applied.
@@ -276,7 +276,7 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 
 /// The kept outputs written into `out`, when every read of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
+pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
     if crate::git_workspace::snapshot::contains(root) {
         return Ok(None);
     }
@@ -392,7 +392,7 @@ fn miss(why: &str) {
     }
 }
 
-pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report, captured: Option<&[u8]>) -> Result<()> {
+pub fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report, captured: Option<&[u8]>) -> Result<()> {
     if crate::git_workspace::snapshot::contains(root) {
         return Ok(());
     }

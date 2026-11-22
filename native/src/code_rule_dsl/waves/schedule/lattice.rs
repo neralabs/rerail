@@ -1,17 +1,8 @@
 //! SQL reductions and improved-value deltas for registered lattices.
 use super::*;
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct Operations {
-    /// Planner-owned proof. External SQL callbacks cannot claim builtin laws.
-    #[serde(skip)]
-    pub reduction: crate::code_rule_dsl::logic::native::aggregation::Reduction,
-    pub aggregate: String,
-    pub merge: String,
-    pub widen: Option<String>,
-    pub after: Option<u32>,
-    pub top: i64,
-}
+// A lattice's operations, which the run's native lattices make and read too: `logic::native::lattices`'.
+pub use crate::code_rule_dsl::logic::native::lattices::Operations;
 
 pub(super) fn fold(
     db: &impl SqlOwner,

@@ -3,8 +3,8 @@
 # data-layer scale run; decision 0364's "data-layer history"). REPO is a clone of the internal data layer holding the commits
 # below; only its objects are read. OUT gets `o125-replay/00` (the .py files of the first commit, under SCOPE if
 # given, else the whole tree) and `o125-replay/01..03`, each the .py files that commit changed in
-# `l2060_query_builder/` (as decision 0364 measured) with the paths it removed in `.deleted`; and `policy.rr`,
-# `conditional-architecture.rr` with its `.scope` lines dropped so it reads the whole tree, as the spike ran it.
+# `l2060_query_builder/` (as decision 0364 measured) with the paths it removed in `.deleted`; and `policy.rerail`,
+# `conditional-architecture.rerail` with its `.scope` lines dropped so it reads the whole tree, as the spike ran it.
 set -eu
 REPO=${1:?the repository}; OUT=${2:?the output directory}; SCOPE=${3:-}
 COMMITS=(9d72c3d3fee ca984ce844a 3471aab176a 49832032922)
@@ -22,6 +22,6 @@ for i in 2 3 4; do
       mkdir -p $d/${f:h}; git -C $REPO show ${COMMITS[i]}:$f > $d/$f; fi
   done
 done
-grep -v '^\.scope' $ROOT/docs/rule-syntax/data-layer/conditional-architecture.rr > $OUT/policy.rr
+grep -v '^\.scope' $ROOT/docs/rule-syntax/data-layer/conditional-architecture.rerail > $OUT/policy.rerail
 cp $ROOT/tmp/mm-in/capped.sh $OUT/ 2>/dev/null || true
 echo "$(find $OUT/o125-replay/00 -name '*.py' | wc -l) files in 00; changed: $(for s in 01 02 03; do echo -n "$s $(find $OUT/o125-replay/$s -name '*.py' | wc -l) "; done)"

@@ -10205,3 +10205,22 @@ The farm tooling (farm 54–57) is taken whole. In `test-remote`'s main, theirs'
 0494 step 7 (key-run columns, 8-byte solves, shared axis solves) is taken whole. Its `solve` takes ours' Windows
 device gate. The manifests are ours', with one `rerail-clif` dev-dependency. 0494's section appears once
 (`notes/roll-up-46-phased-facts.md`).
+
+### Q468. Roll-up 47 (main b922e65dc8 onto Pulling-it-all-together): what the merge chose
+
+Main's two test fixes (#986, #988). In `outside-git.test.ts`, both sides fixed the named-pipe case's wait for its
+writer. Theirs (#986) supersedes ours (96142c32b3): it listens from the start, sends SIGKILL, and checks that nothing
+read the pipe. Ours' GIT_DIR shapes stay (`notes/roll-up-47-main.md`).
+
+### Q469. Roll-up 48 (CUDA-support 7eff18d065 onto Pulling-it-all-together): what the merge chose
+
+0576 §13-21, Intel at its own width, is taken. So is theirs' port of G15's and G13's read fixes, which ours lacked.
+The generated `relation.h` is the merged CLIF's own output, with 0494 step 7 and the slot mask. `UKL_SIMD_GROUP_FREE`
+was checked against ours' `vread` cases 9-11. Found: roll-up 41 left two meanings of `UKL_CALLED`, fixed in the next
+commit (`notes/roll-up-48-cuda-support.md`).
+
+### Q470. Roll-up 49 (engine-crating 07649a78d4 onto Pulling-it-all-together): what the merge chose
+
+Crate split 5g-7a taken whole. Ours' fact-phase and root-inventory plans (337e5ba842) are ported into theirs'
+`corpus/base.rs`, which holds the moved code. Ours' task-run `OnceLock` is a registry `Slot`, by theirs' guard. A
+key test reads its unset switches under `reading` (`notes/roll-up-49-engine-crating.md`).
