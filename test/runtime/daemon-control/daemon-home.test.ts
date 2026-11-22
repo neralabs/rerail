@@ -486,7 +486,8 @@ describe("the daemons of a Rerail home", () => {
     // A second daemon process in the same home, as a start whose wait for a slow daemon ran out launches one.
     const second = daemonProcess(home, env);
     others.push(second);
-    const ended = await Promise.race([once(second, "exit").then(([code]) => `exited ${String(code)}`), delay(7_000).then(() => "still running")]);
+    // Its exit, however long its start takes on a busy machine: the case's own limit bounds the wait.
+    const ended = await once(second, "exit").then(([code]) => `exited ${String(code)}`);
     expect(ended).toMatch(/^exited [1-9]/u);
     expect(await exitMessage(second)).toContain(`rerail daemon: Another Rerail daemon (pid ${first.pid}) runs in ${home}`);
     expect(await recordedPid(home)).toBe(first.pid);
