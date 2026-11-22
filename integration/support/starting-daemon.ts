@@ -124,11 +124,12 @@ export class StartingDaemonHome {
   }
 
   /**
-   * Lets the held daemon go on once each of `commands` says on stderr that it waits for it (`waiting`), or once any of
-   * them has ended: a command that gave up beside a daemon still starting has ended while it was held.
+   * Lets the held daemon go on once one of `commands` says on stderr that it waits for it (`waiting`), as a command does
+   * for a daemon another process launched, or once one has ended: a command that gave up beside a daemon still starting
+   * has ended while it was held.
    */
   async releaseOnceWaitingOrEnded(commands: readonly Command[], waiting: RegExp): Promise<void> {
-    await until(() => commands.some(command => command.ended()) || commands.every(command => waiting.test(command.stderr())), "each command waiting, or one ending");
+    await until(() => commands.some(command => command.ended() || waiting.test(command.stderr())), "a command waiting, or one ending");
     this.release();
   }
 
@@ -147,7 +148,7 @@ export class StartingDaemonHome {
   }
 }
 
-/** What a start says while it waits for a daemon still in its start. */
+/** What a start says while it waits for a daemon still in its start that another process launched. */
 export const WAITS_BESIDE_STARTING = /is still starting; this start waits for it to answer/u;
 
 export interface TwoCommandsSeen {

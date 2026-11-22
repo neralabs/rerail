@@ -891,7 +891,10 @@ export interface DaemonControl {
   packageRoot: string;
   /** Repairs the SQLite binding below `packageRoot` before a daemon is spawned; tests substitute it. */
   ensureSqlite?: (packageRoot: string) => Promise<SqliteRepairResult>;
-  /** Told the pid of a daemon still in its start each time the start begins to wait for it ({@link untilStarted}). */
+  /**
+   * Told the pid of a daemon still in its start that another process launched, each time the start begins to wait for
+   * it ({@link untilStarted}); never of the daemon this start launched, which it waits for without a word.
+   */
   onWaiting?: (pid: number) => void;
 }
 
@@ -1088,12 +1091,13 @@ async function answeredLaunch(launched: LaunchedDaemon, records: LaunchRecords, 
 }
 
 /**
- * Waits for the daemon `coming` names, still in its start, telling `control.onWaiting` first, as a start waits for the
- * daemon it launched (`readyDaemon`): until it answers, until it exits, which fails the start with its log and launches
- * nothing more, or until `coming.deadline`, where it fails as {@link unansweredLaunch} says and is left running.
+ * Waits for the daemon `coming` names, still in its start, telling `control.onWaiting` first when another process
+ * launched it, as a start waits for the daemon it launched (`readyDaemon`): until it answers, until it exits, which
+ * fails the start with its log and launches nothing more, or until `coming.deadline`, where it fails as
+ * {@link unansweredLaunch} says and is left running.
  */
 async function untilStarted(control: DaemonControl, coming: ComingUp, machine: DaemonMachine): Promise<RunningDaemon> {
-  control.onWaiting?.(coming.pid);
+  if (!coming.launched) control.onWaiting?.(coming.pid);
   while (Date.now() < coming.deadline) {
     const daemon = await answeredLaunch(coming.daemon, coming.records, machine.platform);
     if (daemon !== undefined) return daemon;

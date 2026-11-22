@@ -1010,7 +1010,10 @@ async function keptDaemon(lookup: DaemonLookup, packageRoot: string, port: numbe
   return await daemonUsesPackageRoot(lookup.state, packageRoot) ? lookup.state : undefined;
 }
 
-/** Starts the daemon of `packageRoot` in `home`, on `port` when one is named, saying so while it waits for one still in its start. */
+/**
+ * Starts the daemon of `packageRoot` in `home`, on `port` when one is named, saying so while it waits for one another
+ * process launched, still in its start.
+ */
 async function startActiveDaemon(home: string, packageRoot: string, port: number | undefined): Promise<DaemonState> {
   const onWaiting = (pid: number): void => void process.stderr.write(`${startingDaemonNotice(pid, home)}\n`);
   return (await startDaemon({ home, packageRoot, onWaiting }, { dev: false, ...(port === undefined ? {} : { port }) })).daemon.state;

@@ -1,8 +1,8 @@
 // A start that finds a daemon still in its start waits for it. Before, set-up's dashboard step launched the daemon and
 // gave up on it after its 15 s wait while it was still coming up; the `rerail daemon start` a script ran next probed it
 // once for 2 s and exited 1, naming a daemon that does not answer. Two starts at once both exited 1 beside the daemon one
-// of them launched. Each daemon here is held in its start, recorded and not answering, until every command says it
-// waits for it or one has ended (`daemon-start-gate.mjs`).
+// of them launched. Each daemon here is held in its start, recorded and not answering, until a command says it waits
+// for it or one has ended (`daemon-start-gate.mjs`). A command says so only of a daemon another process launched.
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,24 +13,28 @@ import { setupThenStart, StartingDaemonHome, twoStartsAtOnce, WAITS_BESIDE_START
 const NOT_HOME_DAEMON = "The process daemon.json named is not a Rerail daemon of this home, so Rerail ended nothing and removed that record.";
 
 describe("a start beside a daemon still in its start", () => {
-  test("rerail setup --answer start, then rerail daemon start: set-up waits for the daemon it launched, and the start finds it running", async () => {
+  test("rerail setup --answer start, then rerail daemon start: set-up waits its 15 s for the daemon it launched without a word, and the start waits for that daemon and finds it running", async () => {
     const place = StartingDaemonHome.make();
     try {
       const seen = await setupThenStart(place);
-      expect(seen.setup).toMatchObject({ code: 0, stderr: expect.stringMatching(WAITS_BESIDE_STARTING) });
-      expect(seen.startBesideHeld).toBe(false);
-      expect(seen.start).toMatchObject({ code: 0, stdout: expect.stringContaining("The Rerail daemon is already running.") });
+      expect(seen.setup.code).toBe(0);
+      expect(seen.setup.stderr).not.toMatch(WAITS_BESIDE_STARTING);
+      expect(seen.startBesideHeld).toBe(true);
+      expect(seen.start).toMatchObject({ code: 0, stderr: expect.stringMatching(WAITS_BESIDE_STARTING), stdout: expect.stringContaining("The Rerail daemon is already running.") });
       expect(seen.daemons).toBe(1);
     } finally {
       await place.end();
     }
   }, 120_000);
 
-  test("two rerail daemon start at once: both wait for the daemon one of them launched and exit 0 with one daemon running", async () => {
+  test("two rerail daemon start at once: both wait for the daemon one of them launched, the other saying so, and exit 0 with one daemon running", async () => {
     const place = StartingDaemonHome.make();
     try {
       const seen = await twoStartsAtOnce(place);
-      for (const start of seen.starts) expect(start).toMatchObject({ code: 0, stderr: expect.stringMatching(WAITS_BESIDE_STARTING) });
+      for (const start of seen.starts) expect(start.code).toBe(0);
+      const waited = seen.starts.filter(start => WAITS_BESIDE_STARTING.test(start.stderr));
+      expect(waited).toHaveLength(1);
+      expect(waited[0]!.stdout).toContain("The Rerail daemon is already running.");
       expect(seen.starts.filter(start => start.stdout.includes("The Rerail daemon is already running."))).toHaveLength(1);
       expect(seen.daemons).toBe(1);
     } finally {
