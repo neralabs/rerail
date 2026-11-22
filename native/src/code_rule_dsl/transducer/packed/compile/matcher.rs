@@ -443,6 +443,28 @@ impl LoweredMatcher {
         }
     }
 
+    /// The labels this clause's program reads after its entry's tests, where it is `(KIND k | SUPERTYPE c)*
+    /// (SUPERTYPE L)+ CAPTURE EMIT`, `L` labels: its roots are the entry's nodes in every `L`, an AND of the labels'
+    /// words, not a program run at each candidate (t50 step 6: `nameref`'s `identifier` under no parent's `attribute`
+    /// or `name` field, 2.7 M roots on `all` at 0.57 µs each). [`label_copy`](Self::label_copy) is its case of one
+    /// label and no entry.
+    pub fn label_formula(&self) -> Option<Vec<u16>> {
+        let words = self.program.words.as_slice();
+        let [body @ .., capture, emit] = words else { return None };
+        if split(*capture).0 != CAPTURE || split(*emit).0 != EMIT {
+            return None;
+        }
+        let mut labels = Vec::new();
+        for &word in body {
+            match split(word) {
+                (SUPERTYPE, 0, label) if label >= LABEL_BASE => labels.push(label),
+                (KIND, 0, _) | (SUPERTYPE, 0, _) if labels.is_empty() => {}
+                _ => return None,
+            }
+        }
+        (!labels.is_empty()).then_some(labels)
+    }
+
     /// Every program the clause walks: its labels' and its root program.
     pub fn walked_programs(&self) -> Vec<&Program> {
         self.labels.defs.iter().filter_map(Label::program).chain(std::iter::once(&self.program)).collect()
@@ -820,6 +842,8 @@ pub struct WaveRun {
     pub limited: Vec<(usize, usize)>,
     /// How many times the run went again with twice the step budget (decision 0334, Metal's `Outcome::replanned`).
     pub replanned: usize,
+    /// Each clause's root walks' thread CPU (ns), on the CPU's path: what the profile names per matcher.
+    pub roots_cpu: Vec<u64>,
 }
 
 /// A wave's lowered clauses evaluated together (06 S4): each clause's labels shifted past the
@@ -1227,6 +1251,7 @@ impl LoweredWave {
         budget: crate::code_rule_dsl::transducer::packed::WorkBudget,
     ) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
         crate::code_rule_dsl::prof::count("clauses.label_copies", self.clauses.iter().filter(|clause| clause.label_copy().is_some()).count());
+        crate::code_rule_dsl::prof::count("clauses.label_formulas", self.clauses.iter().filter(|clause| clause.label_formula().is_some()).count());
         // Metal asked for: the device's, refused where none is registered (decision 0382), as `execute_with_backend_*`.
         if let Backend::MetalInterpreter = backend {
             // Each clause's roots are its domain's nodes where it runs: a rule the device reads (`ClauseRoots::Rule`),
@@ -1244,7 +1269,9 @@ impl LoweredWave {
         let to_w = |c: usize, t: usize| given.contains(&(c, t)) || self.feeds[c].iter().any(|&fed| given.contains(&(fed, t)));
         let mut limited = Vec::new();
         let mut found = Vec::with_capacity(self.clauses.len());
+        let mut roots_cpu = Vec::with_capacity(self.clauses.len());
         for (c, clause) in self.clauses.iter().enumerate() {
+            let clause_started = rerail_prof::thread_cpu();
             let entry = Entry::of(&clause.program);
             let walk = Micro::of(&clause.program);
             let mut per = Vec::with_capacity(views.len());
@@ -1258,9 +1285,10 @@ impl LoweredWave {
                     per.push(clause.unlabelled_candidates(view).collect());
                     continue;
                 }
-                // A program that only reads a label: its roots are the label's members in the domain.
-                if let Some(copied) = clause.label_copy() {
-                    per.push(members(sets, copied).filter(|&node| in_domain(&clause.domain, view, sets, node)).collect());
+                // A program that only tests its start's entry and reads labels: its roots are the AND of the labels'
+                // members, in the domain and past the entry.
+                if let Some(labels) = clause.label_formula() {
+                    per.push(members_of_all(sets, &labels).filter(|&node| entry.admits(view, node) && in_domain(&clause.domain, view, sets, node)).collect());
                     continue;
                 }
                 // The root walk starts within its anchor (decision 0365): every label it reads is finished.
@@ -1280,8 +1308,9 @@ impl LoweredWave {
                 });
             }
             found.push(per);
+            roots_cpu.push(rerail_prof::thread_cpu().saturating_sub(clause_started).as_nanos() as u64);
         }
-        Ok((found, WaveRun { limited, ..WaveRun::default() }))
+        Ok((found, WaveRun { limited, roots_cpu, ..WaveRun::default() }))
     }
 
     /// The cost store's key for W's matcher at clause `clause`'s roots (`evaluation_costs::w_key`).
@@ -1319,7 +1348,7 @@ impl LoweredWave {
                 }
                 // The right half's tapes numbered in the whole batch.
                 let limited = a.limited.into_iter().chain(b.limited.into_iter().map(|(c, t)| (c, t + half))).collect();
-                Ok((left, WaveRun { metal: true, command_buffers: a.command_buffers + b.command_buffers, device: a.device + b.device, limited, replanned: a.replanned + b.replanned }))
+                Ok((left, WaveRun { metal: true, command_buffers: a.command_buffers + b.command_buffers, device: a.device + b.device, limited, replanned: a.replanned + b.replanned, roots_cpu: Vec::new() }))
             }
             found => found.map(|(mut found, outcome)| {
                 // Where a pass went to W's matcher (decision 0334): its clauses' roots there are their candidates, the
@@ -1328,7 +1357,7 @@ impl LoweredWave {
                 for &(c, t) in &limited {
                     found[c][t] = self.clauses[c].unlabelled_candidates(&tapes[t]).collect();
                 }
-                (found, WaveRun { metal: true, command_buffers: outcome.command_buffers, device: outcome.device, limited, replanned: outcome.replanned })
+                (found, WaveRun { metal: true, command_buffers: outcome.command_buffers, device: outcome.device, limited, replanned: outcome.replanned, roots_cpu: Vec::new() })
             }),
         }
     }
@@ -1523,6 +1552,22 @@ pub fn empty_sets(tapes: &[TapeDoc], labels: usize) -> Vec<Arc<Vec<Vec<u64>>>> {
 }
 
 /// The members of `label`, in node order.
+/// The nodes in every one of `labels` (at least one): their words ANDed, a word at a time.
+fn members_of_all<'a>(sets: &'a [Vec<u64>], labels: &'a [u16]) -> impl Iterator<Item = u32> + 'a {
+    let bits = |label: u16| sets.get(usize::from(label - LABEL_BASE)).map_or(&[][..], Vec::as_slice);
+    let len = labels.iter().map(|&l| bits(l).len()).min().unwrap_or(0);
+    (0..len).flat_map(move |at| {
+        let mut word = labels.iter().fold(u64::MAX, |w, &l| w & bits(l)[at]);
+        std::iter::from_fn(move || {
+            (word != 0).then(|| {
+                let bit = word.trailing_zeros();
+                word &= word - 1;
+                at as u32 * 64 + bit
+            })
+        })
+    })
+}
+
 fn members(sets: &[Vec<u64>], label: u16) -> impl Iterator<Item = u32> + '_ {
     sets.get(usize::from(label - LABEL_BASE)).into_iter().flat_map(|bits| {
         bits.iter().enumerate().flat_map(|(at, &word)| {

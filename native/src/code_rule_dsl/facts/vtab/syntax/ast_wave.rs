@@ -162,6 +162,10 @@ impl MatcherWave {
                 all.extend(theirs);
             }
             run.limited.extend(part_run.limited.into_iter().map(|(c, t)| (c, t + at)));
+            run.roots_cpu.resize(part_run.roots_cpu.len().max(run.roots_cpu.len()), 0);
+            for (all, theirs) in run.roots_cpu.iter_mut().zip(&part_run.roots_cpu) {
+                *all += theirs;
+            }
         }
         Ok((found, run, started.elapsed().as_secs_f64()))
     }
@@ -232,6 +236,7 @@ fn matched(
     // Each tape's document in the batch (`at`, the caller's); the tapes outside it take no part.
     let held: Vec<usize> = (0..tapes.len()).filter(|&i| at[i].is_some()).collect();
     // A matcher runs where its gates hold and W admits the file: its `syntax` (valid or invalid) and text literals.
+    let gates = profile::span(|| "ast matcher gates".into());
     let errors: Vec<crate::code_rule_dsl::soundness::SyntaxErrors> = held.iter().map(|&i| crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&tapes[i].1)).collect();
     let active: Vec<Vec<bool>> = matchers
         .list
@@ -249,6 +254,8 @@ fn matched(
     // Each read at its path, which a `filePath` test inside a matcher tests.
     let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = held.iter().map(|&i| tapes[i].1.with_path(&tapes[i].2)).collect();
     let nodes: u64 = docs.iter().map(|d| d.transducer_len() as u64).sum();
+    drop(gates);
+    let run_span = profile::span(|| "ast matcher wave run".into());
     let (found, limited) = if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
         (vec![vec![BTreeSet::new(); docs.len()]; matchers.len()], Vec::new())
     } else {
@@ -276,12 +283,22 @@ fn matched(
             profile::device("ast matcher wave", run.command_buffers as u64, run.device, wall, nodes);
         }
         profile::decision("ast matcher wave lane", || (if run.metal { "metal" } else { "cpu" }).to_owned());
+        if crate::code_rule_dsl::prof::on() {
+            for (m, ns) in matchers.list.iter().zip(&run.roots_cpu) {
+                crate::code_rule_dsl::prof::count_named(format!("wave.roots_us.{}", m.rel), (*ns / 1000) as usize);
+            }
+            for (m, per) in matchers.list.iter().zip(&found) {
+                crate::code_rule_dsl::prof::count_named(format!("wave.roots_n.{}", m.rel), per.iter().map(BTreeSet::len).sum());
+            }
+        }
         if !run.limited.is_empty() {
             profile::decision("ast matcher roots over the work limit (confirmed by W)", || format!("{} matcher-files", run.limited.len()));
         }
         (found, run.limited)
     };
     profile::work(profile::Unit::Node, nodes);
+    drop(run_span);
+    let _rows_span = profile::span(|| "ast matcher rows".into());
     // A matcher read only where other matchers' roots are (decision 0459): its roots there alone, before any capture.
     let mut demanded: Vec<Option<Vec<BTreeSet<u32>>>> = matchers
         .list

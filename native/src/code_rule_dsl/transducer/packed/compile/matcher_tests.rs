@@ -2042,5 +2042,10 @@ fn not_inside_a_field_of_any_parent_finds_ws_roots() {
         .collect::<BTreeSet<_>>();
     let all_identifiers = (0..tape.transducer_len() as u32).filter(|&o| node_at(&root, o).kind() == "identifier").count();
     assert!(!expected.is_empty() && expected.len() < all_identifiers, "W's matcher keeps some identifiers and drops the fields: {} of {all_identifiers}", expected.len());
+    // Its root program tests the kind and reads two labels: its roots are the labels' AND, no program run per root.
+    assert_eq!(program.label_formula().map(|l| l.len()), Some(2), "the root program is a formula of two labels");
+    let wave = super::compile_matcher::LoweredWave::new(&[&program]).unwrap();
+    let (found, _) = wave.roots_batch(super::compile_matcher::Backend::Cpu, std::slice::from_ref(&tape), &[vec![true]]).unwrap();
+    assert_eq!(found[0][0], expected, "the wave's formula roots are W's");
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
