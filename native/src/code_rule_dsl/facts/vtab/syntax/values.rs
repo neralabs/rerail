@@ -55,7 +55,7 @@ impl Blocks {
         self.blocks.iter().flat_map(|b| b.iter())
     }
     fn push(&mut self, part: Part) {
-        if self.len % BLOCK == 0 {
+        if self.len.is_multiple_of(BLOCK) {
             self.blocks.push(Arc::new(Vec::with_capacity(BLOCK)));
         }
         Arc::make_mut(self.blocks.last_mut().expect("a block")).push(part);

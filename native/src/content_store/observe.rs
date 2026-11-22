@@ -2321,7 +2321,7 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
         swept.answers = answers.len() + forms.len();
         let moved = floor > 0 && meta.get(LISTING_FLOOR) != Some(&rusqlite::types::Value::Integer(floor));
         let meta_put = if moved { vec![(LISTING_FLOOR.to_owned(), rusqlite::types::Value::Integer(floor))] } else { Vec::new() };
-        f.apply(facts::Change { answers: facts::Edit { delete: answers, ..Default::default() }, canon: facts::Edit { delete: forms, ..Default::default() }, meta_put, meta_delete: dropped.into_iter().chain(outputs).collect(), ..Default::default() }, "kept facts");
+        f.apply(facts::Change { answers: facts::Edit { delete: answers, ..Default::default() }, canon: facts::Edit { delete: forms, ..Default::default() }, meta_put, meta_delete: dropped.into_iter().chain(outputs).collect() }, "kept facts");
         f.written();
     }
     // The WAL folded in and emptied: a process that opens the store reads the database, not its history.

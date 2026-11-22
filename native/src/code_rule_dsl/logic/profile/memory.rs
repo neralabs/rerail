@@ -154,12 +154,18 @@ fn holders() -> [usize; 7] {
 /// The relations' blocks live now by the span that made them (span, life, bytes used, blocks), as the facts crate
 /// reads them (`rows::held_by_span`), which sets it at its first block: the sampler takes it at the peak.
 #[derive(Default)]
-pub struct BlocksBySpan(pub std::sync::OnceLock<fn() -> Vec<(u32, u8, usize, usize, String)>>);
+pub struct BlocksBySpan(pub std::sync::OnceLock<fn() -> Vec<SpanBlocks>>);
+
+/// One span's blocks live now: span, life, bytes used, blocks, the span's name.
+pub type SpanBlocks = (u32, u8, usize, usize, String);
 
 /// The runs' relations held now by name (name, rows, columns, bytes of values, runs holding it), as the evaluator
 /// reads them (`setfix::held_by_name`), which sets it at its first run: the sampler takes it at the peak.
 #[derive(Default)]
-pub struct RelationsByName(pub std::sync::OnceLock<fn() -> Vec<(String, usize, usize, usize, usize)>>);
+pub struct RelationsByName(pub std::sync::OnceLock<fn() -> Vec<NamedRelation>>);
+
+/// One relation held now: name, rows, columns, bytes of values, runs holding it.
+pub type NamedRelation = (String, usize, usize, usize, usize);
 
 #[derive(Default)]
 pub(super) struct Sampled {

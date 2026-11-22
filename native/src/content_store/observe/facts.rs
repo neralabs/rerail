@@ -215,7 +215,7 @@ impl Open<'_> {
     fn rows_under<R: ByDir>(&self, chain: &dyn KeptRead, unit: &str) -> Vec<R> {
         let mut out = Vec::new();
         for kept in chain.of(R::REL) {
-            if kept.rows.len() == 0 {
+            if kept.rows.is_empty() {
                 continue;
             }
             // A partition's rows share their directory: its first row names it.
@@ -270,7 +270,7 @@ impl Open<'_> {
             let texts: Vec<String> = ordered.iter().flat_map(|(k, v)| [k.clone(), match v { rusqlite::types::Value::Text(t) => t.clone(), _ => String::new() }]).collect();
             let Ok(syms) = self.store.intern_atoms(&texts.iter().map(String::as_str).collect::<Vec<_>>()) else { return };
             let mut flat = Vec::new();
-            for ((_, v), s) in ordered.iter().zip(syms.chunks_exact(2)) {
+            for ((_, v), s) in ordered.iter().zip(syms.as_chunks::<2>().0) {
                 let (is_text, number) = match v {
                     rusqlite::types::Value::Text(_) => (1, 0),
                     rusqlite::types::Value::Integer(i) => (0, *i),
@@ -314,7 +314,7 @@ impl Open<'_> {
             && let Some(c) = chain
         {
             for kept in c.of(R::REL) {
-                if kept.rows.len() == 0 {
+                if kept.rows.is_empty() {
                     continue;
                 }
                 let Some(first) = self.text(kept.row(0)[0]) else { continue };
