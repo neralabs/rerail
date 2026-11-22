@@ -88,9 +88,11 @@ pub fn every_kernel_ahead() -> bool {
 /// its use asks for it, so its use then finds it compiled.
 pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
     use rerail_accel::gpu::{ahead, caught, released};
-    let mut v: Vec<_> = block_program::LaneWidth::ALL
-        .into_iter()
-        .map(|w| ahead(format!("block_batch {w:?}"), move || released(|| caught(|| _ = block_program::interpreter_kernel(w)))))
+    // The block interpreter where its batches run (`block_program::ready`: a device with SIMD groups of 32).
+    let blocks = if block_program::ready().is_ok() { &block_program::LaneWidth::ALL[..] } else { &[] };
+    let mut v: Vec<_> = blocks
+        .iter()
+        .map(|&w| ahead(format!("block_batch {w:?}"), move || released(|| caught(|| _ = block_program::interpreter_kernel(w)))))
         .collect();
     // The preprocessor's passes only on the CPU, where they run (every preprocessor run is the CPU's for now). A GPU's
     // compiler does not compile their source in bounded time: NVRTC grew past 90 GB resident on a DGX Spark, Intel's

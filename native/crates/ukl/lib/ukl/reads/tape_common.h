@@ -108,17 +108,13 @@
 
 // ---- the one load of the tape in place ------------------------------------------------------------------------------
 
-// `w` bytes (1, 2, 4 or 8), little-endian, at byte `base + off` of the tape.
+// `w` bytes (1, 2, 4 or 8), little-endian, at byte `base + off` of the tape: one read of the words that hold them,
+// whatever the width (a load a width, the width known only at run time, put four loads in each of a read's 38 copies:
+// the interpreter's `tape_end` compiled 152 of them on an Arc 140V).
 UKL_CALLED uint64_t clif_t_ld(UKL_GLOBAL const uint8_t* t, uint32_t base, uint32_t off, uint32_t w)
 {
-    uint64_t a = (uint64_t)base + (uint64_t)off;
-    if (w == 1u)
-        return ukl_ld_u8(t, a);
-    if (w == 2u)
-        return ukl_ld_u16(t, a);
-    if (w == 4u)
-        return ukl_ld_u32(t, a);
-    return ukl_ld_u64(t, a);
+    uint64_t x = ukl_ld_window(t, (uint64_t)base + (uint64_t)off, w);
+    return w >= 8u ? x : x & ukl_mask64(8u * w);
 }
 
 // ---- small helpers ---------------------------------------------------------------------------------------------------

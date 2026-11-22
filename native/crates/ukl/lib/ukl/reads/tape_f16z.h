@@ -603,6 +603,8 @@ UKL_INLINE uint64_t clif_f16b_ld(CLIF_ZB_ARGS, uint32_t base, uint32_t off, uint
 #define CLIF_16(name) clif_f16b_##name
 #define CLIF_16_ARGS CLIF_ZB_ARGS
 #define CLIF_16_PASS t, e, m
+// The side read over a decoded block, the rare case: a call (decision 0576 §19).
+#define CLIF_16_RARE UKL_COLD
 #include <ukl/body/tape_f16.h>
 
 // ---- 16z's reads: each the block's read of the node ---------------------------------------------------------------

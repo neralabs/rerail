@@ -429,8 +429,8 @@ UKL_INLINE uint64_t txt_word(Txt x, uint32_t at, uint32_t end) {
     return w;
 }
 
-// Whether n bytes of x from xs are those of y from ys: a word of eight at a time.
-UKL_INLINE bool txt_same(Txt x, uint32_t xs, Txt y, uint32_t ys, uint32_t n) {
+// Whether n bytes of x from xs are those of y from ys: a word of eight at a time. One body, called.
+UKL_COLD bool txt_same(Txt x, uint32_t xs, Txt y, uint32_t ys, uint32_t n) {
     for (uint32_t at = 0; at < n; at += 8) if (txt_word(x, xs + at, xs + n) != txt_word(y, ys + at, ys + n)) return false;
     return true;
 }
@@ -474,9 +474,8 @@ UKL_INLINE Txt txt_of(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D
 // Mode 7: a literal text test of pattern X (keys 0, 1) and subject Y (keys 2, 3), each of kind agg[1] & 15 and
 // agg[1] >> 4: by op agg[0] >> 1 & 3, 0 equal, 1 Y begins with X, 2 Y ends with X; as agg[0] & 1 wants.
 UKL_INLINE bool textop_one(uint32_t op, Txt x, uint32_t xs, uint32_t lx, Txt y, uint32_t ly) {
-    if (op == 0) return lx == ly && txt_same(x, xs, y, 0, lx);
-    if (op == 1) return ly >= lx && txt_same(x, xs, y, 0, lx);
-    return ly >= lx && txt_same(x, xs, y, ly - lx, lx);
+    bool fits = op == 0 ? lx == ly : ly >= lx;
+    return fits && txt_same(x, xs, y, op >= 2 ? ly - lx : 0, lx);
 }
 
 // With `TEXT_SPLIT` (agg[0] bit 5), X is a set of patterns (`strings::SET_SEP` between them, empty ones too, as
@@ -488,25 +487,31 @@ UKL_COLD bool textop_pass(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_
     Txt x = txt_of(s, L, t, D, A, 0, s->agg[1] & 15, unheld), y = txt_of(s, L, t, D, A, 2, s->agg[1] >> 4, unheld);
     uint32_t lx = txt_len(x), ly = txt_len(y);
     uint32_t op = (s->agg[0] >> 1) & 3;
+    bool split = (s->agg[0] & 32) != 0;
+    const uint64_t lo7 = 0x7f7f7f7f7f7f7f7ful;
+    // Each member of X in turn (X whole when it is no set): one ends at the next separator, the last at X's end.
+    // `m` holds the separators not yet taken of the word at `at - 8`.
     bool r = false;
-    if ((s->agg[0] & 32) == 0) r = textop_one(op, x, 0, lx, y, ly);
-    else {
-        const uint64_t lo7 = 0x7f7f7f7f7f7f7f7ful;
-        uint32_t start = 0;
-        for (uint32_t at = 0; at < lx; at += 8) {
+    uint32_t start = 0, at = 0;
+    uint64_t m = 0;
+    for (;;) {
+        while (split && m == 0 && at < lx) {
             uint64_t z = txt_word(x, at, lx) ^ 0x1f1f1f1f1f1f1f1ful;
             // Bytes past the text read 0 (z's 0x1f): never a separator.
-            uint64_t m = ~(((z & lo7) + lo7) | z | lo7);
+            m = ~(((z & lo7) + lo7) | z | lo7);
             *host = *host || (m != 0 && (s->agg[0] & 64) != 0);
-            for (uint32_t b = 0; b < 8 && m != 0; b++) {
-                uint32_t k = ukl_clz64(m) / 8;
-                uint32_t pos = at + k;
-                r = r || textop_one(op, x, start, pos - start, y, ly);
-                start = pos + 1;
-                m &= ~(0x8000000000000000ul >> (8 * k));
-            }
+            at += 8;
         }
-        r = r || textop_one(op, x, start, lx - start, y, ly);
+        bool last = m == 0;
+        uint32_t end = lx;
+        if (!last) {
+            uint32_t k = ukl_clz64(m) / 8;
+            end = at - 8 + k;
+            m &= ~(0x8000000000000000ul >> (8 * k));
+        }
+        r = r || textop_one(op, x, start, end - start, y, ly);
+        if (last) break;
+        start = end + 1;
     }
     return r == ((s->agg[0] & 1) != 0);
 }

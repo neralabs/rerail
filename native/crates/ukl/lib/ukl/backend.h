@@ -13,6 +13,12 @@
 
 #include <ukl>
 
+// A source written for one SIMD width says so before its includes (`UKL_SIMD_WIDTH_NEEDED`); compiled at another, it
+// is refused here, not run wrong.
+#if defined(UKL_SIMD_WIDTH_NEEDED) && UKL_SIMD_WIDTH != UKL_SIMD_WIDTH_NEEDED
+#error "this source is written for UKL_SIMD_WIDTH_NEEDED lanes, and the device's SIMD groups have another width"
+#endif
+
 // A SIMD group's lanes as bits, lane `l` at bit `l` (a ballot's, a match's): 32 bits, or 64 where the group is wider
 // (AMD's 64 lanes; the CPU at `RERAIL_CPU_SIMD_WIDTH=64`). `ukl_mask_*` below read it whatever its width.
 #if UKL_SIMD_WIDTH > 32
@@ -406,7 +412,7 @@ UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { re
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return b ? 1u : 0u; }
 UKL_INLINE void ukl_sg_barrier() { mem_fence(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
 #else
-#  error "ukl/backend.h: OpenCL's SIMD groups are 32 lanes (native or emulated) or 1"
+#  error "ukl/backend.h: OpenCL's emulated SIMD groups are 32 lanes or 1"
 #endif
 
 // Relaxed atomics on a device word (OpenCL 1.2's are relaxed), and a fence. OpenCL 1.2 has no coherent memory but
@@ -447,7 +453,15 @@ UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { re
 UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_min((volatile __global uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_max((volatile __global uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomic_cmpxchg((volatile __global uint32_t*)p, e, n); }
+// A fence between this thread's device accesses as other threads see them. OpenCL 1.2's `mem_fence` orders a
+// work-item's own accesses alone; OpenCL C 3.0 (the device's sub-groups, `UKL_OPENCL_SUBGROUPS`) has a fence of device
+// scope. Without it, on an Arc 140V a pool's taker read a pushed block's link from before its push, and a block was
+// handed out twice (`ukl/pool.h`).
+#if defined(UKL_OPENCL_SUBGROUPS)
+UKL_INLINE void ukl_fence_device() { atomic_work_item_fence(CLK_GLOBAL_MEM_FENCE, memory_order_seq_cst, memory_scope_device); }
+#else
 UKL_INLINE void ukl_fence_device() { mem_fence(CLK_GLOBAL_MEM_FENCE); }
+#endif
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_add((volatile __local uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile __local uint32_t*)p; }
 UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { atomic_xchg((volatile __local uint32_t*)p, v); }

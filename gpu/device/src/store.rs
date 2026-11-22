@@ -91,7 +91,6 @@ pub fn path(backend: &str, key: &str, ext: &str) -> Option<PathBuf> {
     let d = dir()?.join(backend);
     std::fs::create_dir_all(&d).ok()?;
     let p = d.join(format!("{key}.{ext}"));
-    LAST.with(|l| *l.borrow_mut() = Some(p.clone()));
     touch(&p);
     Some(p)
 }
@@ -213,7 +212,6 @@ pub fn unique() -> u64 {
 
 thread_local! {
     static HERE: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
-    static LAST: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
     static TOUCHED: std::cell::RefCell<Option<Vec<PathBuf>>> = const { std::cell::RefCell::new(None) };
 }
 

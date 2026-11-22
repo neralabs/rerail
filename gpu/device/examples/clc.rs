@@ -169,6 +169,25 @@ impl Cl {
     }
 }
 
+/// The process's CPU time (user and kernel, every thread), in seconds.
+#[cfg(windows)]
+fn cpu_seconds() -> f64 {
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> Ptr;
+        fn GetProcessTimes(p: Ptr, created: *mut u64, exited: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
+    }
+    let (mut a, mut b, mut k, mut u) = (0u64, 0u64, 0u64, 0u64);
+    unsafe { GetProcessTimes(GetCurrentProcess(), &mut a, &mut b, &mut k, &mut u) };
+    (k + u) as f64 * 1e-7
+}
+#[cfg(not(windows))]
+fn cpu_seconds() -> f64 {
+    let mut r: libc::rusage = unsafe { std::mem::zeroed() };
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut r) };
+    let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
+    s(r.ru_utime) + s(r.ru_stime)
+}
+
 /// A file's text and the options its dump recorded.
 fn read(path: &str) -> (String, String) {
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
@@ -194,6 +213,24 @@ fn main() {
             println!("version {}", cl.info(CL_DEVICE_VERSION));
             for e in cl.info(CL_DEVICE_EXTENSIONS).split_whitespace() {
                 println!("ext     {e}");
+            }
+        }
+        Some("builds") => {
+            let fresh = std::env::var("CLC_FRESH").is_ok();
+            let mut cl = cl;
+            for path in &args[1..] {
+                if fresh {
+                    cl = Cl::new();
+                }
+                let (text, options) = read(path);
+                let p = cl.source(&text);
+                let o = CString::new(options.as_str()).unwrap();
+                let (t, c) = (Instant::now(), cpu_seconds());
+                let e = unsafe { (cl.build_program)(p, 1, &cl.device, o.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) };
+                let (w, c) = (t.elapsed().as_secs_f64(), cpu_seconds() - c);
+                let bin = cl.binary(p);
+                let h = bin.iter().fold(0xcbf29ce484222325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+                println!("build {path}: {e} in {w:.2} s, {c:.2} s of CPU, binary {} bytes {h:016x}", bin.len());
             }
         }
         Some("build") => {

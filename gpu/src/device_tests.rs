@@ -324,10 +324,11 @@ fn a_kernel_compiled_once_is_loaded_from_the_store() {
     let (first, counts) = compile();
     assert_eq!(counts, (0, 1), "compiled the first time");
     run(&first);
-    let (second, counts) = compile();
+    // The entry the second compile loaded (`store::recording`: the entries a compile looked up).
+    let ((second, counts), entries) = store::recording(compile);
     assert_eq!(counts, (1, 0), "loaded from the store the second time");
     run(&second);
-    let entry = store::last_here().expect("the entry");
+    let entry = entries.last().cloned().expect("the entry");
     // The CPU's entry is a library this process has open: `dlopen` gives it again whatever the file holds now, so a
     // damaged one is a later process's to compile again. CUDA's and OpenCL's are bytes each compile loads.
     if shared.device.is_cpu() {
