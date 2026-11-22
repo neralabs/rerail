@@ -351,3 +351,57 @@
         let outs = rules_of(&v, "out");
         assert!(!outs.is_empty() && outs.iter().all(|r| r.contains("!rr_inside_rr_kind_function_definition(") && !r.contains("rr_in_")), "{outs:#?}");
     }
+
+    /// 0597 rung 2.4: what a context holds is its own pass's, never widened, copied or narrowed for the host's
+    /// annotations. Hidden at the run values' bound and folded as a pack folds it, the context's instances
+    /// (`rr_cx_quoted_*`) get no `rr_in_annotation_` copy and no `rr_narrow_` copy, and the host's `ident`, read by both
+    /// passes as written, stays the host's: no rule of it takes the annotations in.
+    #[test]
+    fn what_a_context_holds_is_never_copied_widened_or_narrowed() {
+        use crate::code_rule_dsl::facts::vtab::syntax::{HIDDEN_KEYS, RUN_VALUE_KEYS};
+        let folded = |v: Arc<Version>| {
+            let mut p = Pipeline::new("test", v);
+            let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0, diffed: Default::default() };
+            p.program(&mut fold);
+            p.finish().unwrap().0
+        };
+        // The control: the same reach written as the library writes it today, into the annotation's trees from the
+        // host's rules, is copied for the annotation and its original widened.
+        let today = folded(hidden(
+            concat!(
+                ".language python\n",
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl string_annotation(s: node)\n.decl kind(n: node, k: symbol)\n.decl text(n: node, s: symbol)\n",
+                ".decl within(n: node, a: node)\n.input parsed, string_annotation, kind, text, within\n",
+                ".decl ident(i: node)\nident(i) :- kind(i, \"identifier\").\n",
+                ".decl host_names(x: symbol)\nhost_names(x) :- ident(i), text(i, x).\n",
+                ".decl quoted(x: symbol)\nquoted(x) :- string_annotation(s), parsed(s, \"annotation\", r), within(i, r), ident(i), text(i, x).\n",
+                ".output host_names, quoted\n",
+            ),
+            RUN_VALUE_KEYS,
+        ));
+        let wide = (i64::from(HIDDEN_KEYS) << 32).to_string();
+        let shown: Vec<String> = today.rules().map(|r| today.show_rule(r)).collect();
+        assert!(shown.iter().any(|r| r.contains("rr_in_annotation") || r.contains("rr_narrow_")) || rules_of(&today, "ident").iter().any(|r| r.contains(&wide)), "the control copies or widens: {shown:#?}");
+        let v = hidden(
+            concat!(
+                ".language python\n",
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl string_annotation(s: node)\n.decl kind(n: node, k: symbol)\n.decl text(n: node, s: symbol)\n",
+                ".decl within(n: node, a: node)\n.input parsed, string_annotation, kind, text, within\n",
+                ".decl ident(i: node)\nident(i) :- kind(i, \"identifier\").\n",
+                ".decl host_names(x: symbol)\nhost_names(x) :- ident(i), text(i, x).\n",
+                ".decl quoted_root(r: node)\nquoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).\n",
+                ".decl ann_ident(x: symbol)\nann_ident(x) :- ident(i), text(i, x).\n",
+                ".decl quoted(x: symbol)\nquoted(x) :- names(x).\n",
+                ".output host_names, quoted\n",
+                ".context quoted of python roots quoted_root exports ann_ident\n",
+                ".from quoted ann_ident as names\n",
+            ),
+            RUN_VALUE_KEYS,
+        );
+        let v = folded(v);
+        let all: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+        let names: Vec<String> = v.declared_names().iter().map(|n| n.to_string()).chain(v.rules().map(|r| v.rel_name(r.head().rel()).to_owned())).collect();
+        assert!(names.iter().all(|n| !n.starts_with("rr_in_annotation") && !n.starts_with("rr_narrow_")), "no copy: {all:#?}");
+        assert!(all.iter().any(|r| r.starts_with("rr_cx_quoted_ann_ident(")), "the context's own: {all:#?}");
+        assert!(rules_of(&v, "ident").iter().all(|r| !r.contains(&wide)), "the host's ident takes no annotation in: {all:#?}");
+    }
