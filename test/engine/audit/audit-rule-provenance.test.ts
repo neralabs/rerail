@@ -758,11 +758,20 @@ describe("audit rule provenance", () => {
     const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)), from);
     const last = from + written.length - 1;
     upgradeAt(path, from + 1_000);
+    // The move's clock reads 2 s after the first audit at its first read, however long the set-up took, and then runs
+    // at the real clock's pace, behind it by that set-up: once it reads the window over, so does the move's thread,
+    // which reads the real clock.
+    let behind: number | undefined;
+    const clock = (): number => {
+      const now = Date.now();
+      behind ??= now - (from + 2_000);
+      return now - behind;
+    };
     const stderr = spyOnStderr();
     let logged = "";
     try {
       // A window of 3 s: the move waits until 3 s after the last audit recorded before the upgrade.
-      expect(await moveRuleProvenancesInWorker(path, undefined, { olderWindowMs: 3_000 })).toBe(30);
+      expect(await moveRuleProvenancesInWorker(path, undefined, { olderWindowMs: 3_000, clock })).toBe(30);
     } finally {
       logged = stderr.logged();
       stderr.restore();
@@ -803,19 +812,25 @@ describe("audit rule provenance", () => {
     const path = await fileOfTheBuildBefore();
     const app = provenanceOf("/home/dev/app", 200);
     writeInlineAudits(path, Array.from({ length: 30 }, () => app));
-    // This build upgraded the file a second ago; the older Rerail's audits begin after that.
-    upgradeAt(path, Date.now() - 1_000);
-    recordAsOlder(path, "beside-1", app);
+    // This build upgraded the file an hour ago, and the older Rerail's audits begin a second after that: the move's
+    // thread reads the real clock and finds none of them in the window, so only the clock and timer below hold the move.
+    const upgraded = Date.now() - 3_600_000;
+    upgradeAt(path, upgraded);
+    let now = recordAsOlder(path, "beside-1", app, upgraded + 1_000);
+    const second = now + 1_500;
+    // The timer the wait sleeps on moves the move's clock by what it is asked; the older Rerail records its second
+    // audit during the first pass.
+    const timer = (ms: number): Promise<void> => {
+      if (now < second) recordAsOlder(path, "beside-2", app, second);
+      now += ms;
+      return Promise.resolve();
+    };
     const stderr = spyOnStderr();
-    let second: number;
     let logged = "";
     try {
       // A window of 3 s: the move waits until 3 s after the older Rerail's audit, and another audit 1.5 s in makes it
       // wait again, until 3 s after that one.
-      const moving = moveRuleProvenancesInWorker(path, undefined, { olderWindowMs: 3_000 });
-      await new Promise(resolve => setTimeout(resolve, 1_500));
-      second = recordAsOlder(path, "beside-2", app);
-      expect(await moving).toBe(30);
+      expect(await moveRuleProvenancesInWorker(path, undefined, { olderWindowMs: 3_000, clock: () => now, timer })).toBe(30);
     } finally {
       logged = stderr.logged();
       stderr.restore();
