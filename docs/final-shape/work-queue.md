@@ -10329,3 +10329,8 @@ Each choice is read by both sides' invariants in `notes/roll-up-58-uglykl-simd.m
 - **0353 step 3**: theirs' self-relative directory and `ZCache`, with ours' tape `format` (0576) and delta rows.
 - **backend.h**: the vector path reads OpenCL 1.2's fence. Ours' `UKL_SIMD_GROUP_FREE` block is closed again.
 - **Q396**: theirs' pricing on ours' split (`plan/search.rs`). The sketch's clone is ours' `sharing` fix.
+
+### Q480. Roll-up 59 (main 92fbff1ccf onto Pulling-it-all-together): what the merge chose
+
+Main's #985 (a session lets go of removed worktrees) is taken whole, beside roll-up 43's `refreshOwners()`
+(`notes/roll-up-59-main.md`).
