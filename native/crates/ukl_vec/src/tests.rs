@@ -1215,6 +1215,19 @@ fn the_nearest_kernels_atomics_are_loads_stores_and_one_maximum() {
     };
     assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
     let ssa = ssa_of(&p, &k);
+    // Its arguments' struct (read only, as its inner function's `const` parameter) read where the launch put it.
+    let frame: Vec<_> = ssa.funcs[0].insts.iter().filter(|i| matches!(i.op, super::ssa::O::FrameAddr | super::ssa::O::Copy)).map(|i| i.op).collect();
+    assert!(frame.is_empty(), "the kernel reads its lanes' frames: {frame:?}\n{}", ssa.listing());
+    // Its fields read once, at the entry, as values: the struct is the third argument.
+    let f = &ssa.funcs[0];
+    let mut of_args: Vec<super::ssa::V> = (0..f.insts.len() as super::ssa::V).filter(|&x| f.inst(x).op == super::ssa::O::Arg && f.inst(x).a == 2).collect();
+    for x in 0..f.insts.len() as super::ssa::V {
+        if f.inst(x).op == super::ssa::O::Bin && of_args.contains(&f.inst(x).a) {
+            of_args.push(x);
+        }
+    }
+    let fields: Vec<super::ssa::V> = (0..f.insts.len() as super::ssa::V).filter(|&x| f.inst(x).op == super::ssa::O::Load && of_args.contains(&f.inst(x).a)).collect();
+    assert!(!fields.is_empty() && fields.iter().all(|x| f.blocks[0].insts.contains(x)), "the struct's fields {fields:?} read past the entry:\n{}", ssa.listing());
     for w in [1u32, 2, 4, 8, 16, 32] {
         let (c, _) = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap();
         let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
@@ -1226,5 +1239,44 @@ fn the_nearest_kernels_atomics_are_loads_stores_and_one_maximum() {
             let code = c.listing.last().expect("the kernel's code for a chunk whose lanes all run");
             assert!(read_modify_writes(code) <= 1, "w{w}: {} addresses read and written back:\n{code}", read_modify_writes(code));
         }
+    }
+}
+
+/// A kernel's struct of arguments passed by value to inlined functions: one that only reads its copy reads the
+/// launch's bytes where they are, one that writes its copy gets a copy (in each lane's frame), so the struct the
+/// others read is as launched. On the interpreter and the compiled SSA at every width.
+#[test]
+fn a_struct_argument_is_read_in_place_unless_its_copy_is_written() {
+    let text = "#include <ukl/backend.h>\n#include <ukl/memory.h>\n\
+        typedef struct P { uint32_t a, b; } P;\nUKL_REFLECT_STRUCT(P, a, b)\n\
+        UKL_INLINE uint32_t bumped(P p, uint32_t x) { p.a += x; return p.a * p.b; }\n\
+        UKL_INLINE uint32_t total(P p) { return p.a + p.b; }\n\
+        DEFINE_KERNEL2(rule, t_args,\n               RWBUFFER, uint32_t, out, \"[64]\",\n               ARGS,     P,        args, ,\n               GID0,     uint32_t, lid, )\n\
+        {\n    out[lid] = bumped(args, lid) + total(args) + args.a;\n}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_args").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let want: Vec<u32> = (0..64u32).map(|l| (5 + l) * 7 + 12 + 5).collect();
+    let run = |k: &super::vector::Kernel, exec| {
+        let mut out = vec![0u32; 64];
+        let args = [
+            super::run::Arg::Bytes((out.as_mut_ptr() as u64).to_le_bytes().to_vec()),
+            super::run::Arg::Bytes([5u32, 7].iter().flat_map(|x| x.to_le_bytes()).collect()),
+            super::run::Arg::Bytes(vec![0; 8]),
+            super::run::Arg::Bytes(vec![0; 4]),
+        ];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [2, 1, 1], block: [32, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        out
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    let ssa = ssa_of(&p, &k);
+    let copies = ssa.funcs[0].insts.iter().filter(|i| i.op == super::ssa::O::Copy).count();
+    assert_eq!(copies, 1, "one copy, the one `bumped` writes:\n{}", ssa.listing());
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
     }
 }

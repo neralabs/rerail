@@ -494,6 +494,18 @@ struct Fb<'a, 't> {
     var_m: HashMap<u64, M>,
     /// The frame's variables kept as values: offset to size.
     promoted: std::collections::HashSet<(u32, u32)>,
+    /// The frame's variables (offset and size, and the inlined call whose they are: `OWN_BODY` for the function's
+    /// own) written or whose address is taken other than to read: the others, an aggregate parameter among them, may
+    /// be read where their bytes are (`bytes_at`).
+    written: std::collections::HashSet<(u32, u32, usize)>,
+    /// A read-only aggregate parameter's bytes where they are: a kernel's where its launch put them, an inlined
+    /// call's where its argument's are (a read-only one's), so no lane copies it into its frame.
+    bytes_at: HashMap<(u32, u32), V>,
+    /// The uniform addresses of read-only bytes (`bytes_at`'s, and offsets into them), made in the entry block.
+    read_only: std::collections::HashSet<V>,
+    /// The values made once in the entry block past its constants and arguments (`in_entry`), by instruction.
+    entry_vals: HashMap<(O, u8, u32, u32, u32, u32, u32), V>,
+    entry_made: std::collections::HashSet<V>,
     entry: V,
     temps: u64,
     extra: Vec<u32>,
@@ -542,6 +554,11 @@ impl<'a, 't> Fb<'a, 't> {
             repl: HashMap::new(),
             var_m: HashMap::new(),
             promoted: std::collections::HashSet::new(),
+            written: std::collections::HashSet::new(),
+            bytes_at: HashMap::new(),
+            read_only: std::collections::HashSet::new(),
+            entry_vals: HashMap::new(),
+            entry_made: std::collections::HashSet::new(),
             entry: NONE,
             temps: 0,
             extra: Vec::new(),
@@ -563,7 +580,9 @@ impl<'a, 't> Fb<'a, 't> {
         // Each variable (its offset and size: variables of disjoint scopes share places) and whether it may be kept,
         // and whether as a float. A variable is one size, so another size at its offset is another variable.
         let mut seen: HashMap<(u32, u32), (bool, Option<bool>)> = HashMap::new();
-        self.scan(root, 0, self.region, &mut seen);
+        let mut written = std::collections::HashSet::new();
+        self.scan(root, 0, self.region, OWN_BODY, &mut seen, &mut written);
+        self.written = written;
         for &(off, m) in args {
             let e = seen.entry((off, m.bytes())).or_insert((true, Some(m.float())));
             if m.is_agg() {
@@ -575,7 +594,7 @@ impl<'a, 't> Fb<'a, 't> {
 
     /// `promote`'s variables of the body at `root`, at `base` in the frame, its region `region`, and of each call it
     /// inlines (past its region), their parameters too.
-    fn scan(&self, root: usize, base: u32, region: u32, seen: &mut HashMap<(u32, u32), (bool, Option<bool>)>) {
+    fn scan(&self, root: usize, base: u32, region: u32, owner: usize, seen: &mut HashMap<(u32, u32), (bool, Option<bool>)>, written: &mut std::collections::HashSet<(u32, u32, usize)>) {
         let v = self.v;
         for i in root..root + v.size(root) {
             if v.kind(i) == Kind::Call {
@@ -583,7 +602,7 @@ impl<'a, 't> Fb<'a, 't> {
                 if k == INLINE {
                     let bp = v.p(body);
                     let at = base + region;
-                    self.scan(v.child(body, 0), at, crate::vector::region(bp[2], M(bp[4])), seen);
+                    self.scan(v.child(body, 0), at, crate::vector::region(bp[2], M(bp[4])), i, seen, written);
                     for a in 0..bp[6] as usize {
                         let (off, m) = (bp[7 + 2 * a], M(bp[8 + 2 * a]));
                         let e = seen.entry((at + off, m.bytes())).or_insert((true, Some(m.float())));
@@ -600,6 +619,9 @@ impl<'a, 't> Fb<'a, 't> {
             let p = v.p(i);
             let (off, size, inner) = (p[0] + base, p[1], p[2]);
             let parent_ok = self.whole_access(i);
+            if !self.reads_only(i) {
+                written.insert((off, size, owner));
+            }
             let e = seen.entry((off, size)).or_insert((true, None));
             if inner != 0 || parent_ok.is_none() {
                 e.0 = false;
@@ -619,6 +641,30 @@ impl<'a, 't> Fb<'a, 't> {
 
     /// If `Local` node `i` is the address of its parent's whole access (a `Load`, `Store` or `Update` of it, as its
     /// first child): the access's type.
+    /// Whether `Local` node `i`, plus constant offsets, is only read through: the address of a load, or a copy's
+    /// source.
+    fn reads_only(&self, i: usize) -> bool {
+        let v = self.v;
+        let mut t = i;
+        loop {
+            // The parent: the nearest node before `t` whose subtree holds it.
+            let Some(par) = (0..t).rev().find(|&j| j + v.size(j) > t) else { return false };
+            match v.kind(par) {
+                Kind::Bin if matches!(Op::of(v.w(par, 0)), Op::Add | Op::Sub) && M(v.w(par, 1)) == M::PTR && v.child(par, 0) == t && constant(v, v.child(par, 1)).is_some() => t = par,
+                Kind::Load => return v.child(par, 0) == t,
+                Kind::Copy => return v.child(par, 1) == t,
+                // An aggregate passed by value (the callee's parameter an aggregate, its copy).
+                Kind::Call => {
+                    let (body, _) = self.bodies[&v.w(par, 3)];
+                    let bp = v.p(body);
+                    let Some(a) = v.children(par).position(|c| c == t) else { return false };
+                    return (a as u32) < bp[6] && M(bp[8 + 2 * a]).is_agg();
+                }
+                _ => return false,
+            }
+        }
+    }
+
     fn whole_access(&self, i: usize) -> Option<M> {
         let v = self.v;
         // The parent: the nearest node before `i` whose subtree holds it, `i` its first child.
@@ -677,6 +723,27 @@ impl<'a, 't> Fb<'a, 't> {
         let at = b0.iter().position(|&y| !matches!(self.insts[y as usize].op, O::Const | O::Entry | O::NoLanes | O::Undef | O::Arg | O::Global | O::Shared)).unwrap_or(b0.len());
         b0.insert(at, x);
         self.consts.insert(key, x);
+        x
+    }
+
+    /// Instruction `i` (a uniform value of values made in the entry block) made once there, after the values made
+    /// there before it.
+    fn in_entry(&mut self, mut i: Inst) -> V {
+        let key = (i.op, i.sub, i.m.0, i.a, i.b, i.c, i.d);
+        if let Some(&x) = self.entry_vals.get(&key) {
+            return x;
+        }
+        i.shape = Shape::Uniform;
+        let x = self.insts.len() as V;
+        self.insts.push(i);
+        self.stable.push(true);
+        self.at.push(0);
+        let made = &self.entry_made;
+        let b0 = &mut self.blocks[0].insts;
+        let at = b0.iter().position(|&y| !matches!(self.insts[y as usize].op, O::Const | O::Entry | O::NoLanes | O::Undef | O::Arg | O::Global | O::Shared) && !made.contains(&y)).unwrap_or(b0.len());
+        b0.insert(at, x);
+        self.entry_made.insert(x);
+        self.entry_vals.insert(key, x);
         x
     }
 
@@ -1107,7 +1174,12 @@ impl<'a, 't> Fb<'a, 't> {
                 self.var_m.insert(var, am);
                 self.write(var, x);
             } else if self.kernel {
-                // The kernel's arguments are in its frame already (`run`'s).
+                // The kernel's arguments are in its frame already (`run`'s); a read-only aggregate's bytes also where
+                // its argument (a pointer to them) says.
+                if am.is_agg() && !self.written.contains(&(off, am.bytes(), OWN_BODY)) {
+                    self.bytes_at.insert((off, am.bytes()), x);
+                    self.read_only.insert(x);
+                }
             } else if am.is_agg() {
                 let to = self.frame_addr(off * W as u32, am.bytes());
                 let c = self.cur();
@@ -1659,12 +1731,35 @@ impl<'a, 't> Fb<'a, 't> {
     /// The address node `a` gives (a frame variable's directly).
     fn address(&mut self, a: usize) -> R<V> {
         if let Some((off, size, inner)) = self.direct(a) {
+            if let Some(at) = self.bytes_of(off, size, inner) {
+                return Ok(at);
+            }
             return Ok(self.frame_addr(off * W as u32 + inner, size));
         }
         self.value(a)
     }
 
+    /// The uniform address of byte `inner` of a read-only variable whose bytes are elsewhere (`bytes_at`).
+    fn bytes_of(&mut self, off: u32, size: u32, inner: u32) -> Option<V> {
+        let &p = self.bytes_at.get(&(off, size))?;
+        let at = if inner == 0 {
+            p
+        } else {
+            let c = self.konst(M::PTR, inner as i32 as i64 as u64);
+            let mut i = Inst::new(O::Bin, M::PTR, p, c, NONE, M::PTR.0);
+            i.sub = Op::Add as u8;
+            self.in_entry(i)
+        };
+        self.read_only.insert(at);
+        Some(at)
+    }
+
     fn load(&mut self, m: M, addr: V, once: bool) -> V {
+        if self.read_only.contains(&addr) {
+            // Of bytes no one writes: a value, read once at the entry.
+            let entry = self.entry;
+            return self.in_entry(Inst::new(O::Load, m, addr, entry, 0, 0));
+        }
         let c = self.cur();
         let x = self.ins(O::Load, m, addr, c, 0, 0);
         let s = self.shape(addr);
@@ -1704,7 +1799,10 @@ impl<'a, 't> Fb<'a, 't> {
             }
             Kind::Global => self.once(O::Global, M::PTR, p[0], 0),
             Kind::Shared => self.once(O::Shared, M::PTR, p[0], 0),
-            Kind::Local => self.frame_addr((p[0] + self.base) * W as u32 + p[2], p[1]),
+            Kind::Local => match self.bytes_of(p[0] + self.base, p[1], p[2]) {
+                Some(at) => at,
+                None => self.frame_addr((p[0] + self.base) * W as u32 + p[2], p[1]),
+            },
             Kind::Load => {
                 let m = M(p[0]);
                 if m.is_agg() {
@@ -2073,6 +2171,7 @@ impl<'a, 't> Fb<'a, 't> {
             vals.push(if pm.is_agg() { x } else { self.fit(x, pm) });
         }
         let at = self.base + self.region;
+        let mut aliased = Vec::new();
         let saved = (self.base, self.region, self.rv, self.res);
         self.base = at;
         self.region = crate::vector::region(bp[2], ret);
@@ -2086,6 +2185,10 @@ impl<'a, 't> Fb<'a, 't> {
             if self.promoted.contains(&(at + off, pm.bytes())) {
                 let var = local(at + off, pm.bytes());
                 self.write_var(var, pm, x);
+            } else if pm.is_agg() && !self.written.contains(&(at + off, pm.bytes(), n)) && self.read_only.contains(&x) {
+                // Read only, of read-only bytes: read where they are, as by value.
+                self.bytes_at.insert((at + off, pm.bytes()), x);
+                aliased.push((at + off, pm.bytes()));
             } else {
                 let to = self.frame_addr((at + off) * W as u32, pm.bytes());
                 let c = self.cur();
@@ -2100,6 +2203,9 @@ impl<'a, 't> Fb<'a, 't> {
         }
         let lanes = self.cur();
         self.stmt(v.child(body, 0))?;
+        for key in aliased {
+            self.bytes_at.remove(&key);
+        }
         self.set_cur(lanes);
         let res = self.res;
         let r = if m == M::VOID {
@@ -2762,6 +2868,9 @@ pub fn regions(f: &Func, dec: &[bool]) -> (Vec<Option<Lab>>, Vec<bool>) {
         }
     }
 }
+
+/// The owner of a function's own variables (`written`): no inlined call's.
+const OWN_BODY: usize = usize::MAX;
 
 /// Whether a region of a chunked kernel makes value `x` again rather than keep it: a constant, an argument, an
 /// address, the group's sizes, a thread's ids, and casts of them (so their steps are known again).
