@@ -1107,3 +1107,29 @@ decision record. There are no A/B triples. One run per state, with the host's lo
       208 of 209. The one failure, `sql_sessions_use_shared_explain_profiles_…`, runs `node` (the SQL report),
       which that host lacks.
     - On a Mac, that test passes.
+- **Step 7h** (2026-11-22): boot, 23.4k production lines, is now two crates.
+  - **rerail-prefilter** (`native/crates/prefilter`, 6.3k, under boot): the prefilter (`prefilter`).
+    - It holds the tape's terms as candidate sets, the plans, gates, readers, the lowering and the frontier audit.
+    - It reads the rule API and the stats (rerail-workspace), the label sets and `space` (rerail-transducer), and
+      the lanes (rerail-run).
+    - Only boot reads it: `boot.rs` registers its tapes, image and audit, and `waves::matches` selects sets with
+      it.
+  - **rerail-boot** (16.8k) keeps the rest.
+  - The prefilter's Metal set steps called the device's kernel (`metal_program_backend::set_steps::run`). They now
+    go through the device interface:
+    - `MatcherDevice::set_steps` is a new method, and Metal implements it.
+    - `SetStep` moved to `transducer::packed::device`. Its kernel encoding is a function of the Metal module's
+      (`encoded`), since the type is no longer that crate's.
+  - The prefilter's tests that compile rules need the languages boot registers. Boot now hosts them, in its
+    `prefilter` facade:
+    - `tests.rs`, `lower_tests.rs`, `tree/tests.rs`;
+    - the audit's test (`lower/audit_tests.rs`, moved out of `audit.rs`);
+    - the lab's runs and replay test (`lab_tests.rs`, moved out of `lab.rs`, which keeps the capture).
+  - The items those tests read were widened to `pub`. `lower::finish` and `reschedule` are now `test-hooks` items.
+  - The unit tests that need no engine (`graph`, `gates`, `probes`) stay in rerail-prefilter's own test binary.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the prefilter, boot, the
+      transducer's base and the Metal device.
+    - On a Linux host, rerail-prefilter's tests and boot's prefilter and `waves::matches` tests: 50 of 51. The one
+      failure, `metal_set_steps_compute_the_cpus_candidate_sets`, needs a GPU, and that host's layer has none.
+    - On a Mac, that test passes.

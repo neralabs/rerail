@@ -34,6 +34,20 @@ pub enum ClauseRoots<'r> {
 /// (`rerail_gpu::kernels::Ahead`, which the engine makes of it).
 pub type KernelAhead = (String, Box<dyn Fn() -> Result<(), String> + Send + Sync>);
 
+/// A step over slots: a slot is the space's nodes, a bit each.
+#[derive(Clone, Copy, Debug)]
+pub enum SetStep {
+    Clear { out: u32 },
+    /// Every node of the space.
+    Fill { out: u32 },
+    Copy { out: u32, a: u32 },
+    Or { out: u32, a: u32, b: u32 },
+    And { out: u32, a: u32, b: u32 },
+    AndNot { out: u32, a: u32, b: u32 },
+    /// `out`'s nodes kept in files where `test` has a node.
+    Within { out: u32, test: u32 },
+}
+
 /// What the transducer runs on a device. What it runs of a matcher or a wave (W's, lowered) is the wave device's
 /// (`compile_matcher::WaveDevice`, rerail-transducer's), which the device registers beside this.
 pub trait MatcherDevice: Send + Sync {
@@ -68,6 +82,9 @@ pub trait MatcherDevice: Send + Sync {
     /// `Ok(None)`: a program form the device lacks, recorded in 0202's `metal-form` list (the cores run them). Any
     /// other failure is the run's error (decision 0382: no fallback on an error).
     fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Result<Option<Vec<Vec<u64>>>, Error>;
+    /// A node-set program (the prefilter's sets, `SetStep`s over `slots` slots of a space of `len` nodes in `files`,
+    /// each file its first node and count), with `leaves` written in their slots: the words of each of `outputs`.
+    fn set_steps(&self, files: &[(u32, u32)], len: u32, slots: usize, leaves: &[(usize, &[u64])], steps: &[SetStep], outputs: &[usize]) -> Result<Vec<Vec<u64>>, Error>;
     /// This thread's program invocations and host events since the last reset (tests count them).
     fn execution_metrics(&self) -> (usize, usize);
     /// Resets this thread's `execution_metrics`.

@@ -11,31 +11,19 @@ const SOURCE: &str = include_str!("set_steps.uglykl");
 /// A file's threads.
 const WIDTH: u64 = 64;
 
-/// A step over slots: a slot is the space's nodes, a bit each.
-#[derive(Clone, Copy, Debug)]
-pub enum SetStep {
-    Clear { out: u32 },
-    /// Every node of the space.
-    Fill { out: u32 },
-    Copy { out: u32, a: u32 },
-    Or { out: u32, a: u32, b: u32 },
-    And { out: u32, a: u32, b: u32 },
-    AndNot { out: u32, a: u32, b: u32 },
-    /// `out`'s nodes kept in files where `test` has a node.
-    Within { out: u32, test: u32 },
-}
+// `SetStep`, a step over slots, is the device interface's (`device::SetStep`), which the prefilter writes.
+pub use super::device::SetStep;
 
-impl SetStep {
-    fn encoded(self) -> [u32; 4] {
-        match self {
-            SetStep::Clear { out } => [0, out, out, out],
-            SetStep::Fill { out } => [1, out, out, out],
-            SetStep::Copy { out, a } => [2, out, a, a],
-            SetStep::Or { out, a, b } => [3, out, a, b],
-            SetStep::And { out, a, b } => [4, out, a, b],
-            SetStep::AndNot { out, a, b } => [5, out, a, b],
-            SetStep::Within { out, test } => [6, out, test, test],
-        }
+/// A step as the kernel reads it: its opcode and three slots.
+fn encoded(step: SetStep) -> [u32; 4] {
+    match step {
+        SetStep::Clear { out } => [0, out, out, out],
+        SetStep::Fill { out } => [1, out, out, out],
+        SetStep::Copy { out, a } => [2, out, a, a],
+        SetStep::Or { out, a, b } => [3, out, a, b],
+        SetStep::And { out, a, b } => [4, out, a, b],
+        SetStep::AndNot { out, a, b } => [5, out, a, b],
+        SetStep::Within { out, test } => [6, out, test, test],
     }
 }
 
@@ -110,7 +98,7 @@ pub fn run(
         }
     }
     if !files.is_empty() && !steps.is_empty() {
-        let encoded = steps.iter().map(|step| step.encoded()).collect::<Vec<_>>();
+        let encoded = steps.iter().map(|&step| encoded(step)).collect::<Vec<_>>();
         let steps_buffer = lane::buffer_of(device, encoded.as_flattened());
         let layout_buffer = lane::buffer_of(device, layout.as_flattened());
         crate::code_rule_dsl::prof::peak("2a1b.filled");

@@ -233,6 +233,9 @@ pub mod matcher {
                 Err(error) => Err(error),
             }
         }
+        fn set_steps(&self, files: &[(u32, u32)], len: u32, slots: usize, leaves: &[(usize, &[u64])], steps: &[crate::code_rule_dsl::transducer::packed::device::SetStep], outputs: &[usize]) -> Result<Vec<Vec<u64>>, Error> {
+            programs::set_steps::run(files, len, slots, leaves, steps, outputs)
+        }
         fn execution_metrics(&self) -> (usize, usize) {
             #[cfg(any(test, feature = "test-hooks"))]
             return programs::metrics();

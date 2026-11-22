@@ -2803,10 +2803,47 @@ pub mod code_rule_dsl {
     }
     #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_facts::code_rule_dsl::producers;
-    // Published from the scan in a later slice; until then only tests call it.
-    #[allow(dead_code)]
-    #[cfg_attr(not(test), allow(unused_imports))]
-    pub mod prefilter;
+    // The prefilter (rerail-prefilter's), with the tests of it that read what boot registers (its languages).
+    pub mod prefilter {
+        pub use rerail_prefilter::code_rule_dsl::prefilter::*;
+        // `prefilter.rs`'s own imports, which its tests read (`use super::*`).
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::{language, tape::TapeDoc};
+        #[allow(unused_imports)]
+        use crate::content_store::{ContentStore, StoreError, StoreResult, TapeId, TapePrefilter};
+        #[allow(unused_imports)]
+        use ast_grep_core::Doc;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::search_index::kind_token;
+        #[cfg(test)]
+        mod tests;
+        #[cfg(test)]
+        #[path = "lower/audit_tests.rs"]
+        mod audit_tests;
+        #[cfg(test)]
+        #[path = "lab_tests.rs"]
+        mod lab_tests;
+        pub mod lower {
+            pub use rerail_prefilter::code_rule_dsl::prefilter::lower::*;
+            // `lower.rs`'s own imports, which its tests read (`use super::*`).
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::stats::inputs::Statistics;
+            #[allow(unused_imports)]
+            use rusqlite::types::Value;
+            #[allow(unused_imports)]
+            use std::collections::{BTreeSet, HashMap};
+            #[cfg(test)]
+            #[path = "../lower_tests.rs"]
+            mod tests;
+        }
+        pub mod tree {
+            pub use rerail_prefilter::code_rule_dsl::prefilter::tree::*;
+            #[cfg(test)]
+            mod tests;
+        }
+    }
     #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_transducer::code_rule_dsl::space;
     // Read by the prefilter's lowering; the compiled-plan cache is wired with the plans row.

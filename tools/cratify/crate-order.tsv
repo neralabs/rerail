@@ -91,6 +91,7 @@ rerail-logic	core
 rerail-device-metal	provider
 rerail-sessions-base	core
 rerail-sessions	core
+rerail-prefilter	core
 rerail-boot	root
 rerail-engine	root
 rerail-tests-demand	test

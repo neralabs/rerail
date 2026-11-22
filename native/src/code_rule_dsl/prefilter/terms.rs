@@ -16,17 +16,17 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// A text test the term index answers.
-pub(in crate::code_rule_dsl) struct TextSlot {
+pub struct TextSlot {
     /// The slot's key (`Micro::slot_key`): equal tests share their rows.
-    pub(in crate::code_rule_dsl) key: String,
+    pub key: String,
     /// The test in the text layer: equal plans share their terms. The slot's bits cover every node,
     /// whatever kind the walks test first.
-    pub(in crate::code_rule_dsl) lowered: Arc<Lowered>,
+    pub lowered: Arc<Lowered>,
 }
 
 /// Per tape (in `tapes`' order), each slot's bits by key; a slot the text layer could not decide on
 /// a tape (a backtracking pattern past its limits) is left out there, and the walk computes it.
-pub(in crate::code_rule_dsl) fn rows(
+pub fn rows(
     store: &ContentStore,
     lang: u32,
     tapes: &[(i64, &TapeDoc)],

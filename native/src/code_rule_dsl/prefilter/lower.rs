@@ -30,24 +30,24 @@ mod render;
 use render::Definitions;
 #[allow(dead_code)]
 mod children;
-pub(super) mod lifetime;
-pub(super) mod ownership;
+pub mod lifetime;
+pub mod ownership;
 mod waves;
 #[cfg(feature = "code-rule-profile")]
-pub(super) mod working_set;
+pub mod working_set;
 
 #[derive(Clone)]
-struct Set {
-    name: String,
-    exact: bool,
+pub struct Set {
+    pub name: String,
+    pub exact: bool,
 }
 #[derive(serde::Serialize)]
-pub(super) struct Admission {
+pub struct Admission {
     pub consumer: usize,
     pub generated: usize,
     pub broadened: bool,
 }
-pub(super) struct Statement {
+pub struct Statement {
     pub admissions: Vec<Admission>,
     /// Per plan, whether its rows are exactly its rule's roots (the fallback's relations exact).
     pub exact: Vec<bool>,
@@ -78,7 +78,7 @@ impl Statement {
         self.stages.iter().any(|stage| stage.name.starts_with("vocabulary_"))
     }
 
-    fn own(&mut self) {
+    pub fn own(&mut self) {
         let compiled = ownership::compile(
             &self
                 .stages
@@ -103,8 +103,8 @@ impl Statement {
         self.schedule = compiled.schedule;
         self.ownership = compiled.layout;
     }
-    #[cfg(test)]
-    fn reschedule(&mut self) {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn reschedule(&mut self) {
         self.schedule = lifetime::Schedule::new(
             &self
                 .stages
@@ -119,9 +119,9 @@ impl Statement {
         );
     }
 }
-struct Lower {
-    ctes: Vec<String>,
-    parameters: Vec<Value>,
+pub struct Lower {
+    pub ctes: Vec<String>,
+    pub parameters: Vec<Value>,
     utilities: HashMap<(usize, String), Set>,
     /// The tape tag (`language::tape_tag`): kind atoms are `lang * LANG_STRIDE + code`.
     lang: u32,
@@ -129,7 +129,7 @@ struct Lower {
     tree: bool,
     roots: HashMap<BTreeSet<u16>, Set>,
     limit: usize,
-    indexed: BTreeSet<String>,
+    pub indexed: BTreeSet<String>,
     reuse: Reuse,
     decoding: HashMap<String, decode::Demand>,
     predicates: HashMap<String, (String, String)>,
@@ -165,7 +165,7 @@ struct Reuse {
 }
 
 impl Lower {
-    fn new(lang: u32) -> Self {
+    pub fn new(lang: u32) -> Self {
         Self {
             ctes: Vec::new(),
             parameters: Vec::new(),
@@ -210,7 +210,7 @@ impl Lower {
         self.parameters.push(value);
         format!("?{}", self.parameters.len())
     }
-    fn relation(&mut self, body: String, exact: bool) -> Result<Set, ()> {
+    pub fn relation(&mut self, body: String, exact: bool) -> Result<Set, ()> {
         if let Some(name) = self.reuse.bodies.get(&body) {
             return Ok(Set {
                 name: name.clone(),
@@ -232,7 +232,7 @@ impl Lower {
             exact: true,
         }
     }
-    fn combine(&mut self, left: &Set, right: &Set, operator: &str, exact: bool) -> Result<Set, ()> {
+    pub fn combine(&mut self, left: &Set, right: &Set, operator: &str, exact: bool) -> Result<Set, ()> {
         let kinds = match (
             self.reuse.kinds.get(&left.name),
             self.reuse.kinds.get(&right.name),
@@ -354,7 +354,7 @@ impl Lower {
         Ok(selected)
     }
     /// Records that `set` was selected from `scope`'s rows.
-    pub(super) fn narrowed(&mut self, set: Set, scope: &Set) -> Set {
+    pub fn narrowed(&mut self, set: Set, scope: &Set) -> Set {
         if set.name != scope.name && scope.name != "all_nodes" {
             let containing = self.containing(&scope.name);
             self.reuse
@@ -443,7 +443,7 @@ impl Lower {
         self.combine(&base, &kinds, "INTERSECT", exact).map(Some)
     }
     /// One compound UNION: a chain of binary unions materializes and deduplicates every prefix.
-    fn union(&mut self, branches: Vec<Set>) -> Result<Set, ()> {
+    pub fn union(&mut self, branches: Vec<Set>) -> Result<Set, ()> {
         let empty = self.reuse.bodies.get("SELECT 0,0 WHERE 0").cloned();
         let exact = branches.iter().all(|set| set.exact);
         if branches.iter().any(|set| set.name == "all_nodes") {
@@ -753,18 +753,18 @@ impl Lower {
 
 /// The candidate sets of `plans`, over the requested tapes of language `lang` (a tape tag) that
 /// have prefilter rows: `execute::request` fills `request_file`.
-pub(super) fn batch(plans: &[&AnchorPlan], lang: u32, files: &[i64], statistics: &Statistics) -> Statement {
+pub fn batch(plans: &[&AnchorPlan], lang: u32, files: &[i64], statistics: &Statistics) -> Statement {
     batch_scope(plans, lang, files, statistics, false)
 }
 
 /// `batch` for the pure-SQL fallback (03 §17): relations read the tape and are exact.
-pub(super) fn fallback(plans: &[&AnchorPlan], lang: u32, files: &[i64], statistics: &Statistics) -> Statement {
+pub fn fallback(plans: &[&AnchorPlan], lang: u32, files: &[i64], statistics: &Statistics) -> Statement {
     batch_scope(plans, lang, files, statistics, true)
 }
 
 /// The vocabulary's stages after the regex predicates are registered (`vocabulary_predicate`,
 /// ready 0): their literal sets, their terms, and the predicates marked ready.
-pub(super) const VOCABULARY: [(&str, &str); 4] = [
+pub const VOCABULARY: [(&str, &str); 4] = [
     (
         "vocabulary_literals",
         "INSERT OR IGNORE INTO vocabulary_literal SELECT p.lang,p.expression,j.value FROM vocabulary_predicate p CROSS JOIN json_each(nera_literal_set(p.expression)) j WHERE p.ready=0",
@@ -788,7 +788,7 @@ fn scope(lang: u32, statistics: &Statistics, tree: bool) -> Lower {
 
 /// Whether a plan selects from kind postings before it reads its scope: then evaluating it over
 /// every node costs only its postings. A conjunction evaluates its anchored members first (`plan`).
-pub(super) fn anchored(plan: &AnchorPlan) -> bool {
+pub fn anchored(plan: &AnchorPlan) -> bool {
     plan.root_kinds.is_some()
         || match &plan.condition {
             Condition::Pattern(required) => !required.is_empty(),
@@ -978,7 +978,7 @@ fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Stat
 }
 
 #[derive(Clone)]
-pub(super) struct Stage {
+pub struct Stage {
     pub name: String,
     pub sql: String,
     pub index: Option<&'static str>,
@@ -987,8 +987,8 @@ pub(super) struct Stage {
 
 /// SQLite expands CTE references during preparation, including AS MATERIALIZED CTEs.
 /// Cut shared dependencies into real SQL tables before that expansion becomes exponential.
-#[cfg(test)]
-pub(super) fn finish(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn finish(
     ctes: Vec<String>,
     queries: Vec<String>,
     parameters: Vec<Value>,
@@ -1097,6 +1097,4 @@ fn prepare(
     }
 }
 
-#[cfg(test)]
-#[path = "lower_tests.rs"]
-mod tests;
+// tests (lower_tests.rs): a test the engine hosts (it reads above this crate; boot mounts it)
