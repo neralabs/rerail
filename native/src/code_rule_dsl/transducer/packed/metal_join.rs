@@ -260,7 +260,9 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) v_set: u64,
     pub(in crate::code_rule_dsl) v_has: u32,
     pub(in crate::code_rule_dsl) v_nset: u32,
-    pub(in crate::code_rule_dsl) has_pad: [u32; 2],
+    /// 1: R's rows are its length as the device claimed it, at most `nr` (`DevRel::live`, decision 0603 step 3).
+    pub(in crate::code_rule_dsl) r_len: u32,
+    pub(in crate::code_rule_dsl) has_pad: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<Stage>() == 2352 && std::mem::size_of::<Stage>().is_multiple_of(16));
@@ -533,6 +535,9 @@ pub(in crate::code_rule_dsl) struct DevRel {
     kept: Option<crate::code_rule_dsl::facts::rows::Part>,
     /// A `has` axis read off the tape (`DevRel::has`): its set's kind atoms, ascending, two words each.
     has: Option<Words>,
+    /// Its rows are its length as the device claims it, `rows` at most (`live`): a recursive component's relation that
+    /// grows round after round within one launch (decision 0603 step 3).
+    live: bool,
 }
 
 impl DevRel {
@@ -564,7 +569,7 @@ impl DevRel {
         let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None, has: None }.noted())
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None, has: None, live: false }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -651,7 +656,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None, has: None }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None, has: None, live: false }
     }
 
     /// Whether it is a relation read where it lies (`in_block`): it holds the relation's block while it lives.
@@ -667,7 +672,18 @@ impl DevRel {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone(), has: None }.noted())
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone(), has: None, live: false }.noted())
+    }
+
+    /// `self` read as live (`DevRel::live`): `rows` its bound, its rows its length as the device claims it.
+    pub(in crate::code_rule_dsl) fn live(mut self) -> DevRel {
+        self.live = true;
+        self
+    }
+
+    /// The address of its rows' length (`Rows::len`) for a job that reaches its buffer: a gate on its room.
+    fn len_at(&self) -> u64 {
+        self.rows_at()
     }
 
     /// What holds its relation: its own, or the one read in its block (none for words, or a test's relation no
@@ -927,6 +943,7 @@ pub(in crate::code_rule_dsl) struct Screen {
 /// A stage's probed relation `rel` (and its index, read by keys) into its fields.
 fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     stage.nr = rel.rows as u32;
+    stage.r_len = u32::from(rel.live);
     stage.r_at = rel.at;
     stage.r_dead = rel.dead;
     // A relation reads none: a stage bound before to a view reads its new relation, not the view.
@@ -954,6 +971,9 @@ struct Building {
     before: Vec<u8>,
     /// Whether it was queued after a gate (`Batch::gate`): not built when the gate stopped its program.
     gated: bool,
+    /// A live relation's (`DevRel::live`): of its rows as a round claimed them, never marked built (a reader of the
+    /// relation as it lies finds none of its rows' count).
+    live: bool,
 }
 
 impl Building {
@@ -1175,6 +1195,12 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) screened: u32,
     /// Whether a gate stopped its program (`Batch::gate`): the work after it is undone.
     pub(in crate::code_rule_dsl) stopped: bool,
+    /// Whether a round's end ended its program (`Batch::round_end`): a round made no rows.
+    pub(in crate::code_rule_dsl) ended: bool,
+    /// Whether a round's end yielded: `Batch::resume` launches it again.
+    pub(in crate::code_rule_dsl) yielded: bool,
+    /// Whether a round's end stopped it past its rounds.
+    pub(in crate::code_rule_dsl) past_rounds: bool,
 }
 
 /// Work encoded into one submission at a time, committed at `commit_open` and `finish`; every submission runs on the
@@ -1200,6 +1226,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     building: Vec<Building>,
     /// Whether a gate was queued since the last `finish`.
     gated: bool,
+    /// The program a round's end yielded, and the phase it goes on from (`resume`).
+    resume: Option<(Kit, usize)>,
     /// The atoms directory its text kernels read symbols' bytes through (decision 0478 step 2e), made the first
     /// time a stage reads a symbol's text and made again when the store's atoms have grown past it.
     atoms: Option<std::rc::Rc<DevAtoms>>,
@@ -1256,6 +1284,7 @@ impl Batch {
             program: Program::default(),
             programs: Vec::new(),
             gated: false,
+            resume: None,
             committed: Vec::new(),
             done: Done::default(),
             dummy: Held::new(64)?,
@@ -1398,7 +1427,7 @@ impl Batch {
         let stopped = self.done.stopped;
         self.gated = false;
         for b in self.building.drain(..) {
-            if stopped && b.gated {
+            if (stopped && b.gated) || b.live {
                 continue;
             }
             let _g = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
@@ -1459,18 +1488,28 @@ impl Batch {
         let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
         let room = {
             let _g = home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(i) = r.find_index(&key, rel.rows as u32) {
+            // A live relation's index is built again for each round (below): none found.
+            if let Some(i) = r.find_index(&key, rel.rows as u32).filter(|_| !rel.live) {
                 return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
             }
-            if let Some(b) = self.building.iter().find(|b| std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.rows_n as usize == rel.rows) {
-                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
+            if let Some(b) = self.building.iter().find(|b| b.live == rel.live && std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.rows_n as usize == rel.rows) {
+                let room = b.room;
+                drop(_g);
+                let buffer = bound(&home)?;
+                if rel.live {
+                    // A live relation's index in this batch's room for it, built again of its rows now: each round's.
+                    self.queue_index(rel, cols, &room, &buffer)?;
+                    return Ok(DevIndex { index: room.index as u32, rows: rel.rows, moved: None, built: true, walk: 0, buffer });
+                }
+                return Ok(DevIndex { index: room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer });
             }
             // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
             // before the build, which its passes order).
             unsafe { r.try_reserve_index(&home.block, &key, rel.rows as u32) }
         };
         let Some(room) = room else {
-            if rel.dead != 0 {
+            // A live relation grows where it lies: its index has room there, or it is refused.
+            if rel.dead != 0 || rel.live {
                 return Err(Error::BackendCapacity);
             }
             // A view's relation holds no values (its rows are read through the view's reads): a new one has room.
@@ -1509,34 +1548,43 @@ impl Batch {
         };
         let n = rel.rows;
         let buffer = bound(&home)?;
-        assert!(room.rows as u64 + 4 * n as u64 <= buffer.buffer.length(), "the index's room within the buffer bound");
-        if n > 0 {
-            // Queued in the batch's level: every index of the level bucketed in one launch, sorted in one sort, placed
-            // in one launch (`flush`), before the level's stages, which probe it.
-            assert!(cols.len() <= 8, "an index of {} columns", cols.len());
-            let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0 };
-            for (k, &c) in cols.iter().enumerate() {
-                ix.cols[k] = c as u32;
-            }
-            if let Some(v) = &rel.view {
-                (ix.dir, ix.kind) = (v.dir, u64::from(v.kind));
-            }
-            rel.resident_in(self.open()?);
-            let mut job = Job::new(JobKind::Index, views_format([rel]), Stage::default());
-            job.p = Some(ix.bytes().to_vec());
-            // It reads the relation and writes its index's room in the block, which no queued job reads.
-            job.desc.l = job.reach(&buffer.buffer, 0, true)?;
-            job.desc.a = job.desc.l + room.offs as u64;
-            job.desc.counters = job.desc.l + room.rows as u64;
-            (job.count, job.buckets) = (n, room.mask as usize + 1);
-            job.order(&[job.desc.l], &[]);
-            self.queue(job)?;
-        }
+        self.queue_index(rel, cols, &room, &buffer)?;
         let index = room.index as u32;
         let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, gated: self.gated });
+        self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, gated: self.gated, live: rel.live });
         Ok(DevIndex { index, rows: n, moved: None, built: true, walk: 0, buffer })
     }
+
+    /// An index's build into its room (`room`, in the block `buffer` binds), queued in the batch's level: every index of
+    /// the level bucketed in one launch, sorted in one sort, placed in one launch (`flush`), before the level's stages,
+    /// which probe it. A live relation's (`DevRel::live`) is of its rows as the device claimed them when it runs, at
+    /// most `rows`: its keys past them go to its own last bucket (`IX_LIVE`), one more in the level's sort.
+    fn queue_index(&mut self, rel: &DevRel, cols: &[usize], room: &rerail_blocks::relation::IndexRoom, buffer: &Held) -> Result<(), Error> {
+        let n = rel.rows;
+        assert!(room.rows as u64 + 4 * n as u64 <= buffer.buffer.length(), "the index's room within the buffer bound");
+        if n == 0 {
+            return Ok(());
+        }
+        assert!(cols.len() <= 8, "an index of {} columns", cols.len());
+        let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32 | if rel.live { IX_LIVE } else { 0 }, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0 };
+        for (k, &c) in cols.iter().enumerate() {
+            ix.cols[k] = c as u32;
+        }
+        if let Some(v) = &rel.view {
+            (ix.dir, ix.kind) = (v.dir, u64::from(v.kind));
+        }
+        rel.resident_in(self.open()?);
+        let mut job = Job::new(JobKind::Index, views_format([rel]), Stage::default());
+        job.p = Some(ix.bytes().to_vec());
+        // It reads the relation and writes its index's room in the block, which no queued job reads.
+        job.desc.l = job.reach(&buffer.buffer, 0, true)?;
+        job.desc.a = job.desc.l + room.offs as u64;
+        job.desc.counters = job.desc.l + room.rows as u64;
+        (job.count, job.buckets) = (n, room.mask as usize + 1 + usize::from(rel.live));
+        job.order(&[job.desc.l], &[]);
+        self.queue(job)
+    }
+
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
     /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
@@ -1768,11 +1816,26 @@ impl Batch {
         Ok(())
     }
 
+    /// A round's new rows onto a live relation (`DevRel::live`, decision 0603 step 3): `src`'s first rows (as many as slot
+    /// `count.0` of `count.1` holds, at most `cap`) past `dst`'s rows as the device claimed them when the copy runs.
+    /// The round's end claims them (`round_end`).
+    pub(in crate::code_rule_dsl) fn append_live(&mut self, src: Rows<'_>, cap: usize, count: (usize, &Words), cols: &[Col], dst: &DevRel) -> Result<(), Error> {
+        assert!(dst.live, "rows appended past a live relation's length");
+        self.copy_to(src, cap, Some(count), cols, Rows::Rel(dst), 0, None, true)
+    }
+
     /// `n` rows of `src` (as many as slot `count.0` of `count.1` holds, at most `n`), each column of `dst` a column of
     /// `src` or a constant (`cols`), into `dst`'s rows `dst_off..` (past the word at address `off` too, when given):
     /// `rows_copy`, either side a table or a relation in its block.
     #[allow(clippy::too_many_arguments)]
     fn copy(&mut self, src: Rows<'_>, n: usize, count: Option<(usize, &Words)>, cols: &[Col], dst: Rows<'_>, dst_off: usize, off: Option<u64>) -> Result<(), Error> {
+        self.copy_to(src, n, count, cols, dst, dst_off, off, false)
+    }
+
+    /// `copy`; `at_len`: past the destination's rows as the device claimed them when it runs too (a live relation's,
+    /// `DevRel::live`: its rows at most `rows`, so `n` more lie within its room past `rows - n`).
+    #[allow(clippy::too_many_arguments)]
+    fn copy_to(&mut self, src: Rows<'_>, n: usize, count: Option<(usize, &Words)>, cols: &[Col], dst: Rows<'_>, dst_off: usize, off: Option<u64>, at_len: bool) -> Result<(), Error> {
         if n == 0 {
             return Ok(());
         }
@@ -1787,10 +1850,12 @@ impl Batch {
             self.writes(r, "rows copied");
         }
         assert!(n <= src_rows.max(1), "a copy of {n} rows of a source of {src_rows}");
-        assert!(dst_off + n <= dst_rows, "a copy of {n} rows at {dst_off} into a destination of {dst_rows}");
+        // A live relation's room is its gate's (`gate`): the count it copies is within it, its threads are `n`.
+        let live = matches!(dst, Rows::Rel(r) if r.live);
+        assert!(at_len || live || dst_off + n <= dst_rows, "a copy of {n} rows at {dst_off} into a destination of {dst_rows}");
         let mut p = CopyParams {
             konst: [0; 16], src: [NONE; 16], n: n as u32, ncols: cols.len() as u32, src_stride: src_rows as u32, dst_stride: dst_rows as u32,
-            dst_off: dst_off as u32, count_slot: count.map_or(NONE, |c| c.0 as u32), off: off.unwrap_or(0), src_at, dst_rows_at, v_dir: 0, r_view: 0, flags: u32::from(off.is_some()),
+            dst_off: dst_off as u32, count_slot: count.map_or(NONE, |c| c.0 as u32), off: off.unwrap_or(0), src_at, dst_rows_at, v_dir: 0, r_view: 0, flags: u32::from(off.is_some()) | if at_len { 2 } else { 0 },
         };
         let view = match src {
             Rows::Rel(r) => r.view.as_ref().map(|_| r),
@@ -1820,7 +1885,7 @@ impl Batch {
         job.desc.o = job.reach(&d, 0, true)?;
         job.desc.totals = job.reach(&totals, 0, false)?;
         job.count = n;
-        job.span = Some((job.desc.o, dst_off, dst_off + n));
+        job.span = Some(if at_len || live { (job.desc.o, 0, dst_rows.max(dst_off + n)) } else { (job.desc.o, dst_off, dst_off + n) });
         let mut reads = vec![job.desc.l];
         reads.extend(count.map(|_| job.desc.totals));
         reads.extend(off);
@@ -1860,21 +1925,26 @@ impl Batch {
         Ok(())
     }
 
-    /// A gate (decision 0540's rerun, decision 0603 point 4): the program stops here when slot `slot` of a `words`
-    /// holds more than its `cap`, before any later phase reads the short table (`gate_one`). `finish` then says it
+    /// A gate (decision 0540's rerun, decision 0603 point 4): the program stops here when a check's word (and its
+    /// second, when given: a relation's rows and a round's new rows onto it) holds more than its `cap`, before any later phase reads the short table (`gate_one`). `finish` then says it
     /// stopped (`Done::stopped`), and the work after the gate is left undone: the caller grows the tables and
     /// encodes the work again.
-    pub(in crate::code_rule_dsl) fn gate(&mut self, checks: &[(&Words, usize, usize)]) -> Result<(), Error> {
+    pub(in crate::code_rule_dsl) fn gate(&mut self, checks: &[(At<'_>, Option<At<'_>>, usize)]) -> Result<(), Error> {
         if checks.is_empty() {
             return Ok(());
         }
         let mut job = Job::new(JobKind::Gate, 0, Stage::default());
         let mut p: Vec<u64> = vec![checks.len() as u64, 0];
         let mut reads = Vec::new();
-        for (w, slot, cap) in checks {
-            let wa = job.reach(&w.buffer.buffer, 0, false)?;
-            reads.push(wa);
-            p.extend([wa + 4 * *slot as u64, u64::try_from(*cap).ok().filter(|&c| c <= u64::from(u32::MAX)).unwrap_or(u64::from(u32::MAX))]);
+        for (at, plus, cap) in checks {
+            let wa = at.reach(&mut job, false)?;
+            let pa = match plus {
+                Some(b) => b.reach(&mut job, false)?,
+                None => wa,
+            };
+            reads.extend([wa, pa]);
+            let cap = u64::try_from(*cap).ok().filter(|&c| c <= u64::from(u32::MAX)).unwrap_or(u64::from(u32::MAX));
+            p.extend([wa, pa, cap | u64::from(plus.is_some()) << 32]);
         }
         job.p = Some(as_bytes(&p).to_vec());
         job.count = checks.len();
@@ -1886,6 +1956,95 @@ impl Batch {
         self.flush()?;
         self.gated = true;
         Ok(())
+    }
+
+    /// The phase the next level flushed begins (`Program::phase`): a round's first, which a round's end jumps to.
+    pub(in crate::code_rule_dsl) fn next_phase(&mut self) -> Result<u32, Error> {
+        self.flush()?;
+        Ok(self.program.phases.len() as u32)
+    }
+
+    /// A round's end (decision 0603 step 3, `round_one`), alone in its level: `ops` in order (its new rows claimed,
+    /// its next deltas' lengths set, its words emptied for the next round, its counts summed and logged), the round
+    /// counted in slot 0 of `round`; then the round after, from phase `next` (`next_phase`; none: the phase after its own). The program ends when no
+    /// `RoundOp::Any` word is non-zero (`Done::ended`), fails past round `max` (`Done::past_rounds`), and yields after
+    /// `until` rounds in a launch (`Done::yielded`, `resume`), so a launch's GPU time is a few rounds'.
+    pub(in crate::code_rule_dsl) fn round_end(&mut self, ops: &[RoundOp<'_>], round: &Words, max: u32, until: u32, next: Option<u32>) -> Result<(), Error> {
+        assert!(until > 0, "a launch of no rounds");
+        // Alone in its level: the round's work all before it, the next round's after. Its phase is the next one
+        // (`next_phase`); none given, the round after goes on from the phase after it.
+        self.flush()?;
+        let next = next.unwrap_or(self.program.phases.len() as u32 + 1);
+        let mut job = Job::new(JobKind::Round, 0, Stage::default());
+        let ra = job.reach(&round.buffer.buffer, 0, true)?;
+        let mut p: Vec<u64> = vec![ra, u64::from(ops.len() as u32) | u64::from(max) << 32, u64::from(until) | u64::from(next) << 32, 0];
+        let (mut reads, mut writes) = (Vec::new(), vec![ra]);
+        let word = |job: &mut Job, at: &At<'_>, write: bool| at.reach(job, write);
+        for op in ops {
+            let (to, from, code, n) = match op {
+                RoundOp::Add(to, from) => (word(&mut job, to, true)?, word(&mut job, from, false)?, 0u32, 1usize),
+                RoundOp::Set(to, from) => (word(&mut job, to, true)?, word(&mut job, from, false)?, 1, 1),
+                RoundOp::Zero(w, at, n) => {
+                    assert!(at + n <= w.len, "words emptied past their end");
+                    (job.reach(&w.buffer.buffer, 4 * *at as u64, true)?, 0, 2, *n)
+                }
+                RoundOp::Log(w, from) => (job.reach(&w.buffer.buffer, 0, true)?, word(&mut job, from, false)?, 3, w.len),
+                RoundOp::Any(from) => (0, word(&mut job, from, false)?, 4, 1),
+                RoundOp::Sum(to, from) => {
+                    assert!(from.len <= to.len, "counts summed into fewer words");
+                    (job.reach(&to.buffer.buffer, 0, true)?, job.reach(&from.buffer.buffer, 0, false)?, 5, from.len)
+                }
+            };
+            if to != 0 {
+                writes.push(to);
+            }
+            if from != 0 {
+                reads.push(from);
+            }
+            p.extend([to, from, u64::from(code) | (n as u64) << 32]);
+        }
+        job.p = Some(as_bytes(&p).to_vec());
+        job.count = 1;
+        job.order(&reads, &writes);
+        self.queue(job)?;
+        self.flush()?;
+        self.program.rounds = self.program.rounds.max(until);
+        Ok(())
+    }
+
+    /// The program the last `finish` found yielded (`Done::yielded`) launched again from where it stopped: its rounds
+    /// go on in the same buffers. False when none yielded.
+    pub(in crate::code_rule_dsl) fn resume(&mut self) -> Result<bool, Error> {
+        let Some((kit, first)) = self.resume.take() else { return Ok(false) };
+        self.launch(kit, first)?;
+        Ok(true)
+    }
+
+    /// A lattice head's key map made or grown before a program's rounds fold into it (`MapFirst::Ready`): emptied, and
+    /// every key of the old one `old` placed in it again (`lat_hclear_one`, `lat_rehash_one`). `r`: the relation its
+    /// slots' rows are of, its key its first `nkeys` columns.
+    pub(in crate::code_rule_dsl) fn lattice_grow(&mut self, r: &DevRel, nkeys: usize, map: LatMap<'_>, old: Option<LatMap<'_>>) -> Result<(), Error> {
+        assert!(map.places.is_power_of_two() && old.is_none_or(|o| o.places.is_power_of_two() && o.places <= map.places));
+        let (omask, h0_at) = old.map_or((0, 0), |o| ((o.places - 1) as u32, o.at as u64));
+        let p = LatParams { top: 0, n: 0, had: 0, nkeys: nkeys as u32, code: 0, after: NONE, pmask: 0, hmask: (map.places - 1) as u32, level: 0, omask,
+                            counted: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at };
+        let hb = bound(map.home)?;
+        let ob = match old {
+            Some(o) => bound(o.home)?,
+            None => bound(map.home)?,
+        };
+        let mut job = Job::new(JobKind::Lattice, 0, Stage::default());
+        job.desc.s = job.reach(&r.buffer.buffer, 0, false)?;
+        job.desc.vc = job.reach(&hb.buffer, 0, true)?;
+        job.desc.g = job.reach(&ob.buffer, 0, false)?;
+        for d in [&mut job.desc.l, &mut job.desc.a, &mut job.desc.totals, &mut job.desc.h, &mut job.desc.o, &mut job.desc.counters, &mut job.desc.v] {
+            *d = job.desc.g;
+        }
+        job.p = Some(lat_bytes(&p).to_vec());
+        (job.count, job.clear, job.lattice) = (0, 0, [map.places, old.map_or(0, |o| o.places)]);
+        job.order(&[job.desc.s, job.desc.g], &[job.desc.vc]);
+        job.own.extend([hb, ob]);
+        self.queue(job)
     }
 
     /// Sets slots of `table` in place (`stage`'s binds: program columns of the binding's slots, or parameters), queued
@@ -2024,7 +2183,7 @@ impl Batch {
             }
             prog.phase(items);
         };
-        job_phase(prog, &[(JobKind::Gate, PK_GATE, |j| j.count), (JobKind::Sum, PK_SUM, |j| j.count)]);
+        job_phase(prog, &[(JobKind::Gate, PK_GATE, |j| j.count), (JobKind::Sum, PK_SUM, |j| j.count), (JobKind::Round, PK_ROUND, |j| j.count)]);
         job_phase(prog, &[(JobKind::Copy, PK_COPY, |j| j.count)]);
         if let (Some((a, b, hist, tiles)), Some(f)) = (&sort, sorted) {
             job_phase(prog, &[(JobKind::Index, PK_IX_KEY, |j| j.count)]);
@@ -2128,20 +2287,29 @@ impl Batch {
         let phases = bytes(as_bytes(&prog.phases))?;
         let scan_levels = bytes(as_bytes(&scans))?;
         let sorts = bytes(as_bytes(&prog.sorts))?;
-        let nphases = prog.phases.len();
-        let seeds = prog.phases[0][1];
-        // A group an item at most; the queue's room, the continuations and a slot a group gives up at most.
-        let workers = prog.items.len().max(1);
-        let capacity = prog.phases[1..].iter().map(|p| p[1] as usize).sum::<usize>() + workers;
-        let ctl = Words::zeroed(8 + nphases)?;
-        let slots = Words::zeroed(capacity)?;
+        // A group an item at most, a few rounds' where it runs rounds (`round_end`): a group that finds nothing to
+        // take ends, and later ones start as earlier ones end. The queue's room: every phase pushed in a launch (its
+        // rounds' at most), the continuations and a slot a group gives up at most.
+        let rounds = prog.rounds.max(1) as usize;
+        let workers = (prog.items.len() * rounds).clamp(1, PROGRAM_WORKERS.max(prog.items.len()));
+        let capacity = rounds * prog.phases.iter().map(|p| p[1] as usize).sum::<usize>() + workers;
         let format = prog.format.unwrap_or_else(run_view_format);
-        let pipe = program_pipe(format)?;
-        let args: Vec<u8> = [nphases as u32, capacity as u32, seeds, 0].iter().flat_map(|w| w.to_ne_bytes()).collect();
+        self.done.levels += prog.levels;
+        let kit = Kit { descs, items, phases, scans: scan_levels, sorts, counts, phase_items: prog.phases, capacity, workers, format, uses: prog.uses, hold: prog.hold };
+        self.launch(kit, 0)
+    }
+
+    /// One launch of `join_run` over `kit`'s program from its phase `first` (its first, or where a round yielded).
+    fn launch(&mut self, kit: Kit, first: usize) -> Result<(), Error> {
+        let nphases = kit.phase_items.len();
+        let ctl = Words::zeroed(10 + nphases)?;
+        let slots = Words::zeroed(kit.capacity)?;
+        let pipe = program_pipe(kit.format)?;
+        let args: Vec<u8> = [nphases as u32, kit.capacity as u32, kit.phase_items[first][1], first as u32].iter().flat_map(|w| w.to_ne_bytes()).collect();
         let pass = self.open()?;
         // What its jobs reach by address, and its own buffers: resident for the launch.
         let mut seen = std::collections::HashSet::new();
-        for (b, write) in &prog.uses {
+        for (b, write) in &kit.uses {
             if seen.insert((b.contents() as usize, b.length(), *write)) {
                 if *write {
                     pass.use_read_write(b);
@@ -2150,29 +2318,39 @@ impl Batch {
                 }
             }
         }
-        for h in &prog.hold {
+        for h in &kit.hold {
             pass.use_read_write(&h.buffer);
         }
-        pass.use_read_write(&counts.buffer);
+        pass.use_read_write(&kit.counts.buffer);
         pass.run_bytes_at(
             &pipe,
-            &[(&descs.buffer, 0), (&items.buffer, 0), (&phases.buffer, 0), (&scan_levels.buffer, 0), (&sorts.buffer, 0), (&ctl.buffer.buffer, 0), (&slots.buffer.buffer, 0), (&counts.buffer, 0)],
+            &[(&kit.descs.buffer, 0), (&kit.items.buffer, 0), (&kit.phases.buffer, 0), (&kit.scans.buffer, 0), (&kit.sorts.buffer, 0), (&ctl.buffer.buffer, 0), (&slots.buffer.buffer, 0), (&kit.counts.buffer, 0)],
             &args,
-            workers,
+            kit.workers,
         );
-        self.done.levels += prog.levels;
-        self.programs.push(Ran { ctl, last: prog.phases.len() - 1, items: prog.phases[nphases - 1][1] });
+        self.programs.push(Ran { ctl, last: nphases - 1, items: kit.phase_items[nphases - 1][1], kit });
         Ok(())
     }
 
     /// The programs run since the last `finish`, each whole: its last phase done and nothing pushed past its room.
     fn programs_done(&mut self) -> bool {
         let mut whole = true;
-        for r in self.programs.drain(..) {
-            let (overflow, done) = (r.ctl.get(6) & 1 != 0 || r.ctl.get(3) != 0, r.ctl.get(8 + r.last));
+        for r in std::mem::take(&mut self.programs) {
+            let flags = r.ctl.get(6);
+            let (overflow, done) = (flags & 1 != 0 || r.ctl.get(3) != 0, r.ctl.get(10 + r.last));
             // A gate stopped it: its phases after the gate are undone, as the caller asked.
-            if !overflow && r.ctl.get(6) & 2 != 0 {
+            if !overflow && flags & 2 != 0 {
                 self.done.stopped = true;
+                continue;
+            }
+            // A round's end ended it (no new rows), stopped it past its rounds, or yielded (`round_end`).
+            if !overflow && flags & (4 | 8 | 16) != 0 {
+                self.done.ended |= flags & 16 != 0;
+                self.done.past_rounds |= flags & 4 != 0;
+                if flags & 8 != 0 {
+                    self.done.yielded = true;
+                    self.resume = Some((r.kit, r.ctl.get(9) as usize - 1));
+                }
                 continue;
             }
             if overflow || done != r.items {
@@ -2190,8 +2368,68 @@ fn as_bytes<T: Copy>(v: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), std::mem::size_of_val(v)) }
 }
 
+/// A word a gate or a round's end reads or writes: slot `.1` of words, or a relation's rows' length as the device
+/// claims it (`Rows::len`, in its block: a live relation's, `DevRel::live`).
+#[derive(Clone, Copy)]
+pub(in crate::code_rule_dsl) enum At<'a> {
+    Word(&'a Words, usize),
+    Len(&'a DevRel),
+}
+
+impl At<'_> {
+    /// Its address, for `job`, which reaches its buffer.
+    fn reach(&self, job: &mut Job, write: bool) -> Result<u64, Error> {
+        match *self {
+            At::Word(w, slot) => {
+                assert!(slot < w.len, "a word past its words");
+                job.reach(&w.buffer.buffer, 4 * slot as u64, write)
+            }
+            At::Len(r) => job.reach(&r.buffer.buffer, r.rows_at() + ROWS_LEN, write),
+        }
+    }
+}
+
+/// What a round's end does (`Batch::round_end`, `round_one`'s ops), in order.
+pub(in crate::code_rule_dsl) enum RoundOp<'a> {
+    /// `to += from`: a round's new rows claimed onto its relation.
+    Add(At<'a>, At<'a>),
+    /// `to = from`: a next delta's length.
+    Set(At<'a>, At<'a>),
+    /// Words `at..at + n` emptied for the next round.
+    Zero(&'a Words, usize, usize),
+    /// Slot `round` of the words (the round counted before) set to `from`: a round's count, kept by round.
+    Log(&'a Words, At<'a>),
+    /// A count the round made: the program goes on while any is non-zero.
+    Any(At<'a>),
+    /// Each of `from`'s words added to `to`'s: a round's counts summed over the rounds.
+    Sum(&'a Words, &'a Words),
+}
+
+/// `Rows::len`'s offset in its descriptor: a relation's rows as claimed, which the device reads (`clif_rows_len`) and
+/// a round's end writes.
+const ROWS_LEN: u64 = std::mem::offset_of!(rerail_blocks::rows::Rows, len) as u64;
+
+/// A launched program's buffers (`Batch::launch`), kept while it may launch again from a round (`Batch::resume`).
+struct Kit {
+    descs: Held,
+    items: Held,
+    phases: Held,
+    scans: Held,
+    sorts: Held,
+    counts: Held,
+    /// Each phase's first item and its items.
+    phase_items: Vec<[u32; 2]>,
+    capacity: usize,
+    workers: usize,
+    format: u32,
+    uses: Vec<(Buffer, bool)>,
+    hold: Vec<Held>,
+}
+
 /// The radix sort's tile (`UKL_RADIX_TILE`): a group's rows of a pass.
 const SORT_TILE: usize = 1024;
+/// `join_stages.uglykl`'s `IX_LIVE`: an index's rows its relation's length on the device.
+const IX_LIVE: u32 = 0x8000_0000;
 /// The scan's tile (`UKL_SCAN_TILE`): a group's values.
 const SCAN_TILE: usize = 1024;
 
@@ -2223,6 +2461,7 @@ const PK_LAT_BEST: u32 = 24;
 const PK_LAT_MERGE: u32 = 25;
 const PK_SUM: u32 = 26;
 const PK_GATE: u32 = 27;
+const PK_ROUND: u32 = 28;
 
 /// A batch's program (decision 0603): the levels flushed since its last launch, as phases of items (`Item`: a group
 /// of a job's, a scan level's or a sort pass's work), run by one launch of `join_run`. A phase's items follow the
@@ -2240,6 +2479,8 @@ struct Program {
     /// The view format its jobs read (0: several); none read a view.
     format: Option<u32>,
     levels: u32,
+    /// The rounds a launch of it runs at most (`Batch::round_end`); 0 where it runs none.
+    rounds: u32,
     /// What its jobs reach by address, each with whether they write it.
     uses: Vec<(Buffer, bool)>,
     /// Its levels' own buffers: parameter blocks, the jobs' own, the scans' sums, the sorts'.
@@ -2344,7 +2585,11 @@ struct Ran {
     ctl: Words,
     last: usize,
     items: u32,
+    kit: Kit,
 }
+
+/// A program's groups at most where it runs rounds (`Batch::round_end`): enough to start through its launch.
+const PROGRAM_WORKERS: usize = 1 << 16;
 
 /// A buffer's address for the device's kernels (decision 0601's jobs): a device whose buffers have none
 /// (OpenCL without unified shared memory) runs no join on the device, as a view read in place needs one too.
@@ -2415,6 +2660,8 @@ enum JobKind {
     Sum,
     /// A gate (`gate_one`), alone in its level.
     Gate,
+    /// A round's end (`round_one`), alone in its level.
+    Round,
 }
 
 impl JobKind {
@@ -3027,6 +3274,14 @@ pub(in crate::code_rule_dsl) struct LatCode {
     pub(in crate::code_rule_dsl) after: Option<u32>,
 }
 
+/// A fold's level (`Batch::lattice_fold`): a round the host knows, or slot 0 of a program's round word
+/// (`Batch::round_end`).
+#[derive(Clone, Copy)]
+pub(in crate::code_rule_dsl) enum LatLevel<'a> {
+    Round(u32),
+    Word(&'a Words),
+}
+
 /// What a fold does to its key map first: nothing, empty it (new, its words not written), or empty it and place
 /// every key of the old one in it (grown).
 #[derive(Clone, Copy)]
@@ -3049,17 +3304,22 @@ impl Batch {
     /// (decision 0384 step 5), which `first` empties or grows first. A held key's row is updated where it lies; a new
     /// key's row is written at `had` on (room the caller reserved for `n` more) and its slot put in the map. Each
     /// changed key's row (key and value) into `delta`. `counters`: `[changed, new]`. `level`: where the relation keeps
-    /// levels (decision 0311), the round, written to a changed or new key's slot.
+    /// levels (decision 0311), the round, written to a changed or new key's slot. A live relation (`DevRel::live`, a
+    /// program's rounds: decision 0603 step 3) holds its rows as the device claimed them, not `had`; its map is ready.
     #[allow(clippy::too_many_arguments)]
     /// Code 3 compares its values' texts in `arena`, which holds every value the fold reads.
     pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, r: &DevRel, had: usize, nkeys: usize, lat: LatCode, map: LatMap<'_>,
-                                                 first: MapFirst<'_>, counters: &Words, delta: &Table, arena: Option<&Arena>, level: Option<u32>, count: Option<(&Words, usize)>) -> Result<(), Error> {
+                                                 first: MapFirst<'_>, counters: &Words, delta: &Table, arena: Option<&Arena>, level: Option<LatLevel<'_>>, count: Option<(&Words, usize)>) -> Result<(), Error> {
         assert!(lat.code != 3 || arena.is_some(), "a shortlex fold reads its values' texts");
+        assert!(!r.live || matches!(first, MapFirst::Ready), "a live relation's fold into a map made before its rounds");
         assert!(nkeys < MAX_KEYS && u.cap == n && delta.cap == n);
-        assert!(map.places.is_power_of_two() && 2 * n <= map.places, "a key map of {} slots for {n} rows", map.places);
+        // A live relation's keys are at most its bound, which its map holds at half full (its gate's).
+        assert!(map.places.is_power_of_two() && (r.live || 2 * n <= map.places), "a key map of {} slots for {n} rows", map.places);
         let pplaces = (2 * n).next_power_of_two().max(16);
         let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32,
-                                hmask: (map.places - 1) as u32, level: level.unwrap_or(0), omask: 0, counted: u32::from(count.is_some()), r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 0 };
+                                hmask: (map.places - 1) as u32, level: match level { Some(LatLevel::Round(l)) => l, _ => 0 }, omask: 0,
+                                counted: u32::from(count.is_some()) | if r.live { 2 } else { 0 } | if matches!(level, Some(LatLevel::Word(_))) { 4 } else { 0 },
+                                r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 0 };
         // Its rows are written by the fold, through the writer (decision 0463): checked when the batch is done.
         self.writes(r, "a lattice's held rows");
         // The map's block as it is now (reaching its slots), kept until the work completes.
@@ -3093,6 +3353,10 @@ impl Batch {
                 job.own.push(ob);
                 maps[1] = old.places;
             }
+        }
+        // The round's word, slot 0 (`counted & 4`), where the map is ready (no old map read).
+        if let Some(LatLevel::Word(w)) = level {
+            job.desc.g = job.reach(&w.buffer.buffer, 0, false)?;
         }
         job.desc.g = if job.desc.g == 0 { job.desc.l } else { job.desc.g };
         let mut reads = vec![job.desc.l, job.desc.v];

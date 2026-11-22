@@ -122,3 +122,60 @@ Open in step 3: the rounds as a loop on the device. The host still turns between
 the next round's relations by their counts (a stage's `nr`, an index's rows) and decides whether to go on. The loop
 needs each of those as a word: a relation's rows read from its descriptor on the device, its indexes built from that
 count, and a round's last phase that resets the round's words and pushes its first again.
+
+## Done (2026-11-22): step 3, the rounds as a loop on the device
+
+A recursive stratum's rounds after its first are one program (`setfix::device::device_rounds`). The first round, over
+the seed rules, is still encoded by the host, as before. The host encodes a program once, launches it, and launches
+it again where it yields. It encodes a new program only where a gate stopped a round.
+
+- **Live relations** (`DevRel::live`): each head's relation and two deltas. Each is grown in place in a block with
+  room (`Part::for_writes_with_room`, `reserve`) and bound at the program's bound for it. A reader takes the
+  relation's rows from its descriptor: `rows_len`, `rel_len`, written once in CLIF (`clif::relation`, decision
+  0310).
+  - A stage reads them through `Stage::r_len`.
+  - A copy appends past them (`Copy::flags & 2`, `Batch::append_live`).
+  - A fold holds them (`LatP::counted & 2`), and its level is the program's round word (`counted & 4`,
+    `LatLevel::Word`).
+  - A live relation's index is built again in each round in the same room (`IX_LIVE`), of its rows as claimed then.
+    Keys past them go to a last bucket of their own. The index is never marked built, and each program forgets the
+    last one's.
+- **Two templates.** A round reads one delta of each head and writes the other, so no delta is copied. The first
+  template reads the side the stopped or first round left. Each template's tables are the same
+  (`round_runs`' sizes).
+- **A round's end** (`Batch::round_end`, `round_one`, `PK_ROUND`) is alone in its level. In order, it:
+  - claims each head's new rows onto its relation (`RoundOp::Add` to `At::Len`);
+  - sets the next delta's length (`Set`);
+  - logs a set head's rows by round where it keeps levels (`Log`);
+  - empties the round's words (`Zero`);
+  - sums each run's counts over the rounds (`Sum`);
+  - counts the round, and jumps to the other template's first phase.
+
+  The phase a jump pushes has its count emptied as it is pushed (`ctl[10 + p]`).
+- **When a program stops:**
+  - it ends when no head made a row (`Done::ended`, `ctl[6]` bit 16);
+  - it fails past `ROUNDS_MAX` (bit 4);
+  - it yields after `ROUNDS_A_LAUNCH` rounds in a launch (8; bit 8, `ctl[9]`). `Batch::resume` launches it again from
+    there, in the same buffers (`Kit`), so a launch's GPU time is a few rounds'.
+
+  `ProgP::first` is a launch's first phase. The queue holds a launch's rounds' items.
+- **Two gates a round.**
+  - After the joins: every table by its room, as before.
+  - After the heads' union, dedup and anti-join, before anything is written: each head's new rows (a lattice head's
+    union rows) by its delta's room, and its relation's rows plus them by its bound (`GateCheck::plus`).
+
+  At a stop, the tables past their room grow to twice the counts seen, a head's room to twice its rows, and the bounds
+  are made again from the rows. The program is encoded again, from the round that stopped.
+- **A lattice head's key map** is made or grown once before a program's rounds, for the program's bound
+  (`Batch::lattice_grow`). A round's fold takes it as it is (`MapFirst::Ready`).
+- **Measured:**
+  - spark2's CPU backend: 45 of 45 (71 s);
+  - the mini's Metal: 32 of 32;
+  - the recursive closure test (`a_recursive_stratum_on_the_device_is_the_cpus_fixpoint`): 8 rounds in 13 launches, 11
+    of them reruns.
+
+Open (step 5): a program's sizes are fixed when it is encoded, so a stratum whose rounds grow fast (the closure test's
+rows double each round) stops at a gate about once a round. The fix is to read a phase's items from a count on the
+device, not from the host's bounds: the finisher pushes the items the count needs, at most the phase's. A dedup's
+places come from the same count. Then a program's tables and relations can hold its launch's rounds (their room is
+address space), and the work is the rows'.
