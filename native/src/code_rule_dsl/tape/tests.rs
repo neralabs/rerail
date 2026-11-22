@@ -3509,6 +3509,25 @@ pub(crate) fn python_tape_plain(image: &TapeImage, grammar: &Grammar) -> String 
     out
 }
 
+/// Whether two writers' tapes of one source say the same: in format 16 the same bytes; in 16z the same nodes, read
+/// in a batch of their own, as 16z's piece order is the order its blocks were finished, which follows the writer's
+/// commits (a lean parser commits at its statements, the conversion at each node; decision 0434 §2).
+fn same_tape(ours: &TapeImage, theirs: &TapeImage) -> bool {
+    use rerail_tape_format::tape::Tape as _;
+    if ours.format() != super::formats::Format::F16Z || theirs.format() != super::formats::Format::F16Z {
+        return ours.to_bytes().unwrap() == theirs.to_bytes().unwrap();
+    }
+    let (ca, cb) = (ours.own_cache(), theirs.own_cache());
+    let (a, b) = (ours.tape_in(ca.as_ref()), theirs.tape_in(cb.as_ref()));
+    rerail_tape_format::with_tape!(a, |a| rerail_tape_format::with_tape!(b, |b| {
+        a.len() == b.len()
+            && (0..a.len()).all(|i| {
+                a.table().entry(a.code(i)) == b.table().entry(b.code(i))
+                    && (a.start(i), a.end(i), a.subtree_end(i), a.parent(i)) == (b.start(i), b.end(i), b.subtree_end(i), b.parent(i))
+            })
+    }))
+}
+
 /// Python's tapes from the lean parser (the product's Python parser) are tree-sitter-python's, byte for
 /// byte, on hand-written cases; a text tree-sitter reads with an error the lean parser refuses (its
 /// file goes to tree-sitter). The corpus comparison is `rerail-python-lean`'s `oracle`.
@@ -3615,7 +3634,7 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
             .unwrap()
             .primary;
         assert!(
-            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            same_tape(&ours, &theirs),
             "the tapes of a chain of {} bytes differ",
             source.len()
         );
@@ -4006,7 +4025,7 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
                 .unwrap()
                 .primary;
             assert!(
-                ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+                same_tape(&ours, &theirs),
                 "{dialect:?}: the tapes of a chain of {} bytes differ",
                 source.len()
             );
