@@ -897,3 +897,41 @@ documents' old rows at their old held nodes counted out and their new rows at th
 document's held nodes are its exports', which are memo hits, so its part stands. Then `MadeRows` needs no keyed walk
 for statistics, and an edit makes the changed documents' rows alone. `child` counted off the batch (one run's
 `child: counted`) and the 0458 versions' per-document pass are the next two.
+
+**Done** (2026-11-22, each with its test first):
+
+- A semi-join input's held statistics are patched by the changed documents (`held_counted`: the keeper's old and
+  new export values of the changed files, `HeldChange`), and its keyed walk makes only the documents its keys name
+  (`MadeRows::for_rows_keyed`). A shared guest's version is taken by identity (key and digest), not by the path it
+  is filed under, so `child`'s patch is no longer refused.
+- A probe of a made relation by its document key (`docof(n, d)` by `d`) makes that document alone (`key_column`);
+  one by several bound columns makes the documents they all name (`Source::lookup_columns`).
+- A session holds its batch's documents' views' counts, as the documents' table does: the base relations' versions
+  projected 9 documents, not 524.
+
+| Engine | Files | 00 (first) | 01 | 02 | 03 |
+|---|---|---|---|---|---|
+| a phase runs only for an output (bc43f5c906, step 02 profiled) | 334 | 17.27 | 2.19 | 4.63 | 3.24 |
+| the above (2bb2888e27, a9e3e88d8f; none profiled) | 334 | 18-19 | 1.75-1.94 | 2.99-3.31 | 2.39-2.66 |
+
+The ranges are runs on a farm Mac under varying load. No patch is refused, and each step's findings equal a cold
+run's.
+
+**What is left of step 02** (profiled, under light load: the run's thread 2.13 s). The cross part takes 1.36 s.
+0.75 s of it is one stratum derived again, `rr_demand_agg_rr_agg51`. The price chose right: with every stratum
+maintained (`RERAIL_AGAIN=off`) the step costs 6.3 s, 3.3 s of it the mode's removals and rechecks. The derive
+reads every `ca_param` row and probes `docof` by each `$at`. That makes 253 unchanged documents' rows again
+(`document rows` 0.27 s, `node rows` 0.19 s, `relations` 0.09 s, `projected` 0.07 s), because a document's made
+rows do not outlive the run. The session holds its documents' inputs and counts, not their rows.
+
+Two designs remove this, and each changes 0494:
+
+- **The rows outlive the run.** Before 0458 step 4 a memo entry kept them (copy 2 of 0353, removed). In place,
+  the next run would read the held batch's relations less the changed documents' ranges, with their new rows
+  after them, as `retain::Layered` read kept rows (0117 step 2). But 0494 has one block relation per relation, which
+  every reader reads ("no reader concatenates groups"). A relation with dead ranges needs either a part that starts
+  past a row (`rows::Part` is a prefix) or dead rows that whole reads skip.
+- **A group makes only what its read reads.** A probe of `docof` makes every relation of the batch for its
+  documents. String annotations, `Extra`, the tree and the node walk are about 85% of it. But `make_rows` takes a
+  relation's producer from the program's reads (with no span read, `docof` is core.rerail's and has no spans). A
+  narrower group needs a set of relations to make that is apart from the reads that fix their meaning.
