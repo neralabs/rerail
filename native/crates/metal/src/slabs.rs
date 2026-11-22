@@ -465,6 +465,7 @@ impl State {
                 }
             }
             if !self.retire(keep) {
+                refused(&format!("no room for a slab of {length} bytes: {held} held of {}, none to retire", limit()));
                 return Err(Error::BackendCapacity);
             }
         }
@@ -564,7 +565,7 @@ pub fn admit_sources_digested(files: &[&[u8]], digests: &[[u8; 32]]) -> Result<V
     }
     rerail_prof::count("residency.source_hits", files.len() - misses);
     rerail_prof::count("residency.source_misses", misses);
-    digests.iter().map(|digest| state.sources.get(digest).cloned().ok_or(Error::BackendCapacity)).collect()
+    digests.iter().map(|digest| state.sources.get(digest).cloned().ok_or_else(|| refused("a source not resident after its admission"))).collect()
 }
 
 /// The digests the residency does not hold (each once); the hits' slabs are marked used.
@@ -594,7 +595,15 @@ pub fn misses(digests: &[[u8; 32]]) -> Result<Vec<[u8; 32]>, Error> {
 pub fn resident(digests: &[[u8; 32]]) -> Result<Vec<Arc<Resident>>, Error> {
     let st_ = residency();
     let state = st_.state.lock().map_err(|_| Error::BackendFailure)?;
-    digests.iter().map(|digest| state.documents.get(digest).cloned().ok_or(Error::BackendCapacity)).collect()
+    digests.iter().map(|digest| state.documents.get(digest).cloned().ok_or_else(|| refused("a document not resident"))).collect()
+}
+
+/// A refusal for room (`BackendCapacity`); `RERAIL_PP_WHY` says why.
+fn refused(why: &str) -> Error {
+    if std::env::var_os("RERAIL_PP_WHY").is_some() {
+        eprintln!("pp: the residency: {why}");
+    }
+    Error::BackendCapacity
 }
 
 /// A document to place: its digest, the bytes it takes, the language's table it reads (format 16), and how to

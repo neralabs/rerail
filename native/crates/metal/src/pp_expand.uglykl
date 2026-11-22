@@ -960,6 +960,41 @@ UKL_INLINE bool px_pops_at(Ux u, Tf tf, uint32_t lo, uint32_t hi, uint64_t key, 
     return false;
 }
 
+// A name's answer at `slot` (`visible_walk`'s) and whether the invocation pops it there (`px_pops_at`'s),
+// from the rows `[lo, hi)` of its key's upper half (`lo` a row of the sort, not `IR_NONE`). A name has a few
+// rows in a unit: at most `PX_LOOK_ROWS`, every row and its permutation are read at once, then every row's
+// name, value and type at once, and the answer is the latest row before `slot` (at or past `floor`, or of
+// slot 0) of the name, past a `V_SKIP`: two reads deep, where the walk and the pops' search each read
+// one after the other. Past them, the walk and the search. `over`: the walk past its bound (`WALK`).
+#define PX_LOOK_ROWS (8u)
+#define PX_LOOK_LOAD(i) \
+    uint32_t r##i = lo + ukl_min(i##u, n - 1u); \
+    uint64_t s##i = u.sorted[r##i]; uint32_t p##i = u.perm[r##i];
+#define PX_LOOK_ROW(i) \
+    { \
+        uint64_t nk = u.name_keys[p##i]; uint32_t v = u.values[p##i]; uint32_t rt = tf.rtypes[p##i]; \
+        uint32_t at = (uint32_t)(s##i); \
+        bool in = i##u < n && nk == key; \
+        if (in && s##i < q && (at == 0u || at >= floor) && v != V_SKIP) { m = v; found = true; } \
+        if (in && s##i == q && rt == RT_POP) *pops = true; \
+    }
+UKL_INLINE uint32_t px_look(Ux u, Tf tf, uint32_t lo, uint32_t hi, uint64_t key, uint32_t slot, uint32_t floor, UKL_PRIVATE bool* over, UKL_PRIVATE bool* pops) {
+    *over = false; *pops = false;
+    uint32_t n = hi - lo;
+    if (n == 0u) return L_NONE;
+    if (n > PX_LOOK_ROWS) {
+        uint32_t w = visible_walk(u.sorted, u.perm, u.name_keys, u.values, lo, hi, key, slot, floor, over);
+        *pops = px_pops_at(u, tf, lo, hi, key, slot);
+        return w;
+    }
+    uint64_t q = (key & 0xffffffff00000000ul) | ((uint64_t)(slot));
+    PX_LOOK_LOAD(0) PX_LOOK_LOAD(1) PX_LOOK_LOAD(2) PX_LOOK_LOAD(3) PX_LOOK_LOAD(4) PX_LOOK_LOAD(5) PX_LOOK_LOAD(6) PX_LOOK_LOAD(7)
+    uint32_t m = 0u;
+    bool found = false;
+    PX_LOOK_ROW(0) PX_LOOK_ROW(1) PX_LOOK_ROW(2) PX_LOOK_ROW(3) PX_LOOK_ROW(4) PX_LOOK_ROW(5) PX_LOOK_ROW(6) PX_LOOK_ROW(7)
+    return !found || m == V_UNDEF ? L_NONE : m;
+}
+
 // --- Pieces (decision 0520) ------------------------------------------------------------------------
 //
 // A list's tokens, an argument's expansion and a join are each an array of pieces: runs of tokens

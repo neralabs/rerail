@@ -207,8 +207,38 @@ a team is slower on the M3 (a group for each 4,096 of a unit's work: 13.7 ms for
   The slowest piece is now another one (libtiff's `tif_ojpeg.c`, top tokens 7872..7984): 387 steps (from
   1,173) and 1.42 ms. Of that, 224 look aheads take 514 µs (2.3 µs each, one lookup's chain), 138 main steps
   take 433 µs (12 of them macros), and 243 collecting steps take 217 µs. The corpus's first round's run is 3.50
-  ms (from 4.45). What is left is the chain itself: a look ahead started before the thread needs it (the lanes
-  wait for the thread now), and fewer dependent reads in a lookup.
+  ms (from 4.45). The look aheads' chain is measured next (below, "A step's cost").
+- **A step's cost** (measured 2026-11-22, the device's clock, the GB10; the slow piece above).
+  - **The look aheads' parts.** The 74 names asks take 121 µs. The thread's own lookup is 18 µs of that, and
+    shuffling the question to the lanes is 36 µs. The 67 punctuation asks take 94 µs, and the 83 list asks take
+    337 µs, which includes taking their entries.
+  - **The reads, timed in the slow piece's group.** 8 dependent reads of device memory take 128 to 256 ns, 8 of
+    threadgroup memory 160 to 192 ns, and 8 scattered reads of the tape 384 to 512 ns: 20 to 60 ns a read.
+  - **So a lookup's reads are not what a step costs.** A step of 1 to 3 µs is 50 to 100 dependent accesses
+    along the thread's path through the loop. The loop's state is in threadgroup memory (`LpRun`).
+  - **The kernel.** `pp_teams` is 102k instructions, at CUDA's most registers (255), with a 1.5 KB stack its
+    registers spill to.
+  - **Built:**
+    - `px_look`: a name with at most 8 rows reads them all at once (their keys, then their fields), against two
+      binary searches.
+    - The names ask also reads the `(`, `)` and `,` of the 64 tokens after the name it stops at. A call's
+      arguments come next from that window.
+    - The window is 64 tokens (`LP_WIN`), two a lane: an argument longer than 32 tokens takes half the asks.
+
+    The piece is now 378 steps (from 387). Its time is the same within the runs' spread: 1.40 ms, and the
+    corpus's first round's run is 3.47 to 3.55 ms.
+  - **A look ahead started while the thread works** cannot be in its own SIMD group. The group's lanes run the
+    thread's instructions with it, so a lane cannot look while the thread steps. Look-ahead work can move only
+    into an earlier ask (as the stopper's window does), or to another SIMD group.
+  - **Tried and dropped:**
+    - The names ask reading its own window's punctuation: no ask fewer, since the arguments lie past it, and
+      30 µs more.
+    - Keeping the last entry written (`lp_put`), so a push doesn't read it back: 1.50 to 1.52 ms.
+    - The loop's large functions as calls (`UKL_ONCE`): 1.7 ms, and 4.8 ms with the small ones too.
+  - **What is left: the thread's path.**
+    - Keep its state in registers between asks, not in threadgroup memory.
+    - Use fewer registers, so that state is not spilled. `Ux` and `Ar` hold about 60 pointers; they could be a
+      few bases and offsets.
 - **A unit's barriers.** P1's iterations each re-run the whole `#if` pass. Iterating only the lines whose inputs
   changed, and fusing the phases that do little work, cut the chain on every device, most on the M3.
 - **One serial line.** `a_line_past_its_room_runs_again_larger`'s `#if` line (131,071 tokens from one piece) is one

@@ -118,8 +118,9 @@ typedef struct LpRun {
     uint32_t cl_m, cl_n, cl_nsp, cl_tab, cl_nargs, cl_depth, cl_astart, cl_org, cl_cstart, cl_o1;
     LpTok cl_name;
     // The group's window (`LQ_PUNCT`): tokens `w_at..w_end` of source `w_src` (a span's, `LP_TOPSRC`
-    // the top text's), and which are `(`, `)` and `,`, a bit each from `w_at`.
-    uint32_t w_src, w_at, w_end, w_open, w_close, w_comma;
+    // the top text's), at most `LP_WIN`, and which are `(`, `)` and `,`, a bit each from `w_at`.
+    uint32_t w_src, w_at, w_end;
+    uint64_t w_open, w_close, w_comma;
     // A directive's line (`#if`'s, an include's), not the text: its tokens' states (`STATE`: 2 read in a
     // call's arguments, for the tests' evaluator) and marks (`IF_OPS`), and a test's operand being read
     // raw (`raw`: 1 its `(` next, past it 1 + its depth).
@@ -1145,6 +1146,25 @@ UKL_INLINE uint8_t lp_delim(Ux u, uint32_t def, uint32_t p) {
     uint8_t c = ref_punct(u, lp_ref(u, t));
     return c == ((uint8_t)('(')) || c == ((uint8_t)(')')) || c == ((uint8_t)(',')) ? c : ((uint8_t)(0));
 }
+// The window `at..end` of source `def` (`LQ_PUNCT`'s, at most `LP_WIN` tokens): a lane reads
+// `LP_WIN / UKL_SIMD_WIDTH` of them, a group's width apart, their reads all issued before the votes.
+#define LP_WIN (64u)
+#define LP_WIN_N (LP_WIN / UKL_SIMD_WIDTH)
+UKL_INLINE void lp_window(UKL_LOCAL LpRun* r, Ux u, uint32_t def, uint32_t at, uint32_t end, uint32_t ln, bool me __UKL_PARAMS) {
+    uint8_t c[LP_WIN_N];
+    for (uint32_t h = 0u; h < LP_WIN_N; h++) {
+        uint32_t p = at + h * UKL_SIMD_WIDTH + ln;
+        c[h] = p < end ? lp_delim(u, def, p) : ((uint8_t)(0));
+    }
+    uint64_t op = 0ul, cl = 0ul, cm = 0ul;
+    for (uint32_t h = 0u; h < LP_WIN_N; h++) {
+        uint32_t sh = h * UKL_SIMD_WIDTH;
+        op |= ((uint64_t)(ukl_sg_ballot(c[h] == ((uint8_t)('(')) __UKL_ARGS))) << sh;
+        cl |= ((uint64_t)(ukl_sg_ballot(c[h] == ((uint8_t)(')')) __UKL_ARGS))) << sh;
+        cm |= ((uint64_t)(ukl_sg_ballot(c[h] == ((uint8_t)(',')) __UKL_ARGS))) << sh;
+    }
+    if (me) { r->w_src = def; r->w_at = at; r->w_end = end; r->w_open = op; r->w_close = cl; r->w_comma = cm; }
+}
 // The next `k` tokens of the span on top, plain (the group's look ahead, `lp_ahead`): emitted, or
 // pushed onto the argument being expanded, as `k` steps would. Its tokens past the first are
 // flagless and next in their source: after two emitted (three pushed) the piece out (the span on
@@ -1190,9 +1210,9 @@ UKL_INLINE bool lp_tok_plain(Ux u, Ar a, LpTok t, uint32_t slot, uint32_t floor)
         lo = name_rows_lo(u.sorted, u.n_rows, key); hi = name_rows_hi(u.sorted, u.n_rows, key);
     }
     if (lo == IR_NONE) return true;
-    bool over = false;
-    uint32_t m = visible_walk(u.sorted, u.perm, u.name_keys, u.values, lo, hi, key, slot, floor, &over);
-    if (over || px_pops_at(u, a.tf, lo, hi, key, slot)) return false;
+    bool over = false, pops = false;
+    uint32_t m = px_look(u, a.tf, lo, hi, key, slot, floor, &over, &pops);
+    if (over || pops) return false;
     return m == L_NOT_NAME || m == L_NONE || m == L_IDENT;
 }
 // Token `p` of span `def`'s (`lp_tok_plain`).
@@ -1247,7 +1267,7 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
     bool live = me;
     for (;;) {
         bool ask = false;
-        uint32_t q_kind = 0u, q_def = 0u, q_at = 0u, q_end = 0u, q_slot = 0u, q_floor = 0u;
+        uint32_t q_kind = 0u, q_def = 0u, q_at = 0u, q_end = 0u, q_slot = 0u, q_floor = 0u, q_fend = 0u;
         if (live) {
             for (; rp->stop == 0u; step++) {
                 if (step == LP_WORK) { px_refuse(a.ctl, X_WORK); rp->stop = LP_REFUSED; break; }
@@ -1270,13 +1290,13 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                         // of the source may end first): a nested `(` .. `)` and the commas in it are the argument's
                         // tokens, and the depth they leave is kept (`lp_collect_tok`'s), so a step is an argument.
                         uint32_t lim = ukl_min(rp->w_end - f->at, f->end - f->at);
-                        uint32_t dm = (rp->w_open | rp->w_close | rp->w_comma) >> j;
+                        uint64_t dm = (rp->w_open | rp->w_close | rp->w_comma) >> j;
                         uint32_t depth = rp->cl_depth, k = lim;
                         bool comma_in = rp->cl_var && rp->cl_nargs == rp->cl_n;
                         while (dm != 0u) {
-                            uint32_t d = ukl_ctz32(dm);
+                            uint32_t d = ukl_ctz64(dm);
                             if (d >= lim) break;
-                            uint32_t bit = 1u << (j + d);
+                            uint64_t bit = 1ul << (j + d);
                             if ((rp->w_open & bit) != 0u) {
                                 depth++;
                             } else if ((rp->w_close & bit) != 0u) {
@@ -1293,10 +1313,10 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                             if (!lp_collect_run(rp, a, lob, o.nv, k)) break;
                             continue;
                         }
-                        c = ((rp->w_open >> j) & 1u) != 0u ? ((uint8_t)('(')) : ((rp->w_close >> j) & 1u) != 0u ? ((uint8_t)(')')) : ((uint8_t)(','));
+                        c = ((rp->w_open >> j) & 1ul) != 0ul ? ((uint8_t)('(')) : ((rp->w_close >> j) & 1ul) != 0ul ? ((uint8_t)(')')) : ((uint8_t)(','));
                         known = true;
                     } else if (flat && f->at + 1u < f->end) {
-                        ask = true; q_kind = LQ_PUNCT; q_def = src; q_at = f->at; q_end = ukl_min(f->end, f->at + UKL_SIMD_WIDTH);
+                        ask = true; q_kind = LQ_PUNCT; q_def = src; q_at = f->at; q_end = ukl_min(f->end, f->at + LP_WIN);
                         break;
                     }
                     LpTok t; bool at_stop = false;
@@ -1332,7 +1352,7 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     // A span, or an object-like body read in place (its items a body's span's).
                     // A span, or an object-like body read in place (its items a body's span's).
                     if ((f->kind == FK_SPAN || f->kind == FK_BODY) && f->at + 1u < f->end) {
-                        ask = true; q_kind = LQ_NAMES; q_def = f->def; q_at = f->at; q_end = ukl_min(f->end, f->at + UKL_SIMD_WIDTH);
+                        ask = true; q_kind = LQ_NAMES; q_def = f->def; q_at = f->at; q_end = ukl_min(f->end, f->at + UKL_SIMD_WIDTH); q_fend = f->end;
                         q_slot = lp_slot_of(rp, u, rp->last); q_floor = lp_floor(rp, u, q_slot);
                         break;
                     }
@@ -1388,9 +1408,11 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                         }
                         if (lo != IR_NONE) {
                             uint32_t slot = lp_slot_of(rp, u, rp->last);
-                            m = visible_at(u.sorted, u.perm, u.name_keys, u.values, lo, hi, key, slot, lp_floor(rp, u, slot), a.ctl + 2);
+                            bool over = false, pops = false;
+                            m = px_look(u, a.tf, lo, hi, key, slot, lp_floor(rp, u, slot), &over, &pops);
+                            if (over) ukl_atomic_or(a.ctl + 2, 1u << 29);
                             // A name the invocation pops: the serial pass reads it after the pop or before.
-                            if (!rp->line && px_pops_at(u, a.tf, lo, hi, key, slot)) px_refuse(a.ctl, X_PRAGMA);
+                            if (!rp->line && pops) px_refuse(a.ctl, X_PRAGMA);
                         }
                     }
                 }
@@ -1473,12 +1495,16 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
         // The group's lanes look ahead for the piece's thread.
         if (ukl_sg_shuffle(ask ? 1u : 0u, lead __UKL_ARGS) == 0u) break;
         q_kind = ukl_sg_shuffle(q_kind, lead __UKL_ARGS); q_def = ukl_sg_shuffle(q_def, lead __UKL_ARGS); q_at = ukl_sg_shuffle(q_at, lead __UKL_ARGS); q_end = ukl_sg_shuffle(q_end, lead __UKL_ARGS);
-        q_slot = ukl_sg_shuffle(q_slot, lead __UKL_ARGS); q_floor = ukl_sg_shuffle(q_floor, lead __UKL_ARGS);
+        q_slot = ukl_sg_shuffle(q_slot, lead __UKL_ARGS); q_floor = ukl_sg_shuffle(q_floor, lead __UKL_ARGS); q_fend = ukl_sg_shuffle(q_fend, lead __UKL_ARGS);
         uint32_t p = q_at + ln;
         if (q_kind == LQ_NAMES) {
             bool plain = p < q_end && lp_ahead(u, a, q_def, p, q_slot, q_floor);
             uint32_t k = ukl_min(ukl_ctz64((uint64_t)(ukl_sg_ballot(!plain __UKL_ARGS))), q_end - q_at);
             if (me) { rp->run = k; rp->noask = k == 0u; }
+            // The run stops at a name that may be a call's: its arguments' `(`, `)` and `,` are the next
+            // tokens', read now (`LQ_PUNCT`'s window, from the token after it), not by an ask of their own.
+            uint32_t b = q_at + k + 1u;
+            if (k < q_end - q_at && b + 1u < q_fend) lp_window(rp, u, q_def, b, ukl_min(q_fend, b + LP_WIN), ln, me __UKL_ARGS);
         } else if (q_kind == LQ_LIST) {
             // The list's next entries (region 0 from `q_def`), a lane each, and their tokens laid out in a
             // row (a span its tokens, any other entry one): a lane a token of the row's first, looked up.
@@ -1522,11 +1548,7 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
             }
             if (me) rp->noask = k == 0u;
         } else {
-            uint8_t c = p < q_end ? lp_delim(u, q_def, p) : ((uint8_t)(0));
-            uint32_t op = (uint32_t)(ukl_sg_ballot(c == ((uint8_t)('(')) __UKL_ARGS));
-            uint32_t cl = (uint32_t)(ukl_sg_ballot(c == ((uint8_t)(')')) __UKL_ARGS));
-            uint32_t cm = (uint32_t)(ukl_sg_ballot(c == ((uint8_t)(',')) __UKL_ARGS));
-            if (me) { rp->w_src = q_def; rp->w_at = q_at; rp->w_end = q_end; rp->w_open = op; rp->w_close = cl; rp->w_comma = cm; }
+            lp_window(rp, u, q_def, q_at, q_end, ln, me __UKL_ARGS);
         }
     }
 }
