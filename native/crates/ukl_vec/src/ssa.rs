@@ -2543,7 +2543,6 @@ pub fn verify(f: &Func) -> Result<(), String> {
     Ok(())
 }
 
-/// The blocks reached, in reverse postorder.
 /// Whether each block of function `f` of `ssa` has an operation that reads the SIMD group's lanes as a whole: a
 /// cross-lane one, a uniform atomic (made once for the group), a call of a function that has one.
 pub fn cross_blocks(ssa: &Ssa, f: &Func) -> Vec<bool> {
@@ -2561,16 +2560,18 @@ pub fn cross_blocks(ssa: &Ssa, f: &Func) -> Vec<bool> {
 /// Whether each block's branch (`Br`, `Switch`) must be the SIMD group's decision where its lanes run as chunks of
 /// their own (decision 0567, step 3): whether what it branches to reaches an operation of the group's lanes as a
 /// whole (`cross_blocks`) before the blocks join again (its immediate post-dominator), so every chunk meets the
-/// group's operations in one order. A block with no such branch is false.
+/// group's operations in one order. A block with no such branch is false, and so is one whose decision every chunk
+/// makes alike (`chunk_alike`): it needs no exchange.
 pub fn group_decisions(ssa: &Ssa, f: &Func) -> Vec<bool> {
     let nb = f.blocks.len();
     let cross = cross_blocks(ssa, f);
+    let alike = chunk_alike(f, std::ptr::eq(f, &ssa.funcs[0]));
     let succs: Vec<Vec<u32>> = (0..nb).map(|b| f.succs(b)).collect();
     let ipdom = post_dominators(&succs);
     (0..nb)
         .map(|b| {
             let t = f.inst(*f.blocks[b].insts.last().expect("a terminator"));
-            if !matches!(t.op, O::Br | O::Switch) {
+            if !matches!(t.op, O::Br | O::Switch) || alike[t.a as usize] {
                 return false;
             }
             let stop = ipdom[b];
@@ -2589,6 +2590,188 @@ pub fn group_decisions(ssa: &Ssa, f: &Func) -> Vec<bool> {
             false
         })
         .collect()
+}
+
+/// Whether each value of function `f` is the same in every chunk of a SIMD group (decision 0567, step 3) by how it
+/// is made, whatever lanes each chunk runs: a constant, an address of constant or threadgroup memory, the group's
+/// sizes and id, the kernel's arguments (`kernel`), a uniform operation of such values, and a uniform load from such an
+/// address that nothing the function does before it can have written (no store, copy, clear, atomic, call, barrier or
+/// poll on a path from the entry to it): every chunk reads the same bytes. A block's parameter is not.
+pub fn chunk_alike(f: &Func, kernel: bool) -> Vec<bool> {
+    let writes = |op: O| matches!(op, O::Store | O::Copy | O::Zero | O::Atomic | O::Call | O::Bar | O::Yield | O::SgBar);
+    let nb = f.blocks.len();
+    // The blocks a write can precede: those a writing block reaches.
+    let mut after = vec![false; nb];
+    let mut stack: Vec<usize> = (0..nb).filter(|&b| f.blocks[b].insts.iter().any(|&x| writes(f.inst(x).op))).flat_map(|b| f.succs(b)).map(|s| s as usize).collect();
+    while let Some(b) = stack.pop() {
+        if !after[b] {
+            after[b] = true;
+            stack.extend(f.succs(b).into_iter().map(|s| s as usize));
+        }
+    }
+    // The loads a write can precede: in such a block, or after a write in their own.
+    let mut late = vec![false; f.insts.len()];
+    for (b, blk) in f.blocks.iter().enumerate() {
+        let mut wrote = after[b];
+        for &x in &blk.insts {
+            late[x as usize] = wrote;
+            wrote |= writes(f.inst(x).op);
+        }
+    }
+    let mut alike = vec![false; f.insts.len()];
+    loop {
+        let mut changed = false;
+        for x in 0..f.insts.len() {
+            let i = &f.insts[x];
+            if alike[x] || i.shape != Shape::Uniform {
+                continue;
+            }
+            let a = |v: V| v != NONE && alike[v as usize];
+            let yes = match i.op {
+                O::Const | O::Global | O::Shared => true,
+                O::Arg => kernel,
+                O::GroupInfo | O::Un | O::Cast => a(i.a),
+                O::Bin => a(i.a) && a(i.b),
+                O::Select => a(i.a) && a(i.b) && a(i.c),
+                O::LaneOp => a(i.a) && (i.b == NONE || a(i.b)) && (i.d == NONE || a(i.d)),
+                O::Load => a(i.a) && !late[x],
+                _ => false,
+            };
+            if yes {
+                alike[x] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            return alike;
+        }
+    }
+}
+
+/// Each value an instruction of `f` reads: its operands (`Inst::uses`), and a jump's or a call's arguments.
+pub fn reads(f: &Func, x: V) -> Vec<V> {
+    let i = f.inst(x);
+    let mut r: Vec<V> = i.uses().collect();
+    if matches!(i.op, O::Jump | O::Call) {
+        r.extend(f.args_of(i).iter().copied().filter(|&v| v != NONE));
+    }
+    r
+}
+
+/// The values of `f` live at the end of each block: read on a path from there before they are made again (a block's
+/// parameter is made at its block's start, from its jumps' arguments, which the jump reads).
+pub fn live_out(f: &Func) -> Vec<Vec<bool>> {
+    let (nb, n) = (f.blocks.len(), f.insts.len());
+    let mut live_in = vec![vec![false; n]; nb];
+    let mut out = vec![vec![false; n]; nb];
+    loop {
+        let mut changed = false;
+        for b in (0..nb).rev() {
+            let mut o = vec![false; n];
+            for s in f.succs(b) {
+                for (v, &l) in live_in[s as usize].iter().enumerate() {
+                    o[v] |= l;
+                }
+                for &p in &f.blocks[s as usize].params {
+                    o[p as usize] = false;
+                }
+            }
+            let mut l = o.clone();
+            for &x in f.blocks[b].insts.iter().rev() {
+                l[x as usize] = false;
+                for u in reads(f, x) {
+                    l[u as usize] = true;
+                }
+            }
+            if l != live_in[b] || o != out[b] {
+                (live_in[b], out[b]) = (l, o);
+                changed = true;
+            }
+        }
+        if !changed {
+            return out;
+        }
+    }
+}
+
+/// A region of a chunked kernel's code (decision 0567, step 3; `cl`'s chunk loop) by where it starts: the kernel's
+/// start, after an instruction's `n`th exchange (or barrier), at a block where different regions join.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Lab {
+    Start,
+    Split(V, u8),
+    Join(usize),
+}
+
+/// The regions instruction `x` of block `b` of a chunked kernel `f` ends (`dec` its group decisions,
+/// `group_decisions`): an exchange's, a barrier's, a decision of the SIMD group's its chunks exchange; an atomic made
+/// once for the SIMD group, two (its leader's turn, its result).
+pub fn splits(f: &Func, dec: &[bool], b: usize, x: V) -> u8 {
+    let i = f.inst(x);
+    match i.op {
+        O::AnyGroup | O::Bits | O::Shuffle | O::Reduce | O::Agree | O::Bar | O::Yield | O::SgBar => 1,
+        O::Atomic if i.shape == Shape::Uniform => 2,
+        O::Br | O::Switch if dec[b] => match f.inst(i.a).op {
+            O::Agree | O::Const | O::AnyGroup => 0,
+            _ => 1,
+        },
+        _ => 0,
+    }
+}
+
+/// Each block's region at its start (none: not reached), and the blocks that start one: a block that regions of
+/// different starts reach (a join after an exchange on one side, a loop's header whose body has one). Every such
+/// block's predecessors jump to it (a branch's targets have one predecessor each).
+pub fn regions(f: &Func, dec: &[bool]) -> (Vec<Option<Lab>>, Vec<bool>) {
+    let nb = f.blocks.len();
+    let order = rpo(f);
+    let mut preds = vec![Vec::new(); nb];
+    for b in 0..nb {
+        for s in f.succs(b) {
+            preds[s as usize].push(b);
+        }
+    }
+    let last: Vec<Option<Lab>> = (0..nb)
+        .map(|b| f.blocks[b].insts.iter().rev().find_map(|&x| match splits(f, dec, b, x) { 0 => None, n => Some(Lab::Split(x, n - 1)) }))
+        .collect();
+    let (mut lab, mut resume) = (vec![None; nb], vec![false; nb]);
+    loop {
+        let mut changed = false;
+        for &b in &order {
+            let e = if b == 0 {
+                Lab::Start
+            } else if resume[b] {
+                Lab::Join(b)
+            } else {
+                let ends: Vec<Lab> = preds[b].iter().filter_map(|&p| last[p].or(lab[p])).collect();
+                if ends.iter().all(|&e| e == ends[0]) {
+                    ends[0]
+                } else {
+                    resume[b] = true;
+                    changed = true;
+                    Lab::Join(b)
+                }
+            };
+            if lab[b] != Some(e) {
+                lab[b] = Some(e);
+                changed = true;
+            }
+        }
+        if !changed {
+            return (lab, resume);
+        }
+    }
+}
+
+/// Whether a region of a chunked kernel makes value `x` again rather than keep it: a constant, an argument, an
+/// address, the group's sizes, a thread's ids, and casts of them (so their steps are known again).
+pub fn remade(f: &Func, x: V) -> bool {
+    let i = f.inst(x);
+    match i.op {
+        O::Const | O::Global | O::Shared | O::NoLanes | O::Undef | O::Lane | O::FrameAddr | O::Arg => true,
+        O::Lid | O::Gid | O::GroupInfo | O::Cast => reads(f, x).into_iter().all(|u| remade(f, u)),
+        _ => false,
+    }
 }
 
 /// Each block's immediate post-dominator (none: the function's exit, or a block that reaches no exit), by the

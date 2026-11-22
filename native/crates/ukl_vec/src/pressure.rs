@@ -11,11 +11,11 @@
 //! measured: `width_times`); the uniform operations and the control integer ones for the width's lanes; each
 //! register past the target's at a loop's peak a spill and a reload each time round (outside loops, once); each
 //! operation times how often its block runs (`TRIP` times a loop it is in); and below 32 lanes, a cross-lane
-//! kernel's exchanges between its chunks (`cl`'s chunked code): two fiber switches and their stores and loads for
-//! the chunk's lanes.
+//! kernel's region boundaries (`cl`'s chunk loop, `ssa::regions`): at each, for each chunk, a dozen integer
+//! operations, and each register live across it stored and loaded again.
 
 use crate::k::M;
-use crate::ssa::{Func, O, Shape, Ssa, V};
+use crate::ssa::{Func, O, Shape, Ssa, V, reads};
 
 /// The widths a kernel may run at.
 pub const WIDTHS: [u32; 6] = [1, 2, 4, 8, 16, 32];
@@ -66,8 +66,11 @@ pub struct FuncPressure {
     /// Its loads and stores of 1- or 2-byte lanes some bytes apart: at 4 lanes or more a window's load or store and
     /// its shuffle (`cl`'s `load_bytes`, `store_span`), under 4 a lane at a time.
     pub bytes: f64,
-    /// Its exchanges with the SIMD group's other chunks below 32 lanes (cross-lane operations, the group's decisions).
+    /// A cross-lane kernel's region boundaries below 32 lanes (`ssa::regions`: its exchanges, barriers, the group's
+    /// decisions its chunks exchange, the joins of different regions), and at each width the registers live across
+    /// them, which each chunk keeps and reads back.
     pub exchanges: f64,
+    pub kept: [f64; 6],
     /// Its calls: the function called, and at each width the vector registers its values live across the call
     /// take (what the caller keeps, its result apart).
     pub across: Vec<(u32, [u32; 6])>,
@@ -119,16 +122,6 @@ impl Bits {
     fn iter(&self) -> impl Iterator<Item = V> + '_ {
         self.0.iter().enumerate().flat_map(|(k, &w)| (0..64).filter(move |b| w >> b & 1 != 0).map(move |b| (k * 64 + b) as V))
     }
-}
-
-/// The values instruction `x` of `f` reads (a jump's and a call's arguments among them).
-fn reads(f: &Func, x: V) -> Vec<V> {
-    let i = f.inst(x);
-    let mut u: Vec<V> = i.uses().collect();
-    if matches!(i.op, O::Jump | O::Call) {
-        u.extend(f.args_of(i).iter().copied());
-    }
-    u
 }
 
 /// The times a loop's body is taken to run, for each time its loop is entered.
@@ -329,16 +322,21 @@ pub fn of_func(ssa: &Ssa, f: &Func) -> FuncPressure {
             }
         }
     }
-    if f.cross {
-        let dec = crate::ssa::group_decisions(ssa, f);
-        for (b, blk) in f.blocks.iter().enumerate() {
-            let ops = blk.insts.iter().filter(|&&x| {
-                let i = f.inst(x);
-                i.op.cross_lane() || (i.op == O::Atomic && i.shape == Shape::Uniform)
-            });
-            fp.exchanges += freq[b] * (ops.count() + usize::from(dec[b])) as f64;
+    // A chunked kernel's region boundaries: the kernel's own (its callees' cross-lane operations keep it at 32 lanes).
+    let chunked = f.cross && std::ptr::eq(f, &ssa.funcs[0]);
+    let dec = if chunked { crate::ssa::group_decisions(ssa, f) } else { vec![false; nb] };
+    let (_, resume) = if chunked { crate::ssa::regions(f, &dec) } else { (Vec::new(), vec![false; nb]) };
+    // The registers at each width the values `live` a boundary keeps take (those the region makes again apart).
+    let kept = |live: &Bits| -> [f64; 6] {
+        let mut r = [0.0; 6];
+        for x in live.iter().filter(|&x| f.inst(x).op != O::Entry && !crate::ssa::remade(f, x)) {
+            for (k, &w) in WIDTHS.iter().enumerate() {
+                let c = cost(f, x, w);
+                r[k] += f64::from(c.0 + c.1 + c.2);
+            }
         }
-    }
+        r
+    };
     let succs: Vec<Vec<u32>> = (0..nb).map(|b| f.succs(b)).collect();
     let mut live_in = gen_.clone();
     let mut live_out = vec![Bits::new(n); nb];
@@ -414,6 +412,26 @@ pub fn of_func(ssa: &Ssa, f: &Func) -> FuncPressure {
                 }
             }
             note(&sum, &mut fp, &mut here);
+            let n = if chunked { crate::ssa::splits(f, &dec, b, x) } else { 0 };
+            if n > 0 {
+                let r = kept(&live);
+                fp.exchanges += freq[b] * f64::from(n);
+                for k in 0..6 {
+                    fp.kept[k] += freq[b] * f64::from(n) * r[k];
+                }
+            }
+        }
+        if resume[b] {
+            // A join of regions: its parameters and the values live into it kept.
+            let mut l = live.clone();
+            for &p in &blk.params {
+                l.set(p);
+            }
+            let r = kept(&l);
+            fp.exchanges += freq[b];
+            for k in 0..6 {
+                fp.kept[k] += freq[b] * r[k];
+            }
         }
         fp.blocks.push((freq[b], inner[b], here));
     }
@@ -452,12 +470,12 @@ pub fn lane_cost(ps: &[FuncPressure], k: usize, files: Files) -> f64 {
             // store and its lane's moves out of its vector and back (two cycles, measured: `width_times`). The
             // uniform operations and control are integer ones for the width's lanes; a spill a store and a reload.
             let (int, vec) = if w == 1.0 { (vector / 6.0 + p.other / 6.0, 0.0) } else { (p.other / 6.0 / w, vector / (4.0 * w.min(4.0)) + 2.0 * each) };
-            let mem = (each + 2.0 * spilled / w) / 3.0;
-            // An exchange below 32 lanes: a chunk's call of the runtime, its switch out to its group's turns and
-            // back, and its stores and loads, for the chunk's lanes: about 100 cycles (measured: row_text, whose
-            // branches are mostly the group's, takes 6 times as long at 8 lanes as at 32, 13 times at 4).
-            let exchanges = if w < 32.0 { p.exchanges * 100.0 / w } else { 0.0 };
-            int.max(vec).max(mem) + exchanges
+            // Below 32 lanes, a chunked kernel's region boundaries (`cl`'s chunk loop): for each chunk, a dozen
+            // integer operations (the exchange's word, the next region's number and its check, the chunk loop, the
+            // dispatch), and a store and a load of each register live across it.
+            let (rint, rmem) = if w < 32.0 { (p.exchanges * 12.0 / 6.0 / w, 2.0 * p.kept[k] / 3.0 / w) } else { (0.0, 0.0) };
+            let mem = (each + 2.0 * spilled / w) / 3.0 + rmem;
+            (int + rint).max(vec).max(mem)
         })
         .sum()
 }

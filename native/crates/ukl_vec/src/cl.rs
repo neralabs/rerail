@@ -39,10 +39,11 @@ pub struct Places {
     pub live: i32,
     pub args: i32,
     pub lid: i32,
-    /// A chunk's (a SIMD group run as chunks of its lanes, each a fiber: a cross-lane kernel below 32 lanes): its
-    /// first lane (`u32`), its SIMD group's exchange area's address (`u64`, two halves of `XHALF` bytes: the lanes'
-    /// values, 8 bytes a lane, then their bits, a `u32` at `XWORD`), and the half its next exchange uses (`u32`).
-    pub lane0: i32,
+    /// Whether the code failed (`u32`, `fail`'s: the code returns from each function to the runtime).
+    pub failed: i32,
+    /// A SIMD group run as chunks of its lanes (a cross-lane kernel below 32 lanes): its exchange area's address
+    /// (`u64`, two halves of `XHALF` bytes: the lanes' values, 8 bytes a lane, then their bits, a `u32` at `XWORD`),
+    /// and the half its next exchange writes (`u32`; the chunks read the other after it).
     pub xbuf: i32,
     pub xpar: i32,
     /// The environment's: the constant memory's address, the threadgroup memory's, the grid's, group's and group
@@ -58,17 +59,15 @@ pub struct Places {
 }
 
 /// The runtime's helpers, by their place in the environment's table: `bar(sg, site)`, `poll(sg)`, `agree(sg, node,
-/// decision, site)`, `fail(sg, what)` (which never returns), `copy(to, from, bytes)`, `zero(to, bytes)`,
-/// `xbar(sg)`.
+/// decision, site)`, `fail(sg, what)`, `copy(to, from, bytes)`, `zero(to, bytes)`. `fail` and a failed `agree` set
+/// the SIMD group's `failed`, and the code returns.
 pub const H_BAR: i32 = 0;
 pub const H_YIELD: i32 = 1;
 pub const H_AGREE: i32 = 2;
 pub const H_FAIL: i32 = 3;
 pub const H_COPY: i32 = 4;
 pub const H_ZERO: i32 = 5;
-/// `xbar(sg)`: a chunk waits for its SIMD group's other chunks (each at the same exchange), then goes on.
-pub const H_XBAR: i32 = 6;
-pub const HELPERS: usize = 7;
+pub const HELPERS: usize = 6;
 
 /// An exchange area's half: the lanes' values (8 bytes a lane), then their bits at `XWORD`.
 pub const XHALF: i32 = 512;
@@ -77,8 +76,20 @@ const XWORD: i32 = 256;
 /// `fail`'s reasons.
 pub const FAIL_DIV: i64 = 1;
 pub const FAIL_REM: i64 = 2;
+/// A SIMD group's chunks at different places of its code (a decision of a chunk's own that reaches an exchange).
+pub const FAIL_PLACES: i64 = 3;
 
-/// The kernel's entry: a SIMD group's state; it runs the group's lanes, chunk by chunk.
+/// What a SIMD group does once its chunks are all at a place between two of the code's regions (`Cg::split`), by
+/// the low byte: nothing, the exchange area's halves swapped, a barrier (its site above), a poll.
+const ACT_NONE: i64 = 0;
+const ACT_X: i64 = 1;
+const ACT_BAR: i64 = 2;
+const ACT_YIELD: i64 = 3;
+/// A region's number where no chunk has said which runs next, and the code's end.
+const NEXT_NONE: i64 = -1;
+const NEXT_END: i64 = -2;
+
+/// The kernel's entry: a SIMD group's state; it runs the group's lanes.
 pub type Entry = unsafe extern "C" fn(sg: *mut u8);
 
 /// A kernel compiled.
@@ -86,8 +97,12 @@ pub struct Compiled {
     _module: cranelift_jit::JITModule,
     pub entry: Entry,
     pub width: u32,
-    /// Whether its SIMD groups run as chunks of `width` lanes, a fiber each (a cross-lane kernel below 32 lanes).
+    /// Whether its SIMD groups run as chunks of `width` lanes (a cross-lane kernel below 32 lanes): the kernel's
+    /// code a loop over the chunks in each region between its exchanges (`Cg::split`).
     pub chunked: bool,
+    /// Whether its SIMD groups wait for each other (a barrier, a poll): the runtime runs them as fibers then, and
+    /// else calls each SIMD group's code in turn.
+    pub waits: bool,
 }
 
 // SAFETY: the module's code is finalized and never written again.
@@ -107,7 +122,9 @@ enum Rp {
 fn isa() -> R<cranelift_codegen::isa::OwnedTargetIsa> {
     use cranelift_codegen::settings::Configurable;
     let mut flags = cranelift_codegen::settings::builder();
-    for (k, v) in [("opt_level", "speed"), ("enable_verifier", "false"), ("enable_multi_ret_implicit_sret", "true"), ("enable_probestack", "false")] {
+    // The verifier in a debug build: a value read where it is not made (a region's, `Cg::split`) fails the compile.
+    let verify = if cfg!(debug_assertions) { "true" } else { "false" };
+    for (k, v) in [("opt_level", "speed"), ("enable_verifier", verify), ("enable_multi_ret_implicit_sret", "true"), ("enable_probestack", "false")] {
         flags.set(k, v).map_err(|e| Error(format!("the compiler's flags: {e}")))?;
     }
     cranelift_native::builder()
@@ -174,7 +191,8 @@ fn width_mask(m: M) -> i64 {
 
 /// Compiles kernel `ssa` (named `name`) at width `w`, or for `w` 0 the width its register pressure chooses
 /// (`pressure`): the code, and its kept form (`load`), if its relocations are ones it can hold. A kernel with a
-/// cross-lane operation below 32 lanes runs its SIMD groups as chunks (`Compiled::chunked`).
+/// cross-lane operation below 32 lanes runs its SIMD groups as chunks (`Compiled::chunked`); one that calls a function
+/// with one runs at 32 lanes only.
 pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, Option<Vec<u8>>)> {
     let w = if w == 0 {
         let ps = crate::pressure::of(ssa);
@@ -192,7 +210,8 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
             let ops: Vec<String> = ps.iter().map(|p| format!("{:.0} lanes {:.0} each {:.0} bytes {:.0} other", p.lanes, p.scalar, p.bytes, p.other)).collect();
             eprintln!("PRESSURE {name}: {} -> w{w} ({})", row.join(", "), ops.join("; "));
         }
-        w
+        // The chunks of a SIMD group take turns at the kernel's own exchanges, not at its callees'.
+        if ssa.funcs[1..].iter().any(|f| f.cross) { 32 } else { w }
     } else {
         w
     };
@@ -200,6 +219,10 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
         return Err(Error(format!("{name}: a width of {w} lanes")));
     }
     let chunked = ssa.funcs[0].cross && w < 32;
+    if chunked && let Some(f) = ssa.funcs[1..].iter().find(|f| f.cross) {
+        return Err(Error(format!("{name}: {} has a cross-lane operation: the kernel runs at 32 lanes, not {w}", f.name)));
+    }
+    let waits = ssa.funcs.iter().any(|f| f.insts.iter().any(|i| matches!(i.op, O::Bar | O::Yield)));
     let mut module = module()?;
     let cc = module.isa().default_call_conv();
     // Each function's convention: the platform's (its callers save what they keep), or one that keeps its callers'
@@ -217,7 +240,7 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
     let mut ctx = module.make_context();
     // The kernel's function again for a chunk whose lanes all run (`Cg::full`), after the SSA's functions.
     let full_id = module.declare_function("full", Linkage::Local, &sigs[0]).map_err(|e| Error(format!("{name}: {e}")))?;
-    let mut kept = Some(Kept::new(w | u32::from(chunked) << 16, ssa.funcs.len() + 2));
+    let mut kept = Some(Kept::new(w | u32::from(chunked) << 16 | u32::from(waits) << 17, ssa.funcs.len() + 2));
     // A development hook: each machine instruction's SSA value, to the file `RERAIL_UKL_VEC_CL_MAP` names (appended),
     // for a profile of the compiled code: `start end kernel function value operation`.
     let map = std::env::var("RERAIL_UKL_VEC_CL_MAP").ok();
@@ -233,7 +256,7 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
             let refs = Vec::new();
             let mut g = Cg::new(b, ssa, f, k == 0, w, places, cc, refs);
             g.full = full;
-            if chunked && f.cross {
+            if chunked && k == 0 {
                 g.chunked = true;
                 g.group_dec = crate::ssa::group_decisions(ssa, f);
             }
@@ -296,7 +319,7 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
             let _ = fh.write_all(out.as_bytes());
         }
     }
-    Ok((Compiled { _module: module, entry, width: w, chunked }, kept.map(|k| k.out)))
+    Ok((Compiled { _module: module, entry, width: w, chunked, waits }, kept.map(|k| k.out)))
 }
 
 /// What the compiled code is: the host's target and features, and the compiler's own source (the SSA's, this back
@@ -316,7 +339,7 @@ pub fn host() -> String {
 }
 
 /// The kept form's first bytes, and its version.
-const KEPT: &[u8; 8] = b"UKLCL001";
+const KEPT: &[u8; 8] = b"UKLCL002";
 
 /// The relocations a kept form holds: a call of another of its functions, each target's.
 const RELOCS: [cranelift_codegen::binemit::Reloc; 10] = {
@@ -375,7 +398,7 @@ pub fn load(bytes: &[u8]) -> Option<Compiled> {
     }
     let u32_of = |b: &[u8]| u32::from_le_bytes(b.try_into().expect("4 bytes"));
     let wc = u32_of(take(4)?);
-    let (w, chunked) = (wc & 0xffff, wc >> 16 == 1);
+    let (w, chunked, waits) = (wc & 0xffff, wc >> 16 & 1 == 1, wc >> 17 & 1 == 1);
     let n = u32_of(take(4)?) as usize;
     if n == 0 {
         return None;
@@ -407,7 +430,7 @@ pub fn load(bytes: &[u8]) -> Option<Compiled> {
     module.finalize_definitions().ok()?;
     // SAFETY: the kept form's last function is its entry, of `Entry`'s signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(module.get_finalized_function(*ids.last()?)) };
-    Some(Compiled { _module: module, entry, width: w, chunked })
+    Some(Compiled { _module: module, entry, width: w, chunked, waits })
 }
 
 /// The address space a kernel's code is in: one arena, so a call of one of its functions by another is in a direct
@@ -487,7 +510,8 @@ fn push_shape(to: &mut Vec<AbiParam>, m: M, sh: Shape, w: u32) {
 }
 
 /// The entry's body: for each chunk of `w` lanes, its lanes of the SIMD group's (`live`), the kernel's function
-/// called if it has one; `chunked`, the one chunk the state's first lane (`lane0`) names.
+/// called if it has one; `chunked`, the kernel's function once, which runs the chunks itself (`Cg::split`): the full
+/// one where every lane of the SIMD group runs.
 fn entry(b: &mut FunctionBuilder, kernel: ir::FuncRef, full: ir::FuncRef, w: u32, chunked: bool, pl: &Places) {
     let e = b.create_block();
     b.append_block_params_for_function_params(e);
@@ -496,16 +520,20 @@ fn entry(b: &mut FunctionBuilder, kernel: ir::FuncRef, full: ir::FuncRef, w: u32
     let live = b.ins().uload32(mf(), sg, pl.live);
     let fp = b.ins().load(I64, mf(), sg, pl.frame);
     if chunked {
-        let lane0 = b.ins().uload32(mf(), sg, pl.lane0);
-        let shifted = b.ins().ushr(live, lane0);
-        let bits = b.ins().band_imm(shifted, (1i64 << w) - 1);
-        let body = b.create_block();
-        let done = b.create_block();
-        b.ins().brif(bits, body, &[], done, &[]);
-        b.switch_to_block(body);
-        call_kernel(b, kernel, full, bits, w, sg, fp, lane0);
-        b.ins().jump(done, &[]);
-        b.switch_to_block(done);
+        // Its first lane and its mask parameters unread: each chunk's are the function's own.
+        let zero = b.ins().iconst(I64, 0);
+        let is_full = b.ins().icmp_imm(IntCC::Equal, live, 0xffff_ffff);
+        let (fb, pb, join) = (b.create_block(), b.create_block(), b.create_block());
+        b.ins().brif(is_full, fb, &[], pb, &[]);
+        for (blk, f) in [(fb, full), (pb, kernel)] {
+            b.switch_to_block(blk);
+            let bits32 = b.ins().ireduce(I32, live);
+            let mut args = vec![sg, fp, zero];
+            args.extend(mask_of_bits(b, bits32, w));
+            b.ins().call(f, &args);
+            b.ins().jump(join, &[]);
+        }
+        b.switch_to_block(join);
         b.ins().return_(&[]);
         return;
     }
@@ -693,7 +721,6 @@ struct Cg<'a, 'b> {
     /// Splats and 64-bit masks made in the block being made.
     splats: HashMap<(V, u32), Vec<Value>>,
     masks64: HashMap<V, Vec<Value>>,
-    fail: Option<ir::Block>,
     /// The function's entry's lanes as bits (`mask_bits`).
     entry_bits: Value,
     helper_sigs: HashMap<usize, ir::SigRef>,
@@ -707,6 +734,33 @@ struct Cg<'a, 'b> {
     /// The masks known to have every lane of the chunk (`all`): the entry's, where the function is `full`, and the
     /// masks made of them.
     ones: std::collections::HashSet<V>,
+    /// A chunked kernel's regions (`split`): each block's at its start (`regions`), the blocks a region starts at
+    /// (a join of different ones), and the values live at each block's end.
+    lab: Vec<Option<crate::ssa::Lab>>,
+    resume: Vec<bool>,
+    live_out: Vec<Vec<bool>>,
+    /// The regions made: their numbers, their first blocks, the values each reads again (or makes again) at its
+    /// start, and those now in place of the values they were where the region being made is not their first.
+    reg_ids: HashMap<crate::ssa::Lab, usize>,
+    reg_blocks: Vec<ir::Block>,
+    over: Vec<Vec<(V, Rp, Option<Steps>)>>,
+    applied: Vec<(V, Rp, Option<Steps>, Option<Vec<Value>>)>,
+    region: usize,
+    /// The values kept across regions: each one's place in the save area (a chunk's at `16 * parts * chunk` past
+    /// it), its form (`Rp`'s: 0 uniform, 1 lanes, 2 a mask) and its parts' types; the area's bytes, its slot and
+    /// address; the slot of the region to run, the next, and what is done between (`ACT_*`).
+    saved: HashMap<V, (i32, u8, Vec<ir::Type>)>,
+    save_size: u32,
+    save_slot: Option<ir::StackSlot>,
+    save_base: Value,
+    st: Option<ir::StackSlot>,
+    /// The chunk being run (`I64`), and the block that runs the next.
+    chunk: Value,
+    next: Option<ir::Block>,
+    /// The instruction being made, and the regions it has ended (an atomic two).
+    cur_inst: V,
+    split_n: u8,
+    err: Option<Error>,
 }
 
 impl<'a, 'b> Cg<'a, 'b> {
@@ -744,7 +798,6 @@ impl<'a, 'b> Cg<'a, 'b> {
             preds: Vec::new(),
             splats: HashMap::new(),
             masks64: HashMap::new(),
-            fail: None,
             entry_bits: dummy,
             helper_sigs: HashMap::new(),
             chunked: false,
@@ -752,6 +805,24 @@ impl<'a, 'b> Cg<'a, 'b> {
             cur_block: 0,
             full: false,
             ones: std::collections::HashSet::new(),
+            lab: Vec::new(),
+            resume: Vec::new(),
+            live_out: Vec::new(),
+            reg_ids: HashMap::new(),
+            reg_blocks: Vec::new(),
+            over: Vec::new(),
+            applied: Vec::new(),
+            region: 0,
+            saved: HashMap::new(),
+            save_size: 0,
+            save_slot: None,
+            save_base: dummy,
+            st: None,
+            chunk: dummy,
+            next: None,
+            cur_inst: NONE,
+            split_n: 0,
+            err: None,
         }
     }
 
@@ -759,7 +830,8 @@ impl<'a, 'b> Cg<'a, 'b> {
         let f = self.f;
         let w = self.w;
         self.blocks = f.blocks.iter().map(|_| self.b.create_block()).collect();
-        let e = self.blocks[0];
+        // A chunked kernel's entry is its chunk loop's (`chunk_loop`), and its first region its first block.
+        let e = if self.chunked { self.b.create_block() } else { self.blocks[0] };
         self.b.append_block_params_for_function_params(e);
         // Each block's parameters, by their shapes.
         for (k, blk) in f.blocks.iter().enumerate() {
@@ -781,25 +853,27 @@ impl<'a, 'b> Cg<'a, 'b> {
         let ps: Vec<Value> = self.b.block_params(e).to_vec();
         self.sg = ps[0];
         self.fp = ps[1];
+        self.env = self.b.ins().load(I64, mf(), self.sg, self.pl.env);
         // A SIMD group of 32 lanes at 32 is one chunk, its first lane 0.
         self.lane0 = if w == 32 { self.b.ins().iconst(I64, 0) } else { ps[2] };
         let mp = mask_parts(w);
-        let entry_mask: Vec<Value> = if self.full {
+        if self.full {
             // Every lane of the chunk: as `mask_of_bits` of all its lanes' bits.
             self.ones.insert(self.entry_v);
-            if w == 1 {
-                vec![self.b.ins().iconst(I32, -1)]
-            } else {
-                let lanes: Vec<u8> = (0..4u32).flat_map(|j| if j < w { [0xffu8; 4] } else { [0u8; 4] }).collect();
-                let c = self.b.func.dfg.constants.insert(lanes.into());
-                let v = self.b.ins().vconst(I32X4, c);
-                vec![v; mp]
-            }
+        }
+        let mut dispatch = None;
+        let entry_mask: Vec<Value> = if self.chunked {
+            let (mask, d) = self.chunk_loop();
+            dispatch = Some(d);
+            mask
+        } else if self.full {
+            self.all_mask()
         } else {
             ps[3..3 + mp].to_vec()
         };
-        self.env = self.b.ins().load(I64, mf(), self.sg, self.pl.env);
-        self.entry_bits = self.mask_bits(&entry_mask);
+        if !self.chunked {
+            self.entry_bits = self.mask_bits(&entry_mask);
+        }
         let mut at = 3 + mp;
         let mut args = Vec::new();
         if !self.kernel {
@@ -822,10 +896,21 @@ impl<'a, 'b> Cg<'a, 'b> {
         self.idom = crate::ssa::idoms(f);
         self.bounds_of_branches();
         self.loops();
+        if self.chunked {
+            self.regions();
+            let b0 = self.blocks[0];
+            self.reg_blocks.push(b0);
+            self.over.push(Vec::new());
+            self.reg_ids.insert(crate::ssa::Lab::Start, 0);
+        } else {
+            self.resume = vec![false; f.blocks.len()];
+        }
         self.counted_loops();
         let order = crate::ssa::rpo(f);
         for &bk in &order {
-            if bk != 0 {
+            if self.chunked {
+                self.start_block(bk);
+            } else if bk != 0 {
                 self.b.switch_to_block(self.blocks[bk]);
             }
             for &p in &f.blocks[bk].params {
@@ -839,6 +924,7 @@ impl<'a, 'b> Cg<'a, 'b> {
             let blk = &f.blocks[bk];
             for &x in &blk.insts {
                 let i = *f.inst(x);
+                (self.cur_inst, self.split_n) = (x, 0);
                 self.b.set_srcloc(ir::SourceLoc::new(x));
                 // Held stores go before anything that reads or writes memory, or leaves the block.
                 let pure = matches!(
@@ -858,10 +944,22 @@ impl<'a, 'b> Cg<'a, 'b> {
                 self.vals[x as usize] = r;
             }
         }
-        if let Some(fb) = self.fail {
-            let _ = fb;
+        if let Some(d) = dispatch {
+            // The region every chunk runs next: the regions' first blocks by their numbers.
+            self.b.switch_to_block(d);
+            let rs = self.b.ins().stack_load(I32, self.st.expect("a chunked kernel's state"), 0);
+            let mut sw = cranelift_frontend::Switch::new();
+            for (k, &blk) in self.reg_blocks.iter().enumerate().skip(1) {
+                sw.set_entry(k as u128, blk);
+            }
+            sw.emit(&mut self.b, rs, self.reg_blocks[0]);
+            let slot = self.save_slot.expect("a chunked kernel's save area");
+            self.b.func.sized_stack_slots[slot].size = self.save_size.max(16);
         }
-        Ok(())
+        match self.err.take() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     // Values.
@@ -1094,21 +1192,432 @@ impl<'a, 'b> Cg<'a, 'b> {
 
 
     // A chunk's exchanges with its SIMD group's other chunks (`chunked`): it writes its lanes' part of the
-    // exchange area's next half, waits for the others (`xbar`), and reads the whole SIMD group's.
+    // exchange area's half, its region ends (`x_wait`), and once every chunk has written its part, the SIMD group
+    // swaps the halves and each chunk reads the whole SIMD group's in the next region.
 
-    /// The exchange area's next half (the chunk's next exchange uses the other).
+    /// The exchange area's half the chunks write.
     fn x_half(&mut self) -> Value {
         let par = self.b.ins().uload32(mf(), self.sg, self.pl.xpar);
-        let next = self.b.ins().bxor_imm(par, 1);
-        self.b.ins().istore32(mf(), next, self.sg, self.pl.xpar);
+        self.x_at(par)
+    }
+
+    /// The half the chunks wrote, after `x_wait`.
+    fn x_read(&mut self) -> Value {
+        let par = self.b.ins().uload32(mf(), self.sg, self.pl.xpar);
+        let was = self.b.ins().bxor_imm(par, 1);
+        self.x_at(was)
+    }
+
+    fn x_at(&mut self, par: Value) -> Value {
         let buf = self.b.ins().load(I64, mf(), self.sg, self.pl.xbuf);
         let off = self.b.ins().imul_imm(par, i64::from(XHALF));
         self.b.ins().iadd(buf, off)
     }
 
     fn x_wait(&mut self) {
+        self.split(ACT_X);
+    }
+
+    // A chunked kernel's regions (decision 0567, step 3). The kernel's function runs its SIMD group's chunks
+    // itself: a region of its code (from its start, from an exchange or barrier, from a join of different regions)
+    // runs for each chunk in turn, up to the next region's start, where the chunk keeps the values live there in the
+    // save area (its slot of each); once every chunk is there, the SIMD group does what is done between (`ACT_*`), and
+    // runs the next region for each chunk, which reads them back. No chunk runs on a stack of its own.
+
+    /// The chunk loop around the regions, at the function's entry: its state, each chunk's first lane and lanes,
+    /// and between the regions' turns what the SIMD group does. Its mask of the chunk's lanes, and the block that
+    /// goes to the region to run (`dispatch`, made last).
+    fn chunk_loop(&mut self) -> (Vec<Value>, ir::Block) {
+        let w = self.w;
+        let st = self.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3));
+        let save = self.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 4));
+        (self.st, self.save_slot) = (Some(st), Some(save));
+        self.save_base = self.b.ins().stack_addr(I64, save, 0);
+        let (zero, none, zero64) = (self.b.ins().iconst(I32, 0), self.b.ins().iconst(I32, NEXT_NONE), self.b.ins().iconst(I64, 0));
+        self.b.ins().stack_store(zero, st, 0);
+        self.b.ins().stack_store(none, st, 4);
+        self.b.ins().stack_store(zero64, st, 8);
+        let [round, each, body, disp, next, end] = std::array::from_fn(|_| self.b.create_block());
+        self.b.append_block_param(each, I64);
+        self.b.append_block_param(next, I64);
+        self.b.ins().jump(round, &[]);
+        self.b.switch_to_block(round);
+        let c0 = self.b.ins().iconst(I64, 0);
+        self.b.ins().jump(each, &[BlockArg::Value(c0)]);
+        self.b.switch_to_block(each);
+        let c = self.b.block_params(each)[0];
+        self.chunk = c;
+        self.lane0 = self.b.ins().ishl_imm(c, i64::from(w.trailing_zeros()));
+        let bits = if self.full {
+            self.b.ins().jump(body, &[]);
+            None
+        } else {
+            // A chunk with no lane of the SIMD group's has nothing to run, and nothing to give an exchange.
+            let live = self.b.ins().uload32(mf(), self.sg, self.pl.live);
+            let sh = self.b.ins().ushr(live, self.lane0);
+            let bits = self.b.ins().band_imm(sh, (1i64 << w) - 1);
+            self.b.ins().brif(bits, body, &[], next, &[BlockArg::Value(c)]);
+            Some(bits)
+        };
+        self.b.switch_to_block(body);
+        let mask = match bits {
+            None => self.all_mask(),
+            Some(bits) => {
+                let b32 = self.b.ins().ireduce(I32, bits);
+                mask_of_bits(&mut self.b, b32, w)
+            }
+        };
+        self.entry_bits = self.mask_bits(&mask);
+        self.b.ins().jump(disp, &[]);
+        self.b.switch_to_block(next);
+        let c = self.b.block_params(next)[0];
+        let c1 = self.b.ins().iadd_imm(c, 1);
+        let more = self.b.ins().icmp_imm(IntCC::UnsignedLessThan, c1, i64::from(32 / w));
+        self.b.ins().brif(more, each, &[BlockArg::Value(c1)], end, &[]);
+        self.b.switch_to_block(end);
+        let nx = self.b.ins().stack_load(I32, st, 4);
+        let act = self.b.ins().stack_load(I64, st, 8);
+        let a = self.b.ins().band_imm(act, 0xff);
+        let [swap, not_x, bar, not_bar, poll, fin, ret, again] = std::array::from_fn(|_| self.b.create_block());
+        let is = self.b.ins().icmp_imm(IntCC::Equal, a, ACT_X);
+        self.b.ins().brif(is, swap, &[], not_x, &[]);
+        self.b.switch_to_block(swap);
+        let par = self.b.ins().uload32(mf(), self.sg, self.pl.xpar);
+        let par = self.b.ins().bxor_imm(par, 1);
+        self.b.ins().istore32(mf(), par, self.sg, self.pl.xpar);
+        self.b.ins().jump(fin, &[]);
+        self.b.switch_to_block(not_x);
+        let is = self.b.ins().icmp_imm(IntCC::Equal, a, ACT_BAR);
+        self.b.ins().brif(is, bar, &[], not_bar, &[]);
+        self.b.switch_to_block(bar);
+        let site = self.b.ins().ushr_imm(act, 8);
         let sg = self.sg;
-        self.helper(H_XBAR, 1, 0, &[sg]);
+        self.helper(H_BAR, 2, 0, &[sg, site]);
+        self.b.ins().jump(fin, &[]);
+        self.b.switch_to_block(not_bar);
+        let is = self.b.ins().icmp_imm(IntCC::Equal, a, ACT_YIELD);
+        self.b.ins().brif(is, poll, &[], fin, &[]);
+        self.b.switch_to_block(poll);
+        self.helper(H_YIELD, 1, 0, &[sg]);
+        self.b.ins().jump(fin, &[]);
+        self.b.switch_to_block(fin);
+        let done = self.b.ins().icmp_imm(IntCC::Equal, nx, NEXT_END);
+        self.b.ins().brif(done, ret, &[], again, &[]);
+        self.b.switch_to_block(ret);
+        self.b.ins().return_(&[]);
+        self.b.switch_to_block(again);
+        self.b.ins().stack_store(nx, st, 0);
+        self.b.ins().stack_store(none, st, 4);
+        self.b.ins().stack_store(zero64, st, 8);
+        self.b.ins().jump(round, &[]);
+        self.next = Some(next);
+        (mask, disp)
+    }
+
+    /// The mask of every lane of the chunk, a constant.
+    fn all_mask(&mut self) -> Vec<Value> {
+        if self.w == 1 {
+            vec![self.b.ins().iconst(I32, -1)]
+        } else {
+            let lanes: Vec<u8> = (0..4u32).flat_map(|j| if j < self.w { [0xffu8; 4] } else { [0u8; 4] }).collect();
+            let c = self.b.func.dfg.constants.insert(lanes.into());
+            let v = self.b.ins().vconst(I32X4, c);
+            vec![v; mask_parts(self.w)]
+        }
+    }
+
+    /// Each block's region at its start, the blocks that start one (`ssa::regions`), and the values live at each
+    /// block's end.
+    fn regions(&mut self) {
+        (self.lab, self.resume) = crate::ssa::regions(self.f, &self.group_dec);
+        self.live_out = crate::ssa::live_out(self.f);
+    }
+
+    fn remade(&self, x: V) -> bool {
+        crate::ssa::remade(self.f, x)
+    }
+
+    /// The values live before instruction `at` of block `b` (its end for `at` past the last).
+    fn live_before(&self, b: usize, at: usize) -> Vec<bool> {
+        let mut l = self.live_out[b].clone();
+        for &y in self.f.blocks[b].insts[at..].iter().rev() {
+            l[y as usize] = false;
+            for u in crate::ssa::reads(self.f, y) {
+                l[u as usize] = true;
+            }
+        }
+        l
+    }
+
+    /// The values a region kept: those of `live` with registers (the function's lanes are the chunk loop's).
+    fn kept(&self, live: &[bool]) -> Vec<V> {
+        (0..live.len() as V)
+            .filter(|&v| live[v as usize] && v != self.entry_v && self.f.inst(v).shape != Shape::None && !matches!(self.vals[v as usize], Rp::None))
+            .collect()
+    }
+
+    /// The values a region starting at block `b` keeps: those live at its start but its parameters.
+    fn live_in(&self, b: usize) -> Vec<V> {
+        let mut l = self.live_before(b, 0);
+        for &p in &self.f.blocks[b].params {
+            l[p as usize] = false;
+        }
+        self.kept(&l)
+    }
+
+    /// The values a region starting after instruction `x` keeps: those live after it, and its operands (its part
+    /// after the region's start reads them).
+    fn live_after(&self, x: V) -> Vec<V> {
+        let b = self.block_of[x as usize] as usize;
+        let at = self.f.blocks[b].insts.iter().position(|&y| y == x).expect("in its block");
+        let mut l = self.live_before(b, at + 1);
+        for u in crate::ssa::reads(self.f, x) {
+            l[u as usize] = true;
+        }
+        l[x as usize] = false;
+        self.kept(&l)
+    }
+
+    /// Region `lab`'s number, made at its first use (its first block, its values).
+    fn reg(&mut self, lab: crate::ssa::Lab) -> usize {
+        if let Some(&k) = self.reg_ids.get(&lab) {
+            return k;
+        }
+        let k = self.reg_blocks.len();
+        let blk = self.b.create_block();
+        self.reg_blocks.push(blk);
+        self.over.push(Vec::new());
+        self.reg_ids.insert(lab, k);
+        k
+    }
+
+    /// The chunk's region ends: region `k` runs next (or none, `NEXT_END`), after what the SIMD group does then
+    /// (`act`). Every chunk names the same one.
+    fn leave(&mut self, k: i64, act: i64) {
+        let st = self.st.expect("a chunked kernel's state");
+        let kv = self.b.ins().iconst(I32, k);
+        let prev = self.b.ins().stack_load(I32, st, 4);
+        let named = self.b.ins().icmp_imm(IntCC::NotEqual, prev, NEXT_NONE);
+        let other = self.b.ins().icmp(IntCC::NotEqual, prev, kv);
+        let bad = self.b.ins().band(named, other);
+        self.fail_if(bad, FAIL_PLACES);
+        self.b.ins().stack_store(kv, st, 4);
+        let a = self.b.ins().iconst(I64, act);
+        self.b.ins().stack_store(a, st, 8);
+        let (next, c) = (self.next.expect("the chunk loop"), self.chunk);
+        self.b.ins().jump(next, &[BlockArg::Value(c)]);
+    }
+
+    /// The region ends at the instruction being made, and the next starts after it (its part after the exchange,
+    /// what follows): `act` done between.
+    fn split(&mut self, act: i64) {
+        let x = self.cur_inst;
+        let lab = crate::ssa::Lab::Split(x, self.split_n);
+        self.split_n += 1;
+        let live = self.live_after(x);
+        let k = self.reg(lab);
+        self.save(&live);
+        self.leave(k as i64, act);
+        self.b.switch_to_block(self.reg_blocks[k]);
+        self.begin(k, &live);
+    }
+
+    /// The values `live` kept in the save area, the chunk's slot of each.
+    fn save(&mut self, live: &[V]) {
+        for &v in live {
+            if self.remade(v) {
+                continue;
+            }
+            let (kind, vs) = match &self.vals[v as usize] {
+                Rp::U(x) => (0, vec![*x]),
+                Rp::L(p) => (1, p.clone()),
+                Rp::K(p) => (2, p.clone()),
+                Rp::None => continue,
+            };
+            self.save_parts(v, kind, &vs);
+        }
+    }
+
+    fn save_parts(&mut self, v: V, kind: u8, vs: &[Value]) {
+        let tys: Vec<ir::Type> = vs.iter().map(|&x| self.b.func.dfg.value_type(x)).collect();
+        let n = vs.len() as u32;
+        let off = match self.saved.get(&v) {
+            Some((o, k, t)) => {
+                if *k != kind || *t != tys {
+                    self.err.get_or_insert(Error(format!("value {v} kept as {kind} {tys:?}, and before as {k} {t:?}")));
+                }
+                *o
+            }
+            None => {
+                let o = self.save_size as i32;
+                self.save_size += 16 * n * (32 / self.w);
+                self.saved.insert(v, (o, kind, tys));
+                o
+            }
+        };
+        let base = self.save_at(n);
+        for (j, &x) in vs.iter().enumerate() {
+            self.b.ins().store(mf(), x, base, off + 16 * j as i32);
+        }
+    }
+
+    /// The chunk's place in the save area of a value of `n` parts.
+    fn save_at(&mut self, n: u32) -> Value {
+        let o = self.b.ins().imul_imm(self.chunk, i64::from(16 * n));
+        self.b.ins().iadd(self.save_base, o)
+    }
+
+    /// Value `v` read back from the save area.
+    fn reload(&mut self, v: V) -> Option<Rp> {
+        let Some((off, kind, tys)) = self.saved.get(&v).cloned() else {
+            self.err.get_or_insert(Error(format!("value {v} ({:?}) is read in a region no region kept it for", self.f.inst(v).op)));
+            return None;
+        };
+        let base = self.save_at(tys.len() as u32);
+        let vs: Vec<Value> = tys.iter().enumerate().map(|(j, &t)| self.b.ins().load(t, mf(), base, off + 16 * j as i32)).collect();
+        Some(match kind {
+            0 => Rp::U(vs[0]),
+            1 => Rp::L(vs),
+            _ => Rp::K(vs),
+        })
+    }
+
+    /// Region `k` starts (in its first block): the values `live` read back, or made again.
+    fn begin(&mut self, k: usize, live: &[V]) {
+        self.undo();
+        self.region = k;
+        self.splats.clear();
+        self.masks64.clear();
+        for &v in live {
+            if self.remade(v) {
+                self.remake(v);
+            } else if let Some(rp) = self.reload(v) {
+                let old_st = self.steps.remove(&v);
+                let old_raw = self.raw.remove(&v);
+                let old = std::mem::replace(&mut self.vals[v as usize], rp.clone());
+                self.applied.push((v, old, old_st, old_raw));
+                self.over[k].push((v, rp, None));
+            }
+        }
+    }
+
+    /// Value `v` made again in the region starting (`remade`), its operands first.
+    fn remake(&mut self, v: V) {
+        let k = self.region;
+        if self.over[k].iter().any(|(x, ..)| *x == v) {
+            return;
+        }
+        for u in crate::ssa::reads(self.f, v) {
+            self.remake(u);
+        }
+        let i = *self.f.inst(v);
+        let old_st = self.steps.remove(&v);
+        let old_raw = self.raw.remove(&v);
+        match self.inst(v, &i) {
+            Ok(rp) => {
+                let old = std::mem::replace(&mut self.vals[v as usize], rp.clone());
+                self.applied.push((v, old, old_st, old_raw));
+                let st = self.steps.get(&v).cloned();
+                self.over[k].push((v, rp, st));
+            }
+            Err(e) => {
+                self.err.get_or_insert(e);
+            }
+        }
+    }
+
+    /// The values the region being made holds in place of others' put back.
+    fn undo(&mut self) {
+        while let Some((v, old, st, raw)) = self.applied.pop() {
+            self.vals[v as usize] = old;
+            match st {
+                Some(s) => self.steps.insert(v, s),
+                None => self.steps.remove(&v),
+            };
+            match raw {
+                Some(r) => self.raw.insert(v, r),
+                None => self.raw.remove(&v),
+            };
+        }
+    }
+
+    /// Region `k`'s values in place, to make another of its blocks.
+    fn enter(&mut self, k: usize) {
+        if self.region == k {
+            return;
+        }
+        self.undo();
+        self.region = k;
+        self.splats.clear();
+        self.masks64.clear();
+        for (v, rp, st) in self.over[k].clone() {
+            let old_st = self.steps.remove(&v);
+            let old_raw = self.raw.remove(&v);
+            if let Some(st) = st {
+                self.steps.insert(v, st);
+            }
+            let old = std::mem::replace(&mut self.vals[v as usize], rp);
+            self.applied.push((v, old, old_st, old_raw));
+        }
+    }
+
+    /// Block `b` begins: in its region's values, or as a region of its own, which reads back its values and its
+    /// parameters.
+    fn start_block(&mut self, b: usize) {
+        if self.resume[b] {
+            let k = self.reg(crate::ssa::Lab::Join(b));
+            self.b.switch_to_block(self.reg_blocks[k]);
+            let live = self.live_in(b);
+            self.begin(k, &live);
+            let mut args = Vec::new();
+            for &p in &self.f.blocks[b].params.clone() {
+                match self.reload(p) {
+                    Some(Rp::U(x)) => args.push(x),
+                    Some(Rp::L(xs) | Rp::K(xs)) => args.extend(xs),
+                    _ => {}
+                }
+            }
+            let ba: Vec<BlockArg> = args.into_iter().map(BlockArg::Value).collect();
+            self.b.ins().jump(self.blocks[b], &ba);
+        } else {
+            let lab = self.lab[b].expect("a reached block's region");
+            let k = self.reg_ids[&lab];
+            self.enter(k);
+        }
+        self.b.switch_to_block(self.blocks[b]);
+    }
+
+    /// The function's return where its SIMD group failed (`fail`): its results 0.
+    fn ret_failed(&mut self) {
+        let rets: Vec<ir::Type> = self.b.func.signature.returns.iter().map(|a| a.value_type).collect();
+        let vs: Vec<Value> = rets
+            .into_iter()
+            .map(|t| {
+                if t.is_vector() {
+                    let c = self.b.func.dfg.constants.insert(vec![0u8; 16].into());
+                    self.b.ins().vconst(t, c)
+                } else if t == F32 {
+                    self.b.ins().f32const(0.0)
+                } else if t == F64 {
+                    self.b.ins().f64const(0.0)
+                } else {
+                    self.b.ins().iconst(t, 0)
+                }
+            })
+            .collect();
+        self.b.ins().return_(&vs);
+    }
+
+    /// A return where a helper or a function called failed the SIMD group.
+    fn check_failed(&mut self) {
+        let failed = self.b.ins().uload32(mf(), self.sg, self.pl.failed);
+        let (bad, go) = (self.b.create_block(), self.b.create_block());
+        self.b.ins().brif(failed, bad, &[], go, &[]);
+        self.b.switch_to_block(bad);
+        self.ret_failed();
+        self.b.switch_to_block(go);
+        self.splats.clear();
+        self.masks64.clear();
     }
 
     /// The chunk's lanes of mask `k` as its lanes' bits of the half's word.
@@ -1155,6 +1664,7 @@ impl<'a, 'b> Cg<'a, 'b> {
         self.b.ins().store(mf(), v64, mine, 0);
         self.x_put_bits(at, &k);
         self.x_wait();
+        let at = self.x_read();
         let word = self.b.ins().load(I32, mf(), at, XWORD);
         let lead = self.x_lead(word);
         let off = self.b.ins().imul_imm(lead, 8);
@@ -1186,6 +1696,7 @@ impl<'a, 'b> Cg<'a, 'b> {
         let at = self.x_half();
         self.x_put_bits(at, &k);
         self.x_wait();
+        let at = self.x_read();
         let word = self.b.ins().load(I32, mf(), at, XWORD);
         let c = self.b.ins().icmp_imm(IntCC::NotEqual, word, 0);
         self.b.ins().uextend(I64, c)
@@ -1197,6 +1708,7 @@ impl<'a, 'b> Cg<'a, 'b> {
         let at = self.x_half();
         self.x_put_bits(at, &k);
         self.x_wait();
+        let at = self.x_read();
         self.b.ins().load(I32, mf(), at, XWORD)
     }
 
@@ -1239,8 +1751,8 @@ impl<'a, 'b> Cg<'a, 'b> {
             let take = self.b.ins().bor(none, better);
             let take = self.b.ins().band(take, on);
             best = self.b.ins().select(take, v, best);
-            let on8 = self.b.ins().uextend(I8, on);
-            have = self.b.ins().bor(have, on8);
+            // `on` an `I8` (a comparison's).
+            have = self.b.ins().bor(have, on);
         }
         best
     }
@@ -1326,7 +1838,7 @@ impl<'a, 'b> Cg<'a, 'b> {
         v
     }
 
-    /// A branch to the kernel's failure (`fail(sg, what)`, which does not return) if `c` is true.
+    /// A branch to the kernel's failure (`fail(sg, what)`, then a return) if `c` is true.
     fn fail_if(&mut self, c: Value, what: i64) {
         let fail = self.b.create_block();
         let go = self.b.create_block();
@@ -1336,7 +1848,7 @@ impl<'a, 'b> Cg<'a, 'b> {
         let wv = self.b.ins().iconst(I64, what);
         let sg = self.sg;
         self.helper(H_FAIL, 2, 0, &[sg, wv]);
-        self.b.ins().trap(ir::TrapCode::user(1).expect("a trap code"));
+        self.ret_failed();
         self.b.switch_to_block(go);
         self.splats.clear();
         self.masks64.clear();
@@ -1743,7 +2255,8 @@ impl<'a, 'b> Cg<'a, 'b> {
         };
         for h in 0..f.blocks.len() {
             let ps = &self.preds[h];
-            if ps.len() != 2 {
+            // A loop whose body ends a chunked kernel's region starts one at its header: its counter is read back.
+            if ps.len() != 2 || self.resume[h] {
                 continue;
             }
             let (pre, latch) = if self.dominates(h, ps[1]) && !self.dominates(h, ps[0]) { (ps[0], ps[1]) } else if self.dominates(h, ps[0]) && !self.dominates(h, ps[1]) { (ps[1], ps[0]) } else { continue };
@@ -3492,13 +4005,13 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let bi = Builtin::of(u32::from(i.sub));
                 let k = self.mask(i.c);
                 let px = self.lanes(i.a, m);
-                let pl = self.lanes(i.b, M::U32);
                 let (bits, base) = if self.chunked {
                     // The SIMD group's lanes, from the exchange area.
                     let at = self.x_half();
                     self.x_put_lanes(at, &px, m);
                     self.x_put_bits(at, &k);
                     self.x_wait();
+                    let at = self.x_read();
                     (self.b.ins().load(I32, mf(), at, XWORD), at)
                 } else {
                     let bits = self.mask_bits(&k);
@@ -3509,6 +4022,8 @@ impl<'a, 'b> Cg<'a, 'b> {
                     let sl = self.slot();
                     (bits, self.b.ins().stack_addr(I64, sl, 0))
                 };
+                // The operands as the region after the exchange has them.
+                let (px, pl) = (self.lanes(i.a, m), self.lanes(i.b, M::U32));
                 let l0 = if self.chunked { Some(self.b.ins().ireduce(I32, self.lane0)) } else { None };
                 let size = if wide(m) { 8 } else { 4 };
                 let (_, lt) = parts(m, 1);
@@ -3571,6 +4086,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                     self.x_put_lanes(at, &px, m);
                     self.x_put_bits(at, &k);
                     self.x_wait();
+                    let at = self.x_read();
                     let word = self.b.ins().load(I32, mf(), at, XWORD);
                     let size = if wide(m) { 8 } else { 4 };
                     let (_, lt) = parts(m, 1);
@@ -3601,35 +4117,38 @@ impl<'a, 'b> Cg<'a, 'b> {
                     let at = self.x_half();
                     self.x_put_bits(at, &k);
                     self.x_wait();
+                    let at = self.x_read();
                     let word = self.b.ins().load(I32, mf(), at, XWORD);
                     let lead = self.x_lead(word);
                     let some = self.b.ins().icmp_imm(IntCC::NotEqual, word, 0);
                     let mine = self.b.ins().icmp(IntCC::Equal, lead, self.lane0);
                     let go = self.b.ins().band(some, mine);
-                    let (does, join) = (self.b.create_block(), self.b.create_block());
                     let rt = uty(m);
-                    self.b.append_block_param(join, rt);
-                    let none = self.konst_u(m, 0);
-                    self.b.ins().brif(go, does, &[], join, &[BlockArg::Value(none)]);
+                    let [does, skip, zero, keep] = std::array::from_fn(|_| self.b.create_block());
+                    self.b.ins().brif(go, does, &[], skip, &[]);
                     self.b.switch_to_block(does);
                     let p = self.u(i.a);
                     let xv = if i.b != NONE { self.u(i.b) } else { self.konst_u(m, 0) };
                     let yv = if i.c != NONE { self.u(i.c) } else { self.konst_u(m, 0) };
                     let r = self.atomic_u(bi, m, p, xv, yv);
-                    self.b.ins().jump(join, &[BlockArg::Value(r)]);
-                    self.b.switch_to_block(join);
-                    let r = self.b.block_params(join)[0];
-                    // The leader's result: each chunk's own at its place, the leader's read.
-                    let at2 = self.x_half();
+                    // The leader's result at the half's first place, for every chunk; with no lane of the mask,
+                    // every chunk's 0.
                     let r64 = if rt == I64 { r } else { self.b.ins().bitcast(if rt == F32 { I32 } else { I64 }, MemFlags::new(), r) };
                     let r64 = if self.b.func.dfg.value_type(r64) == I32 { self.b.ins().uextend(I64, r64) } else { r64 };
-                    let off = self.b.ins().imul_imm(self.lane0, 8);
-                    let mine_at = self.b.ins().iadd(at2, off);
-                    self.b.ins().store(mf(), r64, mine_at, 0);
+                    let at2 = self.x_half();
+                    self.b.ins().store(mf(), r64, at2, 0);
+                    self.b.ins().jump(keep, &[]);
+                    self.b.switch_to_block(skip);
+                    self.b.ins().brif(some, keep, &[], zero, &[]);
+                    self.b.switch_to_block(zero);
+                    let at2 = self.x_half();
+                    let z = self.b.ins().iconst(I64, 0);
+                    self.b.ins().store(mf(), z, at2, 0);
+                    self.b.ins().jump(keep, &[]);
+                    self.b.switch_to_block(keep);
                     self.x_wait();
-                    let off = self.b.ins().imul_imm(lead, 8);
-                    let theirs = self.b.ins().iadd(at2, off);
-                    let r = self.b.ins().load(I64, mf(), theirs, 0);
+                    let at2 = self.x_read();
+                    let r = self.b.ins().load(I64, mf(), at2, 0);
                     Rp::U(if rt == I64 {
                         r
                     } else {
@@ -3689,8 +4208,28 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let node = self.b.ins().iconst(I64, i64::from(i.a));
                 let site = self.b.ins().iconst(I64, i64::from(i.b));
                 let sg = self.sg;
-                self.helper(H_AGREE, 4, 0, &[sg, node, d, site]);
+                if self.chunked {
+                    // Once for the SIMD group: by its first chunk with a lane.
+                    let live = self.b.ins().uload32(mf(), sg, self.pl.live);
+                    let first = self.b.ins().ctz(live);
+                    let first = self.b.ins().band_imm(first, !(i64::from(self.w) - 1));
+                    let mine = self.b.ins().icmp(IntCC::Equal, first, self.lane0);
+                    let (call, join) = (self.b.create_block(), self.b.create_block());
+                    self.b.ins().brif(mine, call, &[], join, &[]);
+                    self.b.switch_to_block(call);
+                    self.helper(H_AGREE, 4, 0, &[sg, node, d, site]);
+                    self.b.ins().jump(join, &[]);
+                    self.b.switch_to_block(join);
+                } else {
+                    self.helper(H_AGREE, 4, 0, &[sg, node, d, site]);
+                }
+                self.check_failed();
                 if m == M::VOID { Rp::None } else { Rp::U(d) }
+            }
+            // A chunked kernel's barrier and poll are its SIMD group's, once its chunks are all at them.
+            O::Bar if self.chunked => {
+                self.split(ACT_BAR | i64::from(i.a) << 8);
+                Rp::None
             }
             O::Bar => {
                 let site = self.b.ins().iconst(I64, i64::from(i.a));
@@ -3698,12 +4237,16 @@ impl<'a, 'b> Cg<'a, 'b> {
                 self.helper(H_BAR, 2, 0, &[sg, site]);
                 Rp::None
             }
-            // At the group's width its lanes run in step: what one wrote, the others read after it; a chunk waits for
-            // the others.
+            // At the group's width its lanes run in step: what one wrote, the others read after it; a chunk's region
+            // ends, and the next starts once the others have run theirs.
             O::SgBar => {
                 if self.chunked {
-                    self.x_wait();
+                    self.split(ACT_NONE);
                 }
+                Rp::None
+            }
+            O::Yield if self.chunked => {
+                self.split(ACT_YIELD);
                 Rp::None
             }
             O::Yield => {
@@ -3729,6 +4272,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let fr = self.callees[i.a as usize];
                 let call = self.b.ins().call(fr, &args);
                 let res = self.b.inst_results(call).to_vec();
+                self.check_failed();
                 match callee.ret.1 {
                     Shape::Uniform => Rp::U(res[0]),
                     Shape::Lanes => Rp::L(res),
@@ -3739,22 +4283,34 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let to = i.a as usize;
                 let targs: Vec<V> = self.f.args_of(i).to_vec();
                 let params: Vec<V> = self.f.blocks[to].params.clone();
-                let mut vs = Vec::new();
+                let mut each = Vec::new();
                 for (&a, &p) in targs.iter().zip(&params) {
                     let pi = self.f.inst(p);
-                    match pi.shape {
+                    let (kind, vs) = match pi.shape {
                         Shape::Uniform if self.counted.contains_key(&p) => {
                             let k = self.counted[&p].1;
                             let l = self.lin(a).plus(Lin::konst(-k));
-                            vs.push(self.sum(&l));
+                            (0, vec![self.sum(&l)])
                         }
-                        Shape::Uniform => vs.push(self.u(a)),
-                        Shape::Lanes => vs.extend(self.lanes(a, pi.m)),
-                        Shape::Mask => vs.extend(self.mask(a)),
-                        Shape::None => {}
-                    }
+                        Shape::Uniform => (0, vec![self.u(a)]),
+                        Shape::Lanes => (1, self.lanes(a, pi.m)),
+                        Shape::Mask => (2, self.mask(a)),
+                        Shape::None => continue,
+                    };
+                    each.push((p, kind, vs));
                 }
-                let ba: Vec<BlockArg> = vs.into_iter().map(BlockArg::Value).collect();
+                if self.resume[to] {
+                    // A block that starts a region: the values it reads, and its parameters, kept for it.
+                    let k = self.reg(crate::ssa::Lab::Join(to));
+                    let live = self.live_in(to);
+                    self.save(&live);
+                    for (p, kind, vs) in &each {
+                        self.save_parts(*p, *kind, vs);
+                    }
+                    self.leave(k as i64, ACT_NONE);
+                    return Ok(Rp::None);
+                }
+                let ba: Vec<BlockArg> = each.into_iter().flat_map(|(_, _, vs)| vs).map(BlockArg::Value).collect();
                 self.b.ins().jump(self.blocks[to], &ba);
                 Rp::None
             }
@@ -3799,6 +4355,10 @@ impl<'a, 'b> Cg<'a, 'b> {
                     sw.set_entry(u128::from(val), self.blocks[t as usize]);
                 }
                 sw.emit(&mut self.b, xv, self.blocks[self.f.default_of(i) as usize]);
+                Rp::None
+            }
+            O::Ret | O::Halt if self.chunked => {
+                self.leave(NEXT_END, ACT_NONE);
                 Rp::None
             }
             O::Ret => {

@@ -578,6 +578,7 @@ fn thirty_two_bit_lanes_divide_as_each_lanes_integer() {
 #[test]
 fn a_cross_lane_kernel_runs_as_chunks_of_its_lanes() {
     let before = CHUNKED.load(std::sync::atomic::Ordering::Relaxed);
+    let fibers = super::fiber::prepared();
     let out = ran(concat!(
         "    if (lid % 5u == 3u) { out[lid] = 1000u + lid; return; }\n",
         "    uint32_t r = 0u;\n",
@@ -590,6 +591,9 @@ fn a_cross_lane_kernel_runs_as_chunks_of_its_lanes() {
         "    out[lid] = s ^ acc * 3u ^ b;"
     ));
     assert!(CHUNKED.load(std::sync::atomic::Ordering::Relaxed) > before, "the kernel ran as chunks");
+    // A SIMD group's chunks are a loop of its code, between its exchanges: no fiber runs them, nor the SIMD groups of
+    // a group with no barrier.
+    assert_eq!(super::fiber::prepared(), fibers, "fibers prepared for a group with no barrier");
     for l in 0..64u32 {
         if l % 5 == 3 {
             assert_eq!(out[l as usize], 1000 + l, "lane {l} ended first");
@@ -605,6 +609,29 @@ fn a_cross_lane_kernel_runs_as_chunks_of_its_lanes() {
         a.wrapping_add(if src % 5 != 3 { src + k } else { 0 })
     });
     assert_eq!(out[0], s ^ acc.wrapping_mul(3) ^ b, "lane 0");
+}
+
+/// A threadgroup barrier in a cross-lane kernel run as chunks: its SIMD group's chunks all reach it, the group then
+/// waits for the other SIMD group (a fiber each: the only waits that need one), and each lane reads what the other
+/// SIMD group wrote before it; the ballot before and the sum after are their SIMD group's.
+#[test]
+fn a_threadgroup_barrier_in_a_chunked_kernel_waits_for_the_other_simd_group() {
+    let fibers = super::fiber::prepared();
+    let out = ran(concat!(
+        "    uint32_t b = ukl_sg_ballot(lid % 3u == 0u __UKL_ARGS);\n",
+        "    out[lid] = lid * 5u + b;\n",
+        "    ukl_tg_barrier();\n",
+        "    uint32_t v = out[lid ^ 32u];\n",
+        "    ukl_tg_barrier();\n",
+        "    out[lid] = v ^ ukl_sg_sum(lid __UKL_ARGS);"
+    ));
+    let ballot = |g: u32| (0..32u32).filter(|l| (g * 32 + l) % 3 == 0).fold(0u32, |a, l| a | 1 << l);
+    for l in 0..64u32 {
+        let (g, o) = (l / 32, (l ^ 32) / 32);
+        let sum: u32 = (g * 32..g * 32 + 32).sum();
+        assert_eq!(out[l as usize], ((l ^ 32) * 5 + ballot(o)) ^ sum, "lane {l}");
+    }
+    assert!(super::fiber::prepared() > fibers, "the SIMD groups wait for each other as fibers");
 }
 
 /// A call keeps the caller's registers where the callee takes fewer than the caller keeps across it: a small function
@@ -789,6 +816,7 @@ DEFINE_KERNEL2(rule, t_mms,\n\
             .collect::<Vec<u32>>()
     };
     assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    let fibers = super::fiber::prepared();
     // 0: the width its registers' pressure chooses.
     for w in [0u32, 1, 2, 4, 8, 16, 32] {
         let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
@@ -796,6 +824,8 @@ DEFINE_KERNEL2(rule, t_mms,\n\
         let _ = at.cl.set(Ok(c));
         assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
     }
+    // One SIMD group's code, its chunks a loop of it: no fiber.
+    assert_eq!(super::fiber::prepared(), fibers, "fibers prepared for a group with no barrier");
 }
 
 /// Lanes of 1 and 2 bytes some bytes apart, as windows of their bytes and shuffles: signed bytes 3 apart, 2-byte
