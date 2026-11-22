@@ -272,7 +272,7 @@ fn tree_inputs() -> Vec<Vec<u8>> {
 /// built here (`--profile profiling`: optimized). simdjson's: its DOM parser, stage 1 and stage 2 to its tape, from a
 /// padded copy of the bytes (`structurals`). Per file: the instructions retired a byte and the time a byte (each the
 /// median of `RERAIL_ITERS` runs), single-threaded.
-#[cfg(all(target_arch = "aarch64", unix))]
+#[cfg(target_arch = "aarch64")]
 #[test]
 #[ignore = "a measurement: run by name with RERAIL_JSON_FILES and --nocapture, in an optimized build"]
 fn simdjson_form_against_simdjson() {
@@ -361,7 +361,7 @@ fn simdjson_form_against_simdjson() {
 /// - the whole path to 16 and to 16z: the JIT's `image16_in`, the Rust's `parse`.
 ///
 /// Both tapes are checked to be the same first. simdjson's DOM parser on the file is printed beside them.
-#[cfg(all(target_arch = "aarch64", unix))]
+#[cfg(target_arch = "aarch64")]
 #[test]
 #[ignore = "a measurement: run by name with RERAIL_JSON_FILES and --nocapture, in an optimized build"]
 fn simdjson_form_jit_and_aot_phase_by_phase() {

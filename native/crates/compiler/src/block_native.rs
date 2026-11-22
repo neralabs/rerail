@@ -50,7 +50,7 @@ pub enum BlockInst {
     /// bitmask; on Metal SWAR over the lane's `uint4`s.
     EqByte(u8),
     /// The block's bytes in any class of `bits` of table `table`: on the CPU two table lookups
-    /// per 16 bytes (`tbl`); on Metal, see `metal_block_program::ClassStrategy`.
+    /// per 16 bytes (`tbl`); on Metal the forward carry runs its planes form (`planes_form`).
     Class { table: u16, bits: u8 },
     /// Bit `k` of every byte of the block: one bit-plane (`BlockNative::planes_form`).
     Plane(u8),

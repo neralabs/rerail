@@ -1191,13 +1191,26 @@ fn one_document(v: &Version, f: &Fields<'_>, read: &BTreeSet<String>, narrowing:
         }
         Ok(())
     };
-    let mut covered: BTreeSet<&str> = candidates.union(&unwidened).copied().collect();
-    loop {
-        let next: BTreeSet<&str> = covered.iter().copied().filter(|rel| rules_of[rel].iter().all(|&r| covers(r, &covered).is_ok())).collect();
-        if next == covered {
-            break;
+    // The greatest set: each relation is taken to be covered until one of its rules is not. A rule is covered over
+    // fewer relations no more often, so a relation that leaves the set rechecks only its readers.
+    let mut readers: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+    for (head, rs) in &rules_of {
+        for r in rs {
+            for l in r.body() {
+                if let Lit::Atom(a) | Lit::Agg { atom: a, .. } = l.view() {
+                    readers.entry(name(a)).or_default().insert(*head);
+                }
+            }
         }
-        covered = next;
+    }
+    let mut covered: BTreeSet<&str> = candidates.union(&unwidened).copied().collect();
+    let mut queue: BTreeSet<&str> = covered.clone();
+    while let Some(rel) = queue.pop_first() {
+        if !covered.contains(rel) || rules_of[rel].iter().all(|&r| covers(r, &covered).is_ok()) {
+            continue;
+        }
+        covered.remove(rel);
+        queue.extend(readers.get(rel).into_iter().flatten().copied().filter(|h| covered.contains(h)));
     }
 
     // Anchored: each original kept narrow, the sets of its head's node columns some row that differs holds an
@@ -1249,31 +1262,32 @@ fn one_document(v: &Version, f: &Fields<'_>, read: &BTreeSet<String>, narrowing:
     };
     let mut anchors: BTreeMap<&str, BTreeSet<BTreeSet<usize>>> = candidates.iter().map(|&r| (r, BTreeSet::new())).collect();
     let mut unanchored: BTreeSet<&str> = read.iter().map(String::as_str).filter(|r| !rules_of.contains_key(r)).collect();
-    loop {
-        let mut changed = false;
-        for &rel in &candidates {
-            if unanchored.contains(rel) {
-                continue;
-            }
-            let mut sets = anchors[rel].clone();
-            for &r in &rules_of[rel] {
-                match anchor(r, &anchors, &unanchored) {
-                    Ok(s) => sets.extend(s),
-                    Err(_) => {
-                        unanchored.insert(rel);
-                        changed = true;
-                        break;
-                    }
+    // A relation's anchors only grow, and one unanchored stays so: a relation that changes rechecks only its readers
+    // (`readers`), as the greatest set's do.
+    let mut queue: BTreeSet<&str> = candidates.clone();
+    while let Some(rel) = queue.pop_first() {
+        if unanchored.contains(rel) {
+            continue;
+        }
+        let mut sets = anchors[rel].clone();
+        let mut lost = false;
+        for &r in &rules_of[rel] {
+            match anchor(r, &anchors, &unanchored) {
+                Ok(s) => sets.extend(s),
+                Err(_) => {
+                    lost = true;
+                    break;
                 }
             }
-            if !unanchored.contains(rel) && sets != anchors[rel] {
-                anchors.insert(rel, sets);
-                changed = true;
-            }
         }
-        if !changed {
-            break;
+        if lost {
+            unanchored.insert(rel);
+        } else if sets != anchors[rel] {
+            anchors.insert(rel, sets);
+        } else {
+            continue;
         }
+        queue.extend(readers.get(rel).into_iter().flatten().copied().filter(|h| candidates.contains(h) && !unanchored.contains(h)));
     }
     // Anchored with no row that differs: no literal of its rules differs, its narrow rows are its rows.
     let same: BTreeSet<String> = candidates.iter().copied().filter(|rel| !unanchored.contains(rel) && anchors[rel].is_empty() && !lattice.contains_key(*rel)).map(str::to_owned).collect();
@@ -1299,23 +1313,29 @@ fn one_document(v: &Version, f: &Fields<'_>, read: &BTreeSet<String>, narrowing:
     let narrowed = |r: &str| if read.contains(r) { narrow_name(r) } else { r.to_owned() };
     let mut nodes: BTreeSet<String> = rules_of.keys().map(|r| (*r).to_owned()).chain(natives.keys().cloned()).collect();
     nodes.extend(read.iter().map(|r| narrow_name(r)));
+    let edges_of = |n: &str, within: &BTreeSet<&str>| -> BTreeSet<(String, bool)> {
+        let to: BTreeSet<(String, bool)> = match n.strip_prefix("rr_narrow_").filter(|o| read.contains(*o)) {
+            Some(orig) if within.contains(orig) => BTreeSet::from([(orig.to_owned(), false)]),
+            Some(orig) => reads_of(orig).into_iter().map(|r| (narrowed(r), false)).collect(),
+            None if narrowing.sees(n) => reads_of(n).into_iter().map(|r| (narrowed(r), false)).collect(),
+            None => reads_of(n).into_iter().map(|r| (r.to_owned(), false)).collect(),
+        };
+        to.into_iter().filter(|(t, _)| nodes.contains(t)).collect()
+    };
+    // Only a narrow copy's edges change as `within` shrinks: they are made again for the copies that leave it.
+    let mut edges: front::Edges = nodes.iter().map(|n| (n.clone(), edges_of(n, &within))).collect();
     loop {
-        let mut edges: front::Edges = BTreeMap::new();
-        for n in &nodes {
-            let to: BTreeSet<(String, bool)> = match n.strip_prefix("rr_narrow_").filter(|o| read.contains(*o)) {
-                Some(orig) if within.contains(orig) => BTreeSet::from([(orig.to_owned(), false)]),
-                Some(orig) => reads_of(orig).into_iter().map(|r| (narrowed(r), false)).collect(),
-                None if narrowing.sees(n) => reads_of(n).into_iter().map(|r| (narrowed(r), false)).collect(),
-                None => reads_of(n).into_iter().map(|r| (r.to_owned(), false)).collect(),
-            };
-            edges.insert(n.clone(), to.into_iter().filter(|(t, _)| nodes.contains(t)).collect());
-        }
-        let cyclic: Vec<&str> = front::tarjan(&nodes, &edges).into_iter().flat_map(|c| within.iter().copied().filter(|r| c.contains(*r) && c.contains(&narrow_name(r))).collect::<Vec<_>>()).collect();
+        let comps = front::tarjan(&nodes, &edges);
+        let comp_of: HashMap<&str, usize> = comps.iter().enumerate().flat_map(|(i, c)| c.iter().map(move |r| (r.as_str(), i))).collect();
+        let cyclic: Vec<&str> = within.iter().copied().filter(|r| comp_of.get(*r).is_some_and(|c| comp_of.get(narrow_name(r).as_str()) == Some(c))).collect();
         if cyclic.is_empty() {
             break;
         }
         for r in cyclic {
             within.remove(r);
+            let copy = narrow_name(r);
+            let to = edges_of(&copy, &within);
+            edges.insert(copy, to);
         }
     }
     Ok((within.into_iter().map(str::to_owned).collect(), BTreeSet::new()))

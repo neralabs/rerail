@@ -928,7 +928,7 @@ impl Source for Within {
         }
         let chunk = self.batch.chunk();
         let v = views_in_place(&self.batch, chunk)?;
-        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
         view.failed = view.cache_failed();
         Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes().last().copied().unwrap_or(0), view, kinds: Arc::clone(&self.kinds) })
     }

@@ -27,7 +27,7 @@
 //!   error, never an empty document.
 //! - **A resident source** is a file's bytes alone, keyed by their SHA-256: a parser's input,
 //!   which has no tape yet (decision 0067). Block programs read it in place
-//!   (`metal_block_program::run_batch`); it shares the slabs, the budget, retirement and the drop
+//!   (`metal_block_program::serial`); it shares the slabs, the budget, retirement and the drop
 //!   with the documents.
 //! - **Leases** are the `Arc`s a batch holds: a retired slab's memory goes when the last batch
 //!   reading it lets go.

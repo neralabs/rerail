@@ -63,10 +63,12 @@ where
     F: for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's,
 {
     s.spawn(move |s| {
+        // In the caller's run first: `declines` reads the job's expected wall, the machine's (decision 0442).
+        let in_run = carry.enter();
         if rerail_accel::exec::declines(name, 0.0) {
+            drop(in_run);
             return spawn_in(s, name, carry, f);
         }
-        let _in = carry.enter();
         let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         rerail_accel::exec::as_job(name, || f(&Jobs(s)))
     });

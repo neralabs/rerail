@@ -327,6 +327,8 @@
             let u = mj::Table::of_rows(2, &rows).unwrap();
             let changed = mj::Table::new(2, n).unwrap();
             let counters = mj::Words::zeroed(2).unwrap();
+            // A round is a stratum's evaluation (`in_device`): its launches its budget's.
+            let _evaluation_round = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = super::direct_batch(None).unwrap();
             batch.lattice_fold(&u, n, &r_rel, had, 1, lat, super::map_at(m), first, &counters, &changed, None, None).unwrap();
             batch.finish().unwrap();
@@ -1043,12 +1045,15 @@
         let src: std::sync::Arc<dyn Source> = std::sync::Arc::new(r);
         assert!(src.in_block().is_some_and(|b| b.rows as usize == n), "the source's rows are one relation in a block");
         let rel = InRel::over_source(std::sync::Arc::clone(&src), vec![b'i'; 3]);
+        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         let (dev, _, place, _) = super::resident(&rel, &[1, 2], &[], false, &mut batch, &mut rep).expect("resident");
         assert_eq!((rep.in_place, rep.uploads, rep.upload_bytes), (1, 0, 0), "read in place: {rep:?}");
         assert_eq!((dev.rows, dev.cols), (n, 3));
         assert_eq!(place, [0, 1, 2], "each column at its own place");
+        // The statistics are evaluations of their own (`column_stats_of`), not the batch's.
+        drop(_evaluation_batch);
         let cols = [StatColumn::Rel(&rel, 1), StatColumn::Rel(&rel, 2)];
         let (read, in_place) = super::column_stats(&cols, 8).expect("the device");
         assert_eq!(in_place, 2);
@@ -1248,11 +1253,13 @@
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
         // Encoded into a batch a refusal drops uncommitted: nothing ran it, and nothing of it is kept (decision 0478
         // step 3: a copy is made at each stratum, never cached).
+        let _evaluation_refused = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut refused = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         super::resident(&rel, &[0, 1], &[], false, &mut refused, &mut rep).expect("resident");
         assert_eq!(rep.uploads, 1, "made: {rep:?}");
         drop(refused);
+        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         let (dev, _, place, _) = super::resident(&rel, &[0, 1], &[], false, &mut batch, &mut rep).expect("resident");
@@ -1296,6 +1303,7 @@
         assert!(src.device_view().is_some_and(|d| d.in_place.is_some()), "read in place");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
         let probe = |rel: &Arc<InRel>| {
+            let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = mj::Batch::new().expect("the device");
             let mut rep = super::Report::default();
             let (dev, ix, _, _) = super::resident(rel, &[], &[2], false, &mut batch, &mut rep).expect("resident");
@@ -1350,6 +1358,7 @@
                 // Made (a batch whose tapes are not on the device: `a_view_made_in_a_refused_batch_is_made_again`).
                 if d.in_place.is_none() {
                     let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                    let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
                     let mut batch = mj::Batch::new().expect("the device");
                     batch.expand_view(&d.block.device_buffer(device).unwrap(), d.root, d.view, &cols, &out).unwrap();
                     batch.finish().unwrap();
@@ -1363,6 +1372,7 @@
                 if let Some(v) = d.in_place.clone() {
                     let view = mj::DevRel::view(k, n, v.clone()).unwrap();
                     let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                    let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
                     let mut batch = mj::Batch::new().expect("the device");
                     let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
                     batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
@@ -1428,6 +1438,7 @@
                     assert!(n > 0, "{name}: rows");
                     for cols in [vec![0, 1], vec![1]] {
                         let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
                         let mut batch = mj::Batch::new().expect("the device");
                         match &d.in_place {
                             Some(v) => {
@@ -1466,6 +1477,7 @@
             assert_eq!(ib.rows as usize, n, "{name}");
             let rel = mj::DevRel::in_block(&ib, 2).unwrap();
             let out = mj::DevRel::empty(cols.len(), n).unwrap();
+            let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = mj::Batch::new().expect("the device");
             let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
             batch.copy_rows(mj::Rows::Rel(&rel), n, &from, mj::Rows::Rel(&out), 0).unwrap();

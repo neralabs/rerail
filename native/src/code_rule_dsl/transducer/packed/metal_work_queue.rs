@@ -1,13 +1,12 @@
 //! The device work queue (list step 17, decision 0027): device-side enqueue, on the process's device (decision
 //! 0440 step C). A persistent dispatch's workers take items from a queue and push the items their work creates;
-//! idle workers take those up, across every threadgroup, so the device, not the host, decides what runs next and
+//! running workers take those up, across every threadgroup, so the device, not the host, decides what runs next and
 //! how long the loop lasts. A kernel that uses it includes `<ukl/workqueue.h>` (`ukl_wq_take`, `ukl_wq_push`,
-//! `ukl_wq_done`, `ukl_wq_idle`).
+//! `ukl_wq_done`).
 //!
-//! A GPU promises no progress between threadgroups, so no worker waits on another without a
-//! bound (the source says how). The dispatch is sized to what the device keeps resident; a
-//! worker that has polled long enough for nothing exits, and so does one that has taken its
-//! launch's budget of items (`budget`, decision 0540): a launch's GPU time is its workers'
+//! A GPU promises no progress between threadgroups, so no worker waits on another (decision 0540 step 7): a worker
+//! that finds nothing to take ends at once, and the worker that pushed an item is running and takes on. So does one
+//! that has taken its launch's budget of items (`budget`, decision 0540): a launch's GPU time is its workers'
 //! budgets', not the work's. If items remain once all have exited, the host launches the same
 //! dispatch again over the same queue (`run`), within a bound the budget gives.
 use super::*;
@@ -15,10 +14,9 @@ use rerail_metal::lane;
 
 /// A worker group's threads.
 pub(in crate::code_rule_dsl) const WIDTH: u64 = 256;
-/// At most this many worker groups: about what an M-series GPU keeps resident.
+/// At most this many worker groups dispatched. Nothing waits on another worker (`<ukl/workqueue.h>`): those that run
+/// at once take the items, and one that finds none ends.
 const GROUPS: u64 = 64;
-/// An idle worker's polls before it exits.
-pub(in crate::code_rule_dsl) const POLLS: u32 = 4096;
 /// The items a launch is for: a worker's share is these over the workers.
 const ITEMS: u64 = 1 << 20;
 /// A worker's budget is this many shares: one that finishes its items sooner takes more.

@@ -8129,6 +8129,38 @@ object.
   load 9): 1.80 and 1.89 s wall, 79.4 and 79.8 B, 1,629 findings. The corpus tests on a Linux host with no GPU
   then showed four panics ("a view's index home of 14 rows: no device"): a device life's block asked the device for
   memory where none was opened. It is anonymous memory there now (`lease_exact`); the 162 corpus tests pass.
+- **After the hub's merge** (2026-11-20, fast-forward to 3c65266120): 99.3-100.0 B, 2.6-2.8 s wall, 1,629
+  findings. The engine is not it: the probe resolves `builtins.len` through `python/names.rerail`, whose scope
+  rules final-rerail-shape made equal to W's graph (46793a3c78, t50 §4: `def_outside`, `cls_late`, `gbefore`,
+  `nl_try`). Their strata cost about 1.3 s of CPU more. Two things, found on the way:
+  - **The plan of `def_outside`** read every function's body: `within(n, p)` from the function's `parameters` was
+    priced at the function's size (t50 step 4's `part_of`), the same as the function's every node by `nearest`. A
+    field's part is now priced at the mean size of the kinds that field's children have under that parent
+    (`Fielded::part_size`, over the tree's (parent kind, child kind, field) counts); a body stays near its
+    function's. `def_outside`'s work 1.27 M to 0.35 M rows. Measured 91.5 and 91.6 B, 1,629 findings (load 40, so
+    the wall says nothing). Test: `within_read_from_a_fields_part_is_priced_by_that_fields_children`; the
+    planner's 95 tests, the corpus and converter tests, and the reference tests (W's graph) pass.
+  - **A sketch's clone** shared its original's few values (`Counts`) in place, and the original's passing them
+    (`end_few`) left the clone with neither few values nor a filter: `keys` reached `unreachable!` ("a sketch past
+    its few values keeps their filter"), one cold hogql run in four. A clone of a sketch still in its few values
+    now counts its own. Test: `a_clone_of_few_values_keeps_its_keys_when_the_sketch_passes_them` (fails without).
+  - Left: rewriting `cls_early` and `def_outside` through a relation of their candidates did nothing (the planner
+    inlines it back) and cost 11 B outside the spans, so it is not kept. t50's next steps (keyed nearest for
+    `walk`/`look`) are final-rerail-shape's.
+  - **`nameref`** (2026-11-21). Before the merge it was inlined into its readers. The merge gave it 16 reader
+    copies, so it is now built whole, and `pat_tail` (the merge's) was demanded. The demand split's scan took
+    `pat_tail(n)` at every `child` row, because `child(d, n, i)` binds `n`, though `d` is one of a few dotted names.
+    So `nameref` was a `pre_` relation of every identifier, a 236 k-row demand and a second pass: 0.45 s of strata
+    CPU. A scan's rows are now carried across the base atoms its variables share (the rows a probe of that column
+    meets, `stats.fan`), so `pat_tail` is not demanded, and `nameref` is one stratum at 0.22 s. Measured 90.5 and
+    90.9 B, 1.89-1.95 s wall at load 11-15, 1,629 findings. Test: `a_scan_bound_through_a_small_kinds_children_is_not_demanded`.
+    The demand, split and planner tests (338), the corpus and converter tests and the pack-data ones pass.
+    What is left of `nameref`, at 365 k identifiers: two `!field(_, #f, $n)` at 150-165 ns a probe and
+    `text($n, $x)` at 255-267 ns. Each resolves a node id to its document and tape node again: three times an
+    identifier, through the granule table (`number_of`). A test that reads `$n`'s own field and builds no rows
+    (`Source::holds` on `field`) measured the same, so the rows built are not the cost. It is not kept.
+  - The reference test on the projects needs the data-layer lint pack's two authored dead-code checks to include
+    `python/references.rerail` (Final-shape-quality's staged publish); with that local copy it passes.
 
 ### Q431. (Q412 on investigate-bend-vs-datalog; Q266 on Native-GPU-strata, Q397 on it after its merge of the hub) The CPU JIT runs a quantified query 6-10 times slower than the interpreter, and more so as its runs grow
 
@@ -10246,3 +10278,59 @@ held image store and kept rows staged. Theirs' edits of code ours' split moved a
 R9's test of `own_names` stands beside it in `base.rs`. Found red at both tips, fixed at root in the next commits: a
 session's aggregate stratum derived again, and a warm host edit building an unchanged document from its tape, both only
 beside the other corpus tests (`notes/roll-up-51-cost-classifier-metal-rf.md`).
+
+### Q473. Roll-up 52 (django-bugs 87dbbe9135 onto Pulling-it-all-together): what the merge chose
+
+0540 steps 3-7 and 0601 taken whole: one launch ledger in `rerail-accel`, past it a hard failure, no guard and no
+split batches. Ours' moved `Device` impl loses `install_launch_guard`, the test loader registers its carriers once, and
+ours' `InFlight` index records stay on theirs' commit. Ours' new submissions all go through charged commits
+(`notes/roll-up-52-django-bugs.md`).
+
+### Q474. Roll-up 53 (final-rerail-shape 39de0fce60 onto Pulling-it-all-together): what the merge chose
+
+Theirs' picked puts taken: no kept put holds a heap vector, and ours' new puts (reader record, observer facts, slice,
+prepared facts, models) are blocks. A source's structure statistics keep ours' one patchable form; theirs'
+unpatchable `of_structure` and format 4 go. `source_rows` moves to the planner, which reads it
+(`notes/roll-up-53-final-rerail-shape.md`).
+
+### Q475. Roll-up 54 (final-rerail-shape-rr-align 00c113cfcd onto Pulling-it-all-together): what the merge chose
+
+A semi-join's statistics at its held nodes are theirs' kept rows beside the documents' table. Ours' t51 item 2
+(`held_counted`, `held_stats_name`) is reversed, its gap closed by theirs. Theirs' worklist runs ours' `covered` and
+anchor fixpoints. The image store's `where_kept` joins ours' `images_store` in `rr.rs`, above the corpus it reads
+(`notes/roll-up-54-rr-align.md`).
+
+### Q476. Roll-up 55 (Parser-generators-final-shape d558cc0919 onto Pulling-it-all-together): what the merge chose
+
+Theirs' removal of the IR-to-Rust lowerings goes whole (`rerail-rust-stream`, `rerail-pp-aot`), and tier 2's facts
+and analyses are in theirs' place: the JIT's `native_cpu_facts` and `native_cpu_stream`. Engine-crating's
+`stream_analysis` and `stream_facts` were moves for the removed lowering's sake, so they go. The parser decisions
+are numbered as theirs, 0577-0579. Theirs' 0561 and 0570 become 0562 and 0569 (`notes/roll-up-55-parser-generators.md`).
+
+### Q477. Roll-up 56 (Go-C-and-C-support cb23f84a49 onto Pulling-it-all-together): what the merge chose
+
+The preprocessor's grid is theirs' (0568, 0588; 0540 leaves its waits to its owner), and `<ukl/pool.h>` goes. The
+files theirs changed only through its merges of hub roll-up 38 and CUDA-support take ours. A function's call is
+named `UKL_ONCE` (forced) or `UKL_FUNC` (the compiler's choice). The setup's call depth is 4, since 0576's tape
+reads are one forced call shallower (`notes/roll-up-56-go-c.md`).
+
+### Q478. Roll-up 57 (sync-integration-hub-tape 3c058416f0 onto Pulling-it-all-together): what the merge chose
+
+Theirs' 0563 A (`may_embed`, `Report::unfillable`) is placed where ours' split keeps `Report` (`corpus/base.rs`), and
+reads the existing `observe::unhex` (`notes/roll-up-57-sync-hub-tape.md`).
+
+### Q479. Roll-up 58 (uglykl-CPU-SIMD-parallelization 091c4e099d onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-58-uglykl-simd.md`:
+
+- **Files theirs changed only through merges**: ours, Windows' cfgs with them. A recursive base had let theirs' older
+  text win clean hunks, in its own files too.
+- **The CPU device**: ours' `os::Lib` and stacks, carrying theirs' interpreted libraries (0567).
+- **0353 step 3**: theirs' self-relative directory and `ZCache`, with ours' tape `format` (0576) and delta rows.
+- **backend.h**: the vector path reads OpenCL 1.2's fence. Ours' `UKL_SIMD_GROUP_FREE` block is closed again.
+- **Q396**: theirs' pricing on ours' split (`plan/search.rs`). The sketch's clone is ours' `sharing` fix.
+
+### Q480. Roll-up 59 (main 92fbff1ccf onto Pulling-it-all-together): what the merge chose
+
+Main's #985 (a session lets go of removed worktrees) is taken whole, beside roll-up 43's `refreshOwners()`
+(`notes/roll-up-59-main.md`).

@@ -4741,21 +4741,14 @@ pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
 }
 
 /// A native relation of `conn`'s run as it can be kept and held again (`hold_rows`): its columns' types and its live
-/// rows, flat.
-pub fn kept_rows(conn: &Connection, table: &str) -> Option<(Vec<u8>, Vec<i64>, usize)> {
+/// rows where they lie, as a source (`Derived`). Not a view.
+pub fn kept_source(conn: &Connection, table: &str) -> Option<(Vec<u8>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> {
     let rel = on(conn).derived.lock().get(table).cloned()?;
     if rel.view.is_some() {
         return None;
     }
-    let k = rel.k;
-    let mut out = Vec::with_capacity(rel.rows() * k);
-    for id in 0..rel.len() as u32 {
-        if rel.ndead > 0 && is_dead(&rel.dead, id) {
-            continue;
-        }
-        out.extend_from_slice(&rel.rows.row(id, k));
-    }
-    Some((rel.types.clone(), out, rel.rows()))
+    let types = rel.types.clone();
+    Some((types, Derived::source(rel, None)))
 }
 
 /// The relations `adopt`ed into `conn`'s next run, taken by its planner.
@@ -4816,6 +4809,15 @@ impl InRel {
         Some(Arc::new(rel))
     }
     /// Its live rows' levels, in `live_rows`' order: `None` unless every row has one (`has_levels`).
+    /// Each live row's level, by its place among the live rows, where it has them (`has_levels`).
+    pub fn each_live_level(&self, f: &mut dyn FnMut(usize, u32)) {
+        if !self.has_levels() {
+            return;
+        }
+        for (i, id) in (0..self.n).filter(|&id| self.ndead == 0 || !is_dead(&self.dead, id as u32)).enumerate() {
+            f(i, self.level[id]);
+        }
+    }
     pub fn live_levels(&self) -> Option<Vec<u32>> {
         if !self.has_levels() {
             return None;

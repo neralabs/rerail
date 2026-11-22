@@ -204,6 +204,15 @@ impl Device {
         }
     }
 
+    /// The alignment, in bytes, of an offset a buffer is bound at: OpenCL's sub-buffer origin
+    /// (`CL_DEVICE_MEM_BASE_ADDR_ALIGN`: 512 on NVIDIA's); 1 elsewhere, where any offset its type aligns binds.
+    pub fn bind_align(&self) -> u64 {
+        match self {
+            Device::OpenCl(d) => d.base_align(),
+            _ => 1,
+        }
+    }
+
     pub fn is_cpu(&self) -> bool {
         matches!(self, Device::Cpu(_))
     }

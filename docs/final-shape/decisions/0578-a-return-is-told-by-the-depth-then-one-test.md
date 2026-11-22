@@ -1,6 +1,6 @@
-# 0558: A return is told by the depth, then by one test
+# 0578: A return is told by the depth, then by one test
 
-Numbered 0548 where it was written (Parser-generators-final-shape); 0558 here, the hub's 0548 being another.
+Numbered 0548 where it was written (this branch); renumbered at the merge of the hub, which holds its own 0548.
 
 Status: done by the implementer. The item is the user's (2026-11-21, "please do these", the second): "a two-way
 return". How it is done is the implementer's choice. Follows 0541. Page 40, step 52.

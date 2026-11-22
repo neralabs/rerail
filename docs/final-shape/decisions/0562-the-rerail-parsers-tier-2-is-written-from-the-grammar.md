@@ -1,6 +1,4 @@
-# 0605: The `.rerail` parser's tier 2 is written from the grammar
-
-Numbered 0561 where it was written (Parser-generators-final-shape); 0605 at its merge of the hub, whose 0561 is another.
+# 0562: The `.rerail` parser's tier 2 is written from the grammar
 
 Status: done by the implementer. The direction is the user's (2026-11-21): the `.rerail` parser's Rust needs the
 new generator to cover the grammar (0550). How it is done is the implementer's choice. Follows 0560, which wrote tier

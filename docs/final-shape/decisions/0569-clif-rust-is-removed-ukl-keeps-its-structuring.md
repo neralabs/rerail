@@ -1,6 +1,4 @@
-# 0606: `clif_rust` is removed; UKL keeps the structuring it used
-
-Numbered 0570 where it was written (Parser-generators-final-shape); 0606 at its merge of the hub, whose 0570 is another.
+# 0569: `clif_rust` is removed; UKL keeps the structuring it used
 
 Status: done by the implementer. The direction is the user's (2026-11-21): "delete the rest of clif_rust and fix the
 parts that think they need it. Parts which are not about rust generation need to be either folded into their

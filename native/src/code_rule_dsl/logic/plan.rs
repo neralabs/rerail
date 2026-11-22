@@ -48,6 +48,8 @@ pub mod join_spec;
 pub mod compose;
 pub mod emit;
 pub mod issue;
+/// A source's rows where they lie, digested and lent to a keep (`SourceRows`), the component's and the corpus's.
+pub mod source_rows;
 pub mod sql_kernel;
 
 /// Plans kept across chunks on this thread while held (a corpus run), none kept at the start; for a session's run
@@ -5392,7 +5394,7 @@ pub trait KeptStrata {
     fn rows(&mut self, rel: &str, types: &[u8]) -> Option<(Vec<u8>, Arc<super::native::component::InRel>)>;
     /// This run derived `rel`: its digest, and its rows (types, flat, count), with the digest each relation its
     /// stratum read had; `None` when SQL derived it, or a read's digest is not known.
-    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Vec<i64>, usize, Vec<(String, u64)>)>);
+    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Box<dyn crate::content_store::kept_facts::KeptPicked>, usize, Vec<(String, u64)>)>);
     /// The run's end: the strata it evaluated, of all.
     fn counted(&mut self, evaluated: usize, of: usize);
 }
@@ -5920,19 +5922,37 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BT
     let mut members = Vec::new();
     let f = run.fields();
     for r in scc.iter().filter(|r| !run.views.contains(*r)) {
-        let got = if run.native_rels.contains(r) {
-            super::native::component::kept_rows(db, r)
+        let atoms = crate::content_store::atoms::Atoms::for_connection(db);
+        // Its rows where they lie, and their digest: a native relation's read in its block (`kept_source`), SQL's
+        // written into a block of their own as the query gives them (`produced_rows`).
+        let got: Option<(Vec<u8>, u64, Box<dyn crate::content_store::kept_facts::KeptPicked>, usize)> = if run.native_rels.contains(r) {
+            super::native::component::kept_source(db, r).map(|(types, source)| {
+                let digest = source_rows::digest(source.as_ref(), &Cells::new(&atoms, &stored_types(f, r, types.clone())));
+                let n = source.len();
+                (types, digest, Box::new(source_rows::SourceRows { source }) as Box<dyn crate::content_store::kept_facts::KeptPicked>, n)
+            })
         } else if f.produced(r) && !f.is_input(r) {
             // SQL holds the answers when the relation is outside the native component.
-            produced_rows(db, run, r)
+            produced_rows(db, run, r).map(|(types, rows)| {
+                let cells = Cells::new(&atoms, &stored_types(f, r, types.clone()));
+                let (n, w) = (rows.len(), types.len());
+                let mut sum = 0u64;
+                let mut row = vec![0i64; w];
+                for i in 0..n {
+                    for (c, v) in row.iter_mut().enumerate() {
+                        *v = rows.get(i, c);
+                    }
+                    sum = sum.wrapping_add(cells.sum(&row));
+                }
+                (types, sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd), Box::new(rows) as Box<dyn crate::content_store::kept_facts::KeptPicked>, n)
+            })
         } else {
             None
         };
-        let atoms = crate::content_store::atoms::Atoms::for_connection(db);
-        let digest = got.as_ref().map(|(types, rows, n)| rows_digest(&Cells::new(&atoms, &stored_types(f, r, types.clone())), rows, *n));
+        let digest = got.as_ref().map(|g| g.1);
         fresh.insert(r.clone(), digest);
         members.push((r.clone(), digest));
-        ks.ran(r, got.zip(reads).map(|((types, rows, n), reads)| (digest.expect("rows give a digest"), stored_types(f, r, types), rows, n, reads.clone())));
+        ks.ran(r, got.zip(reads).map(|((types, digest, rows, n), reads)| (digest, stored_types(f, r, types), rows, n, reads.clone())));
     }
     for v in scc.iter().filter(|r| run.views.contains(*r)) {
         fresh.insert(v.clone(), view_digest(reads.map(Vec::as_slice), &members));
@@ -5940,22 +5960,26 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BT
 }
 
 /// A produced relation's rows as its table holds them, typed as the program declares it (no rows without a table).
-fn produced_rows(db: &Connection, run: &Run, rel: &str) -> Option<(Vec<u8>, Vec<i64>, usize)> {
+fn produced_rows(db: &Connection, run: &Run, rel: &str) -> Option<(Vec<u8>, crate::content_store::kept_facts::BlockFlat)> {
     let types: Vec<u8> = run.fields().types(rel).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes();
     let width = types.len();
     let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-    let mut flat = Vec::new();
-    let mut n = 0;
-    if let Ok(mut stmt) = db.prepare(&format!("SELECT DISTINCT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(rel))) {
-        let mut rows = stmt.query([]).ok()?;
-        while let Some(row) = rows.next().ok()? {
-            for c in 0..width {
-                flat.push(row.get::<_, i64>(c).ok()?);
-            }
-            n += 1;
+    let from = format!("SELECT DISTINCT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(rel));
+    // Counted first, so its rows go straight into a block of their size, none gathered on the heap.
+    let Ok(n) = db.query_row(&format!("SELECT COUNT(*) FROM ({from})"), [], |r| r.get::<_, i64>(0)) else {
+        return Some((types, crate::content_store::kept_facts::BlockFlat::new(0, width, false)));
+    };
+    let mut flat = crate::content_store::kept_facts::BlockFlat::new(usize::try_from(n).ok()?, width, false);
+    let mut stmt = db.prepare(&from).ok()?;
+    let mut rows = stmt.query([]).ok()?;
+    let mut i = 0;
+    while let Some(row) = rows.next().ok()? {
+        for c in 0..width {
+            flat.put(i, c, row.get::<_, i64>(c).ok()?);
         }
+        i += 1;
     }
-    Some((types, flat, n))
+    Some((types, flat))
 }
 
 /// A view's digest: of what its stratum read and of its stratum's other relations (`None` when one is not known).
@@ -7481,9 +7505,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         let width = f0.width(&req);
                         // The request's rows where they are: the engine's (a relation it holds), none (one still to be
                         // made: no table, no rows), or its table's.
-                        let native = run.native_rels.contains(&req).then(|| super::native::component::kept_rows(db, &req)).flatten();
-                        let asked: Vec<Vec<i64>> = if let Some((_, flat, _)) = native.filter(|_| width > 0) {
-                            flat.chunks(width).map(<[i64]>::to_vec).collect()
+                        let native = run.native_rels.contains(&req).then(|| super::native::component::kept_source(db, &req)).flatten();
+                        let asked: Vec<Vec<i64>> = if let Some((_, source)) = native.filter(|_| width > 0) {
+                            (0..source.len()).map(|r| (0..width).map(|c| source.value(r, c)).collect()).collect()
                         } else if run.pending.contains_key(&req) && !run.native_rels.contains(&req) {
                             Vec::new()
                         } else {
@@ -7521,8 +7545,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 // so its readers read the facts and the answers both.
                 let mut rows = rows;
                 if run.native_rels.contains(rel)
-                    && let Some((_, flat, k)) = super::native::component::kept_rows(db, rel).filter(|(_, _, k)| *k == types.len() && *k > 0) {
-                        rows.extend(flat.chunks(k).map(<[i64]>::to_vec));
+                    && let Some((_, source)) = super::native::component::kept_source(db, rel).filter(|(_, s)| s.columns().len() == types.len() && !types.is_empty()) {
+                        let k = types.len();
+                        rows.extend((0..source.len()).map(|r| (0..k).map(|c| source.value(r, c)).collect::<Vec<i64>>()));
                     }
                 super::native::component::retain(db, rel, rows, types)?;
                 run.native_rels.insert(rel.clone());

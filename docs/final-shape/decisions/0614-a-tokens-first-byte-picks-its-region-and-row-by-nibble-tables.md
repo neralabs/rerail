@@ -1,4 +1,6 @@
-# 0588: A token's first byte picks its region and its row by nibble tables
+# 0614: A token's first byte picks its region and its row by nibble tables
+
+Numbered 0588 where it was written (Swift-Kotlin-Scala-support); 0614 here, the C preprocessor's 0588 being another.
 
 Status: decided (the user, 2026-11-21: "no, use simdjson's approach for this where possible. We already have
 done some of the proving infrastructure", then "I mean 1": the first byte's class from nibble tables picks the

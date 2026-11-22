@@ -153,6 +153,8 @@ pub struct Report {
     /// Of those, the strata a changed read reached that no rule of saw a row of its delta, by kind or key (decision
     /// 0563 B; `Outcome::unseen`), by their keys.
     pub cross_unseen: Vec<String>,
+    /// The rules the run dropped as no row can reach them, it admitting no guest (decision 0563 A; `may_embed`).
+    pub unfillable: usize,
     /// The cross-file relations handed off as the run went, their frames made once no later stratum read them and
     /// their rows let go (Q74): a run not driven by deltas.
     pub cross_handed: usize,

@@ -22,7 +22,6 @@ const TOP: i64 = 1 << 62;
 struct Args {
     cells: u32,
     capacity: u32,
-    polls: u32,
     budget: u32,
 }
 unsafe impl lane::Pod for Args {}
@@ -92,7 +91,7 @@ pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Err
     let stats = zeroed::<u32>(4)?;
     let made_in = super::metal_backend::launch::host_seconds() - begun;
     let budget = super::work_queue::budget(groups);
-    let args = Args { cells: n as u32, capacity: queue.capacity, polls: super::work_queue::POLLS, budget };
+    let args = Args { cells: n as u32, capacity: queue.capacity, budget };
     let kernel = kernel();
     let ran = super::work_queue::run(&kernel, &queue, groups, budget, "Rerail lattice FIX", |launch| {
         let rows: [(&'static str, &super::blocks::Block); 14] = [

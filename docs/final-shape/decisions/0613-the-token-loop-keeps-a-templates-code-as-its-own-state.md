@@ -1,4 +1,6 @@
-# 0562: The token loop keeps a template's code as its own state
+# 0613: The token loop keeps a template's code as its own state
+
+Numbered 0562 where it was written (Swift-Kotlin-Scala-support); 0613 here, the hub's 0562 being another.
 
 Status: decided (the user, 2026-11-21: "Next: step C item 3, the escapes tested over code … Then the template
 masks, which need state kept in the loop, and the semicolon masks. After those, nothing reads the regions' walk

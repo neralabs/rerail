@@ -1,17 +1,11 @@
 # 0565: `rust_stream` is removed; the JIT keeps the facts it read from it
 
 Status: done by the implementer. The direction is the user's (2026-11-21): delete `rust_stream`, and the parts of
-`clif_rust` that can go now. How it is done is the implementer's choice. Follows 0550, 0560, 0605.
-
-At the merge of the hub (Parser-generators-final-shape, 2026-11-22), the facts are the hub's own split of the same
-analyses into the front end: `stream_facts` (`direct_keys`, `open_bound`, `marks`, `word_form`, on the words' own
-successors, `word_succ`, with no Rust text) and `stream_analysis`. `native_cpu_facts` is gone, and with it the Rust
-text this record says it still built to find successors. The hub's `rerail-rust-stream` crate is removed, as is
-everything only it read (`direct_entries`, `refusal`, `STATE_SLOTS`, the JIT's `set_entry` and `asks_feed`).
+`clif_rust` that can go now. How it is done is the implementer's choice. Follows 0550, 0560, 0562.
 
 ## What was there
 
-- `rust_stream` (5480 lines) wrote tier 2 as Rust from the native IR. Decision 0550 deprecated it, and 0560 and 0605
+- `rust_stream` (5480 lines) wrote tier 2 as Rust from the native IR. Decision 0550 deprecated it, and 0560 and 0562
   replaced its last product use (`rerail-rr-aot`).
 - The JIT (`native_cpu_stream`) still called four of its items:
   - `direct_keys`: whether a format 16 run passes each node to the writer at its word, and each node word's key;

@@ -16,7 +16,7 @@ fn observe_output<T>(
         assert!(
             trace
                 .iter()
-                .all(|record| record.encoded && record.submitted && record.completed)
+                .all(|record| record.submitted && record.completed)
         );
     }
     let mut kernels = std::collections::BTreeMap::<String, usize>::new();

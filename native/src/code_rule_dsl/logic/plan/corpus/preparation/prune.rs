@@ -196,45 +196,65 @@ impl ProgramPass for Unfillable {
         for (i, r) in rules.iter().enumerate() {
             by_head.entry(r.head().rel()).or_default().push(i);
         }
-        let mut empty: HashSet<RelId> = self.empty.iter().filter(|r| inputs.contains(r.as_str())).filter_map(|r| v.rel(r)).collect();
-        loop {
-            let mut grew = false;
-            for (&h, at) in &by_head {
-                let name = v.rel_name(h);
-                if empty.contains(&h) || inputs.contains(name) || facts.contains(name) || natives.contains(&h) {
-                    continue;
-                }
-                if at.iter().all(|&i| bodies[i].iter().any(|a| empty.contains(a))) {
-                    empty.insert(h);
-                    grew = true;
-                }
-            }
-            if !grew {
-                break;
+        // The rules each relation is read by: positively (the forward closure), at all (the backward one).
+        let mut positive_readers: HashMap<RelId, Vec<usize>> = HashMap::new();
+        for (i, body) in bodies.iter().enumerate() {
+            for &a in body {
+                positive_readers.entry(a).or_default().push(i);
             }
         }
-        let mut gone: HashSet<usize> = (0..rules.len()).filter(|&i| bodies[i].iter().any(|a| empty.contains(a))).collect();
+        let reads_of: Vec<Vec<RelId>> = rules.iter().map(reads).collect();
+        let mut readers: HashMap<RelId, usize> = HashMap::new();
+        for rs in &reads_of {
+            for &a in rs {
+                *readers.entry(a).or_default() += 1;
+            }
+        }
+        // Forward, as a worklist: a rule is dead once one of its positive atoms is empty, and a relation only rules
+        // make is empty once every rule of it is.
+        let mut empty: HashSet<RelId> = self.empty.iter().filter(|r| inputs.contains(r.as_str())).filter_map(|r| v.rel(r)).collect();
+        let mut dead = vec![false; rules.len()];
+        let mut live_rules: HashMap<RelId, usize> = by_head.iter().map(|(&h, at)| (h, at.len())).collect();
+        let mut todo: Vec<RelId> = empty.iter().copied().collect();
+        while let Some(rel) = todo.pop() {
+            for &i in positive_readers.get(&rel).into_iter().flatten() {
+                if std::mem::replace(&mut dead[i], true) {
+                    continue;
+                }
+                let h = rules[i].head().rel();
+                let left = live_rules.get_mut(&h).expect("a rule's head");
+                *left -= 1;
+                let name = v.rel_name(h);
+                if *left == 0 && !inputs.contains(name) && !facts.contains(name) && !natives.contains(&h) && empty.insert(h) {
+                    todo.push(h);
+                }
+            }
+        }
+        let mut gone: HashSet<usize> = (0..rules.len()).filter(|&i| dead[i]).collect();
         let dropped = gone.len();
-        // What only the dropped rules read, from their reads outward.
+        // Backward, as a worklist: a relation no rule left reads goes with its rules, unless something outside the
+        // rules reads it.
         let outputs: HashSet<&str> = v.outputs().map(|a| v.text(a)).collect();
-        let kept = |rel: RelId, gone: &HashSet<usize>| {
+        let kept = |rel: RelId| {
             let name = v.rel_name(rel);
             outputs.contains(name)
                 || self.keep.contains(name)
                 || natives.contains(&rel)
                 || native_reads.contains(&rel)
                 || crate::code_rule_dsl::logic::plan::corpus::guests::REQUESTS.contains(&name)
-                || rules.iter().enumerate().any(|(i, r)| !gone.contains(&i) && reads(r).contains(&rel))
         };
-        let mut todo: Vec<RelId> = gone.iter().flat_map(|&i| reads(&rules[i])).collect();
-        let mut seen: HashSet<RelId> = HashSet::new();
-        while let Some(rel) = todo.pop() {
-            if !seen.insert(rel) || kept(rel, &gone) {
-                continue;
-            }
-            for &i in by_head.get(&rel).into_iter().flatten() {
-                if gone.insert(i) {
-                    todo.extend(reads(&rules[i]));
+        let mut todo: Vec<usize> = gone.iter().copied().collect();
+        while let Some(i) = todo.pop() {
+            for &rel in &reads_of[i] {
+                let left = readers.get_mut(&rel).expect("a read");
+                *left -= 1;
+                if *left > 0 || kept(rel) {
+                    continue;
+                }
+                for &j in by_head.get(&rel).into_iter().flatten() {
+                    if gone.insert(j) {
+                        todo.push(j);
+                    }
                 }
             }
         }

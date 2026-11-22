@@ -53,10 +53,8 @@ fn all() -> Arc<Executor> {
     Arc::clone(lanes().all.get_or_init(|| {
         // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
         super::costs::start();
-        // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
-        if let Some(dev) = crate::code_rule_dsl::logic::device::device() {
-            dev.install_launch_guard();
-        }
+        // Every launch the executor's GPU lane makes is charged to the launch budget where it is made
+        // (`rerail_accel::gpu::GpuBackend::run`, decision 0100 §2).
         Arc::new(Executor::new())
     }))
 }

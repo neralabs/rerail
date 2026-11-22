@@ -34,7 +34,5 @@ rerail-parser-tests = { path = ".", features = ["test-hooks"] }
 [target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
 # The block programs' Metal backend, for the Metal checks (`metal_tests`).
 rerail-metal = { path = "../metal", features = ["test-hooks"] }
-# The OS's library loader, for the ladder's ahead-of-time libraries (`aot_tests`).
-rerail-device = { path = "../../../gpu/device" }
 # simdjson itself, the measure the simdjson form is timed against (`simdjson_form_against_simdjson`).
 rerail-simdjson-native = { path = "../simdjson_native" }

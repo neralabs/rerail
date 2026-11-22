@@ -704,6 +704,48 @@ impl ContentStore {
         Ok(id)
     }
 
+    /// Records that the tapes of `tapes` (each a source and its grammar: id, version, tape format) have no programs:
+    /// their loads ran the embedders and found none (decision 0431 step 6). A tape whose programs are recorded, or
+    /// that is not stored, is left as it is. One transaction for all. Read back by `programs_counts` (decision 0563
+    /// A: a run whose documents embed nothing admits no guest) and by a load, which then embeds none again.
+    pub fn put_no_programs(&self, tapes: &[(SourceId, (i64, i64, i64))]) -> StoreResult<()> {
+        if tapes.is_empty() {
+            return Ok(());
+        }
+        self.require_write_capacity()?;
+        self.immediate_transaction(|transaction| {
+            let mut update = transaction.prepare_cached(
+                "UPDATE tape_objects SET programs=0 WHERE source_id=?1 AND grammar_id=?2 AND grammar_version=?3 AND tape_format_version=?4 AND programs<0",
+            )?;
+            for &(source, (grammar_id, grammar_version, tape_format_version)) in tapes {
+                update.execute(params![source.0, grammar_id, grammar_version, tape_format_version])?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Each text's count of programs in its grammar (`(its SHA-256, its grammar id)`, at `grammar_version` and
+    /// `tape_format_version`): `None` where its tape is not stored, or stored without its programs known (-1).
+    pub fn programs_counts(&self, texts: &[(HashKey, i64)], grammar_version: i64, tape_format_version: i64) -> StoreResult<Vec<Option<i64>>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT t.programs FROM hashes h JOIN tape_objects t ON t.canonical_hash_id = h.hash_id \
+             WHERE h.algorithm_id=?1 AND h.lane0=?2 AND h.lane1=?3 AND h.lane2=?4 AND h.lane3=?5 \
+             AND t.grammar_id=?6 AND t.grammar_version=?7 AND t.tape_format_version=?8",
+        )?;
+        texts
+            .iter()
+            .map(|&(hash, grammar_id)| {
+                let [a, l0, l1, l2, l3] = hash_params(hash);
+                statement
+                    .query_row(params![a, l0, l1, l2, l3, grammar_id, grammar_version, tape_format_version], |row| row.get::<_, i64>(0))
+                    .optional()
+                    .map(|n| n.filter(|&n| n >= 0))
+                    .map_err(StoreError::from)
+            })
+            .collect()
+    }
+
     /// Records the programs of `source`'s tape in `grammar` (grammar id, version, tape format; decision 0431 step 6):
     /// each a source and a tape of its own, placed as they are in one segment (`Placing`), and a `file_documents`
     /// row, and the tape's count of them, in one transaction. A tape whose programs are recorded, or that is not

@@ -58,7 +58,7 @@ fn put(rel: &str, part: i64, digest: u64, what: KeptWhat) -> KeptPut {
 }
 
 fn flat(rows: &[i64]) -> KeptWhat {
-    KeptWhat::Flat { widths: vec![8, 8], rows: rows.to_vec(), n: rows.len() / 2, levels: None, given: false }
+    KeptWhat::Picked(Box::new(BlockFlat::of_rows(rows, 2, false)))
 }
 
 /// A store's file with its schema, and a connection to it.
@@ -283,6 +283,31 @@ fn a_waves_puts_are_one_file_a_space() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// A program's puts queued in one wave each name their identities in its reader record; the wave's file holds one
+/// record of them all (decision 0401 step 8). The wave's last record, alone, was the program's, and its next run asked
+/// the others' entries again and wrote its record: a warm run's write.
+#[test]
+fn a_waves_reader_records_of_one_program_are_one() {
+    let (path, c) = store("wave-readers");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let program = [0x33u8; 32];
+    let (first, second, third) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+    let entry = |rel: &str, ident: [u8; 32], v: i64| KeptPut { ident, ..put(rel, 0, v as u64, flat(&[v, v])) };
+    {
+        let log = std::sync::Arc::new(ReaderLog::new(program));
+        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptReader(Some(std::sync::Arc::clone(&log))));
+        let _waves = crate::content_store::write_back::run_waves();
+        store.queue_kept(SPACE, vec![entry("a", first, 1)]);
+        store.queue_kept(SPACE, vec![entry("b", second, 2), entry("c", third, 3)]);
+    }
+    store.written().unwrap();
+    let rows = chain_rows(&c, &SPACE).unwrap();
+    let kept = KeptSpace::open(&path, &SPACE, &rows).unwrap();
+    let records: Vec<([u8; 32], Vec<[u8; 32]>)> = kept.view().of(READERS).map(|k| (*k.key.ident, record_idents(&k).collect())).collect();
+    assert_eq!(records, [(program, vec![first, second, third])], "one record, naming every put of the wave");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// F-R5 (decisions 0401 F5, 0439): the kept relations read through SQL are their entries. `kept_entries` gives each
 /// entry's key, digest, types, reads and rows' count; `kept_facts` each entry's rows, a row the run killed not kept;
 /// an entry not kept has no rows.
@@ -329,12 +354,15 @@ fn the_kept_relations_read_through_sql_equal_their_entries() {
 #[test]
 fn levels_follow_their_rows_and_an_entry_put_as_given_keeps_its_order() {
     let (path, c) = store("levels-given");
-    let mut with_levels = put("p", 0, 1, flat(&[3, 30, 1, 10]));
-    if let KeptWhat::Flat { levels, .. } = &mut with_levels.what {
-        *levels = Some(vec![5, 6]);
+    let mut leveled = BlockFlat::with_levels(2, 2, false, true);
+    for (r, (row, level)) in [([3, 30], 5), ([1, 10], 6)].into_iter().enumerate() {
+        leveled.put(r, 0, row[0]);
+        leveled.put(r, 1, row[1]);
+        leveled.put_level(r, level);
     }
+    let with_levels = put("p", 0, 1, KeptWhat::Picked(Box::new(leveled)));
     let granule_rows = vec![9, 2, 8, 1, 9, 2];
-    write(&path, &c, vec![with_levels, put("g", 0, 0, KeptWhat::Flat { widths: vec![8, 8], rows: granule_rows.clone(), n: 3, levels: None, given: true })]);
+    write(&path, &c, vec![with_levels, put("g", 0, 0, KeptWhat::Picked(Box::new(BlockFlat::of_rows(&granule_rows, 2, true))))]);
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
     let p = view.get(&FactKey { rel: "p", ident: &ID, part: 0 }).unwrap();
@@ -370,7 +398,7 @@ fn kept_facts_are_a_virtual_table() {
     let view = space.view();
     let p = view.all().find(|k| k.key.rel == "p").unwrap();
     assert!(p.rows.leads(0) && !p.rows.leads(1), "a canonical entry leads by its first column");
-    write(&path, &c, vec![put("r", 0, 5, KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 0, 1, 0], n: 2, levels: None, given: true })]);
+    write(&path, &c, vec![put("r", 0, 5, KeptWhat::Picked(Box::new(BlockFlat::of_rows(&[2, 0, 1, 0], 2, true))))]);
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
     let r = view.all().find(|k| k.key.rel == "r").unwrap();

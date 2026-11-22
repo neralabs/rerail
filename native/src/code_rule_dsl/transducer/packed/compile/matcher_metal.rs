@@ -241,7 +241,9 @@ fn metal<'a>(
         for (_, levels) in steps.iter_mut().filter(|(recursive, _)| !recursive) {
             for pass in levels.iter_mut().flatten() {
                 let Pass::Program { target, program, roots, captured } = pass else { continue };
-                let formula = if *captured { device_targets(program, roots) } else { device_formula(program) };
+                // Within its demand's set where it has one (`demands`), as a walk's anchor is.
+                let demand = demands.get(&(Arc::as_ptr(roots) as usize));
+                let formula = if *captured { device_targets(program, roots, demand) } else { device_formula(program, demand) };
                 let Some(formula) = formula else { continue };
                 *pass = Pass::Formula { target: *target, roots: Arc::clone(roots), formula, image: *captured };
             }
@@ -424,12 +426,10 @@ fn apart<'a>(
         if segment.0.is_empty() && !(last && roots.is_some()) {
             return Ok(());
         }
-        // The segment's steps as runs, in order (a stack, the next on top). A run past its evaluation's launches
-        // (`label_passes`: its plan's bound, or its submission's where a group did not fuse) with more than one step
-        // is two runs, of its halves: the first's labels start the second, as a host sweep's do. A step's launches
-        // do not shrink with the files, so splitting the wave's tapes alone could not make it fit.
-        let mut pieces = vec![(std::mem::take(&mut segment.0), std::mem::take(&mut segment.1))];
-        while let Some((steps, chains)) = pieces.pop() {
+        // The segment's steps as one run: past its evaluation's launches is the hard failure (decision 0601), never
+        // a run split to fit.
+        let (steps, chains) = (std::mem::take(&mut segment.0), std::mem::take(&mut segment.1));
+        {
             let plan = Plan {
                 labels,
                 counts,
@@ -440,25 +440,13 @@ fn apart<'a>(
                 initial: std::cell::Cell::new(Some(std::mem::take(&mut outcome.labels)).filter(|labels| !labels.is_empty())),
                 rows: Some(&rows),
                 buffers: Some(&kept),
-                roots: if last && pieces.is_empty() { roots } else { None },
+                roots: if last { roots } else { None },
                 w_cost,
             };
             crate::code_rule_dsl::prof::release();
             let before = crate::code_rule_dsl::prof::footprint_mb();
             mark("plan");
-            let ran = match crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes)) {
-                Err(Error::BackendLaunchLimit) if plan.steps.len() > 1 => {
-                    crate::code_rule_dsl::prof::count("labels.launch_split", 1);
-                    // A refused run leaves its starting labels in the plan (`Plan::initial`).
-                    outcome.labels = plan.initial.take().unwrap_or_default();
-                    let (mut steps, mut chains) = (plan.steps, plan.chains);
-                    let half = steps.len() / 2;
-                    pieces.push((steps.split_off(half), chains.split_off(half)));
-                    pieces.push((steps, chains));
-                    continue;
-                }
-                ran => ran?,
-            };
+            let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
             if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
                 eprintln!(
                     "FOOTPRINT run: {before} -> {} MB (high-water {} MB); heap live {} MB, resident {} MB; Metal {} MB",

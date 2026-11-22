@@ -580,14 +580,20 @@ impl ProgramPass for DemandExports {
                 }
             }
         }
-        let projection = |rel: &str| {
-            let mut of = rules.iter().filter(|r| head(r) == rel).peekable();
-            of.peek().is_some()
-                && of.all(|r| {
+        // The relations whose every rule is one positive read of an input, found once by head (`rules_of`): asked for
+        // each read of an export, a scan of every rule each time was a pass over the program per read.
+        let projections: BTreeSet<&str> = pass
+            .rules_of
+            .iter()
+            .filter(|(_, rs)| {
+                rs.iter().all(|r| {
                     let body: Vec<LitRef<'_>> = r.body().collect();
                     matches!(body.as_slice(), [l] if matches!(l.view(), L::Atom(a) if !a.neg() && f.is_input(v.rel_name(a.rel()))))
                 })
-        };
+            })
+            .map(|(rel, _)| *rel)
+            .collect();
+        let projection = |rel: &str| projections.contains(rel);
         // Each export's reads: (reader, literal) and each read's filters.
         let mut reads: BTreeMap<String, Vec<(RuleRef<'_>, LitRef<'_>, Vec<Filter>)>> = BTreeMap::new();
         let mut uncut: BTreeSet<String> = BTreeSet::new();
