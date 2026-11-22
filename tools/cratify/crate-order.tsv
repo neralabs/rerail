@@ -97,6 +97,9 @@ rerail-engine	root
 rerail-tests-demand	test
 rerail-tests-transducer	test
 rerail-tests-logic	test
+rerail-tests-corpus	test
+rerail-tests-rr	test
+rerail-tests-sql	test
 rerail-tests-compile	test
 rerail-tests-matcher	test
 rerail-tests-lang	test

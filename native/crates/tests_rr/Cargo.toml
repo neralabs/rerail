@@ -1,0 +1,264 @@
+# The engine's tests of the .rr lowering and the program image: rr, its tapes, the program image and its text, and the JSON rules (docs/final-shape/proposals/crate-split/incremental-plan.md, step 7i).
+# A test crate: its library is its tests (`#![cfg(test)]`). Its manifest is boot's, with boot below it
+# (tools/cratify/test_crates.py), and kept by hand since.
+[package]
+name = "rerail-tests-rr"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The engine's tests of the .rr lowering and the program image: rr, its tapes, the program image and its text, and the JSON rules."
+
+[features]
+# Every registry language (`languages/<id>.json`) is built by default. A build without `lang-<id>` keeps the
+# language's tables but no grammar: its files are routed to no parser and nothing embeds it (`build.rs`,
+# `GrammarDialect::built`). The browser build (wasm/README.md) picks the languages a page needs.
+# `default` also turns on the default of each workspace crate below (every crate does the same for its own), so a
+# crate built with its defaults alone (`cargo test -p rerail-logic`) and through the engine gets the same features,
+# and one build (scripts/check/check_dev_features.py).
+default = ["rerail-boot/default", "all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-device-metal/default", "rerail-facts/default", "rerail-lang/default", "rerail-lang-ecma/default", "rerail-lang-json/default", "rerail-lang-php/default", "rerail-lang-python/default", "rerail-lang-rust/default", "rerail-lang-sql/default", "rerail-logic/default", "rerail-rr/default", "rerail-sessions/default", "rerail-transducer/default", "rerail-workspace/default"]
+all-languages = ["rerail-boot/all-languages", "lang-blade", "lang-c", "lang-cpp", "lang-csharp", "lang-css", "lang-go", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-kotlin", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-scala", "lang-sql", "lang-swift", "lang-typescript", "lang-vue", "rerail-device-metal/all-languages", "rerail-facts/all-languages", "rerail-lang-ecma/all-languages", "rerail-lang-json/all-languages", "rerail-lang-php/all-languages", "rerail-lang-python/all-languages", "rerail-lang-rust/all-languages", "rerail-lang-sql/all-languages", "rerail-lang/all-languages", "rerail-logic/all-languages", "rerail-rr/all-languages", "rerail-sessions/all-languages", "rerail-transducer/all-languages", "rerail-workspace/all-languages"]
+lang-blade = ["rerail-boot/lang-blade", "rerail-device-metal/lang-blade", "rerail-facts/lang-blade", "rerail-lang/lang-blade", "rerail-lang-ecma/lang-blade", "rerail-lang-json/lang-blade", "rerail-lang-php/lang-blade", "rerail-lang-python/lang-blade", "rerail-lang-rust/lang-blade", "rerail-lang-sql/lang-blade", "rerail-logic/lang-blade", "rerail-rr/lang-blade", "rerail-sessions/lang-blade", "rerail-transducer/lang-blade", "rerail-workspace/lang-blade"]
+lang-csharp = ["rerail-boot/lang-csharp", "ast-grep-language/tree-sitter-c-sharp", "rerail-device-metal/lang-csharp", "rerail-facts/lang-csharp", "rerail-lang/lang-csharp", "rerail-lang-ecma/lang-csharp", "rerail-lang-json/lang-csharp", "rerail-lang-php/lang-csharp", "rerail-lang-python/lang-csharp", "rerail-lang-rust/lang-csharp", "rerail-lang-sql/lang-csharp", "rerail-logic/lang-csharp", "rerail-rr/lang-csharp", "rerail-sessions/lang-csharp", "rerail-transducer/lang-csharp", "rerail-workspace/lang-csharp"]
+lang-css = ["rerail-boot/lang-css", "ast-grep-language/tree-sitter-css", "rerail-device-metal/lang-css", "rerail-facts/lang-css", "rerail-lang/lang-css", "rerail-lang-ecma/lang-css", "rerail-lang-json/lang-css", "rerail-lang-php/lang-css", "rerail-lang-python/lang-css", "rerail-lang-rust/lang-css", "rerail-lang-sql/lang-css", "rerail-logic/lang-css", "rerail-rr/lang-css", "rerail-sessions/lang-css", "rerail-transducer/lang-css", "rerail-workspace/lang-css"]
+lang-html = ["rerail-boot/lang-html", "ast-grep-language/tree-sitter-html", "rerail-device-metal/lang-html", "rerail-facts/lang-html", "rerail-lang/lang-html", "rerail-lang-ecma/lang-html", "rerail-lang-json/lang-html", "rerail-lang-php/lang-html", "rerail-lang-python/lang-html", "rerail-lang-rust/lang-html", "rerail-lang-sql/lang-html", "rerail-logic/lang-html", "rerail-rr/lang-html", "rerail-sessions/lang-html", "rerail-transducer/lang-html", "rerail-workspace/lang-html"]
+lang-java = ["rerail-boot/lang-java", "ast-grep-language/tree-sitter-java", "rerail-device-metal/lang-java", "rerail-facts/lang-java", "rerail-lang/lang-java", "rerail-lang-ecma/lang-java", "rerail-lang-json/lang-java", "rerail-lang-php/lang-java", "rerail-lang-python/lang-java", "rerail-lang-rust/lang-java", "rerail-lang-sql/lang-java", "rerail-logic/lang-java", "rerail-rr/lang-java", "rerail-sessions/lang-java", "rerail-transducer/lang-java", "rerail-workspace/lang-java"]
+lang-go = ["rerail-boot/lang-go", "ast-grep-language/tree-sitter-go", "rerail-device-metal/lang-go", "rerail-facts/lang-go", "rerail-lang/lang-go", "rerail-lang-ecma/lang-go", "rerail-lang-json/lang-go", "rerail-lang-php/lang-go", "rerail-lang-python/lang-go", "rerail-lang-rust/lang-go", "rerail-lang-sql/lang-go", "rerail-logic/lang-go", "rerail-rr/lang-go", "rerail-sessions/lang-go", "rerail-transducer/lang-go", "rerail-workspace/lang-go"]
+lang-c = ["rerail-boot/lang-c", "ast-grep-language/tree-sitter-c", "rerail-device-metal/lang-c", "rerail-facts/lang-c", "rerail-lang/lang-c", "rerail-lang-ecma/lang-c", "rerail-lang-json/lang-c", "rerail-lang-php/lang-c", "rerail-lang-python/lang-c", "rerail-lang-rust/lang-c", "rerail-lang-sql/lang-c", "rerail-logic/lang-c", "rerail-rr/lang-c", "rerail-sessions/lang-c", "rerail-transducer/lang-c", "rerail-workspace/lang-c"]
+lang-cpp = ["rerail-boot/lang-cpp", "ast-grep-language/tree-sitter-cpp", "rerail-device-metal/lang-cpp", "rerail-facts/lang-cpp", "rerail-lang/lang-cpp", "rerail-lang-ecma/lang-cpp", "rerail-lang-json/lang-cpp", "rerail-lang-php/lang-cpp", "rerail-lang-python/lang-cpp", "rerail-lang-rust/lang-cpp", "rerail-lang-sql/lang-cpp", "rerail-logic/lang-cpp", "rerail-rr/lang-cpp", "rerail-sessions/lang-cpp", "rerail-transducer/lang-cpp", "rerail-workspace/lang-cpp"]
+lang-javascript = ["rerail-boot/lang-javascript", "rerail-device-metal/lang-javascript", "rerail-facts/lang-javascript", "rerail-lang/lang-javascript", "rerail-lang-ecma/lang-javascript", "rerail-lang-json/lang-javascript", "rerail-lang-php/lang-javascript", "rerail-lang-python/lang-javascript", "rerail-lang-rust/lang-javascript", "rerail-lang-sql/lang-javascript", "rerail-logic/lang-javascript", "rerail-rr/lang-javascript", "rerail-sessions/lang-javascript", "rerail-transducer/lang-javascript", "rerail-workspace/lang-javascript"]
+# JSON, parsed by its Bitlex grammar (`transducer::packed::json_parser`); tree-sitter-json for a file it refuses.
+lang-json = ["rerail-boot/lang-json", "ast-grep-language/tree-sitter-json", "rerail-device-metal/lang-json", "rerail-facts/lang-json", "rerail-lang/lang-json", "rerail-lang-ecma/lang-json", "rerail-lang-json/lang-json", "rerail-lang-php/lang-json", "rerail-lang-python/lang-json", "rerail-lang-rust/lang-json", "rerail-lang-sql/lang-json", "rerail-logic/lang-json", "rerail-rr/lang-json", "rerail-sessions/lang-json", "rerail-transducer/lang-json", "rerail-workspace/lang-json"]
+lang-kotlin = ["rerail-boot/lang-kotlin", "ast-grep-language/tree-sitter-kotlin", "rerail-device-metal/lang-kotlin", "rerail-facts/lang-kotlin", "rerail-lang/lang-kotlin", "rerail-lang-ecma/lang-kotlin", "rerail-lang-json/lang-kotlin", "rerail-lang-php/lang-kotlin", "rerail-lang-python/lang-kotlin", "rerail-lang-rust/lang-kotlin", "rerail-lang-sql/lang-kotlin", "rerail-logic/lang-kotlin", "rerail-rr/lang-kotlin", "rerail-sessions/lang-kotlin", "rerail-transducer/lang-kotlin", "rerail-workspace/lang-kotlin"]
+lang-markdown = ["rerail-boot/lang-markdown", "rerail-device-metal/lang-markdown", "rerail-facts/lang-markdown", "rerail-lang/lang-markdown", "rerail-lang-ecma/lang-markdown", "rerail-lang-json/lang-markdown", "rerail-lang-php/lang-markdown", "rerail-lang-python/lang-markdown", "rerail-lang-rust/lang-markdown", "rerail-lang-sql/lang-markdown", "rerail-logic/lang-markdown", "rerail-rr/lang-markdown", "rerail-sessions/lang-markdown", "rerail-transducer/lang-markdown", "rerail-workspace/lang-markdown"]
+lang-php = ["rerail-boot/lang-php", "ast-grep-language/tree-sitter-php", "rerail-device-metal/lang-php", "rerail-facts/lang-php", "rerail-lang/lang-php", "rerail-lang-ecma/lang-php", "rerail-lang-json/lang-php", "rerail-lang-php/lang-php", "rerail-lang-python/lang-php", "rerail-lang-rust/lang-php", "rerail-lang-sql/lang-php", "rerail-logic/lang-php", "rerail-rr/lang-php", "rerail-sessions/lang-php", "rerail-transducer/lang-php", "rerail-workspace/lang-php"]
+lang-python = ["rerail-boot/lang-python", "rerail-device-metal/lang-python", "rerail-facts/lang-python", "rerail-lang/lang-python", "rerail-lang-ecma/lang-python", "rerail-lang-json/lang-python", "rerail-lang-php/lang-python", "rerail-lang-python/lang-python", "rerail-lang-rust/lang-python", "rerail-lang-sql/lang-python", "rerail-logic/lang-python", "rerail-rr/lang-python", "rerail-sessions/lang-python", "rerail-transducer/lang-python", "rerail-workspace/lang-python"]
+# `.rerail` rule files, parsed by the rule engine's own parser (`logic::rr::syntax`, decision 0061).
+lang-rr = ["rerail-boot/lang-rr", "rerail-device-metal/lang-rr", "rerail-facts/lang-rr", "rerail-lang/lang-rr", "rerail-lang-ecma/lang-rr", "rerail-lang-json/lang-rr", "rerail-lang-php/lang-rr", "rerail-lang-python/lang-rr", "rerail-lang-rust/lang-rr", "rerail-lang-sql/lang-rr", "rerail-logic/lang-rr", "rerail-rr/lang-rr", "rerail-sessions/lang-rr", "rerail-transducer/lang-rr", "rerail-workspace/lang-rr"]
+lang-rust = ["rerail-boot/lang-rust", "ast-grep-language/tree-sitter-rust", "rerail-device-metal/lang-rust", "rerail-facts/lang-rust", "rerail-lang/lang-rust", "rerail-lang-ecma/lang-rust", "rerail-lang-json/lang-rust", "rerail-lang-php/lang-rust", "rerail-lang-python/lang-rust", "rerail-lang-rust/lang-rust", "rerail-lang-sql/lang-rust", "rerail-logic/lang-rust", "rerail-rr/lang-rust", "rerail-sessions/lang-rust", "rerail-transducer/lang-rust", "rerail-workspace/lang-rust"]
+lang-scala = ["rerail-boot/lang-scala", "ast-grep-language/tree-sitter-scala", "rerail-device-metal/lang-scala", "rerail-facts/lang-scala", "rerail-lang/lang-scala", "rerail-lang-ecma/lang-scala", "rerail-lang-json/lang-scala", "rerail-lang-php/lang-scala", "rerail-lang-python/lang-scala", "rerail-lang-rust/lang-scala", "rerail-lang-sql/lang-scala", "rerail-logic/lang-scala", "rerail-rr/lang-scala", "rerail-sessions/lang-scala", "rerail-transducer/lang-scala", "rerail-workspace/lang-scala"]
+lang-sql = ["rerail-boot/lang-sql", "rerail-device-metal/lang-sql", "rerail-facts/lang-sql", "rerail-lang/lang-sql", "rerail-lang-ecma/lang-sql", "rerail-lang-json/lang-sql", "rerail-lang-php/lang-sql", "rerail-lang-python/lang-sql", "rerail-lang-rust/lang-sql", "rerail-lang-sql/lang-sql", "rerail-logic/lang-sql", "rerail-rr/lang-sql", "rerail-sessions/lang-sql", "rerail-transducer/lang-sql", "rerail-workspace/lang-sql"]
+lang-swift = ["rerail-boot/lang-swift", "ast-grep-language/tree-sitter-swift", "rerail-device-metal/lang-swift", "rerail-facts/lang-swift", "rerail-lang/lang-swift", "rerail-lang-ecma/lang-swift", "rerail-lang-json/lang-swift", "rerail-lang-php/lang-swift", "rerail-lang-python/lang-swift", "rerail-lang-rust/lang-swift", "rerail-lang-sql/lang-swift", "rerail-logic/lang-swift", "rerail-rr/lang-swift", "rerail-sessions/lang-swift", "rerail-transducer/lang-swift", "rerail-workspace/lang-swift"]
+lang-typescript = ["rerail-boot/lang-typescript", "rerail-device-metal/lang-typescript", "rerail-facts/lang-typescript", "rerail-lang/lang-typescript", "rerail-lang-ecma/lang-typescript", "rerail-lang-json/lang-typescript", "rerail-lang-php/lang-typescript", "rerail-lang-python/lang-typescript", "rerail-lang-rust/lang-typescript", "rerail-lang-sql/lang-typescript", "rerail-logic/lang-typescript", "rerail-rr/lang-typescript", "rerail-sessions/lang-typescript", "rerail-transducer/lang-typescript", "rerail-workspace/lang-typescript"]
+lang-vue = ["rerail-boot/lang-vue", "rerail-device-metal/lang-vue", "rerail-facts/lang-vue", "rerail-lang/lang-vue", "rerail-lang-ecma/lang-vue", "rerail-lang-json/lang-vue", "rerail-lang-php/lang-vue", "rerail-lang-python/lang-vue", "rerail-lang-rust/lang-vue", "rerail-lang-sql/lang-vue", "rerail-logic/lang-vue", "rerail-rr/lang-vue", "rerail-sessions/lang-vue", "rerail-transducer/lang-vue", "rerail-workspace/lang-vue"]
+# The engine without its Node addon (the `rerail-engine` CLI, the browser build): `#[napi]` items compile as plain
+# Rust and register nothing, so a binary links only what it calls rather than the addon's whole API (workspace
+# service, editor, suppressions, embeddings, git). Never on for the addon `npm run build` makes.
+headless = ["rerail-boot/headless", "napi-derive/noop", "rerail-tree-watch/headless", "rerail-device-metal/headless", "rerail-facts/headless", "rerail-lang/headless", "rerail-lang-ecma/headless", "rerail-lang-json/headless", "rerail-lang-php/headless", "rerail-lang-python/headless", "rerail-lang-rust/headless", "rerail-lang-sql/headless", "rerail-logic/headless", "rerail-rr/headless", "rerail-sessions/headless", "rerail-transducer/headless", "rerail-workspace/headless"]
+# The CLI's `dump` (rules in the earlier JSON/YAML form, compiled and printed as `rir`): off, the CLI links no
+# part of that compiler (the addon still has it).
+dump-cli = ["rerail-boot/dump-cli", "rerail-device-metal/dump-cli", "rerail-facts/dump-cli", "rerail-lang/dump-cli", "rerail-lang-ecma/dump-cli", "rerail-lang-json/dump-cli", "rerail-lang-php/dump-cli", "rerail-lang-python/dump-cli", "rerail-lang-rust/dump-cli", "rerail-lang-sql/dump-cli", "rerail-logic/dump-cli", "rerail-rr/dump-cli", "rerail-sessions/dump-cli", "rerail-transducer/dump-cli", "rerail-workspace/dump-cli"]
+# `syntax_error` on Python from a parser that follows CPython's grammar (Ruff's, with its 0.8 MB Unicode name table);
+# off, Python's verdict is tree-sitter's, as the other languages' are.
+python-syntax-error = ["rerail-boot/python-syntax-error", "rerail-device-metal/python-syntax-error", "rerail-facts/python-syntax-error", "rerail-lang/python-syntax-error", "rerail-lang-ecma/python-syntax-error", "rerail-lang-json/python-syntax-error", "rerail-lang-php/python-syntax-error", "rerail-lang-python/python-syntax-error", "rerail-lang-rust/python-syntax-error", "rerail-lang-sql/python-syntax-error", "rerail-logic/python-syntax-error", "rerail-rr/python-syntax-error", "rerail-sessions/python-syntax-error", "rerail-transducer/python-syntax-error", "rerail-workspace/python-syntax-error"]
+# E7 (draft decision 0156): counts of each part of a tape node that readers take, on stderr at a command's end
+# (`tape::reads`). Off in every shipped build.
+tape-reads = ["rerail-boot/tape-reads", "rerail-facts/tape-reads", "rerail-lang/tape-reads"]
+# The corpus runner's persistent store (`RERAIL_TAPE_CACHE`): tapes kept across runs, the per-file memo, run records
+# and their collection, in zstd frames. Off (the browser build), every run parses every file.
+tape-cache = ["rerail-boot/tape-cache", "rerail-device-metal/tape-cache", "rerail-facts/tape-cache", "rerail-lang/tape-cache", "rerail-lang-ecma/tape-cache", "rerail-lang-json/tape-cache", "rerail-lang-php/tape-cache", "rerail-lang-python/tape-cache", "rerail-lang-rust/tape-cache", "rerail-lang-sql/tape-cache", "rerail-logic/tape-cache", "rerail-rr/tape-cache", "rerail-sessions/tape-cache", "rerail-transducer/tape-cache", "rerail-workspace/tape-cache"]
+# Memory attribution: Rust, Tree-sitter and SQLite allocate through the system allocator instead of jemalloc, so
+# macOS's `malloc_history` and `heap` see every live allocation with its stack. Never on for a build that ships.
+system-allocator = ["rerail-boot/system-allocator", "rerail-device-metal/system-allocator", "rerail-facts/system-allocator", "rerail-lang/system-allocator", "rerail-lang-ecma/system-allocator", "rerail-lang-json/system-allocator", "rerail-lang-php/system-allocator", "rerail-lang-python/system-allocator", "rerail-lang-rust/system-allocator", "rerail-lang-sql/system-allocator", "rerail-logic/system-allocator", "rerail-rr/system-allocator", "rerail-sessions/system-allocator", "rerail-transducer/system-allocator", "rerail-workspace/system-allocator"]
+code-rule-profile = ["rerail-boot/code-rule-profile", "rerail-device-metal/code-rule-profile", "rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-lang-ecma/code-rule-profile", "rerail-lang-json/code-rule-profile", "rerail-lang-php/code-rule-profile", "rerail-lang-python/code-rule-profile", "rerail-lang-rust/code-rule-profile", "rerail-lang-sql/code-rule-profile", "rerail-logic/code-rule-profile", "rerail-rr/code-rule-profile", "rerail-sessions/code-rule-profile", "rerail-transducer/code-rule-profile", "rerail-workspace/code-rule-profile"]
+# P's workspace anchor path (PIAT@cbee7a03): its anchor corpus prepared for every
+# rule and read by `FileAnchorIndex::build_at`, in place of W's per-file index. Test builds only, over
+# the test-only copy `matcher::p_anchors`, until open item O20 picks one engine.
+p-anchor-corpus = ["rerail-boot/p-anchor-corpus", "rerail-device-metal/p-anchor-corpus", "rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-lang-ecma/p-anchor-corpus", "rerail-lang-json/p-anchor-corpus", "rerail-lang-php/p-anchor-corpus", "rerail-lang-python/p-anchor-corpus", "rerail-lang-rust/p-anchor-corpus", "rerail-lang-sql/p-anchor-corpus", "rerail-logic/p-anchor-corpus", "rerail-rr/p-anchor-corpus", "rerail-sessions/p-anchor-corpus", "rerail-transducer/p-anchor-corpus", "rerail-workspace/p-anchor-corpus"]
+# The Metal transducer suites (485 tests). Every GPU dispatch takes the process-wide
+# `METAL_EXECUTION_LOCK`, so these run one at a time and were 82% of the default suite's test
+# time; they run as their own gate: `cargo test --lib --features metal-tests -- transducer::`.
+metal-tests = ["rerail-boot/metal-tests", "rerail-device-metal/metal-tests", "rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-lang-ecma/metal-tests", "rerail-lang-json/metal-tests", "rerail-lang-php/metal-tests", "rerail-lang-python/metal-tests", "rerail-lang-rust/metal-tests", "rerail-lang-sql/metal-tests", "rerail-logic/metal-tests", "rerail-rr/metal-tests", "rerail-sessions/metal-tests", "rerail-transducer/metal-tests", "rerail-workspace/metal-tests"]
+# The test-only items of the engine's crates (`cfg(any(test, feature = "test-hooks"))`), for the tests of the crates
+# above them; the engine's tests turn it on. Off in every product build. A development build of the CLI turns it on
+# too (`cargo build --bin rerail-engine --features test-hooks`), and so it also turns on everything the
+# dev-dependencies below add to the dependencies (the grammars, rusqlite's `array`, tempfile): then the CLI and the
+# tests build every dependency crate alike, once per edit, not twice (docs/final-shape/notes/t37-edit-loop-time.md,
+# "One feature set"). `scripts/check/check_dev_features.py` checks that the two stay alike.
+test-hooks = ["rerail-boot/test-hooks", "rerail-c-pp/test-hooks", "rerail-clif/test-hooks", "rerail-tape-format/test-hooks", "dep:tempfile", "rusqlite/array", "rerail-c-directives/test-hooks",
+  "ast-grep-language/tree-sitter-bash", "ast-grep-language/tree-sitter-c", "ast-grep-language/tree-sitter-cpp",
+  "ast-grep-language/tree-sitter-c-sharp", "ast-grep-language/tree-sitter-css", "ast-grep-language/tree-sitter-go",
+  "ast-grep-language/tree-sitter-html", "ast-grep-language/tree-sitter-java", "ast-grep-language/tree-sitter-json",
+  "ast-grep-language/tree-sitter-kotlin", "ast-grep-language/tree-sitter-lua", "ast-grep-language/tree-sitter-php",
+  "ast-grep-language/tree-sitter-ruby", "ast-grep-language/tree-sitter-rust", "ast-grep-language/tree-sitter-scala",
+  "ast-grep-language/tree-sitter-swift",
+  "rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-workspace/test-hooks", "rerail-store/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks"]
+
+[dependencies]
+rerail-boot = { path = "../boot", default-features = false }
+# `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
+dunce = "=1.0.5"
+# Only under `test-hooks` (above); the tests have it as a dev-dependency.
+tempfile = { version = "=3.27.0", optional = true }
+# `.rerail`'s @ed25519_ok (code_rule_dsl/logic/crypto.rs): W's verify_ed25519, with the crates and versions it used.
+base64 = "=0.22.1"
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
+# Relational kernels on every lane and the executor that batches their launches (decision 0098).
+rerail-accel = { path = "../../../accel" }
+# The tree watch, built apart (`crates/tree_watch`) so its tests build without the engine; its sources stay in `src/`.
+rerail-tree-watch = { path = "../tree_watch" }
+# The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
+rerail-store = { path = "../store", features = ["test-hooks"] }
+ast-grep-core = "=0.51.0"
+# Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
+# vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md).
+# Ruff supplies a demanded Python grammar verdict; it does not replace the tape parser.
+# Rust parses with ast-grep's tree-sitter-rust 0.24.2 (MIT), the grammar its feasibility census measured.
+# PHP and Rust parse with its grammars when `lang-php` and `lang-rust` are on.
+ast-grep-language = { version = "=0.51.0", default-features = false }
+# The transducer's CPU JIT (code_rule_dsl/transducer/packed).
+cranelift-codegen = "=0.125.4"
+# Tier 1 of the transducer's parsers, a crate of its own so that a change to it rebuilds little.
+rerail-compiler = { path = "../compiler" }
+rerail-rr-syntax = { path = "../rr_syntax" }
+rerail-tape-format = { path = "../tape_format" }
+# The C and C++ preprocessor (0327): directives as facts, translation units applied (`language::adapter::c_pp`,
+# the answerers the engine installs at load).
+rerail-c-pp = { path = "../c_pp" }
+# Its directives compiled (Bitlex, 0327 mode (a)): the engine's answer where they read a file.
+rerail-c-directives = { path = "../c_directives" }
+# The tape's reads written once in CLIF, and the JIT's inlining pass over them (decision 0310).
+rerail-clif = { path = "../clif" }
+# The .rerail parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
+rerail-rr-parser = { path = "../rr_parser" }
+rerail-prof = { path = "../prof" }
+cranelift-frontend = "=0.125.4"
+cranelift-module = "=0.125.4"
+# The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
+foldhash = "=0.2.0"
+hashbrown = { version = "=0.16.1", default-features = false }
+gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }
+globset = "=0.4.21"
+# Multi-literal search for the text layer (code_rule_dsl/text): already in the tree through `regex`.
+aho-corasick = "=1.1.5"
+model2vec-rs = { version = "0.4.0", default-features = false, features = ["fancy-regex", "local-only"] }
+napi = { version = "3.0", default-features = false, features = ["napi8", "dyn-symbols"] }
+napi-derive = "3.0"
+indexmap = "=2.14.2"
+memchr = "=2.8.3"
+num-bigint = "=0.5.1"
+num-integer = "=0.1.47"
+num-traits = "=0.2.19"
+parking_lot = { version = "0.12", features = ["arc_lock"] }
+rayon = "=1.12.0"
+serde = { version = "1.0", features = ["derive"] }
+fancy-regex = "=0.17.0"
+regex = "=1.13.1"
+# The reach index (decision 0119): each start's closure as a compressed bitmap.
+roaring = "=0.11.5"
+regex-automata = "=0.4.18"
+regex-syntax = "=0.8.11"
+# Held at 0.40.2, not main's 0.41.1: 0.41 registers hooks (`progress_handler`, `commit_hook`,
+# `rollback_hook`, `authorizer`) through `&mut Connection`, and the engine installs them on connections its
+# statements share.
+rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
+fallible-iterator = "0.3"
+# Native Python grammar validation, pinned to the source oracle version (3.13).
+# `core.rerail`'s `syntax_error` for Python: a parser that follows CPython's grammar (Ruff's), since tree-sitter
+# recovers from errors. 0.0.10 is the last release that builds on the pinned toolchain (1.95).
+# The same crates give CPython's other verdicts on Python source (code_rule_dsl/cpython: ast.unparse, ast.dump,
+# literal_eval, string annotations); 0.0.10 is Ruff's tag 0.16.4 (11c76bf48) as published by Astral.
+ruff_python_parser = "=0.0.10"
+ruff_python_ast = "=0.0.10"
+ruff_text_size = "=0.0.10"
+rustc-hash = "=2.1.3"
+serde_json = "1.0"
+serde_yaml_ng = "=0.10.0"
+# Git blob ids, for run artifacts' input digests (`corpus::inputs`, data-layer/RUN-FACTS.md section 4).
+sha1 = "0.11"
+sha2 = "0.11"
+tree-sitter-language = "=0.1.9"
+tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
+tree-sitter = "=0.27.1"
+# Bitlex's parser (and, in tests, its reference evaluator), for the Bitlex compiler
+# (`transducer/packed/bitlex_compile`). Its library has no dependencies; the tree-sitter oracle is
+# its binary's feature.
+bitlex = { path = "../../../tools/bitlex", default-features = false }
+# CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
+unicode-normalization = "=0.1.26"
+zstd = "=0.14.3"
+
+# The engine's crates (tools/cratify/apply.py): its sources, mounted in place.
+rerail-facts = { path = "../facts", default-features = false }
+rerail-lang = { path = "../lang", default-features = false }
+rerail-lang-ecma = { path = "../lang_ecma", default-features = false }
+rerail-lang-json = { path = "../lang_json", default-features = false }
+rerail-lang-php = { path = "../lang_php", default-features = false }
+rerail-lang-python = { path = "../lang_python", default-features = false }
+rerail-lang-rust = { path = "../lang_rust", default-features = false }
+rerail-lang-sql = { path = "../lang_sql", default-features = false }
+rerail-logic = { path = "../logic", default-features = false }
+rerail-rr = { path = "../rr", default-features = false }
+rerail-sessions = { path = "../sessions", default-features = false }
+rerail-transducer = { path = "../transducer", default-features = false }
+rerail-workspace = { path = "../workspace", default-features = false }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# Executable code needs dedicated mappings, separate from mimalloc heap pages (G).
+cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
+
+# The browser build (wasm32-wasip1, `wasm/README.md`): a page has no executable memory, so the JIT's stand-in
+# fails to build a module and the transducer interprets, as it does before a background JIT compile lands.
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+cranelift-jit-wasm = { path = "../../wasm/cranelift-jit" }
+libc = "0.2.189"
+
+[target.'cfg(unix)'.dependencies]
+# G's global allocator, ported as a dependency only: W keeps jemalloc (`lib.rs`) until O16.
+mimalloc = { version = "=0.1.52", default-features = false }
+libc = "0.2.189"
+
+# jemalloc does not build for MSVC targets or wasm; both keep the system allocator (`lib.rs`).
+
+[target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
+# The addon is dlopen'ed by Node; glibc can't fit jemalloc's initial-exec TLS in its static block.
+tikv-jemallocator = { version = "=0.7.0", features = ["disable_initial_exec_tls"] }
+tikv-jemalloc-ctl = { version = "=0.7.0", features = ["stats"] }
+# Tree-sitter's allocator (`lib.rs`): the same jemalloc, linked by tikv-jemallocator.
+tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+# `Win32_System_IO` and `Win32_System_Ioctl`: the tree watch's completion port, reads and oplock (`tree_watch/windows.rs`).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block = "0.1.6"
+metal = "0.33.0"
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
+rerail-device-metal = { path = "../device_metal", default-features = false }
+# The Metal runtime, the slab residency's arena and the block programs' backend.
+rerail-metal = { path = "../metal" }
+
+# The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
+
+[dev-dependencies]
+# Python's lean parser, measured directly (`tape::tests::python_parse_costs`).
+rerail-python-lean = { path = "../python_lean" }
+# This crate's own test build turns on its test hooks, as the language packs' do (`test-hooks`).
+rerail-tests-rr = { path = ".", features = ["test-hooks"] }
+rerail-boot = { path = "../boot", default-features = false, features = ["test-hooks"] }
+rerail-facts = { path = "../facts", default-features = false, features = ["test-hooks"] }
+rerail-lang = { path = "../lang", default-features = false, features = ["test-hooks"] }
+rerail-lang-ecma = { path = "../lang_ecma", default-features = false, features = ["test-hooks"] }
+rerail-lang-json = { path = "../lang_json", default-features = false, features = ["test-hooks"] }
+rerail-lang-php = { path = "../lang_php", default-features = false, features = ["test-hooks"] }
+rerail-lang-python = { path = "../lang_python", default-features = false, features = ["test-hooks"] }
+rerail-lang-rust = { path = "../lang_rust", default-features = false, features = ["test-hooks"] }
+rerail-lang-sql = { path = "../lang_sql", default-features = false, features = ["test-hooks"] }
+rerail-logic = { path = "../logic", default-features = false, features = ["test-hooks"] }
+rerail-rr = { path = "../rr", default-features = false, features = ["test-hooks"] }
+rerail-sessions = { path = "../sessions", default-features = false, features = ["test-hooks"] }
+rerail-transducer = { path = "../transducer", default-features = false, features = ["test-hooks"] }
+rerail-workspace = { path = "../workspace", default-features = false, features = ["test-hooks"] }
+rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
+ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
+rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
+tempfile = "=3.27.0"
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dev-dependencies]
+# The tape's views run as UKL kernels, launched through the device layer (decision 0440 step C).
+rerail-gpu = { path = "../../../gpu" }
+# Per-thread buffer ledgers for the engine's tests (`rerail_metal::test_pool`).
+rerail-metal = { path = "../metal", features = ["test-hooks"] }
+rerail-device-metal = { path = "../device_metal", default-features = false, features = ["test-hooks"] }

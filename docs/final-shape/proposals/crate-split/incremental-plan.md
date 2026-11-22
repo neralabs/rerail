@@ -1133,3 +1133,18 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     - On a Linux host, rerail-prefilter's tests and boot's prefilter and `waves::matches` tests: 50 of 51. The one
       failure, `metal_set_steps_compute_the_cpus_candidate_sets`, needs a GPU, and that host's layer has none.
     - On a Mac, that test passes.
+- **Step 7i** (2026-11-22): the test crates are split by subject, about 10k test lines each. Each new crate is the old
+  crate's facade cut to its mounts, with the same manifest, test load and `test_support`. A mount goes with the
+  subject whose prefix it falls under.
+  - rerail-tests-logic (36.7k) is now four crates:
+
+    | crate | test lines | what it holds |
+    |---|---:|---|
+    | rerail-tests-corpus | 9.2k | `logic::plan::corpus` and `coverage`, the warm tier among them (`--profile warm` now runs `-p rerail-tests-corpus`) |
+    | rerail-tests-rr | 8.9k | `logic::rr`, `program_image`, `program_text`, `json_rules` |
+    | rerail-tests-sql | 11.1k | `sql_executor`, `sql_admission`, `residency` |
+    | rerail-tests-logic | 8.9k | the rest: the planner's tests, the native kernels, the profile, typing, the waves, the stats |
+
+  - CI's step that named `rerail-tests-logic` for `logic::rr::tests` names `rerail-tests-rr`.
+  - Tests: on a Linux host, the four crates in full: 878 of 880. The two failures are one pack-data test and the SQL
+    report test that runs `node`, which that host lacks.
