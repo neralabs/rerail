@@ -39,7 +39,7 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-transducer/code-rule-profile", "rerail-rules/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-transducer/p-anchor-corpus", "rerail-rules/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-transducer/metal-tests"]
-test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-transducer/test-hooks", "rerail-rules/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
+test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-transducer/test-hooks", "rerail-rules/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
 
 [dependencies]
 base64 = "=0.22.1"
@@ -95,6 +95,7 @@ rerail-transducer = { path = "../transducer", default-features = false }
 rerail-rules = { path = "../rules", default-features = false }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }
+rerail-rir = { path = "../rir" }
 rerail-bitlex = { path = "../bitlex" }
 rerail-cpu-block = { path = "../cpu_block" }
 rerail-cpu-stream = { path = "../cpu_stream" }

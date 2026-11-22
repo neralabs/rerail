@@ -23,7 +23,7 @@ fn main() {
 fn generate() {
     let rir = std::fs::read_to_string("../c_directives/expand/expand.rir").expect("reads the words");
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
-    let words = rerail_compiler::rir_asm::assemble(&rir).expect("the words assemble");
+    let words = rerail_rir::rir_asm::assemble(&rir).expect("the words assemble");
     let src = rerail_cpu_pp::native_cpu_pp::rust_source(&words).unwrap_or_else(|e| panic!("the words to Rust: {e}"));
     let body: String = src.lines().filter(|l| !l.starts_with("#![") && !l.starts_with("//!")).flat_map(|l| [l, "\n"]).collect();
     // The words' text it was made from, by fingerprint: the host runs the build only for the

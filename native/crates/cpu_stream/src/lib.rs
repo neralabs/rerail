@@ -14,7 +14,8 @@ extern crate cranelift_jit_wasm as cranelift_jit;
 
 // The crates below under their modules' names, so the mounted sources' `crate::records`, `crate::block`, ... read them.
 #[allow(unused_imports)]
-use rerail_compiler::*;
+// The front end, with the RIR assembler and the preprocessor's words over it (rerail-rir, step 7a).
+use rerail_rir::*;
 #[allow(unused_imports)]
 use rerail_cpu_block::*;
 // The Bitlex compiler, which only the ladder and the tests read.

@@ -3301,6 +3301,7 @@ dependencies = [
  "rerail-logic",
  "rerail-metal",
  "rerail-prof",
+ "rerail-rir",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -3348,6 +3349,7 @@ dependencies = [
  "rerail-cpu-stream",
  "rerail-metal",
  "rerail-pp-aot",
+ "rerail-rir",
  "rerail-simd8",
  "rerail-tape-format",
  "sha2 0.10.9",
@@ -3607,6 +3609,7 @@ dependencies = [
  "rerail-clif",
  "rerail-compiler",
  "rerail-cpu-pp",
+ "rerail-rir",
 ]
 
 [[package]]
@@ -3626,6 +3629,7 @@ dependencies = [
  "rerail-cpu-block",
  "rerail-cpu-stream",
  "rerail-metal",
+ "rerail-rir",
  "rerail-tape-format",
 ]
 
@@ -4042,6 +4046,7 @@ dependencies = [
  "rerail-kotlin-aot",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
+ "rerail-rir",
  "rerail-tape-format",
 ]
 
@@ -4252,6 +4257,7 @@ dependencies = [
  "rerail-lang",
  "rerail-lang-json",
  "rerail-prof",
+ "rerail-rir",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-rules",
@@ -4783,6 +4789,7 @@ dependencies = [
  "rerail-gpu",
  "rerail-metal",
  "rerail-prof",
+ "rerail-rir",
  "rerail-tape-format",
  "rerail-ukl",
  "serde",
@@ -4804,6 +4811,7 @@ dependencies = [
  "rerail-kotlin-parser",
  "rerail-metal",
  "rerail-parser-tests",
+ "rerail-rir",
  "rerail-rr-syntax",
  "rerail-rust-stream",
  "rerail-simdjson-native",
@@ -5067,6 +5075,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-cpu-pp",
  "rerail-cpu-stream",
+ "rerail-rir",
 ]
 
 [[package]]
@@ -5158,6 +5167,14 @@ dependencies = [
 [[package]]
 name = "rerail-registry"
 version = "0.1.0"
+
+[[package]]
+name = "rerail-rir"
+version = "0.1.0"
+dependencies = [
+ "rerail-compiler",
+ "rerail-rir",
+]
 
 [[package]]
 name = "rerail-rr"
@@ -5259,6 +5276,7 @@ dependencies = [
  "rerail-cpu-stream",
  "rerail-metal",
  "rerail-prof",
+ "rerail-rir",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-simdjson-native",
@@ -6366,6 +6384,7 @@ dependencies = [
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-prof",
+ "rerail-rir",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -6446,6 +6465,7 @@ dependencies = [
  "rerail-facts",
  "rerail-lang",
  "rerail-prof",
+ "rerail-rir",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-rules",

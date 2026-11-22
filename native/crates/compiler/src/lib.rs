@@ -35,12 +35,9 @@ pub mod native_cpu_pressure;
 pub mod native_cpu_shape;
 pub mod native_ir;
 pub mod program;
-pub mod pp_expr;
-pub mod pp_words;
-#[cfg(test)]
-mod pp_words_tests;
+// The RIR assembler and the preprocessor's words (`rir_asm`, `pp_words`, `pp_expr`) are rerail-rir's, over this
+// crate (step 7a).
 pub mod records;
-pub mod rir_asm;
 pub mod rir_text;
 pub mod set_mode;
 pub mod stream;

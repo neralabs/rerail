@@ -9,10 +9,11 @@ build = "../compiler/build.rs"
 
 [features]
 # The ladder (`ladder`) and the tests read the Bitlex compiler, which nothing else here does.
-test-hooks = ["dep:rerail-bitlex", "rerail-bitlex/test-hooks", "rerail-compiler/test-hooks", "rerail-cpu-block/test-hooks", "rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail-metal/test-hooks"]
+test-hooks = ["dep:rerail-bitlex", "rerail-bitlex/test-hooks", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-cpu-block/test-hooks", "rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail-metal/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }
+rerail-rir = { path = "../rir" }
 rerail-cpu-block = { path = "../cpu_block" }
 rerail-bitlex = { path = "../bitlex", optional = true }
 # The engine's tape, which tier 2 writes (decision 0140).

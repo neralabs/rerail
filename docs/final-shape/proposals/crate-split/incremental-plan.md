@@ -934,3 +934,21 @@ decision record. There are no A/B triples. One run per state, with the host's lo
 
   The plan's "a core file that names a provider" is the graph's check: since the split, a file can only name a
   crate its own crate depends on.
+- **Step 7a** (2026-11-22): the compiler, 22.3k production lines, under the target.
+  - **`rerail-rir`** (`native/crates/rir`, 5.0k) holds the RIR assembler (`rir_asm`) and the C preprocessor's words
+    it validates (`pp_words`, `pp_expr`). Their sources stay in `crates/compiler/src`, mounted in place, and it
+    re-exports the front end by glob.
+  - **`rerail-compiler`** keeps the front end (17.3k).
+  - **The cut:** the three sat at one end of the front end's graph. Nothing else in the compiler read them; they
+    read `program`, `records`, `block`, `stream`, `rir_text`, `stream_ir` and `Error`, all below.
+  - **Readers moved to the new paths:**
+    - The parsers (`rr_parser`, `kotlin_parser`, `c_directives`), `rerail-metal`'s `pp_on` and lang-json's
+      `json_parser` read `rerail_rir::rir_asm`/`pp_words`.
+    - So do the transducer's `rir`, boot, `pp_aot`'s build script (`generated`) and the parser tests.
+    - `cpu_pp` (`native_cpu_pp`) and `cpu_stream` (`ladder`, and the compiler tests it mounts) take rerail-rir's
+      glob in place of the front end's.
+  - `tools/cratify/crate-order.tsv` has its line after the compiler's.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; `pp_aot` with `generated`
+    clean; clippy clean on the seven crates). On a Linux host:
+    - rerail-rir, the compiler, `cpu_pp`, `cpu_stream` and `c_directives` in full: 129 of 129.
+    - The transducer's RIR and regex-block tests and the `.rerail` parser's RIR and token-local tests: 13 of 13.

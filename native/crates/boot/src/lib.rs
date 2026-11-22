@@ -3369,7 +3369,7 @@ pub mod code_rule_dsl {
                 #[cfg_attr(not(test), allow(unused_imports))]
                 pub use rerail_transducer::code_rule_dsl::transducer::packed::rir::Names;
                 #[allow(unused_imports)]
-                use rerail_compiler::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
+                use rerail_rir::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
                 #[allow(unused_imports)]
                 use super::*;
                 #[allow(unused_imports)]
