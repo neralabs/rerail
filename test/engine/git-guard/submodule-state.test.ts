@@ -261,8 +261,8 @@ describe("definesNoDriver", () => {
 describe("a file Git reads whole, each read of it cut short", () => {
   // Each row: the file, from the linked worktree's folder, and the bytes each read of it gives, fewer than Git looks for.
   it.each<[string, (linked: string) => string, number]>([
-    ["its `.git` file", linked => join(linked, ".git"), 7],
-    ["its Git folder's `HEAD`", linked => join(gitFolderFound(linked) ?? "", "HEAD"), 3],
+    ["`.git` file", linked => join(linked, ".git"), 7],
+    ["Git folder's `HEAD`", linked => join(gitFolderFound(linked) ?? "", "HEAD"), 3],
   ])("opens a submodule whose %s is read on after a read cut short, as Git reads it", async (_what, file, most) => {
     const root = await folder();
     const { linked } = repositories(root);
