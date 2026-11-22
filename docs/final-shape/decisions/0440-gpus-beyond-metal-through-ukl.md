@@ -1670,6 +1670,22 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
   set aside (`reads_side_by_side_make_each_document_once`, which the Windows host's scheduling showed). A read now
   claims them in the lock that found them unclaimed.
 
+**HIP on the Radeon 680M (2026-11-22).** The user: "you can install the HIP SDK", with AMD's full install.
+
+- **What is installed:** AMD's HIP SDK 7.2 for Windows, by its silent install (`-install`), from
+  `AMD-Software-PRO-Edition-26.Q3-Win11-For-HIP.exe`.
+  - It installed `hipcc` and AMD's clang, the HIP runtime (`amdhip64_7`), `hiprtc` (`hiprtc0702`), `comgr`, and
+    the HIP libraries.
+  - The display driver stayed 32.0.21030.2001, although the bundle carries the PRO 25.30 driver.
+  - The first attempt hard-reset the host 18 s after the installer unpacked itself (Kernel-Power 41, no log). The
+    second ran to the end in about a minute.
+- **gfx1035 works,** though AMD does not list it as supported:
+  - `hipInfo` gives the device as gfx1035, with 32-lane waves and 6 compute units (12 CUs as WGPs).
+  - A kernel built by `hipcc --offload-arch=gfx1035` ran right: a wave's sum by `__shfl_xor`, and
+    `__builtin_amdgcn_sdot4`.
+- **So a HIP backend can be the CUDA backend's port:** `hiprtc` compiles at run time, as NVRTC does there, and
+  device pointers give the addresses OpenCL lacks (a batch over several slabs, above). It is not started.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
