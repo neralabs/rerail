@@ -131,7 +131,8 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     // After the `TOKEN`, a call's field on the node it made (`NODE_FIELD m=4`), where both
     // returns land (`RETURN m=0` at the `TOKEN`, `m=1` past it). A mark that loses (`, loses`)
     // has its `SETTLE m=2` right before its `MARK`, and one that refuses (`, refuses`) its
-    // `SETTLE m=19` before that.
+    // `SETTLE m=19` before that. A mark that ends levels where a flag says so (`lose_flag`) has
+    // its test gated: `FLAG m=2`, `GOTO` the test, `GOTO` past it.
     let asks = |q: usize| words.get(q).is_some_and(|&w| split(w).0 == SETTLE && split(w).1 >= 2);
     let lose = |q: usize| (q..).take_while(|&i| asks(i)).count();
     let state = |p: usize| {
@@ -139,7 +140,14 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         if words.get(q).is_some_and(|&w| split(w).0 == NODE_FIELD && split(w).1 == 4) {
             q += 1;
         }
-        while words.get(q + lose(q)).is_some_and(|&w| split(w).0 == MARK) {
+        // A mark test gated on a flag (a mark that ends levels only at its own level's callees):
+        // `FLAG m=2`, a `GOTO` to the test, a `GOTO` past it.
+        let gate = |q: usize| {
+            let at = |i: usize| words.get(q + i).map(|&w| split(w));
+            usize::from(matches!(at(0), Some((FLAG, 2, _))) && at(1).is_some_and(|w| w.0 == GOTO && usize::from(w.2) == q + 3) && at(2).is_some_and(|w| w.0 == GOTO)) * 3
+        };
+        while words.get(q + gate(q) + lose(q + gate(q))).is_some_and(|&w| split(w).0 == MARK) {
+            q += gate(q);
             q += lose(q);
             if words.get(q + 1).is_none_or(|&w| !matches!(split(w).0, GOTO | STOP)) {
                 return false;

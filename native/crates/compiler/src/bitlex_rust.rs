@@ -352,7 +352,10 @@ impl<'a> G<'a> {
     /// test; then a `match` on the word, a kind's test a guard of its arm. `exits`: marks that
     /// leave the decision (`exit`, the code after it takes them, or the level ends there). None
     /// passes: `none`. An arm reached by two tests apart is numbered, its code written once.
-    fn decide(&self, arms: &[(Vec<First>, String)], exits: &[usize], unmarked: &[usize], exit: &str, none: &str, pad: &str) -> String {
+    /// `gated`: exits where the level ends at a hidden mark that ends levels and has questions,
+    /// tested only where the caller's level is the mark's (`asks`): elsewhere (inside
+    /// parentheses) the mark is passed, as the lean parser asks `asi` only where `stmt` is set.
+    fn decide(&self, arms: &[(Vec<First>, String)], exits: &[usize], unmarked: &[usize], gated: &[usize], exit: &str, none: &str, pad: &str) -> String {
         let n = arms.len();
         let mut marks: Vec<(usize, Option<String>, usize)> = Vec::new();
         let mut words: Vec<(u8, Option<String>, usize)> = Vec::new();
@@ -381,6 +384,7 @@ impl<'a> G<'a> {
         for (m, f, t) in &marks {
             let c = guard(f, format!("self.m_{}()", ident(&self.x.marks[*m].name)));
             let c = if *t == n && unmarked.contains(m) { format!("!self.marked && {c}") } else { c };
+            let c = if *t == n && gated.contains(m) { format!("self.asks >> {m} & 1 != 0 && {c}") } else { c };
             match mg.last_mut() {
                 Some((cs, tt)) if tt == t => cs.push(c),
                 _ => mg.push((vec![c], *t)),
@@ -518,6 +522,13 @@ impl<'a> G<'a> {
         let first: Vec<usize> = fr.iter().filter_map(|t| if let Test::Mark(m) = t.0 { Some(m) } else { None }).collect();
         let ending = self.ending();
         Ok(self.follow(rule)?.into_iter().filter(|m| !first.contains(m) && ending.contains(m) && self.x.marks[*m].hidden).collect())
+    }
+
+    /// The exits of `ex` where the level ends at a hidden mark that ends levels and has
+    /// questions: those `decide` tests only where `asks` has the mark (`gated`).
+    fn gated(&self, ex: &[(usize, bool)]) -> Vec<usize> {
+        let ending = self.ending();
+        ex.iter().filter(|e| e.1 && ending.contains(&e.0) && self.x.marks[e.0].hidden && self.asks(e.0)).map(|e| e.0).collect()
     }
 
     /// Whether mark `m`'s name has questions a decision asks (`refuses`, `loses`).
@@ -701,7 +712,7 @@ impl<'a> G<'a> {
                 let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = self.after_mark(rest, rule)?;
-                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, "", "", pad)
+                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, &self.gated(&ex), "", "", pad)
             }
             Gram::Star(a) | Gram::Plus(a) => {
                 let mut out = String::new();
@@ -715,7 +726,7 @@ impl<'a> G<'a> {
                 let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = self.after_mark(rest, rule)?;
-                let d = self.asking(&arms, &ex, &deeper) + &self.decide(&arms, &exits, &unmarked, "break;\n", "break;\n", &deeper);
+                let d = self.asking(&arms, &ex, &deeper) + &self.decide(&arms, &exits, &unmarked, &self.gated(&ex), "break;\n", "break;\n", &deeper);
                 let _ = write!(out, "{pad}loop {{\n{d}{pad}}}\n");
                 out
             }
@@ -730,7 +741,7 @@ impl<'a> G<'a> {
                 let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = if empty.is_some() { self.after_mark(rest, rule)? } else { Vec::new() };
-                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, &none, &none, pad)
+                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, &self.gated(&ex), &none, &none, pad)
             }
             Gram::Field(f, a) => {
                 let mut out = self.code(a, rest, rule, pad)?;

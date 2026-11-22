@@ -721,24 +721,14 @@ fn a_string_with_templates_is_one_record() {
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
-        // The lean parser's `fun` leaf: a function's `fun` is implied, and the `interface`
-        // after it comes too late to keep it.
-        "fun interface A {\n    fun f()\n}\n",
         "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
         "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
-        "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
         "val s = \"${f(\"${x}\")}\"\n",
         "val s = \"${if (a) { 1 } else 2}\"\n",
-        "fun interface P {\n    fun f()\n}\n",
-        "fun f(g: ((Int) -> Int) -> Int) {}\n",
         "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
-        "val <T : Any> List<T>.second: T get() = this[1]\n",
         "val h = \"\"\"\"a\"\"\"\n",
         "val h = \"\"\"a\"\"\"\"\n",
         "val h = \"\"\"\\$a\"\"\"\n",
-        "val a = b to f<T>()\n",
-        "val a = x + f<T>(1)\n",
-        "val a = x < f<T>(1)\n",
         "import a.b import c\n",
         "val s = 'x\n",
         "val s = \"a\nb\"\n",
@@ -754,10 +744,8 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val x = 1_\n",
         "val x = 0x\n",
         "class A { val x = 1 }\n",
-        "val x: Int\n    get() = 1\n",
         "fun f(noinline: Int) {}\n",
         "fun String?.h() = 1\n",
-        "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
         "val a = b as java.util.List<Int>\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
         // A comment lost before `catch`, `finally` or `else` (not `else ->`): not read yet.
@@ -770,6 +758,102 @@ fn what_the_grammar_does_not_read_is_refused() {
 #[test]
 fn a_constructor_off_its_modifiers_line_is_refused() {
     refused(&["class A\nprivate\nconstructor(x: Int)\n", "class A\n@Inject private\nconstructor(x: Int)\n"]);
+}
+
+/// A generic call after a tighter operator's operand: over the whole operation, as the lean
+/// parser's `expr_in` reads it (its own test's texts, `generic_calls_over_tighter_operations`).
+#[test]
+fn generic_calls_over_tighter_operations_are_the_lean_parsers() {
+    same(&[
+        "val a = b ?: f<T>()!!\nval c = \"x\" to g<String>(y)\nval d = -h<T>()\nval e = p < q<T>()\nval f = p + q<T>()\nval g = p == q<T>()\nval h = x in q<T>()\nval i = !q<T>()\nval j = p * q<T>().z\n",
+        "val a = b to f<T>()\nval b = x + f<T>(1)\nval c = x < f<T>(1)\n",
+        "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
+        "val a = mapOf(\"a\" to mutableListOf<String>(\"456\"), \"b\" to c)\n",
+        "val a = x && y == f<T> { z }\nval b = p || q as R\n",
+    ]);
+}
+
+/// An accessor alone at a statement's level, a property's on the line after: the lean parser's
+/// `declaration_ahead` reads it there too.
+#[test]
+fn accessors_on_their_own_line_are_the_lean_parsers() {
+    same(&[
+        "val x: Int\n    get() = 1\n",
+        "val x: Int\n    get() = this is A\nval y = 2\n",
+        "interface A {\n    val b: Boolean\n        get() = c\n}\n",
+        "var x: Int = 0\n    private set\n",
+        "fun f() {\n    val get = 1\n    get + 1\n}\n",
+        "fun f() {\n    get(1)\n    set\n    get\n    x = get ?: 2\n}\n",
+        "class A {\n    var b = 1\n        set\n    val c get() = 2\n}\n",
+    ]);
+}
+
+/// Types as the lean parser's `ty` reads them: annotations and `suspend` before any type, a
+/// function type where `->` follows its `)`, else a parenthesized type.
+#[test]
+fn types_are_the_lean_parsers() {
+    same(&[
+        "fun f(): @Nullable A = g()\nval s: Set<@JvmSuppressWildcards C> = d\n",
+        "val f: (Int) -> Int = g\nval h: ((Int) -> Int)? = null\nval k: suspend () -> Unit = l\n",
+        "fun f(g: ((Int) -> Int) -> Int) {}\nval m: @A suspend (B) -> C = n\nval p: (A) = q\n",
+        "val r: suspend A.() -> B = s\nval t: Map<String, (Int) -> Unit> = u\n",
+    ]);
+}
+
+/// Labels: a loop's before it, a trailing lambda's, and an expression's (`prefix_expression`), as
+/// the lean parser reads them.
+#[test]
+fn labels_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    loop@ for (i in a) break@loop\n    outer@ while (b) { continue@outer }\n}\n",
+        "fun f() {\n    set.forEach loop@{ value ->\n        return@loop\n    }\n    g(lit@{ 1 })\n}\n",
+    ]);
+}
+
+/// An assignment's target, flat as the lean parser's `assignable` reads it: its `!!` a leaf.
+#[test]
+fn assignment_targets_are_the_lean_parsers() {
+    same(&["fun f() {\n    stringPool!![s] = offset\n    a!!.b = c\n    d.e!! += 1\n}\n"]);
+}
+
+/// A line break inside brackets is no semicolon: the lean parser asks `asi` only at a statement's
+/// level (`level(false, …)`).
+#[test]
+fn line_breaks_in_brackets_are_the_lean_parsers() {
+    same(&["fun f() {\n    g(\n        a + \"b\"\n            + \"c\",\n        d)\n    val e = (h\n        - i)\n}\n"]);
+}
+
+/// `where` constraints, a function's, a property's and a class's.
+#[test]
+fn type_constraints_are_the_lean_parsers() {
+    same(&[
+        "fun <T> f(x: T): T where T : A, T : B = x\n",
+        "class C<S> : D() where S : PageScope {\n}\n",
+        "val <T> T.x: Int where T : A get() = 1\n",
+        "fun <T> g() where T : @A B {}\n",
+        "val <T : Any> List<T>.second: T get() = this[1]\n",
+    ]);
+}
+
+/// `fun interface`: a class, as the lean parser's `declaration_ahead` reads it.
+#[test]
+fn fun_interfaces_are_the_lean_parsers() {
+    same(&[
+        "fun interface A {\n    fun f()\n}\n",
+        "private fun interface P<T> : Q {\n    fun f(): T\n}\nfun g() = 1\nfun interface R\n",
+    ]);
+}
+
+/// `by` on the next line: a delegate where a property's or a supertype's is asked (the lean
+/// lexer's `asi` with `cx.by`), else a new statement's first name.
+#[test]
+fn by_on_the_next_line_is_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    a {\n        size_ = true\n        by = \"foo\"\n    }\n}\n",
+        "class A {\n    val m\n        by lazy { 1 }\n}\n",
+        "class A : I\n    by d {\n}\n",
+        "val x = 1\nby(2)\n",
+    ]);
 }
 
 #[test]
@@ -1667,3 +1751,42 @@ fn walk_lemmas_keep_the_tapes() {
     }
 }
 
+
+/// Each text of the file `RERAIL_KOTLIN_PROBE` (texts separated by a line `---`): whether the lean
+/// parser and the compiled grammar read it, and whether their tapes agree. A tool, run by hand.
+#[test]
+#[ignore]
+fn probe() {
+    let Ok(path) = std::env::var("RERAIL_KOTLIN_PROBE") else { return };
+    let c = compiled().expect("compiles");
+    for text in std::fs::read_to_string(path).expect("the probe file").split("\n---\n") {
+        let text = format!("{}\n", text.trim_end_matches('\n'));
+        let lean = lean_text(&text);
+        let ours = c.parser.image(text.as_bytes()).ok().and_then(|i| image_text(&i).ok());
+        let verdict = match (&lean, &ours) {
+            (Some(a), Some(b)) if a == b => "same".to_string(),
+            (Some(a), Some(b)) => {
+                let (x, y): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
+                let i = x.iter().zip(&y).position(|(p, q)| p != q).unwrap_or(x.len().min(y.len()));
+                format!("differ: lean {:?} ours {:?}", x.get(i), y.get(i))
+            }
+            (Some(_), None) => format!("ours refuses at {:?}", c.refused_at(&text)),
+            (None, Some(_)) => "lean refuses, ours reads".into(),
+            (None, None) => "both refuse".into(),
+        };
+        eprintln!("PROBE {text:?}: {verdict}");
+        if std::env::var_os("RERAIL_KOTLIN_PROBE_LEAN").is_some() {
+            eprintln!("  lean:\n{}", lean.as_deref().unwrap_or("(refused)"));
+        }
+        if std::env::var_os("RERAIL_KOTLIN_PROBE_TOKENS").is_some() {
+            // The reference evaluator's errors and tokens, marks by name.
+            let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+            let out = ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &Default::default()).expect("runs");
+            eprintln!("  errors: {:?}", out.errors);
+            let toks: Vec<String> = out.tokens.iter().map(|t| if t.mark { format!("<{}>", t.kind) } else { format!("{:?}", &text[t.start..t.end]) }).collect();
+            eprintln!("  tokens: {}", toks.join(" "));
+            let tree = out.tree.as_ref().map(|d| ::bitlex::tree::nodes(d, &out.tokens, text.len()).map(|n| n.len()));
+            eprintln!("  the reference tree: {tree:?}");
+        }
+    }
+}

@@ -343,6 +343,9 @@ skip ws
 # grammar does not say yet: refused where the class's rule takes the mark (`refuses taken`).
 mark head_ctor  = lf & code, before "constructor", before "public" | "private" | "internal" | "protected" "constructor" without semi, before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor" | "public" | "private" | "internal" | "protected"))* nest ("(" to ")") "constructor", before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor"))* nest ("(" to ")") ending ("public" | "private" | "internal" | "protected") "constructor" without semi,
   refuses taken after ~";" multiline_comment with semi
+# A line break before `by` where a property's delegate or a supertype's may come: the lean
+# lexer's `asi` reads `by` on the next line there (`cx.by`), and ends the statement elsewhere.
+mark by_lf      = lf & code, before "by"
 # The line break an annotation reads past (`annotation`): `semi`'s, but no semicolon of
 # tree-sitter's scanner (none is valid after an annotation) and no `asi` of the lean parser's:
 # it settles nothing and asks no question, so a comment after the annotation is the next
@@ -369,7 +372,7 @@ mark ann_lf     = lf & code unless after ";", unless before "}" | "," | "." | ".
 #   refused there (`refuses`), as the lean lexer reads them where `asi` is asked. Another
 #   comment is read after the first after the line break, however many follow (`since`: from
 #   the grammar token before).
-mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends,
+mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally", unless before "else" ~"->", unless before "else" end, end, settles, ends,
   drops after ~";" multiline_comment with semi before starting "aew",
   drops unless after multiline_comment before "as" | "where" | "else",
   loses after ~";" multiline_comment with semi before starting ",.:*%><={[(?|&/",
@@ -389,7 +392,11 @@ mark real       = empty, at integer_literal when count(frac_dot | e_at | f_at) a
 mark bt_cref    = tokens backtick_name "::"
 # A label's definition (`loop@`): a `@` touching a name. No rule takes it, so the file is
 # refused where it holds, as the lean parser's `label_ahead` would read it.
-mark label_at   = tokens simple_identifier "@" without apart
+mark label_at   = tokens simple_identifier "@" without apart, unless before simple_identifier "@" "for" | "while" | "do" | "{"
+# A loop's label: the statement's own, before it (the lean parser's `statement_inner`); a trailing
+# lambda's, where `{` follows it (the lean parser's `postfix`, `label_ahead` and `{`).
+mark lab_loop   = tokens simple_identifier "@" without apart "for" | "while" | "do"
+mark lab_lam    = tokens simple_identifier "@" without apart "{"
 # Token marks, after the mask marks: they hold no bit of the code (decision 0407).
 # `this@`, `return@`, `break@`, `continue@` and `as?`: a word and the `@` or `?` touching it,
 # one leaf where the rule takes the mark (the lean parser's `adjacent(0)`).
@@ -442,9 +449,13 @@ mark ft_dot_at  = tokens "." "("
 # type arguments or parameters anyway, which take it. Where no rule takes it, the file is refused.
 # The run counts `<` `>` and `(` `)` as the lean parser does: the `>` is the one whose depth closes
 # the `<`, and a `)` with no `(` ends the run.
-# And a parenthesized type's `(`, after a type's `:`, before another `(`; and a `suspend` there.
 mark generic    = tokens after simple_identifier "<" without apart (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("<" to ">") ("(" to ")") ">" "(" | "{" | "." | "?." | "::"
-mark generic    = tokens after ":" "(" | "suspend" "("
+# A function type's `(`: its `)` (the lean parser's `paren_end`) before `->`, as the lean
+# parser's `ty_core` reads it; another `(` in a type is a parenthesized type's.
+mark fn_paren   = tokens "(" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("(" to ")") ("<" to ">") ")" "->"
+# `suspend` before a type (a name, `(` or `@`): a type modifier, as the lean parser's
+# `type_modifiers_ahead` reads it.
+mark ty_susp    = tokens "suspend" simple_identifier | backtick_name | "(" | "@"
 # A name before `::`, but `this` (a hard keyword, as every one): a callable reference's receiver.
 mark cref       = tokens simple_identifier "::"
 # A name and `=` (or an assignment's operator): an assignment to it, or a named argument; and a
@@ -454,14 +465,18 @@ mark named      = tokens simple_identifier "=" | "+=" | "-=" | "*=" | "/=" | "%=
 mark named      = tokens "!" with semi "in" | "is"
 # An enum class's `enum`, a soft word elsewhere.
 mark enum_class = tokens "enum" "class"
+# `fun interface`: a class's, as the lean parser's `declaration_ahead` reads `fun` before
+# `interface`.
+mark fun_iface  = tokens "fun" "interface"
 # A function type's receiver's first name: names, dots and type arguments from it to a `.`
 # before a `(`; not `suspend`, and not after a `.`, `<` or `>`.
 mark fn_recv    = tokens after ~("." | "<" | ">") simple_identifier (simple_identifier | "." | "<" | ">")* "." "(", unless before "suspend"
 # A property's accessor: its `get` or `set` after a line break, or on the line of a visibility
 # word after one, as the lean parser's `declaration_ahead` asks `accessor_ahead` at the token: where
-# no `.` or `:` follows it, and, for `get`, no `(` with arguments.
-mark acc        = tokens "get" | "set" with semi, unless before "get" | "set" "." | ":", unless before "get" "(" ~")"
-mark acc        = tokens after "private" | "protected" | "internal" | "public" with semi "get" | "set" without semi, unless before "get" | "set" "." | ":", unless before "get" "(" ~")"
+# no `.` or `:` follows it, for `get` no `(` with arguments, and no token on its line but `(`,
+# `;` or `}` (`get + 1` is an expression).
+mark acc        = tokens "get" | "set" with semi, unless before "get" | "set" "." | ":", unless before "get" | "set" simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "." | "*" | "/" | "," | ":" | ")" | "{" | "[" | "]" | "<" | ">" | "=" | "+" | "-" | "!" | "?" | "%" | "@" | "->" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "++" | "--" | "+=" | "-=" | "*=" | "/=" | "%=" | "?." | "?:" | ".." | "!!" | "::" | "===" | "!==" | "..<" without semi, unless before "get" "(" ~")"
+mark acc        = tokens after "private" | "protected" | "internal" | "public" with semi "get" | "set" without semi, unless before "get" | "set" "." | ":", unless before "get" | "set" simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "." | "*" | "/" | "," | ":" | ")" | "{" | "[" | "]" | "<" | ">" | "=" | "+" | "-" | "!" | "?" | "%" | "@" | "->" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "++" | "--" | "+=" | "-=" | "*=" | "/=" | "%=" | "?." | "?:" | ".." | "!!" | "::" | "===" | "!==" | "..<" without semi, unless before "get" "(" ~")"
 # A declaration's receiver, as the lean parser's `receiver_end` reads it from the token after
 # `fun`, `val` or `var` and the type parameters: a run of the type's tokens to a `.` and a name
 # that no `.`, type argument or `,` follows; but a delegated property's name (`val x by a.b`).
@@ -490,7 +505,7 @@ tree kotlin {
 
   # --- Statements --------------------------------------------------------------------------------
 
-  choice statement nested = declaration | for_statement | while_statement | do_while_statement | assignment | expression [assign_tail]
+  choice statement nested = declaration | lab_loop label (for_statement | while_statement | do_while_statement) | for_statement | while_statement | do_while_statement | assignment | expression [assign_tail]
   # Statements in a block: a line break between them, and before the `}` if it likes.
   node statements nested = statement (semi statement | ';' [statement])* [semi_close]
   choice block          = '{' [statements] '}'
@@ -504,21 +519,26 @@ tree kotlin {
   choice assignment_operator = '=' | '+=' | '-=' | '*=' | '/=' | '%='
   # `a.b = …`, `a[i] += …`: the navigations and indexings read so far, the target's, flat.
   choice assign_tail    = wrap assignment _ reread assignable assignment_operator expression
-  reading assignable    = root as directly_assignable_expression, navigation_expression gone, indexing_expression gone,
-                          keep simple_identifier soft_name navigation_suffix indexing_suffix call_expression parenthesized_expression this_expression
+  reading assignable    = root as directly_assignable_expression, navigation_expression gone, indexing_expression gone, postfix_expression gone,
+                          keep simple_identifier soft_name navigation_suffix indexing_suffix call_expression parenthesized_expression this_expression '!!' '++' '--'
 
   # --- Declarations ------------------------------------------------------------------------------
 
   # A declaration's node is opened at its first token: its modifiers' or its keyword's.
   node declaration nested = [modifiers] declaration_rest
-  choice declaration_rest = retag function_declaration function_rest | retag property_declaration property_rest
-                          | retag class_declaration class_rest | retag object_declaration object_rest
+  choice declaration_rest = retag class_declaration class_rest | retag function_declaration function_rest
+                          | retag property_declaration property_rest | retag object_declaration object_rest
                           | retag type_alias alias_rest
+                          # An accessor wherever a declaration may come, as the lean parser's
+                          # `declaration_ahead` reads it: in a class body, and alone at a
+                          # statement's level (a property's on the line after).
+                          | acc accessor
   choice alias_rest     = 'typealias' type_name [type_parameters] '=' type
-  choice function_rest  = 'fun' [type_parameters] [receiver] name function_value_parameters [':' type] [function_body]
-  choice property_rest  = binding_pattern_kind [receiver] (variable_declaration | multi_variable_declaration) ['=' expression | property_delegate | getter_inline]
+  choice function_rest  = 'fun' [type_parameters] [receiver] name function_value_parameters [':' type] [type_constraints] [function_body]
+  choice property_rest  = binding_pattern_kind [type_parameters] [receiver] (variable_declaration | multi_variable_declaration) [type_constraints] ['=' expression | [by_lf] property_delegate | getter_inline]
   node property_delegate = 'by' expression
-  choice class_rest     = ('class' | 'interface') type_name [type_parameters] [head_ctor] [primary_constructor] [':' delegation_specifier (',' delegation_specifier)*] [class_body]
+  choice class_rest     = ('class' | 'interface') type_name [type_parameters] [head_ctor] [primary_constructor] [':' delegation_specifier (',' delegation_specifier)*] [type_constraints] [class_body]
+                        | fun_iface 'fun' 'interface' type_name [type_parameters] [head_ctor] [primary_constructor] [':' delegation_specifier (',' delegation_specifier)*] [class_body]
                         | enum_class 'enum' 'class' type_name [type_parameters] [head_ctor] [primary_constructor] [':' delegation_specifier (',' delegation_specifier)*] [enum_class_body]
   # An enum's entries, `,` between them, a line break where one may come; then after a `;`, the
   # members.
@@ -540,12 +560,11 @@ tree kotlin {
   # d {` ends it before the body's `{`. An object literal's specifiers are read so too. The flag
   # is clear again inside parentheses, as the lean parser's `level` clears it.
   flag no_lambda
-  node delegation_specifier = user_type [wrap constructor_invocation _ value_arguments | wrap explicit_delegation _ 'by' with no_lambda expression]
+  node delegation_specifier = user_type [wrap constructor_invocation _ value_arguments | wrap explicit_delegation _ [by_lf] 'by' with no_lambda expression]
   node class_body       = '{' [class_member (semi class_member | ';' [class_member])* semi_close] '}'
   node class_member nested = [modifiers] member_rest
   choice member_rest    = declaration_rest | retag companion_object companion_rest | retag anonymous_initializer init_rest
                         | retag secondary_constructor ctor_rest
-                        | acc accessor
   choice accessor       = retag getter getter_rest | retag setter setter_rest
   node getter_inline nested = getter_retag
   choice getter_retag   = retag getter getter_rest
@@ -558,6 +577,9 @@ tree kotlin {
   node constructor_delegation_call = ('this' | 'super') value_arguments
   node type_parameters  = [generic] '<' type_parameter (',' type_parameter)* (trail_angle | '>')
   node type_parameter   = [type_parameter_modifiers] type_name [':' type]
+  # `where T : A, U : B`, as the lean parser's `type_constraints`.
+  node type_constraints = 'where' type_constraint (',' type_constraint)*
+  node type_constraint  = (annotation)* type_name ':' type
   node type_parameter_modifiers = (reification_modifier | variance_modifier)+
   node reification_modifier = 'reified'
 
@@ -575,21 +597,24 @@ tree kotlin {
   # `@A`, `@A.B`, `@A(x)`: its arguments after the type, always.
   # A line break after an annotation is no semicolon (`ann_lf`): the lean parser reads on to
   # what it annotates.
-  node annotation       = '@' [use_site use_site_target] user_type [wrap constructor_invocation _ value_arguments] [ann_lf]
+  node annotation nested = '@' [use_site use_site_target] user_type [wrap constructor_invocation _ value_arguments] [ann_lf]
   node use_site_target  = ('field' | 'property' | 'get' | 'set' | 'receiver' | 'param' | 'setparam' | 'delegate') ':'
   node file_annotation  = '@' 'file' ':' user_type [wrap constructor_invocation _ value_arguments]
 
   # --- Types -------------------------------------------------------------------------------------
 
-  choice type nested    = user_type [wrap nullable_type _ ('?' as quest)+] | function_type
-                        | generic (parenthesized_type [wrap nullable_type _ ('?' as quest)+] | type_modifiers function_type)
-                        | fn_recv recv_function_type
+  # A type, as the lean parser's `ty`: its modifiers (annotations, `suspend`), then a function
+  # type, a parenthesized one, a function type with a receiver, or a user type, the last two
+  # nullable.
+  choice type nested    = [type_modifiers] type_core
+  choice type_core      = fn_paren function_type | parenthesized_type [wrap nullable_type _ ('?' as quest)+]
+                        | fn_recv recv_function_type | user_type [wrap nullable_type _ ('?' as quest)+]
   node recv_function_type = retag function_type receiver: fn_receiver ft_dot_at '.' function_type_parameters '->' type
   node fn_receiver      = retag receiver_type fn_receiver_type
   # Its first name is no soft word, which `suspend` would be (a soft word's receiver is refused).
   node fn_receiver_type = retag user_type fn_name [type_arguments] ('.' type_name [type_arguments])*
   choice fn_name        = simple_identifier as type_identifier | backtick_name as type_identifier
-  node type_modifiers   = 'suspend'
+  node type_modifiers   = (annotation | ty_susp 'suspend')+
   node parenthesized_type = '(' type ')'
   choice receiver       = recv receiver: receiver_type '.'
   node receiver_type    = recv_type
@@ -608,7 +633,12 @@ tree kotlin {
   # By tree-sitter-kotlin's precedences, each operation around the left side so far: one loop, as
   # the lean parser's `expr_in` (decision 0492). An operator's right operand takes every operator
   # that binds tighter, so the loop never meets one after a looser one.
-  choice expression nested = unary_level (as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op | eq_op | conj_op | disj_op)*
+  choice expression nested = unary_tight (gen_op | as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op | eq_op | conj_op | disj_op)*
+  # A generic call's type arguments after a tighter operator's operand: over the whole operation
+  # read so far (`a to f<T>()` is `call(infix(a, f), <T>())`, tree-sitter's GLR reading), then
+  # the postfix operations over it. Asked where a comparison may come, as the lean parser's
+  # `expr_in` asks it at `min <= COMPARISON`.
+  choice gen_op         = generic (wrap call_expression _ generic_suffix) (postfix_op | unless no_lambda lambda_call)*
   choice mul_op         = wrap multiplicative_expression _ ('*' | '/' | '%') as_operand
   # The type after `as`: a dotted name, or one name with type arguments. With both, the lean
   # parser reads a comparison where an expression follows on the next line: refused.
@@ -631,21 +661,17 @@ tree kotlin {
   choice infix_operand nested = unary_tight (as_op | mul_op | add_op | range_op)*
   choice elvis_operand nested = unary_tight (as_op | mul_op | add_op | range_op | infix_op)*
   choice check_operand nested = unary_tight (as_op | mul_op | add_op | range_op | infix_op | elvis_op)*
-  choice cmp_operand nested = unary_tight (as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op)*
-  choice eq_operand nested = unary_level (as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op)*
-  choice conj_operand nested = unary_level (as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op | eq_op)*
-  choice disj_operand nested = unary_level (as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op | eq_op | conj_op)*
+  choice cmp_operand nested = unary_tight (gen_op | as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op)*
+  choice eq_operand nested = unary_tight (gen_op | as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op)*
+  choice conj_operand nested = unary_tight (gen_op | as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op | eq_op)*
+  choice disj_operand nested = unary_tight (gen_op | as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op | eq_op | conj_op)*
 
-  # A prefix operator's operand: the postfix operations bind tighter.
-  choice unary_level nested = prefix_expression | primary_tight (postfix_level | unless no_lambda lambda_call)*
-  # A generic call, after a name or a navigation: only where the operand is no tighter operator's
-  # (`a ?: f<T>()` is the call over the whole, in tree-sitter's GLR parse: refused).
-  choice postfix_level  = postfix_op | generic (wrap call_expression _ generic_suffix)
-  # The right operand of a comparison or of an operator that binds tighter: the lean parser puts a
-  # generic call's type arguments there over the whole operation (`a to f<T>()` is
-  # `call(infix(a, f), <T>())`), not read yet. Its `generic` mark is taken by no rule: refused.
+  # An operand: a prefix operation, or a primary and its postfix operations, as the lean parser's
+  # `unary` and `postfix`. No generic call: the operator loop reads it (`gen_op`).
   choice unary_tight nested = prefix_expression | primary_tight (postfix_op | unless no_lambda lambda_call)*
-  node prefix_expression = ('!' | '-' | '+' | '++' | '--') unary_level | ann_expr annotation expression
+  # A prefix operator's operand: the postfix operations, no generic call (the lean parser's
+  # `expr(PREFIX)`): the loop reads one over the prefix (`-h<T>()` is `call(prefix(-, h), <T>())`).
+  node prefix_expression = ('!' | '-' | '+' | '++' | '--') unary_tight | ann_expr annotation expression | label_at label expression | lab_lam label expression
   choice postfix_op     = wrap call_expression _ call_suffix
                         | wrap navigation_expression _ navigation_suffix
                         | wrap indexing_expression _ indexing_suffix
@@ -655,7 +681,9 @@ tree kotlin {
   # asks `T::LBrace if !self.no_lambda`.
   choice lambda_call    = wrap call_expression _ lambda_suffix
   node lambda_suffix    = retag call_suffix annotated_lambda
-  node annotated_lambda = lambda_literal
+  node annotated_lambda = [lab_lam label] lambda_literal
+  # A label: its name and `@`, one leaf (the lean parser's `label`).
+  choice label          = simple_identifier merge label '@'
   node lambda_literal   = lam_bare lambda_bare_open [statements] '}'
                         | lam_params '{' lambda_parameters '->' [statements] '}'
                         | '{' [statements] '}'
@@ -751,6 +779,8 @@ tree kotlin {
   implied function_value_parameters '(' ')' ','
   implied function_value_parameter '='
   implied parameter ':'
+  implied type_constraints 'where' ','
+  implied type_constraint ':'
   implied primary_constructor 'constructor' '(' ')' ','
   implied class_parameter ':' '='
   implied class_body '{' '}' ';'
@@ -797,6 +827,6 @@ tree kotlin {
   # Every mark a rule takes is asked only where a rule takes it, as the lean parser asks each
   # question where it branches (decision 0492). Not hidden: `generic`, where a `<` that opens type
   # arguments no rule reads refuses the file.
-  hidden apart this_at jump_at as_q sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class acc
+  hidden apart this_at jump_at as_q sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp
   extra line_comment multiline_comment
 }

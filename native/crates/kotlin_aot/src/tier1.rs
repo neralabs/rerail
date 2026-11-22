@@ -2136,7 +2136,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x80)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
                 }
 ,
                 3 => {
@@ -2156,7 +2156,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     assert_eq!(run_last(&m_nb, s), run_last(&t66, s), "assume in integer_literal at byte {s}");
                     let l = l.max(s);
                     if count_in(&t94, s, l) >= 1 {
-                        hits |= 1 << 5;
+                        hits |= 1 << 6;
                     }
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
@@ -2825,7 +2825,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x40)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x80)
                 }
 ,
                 13 => {
@@ -2907,8 +2907,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                 if rec_0 {
                     marks |= 1 << 2;
                 }
-                if rec_1 || here_1 {
+                if rec_0 {
                     marks |= 1 << 3;
+                }
+                if rec_1 || here_1 {
+                    marks |= 1 << 4;
                 }
             pending |= hits & 0xffff | hits >> 16;
         } else {
@@ -2917,25 +2920,29 @@ pub fn lex(src: &[u8]) -> Lexed {
                 if (tested >> 0 & 1 == 1 || acc_0) {
                     marks |= 1 << 0;
                 }
-                // `ann_lf`
-                if (tested >> 1 & 1 == 1 || acc_0) && !matches!(before, 33) {
+                // `by_lf`
+                if (tested >> 1 & 1 == 1 || acc_0) {
                     marks |= 1 << 1;
                 }
-                // `semi`
+                // `ann_lf`
                 if (tested >> 2 & 1 == 1 || acc_0) && !matches!(before, 33) {
                     marks |= 1 << 2;
                 }
-                // `semi_close`
-                if (tested >> 3 & 1 == 1 || acc_1 || here_1) {
+                // `semi`
+                if (tested >> 3 & 1 == 1 || acc_0) && !matches!(before, 33) {
                     marks |= 1 << 3;
                 }
-                // `apart`
-                if (tested >> 4 & 1 == 1 || acc_2 || here_2) {
+                // `semi_close`
+                if (tested >> 4 & 1 == 1 || acc_1 || here_1) {
                     marks |= 1 << 4;
                 }
-                // `real`
-                if (tested >> 5 & 1 == 1) {
+                // `apart`
+                if (tested >> 5 & 1 == 1 || acc_2 || here_2) {
                     marks |= 1 << 5;
+                }
+                // `real`
+                if (tested >> 6 & 1 == 1) {
+                    marks |= 1 << 6;
                 }
             from = s + 1;
             before = word;

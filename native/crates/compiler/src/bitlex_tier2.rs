@@ -929,6 +929,21 @@ impl Emit<'_> {
                 let s = self.string(&w);
                 self.mark_words.insert(k as u8, s);
             }
+            // A hidden mark that ends levels, with a flag (`lose_flag`): it ends this level only
+            // where a caller's level is the mark's, as the lean parser asks `asi` only at a
+            // statement's level (`stmt`); elsewhere (inside parentheses) it is skipped, and the
+            // level reads on. `FLAG m=2` runs the next word where the flag is set.
+            let m = &self.marks[k];
+            let (gated, flag) = (at == AtMark::End && m.ends && m.hidden && (m.lose.is_some() || m.refuse.is_some()), m.lose_flag);
+            let over = gated.then(|| {
+                self.push("FLAG", 2, Arg::Num(flag));
+                let test = self.pc();
+                self.push("GOTO", 0, Arg::Pc(0));
+                let over = self.pc();
+                self.push("GOTO", 0, Arg::Pc(0));
+                self.words[test as usize].2 = Arg::Pc(self.pc());
+                over
+            });
             let m = &self.marks[k];
             // Its order, and 32 when the end has it.
             // An arm that calls: the mark kept, for the callee, which tests it again and takes it.
@@ -963,6 +978,9 @@ impl Emit<'_> {
                     self.push("GOTO", 0, Arg::Pc(0));
                 }
                 AtMark::Refuse => self.push("STOP", 0, Arg::None),
+            }
+            if let Some(over) = over {
+                self.words[over as usize].2 = Arg::Pc(self.pc());
             }
         }
     }
