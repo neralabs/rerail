@@ -1453,7 +1453,18 @@ impl Batch {
                 let ix = self.index(&fresh, cols)?;
                 return Ok(DevIndex { fresh: Some(fresh), ..ix });
             }
-            // Nothing is copied for a key (decision 0353 step 6): a relation whose block has no room for the index
+            // Nothing is copied for a key (decision 0353 step 6): the index goes in a device block of its own, built on a
+            // link there that reads the relation as its far base (`Part::far_link`), which the batch binds beside it.
+            if rel.far.is_none()
+                && let Some(base) = rel.holder().filter(|p| std::ptr::eq(p.rel(), r))
+                && let Some(link) = crate::code_rule_dsl::facts::rows::Part::far_link(&base, rel.rows as u32)
+            {
+                let fresh = std::rc::Rc::new(DevRel::in_block(&link.in_block(rel.rows as u32), rel.cols)?);
+                crate::code_rule_dsl::prof::count_named("device.index_beside: an index in a block of its own".to_owned(), rel.rows);
+                let ix = self.index(&fresh, cols)?;
+                return Ok(DevIndex { fresh: Some(fresh), ..ix });
+            }
+            // A relation that cannot be linked (its chain reaches another block already, or no device block is had)
             // refuses its stratum, which runs on the CPU, reading it where it lies. Counted by why its block refused
             // it, its directory full or no bytes left, and by where the relation lies.
             let full = r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize >= rerail_blocks::relation::ADDED_INDEXES;
@@ -1889,10 +1900,11 @@ pub mod tests {
         }
     }
 
-    /// A key past the room of a relation's block is refused, nothing copied (decision 0353 step 6): its stratum runs on
-    /// the CPU. The indexes built before it are still the relation's, built by the batch, which finishes.
+    /// A key past the room of a relation's block goes in a device block beside it, nothing copied and nothing refused
+    /// (decision 0353 step 6): on a link there whose far base is the relation. The indexes built before it are the
+    /// relation's own, built by the batch, which finishes.
     #[test]
-    fn a_key_past_a_relations_room_is_refused_not_copied() {
+    fn a_key_past_a_relations_room_goes_beside_not_copied() {
         if rerail_accel::gpu::join::device().is_err() {
             return;
         }
@@ -1901,21 +1913,11 @@ pub mod tests {
         let rel = DevRel::written(4, n, |c, r| cols[c][r]).unwrap();
         let mut batch = Batch::new().unwrap();
         let keys: [&[usize]; 9] = [&[0], &[1], &[2], &[3], &[0, 1], &[0, 2], &[0, 3], &[1, 2], &[1, 3]];
-        let mut built = Vec::new();
-        let mut refused = false;
-        for key in keys {
-            match batch.index(&rel, key) {
-                Ok(ix) => built.push(ix),
-                Err(e) => {
-                    assert!(matches!(e, Error::BackendCapacity), "refused for want of room: {e:?}");
-                    refused = true;
-                    break;
-                }
-            }
-        }
-        assert!(refused, "a key past the relation's room is refused");
-        assert!(!built.is_empty() && built.iter().all(|ix| ix.fresh.is_none()), "every index built in the relation's own block");
-        batch.finish().expect("the indexes built before the refusal");
+        let built: Vec<DevIndex> = keys.iter().map(|key| batch.index(&rel, key).expect("every key indexed")).collect();
+        let beside = built.iter().position(|ix| ix.fresh.is_some()).expect("a key past the relation's room");
+        assert!(beside > 0 && built[..beside].iter().all(|ix| ix.fresh.is_none()), "the first ones in the relation's own block");
+        assert!(built[beside..].iter().all(|ix| ix.fresh.is_some() && ix.of(&rel).far.is_some()), "the rest beside it, reading it as their far base");
+        batch.finish().expect("every index built");
     }
 
     /// A two-stage plan on the device against the same plan by nested loops: a scan of `a` (slots 0, 1), a join of
@@ -2269,6 +2271,58 @@ pub mod tests {
         batch.finish().unwrap();
         assert_eq!(out.column(0, n), &c0[..], "column 0, down the chain");
         assert_eq!(out.column(1, n), &c1[..], "column 1, down the chain");
+    }
+
+    /// Decision 0353 step 6: a relation whose index directory is full gets its next index in a device block of its
+    /// own, on a link there that reads the relation as its far base; nothing is copied and the stratum is not
+    /// refused. The index is the host's over the same rows.
+    #[test]
+    fn an_index_past_a_full_directory_goes_in_a_block_beside() {
+        use crate::code_rule_dsl::facts::rows::Rows as FactRows;
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let n = 2_000;
+        let cs: Vec<Vec<i64>> = (0..4).map(|c| rows(n, 51 + c as u64, 37 + 11 * c as i64)).collect();
+        let vals: Vec<i64> = (0..n).flat_map(|i| cs.iter().map(move |c| c[i])).collect();
+        let mut held = FactRows::new(4);
+        // copy: not block data: a test's rows
+        held.extend_from_slice(&vals);
+        let dev = DevRel::in_block(&held.in_block().unwrap(), 4).unwrap();
+        let mut keys: Vec<Vec<usize>> = (0..4).map(|c| vec![c]).collect();
+        keys.extend((0..4).flat_map(|a| (0..4).filter(move |&b| b != a).map(move |b| vec![a, b])));
+        keys.push(vec![0, 1, 2]);
+        assert_eq!(keys.len(), rerail_blocks::relation::ADDED_INDEXES + 1);
+        let mut host = FactRows::new(4);
+        // copy: not block data: a test's rows
+        host.extend_from_slice(&vals);
+        let host = DevRel::in_block(&host.in_block().unwrap(), 4).unwrap();
+        for (i, cols) in keys.iter().enumerate() {
+            let mut batch = Batch::new().unwrap();
+            let ix = batch.index(&dev, cols).unwrap();
+            batch.finish().unwrap();
+            assert_eq!(ix.fresh.is_some(), i == rerail_blocks::relation::ADDED_INDEXES, "{cols:?}: in the relation's own directory while it has room");
+            if ix.fresh.is_none() {
+                continue;
+            }
+            let beside = ix.of(&dev);
+            assert!(beside.far.is_some(), "a link whose far base is the relation");
+            let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+            let h = host.relation();
+            let hosts = {
+                let home = host.home.as_ref().unwrap();
+                // SAFETY: one thread; the rows are written.
+                let room = unsafe { h.try_reserve_index(&home.block, &key, n as u32) }.unwrap();
+                unsafe {
+                    h.build_index(&room);
+                    h.index_built(&room);
+                }
+                room.index
+            };
+            let (d, w) = (beside.relation().index_at(ix.index as usize), h.index_at(hosts));
+            assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
+            assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
+        }
     }
 
     /// Decision 0325 step 3: relations read where they lie in their blocks, with dead rows marked by a delta's dead

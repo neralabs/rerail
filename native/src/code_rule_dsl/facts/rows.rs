@@ -1745,6 +1745,18 @@ impl Part {
         Some(Part { held: Arc::new(held), cap: u32::MAX })
     }
 
+    /// `base`'s first `rows` rows read through a link in a device block of its own with room for their indexes
+    /// (decision 0353 step 6): where `base`'s block has no room for an index, the index goes there, and a reader binds
+    /// both blocks (the link's far base). `None` when no device block is had, or `base` cannot be a far base.
+    pub fn far_link(base: &Part, rows: u32) -> Option<Part> {
+        let k = base.rel().rows.ncols as usize;
+        let room = Part::try_new_with(Life::Device, k, 0, index_room(rows as usize), false).ok()?;
+        if Arc::ptr_eq(&room.facts, &base.facts) {
+            return None;
+        }
+        Part::link(Some(base), rows, &room)
+    }
+
     /// The block its chain's far base lies in (`link`), which a reader binds beside its own: none when every
     /// relation it reads lies in its block.
     pub fn far_facts(&self) -> Option<Arc<Facts>> {
