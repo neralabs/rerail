@@ -800,6 +800,10 @@ struct Plan {
     /// cycle through a negation).
     gone_reach: HashMap<String, BTreeSet<String>>,
     cand_reach: HashMap<String, BTreeSet<String>>,
+    /// The originals whose copies no rule reads as a relation: their rules go.
+    dropped: BTreeSet<String>,
+    /// The rules (by hash) whose reads of copies cannot all be written in place: they read the copies as relations.
+    as_written: BTreeSet<u64>,
 }
 
 impl Plan {
@@ -890,8 +894,11 @@ impl ProgramPass for Unnarrow {
             }
         }
         let adds: BTreeSet<String> = of.iter().filter(|(n, _)| adding.contains(*n)).map(|(_, o)| o.clone()).collect();
-        let mut plan = Plan { read: HashMap::new(), adds, gone_reach, cand_reach };
+        let mut plan = Plan { read: HashMap::new(), adds, gone_reach, cand_reach, dropped: BTreeSet::new(), as_written: BTreeSet::new() };
+        // The copies some rule still reads as relations, and those rules (by their hash): a rule whose reads cannot
+        // all be written so reads every copy it reads as a relation, kept for it; every other rule reads them in place.
         let mut kept: BTreeSet<String> = BTreeSet::new();
+        let mut as_written: BTreeSet<u64> = BTreeSet::new();
         let keep = |o: &str, why: &dyn Fn() -> String, kept: &mut BTreeSet<String>| {
             if debug {
                 eprintln!("NKEEP {o}: {}", why());
@@ -912,6 +919,7 @@ impl ProgramPass for Unnarrow {
             let mut ways = 1usize;
             let mut wilds = 0;
             let mut reads = Vec::new();
+            let mut whole = true;
             for l in r.body() {
                 let (a, plain) = match l.view() {
                     Lit::Atom(a) => (a, true),
@@ -923,28 +931,43 @@ impl ProgramPass for Unnarrow {
                 let wild = a.args().any(|t| matches!(t, TermRef::Wild));
                 let terms = a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Wild)) && a.arity() <= WILD_COLS;
                 if native || !plain || a.gated() || !terms {
-                    keep(o, &|| format!("native {native} agg {} gated {} terms {} in {head}", !plain, a.gated(), !terms), &mut kept);
+                    if debug {
+                        eprintln!("NKEEP {o}: native {native} agg {} gated {} terms {} in {head}", !plain, a.gated(), !terms);
+                    }
+                    whole = false;
                     continue;
                 }
                 wilds += usize::from(wild);
                 match plan.form(head, o, a.neg(), wild) {
                     Some((_, n)) => ways = ways.saturating_mul(n),
-                    None => keep(o, &|| format!("in its recursion, neg {} wild {wild}, in {head}", a.neg()), &mut kept),
+                    None => {
+                        if debug {
+                            eprintln!("NKEEP {o}: in its recursion, neg {} wild {wild}, in {head}", a.neg());
+                        }
+                        whole = false;
+                    }
                 }
             }
             if ways > Self::WAYS || wilds > WILD_READS {
-                for o in &reads {
-                    keep(o, &|| format!("{ways} ways in {head}"), &mut kept);
+                if debug {
+                    eprintln!("NKEEP {reads:?}: {ways} ways in {head}");
                 }
+                whole = false;
+            }
+            if !whole {
+                as_written.insert(r.hash());
+                kept.extend(reads);
             }
         }
-        plan.read = of.into_iter().filter(|(_, o)| !kept.contains(o)).collect();
+        plan.dropped = of.values().filter(|o| !kept.contains(*o)).cloned().collect();
+        plan.as_written = as_written;
+        plan.read = of;
         self.kept = kept.len();
         if plan.read.is_empty() {
             return Ok(());
         }
-        let (n, k) = (plan.read.len(), kept.len());
-        crate::code_rule_dsl::logic::profile::decision("narrow copies read in place (decision 0575)", || format!("{n} read in place, {k} built"));
+        let (n, k, rules) = (plan.read.len(), kept.len(), plan.as_written.len());
+        crate::code_rule_dsl::logic::profile::decision("narrow copies read in place (decision 0575)", || format!("{n} read in place, {k} of them kept for {rules} rules that read them as relations"));
         w.derive()?;
         w.apply(cx, &mut InPlace { plan: &plan, on: Default::default() }, &crate::code_rule_dsl::logic::program_image::manager::Select::All)
     }
@@ -983,8 +1006,11 @@ impl RulePass for InPlace<'_> {
         use crate::code_rule_dsl::logic::program_image::build::t_of;
         let v = cx.v();
         let head = v.rel_name(r.head().rel());
-        if self.plan.read.contains_key(head) {
-            return Ok(Step::Drop);
+        if let Some(o) = self.plan.read.get(head) {
+            return Ok(if self.plan.dropped.contains(o) { Step::Drop } else { Step::Keep });
+        }
+        if self.plan.as_written.contains(&r.hash()) {
+            return Ok(Step::Keep);
         }
         // Each read's place and its ways, each a few literals.
         let mut drop: BTreeSet<usize> = BTreeSet::new();
