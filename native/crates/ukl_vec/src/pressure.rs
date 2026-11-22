@@ -4,13 +4,15 @@
 //! lanes value, in an integer or float register), the most at any point the function's pressure in each file.
 //!
 //! The width is the one whose cost a lane is least, in cycles of a core that issues six integer operations, four
-//! vector ones and three loads or stores a cycle (an Apple M1's, near enough an x86-64 core's): a lanes operation is
-//! a vector one of up to four lanes (fewer at a width below four), at one lane an integer one; one a lane at a time
-//! (a load or store at each lane's address, a copy, a shuffle) a load a lane, and at a width of two or more its lane
-//! moved out of its vector and back too (two cycles, measured: `width_times`); the uniform operations and the
-//! control integer ones for the width's lanes; each register past the target's a spill and a reload for the
-//! width's lanes; and below 32 lanes, a cross-lane kernel's exchanges between its chunks (`cl`'s chunked code): two
-//! fiber switches and their stores and loads for the chunk's lanes.
+//! vector ones and three loads or stores a cycle (an Apple M1's, near enough an x86-64 core's), to its units at once,
+//! so a lane's cycles are its busiest unit's: a lanes operation is a vector one of up to four lanes (fewer at a width
+//! below four), at one lane an integer one; one a lane at a time (a load or store at each lane's address, a copy, a
+//! shuffle) a load a lane, and at a width of two or more its lane moved out of its vector and back too (two cycles,
+//! measured: `width_times`); the uniform operations and the control integer ones for the width's lanes; each
+//! register past the target's at a loop's peak a spill and a reload each time round (outside loops, once); each
+//! operation times how often its block runs (`TRIP` times a loop it is in); and below 32 lanes, a cross-lane
+//! kernel's exchanges between its chunks (`cl`'s chunked code): two fiber switches and their stores and loads for
+//! the chunk's lanes.
 
 use crate::k::M;
 use crate::ssa::{Func, O, Shape, Ssa, V};
@@ -48,16 +50,24 @@ pub struct Pressure {
     pub float: u32,
 }
 
-/// A function's pressure at each width (`WIDTHS`'), and its operations' counts.
+/// A function's pressure at each width (`WIDTHS`'), and its operations' counts, each times how often its block runs
+/// (`freq`: `TRIP` times for each loop it is in).
 #[derive(Clone, Debug, Default)]
 pub struct FuncPressure {
     pub at: [Pressure; 6],
+    /// Each block's: how often its innermost loop's body runs (the function's once, outside loops), the loop (its
+    /// header; the function's, `usize::MAX`), and its pressure at each width. A loop's registers past the target's
+    /// at its peak are spilled and reloaded each time round; the function's outside loops, once.
+    pub blocks: Vec<(f64, usize, [Pressure; 6])>,
     /// Its operations on lanes as vectors, on lanes a lane at a time, and the others (uniform ones and control).
-    pub lanes: u32,
-    pub scalar: u32,
-    pub other: u32,
+    pub lanes: f64,
+    pub scalar: f64,
+    pub other: f64,
+    /// Its loads and stores of 1- or 2-byte lanes some bytes apart: at 4 lanes or more a window's load or store and
+    /// its shuffle (`cl`'s `load_bytes`, `store_span`), under 4 a lane at a time.
+    pub bytes: f64,
     /// Its exchanges with the SIMD group's other chunks below 32 lanes (cross-lane operations, the group's decisions).
-    pub exchanges: u32,
+    pub exchanges: f64,
     /// Its calls: the function called, and at each width the vector registers its values live across the call
     /// take (what the caller keeps, its result apart).
     pub across: Vec<(u32, [u32; 6])>,
@@ -121,10 +131,149 @@ fn reads(f: &Func, x: V) -> Vec<V> {
     u
 }
 
+/// The times a loop's body is taken to run, for each time its loop is entered.
+pub const TRIP: f64 = 16.0;
+
+/// Each block's loop depth and its innermost loop's header (`usize::MAX` outside loops): the natural loops of the
+/// back edges (a jump to a block that dominates it).
+fn depths(f: &Func) -> (Vec<u32>, Vec<usize>) {
+    let nb = f.blocks.len();
+    let idom = crate::ssa::idoms(f);
+    let dominates = |a: usize, mut b: usize| loop {
+        if b == a {
+            return true;
+        }
+        if idom[b] == usize::MAX || idom[b] == b {
+            return false;
+        }
+        b = idom[b];
+    };
+    let mut preds = vec![Vec::new(); nb];
+    for b in 0..nb {
+        for s in f.succs(b) {
+            preds[s as usize].push(b);
+        }
+    }
+    let mut depth = vec![0u32; nb];
+    let mut inner = vec![(usize::MAX, usize::MAX); nb];
+    for b in 0..nb {
+        if idom[b] == usize::MAX {
+            continue;
+        }
+        for h in f.succs(b) {
+            let h = h as usize;
+            if !dominates(h, b) {
+                continue;
+            }
+            let mut body = vec![false; nb];
+            body[h] = true;
+            let mut work = vec![b];
+            while let Some(x) = work.pop() {
+                if !body[x] {
+                    body[x] = true;
+                    work.extend(&preds[x]);
+                }
+            }
+            let size = body.iter().filter(|&&x| x).count();
+            for (x, &inside) in body.iter().enumerate() {
+                depth[x] += u32::from(inside);
+                if inside && size < inner[x].0 {
+                    inner[x] = (size, h);
+                }
+            }
+        }
+    }
+    (depth, inner.into_iter().map(|x| x.1).collect())
+}
+
+/// A lanes integer's steps, where they are a constant: lane `j`'s value is lane 0's plus `j * step`; `group`, the
+/// power of two (its log) its SIMD group lane 0's value is a multiple of, where known (as `cl`'s `Steps`).
+#[derive(Clone, Copy)]
+struct Stride {
+    step: i64,
+    group: Option<u32>,
+}
+
+/// Each lanes value's `Stride`, and each uniform integer's power of two (its log) it is a multiple of: through the
+/// first dimension's thread id (steps of 1, its group lane 0 a multiple of 32), sums with uniform values, products
+/// and shifts by constants, casts, and a shift or mask that takes the group's lane bits away (`cl`'s `group_bin`).
+fn strides(f: &Func) -> (Vec<Option<Stride>>, Vec<u32>) {
+    let n = f.insts.len();
+    let mut st: Vec<Option<Stride>> = vec![None; n];
+    let mut al = vec![0u32; n];
+    let int = |m: M| !m.float() && !m.is_agg() && m != M::B;
+    // A uniform integer constant, through integer casts that keep it.
+    let konst = |mut x: V| loop {
+        let i = f.inst(x);
+        match i.op {
+            O::Const if i.shape == Shape::Uniform => return Some(crate::ops::norm(i.m, u64::from(i.a) | u64::from(i.b) << 32)),
+            O::Cast if i.shape == Shape::Uniform && int(i.m) && int(M(i.b)) => x = i.a,
+            _ => return None,
+        }
+    };
+    for b in crate::ssa::rpo(f) {
+        for &x in &f.blocks[b].insts {
+            let i = *f.inst(x);
+            if !int(i.m) {
+                continue;
+            }
+            let lanes = i.shape == Shape::Lanes;
+            match i.op {
+                O::Const => al[x as usize] = konst(x).map_or(0, |k| k.trailing_zeros()),
+                O::Lid if lanes && konst(i.a) == Some(0) => st[x as usize] = Some(Stride { step: 1, group: Some(5) }),
+                O::Cast if int(M(i.b)) => {
+                    st[x as usize] = st[i.a as usize];
+                    al[x as usize] = al[i.a as usize];
+                }
+                O::Bin => {
+                    let op = crate::k::Op::of(u32::from(i.sub));
+                    let (ka, kb) = (konst(i.a), konst(i.b));
+                    use crate::k::Op;
+                    if lanes {
+                        let r = match op {
+                            Op::Add => [(i.a, i.b), (i.b, i.a)].into_iter().find_map(|(s, u)| {
+                                let s = st[s as usize]?;
+                                (f.inst(u).shape == Shape::Uniform).then(|| Stride { step: s.step, group: s.group.map(|g| g.min(al[u as usize])) })
+                            }),
+                            Op::Mul => [(i.a, kb), (i.b, ka)].into_iter().find_map(|(s, c)| {
+                                let (s, c) = (st[s as usize]?, c?);
+                                Some(Stride { step: s.step.wrapping_mul(c as i64), group: s.group.map(|g| (g + c.trailing_zeros()).min(64)) })
+                            }),
+                            Op::Shl => st[i.a as usize].zip(kb.filter(|&k| k < 64)).map(|(s, k)| Stride { step: s.step.wrapping_shl(k as u32), group: s.group.map(|g| (g + k as u32).min(64)) }),
+                            Op::Shr | Op::And => st[i.a as usize].zip(kb).and_then(|(s, k)| {
+                                let bits = if op == Op::Shr { k as u32 } else { (k + 1).trailing_zeros() };
+                                let fits = s.step >= 0 && bits < 63 && (s.step as i128) * 31 < (1i128 << bits) && s.group? >= bits;
+                                if !fits || (op == Op::And && !(k + 1).is_power_of_two()) {
+                                    return None;
+                                }
+                                Some(if op == Op::Shr { Stride { step: 0, group: Some(s.group? - bits) } } else { Stride { step: s.step, group: Some(64) } })
+                            }),
+                            _ => None,
+                        };
+                        st[x as usize] = r;
+                    } else {
+                        al[x as usize] = match op {
+                            Op::Add => al[i.a as usize].min(al[i.b as usize]),
+                            Op::Mul => (al[i.a as usize] + al[i.b as usize]).min(64),
+                            Op::Shl => kb.map_or(0, |k| (al[i.a as usize] + k as u32).min(64)),
+                            _ => 0,
+                        };
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    (st, al)
+}
+
 /// Function `f`'s pressure at each width.
 pub fn of_func(ssa: &Ssa, f: &Func) -> FuncPressure {
     let n = f.insts.len();
     let nb = f.blocks.len();
+    let (depth, inner) = depths(f);
+    let freq: Vec<f64> = depth.iter().map(|&d| TRIP.powi(d as i32)).collect();
+    let (stride, _) = strides(f);
     // Each block's values read before it defines them (`gen`) and those it defines (its parameters among them).
     let mut gen_ = vec![Bits::new(n); nb];
     let mut def = vec![Bits::new(n); nb];
@@ -141,31 +290,54 @@ pub fn of_func(ssa: &Ssa, f: &Func) -> FuncPressure {
             }
             def[b].set(x);
             let i = f.inst(x);
+            let fr = freq[b];
             let lanes = |u: u32| f.inst(u).shape == Shape::Lanes;
-            let each = match i.op {
-                O::Load => lanes(i.a) && f.inst(i.a).op != O::FrameAddr,
-                O::Store => lanes(i.a) && f.inst(i.a).op != O::FrameAddr,
-                O::Atomic => i.shape == Shape::Lanes,
-                O::Copy | O::Zero | O::Shuffle => true,
-                _ => false,
+            // A lanes access: as `cl` lowers it, by its address's steps (one address; contiguous lanes of 4 or 8
+            // bytes; lanes of 1 or 2 some bytes apart), else a lane at a time.
+            let access = |eb: u32| match stride[i.a as usize] {
+                Some(s) if s.step == 0 && i.op == O::Load => Some(false),
+                Some(s) if s.step == i64::from(eb) && matches!(eb, 4 | 8) => Some(false),
+                Some(s) if matches!(eb, 1 | 2) && s.step >= i64::from(eb) && s.step <= 16 => Some(true),
+                _ => None,
             };
-            if each {
-                fp.scalar += 1;
-            } else {
-                match i.shape {
-                    Shape::Lanes | Shape::Mask => fp.lanes += 1,
-                    _ => fp.other += 1,
-                }
+            let shift = i.op == O::Bin
+                && lanes(x)
+                && matches!(crate::k::Op::of(u32::from(i.sub)), crate::k::Op::Shl | crate::k::Op::Shr)
+                && lanes(i.b);
+            let kind = match i.op {
+                O::Load | O::Store if lanes(i.a) && f.inst(i.a).op != O::FrameAddr => match access(i.m.bytes()) {
+                    Some(true) => 'b',
+                    Some(false) => 'l',
+                    None => 'e',
+                },
+                // A shift by each lane's count: a shift and a multiply where its counts have steps, else a lane at
+                // a time (Cranelift's vectors shift by one count).
+                _ if shift => if stride[i.b as usize].is_some() { 'L' } else { 'e' },
+                O::Atomic if i.shape == Shape::Lanes => 'e',
+                O::Copy | O::Zero | O::Shuffle => 'e',
+                _ => match i.shape {
+                    Shape::Lanes | Shape::Mask => 'l',
+                    _ => 'o',
+                },
+            };
+            match kind {
+                'e' => fp.scalar += fr,
+                'b' => fp.bytes += fr,
+                'l' => fp.lanes += fr,
+                'L' => fp.lanes += 2.0 * fr,
+                _ => fp.other += fr,
             }
         }
     }
     if f.cross {
         let dec = crate::ssa::group_decisions(ssa, f);
-        let ops = f.blocks.iter().flat_map(|b| &b.insts).filter(|&&x| {
-            let i = f.inst(x);
-            i.op.cross_lane() || (i.op == O::Atomic && i.shape == Shape::Uniform)
-        });
-        fp.exchanges = (ops.count() + dec.iter().filter(|&&d| d).count()) as u32;
+        for (b, blk) in f.blocks.iter().enumerate() {
+            let ops = blk.insts.iter().filter(|&&x| {
+                let i = f.inst(x);
+                i.op.cross_lane() || (i.op == O::Atomic && i.shape == Shape::Uniform)
+            });
+            fp.exchanges += freq[b] * (ops.count() + usize::from(dec[b])) as f64;
+        }
     }
     let succs: Vec<Vec<u32>> = (0..nb).map(|b| f.succs(b)).collect();
     let mut live_in = gen_.clone();
@@ -203,10 +375,12 @@ pub fn of_func(ssa: &Ssa, f: &Func) -> FuncPressure {
                 sum[k] = (sum[k].0 + c.0, sum[k].1 + c.1, sum[k].2 + c.2);
             }
         }
-        let note = |sum: &[(u32, u32, u32); 6], fp: &mut FuncPressure| {
+        let mut here = [Pressure::default(); 6];
+        let note = |sum: &[(u32, u32, u32); 6], fp: &mut FuncPressure, here: &mut [Pressure; 6]| {
             for k in 0..6 {
-                let p = &mut fp.at[k];
-                (p.vec, p.int, p.float) = (p.vec.max(sum[k].0), p.int.max(sum[k].1), p.float.max(sum[k].2));
+                for p in [&mut fp.at[k], &mut here[k]] {
+                    (p.vec, p.int, p.float) = (p.vec.max(sum[k].0), p.int.max(sum[k].1), p.float.max(sum[k].2));
+                }
             }
         };
         let add = |sum: &mut [(u32, u32, u32); 6], x: V, sign: i32| {
@@ -220,14 +394,14 @@ pub fn of_func(ssa: &Ssa, f: &Func) -> FuncPressure {
                 }
             }
         };
-        note(&sum, &mut fp);
+        note(&sum, &mut fp, &mut here);
         for &x in blk.insts.iter().rev() {
             if !live.has(x) {
                 // Defined, not read after: live at its definition only.
                 live.set(x);
                 add(&mut sum, x, 1);
             }
-            note(&sum, &mut fp);
+            note(&sum, &mut fp, &mut here);
             live.clear(x);
             add(&mut sum, x, -1);
             if f.inst(x).op == O::Call {
@@ -239,8 +413,9 @@ pub fn of_func(ssa: &Ssa, f: &Func) -> FuncPressure {
                     add(&mut sum, u, 1);
                 }
             }
-            note(&sum, &mut fp);
+            note(&sum, &mut fp, &mut here);
         }
+        fp.blocks.push((freq[b], inner[b], here));
     }
     fp
 }
@@ -250,23 +425,39 @@ pub fn of(ssa: &Ssa) -> Vec<FuncPressure> {
     ssa.funcs.iter().map(|f| of_func(ssa, f)).collect()
 }
 
-/// The cost a lane of the kernel's functions at width `WIDTHS[k]`, the target's `files` (in operations, per lane).
+/// The cost a lane of the kernel's functions at width `WIDTHS[k]`, the target's `files` (in cycles, per lane, each
+/// operation and spill times how often its block runs).
 pub fn lane_cost(ps: &[FuncPressure], k: usize, files: Files) -> f64 {
     let w = WIDTHS[k];
     let past = |p: u32, have: u32| f64::from(p.saturating_sub(have));
     ps.iter()
         .map(|p| {
-            let at = p.at[k];
-            // Floats share the vector registers on both targets.
-            let spilled = if w == 1 { past(at.int, files.int) + past(at.float, files.vec) } else { past(at.vec + at.float, files.vec) + past(at.int, files.int) };
+            // Each loop's registers past the target's at its peak: a spill and reload each time round (the
+            // function's outside loops, once). Floats share the vector registers on both targets.
+            let mut peak: Vec<(usize, f64, f64)> = Vec::new();
+            for &(fr, lp, at) in &p.blocks {
+                let at = at[k];
+                let x = if w == 1 { past(at.int, files.int) + past(at.float, files.vec) } else { past(at.vec + at.float, files.vec) + past(at.int, files.int) };
+                match peak.iter_mut().find(|r| r.0 == lp) {
+                    Some(r) => r.2 = r.2.max(x),
+                    None => peak.push((lp, fr, x)),
+                }
+            }
+            let spilled: f64 = peak.iter().map(|r| r.1 * r.2).sum();
             let w = f64::from(w);
-            let lanes = if w == 1.0 { f64::from(p.lanes) / 6.0 } else { f64::from(p.lanes) / (4.0 * w.min(4.0)) };
-            let each = f64::from(p.scalar) * if w == 1.0 { 1.0 / 3.0 } else { 1.0 / 3.0 + 2.0 };
+            let (vector, each) = if w >= 4.0 { (p.lanes + 2.0 * p.bytes, p.scalar) } else { (p.lanes, p.scalar + p.bytes) };
+            // The core issues to its integer, vector and memory units at once: a lane's cycles are its busiest
+            // unit's. At one lane, the lanes operations are integer ones, a lane-at-a-time access a load or store;
+            // at more, a lanes operation is a vector one of up to four lanes, a lane-at-a-time access a load or
+            // store and its lane's moves out of its vector and back (two cycles, measured: `width_times`). The
+            // uniform operations and control are integer ones for the width's lanes; a spill a store and a reload.
+            let (int, vec) = if w == 1.0 { (vector / 6.0 + p.other / 6.0, 0.0) } else { (p.other / 6.0 / w, vector / (4.0 * w.min(4.0)) + 2.0 * each) };
+            let mem = (each + 2.0 * spilled / w) / 3.0;
             // An exchange below 32 lanes: a chunk's call of the runtime, its switch out to its group's turns and
             // back, and its stores and loads, for the chunk's lanes: about 100 cycles (measured: row_text, whose
             // branches are mostly the group's, takes 6 times as long at 8 lanes as at 32, 13 times at 4).
-            let exchanges = if w < 32.0 { f64::from(p.exchanges) * 100.0 / w } else { 0.0 };
-            lanes + each + exchanges + (f64::from(p.other) / 6.0 + 2.0 * spilled / 3.0) / w
+            let exchanges = if w < 32.0 { p.exchanges * 100.0 / w } else { 0.0 };
+            int.max(vec).max(mem) + exchanges
         })
         .sum()
 }
@@ -285,10 +476,11 @@ pub fn keeps_callers(ps: &[FuncPressure], k: usize) -> Vec<bool> {
     ps.iter().enumerate().map(|(f, p)| f != 0 && most[f] > p.at[k].vec + p.at[k].float).collect()
 }
 
-/// The width a kernel runs at on a target of `files`: the least cost a lane.
+/// The width a kernel runs at on a target of `files`: the least cost a lane, the widest of equal ones (fewer
+/// chunks, each its call and its masks).
 pub fn width(ps: &[FuncPressure], files: Files) -> u32 {
     let mut best = (f64::INFINITY, 1);
-    for k in 0..WIDTHS.len() {
+    for k in (0..WIDTHS.len()).rev() {
         let c = lane_cost(ps, k, files);
         if c < best.0 {
             best = (c, WIDTHS[k]);

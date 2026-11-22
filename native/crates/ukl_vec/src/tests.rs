@@ -789,11 +789,61 @@ DEFINE_KERNEL2(rule, t_mms,\n\
             .collect::<Vec<u32>>()
     };
     assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
-    for w in [1u32, 2, 4, 8, 16, 32] {
+    // 0: the width its registers' pressure chooses.
+    for w in [0u32, 1, 2, 4, 8, 16, 32] {
         let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
         let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
         let _ = at.cl.set(Ok(c));
         assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+    }
+}
+
+/// Lanes of 1 and 2 bytes some bytes apart, as windows of their bytes and shuffles: signed bytes 3 apart, 2-byte
+/// lanes 4 apart; and stores of two of each 3 bytes, which are never whole elements, so each lane's go as they are
+/// (the third byte of each kept). At every width, as a lane at a time would.
+#[test]
+fn byte_lanes_some_bytes_apart_are_read_and_written_as_each_lanes() {
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\n\
+DEFINE_KERNEL2(rule, t_bytes,\n\
+               ROBUFFER, int8_t, src, \"[256]\",\n\
+               ROBUFFER, int16_t, hs, \"[128]\",\n\
+               RWBUFFER, uint8_t, dst, \"[256]\",\n\
+               RWBUFFER, uint32_t, out, \"[64]\",\n\
+               LID0,     uint32_t, lid, )\n\
+{\n\
+    int32_t a = src[3u * lid + 1u];\n\
+    int32_t h = hs[2u * lid];\n\
+    dst[3u * lid] = (uint8_t)(a + h);\n\
+    dst[3u * lid + 2u] = (uint8_t)(h >> 8);\n\
+    out[lid] = (uint32_t)(a * 65536 + h);\n\
+}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_bytes").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let bytes: Vec<i8> = (0..256u32).map(|x| (x.wrapping_mul(0x9e37_79b9) >> 24) as i8).collect();
+    let halves: Vec<i16> = (0..128u32).map(|x| (x.wrapping_mul(0x85eb_ca6b) >> 16) as i16).collect();
+    let mut want_dst = vec![0xa5u8; 256];
+    let mut want_out = vec![0u32; 64];
+    for l in 0..64usize {
+        let (a, h) = (i32::from(bytes[3 * l + 1]), i32::from(halves[2 * l]));
+        want_dst[3 * l] = (a + h) as u8;
+        want_dst[3 * l + 2] = (h >> 8) as u8;
+        want_out[l] = (a * 65536 + h) as u32;
+    }
+    let run = |k: &super::vector::Kernel, exec| {
+        let (mut dst, mut out) = (vec![0xa5u8; 256], vec![0u32; 64]);
+        let ptr = |p: *const u8| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args = [ptr(bytes.as_ptr().cast()), ptr(halves.as_ptr().cast()), ptr(dst.as_mut_ptr()), ptr(out.as_mut_ptr().cast()), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [64, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        (dst, out)
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), (want_dst.clone(), want_out.clone()), "the interpreter");
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), (want_dst.clone(), want_out.clone()), "the compiled SSA at width {w}");
     }
 }
 

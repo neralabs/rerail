@@ -560,7 +560,6 @@ impl<'a, 't> Fb<'a, 't> {
     /// The frame's variables kept as values: those every access of reads or writes whole, at one type's size, by
     /// its `Local` directly, never as an address. A function's parameters among them.
     fn promote(&mut self, root: usize, args: &[(u32, M)]) {
-        let v = self.v;
         // Each variable (its offset and size: variables of disjoint scopes share places) and whether it may be kept,
         // and whether as a float. A variable is one size, so another size at its offset is another variable.
         let mut seen: HashMap<(u32, u32), (bool, Option<bool>)> = HashMap::new();
