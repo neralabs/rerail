@@ -305,7 +305,7 @@ function rulesAtRef(root: string, { ref, commit, source }: RulesRefTree, loadedR
     message: `${entry.reason}; it does not run`,
     path: `${ref}:${entry.path}`,
     pathIdentity: textPath(entry.path),
-    ruleId: null,
+    ruleId: entry.path.endsWith(".rerail") ? loadedRr.failedPolicy(entry.path, source) : null,
   }));
   return { provenance, documents, skipped: [...failures, ...skipped], ...(rr.length === 0 ? {} : { rr: { catalog, source } }) };
 }
@@ -829,7 +829,7 @@ async function scanReport(
     && pathFailures.length === 0
     && !refRules?.skipped.some(failure => failure.code === "adapter-error");
   for (const skipped of (refRules === undefined ? catalog?.skipped.filter(policy => policy.path?.endsWith(".rerail")) : undefined) ?? []) {
-    failures.push({ code: "adapter-error", message: skipped.reason, path: skipped.path, ruleId: null });
+    failures.push({ code: "adapter-error", message: skipped.reason, path: skipped.path, ruleId: skipped.path === undefined ? null : loadedRr.failedPolicy(skipped.path) });
     completed = false;
   }
   if (rr.length > 0) {
@@ -846,7 +846,7 @@ async function scanReport(
       if (explicitRr) selected = selected.filter(path => {
         try { loadedRr.load(resolve(path)); return true; }
         catch (error) {
-          failures.push({ code: "adapter-error", path: resolve(path), ruleId: null, message: error instanceof Error ? error.message : String(error) });
+          failures.push({ code: "adapter-error", path: resolve(path), ruleId: loadedRr.failedPolicy(resolve(path)), message: error instanceof Error ? error.message : String(error) });
           completed = false;
           return false;
         }

@@ -382,6 +382,35 @@ impl LoadedRrPolicies {
             None => read(),
         })
     }
+
+    /// The policy a failed `load` of `path` names: the one `.policy` its own text declares, read without lowering
+    /// (`declared_policy_ids`); `null` when it declares none or several, or cannot be read.
+    #[napi]
+    pub fn failed_policy(&self, path: String, source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>) -> Option<String> {
+        let snapshot = source.map(|source| source.pinned_snapshot());
+        on_revisions(snapshot.as_deref(), || failed_policy_id(declared_policy_ids(&path, snapshot.as_deref())))
+    }
+}
+
+/// The `.policy` IDs the policy at `path` declares in its own text (`rr::declared_policies`), read where `snapshot`
+/// (a Git view, registered: `on_revisions`) or the worktree holds it, without its includes or lowering: what a policy
+/// whose program does not load names in its failure. Empty when the text cannot be read.
+#[cfg(not(feature = "headless"))]
+fn declared_policy_ids(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Vec<String> {
+    let Ok(path) = rr_policy_path(path, snapshot) else { return Vec::new() };
+    let bytes = if git_workspace::snapshot::view_root(&path).is_some() {
+        git_workspace::snapshot::read_bounded(&path, 1024 * 1024).ok()
+    } else {
+        std::fs::read(&path).ok()
+    };
+    bytes.and_then(|bytes| String::from_utf8(bytes).ok()).map(|text| code_rule_dsl::logic::rr::declared_policies(&text)).unwrap_or_default()
+}
+
+/// The one policy a policy's failure names: its single declared `.policy` (`declared_policy_ids`), else none.
+#[cfg(not(feature = "headless"))]
+fn failed_policy_id(ids: Vec<String>) -> Option<String> {
+    let [id] = <[String; 1]>::try_from(ids).ok()?;
+    Some(id)
 }
 
 #[cfg(not(feature = "headless"))]
@@ -525,7 +554,9 @@ impl ScanRrPolicies {
                 let (LoadedRrPolicy { program, files, location }, ids) = match policy {
                     Ok(policy) => policy,
                     Err(error) => {
-                        reports.push(serde_json::json!({"error": error, "ruleId": null}));
+                        // A program that did not load names the policy its own text declares.
+                        let id = self.paths.get(i).and_then(|path| failed_policy_id(declared_policy_ids(path, self.policy_snapshot.as_deref())));
+                        reports.push(serde_json::json!({"error": error, "ruleId": id}));
                         continue;
                     }
                 };

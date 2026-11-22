@@ -5449,3 +5449,14 @@ fn ended_within(mut child: std::process::Child, limit: std::time::Duration) -> O
     child.wait().unwrap();
     None
 }
+
+/// A policy whose program does not load names the policies its own text declares, read without its includes or
+/// its lowering: a setting its lowering refuses still leaves its `.policy` readable.
+#[test]
+fn a_texts_declared_policies_read_without_lowering() {
+    let src = "#include \"core.rerail\"\n.policy \"bad\" revision 1\n.language python\n.references {\"unknownParameter\":true}\n.violation V(at: node) \"edge\"\nV(n) :- kind(n, \"call\").\n";
+    assert_eq!(declared_policies(src), ["bad"]);
+    assert_eq!(declared_policies(".policy \"one\" revision 1\n.policy \"two\" revision 1\n"), ["one", "two"]);
+    assert!(declared_policies(".violation V(at: node) \"x\"\nV(n) :- kind(n, \"call\").\n").is_empty());
+    assert!(declared_policies(".policy \"unclosed").is_empty(), "a text that does not parse declares none");
+}

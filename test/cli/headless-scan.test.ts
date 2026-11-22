@@ -1795,9 +1795,11 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     const selectedPolicy = await scan(root, { ...source, rulesRef: refWith(".rerail") });
     expect(selectedPolicy.status).toBe("failed");
     expect(selectedPolicy.violations.map(finding => finding.path)).toEqual(["a.py"]);
+    const policyName = "ff" + Buffer.from(".rerail").toString("hex");
     expect(selectedPolicy.failures).toEqual([expect.objectContaining({
-      path: expect.stringMatching(/\.rerail\/rules\/\[hex:ff2e7272\]$/u),
-      pathIdentity: { encoding: "hex", value: Buffer.from(".rerail/rules/").toString("hex") + "ff2e7272" },
+      path: expect.stringMatching(new RegExp(`\\.rerail/rules/\\[hex:${policyName}\\]$`, "u")),
+      pathIdentity: { encoding: "hex", value: Buffer.from(".rerail/rules/").toString("hex") + policyName },
+      message: "Git policy name has invalid UTF-8",
     })]);
   });
 
