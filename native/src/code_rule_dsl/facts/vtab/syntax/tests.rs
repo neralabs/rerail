@@ -2488,6 +2488,27 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
     assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
 }
 
+/// Decision 0353: `rr_long_text_node`'s statistics are counted on the tape, with no group made: the planner's measure
+/// of it made every document's rows of every relation before (a 158 MB block at the M3's 300-file peak). They are
+/// what its rows, once made, measure.
+#[test]
+fn long_text_nodes_are_measured_on_the_tape_with_no_row_made() {
+    let store = ContentStore::open(&temp("long-text-stats")).unwrap();
+    let long = "x".repeat(core_rr::TEXT_INLINE + 5);
+    let docs = || -> Vec<Document> {
+        (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return \"{long}\" + \"s{k}\"\n"))).collect()
+    };
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "rr_long_text_node", "doc"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let batch = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let texts = Arc::clone(&sources.iter().find(|(n, _, _)| *n == LONG_TEXT_NODES).unwrap().2);
+    let got = texts.statistics().expect("counted on the tape");
+    assert_eq!(batch.groups(), 0, "the statistics made no group");
+    let want = measured(&*texts);
+    assert!(want[0].1 >= 6, "each document's long string and the nodes holding it: {want:?}");
+    assert_eq!(got, want, "the tape's count, as the rows measure");
+}
+
 /// Decision 0494 (Q396): reads of a batch side by side make each document once. Each thread reads a relation whole;
 /// a read finding documents another is making waits for them, so every group made is kept, none made again and set
 /// aside (the base relations counted on the pool made the whole batch once each).

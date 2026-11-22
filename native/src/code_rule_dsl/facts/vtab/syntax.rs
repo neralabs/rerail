@@ -39,6 +39,7 @@ use std::sync::{Arc, OnceLock};
 use cells::{Block, Cells};
 
 pub mod within;
+pub mod places;
 pub mod values;
 
 /// The language's `within(n, a)`, `n` strictly below `a` (`within::Within`, tree mode).
@@ -321,12 +322,30 @@ pub struct LongTexts {
     batch: Arc<Batch>,
     /// Each document key's place in `batch.docs`.
     docs: HashMap<u32, usize>,
+    /// Its rows, counted on the tape (`statistics`).
+    counted: std::sync::OnceLock<usize>,
 }
 
 impl LongTexts {
     fn new(nodes: Arc<dyn Source>, batch: &Arc<Batch>) -> Self {
         let docs = batch.docs.keys().iter().enumerate().map(|(i, &k)| (k, i)).collect();
-        Self { nodes, batch: Arc::clone(batch), docs }
+        Self { nodes, batch: Arc::clone(batch), docs, counted: std::sync::OnceLock::new() }
+    }
+
+    /// How many rows it has, counted on the tape as the batch's rows are made (each node of a document of a grammar
+    /// whose text is past the inline bound), with no row made: its group's rows are made only where they are read.
+    fn tape_len(&self) -> usize {
+        *self.counted.get_or_init(|| {
+            (0..self.batch.docs.len())
+                .map(|i| {
+                    let p = &self.batch.docs[i];
+                    if p.tag == TEXT || self.batch.dialects.get(p.tag).is_none() {
+                        return 0;
+                    }
+                    p.node_ids().filter(|&(_, id, _)| (p.facts.end(id) - p.facts.start(id)) as usize > core_rr::TEXT_INLINE).count()
+                })
+                .sum()
+        })
     }
 
     /// Node `n`'s text when it is past `text`'s inline bound (`core_rr::TEXT_INLINE`); none for a shorter node
@@ -454,6 +473,16 @@ impl Source for LongTexts {
     /// The nodes' estimate, made of no rows (`Source::estimated_len`'s default is `len`, which makes them).
     fn estimated_len(&self) -> usize {
         self.nodes.estimated_len()
+    }
+    /// Its one column's statistics, of its rows counted on the tape (decision 0353): one row a node, so each of its
+    /// counts is its rows. Measured as rows (`sampled_statistics_unanswered`), the measure made its whole group's
+    /// rows, every relation's of every document's (the M3's 300-file peak held 77 MB of them, and a 158 MB block).
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        if let Some(known) = self.nodes.statistics() {
+            return Some(known);
+        }
+        let n = self.tape_len() as i64;
+        Some(self.nodes.columns().into_iter().map(|c| (c, n, n, n, n)).collect())
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.nodes.estimated_matches(column, batch)
@@ -2320,6 +2349,9 @@ struct Extra {
     col: bool,
     node_text: bool,
     docof: bool,
+    /// Whether the nodes' and tokens' places (`line`, `end_line`, `col`, `docof`) are made as rows: in core.rerail's
+    /// shape they are the `Loc` view's, and only the spans' are rows (`places`, decision 0353).
+    node_places: bool,
     value: bool,
     /// `rr_value_lit`: the literal values of documents W reads no values of, where `value` is answered on request
     /// (decision 0174): kept eager, as they are few.
@@ -2408,6 +2440,7 @@ impl Extra {
             value_type: read("value_type"),
             comment: shape == Shape::T && read("comment"),
             rx_span: shape == Shape::Core && read("rx_span"),
+            node_places: shape != Shape::Core,
             matches: matches
                 .iter()
                 .enumerate()
@@ -2462,7 +2495,9 @@ impl Extra {
         let f = &*p.facts;
         let ends = p.extra.as_ref().map_or(0..0, |x| p.len() + x.ends_from()..p.len() + x.ends_from() + x.ends);
         let guest = p.extra.as_deref().filter(|x| x.host.is_some());
-        if self.line_rows() || self.end_line || self.col || self.node_text {
+        // In core.rerail's shape a node's place is the `Loc` view's (`places`): only its text is a row here.
+        let (rows_line, rows_end, rows_col) = (self.line_rows() && self.node_places, self.end_line && self.node_places, self.col && self.node_places);
+        if rows_line || rows_end || rows_col || self.node_text {
             for (_, id, n) in p.node_ids() {
                 let (start, end) = (f.start(id) as usize, f.end(id) as usize);
                 if self.node_text {
@@ -2470,36 +2505,36 @@ impl Extra {
                 }
                 if let Some(x) = guest {
                     let (first, last, col) = x.place([start as u32, end as u32]);
-                    if self.line_rows() {
+                    if rows_line {
                         self.lines.push([n, i64::from(first)]);
                     }
-                    if self.end_line {
+                    if rows_end {
                         self.end_lines.push([n, i64::from(last)]);
                     }
-                    if self.col {
+                    if rows_col {
                         self.cols.push([n, i64::from(col)]);
                     }
                     continue;
                 }
-                if self.line_rows() {
+                if rows_line {
                     self.lines.push([n, i64::from(f.start_line(id))]);
                 }
-                if self.end_line {
+                if rows_end {
                     self.end_lines.push([n, f.lines.line(end) as i64 + 1]);
                 }
-                if self.col {
+                if rows_col {
                     self.cols.push([n, (start - f.lines.start(f.lines.line(start))) as i64]);
                 }
             }
             for (local, _, n) in p.token_ids() {
                 let [start, end] = p.span(local).map(|at| at as usize);
-                if self.line_rows() {
+                if rows_line {
                     self.lines.push([n, f.lines.line(start) as i64 + 1]);
                 }
-                if self.end_line {
+                if rows_end {
                     self.end_lines.push([n, f.lines.line(end) as i64 + 1]);
                 }
-                if self.col {
+                if rows_col {
                     self.cols.push([n, (start - f.lines.start(f.lines.line(start))) as i64]);
                 }
             }
@@ -2517,18 +2552,18 @@ impl Extra {
                         (l as i64 + 1, (at as usize - f.lines.start(l)) as i64)
                     }
                 };
-                if self.line_rows() {
+                if rows_line {
                     self.lines.push([n, line]);
                 }
-                if self.end_line {
+                if rows_end {
                     self.end_lines.push([n, line]);
                 }
-                if self.col {
+                if rows_col {
                     self.cols.push([n, col]);
                 }
             }
         }
-        if self.docof {
+        if self.docof && self.node_places {
             let key = i64::from(p.file);
             self.docofs.extend(p.node_ids().chain(p.token_ids()).map(|(_, _, n)| n).chain(ends.map(|local| p.global(local))).map(|n| [n, key]));
         }
@@ -4595,6 +4630,7 @@ pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Proje
     let batch = Batch::new(store, documents, projection, &[], &[], false, None, &HashMap::new())?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = made_sources(&batch).into_iter().filter_map(|(_, name, source)| Some((name?, source))).collect();
     out.extend(views(&batch));
+    places::join(&mut out, &batch);
     Ok(out)
 }
 
@@ -4912,6 +4948,7 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
     let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, source)| (name.to_owned(), source)));
+    places::join(&mut out, &batch);
     drop(viewing);
     // The kind-set axes, made per looked-up node like containment (decision 0050): a set no join reads, and the nodes
     // no join binds, cost nothing. Their statistics come from the tree.
