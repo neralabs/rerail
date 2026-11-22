@@ -11941,6 +11941,41 @@ fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel
     Ok(n)
 }
 
+/// Relation `rel`'s one rule `rule` as a filter its source's rows can stand for (decision 0611): `filter_of`, its head
+/// a plain relation. A lattice's rows are its groups' merges, a gate's and a native operator's are made otherwise.
+pub fn plain_filter(f: &Fields<'_>, rel: &str, v: &Version, rule: super::program_image::RuleRef<'_>) -> Option<(String, Vec<(usize, i64)>)> {
+    if f.lattice(rel) || f.gate(rel) || f.native(rel).is_some() {
+        return None;
+    }
+    filter_of(v, rule)
+}
+
+/// Rule `rule` as a filter of one relation (t52 step 3): `h(v0, …) :- x(v0, …), $vi < b, …`, the head the atom's
+/// distinct variables in order, every other literal one of them compared under a constant. `x`, and each compared
+/// column with its bound.
+pub fn filter_of(v: &Version, rule: super::program_image::RuleRef<'_>) -> Option<(String, Vec<(usize, i64)>)> {
+    let head: Vec<VarSlot> = rule.head().args().map(|t| t.var()).collect::<Option<_>>()?;
+    if head.iter().enumerate().any(|(i, x)| head[..i].contains(x)) {
+        return None;
+    }
+    let mut atom = None;
+    let mut cmps = Vec::new();
+    for l in rule.body() {
+        match l.view() {
+            Lit::Atom(a) if !a.neg() && atom.is_none() => atom = Some(a),
+            Lit::Cmp { op: CmpOp::Lt, l: TermRef::Var(x), r: TermRef::Int(b) } => cmps.push((x, b)),
+            _ => return None,
+        }
+    }
+    let a = atom?;
+    let args: Vec<VarSlot> = a.args().map(|t| t.var()).collect::<Option<_>>()?;
+    if args != head {
+        return None;
+    }
+    let bounds = cmps.into_iter().map(|(x, b)| args.iter().position(|y| *y == x).map(|c| (c, b))).collect::<Option<Vec<_>>>()?;
+    Some((v.rel_name(a.rel()).to_owned(), bounds))
+}
+
 /// A clean relation's kept rows (`KeptStrata::rows`), as the requests it answers again take them.
 fn kept_strata_rows(ks: &mut dyn KeptStrata, f: Fields<'_>, rel: &str) -> Result<Vec<Vec<i64>>> {
     let types = vec![b'i'; f.types(rel).len()];
@@ -13674,6 +13709,65 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 }
             }
             continue;
+        }
+        // A filter every row passes is its relation (t52 step 3): `h(v…) :- x(v…), $v < b, …` (`filter_of`), where each
+        // live row of `x` holds every compared column under its bound, as hiding's narrow twins in a run with no
+        // annotation document. Its rows are `x`'s, held under both names: read where they lie to check, nothing
+        // derived or copied. Maintained, its change is `x`'s: the same rows pass the same bounds. Not under kept
+        // strata, whose kept rows are a stratum's own, nor on the device, whose strata bind their relations themselves.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let [r] = rules.as_slice()
+            && strata_kept.is_none()
+            && !placement::device_on()
+            && let Some((of, bounds)) = { let (v, rule) = run.versions.rule_at(*r); plain_filter(&f0, rel, v, rule) }
+            && run.native_rels.contains(&of)
+            && let Some(n) = super::native::component::hold_as_where_all(db, rel, &of, |src, row| bounds.iter().all(|&(c, b)| src.value(row, c) < b))
+        {
+            super::profile::stratum(&skey, "a filter every row passes: its relation's rows (t52 step 3)", || format!("{of}: {n} rows"));
+            super::profile::decision("filters every row passes, read as their relation", || format!("{rel} as {of}"));
+            run.native_rels.insert((*rel).clone());
+            if let Some(&card) = run.model.stats.card.get(of.as_str()) {
+                run.model.stats.card.insert(rel, card);
+            }
+            for c in 0..f0.types(rel).len() {
+                let k = (of.clone(), c);
+                if let Some(&d) = run.model.ndv.get(&k) {
+                    run.model.ndv.insert(((*rel).clone(), c), d);
+                }
+                if let Some(&fan) = run.model.stats.fan.get(&k) {
+                    run.model.stats.fan.insert(((*rel).clone(), c), fan);
+                }
+            }
+            if let Some(m) = maintaining.as_deref_mut() {
+                if !moved_rels.contains(&of) {
+                    outcome.unchanged.insert((*rel).clone());
+                } else if let Some(d) = diffs.get(&of).cloned() {
+                    diffs.insert((*rel).clone(), d);
+                    m.delta_made(rel);
+                    moved_rels.insert((*rel).clone());
+                } else {
+                    m.no_delta(rel);
+                    moved_rels.insert((*rel).clone());
+                }
+            }
+            outcome.native.insert(key);
+            continue;
+        }
+        if super::profile::on()
+            && let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let [r] = rules.as_slice()
+            && let Some((of, _)) = { let (v, rule) = run.versions.rule_at(*r); plain_filter(&f0, rel, v, rule) }
+        {
+            let why = if strata_kept.is_some() {
+                "kept strata"
+            } else if placement::device_on() {
+                "on the device"
+            } else if !run.native_rels.contains(&of) {
+                "its relation not held by the engine"
+            } else {
+                "a row of its relation fails a bound"
+            };
+            super::profile::decision("filters derived, not read as their relation", || format!("{rel} of {of}: {why}"));
         }
         // A reach index not made in place (`reach_rows`) has no delta: its readers derive again.
         if let Some(m) = maintaining.as_deref_mut() {

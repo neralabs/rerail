@@ -4740,6 +4740,23 @@ pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
     on(conn).derived.lock().insert(table.to_owned(), rel);
 }
 
+/// Holds `table` in `conn`'s run as relation `of` (`hold_as`) where every live row of `of` passes `keep` (t52 step 3:
+/// a filter every row passes is its relation), read where they lie to check. The rows held; `None` where `of` is not
+/// held as rows, or a row fails `keep`.
+pub fn hold_as_where_all(conn: &Connection, table: &str, of: &str, keep: impl Fn(&dyn crate::code_rule_dsl::facts::vtab::Source, usize) -> bool) -> Option<usize> {
+    let rel = on(conn).derived.lock().get(of).cloned()?;
+    if rel.view.is_some() {
+        return None;
+    }
+    let src = Derived::source(Arc::clone(&rel), None);
+    let n = src.len();
+    if !(0..n).all(|r| keep(&*src, r)) {
+        return None;
+    }
+    hold_as(conn, table, rel);
+    Some(n)
+}
+
 /// A native relation of `conn`'s run as it can be kept and held again (`hold_rows`): its columns' types and its live
 /// rows where they lie, as a source (`Derived`). Not a view.
 pub fn kept_source(conn: &Connection, table: &str) -> Option<(Vec<u8>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> {

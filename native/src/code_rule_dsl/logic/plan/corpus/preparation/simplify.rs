@@ -2847,6 +2847,13 @@ impl ProgramPass for ProjectAll {
             if kept(&f, rel) || f.nullary(rel) || f.answer(rel) {
                 continue;
             }
+            // A filter of one relation keeps its columns: where every row passes, the run reads it as that relation
+            // (`plan::filter_of`, t52 step 3), which a projection would make a relation of its own.
+            if let [r] = rules.as_slice()
+                && crate::code_rule_dsl::logic::plan::plain_filter(&f, rel, v, *r).is_some()
+            {
+                continue;
+            }
             let Some(Some(cols)) = self.read.get(rel) else { continue };
             let Some(n) = f.arity(rel) else { continue };
             let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();

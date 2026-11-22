@@ -170,11 +170,13 @@ unchanged and CPU noted.
    A finer test was built and measured (each relation's node columns grouped by document, a reader holding every
    column; `tmp/t52/combining-column-groups.rs`) and left nothing fewer on `s100`.
 
-   What is left is a check at run time: with no run-value document, each filter is its original. That needs a fact
-   the run does not have. `GuestKeys` holds every key the store has given, and a memo hit's rows carry an
-   annotation's nodes without admitting it again, so "this run has no run-value document" is a new record: kept in
-   the memo, read by the executor, which binds the twin to its original's rows (`hold_bound`), with filter twins kept
-   out of column projection and demand.
+   What is left is a check at run time, built as decision 0611. With no run-value document, each filter is its
+   original, and the rows themselves show whether one reached them. The executor reads a filter's source against
+   its bounds, and where every row passes holds the filter as its source (`hold_as`): no new record, and memo hits
+   need nothing apart. On `all` the cross part's twins (`rf_attr`'s 811 K rows, `rf_plain_attr`'s 596 K,
+   `rf_import_target`'s) and plain copies (`reference_edge` as `rf_edge`, 438 K rows) are read as their sources.
+   What keeps `rr_narrow_` in its name is no copy: a chunk's `rr_narrow_rf_import_target`, which derives no
+   `rf_import_target` beside it, and the demand set `dm_rr_narrow_rf_attr_2`.
 
 4. **An export is read where its chunks' rows lie.** `Exports::add` appends a chunk's part to the export's rows
    (`Rows::append_part`) under the export's life, in place of writing its rows again. A row given twice is marked
