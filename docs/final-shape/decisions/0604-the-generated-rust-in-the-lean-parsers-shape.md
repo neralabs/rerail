@@ -194,6 +194,10 @@ Implementer's choices:
     cache, then about 1.6 million failed lookups. Decision 0540 (step 5, the M3, 2026-11-21) recorded the same: a
     16z writer stands still while its waiters spin. Its step 4 (a block decoded by its SIMD group's lanes together)
     is the planned fix. It is that workstream's open step, not done here.
+  - Corrected at the merge of the hub (f1793ae112, 2026-11-22): the cause was not 0540's step 4 but the M3's
+    miscompiles of the cache's device code (G15: a slot index masked only by the header's count, and LZ4's
+    `dst + at - zext16(off)`), fixed on django-bugs (18367a7deb) and brought by the hub. After the merge the test
+    passes on the M3.
 - **New unit tests** in `bitlex_lex_rust`:
   - the records proof holds for JSON's grammar, and fails without the new error;
   - `without_lv`'s rewrites;
