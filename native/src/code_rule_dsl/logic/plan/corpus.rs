@@ -27,8 +27,8 @@ use crate::code_rule_dsl::logic::program_image::fields::{Edit, ProgramFields};
 use crate::code_rule_dsl::logic::rr::WORLD;
 // cratify: the corpus's base (`base`: the store and its selection, phase 0's observer, the programs combined, the
 // report) and the modules the language's root reads with it (`phase0`, `phases`, `combined`, `constants`, `reuse`,
-// `git`, `git_content`, `world`, `switches`, `import_closure`, `link`, `kept_link`, `analysis_history`, `inputs`,
-// `source_languages`, `test_store`) are rerail-rr-root's, under the language's root (`logic::rr`); this root
+// `git`, `git_content`, `world`, `switches`, `import_closure`, `link`, `kept_link`, `kept_texts`, `analysis_history`,
+// `inputs`, `source_languages`, `test_store`) are rerail-rr-root's, under the language's root (`logic::rr`); this root
 // re-exports them.
 pub use rerail_rr_root::code_rule_dsl::logic::plan::corpus::*;
 // cratify: the memo's modules (`memo`, `guests`, `hiding`, `exports`, `keptstats`, …) are rerail-corpus-memo's,

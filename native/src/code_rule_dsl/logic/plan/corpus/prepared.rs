@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 /// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155; 106: the
 /// decisions preparing made, decision 0269). It names the shipped pointer (`shipped_key`).
-const POINTER: u32 = crate::content_store::live_fact_schema(106);
+const POINTER: u32 = 106;
 
 /// The pointer's plan: the engine build, the grammar version and `key` (the program's texts, the dialect and the
 /// run's additions).
@@ -581,8 +581,8 @@ pub(super) fn record(store: &ContentStore, source: Option<SourceId>, text: Strin
     // The programs' texts (and the run's text, which the pointer is kept beside), by the store's writer in the run's
     // record; the pointer as kept facts, behind the run.
     let (packed, pieces) = program_text::pack(programs, Vec::new());
+    pointer::put(store, &text, key, &facts);
     store.record_held("the prepared program", vec![queued(key)], &(source, text, *key, packed), pieces, apply);
-    pointer::put(store, key, &facts);
 }
 
 
@@ -610,101 +610,28 @@ fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_stor
 
 /// The pointer as kept facts of the store (t33 step 2, decisions 0104 and 0456): each of its relations
 /// (`prepared_*`, `prepared_program`) a kept relation of the store's prepared programs' space, the program's rows one
-/// partition (its pointer plan's: the engine build, the grammar version and `key`). A value is two words: its tag
-/// (as `program_facts` writes it: 0 a number, 1 a string, 2 to 4 a branded atom's class) and its number, atom or
-/// string's atom. It stood in a facts-memo entry under the program text's source (decision 0052).
+/// partition (its pointer plan's: the engine build, the grammar version and `key`), held by the run's text's source
+/// and the pointer plan (`kept_entry`), as the facts-memo entry it stood in (decision 0052) was.
 mod pointer {
-    use super::{Facts, Value};
-    use crate::content_store::ContentStore;
-    use crate::content_store::kept_facts::{KeptPut, KeptWhat};
-    use crate::code_rule_dsl::logic::front::ast::{Branded, Class};
-    use rerail_blocks::kept::KeptRead as _;
-    use sha2::{Digest as _, Sha256};
-    use std::collections::BTreeSet;
+    use super::Facts;
+    use crate::code_rule_dsl::logic::plan::kept_entry::Entries;
+    use crate::content_store::{ContentStore, HashKey};
 
-    fn space() -> [u8; 32] {
-        Sha256::digest(b"rerail.prepared-space/v1").into()
-    }
+    const ENTRIES: Entries = Entries::new("rerail.prepared");
 
-    fn ident(rel: &str) -> [u8; 32] {
-        Sha256::digest(format!("rerail.prepared/v1\0{rel}").as_bytes()).into()
-    }
-
-    /// The program `key`'s partition.
-    fn part(key: &[u8; 32]) -> i64 {
-        let plan = super::pointer_plan(key).plans[0];
-        i64::from_le_bytes(plan[..8].try_into().expect("8 bytes")) & i64::MAX
+    fn plan(key: &[u8; 32]) -> [u8; 32] {
+        super::pointer_plan(key).plans[0]
     }
 
     /// The program `key`'s pointer, as kept; `None` when the store keeps none (or one that no longer reads).
     pub(super) fn get(store: &ContentStore, key: &[u8; 32]) -> Option<Facts> {
-        let kept = store.kept_space(&space()).ok()??;
-        let chain = kept.view();
-        let part = part(key);
-        let mut facts = Facts::new();
-        for entry in chain.all().filter(|e| e.key.part == part && *e.key.ident == ident(e.key.rel)) {
-            let width = entry.types.len() / 2;
-            let mut rows = Vec::with_capacity(entry.rows.len());
-            for i in 0..entry.rows.len() {
-                let words = entry.row(i);
-                let mut row = Vec::with_capacity(width);
-                for pair in words.chunks_exact(2) {
-                    row.push(match pair[0] {
-                        0 => Value::Int(pair[1]),
-                        1 => Value::Str(store.atom_value(u32::try_from(pair[1]).ok()?).ok()??.into()),
-                        tag @ 2..=4 => Value::Branded(Branded { class: [Class::Name, Class::Kind, Class::Field][usize::try_from(tag - 2).ok()?], atom: u32::try_from(pair[1]).ok()? }),
-                        _ => return None,
-                    });
-                }
-                rows.push(row.into());
-            }
-            facts.insert(entry.key.rel.to_owned(), rows);
-        }
-        (!facts.is_empty()).then_some(facts)
+        ENTRIES.get(store, Entries::part(&plan(key)))
     }
 
-    /// Keeps `facts` as the program `key`'s pointer, behind the run (the store's writer): its relations' rows, and
-    /// the relations it kept before and has no longer, gone. Nothing when a relation's rows differ in width or the
-    /// store refuses its strings (the next run prepares again).
-    pub(super) fn put(store: &ContentStore, key: &[u8; 32], facts: &Facts) {
-        let part = part(key);
-        let strings: Vec<&str> = facts.values().flatten().flat_map(|r| r.iter()).filter_map(|v| if let Value::Str(s) = v { Some(s.as_ref()) } else { None }).collect();
-        let Ok(atoms) = store.intern_atoms(&strings) else { return };
-        let mut atoms = atoms.into_iter();
-        let mut puts = Vec::new();
-        for (rel, rows) in facts {
-            let Some(width) = rows.first().map(|r| r.len()) else { continue };
-            if rows.iter().any(|r| r.len() != width) {
-                return;
-            }
-            let mut flat = Vec::with_capacity(rows.len() * width * 2);
-            for row in rows {
-                for v in row.iter() {
-                    match v {
-                        Value::Int(i) => flat.extend([0, *i]),
-                        Value::Str(_) => flat.extend([1, i64::from(atoms.next().expect("an atom a string"))]),
-                        Value::Branded(b) => flat.extend([2 + b.class as i64, i64::from(b.atom)]),
-                    }
-                }
-            }
-            let mut h = Sha256::new();
-            for v in &flat {
-                h.update(v.to_le_bytes());
-            }
-            let digest = u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes"));
-            let types = b"ii".repeat(width);
-            puts.push(KeptPut { rel: rel.clone(), ident: ident(rel), part, digest, reads: Vec::new(), types: types.clone(), what: KeptWhat::Picked(Box::new(crate::content_store::kept_facts::BlockFlat::of_rows(&flat, types.len(), true))) });
-        }
-        // What the partition kept before that this program has no rows of.
-        let written: BTreeSet<&str> = puts.iter().map(|p| p.rel.as_str()).collect();
-        if let Ok(Some(kept)) = store.kept_space(&space()) {
-            let chain = kept.view();
-            let before: Vec<(String, Vec<u8>)> = chain.all().filter(|e| e.key.part == part && !written.contains(e.key.rel)).map(|e| (e.key.rel.to_owned(), e.types.to_vec())).collect();
-            for (rel, types) in before {
-                puts.push(KeptPut { ident: ident(&rel), rel, part, digest: 0, reads: Vec::new(), types, what: KeptWhat::Gone });
-            }
-        }
-        store.queue_kept(space(), puts);
+    /// Keeps `facts` as the program `key`'s pointer, held by the source of the run's `text`, behind the run.
+    pub(super) fn put(store: &ContentStore, text: &str, key: &[u8; 32], facts: &Facts) {
+        let plan = plan(key);
+        let holder = HashKey::sha256(text.as_bytes()).sha256_bytes().expect("a sha256 key");
+        ENTRIES.put(store, Entries::part(&plan), holder, Some(plan), facts);
     }
-
 }

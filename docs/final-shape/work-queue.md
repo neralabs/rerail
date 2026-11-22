@@ -10371,3 +10371,12 @@ Places off the tape with span rows only, and the measure's rows in blocks (`note
   commits applied, so its hub merges' older text (`SemijoinRows` without statistics) does not come back.
 - **The kept texts** live beside the combine in ours' `corpus/base.rs` (rerail-rr-root).
 - **The watched constants** are on ours' statkeep column, and theirs' test is in ours' tests file.
+
+### Q485. Roll-up 64 (Typing-support-final-shape 56127ea208 onto Pulling-it-all-together): what the merge chose
+
+t33 steps 3, 6 and 8: the facts memo, fact statistics and compiled plans as kept facts (`notes/roll-up-64-typing.md`):
+- **Git's merge where the base is real**: one merge base, so the files both sides changed are git's three-way merge.
+  Rebuilding them from theirs' commits left out its hub merge's own lines (`KeptGather::folded`, `holder_put` on blocks).
+- **`kept_entry`** is rerail-plan-search's, as theirs mounts it.
+- **The crate DAG check's hooks** are only functions in files with a `OnceLock`. Two stale entries leave its list.
+- **rr-align's merge fix**, missed in roll-up 63: an exported file-local output is the cross part's to write.

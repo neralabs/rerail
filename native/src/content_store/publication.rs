@@ -9,12 +9,11 @@ use super::relationships::{
 };
 use super::rows::{hash_params, validate_relative_path};
 use super::{
-    BusyRetries, CandidateClause, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
-    OverlayFilePublication, PublicationResult, STRING_CLAUSE_KEY, STRING_PATH, SourceId,
-    StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId,
+    BusyRetries, ContentStore, HashKey, MAX_PUBLICATION_BATCH, OverlayFilePublication,
+    PublicationResult, STRING_PATH, SourceId, StoreError, StoreResult, StoredFile, TapeId,
+    TapePayload, WorkspaceId,
 };
 use rayon::prelude::*;
-use rusqlite::limits::Limit;
 use rusqlite::{Connection, TransactionBehavior, params};
 #[cfg(any(test, feature = "test-hooks"))]
 use std::cell::RefCell;
@@ -134,7 +133,6 @@ impl ContentStore {
                 })
                 .collect::<StoreResult<Vec<_>>>()
         })?;
-        let candidate_identities = publication_candidate_identities(publications);
         // Path identities are hashed once, before any transaction takes the write lock.
         let path_hashes = publications
             .iter()
@@ -145,7 +143,7 @@ impl ContentStore {
                 )
             })
             .collect::<Vec<_>>();
-        let (existing, initial_path_ids, initial_interned) = {
+        let (existing, initial_path_ids) = {
             let mut connection = self
                 .connection
                 .lock()
@@ -154,9 +152,8 @@ impl ContentStore {
                 super::connection::begin(&mut connection, TransactionBehavior::Deferred)?;
             let existing = stored_object_identities(&transaction, &identities)?;
             let path_ids = stored_path_ids(&transaction, &path_hashes)?;
-            let interned = resolve_publication_identities(&transaction, &candidate_identities)?;
             self.commit(transaction)?;
-            (existing, path_ids, interned)
+            (existing, path_ids)
         };
         let initial_objects = existing.clone();
         // Each source and tape not stored yet is placed, as it is, in the pass's segment (`place_missing_objects`).
@@ -174,15 +171,6 @@ impl ContentStore {
             .iter()
             .filter(|item| item.0.tape.is_some() && item.5.is_none())
             .count();
-        let expected_catalogs = candidate_identities
-            .iter()
-            .map(|(catalog, _)| *catalog)
-            .collect::<BTreeSet<_>>()
-            .len();
-        let expected_clauses = candidate_identities
-            .iter()
-            .filter(|(_, candidate)| candidate.is_some())
-            .count();
         let expected_paths = publications
             .iter()
             .map(|publication| publication.path)
@@ -191,7 +179,7 @@ impl ContentStore {
         let mut transaction_nanoseconds = 0_u64;
         let mut object_transaction_nanoseconds = 0_u64;
         let mut relationship_transaction_nanoseconds = 0_u64;
-        let mut read_data_statements = 3_usize;
+        let mut read_data_statements = 2_usize;
         let mut data_statements = 0_usize;
         let mut max_data_statements_per_pass = 0_usize;
         // The initial read snapshot executes BEGIN and COMMIT separately from its data statements.
@@ -204,19 +192,16 @@ impl ContentStore {
                 source.is_some() && (prepared[index].0.tape.is_none() || tape.is_some())
             })
             && initial_path_ids.len() == expected_paths
-            && initial_interned.catalogs.len() == expected_catalogs
-            && initial_interned.clauses.len() == expected_clauses
             && publications
                 .iter()
                 .all(|publication| publication.aliases.is_empty());
-        let (stored_objects, path_ids, known_interned) = if initial_complete {
-            (initial_objects, initial_path_ids, initial_interned)
+        let (stored_objects, path_ids) = if initial_complete {
+            (initial_objects, initial_path_ids)
         } else {
             #[cfg(any(test, feature = "test-hooks"))]
             run_publication_test_hook(&AFTER_PUBLICATION_READ_HOOK);
             let mut current_objects = initial_objects;
             let mut current_path_ids = initial_path_ids;
-            let mut current_interned = initial_interned;
             loop {
                 if cancelled() {
                     return Err(StoreError::Invalid(
@@ -233,7 +218,6 @@ impl ContentStore {
                     &prepared,
                     &current_objects,
                     &current_path_ids,
-                    &current_interned,
                 )?;
                 // The loop above polls cancellation before the first attempt; a retry polls again.
                 let mut retry = false;
@@ -284,7 +268,7 @@ impl ContentStore {
                     .iter()
                     .map(|item| (item.0, item.1, item.4))
                     .collect::<Vec<_>>();
-                let (stored_objects, path_ids, known_interned) = {
+                let (stored_objects, path_ids) = {
                     let mut connection = self
                         .connection
                         .lock()
@@ -294,12 +278,10 @@ impl ContentStore {
                     let stored_objects =
                         stored_object_identities(&transaction, &corrected_identities)?;
                     let path_ids = stored_path_ids(&transaction, &path_hashes)?;
-                    let known_interned =
-                        resolve_publication_identities(&transaction, &candidate_identities)?;
                     self.commit(transaction)?;
-                    (stored_objects, path_ids, known_interned)
+                    (stored_objects, path_ids)
                 };
-                read_data_statements += 3;
+                read_data_statements += 2;
                 transaction_statements += 2;
                 let complete = stored_objects
                     .iter()
@@ -307,11 +289,9 @@ impl ContentStore {
                     .all(|(index, (source, tape))| {
                         source.is_some() && (prepared[index].0.tape.is_none() || tape.is_some())
                     })
-                    && path_ids.len() == expected_paths
-                    && known_interned.catalogs.len() == expected_catalogs
-                    && known_interned.clauses.len() == expected_clauses;
+                    && path_ids.len() == expected_paths;
                 if complete {
-                    break (stored_objects, path_ids, known_interned);
+                    break (stored_objects, path_ids);
                 }
                 if reconciliation_passes >= 8 {
                     return Err(StoreError::Invalid(
@@ -321,7 +301,6 @@ impl ContentStore {
                 }
                 current_objects = stored_objects;
                 current_path_ids = path_ids;
-                current_interned = known_interned;
             }
         };
         let relationship_hashes = prepared
@@ -353,25 +332,10 @@ impl ContentStore {
             });
         }
 
-        let variable_limit = usize::try_from(
-            self.connection
-                .lock()
-                .expect("content store connection unavailable")
-                .limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER)?,
-        )
-        .map_err(|_| StoreError::Invalid("SQLite variable limit is negative".to_owned()))?;
-        let relationship_pass = prepare_relationship_pass(
-            workspace_id,
-            &overlay_rows,
-            &known_interned,
-            variable_limit,
-        )?;
+        let relationship_pass = prepare_relationship_pass(workspace_id, &overlay_rows)?;
         #[cfg(any(test, feature = "test-hooks"))]
         run_publication_test_hook(&BEFORE_RELATIONSHIP_WRITE_HOOK);
-        // The results' bytes, as they are, in one segment of the pass's (decision 0450 step 2): numbered in its
-        // transaction, named once it commits; a pass that does not commit leaves no file.
-        let mut placing = Placing::write(&self.database_path, &relationship_pass.result_bytes(), self.connection.flush())?;
-        let (elapsed, statement_count, current, seg) = retry_busy(busy, || {
+        let (elapsed, statement_count, current) = retry_busy(busy, || {
             if cancelled() {
                 return Err(StoreError::Invalid(
                     "overlay publication was cancelled".to_owned(),
@@ -391,18 +355,14 @@ impl ContentStore {
                 &overlay_rows,
                 &path_hashes,
                 &relationship_hashes,
-                &candidate_identities,
-                &known_interned,
             )? {
                 return Ok((
                     u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                     0,
                     false,
-                    None,
                 ));
             }
-            let seg = placing.number(&transaction)?;
-            execute_relationship_pass(&transaction, &relationship_pass, &placing, seg)?;
+            execute_relationship_pass(&transaction, &relationship_pass)?;
             let statement_count = relationship_pass.statement_count();
             if cancelled() {
                 return Err(StoreError::Invalid(
@@ -414,10 +374,8 @@ impl ContentStore {
                 u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                 statement_count,
                 true,
-                seg,
             ))
         })?;
-        placing.name(seg)?;
         if !current {
             if stale_relationship_retries >= 8 {
                 return Err(StoreError::Invalid(
@@ -439,15 +397,6 @@ impl ContentStore {
         max_data_statements_per_pass = max_data_statements_per_pass.max(statement_count);
         transaction_statements += 2;
         reconciliation_passes += 1;
-        if publications
-            .iter()
-            .any(|publication| !publication.local_results.is_empty())
-        {
-            self.local_result_cache
-                .lock()
-                .expect("local result cache mutex poisoned")
-                .clear();
-        }
         Ok(PublicationResult {
             files: stored,
             retries: busy.retries,
@@ -485,8 +434,6 @@ struct PreparedObjectPass {
     hashes_json: String,
     strings_json: String,
     paths_json: String,
-    catalogs_json: String,
-    checks_json: String,
     aliases_json: String,
     source_sql: String,
     source_values: Vec<rusqlite::types::Value>,
@@ -589,13 +536,10 @@ fn prepare_object_pass(
     prepared: &[PreparedOverlayPublication<'_>],
     stored_objects: &[(Option<SourceId>, Option<TapeId>)],
     known_paths: &HashMap<String, i64>,
-    known_interned: &PublicationInternCache,
 ) -> StoreResult<PreparedObjectPass> {
     let mut hashes = BTreeSet::new();
     let mut strings = BTreeMap::<(i64, String), HashKey>::new();
     let mut paths = BTreeMap::<String, HashKey>::new();
-    let mut catalogs = BTreeSet::new();
-    let mut clauses = BTreeMap::<(HashKey, HashKey, String), HashKey>::new();
     let mut aliases = BTreeSet::<(HashKey, HashKey)>::new();
     let mut source_rows = Vec::new();
     let mut tape_rows = Vec::new();
@@ -615,43 +559,9 @@ fn prepare_object_pass(
             strings.insert((STRING_PATH, publication.path.to_owned()), path_hash);
             paths.insert(publication.path.to_owned(), path_hash);
         }
-        let catalog = publication.catalog.key();
-        let known_catalog = known_interned.catalogs.get(&catalog).copied();
-        if known_catalog.is_none() {
-            hashes.insert(catalog);
-            catalogs.insert(catalog);
-        }
         for alias in publication.aliases {
             hashes.insert(*alias);
             aliases.insert((*alias, *source_hash));
-        }
-        for result in publication.local_results {
-            hashes.insert(result.context);
-        }
-        let candidates = publication.candidates.iter().chain(
-            publication
-                .local_results
-                .iter()
-                .map(|result| &result.candidate),
-        );
-        for candidate in candidates {
-            let known = known_catalog.is_some_and(|catalog_id| {
-                known_interned.clauses.contains_key(&(
-                    catalog_id,
-                    candidate.rule,
-                    candidate.clause.clone(),
-                ))
-            });
-            if !known {
-                hashes.insert(candidate.rule);
-                let clause_hash = HashKey::sha256(candidate.clause.as_bytes());
-                hashes.insert(clause_hash);
-                strings.insert((STRING_CLAUSE_KEY, candidate.clause.clone()), clause_hash);
-                clauses.insert(
-                    (catalog, candidate.rule, candidate.clause.clone()),
-                    clause_hash,
-                );
-            }
         }
         if source_id.is_none() {
             let place = source_frame.ok_or(StoreError::Vanished("source"))?;
@@ -721,24 +631,6 @@ fn prepare_object_pass(
             .map(|(path, hash)| serde_json::json!([path, hash_json(hash)]))
             .collect::<Vec<_>>(),
         "path identities",
-    )?;
-    let catalogs_json = encode_json(
-        &catalogs.into_iter().map(hash_json).collect::<Vec<_>>(),
-        "catalog identities",
-    )?;
-    let checks_json = encode_json(
-        &clauses
-            .into_iter()
-            .map(|((catalog, rule, clause), clause_hash)| {
-                serde_json::json!([
-                    hash_json(catalog),
-                    hash_json(rule),
-                    clause,
-                    hash_json(clause_hash)
-                ])
-            })
-            .collect::<Vec<_>>(),
-        "check identities",
     )?;
     let aliases_json = encode_json(
         &aliases
@@ -900,8 +792,6 @@ fn prepare_object_pass(
         hashes_json,
         strings_json,
         paths_json,
-        catalogs_json,
-        checks_json,
         aliases_json,
         source_sql,
         source_values,
@@ -949,33 +839,6 @@ fn execute_object_pass(transaction: &Connection, pass: &PreparedObjectPass) -> S
          CROSS JOIN strings s ON s.domain_id=?2 AND s.content_hash_id=h.hash_id AND s.value=i.path_value",
     )?.execute(params![pass.paths_json, STRING_PATH])?;
     statements += 1;
-    transaction.prepare_cached(
-        "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) algorithm,\
-         CAST(json_extract(value,'$[1]') AS INTEGER) lane0,CAST(json_extract(value,'$[2]') AS INTEGER) lane1,\
-         CAST(json_extract(value,'$[3]') AS INTEGER) lane2,CAST(json_extract(value,'$[4]') AS INTEGER) lane3 FROM json_each(?1)) \
-         INSERT OR IGNORE INTO candidate_catalogs(identity_hash_id) SELECT h.hash_id FROM input i \
-         JOIN hashes h INDEXED BY hashes_by_prefix ON h.algorithm_id=i.algorithm AND h.lane0=i.lane0 \
-         AND h.lane1=i.lane1 AND h.lane2=i.lane2 AND h.lane3=i.lane3",
-    )?.execute([&pass.catalogs_json])?;
-    statements += 1;
-    transaction.prepare_cached(
-        "WITH input AS (SELECT \
-         CAST(json_extract(value,'$[0][0]') AS INTEGER) ca,CAST(json_extract(value,'$[0][1]') AS INTEGER) c0,\
-         CAST(json_extract(value,'$[0][2]') AS INTEGER) c1,CAST(json_extract(value,'$[0][3]') AS INTEGER) c2,CAST(json_extract(value,'$[0][4]') AS INTEGER) c3,\
-         CAST(json_extract(value,'$[1][0]') AS INTEGER) pa,CAST(json_extract(value,'$[1][1]') AS INTEGER) p0,\
-         CAST(json_extract(value,'$[1][2]') AS INTEGER) p1,CAST(json_extract(value,'$[1][3]') AS INTEGER) p2,CAST(json_extract(value,'$[1][4]') AS INTEGER) p3,\
-         json_extract(value,'$[2]') clause_value,CAST(json_extract(value,'$[3][0]') AS INTEGER) sa,\
-         CAST(json_extract(value,'$[3][1]') AS INTEGER) s0,CAST(json_extract(value,'$[3][2]') AS INTEGER) s1,\
-         CAST(json_extract(value,'$[3][3]') AS INTEGER) s2,CAST(json_extract(value,'$[3][4]') AS INTEGER) s3 FROM json_each(?1)) \
-         INSERT OR IGNORE INTO candidate_checks(catalog_id,policy_hash_id,check_string_id) \
-         SELECT c.catalog_id,ph.hash_id,s.string_id FROM input i \
-         JOIN hashes ch INDEXED BY hashes_by_prefix ON ch.algorithm_id=i.ca AND ch.lane0=i.c0 AND ch.lane1=i.c1 AND ch.lane2=i.c2 AND ch.lane3=i.c3 \
-         JOIN candidate_catalogs c ON c.identity_hash_id=ch.hash_id \
-         JOIN hashes ph INDEXED BY hashes_by_prefix ON ph.algorithm_id=i.pa AND ph.lane0=i.p0 AND ph.lane1=i.p1 AND ph.lane2=i.p2 AND ph.lane3=i.p3 \
-         JOIN hashes sh INDEXED BY hashes_by_prefix ON sh.algorithm_id=i.sa AND sh.lane0=i.s0 AND sh.lane1=i.s1 AND sh.lane2=i.s2 AND sh.lane3=i.s3 \
-         JOIN strings s ON s.domain_id=?2 AND s.content_hash_id=sh.hash_id AND s.value=i.clause_value",
-    )?.execute(params![pass.checks_json, STRING_CLAUSE_KEY])?;
-    statements += 1;
     transaction
         .prepare_cached(&pass.source_sql)?
         .execute(rusqlite::params_from_iter(pass.source_values.iter()))?;
@@ -1018,121 +881,6 @@ fn execute_object_pass(transaction: &Connection, pass: &PreparedObjectPass) -> S
     Ok(statements)
 }
 
-pub(super) type PublicationCandidateIdentity = (HashKey, Option<CandidateClause>);
-
-fn publication_candidate_identities(
-    publications: &[OverlayFilePublication<'_>],
-) -> Vec<PublicationCandidateIdentity> {
-    let mut identities =
-        BTreeMap::<(HashKey, Option<(HashKey, String)>), PublicationCandidateIdentity>::new();
-    for publication in publications {
-        let catalog = publication.catalog.key();
-        identities.entry((catalog, None)).or_insert((catalog, None));
-        for candidate in publication.candidates.iter().chain(
-            publication
-                .local_results
-                .iter()
-                .map(|result| &result.candidate),
-        ) {
-            let key = (candidate.rule, candidate.clause.clone());
-            identities
-                .entry((catalog, Some(key)))
-                .or_insert_with(|| (catalog, Some(candidate.clone())));
-        }
-    }
-    identities.into_values().collect()
-}
-
-pub(super) fn resolve_publication_identities(
-    connection: &Connection,
-    identities: &[PublicationCandidateIdentity],
-) -> StoreResult<PublicationInternCache> {
-    let input = identities
-        .iter()
-        .map(|(catalog, candidate)| {
-            let rule = candidate.as_ref().map(|candidate| candidate.rule);
-            serde_json::json!([
-                catalog.algorithm,
-                catalog.lanes[0],
-                catalog.lanes[1],
-                catalog.lanes[2],
-                catalog.lanes[3],
-                rule.map(|key| key.algorithm),
-                rule.map(|key| key.lanes[0]),
-                rule.map(|key| key.lanes[1]),
-                rule.map(|key| key.lanes[2]),
-                rule.map(|key| key.lanes[3]),
-                candidate
-                    .as_ref()
-                    .map(|candidate| candidate.clause.as_str()),
-            ])
-        })
-        .collect::<Vec<_>>();
-    let encoded = serde_json::to_string(&input).map_err(|error| {
-        StoreError::Invalid(format!("publication identities cannot be encoded: {error}"))
-    })?;
-    let mut statement = connection.prepare_cached(
-        r#"WITH input AS (
-             SELECT CAST(key AS INTEGER) ordinal,
-               CAST(json_extract(value,'$[0]') AS INTEGER) catalog_algorithm,
-               CAST(json_extract(value,'$[1]') AS INTEGER) catalog_lane0,
-               CAST(json_extract(value,'$[2]') AS INTEGER) catalog_lane1,
-               CAST(json_extract(value,'$[3]') AS INTEGER) catalog_lane2,
-               CAST(json_extract(value,'$[4]') AS INTEGER) catalog_lane3,
-               CAST(json_extract(value,'$[5]') AS INTEGER) rule_algorithm,
-               CAST(json_extract(value,'$[6]') AS INTEGER) rule_lane0,
-               CAST(json_extract(value,'$[7]') AS INTEGER) rule_lane1,
-               CAST(json_extract(value,'$[8]') AS INTEGER) rule_lane2,
-               CAST(json_extract(value,'$[9]') AS INTEGER) rule_lane3,
-               json_extract(value,'$[10]') clause_value
-             FROM json_each(?1)
-           )
-           SELECT i.ordinal,c.catalog_id,
-             CASE WHEN i.rule_algorithm IS NULL THEN NULL ELSE (
-               SELECT cc.check_id FROM candidate_checks cc
-               JOIN strings s ON s.string_id=cc.check_string_id
-               WHERE cc.catalog_id=c.catalog_id AND cc.policy_hash_id=ph.hash_id
-                 AND s.domain_id=?2 AND s.value=i.clause_value LIMIT 1
-             ) END
-           FROM input i
-           CROSS JOIN hashes ch INDEXED BY hashes_by_prefix
-             ON ch.algorithm_id=i.catalog_algorithm AND ch.lane0=i.catalog_lane0
-             AND ch.lane1=i.catalog_lane1 AND ch.lane2=i.catalog_lane2 AND ch.lane3=i.catalog_lane3
-           CROSS JOIN candidate_catalogs c ON c.identity_hash_id=ch.hash_id
-           LEFT JOIN hashes ph INDEXED BY hashes_by_prefix
-             ON ph.algorithm_id=i.rule_algorithm AND ph.lane0=i.rule_lane0
-             AND ph.lane1=i.rule_lane1 AND ph.lane2=i.rule_lane2 AND ph.lane3=i.rule_lane3
-           ORDER BY i.ordinal"#,
-    )?;
-    let mut rows = statement.query(params![encoded, STRING_CLAUSE_KEY])?;
-    let mut resolved = PublicationInternCache::default();
-    while let Some(row) = rows.next()? {
-        let ordinal: i64 = row.get(0)?;
-        let ordinal = usize::try_from(ordinal).map_err(|_| {
-            StoreError::Corrupt("publication identity ordinal is negative".to_owned())
-        })?;
-        let catalog_id: i64 = row.get(1)?;
-        let Some((catalog, candidate)) = identities.get(ordinal) else {
-            return Err(StoreError::Corrupt(
-                "publication identity ordinal is out of range".to_owned(),
-            ));
-        };
-        resolved.catalogs.insert(*catalog, catalog_id);
-        if let (Some(candidate), Some(check_id)) = (candidate, row.get::<_, Option<i64>>(2)?) {
-            resolved.clauses.insert(
-                (catalog_id, candidate.rule, candidate.clause.clone()),
-                check_id,
-            );
-        }
-    }
-    Ok(resolved)
-}
-
-#[derive(Clone, Default, Eq, PartialEq)]
-pub(super) struct PublicationInternCache {
-    pub(super) catalogs: BTreeMap<HashKey, i64>,
-    pub(super) clauses: BTreeMap<(i64, HashKey, String), i64>,
-}
 
 pub(super) fn stored_path_ids(
     connection: &Connection,

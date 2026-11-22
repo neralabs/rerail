@@ -249,6 +249,47 @@ impl KeptPut {
 /// a live program's record names (`collect_kept_facts`). No relation's name starts with a NUL.
 pub const READERS: &str = "\0readers";
 
+/// The relation a partition's holder is kept under (t33 step 3): one row, the SHA-256 key of the source that holds
+/// the space's entries of that partition, and the plan they were made under (zeros for none), four words each.
+/// Collection drops a held partition once the store keeps no source of that key, or once its plan is dead
+/// (`collect_kept_facts`), as the facts memo's rows died with their source or their plan: a memo entry kept as kept
+/// facts lives exactly as long as the memo row it replaced would have.
+///
+/// A holder is put with its partition's whole entry: the writer drops what else the partition kept (`write_chain`),
+/// and a wave's earlier puts of it (`KeptGather::add`), so its user writes an entry without reading what it was.
+pub const HOLDER: &str = "\0holder";
+
+fn holder_ident() -> [u8; 32] {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(b"rerail.kept-facts/holder/v1").into()
+}
+
+/// The put that makes the source of SHA-256 key `source`, and `plan`, partition `part`'s holder in its space.
+pub fn holder_put(part: i64, source: [u8; 32], plan: Option<[u8; 32]>) -> KeptPut {
+    let mut row = BlockFlat::new(1, 8, true);
+    for (c, w) in source.as_chunks::<8>().0.iter().chain(plan.unwrap_or([0; 32]).as_chunks::<8>().0).enumerate() {
+        row.put(0, c, i64::from_le_bytes(*w));
+    }
+    let digest = u64::from_le_bytes(source[..8].try_into().expect("8 bytes")) ^ plan.map_or(0, |p| u64::from_le_bytes(p[..8].try_into().expect("8 bytes")));
+    KeptPut { rel: HOLDER.into(), ident: holder_ident(), part, digest, reads: Vec::new(), types: b"iiiiiiii".to_vec(), what: KeptWhat::Picked(Box::new(row)) }
+}
+
+/// The source key and plan a holder entry names.
+fn holder_of(entry: &rerail_blocks::kept::Kept<'_>) -> Option<([u8; 32], Option<[u8; 32]>)> {
+    if entry.rows.len() != 1 || entry.types.len() != 8 {
+        return None;
+    }
+    let digest = |at: usize| {
+        let mut d = [0u8; 32];
+        for (c, w) in d.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+            *w = entry.rows.get(0, at + c).to_le_bytes();
+        }
+        d
+    };
+    let plan = digest(4);
+    Some((digest(0), (plan != [0; 32]).then_some(plan)))
+}
+
 /// A reader record's put: program `key`'s `idents`, sorted, as rows of four words, digested.
 fn readers_put(key: [u8; 32], idents: &BTreeSet<[u8; 32]>) -> KeptPut {
     use sha2::Digest as _;
@@ -665,6 +706,17 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
             return Ok(Some(Vec::new()));
         }
     }
+    // A held partition is put whole (`HOLDER`): what else it kept goes.
+    let held: BTreeSet<i64> = puts.iter().filter(|p| p.rel == HOLDER && !matches!(p.what, KeptWhat::Gone)).map(|p| p.part).collect();
+    if !held.is_empty() {
+        let named: HashSet<(&str, [u8; 32], i64)> = puts.iter().map(|p| (p.rel.as_str(), p.ident, p.part)).collect();
+        let gone: Vec<KeptPut> = chain
+            .all()
+            .filter(|e| held.contains(&e.key.part) && e.key.rel != READERS && !named.contains(&(e.key.rel, *e.key.ident, e.key.part)))
+            .map(|e| KeptPut { rel: e.key.rel.to_owned(), ident: *e.key.ident, part: e.key.part, digest: 0, reads: Vec::new(), types: e.types.to_vec(), what: KeptWhat::Gone })
+            .collect();
+        puts.extend(gone);
+    }
     let put_keys: HashSet<FactKey<'_>> = puts.iter().map(KeptPut::key).collect();
     // The files merged into this one: the newest ones, each weighing no more than twice the bytes joining it.
     let mut from = old.files.len();
@@ -824,15 +876,30 @@ fn held_bytes(p: &KeptPut) -> usize {
 }
 
 impl KeptGather {
+    /// `puts` of `space` folded as one wave's are (`add`): each key once.
+    fn folded(space: [u8; 32], puts: Vec<KeptPut>) -> Vec<KeptPut> {
+        let mut g = KeptGather::default();
+        g.add(space, puts);
+        g.spaces.remove(&space).map(|(list, _)| list).unwrap_or_default()
+    }
+
     /// `space`'s puts, each key once: a later put replaces an earlier one of its key, but a retag (`Reads`) keeps the
     /// rows an earlier put of this wave gave it, and their digest, with its reads. A retag has no digest of its own
     /// (its rows are the entry's): taken over, it gave a relation handed off with its rows (its digest known then) and
     /// retagged at the run's end digest 0, and every reader of it ran again in the next run. A program's reader record
     /// joins its earlier one, as the space's record only grows (decision 0401 step 8): each names what its own puts
     /// did, and replaced, the wave's last record was the program's, so the next run asked the others' entries again,
-    /// and wrote its record (a warm run's write).
+    /// and wrote its record (a warm run's write). A held partition is put whole (`HOLDER`): its earlier puts of this
+    /// wave go with it, its reader records kept.
     fn add(&mut self, space: [u8; 32], puts: Vec<KeptPut>) {
         let (list, at) = self.spaces.entry(space).or_default();
+        let held: BTreeSet<i64> = puts.iter().filter(|p| p.rel == HOLDER && !matches!(p.what, KeptWhat::Gone)).map(|p| p.part).collect();
+        if !held.is_empty() && list.iter().any(|p| held.contains(&p.part) && p.rel != READERS) {
+            let (kept, dropped): (Vec<KeptPut>, Vec<KeptPut>) = std::mem::take(list).into_iter().partition(|p| !held.contains(&p.part) || p.rel == READERS);
+            self.bytes -= dropped.iter().map(held_bytes).sum::<usize>();
+            *list = kept;
+            *at = list.iter().enumerate().map(|(i, p)| ((p.rel.clone(), p.ident, p.part), i)).collect();
+        }
         for p in puts {
             self.bytes += held_bytes(&p);
             let key = (p.rel.clone(), p.ident, p.part);
@@ -931,8 +998,9 @@ impl super::ContentStore {
         if self.gather("kept facts", KeptGather::default, |g| g.add(space, puts.take().expect("the puts"))) {
             return;
         }
-        // Outside a run's waves (or with no writer): its own job.
-        let puts = puts.take().expect("the puts");
+        // Outside a run's waves (or with no writer): its own job, its puts folded as a wave's are (a later put of a key
+        // replaces an earlier one, `KeptGather::add`), as the writer refuses a key put twice.
+        let puts = KeptGather::folded(space, puts.take().expect("the puts"));
         let held: usize = puts.iter().map(held_bytes).sum();
         let write = KeptWrite { spaces: vec![(space, puts)], staged: None };
         self.write_back_syms(super::write_back::Syms::Mapped, "kept facts", held, vec![(space_key(&space), None)], super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
@@ -947,6 +1015,7 @@ impl super::ContentStore {
         if puts.is_empty() {
             return;
         }
+        let puts = KeptGather::folded(space, puts);
         let held: usize = puts.iter().map(held_bytes).sum();
         let write = KeptWrite { spaces: vec![(space, puts)], staged: None };
         self.write_back_syms(super::write_back::Syms::Mapped, what, held, vec![(space_key(&space), None)], super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
@@ -1006,7 +1075,8 @@ impl super::ContentStore {
     /// program (a plan the keep decision marked dead, `corpus_plans.live = 0`) written again as one base without the
     /// entries only dead programs' records name, nor those records; a space left with none is dropped. An entry no
     /// record names (an older build's, a session's) stays; so does one a live program's record names, and one of a
-    /// program the store has not decided on. Run under the collection's lease, before the dead plans' rows go. The
+    /// program the store has not decided on. Each partition whose holder (`HOLDER`) the store no longer keeps, or whose
+    /// plan is dead, goes too, with its holder. Run under the collection's lease, before the dead plans' rows go. The
     /// spaces rewritten or dropped.
     pub fn collect_kept_facts(&self) -> StoreResult<usize> {
         let (dead, spaces): (HashSet<[u8; 32]>, Vec<[u8; 32]>) = {
@@ -1015,27 +1085,51 @@ impl super::ContentStore {
             let spaces = connection.prepare("SELECT DISTINCT space FROM facts_chain")?.query_map([], |r| r.get::<_, Vec<u8>>(0))?.filter_map(|s| s.ok().and_then(|s| <[u8; 32]>::try_from(s.as_slice()).ok())).collect();
             (dead, spaces)
         };
-        if dead.is_empty() {
-            return Ok(0);
-        }
         let path = self.database_path.clone();
         let mut done = 0;
         for space in spaces {
+            // A space with neither holders nor, while plans are dead, reader records has nothing to collect: no write
+            // transaction for it.
+            if let Some(kept) = self.kept_space(&space)? {
+                let chain = kept.view();
+                if chain.of(HOLDER).next().is_none() && (dead.is_empty() || chain.of(READERS).next().is_none()) {
+                    continue;
+                }
+            }
             let written = self.immediate_transaction(|t| {
                 let rows = chain_rows(t, &space)?;
                 let old = KeptSpace::open(&path, &space, &rows)?;
                 let chain = old.view();
+                // The partitions whose holder the store no longer keeps (`HOLDER`).
+                let mut unheld = HashSet::new();
+                for entry in chain.of(HOLDER) {
+                    let held = match holder_of(&entry) {
+                        Some((_, Some(plan))) if dead.contains(&plan) => false,
+                        Some((key, _)) => super::objects::source_id_by_hash(t, super::HashKey::from_sha256_digest(key))?.is_some(),
+                        None => false,
+                    };
+                    if !held {
+                        unheld.insert(entry.key.part);
+                    }
+                }
                 let (mut live, mut gone) = (HashSet::new(), HashSet::new());
                 let mut any_dead = false;
-                for record in chain.of(READERS) {
-                    let is_dead = dead.contains(record.key.ident);
-                    any_dead |= is_dead;
-                    (if is_dead { &mut gone } else { &mut live }).extend(record_idents(&record));
+                if !dead.is_empty() {
+                    for record in chain.of(READERS) {
+                        let is_dead = dead.contains(record.key.ident);
+                        any_dead |= is_dead;
+                        (if is_dead { &mut gone } else { &mut live }).extend(record_idents(&record));
+                    }
                 }
-                if !any_dead {
+                if !any_dead && unheld.is_empty() {
                     return Ok(None);
                 }
-                let keep = |k: &FactKey<'_>| if k.rel == READERS { !dead.contains(k.ident) } else { live.contains(k.ident) || !gone.contains(k.ident) };
+                let keep = |k: &FactKey<'_>| {
+                    if k.rel == READERS {
+                        return !dead.contains(k.ident);
+                    }
+                    !unheld.contains(&k.part) && (live.contains(k.ident) || !gone.contains(k.ident))
+                };
                 rewrite_space(&path, t, &space, &keep)
             })?;
             let Some(rows) = written else { continue };

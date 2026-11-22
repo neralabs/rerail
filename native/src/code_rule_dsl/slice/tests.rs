@@ -857,6 +857,9 @@ fn documents_seen_before_take_their_rows_from_the_content_memo() {
     let back = apply(&store, WS, directory_root(&store, &one).unwrap(), &mut rules).unwrap();
     assert_eq!((back.evaluated.len(), back.reused.as_slice()), (0, &["b.py".to_owned()][..]));
     assert_eq!(keys(&back), keys(&first));
+    // The memo's entries are kept facts (t33 step 3): the store has no facts memo to hold one.
+    let tables = store.query_rows("SELECT count(*) FROM sqlite_schema WHERE name = 'facts_results'", [], |row| row.get::<_, i64>(0)).unwrap()[0];
+    assert_eq!(tables, 0);
 }
 
 #[test]
@@ -873,10 +876,13 @@ fn the_statistics_loop_runs_on_the_slices_path() {
     assert_eq!(keys(&first), keys(&cold(&one, &policies)), "gated sets keep every finding");
     // The gates are compiled plans with the statistics they read, and each batch's selectivity
     // is fed back.
-    let plans = count("SELECT count(*) FROM compiled_plans");
+    // They are kept facts of the store (t33 step 6): no SQLite table keeps them.
+    let kept = crate::code_rule_dsl::stats::plans::kept_plans(&store);
+    let plans = kept.plans.len();
     assert!(plans > 0);
-    assert!(count("SELECT count(*) FROM compiled_plan_reads") > 0);
-    assert!(count("SELECT count(*) FROM plan_feedback") > 0);
+    assert!(kept.reads > 0);
+    assert!(!kept.samples.is_empty());
+    assert_eq!(count("SELECT count(*) FROM sqlite_master WHERE name IN ('compiled_plans', 'compiled_plan_reads', 'plan_feedback')"), 0);
     // The wave's rows are kept facts of the scope (t33 step 3), read through `kept_facts`; no SQLite table keeps them.
     let matches = super::kept::count(&store, WS, "slice_match");
     assert!(matches > 0 && super::kept::count(&store, WS, "slice_span") > 0);
@@ -888,8 +894,9 @@ fn the_statistics_loop_runs_on_the_slices_path() {
     assert_eq!(keys(&edited), keys(&cold(&one, &policies)));
     assert!(super::kept::count(&store, WS, "slice_match") < matches, "the edited document's matches went with its assert");
     // Unchanged statistics keep their compiled gates.
-    assert_eq!(count("SELECT count(*) FROM compiled_plans"), plans);
-    assert!(count("SELECT max(samples) FROM plan_feedback") >= 2);
+    let kept = crate::code_rule_dsl::stats::plans::kept_plans(&store);
+    assert_eq!(kept.plans.len(), plans);
+    assert!(kept.samples.iter().max().is_some_and(|&n| n >= 2));
 }
 
 mod data_layer;

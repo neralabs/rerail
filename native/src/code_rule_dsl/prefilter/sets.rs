@@ -373,11 +373,14 @@ pub(super) fn select(
     let program = crate::code_rule_dsl::prof::time("sets.lower", || Program::lower(plans));
     let regexes = program.regexes();
     let lang = i64::from(lang);
-    // The gates write compiled plans, so the transaction always writes.
+    // The stored gates, opened before the transaction holds the store's connection; the gates it
+    // compiles are written after it (`gates::flush`).
+    let kept_gates = crate::code_rule_dsl::stats::plans::Plans::open(store)?;
+    let store_path = store.database_path().to_path_buf();
     let (space, leaves, gated) = store.candidate_transaction(true, |db| {
         let gated = {
             let _stage = crate::code_rule_dsl::prof::Stage::start("sets.gates");
-            super::gates::select(db, lang as u32, plans, files)?
+            super::gates::select(db, &store_path, kept_gates.as_ref(), lang as u32, plans, files)?
         };
         // The vocabulary's terms for each regex, as the SQL's vocabulary stages fill them.
         if !regexes.is_empty() {
@@ -521,6 +524,7 @@ pub(super) fn select(
         }
         Ok((space, leaves, gated))
     })?;
+    super::gates::flush(store);
     crate::code_rule_dsl::prof::peak("2a1.leaves");
     let _stage = crate::code_rule_dsl::prof::Stage::start("sets.evaluate");
     let started = std::time::Instant::now();
@@ -547,7 +551,7 @@ pub(super) fn select(
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Device::Metal => "metal",
     };
-    store.candidate_transaction(true, |db| super::gates::observe(db, &gated, &candidates, space.len(), backend, ns_per_plan))?;
+    super::gates::observe(store, &gated, &candidates, space.len(), backend, ns_per_plan)?;
     Ok((space, outputs))
 }
 

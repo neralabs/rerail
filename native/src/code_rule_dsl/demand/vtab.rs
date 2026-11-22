@@ -1754,9 +1754,17 @@ impl MatchBatch {
 pub struct MatchRegistry {
     next: AtomicI64,
     batches: Mutex<HashMap<i64, Arc<MatchBatch>>>,
+    /// The terminal matches' row estimate its tables plan with (`ContentStore::terminal_estimate`), where a wave
+    /// kept one.
+    terminal_estimate: Option<i64>,
 }
 
 impl MatchRegistry {
+    /// A registry whose terminal matches' table plans with `estimate` rows (none: SQLite's default for a table).
+    pub fn with_terminal_estimate(estimate: Option<i64>) -> Self {
+        Self { terminal_estimate: estimate, ..Self::default() }
+    }
+
     pub fn register(&self, demand: PackedDemand) -> i64 {
         let token = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         self.batches
@@ -1886,13 +1894,10 @@ pub fn register_module(
     registry: Arc<MatchRegistry>,
 ) -> SqlResult<()> {
     const MODULE: Module<MatchTable> = Module::eponymous_only_module();
-    // A relation's rows come from the statistics of the match facts it fills (`fact_stats`,
-    // merged by `stats::ingest` as the driver writes them), not from fixed seeds; without them,
-    // SQLite's own default for a virtual table.
-    let estimates = connection.prepare("SELECT tbl,max(rows) FROM fact_stats WHERE tbl IN('rerail_batch_status','rerail_producer_status','rerail_terminal_match','rerail_capture','rerail_document_map') GROUP BY tbl")?
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(DEFAULT_ESTIMATED_ROWS).max(1))))?
-        .collect::<SqlResult<HashMap<_, _>>>()?;
-    let estimate = |name: &str| -> SqlResult<i64> { Ok(estimates.get(name).copied().unwrap_or(DEFAULT_ESTIMATED_ROWS)) };
+    // The terminal matches' rows are the estimate the last wave kept of them (the registry's), not a fixed seed; the
+    // other tables', and the terminal's without one, SQLite's own default for a virtual table.
+    let terminal = registry.terminal_estimate.map_or(DEFAULT_ESTIMATED_ROWS, |n| n.max(1));
+    let estimate = |name: &str| -> SqlResult<i64> { Ok(if name == "rerail_terminal_match" { terminal } else { DEFAULT_ESTIMATED_ROWS }) };
     let register = |name, module: RelationModule| {
         connection.create_module(name, &MODULE, Some(Arc::new(module)))
     };

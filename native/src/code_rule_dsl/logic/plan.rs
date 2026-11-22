@@ -16,7 +16,7 @@
 //! `direct`), `native_set_fixpoint` (`setfix`), `join_spec` (`join`), `observe` and `live_stats` (statistics the
 //! native store reports), the `tape_nearest` climb (`nearest`). They call the SQL
 //! functions of T's extension (`logic::native`), which the caller registers on the connection, as T loads it.
-//! Rule bodies are typed queries (`sql::select`, over `sql_ast`'s expressions), checked before they are rendered; the wave keeps its planned program in `compiled_plans` (`waves::matches`). Left out of the
+//! Rule bodies are typed queries (`sql::select`, over `sql_ast`'s expressions), checked before they are rendered; the wave keeps its planned program as a compiled plan (`stats::plans`, `waves::matches`). Left out of the
 //! port: T's measurement switches (`RDL_PLAN0`, `RDL_SQL_REPLAN`, `RDL_CLUSTER=0`, `RDL_WHOLE=0`, `RDL_REPLAN`, traces
 //! and profiles, with `timed_plan`, T's planning timer) and its 1 GB page caches (over the 500 MB budget; SQLite's
 //! defaults instead).
@@ -41,7 +41,7 @@ use super::sql::sql_ast::{SqlBinaryOperator as Op, SqlExpression as Expr, SqlUna
 // cratify: the planner's base is rerail-plan-base's (its facade of `plan` mounts the vocabulary, `base`, and the
 // children the search reads: the forms, joins, outputs, placement, tables and emission), and its search is
 // rerail-plan-search's (its facade mounts `search`, with `choices`, `demand`, `keeps`, `prepared`, `replanning` and
-// `select`, the passes that read the model); the run re-exports both here.
+// `select`, the passes that read the model, and `kept_entry`, the kept facts' entries they and the corpus keep); the run re-exports both here.
 pub use rerail_plan_search::code_rule_dsl::logic::plan::*;
 // cratify: `corpus` is rerail-logic's (it mounts it: the corpus runner reads the language, above the planner)
 pub mod join_spec;

@@ -15,20 +15,25 @@
 //! The entry is the read record as rows of `read_file` and the program's digest; the program is kept as its `.rerail`
 //! text (`program_text`, decision 0155). The run's manifest names the source and the plan (`named`), so collection
 //! keeps the entry while it keeps the run.
+//!
+//! The entry is kept facts of the store (t33 step 3, `plan::kept_entry`), a partition per texts key, held by the
+//! small source and the plan, where a facts-memo row held it: written on the run's side, behind the run, beside the
+//! record item that keeps the program's text and the small source.
 
 use crate::code_rule_dsl::logic::front::Value;
 use crate::code_rule_dsl::logic::program_facts::{self, Facts};
 use crate::code_rule_dsl::logic::program_text;
 use crate::code_rule_dsl::logic::rr::{self, LibraryFile};
-use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreError, StoreResult};
+use crate::code_rule_dsl::logic::plan::kept_entry::Entries;
+use crate::content_store::{ContentStore, FactsPlanSet, HashKey, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::path::PathBuf;
 
 /// The entry's schema: bumped when its encoding or meaning changes (105: the program as its text, decision 0155).
-const SCHEMA: u32 = crate::content_store::live_fact_schema(105);
+const SCHEMA: u32 = 105;
 
-/// The path a lookup names. The entry reads no path (`path_dependent: false`).
-const PATH: &str = "rerail/combined";
+/// The entries, kept facts of the store.
+const ENTRIES: Entries = Entries::new("rerail.combined");
 
 /// The relation holding the program's text's digest (sha256 hex).
 const PROGRAM: &str = "rr_combined_program";
@@ -181,22 +186,18 @@ fn entry_read(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<([u8; 
 /// with no digest), and the paths its includes resolved through.
 pub(in crate::code_rule_dsl) fn read_record(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<ReadRecord>> {
     // The store's entry, or, where the store has none, the one the engine ships (decision 0264).
-    let entry = match store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? {
-        Some(source) => {
-            let set = plan();
-            let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
-            let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
-            std::borrow::Cow::Owned(result.entry.clone())
-        }
+    let facts = match stored(store, key)? {
+        Some(facts) => facts,
+        None if store.source_by_hash(holder_key(key))?.is_some() => return Ok(None),
         None => match rr::images::shipped().and_then(|b| b.get(shipped_key(key))) {
             Some(bytes) => {
                 crate::code_rule_dsl::prof::count("corpus.combined_shipped", 1);
-                std::borrow::Cow::Borrowed(bytes)
+                let Ok(facts) = program_facts::decode(bytes) else { return Ok(None) };
+                facts
             }
             None => return Ok(None),
         },
     };
-    let Ok(facts) = program_facts::decode(&entry) else { return Ok(None) };
     let mut read = Vec::new();
     for row in facts.get(READ_FILE).into_iter().flatten() {
         let [Value::Str(path), Value::Str(digest)] = row.as_slice() else { return Ok(None) };
@@ -305,26 +306,28 @@ fn record_encoded(store: &ContentStore, what: &'static str, key: &[u8; 32], read
     if let Some(run) = run {
         facts.insert(RUN.to_owned(), vec![[Value::Str(hex(&run).into())].into()]);
     }
-    let entry = program_facts::encode(&facts);
     // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`) ships the entry (its program's image ships with
     // `program_text::encode_version`).
-    rr::images::export(shipped_key(key), &entry);
-    let (packed, pieces) = program_text::pack(vec![encoded], entry);
+    if std::env::var_os("RERAIL_EXPORT_IMAGES").is_some() {
+        rr::images::export(shipped_key(key), &program_facts::encode(&facts));
+    }
+    // The entry as kept facts, behind the run; the program's text and the small source holding the entry, by the
+    // store's writer in the run's record.
+    ENTRIES.put(store, Entries::part(key), holder_digest(key), Some(plan().plans[0]), &facts);
+    let (packed, pieces) = program_text::pack(vec![encoded], Vec::new());
     store.record_held(what, vec![queued(key)], &(*key, packed), pieces, apply);
 }
 
 fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
     let (key, packed): ([u8; 32], program_text::Packed) = crate::content_store::record::codec::from_body("the combined program", body)?;
     let store = cx.store;
-    let (text_source, entry) = program_text::store_packed(store, &packed, cx.pieces)?;
+    let (text_source, _) = program_text::store_packed(store, &packed, cx.pieces)?;
     let text = source_text(&key);
     let hash = HashKey::sha256(text.as_bytes());
     let source = match store.source_by_hash(hash)? {
         Some(id) => id,
         None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
     };
-    let set = plan();
-    store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.to_vec() }], &[])?;
     // No manifest names the entry until the run that combined it records its own, and the run's hold comes after the
     // combine. Meanwhile a collection (a batch's earlier run's, started once that run's manifest was written) took it:
     // a batch combined its pack again every time. Pinned under the entry's own owner until that run holds it
@@ -370,67 +373,88 @@ impl Drop for Pins<'_> {
 /// write when this process queued one.
 pub fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
     // Stored already (decision 0228): named now, kept meanwhile by the run's collection lease (decision 0306 step 4).
-    // The writer finds what a write queued before it stores.
-    if let Some(found) = program_source(cache, key).ok().flatten() {
-        late.lock().expect("the late sources").push(found);
-        late.lock().expect("the late sources").extend(image_sources(cache, key).ok().unwrap_or_default());
+    if cache.source_by_hash(holder_key(key)).ok().flatten().is_some() {
+        if let Some(facts) = ENTRIES.get(cache, Entries::part(key)) {
+            let found = Named::of(&facts).sources(cache).ok().unwrap_or_default();
+            late.lock().expect("the late sources").extend(found);
+        }
         return;
     }
-    // Not stored, and no write of the entry queued (`remember`'s): the writer would find nothing either.
+    // Not stored, and no write of the entry queued (`record_encoded`'s): the writer would find nothing either.
     if !cache.queued(&queued(key)) {
         return;
     }
-    // In the run's record (decision 0306), after the entry's write.
+    // The entry's facts, kept behind the run as it was recorded, read here (a read waits for that write, not for the
+    // record's); the writer looks up the sources they name by their digests, after the record item that stores them.
+    let Some(facts) = ENTRIES.get(cache, Entries::part(key)) else { return };
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
-        let key: [u8; 32] = crate::content_store::record::codec::from_body("the combined program's text, named", body)?;
-        cx.name(program_source(cx.store, &key)?);
-        cx.name(image_sources(cx.store, &key)?);
+        let named: Named = crate::content_store::record::codec::from_body("the combined program's text, named", body)?;
+        cx.name(named.sources(cx.store)?);
         Ok(())
     }
-    cache.record("the combined program's text, named", Vec::new(), key, None, apply);
+    cache.record("the combined program's text, named", Vec::new(), &Named::of(&facts), None, apply);
 }
 
-/// The source of the program text of texts `key`'s entry, when the store keeps the entry and the text.
-fn program_source(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<crate::content_store::SourceId>> {
-    let Some(source) = store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(None) };
-    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
-    let Some(result) = memo.results.get(&plan().plans[0]) else { return Ok(None) };
-    let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
-    let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
-    let Some(digest) = unhex(digest) else { return Ok(None) };
-    store.source_by_hash(HashKey::from_sha256_digest(digest))
+/// The SHA-256 key of the small source that holds texts `key`'s entry.
+fn holder_key(key: &[u8; 32]) -> HashKey {
+    HashKey::sha256(source_text(key).as_bytes())
 }
 
-/// The images texts `key`'s entry names (`IMAGE`) that the store still keeps, and the sources of the tail run it names
-/// (`RUN`) where the store keeps that run whole.
-fn image_sources(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Vec<crate::content_store::SourceId>> {
-    let Some(source) = store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(Vec::new()) };
-    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
-    let Some(result) = memo.results.get(&plan().plans[0]) else { return Ok(Vec::new()) };
-    let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(Vec::new()) };
-    let mut out = Vec::new();
-    for row in facts.get(IMAGE).into_iter().flatten() {
-        if let [Value::Str(digest)] = row.as_slice()
-            && let Some(digest) = unhex(digest)
-            && let Some(id) = match store.source_by_alias(HashKey::from_sha256_digest(digest))? {
-                Some(id) => Some(id),
-                // Facts kept by their text's hash (`parts::keep_facts`: the tail run's pointer).
-                None => store.source_by_hash(HashKey::from_sha256_digest(digest))?,
-            }
+fn holder_digest(key: &[u8; 32]) -> [u8; 32] {
+    holder_key(key).sha256_bytes().expect("a sha256 key")
+}
+
+/// Texts `key`'s entry as the store keeps it: while the small source holding it is stored.
+fn stored(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<Facts>> {
+    if store.source_by_hash(holder_key(key))?.is_none() {
+        return Ok(None);
+    }
+    Ok(ENTRIES.get(store, Entries::part(key)))
+}
+
+/// What an entry names that a run reading it names too: its program's text (`PROGRAM`), the images it read or kept
+/// (`IMAGE`) and the tail runs it was made over (`RUN`), by their digests.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct Named {
+    program: Option<[u8; 32]>,
+    images: Vec<[u8; 32]>,
+    runs: Vec<[u8; 32]>,
+}
+
+impl Named {
+    fn of(facts: &Facts) -> Named {
+        let one = |rel: &str| facts.get(rel).into_iter().flatten().filter_map(|row| match row.as_slice() {
+            [Value::Str(digest)] => unhex(digest),
+            _ => None,
+        });
+        Named { program: one(PROGRAM).next(), images: one(IMAGE).collect(), runs: one(RUN).collect() }
+    }
+
+    /// The sources the store keeps of what it names: the program's text, the images (by alias, or facts kept by
+    /// their text's hash: `parts::keep_facts`, the tail run's pointer), and each tail run's where the store keeps the
+    /// run whole.
+    fn sources(&self, store: &ContentStore) -> StoreResult<Vec<crate::content_store::SourceId>> {
+        let mut out = Vec::new();
+        if let Some(digest) = self.program
+            && let Some(id) = store.source_by_hash(HashKey::from_sha256_digest(digest))?
         {
             out.push(id);
         }
-    }
-    for row in facts.get(RUN).into_iter().flatten() {
-        if let [Value::Str(run)] = row.as_slice()
-            && let Some(run) = unhex(run)
-            && let Some(ids) = program_text::run_sources(store, &run).map_err(StoreError::Invalid)?
-        {
-            out.extend(ids);
+        for digest in &self.images {
+            let found = match store.source_by_alias(HashKey::from_sha256_digest(*digest))? {
+                Some(id) => Some(id),
+                None => store.source_by_hash(HashKey::from_sha256_digest(*digest))?,
+            };
+            out.extend(found);
         }
+        for run in &self.runs {
+            if let Some(ids) = program_text::run_sources(store, run).map_err(StoreError::Invalid)? {
+                out.extend(ids);
+            }
+        }
+        crate::code_rule_dsl::prof::count("corpus.combined_images_named", out.len());
+        Ok(out)
     }
-    crate::code_rule_dsl::prof::count("corpus.combined_images_named", out.len());
-    Ok(out)
 }
 
 /// What the write of texts `key`'s program is queued under (`write_back`, decision 0102).

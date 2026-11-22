@@ -614,14 +614,10 @@ fn placed_objects(t: &Connection, from: i64) -> rusqlite::Result<Vec<super::segm
     Ok(out)
 }
 
-/// A placed row whose segment is not there: marked so, or removed (its table's `Missing`).
+/// A placed row whose segment is not there: marked so (`seg` -1), as other rows name it.
 fn lose_object(t: &Connection, (table, key): &PlacedRow) -> rusqlite::Result<()> {
     let placed = &PLACED[*table];
-    let filter = key_filter(placed.key, 1);
-    let sql = match placed.missing {
-        Missing::Mark => format!("UPDATE {} SET seg = -1 WHERE {filter}", placed.table),
-        Missing::Drop => format!("DELETE FROM {} WHERE {filter}", placed.table),
-    };
+    let sql = format!("UPDATE {} SET seg = -1 WHERE {}", placed.table, key_filter(placed.key, 1));
     t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(key.iter())).map(drop)
 }
 
@@ -634,28 +630,16 @@ fn move_object(t: &Connection, (table, key): &PlacedRow, seg: i64, at: i64) -> r
     t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(values.iter())).map(drop)
 }
 
-/// What a compaction does with a row whose segment is gone.
-enum Missing {
-    /// Marked absent (`seg` -1): other rows name it.
-    Mark,
-    /// Removed: a cache, computed again.
-    Drop,
-}
-
 /// A table whose rows name their bytes' place in an object segment (`seg`, `seg_at`, `seg_len`), with its key.
 struct PlacedTable {
     table: &'static str,
     key: &'static [&'static str],
-    missing: Missing,
 }
 
-/// Every table whose rows name a place in the object segments: sources and tapes (decision 0295 step 5), check
-/// results with call summaries, and tree pages (decision 0450 step 2).
-const PLACED: [PlacedTable; 4] = [
-    PlacedTable { table: "tape_objects", key: &["tape_id"], missing: Missing::Mark },
-    PlacedTable { table: "source_objects", key: &["source_id"], missing: Missing::Mark },
-    PlacedTable { table: "context_check_results", key: &["source_id", "context_hash_id", "check_id"], missing: Missing::Drop },
-    PlacedTable { table: "tree_pages", key: &["page_key", "page_index"], missing: Missing::Drop },
+/// Every table whose rows name a place in the object segments: sources and tapes (decision 0295 step 5).
+const PLACED: [PlacedTable; 2] = [
+    PlacedTable { table: "tape_objects", key: &["tape_id"] },
+    PlacedTable { table: "source_objects", key: &["source_id"] },
 ];
 
 /// `k1 = ?n AND k2 = ?n+1 …` over `key`, its parameters from `first`.

@@ -159,13 +159,13 @@ removed with nothing in its place but K1–K4.
 | `rr.rs` `PARSED`, `LIBRARIES`, `PROGRAMS` | a file's path and digest; the files' digests | a rule file is a document loaded by `load(path, _, "rr")` (phase 0 already does); its statements are 0074's program facts, stored in K1 under the file's `file` row |
 | `phase0.rs` `KEPT` | the seed; held while every module is as it was | `bootstrap.rr`'s output relations (the include graph), stored in K1 |
 | `corpus.rs` `COMBINED`, `PREPARED`, `prepared.rs`'s memo entries | the texts' digest; the texts, additions, stage, dialect, build | `prepared(p, …) :- program(p, digest), engine(b), …` answered by preparing; its rows are the `prepared_*` program facts 0074 already writes. **Pointer built** (2026-11-21, `prepared.rs` `pointer`): the `prepared_*` and `prepared_program` rows are kept facts of the store's prepared programs' space, a partition a program (its pointer plan: build, grammar, key); `PREPARED` is their in-memory copy (state). The programs' texts stay sources |
-| `choices.rs` `KEPT` | a digest of the program, the build and three switches, "a scale at most GROWTH times theirs" | an answer keyed by the program's facts and the statistics it read (with step 6) |
+| `choices.rs` `KEPT` | a digest of the program, the build and three switches, "a scale at most GROWTH times theirs" | an answer keyed by the program's facts and the statistics it read (with step 6). **Entries moved** (2026-11-22): the store's choices and kept plans are kept facts of the prepared program's spaces (step 3); `KEPT` is their in-memory copy |
 
 ### Step 3: a document's facts
 
 | Today | Key and check today | Becomes |
 |---|---|---|
-| `facts_results`, `facts_plan_sets`, `facts_completions` (the per-file memo, 0052) | content, path, plan digest (build, grammar, node-id scheme, program, options, facts) | the per-file part's relations in K1, partitioned by document. A document whose base relations have no delta is not run (K4 over a per-document partition). `plan_digest`, `with_options` and `with_rows` go; `doc_keys` stays (it is identity) |
+| `facts_results`, `facts_plan_sets`, `facts_completions` (the per-file memo, 0052) | content, path, plan digest (build, grammar, node-id scheme, program, options, facts) | the per-file part's relations in K1, partitioned by document. A document whose base relations have no delta is not run (K4 over a per-document partition). `plan_digest`, `with_options` and `with_rows` go; `doc_keys` stays (it is identity). **Done** (2026-11-22). The tables were a store of opaque entries with six users, not one cache. A kept partition is held by a source and a plan (`kept_facts::HOLDER`), so it dies when the memo row it replaced would have; `plan::kept_entry` keeps an entry of program facts that way, a relation's rows of one shape a kept relation. A held partition is put whole: the store's writer drops what else it kept, so a run writes an entry inside its waves with no read of the store. Moved: the prepared pointer (which had lost its collection when step 2 moved it), the slice's content memo (`slice/memo.rs`), and `combined.rs`, `preparation/parts.rs` and `choices.rs`. Their entries are read on the run's side, never in the writer's record steps (where a kept read would wait on the writer itself): `name_program` reads the entry before it records, and its record carries the digests its step names; the other steps only make the holder's source. `facts/memo.rs`, the workspace pipeline's per-file memo, had no caller outside its tests and went. The three tables went, with the sweep of the corpus memo's retired schemas (`corpus_swept`) |
 | the projection spike (a075764a3) | (tape, relation) | the base relations as derived relations of `doc_tape`, in K1 per document. After RER-131 renumbers the nodes |
 | tapes: `source_objects`, `tape_objects` (kept: they are objects) | (content, tag, grammar version, format) | `doc_key` and `doc_tape` as in the Intro; the object tables hold the bytes the answer's value names |
 | `guests.rs` `KEPT` | (text, grammar) | `parse_of`'s answer rows (K3) |
@@ -199,9 +199,9 @@ rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.ph
 
 | Today | Key and check today | Becomes |
 |---|---|---|
-| `stat_blob`, `fact_stats`, `fact_value_stats`, `kind_size`, `edge_freq`, `tape_kind_counts`, `term_freq`, `term_kind_freq`, `term_node_freq`, `term_coverage`, own counts (a name binding) | one blob per plan; patched by its own delta code (0096) | aggregate relations over K1's relations (`count` per relation, column and document), maintained by counting like any aggregate |
-| `compiled_plans`, `compiled_plan_reads`, `plan.rs` `PLANS`, `SESSION_PLANS`, `KEPT`, `derived.rs` `MEMO`, `SESSION_MEMO` | a plan key; statistic intervals | a plan is an answer keyed by its stratum's definition and the statistics' intervals it is valid over (03 §6 already records those intervals) |
-| `plan_feedback`, `keeps.rs` `OBSERVED`, `table.rs` `PAID`, `accel_models` | what a run observed | facts the run produces about itself, stored in K1. `accel_models`: **built** (2026-11-21, `content_store/accel_models.rs`): `accel_model(key, archive)` in the store's models' space, a partition a key; the archive a source of the store by its SHA-256, pinned with no end as the table kept it |
+| `stat_blob`, `fact_stats`, `fact_value_stats`, `kind_size`, `edge_freq`, `tape_kind_counts`, `term_freq`, `term_kind_freq`, `term_node_freq`, `term_coverage`, own counts (a name binding) | one blob per plan; patched by its own delta code (0096) | aggregate relations over K1's relations (`count` per relation, column and document), maintained by counting like any aggregate. `fact_stats`, `fact_value_stats`: **gone** (2026-11-22). Nothing wrote them but the tests of `stats::ingest::merge_facts` and `stats::plans::write_stat1` (no fact relation is a SQL table with a document column), and the slice wave's row estimates, of which the demand relations read one, the terminal matches'. That one is a kept fact (`content_store/estimates.rs`, `terminal_estimate`), read before the drive's transaction; the merge, `write_stat1`, upkeep's exclusion of the tables they named, and the tables went. `kind_size`, `edge_freq`, `tape_kind_counts` and the `term_*` tables are the prefilter's, written in the pass that builds its sets (`content_store/prefilter.rs`) and read by it and the vocabulary: they move with step 7. `stat_blob` (the corpus keeper, `keptstats::Keeper`, one encoded blob per memo plan) is left |
+| `compiled_plans`, `compiled_plan_reads`, `plan.rs` `PLANS`, `SESSION_PLANS`, `KEPT`, `derived.rs` `MEMO`, `SESSION_MEMO` | a plan key; statistic intervals | a plan is an answer keyed by its stratum's definition and the statistics' intervals it is valid over (03 §6 already records those intervals). `compiled_plans`, `compiled_plan_reads`: **built** (2026-11-22, `stats/plans.rs`): a kept space, a partition a plan (`compiled_plan`, `compiled_plan_bytes`, `compiled_plan_read`); read from a space opened before a candidate transaction, written after it |
+| `plan_feedback`, `keeps.rs` `OBSERVED`, `table.rs` `PAID`, `accel_models` | what a run observed | facts the run produces about itself, stored in K1. `plan_feedback`: **built** (2026-11-22), a relation of the compiled plans' space. `accel_models`: **built** (2026-11-21, `content_store/accel_models.rs`): `accel_model(key, archive)` in the store's models' space, a partition a key; the archive a source of the store by its SHA-256, pinned with no end as the table kept it |
 
 ### Step 7: text patterns and indexes
 
@@ -214,8 +214,19 @@ rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.ph
 
 ### Step 8: the workspace pipeline
 
-`tree_pages`, `tree_result_segments`, `completed_*`, `candidate_*`, `local_check_results`,
-`context_check_results`: moved with that pipeline by its owner, or retired with it. Not planned here.
+`completed_workspace_revisions`, `completed_directory_reuse`, `candidate_*`, `context_check_results`: **Moved**
+(user, 2026-11-22: "Move to kept facts"). The product reads two of them: a warm scan restores a clean file's results
+(`prefetch_results`, the repository index's restore under `reusable_directory_prefixes`), and a file evicted by
+`evictInactive()` is paged back from them. A file's results under one context and one catalog are now one entry of
+the store's per-file memo (`content_store/results.rs`, `held::memo_pack`), written whole after the file's
+publication, read in place; a completed directory is one entry too. Blocks hold words and a result is text, so the
+memo's form holds them, not a relation's. Collection drops a content's entries once no source of it is kept, and a
+catalog's directories once none of its results are. `completed_workspace_revisions` was written and never read
+outside tests: it went with no successor. The five tables, their writers (the publication's catalog, clause and
+result statements, `LocalResultCache`) and their collection are gone; the schema drops them. **Removed**
+(2026-11-22): the per-directory result
+pages (`facts/pages.rs`, `tree_pages`, `tree_pages_pending`) and the predecessor's tree result segments
+(`tree_result_segments`, `completed_snapshot_trees`), which nothing called outside their own tests.
 
 ## Order of work
 
@@ -249,3 +260,12 @@ Decided (user, 2026-11-21):
 4. **Typing-support-final-shape takes on the rest of this plan** (t32 5.3): K2, K3 and step 1 first, which no
    other branch is building; then steps 3, 2, 6 and 7. K4 for each document and the statistics stay with the sync
    branch's Q332, merged from the hub as they land.
+
+   Checked 2026-11-22: no branch is moving K4 or the statistics' tables to kept facts. The sync branch's Q332 is
+   about warm edits making only the changed documents. What other branches build near it is the corpus path's
+   statistics kept as kept facts: `final-rerail-shape` (a structure's statistics, `statkeep` format 4) and
+   `final-rerail-shape-rr-align` (a semi-join's rows and statistics, Q396). So this branch takes the rest too. It
+   takes the SQL path's statistics (`fact_stats`, `kind_size`, `edge_freq`, `term_*`) and the text matchers (step
+   7) once the hub brings in those branches' work and `engine-crating`'s matcher crate, so it builds on them. The
+   `corpus_*` tables are collection's bookkeeping, not caches (kept facts' own collection reads `corpus_plans`), and
+   stay; `run_record` goes with K4, not as a move of its own.

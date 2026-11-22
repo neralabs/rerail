@@ -194,6 +194,20 @@ fn a_waves_kept_puts_are_one_block_per_space() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// Outside a run's waves a job's puts are folded as a wave's are: a key put twice in one `queue_kept` is written once,
+/// its later put what the space keeps. Written as given, the writer refused the job ("put twice"), and a plan compiled
+/// twice before its flush (`stats::plans`) kept nothing.
+#[test]
+fn a_key_put_twice_outside_a_wave_is_written_once() {
+    let (path, c) = store("twice-outside");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    store.queue_kept(SPACE, vec![put("a", 0, 1, flat(&[1, 1])), put("b", 0, 2, flat(&[2, 2])), put("a", 0, 3, flat(&[3, 3]))]);
+    store.written().unwrap();
+    let got: Vec<(String, u64, Vec<Vec<i64>>)> = read(&path, &c).into_iter().map(|(r, _, d, rows)| (r, d, rows)).collect();
+    assert_eq!(got, [("a".into(), 3, vec![vec![3, 3]]), ("b".into(), 2, vec![vec![2, 2]])]);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// A program's reader record put twice in one wave (two of its puts in a space, decision 0401 step 8) is one put
 /// naming both's entries: a record only grows. Gathered as any key, the later replaced the earlier, the kept record
 /// named the last put's entries only, and the warm run after asked the others again and wrote its record (the
@@ -526,6 +540,56 @@ fn collection_rewrites_without_dead_entries() {
     c.execute("UPDATE corpus_plans SET live=0", []).unwrap();
     assert_eq!(store.collect_kept_facts().unwrap(), 1);
     assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["l"]);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// t33 step 3: a partition kept under a holder (`HOLDER`, a source's SHA-256 key) lives as long as the store keeps that
+/// source, as the facts memo's rows did; a partition with no holder, and the space's other partitions, stay.
+#[test]
+fn a_held_partition_goes_with_its_holder() {
+    let (path, c) = store("holder");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let text = b"rerail/holder-test\0anchor";
+    let key = crate::content_store::HashKey::sha256(text);
+    let source = store.put_source_hashed(text, key, &[]).unwrap();
+    let holder = key.sha256_bytes().unwrap();
+    store.queue_kept(SPACE, vec![put("held", 7, 1, flat(&[1, 1])), holder_put(7, holder, None), put("free", 8, 2, flat(&[2, 2]))]);
+    store.written().unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 0, "its holder kept: nothing to collect");
+    c.execute("DELETE FROM source_objects WHERE source_id=?1", [source.raw()]).unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 1, "the space rewritten");
+    assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["free"], "the held partition and its holder gone");
+    assert_eq!(store.collect_kept_facts().unwrap(), 0);
+    // A partition held by a plan goes once its plan is dead, though its source stays.
+    let plan = [0x33u8; 32];
+    let kept = store.put_source_hashed(text, key, &[]).unwrap();
+    store.queue_kept(SPACE, vec![put("planned", 9, 3, flat(&[3, 3])), holder_put(9, holder, Some(plan))]);
+    store.written().unwrap();
+    c.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1)", [&plan[..]]).unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 0, "its plan live, its source kept");
+    c.execute("UPDATE corpus_plans SET live=0", []).unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 1);
+    assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["free"], "the plan's partition gone");
+    assert!(store.source_by_hash(key).unwrap() == Some(kept), "its source stays");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// t33 step 3: a held partition is put whole (`HOLDER`): its user writes an entry without reading what it was (a run
+/// writes inside its waves, decision 0104), and the writer drops the relations the partition kept that the new entry
+/// has not, beside the space's other partitions, which stay.
+#[test]
+fn a_held_partition_is_put_whole() {
+    let (path, c) = store("whole");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let holder = [0x44u8; 32];
+    store.queue_kept(SPACE, vec![put("a", 7, 1, flat(&[1, 1])), put("b", 7, 2, flat(&[2, 2])), holder_put(7, holder, None), put("b", 8, 3, flat(&[3, 3]))]);
+    store.written().unwrap();
+    let parts = |path: &Path, c: &Connection| read(path, c).iter().map(|e| (e.0.clone(), e.1)).collect::<Vec<_>>();
+    let named = |v: &[(&str, i64)]| v.iter().map(|(r, p)| (r.to_string(), *p)).collect::<Vec<_>>();
+    assert_eq!(parts(&path, &c), named(&[("\0holder", 7), ("a", 7), ("b", 7), ("b", 8)]));
+    store.queue_kept(SPACE, vec![put("a", 7, 4, flat(&[4, 4])), holder_put(7, holder, None)]);
+    store.written().unwrap();
+    assert_eq!(parts(&path, &c), named(&[("\0holder", 7), ("a", 7), ("b", 8)]), "partition 7's `b` gone, partition 8's kept");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 

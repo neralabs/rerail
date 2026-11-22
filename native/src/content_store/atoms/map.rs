@@ -504,24 +504,15 @@ pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
     ("vocabulary_pending", "term", "a trigger on `term_freq`"),
     ("text_term", "term", "SQL over `term_freq` and the `atoms` table, in the store's ids (vocabulary.rs)"),
     ("text_pending", "term", "a trigger on `term_freq`"),
-    ("compiled_plans", "program", "a wave plan's SQL in this process's ids: reused only where the names it records intern to the same ids here (matches.rs `Wave::emit`)"),
     ("source_objects", "frame", "content-addressed sources: their makers keep no atom (tapes, program texts, tree counts of integer constants, the planning choices' own string table)"),
     ("stat_blob", "blob", "the kept statistics' exact counts of `sym` columns: mapped as written and read (keptstats.rs `Keeper::map_symbols`)"),
 ];
 
 /// The integer, untyped and blob columns of the store's schema that hold no atom (ids of the store's own rows,
-/// counts, digests, encoded bytes of integers or text). `fact_value_stats.val`: the slice's scope (text) and clause
-/// numbers (`matched(c: number, …)`).
+/// counts, digests, encoded bytes of integers or text).
 #[cfg(test)]
 pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("atom_blocks", &["seq", "tag"]),
-    ("candidate_catalogs", &["catalog_id", "identity_hash_id"]),
-    ("candidate_checks", &["check_id", "catalog_id", "policy_hash_id", "check_string_id"]),
-    ("compiled_plan_reads", &["plan", "lo", "hi"]),
-    ("compiled_plans", &["plan", "compiler"]),
-    ("completed_directory_reuse", &["tree_hash_id", "package_hash_id", "catalog_hash_id"]),
-    ("completed_workspace_revisions", &["workspace_id", "revision", "catalog_hash_id", "completed_at"]),
-    ("context_check_results", &["source_id", "context_hash_id", "check_id", "seg", "seg_at", "seg_len"]),
     ("corpus_decided", &["singleton", "run", "time", "swept"]),
     ("corpus_live", &["source_id", "grammar_version", "tape_format"]),
     ("corpus_manifest_plans", &["manifest_id", "plan_digest"]),
@@ -530,16 +521,10 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("corpus_plans", &["plan_digest", "live"]),
     ("corpus_roots", &["root_id"]),
     ("corpus_state", &["singleton", "run", "history_bytes", "due", "archive_due"]),
-    ("corpus_swept", &["singleton", "done"]),
     ("derivation_inputs", &["ordinal", "digest"]),
     ("derivations", &["producer", "status", "cost"]),
     ("edge_freq", &["pkind", "ckind", "field", "n"]),
-    ("fact_stats", &["rows", "ndv", "sq", "sqd"]),
-    ("fact_value_stats", &["val", "n", "docs", "sqd"]),
     ("facts_chain", &["space", "seq", "tag"]),
-    ("facts_completions", &["source_id", "fact_schema", "set_digest", "words", "codec_id", "raw_length", "counts"]),
-    ("facts_plan_sets", &["set_digest", "ordinal", "plan_digest"]),
-    ("facts_results", &["source_id", "fact_schema", "plan_digest", "codec_id", "raw_length", "frame"]),
     ("file_documents", &["tape_id", "ordinal", "parent_ordinal", "role_id", "via_id", "document_tape_id", "source_map", "host_errors", "at_start", "at_end"]),
     // The per-file memo's entries (decision 0240 §4): their symbols are strings in the pack (memo/image.rs).
     ("memo_entries", &["space", "part", "digest", "doc", "pack", "at", "len", "raw", "over_pack", "over_at", "over_len", "over_raw", "framed"]),
@@ -554,7 +539,6 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("object_archive", &["kind", "id", "frame"]),
     ("object_pins", &["object_kind_id", "object_id", "owner_string_id", "lease_until"]),
     ("paths", &["path_id", "string_id"]),
-    ("plan_feedback", &["plan", "samples", "updated_at"]),
     ("prefilter_sets", &["tape_id", "version", "nodes", "edges"]),
     ("push_pending", &["pending"]),
     ("search_index_sets", &["tape_id", "index_version", "node_count", "complete", "has_errors"]),
@@ -593,8 +577,6 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("text_matcher", &["lang", "upto"]),
     ("text_pending", &["seq", "lang"]),
     ("text_term", &["lang"]),
-    ("tree_pages_pending", &["digest", "pid"]),
-    ("tree_pages", &["page_key", "page_index", "page_count", "digest", "file_count", "seg", "seg_at", "seg_len"]),
     ("vocabulary_literal", &["lang"]),
     ("vocabulary_pending", &["lang"]),
     ("vocabulary_predicate", &["lang", "ready"]),
