@@ -714,7 +714,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let group: u16 = line.number("")?;
                 let (opener, closer, open, fill): (u16, u16, u16, u16) = (line.number("%")?, line.number("%")?, line.number("%")?, line.number("%")?);
                 let bytes: u8 = line.number("")?;
-                let (mut outside, mut empty, mut or, mut after) = (false, None, None, 0u16);
+                let (mut outside, mut empty, mut or, mut after, mut resumes) = (false, None, None, 0u16, false);
                 while let Some(w) = line.peek_word() {
                     if w == "outside" {
                         line.word()?;
@@ -728,11 +728,14 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     } else if w == "after" {
                         line.word()?;
                         after = line.number("")?;
+                    } else if w == "resumes" {
+                        line.word()?;
+                        resumes = true;
                     } else {
-                        return Err(format!("block {at} region: `outside`, `else %e M`, `or %c M` or `after MASK`, not {w}"));
+                        return Err(format!("block {at} region: `outside`, `else %e M`, `or %c M` or `after MASK [resumes]`, not {w}"));
                     }
                 }
-                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty, or, after };
+                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty, or, after, resumes };
                 match program.walks.last_mut() {
                     Some(w) if w.group == group => w.kinds.push(kind),
                     _ => {

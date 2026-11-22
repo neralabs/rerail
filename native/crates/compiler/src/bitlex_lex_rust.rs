@@ -175,6 +175,10 @@ struct Span {
     e: Expr,
     /// The rows it opens at (by row), each where, as code over `close` and `l`.
     opens_at: Vec<(usize, String)>,
+    /// Where its stop is a region's opener (`o_K`, a template's `}`): the rows that read `K`,
+    /// whose token ends it, and its checks over it there (decision 0600). Else none, its end
+    /// found where it opens.
+    ends_at: Vec<usize>,
     open: Vec<(String, String)>,
     starts: Vec<(String, Option<String>, Option<String>)>,
     at_end: Vec<(String, String)>,
@@ -708,6 +712,12 @@ struct Gen<'a> {
 }
 
 impl Gen<'_> {
+    /// Whether row `row`'s read keeps its closer (`close`): a fill the loop keeps opens after
+    /// it, or it resumes a string's record, which a close at its template keeps open.
+    fn keeps_close(&self, row: usize, rule: &Option<TokenRule>) -> bool {
+        self.spans.iter().any(|sp| sp.opens_at.iter().any(|(r, _)| *r == row)) || matches!(rule, Some(TokenRule::ReadParts(rs, _)) if rs.iter().all(|r| r.resumes))
+    }
+
     /// Whether `e` reads a region's mask (`regional`): it is made after stage 1.
     fn regional(&self, e: &Expr) -> bool {
         match e {
@@ -3647,6 +3657,8 @@ impl Gen<'_> {
                 // A plain kind's close at its second closer: a template opens in it.
                 let last = match &ors[k] {
                     Some((c2, _)) if r.after.is_empty() => format!("{{\n                                if bit(&{c2}, c) {{\n                                    template = {k};\n                                }}\n                                {last}\n                            }}"),
+                    // A resuming kind's close at its own closer: the string ended, no template open.
+                    Some((c2, _)) if r.resumes => format!("{{\n                                if !bit(&{c2}, c) {{\n                                    template = usize::MAX;\n                                }}\n                                {last}\n                            }}"),
                     _ => last,
                 };
                 format!("                    match first_bit(&{c}, p + 1) {{\n                        Some(c) => {{\n                            let last = {last};\n                            set(&mut {f}, p, c);\n                            set(&mut {hidden}, p + 1, last + 1);\n                            at = last + 1;\n                        }}\n                        None => {{\n                            set(&mut {f}, p, n);\n                            set(&mut {hidden}, p + 1, n);\n                            at = n;\n                        }}\n                    }}\n")
@@ -3860,7 +3872,35 @@ impl Gen<'_> {
                 let Stmt::Mask(name, Expr::Call(f, args)) = s else { continue };
                 let [Arg::E(Expr::Call(p, pa)), Arg::E(stop)] = args.as_slice() else { continue };
                 let [Arg::E(t @ Expr::Name(_))] = pa.as_slice() else { continue };
-                if !(f == "fill" && p == "prev" && self.is_end(t) && !self.regional(stop)) {
+                // A stop that is regions' openers (`o_K | …`): the rows reading those regions end it.
+                let mut ends_at = Vec::new();
+                if self.regional(stop) {
+                    fn openers(e: &Expr, out: &mut Vec<String>) -> bool {
+                        match e {
+                            Expr::Or(a, b) => openers(a, out) && openers(b, out),
+                            Expr::Name(n) => n.strip_prefix("o_").is_some_and(|k| {
+                                out.push(k.to_owned());
+                                true
+                            }),
+                            _ => false,
+                        }
+                    }
+                    let mut ks = Vec::new();
+                    if !openers(stop, &mut ks) || !ks.iter().all(|k| self.kinds.iter().any(|q| q.kind == *k)) {
+                        continue;
+                    }
+                    for (row, st) in &rows {
+                        if let Stmt::Token { rule: Some(TokenRule::Read(rs) | TokenRule::ReadParts(rs, _)), .. } = st
+                            && rs.iter().any(|r| ks.contains(&r.kind))
+                        {
+                            ends_at.push(*row);
+                        }
+                    }
+                    if ends_at.is_empty() {
+                        continue;
+                    }
+                }
+                if !(f == "fill" && p == "prev" && self.is_end(t)) {
                     continue;
                 }
                 // Where it opens: `T` at the last byte of each row's region token, none after it.
@@ -3898,7 +3938,7 @@ impl Gen<'_> {
                     }
                 }
                 if known {
-                    self.spans.push(Span { f: name.clone(), t: t.clone(), e: stop.clone(), opens_at, open: Vec::new(), starts: Vec::new(), at_end: Vec::new(), passed: Vec::new() });
+                    self.spans.push(Span { f: name.clone(), t: t.clone(), e: stop.clone(), opens_at, ends_at, open: Vec::new(), starts: Vec::new(), at_end: Vec::new(), passed: Vec::new() });
                 }
             }
         }
@@ -4165,7 +4205,7 @@ impl Gen<'_> {
                             let found = self.closer_last(r, &[])?;
                             let some = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                             let some = self.template_close(&r.kind, some)?;
-                            let some = if !self.spans.iter().any(|sp| sp.opens_at.iter().any(|(r, _)| r == row)) { some } else { with_close(&some) };
+                            let some = if !self.keeps_close(*row, rule) { some } else { with_close(&some) };
                             format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {some},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}")
                         };
                         if rs.len() == 1 {
@@ -4186,7 +4226,7 @@ impl Gen<'_> {
                     let tests = self.region_tests(&r.kind);
                     let found = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                     let found = self.template_close(&r.kind, found)?;
-                    let found = if !self.spans.iter().any(|sp| sp.opens_at.iter().any(|(r, _)| r == row)) { found } else { with_close(&found) };
+                    let found = if !self.keeps_close(*row, rule) { found } else { with_close(&found) };
                     (format!("read {} parts, to its closer", r.kind), format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {found},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}"))
                 }
                 None => match last {
@@ -4236,6 +4276,16 @@ impl Gen<'_> {
             }
             // The fills the loop keeps that open after this token.
             for i in 0..self.spans.len() {
+                let sp = &self.spans[i];
+                if !sp.ends_at.is_empty() {
+                    // Its end is a later token's start: open to it, checked there.
+                    for (r, cond) in &sp.opens_at {
+                        if r == row {
+                            let _ = write!(hits, "            // `{}`: from the byte after `{}`, to the next of `{}`, a token's start.\n            if {cond} {{\n                span_{i} = (l + 1, usize::MAX);\n            }}\n", sp.f, show(&sp.t), show(&sp.e));
+                        }
+                    }
+                    continue;
+                }
                 let stop = self.val(&self.spans[i].e.clone())?;
                 let sp = &self.spans[i];
                 for (r, cond) in &sp.opens_at {
@@ -4333,7 +4383,8 @@ impl Gen<'_> {
             let resume = match rule {
                 Some(TokenRule::ReadParts(rs, _)) if rs.iter().all(|r| r.resumes) => {
                     let again = match rs.first().and_then(|r| r.or.clone()) {
-                        Some((c2, _)) => format!("if !bit(&{}, close) {{\n                        held = None;\n                    }}", self.val(&c2)?),
+                        // Closed at its quote: the string ended, and no template is open (`template`).
+                        Some((c2, _)) => format!("if !bit(&{}, close) {{\n                        held = None;\n                        template = usize::MAX;\n                    }}", self.val(&c2)?),
                         None => "held = None;".to_owned(),
                     };
                     Some(format!("            // Resumes the open string's record: no record of its own.\n            match held {{\n                Some(o) => {{\n                    lasts[o] = l as u32;\n                    {again}\n                }}\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}\n            at = l + 1;\n            if at >= base + 64 {{\n                b = at / 64;\n                continue 'tokens;\n            }}\n            firsts &= !0u64 << (at - base);\n            continue;\n        }}"))
@@ -4450,6 +4501,17 @@ impl Gen<'_> {
         }
         let mut span_decl = String::new();
         let mut span_after = String::new();
+        // A span whose stop is a region's opener that the file ends in: its checks to the end.
+        for (i, sp) in self.spans.iter().enumerate() {
+            if sp.ends_at.is_empty() || sp.open.is_empty() {
+                continue;
+            }
+            let mut t1 = String::new();
+            for (why, t) in &sp.open {
+                let _ = write!(t1, "        // {why}\n        if {t} {{\n            refused = true;\n        }}\n");
+            }
+            let _ = write!(span_after, "    // `{}` open at the file's end: to it.\n    if !refused && span_{i}.0 != usize::MAX && span_{i}.1 == usize::MAX {{\n        let (l, c) = (span_{i}.0 - 1, n);\n        let _ = (l, c);\n{t1}    }}\n", sp.f);
+        }
         let mut acc_after = String::new();
         // The gap masks the loop keeps.
         for (j, a) in accs.iter().enumerate() {
@@ -4476,8 +4538,8 @@ impl Gen<'_> {
         }
         // The fills the loop keeps: each its first byte and its end (`usize::MAX`: none open), the
         // escapes at the starts in it, and at its end.
-        if !self.spans.is_empty() {
-            span_decl.push_str("    // The closer the region token read ends at, where a fill the loop keeps opens after it.\n    let mut close: usize;\n");
+        if !self.spans.is_empty() || self.kinds.iter().any(|q| q.resumes) {
+            span_decl.push_str("    // The closer the region token read ends at, where a fill the loop keeps opens after it, or a read resumes a string's.\n    let mut close: usize;\n");
         }
         for (i, sp) in self.spans.iter().enumerate() {
             let _ = writeln!(span_decl, "    // `{}`'s first byte and the byte after it (none: `usize::MAX`).\n    let mut span_{i} = (usize::MAX, usize::MAX);", sp.f);
@@ -4508,6 +4570,15 @@ impl Gen<'_> {
                 let fold = |t: &str| fold_open(t, opens);
                 let refuse_at = |why: &str, t: &str, pad: &str| if t == "true" { format!("{pad}// {why}\n{pad}refused = true;\n{pad}break;\n") } else { format!("{pad}// {why}\n{pad}if {t} {{\n{pad}    refused = true;\n{pad}    break;\n{pad}}}\n") };
                 let mut code = String::new();
+                // Its end, at a token of a row that reads its stop's region: the checks over it,
+                // from its first byte to the token's (`c`), then its end, before the starts' tests.
+                if sp.ends_at.contains(&arm.row) {
+                    let mut t1 = String::new();
+                    for (why, t) in &sp.open {
+                        t1.push_str(&refuse_at(why, t, "                "));
+                    }
+                    let _ = write!(code, "            if span_{i}.0 != usize::MAX && span_{i}.1 == usize::MAX && s >= span_{i}.0 {{\n                let (l, c) = (span_{i}.0 - 1, s);\n                let _ = (l, c);\n{t1}                span_{i}.1 = s;\n            }}\n");
+                }
                 // At the starts in it.
                 let (mut f1, mut r1) = (String::new(), String::new());
                 for (why, f, r) in &sp.starts {

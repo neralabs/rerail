@@ -4201,10 +4201,15 @@ fn split_enter_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts
 /// A record of a split region (`SplitParts`, `Split::Tier2`): at its opener's bit and past its
 /// byte. Its opener's byte is the token, its parts pending from the byte after (`Mem::PartAt`)
 /// to its closer's last (`Mem::PartEnd`, as `records::read_parts` ends them). The record is the
-/// whole region (the token loop's) or its opener alone (the masks', a device's): its last is not
-/// read.
+/// whole region (the token loop's, the masks'), its last not read. In a grammar with templates
+/// (decision 0600) it is also its opener alone, the masks' of every region, its parts no records;
+/// in another, a record of its opener alone is split already (tier 1's, `Split::Tier1`): a token
+/// as it is.
 fn split_enter(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw: &crate::native_cpu_bytes::Bytewise<'_>, (s, l): (Value, Value), words: Option<&[u8]>, heads: &mut Vec<(Block, Step)>) {
-    let _ = (words, l);
+    let _ = words;
+    let templates = sp.readers.iter().any(|rd| rd.template.is_some());
+    let whole = f.ins().icmp(IntCC::UnsignedGreaterThan, l, s);
+    let whole = f.ins().uextend(types::I64, whole);
     let on = f.create_block();
     for (k, rd) in sp.readers.iter().enumerate() {
         let q = f.ins().ushr_imm(s, 6);
@@ -4212,6 +4217,7 @@ fn split_enter(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw
         let sh = f.ins().band_imm(s, 63);
         let x = f.ins().ushr(x, sh);
         let opens = f.ins().band_imm(x, 1);
+        let opens = if templates { opens } else { f.ins().band(opens, whole) };
         let (enter, next) = (f.create_block(), f.create_block());
         f.ins().brif(opens, enter, &[], next, &[]);
         f.switch_to_block(enter);

@@ -1368,6 +1368,15 @@ impl Lowering {
         }
         let hidden = self.program.ops.len() as u16;
         self.program.ops.push(BlockOp::Carry(zero));
+        // With a kind that resumes (decision 0600), a second carry: the places after one closed
+        // at its own closer, in the round before (the string ended): from there no template is
+        // open, and none opens there. A `prev` on its way (`groups`' strict rule); each round is
+        // right a place further, as the hidden places are.
+        let ends = regions.kinds.iter().any(|r| r.resumes).then(|| {
+            self.program.ops.push(BlockOp::Carry(zero));
+            (self.program.ops.len() - 1) as u16
+        });
+        let mut ended: Vec<u16> = Vec::new();
         let code = self.op(BlockOp::AndNot(w, hidden));
         let mut hide: Vec<u16> = Vec::new();
         let mut kinds = Vec::new();
@@ -1404,9 +1413,16 @@ impl Lowering {
                         None => o,
                     });
                 }
-                let last = self.op(BlockOp::Fill(named.expect("verified: a kind named"), others.unwrap_or(zero)));
+                let others = match (others, ends) {
+                    (Some(o), Some(e)) => self.op(BlockOp::Or(o, e)),
+                    (o, e) => o.or(e).unwrap_or(zero),
+                };
+                let last = self.op(BlockOp::Fill(named.expect("verified: a kind named"), others));
                 let before = self.op(BlockOp::Prev(last, 1));
                 taken = self.op(BlockOp::And(taken, before));
+                if let Some(e) = ends {
+                    taken = self.op(BlockOp::AndNot(taken, e));
+                }
             }
             if let Some(e) = earlier {
                 taken = self.op(BlockOp::AndNot(taken, e));
@@ -1443,6 +1459,9 @@ impl Lowering {
                 if r.after.is_empty() {
                     templates[at] = Some(two);
                 }
+                if r.resumes {
+                    ended.push(one);
+                }
                 for k in 1..r.bytes {
                     hide.push(self.op(BlockOp::Prev(one, k)));
                 }
@@ -1462,14 +1481,23 @@ impl Lowering {
             let before = self.prev(f, 1)?;
             let flips = self.xor(f, before)?;
             self.toggles.push((f, flips));
-            kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty, or, after });
+            kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty, or, after, resumes: r.resumes });
         }
         let mut next = *hide.first().ok_or("regions that hide nothing")?;
         for &h in &hide[1..] {
             next = self.op(BlockOp::Or(next, h));
         }
         named(self, regions.hidden.clone(), hidden);
-        self.program.rounds.push(vec![(hidden, next)]);
+        let mut pairs = vec![(hidden, next)];
+        if let Some(e) = ends {
+            let mut x = *ended.first().ok_or("a kind that resumes with no closer of its own")?;
+            for &y in &ended[1..] {
+                x = self.op(BlockOp::Or(x, y));
+            }
+            let x = self.op(BlockOp::Prev(x, 1));
+            pairs.push((e, x));
+        }
+        self.program.rounds.push(pairs);
         self.program.walks.push(crate::block::Walk { group: (self.program.rounds.len() - 1) as u16, hidden, kinds });
         Ok(())
     }

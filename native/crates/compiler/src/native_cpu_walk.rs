@@ -308,8 +308,16 @@ fn emit_cont(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, (closer
 }
 
 /// The last plain kind with a template from a close at `c`: this kind, where it has no `after`
-/// and its second closer holds at `c` (a template's `$`), else as before.
+/// and its second closer holds at `c` (a template's `$`); none where it resumes and closes at
+/// its own closer; else as before.
 fn template_last(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, k: usize, c: Value, second: Value, last: Value) -> Value {
+    // A kind that resumes, closed at its own closer: the string ended, none (decision 0600).
+    if kind.resumes {
+        let at = f.ins().ushr(second, c);
+        let at = f.ins().band_imm(at, 1);
+        let none = f.ins().iconst(types::I64, 0);
+        return f.ins().select(at, last, none);
+    }
     if kind.after != 0 || kind.or.is_none() {
         return last;
     }

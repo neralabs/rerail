@@ -57,16 +57,13 @@ fn tier1_same(texts: &[&str]) {
     }
 }
 
-/// The template spans' escapes, each tested in the rows it may hold in (decision 0595): a `}` of
-/// a template's code in a token of it, a raw string in a template's code, a string, a character
-/// or a backtick name in a raw string's template; and a template's span after its end.
+/// The template spans' escapes, each tested in the rows it may hold in (decision 0595): a raw
+/// string in a template's code, a string, a character or a backtick name in a raw string's
+/// template; and a template's span after its end. A `}` in a token of the code is no template's
+/// end (decision 0600): a string after it that never closes is refused.
 #[test]
 fn the_template_spans_are_the_interpreters() {
     refused(&[
-        "val a = \"${\"}\"}\"\n",
-        "val a = \"${'}'}\"\n",
-        // Where what follows still reads as tokens: the `}` a token of the code covered is
-        // punctuation.
         "val a = \"${\"}\"}\"\"\n",
         "val a = \"${'}'}\"\"\n",
     ]);
@@ -604,6 +601,13 @@ fn a_string_with_templates_is_one_record() {
         "val h = \"\"\"a ${f(\"b\")} \"c\" ${'d'}e\"\"\"\n",
         "val a = \"${ b }\"\nval c = \"${ d } e\"\n.f()\n",
         "fun f() = \"${ a }\"",
+        // A `}` in a string or a character of a template's code is no template's end; a `}` of
+        // code after a string ended opens no tail.
+        "val a = \"${f(\"}\")} b\"\n",
+        "val a = \"${\"}\"}\"\nval b = \"${'}'}\"\nval s = \"${f(\"}\")}\"\n",
+        "val a = \"${f('}')}\" + \"\"\"${g(\"}\")}\"\"\"\n",
+        "fun f() { val a = \"${b}\" }\nfun g() {\n    h(\"${c} d\") }\n",
+        "class A {\n    val s = \"${x}${y}\"\n    fun f() { }\n}\n",
         // A tail read across a block's edge: the loop reads it again where its block is final.
         "fun q() = \"${a} ${b} xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n",
         "fun q() = \"\"\"\n    SELECT * FROM ${t.name} WHERE a = ${b + 1}\n    AND c = '$d'\n\"\"\".trimIndent()\n",
@@ -639,6 +643,16 @@ fn a_string_with_templates_is_one_record() {
                         e += 2;
                         continue;
                     }
+                    // A string or a character in the code: its bytes are no template's `}`.
+                    if code > 0 && matches!(bytes[e], b'"' | b'\'') {
+                        let q = bytes[e];
+                        e += 1;
+                        while bytes[e] != q {
+                            e += if bytes[e] == b'\\' { 2 } else { 1 };
+                        }
+                        e += 1;
+                        continue;
+                    }
                     if code > 0 && bytes[e] == b'}' {
                         assert!(!starts.contains(&(e as u32)), "no record at a template's `}}`, {e} of {text:?}");
                     }
@@ -655,6 +669,13 @@ fn a_string_with_templates_is_one_record() {
                 continue;
             }
             at += 1;
+        }
+        // The regions as rounds, Metal's form, settle to the walk's: every output.
+        let (walked, spans) = program.all_values(&[bytes]);
+        let (rounds, _) = program.rounds_values(&[bytes]);
+        for (k, &v) in program.outputs.iter().enumerate() {
+            let v = usize::from(v);
+            assert_eq!(rounds[v][spans[0].clone()], walked[v][spans[0].clone()], "output {k} as rounds, {text:?}");
         }
         // The records' masks, as a device without the token loop reads them (Metal): the loop's
         // records, a region tier 2 splits its opener alone, and none at a template's `}`.
@@ -706,7 +727,6 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
         "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
         "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
-        "val s = \"${f(\"}\")}\"\n",
         "val s = \"${f(\"${x}\")}\"\n",
         "val s = \"${if (a) { 1 } else 2}\"\n",
         "fun interface P {\n    fun f()\n}\n",

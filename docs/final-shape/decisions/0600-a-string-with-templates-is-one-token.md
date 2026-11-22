@@ -95,3 +95,30 @@ template's code where it reaches the `${` (`parse/expr.rs`, `string_literal`, `i
 - The test: every tier on every text: the interpreter, the JIT's tier 1 and tier 2, the masks' records, and tier 1
   and tier 2 as Rust. The texts include a gap before a template's `}`, a file that ends at a string, and tails
   read across a block's edge.
+
+## What changed (step 6): which `}` ends a template
+
+Until now a template's tail opened at the first `}` on its line, by the bytes (`t_close = rbrace & (prev(t_lex) |
+prev(t_body))`), and the grammar refused, by an escape, "a `${…}` template whose `}` is in a string of its code". That escape refused
+valid Kotlin (`"${f("}")}"`, `"${'}'}"`), and lean reads them. Now the regions say which `}` ends a template:
+only the first `}` outside the code's own strings and characters, while a template is open. The escape is gone,
+and `t_close = rbrace`.
+
+- The regions (`block::WalkKind::resumes`, `resumes` in the text form): a kind that resumes, closing at its own
+  closer (the string's quote, not its `$`), ends the template the string was in. The walk sets `last` to none
+  there, and a `}` after it opens no tail. The JIT's walk (`native_cpu_walk::template_last`), tier 1 as Rust's
+  walk and its test build's are the same.
+- The rounds (`Lowering::regions`, bitlex's `Regions::body`) have a second carry, `H_ended`. It holds the places
+  after the round before's closes of a resuming kind at its own closer (`prev(c & ~C2)`). Those places are added to
+  the kinds that end a template's fill, and are taken from the openers of a kind `after` one. `verify_walks` wants
+  that carry exactly where a kind resumes. The test checks every output of the rounds against the walk's on every
+  text.
+- `t_code = fill(prev(t_brace), o_tail | o_rtail)`: a template's code runs to the `}` its tail opens at. Tier 1 as
+  Rust keeps it as a span whose stop is regions' openers. A token of a row that reads those regions ends it, and
+  its checks run there over the span; a span the file ends in is checked to the end. The rows that resume keep
+  their closer (`close`), which the string ended tests.
+- `split_enter`: in a grammar with templates, every split region's masks' record is its opener alone, its parts
+  no records, so it enters there. In another grammar a record of its opener alone is split already (tier 1's,
+  `Split::Tier1`: JSON's A records read by B), a token as it is, as before step 5.
+- The texts moved from the refused lists to the test of every tier, with strings, characters and `}` in a
+  template's code, and code after a string ended.

@@ -528,13 +528,15 @@ pub struct BlockProgram {
 ///
 /// A kind with `after` (a mask of kinds, by place) opens only where the last region closed at
 /// its second closer (`or`) before `t`, of the kinds with none, is one it names; otherwise its
-/// opener is no opener. The
+/// opener is no opener. A kind that `resumes` and closes at its own closer (a template's tail at
+/// its quote) ends that: none closed so since (decision 0600, the lean lexer's string ended). The
 /// next region opens at the first place after the hidden ones (after `t` at least).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Walk {
     /// Its rounds group (`BlockProgram::rounds`).
     pub group: u16,
-    /// The hidden places: the group's one carry.
+    /// The hidden places: the group's first carry. A walk with a kind that `resumes` has a
+    /// second: the places where such a kind closed at its own closer, in the round before.
     pub hidden: u16,
     pub kinds: Vec<WalkKind>,
 }
@@ -559,6 +561,8 @@ pub struct WalkKind {
     /// template's `$`) of the kinds with no `after` must be (0: none; a template's tail back to
     /// its string's kind).
     pub after: u16,
+    /// With `after`: a close at its own closer, not its second, ends the last (`Walk`).
+    pub resumes: bool,
 }
 
 impl Walk {
@@ -836,8 +840,12 @@ impl BlockProgram {
         for (w, walk) in self.walks.iter().enumerate() {
             let g = usize::from(walk.group);
             let Some(group) = groups.get(g) else { return Err(format!("walk {w}: no group {g}")) };
-            if std::mem::replace(&mut seen[g], true) || group.carries.len() != 1 || usize::from(walk.hidden) != group.carries[0].0 || walk.kinds.is_empty() {
-                return Err(format!("walk {w}: a group of one carry, walked once"));
+            let carries = 1 + usize::from(walk.kinds.iter().any(|k| k.resumes));
+            if std::mem::replace(&mut seen[g], true) || group.carries.len() != carries || usize::from(walk.hidden) != group.carries[0].0 || walk.kinds.is_empty() {
+                return Err(format!("walk {w}: a group of one carry (two with a kind that resumes), walked once"));
+            }
+            if walk.kinds.iter().any(|k| k.resumes && (k.after == 0 || k.or.is_none())) {
+                return Err(format!("walk {w}: a kind that resumes with no `after` or no `or`"));
             }
             let member = |v: u16| group.members.contains(&usize::from(v));
             let made = walk.made();
@@ -976,6 +984,7 @@ impl BlockProgram {
                     out.extend_from_slice(&c2.to_le_bytes());
                     out.push(m2);
                     out.extend_from_slice(&k.after.to_le_bytes());
+                    out.push(u8::from(k.resumes));
                 }
             }
         }
@@ -1218,6 +1227,9 @@ impl BlockProgram {
                 BlockOp::Prefix(n, w) => blocks.iter().zip(&place).map(|(block, &(at, len))| prefix_at(block, at, len, n, w)).collect(),
                 BlockOp::Phase(k, r) => place.iter().map(|&(at, _)| phase(64 * at, k, r)).collect(),
                 BlockOp::Position(j) => place.iter().map(|&(at, _)| position(at, j)).collect(),
+                // A walked group's carry past its first (`Walk::hidden`): the rounds' working, which
+                // the walk's values do not read; zero.
+                BlockOp::Carry(_) if walk => place.iter().map(|_| 0).collect(),
                 BlockOp::Carry(_) => unreachable!("a carry is its group's, run with it"),
                 BlockOp::Cmp { .. } | BlockOp::Bit { .. } => unreachable!("verified: a row program's, run by `run_rows`"),
                 BlockOp::Eq(byte) => blocks.iter().map(|block| eq(block, byte)).collect(),
@@ -1328,6 +1340,10 @@ impl BlockProgram {
                 let wide = kind.or.filter(|&(c2, _)| (values[usize::from(c2)][c / 64] >> (c % 64)) & 1 != 0);
                 if kind.after == 0 && wide.is_some() {
                     last = k as u32;
+                }
+                // A kind that resumes, closed at its own closer: the string ended.
+                if kind.resumes && wide.is_none() {
+                    last = 16;
                 }
                 let to = if kind.outside { c } else { c + usize::from(wide.map_or(kind.bytes, |o| o.1)) };
                 set(&mut values[hidden], t + 1, to.min(end));
@@ -1807,7 +1823,7 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
             let outside = if k.outside { " outside" } else { "" };
             let empty = k.empty.map_or(String::new(), |(e, m)| format!(" else %{e} {m}"));
             let or = k.or.map_or(String::new(), |(c, m)| format!(" or %{c} {m}"));
-            let after = if k.after != 0 { format!(" after {}", k.after) } else { String::new() };
+            let after = if k.after != 0 { format!(" after {}{}", k.after, if k.resumes { " resumes" } else { "" }) } else { String::new() };
             let _ = writeln!(out, "  block {at} region {} %{} %{} %{} %{} {}{outside}{empty}{or}{after}", walk.group, k.opener, k.closer, k.open, k.fill, k.bytes);
         }
     }

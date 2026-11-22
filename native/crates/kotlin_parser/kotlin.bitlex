@@ -83,12 +83,13 @@ mask block_end  = slash & prev(star)
 # A string's closer: a `"` no backslash escapes.
 mask dq_close   = dq & ~escaped(backslash)
 mask sq_close   = sq & ~escaped(backslash)
-# A template, as its bytes show it: `${`, then code to the first `}` on its line. It is one
-# where its `$` closes a string's region; a `${` in a comment or a character is no template.
+# A template: `${`, where its `$` closes a string's region (a `${` in a comment or a character
+# is no template), then code to the first `}` outside the code's own strings and characters:
+# the regions say which `}` (a tail opens at a `}` only while a template is open, and a tail
+# closed at its quote ends the string), as the lean lexer reads a template's code.
 mask t_dollar   = dollar & next(lbrace) & ~escaped(backslash)
 mask t_lex      = prev(t_dollar)
-mask t_body     = fill(prev(t_lex) & ~rbrace & ~lf, rbrace | lf)
-mask t_close    = rbrace & (prev(t_lex) | prev(t_body))
+mask t_close    = rbrace
 # A raw string: `"""`, then to the last three quotes of the next run of three or more.
 mask dq3        = dq & next(dq) & next(dq, 2)
 mask rclose     = dq3 & ~next(dq, 3)
@@ -110,12 +111,10 @@ mask t_brace    = t_lex & prev(hidden) & ~hidden
 assume "a template's `{` is the last byte of its string's token, after the `$` that closes it" at ends t_brace
 mask code       = ~region & ~t_brace
 
-# A template's code: not read yet with a brace, a template, a comment or a line break in it,
-# nor with none. A `$` in code is no template's. A string or a character in it is a region;
-# the `}` the bytes end the code at opens the tail, unless it is inside one of them.
-mask t_code     = fill(prev(t_brace), rbrace)
+# A template's code: to the `}` its tail opens at. Not read yet with a brace, a template, a
+# comment or a line break in it, nor with none. A `$` in code is no template's.
+mask t_code     = fill(prev(t_brace), o_tail | o_rtail)
 escape "a `${…}` template with a brace, a template, a comment or a line break" when t_code & (lbrace | lf | line_open | block_open | dollar & next(lbrace))
-escape "a `${…}` template whose `}` is in a string of its code" when rbrace & prev(t_code) & ~o_tail & ~o_rtail
 escape "an empty `${}`" when prev(t_brace) & rbrace
 escape "a `$` outside a string" when code & dollar
 

@@ -455,7 +455,9 @@ impl Regions {
     /// - 1) | prev(c & C2) | … | prev(c & C2, M - 1)`. A kind with `after A …`
     /// comes after the kinds with none, which it reads: its openers are where the last of
     /// their closers at a `C2` before (`c & C2`, `t_K`) is an `A`'s, `o_K = O & ~H &
-    /// prev(fill(t_A | …, t_B | …))`, the `B`s the other kinds with an `or`.
+    /// prev(fill(t_A | …, t_B | …))`, the `B`s the other kinds with an `or`. With a kind that
+    /// `resumes`, a second carry `H_ended`: the places after its closes at its own closer
+    /// (`prev(c & ~C2)`, the string ended), from the round before, among the `B`s and no opener.
     pub fn body(&self) -> Vec<Stmt> {
         let name = |s: &str| Expr::Name(s.to_string());
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
@@ -468,6 +470,12 @@ impl Regions {
             out.push(Stmt::Mask(r.later(), later));
         }
         out.push(Stmt::Carry(self.hidden.clone(), Expr::Empty));
+        let ended = format!("{}_ended", self.hidden);
+        let resumes = self.kinds.iter().any(|r| r.resumes);
+        if resumes {
+            out.push(Stmt::Carry(ended.clone(), Expr::Empty));
+        }
+        let mut ends: Option<Expr> = None;
         let mut hide: Option<Expr> = None;
         let mut or = |e: Expr| hide = Some(match hide.take() {
             Some(h) => Expr::Or(Box::new(h), Box::new(e)),
@@ -491,7 +499,11 @@ impl Regions {
             if !r.after.is_empty() {
                 let named = any(plain.iter().copied().filter(|k| r.after.contains(&k.kind)).collect(), &templates).expect("verified: a kind named");
                 let others = any(plain.iter().copied().filter(|k| !r.after.contains(&k.kind)).collect(), &templates).unwrap_or(Expr::Empty);
+                let others = if resumes { Expr::Or(Box::new(others), Box::new(name(&ended))) } else { others };
                 open = and(open, call("prev", vec![Arg::E(call("fill", vec![Arg::E(named), Arg::E(others)]))]));
+                if resumes {
+                    open = and(open, not(name(&ended)));
+                }
             }
             if let Some(e) = &earlier {
                 open = and(open, not(e.clone()));
@@ -525,6 +537,12 @@ impl Regions {
                 if r.after.is_empty() {
                     templates.push((r.kind.clone(), l2.clone()));
                 }
+                if r.resumes {
+                    ends = Some(match ends.take() {
+                        Some(e) => Expr::Or(Box::new(e), Box::new(l.clone())),
+                        None => l.clone(),
+                    });
+                }
                 or(prev(&f, 1));
                 for k in 1..r.bytes {
                     or(pk(l.clone(), k));
@@ -539,6 +557,9 @@ impl Regions {
             }
         }
         out.push(Stmt::Next(self.hidden.clone(), hide.unwrap_or(Expr::Empty)));
+        if resumes {
+            out.push(Stmt::Next(ended, call("prev", vec![Arg::E(ends.unwrap_or(Expr::Empty))])));
+        }
         out
     }
 }
