@@ -31,7 +31,8 @@ unsafe fn all(k: &[uint32x4_t; 2]) -> bool {
 }
 
 #[inline(always)]
-unsafe fn b0_sssi_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: *const u8, x8: *const u8, x16: *const u8, x32: u32) {
+unsafe fn b0_r0r1sg_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8, arg1: *const u8, x16: *const u8) {
+    let gid0 = l.group[0] * l.block[0] + lid0;
     let a0: u32 = (x16.wrapping_add(4u64 as usize) as *const u32).read_unaligned();
     let a1: u32 = (x16 as *const u32).read_unaligned();
     let mut x40: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
@@ -39,7 +40,7 @@ unsafe fn b0_sssi_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: *const u8, x8
     let mut x56: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
     let mut x64: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
     let mut live = k;
-    let t1: [uint32x4_t; 2] = [vaddq_u32(vdupq_n_u32(x32), vld1q_u32(LANE[0].as_ptr())), vaddq_u32(vdupq_n_u32(x32), vld1q_u32(LANE[1].as_ptr()))];
+    let t1: [uint32x4_t; 2] = [vaddq_u32(vdupq_n_u32(gid0), vld1q_u32(LANE[0].as_ptr())), vaddq_u32(vdupq_n_u32(gid0), vld1q_u32(LANE[1].as_ptr()))];
     let t2 = [vdupq_n_u32(a0); 2];
     let t3: [uint32x4_t; 2] = [vcgeq_u32(t1[0], t2[0]), vcgeq_u32(t1[1], t2[1])];
     let t4: [uint32x4_t; 2] = [vandq_u32(live[0], t3[0]), vandq_u32(live[1], t3[1])];
@@ -47,7 +48,7 @@ unsafe fn b0_sssi_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: *const u8, x8
         live = [vbicq_u32(live[0], t4[0]), vbicq_u32(live[1], t4[1])];
     }
     if any(&live) {
-        let t5 = b1_ai4_p(l, lid0, live, x0, x32);
+        let t5 = b1_ag4r0_p(l, lid0, live, arg0);
         x40 = t5;
         let t6 = [vdupq_n_u32(a1); 2];
         let mut t7x = [0u32; 8];
@@ -70,19 +71,20 @@ unsafe fn b0_sssi_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: *const u8, x8
             t11 = [vandq_u32(t11[0], t17[0]), vandq_u32(t11[1], t17[1])];
             if !(any(&t11)) { break; }
             let t19: [uint32x4_t; 2] = [vaddq_u32(x48[0], x40[0]), vaddq_u32(x48[1], x40[1])];
-            let t20 = b1_al4_p(l, lid0, t11, x0, t19);
+            let t20 = b1_al4r0_p(l, lid0, t11, arg0, t19);
             x64 = t20;
             x40 = x64;
             let t21 = x56;
             x56 = [vsubq_u32(x56[0], t11[0]), vsubq_u32(x56[1], t11[1])];
-            b2_ai4l_p(l, lid0, t11, x0, x32, x40);
+            b2_ag4r0l_p(l, lid0, t11, arg0, x40);
         }
-        let t22 = b3_sl_p(l, lid0, live, x8.wrapping_add((0u64).wrapping_mul(4u64) as usize), x56);
+        let t22 = b3_o1l_p(l, lid0, live, arg1.wrapping_add((0u64).wrapping_mul(4u64) as usize), x56);
     }
 }
 
 #[inline(always)]
-unsafe fn b0_sssi_f(l: &Launch, lid0: u32, x0: *const u8, x8: *const u8, x16: *const u8, x32: u32) {
+unsafe fn b0_r0r1sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u8, x16: *const u8) {
+    let gid0 = l.group[0] * l.block[0] + lid0;
     let a0: u32 = (x16.wrapping_add(4u64 as usize) as *const u32).read_unaligned();
     let a1: u32 = (x16 as *const u32).read_unaligned();
     let mut x40: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
@@ -90,10 +92,10 @@ unsafe fn b0_sssi_f(l: &Launch, lid0: u32, x0: *const u8, x8: *const u8, x16: *c
     let mut x56: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
     let mut x64: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
     let mut live = [vdupq_n_u32(u32::MAX); 2];
-    if ((x32) as u64 + 7) < ((a0) as u64) {
-        let t23 = b1_ai4_f(l, lid0, x0, x32);
+    if ((gid0) as u64 + 7) < ((a0) as u64) {
+        let t23 = b1_ag4r0_f(l, lid0, arg0);
         x40 = t23;
-        let t24: [uint32x4_t; 2] = [vaddq_u32(vdupq_n_u32(x32), vld1q_u32(LANE[0].as_ptr())), vaddq_u32(vdupq_n_u32(x32), vld1q_u32(LANE[1].as_ptr()))];
+        let t24: [uint32x4_t; 2] = [vaddq_u32(vdupq_n_u32(gid0), vld1q_u32(LANE[0].as_ptr())), vaddq_u32(vdupq_n_u32(gid0), vld1q_u32(LANE[1].as_ptr()))];
         let t25 = [vdupq_n_u32(a1); 2];
         let mut t26x = [0u32; 8];
         let mut t26y = [0u32; 8];
@@ -115,19 +117,19 @@ unsafe fn b0_sssi_f(l: &Launch, lid0: u32, x0: *const u8, x8: *const u8, x16: *c
             t30 = [vandq_u32(t30[0], t36[0]), vandq_u32(t30[1], t36[1])];
             if !(any(&t30)) { break; }
             let t38: [uint32x4_t; 2] = [vaddq_u32(x48[0], x40[0]), vaddq_u32(x48[1], x40[1])];
-            let t39 = b1_al4_p(l, lid0, t30, x0, t38);
+            let t39 = b1_al4r0_p_v0(l, lid0, t30, arg0, t38);
             x64 = t39;
             x40 = x64;
             let t40 = x56;
             x56 = [vsubq_u32(x56[0], t30[0]), vsubq_u32(x56[1], t30[1])];
-            b2_ai4l_p(l, lid0, t30, x0, x32, x40);
+            b2_ag4r0l_p_v0(l, lid0, t30, arg0, x40);
         }
-        let t41 = b3_sl_f(l, lid0, x8.wrapping_add((0u64).wrapping_mul(4u64) as usize), x56);
-    } else if (((x32) as u64 + 7) <= u32::MAX as u64 && ((x32) as u64) >= ((a0) as u64)) {
+        let t41 = b3_o1l_f(l, lid0, arg1.wrapping_add((0u64).wrapping_mul(4u64) as usize), x56);
+    } else if (((gid0) as u64 + 7) <= u32::MAX as u64 && ((gid0) as u64) >= ((a0) as u64)) {
         return;
     } else {
         // Lanes part: the chunk's lanes on both sides of the bound.
-        let t42: [uint32x4_t; 2] = [vaddq_u32(vdupq_n_u32(x32), vld1q_u32(LANE[0].as_ptr())), vaddq_u32(vdupq_n_u32(x32), vld1q_u32(LANE[1].as_ptr()))];
+        let t42: [uint32x4_t; 2] = [vaddq_u32(vdupq_n_u32(gid0), vld1q_u32(LANE[0].as_ptr())), vaddq_u32(vdupq_n_u32(gid0), vld1q_u32(LANE[1].as_ptr()))];
         let t43 = [vdupq_n_u32(a0); 2];
         let t44: [uint32x4_t; 2] = [vcgeq_u32(t42[0], t43[0]), vcgeq_u32(t42[1], t43[1])];
         let t45: [uint32x4_t; 2] = [vandq_u32(live[0], t44[0]), vandq_u32(live[1], t44[1])];
@@ -135,7 +137,7 @@ unsafe fn b0_sssi_f(l: &Launch, lid0: u32, x0: *const u8, x8: *const u8, x16: *c
             live = [vbicq_u32(live[0], t45[0]), vbicq_u32(live[1], t45[1])];
         }
         if any(&live) {
-            let t46 = b1_ai4_p(l, lid0, live, x0, x32);
+            let t46 = b1_ag4r0_p(l, lid0, live, arg0);
             x40 = t46;
             let t47 = [vdupq_n_u32(a1); 2];
             let mut t48x = [0u32; 8];
@@ -158,25 +160,26 @@ unsafe fn b0_sssi_f(l: &Launch, lid0: u32, x0: *const u8, x8: *const u8, x16: *c
                 t52 = [vandq_u32(t52[0], t58[0]), vandq_u32(t52[1], t58[1])];
                 if !(any(&t52)) { break; }
                 let t60: [uint32x4_t; 2] = [vaddq_u32(x48[0], x40[0]), vaddq_u32(x48[1], x40[1])];
-                let t61 = b1_al4_p(l, lid0, t52, x0, t60);
+                let t61 = b1_al4r0_p(l, lid0, t52, arg0, t60);
                 x64 = t61;
                 x40 = x64;
                 let t62 = x56;
                 x56 = [vsubq_u32(x56[0], t52[0]), vsubq_u32(x56[1], t52[1])];
-                b2_ai4l_p(l, lid0, t52, x0, x32, x40);
+                b2_ag4r0l_p(l, lid0, t52, arg0, x40);
             }
-            let t63 = b3_sl_p(l, lid0, live, x8.wrapping_add((0u64).wrapping_mul(4u64) as usize), x56);
+            let t63 = b3_o1l_p(l, lid0, live, arg1.wrapping_add((0u64).wrapping_mul(4u64) as usize), x56);
         }
     }
 }
 
 #[inline(always)]
-unsafe fn b1_al4_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0b: *const u8, x0i: [uint32x4_t; 2]) -> [uint32x4_t; 2] {
+unsafe fn b1_al4r0_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8, x0i: [uint32x4_t; 2]) -> [uint32x4_t; 2] {
+    let gid0 = l.group[0] * l.block[0] + lid0;
     let mut live = k;
     let mut res: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
     let t64 = vdupq_n_u32(vmaxvq_u32(vmaxq_u32(vandq_u32(live[0], x0i[0]), vandq_u32(live[1], x0i[1]))));
     let t65: [uint32x4_t; 2] = [vbslq_u32(live[0], x0i[0], t64), vbslq_u32(live[1], x0i[1], t64)];
-    let t66 = x0b as *const u32;
+    let t66 = arg0 as *const u32;
     let mut t67: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
     t67[0] = vld1q_lane_u32::<0>(t66.add(vgetq_lane_u32::<0>(t65[0]) as usize), t67[0]);
     t67[0] = vld1q_lane_u32::<1>(t66.add(vgetq_lane_u32::<1>(t65[0]) as usize), t67[0]);
@@ -191,80 +194,115 @@ unsafe fn b1_al4_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0b: *const u8, x0
 }
 
 #[inline(always)]
-unsafe fn b1_ai4_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0b: *const u8, x0i: u32) -> [uint32x4_t; 2] {
+unsafe fn b1_al4r0_p_v0(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8, x0i: [uint32x4_t; 2]) -> [uint32x4_t; 2] {
+    let gid0 = l.group[0] * l.block[0] + lid0;
     let mut live = k;
     let mut res: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
-    let mut t68: [uint32x4_t; 2];
-    if all(&live) {
-        let t69 = (x0b as *const u32).add((x0i) as usize);
-        t68 = [vld1q_u32(t69.add(0)), vld1q_u32(t69.add(4))];
-    } else {
-        let t70: [uint32x4_t; 2] = [vaddq_u32(vdupq_n_u32(x0i), vld1q_u32(LANE[0].as_ptr())), vaddq_u32(vdupq_n_u32(x0i), vld1q_u32(LANE[1].as_ptr()))];
-        let t71 = vdupq_n_u32(vmaxvq_u32(vmaxq_u32(vandq_u32(live[0], t70[0]), vandq_u32(live[1], t70[1]))));
-        let t72: [uint32x4_t; 2] = [vbslq_u32(live[0], t70[0], t71), vbslq_u32(live[1], t70[1], t71)];
-        let t73 = x0b as *const u32;
-        let mut t74: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
-        t74[0] = vld1q_lane_u32::<0>(t73.add(vgetq_lane_u32::<0>(t72[0]) as usize), t74[0]);
-        t74[0] = vld1q_lane_u32::<1>(t73.add(vgetq_lane_u32::<1>(t72[0]) as usize), t74[0]);
-        t74[0] = vld1q_lane_u32::<2>(t73.add(vgetq_lane_u32::<2>(t72[0]) as usize), t74[0]);
-        t74[0] = vld1q_lane_u32::<3>(t73.add(vgetq_lane_u32::<3>(t72[0]) as usize), t74[0]);
-        t74[1] = vld1q_lane_u32::<0>(t73.add(vgetq_lane_u32::<0>(t72[1]) as usize), t74[1]);
-        t74[1] = vld1q_lane_u32::<1>(t73.add(vgetq_lane_u32::<1>(t72[1]) as usize), t74[1]);
-        t74[1] = vld1q_lane_u32::<2>(t73.add(vgetq_lane_u32::<2>(t72[1]) as usize), t74[1]);
-        t74[1] = vld1q_lane_u32::<3>(t73.add(vgetq_lane_u32::<3>(t72[1]) as usize), t74[1]);
-        t68 = t74;
-    }
-    res = t68;
+    let t68: [uint32x4_t; 2] = [vaddq_u32(vdupq_n_u32(gid0), vld1q_u32(LANE[0].as_ptr())), vaddq_u32(vdupq_n_u32(gid0), vld1q_u32(LANE[1].as_ptr()))];
+    let t69: [uint32x4_t; 2] = [vbslq_u32(live[0], x0i[0], t68[0]), vbslq_u32(live[1], x0i[1], t68[1])];
+    let t70 = arg0 as *const u32;
+    let mut t71: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
+    t71[0] = vld1q_lane_u32::<0>(t70.add(vgetq_lane_u32::<0>(t69[0]) as usize), t71[0]);
+    t71[0] = vld1q_lane_u32::<1>(t70.add(vgetq_lane_u32::<1>(t69[0]) as usize), t71[0]);
+    t71[0] = vld1q_lane_u32::<2>(t70.add(vgetq_lane_u32::<2>(t69[0]) as usize), t71[0]);
+    t71[0] = vld1q_lane_u32::<3>(t70.add(vgetq_lane_u32::<3>(t69[0]) as usize), t71[0]);
+    t71[1] = vld1q_lane_u32::<0>(t70.add(vgetq_lane_u32::<0>(t69[1]) as usize), t71[1]);
+    t71[1] = vld1q_lane_u32::<1>(t70.add(vgetq_lane_u32::<1>(t69[1]) as usize), t71[1]);
+    t71[1] = vld1q_lane_u32::<2>(t70.add(vgetq_lane_u32::<2>(t69[1]) as usize), t71[1]);
+    t71[1] = vld1q_lane_u32::<3>(t70.add(vgetq_lane_u32::<3>(t69[1]) as usize), t71[1]);
+    res = t71;
     return res;
 }
 
 #[inline(always)]
-unsafe fn b1_ai4_f(l: &Launch, lid0: u32, x0b: *const u8, x0i: u32) -> [uint32x4_t; 2] {
+unsafe fn b1_ag4r0_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8) -> [uint32x4_t; 2] {
+    let gid0 = l.group[0] * l.block[0] + lid0;
+    let mut live = k;
+    let mut res: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
+    let mut t72: [uint32x4_t; 2];
+    if all(&live) {
+        let t73 = (arg0 as *const u32).add((gid0) as usize);
+        t72 = [vld1q_u32(t73.add(0)), vld1q_u32(t73.add(4))];
+    } else {
+        let t74: [uint32x4_t; 2] = [vaddq_u32(vdupq_n_u32(gid0), vld1q_u32(LANE[0].as_ptr())), vaddq_u32(vdupq_n_u32(gid0), vld1q_u32(LANE[1].as_ptr()))];
+        let t75 = vdupq_n_u32(vmaxvq_u32(vmaxq_u32(vandq_u32(live[0], t74[0]), vandq_u32(live[1], t74[1]))));
+        let t76: [uint32x4_t; 2] = [vbslq_u32(live[0], t74[0], t75), vbslq_u32(live[1], t74[1], t75)];
+        let t77 = arg0 as *const u32;
+        let mut t78: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
+        t78[0] = vld1q_lane_u32::<0>(t77.add(vgetq_lane_u32::<0>(t76[0]) as usize), t78[0]);
+        t78[0] = vld1q_lane_u32::<1>(t77.add(vgetq_lane_u32::<1>(t76[0]) as usize), t78[0]);
+        t78[0] = vld1q_lane_u32::<2>(t77.add(vgetq_lane_u32::<2>(t76[0]) as usize), t78[0]);
+        t78[0] = vld1q_lane_u32::<3>(t77.add(vgetq_lane_u32::<3>(t76[0]) as usize), t78[0]);
+        t78[1] = vld1q_lane_u32::<0>(t77.add(vgetq_lane_u32::<0>(t76[1]) as usize), t78[1]);
+        t78[1] = vld1q_lane_u32::<1>(t77.add(vgetq_lane_u32::<1>(t76[1]) as usize), t78[1]);
+        t78[1] = vld1q_lane_u32::<2>(t77.add(vgetq_lane_u32::<2>(t76[1]) as usize), t78[1]);
+        t78[1] = vld1q_lane_u32::<3>(t77.add(vgetq_lane_u32::<3>(t76[1]) as usize), t78[1]);
+        t72 = t78;
+    }
+    res = t72;
+    return res;
+}
+
+#[inline(always)]
+unsafe fn b1_ag4r0_f(l: &Launch, lid0: u32, arg0: *const u8) -> [uint32x4_t; 2] {
+    let gid0 = l.group[0] * l.block[0] + lid0;
     let mut live = [vdupq_n_u32(u32::MAX); 2];
     let mut res: [uint32x4_t; 2] = [vdupq_n_u32(0); 2];
-    let t75 = (x0b as *const u32).add((x0i) as usize);
-    let t76: [uint32x4_t; 2] = [vld1q_u32(t75.add(0)), vld1q_u32(t75.add(4))];
-    res = t76;
+    let t79 = (arg0 as *const u32).add((gid0) as usize);
+    let t80: [uint32x4_t; 2] = [vld1q_u32(t79.add(0)), vld1q_u32(t79.add(4))];
+    res = t80;
     return res;
 }
 
 #[inline(always)]
-unsafe fn b2_ai4l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0b: *const u8, x0i: u32, x8: [uint32x4_t; 2]) {
+unsafe fn b2_ag4r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8, x8: [uint32x4_t; 2]) {
+    let gid0 = l.group[0] * l.block[0] + lid0;
     let mut live = k;
-    let t77 = (x0b as *mut u32).add((x0i) as usize);
+    let t81 = (arg0 as *mut u32).add((gid0) as usize);
     if all(&live) {
-        vst1q_u32(t77.add(0), x8[0]);
-        vst1q_u32(t77.add(4), x8[1]);
+        vst1q_u32(t81.add(0), x8[0]);
+        vst1q_u32(t81.add(4), x8[1]);
     } else {
-        let mut t78w = 0u32;
-        let t78 = core::hint::black_box(&raw mut t78w);
-        core::hint::select_unpredictable(vgetq_lane_u32::<0>(live[0]) != 0, t77.add(0), t78).write(vgetq_lane_u32::<0>(x8[0]));
-        core::hint::select_unpredictable(vgetq_lane_u32::<1>(live[0]) != 0, t77.add(1), t78).write(vgetq_lane_u32::<1>(x8[0]));
-        core::hint::select_unpredictable(vgetq_lane_u32::<2>(live[0]) != 0, t77.add(2), t78).write(vgetq_lane_u32::<2>(x8[0]));
-        core::hint::select_unpredictable(vgetq_lane_u32::<3>(live[0]) != 0, t77.add(3), t78).write(vgetq_lane_u32::<3>(x8[0]));
-        core::hint::select_unpredictable(vgetq_lane_u32::<0>(live[1]) != 0, t77.add(4), t78).write(vgetq_lane_u32::<0>(x8[1]));
-        core::hint::select_unpredictable(vgetq_lane_u32::<1>(live[1]) != 0, t77.add(5), t78).write(vgetq_lane_u32::<1>(x8[1]));
-        core::hint::select_unpredictable(vgetq_lane_u32::<2>(live[1]) != 0, t77.add(6), t78).write(vgetq_lane_u32::<2>(x8[1]));
-        core::hint::select_unpredictable(vgetq_lane_u32::<3>(live[1]) != 0, t77.add(7), t78).write(vgetq_lane_u32::<3>(x8[1]));
+        let mut t82w = 0u32;
+        let t82 = core::hint::black_box(&raw mut t82w);
+        core::hint::select_unpredictable(vgetq_lane_u32::<0>(live[0]) != 0, t81.add(0), t82).write(vgetq_lane_u32::<0>(x8[0]));
+        core::hint::select_unpredictable(vgetq_lane_u32::<1>(live[0]) != 0, t81.add(1), t82).write(vgetq_lane_u32::<1>(x8[0]));
+        core::hint::select_unpredictable(vgetq_lane_u32::<2>(live[0]) != 0, t81.add(2), t82).write(vgetq_lane_u32::<2>(x8[0]));
+        core::hint::select_unpredictable(vgetq_lane_u32::<3>(live[0]) != 0, t81.add(3), t82).write(vgetq_lane_u32::<3>(x8[0]));
+        core::hint::select_unpredictable(vgetq_lane_u32::<0>(live[1]) != 0, t81.add(4), t82).write(vgetq_lane_u32::<0>(x8[1]));
+        core::hint::select_unpredictable(vgetq_lane_u32::<1>(live[1]) != 0, t81.add(5), t82).write(vgetq_lane_u32::<1>(x8[1]));
+        core::hint::select_unpredictable(vgetq_lane_u32::<2>(live[1]) != 0, t81.add(6), t82).write(vgetq_lane_u32::<2>(x8[1]));
+        core::hint::select_unpredictable(vgetq_lane_u32::<3>(live[1]) != 0, t81.add(7), t82).write(vgetq_lane_u32::<3>(x8[1]));
     }
 }
 
 #[inline(always)]
-unsafe fn b3_sl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: *const u8, x8: [uint32x4_t; 2]) -> u32 {
+unsafe fn b2_ag4r0l_p_v0(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8, x8: [uint32x4_t; 2]) {
+    let gid0 = l.group[0] * l.block[0] + lid0;
+    let mut live = k;
+    let t83 = (arg0 as *mut u32).add((gid0) as usize);
+    vst1q_u32(t83.add(0), vbslq_u32(live[0], x8[0], vld1q_u32(t83.add(0))));
+    vst1q_u32(t83.add(4), vbslq_u32(live[1], x8[1], vld1q_u32(t83.add(4))));
+}
+
+#[inline(always)]
+unsafe fn b3_o1l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg1_x0: *const u8, x8: [uint32x4_t; 2]) -> u32 {
+    let gid0 = l.group[0] * l.block[0] + lid0;
     let mut live = k;
     let mut res: u32 = 0;
-    let t79: [uint32x4_t; 2] = [vbslq_u32(live[0], x8[0], vdupq_n_u32(0)), vbslq_u32(live[1], x8[1], vdupq_n_u32(0))];
-    let t80 = vmaxvq_u32(vmaxq_u32(t79[0], t79[1]));
-    if t80 != 0 { AtomicU32::from_ptr(x0 as *mut u32).fetch_max(t80, Relaxed); }
+    let t84: [uint32x4_t; 2] = [vbslq_u32(live[0], x8[0], vdupq_n_u32(0)), vbslq_u32(live[1], x8[1], vdupq_n_u32(0))];
+    let t85 = vmaxvq_u32(vmaxq_u32(t84[0], t84[1]));
+    if t85 != 0 { AtomicU32::from_ptr(arg1_x0 as *mut u32).fetch_max(t85, Relaxed); }
     return res;
 }
 
 #[inline(always)]
-unsafe fn b3_sl_f(l: &Launch, lid0: u32, x0: *const u8, x8: [uint32x4_t; 2]) -> u32 {
+unsafe fn b3_o1l_f(l: &Launch, lid0: u32, arg1_x0: *const u8, x8: [uint32x4_t; 2]) -> u32 {
+    let gid0 = l.group[0] * l.block[0] + lid0;
     let mut live = [vdupq_n_u32(u32::MAX); 2];
     let mut res: u32 = 0;
-    let t81 = vmaxvq_u32(vmaxq_u32(x8[0], x8[1]));
-    if t81 != 0 { AtomicU32::from_ptr(x0 as *mut u32).fetch_max(t81, Relaxed); }
+    let t86 = vmaxvq_u32(vmaxq_u32(x8[0], x8[1]));
+    if t86 != 0 { AtomicU32::from_ptr(arg1_x0 as *mut u32).fetch_max(t86, Relaxed); }
     return res;
 }
 
@@ -276,40 +314,42 @@ unsafe fn b3_sl_f(l: &Launch, lid0: u32, x0: *const u8, x8: [uint32x4_t; 2]) -> 
 /// `argv` holds the kernel's arguments, its buffers as large as it reads and writes; `l` is a 1-D group's launch.
 pub unsafe fn nearest_jump_w8(argv: *const *const u8, l: &Launch) {
     let n = l.block[0] * l.block[1] * l.block[2];
-    let x0: *const u8 = (*argv.add(0) as *const *const u8).read_unaligned();
-    let x8: *const u8 = (*argv.add(1) as *const *const u8).read_unaligned();
+    let arg0: *const u8 = (*argv.add(0) as *const *const u8).read_unaligned();
+    let arg1: *const u8 = (*argv.add(1) as *const *const u8).read_unaligned();
     let x16: *const u8 = *argv.add(2);
-    let x32: *const u8 = (*argv.add(3) as *const *const u8).read_unaligned();
+    let arg3: *const u8 = (*argv.add(3) as *const *const u8).read_unaligned();
     let x40: u32 = (*argv.add(4) as *const u32).read_unaligned();
-    let mut t82: bool = !(x32).is_null();
-    if t82 {
-        let mut t83: bool = ((l.group[0]) >= ((x32.wrapping_add((((x40) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned()));
-        if !t83 {
-            t83 = ((l.group[1]) >= ((x32.wrapping_add(((((x40).wrapping_add(1u32)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned()));
+    let mut t87: bool = !(arg3).is_null();
+    if t87 {
+        let mut t88: bool = ((l.group[0]) >= ((arg3.wrapping_add((((x40) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned()));
+        if !t88 {
+            t88 = ((l.group[1]) >= ((arg3.wrapping_add(((((x40).wrapping_add(1u32)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned()));
         }
-        let mut t84: bool = t83;
-        if !t84 {
-            t84 = ((l.group[2]) >= ((x32.wrapping_add(((((x40).wrapping_add(2u32)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned()));
+        let mut t89: bool = t88;
+        if !t89 {
+            t89 = ((l.group[2]) >= ((arg3.wrapping_add(((((x40).wrapping_add(2u32)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned()));
         }
-        t82 = t84;
+        t87 = t89;
     }
-    if t82 {
+    if t87 {
         return;
     }
     let mut lid0 = 0u32;
     while lid0 + 8 <= n {
         let mut live = [vdupq_n_u32(u32::MAX); 2];
+        let gid0 = l.group[0] * l.block[0] + lid0;
         'chunk: {
-            b0_sssi_f(l, lid0, x0, x8, x16, (l.group[0] * l.block[0] + lid0));
+            b0_r0r1sg_f(l, lid0, arg0, arg1, x16);
         }
         lid0 += 8;
     }
     if lid0 < n {
         // Lanes part: the group's last threads, those under `n`.
-        let t85: [uint32x4_t; 2] = [vcltq_u32(vaddq_u32(vdupq_n_u32(lid0), vld1q_u32(LANE[0].as_ptr())), vdupq_n_u32(n)), vcltq_u32(vaddq_u32(vdupq_n_u32(lid0), vld1q_u32(LANE[1].as_ptr())), vdupq_n_u32(n))];
-        let mut live = t85;
+        let t90: [uint32x4_t; 2] = [vcltq_u32(vaddq_u32(vdupq_n_u32(lid0), vld1q_u32(LANE[0].as_ptr())), vdupq_n_u32(n)), vcltq_u32(vaddq_u32(vdupq_n_u32(lid0), vld1q_u32(LANE[1].as_ptr())), vdupq_n_u32(n))];
+        let mut live = t90;
+        let gid0 = l.group[0] * l.block[0] + lid0;
         'chunk: {
-            b0_sssi_p(l, lid0, live, x0, x8, x16, (l.group[0] * l.block[0] + lid0));
+            b0_r0r1sg_p(l, lid0, live, arg0, arg1, x16);
         }
     }
 }

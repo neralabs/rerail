@@ -162,6 +162,10 @@ pub enum Kind {
 /// A `Return`'s slot when it ends the thread (the kernel's own body's).
 pub const NO_SLOT: u32 = u32::MAX;
 
+/// An `if`'s second word: its condition's hint (`UKL_LIKELY`, `UKL_UNLIKELY`), else 0.
+pub const IF_LIKELY: u32 = 1;
+pub const IF_UNLIKELY: u32 = 2;
+
 impl Kind {
     pub const LAST: u16 = Kind::Case as u16;
 
@@ -267,12 +271,16 @@ pub enum Builtin {
     Max,
     /// `a * b + c`, rounded once (`__ukl_fma`, and what a floating `a * b + c` contracts to).
     Fma,
+    /// A condition most lanes take, or few do (`UKL_LIKELY`, `UKL_UNLIKELY`): the condition, its hint the `if`'s
+    /// (`lower`), never a node of a tape.
+    Likely,
+    Unlikely,
 }
 
 impl Builtin {
     pub fn of(w: u32) -> Builtin {
-        assert!(w <= Builtin::Fma as u32, "a builtin: {w}");
-        // SAFETY: `Builtin` is `repr(u32)`, its values 0 to `Fma` in order.
+        assert!(w <= Builtin::Unlikely as u32, "a builtin: {w}");
+        // SAFETY: `Builtin` is `repr(u32)`, its values 0 to `Unlikely` in order.
         unsafe { std::mem::transmute::<u32, Builtin>(w) }
     }
 
@@ -329,6 +337,8 @@ impl Builtin {
             "__ukl_min" => Builtin::Min,
             "__ukl_max" => Builtin::Max,
             "__ukl_fma" => Builtin::Fma,
+            "__ukl_likely" => Builtin::Likely,
+            "__ukl_unlikely" => Builtin::Unlikely,
             _ if as_type(name).is_some() => Builtin::As,
             _ => return None,
         })

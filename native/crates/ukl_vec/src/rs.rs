@@ -61,10 +61,40 @@ enum Sh {
     S,
     /// Lanes `x + j` (`x` a `u32`).
     Iota,
+    /// The thread's id in its launch, `gid0`, which the function has as the kernel does: no parameter.
+    Gid,
     /// Each lane's value.
     L,
-    /// Each lane's address: a base, and an index of each lane (`true`: consecutive, from a `u32`), times the scale.
-    At(u32, bool),
+    /// The kernel's buffer argument `k`, named as the kernel's (`arg{k}`).
+    Arg(u32),
+    /// One pointer into the kernel's buffer `k` (`arg{k}_{name}`), so its writes are known to be that buffer's.
+    In(u32),
+    /// Each lane's address: a base (the kernel's buffer `k`, if it is one), and an index of each lane (its own, of
+    /// consecutive lanes from a `u32`, or `gid0`), times the scale.
+    At(u32, Ix, Option<u32>),
+}
+
+/// An index of each lane, as a parameter passes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Ix {
+    L,
+    Iota,
+    Gid,
+}
+
+/// The thread's id in its launch's first dimension, as every function names it.
+const GID: &str = "gid0";
+
+/// The kernel's buffer argument `s` is, if it is one (`arg{k}`).
+fn root(s: &str) -> Option<u32> {
+    s.strip_prefix("arg").and_then(|k| k.parse().ok())
+}
+
+/// The kernel's buffer argument an address `s` lies in (`arg{k}` plus an offset), if it does.
+fn root_of(s: &str) -> Option<u32> {
+    let k = s.strip_prefix("arg")?;
+    let d = k.find(|c: char| !c.is_ascii_digit()).unwrap_or(k.len());
+    (d > 0 && (d == k.len() || k[d..].starts_with(['.', '_']))).then(|| k[..d].parse().ok()).flatten()
 }
 
 impl Sh {
@@ -72,18 +102,48 @@ impl Sh {
         match self {
             Sh::S => "s".into(),
             Sh::Iota => "i".into(),
+            Sh::Gid => "g".into(),
             Sh::L => "l".into(),
-            Sh::At(k, true) => format!("ai{k}"),
-            Sh::At(k, false) => format!("al{k}"),
+            Sh::Arg(k) => format!("r{k}"),
+            Sh::In(k) => format!("o{k}"),
+            Sh::At(k, ix, r) => format!("a{}{k}{}", match ix { Ix::L => "l", Ix::Iota => "i", Ix::Gid => "g" }, r.map(|r| format!("r{r}")).unwrap_or_default()),
         }
     }
 
     fn of(x: &V) -> Sh {
         match x {
+            V::S(s, M::PTR) if root(s).is_some() => Sh::Arg(root(s).unwrap()),
+            V::S(s, M::PTR | M::U64) if root_of(s).is_some() => Sh::In(root_of(s).unwrap()),
             V::S(..) | V::None => Sh::S,
+            V::Iota(f, _) if f == GID => Sh::Gid,
             V::Iota(..) => Sh::Iota,
-            V::At { idx, scale, .. } => Sh::At(*scale, matches!(**idx, V::Iota(..))),
+            V::At { base, idx, scale } => Sh::At(
+                *scale,
+                match &**idx {
+                    V::Iota(f, _) if f == GID => Ix::Gid,
+                    V::Iota(..) => Ix::Iota,
+                    _ => Ix::L,
+                },
+                root(base),
+            ),
             V::L(..) | V::K(..) | V::Cmp { .. } => Sh::L,
+        }
+    }
+
+    /// The kernel's buffer the parameter is (or is an address in), if it is one.
+    fn root(self) -> Option<u32> {
+        match self {
+            Sh::Arg(k) | Sh::At(_, _, Some(k)) => Some(k),
+            _ => None,
+        }
+    }
+
+    /// The shape without its buffer (a second parameter of one buffer is passed as any other pointer).
+    fn rootless(self) -> Sh {
+        match self {
+            Sh::Arg(_) => Sh::S,
+            Sh::At(k, ix, _) => Sh::At(k, ix, None),
+            sh => sh,
         }
     }
 }
@@ -116,8 +176,9 @@ struct Cx {
     chunk: bool,
 }
 
-/// A function's instance: its number, its parameters' shapes, and whether all its lanes run (`_f`, else `_p`).
-type Inst = (u32, Vec<Sh>, bool);
+/// A function's instance: its number, its parameters' shapes, whether all its lanes run (`_f`, else `_p`), and the
+/// kernel's buffers whose every lane's own element (at `gid0`) the caller has accessed, so is valid (`_v{k}`).
+type Inst = (u32, Vec<Sh>, bool, Vec<u32>);
 
 struct Em<'a> {
     v: View<'a>,
@@ -140,6 +201,13 @@ struct Em<'a> {
     /// Lanes made of a value that does not change (consecutive lanes, a constant's): their name, and the depth
     /// of the block that made them.
     memo: Vec<(String, String, usize)>,
+    /// The kernel's buffers whose every lane's own element is valid here (accessed in each), and the depth of the
+    /// block that found it (a found one ends with its block, as `memo`'s).
+    valid: Vec<(u32, usize)>,
+    /// This pass's writes of memory: the buffer (if known) and whether at the thread's own element; the last pass's
+    /// buffers that only their own threads write (each at its own element), so no thread writes another's.
+    writes: Vec<(Option<u32>, bool)>,
+    disjoint: std::collections::BTreeSet<u32>,
     again: bool,
     out: String,
     ind: usize,
@@ -160,7 +228,7 @@ pub fn kernel(k: &crate::vector::Kernel, w: u32) -> R<String> {
             bodies.insert(v.w(i, 0), i);
         }
     }
-    let mut e = Em { v, w, p: w / 4, bodies, lanes: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new() };
+    let mut e = Em { v, w, p: w / 4, bodies, lanes: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new() };
     // Each pass finds lanes the one before did not (a variable written a lane's value, or apart); until none.
     for _ in 0..16 {
         if !e.again {
@@ -170,7 +238,18 @@ pub fn kernel(k: &crate::vector::Kernel, w: u32) -> R<String> {
         e.out.clear();
         e.n = 0;
         e.seen.clear();
+        e.writes.clear();
         e.module(&k.name)?;
+        // The buffers only their own threads write: none written where the writes' buffer is not known.
+        let mut d: std::collections::BTreeSet<u32> = e.writes.iter().filter_map(|w| w.0).collect();
+        if e.writes.iter().any(|w| w.0.is_none()) {
+            d.clear();
+        }
+        d.retain(|k| e.writes.iter().all(|w| w.0 != Some(*k) || w.1));
+        if d != e.disjoint {
+            e.disjoint = d;
+            e.again = true;
+        }
         if e.seen != e.params {
             e.params = std::mem::take(&mut e.seen);
             e.again = true;
@@ -188,6 +267,7 @@ impl Em<'_> {
         if s.as_ref().starts_with('}') {
             let d = self.ind;
             self.memo.retain(|m| m.2 <= d);
+            self.valid.retain(|m| m.1 <= d);
         }
         for _ in 0..self.ind {
             self.out.push_str("    ");
@@ -258,8 +338,8 @@ impl Em<'_> {
         self.line("");
         // The functions' instances, in their numbers' and shapes' order, then the kernel's.
         let insts: Vec<Inst> = self.params.iter().cloned().collect();
-        for (id, sh, full) in insts {
-            self.body(id, &sh, full)?;
+        for (id, sh, full, valid) in insts {
+            self.body(id, &sh, full, &valid)?;
             self.line("");
         }
         self.line(format!("/// The group `l.group`'s threads, {w} at a time: `argv[j]` the address of argument `j`'s bytes (a buffer's address,"));
@@ -288,6 +368,7 @@ impl Em<'_> {
         self.line(format!("while lid0 + {w} <= n {{"));
         self.ind += 1;
         self.line(format!("let mut live = {};", self.ones()));
+        self.line(format!("let {GID} = l.group[0] * l.block[0] + lid0;"));
         self.line("'chunk: {");
         self.ind += 1;
         self.stmt(n, &Cx { full: true, chunk: true, ..cx.clone() })?;
@@ -301,6 +382,7 @@ impl Em<'_> {
         self.line("// Lanes part: the group's last threads, those under `n`.");
         let t = self.map(|r| format!("vcltq_u32(vaddq_u32(vdupq_n_u32(lid0), vld1q_u32(LANE[{r}].as_ptr())), vdupq_n_u32(n))"));
         self.line(format!("let mut live = {t};"));
+        self.line(format!("let {GID} = l.group[0] * l.block[0] + lid0;"));
         self.line("'chunk: {");
         self.ind += 1;
         self.stmt(n, &Cx { full: false, chunk: true, ..cx.clone() })?;
@@ -321,9 +403,9 @@ impl Em<'_> {
     }
 
     /// Function number `id`'s `Body`: a Rust function of the caller's mask and its parameters.
-    fn body(&mut self, id: u32, shapes: &[Sh], full: bool) -> R<()> {
+    fn body(&mut self, id: u32, shapes: &[Sh], full: bool, valid: &[u32]) -> R<()> {
         let n = self.bodies[&id];
-        let ctx = self.inst(id, shapes, full);
+        let ctx = self.inst(id, shapes, full, valid);
         let v = &self.v;
         let ret = M(v.w(n, 4));
         let np = v.w(n, 6) as usize;
@@ -339,6 +421,17 @@ impl Em<'_> {
                 Var { name, m: M::PTR, lanes: false, fixed: None }
             } else {
                 match shapes.get(k).copied().unwrap_or(Sh::S) {
+                    Sh::Arg(r) => {
+                        let name = format!("arg{r}");
+                        ps.push(format!("{name}: *const u8"));
+                        Var { name, m, lanes: false, fixed: None }
+                    }
+                    Sh::Gid => Var { name, m, lanes: false, fixed: Some(V::Iota(GID.into(), m)) },
+                    Sh::In(r) => {
+                        let name = format!("arg{r}_{name}");
+                        ps.push(format!("{name}: {}", self.ty(m, false)?));
+                        Var { name, m, lanes: false, fixed: None }
+                    }
                     Sh::S => {
                         ps.push(format!("{name}: {}", self.ty(m, false)?));
                         Var { name, m, lanes: false, fixed: None }
@@ -352,11 +445,20 @@ impl Em<'_> {
                         ps.push(format!("{name}: u32"));
                         Var { name: name.clone(), m, lanes: false, fixed: Some(V::Iota(name, m)) }
                     }
-                    Sh::At(scale, iota) => {
-                        let (b, i) = (format!("{name}b"), format!("{name}i"));
+                    Sh::At(scale, ix, r) => {
+                        let (b, i) = (r.map(|r| format!("arg{r}")).unwrap_or(format!("{name}b")), format!("{name}i"));
                         ps.push(format!("{b}: *const u8"));
-                        ps.push(format!("{i}: {}", if iota { "u32".to_string() } else { self.ty(M::U32, true)? }));
-                        let idx = if iota { V::Iota(i, M::U32) } else { V::L(i, M::U32) };
+                        let idx = match ix {
+                            Ix::Gid => V::Iota(GID.into(), M::U32),
+                            Ix::Iota => {
+                                ps.push(format!("{i}: u32"));
+                                V::Iota(i, M::U32)
+                            }
+                            Ix::L => {
+                                ps.push(format!("{i}: {}", self.ty(M::U32, true)?));
+                                V::L(i, M::U32)
+                            }
+                        };
                         Var { name, m, lanes: false, fixed: Some(V::At { base: b, idx: Box::new(idx), scale }) }
                     }
                 }
@@ -366,10 +468,12 @@ impl Em<'_> {
         let rl = self.rets.get(&ctx).copied().unwrap_or(false);
         let rt = if ret == M::VOID { String::new() } else { format!(" -> {}", self.ty(ret, rl)?) };
         self.line("#[inline(always)]");
-        self.line(format!("unsafe fn {}({}){rt} {{", fname(id, shapes, full), ps.join(", ")));
+        self.line(format!("unsafe fn {}({}){rt} {{", fname(id, shapes, full, valid), ps.join(", ")));
         self.ind += 1;
+        self.line(format!("let {GID} = l.group[0] * l.block[0] + lid0;"));
         self.top = self.out.len();
         self.hoisted.clear();
+        self.valid = valid.iter().map(|&k| (k, 1)).collect();
         // Its variables, each declared once at its start (a scope's are its function's in C's sense here).
         let locals = self.locals(n, ctx, &params)?;
         for var in &locals {
@@ -399,9 +503,54 @@ impl Em<'_> {
     }
 
     /// Function `id`'s instance of `shapes`' number.
-    fn inst(&mut self, id: u32, shapes: &[Sh], full: bool) -> u32 {
+    fn inst(&mut self, id: u32, shapes: &[Sh], full: bool, valid: &[u32]) -> u32 {
         let k = self.insts.len() as u32;
-        *self.insts.entry((id, shapes.to_vec(), full)).or_insert(k)
+        *self.insts.entry((id, shapes.to_vec(), full, valid.to_vec())).or_insert(k)
+    }
+
+    /// Whether every lane's own element of the kernel's buffer `k` is valid here.
+    fn is_valid(&self, k: u32) -> bool {
+        self.valid.iter().any(|v| v.0 == k)
+    }
+
+    /// Whether address `a`, of `m`, is every lane's own element of the kernel's buffer: that buffer.
+    fn own(&self, a: &V, m: M) -> Option<u32> {
+        match a {
+            V::At { base, idx, scale } if *scale == m.bytes() && matches!(&**idx, V::Iota(f, _) if f == GID) => root(base),
+            _ => None,
+        }
+    }
+
+    /// An access of `a` (of `m`) where all lanes run: every lane's own element of its buffer is valid after it.
+    fn accessed(&mut self, a: &V, m: M, cx: &Cx) {
+        if cx.full
+            && let Some(k) = self.own(a, m)
+            && !self.is_valid(k)
+        {
+            let d = self.ind;
+            self.valid.push((k, d));
+        }
+    }
+
+    /// Whether function `b`'s first statement, which every call runs, reads or writes through its parameter `k`.
+    fn first_access(&self, b: usize, k: usize) -> bool {
+        let off = self.v.w(b, 7 + 2 * k);
+        let mut s = self.v.child(b, 0);
+        while self.v.kind(s) == Kind::Block {
+            let Some(c) = self.v.children(s).next() else { return false };
+            s = c;
+        }
+        if !matches!(self.v.kind(s), Kind::Expr | Kind::Return) || (s..s + self.v.size(s)).any(|i| matches!(self.v.kind(i), Kind::Logic | Kind::Cond | Kind::Comma)) {
+            return false;
+        }
+        (s..s + self.v.size(s)).any(|i| {
+            let through = |a: usize| self.loaded(a) == Some(off);
+            match self.v.kind(i) {
+                Kind::Builtin => matches!(Builtin::of(self.v.w(i, 0)), Builtin::AtomicLoad | Builtin::AtomicStore) && through(self.v.child(i, 0)),
+                Kind::Load | Kind::Store => !M(self.v.w(i, 0)).is_agg() && through(self.v.child(i, 0)),
+                _ => false,
+            }
+        })
     }
 
     /// Function `n`'s (context `ctx`'s) variables but its parameters, as accessed: each a Rust variable.
@@ -466,7 +615,8 @@ impl Em<'_> {
                 let np = v.w(n, 4) as usize;
                 let ps: Vec<(u32, M)> = (0..np).map(|k| (v.w(n, 5 + 2 * k), M(v.w(n, 6 + 2 * k)))).collect();
                 for (k, (off, m)) in ps.into_iter().enumerate() {
-                    let name = format!("x{off}");
+                    // A buffer: `arg{k}`, as every function that is passed it names it.
+                    let name = if m == M::PTR { format!("arg{k}") } else { format!("x{off}") };
                     let val = if m.is_agg() { format!("*argv.add({k})") } else if m == M::PTR { format!("(*argv.add({k}) as *const *const u8).read_unaligned()") } else { format!("(*argv.add({k}) as *const {}).read_unaligned()", scalar(m)?) };
                     self.line(format!("let {name}: {} = {val};", self.ty(if m.is_agg() { M::PTR } else { m }, false)?));
                     self.vars.insert((u32::MAX, off), Var { name, m: if m.is_agg() { M::PTR } else { m }, lanes: false, fixed: None });
@@ -1092,39 +1242,65 @@ impl Em<'_> {
                     vals.push(self.expr(c, cx)?);
                 }
                 // The instance of its arguments' shapes (an aggregate's, its address, one).
-                let shapes: Vec<Sh> = vals.iter().enumerate().map(|(k, a)| if M(self.v.w(b, 8 + 2 * k)).is_agg() { Sh::S } else { Sh::of(a) }).collect();
-                self.seen.insert((id, shapes.clone(), cx.full));
-                let ctx = self.inst(id, &shapes, cx.full);
+                let mut shapes: Vec<Sh> = vals.iter().enumerate().map(|(k, a)| if M(self.v.w(b, 8 + 2 * k)).is_agg() { Sh::S } else { Sh::of(a) }).collect();
+                // One parameter of each buffer by its name; another of it as any pointer.
+                for k in 1..shapes.len() {
+                    if shapes[k].root().is_some() && shapes[..k].iter().any(|s| s.root() == shapes[k].root()) {
+                        shapes[k] = shapes[k].rootless();
+                    }
+                }
+                let valid: Vec<u32> = {
+                    let mut v: Vec<u32> = shapes.iter().filter_map(|s| s.root()).filter(|&k| self.is_valid(k)).collect();
+                    v.sort();
+                    v
+                };
+                self.seen.insert((id, shapes.clone(), cx.full, valid.clone()));
+                let ctx = self.inst(id, &shapes, cx.full, &valid);
+                // Its first statement's access, through a parameter of every lane's own element, where all lanes run.
+                let first: Vec<u32> = (0..shapes.len()).filter(|&k| matches!(shapes[k], Sh::At(_, Ix::Gid, Some(_))) && self.first_access(b, k)).filter_map(|k| shapes[k].root()).collect();
                 for (k, a) in vals.into_iter().enumerate() {
                     let pm = M(self.v.w(b, 8 + 2 * k));
                     match (shapes[k], a) {
                         (_, V::S(s, _)) if pm.is_agg() => args.push(s),
                         (_, _) if pm.is_agg() => return err("an aggregate argument of each lane"),
                         (Sh::S, V::S(s, am)) => args.push(conv(&s, am, pm)),
+                        (Sh::Arg(_), V::S(s, _)) => args.push(s),
+                        (Sh::In(_), V::S(s, am)) => args.push(conv(&s, am, pm)),
+                        (Sh::Gid, _) => {}
                         (Sh::Iota, V::Iota(f, _)) => args.push(f),
                         (Sh::L, a) => {
                             let l = if pm == M::B { self.mask(&a)? } else { self.lanes(&a, pm)? };
                             args.push(l);
                         }
-                        (Sh::At(..), V::At { base, idx, .. }) => {
+                        (Sh::At(_, ix, _), V::At { base, idx, .. }) => {
                             args.push(base);
-                            args.push(match *idx {
-                                V::Iota(f, _) => f,
-                                i => self.lanes(&i, M::U32)?,
-                            });
+                            match (ix, *idx) {
+                                (Ix::Gid, _) => {}
+                                (_, V::Iota(f, _)) => args.push(f),
+                                (_, i) => args.push(self.lanes(&i, M::U32)?),
+                            }
                         }
                         (sh, a) => return err(format!("{a:?} passed as {sh:?}")),
                     }
                 }
-                let call = format!("{}({})", fname(id, &shapes, cx.full), args.join(", "));
-                if ret == M::VOID {
+                let call = format!("{}({})", fname(id, &shapes, cx.full, &valid), args.join(", "));
+                let r = if ret == M::VOID {
                     self.line(format!("{call};"));
                     V::None
                 } else {
                     let t = self.tmp();
                     self.line(format!("let {t} = {call};"));
                     if self.rets.get(&ctx).copied().unwrap_or(false) { if ret == M::B { V::K(t) } else { V::L(t, ret) } } else { V::S(t, ret) }
+                };
+                if cx.full {
+                    for k in first {
+                        if !self.is_valid(k) {
+                            let d = self.ind;
+                            self.valid.push((k, d));
+                        }
+                    }
                 }
+                r
             }
             Kind::Builtin => return self.builtin(n, cx),
             Kind::Comma => {
@@ -1451,6 +1627,12 @@ impl Em<'_> {
 
     /// A load of `m` at `a` in the lanes of `cx` that run.
     fn load(&mut self, m: M, a: &V, cx: &Cx) -> R<V> {
+        let r = self.load_at(m, a, cx);
+        self.accessed(a, m, cx);
+        r
+    }
+
+    fn load_at(&mut self, m: M, a: &V, cx: &Cx) -> R<V> {
         match a {
             V::S(s, _) => Ok(V::S(format!("({s} as *const {}).read_unaligned()", scalar(m)?), m)),
             V::At { base, idx, scale } if m.bytes() == 4 && *scale == 4 => {
@@ -1510,6 +1692,14 @@ impl Em<'_> {
     /// `cur`) loads a running one's element (the largest index of those), as some lane of `cur` runs wherever a
     /// statement does (each is under a test that any does).
     fn gather(&mut self, base: &str, l: &str, cur: &str) -> String {
+        // A lane's own element, where every lane's is valid: its address for a lane that does not run.
+        if let Some(k) = root(base)
+            && self.is_valid(k)
+        {
+            let own = self.lanes(&V::Iota(GID.into(), M::U32), M::U32).unwrap_or_default();
+            let ix = self.map(|r| format!("vbslq_u32({cur}[{r}], {l}[{r}], {own}[{r}])"));
+            return self.gather_all(base, &ix);
+        }
         let mut e = format!("vandq_u32({cur}[0], {l}[0])");
         for r in 1..self.p {
             e = format!("vmaxq_u32({e}, vandq_u32({cur}[{r}], {l}[{r}]))");
@@ -1530,6 +1720,37 @@ impl Em<'_> {
 
     /// A store of `x` (of `m`) at `a` in the lanes of `cx` that run.
     fn store(&mut self, m: M, a: &V, x: &V, cx: &Cx) -> R<()> {
+        let k = match a {
+            V::S(s, _) => root_of(s),
+            V::At { base, .. } => root(base),
+            _ => None,
+        };
+        let own = self.own(a, m).is_some();
+        self.writes.push((k, own));
+        // Every lane's own element, each valid, of a buffer whose every write is a thread's own element: a lane
+        // that does not run writes back what is there (no other thread writes it), the registers stored whole.
+        if !cx.full
+            && let Some(k) = self.own(a, m)
+            && self.is_valid(k)
+            && self.disjoint.contains(&k)
+            && let V::At { base, idx, .. } = a
+            && let V::Iota(first, _) = &**idx
+        {
+            let l = self.lanes(x, m)?;
+            let cur = cx.cur.clone();
+            let q = self.tmp();
+            self.line(format!("let {q} = ({base} as *mut u32).add(({first}) as usize);"));
+            for r in 0..self.p {
+                self.line(format!("vst1q_u32({q}.add({o}), vbslq_u32({cur}[{r}], {l}[{r}], vld1q_u32({q}.add({o}))));", o = 4 * r));
+            }
+            return Ok(());
+        }
+        let r = self.store_at(m, a, x, cx);
+        self.accessed(a, m, cx);
+        r
+    }
+
+    fn store_at(&mut self, m: M, a: &V, x: &V, cx: &Cx) -> R<()> {
         match a {
             V::S(s, _) => {
                 let x = match x {
@@ -1616,8 +1837,12 @@ impl Em<'_> {
         Ok(match b {
             Builtin::LocalId | Builtin::GlobalId => {
                 let d = dim(&args[0])?;
-                let base = if b == Builtin::GlobalId { format!("l.group[{d}] * l.block[{d}] + ") } else { String::new() };
-                if d == 0 { V::Iota(format!("({base}lid0)"), M::U32) } else { V::S(format!("({base}0)"), M::U32) }
+                match (b, d) {
+                    (Builtin::GlobalId, 0) => V::Iota(GID.into(), M::U32),
+                    (_, 0) => V::Iota("lid0".into(), M::U32),
+                    (Builtin::GlobalId, d) => V::S(format!("(l.group[{d}] * l.block[{d}])"), M::U32),
+                    _ => V::S("0u32".into(), M::U32),
+                }
             }
             Builtin::LocalSize => V::S(format!("l.block[{}]", dim(&args[0])?), M::U32),
             Builtin::GroupId => V::S(format!("l.group[{}]", dim(&args[0])?), M::U32),
@@ -1634,6 +1859,12 @@ impl Em<'_> {
             }
             Builtin::AtomicAdd | Builtin::AtomicMax | Builtin::AtomicMin | Builtin::AtomicOr | Builtin::AtomicAnd if m.bytes() == 4 && !m.signed() => {
                 let unread = self.unread(n);
+                let k = match &args[0] {
+                    V::S(s, _) => root_of(s),
+                    V::At { base, .. } => root(base),
+                    _ => None,
+                };
+                self.writes.push((k, false));
                 let f = match b {
                     Builtin::AtomicAdd => "fetch_add",
                     Builtin::AtomicMax => "fetch_max",
@@ -1700,12 +1931,15 @@ impl Em<'_> {
 }
 
 /// Function `id`'s instance of `shapes`' name.
-fn fname(id: u32, shapes: &[Sh], full: bool) -> String {
+fn fname(id: u32, shapes: &[Sh], full: bool, valid: &[u32]) -> String {
     let mut s = format!("b{id}_");
     for sh in shapes {
         s.push_str(&sh.code());
     }
     s.push_str(if full { "_f" } else { "_p" });
+    for k in valid {
+        s.push_str(&format!("_v{k}"));
+    }
     s
 }
 

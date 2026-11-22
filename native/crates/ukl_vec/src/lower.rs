@@ -890,8 +890,12 @@ impl L<'_> {
             },
             "if_statement" => {
                 let site = self.site(s, "if");
-                let n = self.b.open(Kind::If, &[site]);
-                self.cond(self.c.child(s, "condition").expect("a condition"))?;
+                // A hint (`UKL_LIKELY`, `UKL_UNLIKELY`): the `if`'s second word (`IF_LIKELY`, `IF_UNLIKELY`), its
+                // condition the hint's argument.
+                let c = self.c.child(s, "condition").expect("a condition");
+                let (hint, c) = self.hinted(c)?;
+                let n = self.b.open(Kind::If, &[site, hint]);
+                self.cond(c)?;
                 self.stmt(self.c.child(s, "consequence").expect("a consequence"))?;
                 if let Some(e) = self.c.child(s, "alternative") {
                     let x = self.inner(e)?;
@@ -1251,7 +1255,7 @@ impl L<'_> {
                 let t = arg(0).pointee().cloned().unwrap_or(U32);
                 (t.clone(), vec![arg(0), t])
             }
-            Builtin::Popcount | Builtin::Clz => (arg(0), vec![arg(0)]),
+            Builtin::Popcount | Builtin::Clz | Builtin::Likely | Builtin::Unlikely => (arg(0), vec![arg(0)]),
             Builtin::MulHi | Builtin::Min | Builtin::Max => {
                 let t = Ty::common(&arg(0), &arg(1));
                 (t.clone(), vec![t.clone(), t])
@@ -1312,6 +1316,23 @@ impl L<'_> {
     // Expressions' nodes.
 
     /// A condition: `e` as a `bool`.
+    /// Condition `e`'s hint (`IF_LIKELY`, `IF_UNLIKELY`, else 0) and the condition it hints.
+    fn hinted(&self, e: usize) -> R<(u32, usize)> {
+        let x = if self.c.kind(e) == "parenthesized_expression" { self.inner(e)? } else { e };
+        if self.c.kind(x) == "call_expression"
+            && let Some(f) = self.c.child(x, "function")
+            && let Some(a) = self.c.child(x, "arguments")
+            && let [arg] = self.named(a).as_slice()
+        {
+            match self.c.text(f) {
+                "__ukl_likely" => return Ok((crate::k::IF_LIKELY, *arg)),
+                "__ukl_unlikely" => return Ok((crate::k::IF_UNLIKELY, *arg)),
+                _ => {}
+            }
+        }
+        Ok((0, e))
+    }
+
     fn cond(&mut self, e: usize) -> R<()> {
         let e = if self.c.kind(e) == "parenthesized_expression" { self.inner(e)? } else { e };
         self.rv_as(e, &Ty::Bool)
@@ -1657,6 +1678,12 @@ impl L<'_> {
                     self.rv_as(a, &p)?;
                 }
                 self.b.close(n);
+            }
+            // A hint elsewhere than an `if`'s condition: its condition.
+            Callee::Builtin(Builtin::Likely | Builtin::Unlikely, params) => {
+                for (a, p) in args.into_iter().zip(params) {
+                    self.rv_as(a, &p)?;
+                }
             }
             Callee::Builtin(b, params) => {
                 let ret = if b == Builtin::SubGroupBallot { M::U32 } else { self.m(t) };

@@ -1397,4 +1397,15 @@ fn the_nearest_kernels_rust_masks_only_where_its_lanes_part() {
     let selected: Vec<&&str> = lines.iter().filter(|l| { let t = l.trim_start(); t.starts_with('x') && t.contains(" = [vbslq_u32(") }).collect();
     assert!(selected.is_empty(), "variables set by a select: {selected:?}\n{rust}");
     assert!(lines.iter().any(|l| { let t = l.trim_start(); t.starts_with('x') && t.contains(" = [vsubq_u32(x") }), "`steps` not counted by its mask:\n{rust}");
+    // (5) In the loop, after every lane read its own cell of `state` (`_v0`, its address valid in each): the gather
+    // of a lane that does not run reads its own cell, not a running lane's (no reduction for one); and the store of
+    // `state[cell]`, whose every write is a thread's own cell (no other thread writes a lane's), writes back what is
+    // there in a lane that does not run: a load, a select and the registers' store, no store of each lane.
+    let funcs: Vec<(&str, String)> = rust.split("\nunsafe fn ").skip(1).map(|f| (f.split('(').next().unwrap(), f.split("\n}\n").next().unwrap().to_string())).collect();
+    let owned: Vec<&(&str, String)> = funcs.iter().filter(|(n, _)| n.contains("_v0")).collect();
+    assert!(owned.len() >= 2, "functions of lanes whose own cells are valid: {:?}\n{rust}", funcs.iter().map(|f| f.0).collect::<Vec<_>>());
+    for (n, f) in &owned {
+        assert!(!f.contains("vdupq_n_u32(vmaxvq_u32(") && !f.contains("select_unpredictable"), "{n}: a running lane's address for one that does not run, or a store of each lane:\n{f}");
+    }
+    assert!(owned.iter().any(|(_, f)| f.contains("vst1q_u32(") && f.contains("vbslq_u32(") && f.contains("vld1q_u32(")), "no store of the registers, its lanes that do not run what is there:\n{rust}");
 }

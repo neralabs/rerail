@@ -368,6 +368,10 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __at
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
 #endif
+// An `if`'s condition that most lanes take (`UKL_LIKELY`) or that few do (`UKL_UNLIKELY`): the vectorizer runs the
+// favoured side without masks where a chunk's lanes all agree on it (rs.rs), and otherwise both sides, masked.
+#define UKL_LIKELY(c) __ukl_likely(c)
+#define UKL_UNLIKELY(c) __ukl_unlikely(c)
 // A shared read and a large body are calls (the vectorizer's calls keep the caller's registers): inlined at each
 // of many sites, a kernel's code would be the bodies' many times over.
 #define UKL_SHARED static __attribute__((noinline))
@@ -648,6 +652,15 @@ UKL_INLINE uint32_t ukl_mask_rank(ukl_mask_t m, uint32_t l) { return ukl_mask_co
 // 0; elsewhere the define `UKL_CONSTANT_0` each value's program is compiled with (`rerail_gpu::kernels::program_with`).
 #ifndef UKL_CONSTANT_U32
 #define UKL_CONSTANT_U32(name) static const uint32_t name = (UKL_CONSTANT_0);
+#endif
+
+// An `if`'s condition most of a SIMD group's lanes take, or few do: a hint where the backend's vectorizer reads one
+// (`UKL_VEC`'s, above), and the condition itself elsewhere.
+#ifndef UKL_LIKELY
+#define UKL_LIKELY(c) (c)
+#endif
+#ifndef UKL_UNLIKELY
+#define UKL_UNLIKELY(c) (c)
 #endif
 
 // A poll of another group's progress: nothing on a GPU, where the groups run at once.
