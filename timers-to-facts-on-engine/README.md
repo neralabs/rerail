@@ -1,6 +1,6 @@
 # Thirteen waits end on the fact that decides each, not a clock
 
-For [pull request #964](https://github.com/neralabs/rerail/pull/964), head 22d3ffbd1. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #964](https://github.com/neralabs/rerail/pull/964), head 4c0fa4e9b. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #964](https://github.com/neralabs/rerail/pull/964), head 22d3f
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 18,926 lines in 156 files: 8,363 ship, 9 run in every test run, 10,554 are tests and text | Careful. A code owner: when hooks answer and records land. | Nothing. No pull request needs to merge first. | 6 |
+| 19,533 lines in 159 files: 8,601 ship, 9 run in every test run, 10,923 are tests and text | Careful. A code owner: when hooks answer and records land. | Nothing. No pull request needs to merge first. | 6 |
 
 ## 2. Intent, and the gap
 
@@ -48,13 +48,13 @@ Each wait shown on today's `main` on 20 November 2026, through the product, on 1
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Hooks beside a silent daemon, high risk, 1,176 lines; B, Records off the hook thread, high risk, 2,033 lines; C, A turn&#x27;s end that gave up, medium risk, 457 lines; D, Shell results by change notices, medium risk, 1,022 lines; E, The daemon&#x27;s lock and restart, medium risk, 837 lines; F, A reopened session and kept rules, medium risk, 325 lines; G, Note and link in the answer, low risk, 560 lines; H, The MCP bridge&#x27;s one bound, low risk, 202 lines; I, The dashboard&#x27;s change stream, low risk, 1,225 lines; J, Merge Assist&#x27;s sign-in read, low risk, 535 lines. Read first: engine-service.ts, untaken-events.ts, record-writes.ts. To skim: 10,420 lines of tests and 134 lines of fourteen release notes and seven docs pages.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Hooks beside a silent daemon, high risk, 1,331 lines; B, Records off the hook thread, high risk, 2,053 lines; C, A turn&#x27;s end that gave up, medium risk, 457 lines; D, Shell results by change notices, medium risk, 1,063 lines; E, The daemon&#x27;s lock and restart, medium risk, 839 lines; F, A reopened session and kept rules, medium risk, 330 lines; G, Note and link in the answer, low risk, 565 lines; H, The MCP bridge&#x27;s one bound, low risk, 202 lines; I, The dashboard&#x27;s change stream, low risk, 1,235 lines; J, Merge Assist&#x27;s sign-in read, low risk, 535 lines. Read first: engine-service.ts, untaken-events.ts, record-writes.ts. To skim: 10,789 lines of tests and 134 lines of fourteen release notes and seven docs pages.">
 
 1. **Read first**, 15 min: `engine-service.ts`: `hookRequestSignal`, `answerFactsReader`, `recordHandedReceipt`, `untakenTaker`. Can an answer's facts or a kept receipt disagree with the session's records?
 2. **Read first**, 10 min: `untaken-events.ts`: `leaveUntaken`, `untakenFor`, the taken mark. Can a hook skip its wait for a daemon that reads?
 3. **Read first**, 10 min: `record-writes.ts`: `openRecordWriter`, `#keep`, `#awaitLock`, `#lockFreed`. Can a read miss a write still waiting for the lock?
-4. 25 min: `hook-host.ts`, `hook-failures.ts`, `daemon.ts`, `daemon-control.ts`, `cursor-hook-adapter.ts`, `cursor-transcript.ts`, `daemon-entry.ts`, `runtime/index.ts`, `write-lock-wait.ts`, `write-lock-wait-worker.ts`, `session-store.ts`, `audit-store.ts`, `database.ts`, `audit-control.ts`, `runtime.ts`.
-5. 25 min: `code-rule-bridge.ts`, `worktree-notices.ts`, `worktree-walks.ts`, `inotify.rs`, `main_instance.rs`, `home-daemon-lock.ts`, `file-lock.ts`, `native.ts`, `customer-profile.ts`, `packs-lock.ts`, `ci.yml`, `kept-runtimes.ts`, `memory-room.ts`, `heap-ceiling.ts`.
+4. 25 min: `hook-host.ts`, `hook-failures.ts`, `daemon.ts`, `daemon-control.ts`, `cursor-hook-adapter.ts`, `cursor-transcript.ts`, `daemon-entry.ts`, `runtime/index.ts`, `write-lock-wait.ts`, `write-lock-wait-worker.ts`, `session-store.ts`, `audit-store.ts`, `database.ts`, `audit-control.ts`, `private-files.ts`, `runtime.ts`.
+5. 25 min: `code-rule-bridge.ts`, `worktree-notices.ts`, `worktree-walks.ts`, `worktree-look.ts`, `inotify.rs`, `main_instance.rs`, `home-daemon-lock.ts`, `file-lock.ts`, `native.ts`, `customer-profile.ts`, `packs-lock.ts`, `ci.yml`, `kept-runtimes.ts`, `memory-room.ts`, `heap-ceiling.ts`.
 6. 15 min: `session-presentation.ts`, `cli.ts`, `event-answer.ts`, `adapter-contract.ts`, `claude-hook-adapter.ts`, `event-protocol.ts`, `host-commands.ts`, `code-rule-dsl-catalog.ts`, `event-stream.ts`, `codex-hook-adapter.ts`, `rerail-steer.ts`, `engine/index.ts`, `mcp-bridge.ts`.
 7. 20 min: `poll.js`, `change-feed.ts`, `change-stream.ts`, `topbar.js`, `api.js`, `stores.ts`, `worktree-pack.ts`, `branch-git.ts`, `app.js`, `state.js`, `operation.ts`, `http.ts`, `sign-in.ts`, `service.ts`, `gh-config.ts`, `merge-assist-cli.ts`, `merge.js`, `model.ts`, `github.ts`.
 
@@ -225,15 +225,15 @@ Start at A and B: when a hook answers and when its records land.
 
 <details><summary><b>7. How it fits</b></summary>
 
-Nothing has to merge first: it holds `main` at 06a1a1ce8 and needs no other pull request. Part of #737, as its second question asked. Left out: the store's writes taking turns, to be redone on the new store; arrival-order checks, whose wait the new engine no longer shows.
+Nothing has to merge first: it holds `main` at 92fbff1cc and needs no other pull request. Part of #737, as its second question asked. Left out: the store's writes taking turns, to be redone on the new store; arrival-order checks, whose wait the new engine no longer shows.
 
-This pull request holds main at 06a1a1ce8 and needs nothing else. #921 merges clean.
+This pull request holds main at 92fbff1cc and needs nothing else. #921 merges clean.
 
-**Trial merges with this head.** `main` 06a1a1ce8 is merged in. Of what merged today, #883, #912 and #903 merged clean beside it; #904, #812 and #909 met it in `worktree-notices.ts`, `runtime.ts` and `engine-service.ts`, #922 in `code-rule-bridge.ts`, `runtime.ts`, `session-store.ts` and a doc, #924 in eight files, #920 in `runtime.ts`, two docs and a test file, and #915's invented names in 13 test and source files; each file keeps both sides. Open: #921 shares no file and merges clean.
+**Trial merges with this head.** `main` 92fbff1cc is merged in; #985 met it in the bridge's code and tests, each keeping both. #973, which compiles a repository's rules off the daemon's thread, met it in the bridge, the catalog, the engine binding and `runtime.ts`: a call's start builds its rules before this change's ignore-file look and check, and the session-start answer reads the rules #973 built. Before it #904, #812, #909, #922, #924, #920 and #915 met it; each file keeps both sides. Open: #921 shares no file and merges clean.
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 6 not verified, 5 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 6 not verified, 6 limits that stay</summary>
 
 1. **A write no notice tells of** is checked at the turn's end or the next whole walk, not at its own result, as the release note says.
 2. **A record behind a quiet holder** lands at `main`'s time: a holder that changed nothing leaves no sign of its release.
@@ -249,6 +249,7 @@ This pull request holds main at 06a1a1ce8 and needs nothing else. #921 merges cl
 - Left out, a check's turn on the engine in arrival order: on the 0.2.0 engine `main`'s check beside a large scan no longer waits (153 to 200 ms, against 1.4 to 3.1 s before).
 - Each change was measured through the product on Windows 11 when it was built, at older `main` commits; today's figures are Linux x64.
 - Behind a proxy other than nginx that holds a streamed response, the page reads every 5 s from when it opens, as `main` does: a change shows at the next read.
+- On Unix a lock wait given up keeps its thread and the lock file open until the holder lets go or ends; only a command, a hook or a daemon's start waits for a held lock.
 
 </details>
 
@@ -262,15 +263,15 @@ The description is the record: "How you tested it" holds the runs and each wait'
 
 | Where | What ran | Result |
 |---|---|---|
-| Linux x64 | CI's lint and type-check at the merge of `main` 06a1a1ce8 (fe17eb24f); the engine's library tests that read the source tree (`rerail-logic`) at cc2828e54, `main` beside them | Pass; `rerail-logic` 411 pass and 7 are ignored, as at `main`; the merges since bring no change to the Rust this change edits. |
+| Linux x64 and Windows 11 | At the merge with `main` 8b4c74cbe (4c0fa4e9b): CI's lint and type-check, the 112 test files its five shared files reach and both sides' Rust cases, `main`'s 105 files beside them; `rerail-logic` at cc2828e54 | Pass, but `complexity-rules.test.ts` at both builds, its pack data not on the machine: Linux x64 2,743 cases pass here and 2,591 at `main`; Windows 11 2,726 and 2,574, the bridge's EPERM walk failing at both and two 1 s waits here that then pass 6 runs of 6; the Rust cases 23 of 23; `rerail-logic` 411 pass and 7 are ignored, as at `main`. |
 | Linux x64 | The 308 test files the change adds or edits, and those importing a changed module (4b57f6301), at load 20 to 25 | Only `packs.test.ts` and `complexity-rules.test.ts` fail, as on `main`, and nine 5 s limits; beside `main` bf24c778f, three runs a side, the same two cases fail at both builds and the rest pass at both. |
 | Windows 11 | The same 286 unit files (f2b7ce23a), four machines | Only those two files and 30 to 60 s limits on machines running other work; the 19 files that held them, `main` 6ec384ad9 then this change on one machine: none failed at either (541 and 523 cases passed). |
 | Linux x64 | CI's integration step (4b57f6301), at load 19 | 23 files passed, 1 skipped; 95 tests passed. |
 | Linux x64 | `claude-hook-rules` and `event-adapter-parity` alternating with `main` df9358d3f, 10 runs a side, at load 16 to 27 | Both fail at both builds: the session's first edit not steered at its own result 3 of 10 here and 1 of 10 on `main` (the first start's rules still compiling, `main`'s design), and the 5 s limit 5 of 10 at each. |
-| Linux x64 | The repository's reviewer rules over the changed files (fe17eb24f), `main` 06a1a1ce8 built beside it | No new finding; 1,017 functions added or edited, none over complexity 6. |
-| Linux x64 | The test files of each file both this change and `main` since d54b586a8 edit, and of #920's, with those importing them (43), at fe17eb24f, beside `main` 06a1a1ce8; CI's browser tests | Linux x64, on a loaded machine: 845 pass and 13 fail at their 5 s limits, against 651 and 77 at `main`; the 3 files holding the 13 pass on a quieter machine at all three refs. Windows 11: 855 pass here and 725 at `main`, none fails. The browser tests: 86 here, 82 at `main`. |
+| Linux x64 | The repository's reviewer rules over the changed files (9a790bf68), `main` 1e80e3b04 built beside it | No new finding; 1,032 functions added or edited, none over complexity 6. |
+| Linux x64 and Windows 11 | The test files of the modules the second and third reviews' fixes edit (50 at 168870866, 3 at cda26e7ce), `main` 1e80e3b04's 41 and 2 beside them; CI's browser tests at fc27afce4, whose page the fixes since leave as it was | Linux x64: 1,389 pass here and 1,195 at `main`, none fails at either. Windows 11: 1,229 pass and 1 fails here, 1,043 pass and another case fails at `main`, each passing run again at both at once. The third's: 145 and 112 on Linux x64, 143 and 110 on Windows 11, none fails. The browser tests: 86 here, 82 at `main`. |
 | Linux x64 | Each wait through the product: `main` df9358d3f beside this change at 022469d1f on one machine, its load given | Each wait in the description's table shows at `main` and not here. |
 
-**Sources.** The branch at fe17eb24f, read on 20 November 2026; `main` at 06a1a1ce8, d54b586a8, 9b93ecd80, e3b4112ce, d5f941195, d69d7ab68, 1328a4e38, 95ad00618, 1e915f661, 6ec384ad9, bf24c778f, df9358d3f, a5ed5ccb8 and 2221b5ec9. Each wait's figures come from runs through the product on 20 November, on Linux x64; earlier checks of each change from its own runs on Linux x64 and Windows 11.
+**Sources.** The branch at fe17eb24f, read on 20 November 2026, and its merges 4c0fa4e9b and 6eb3f5275, read on 21 and 22 November; `main` at 92fbff1cc, 8b4c74cbe, 06a1a1ce8, d54b586a8, 9b93ecd80, e3b4112ce, d5f941195, d69d7ab68, 1328a4e38, 95ad00618, 1e915f661, 6ec384ad9, bf24c778f, df9358d3f, a5ed5ccb8 and 2221b5ec9. Each wait's figures come from runs through the product on 20 November, on Linux x64; earlier checks of each change from its own runs on Linux x64 and Windows 11.
 
 </details>
