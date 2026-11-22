@@ -85,7 +85,7 @@
             let assembled = rerail_compiler::rir_asm::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).unwrap();
             let executors = rerail_parser_tests::executors::Executors::new(&assembled);
             for text in TEXTS {
-                let (runs, _) = executors.run(text.as_bytes(), true);
+                let runs = executors.run(text.as_bytes(), true);
                 let want = p.ends(text.as_bytes());
                 for (name, got) in runs {
                     assert_eq!(got[0], want, "{re} on {name} over {text:?}");

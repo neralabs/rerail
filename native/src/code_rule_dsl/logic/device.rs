@@ -65,8 +65,6 @@ pub trait SolverDevice: Send + Sync {
     fn lattice(&self, system: &lattice::System<'_>) -> Result<lattice::Solved, Refused>;
     /// Nearest ancestors in a set by pointer jumping (`nodes` per set; `target` and `done` set-major).
     fn nearest(&self, nodes: usize, target: &[u32], done: &[u8], how: nearest::Buffers) -> Result<nearest::Solved, Refused>;
-    /// Checks every submission the relational executor makes against the engine's launch budget (decision 0100 §2).
-    fn install_launch_guard(&self);
     /// Columns' exact statistics and `k` most common values (decision 0209 §6), in one batch. A relation's column the
     /// device holds is read where it is (decision 0261); the others are gathered. Also how many were read in place.
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused>;

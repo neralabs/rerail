@@ -89,34 +89,28 @@ impl<'a> Executors<'a> {
         }
     }
 
-    /// Every executor's outputs over `bytes`, with the executor's name; none over the launch
-    /// budget.
+    /// Every executor's outputs over `bytes`, with the executor's name.
     pub fn every(&self, bytes: &[u8]) -> Runs {
-        let (out, skipped) = self.run(bytes, true);
-        assert!(skipped.is_empty(), "over the launch budget: {skipped:?}");
+        self.run(bytes, true)
+    }
+
+    /// Every executor's outputs over `bytes` (the Metal ones when `metal`). A Metal run past the
+    /// launch budget is the hard failure (decision 0601), never skipped.
+    pub fn run(&self, bytes: &[u8], metal: bool) -> Runs {
+        let mut out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
+        if metal {
+            self.device(bytes, &mut out);
+        }
         out
     }
 
-    /// Every executor's outputs over `bytes` (the Metal ones when `metal`), without a Metal
-    /// executor whose run would take more launches than the budget (`metal_launch_budget`):
-    /// those are named in the second list.
-    pub fn run(&self, bytes: &[u8], metal: bool) -> (Runs, Vec<String>) {
-        let mut out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
-        let mut skipped = Vec::new();
-        if metal {
-            self.device(bytes, &mut out, &mut skipped);
-        }
-        (out, skipped)
-    }
-
-    /// The device's executors' outputs over `bytes` into `out`, those over the launch budget into `skipped`.
+    /// The device's executors' outputs over `bytes` into `out`.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn device(&self, bytes: &[u8], out: &mut Runs, skipped: &mut Vec<String>) {
+    fn device(&self, bytes: &[u8], out: &mut Runs) {
         use metal_program_backend::block_program::serial::{Segments, run_serial_split};
         use rerail_compiler::Error;
         let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
             Ok(got) => out.push((name, got)),
-            Err(Error::BackendLaunchLimit) => skipped.push(name),
             // A device whose SIMD groups are not 32 lanes runs no block program (`block_program::ready`).
             Err(Error::UnsupportedBackend) if no_device() => {}
             Err(e) => panic!("{name} runs: {e:?}"),
@@ -131,6 +125,6 @@ impl<'a> Executors<'a> {
 
     /// No device executors off the device layer's targets.
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-    fn device(&self, _bytes: &[u8], _out: &mut Runs, _skipped: &mut Vec<String>) {}
+    fn device(&self, _bytes: &[u8], _out: &mut Runs) {}
 }
 

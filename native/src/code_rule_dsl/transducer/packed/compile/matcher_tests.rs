@@ -628,7 +628,7 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
             });
             match (cpu, metal) {
                 (Ok(cpu), Ok(metal)) if cpu == metal => equal += 1,
-                (Ok(_), Err(error @ (Error::BackendCapacity | Error::BackendLaunchLimit))) => {
+                (Ok(_), Err(error @ Error::BackendCapacity)) => {
                     refused += 1;
                     eprintln!("  refused {policy}/{clause}: {error:?}");
                 }
@@ -691,7 +691,7 @@ fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
                 replanned += outcome.replanned;
                 checked += 1;
             }
-            (Err(Error::BackendCapacity | Error::BackendLaunchLimit), _) => {}
+            (Err(Error::BackendCapacity), _) => {}
             (full, replan) => panic!("full {:?}, replanned {:?}", full.err(), replan.err()),
         }
     }
@@ -822,7 +822,7 @@ fn replan_finds_the_full_budgets_roots(backend: super::compile_matcher::Backend,
         let started = std::time::Instant::now();
         let full = match run(WorkBudget::Full) {
             Ok(found) => found,
-            Err(Error::BackendCapacity | Error::BackendLaunchLimit) => continue,
+            Err(Error::BackendCapacity) => continue,
             Err(e) => panic!("full: {e:?}"),
         };
         let full_time = started.elapsed();
@@ -913,7 +913,7 @@ fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where
         evaluation_costs::install(Default::default());
         let full = match wave.roots_batch(Backend::MetalInterpreter, &tapes, &active) {
             Ok(found) => found,
-            Err(Error::BackendCapacity | Error::BackendLaunchLimit) => continue,
+            Err(Error::BackendCapacity) => continue,
             Err(e) => panic!("full: {e:?}"),
         };
         unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") };
@@ -2082,7 +2082,7 @@ fn the_waves_labels_on_metal_are_the_cpus() {
     let scope = crate::code_rule_dsl::transducer::packed::metal_backend::launch::LaunchScope::enter();
     let (metal, outcome) = wave.labelled_metal(&tapes, &active, Some(&jobs)).unwrap();
     let mut kernels = std::collections::BTreeMap::<String, usize>::new();
-    for record in scope.snapshot().iter().filter(|record| record.encoded) {
+    for record in scope.snapshot().iter() {
         *kernels.entry(record.kernel.clone()).or_default() += 1;
     }
     drop(scope);

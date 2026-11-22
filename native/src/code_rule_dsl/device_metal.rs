@@ -23,9 +23,12 @@ pub fn register() {
 /// This crate's own test binary, which the engine does not load: Metal and the language packs its tests read are
 /// registered as the binary loads, as the engine registers them (`crate::install_devices`, `install_languages`), so
 /// the device's tests run on the device and no test's CPU worker meets a document before its pack is registered.
+/// What a job carries of its run is the logic's (`logic::CARRIERS`, which the engine's composition registers): a
+/// stratum's jobs on the pool carry it (`run_state::Carry::here`).
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
+        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
         super::register();
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         crate::test_languages();
@@ -105,10 +108,6 @@ impl SolverDevice for Metal {
 
     fn nearest(&self, nodes: usize, target: &[u32], done: &[u8], how: nearest::Buffers) -> Result<nearest::Solved, Refused> {
         packed::metal_nearest::solve_with(nodes, target, done, how).map_err(refused)
-    }
-
-    fn install_launch_guard(&self) {
-        packed::metal_sort::install_guard();
     }
 
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {

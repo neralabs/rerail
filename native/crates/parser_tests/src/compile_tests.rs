@@ -309,7 +309,7 @@ fn numbers_equal_the_evaluator_on_every_executor() {
     cases.extend([b"a````b``c`````d````e`````".to_vec(), b"````````".to_vec(), fences(60), [vec![b'.'; 65_530], fences(40)].concat()]);
     for bytes in cases {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in Executors::new(&p).run(&bytes, false).0 {
+        for (executor, got) in Executors::new(&p).run(&bytes, false) {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes", bytes.len());
             }
@@ -336,7 +336,7 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
             // Metal runs a backward pass in its forward carry only (`run_passes`), not in its
             // interpreter or generated kernels.
             #[allow(unused_mut)]
-            let mut got = Executors::new(&p).run(&bytes, false).0;
+            let mut got = Executors::new(&p).run(&bytes, false);
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             {
                 use metal_program_backend::block_program::serial::{Segments, run_serial_split};
@@ -426,8 +426,7 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
             want_starts[t.start / 64] |= 1 << (t.start % 64);
             want_lasts[(t.end - 1) / 64] |= 1 << ((t.end - 1) % 64);
         }
-        let (runs, over) = prepared.run(&bytes, true);
-        assert!(over.is_empty(), "over the launch budget: {over:?}");
+        let runs = prepared.run(&bytes, true);
         for (executor, got) in runs {
             if compiled.fallbacks.iter().any(|&k| cut(got[usize::from(k)].clone(), n).iter().any(|&w| w != 0)) {
                 conservative += 1;
@@ -1343,7 +1342,7 @@ fn rounds_equal_the_evaluator() {
     }
     for bytes in cases {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in run.run(&bytes, false).0 {
+        for (executor, got) in run.run(&bytes, false) {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {:?}\n{}", String::from_utf8_lossy(&bytes), compiled.rows);
             }

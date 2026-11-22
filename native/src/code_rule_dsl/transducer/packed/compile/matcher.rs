@@ -1320,7 +1320,7 @@ impl LoweredWave {
             return self.roots_batch_budgeted(Backend::Cpu, tapes, active, WorkBudget::current());
         }
         match found {
-            Err(Error::BackendCapacity | Error::BackendLaunchLimit) if tapes.len() > 1 => {
+            Err(Error::BackendCapacity) if tapes.len() > 1 => {
                 let half = tapes.len() / 2;
                 let part = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
                 let (mut left, a) = self.roots_metal_split(&tapes[..half], &part(0..half))?;

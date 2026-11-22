@@ -722,7 +722,7 @@ fn shared_capture_operator_batches_use_broad_stages_as_files_grow() {
         assert!(
             trace
                 .iter()
-                .all(|record| record.encoded && record.submitted && record.completed)
+                .all(|record| record.submitted && record.completed)
         );
         eprintln!(
             "CAPTURE_OPERATOR_SCALING_EVIDENCE {}",

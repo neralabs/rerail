@@ -1300,8 +1300,8 @@ const MICRO_DEEP_POOL: usize = 2048;
 const MICRO_DEEP_FRAMES: usize = 128;
 /// The launches an evaluation's encoding stays within (`metal_launch_budget`, list step 13): a
 /// recursive group's rounds are encoded from what the plan's fixed launches leave, and a plan
-/// that cannot fit (its fixed launches and two rounds a group, or a rerun) is refused before it
-/// encodes, as `BackendLaunchLimit`.
+/// that cannot fit (its fixed launches and two rounds a group, or a rerun) is the hard failure
+/// before it encodes (decision 0601).
 const LAUNCHES: usize = super::super::metal_backend::launch::KERNEL_LAUNCH_LIMIT;
 /// At most this many rounds of a recursive group are encoded in one go.
 const MOST_ROUNDS: usize = 64;
@@ -1804,20 +1804,19 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         let rounds = rounds(cap);
         // The plan-time bound: what this encoding launches.
         if fixed + groups + cost(&rounds) > limit {
-            crate::code_rule_dsl::prof::count("run.launch_limit", 1);
-            if std::env::var_os("RERAIL_LAUNCHES").is_some() {
-                eprintln!("launch limit: {limit} fixed {fixed} groups {groups} rounds {rounds:?} per group {per_group:?} files {}", files.len());
-            }
-            return Err(Error::BackendLaunchLimit);
+            super::super::metal_backend::launch::plan_past_budget(format!(
+                "a label run's plan: {limit} launches left, fixed {fixed} groups {groups} rounds {rounds:?} per group {per_group:?} files {}",
+                files.len()
+            ));
         }
-        Ok(rounds)
+        rounds
     };
     let mut wanted = expected.clone();
     if std::env::var_os("RERAIL_LAUNCHES").is_some() {
         let levels = plan.steps.iter().map(|(_, levels)| levels.len()).sum::<usize>();
         eprintln!("PLAN steps {} levels {levels} fixed {fixed} groups {groups} per group {per_group:?} expected {expected:?} files {}", plan.steps.len(), files.len());
     }
-    let mut rounds = plan_rounds(LAUNCHES, &wanted)?;
+    let mut rounds = plan_rounds(LAUNCHES, &wanted);
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
     let (mut lanes, mut micro, mut deep, mut released) = (NARROW, !interpret_only(), false, false);
@@ -1828,7 +1827,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         // decision 2026-11-21), planned within what it has left.
         let _rerun = (attempt > 0).then(super::super::metal_backend::launch::rerun);
         if attempt > 0 {
-            rounds = plan_rounds(super::super::metal_backend::launch::rerun_available(), &wanted)?;
+            rounds = plan_rounds(super::super::metal_backend::launch::rerun_available(), &wanted);
         }
         attempt += 1;
         let mut outcome = match encode(plan, files, &rounds, lanes, micro, deep, budget) {

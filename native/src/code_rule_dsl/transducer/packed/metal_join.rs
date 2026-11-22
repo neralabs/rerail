@@ -56,8 +56,6 @@ pub(in crate::code_rule_dsl) const MAX_PARAMS: usize = 16;
 pub(in crate::code_rule_dsl) const MAX_BINDS: usize = 16;
 pub(in crate::code_rule_dsl) const MAX_OPS: usize = 64;
 pub(in crate::code_rule_dsl) const MAX_OUTPUTS: usize = 16;
-/// The dispatches a command buffer takes before the batch starts another (the launch budget is 200).
-const BUDGET: usize = 150;
 
 /// A stage's mode.
 pub(in crate::code_rule_dsl) const JOIN: u32 = 0;
@@ -407,6 +405,8 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
     let full = || "the chunk block cannot hold the axis".to_string();
     let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
     let device = rerail_accel::gpu::join::device()?;
+    // An evaluation of the launch budget, or the caller's when it is in one: every chunk's count and write.
+    let _evaluation = super::metal_backend::launch::LaunchScope::enter();
     let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
     let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
     // Each chunk's counts scanned into its starts: its parameters, its starts' offset, and its rows.
@@ -433,7 +433,7 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
         let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), 0, 0, 0, 0];
         let scan = Scan::owned(n)?;
         let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-        let pass = batch.pass(16).map_err(|e| format!("{e:?}"))?;
+        let pass = batch.pass().map_err(|e| format!("{e:?}"))?;
         pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
         scan.encode(pass, &starts)?;
         batch.finish().map_err(|e| format!("{e:?}"))?;
@@ -494,7 +494,7 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
             // SAFETY: as the count's: the chunk's block outlives the work, waited for below.
             let starts = unsafe { rerail_device::device::wrap_host_memory(device, b.ptr::<u8>(start_at), (4 * (n + 1)).next_multiple_of(PAGE))? };
             let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-            let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
+            let pass = batch.pass().map_err(|e| format!("{e:?}"))?;
             pass.run(&write, &[&whole, &starts, &out], &p, &[rows_at], groups(n));
             batch.finish().map_err(|e| format!("{e:?}"))?;
         }
@@ -1305,11 +1305,10 @@ impl Batch {
         Ok(self.arena.clone().expect("the arena"))
     }
 
-    /// The open submission, with room for `need` more dispatches (a new one when not).
-    fn pass(&mut self, need: usize) -> Result<&Pass, Error> {
-        if self.pass.as_ref().is_some_and(|p| p.dispatches() + need > BUDGET) {
-            self.submit_open()?;
-        }
+    /// The open submission (a new one when none is open). Its launches are charged to the evaluation's launch budget
+    /// as they are made (`rerail_accel::gpu::launch`): a batch's work past the budget is refused at its commit, never
+    /// split into submissions of their own count.
+    fn pass(&mut self) -> Result<&Pass, Error> {
         if self.pass.is_none() {
             super::metal_sort::ready()?;
             self.pass = Some(Pass::new()?);
@@ -1330,7 +1329,7 @@ impl Batch {
         let Some(pass) = self.pass.take() else { return Ok(()) };
         self.done.dispatches += pass.dispatches() as u32;
         rerail_accel::exec::command_committed();
-        let s = pass.commit()?;
+        let s = pass.commit().map_err(Error::from)?;
         self.committed.push(s);
         self.done.submissions += 1;
         Ok(())
@@ -1493,7 +1492,7 @@ impl Batch {
             }
             let params = self.block(ix.bytes())?;
             // A sort is at most 4 passes of three dispatches and two scans' levels, and a few more.
-            let pass = self.pass(48)?;
+            let pass = self.pass()?;
             let words = Held::new(4 * n)?;
             // A sort refused after the bucket's dispatch leaves `words`, which the dispatch writes, with the batch
             // until its submission is done: dropped here, it would go back to the pool at once.
@@ -1529,7 +1528,7 @@ impl Batch {
         p.extend(cols.iter().map(|&c| c as u32));
         if out.rows > 0 {
             let params = self.block(&p.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>())?;
-            let pass = self.pass(1)?;
+            let pass = self.pass()?;
             pass.run_bytes(&expand, &[block, &out.buffer.buffer, &params.buffer], &[], groups(out.rows));
         }
         Ok(())
@@ -1568,7 +1567,7 @@ impl Batch {
             let counts = scratch(FREE, 4 * (n + 1))?;
             let scan = Scan::new(n)?;
             let sb = self.block(stage.bytes())?;
-            let pass = self.pass(12)?;
+            let pass = self.pass()?;
             if let Some((rel, index)) = right {
                 index.map_or(rel, |ix| ix.of(rel)).resident_in(pass);
             }
@@ -1594,7 +1593,7 @@ impl Batch {
             return Err(Error::BackendCapacity);
         }
         let dummy = self.dummy.buffer.clone();
-        let pass = self.pass(13)?;
+        let pass = self.pass()?;
         if let Some((rel, index)) = right {
             index.map_or(rel, |ix| ix.of(rel)).resident_in(pass);
         }
@@ -1670,7 +1669,7 @@ impl Batch {
         write.nbinds = 0;
         write.screen = 0;
         let (sb, wb) = (self.block(stage.bytes())?, self.block(write.bytes())?);
-        let pass = self.pass(3)?;
+        let pass = self.pass()?;
         rel.resident_in(pass);
         for &(_, r, ix) in rest {
             ix.map_or(r, |ix| ix.of(r)).resident_in(pass);
@@ -1718,7 +1717,7 @@ impl Batch {
         let cache = self.kept.clone().ok_or(Error::BackendCapacity)?;
         let dummy = self.dummy.buffer.clone();
         let sb = self.block(stage.bytes())?;
-        let pass = self.pass(4)?;
+        let pass = self.pass()?;
         let lbuf: &Buffer = &left.buffer.buffer;
         let (vc, vc_at) = (&cache.cache.0, cache.cache.1);
         atoms.resident_in(pass);
@@ -1758,7 +1757,7 @@ impl Batch {
         let counts = scratch(FREE, 4 * (n + 1))?;
         let scan = Scan::new(n)?;
         let db = self.block(bytes)?;
-        let pass = self.pass(12)?;
+        let pass = self.pass()?;
         let t: &Buffer = &table.buffer.buffer;
         pass.run_bytes(&clear, &[&p.buffer, &db.buffer], &[], groups(places));
         pass.run_bytes(&claim, &[t, &totals.buffer.buffer, &p.buffer, &db.buffer], &[], groups(table.cap));
@@ -1827,7 +1826,7 @@ impl Batch {
         let (s, d) = (s.clone(), d.clone());
         let totals = count.map_or_else(|| self.dummy.buffer.clone(), |c| c.1.buffer.buffer.clone());
         let cb = self.block(bytes)?;
-        let pass = self.pass(1)?;
+        let pass = self.pass()?;
         if let Some(r) = view {
             r.resident_in(pass);
         }
@@ -1843,7 +1842,7 @@ impl Batch {
         stage.in_slot = in_slot as u32;
         stage.nslots = table.slots as u32;
         let sb = self.block(stage.bytes())?;
-        let pass = self.pass(1)?;
+        let pass = self.pass()?;
         pass.run_bytes(&map, &[&table.buffer.buffer, &totals.buffer.buffer, &sb.buffer], &[], groups(table.cap));
         Ok(())
     }
@@ -1891,6 +1890,7 @@ pub mod tests {
         let dst = DevRel::empty(2, n).unwrap();
         let (sb, db) = (src.home.clone().unwrap(), dst.home.clone().unwrap());
         let (s0, d0) = (rerail_blocks::region::whole(&sb.block).region().version(), rerail_blocks::region::whole(&db.block).region().version());
+        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = Batch::new().unwrap();
         batch.copy_rows(Rows::Rel(&src), n, &[Col::From(0), Col::From(1)], Rows::Rel(&dst), 0).unwrap();
         batch.finish().unwrap();
@@ -1914,6 +1914,7 @@ pub mod tests {
         let n = 1000;
         let cols: Vec<Vec<i64>> = (0..4).map(|c| rows(n, 11 + c, 50)).collect();
         let rel = DevRel::upload(4, n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap();
+        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = Batch::new().unwrap();
         let keys: [&[usize]; 9] = [&[0], &[1], &[2], &[3], &[0, 1], &[0, 2], &[0, 3], &[1, 2], &[1, 3]];
         let mut moved = None;
@@ -1949,6 +1950,7 @@ pub mod tests {
             DevRel::upload(cols.len(), n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap()
         };
         let (ra, rb, rc) = (up(&[&a0, &a1]), up(&[&b0, &b1]), up(&[&c0]));
+        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = Batch::new().unwrap();
         let ib = batch.index(&rb, &[0]).unwrap();
         let ic = batch.index(&rc, &[0]).unwrap();
@@ -2053,6 +2055,7 @@ pub mod tests {
         let (ra, rb, rc) = (up(&[&a0, &a1]), up(&[&b0, &b1]), up(&[&c0]));
         let (sb0, sb1, sc0, none) = (screen(&b0, 0), screen(&b1, 0), screen(&c0, 0), screen(&[], 0));
         let run = |join_screen: Option<&Screen>, anti_screen: Option<&Screen>, semi_screen: Option<&Screen>| {
+            let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = Batch::new().unwrap();
             let ib = batch.index(&rb, &[0]).unwrap();
             let ic = batch.index(&rc, &[0]).unwrap();
@@ -2135,6 +2138,7 @@ pub mod tests {
         let host_rows = || DevRel::in_block(&crate::code_rule_dsl::facts::rows::anon_in_block(2, &vals), 2).unwrap();
         let (placed, host) = (host_rows(), host_rows());
         for (dev, cols) in [(&dev0, vec![0usize]), (&dev1, vec![1, 0]), (&placed, vec![0]), (&placed, vec![1, 0])] {
+            let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = Batch::new().unwrap();
             let ix = batch.index(dev, &cols).unwrap();
             assert!(ix.built && ix.moved.is_none(), "built in the relation's own block");
@@ -2164,6 +2168,7 @@ pub mod tests {
             assert_eq!(d.mask, w.mask);
             assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
             assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
+            let _evaluation_later = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut later = Batch::new().unwrap();
             let found = later.index(dev, &cols).unwrap();
             assert!(!found.built && found.index == ix.index, "a later batch finds it");
@@ -2210,6 +2215,7 @@ pub mod tests {
         host.extend_from_slice(&vals(0, n));
         let host = DevRel::in_block(&host.in_block().unwrap(), 2).unwrap();
         for cols in [vec![0usize], vec![1, 0]] {
+            let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = Batch::new().unwrap();
             let ix = batch.index(&dev, &cols).unwrap();
             assert!(ix.built && ix.moved.is_none(), "built in the fork's own block");
@@ -2263,6 +2269,7 @@ pub mod tests {
             (DevRel::in_block(&b, k).unwrap(), r)
         };
         let ((ra, _ka), (rb, _kb), (rc, _kc)) = (placed(&[&a0, &a1], &da), placed(&[&b0, &b1], &db), placed(&[&c0], &dc));
+        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = Batch::new().unwrap();
         let ib = batch.index(&rb, &[0]).unwrap();
         let ic = batch.index(&rc, &[0]).unwrap();
@@ -2332,6 +2339,7 @@ pub mod tests {
         let totals = Words::zeroed(2).unwrap();
         totals.set(0, n as u32);
         let out = Table::new(2, cap).unwrap();
+        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = Batch::new().unwrap();
         batch.dedup(&t, &[2, 1], 0, 1, &totals, &out).unwrap();
         batch.finish().unwrap();
@@ -2404,7 +2412,7 @@ impl Batch {
         self.writes(r, "a lattice's held rows");
         if !matches!(first, MapFirst::Ready) {
             let hclear = pipeline("join", "lat_hclear", || SOURCE.to_owned())?;
-            let pass = self.pass(2)?;
+            let pass = self.pass()?;
             pass.run_bytes(&hclear, &[&hb.buffer], lat_bytes(&p), groups(map.places));
             if let MapFirst::Grow(old) = first {
                 p.omask = (old.places - 1) as u32;
@@ -2423,7 +2431,7 @@ impl Batch {
         let chosen = Held::new(4 * pplaces)?;
         let flags = Held::new(4 * pplaces)?;
         let a: Buffer = arena.map_or_else(|| self.dummy.buffer.clone(), |a| a.buffer.buffer.clone());
-        let pass = self.pass(4)?;
+        let pass = self.pass()?;
         let ub: &Buffer = &u.buffer.buffer;
         pass.run_bytes(&clear, &[&places.buffer, &chosen.buffer, &flags.buffer], bytes, groups(pplaces));
         pass.run_bytes(&claim, &[ub, &places.buffer], bytes, groups(n));

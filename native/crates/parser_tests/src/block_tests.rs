@@ -684,7 +684,7 @@ fn back_fill_equals_reference_on_the_cpu_and_the_forward_carry() {
     let mut files = inputs();
     files.extend([b"".to_vec(), b"a\"".to_vec(), b"\\aa\"".to_vec(), [vec![b'a'; 130], b"\"".to_vec()].concat()]);
     for bytes in &files {
-        let (got, _) = Executors::new(&p).run(bytes, false);
+        let got = Executors::new(&p).run(bytes, false);
         for (name, got) in got {
             assert_eq!(got, want(bytes), "{name}, {} bytes", bytes.len());
         }
@@ -769,7 +769,7 @@ fn position_planes_equal_the_positions_on_every_executor() {
     let mut files = inputs();
     files.extend([b"".to_vec(), b"a".to_vec(), vec![b'a'; 63], vec![b'a'; 64], vec![b'a'; 2100], [vec![b'b'; 700], vec![b'a'; 700]].concat()]);
     for bytes in &files {
-        let (got, _) = Executors::new(&p).run(bytes, true);
+        let got = Executors::new(&p).run(bytes, true);
         for (name, got) in got {
             assert_eq!(got, want(bytes), "{name}, {} bytes", bytes.len());
         }
