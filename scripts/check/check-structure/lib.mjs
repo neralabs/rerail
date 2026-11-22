@@ -57,13 +57,15 @@ export function isDataPath(path) {
 /**
  * Third-party code vendored byte-identical (REUSE.toml): never restyled or re-laid-out. `native/grammars/` (the
  * tree-sitter grammars), `native/vendor/` (the crates and C++ sources the engine builds from a copy) and
- * `forest/src/mldb/` (MLDB's random forest, copied at its upstream paths).
+ * `forest/src/mldb/` (MLDB's random forest, copied at its upstream paths) and `native/crates/ukl/mldb/` (MLDB's UKL
+ * shims and common headers, which the UKL crate carries, at the same paths).
  */
 export function isVendored(path) {
   return (
     path.startsWith("native/grammars/") ||
     path.startsWith("native/vendor/") ||
     path.startsWith("forest/src/mldb/") ||
+    path.startsWith("native/crates/ukl/mldb/") ||
     path.split("/").includes("node_modules")
   );
 }
