@@ -8,7 +8,10 @@ import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 
 const REGISTRY = "https://registry.npmjs.org";
-/** The preview channel's dist-tag. It never trails `latest`: a version published under `latest` moves it up too. */
+/**
+ * The dist-tag a release publishes to, and the preview channel. It never trails `latest`: a version promoted to
+ * `latest` moves it up too.
+ */
 export const NEXT_TAG = "next";
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/u;
@@ -48,11 +51,29 @@ export function compareVersions(a, b) {
 export const nextTrails = (next, version) => next === null || next === undefined || compareVersions(next, version) < 0;
 
 /**
- * Why a `beta` or `next` preview `version` must not be published, given the package's `latest` (undefined when it has
- * none), or null when it may be: one older than `latest` would leave its channel behind the stable one.
+ * Why `version` must not be published under `channel`, given the package's dist-tags (`{ latest, next }`, each absent
+ * when unset), or null when it may be. One older than `latest` would leave its channel behind the stable one. Under
+ * `next`, one older than `next` would move `next` back, as re-running an older release's publish would, or a release
+ * while a newer preview is on `next`.
  */
-export const previewRefusal = (version, channel, latest) =>
-  latest !== undefined && compareVersions(version, latest) < 0 ? `${version} is older than latest ${latest}: a ${channel} preview must not trail latest` : null;
+export function publishRefusal(version, channel, { latest, [NEXT_TAG]: next } = {}) {
+  if (latest !== undefined && compareVersions(version, latest) < 0) return `${version} is older than latest ${latest}: a release on ${channel} must not trail latest`;
+  if (channel === NEXT_TAG && next !== undefined && compareVersions(version, next) < 0) return `${version} is older than next ${next}: publishing it under next would move next back`;
+  return null;
+}
+
+/**
+ * What release tag `tag` (`v<version>`) publishes, given the version package.json names at it: `{ version, channel }`.
+ * A plain version goes to `next`, where it waits for a person to promote it to `latest` (release.yml's `latest` input);
+ * a `beta` or `next` preview goes to its own channel. Throws on a tag that is no release tag, or one package.json
+ * disagrees with.
+ */
+export function releaseChannel(tag, packageVersion) {
+  const match = /^v(\d+\.\d+\.\d+)(?:-(beta|next)\.\d+)?$/u.exec(tag);
+  if (match === null) throw new Error(`Release tag ${tag} is not vX.Y.Z, vX.Y.Z-beta.N, or vX.Y.Z-next.N`);
+  if (packageVersion !== tag.slice(1)) throw new Error(`package.json version ${packageVersion} does not match ${tag}`);
+  return { version: packageVersion, channel: match[2] ?? NEXT_TAG };
+}
 
 /**
  * `name`'s dist-tags (`{ tag: version }`), read anonymously from the registry's dist-tags endpoint (the one
@@ -68,19 +89,26 @@ export async function readPublicDistTags(name) {
 /** `name`'s `next` dist-tag, null when it has none (readPublicDistTags). */
 export const readNextTag = async (name) => (await readPublicDistTags(name))[NEXT_TAG] ?? null;
 
-/** `name`'s `latest` dist-tag, null when it has none or the package was never published (a first publish by hand). */
-export async function readLatestTag(name) {
+/** `version` of `name` as npm published it: its package.json, read anonymously. Throws when the registry has none. */
+export async function readPublishedManifest(name, version) {
+  const response = await fetch(`${REGISTRY}/${name.replace("/", "%2f")}/${encodeURIComponent(version)}`, { headers: { accept: "application/json" } });
+  if (!response.ok) throw new Error(`${name}@${version} answers an anonymous request with ${response.status}`);
+  return await response.json();
+}
+
+/** `name`'s dist-tags, as readPublicDistTags reads them, or none (`{}`) when the package was never published. */
+export async function readDistTagsOrNone(name) {
   const response = await fetch(`${REGISTRY}/-/package/${name.replace("/", "%2f")}/dist-tags`, { headers: { accept: "application/json" } });
-  if (response.status === 404) return null;
+  if (response.status === 404) return {};
   if (!response.ok) throw new Error(`${name}'s dist-tags answer an anonymous request with ${response.status}`);
-  return (await response.json()).latest ?? null;
+  return await response.json();
 }
 
 /** Points `name`'s dist-tag `tag` at `version`, with npm's output on the terminal; throws when npm fails. */
 export const addDistTag = (name, version, tag) => execFileSync("npm", ["dist-tag", "add", `${name}@${version}`, tag, "--registry", REGISTRY], { stdio: "inherit" });
 
 /**
- * Points `name`'s `next` at `version`, just published under `latest`, unless `next` is already there or at a newer
+ * Points `name`'s `next` at `version`, just moved to `latest`, unless `next` is already there or at a newer
  * version (a preview past it), so the preview channel never trails the stable one. `steps.readNext(name)` resolves to
  * `next` or null, and `steps.distTag(name, version, tag)` moves it; both throw on failure. Returns what it did, for
  * the log. Running it again is safe: a `next` already moved is left where it is.

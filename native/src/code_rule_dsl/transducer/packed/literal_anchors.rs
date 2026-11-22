@@ -229,7 +229,7 @@ pub fn load_literal_anchor_batch(
         .collect())
 }
 
-#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
 pub fn eligibility_masks(eligibility: Vec<Vec<Option<bool>>>, programs: usize) -> Vec<Vector<u32>> {
     let words = programs.div_ceil(32);
     eligibility
@@ -342,7 +342,7 @@ pub fn load_text_candidate_batch(
 
 /// Convert complete exact-literal anchors directly into terminal outputs. The selector already
 /// proved the full predicate, so a second matcher or GPU dispatch would duplicate work.
-#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
 pub fn materialize_literal_anchors(
     programs: &[Program],
     files: &[TapeDoc],

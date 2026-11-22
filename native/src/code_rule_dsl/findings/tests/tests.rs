@@ -1,7 +1,6 @@
 use super::native_oracle::Native;
 use super::*;
 use crate::code_rule_dsl::{
-    CodeRuleDslRuntime,
     tape::{Grammar, TapeDoc, TapeImage},
     test_support::CAPABILITIES,
 };
@@ -61,11 +60,7 @@ fn native_policy() -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     capabilities["limits"]["maxSourceBytes"] = json!(200_000_000);
     capabilities["limits"]["maxVisitedNodes"] = json!(100_000_000);
     capabilities["limits"]["maxWitnesses"] = json!(1_000_000);
-    CodeRuleDslRuntime::compile(
-        combined.to_string(),
-        "json".into(),
-        capabilities.to_string(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&combined.to_string(), "json", &capabilities.to_string())
     .unwrap()
 }
 fn native_run(

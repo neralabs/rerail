@@ -27,7 +27,7 @@
 //! `language-not-supported`; a `refused` capability is refused as invalid, never answered by
 //! another family's code.
 
-// cratify: `adapter` is rerail-w's (it mounts it)
+// cratify: `adapter` is rerail-classic's (it mounts it)
 
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::semver::Range;
@@ -609,6 +609,12 @@ pub fn label(lang: GrammarDialect) -> Option<&'static str> {
     dialect(lang).map(|dialect| dialect.label)
 }
 
+/// The suffix registry as input to source selection rules.
+pub fn source_grammar_suffixes() -> impl Iterator<Item = (&'static str, &'static str, i64, bool)> {
+    DIALECTS.iter().flat_map(|d| d.suffixes.iter().map(move |suffix| (d.label, *suffix, d.lang)))
+        .enumerate().map(|(order, (label, suffix, lang))| (label, suffix, order as i64, lang.built()))
+}
+
 /// The file label a path's suffix selects, as the host's table does for dialect files: the
 /// longest matching suffix. A dialect this build leaves out (`GrammarDialect::built`) selects none: its files are
 /// not read, as a planned language's are not.
@@ -818,6 +824,7 @@ pub fn parse_input(dialect: GrammarDialect, source: &str) -> Cow<'_, str> {
 
 /// `dialect`'s ast-grep tree of `parse_input`, reading `source`'s text.
 pub fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<GrammarDialect>> {
+    crate::code_rule_dsl::prof::count("source_ast.parses", 1);
     match parse_input(dialect, source) {
         Cow::Borrowed(_) => dialect.ast_grep(source),
         Cow::Owned(input) => {
@@ -1563,6 +1570,14 @@ pub mod tests {
             CodeRuleLanguage::read("php", "/language", unknown).unwrap(),
             CodeRuleLanguage::Php
         );
+    }
+
+    #[test]
+    fn the_source_registry_version_hashes_the_suffix_facts_this_build_supplies() {
+        use sha2::{Digest, Sha256};
+        let rows: Vec<_> = source_grammar_suffixes().collect();
+        let version = Sha256::digest(serde_json::to_vec(&rows).unwrap());
+        assert_eq!(SOURCE_GRAMMAR_REGISTRY, crate::content_store::observe::hex(&version.into()));
     }
 
     /// The host reads the registry through `src/engine/code-rule/code-rule-language-registry.generated.ts`, which a script

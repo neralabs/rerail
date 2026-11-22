@@ -297,13 +297,19 @@ pub(super) struct Before {
     now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,
     skip: Vector<u32>,
     was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>,
-    kept: usize,
+    kept: std::sync::OnceLock<usize>,
 }
 
 impl Before {
     pub(super) fn new(now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, skip: Vector<u32>, was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>) -> Before {
-        let kept = now.len() - skip.len();
-        Before { now, skip, was, kept }
+        Before { now, skip, was, kept: std::sync::OnceLock::new() }
+    }
+
+    /// Its rows of `now`, the skipped ones but: read when it is first read, not when it is made, as the corpus batch
+    /// counts its rows by the totals it is given after the versions are made (decision 0494), and before them made
+    /// every document to count them (Q332).
+    fn kept(&self) -> usize {
+        *self.kept.get_or_init(|| self.now.len() - self.skip.len())
     }
 
     /// The id in `now` of its `r`-th row not skipped: `r` plus the skipped ids before it (`skip[j] - j` counts the rows
@@ -329,7 +335,7 @@ impl crate::code_rule_dsl::facts::vtab::Source for Before {
         self.now.columns()
     }
     fn len(&self) -> usize {
-        self.kept + self.was.as_ref().map_or(0, |w| w.len())
+        self.kept() + self.was.as_ref().map_or(0, |w| w.len())
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.now.estimated_matches(column, batch)
@@ -346,18 +352,18 @@ impl crate::code_rule_dsl::facts::vtab::Source for Before {
         let mut out: rerail_blocks::vector::Vector<usize> = self.now.lookup(column, values)?.into_iter().filter_map(|id| self.before_row(id)).collect();
         if let Some(was) = &self.was {
             match was.lookup(column, values) {
-                Some(ids) => out.extend(ids.into_iter().map(|r| r + self.kept)),
-                None => out.extend((0..was.len()).filter(|&r| values.contains(&was.value(r, column))).map(|r| r + self.kept)),
+                Some(ids) => out.extend(ids.into_iter().map(|r| r + self.kept())),
+                None => out.extend((0..was.len()).filter(|&r| values.contains(&was.value(r, column))).map(|r| r + self.kept())),
             }
         }
         out.sort_unstable();
         Some(out)
     }
     fn value(&self, row: usize, column: usize) -> i64 {
-        if row < self.kept {
+        if row < self.kept() {
             self.now.value(self.now_row(row), column)
         } else {
-            self.was.as_ref().expect("a row past the kept ones is an old document's").value(row - self.kept, column)
+            self.was.as_ref().expect("a row past the kept ones is an old document's").value(row - self.kept(), column)
         }
     }
 }

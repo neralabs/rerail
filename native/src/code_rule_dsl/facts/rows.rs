@@ -32,9 +32,9 @@ use rerail_blocks::rows::ColRead;
 /// The most segments a frozen relation holds; past them its newest are merged.
 const MAX_SEGMENTS: usize = 8;
 
-/// Whether a reservation is address space only (a 64-bit Unix: `rerail_blocks::mem::reserve`), its pages taken as
-/// they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
-const RESERVES_ADDRESS_SPACE: bool = cfg!(all(unix, target_pointer_width = "64"));
+/// Whether a reservation is address space only (a 64-bit Unix or Windows: `rerail_blocks::mem::reserve`), its pages
+/// taken (on Windows, committed) as they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
+const RESERVES_ADDRESS_SPACE: bool = cfg!(all(any(unix, windows), target_pointer_width = "64"));
 
 /// What a block of relations reserves where a reservation is address space (decision 0445, t49 item 2): enough that
 /// no relation's tail outgrows its block within a run's memory. A Mac gave 4,000 such reservations at once.
@@ -152,6 +152,20 @@ pub enum Life {
 /// run's, so no two runs' relations share a block).
 #[derive(Default)]
 struct Open([Mutex<Option<Arc<Facts>>>; 4]);
+
+/// The open blocks new relations go in outside a chunk (`Open`): the run's, or outside a run the machine's (decision
+/// 0442: every piece of state has an owner). A session's work between its runs shares the machine's, as a run's
+/// relations share the run's: a relation's tables grow in its block (0384), and a relation dropped gives its chunks
+/// back to it (0342). Outside a run `local` is a value of its own each time it is asked for: every relation then
+/// leased a block of a run's size, 16 GiB of address space where blocks reserve it (decision 0445), and a session's
+/// 1,000 one-document batches' relations reserved all of it (mmap refused at 256 TiB).
+fn open_blocks() -> Arc<Open> {
+    if crate::code_rule_dsl::logic::profile::run_own().is_some() {
+        crate::code_rule_dsl::logic::profile::local::<Open>()
+    } else {
+        crate::code_rule_dsl::logic::profile::machine::<Open>()
+    }
+}
 
 /// Every block leased on this machine, by `Life`, while it lives: what a profile reads (`held`; decision 0442: the
 /// machine's, as the memory it counts is).
@@ -381,9 +395,14 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
 /// may read it in place (a pool slab when one is spare), a CPU run's never (Q58); its relations are made and
 /// dropped, so it keeps a free list.
 fn lease(bytes: usize, life: Life) -> Result<Block, String> {
+    lease_room(bytes.max(life.block_bytes()))
+}
+
+/// `lease`'s block of `bytes`, no more: a relation's alone in it outside a run (`Part::try_new_with`).
+fn lease_room(bytes: usize) -> Result<Block, String> {
     use rerail_blocks::alloc::{Need, Writes};
     let device = BLOCK_DEVICE.get().map_or(rerail_blocks::alloc::Device::May, |f| f());
-    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes: bytes.max(life.block_bytes()), writes: Writes::Churn, device, ..Need::SLAB })
+    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Churn, device, ..Need::SLAB })
 }
 
 /// What a block of relations asks of the policy about the device: the run's binding's (`placement::block_device`,
@@ -425,7 +444,7 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
 /// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
 fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
     let chunk = current_chunk();
-    let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
+    let runs = open_blocks();
     let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
         && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN
@@ -1161,7 +1180,7 @@ fn room_for_widths(widths: &[u32], rows: usize) -> usize {
 /// anonymous memory, which the CPU's reads take as they take any block.
 fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
     use rerail_blocks::alloc::{Budget, Device, Need, Size, Writes};
-    let device = if cfg!(any(target_os = "macos", target_os = "linux")) && life == Life::Device && rerail_accel::gpu::shared::layer().is_some() {
+    let device = if cfg!(any(target_os = "macos", target_os = "linux", windows)) && life == Life::Device && rerail_accel::gpu::shared::layer().is_some() {
         Device::Must
     } else {
         Device::No
@@ -1353,7 +1372,7 @@ impl std::ops::Deref for Part {
 unsafe impl Send for Held {}
 unsafe impl Sync for Held {}
 
-/// A column's blocked Bloom filter (decision 0500, `rerail_blocks::bloom`) in a block of the run's relations: the
+/// A column's blocked Bloom filter (decision 0488, `rerail_blocks::bloom`) in a block of the run's relations: the
 /// block the relations whose keys it holds are made in, so the device binds it as it binds them and reads it where
 /// it lies, as the host does. Its chunks go back to the block's free list when it is dropped.
 pub struct FactsBloom {
@@ -1450,7 +1469,7 @@ impl Part {
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
         let chunk = crate::code_rule_dsl::logic::profile::bound::<InChunk>().0;
-        let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
+        let (runs, live_blocks) = (open_blocks(), crate::code_rule_dsl::logic::profile::machine::<Live>());
         let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
@@ -1496,33 +1515,53 @@ impl Part {
     /// with it, built once; a second key's copies the relation into a block of its own). About 8 to 12 bytes a row,
     /// next to the relation's 8 a column.
     pub fn for_device(k: usize, rows: usize) -> Result<Part, String> {
-        Part::claimed(Life::Device, k, rows)
+        Part::for_device_indexed(k, rows, 1)
+    }
+
+    /// `for_device` with room for `indexes` indexes of its rows, one for each key its readers probe it by (a
+    /// recursive component's relation, decision 0353 step 6): no key of those copies it.
+    pub fn for_device_indexed(k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        Part::claimed(Life::Device, k, rows, indexes)
     }
 
     /// The same shape in a run's own memory, for the CPU's work (a view's index home, `setfix`): a block of anonymous
     /// memory alone, as `lease_exact` gives a run, so a host with no device makes it too. `Err` when the join's
     /// budget refuses it.
     pub fn for_host(k: usize, rows: usize) -> Result<Part, String> {
-        Part::claimed(Life::Run, k, rows)
+        Part::claimed(Life::Run, k, rows, 1)
     }
 
-    /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for one
-    /// index of its rows.
-    fn claimed(life: Life, k: usize, rows: usize) -> Result<Part, String> {
-        let cap = rows.next_power_of_two().max(1);
-        let index = 4 * (cap + 1) + 4 * rows.max(1) + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 3 * 64;
-        let part = Part::try_new_with(life, k, rows, index, false)?;
+    /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for
+    /// `indexes` indexes of its rows.
+    fn claimed(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        let part = Part::reserved(life, k, rows, indexes)?;
         // SAFETY: rows `0..rows` are reserved; the caller writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };
         Ok(part)
     }
 
-    /// How long its rows live: the blocks it is in.
+    /// `for_device_indexed` with its `rows` rows reserved, none claimed: the device writes as many as its own count
+    /// says (a recursive component's delta, its rows a round's, counted on the device: decision 0603), and the host
+    /// claims them once its work is done (`written`), so its indexes are of those rows.
+    pub fn for_device_writes(k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        Part::reserved(Life::Device, k, rows, indexes)
+    }
+
+    /// A relation of `k` columns, room for `rows` rows reserved (none claimed) alone in a block of `life`'s, with room
+    /// for `indexes` indexes of them.
+    fn reserved(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        let cap = rows.next_power_of_two().max(1);
+        let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;
+        let index = indexes.max(1) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
+        Part::try_new_with(life, k, rows, index, false)
+    }
+
     /// Whether nothing else holds its relation (no other part, reader or borrowed array of it).
     pub fn is_unique(&self) -> bool {
         Arc::strong_count(&self.held) == 1
     }
 
+    /// How long its rows live: the blocks it is in.
     pub fn life(&self) -> Life {
         self.life
     }
@@ -2429,6 +2468,11 @@ impl Rows {
         Some(Home { facts: p.facts.clone(), life: p.life, grow: 0 })
     }
 
+    /// Whether `facts` is its home's block (`home`), read with no reference counted.
+    pub fn home_is(&self, facts: &Arc<Facts>) -> bool {
+        self.tail.as_ref().map(|t| &t.facts).or_else(|| self.segs.last().map(|(_, p)| &p.facts)).is_none_or(|f| Arc::ptr_eq(f, facts))
+    }
+
     /// Its relations, oldest first: the frozen segments, then the tail if it has rows. A reader that keeps them
     /// (`append_part`) holds the rows where they lie.
     pub fn parts(&self) -> impl Iterator<Item = &Part> {
@@ -3304,6 +3348,25 @@ mod tests {
         let live = [(Life::Run, 10 << 20, 4 << 20), (Life::Kept, 2 << 20, 2 << 20), (Life::Device, 64 << 20, 64 << 20), (Life::Source, 1 << 20, 0)];
         assert_eq!(held_of(&live), 6 << 20);
         assert_eq!(held_of(&live[..2]), held_of(&live), "the device's blocks, alive or not, change nothing");
+    }
+
+    /// Outside a run the open blocks are the machine's (decision 0442, `open_blocks`): a session's relations made
+    /// between its runs share one block, as a run's do, not a block of their own each (16 GiB of address space each
+    /// where blocks reserve it: a session's 1,000 one-document batches' relations reserved all of it).
+    #[test]
+    fn relations_made_outside_a_run_share_the_machines_block() {
+        assert!(crate::code_rule_dsl::logic::profile::run_own().is_none(), "outside a run");
+        let made: Vec<Rows> = (0..1000i64)
+            .map(|i| {
+                let mut r = Rows::new(2);
+                // copy: not block data (a test's literal rows)
+                r.extend_from_slice(&[i, i + 1, i + 2, i + 3]);
+                r
+            })
+            .collect();
+        let first = block_of(&made[0]);
+        assert!(made.iter().all(|r| Arc::ptr_eq(&block_of(r), &first)), "one block");
+        assert_eq!(*made[999].row(1, 2), [1001, 1002]);
     }
 
     /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of

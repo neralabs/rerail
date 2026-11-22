@@ -201,7 +201,7 @@ fn cycle_progress_preserves_nested_query_loops_with_separate_entries() {
 #[ignore = "requires the pinned 335-pattern query catalog"]
 fn cycle_progress_compiles_every_pinned_query() {
     use ast_grep_language::LanguageExt;
-    let root = std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR").unwrap();
+    let root = std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR").unwrap();
     let mut paths = std::fs::read_dir(root)
         .unwrap()
         .map(|entry| entry.unwrap().path())

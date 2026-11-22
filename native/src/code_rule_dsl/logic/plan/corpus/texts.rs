@@ -12,14 +12,20 @@ use std::path::{Path, PathBuf};
 
 /// The texts one run read, by the path it read each at: the run's, gone with it.
 #[derive(Default)]
-pub struct Sources(parking_lot::Mutex<HashMap<PathBuf, (FileStat, String)>>);
+pub struct Sources(parking_lot::Mutex<HashMap<PathBuf, (Option<FileStat>, String)>>);
 
 impl Sources {
     /// Keeps the text read at `path` while the file's stat is `stat`. Bytes that are not UTF-8 are no text: a
     /// builder reads and refuses them itself.
     pub fn keep(&self, path: &Path, stat: FileStat, bytes: Vec<u8>) {
         let Ok(text) = String::from_utf8(bytes) else { return };
-        self.0.lock().insert(path.to_path_buf(), (stat, text));
+        self.0.lock().insert(path.to_path_buf(), (Some(stat), text));
+    }
+
+    /// A Git source's path includes its immutable object identity, so it needs no filesystem stat.
+    pub fn keep_git(&self, path: &Path, bytes: &[u8]) {
+        let Ok(text) = std::str::from_utf8(bytes) else { return };
+        self.0.lock().insert(path.to_path_buf(), (None, text.to_owned()));
     }
 
     /// The text kept for `path`, if its file is as it was read (else it is dropped): taken, by its last reader,
@@ -27,7 +33,7 @@ impl Sources {
     fn text(&self, path: &Path, take: bool) -> Option<String> {
         let mut all = self.0.lock();
         let (stat, _) = all.get(path)?;
-        if std::fs::metadata(path).ok().map(|m| FileStat::of(&m)) != Some(*stat) {
+        if stat.is_some() && crate::git_workspace::snapshot::file_stat(path) != *stat {
             all.remove(path);
             return None;
         }

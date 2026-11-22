@@ -130,8 +130,14 @@ impl Source for KeptSource {
                     }
                 });
                 n
+            } else if let Some((values, _)) = self.by[column].get() {
+                values.chunk_by(|a, b| a == b).count()
             } else {
-                let values = &self.by(column).0;
+                // Counted on the column's values sorted for the count alone: its order (`by`, 12 bytes a row) is
+                // made for a probe of it, not held for an estimate.
+                let mut values = Vec::with_capacity(self.len());
+                self.for_each(column, |v| values.push(v));
+                values.sort_unstable();
                 values.chunk_by(|a, b| a == b).count()
             }
         });

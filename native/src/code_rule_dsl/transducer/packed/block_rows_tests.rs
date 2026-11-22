@@ -63,10 +63,11 @@ fn a_row_program_filters_rows_on_every_cpu_executor() {
     let p = program(FILTER);
     let block = &p.block_programs()[0];
     block.verify().expect("a valid row program");
-    let jit = block.compile_rows().expect("compiles");
+    let jit = native_cpu_rows::compile_program(block).expect("compiles");
     assert!(!jit.clif.contains("call"), "no call in a row program:\n{}", jit.clif);
     let set: Vector<u64> = (0..3).map(|k| 0x8421_0842_1084_2108u64.rotate_left(k * 7)).collect();
-    let mut values = Vec::new();
+    // The interpreter's values: the caller's block, sized for the longest batch and kept from run to run.
+    let mut values: Vector<u64> = rerail_blocks::vector![0; block.row_words(300)];
     let mut jit_out = Vec::new();
     for (seed, len) in [0usize, 1, 2, 63, 64, 65, 127, 128, 129, 300].into_iter().enumerate() {
         let cols: Vec<Vector<i64>> = (0..3).map(|k| column((seed * 3 + k) as u64, len)).collect();
@@ -122,7 +123,7 @@ fn row_programs_are_verified_and_digested() {
 /// On Metal, over the 16-bit layout (`metal_rows`): node columns in a few documents (each a chunk
 /// or more), a number column, comparisons of two node columns of a row's chunk, a node column
 /// against parameters in and out of its chunk, and documents: the interpreter's rows.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn a_row_program_scans_rows_on_metal_in_the_16_bit_layout() {
     use super::metal_rows::{Form, Input, Resident, scan};
@@ -153,7 +154,7 @@ fn a_row_program_scans_rows_on_metal_in_the_16_bit_layout() {
         let docs: Vector<i64> = a.iter().map(|v| v >> 32).collect();
         let all: Vec<&[i64]> = vec![&a, &b, &n, &docs];
         let batch = RowBatch { columns: &all, params: &params, sets: &[], len };
-        let mut values = Vec::new();
+        let mut values: Vector<u64> = rerail_blocks::vector![0; block.row_words(len)];
         let mut want = rerail_blocks::vector::Vector::new();
         block.extract_rows(&batch, 0, &mut values, &mut want);
         let resident = Resident::new(&cols, len).expect("resident");

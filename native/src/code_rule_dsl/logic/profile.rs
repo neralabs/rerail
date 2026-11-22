@@ -397,6 +397,7 @@ pub struct GpuTotal {
     pub in_place: u64,
     pub sorts: u64,
     pub sort_hits: u64,
+    pub moved: u64,
     pub rows: u64,
     pub distinct: u64,
     /// Head rows written in place into their head's block (decision 0325 step 4).
@@ -408,9 +409,9 @@ pub struct GpuTotal {
     pub waved: u64,
     /// Batches run again because their text arena filled.
     pub arena_reruns: u64,
-    /// Stages whose grids the device sized.
-    pub sized: u64,
-    /// Stages screened by their relation's kept filter (decision 0500).
+    /// Levels launched, each kernel once for their jobs (decision 0601).
+    pub levels: u64,
+    /// Stages screened by their relation's kept filter (decision 0488).
     pub screened: u64,
 }
 
@@ -437,6 +438,7 @@ impl GpuTotal {
         self.in_place += o.in_place;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
+        self.moved += o.moved;
         self.rows += o.rows;
         self.distinct += o.distinct;
         self.placed += o.placed;
@@ -444,7 +446,7 @@ impl GpuTotal {
         self.made += o.made;
         self.waved += o.waved;
         self.arena_reruns += o.arena_reruns;
-        self.sized += o.sized;
+        self.levels += o.levels;
         self.screened += o.screened;
     }
 
@@ -1119,13 +1121,17 @@ pub fn process_cpu() -> f64 {
         let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
         t(usage.ru_utime) + t(usage.ru_stime)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        rerail_prof::process_cpu().as_secs_f64()
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         0.0
     }
 }
 
-/// The live threads' Mach ports (macOS) or thread ids (Linux), and names; none elsewhere.
+/// The live threads' Mach ports (macOS) or thread ids (Linux, Windows), and names; none elsewhere.
 fn live_threads() -> Vec<(u32, String)> {
     #[cfg(target_os = "macos")]
     {
@@ -1176,7 +1182,11 @@ fn live_threads() -> Vec<(u32, String)> {
             })
             .collect()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_threads().into_iter().map(|(id, name)| (id, if name.is_empty() { "unnamed".to_owned() } else { name })).collect()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         Vec::new()
     }
@@ -1229,7 +1239,9 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
     // SAFETY: no arguments; the calling thread's id. The system call, not glibc's `gettid` (2.30): the Linux engine
     // links against 2.17.
     let port = unsafe { libc::syscall(libc::SYS_gettid) } as u32;
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    let port = rerail_prof::windows_thread_id();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     let port = 0;
     let me = std::sync::Arc::new(parking_lot::Mutex::new(Thread {
         name: std::thread::current().name().unwrap_or("unnamed").to_owned(),
@@ -1858,6 +1870,17 @@ pub fn behind<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// Runs `f`, the command's own store bookkeeping around its run (an analysis scope's begin before the run, its
+/// publication after it: `AnalysisRun`), as the store's writer does its work: outside the waves it writes as a writer
+/// may (decision 0104: a run reads once before its first wave and writes behind it, and this is neither the run's read
+/// nor its write). Inside the waves it is the run's own write, which the strict mode refuses.
+pub fn around_the_run<T>(f: impl FnOnce() -> T) -> T {
+    if strict() && waves_here() && !is_behind() {
+        violation("inside the waves", "the command's own bookkeeping (`around_the_run`)");
+    }
+    behind(f)
+}
+
 /// Whether this thread works behind the run (`behind`, `behind_the_run`).
 pub fn is_behind() -> bool {
     BEHIND.with(std::cell::Cell::get)
@@ -2204,12 +2227,12 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
     let ms = |s: f64| s * 1e3;
     let _ = writeln!(r, "Strata run on the GPU: {} strata, {} runs, {} rules in {} stages; those runs' CPU {:.2} s (the whole run: planning its replans, the store, the device's host part); the same strata's other {} runs, on the CPU: {:.2} s",
         ran.len(), sum.runs, sum.rules, sum.stages, cpu, all_runs - sum.runs, elsewhere);
-    let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave; {} stages' grids sized on the device; {} stages screened by their relation's kept filter",
-        ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized, sum.screened);
+    let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave; {} levels, each kernel launched once for their jobs; {} stages screened by their relation's kept filter",
+        ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.levels, sum.screened);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}; sorts made {}, found in their blocks {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}; sorts made {}, found in their blocks {}, copied for a key past their blocks' room {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.sorts, sum.sort_hits, sum.moved, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
     let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
     let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
@@ -2706,7 +2729,7 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     memory::sampled_report(r);
 }
 
-/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux) `port`, read from another thread;
+/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux, Windows) `port`, read from another thread;
 /// `None` for a thread that has ended, and elsewhere.
 fn thread_cpu(port: u32) -> Option<f64> {
     #[cfg(target_os = "macos")]
@@ -2737,7 +2760,11 @@ fn thread_cpu(port: u32) -> Option<f64> {
         }
         Some(t.tv_sec as f64 + t.tv_nsec as f64 / 1e9)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_thread_cpu(port)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         let _ = port;
         None
@@ -3082,9 +3109,10 @@ pub struct Report {
     pub waved: u32,
     /// Batches run again because their text arena filled (in one as big as their texts asked).
     pub arena_reruns: u32,
-    /// Stages whose grids were sized on the device, from the rows before them (not the host's guess of their space).
-    pub sized: u32,
-    /// Stages screened by their relation's kept filter (decision 0500).
+    /// Levels launched (`metal_join::Batch::flush`, decision 0601): each kernel once for the stages, maps, text rows
+    /// and dedups queued between two dependencies.
+    pub levels: u32,
+    /// Stages screened by their relation's kept filter (decision 0488).
     pub screened: u32,
     /// Text functions made once per distinct symbol (`mapped_text`, chunked), and the names they made.
     pub per_symbol: u32,
@@ -3119,6 +3147,8 @@ pub struct Report {
     pub in_place: u32,
     pub sorts: u32,
     pub sort_hits: u32,
+    /// Indexes that copied their relation, its block having no room for them (`DevIndex::moved`, 0353 step 6).
+    pub moved: u32,
     /// Rows the heads made (before the store's set), and bindings the stages made.
     pub rows: u64,
     pub bindings: u64,

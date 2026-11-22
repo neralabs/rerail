@@ -119,11 +119,19 @@ Each has its test before the code that meets it.
   granule left; instructions cold 198.9 G to 212.3 G, the edit 37.3 G to 35.2 G; peak memory cold 888 MB to 724 MB.
   Two costs it found are fixed: the old version (`Before`) answered no lookup, so every stratum hashed all its rows,
   and the corpus batch made what the cross part does not read (tree digests). Kept after an edit is still the cross
-  part's `kind`, a view of `node` the maintain mode derives (work queue Q382, Q287 on phased-facts, as before this decision).
+  part's `kind`, a view of `node` the maintain mode derives (work queue Q421, Q287 on phased-facts, as before this decision).
+- **A session** (2026-11-20). A session's run digests its base relations by their documents as every run does
+  (`kept_source_digested`, the corpus batch's digest). It holds its corpus batch from run to run
+  (`session::HeldCorpus`, under the maintained cross program's key, as its kept part is): each path's documents, with
+  the content and key they were made from, the documents' digest, and the base statistics. An edit makes the changed
+  files' documents alone and takes the others' as held; the held ones of the changed paths are the base relations'
+  old version, so their `Before`, `Plus` and `Minus` and the statistics' patch come from them, as the kept route's
+  come from the old sources and tapes. Statistics of unchanged rows are taken as kept. A batch with a document of no
+  known content is not held, and the next run makes every document. Test:
+  `cross_views_tests::a_session_holds_its_corpus_batch_and_keeps_its_base_statistics` (first run: 4 documents
+  made, counted; the next: none made, kept; an edit: 1 made, patched; outputs a fresh run's).
 - **Not yet:** a document is not yet made when first read: the corpus batch makes every document (on the 50 files'
-  edit 0.45 s, most of what the batch adds over the memo's base rows). A session (0077) still digests a base relation
-  by its rows (`retain::kept_source`), holds no corpus batch from run to run, and keeps no base statistics (it counts
-  them off the batch each run).
+  edit 0.45 s, most of what the batch adds over the memo's base rows); a session makes only the changed files'.
 
 ## Open
 

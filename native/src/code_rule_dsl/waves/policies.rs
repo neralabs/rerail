@@ -63,7 +63,7 @@ fn invalid(error: impl std::fmt::Display) -> StoreError {
 
 /// The policies' rules as the wave runs them.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Logic {
+pub struct Logic {
     /// The program added to the wave's source (`matches::SOURCE`): the relations' declarations, outputs, rules
     /// over `match` and their facts (decision 0249).
     pub(in crate::code_rule_dsl) rules: Arc<Version>,
@@ -129,7 +129,7 @@ fn finished(b: Builder<'_>) -> StoreResult<Arc<Version>> {
 }
 
 /// The program with nothing in it: no authored program beside the policies.
-pub(in crate::code_rule_dsl) fn nothing() -> StoreResult<Arc<Version>> {
+pub fn nothing() -> StoreResult<Arc<Version>> {
     finished(Builder::base())
 }
 
@@ -377,10 +377,10 @@ fn merged(v: &Arc<Version>) -> StoreResult<Arc<Version>> {
 }
 
 /// The lowered policies: the wave's clauses and their shapes (aligned), and the rules over them.
-pub(in crate::code_rule_dsl) struct Lowered {
-    pub(in crate::code_rule_dsl) clauses: Vec<Clause>,
-    pub(in crate::code_rule_dsl) shapes: Vec<Shape>,
-    pub(in crate::code_rule_dsl) logic: Logic,
+pub struct Lowered {
+    pub clauses: Vec<Clause>,
+    pub shapes: Vec<Shape>,
+    pub logic: Logic,
     /// The policies as one logic program, as the round trip gave it.
     pub(in crate::code_rule_dsl) program: Arc<Version>,
 }
@@ -388,7 +388,7 @@ pub(in crate::code_rule_dsl) struct Lowered {
 /// `policies` (each by its file stem) through the logic language: their documents round-tripped, their
 /// `ast` atoms whose Python matcher lowers as the wave's clauses, their rules rewritten over them, and the
 /// demand program.
-pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]) -> StoreResult<Lowered> {
+pub fn lower(policies: &[(String, CompiledCodeRuleDsl)]) -> StoreResult<Lowered> {
     lower_with(policies, &nothing()?)
 }
 
@@ -453,7 +453,7 @@ fn helper_grammar(value: &serde_json::Value, base: Option<&serde_json::Value>) -
     let mut clauses = defines;
     clauses.push(serde_json::json!({"id": "h0", "forbid": {"ast": value}, "violation": {"code": "helper", "message": "helper", "anchor": "witness.span"}}));
     document["clauses"] = serde_json::Value::Array(clauses);
-    let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), crate::code_rule_dsl::tools::CAPABILITIES.to_owned()).map_err(|e| e.reason.to_string())?;
+    let compiled = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", crate::code_rule_dsl::rule_api::CAPABILITIES).map_err(|e| e.reason.to_string())?;
     let clause = compiled.inner.clauses.iter().find(|c| c.id == "h0").ok_or("the helper clause is missing")?;
     let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { return Err("not an ast query".to_owned()) };
     let grammar = matchers.iter().find(|m| m.language == GrammarDialect::Python).ok_or("no Python matcher")?;
@@ -678,9 +678,9 @@ fn is_bound(rel: &str) -> bool {
 ///   policy of its own (`HELPERS`, its first `.policy`'s `define` clauses kept so utils resolve) that
 ///   derives no violation;
 /// - its rules may read the base relations (`BASE`) and the `py.*` families as they are bound.
-pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRuleDsl)], authored: &Arc<Version>) -> StoreResult<Lowered> {
+pub fn lower_with(policies: &[(String, CompiledCodeRuleDsl)], authored: &Arc<Version>) -> StoreResult<Lowered> {
     let compile = |document: &serde_json::Value| {
-        crate::code_rule_dsl::CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), crate::code_rule_dsl::tools::CAPABILITIES.to_owned()).map_err(|e| invalid(e.reason))
+        crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", crate::code_rule_dsl::rule_api::CAPABILITIES).map_err(|e| invalid(e.reason))
     };
     let authored_policies = authored.policies().map_err(invalid)?;
     let mut owned: Vec<(String, CompiledCodeRuleDsl)> = policies.iter().map(|(name, compiled)| (name.clone(), CompiledCodeRuleDsl { inner: Arc::clone(&compiled.inner) })).collect();

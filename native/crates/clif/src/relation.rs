@@ -669,9 +669,9 @@ mod tests {
         type Atom = extern "C" fn(*const u8, u32) -> u64;
         type Len = extern "C" fn(*const u8, u32) -> u32;
         // SAFETY: each read's signature: its descriptor's address, then its parameters.
-        let (hash, mask): (Wide, Wide) = unsafe { (std::mem::transmute(reads.function("bloom_hash")), std::mem::transmute(reads.function("bloom_mask"))) };
-        let may: May = unsafe { std::mem::transmute(reads.function("bloom_may")) };
-        let (at, len): (Atom, Len) = unsafe { (std::mem::transmute(reads.function("atoms_at")), std::mem::transmute(reads.function("atoms_len"))) };
+        let (hash, mask): (Wide, Wide) = unsafe { (std::mem::transmute::<*const u8, Wide>(reads.function("bloom_hash")), std::mem::transmute::<*const u8, Wide>(reads.function("bloom_mask"))) };
+        let may: May = unsafe { std::mem::transmute::<*const u8, May>(reads.function("bloom_may")) };
+        let (at, len): (Atom, Len) = unsafe { (std::mem::transmute::<*const u8, Atom>(reads.function("atoms_at")), std::mem::transmute::<*const u8, Len>(reads.function("atoms_len"))) };
         let keys: Vec<i64> = (0..3_000i64).map(|i| (i * 0x9E37_79B9) ^ (i << 40)).chain([0, -1, i64::MIN, i64::MAX]).collect();
         for &k in &keys {
             let h = bloom::hash(k);

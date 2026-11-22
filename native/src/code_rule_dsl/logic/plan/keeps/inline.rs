@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 /// The inlined version, and each of its rules' origin: the base rule it was unfolded from, and the relations unfolded
 /// into it, for every rule of the result (`unfold_reads`'s `origin`), in the tree pass's order.
-pub(super) struct Inlined {
+pub struct Inlined {
     pub v: Arc<Version>,
     /// The result's rules in the tree pass's order: each rule's id in `v`, its base rule and the relations unfolded
     /// into it.
@@ -25,7 +25,7 @@ pub(super) struct Inlined {
 /// `base` with the reads of the `inline` relations unfolded into their readers, as `unfold_reads` unfolds them (at
 /// most eight passes, a rule's first such read a pass), and the inlined relations' rules removed but where a reader
 /// still reads one.
-pub(super) fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<String>) -> Result<Inlined, String> {
+pub fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<String>) -> Result<Inlined, String> {
     let inline_ids: BTreeSet<RelId> = inline.iter().filter_map(|r| base.rel(r)).collect();
     // The program's rules in the tree pass's order (`order`, the program's; copies where their reader was), with
     // their origins.
@@ -103,7 +103,7 @@ pub(super) fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<St
 /// How many copies `unfold` makes of `reader`'s read at `at` of a relation whose rules are `defs`, or `None` where
 /// it makes none (`keeps::copies`): a positive read one per rule, a negated one the product of its rules'
 /// alternatives.
-pub(super) fn count(v: &Version, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>]) -> Option<usize> {
+pub fn count(v: &Version, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>]) -> Option<usize> {
     let Lit::Atom(read) = reader.body().nth(at)?.view() else { return None };
     if !read.neg() {
         return Some(defs.len());
@@ -349,7 +349,7 @@ fn subst<'v>(v: &'v Version, t: TermRef<'_>, to: &BTreeMap<Slot, Sub<'_>>, reade
 }
 
 /// Term `t` as the builder writes it, each variable by its name `var` gives.
-pub(in crate::code_rule_dsl::logic::plan) fn named<'v>(v: &'v Version, t: TermRef<'_>, var: &dyn Fn(Slot) -> &'v str) -> T<'v> {
+pub fn named<'v>(v: &'v Version, t: TermRef<'_>, var: &dyn Fn(Slot) -> &'v str) -> T<'v> {
     match t {
         TermRef::Var(s) => T::Var(var(s)),
         TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| named(v, a, var)).collect()),
@@ -399,8 +399,8 @@ impl Rewrite for Renamed<'_> {
 
 /// The copies `unfold` makes of `reader`'s read `at` through `defs` (rules of `v`), the read's variables named apart
 /// with `fresh`: the version they are in, and their ids there. `None` where it refuses.
-#[cfg(test)]
-pub(super) fn unfolded(v: &Arc<Version>, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>], fresh: usize) -> Option<(Arc<Version>, Vec<RuleId>)> {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn unfolded(v: &Arc<Version>, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>], fresh: usize) -> Option<(Arc<Version>, Vec<RuleId>)> {
     let Lit::Atom(read) = reader.body().nth(at)?.view() else { return None };
     let mut b = Builder::on(v);
     let made = unfold(&mut b, v, reader, at, read, defs, fresh, super::RULE_COPIES).ok()??;
@@ -409,8 +409,8 @@ pub(super) fn unfolded(v: &Arc<Version>, reader: RuleRef<'_>, at: usize, defs: &
 }
 
 /// `unfolded`'s copies, shown.
-#[cfg(test)]
-pub(super) fn unfolded_shown(v: &Arc<Version>, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>], fresh: usize) -> Option<Vec<String>> {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn unfolded_shown(v: &Arc<Version>, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>], fresh: usize) -> Option<Vec<String>> {
     let (out, ids) = unfolded(v, reader, at, defs, fresh)?;
     Some(ids.iter().map(|&id| out.show_rule(out.rule(id).expect("a copy"))).collect())
 }

@@ -1,7 +1,7 @@
 //! The corpus planner keeps its statistics and native dispatch; SQL components use the wave kernel.
 use super::*;
 use crate::code_rule_dsl::{
-    logic::sql::lattices,
+    logic::native::lattices,
     waves::schedule,
 };
 
@@ -139,7 +139,7 @@ pub(super) fn component(
         views: vec![],
         inputs: f.inputs().map(str::to_owned).collect(),
     };
-    lattices::transfers(&mut emitted, &tops);
+    super::emit::transfers(&mut emitted, &tops);
     for (step, q) in emitted
         .program
         .steps

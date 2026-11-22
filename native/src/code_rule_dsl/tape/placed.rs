@@ -6,21 +6,21 @@
 use rerail_tape_format::home::{Home, Room};
 
 /// A slab's room, held: the slab lives as long as a tape placed in it.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct SlabRoom {
     slab: std::sync::Arc<rerail_metal::slabs::Slab>,
     at: usize,
     len: usize,
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl std::fmt::Debug for SlabRoom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "SlabRoom {{ slab: {}, at: {}, len: {} }}", self.slab.id, self.at, self.len)
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl Room for SlabRoom {
     #[inline]
     fn bytes(&self) -> &[u8] {
@@ -34,7 +34,7 @@ impl Room for SlabRoom {
 }
 
 /// The device the slabs are on, if there is one: the process's, whatever its backend (decision 0440 step C).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn device() -> Option<&'static rerail_metal::lane::Device> {
     rerail_metal::lane::device().ok()
 }
@@ -42,7 +42,7 @@ pub fn device() -> Option<&'static rerail_metal::lane::Device> {
 /// Where the device reads `bytes` of a tape placed in `room` (decision 0353 step 4d): their device address, and the
 /// slab's buffer, which a pass that reads them makes resident. `None` for a room that is no slab's, bytes outside
 /// it, or a device whose buffers have no addresses (OpenCL 1.2).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn on_device(room: &std::sync::Arc<dyn Room>, bytes: &[u8]) -> Option<(u64, rerail_metal::lane::Buffer)> {
     let slab = &room.as_any().downcast_ref::<SlabRoom>()?.slab;
     let held = room.bytes().as_ptr_range();
@@ -56,7 +56,7 @@ pub fn on_device(room: &std::sync::Arc<dyn Room>, bytes: &[u8]) -> Option<(u64, 
 
 /// `len` bytes written by `fill` into their home: a slab's room where the device's pool gives one, else a vector.
 pub fn place(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) -> std::io::Result<Home> {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if device().is_some()
         // A word of room past the tape: the device's reads load a whole word where a value ends (`clif_word`).
         && let Ok((slab, at)) = rerail_metal::slabs::tape_room(len + 16)
@@ -70,7 +70,7 @@ pub fn place(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) ->
     }
     // A device that refused the room (its budget spent): the tape is read apart, and a batch of it makes its views
     // (`device_chunk::views_in_place`).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if device().is_some() {
         crate::code_rule_dsl::prof::count("tape.room_refused", 1);
     }

@@ -58,8 +58,9 @@ fn the_if_evaluator_is_the_serial_passes() {
     const COLON: u32 = 25;
     let v = |x: u64| (0u32, x);
     let o = |op: u32| (op, 0u64);
-    // Each expression, its truth and its value's low word.
-    let cases: Vec<(&str, Vec<(u32, u64)>, u32, u32)> = vec![
+    // An expression's text, its items (an operator and a value each), its truth and its value's low word.
+    type Case = (&'static str, Vec<(u32, u64)>, u32, u32);
+    let cases: Vec<Case> = vec![
         ("1", vec![v(1)], 1, 1),
         ("1 == 1", vec![v(1), o(EQ), v(1)], 1, 1),
         ("1 + 1", vec![v(1), o(PLUS), v(1)], 1, 2),
@@ -155,7 +156,7 @@ fn search_and_expand_equal_the_host() {
         sorted.sort_unstable();
         let queries: Vec<u64> = (0..n.max(1) * 2).map(|_| r.next() % 5100).collect();
         let (sb, qb, out, counts) = (buf(&sorted), buf(&queries), zeroed::<u32>(queries.len()), buf(&[n as u32, queries.len() as u32]));
-        run(|e| e.run("pb_search", &[("sorted", &sb), ("ns", &counts), ("queries", &qb), ("nq", &counts), ("out", &out)], Some(ProbeArgs([0, 1, 0, 0])), (queries.len() as u64).div_ceil(TG)));
+        run(|e| e.run("pb_search", &[("sorted", &sb), ("ns", &counts), ("queries", &qb), ("nq", &counts), ("out", &out)], Some(ProbeArgs([0, 1, 0, 0])), (queries.len() as u64).div_ceil(tg())));
         let want: Vec<u32> = queries.iter().map(|&q| sorted.partition_point(|&s| s < q) as u32).collect();
         assert_eq!(read::<u32>(&out, queries.len()), want, "search, n = {n}");
         // Expand: items with counts 0 to 3, their offsets an exclusive scan.
@@ -165,7 +166,7 @@ fn search_and_expand_equal_the_host() {
         let total = acc as usize;
         let (ob, nb, tb) = (buf(&offsets), buf(&[n as u32]), buf(&[acc]));
         let (item, rank) = (zeroed::<u32>(total), zeroed::<u32>(total));
-        run(|e| e.run("pb_expand", &[("offsets", &ob), ("n", &nb), ("total", &tb), ("item", &item), ("rank", &rank)], Some(ProbeArgs::default()), (total as u64).div_ceil(TG)));
+        run(|e| e.run("pb_expand", &[("offsets", &ob), ("n", &nb), ("total", &tb), ("item", &item), ("rank", &rank)], Some(ProbeArgs::default()), (total as u64).div_ceil(tg())));
         let mut want = Vec::new();
         for (k, &c) in item_counts.iter().enumerate() {
             for j in 0..c {
@@ -229,7 +230,7 @@ fn the_grid_sort_alone_is_fast() {
     }
 }
 
-/// `<ukl/pool.h>` over a grid (decision 0503 §10): the pieces of ranges given, taken by every
+/// `<ukl/pool.h>` over a grid (decision 0486 §10): the pieces of ranges given, taken by every
 /// thread of 8 groups at once, then given back and taken again. No block is taken twice in a
 /// round, each lies inside one given range and fits its class, and where the takers ask for
 /// more than a class holds, every block of it is taken.
@@ -259,7 +260,7 @@ fn the_pool_gives_each_block_once() {
         for u in w[0]..w[0] + w[1] { owner[u as usize] = i as u32; }
     }
     let groups = 8u64;
-    let threads = groups as usize * TG as usize;
+    let threads = groups as usize * tg() as usize;
     let per = 4usize;
     // Classes the pieces have, so the takers ask for more than some hold and less than others.
     let have: Vec<u32> = supply.keys().copied().collect();
@@ -267,7 +268,7 @@ fn the_pool_gives_each_block_once() {
     let mut demand: BTreeMap<u32, usize> = BTreeMap::new();
     for &c in &classes { *demand.entry(c).or_default() += 1; }
     for rounds in [1u32, 3] {
-        let (ctl, rb, cb) = (zeroed::<u32>(3), buf(&ranges), buf(&classes));
+        let (ctl, rb, cb) = (zeroed::<u32>(4), buf(&ranges), buf(&classes));
         let (heads, next, out) = (zeroed::<u32>(128), zeroed::<u32>(at as usize), zeroed::<u32>(threads * per));
         run(|e| e.run("pb_pool", &[("ctl", &ctl), ("ranges", &rb), ("classes", &cb), ("heads", &heads), ("next", &next), ("out", &out)], Some(ProbeArgs([(ranges.len() / 2) as u32, per as u32, rounds, 0])), groups));
         assert_eq!(read::<u32>(&ctl, 3)[2], 0, "a grid barrier failed");
@@ -291,7 +292,7 @@ fn the_pool_gives_each_block_once() {
     }
 }
 
-/// `<ukl/pool.h>`'s split takes over a grid (decision 0503 §10): every thread of 8 groups takes
+/// `<ukl/pool.h>`'s split takes over a grid (decision 0486 §10): every thread of 8 groups takes
 /// blocks of one class from pieces of every class, a larger piece split and its rest pushed back
 /// while others take; then they are given back and taken again. No unit is taken twice, each block
 /// lies inside one given range, and the takes met are the demand or the pieces' room in blocks of
@@ -319,13 +320,13 @@ fn the_pool_splits_a_larger_block() {
         for u in w[0]..w[0] + w[1] { owner[u as usize] = i as u32; }
     }
     let groups = 8u64;
-    let threads = groups as usize * TG as usize;
+    let threads = groups as usize * tg() as usize;
     let per = 4usize;
     for c in [0u32, 1, 3] {
         let room: usize = pieces.iter().filter(|&&k| k >= c).map(|&k| 1usize << (k - c)).sum();
         let classes = vec![c; threads * per];
         for rounds in [1u32, 3] {
-            let (ctl, rb, cb) = (zeroed::<u32>(3), buf(&ranges), buf(&classes));
+            let (ctl, rb, cb) = (zeroed::<u32>(4), buf(&ranges), buf(&classes));
             let (heads, next, out) = (zeroed::<u32>(128), zeroed::<u32>(at as usize), zeroed::<u32>(threads * per));
             run(|e| e.run("pb_pool", &[("ctl", &ctl), ("ranges", &rb), ("classes", &cb), ("heads", &heads), ("next", &next), ("out", &out)], Some(ProbeArgs([(ranges.len() / 2) as u32, per as u32, rounds, 1])), groups));
             assert_eq!(read::<u32>(&ctl, 3)[2], 0, "a grid barrier failed");
@@ -412,20 +413,20 @@ fn the_source_is_opencl_c_1_2() {
 
 /// §4 of decision 0468: the grid is the device's resident count at the grid kernels' threadgroup
 /// memory (`Device::resident_groups`), at most `GROUPS_MOST`, and `GROUPS_UNKNOWN` on a device
-/// that gives no cores.
+/// that gives no cores. On the CPU it is one group (decision 0527 §3: its groups are coroutines
+/// on one host thread).
 #[test]
 fn the_grid_is_the_devices_resident_count() {
     let device = lane::device().unwrap();
-    // The CPU runs one group (decision 0527): its groups would be coroutines on one thread.
     if matches!(device, lane::Device::Cpu(_)) {
-        assert_eq!(groups(), 1, "one group on the CPU");
+        assert_eq!(groups(), 1, "the CPU's grid");
         return;
     }
     let local = kernel("pp_setup").threadgroup_bytes();
     match device.gpu_cores() {
         Some(cores) => {
             eprintln!("{cores} GPU cores, {local} bytes of threadgroup memory a group: {} groups", groups());
-            let resident = device.resident_groups(TG as u32, local).unwrap();
+            let resident = device.resident_groups(tg() as u32, local).unwrap();
             assert_eq!(groups(), resident.min(GROUPS_MOST), "the resident count, capped");
             assert!(resident >= cores as u64, "a core holds a group at least");
         }

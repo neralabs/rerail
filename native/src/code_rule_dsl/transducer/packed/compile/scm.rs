@@ -885,328 +885,367 @@ impl<'a> Compiler<'a> {
 
     fn predicates(&mut self, predicates: &[Predicate]) -> Result<(), Error> {
         for predicate in predicates {
-            if predicate.name == "#set!" {
-                let (capture, key, value) = match predicate.arguments.as_slice() {
-                    [Argument::Text(key)] => (None, key, None),
-                    [Argument::Text(key), Argument::Text(value)] => (None, key, Some(value)),
-                    [Argument::Capture(capture), Argument::Text(key)] => (Some(capture), key, None),
-                    [
-                        Argument::Capture(capture),
-                        Argument::Text(key),
-                        Argument::Text(value),
-                    ] => (Some(capture), key, Some(value)),
-                    _ => return Err(Error::UnsupportedPattern),
-                };
-                let key = self.string(key.as_bytes())?;
-                let value = value
-                    .map(|value| self.string(value.as_bytes()))
-                    .transpose()?;
-                if let Some(capture) = capture {
-                    let capture = *self
-                        .label_indexes
-                        .get(capture)
-                        .ok_or_else(|| Error::UnknownCapture(capture.clone()))?;
-                    self.directives.push(Directive::SetCapture {
-                        capture,
-                        key,
-                        value,
-                    });
-                } else {
-                    self.directives.push(Directive::Set { key, value });
-                }
-                continue;
-            }
-            if predicate.name == "#offset!" {
-                let Some(Argument::Capture(capture)) = predicate.arguments.first() else {
-                    return Err(Error::UnsupportedPattern);
-                };
-                let capture = *self
-                    .label_indexes
-                    .get(capture)
-                    .ok_or_else(|| Error::UnknownCapture(capture.clone()))?;
-                let offsets = predicate
-                    .arguments
-                    .iter()
-                    .skip(1)
-                    .map(|argument| match argument {
-                        Argument::Text(value) => {
-                            value.parse::<i32>().map_err(|_| Error::UnsupportedPattern)
-                        }
-                        Argument::Capture(_) => Err(Error::UnsupportedPattern),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let offsets: [i32; 4] =
-                    offsets.try_into().map_err(|_| Error::UnsupportedPattern)?;
-                self.directives.push(Directive::Offset { capture, offsets });
-                continue;
-            }
-            if predicate.name == "#strip!" {
-                let [Argument::Capture(capture), Argument::Text(source)] =
-                    predicate.arguments.as_slice()
-                else {
-                    return Err(Error::UnsupportedPattern);
-                };
-                let capture = *self
-                    .label_indexes
-                    .get(capture)
-                    .ok_or_else(|| Error::UnknownCapture(capture.clone()))?;
-                let source_index = self.string(source.as_bytes())?;
-                self.directives.push(Directive::Strip {
-                    capture,
-                    source: source_index,
-                    compiled: Regex::new(source).map_err(|_| Error::UnsupportedPattern)?,
-                });
-                continue;
-            }
-            if matches!(
-                predicate.name.as_str(),
-                "#select-adjacent!" | "#set-adjacent!"
-            ) {
-                let [Argument::Capture(capture), Argument::Capture(target)] =
-                    predicate.arguments.as_slice()
-                else {
-                    return Err(Error::UnsupportedPattern);
-                };
-                let capture = *self
-                    .label_indexes
-                    .get(capture)
-                    .ok_or_else(|| Error::UnknownCapture(capture.clone()))?;
-                let target = *self
-                    .label_indexes
-                    .get(target)
-                    .ok_or_else(|| Error::UnknownCapture(target.clone()))?;
-                self.directives
-                    .push(Directive::SelectAdjacent { capture, target });
-                continue;
-            }
-            if predicate.name == "#downcase!" {
-                let [Argument::Capture(capture)] = predicate.arguments.as_slice() else {
-                    return Err(Error::UnsupportedPattern);
-                };
-                let capture = *self
-                    .label_indexes
-                    .get(capture)
-                    .ok_or_else(|| Error::UnknownCapture(capture.clone()))?;
-                self.directives.push(Directive::Downcase { capture });
-                continue;
-            }
-            if predicate.name == "#set-lang-from-mimetype!" {
-                let [Argument::Capture(capture)] = predicate.arguments.as_slice() else {
-                    return Err(Error::UnsupportedPattern);
-                };
-                let capture = *self
-                    .label_indexes
-                    .get(capture)
-                    .ok_or_else(|| Error::UnknownCapture(capture.clone()))?;
-                self.directives
-                    .push(Directive::SetLanguageFromMimeType { capture });
-                continue;
-            }
-            if matches!(predicate.name.as_str(), "#is?" | "#is-not?") {
-                if predicate.arguments.is_empty() || predicate.arguments.len() > 3 {
-                    return Err(Error::UnsupportedPattern);
-                }
-                let capture_count = predicate
-                    .arguments
-                    .iter()
-                    .filter(|argument| matches!(argument, Argument::Capture(_)))
-                    .count();
-                let text_count = predicate
-                    .arguments
-                    .iter()
-                    .filter(|argument| matches!(argument, Argument::Text(_)))
-                    .count();
-                if capture_count > 1 || !(1..=2).contains(&text_count) {
-                    return Err(Error::UnsupportedPattern);
-                }
-                for argument in &predicate.arguments {
-                    if let Argument::Capture(capture) = argument
-                        && !self.label_indexes.contains_key(capture)
-                    {
-                        return Err(Error::UnknownCapture(capture.clone()));
-                    }
-                }
-                eprintln!(
-                    "Tempo ignored SCM property predicate {} for ast-index-spike compatibility; exact host semantics are not implemented",
-                    predicate.name
-                );
-                continue;
-            }
-            let Some(Argument::Capture(capture)) = predicate.arguments.first() else {
-                return Err(Error::UnsupportedPattern);
-            };
-            let capture = *self
-                .label_indexes
-                .get(capture)
-                .ok_or_else(|| Error::UnknownCapture(capture.clone()))?;
-            let any = predicate.name.starts_with("#any-");
-            let negated = predicate.name.contains("not-");
-            let compiled = match predicate.name.as_str() {
-                "#eq?" | "#not-eq?" | "#any-eq?" | "#any-not-eq?" => {
-                    match predicate.arguments.get(1) {
-                        Some(Argument::Capture(right)) => CapturePredicate::Equal {
-                            left: capture,
-                            right: *self
-                                .label_indexes
-                                .get(right)
-                                .ok_or_else(|| Error::UnknownCapture(right.clone()))?,
-                            negated,
-                            any,
-                        },
-                        Some(Argument::Text(text)) => {
-                            let string = self.string(text.as_bytes())?;
-                            let predicate_index = u16::try_from(self.predicates.len())
-                                .map_err(|_| Error::UnsupportedPattern)?;
-                            self.predicates.push(TextPredicate::Equal(string));
-                            CapturePredicate::Text {
-                                capture,
-                                predicate: predicate_index,
-                                negated,
-                                any,
-                            }
-                        }
-                        None => return Err(Error::UnsupportedPattern),
-                    }
-                }
-                "#match?" | "#not-match?" | "#any-match?" | "#any-not-match?" => {
-                    let Some(Argument::Text(source)) = predicate.arguments.get(1) else {
-                        return Err(Error::UnsupportedPattern);
-                    };
-                    let string = self.string(source.as_bytes())?;
-                    let predicate_index = u16::try_from(self.predicates.len())
-                        .map_err(|_| Error::UnsupportedPattern)?;
-                    self.predicates.push(TextPredicate::Regex {
-                        source: string,
-                        compiled: Regex::new(source).map_err(|_| Error::UnsupportedPattern)?,
-                    });
-                    CapturePredicate::Text {
-                        capture,
-                        predicate: predicate_index,
-                        negated,
-                        any,
-                    }
-                }
-                "#any-of?" | "#not-any-of?" => CapturePredicate::AnyOf {
-                    capture,
-                    strings: predicate
-                        .arguments
-                        .iter()
-                        .skip(1)
-                        .map(|argument| match argument {
-                            Argument::Text(text) => self.string(text.as_bytes()),
-                            Argument::Capture(_) => Err(Error::UnsupportedPattern),
-                        })
-                        .collect::<Result<Vector<_>, _>>()?,
-                    negated,
-                    any: false,
-                },
-                "#contains?" | "#not-contains?" | "#any-contains?" | "#any-not-contains?" => {
-                    if predicate.arguments.len() < 2 {
-                        return Err(Error::UnsupportedPattern);
-                    }
-                    CapturePredicate::Contains {
-                        capture,
-                        strings: predicate
-                            .arguments
-                            .iter()
-                            .skip(1)
-                            .map(|argument| match argument {
-                                Argument::Text(text) => self.string(text.as_bytes()),
-                                Argument::Capture(_) => Err(Error::UnsupportedPattern),
-                            })
-                            .collect::<Result<Vector<_>, _>>()?,
-                        negated,
-                        any,
-                    }
-                }
-                "#kind-eq?" | "#not-kind-eq?" => {
-                    if predicate.arguments.len() < 2 {
-                        return Err(Error::UnsupportedPattern);
-                    }
-                    let kinds = predicate
-                        .arguments
-                        .iter()
-                        .skip(1)
-                        .map(|argument| match argument {
-                            Argument::Text(kind) => Ok(self.predicate_kind(kind)),
-                            Argument::Capture(_) => Err(Error::UnsupportedPattern),
-                        })
-                        .collect::<Result<Vec<_>, _>>()?
-                        .into_iter()
-                        .flatten()
-                        .collect();
-                    CapturePredicate::Kinds {
-                        capture,
-                        kinds,
-                        negated,
-                    }
-                }
-                "#has-parent?" | "#not-has-parent?" | "#has-ancestor?" | "#not-has-ancestor?" => {
-                    if predicate.arguments.len() < 2 {
-                        return Err(Error::UnsupportedPattern);
-                    }
-                    let kinds = predicate
-                        .arguments
-                        .iter()
-                        .skip(1)
-                        .map(|argument| match argument {
-                            Argument::Text(kind) => Ok(self.predicate_kind(kind)),
-                            Argument::Capture(_) => Err(Error::UnsupportedPattern),
-                        })
-                        .collect::<Result<Vec<_>, _>>()?
-                        .into_iter()
-                        .flatten()
-                        .collect();
-                    CapturePredicate::Relation {
-                        capture,
-                        kinds,
-                        ancestor: predicate.name.contains("ancestor"),
-                        negated,
-                    }
-                }
-                "#same-line?" | "#not-same-line?" => {
-                    if predicate.arguments.len() != 2 {
-                        return Err(Error::UnsupportedPattern);
-                    }
-                    let Some(Argument::Capture(right)) = predicate.arguments.get(1) else {
-                        return Err(Error::UnsupportedPattern);
-                    };
-                    CapturePredicate::SameLine {
-                        left: capture,
-                        right: *self
-                            .label_indexes
-                            .get(right)
-                            .ok_or_else(|| Error::UnknownCapture(right.clone()))?,
-                        negated,
-                    }
-                }
-                "#lua-match?" | "#not-lua-match?" | "#any-lua-match?" | "#any-not-lua-match?" => {
-                    let Some(Argument::Text(source)) = predicate.arguments.get(1) else {
-                        return Err(Error::UnsupportedPattern);
-                    };
-                    let string = self.string(source.as_bytes())?;
-                    let predicate_index = u16::try_from(self.predicates.len())
-                        .map_err(|_| Error::UnsupportedPattern)?;
-                    self.predicates.push(TextPredicate::LuaPattern {
-                        source: string,
-                        compiled: LuaPattern::parse(source.as_bytes())
-                            .map_err(|_| Error::UnsupportedFeature("Lua pattern syntax"))?,
-                    });
-                    CapturePredicate::Text {
-                        capture,
-                        predicate: predicate_index,
-                        negated,
-                        any,
-                    }
-                }
-                _ => return Err(Error::UnsupportedFeature("predicate")),
-            };
-            let index = u16::try_from(self.capture_predicates.len())
-                .map_err(|_| Error::UnsupportedPattern)?;
-            self.capture_predicates.push(compiled);
-            self.emit(ASSERT, 0, index);
+            self.predicate(predicate)?;
         }
         Ok(())
+    }
+
+    fn predicate(&mut self, predicate: &Predicate) -> Result<(), Error> {
+        match predicate.name.as_str() {
+            "#set!" => self.set_directive(&predicate.arguments),
+            "#offset!" => self.offset_directive(&predicate.arguments),
+            "#strip!" => self.strip_directive(&predicate.arguments),
+            "#select-adjacent!" | "#set-adjacent!" => {
+                self.select_adjacent_directive(&predicate.arguments)
+            }
+            "#downcase!" => self.downcase_directive(&predicate.arguments),
+            "#set-lang-from-mimetype!" => self.language_from_mime_directive(&predicate.arguments),
+            "#is?" | "#is-not?" => self.property_predicate(predicate),
+            _ => self.capture_predicate(predicate),
+        }
+    }
+
+    fn capture_label(&self, capture: &str) -> Result<u16, Error> {
+        self.label_indexes
+            .get(capture)
+            .copied()
+            .ok_or_else(|| Error::UnknownCapture(capture.to_owned()))
+    }
+
+    fn set_directive(&mut self, arguments: &[Argument]) -> Result<(), Error> {
+        let (capture, key, value) = match arguments {
+            [Argument::Text(key)] => (None, key, None),
+            [Argument::Text(key), Argument::Text(value)] => (None, key, Some(value)),
+            [Argument::Capture(capture), Argument::Text(key)] => (Some(capture), key, None),
+            [
+                Argument::Capture(capture),
+                Argument::Text(key),
+                Argument::Text(value),
+            ] => (Some(capture), key, Some(value)),
+            _ => return Err(Error::UnsupportedPattern),
+        };
+        let key = self.string(key.as_bytes())?;
+        let value = value
+            .map(|value| self.string(value.as_bytes()))
+            .transpose()?;
+        if let Some(capture) = capture {
+            let capture = self.capture_label(capture)?;
+            self.directives.push(Directive::SetCapture {
+                capture,
+                key,
+                value,
+            });
+        } else {
+            self.directives.push(Directive::Set { key, value });
+        }
+        Ok(())
+    }
+
+    fn offset_directive(&mut self, arguments: &[Argument]) -> Result<(), Error> {
+        let Some(Argument::Capture(capture)) = arguments.first() else {
+            return Err(Error::UnsupportedPattern);
+        };
+        let capture = self.capture_label(capture)?;
+        let offsets = arguments
+            .iter()
+            .skip(1)
+            .map(|argument| match argument {
+                Argument::Text(value) => value.parse::<i32>().map_err(|_| Error::UnsupportedPattern),
+                Argument::Capture(_) => Err(Error::UnsupportedPattern),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let offsets: [i32; 4] = offsets.try_into().map_err(|_| Error::UnsupportedPattern)?;
+        self.directives.push(Directive::Offset { capture, offsets });
+        Ok(())
+    }
+
+    fn strip_directive(&mut self, arguments: &[Argument]) -> Result<(), Error> {
+        let [Argument::Capture(capture), Argument::Text(source)] = arguments else {
+            return Err(Error::UnsupportedPattern);
+        };
+        let capture = self.capture_label(capture)?;
+        let source_index = self.string(source.as_bytes())?;
+        self.directives.push(Directive::Strip {
+            capture,
+            source: source_index,
+            compiled: Regex::new(source).map_err(|_| Error::UnsupportedPattern)?,
+        });
+        Ok(())
+    }
+
+    fn select_adjacent_directive(&mut self, arguments: &[Argument]) -> Result<(), Error> {
+        let [Argument::Capture(capture), Argument::Capture(target)] = arguments else {
+            return Err(Error::UnsupportedPattern);
+        };
+        let capture = self.capture_label(capture)?;
+        let target = self.capture_label(target)?;
+        self.directives
+            .push(Directive::SelectAdjacent { capture, target });
+        Ok(())
+    }
+
+    fn downcase_directive(&mut self, arguments: &[Argument]) -> Result<(), Error> {
+        let [Argument::Capture(capture)] = arguments else {
+            return Err(Error::UnsupportedPattern);
+        };
+        let capture = self.capture_label(capture)?;
+        self.directives.push(Directive::Downcase { capture });
+        Ok(())
+    }
+
+    fn language_from_mime_directive(&mut self, arguments: &[Argument]) -> Result<(), Error> {
+        let [Argument::Capture(capture)] = arguments else {
+            return Err(Error::UnsupportedPattern);
+        };
+        let capture = self.capture_label(capture)?;
+        self.directives
+            .push(Directive::SetLanguageFromMimeType { capture });
+        Ok(())
+    }
+
+    /// `#is?` and `#is-not?`: checked, then ignored with a note on stderr.
+    fn property_predicate(&self, predicate: &Predicate) -> Result<(), Error> {
+        Self::check_property_arguments(&predicate.arguments)?;
+        for argument in &predicate.arguments {
+            if let Argument::Capture(capture) = argument
+                && !self.label_indexes.contains_key(capture)
+            {
+                return Err(Error::UnknownCapture(capture.clone()));
+            }
+        }
+        eprintln!(
+            "ignored SCM property predicate {}: its host semantics are not implemented",
+            predicate.name
+        );
+        Ok(())
+    }
+
+    fn check_property_arguments(arguments: &[Argument]) -> Result<(), Error> {
+        if arguments.is_empty() || arguments.len() > 3 {
+            return Err(Error::UnsupportedPattern);
+        }
+        let capture_count = arguments
+            .iter()
+            .filter(|argument| matches!(argument, Argument::Capture(_)))
+            .count();
+        let text_count = arguments
+            .iter()
+            .filter(|argument| matches!(argument, Argument::Text(_)))
+            .count();
+        if capture_count > 1 || !(1..=2).contains(&text_count) {
+            return Err(Error::UnsupportedPattern);
+        }
+        Ok(())
+    }
+
+    /// A predicate on its first argument, a capture, as an `ASSERT` of a capture predicate.
+    fn capture_predicate(&mut self, predicate: &Predicate) -> Result<(), Error> {
+        let Some(Argument::Capture(capture)) = predicate.arguments.first() else {
+            return Err(Error::UnsupportedPattern);
+        };
+        let capture = self.capture_label(capture)?;
+        let compiled = self.lower_capture_predicate(predicate, capture)?;
+        let index = u16::try_from(self.capture_predicates.len())
+            .map_err(|_| Error::UnsupportedPattern)?;
+        self.capture_predicates.push(compiled);
+        self.emit(ASSERT, 0, index);
+        Ok(())
+    }
+
+    fn lower_capture_predicate(
+        &mut self,
+        predicate: &Predicate,
+        capture: u16,
+    ) -> Result<CapturePredicate, Error> {
+        let arguments = &predicate.arguments;
+        let any = predicate.name.starts_with("#any-");
+        let negated = predicate.name.contains("not-");
+        match predicate.name.as_str() {
+            "#eq?" | "#not-eq?" | "#any-eq?" | "#any-not-eq?" => {
+                self.equal_predicate(arguments, capture, negated, any)
+            }
+            "#match?" | "#not-match?" | "#any-match?" | "#any-not-match?" => {
+                self.regex_predicate(arguments, capture, negated, any)
+            }
+            "#any-of?" | "#not-any-of?" => Ok(CapturePredicate::AnyOf {
+                capture,
+                strings: self.text_arguments(arguments)?,
+                negated,
+                any: false,
+            }),
+            "#contains?" | "#not-contains?" | "#any-contains?" | "#any-not-contains?" => {
+                self.contains_predicate(arguments, capture, negated, any)
+            }
+            "#kind-eq?" | "#not-kind-eq?" => Ok(CapturePredicate::Kinds {
+                capture,
+                kinds: self.kind_arguments(arguments)?,
+                negated,
+            }),
+            "#has-parent?" | "#not-has-parent?" | "#has-ancestor?" | "#not-has-ancestor?" => {
+                Ok(CapturePredicate::Relation {
+                    capture,
+                    kinds: self.kind_arguments(arguments)?,
+                    ancestor: predicate.name.contains("ancestor"),
+                    negated,
+                })
+            }
+            "#same-line?" | "#not-same-line?" => {
+                self.same_line_predicate(arguments, capture, negated)
+            }
+            "#lua-match?" | "#not-lua-match?" | "#any-lua-match?" | "#any-not-lua-match?" => {
+                self.lua_match_predicate(arguments, capture, negated, any)
+            }
+            _ => Err(Error::UnsupportedFeature("predicate")),
+        }
+    }
+
+    fn text_predicate_index(&self) -> Result<u16, Error> {
+        u16::try_from(self.predicates.len()).map_err(|_| Error::UnsupportedPattern)
+    }
+
+    /// The string indexes of the text arguments after the capture.
+    fn text_arguments(&mut self, arguments: &[Argument]) -> Result<Vector<u16>, Error> {
+        arguments
+            .iter()
+            .skip(1)
+            .map(|argument| match argument {
+                Argument::Text(text) => self.string(text.as_bytes()),
+                Argument::Capture(_) => Err(Error::UnsupportedPattern),
+            })
+            .collect()
+    }
+
+    /// The node kinds named after the capture; a name the grammar lacks is dropped.
+    fn kind_arguments(&self, arguments: &[Argument]) -> Result<Vector<u16>, Error> {
+        if arguments.len() < 2 {
+            return Err(Error::UnsupportedPattern);
+        }
+        Ok(arguments
+            .iter()
+            .skip(1)
+            .map(|argument| match argument {
+                Argument::Text(kind) => Ok(self.predicate_kind(kind)),
+                Argument::Capture(_) => Err(Error::UnsupportedPattern),
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
+    fn equal_predicate(
+        &mut self,
+        arguments: &[Argument],
+        capture: u16,
+        negated: bool,
+        any: bool,
+    ) -> Result<CapturePredicate, Error> {
+        match arguments.get(1) {
+            Some(Argument::Capture(right)) => Ok(CapturePredicate::Equal {
+                left: capture,
+                right: self.capture_label(right)?,
+                negated,
+                any,
+            }),
+            Some(Argument::Text(text)) => {
+                let string = self.string(text.as_bytes())?;
+                let predicate_index = self.text_predicate_index()?;
+                self.predicates.push(TextPredicate::Equal(string));
+                Ok(CapturePredicate::Text {
+                    capture,
+                    predicate: predicate_index,
+                    negated,
+                    any,
+                })
+            }
+            None => Err(Error::UnsupportedPattern),
+        }
+    }
+
+    fn regex_predicate(
+        &mut self,
+        arguments: &[Argument],
+        capture: u16,
+        negated: bool,
+        any: bool,
+    ) -> Result<CapturePredicate, Error> {
+        let Some(Argument::Text(source)) = arguments.get(1) else {
+            return Err(Error::UnsupportedPattern);
+        };
+        let string = self.string(source.as_bytes())?;
+        let predicate_index = self.text_predicate_index()?;
+        self.predicates.push(TextPredicate::Regex {
+            source: string,
+            compiled: Regex::new(source).map_err(|_| Error::UnsupportedPattern)?,
+        });
+        Ok(CapturePredicate::Text {
+            capture,
+            predicate: predicate_index,
+            negated,
+            any,
+        })
+    }
+
+    fn contains_predicate(
+        &mut self,
+        arguments: &[Argument],
+        capture: u16,
+        negated: bool,
+        any: bool,
+    ) -> Result<CapturePredicate, Error> {
+        if arguments.len() < 2 {
+            return Err(Error::UnsupportedPattern);
+        }
+        Ok(CapturePredicate::Contains {
+            capture,
+            strings: self.text_arguments(arguments)?,
+            negated,
+            any,
+        })
+    }
+
+    fn same_line_predicate(
+        &self,
+        arguments: &[Argument],
+        capture: u16,
+        negated: bool,
+    ) -> Result<CapturePredicate, Error> {
+        if arguments.len() != 2 {
+            return Err(Error::UnsupportedPattern);
+        }
+        let Some(Argument::Capture(right)) = arguments.get(1) else {
+            return Err(Error::UnsupportedPattern);
+        };
+        Ok(CapturePredicate::SameLine {
+            left: capture,
+            right: self.capture_label(right)?,
+            negated,
+        })
+    }
+
+    fn lua_match_predicate(
+        &mut self,
+        arguments: &[Argument],
+        capture: u16,
+        negated: bool,
+        any: bool,
+    ) -> Result<CapturePredicate, Error> {
+        let Some(Argument::Text(source)) = arguments.get(1) else {
+            return Err(Error::UnsupportedPattern);
+        };
+        let string = self.string(source.as_bytes())?;
+        let predicate_index = self.text_predicate_index()?;
+        self.predicates.push(TextPredicate::LuaPattern {
+            source: string,
+            compiled: LuaPattern::parse(source.as_bytes())
+                .map_err(|_| Error::UnsupportedFeature("Lua pattern syntax"))?,
+        });
+        Ok(CapturePredicate::Text {
+            capture,
+            predicate: predicate_index,
+            negated,
+            any,
+        })
     }
 
     fn compile(mut self, query: &QueryPattern) -> Result<Program, Error> {
@@ -1273,13 +1312,11 @@ pub mod tests {
     #[test]
     #[ignore = "all pinned Python SCM files"]
     fn parser_accepts_every_pinned_python_query_file() {
-        let root = std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR")
-            .expect("TEMPO_PYTHON_SCM_QUERY_DIR must name the original Python SCM directory");
+        let root = std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR")
+            .expect("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR must name the original Python SCM directory");
         let mut paths = std::fs::read_dir(&root)
             .unwrap_or_else(|error| {
-                panic!(
-                    "cannot read pinned Python SCM input at {root}: {error}; run tempo/scripts/fetch-pinned-python-scm.sh"
-                )
+                panic!("cannot read pinned Python SCM input at {root}: {error}")
             })
             .map(|entry| entry.unwrap().path())
             .filter(|path| path.extension().is_some_and(|extension| extension == "scm"))
@@ -1295,7 +1332,7 @@ pub mod tests {
         assert_eq!(paths.len(), 15);
         assert_eq!(patterns, 335);
         println!(
-            "TEMPO_PYTHON_SCM_PARSE {{\"files\":{},\"patterns\":{patterns}}}",
+            "RERAIL_PACKED_PYTHON_SCM_PARSE {{\"files\":{},\"patterns\":{patterns}}}",
             paths.len()
         );
     }
@@ -1304,20 +1341,86 @@ pub mod tests {
     #[ignore = "all pinned Python SCM patterns through the Program lowerer"]
     fn lowerer_audits_every_pinned_python_pattern_without_approximation() {
         use ast_grep_language::LanguageExt;
-        let root = std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR")
-            .expect("TEMPO_PYTHON_SCM_QUERY_DIR must name the original Python SCM directory");
+        let root = std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR")
+            .expect("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR must name the original Python SCM directory");
         let mut paths = std::fs::read_dir(&root)
             .unwrap_or_else(|error| {
-                panic!(
-                    "cannot read pinned Python SCM input at {root}: {error}; run tempo/scripts/fetch-pinned-python-scm.sh"
-                )
+                panic!("cannot read pinned Python SCM input at {root}: {error}")
             })
             .map(|entry| entry.unwrap().path())
             .filter(|path| path.extension().is_some_and(|extension| extension == "scm"))
             .collect::<Vec<_>>();
         paths.sort();
         let language = crate::code_rule_dsl::language::GrammarDialect::Python.get_ts_language();
-        let pinned_nvim = BTreeMap::from([
+        let LoweringAudit {
+            compiled,
+            incompatible,
+            rejected,
+        } = audit_pinned_python_lowering(&paths, &language);
+        let incompatible_count = incompatible.values().sum::<usize>();
+        let rejected_count = rejected.values().sum::<usize>();
+        assert_eq!(compiled.len(), 335);
+        assert_eq!(incompatible_count, 0);
+        assert_eq!(rejected_count, 0, "compatible patterns must all lower");
+        let ProgramCounts {
+            opcode_counts,
+            value_program_counts,
+            capture_program_counts,
+            output_instruction_counts,
+        } = count_program_parts(&compiled);
+
+        let native_cpu_millis = native_cpu_compile_millis(&compiled);
+        let metal_compile_millis: Option<f64> = None;
+        println!(
+            "RERAIL_PACKED_PYTHON_SCM_COMPILATION {{\"programs\":{},\"nativeIrLowered\":{},\"callbackFreeCpuJitCompiled\":{},\"callbackFreeCpuJitCompileMillis\":{native_cpu_millis},\"metalJitCompiled\":{},\"metalJitCompileMillis\":{},\"structuralOpcodeCounts\":{},\"valueProgramCounts\":{},\"captureProgramCounts\":{},\"outputInstructionCounts\":{}}}",
+            compiled.len(),
+            compiled.len(),
+            compiled.len(),
+            if metal_compile_millis.is_some() {
+                compiled.len()
+            } else {
+                0
+            },
+            serde_json::to_string(&metal_compile_millis).unwrap(),
+            serde_json::to_string(&opcode_counts).unwrap(),
+            serde_json::to_string(&value_program_counts).unwrap(),
+            serde_json::to_string(&capture_program_counts).unwrap(),
+            serde_json::to_string(&output_instruction_counts).unwrap(),
+        );
+        println!(
+            "RERAIL_PACKED_PYTHON_SCM_LOWERING {{\"compiled\":{},\"grammarIncompatible\":{incompatible_count},\"loweringRejected\":{rejected_count},\"incompatibilities\":{},\"rejections\":{}}}",
+            compiled.len(),
+            serde_json::to_string(&incompatible).unwrap(),
+            serde_json::to_string(&rejected).unwrap()
+        );
+    }
+
+    /// The pinned patterns that lowered, and the rest counted by why they did not.
+    struct LoweringAudit {
+        compiled: Vec<Program>,
+        incompatible: BTreeMap<String, usize>,
+        rejected: BTreeMap<String, usize>,
+    }
+
+    impl LoweringAudit {
+        fn lower_patterns(&mut self, source: &str, language: &tree_sitter::Language) {
+            for pattern in parse(source).unwrap() {
+                if let Err(error) = tree_sitter::Query::new(language, pattern.source()) {
+                    *self.incompatible.entry(error.message.clone()).or_default() += 1;
+                    continue;
+                }
+                match compile(&pattern, language) {
+                    Ok(program) => self.compiled.push(program),
+                    Err(error) => {
+                        *self.rejected.entry(format!("{error:?}")).or_default() += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    fn pinned_nvim_digests() -> BTreeMap<&'static str, &'static str> {
+        BTreeMap::from([
             (
                 "nvim-treesitter__python__folds.scm",
                 "7ea0eb74ffee66415a3b6fd51b47873b411bc80d8eb4dfb7aa6ffa0cf7fad1f3",
@@ -1338,119 +1441,148 @@ pub mod tests {
                 "nvim-treesitter__python__locals.scm",
                 "370635358588e6d66e6065dd9fb1e21d864e8eb125abbf4728e573bc06ef4921",
             ),
-        ]);
-        let mut compiled = Vec::new();
-        let mut incompatible = BTreeMap::<String, usize>::new();
-        let mut rejected = BTreeMap::<String, usize>::new();
-        for path in &paths {
-            let source = std::fs::read_to_string(path).unwrap();
-            if let Some(expected) = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .and_then(|name| pinned_nvim.get(name))
-            {
-                assert_eq!(
-                    crate::code_rule_dsl::prof::lower_hex(&Sha256::digest(source.as_bytes())),
-                    *expected
-                );
-            }
-            for pattern in parse(&source).unwrap() {
-                if let Err(error) = tree_sitter::Query::new(&language, pattern.source()) {
-                    *incompatible.entry(error.message.clone()).or_default() += 1;
-                    continue;
-                }
-                match compile(&pattern, &language) {
-                    Ok(program) => compiled.push(program),
-                    Err(error) => {
-                        *rejected.entry(format!("{error:?}")).or_default() += 1;
-                    }
-                }
-            }
+        ])
+    }
+
+    fn assert_pinned_nvim_digest(
+        pinned_nvim: &BTreeMap<&str, &str>,
+        path: &std::path::Path,
+        source: &str,
+    ) {
+        if let Some(expected) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| pinned_nvim.get(name))
+        {
+            assert_eq!(
+                crate::code_rule_dsl::prof::lower_hex(&Sha256::digest(source.as_bytes())),
+                *expected
+            );
         }
-        let incompatible_count = incompatible.values().sum::<usize>();
-        let rejected_count = rejected.values().sum::<usize>();
-        assert_eq!(compiled.len(), 335);
-        assert_eq!(incompatible_count, 0);
-        assert_eq!(rejected_count, 0, "compatible patterns must all lower");
-        let mut opcode_counts = BTreeMap::<&str, usize>::new();
-        let mut value_program_counts = BTreeMap::<&str, usize>::new();
-        let mut capture_program_counts = BTreeMap::<&str, usize>::new();
-        let mut output_instruction_counts = BTreeMap::<&str, usize>::new();
-        for program in &compiled {
+    }
+
+    fn audit_pinned_python_lowering(
+        paths: &[std::path::PathBuf],
+        language: &tree_sitter::Language,
+    ) -> LoweringAudit {
+        let pinned_nvim = pinned_nvim_digests();
+        let mut audit = LoweringAudit {
+            compiled: Vec::new(),
+            incompatible: BTreeMap::new(),
+            rejected: BTreeMap::new(),
+        };
+        for path in paths {
+            let source = std::fs::read_to_string(path).unwrap();
+            assert_pinned_nvim_digest(&pinned_nvim, path, &source);
+            audit.lower_patterns(&source, language);
+        }
+        audit
+    }
+
+    #[derive(Default)]
+    struct ProgramCounts {
+        opcode_counts: BTreeMap<&'static str, usize>,
+        value_program_counts: BTreeMap<&'static str, usize>,
+        capture_program_counts: BTreeMap<&'static str, usize>,
+        output_instruction_counts: BTreeMap<&'static str, usize>,
+    }
+
+    fn count_program_parts(compiled: &[Program]) -> ProgramCounts {
+        let mut counts = ProgramCounts::default();
+        for program in compiled {
             for value in &program.value_programs {
-                let name = match value {
-                    super::super::value::ValueProgram::Equal { .. } => "equal",
-                    super::super::value::ValueProgram::Prefix { .. } => "prefix",
-                    super::super::value::ValueProgram::Regex(_) => "regex",
-                    super::super::value::ValueProgram::Lua(_) => "lua",
-                };
-                *value_program_counts.entry(name).or_default() += 1;
+                *counts
+                    .value_program_counts
+                    .entry(value_program_name(value))
+                    .or_default() += 1;
             }
             for capture in &program.capture_programs {
-                let name = match capture {
-                    super::super::value::CaptureProgram::Equal { .. } => "equal",
-                    super::super::value::CaptureProgram::Text { .. } => "text",
-                    super::super::value::CaptureProgram::AnyOf { .. } => "any_of",
-                    super::super::value::CaptureProgram::Kind { .. } => "kind",
-                    super::super::value::CaptureProgram::Contains { .. } => "contains",
-                    super::super::value::CaptureProgram::Relation { .. } => "relation",
-                    super::super::value::CaptureProgram::SameLine { .. } => "same_line",
-                };
-                *capture_program_counts.entry(name).or_default() += 1;
+                *counts
+                    .capture_program_counts
+                    .entry(capture_program_name(capture))
+                    .or_default() += 1;
             }
             for output in &program.output_program.instructions {
-                let name = match output {
-                    super::super::output::OutputInstruction::MatchProperty { .. } => {
-                        "match_property"
-                    }
-                    super::super::output::OutputInstruction::CaptureProperty { .. } => {
-                        "capture_property"
-                    }
-                    super::super::output::OutputInstruction::Offset { .. } => "offset",
-                    super::super::output::OutputInstruction::Strip { .. } => "strip",
-                    super::super::output::OutputInstruction::SelectAdjacent { .. } => {
-                        "select_adjacent"
-                    }
-                    super::super::output::OutputInstruction::Downcase { .. } => "downcase",
-                    super::super::output::OutputInstruction::LanguageFromMime { .. } => {
-                        "language_from_mime"
-                    }
-                };
-                *output_instruction_counts.entry(name).or_default() += 1;
+                *counts
+                    .output_instruction_counts
+                    .entry(output_instruction_name(output))
+                    .or_default() += 1;
             }
             for word in &program.words {
-                let name = match super::super::split(*word).0 {
-                    super::super::STOP => "stop",
-                    super::super::KIND => "kind",
-                    super::super::FIELD => "field",
-                    super::super::FLAGS => "flags",
-                    super::super::TEXT => "text",
-                    super::super::SIZE => "size",
-                    super::super::ASSERT => "assert",
-                    super::super::FIRST => "first",
-                    super::super::LAST => "last",
-                    super::super::ABSENT_FIELD => "absent_field",
-                    super::super::SUPERTYPE => "supertype",
-                    super::super::CHILD => "child",
-                    super::super::DESCEND => "descend",
-                    super::super::NEXT => "next",
-                    super::super::FOLLOWING => "following",
-                    super::super::PARENT => "parent",
-                    super::super::SAVE_CURSOR => "save_cursor",
-                    super::super::RESTORE_CURSOR => "restore_cursor",
-                    super::super::CAPTURE => "capture",
-                    super::super::REPEAT_BEGIN => "repeat_begin",
-                    super::super::REPEAT_BUMP => "repeat_bump",
-                    super::super::REPEAT_END => "repeat_end",
-                    super::super::FORK => "fork",
-                    super::super::GOTO => "goto",
-                    super::super::EMIT => "emit",
-                    opcode => panic!("unrecognized compiled opcode {opcode}"),
-                };
-                *opcode_counts.entry(name).or_default() += 1;
+                *counts.opcode_counts.entry(opcode_name(*word)).or_default() += 1;
             }
         }
+        counts
+    }
 
+    fn value_program_name(value: &super::super::value::ValueProgram) -> &'static str {
+        match value {
+            super::super::value::ValueProgram::Equal { .. } => "equal",
+            super::super::value::ValueProgram::Prefix { .. } => "prefix",
+            super::super::value::ValueProgram::Regex(_) => "regex",
+            super::super::value::ValueProgram::Lua(_) => "lua",
+        }
+    }
+
+    fn capture_program_name(capture: &super::super::value::CaptureProgram) -> &'static str {
+        match capture {
+            super::super::value::CaptureProgram::Equal { .. } => "equal",
+            super::super::value::CaptureProgram::Text { .. } => "text",
+            super::super::value::CaptureProgram::AnyOf { .. } => "any_of",
+            super::super::value::CaptureProgram::Kind { .. } => "kind",
+            super::super::value::CaptureProgram::Contains { .. } => "contains",
+            super::super::value::CaptureProgram::Relation { .. } => "relation",
+            super::super::value::CaptureProgram::SameLine { .. } => "same_line",
+        }
+    }
+
+    fn output_instruction_name(output: &super::super::output::OutputInstruction) -> &'static str {
+        match output {
+            super::super::output::OutputInstruction::MatchProperty { .. } => "match_property",
+            super::super::output::OutputInstruction::CaptureProperty { .. } => "capture_property",
+            super::super::output::OutputInstruction::Offset { .. } => "offset",
+            super::super::output::OutputInstruction::Strip { .. } => "strip",
+            super::super::output::OutputInstruction::SelectAdjacent { .. } => "select_adjacent",
+            super::super::output::OutputInstruction::Downcase { .. } => "downcase",
+            super::super::output::OutputInstruction::LanguageFromMime { .. } => {
+                "language_from_mime"
+            }
+        }
+    }
+
+    fn opcode_name(word: u32) -> &'static str {
+        match super::super::split(word).0 {
+            super::super::STOP => "stop",
+            super::super::KIND => "kind",
+            super::super::FIELD => "field",
+            super::super::FLAGS => "flags",
+            super::super::TEXT => "text",
+            super::super::SIZE => "size",
+            super::super::ASSERT => "assert",
+            super::super::FIRST => "first",
+            super::super::LAST => "last",
+            super::super::ABSENT_FIELD => "absent_field",
+            super::super::SUPERTYPE => "supertype",
+            super::super::CHILD => "child",
+            super::super::DESCEND => "descend",
+            super::super::NEXT => "next",
+            super::super::FOLLOWING => "following",
+            super::super::PARENT => "parent",
+            super::super::SAVE_CURSOR => "save_cursor",
+            super::super::RESTORE_CURSOR => "restore_cursor",
+            super::super::CAPTURE => "capture",
+            super::super::REPEAT_BEGIN => "repeat_begin",
+            super::super::REPEAT_BUMP => "repeat_bump",
+            super::super::REPEAT_END => "repeat_end",
+            super::super::FORK => "fork",
+            super::super::GOTO => "goto",
+            super::super::EMIT => "emit",
+            opcode => panic!("unrecognized compiled opcode {opcode}"),
+        }
+    }
+
+    /// Lowers every Program to the native IR, then times the callback-free CPU JIT over them.
+    fn native_cpu_compile_millis(compiled: &[Program]) -> f64 {
         let native_modules = compiled
             .iter()
             .map(|program| {
@@ -1463,30 +1595,7 @@ pub mod tests {
             super::super::native_cpu::compile_straight_line(native)
                 .expect("the callback-free CPU JIT must compile every pinned Program");
         }
-        let native_cpu_millis = native_cpu_started.elapsed().as_secs_f64() * 1_000.0;
-        let metal_compile_millis: Option<f64> = None;
-        println!(
-            "TEMPO_PYTHON_SCM_COMPILATION {{\"programs\":{},\"nativeIrLowered\":{},\"callbackFreeCpuJitCompiled\":{},\"callbackFreeCpuJitCompileMillis\":{native_cpu_millis},\"metalJitCompiled\":{},\"metalJitCompileMillis\":{},\"structuralOpcodeCounts\":{},\"valueProgramCounts\":{},\"captureProgramCounts\":{},\"outputInstructionCounts\":{}}}",
-            compiled.len(),
-            compiled.len(),
-            compiled.len(),
-            if metal_compile_millis.is_some() {
-                compiled.len()
-            } else {
-                0
-            },
-            serde_json::to_string(&metal_compile_millis).unwrap(),
-            serde_json::to_string(&opcode_counts).unwrap(),
-            serde_json::to_string(&value_program_counts).unwrap(),
-            serde_json::to_string(&capture_program_counts).unwrap(),
-            serde_json::to_string(&output_instruction_counts).unwrap(),
-        );
-        println!(
-            "TEMPO_PYTHON_SCM_LOWERING {{\"compiled\":{},\"grammarIncompatible\":{incompatible_count},\"loweringRejected\":{rejected_count},\"incompatibilities\":{},\"rejections\":{}}}",
-            compiled.len(),
-            serde_json::to_string(&incompatible).unwrap(),
-            serde_json::to_string(&rejected).unwrap()
-        );
+        native_cpu_started.elapsed().as_secs_f64() * 1_000.0
     }
 
     #[test]

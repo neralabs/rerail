@@ -1,0 +1,56 @@
+.policy "rerail-walk-limits" revision 2
+.description "Take a TypeScript repository walk's skipped folders and file and byte limits from the code rule enforcer instead of restating them; budgets for other inputs may differ."
+.language typescript
+.mode steer
+.scope include "src/**/*.ts", "src/**/*.tsx"
+.scope exclude "src/engine/code-rule/code-rule-enforcer.ts", "**/*.test.ts", "**/*.test.tsx", "**/test/**", "**/*.generated.ts"
+// The repository walk's skipped folders and its file and byte limits are the code rule enforcer's; a TypeScript file
+// that restates them drifts when they change. Two text searches over each file, as the JSON's regex clauses:
+//   const SKIP = ["node_modules", ".git"];              WALK_FOLDERS_RESTATED (a list naming node_modules and another)
+//   name === "node_modules" || name === ".git"          WALK_FOLDERS_RESTATED (a chain of comparisons)
+//   const REPOSITORY_MAX_FILES = 100_000;               WALK_LIMIT_RESTATED (a walk-limit name set to a known bound)
+//   if (!IGNORED_DIRECTORIES.has(entry.name)) …         not reported
+// A finding sits where the match starts. The regexes are the JSON's, copied exactly.
+
+.violation WALK_FOLDERS_RESTATED(at: span) "Skip folders with IGNORED_DIRECTORIES from src/engine/code-rule/code-rule-enforcer.ts instead of naming them here (it also skips build output); leave names not about walking a user's repository."
+WALK_FOLDERS_RESTATED(m) :- source(_, sp), match_all("\\[[^\\]\\[;()]{0,400}?[\"'`](?:node_modules|__pycache__)[\"'`][^\\]\\[;()]{0,400}?[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]|\\[[^\\]\\[;()]{0,400}?[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`][^\\]\\[;()]{0,400}?[\"'`](?:node_modules|__pycache__)[\"'`]|(?:(?:===?|!==?)\\s*[\"'`](?:node_modules|__pycache__)[\"'`]|[\"'`](?:node_modules|__pycache__)[\"'`]\\s*(?:===?|!==?))[^;{}(),]{0,200}?(?:\\|\\||&&)[^;{}(),]{0,200}?(?:(?:===?|!==?)\\s*[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]|[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]\\s*(?:===?|!==?)|\\.startsWith\\(\\s*[\"'`]\\.[\"'`]\\s*\\))|(?:(?:===?|!==?)\\s*[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]|[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]\\s*(?:===?|!==?)|\\.startsWith\\(\\s*[\"'`]\\.[\"'`]\\s*\\))[^;{}(),]{0,200}?(?:\\|\\||&&)[^;{}(),]{0,200}?(?:(?:===?|!==?)\\s*[\"'`](?:node_modules|__pycache__)[\"'`]|[\"'`](?:node_modules|__pycache__)[\"'`]\\s*(?:===?|!==?))|\\bcase\\s+[\"'`](?:node_modules|__pycache__)[\"'`]\\s*:[^;{}]{0,200}?\\bcase\\s+[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]\\s*:|\\bcase\\s+[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]\\s*:[^;{}]{0,200}?\\bcase\\s+[\"'`](?:node_modules|__pycache__)[\"'`]\\s*:|\\b(?:node_modules|__pycache__)\\|(?:[\\w\\\\.$-]+\\|){0,12}(?:\\\\?\\.)?(?:git|hg|svn|rerail|venv|__pycache__|node_modules|dist|build|next|turbo|coverage|target|vendor)\\b|\\b(?:git|hg|svn|rerail|venv|__pycache__|node_modules|dist|build|next|turbo|coverage|target|vendor)\\|(?:[\\w\\\\.$-]+\\|){0,12}(?:node_modules|__pycache__)\\b", sp, m).
+
+.violation WALK_LIMIT_RESTATED(at: span) "Use AUDIT_MAX_FILES, MAX_SOURCE_BYTES or AUDIT_MAX_SOURCE_BYTES from src/engine/code-rule/code-rule-enforcer.ts instead of restating the walk's limit; leave a bound that is not the walk's alone."
+WALK_LIMIT_RESTATED(m) :- source(_, sp), match_all("(?i:\\b[\\w$]*(?:max|limit|budget|cap|bound|ceiling)[\\w$]*(?:files|entries|bytes)[\\w$]*|\\b[\\w$]*(?:files?|entr(?:y|ies)|bytes)[\\w$]*(?:max|limit|budget|cap|bound|ceiling)[\\w$]*)\\s*(?::\\s*[\\w$.<>\\[\\]| ]{1,40})?\\s*[=:]\\s*(?:100_?000|1e5|32_?000_?000|32e6|512\\s*\\*\\s*1024\\s*\\*\\s*1024|1024\\s*\\*\\s*1024\\s*\\*\\s*512|512\\s*\\*\\s*1024\\s*\\*\\*\\s*2|512\\s*<<\\s*20|1\\s*<<\\s*29|536_?870_?912|0x2000_?0000|2\\s*\\*\\*\\s*29)\\b", sp, m).
+
+// The pack's example (packs/rerail/pack.json).
+.test restated_limits_are_reported exactly
+    .fixture "src/cli/rule-draft.ts" ```
+        /** The same bounds a repository scan walks with. */
+        const REPOSITORY_MAX_FILES = 100_000;
+        const REPOSITORY_MAX_FILE_BYTES = 32_000_000;
+        ```
+    .expect WALK_LIMIT_RESTATED at "src/cli/rule-draft.ts":2
+    .expect WALK_LIMIT_RESTATED at "src/cli/rule-draft.ts":3
+.end
+
+.test restated_folders_are_reported exactly
+    .fixture "src/a/walk.ts" ```
+        const SKIP = ["node_modules", ".git"];
+        const keep = (name: string) => name !== "dist";
+        if (name === "node_modules" || name === ".git") skip();
+        ```
+    .expect WALK_FOLDERS_RESTATED at "src/a/walk.ts":1
+    .expect WALK_FOLDERS_RESTATED at "src/a/walk.ts":3
+.end
+
+// The pack's passing example, a bound that is not the walk's, and the enforcer itself.
+.test the_enforcer_and_other_bounds_pass exactly
+    .fixture "src/engine/catalog/rule-pack-matcher.ts" ```
+        import { IGNORED_DIRECTORIES } from "../code-rule/code-rule-enforcer.js";
+
+        if (entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name)) pending.push(path);
+        const MAX_FILES_PER_BATCH = 500;
+        ```
+    .fixture "src/engine/code-rule/code-rule-enforcer.ts" ```
+        export const AUDIT_MAX_FILES = 100_000;
+        ```
+    .fixture "src/cli/walk.test.ts" ```
+        const MAX_FILES = 100_000;
+        ```
+.end

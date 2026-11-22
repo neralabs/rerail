@@ -101,7 +101,7 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
     Read { family: Family::Relation, name: "rel_group_row", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_row },
     Read { family: Family::Relation, name: "rel_key_mix", params: &[I64, I64], ret: I64, hot: true, body: crate::relation::rel_key_mix },
-    // A blocked Bloom filter's (decision 0500): the descriptor is a `bloom::Bloom`.
+    // A blocked Bloom filter's (decision 0488): the descriptor is a `bloom::Bloom`.
     Read { family: Family::Relation, name: "bloom_hash", params: &[I64], ret: I64, hot: true, body: crate::relation::bloom_hash },
     Read { family: Family::Relation, name: "bloom_mask", params: &[I64], ret: I64, hot: true, body: crate::relation::bloom_mask },
     Read { family: Family::Relation, name: "bloom_may", params: &[I64], ret: I32, hot: true, body: crate::relation::bloom_may },
@@ -149,9 +149,18 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "text_open", params: &[I32, I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_open },
     Read { family: Family::Relation, name: "cache_done", params: &[I64], ret: I32, hot: false, body: crate::verdict_reads::cache_done },
     // The cache's two lookups, each written once and called (decision 0310): the verdicts' (an entry made with its
-    // masks empty) and the texts' open one. Last, so no other read's number moves.
+    // masks empty) and the texts' open one.
     Read { family: Family::Relation, name: "verdict_entry", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::verdict_entry },
     Read { family: Family::Relation, name: "cache_open", params: &[I64, I32], ret: I64, hot: false, body: crate::verdict_reads::cache_open },
+    // `has` probed off the tape (decision 0353 step 5): a node's numbered ancestors by a climb, its numbered
+    // descendants as a range of numbers. Last, so no other read's number moves.
+    Read { family: Family::View, name: "view_up", params: &[I32], ret: I32, hot: false, body: crate::view_reads::up },
+    Read { family: Family::View, name: "view_end", params: &[I32], ret: I32, hot: false, body: crate::view_reads::end },
+    // `tape`, `ast_depth` and `node_order` read in place (decision 0353 step 6: they were uploaded from the host).
+    // Last, so no other read's number moves.
+    Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },
+    Read { family: Family::View, name: "view_depth", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::depth },
+    Read { family: Family::View, name: "view_order", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::order },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
@@ -193,7 +202,7 @@ pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &
 /// `build_for`, and with `z` a 16z tape too (decision 0353 step 4b) where the body reads either format: its block
 /// decoded into the reader's slot (`tape_z_block`) and read as format 16. The JIT's reads read 16z; the tape crate's
 /// Rust reads a block at a time itself (`F16Z`). The kernels' reads of the same are written by hand (decision 0524):
-/// `<ukl/reads/tape_body.h>`.
+/// `<ukl/reads/tape_f16z.h>` (decision 0576).
 pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>, z: bool) -> Function {
     let mut func = Function::with_name_signature(name, signature(read, call_conv));
     let mut context = FunctionBuilderContext::new();
@@ -217,7 +226,10 @@ pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, calle
 }
 
 /// Where the reads' UKL is held: the library's `ukl/reads/`, which every kernel includes them from.
-pub const UKL_READS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl/lib/ukl/reads");
+#[cfg(test)]
+fn ukl_reads() -> String {
+    format!("{}/../ukl/lib/ukl/reads", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
+}
 
 /// A generated header's first lines: what made it, and how to make it again.
 fn generated(function: &str, decision: &str, test: &str) -> String {
@@ -228,9 +240,10 @@ fn generated(function: &str, decision: &str, test: &str) -> String {
 }
 
 /// The views' reads as UKL (decision 0353 step 4c), after their entry's declaration (`view_reads::ukl`):
-/// `<ukl/reads/view.h>`, over the tape's reads that read 16z too and the numbering's (whose functions they call),
-/// made again by `the_view_kernels_reads_are_these`.
-pub fn view_ukl_source() -> Result<String, String> {
+/// `<ukl/reads/view.h>`, over the tape's reads that read 16z too and the numbering's (whose functions they call), and
+/// the body it includes once per tape format (`<ukl/body/view_reads.h>`, decision 0576), made again by
+/// `the_view_kernels_reads_are_these`.
+pub fn view_ukl_source() -> Result<(String, String), String> {
     let funcs: Vec<(u32, Function, &str)> = READS
         .iter()
         .enumerate()
@@ -238,13 +251,10 @@ pub fn view_ukl_source() -> Result<String, String> {
         .map(|(k, read)| (k as u32, build_for(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None)))
         .map(|(k, f)| (k, f, READS[k as usize].name))
         .collect();
-    let body = crate::ukl::translate_reads(&funcs, "clif_", Family::View)?;
-    let (head, rest) = body.split_at(crate::ukl::HELPERS.len());
-    Ok(format!(
-        "{}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/ids.h>\n{}{rest}",
-        generated("view_ukl_source", "the views' reads in CLIF (decision 0353 step 4c)", "the_view_kernels_reads_are_these"),
-        crate::view_reads::ukl()
-    ))
+    let (header, body) = crate::ukl::translate_view_reads(&funcs, "clif_")?;
+    let (head, rest) = header.split_at(crate::ukl::HELPERS.len());
+    let made = generated("view_ukl_source", "the views' reads in CLIF (decision 0353 step 4c, 0576)", "the_view_kernels_reads_are_these");
+    Ok((format!("{made}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/ids.h>\n{}{rest}", crate::view_reads::ukl()), format!("{made}{body}")))
 }
 
 /// Where a read's calls of other reads go when it is translated: by its place in `READS`, as the translators name
@@ -1289,7 +1299,9 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     let t = b.f.ins().ireduce(I32, t);
     let t = b.f.ins().bor_imm(t, 1);
     let tag = b.f.ins().ishl_imm(t, i64::from(c::TAG_SHIFT));
+    // Bounded by the most slots too, so a slot's offset has a bound the compiler sees (`cache::SLOTS_MAX`).
     let slot_mask = b.f.ins().iadd_imm(slots, -1);
+    let slot_mask = b.f.ins().band_imm(slot_mask, i64::from(c::SLOTS_MAX - 1));
     let done = b.f.create_block();
     b.f.append_block_param(done, I64);
     // An open lookup's entry being written by another thread: the dead entry, `PENDING`.
@@ -1333,7 +1345,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     let k = b.f.block_params(look)[0];
     let more = b.f.ins().icmp(IntCC::UnsignedLessThan, k, live);
     let check = b.f.create_block();
-    b.f.ins().brif(more, check, &[], miss, &[]);
+    b.f.append_block_param(miss, I32);
+    b.f.ins().brif(more, check, &[], miss, &[zero.into()]);
     b.f.switch_to_block(check);
     let want = b.f.ins().isub(epoch, k);
     let generation = gen_of(b, want);
@@ -1383,7 +1396,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.ins().brif(moved, read_slot, &[], slot_wait, &[spin.into()]);
     b.f.switch_to_block(slot_out);
     cache_stat(b, cache, c::DUPLICATES);
-    b.f.ins().jump(miss, &[]);
+    let own = b.c32(1);
+    b.f.ins().jump(miss, &[own.into()]);
     // A fence between the slot's number and its entry's offset, key and completion: the writer's fence before it put
     // the number is half of the pair; without this half a reader on a weakly ordered device (Metal's relaxed atomics)
     // can see the number with an older offset, key or completion, take the entry for another key's, and decode the
@@ -1438,7 +1452,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.ins().jump(found, &[e.into(), k.into(), stamp.into()]);
     b.f.switch_to_block(run_out);
     cache_stat(b, cache, c::DUPLICATES);
-    b.f.ins().jump(miss, &[]);
+    let own = b.c32(1);
+    b.f.ins().jump(miss, &[own.into()]);
     b.f.switch_to_block(probe_on);
     let p = b.f.ins().iadd_imm(p, 1);
     b.f.ins().jump(probe, &[p.into()]);
@@ -1457,7 +1472,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.switch_to_block(copy);
     // An entry's own bytes: what its copy takes and copies.
     let len = cache_load(b, e, c::LEN);
-    let copied = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, len, Some(&|b, to| {
+    let not_own = b.c32(0);
+    let copied = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, len, not_own, Some(&|b, to| {
         // The payload, a word at a time, and the source's completion read again after it.
         let (head, step, after) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
         b.f.append_block_param(head, I64);
@@ -1489,6 +1505,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     // A miss: an entry of the head taken and filled, else (the head full) the spare turned and tried again. An
     // entry past the most is never taken: no generation turns for it.
     b.f.switch_to_block(miss);
+    // Whether its wait ran out: an entry of its own, past the pending one's slot.
+    let own = b.f.block_params(miss)[0];
     let (sized, take_it, too_big, find_only) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     let nothing = b.f.ins().icmp_imm(IntCC::Equal, size, 0);
     b.f.ins().brif(nothing, find_only, &[], sized, &[]);
@@ -1496,7 +1514,7 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     let over = b.f.ins().icmp(IntCC::UnsignedGreaterThan, size, max);
     b.f.ins().brif(over, too_big, &[], take_it, &[]);
     b.f.switch_to_block(take_it);
-    let taken = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, size, fill);
+    let taken = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, size, own, fill);
     let got = b.f.ins().icmp_imm(IntCC::NotEqual, taken, 0);
     let (hit_miss, retry, fail) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.ins().brif(got, hit_miss, &[], retry, &[]);
@@ -1573,6 +1591,7 @@ fn cache_take(
     h: Value,
     slot_mask: Value,
     size: Value,
+    own: Value,
     fill: Option<Fill<'_>>,
 ) -> Value {
     use crate::view::cache as c;
@@ -1587,8 +1606,9 @@ fn cache_take(
     let (take, full) = (b.f.create_block(), b.f.create_block());
     b.f.ins().brif(current, take, &[], done, &[none.into()]);
     // Its slot in the head's index claimed first, pending (its tag, no entry yet), so a thread that misses the same
-    // block at once finds it and waits rather than taking an entry too. A slot of the same block already: none
-    // (the lookup, tried again, finds it). No slot free in its probes: the head full.
+    // block at once finds it and waits rather than taking an entry too. A slot of the same block already, unless
+    // `own` (the lookup's wait for it ran out: an entry of its own, at a slot past it): none (the lookup, tried
+    // again, finds it). No slot free in its probes: the head full.
     b.f.switch_to_block(take);
     let (probe, place, check, theirs, mine_already, next, slotted) =
         (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
@@ -1612,6 +1632,8 @@ fn cache_take(
     b.f.switch_to_block(check);
     let its = b.f.ins().band_imm(was, !i64::from(c::NUMBER));
     let same_tag = b.f.ins().icmp(IntCC::Equal, its, tag);
+    let not_own = b.f.ins().icmp_imm(IntCC::Equal, own, 0);
+    let same_tag = b.f.ins().band(same_tag, not_own);
     b.f.ins().brif(same_tag, theirs, &[], next, &[]);
     b.f.switch_to_block(theirs);
     let number = b.f.ins().band_imm(was, i64::from(c::NUMBER));
@@ -1701,9 +1723,13 @@ fn cache_take(
     let fits = fill(b, e);
     let (complete, unfit) = (b.f.create_block(), b.f.create_block());
     b.f.ins().brif(fits, complete, &[], unfit, &[]);
-    // Too large for an entry: the entry given back.
+    // Not filled (too large for an entry, or a promotion whose source turned under its copy): the entry given back,
+    // its slot no key's (its number, no tag: every tag has bit 16), so it neither stops a probe nor blocks the next
+    // claim of the block (decision 0540).
     b.f.switch_to_block(unfit);
     cache_store(b, e, c::READY, zero);
+    b.f.ins().fence();
+    b.f.ins().atomic_store(MemFlags::trusted(), number, slot);
     b.f.ins().fence();
     cache_add(b, head, c::WRITERS, minus);
     b.f.ins().jump(done, &[none.into()]);
@@ -2156,14 +2182,17 @@ fn end_of(b: &mut B<'_, '_>) -> Value {
     hop(b, i, size)
 }
 
-/// `c + size`, past `c` however `size` wraps, and no further than the tape's nodes: a walk by sizes ends whatever
-/// the tape holds, and every node it gives is one of the tape's (decision 0463).
+/// `c + size`, no further than the tape's nodes, and always past `c` however `size` wraps: a walk by sizes ends
+/// whatever the tape holds, and every node it gives from one of the tape's is one of the tape's (decision 0463). A
+/// walk at or past the view's last node (a short count, a node asked past it) still steps on: clamped to the nodes
+/// first, a hop from there was a step of zero, and a walk stopped only past its end never stopped.
 fn hop(b: &mut B<'_, '_>, c: Value, size: Value) -> Value {
     let to = b.f.ins().iadd(c, size);
     let past = b.f.ins().iadd_imm(c, 1);
     let to = b.f.ins().umax(to, past);
     let nodes = b.view(at::NODES);
-    b.f.ins().umin(to, nodes)
+    let to = b.f.ins().umin(to, nodes);
+    b.f.ins().umax(to, past)
 }
 
 /// The node after the node's subtree while it is before `end` (its parent's subtree's end), else `NONE`.
@@ -2315,7 +2344,9 @@ fn select_in_word(b: &mut B<'_, '_>, x: Value, r: Value) -> Value {
 }
 
 /// The position in the newline index's high bits of its `j`-th one (`ones` 1) or zero (0): from the sample before
-/// it, a word at a time.
+/// it, a word at a time, within the index's words. Past them (a `j` the index does not hold: a line past the last),
+/// the position past its last word: the walk ends there. Unbounded, a word of none of them was a step of zero, and
+/// past the index lies the rest of the slab, zeroed: a select of a one there walked it all (2026-11-20, a GPU held).
 fn line_select(b: &mut B<'_, '_>) -> Value {
     let (ones, j) = (b.arg(0), b.arg(1));
     let zs = lines_field(b, 2);
@@ -2333,13 +2364,18 @@ fn line_select(b: &mut B<'_, '_>) -> Value {
     let samples = b.f.ins().iadd(zs, os);
     let samples = b.f.ins().imul_imm(samples, 8);
     let high = lines_part(b, samples);
-    let (head, done) = (b.f.create_block(), b.f.create_block());
+    let words = lines_field(b, 4);
+    let (head, within, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I32);
     b.f.append_block_param(head, I32);
     b.f.append_block_param(done, I32);
     b.f.ins().jump(head, &[w0.into(), before0.into()]);
     b.f.switch_to_block(head);
     let (w, before) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, w, words);
+    let end = b.f.ins().imul_imm(words, 64);
+    b.f.ins().brif(inside, within, &[], done, &[end.into()]);
+    b.f.switch_to_block(within);
     let at = b.f.ins().imul_imm(w, 8);
     let word = b.word(high, at);
     let flipped = b.f.ins().bnot(word);
@@ -2540,7 +2576,7 @@ mod tests {
     /// The numbering's kernels' reads are these, as UKL (`<ukl/reads/ids.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_facts_id_kernels_reads_are_these() {
-        let path = format!("{}/ids.h", super::UKL_READS);
+        let path = format!("{}/ids.h", super::ukl_reads());
         let source = super::ids_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();
@@ -2552,7 +2588,7 @@ mod tests {
     /// The relation's kernels' reads are these, as UKL (`<ukl/reads/relation.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_blocks_kernels_reads_are_these() {
-        let path = format!("{}/relation.h", super::UKL_READS);
+        let path = format!("{}/relation.h", super::ukl_reads());
         let source = super::relation_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();
@@ -2564,13 +2600,14 @@ mod tests {
     /// The views' kernels' reads are these, as UKL (`<ukl/reads/view.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_view_kernels_reads_are_these() {
-        let path = format!("{}/view.h", super::UKL_READS);
-        let source = super::view_ukl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(&path, &source).unwrap();
+        let (header, body) = super::view_ukl_source().unwrap();
+        for (path, source) in [(format!("{}/view.h", super::ukl_reads()), header), (format!("{}/../body/view_reads.h", super::ukl_reads()), body)] {
+            if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+                std::fs::write(&path, &source).unwrap();
+            }
+            let held = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these");
         }
-        let held = std::fs::read_to_string(&path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these");
     }
 }
 
@@ -2580,11 +2617,11 @@ mod tests {
 mod ukl_header {
     use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, at, cache as c, z};
 
-    /// `<ukl/reads/tape_body.h>`'s `CLIF_T_*` constants are the view's field offsets, the formats' numbers, the 16z
+    /// `<ukl/reads/tape_common.h>`'s `CLIF_T_*` constants are the view's field offsets, the formats' numbers, the 16z
     /// entry's layout and the rolling cache's (`view::cache`), and it defines no other.
     #[test]
     fn the_tape_headers_constants_are_the_views() {
-        let header = include_str!("../../ukl/lib/ukl/reads/tape_body.h");
+        let header = include_str!("../../ukl/lib/ukl/reads/tape_common.h");
         let defined: std::collections::HashMap<&str, u64> = header
             .lines()
             .filter_map(|line| line.strip_prefix("#define CLIF_T_"))
@@ -2659,6 +2696,7 @@ mod ukl_header {
             ("C_CLEARING", c::CLEARING.into()),
             ("C_WRITING", c::WRITING.into()),
             ("C_PROBES", c::PROBES.into()),
+            ("C_SLOTS_MAX", c::SLOTS_MAX.into()),
             ("C_TRIES", c::TRIES.into()),
             ("C_SPIN", c::SPIN.into()),
             ("C_TAG_SHIFT", c::TAG_SHIFT.into()),

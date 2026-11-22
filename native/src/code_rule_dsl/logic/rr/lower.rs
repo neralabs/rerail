@@ -72,6 +72,7 @@ use crate::code_rule_dsl::logic::program_facts::Field;
 use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
 pub mod findings;
 use super::clause::{self as reads, At, HeadAt, L, LitAt, Reads, T};
+mod bound_family;
 
 /// The text tests: their `.rerail` names and the engine's.
 pub const TESTS: [(&str, &str); 11] = [
@@ -170,6 +171,10 @@ enum FindingCode {
 /// The relation of the `@place(path, line)` rows of a violation V: `(path, line, V's other columns)`.
 fn place_relation(v: &str) -> String {
     format!("rr_place_{v}")
+}
+
+fn commit_location_relation(v: &str) -> String {
+    format!("rr_commit_location_{v}")
 }
 
 /// What a deciding walk logs for its writing walks to read again (decision 0276 A3.3).
@@ -667,6 +672,8 @@ pub struct Seeds {
     given: BTreeMap<String, Vec<String>>,
     /// The demands the scope's modules stated.
     printed: BTreeSet<String>,
+    /// The bound families the scope's modules declared (`.pragma "bound-family"`), for the module's readers.
+    families: Vec<String>,
 }
 
 /// `scope`, seeded (`Seeds`).
@@ -679,7 +686,8 @@ pub fn seeds(scope: &[&Module]) -> Seeds {
         given.extend(m.written.iter().map(|(k, v)| (k.clone(), v.clone())));
     }
     let printed = scope.iter().flat_map(|m| m.l.printed_demands.iter().cloned()).collect();
-    Seeds { l, seeded, given, printed }
+    let families = scope.iter().flat_map(|m| bound_family::specs(&*m.version)).collect();
+    Seeds { l, seeded, given, printed, families }
 }
 
 /// `statements` lowered as a module of a scope seeded already (`seeds`), its rules written as a version in the walk
@@ -751,6 +759,12 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
                 l.lattices.insert(name, (ty(&base), lub));
             }
             S::Pragma => match t.pragma(node).map_err(at)?.as_slice() {
+                // `.pragma "bound-family" "request complete member…"`: a finite request domain, and the evidence a
+                // member's negation needs (`bound_family`).
+                [key, family] if key == "bound-family" => {
+                    bound_family::check_names(family).map_err(at)?;
+                    l.prog.push_setting("pragma".to_owned(), format!("\"bound-family\" {}", quote(family)));
+                }
                 [magic, relations] if magic == "magic-transform" => {
                     l.prog.edit(|b| b.demand(), |d| Field::Demand(d), |d| d.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned)));
                 }
@@ -853,6 +867,9 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
     // The module's header goes into its version with its rules: what the link and the modules that include it read.
     let version = std::mem::take(&mut l.out).version(std::mem::take(&mut l.prog))?;
     let version = l.merge_helpers(version)?;
+    // A bound family's members (`.pragma "bound-family"`, its own and its includes'): each reader's request, and the
+    // completeness a negated member needs.
+    let version = bound_family::lower(&version, &seeds.families, &l.deps)?.unwrap_or(version);
     // Each `.shape` names what its rules read, in the version: a relation of their body, and the variables it waits
     // for.
     shapes_hold(&version, &shapes)?;
@@ -1677,12 +1694,15 @@ impl PendingFindings {
 }
 
 /// What `findings` reads of a program's rules, which it does not see.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct RulesSeen {
     /// Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
     pub place_values: bool,
     /// The first tool call's relation a rule reads (`TOOL_CALLS`), refused outside `.scope tool_calls`.
     pub reads_tool_call: Option<&'static str>,
+    /// The relations a rule heads: a violation none heads (its heads all `@place` or `@git_commit_location`) has no
+    /// document's rows.
+    pub heads: BTreeSet<String>,
     /// Whether a rule, the program's or its library's, reads a guest relation (`parsed`, `guest_of`, …), `guest_place`
     /// and `tape_of` declared: only then can a finding's node be a tape value's, placed through the string that holds
     /// it (`guest_place`, decision 0431 §3).
@@ -2960,7 +2980,36 @@ impl Lowerer {
             // `V(@place(path, line), …)` for a `.violation V`: a row of V's place relation.
             let mut rel = head.rel.clone();
             let mut written = head.args.clone();
-            if let Some(T::Call { name, functor: true, args: place }) = head.args.first().map(|a| self.tv(a))
+            // `V(@git_commit_location(repo, commit[, field]), …)` for a `.violation V`: a row of V's commit location
+            // relation, at a commit and no file's line.
+            let mut made: Option<Vec<Tm>> = None;
+            if let Some(T::Call { name, functor: true, args: at }) = head.args.first().map(|a| self.tv(a))
+                && name == "git_commit_location"
+            {
+                if !self.violations.iter().any(|v| v.name == head.rel) {
+                    return Err(Error::Syntax("@git_commit_location belongs in a violation head".to_owned()));
+                }
+                let (repo, commit, field) = match at.as_slice() {
+                    [repo, commit] => (repo, commit, None),
+                    [repo, commit, field] => (repo, commit, Some(field)),
+                    _ => return Err(Error::Syntax("@git_commit_location takes a repository, a commit and an optional field".to_owned())),
+                };
+                rel = commit_location_relation(&head.rel);
+                if self.prog.columns_of(&rel).is_none() {
+                    let mut cols: Vec<(String, String)> = [("repository", "sym"), ("commit", "sym"), ("has_field", "int"), ("field", "sym")].into_iter().map(|(c, t)| (c.to_owned(), t.to_owned())).collect();
+                    cols.extend(self.prog.columns_of(&head.rel).expect("a `.violation` is declared").into_iter().skip(1));
+                    self.prog.declare_cols(&rel, cols);
+                }
+                let field = match field {
+                    Some(f) => self.term_tm(f)?,
+                    None => self.str_tm(""),
+                };
+                let mut args = vec![self.term_tm(repo)?, self.term_tm(commit)?, Tm::Int(i64::from(at.len() == 3)), field];
+                for a in head.args.iter().skip(1) {
+                    args.push(self.term_tm(a)?);
+                }
+                made = Some(args);
+            } else if let Some(T::Call { name, functor: true, args: place }) = head.args.first().map(|a| self.tv(a))
                 && name == "place"
                 && let Some(k) = self.violations.iter().position(|v| v.name == head.rel)
             {
@@ -2974,7 +3023,10 @@ impl Lowerer {
                 rel = place_relation(&head.rel);
                 written = [path.clone(), line.clone()].into_iter().chain(head.args.iter().skip(1).cloned()).collect();
             }
-            let args = written.iter().map(|a| self.term_tm(a)).collect::<Result<Vec<_>, _>>()?;
+            let args = match made {
+                Some(args) => args,
+                None => written.iter().map(|a| self.term_tm(a)).collect::<Result<Vec<_>, _>>()?,
+            };
             for k in 0..combinations {
                 // The empty value's variables, of the combination's literals (a scan of them), then its rule.
                 self.subs.truncate(1);
@@ -5598,13 +5650,14 @@ fn kind_set_name(kind: &str) -> String {
 
 /// The variables of literals, the relations passed to built-ins (`nearest(n, a, scope)`'s `scope`) left out.
 /// The relations of decision 0055's guests: a rule's request for a guest cannot wait on them.
-/// The relations a guest or value read asks through (`demand`).
-const DEMANDS: [&str; 3] = ["rr_embed_req", "rr_parse_req", "rr_splice_req"];
+/// The relations a guest or value read asks through (`demand`): `embed`'s, `@parse`'s and `@splice`'s (the corpus's
+/// guests answer them, `corpus::guests`).
+pub const DEMANDS: [&str; 3] = ["rr_embed_req", "rr_parse_req", "rr_splice_req"];
 
 /// The placeholder for a demand's location (`value_demand`).
 const LOCATED: &str = "rr_located";
 
-const GUEST_RELATIONS: [&str; 10] = ["parsed", "sub_tape", "rr_program", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
+const GUEST_RELATIONS: [&str; 11] = ["parsed", "sub_tape", "rr_program", "doc_grammar", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
 
 /// The tape operations (decision 0058 §4): function, arity, the relation it reads, and that relation's columns.
 pub(super) const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
@@ -5797,8 +5850,19 @@ pub fn undo_round(prog: &mut (impl crate::code_rule_dsl::logic::program_image::f
 /// The file system's answers and their requests (t21 E1).
 pub const FILE_SYSTEM: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
 
-/// Every answer of a file and its request: the file system's (`FILE_SYSTEM`), then each language's
-/// (`answerers`), one row an answer's relation. A request of several relations has a row for each.
+/// The engine's other answers and their requests: a Git view's revisions, objects, payloads and inventory, and the
+/// analysis history's scans. Each request is of several columns, made by rules (`git.rerail`, `analysis.rerail`).
+pub const ENGINE_ANSWERS: [(&str, &str); 6] = [
+    ("git_view_revision_of", "git_view_revision_request"),
+    ("git_revision_of", "git_revision_request"),
+    ("git_object_of", "git_object_request"),
+    ("git_payload_of", "git_payload_request"),
+    ("git_inventory_child_of", "git_inventory_child_request"),
+    ("analysis_history_of", "analysis_history_lookup"),
+];
+
+/// Every answer of a file and its request: the file system's (`FILE_SYSTEM`), the engine's others (`ENGINE_ANSWERS`),
+/// then each language's (`answerers`), one row an answer's relation. A request of several relations has a row for each.
 pub static WORLD: World = World;
 
 /// `WORLD`'s rows. Made once the languages are installed, and not before: a process whose languages install after
@@ -5808,14 +5872,15 @@ pub struct World;
 
 impl World {
     pub fn iter(&self) -> std::slice::Iter<'static, (&'static str, &'static str)> {
-        static FS: [(&str, &str); 3] = FILE_SYSTEM;
+        static ENGINE: std::sync::OnceLock<Vec<(&'static str, &'static str)>> = std::sync::OnceLock::new();
         static ALL: std::sync::OnceLock<Vec<(&'static str, &'static str)>> = std::sync::OnceLock::new();
+        let engine = || FILE_SYSTEM.into_iter().chain(ENGINE_ANSWERS);
         if !crate::code_rule_dsl::language::answerers_installed() {
-            return FS.iter();
+            return ENGINE.get_or_init(|| engine().collect()).iter();
         }
         ALL.get_or_init(|| {
             let languages = crate::code_rule_dsl::language::answerers().iter().flat_map(|a| a.produces().iter().map(|r| (*r, a.request())));
-            FILE_SYSTEM.into_iter().chain(languages).collect()
+            engine().chain(languages).collect()
         })
         .iter()
     }
@@ -5824,7 +5889,11 @@ impl World {
 /// The request an answer's relation asks by its first column: the file system's, and a language's of one column. A
 /// request of several columns is made by rules (`c_pp_tu_req(tu, spec)`).
 fn world_demand(rel: &str) -> Option<&'static str> {
-    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d).filter(|d| crate::code_rule_dsl::language::answerer(d).is_none_or(|a| a.key_width() == 1))
+    // The file system's requests ask by the first column; the engine's other answers' are made by rules.
+    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d).filter(|d| match crate::code_rule_dsl::language::answerer(d) {
+        Some(a) => a.key_width() == 1,
+        None => FILE_SYSTEM.iter().any(|(_, f)| f == d),
+    })
 }
 
 

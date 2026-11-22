@@ -89,8 +89,8 @@ pub fn traffic(program: &crate::program::Words, files: &[&[u8]]) -> HashMap<(u32
 /// The place each word is lowered at: a word of a shared arm that is not its body's first place
 /// (`native_cpu_stream::shared_runs`) runs as the body's word, at the first place.
 fn lowered_at(native: &Structure) -> (Vec<usize>, Vec<bool>) {
-    let pushes = crate::native_cpu_stream::push_targets(native);
-    let shared = crate::native_cpu_stream::shared_runs(native, &pushes, None, None);
+    let pushes = crate::stream_analysis::push_targets(native);
+    let shared = crate::stream_analysis::shared_runs(native, &pushes, None, None);
     let n = native.structural.len();
     let mut at: Vec<usize> = (0..n).collect();
     for (&s, &(b, _)) in &shared.at {
@@ -156,12 +156,12 @@ pub fn by_traffic(native: &Structure, traffic: &HashMap<(u32, u32), u64>, cap: u
         union(&mut parent, &mut size, a, b);
     }
     // The program's edges, a word to each it goes on to.
-    let pushes = crate::native_cpu_stream::push_targets(native);
+    let pushes = crate::stream_analysis::push_targets(native);
     for pc in 0..n {
         if skipped[pc] {
             continue;
         }
-        let mut next = crate::native_cpu_stream::successors(native, &pushes, pc);
+        let mut next = crate::stream_analysis::successors(native, &pushes, pc);
         if matches!(native.structural[pc].operation, crate::native_ir::StructuralOperation::Token { .. }) && pc + 1 < n {
             next.push(pc + 1);
         }
@@ -224,7 +224,7 @@ pub fn by_states(native: &Structure) -> Cut {
         return Cut::one(0);
     }
     let (at, skipped) = lowered_at(native);
-    let pushes = crate::native_cpu_stream::push_targets(native);
+    let pushes = crate::stream_analysis::push_targets(native);
     let mut of: Vec<Option<u32>> = vec![None; n];
     let mut count = 0u32;
     for s in (0..n).filter(|&pc| !skipped[pc] && matches!(native.structural[pc].operation, Op::Token { .. })) {
@@ -236,7 +236,7 @@ pub fn by_states(native: &Structure) -> Cut {
                 continue;
             }
             of[pc] = Some(c);
-            let mut next = crate::native_cpu_stream::successors(native, &pushes, pc);
+            let mut next = crate::stream_analysis::successors(native, &pushes, pc);
             if matches!(native.structural[pc].operation, Op::Token { .. }) {
                 next.push(pc + 1);
             }
@@ -266,7 +266,7 @@ pub fn by_states(native: &Structure) -> Cut {
 /// that reach it meet; its `RETURN` returns from the rule that tail-called it. So no word is
 /// lowered twice, and each function has one entry.
 pub fn by_rules(native: &Structure) -> Cut {
-    use crate::native_cpu_stream::{callee, rule_successors};
+    use crate::stream_analysis::{callee, rule_successors};
     use std::collections::BTreeSet;
     let n = native.structural.len();
     if n == 0 {
@@ -276,7 +276,7 @@ pub fn by_rules(native: &Structure) -> Cut {
     // each rule a function, as the program says (the verifier checked only calls cross).
     if !native.rules.is_empty() {
         let of = (0..n).map(|pc| (native.rules.partition_point(|&s| usize::from(s) <= pc) - 1) as u32).collect();
-        return Cut { of, count: native.rules.len() as u32, calls: true, held: crate::native_cpu_stream::HELD_IN_RULES.to_vec(), pass: crate::native_cpu_stream::HELD_IN_RULES.to_vec(), reload: true, ..Cut::one(n) };
+        return Cut { of, count: native.rules.len() as u32, calls: true, held: crate::stream_analysis::HELD_IN_RULES.to_vec(), pass: crate::stream_analysis::HELD_IN_RULES.to_vec(), reload: true, ..Cut::one(n) };
     }
     // Else a state machine's rules, found: from each call's callee.
     let mut entries: BTreeSet<usize> = std::iter::once(0)
@@ -306,7 +306,7 @@ pub fn by_rules(native: &Structure) -> Cut {
         for pc in (0..n).filter(|&pc| !owned[pc].is_empty()) {
             for q in rule_successors(native, pc) {
                 if owned[q].len() > 1 && owned[q] != owned[pc] {
-                    meet.insert(crate::native_cpu_stream::past_gotos(native, q));
+                    meet.insert(crate::stream_analysis::past_gotos(native, q));
                 }
             }
         }
@@ -321,11 +321,11 @@ pub fn by_rules(native: &Structure) -> Cut {
     // A `GOTO` goes with the word it goes to: a jump to it is a jump there.
     for pc in 0..n {
         if matches!(native.structural[pc].operation, crate::native_ir::StructuralOperation::Goto { .. }) {
-            let t = crate::native_cpu_stream::past_gotos(native, pc);
+            let t = crate::stream_analysis::past_gotos(native, pc);
             if t < n {
                 of[pc] = of[t];
             }
         }
     }
-    Cut { of, count: entries.len() as u32, calls: true, held: crate::native_cpu_stream::HELD_IN_RULES.to_vec(), pass: crate::native_cpu_stream::HELD_IN_RULES.to_vec(), reload: true, ..Cut::one(n) }
+    Cut { of, count: entries.len() as u32, calls: true, held: crate::stream_analysis::HELD_IN_RULES.to_vec(), pass: crate::stream_analysis::HELD_IN_RULES.to_vec(), reload: true, ..Cut::one(n) }
 }

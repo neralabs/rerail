@@ -7,12 +7,17 @@ description = "The parsers' tests that need no engine: the .rerail ladder agains
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-tape-format/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-rust-stream/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
 # The block runs' outputs (`BlockRun`), in blocks (decision 0353).
 rerail-blocks = { path = "../blocks" }
+rerail-bitlex = { path = "../bitlex" }
+rerail-cpu-block = { path = "../cpu_block" }
+rerail-cpu-stream = { path = "../cpu_stream" }
+# Tier 2 as Rust, against the JIT (`aot_tests`, `json_tests`).
+rerail-rust-stream = { path = "../rust_stream" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 # Format 16's tapes, which the JSON suite compares (decision 0434).
 rerail-tape-format = { path = "../tape_format" }
@@ -23,14 +28,18 @@ tree-sitter-json = "=0.24.8"
 
 [dev-dependencies]
 rerail-context = { path = "../context", features = ["test-hooks"] }
+# Kotlin's shipped prover answers (`shipped_answers`, decision 0414), for its step in the AOT test.
+rerail-kotlin-parser = { path = "../kotlin_parser" }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-parser-tests = { path = ".", features = ["test-hooks"] }
 # Loading tier 2's Rust, built by rustc, in place of the JIT's code (`simdjson_forms_rust_trees_are_the_jits`).
 libc = "0.2.189"
 
-# The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
-[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+# The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
 # The block programs' Metal backend, for the Metal checks (`metal_tests`).
 rerail-metal = { path = "../metal", features = ["test-hooks"] }
+# The OS's library loader, for the ladder's ahead-of-time libraries (`aot_tests`).
+rerail-device = { path = "../../../gpu/device" }
 # simdjson itself, the measure the simdjson form is timed against (`simdjson_form_against_simdjson`).
 rerail-simdjson-native = { path = "../simdjson_native" }

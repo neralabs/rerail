@@ -368,7 +368,7 @@ pub fn drop_all() {
     clear();
     crate::code_rule_dsl::transducer::packed::metal_backend::drop_pipelines();
     rerail_metal::pool::drop_all();
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     rerail_accel::gpu::shared::drop_idle();
     if let Some(device) = crate::code_rule_dsl::transducer::packed::device::matcher() {
         device.drop_label_pipelines();

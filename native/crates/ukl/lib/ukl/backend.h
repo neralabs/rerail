@@ -44,11 +44,18 @@ typedef uint32_t ukl_mask_t;
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
+// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
+// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
+#ifndef UKL_CALLED
+#define UKL_CALLED static __attribute__((noinline))
+#endif
 #define UKL_GLOBAL device
 #define UKL_COHERENT device coherent(device)
 #define UKL_LOCAL threadgroup
 #define UKL_PRIVATE thread
-// A table at file scope (`UKL_TABLE const uint32_t t[2]={1u,2u};`) and a pointer into one (`UKL_TABLE_SPACE const T*`).
+// A table at file scope (`UKL_TABLE uint32_t t[2]={1u,2u};`: read-only on every backend, the macro its qualifiers) and a
+// pointer into one (`UKL_TABLE_SPACE const T*`).
 #define UKL_TABLE constant
 #define UKL_TABLE_SPACE constant
 
@@ -74,9 +81,11 @@ UKL_INLINE void ukl_tg_barrier_device() { threadgroup_barrier(mem_flags::mem_dev
 
 // Relaxed atomics on a device word, and a device-wide fence.
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return atomic_load_explicit((device atomic_uint*)p, memory_order_relaxed); }
-// A poll of a word another group writes (a grid barrier's generation, a queue's counts): a read-modify-write that
-// changes nothing, so it is served where the word's writes meet. On an M1 Max (Apple7) a relaxed atomic load polled
-// in a loop read the value before another group's write for 10^6 polls, while a compare-and-swap saw the new one.
+// A poll: the read of a word another threadgroup writes and this thread waits for, again and again (decision 0540).
+// On Apple's GPUs a relaxed load in a loop may keep reading the polling core's copy and never see the store (the
+// M1 Max, Q123; the Mac mini too: a grid barrier's waiters polled its generation a million times each and saw it
+// unchanged, while their compare-and-swaps after found it stepped). A read-modify-write that changes nothing reads
+// the coherent copy.
 UKL_INLINE uint32_t ukl_atomic_poll(UKL_GLOBAL uint32_t* p) { return atomic_fetch_or_explicit((device atomic_uint*)p, 0u, memory_order_relaxed); }
 UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { atomic_store_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
 UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_fetch_add_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
@@ -139,6 +148,12 @@ UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { retur
 #define UKL_CALLED static __device__
 #ifndef UKL_COLD
 #define UKL_COLD static __device__ __noinline__
+#endif
+// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
+// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
+#ifndef UKL_CALLED
+#define UKL_CALLED static __device__ __noinline__
 #endif
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
@@ -203,6 +218,12 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __reduce
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
+// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
+// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
+#ifndef UKL_CALLED
+#define UKL_CALLED static __attribute__((noinline))
+#endif
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
 #define UKL_LOCAL
@@ -244,6 +265,20 @@ UKL_INLINE uint32_t ukl_sg_inclusive_sum_native(uint32_t v __UKL_PARAMS) { retur
 UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_prefix(v, false); }
 #define UKL_NATIVE_SG_SEG 1
 UKL_INLINE uint32_t ukl_sg_seg_inclusive_native(bool add, uint32_t f, uint32_t v, uint32_t* fin __UKL_PARAMS) { return __ukl_cpu_seg(add, f, v, fin); }
+// The scans with the SIMD group's whole aggregate, read from the same operation's results.
+#define UKL_NATIVE_SG_TOTALS 1
+UKL_INLINE uint32_t ukl_sg_inclusive_sum_total_native(uint32_t v, uint32_t* total __UKL_PARAMS) { return __ukl_cpu_prefix_total(v, total); }
+UKL_INLINE uint32_t ukl_sg_seg_inclusive_total_native(bool add, uint32_t f, uint32_t v, uint32_t* fin, uint32_t* tv, uint32_t* tf __UKL_PARAMS)
+{
+    return __ukl_cpu_seg_total(add, f, v, fin, tv, tf);
+}
+UKL_INLINE uint32_t ukl_sg_seg_inclusive_ex_native(bool add, uint32_t f, uint32_t v, uint32_t* fin, uint32_t* ev, uint32_t* ef, uint32_t* tv,
+                                                  uint32_t* tf __UKL_PARAMS)
+{
+    return __ukl_cpu_seg_ex(add, f, v, fin, ev, ef, tv, tf);
+}
+// A scan's tile is 16 values a thread: each of the group's operations switches all its threads.
+#define UKL_SCAN_VT 16u
 
 UKL_INLINE void ukl_sg_barrier() { __ukl_cpu_wait(__UKL_AT_SG); }
 UKL_INLINE void ukl_tg_barrier() { __ukl_cpu_wait(__UKL_AT_TG); }
@@ -252,6 +287,9 @@ UKL_INLINE void ukl_tg_barrier_device() { __ukl_cpu_wait(__UKL_AT_TG); }
 // group yields to the others that run with it (ukl_cpu_shim.h). So a poll there is a round of every other group, and
 // a grid barrier's bound is a thousand rounds, not a GPU's million spins.
 #define ukl_poll_yield() __ukl_cpu_wait(__UKL_YIELD)
+// The groups that run together, known exactly (the launch's `resident`): a grid's join closes when they all have
+// joined, with no window (decision 0540 §3).
+#define UKL_GRID_RESIDENT() __ukl_cpu_resident()
 #ifndef UKL_GRID_SPINS
 #define UKL_GRID_SPINS 1000u
 #endif
@@ -296,6 +334,12 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __at
 #define UKL_CALLED static
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
+#endif
+// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
+// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
+#ifndef UKL_CALLED
+#define UKL_CALLED static __attribute__((noinline))
 #endif
 #define UKL_GLOBAL __global
 #define UKL_COHERENT volatile __global

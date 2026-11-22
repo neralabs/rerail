@@ -283,11 +283,10 @@ impl WireFile {
     }
 }
 
+/// Whether the workspace evaluates `clause` one file at a time (`CompiledClause::is_file_local`,
+/// which `CompiledCodeRule::reads_other_files` reads too).
 pub(super) fn is_file_local(clause: &CompiledClause) -> bool {
-    matches!(
-        clause.kind,
-        ClauseKind::Forbid(Query::Regex { .. } | Query::Ast { .. } | Query::File)
-    )
+    clause.is_file_local()
 }
 
 pub fn make_file(

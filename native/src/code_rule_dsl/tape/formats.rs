@@ -645,9 +645,14 @@ impl TapeDoc {
     /// The document read in its batch: a 16z tape's blocks decoded into `cache`, the batch's (the device's reads
     /// share it). The document itself stays its own, read in every batch it is in, each through its own cache; a
     /// tape of another format is read as held, and the document is returned as it is.
+    /// A tape whose blocks the batch's entries do not hold (a document made when first read, after its batch's cache
+    /// was sized: `syntax::Pending`) is read in a batch of its own (`alone`).
     pub fn in_batch(&self, cache: &Arc<f16::ZCache>) -> TapeDoc {
         if self.held.image.format() != Format::F16Z {
             return self.clone();
+        }
+        if self.z_tape().is_some_and(|t| cache.entry_size() < t.entry_size()) {
+            return self.alone();
         }
         let held = DocTape::in_batch(Arc::clone(&self.held.image), Arc::clone(&self.held.source), Some(Arc::clone(cache)));
         TapeDoc { held: Arc::new(held), ..self.clone() }

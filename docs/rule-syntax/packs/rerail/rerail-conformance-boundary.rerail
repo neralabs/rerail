@@ -1,0 +1,94 @@
+.policy "rerail-conformance-boundary" revision 2
+.description "Keep conformance independent of the authoring path: run programs through its command runner, import nothing from the pack-data or upstream scripts or pack generators, and hold no recorders."
+.language typescript
+.mode steer
+.scope include "conformance/**/*.ts", "conformance/**/*.mts", "conformance/**/*.cts", "conformance/**/*.tsx", "conformance/**/*.js", "conformance/**/*.mjs", "conformance/**/*.cjs", "conformance/**/*.jsx"
+.scope exclude "conformance/process.ts", "conformance/languages/shards.ts", "conformance/**/*.generated.ts"
+// Conformance checks what the authoring path (scripts/pack-data/, scripts/upstream/, a pack's upstream/ recorders)
+// produced, so it shares no code with it and runs programs only through conformance/process.ts. Four clauses, as the
+// JSON's; this file holds the TypeScript and JavaScript files, rerail-conformance-boundary.text.rerail the other files
+// under a recorders/ folder (the JSON's scope also takes `conformance/**/recorders/**`, of any language):
+//   import { execFileSync } from "node:child_process";   CHILD_PROCESS_IN_CONFORMANCE (also require(), import())
+//   import { record } from "../../scripts/pack-data/x.js"; AUTHORING_IMPORT_IN_CONFORMANCE (a .json or .yaml file is data)
+//   conformance/languages/recorders/eslint.ts            RECORDER_IN_CONFORMANCE (the file, at no line)
+//   writeFileSync(fixturesExpectedPath(pack), text)      EXPECTED_FINDINGS_WRITTEN_IN_CONFORMANCE
+//   import { runChecked, type CommandRunner } from "../../process.js";   not reported
+// The JSON's `regex` tests a node's text, as ast-grep's do (a search; `^`/`$` anchor the whole text); its `has`
+// without `stopBy` is a child, with `stopBy: end` any descendant.
+#include "tsx/rerail-module-loads.rerail"   // module_literal(n, s), loads_types_only(n)
+
+.violation CHILD_PROCESS_IN_CONFORMANCE(at: node) "Run programs through the CommandRunner in conformance/process.ts (runner.run, runChecked), taking the runner as a parameter; if it lacks an option you need, add it there."
+CHILD_PROCESS_IN_CONFORMANCE(n) :- module_literal(n, s), match("[\\\"'`](?:node:)?child_process(?:/promises)?[\\\"'`]", s), !loads_types_only(n).
+
+.violation AUTHORING_IMPORT_IN_CONFORMANCE(at: node) "Conformance doesn't import the authoring path. Shared code goes in conformance/ for scripts/ to import; code that records findings or fetches upstream goes in scripts/pack-data/ or scripts/upstream/."
+// A module under scripts/pack-data/ or scripts/upstream/, a pack's upstream/ or a recorders/ folder, by a relative
+// path or the pack's package; not a .json or .yaml file.
+AUTHORING_IMPORT_IN_CONFORMANCE(n) :- module_literal(n, s), match("[\\\"'`](?:(?:\\.{1,2}/)+(?:[^\\\"'`\\s]*/)?(?:scripts/(?:pack-data|upstream)|packs/[^\\\"'`/\\s]+/upstream|(?:[^\\\"'`\\s]*/)?recorders)|@neralabs/rerail-pack-[^/\\\"'`\\s]+/upstream)(?:/[^\\\"'`\\s]*)?[\\\"'`]", s), !match("(?s:.*)(?:\\.(?:json|ya?ml)[\\\"'`])(?s:.*)", n).
+
+.violation RECORDER_IN_CONFORMANCE(at: loc) "Recorders and expected-findings generators live on the authoring path: put this in scripts/pack-data/ or the pack's upstream/<tool>/ folder, not under conformance/."
+RECORDER_IN_CONFORMANCE(@place(p, 0)) :- doc(_, p, _), match("conformance/(?:.*/)?recorders/(?s:.*)", p).
+
+.violation EXPECTED_FINDINGS_WRITTEN_IN_CONFORMANCE(at: node) "Recorders and expected-findings generators live on the authoring path: put this in scripts/pack-data/ or the pack's upstream/<tool>/ folder, not under conformance/."
+// writeFile, appendFile or createWriteStream (any receiver) of the expected findings file.
+EXPECTED_FINDINGS_WRITTEN_IN_CONFORMANCE(c) :- kind(c, "call_expression"), match("(?:[\\w$]+\\.)*(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)\\s*\\((?s:.*)", c),
+    child(c, a, _), kind(a, "arguments"), match("(?s:.*)(?:fixturesExpectedPath\\s*\\(|fixtures\\.expected\\.json)(?s:.*)", a).
+
+// The pack's example (packs/rerail/pack.json).
+.test running_git_directly_is_reported exactly
+    .fixture "conformance/port-readiness/cache.ts" ```
+        import { execFileSync } from "node:child_process";
+
+        export function tracked(root: string, pathspec: string): string[] {
+          return execFileSync("git", ["ls-files", "-z", "--", pathspec], { cwd: root, encoding: "utf8" }).split(String.fromCharCode(0)).filter(Boolean);
+        }
+        ```
+    .expect CHILD_PROCESS_IN_CONFORMANCE at "conformance/port-readiness/cache.ts":1
+.end
+
+.test loading_child_process_and_the_authoring_path_is_reported exactly
+    .fixture "conformance/languages/load.mjs" ```
+        const cp = require("child_process");
+        const later = await import(`node:child_process/promises`);
+        export { spawn } from "node:child_process";
+        import { record } from "../../scripts/pack-data/record.js";
+        import upstream from "@neralabs/rerail-pack-eslint/upstream/rules.js";
+        export * from "./recorders/eslint.js";
+        writeFileSync(fixturesExpectedPath(pack), text);
+        await fs.appendFile(join(dir, "fixtures.expected.json"), more);
+        ```
+    .expect CHILD_PROCESS_IN_CONFORMANCE at "conformance/languages/load.mjs":1
+    .expect CHILD_PROCESS_IN_CONFORMANCE at "conformance/languages/load.mjs":2
+    .expect CHILD_PROCESS_IN_CONFORMANCE at "conformance/languages/load.mjs":3
+    .expect AUTHORING_IMPORT_IN_CONFORMANCE at "conformance/languages/load.mjs":4
+    .expect AUTHORING_IMPORT_IN_CONFORMANCE at "conformance/languages/load.mjs":5
+    .expect AUTHORING_IMPORT_IN_CONFORMANCE at "conformance/languages/load.mjs":6
+    .expect EXPECTED_FINDINGS_WRITTEN_IN_CONFORMANCE at "conformance/languages/load.mjs":7
+    .expect EXPECTED_FINDINGS_WRITTEN_IN_CONFORMANCE at "conformance/languages/load.mjs":8
+.end
+
+.test a_recorder_is_reported exactly
+    .fixture "conformance/languages/recorders/eslint.ts" ```
+        export const tool = "eslint";
+        ```
+    .expect RECORDER_IN_CONFORMANCE at "conformance/languages/recorders/eslint.ts":0
+.end
+
+// The pack's passing example, type-only loads, data files, reading the expected findings, and the runner itself.
+.test the_runner_and_data_pass exactly
+    .fixture "conformance/languages/checks/ungated.ts" ```
+        import { runChecked, type CommandRunner } from "../../process.js";
+
+        export async function isCommit(runner: CommandRunner, root: string, base: string): Promise<boolean> {
+          return (await runChecked(runner, ["git", "cat-file", "-t", base], { cwd: root })).trim() === "commit";
+        }
+        ```
+    .fixture "conformance/languages/types.ts" ```
+        import type { ChildProcess } from "node:child_process";
+        type Exec = typeof import("node:child_process").execFile;
+        import rules from "../../scripts/pack-data/rules.json" with { type: "json" };
+        const expected = readFileSync(fixturesExpectedPath(pack), "utf8");
+        ```
+    .fixture "conformance/process.ts" ```
+        import { execFile } from "node:child_process";
+        ```
+.end

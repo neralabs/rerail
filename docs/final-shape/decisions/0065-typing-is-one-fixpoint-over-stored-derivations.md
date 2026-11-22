@@ -244,7 +244,7 @@ figure without either one.
   dependency universe's summaries.
 - **t10 §2g** (corpus profile): "run the cross-file part as one fixpoint and drop the rounds … the incremental
   case is then the memo's job".
-- **ast-index-spike:** design index §17 scopes cross-file facts out, so it offers no prior form. The ledger's
+- **SQL index prototype:** design index §17 scopes cross-file facts out, so it offers no prior form. The ledger's
   row 20 (partition by file, global machinery only where needed) holds: the fixpoint is the needed global part.
 - **0052:** the per-file memo's keys (content, path, plan), and document keys hashed from the path, so node ids
   are stable across runs.

@@ -15,6 +15,9 @@ for b in blocks:
         continue
     f, l, c = locs[1]
     f = os.path.normpath(f)
+    # A crate's facade file holds re-exports, not definitions (widen_boot.py widens boot's).
+    if re.match(r'native/crates/[^/]+/src/lib\.rs$', f):
+        continue
     sites.add((f, int(l), int(c)))
 KW = r'(?:(?:const|unsafe|async)\s+)*(?:fn|struct|enum|union|trait|type|const|static|mod|use)\b'
 n = 0

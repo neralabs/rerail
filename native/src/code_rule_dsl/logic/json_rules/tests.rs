@@ -3,10 +3,9 @@
 
 use super::{patterns, pyre, souffle, textglob, value};
 use std::collections::BTreeSet;
-use std::path::Path;
 
-fn repo() -> &'static Path {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
+fn repo() -> std::path::PathBuf {
+    crate::source_tree::native().join("..")
 }
 
 /// Every JSON rule of main's pinned pack translates to the pack's `<id>.rerail`, byte for byte: the generated pack is

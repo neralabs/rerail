@@ -340,7 +340,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
 }
 
 fn root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
+    crate::source_tree::native().join("src/code_rule_dsl/logic")
 }
 
 /// T's expected rows of `rel` (its golden `<rel>.csv`, a fixture T wrote): its lines, as T shows its rows. A fixture
@@ -596,7 +596,7 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
     let store = ContentStore::open(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     let modules = Modules::default();
-    for (name, source) in syntax::sources(&store, syntax::tests::documents()).unwrap() {
+    for (name, source) in syntax::sources(&store, syntax::fixtures::documents()).unwrap() {
         modules.bind(&db, name, source).unwrap();
     }
     let t = Connection::open_in_memory().unwrap();
@@ -650,7 +650,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
     use crate::content_store::Binding;
     let path = crate::code_rule_dsl::fixtures::temp();
     let store = ContentStore::open(&path).unwrap();
-    let docs = syntax::tests::documents();
+    let docs = syntax::fixtures::documents();
     store.bind_names(&docs.iter().map(|d| Binding { name: d.core.clone(), digest: d.digest }).collect::<Vec<_>>()).unwrap();
     let db = Connection::open(&path).unwrap();
     let modules = Modules::default();
@@ -743,7 +743,7 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
             assert!(!sets.is_empty(), "{name} reads nearest");
             let placed = lowered.placed().unwrap();
             assert!(!placed.v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. })));
-            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
+            for (rel, source) in syntax::with_nearest(&store, syntax::fixtures::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
                 if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                     db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                     for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
@@ -787,7 +787,7 @@ fn t_programs_run_natively_over_atoms_like_t() {
     let mut ran = BTreeSet::new();
     for name in ["workload", "workload_demand", "calls"] {
         let (lowered, sets) = lowered_with_nearest(program(name), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())));
-        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
+        for (rel, source) in syntax::with_nearest(&store, syntax::fixtures::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
             if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                 db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                 for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
@@ -1042,7 +1042,7 @@ fn open_files() -> Vec<std::path::PathBuf> {
             })
             .collect()
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Vec::new()
     }
@@ -1437,6 +1437,40 @@ late(f, k) :- r(f, k), v = max x : { l(f, x) }, k >= v.
     assert_eq!(got["q"], [["1", "a.fi"], ["2", "b"]]);
     assert_eq!(got["early"], [["1", "2"], ["2", "1"]]);
     assert_eq!(got["late"], [["2", "9"]]);
+}
+
+/// A node's document compared with a bound (`d = @doc(n), d < B`: hiding's bound on a `doc` read, kept once the read
+/// itself is dropped, as in main's pack's ARG004) runs natively: `d` is a document key, an integer. The native engine
+/// declined it ("comparison <": `d` had no type), and a strict run stopped.
+#[test]
+fn a_documents_key_compared_with_a_bound_runs_natively() {
+    use crate::code_rule_dsl::logic::profile;
+    // `named` reads `total`, a count over every file: a cross-file stratum, which the native set engine plans.
+    let program = r#"
+.decl ids(n: node)
+ids(n) :- kind(n, "identifier").
+.decl total(c: number)
+total(c) :- c = count : { ids(_) }.
+.decl named(n: node, c: number)
+named(n, c) :- total(c), ids(n), d = @doc(n), d < 1342177280.
+.output named
+"#;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("doc_bound");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = y\n").unwrap();
+    std::fs::write(dir.join("b.py"), "z = 1\n").unwrap();
+    let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let ran = super::corpus::run(program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    let declined = profile::declined();
+    profile::set(false);
+    let rows = ran.as_ref().ok().map(|_| crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out"), "named").unwrap());
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap();
+    assert!(!declined.keys().any(|k| k.contains("named")), "{declined:?}");
+    let rows = rows.unwrap();
+    assert!(rows.len() == 3 && rows.iter().all(|r| r[1] == "3"), "x, y and z, each with the count: {rows:?}");
 }
 
 // ---- violations ----
@@ -2802,6 +2836,33 @@ fn a_probe_on_several_columns_reads_a_combinations_rows() {
     assert!((work - (100.0 + 100.0 * 1.0)).abs() < 1e-6, "work {work}");
 }
 
+/// Decision 0299's combination floor is for columns one reached from another: two columns bound by a cross
+/// product's atoms are independent pairs, and most are none of the relation's. `open_tuple(t) :- kind(t, tuple),
+/// child(t, c, _), unparen(c, m), …` was planned `kind`, a scan of `unparen`, then `child` by (t, c), priced a row a
+/// pair: past the head's binding the witness pricing (Q146) made the cross product nearly free (ep2: 61 M rows).
+#[test]
+fn a_cross_products_pairs_are_not_priced_a_combinations_rows() {
+    let p = parse_version(".decl k(t: number)\n.decl e(t: number, c: number, i: number)\n.decl u(c: number, m: number)\n.decl lit(m: number)\n.decl o(t: number)\no(t) :- k(t), e(t, c, _), !lit(c), u(c, m), !lit(m).\n.output o\n").unwrap();
+    let mut model = bare_model(&p);
+    for (rel, rows, cols) in [
+        ("k", 200.0, vec![(200.0, 1.0)]),
+        ("e", 70_000.0, vec![(20_000.0, 3.5), (70_000.0, 1.0), (40.0, 1_750.0)]),
+        ("u", 65_000.0, vec![(65_000.0, 1.0), (65_000.0, 1.0)]),
+        ("lit", 30_000.0, vec![(30_000.0, 1.0)]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 70_000.0;
+    let (order, work) = priced_first_rule(&model, &p);
+    let at = |name: &str| order.iter().position(|s| s.starts_with(name)).unwrap();
+    assert!(at("e(") < at("u("), "the tuple's children before `u`, not a scan of `u` per tuple: {order:?} at {work}");
+    assert!(work < 10_000.0, "a few rows a tuple: {work} {order:?}");
+}
+
 #[test]
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse_version(".decl a(x:number,y:number)\n").unwrap();
@@ -3115,7 +3176,7 @@ fn a_demanded_rule_may_be_led_by_a_constant_restricted_atom() {
     assert!(model.valid_live_driver(&order, &b, None), "a kept order led by it is kept");
 }
 
-/// A deferred join's request (`rr_deferred_pairs_x`, decision 0500) bounds its producer as a demand does (Q59): an
+/// A deferred join's request (`rr_deferred_pairs_x`, decision 0488) bounds its producer as a demand does (Q59): an
 /// atom a constant restricts may lead it, as corpus0's `lambda_arg` led by its lambdas (229), not its 14,360
 /// requested calls; an unrestricted atom may not.
 #[test]
@@ -3733,7 +3794,7 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
     assert!(!prep.0.contains_key(&line("z", 0, None)), "`anc` is not sized: `z` is not prepared");
 }
 
-/// Decision 0500: where both columns' keys are kept, a probe hits as often as the keys they share say. Containment
+/// Decision 0488: where both columns' keys are kept, a probe hits as often as the keys they share say. Containment
 /// takes the probed column's values as all present where it has as many distinct values as the binding (1,000
 /// each here), so a join of disjoint values was priced as if each probe hit; their filters say none does.
 #[test]
@@ -3764,7 +3825,7 @@ fn kept_keys_price_a_probe_by_the_keys_two_columns_share() {
     assert!(apart < 0.5 * containment, "keys two columns do not share are probes that miss: {apart} against {containment}");
 }
 
-/// Decision 0500: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):
+/// Decision 0488: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):
 /// the rows the two columns join, whichever is probed. Their fanouts and distinct values price a probe of `b` by `a`'s
 /// rows at a tenth of what it makes (the keys both hold heavy are 1% of `a`'s distinct values, and most of its rows).
 #[test]
@@ -3794,4 +3855,34 @@ fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
     let (with, without) = (last(true), last(false));
     assert!((with / joined - 1.0).abs() < 0.25, "priced by the counters: {with} rows against {joined}");
     eprintln!("a join of skewed columns: {with} rows priced by the counters, {without} without, {joined} made");
+}
+
+/// Past a bound head the search passes on one witness a binding only for a step joined by a bound variable, as the
+/// greedy `step` does: a cross product reads its rows until one passes the rest (Q240). A dict's keys and values
+/// unwrapped, `h(t) :- tgt(t), child(t, k0, i), child(t, v0, j), unparen(k0, k), unparen(v0, v)`, was led from the
+/// 233 targets through both `unparen` scans unjoined (69,690 rows each a target), priced at 461 work, and ran past
+/// 100 s on 300 files; probed by `child` first, a target reads a few rows.
+#[test]
+fn a_cross_product_past_a_bound_head_is_not_priced_as_one_witness() {
+    let p = parse_version(".decl tgt(t:number)\n.decl child(p:number,c:number,i:number)\n.decl unparen(e:number,t:number)\n.input tgt, child, unparen\n.decl h(t:number)\nh(t) :- tgt(t), child(t,k0,i), child(t,v0,j), unparen(k0,k), unparen(v0,v).\n.output h\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
+    for (rel, rows, ndv) in [("tgt", 233.0, vec![233.0]), ("child", 69_650.0, vec![23_217.0, 69_650.0, 103.0]), ("unparen", 69_690.0, vec![69_690.0, 69_690.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    model.stats.solve(["h"].into_iter().map(str::to_owned).collect());
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "h").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<_> = order.iter().filter_map(|s| b.atom(s.at)).map(|a| b.rel(a)).collect();
+    // Each `unparen` after the `child` that binds its node: probed, never scanned.
+    let first = |rel: &str| order.iter().position(|r| *r == rel).unwrap();
+    assert_eq!(order[0], "tgt", "{order:?}, work={work}");
+    assert!(first("child") < first("unparen"), "{order:?}, work={work}");
+    assert!(work < 1e4, "{order:?}: {work}");
 }

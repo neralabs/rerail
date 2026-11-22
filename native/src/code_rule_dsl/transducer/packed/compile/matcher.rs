@@ -270,11 +270,15 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
     // (the pool's work, which the caller's does not hold: Q135). Not a `labels.` stage: those take process CPU too,
     // which tapes in parallel would count again.
     let block = &*rows.block;
+    // Each tape's item in the caller's run (decision 0442): a pool thread that takes it reads the run's records.
+    let carry = crate::code_rule_dsl::logic::profile::carry();
     rows.found = crate::code_rule_dsl::prof::time("labels.facts", || {
         crate::code_rule_dsl::logic::profile::on_cores(|| {
             tapes
                 .par_iter()
-                .flat_map_iter(|tape| crate::code_rule_dsl::prof::time("fact_rows.tape", || {
+                .flat_map_iter(|tape| {
+                  let _in = carry.enter("fact_rows.tape");
+                  crate::code_rule_dsl::prof::time("fact_rows.tape", || {
                     let file = ast_grep_core::AstGrep::doc(tape.clone());
                     let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, tape.has_syntax_error());
                     // The tape's parents' gaps for its facts' gap tests, each parent's made once (Q135).
@@ -290,7 +294,8 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
                             ((Arc::as_ptr(fact) as usize, source), found)
                         })
                         .collect::<Vec<_>>()
-                }))
+                  })
+                })
                 .collect()
         })
     });
@@ -520,6 +525,9 @@ impl LoweredMatcher {
                         .map(|(tape, sets)| tape.with_labels(Arc::clone(sets)))
                         .collect::<Vec<_>>();
                     let found = self.evaluate(self.labels.def(id), &views, sets, &facts)?;
+                    // The views share each file's sets: dropped first, the write below is in place, not a copy of
+                    // every label's set (decision 0353).
+                    drop(views);
                     for (sets, set) in sets.iter_mut().zip(found) {
                         let slot = &mut Arc::make_mut(sets)[usize::from(id - LABEL_BASE)];
                         if *slot != set {
@@ -577,7 +585,10 @@ impl LoweredMatcher {
                         for &id in &ordered {
                             let (Label::Roots(program, _) | Label::Targets(program, _)) = self.labels.def(id) else { unreachable!() };
                             let view = tape.with_labels(Arc::clone(sets));
-                            for output in program.execute_roots(&view, [node])? {
+                            let outputs = program.execute_roots(&view, [node])?;
+                            // Dropped first, the marks below are written in place (decision 0353).
+                            drop(view);
+                            for output in outputs {
                                 let nodes = match self.labels.def(id) {
                                     Label::Roots(..) => vec![output.start],
                                     _ => output.captures.iter().map(|capture| capture.node).collect(),
@@ -910,8 +921,8 @@ impl LoweredWave {
             // A label in no step (none is expected) keeps its own.
             for local in 0..labels.defs.len() {
                 let id = LABEL_BASE + labels.offset + local as u16;
-                if let std::collections::hash_map::Entry::Vacant(e) = map.entry(id) {
-                    e.insert(fresh(&mut next)?);
+                if let std::collections::hash_map::Entry::Vacant(entry) = map.entry(id) {
+                    entry.insert(fresh(&mut next)?);
                 }
             }
             let rename = |label: u16| map.get(&label).copied().unwrap_or(label);
@@ -1303,14 +1314,14 @@ impl LoweredWave {
         // wrapped for the device, refused 43 tapes with a third of a 2 GB budget free (t62, Q203).
         if tapes.len() == 1 && matches!(found, Err(Error::BackendCapacity)) {
             crate::code_rule_dsl::prof::count("wave.tape_on_cpu", 1);
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             crate::code_rule_dsl::logic::profile::decision("a matcher wave's tape not admitted to the device, its roots found on the cores (0334)", || {
                 format!("{} nodes; the device: {}", tapes[0].transducer_len(), rerail_accel::gpu::shared::describe())
             });
             return self.roots_batch_budgeted(Backend::Cpu, tapes, active, WorkBudget::current());
         }
         match found {
-            Err(Error::BackendCapacity | Error::BackendLaunchLimit) if tapes.len() > 1 => {
+            Err(Error::BackendCapacity) if tapes.len() > 1 => {
                 let half = tapes.len() / 2;
                 let part = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
                 let (mut left, a) = self.roots_metal_split(&tapes[..half], &part(0..half))?;

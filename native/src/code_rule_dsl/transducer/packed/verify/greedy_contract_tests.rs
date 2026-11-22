@@ -59,7 +59,7 @@ fn greedy_contract_rejects_observable_and_reentered_query_continuations() {
             "query construction must reject unsupported greedy behavior at {pc}: {words:?}"
         );
     }
-    // Tempo's `admission_spike::advancing_greedy_reconvergence` program (the spike is placed
+    // The predecessor's `admission_spike::advancing_greedy_reconvergence` program (the spike is placed
     // test-only as `packed::admission_spike`, `f5de8998`).
     let counterexample = program(rerail_blocks::vector![
         word(REPEAT_BEGIN, 0, 0),

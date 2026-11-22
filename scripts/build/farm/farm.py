@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -23,7 +24,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 52
+VERSION = 57
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -60,8 +61,14 @@ USER_IDLE_SECONDS = 300
 # A remote step that takes longer than this has stalled: the compile runs here instead.
 COPY_SECONDS = 120
 COMPILE_SECONDS = 900
-# What a crate's build reads as a path must be hashed as it is, not with its checkout stripped.
-VERBATIM = "CARGO_MANIFEST_DIR,CARGO_MANIFEST_PATH,RERAIL_FIXTURES_DIR,RERAIL_ORACLES_DIR"
+# What a crate's build reads as a path must be hashed as it is, not with its checkout stripped. Not
+# RERAIL_FIXTURES_DIR: the tests read it as they run, and as they compile only to embed a fixture's
+# text (`oracle!`, native/src/code_rule_dsl/fixtures.rs), which the key holds; hashed as it is, it made
+# every test binary of every checkout its own (scripts/check/ci/path-free-builds.mjs keeps it so). A
+# hit from another checkout names this checkout's fixtures in its dep-info: sccache writes the
+# dep-info from its own `--emit=dep-info` run of this compile, never from the cache (upstream 81c2834,
+# in build-sccache's BASE), so cargo watches the files this checkout embeds.
+VERBATIM = "CARGO_MANIFEST_DIR,CARGO_MANIFEST_PATH,RERAIL_ORACLES_DIR"
 # Where cargo keeps the crates it downloads: the same files at the same paths on every machine.
 IN_PLACE = (os.path.join(HOME, ".cargo/registry/src"), os.path.join(HOME, ".cargo/git/checkouts"))
 # Variables a remote compile must not see: this machine's jobserver, terminal and farm plumbing.
@@ -455,15 +462,45 @@ def hot_marker(out_dir, crate, extra):
 LINKED = {"proc-macro", "cdylib", "dylib", "bin"}
 
 
+def linked_types(args):
+    """The crate types of a compile, a test harness (`--test`) as `bin`: an executable rustc links."""
+    types = set()
+    for t in values(args, "--crate-type"):
+        types.update(t.split(","))
+    if "--test" in args:
+        types.add("bin")
+    return types
+
+
+def fresh_inode(path):
+    """Replaces the program at `path` with a copy of itself, in a file of its own. The farm's sccache
+    writes a hit's files while its other threads start compilers, each of which holds the file open
+    until it execs: cargo running the program then fails with "Text file busy" (ETXTBSY; twice in an
+    hour on the build boxes, 2026-11-18). The copy is a file only this process wrote and closed. A
+    copy that fails (a full disk, a refused write) keeps the program as the compile wrote it: the
+    compile succeeded, and only this bookkeeping did not."""
+    tmp = f"{path}.farm-{os.getpid()}"
+    try:
+        shutil.copy2(path, tmp)
+        os.replace(tmp, path)
+    except FileNotFoundError:
+        pass  # no program: the compile failed, or wrote none
+    except OSError as e:
+        # The partial copy goes first: it frees the space a full disk needs for the log line.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        log(f"fresh_inode: {path} kept as written: {e}")
+
+
 def same_in_every_checkout(args, out_dir, crate):
     """Arguments that keep what rustc links (a proc macro's dylib, a build script, the engine's cdylib)
     free of its checkout's and target directory's paths: its install name and the debug map's paths
     to the objects it links. The farm's sccache caches these (`SCCACHE_CACHE_LINKED`), and every crate
     that uses a proc macro hashes its dylib. A cached one's debug map names objects of the target
     directory that compiled it: elsewhere, its own code has no line tables."""
-    types = set()
-    for t in values(args, "--crate-type"):
-        types.update(t.split(","))
+    types = linked_types(args)
     if not types & LINKED or not out_dir:
         return []
     # `<target>/<profile>/deps`: the debug map's paths start at the profile's directory.
@@ -880,12 +917,6 @@ def wrapper(rustc, args):
         if os.path.exists(plain):
             os.execv(plain, [plain, rustc] + args)
         os.execv(rustc, [rustc] + args)
-    # Linux: a program cargo runs (a build script, a binary) is compiled here, never written by the
-    # farm's sccache. Its server writes a hit's files while its other threads start compilers, each of
-    # which holds the file open until it execs, and running the program then fails with "Text file
-    # busy" (ETXTBSY; twice in an hour on the build boxes, 2026-11-18). macOS has no such error.
-    if sys.platform != "darwin" and "bin" in ",".join(values(args, "--crate-type")).split(","):
-        os.execv(rustc, [rustc] + args)
     # Not cargo's probes (`--print`, crate `___`): cargo keeps their output, a failure included, in
     # `target/.rustc_info.json`, and would replay a refusal after its cause was gone.
     if crate != "___" and not any(a == "--print" or a.startswith("--print=") for a in args):
@@ -921,6 +952,14 @@ def wrapper(rustc, args):
     for k in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"):
         env.pop(k, None)
     sccache_env(env)
+    # A program cargo runs (a build script, a binary, a test harness) gets a file of its own on Linux
+    # (`fresh_inode`); macOS has no "Text file busy". The compile keeps cargo's jobserver descriptors
+    # (`CARGO_MAKEFLAGS` names them), as the exec below does.
+    if sys.platform != "darwin" and "bin" in linked_types(args) and out_dir:
+        code = subprocess.run([SCCACHE, shim(rustc)] + args, env=env, close_fds=False).returncode
+        if code == 0:
+            fresh_inode(os.path.join(out_dir, crate + (codegen(args, "extra-filename") or "")))
+        sys.exit(code)
     os.execve(SCCACHE, [SCCACHE, shim(rustc)] + args, env)
 
 
@@ -1046,6 +1085,102 @@ def host_os(host):
     return host.get("os", "macos")
 
 
+# `uname -m`'s names, as test-remote's --arch takes them.
+ARCHES = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x86_64", "amd64": "x86_64"}
+
+
+def host_arch(host):
+    """`host`'s CPU architecture ("arm64", "x86_64"), as its last health probe found it (`arch` in
+    the configuration for one never probed: a guest not yet started); None when unknown. A Windows
+    host's is its WSL's, the same machine's."""
+    return read_json(state("health", host["name"]), {}).get("arch") or host.get("arch")
+
+
+def host_memory_gb(host):
+    """The memory a command on `host` has, in GB: a VM's own (a guest's is less than its machine's),
+    from its last health probe (`memory_gb` in the configuration for one never probed); None when
+    unknown. A Windows host's is its WSL VM's, under what Windows itself has."""
+    return read_json(state("health", host["name"]), {}).get("memory_gb") or host.get("memory_gb")
+
+
+# ---- a host's CPU: its model, its features under one set of names, its vector lengths
+#
+# Each health probe asks (`CPU_SCRIPT`), so a guest restarted on other hardware is seen at once; a
+# stopped guest keeps what its last run found. test-remote's `--cpu-feature`, `features` and
+# `status` read it, and a test-remote command gets it as RERAIL_FARM_CPU_* (`cpu_env`).
+
+# One line: "cpu MODEL|FEATURES|SVE BYTES|SME BYTES". macOS: the hw.optional flags set to 1 (arm64's
+# under `arm.`), the SME streaming length; Linux (and a Windows host, through its WSL): cpuinfo's
+# flags or Features, each core type's model (big.LITTLE: "Cortex-X925+Cortex-A725"), the kernel's
+# default SVE and SME lengths.
+CPU_SCRIPT = {
+    "macos": "echo \"cpu $(sysctl -n machdep.cpu.brand_string)|$(sysctl hw.optional 2>/dev/null | awk -F': ' '$2 == 1 {print $1}' | tr '\\n' ' ')||$(sysctl -n hw.optional.arm.sme_max_svl_b 2>/dev/null)\"",
+    "linux": "echo \"cpu $(lscpu 2>/dev/null | awk -F': *' '/^Model name/ {print $2}' | grep -v '^-$' | paste -sd+ -)|$(grep -m1 -E '^(flags|Features)' /proc/cpuinfo | cut -d: -f2)|$(cat /proc/sys/abi/sve_default_vector_length 2>/dev/null)|$(cat /proc/sys/abi/sme_default_vector_length 2>/dev/null)\"",
+}
+# Linux's and macOS's names for one feature, as the farm names it (Linux x86's names otherwise).
+CPU_ALIASES = {"asimd": "neon", "advsimd": "neon", "asimdhp": "fp16", "asimddp": "dotprod", "asimdfhm": "fhm",
+               "asimdrdm": "rdm", "fphp": "fp16", "advsimd_hpfpcvt": "fp16_cvt"}
+# The vector units, in the order `vector_summary` names them.
+VECTOR_FEATURES = ["sse4_2", "avx", "avx2", "fma", "f16c", "avx_vnni", "avx512f", "avx512bw", "avx512vl",
+                   "avx512_vnni", "avx512_bf16", "avx512_fp16", "amx_tile", "neon", "fp16", "dotprod", "fhm",
+                   "bf16", "i8mm", "sve", "sve2", "sme", "sme2"]
+
+
+def parse_cpu(line):
+    """The record of a CPU_SCRIPT line: {"model", "features", "sve_bytes", "sme_bytes"}, or None."""
+    if not line.startswith("cpu "):
+        return None
+    parts = (line[4:].split("|") + ["", "", ""])[:4]
+    features = set()
+    for w in parts[1].split():
+        if w.startswith("hw.optional."):
+            w = w[len("hw.optional."):]
+            if not w.startswith("arm."):
+                continue  # macOS's older names (armv8_*, neon_*): the arm.* ones say the same
+            w = w[4:]
+            w = w[5:] if w.startswith("FEAT_") else w
+        w = w.lower()
+        features.add(CPU_ALIASES.get(w, w))
+    return {"model": parts[0].strip() or None, "features": sorted(features),
+            "sve_bytes": int(parts[2]) if parts[2].strip().isdigit() else None,
+            "sme_bytes": int(parts[3]) if parts[3].strip().isdigit() else None}
+
+
+def local_cpu():
+    """This Mac's CPU record (as a host's), read once a day."""
+    path = state("cpu-local.json")
+    c = read_json(path, None)
+    if c is None or time.time() - c.get("at", 0) > 86400:
+        out = subprocess.run(["sh", "-c", CPU_SCRIPT["macos" if sys.platform == "darwin" else "linux"]],
+                             capture_output=True, text=True, timeout=20).stdout.strip()
+        c = dict(parse_cpu(out) or {}, at=time.time())
+        write_json(path, c)
+    return c
+
+
+def host_cpu(host):
+    """`host`'s CPU record (`parse_cpu`) from its last health probe (`cpu` in the configuration for
+    one never probed), or {}."""
+    return read_json(state("health", host["name"]), {}).get("cpu") or host.get("cpu") or {}
+
+
+def vector_summary(cpu):
+    """`cpu`'s vector units, in a few words: "neon, bf16, i8mm, sve2 (SVE 128-bit)"."""
+    have = set(cpu.get("features") or [])
+    words = [f for f in VECTOR_FEATURES if f in have]
+    lengths = [f"{k} {cpu[k + '_bytes'] * 8}-bit" for k in ("sve", "sme") if cpu.get(k + "_bytes")]
+    return ", ".join(words) + (f" ({', '.join(x.upper() for x in lengths).replace('-BIT', '-bit')})" if lengths else "") if words else ""
+
+
+def cpu_env(cpu):
+    """What a command is told of the CPU it runs on: RERAIL_FARM_CPU_MODEL, RERAIL_FARM_CPU_FEATURES
+    (space-separated, the farm's names), RERAIL_FARM_SVE_BITS and RERAIL_FARM_SME_BITS (0: none)."""
+    return {"RERAIL_FARM_CPU_MODEL": cpu.get("model") or "",
+            "RERAIL_FARM_CPU_FEATURES": " ".join(cpu.get("features") or []),
+            "RERAIL_FARM_SVE_BITS": str((cpu.get("sve_bytes") or 0) * 8),
+            "RERAIL_FARM_SME_BITS": str((cpu.get("sme_bytes") or 0) * 8)}
+
+
 def entry(name):
     """`name`'s configuration entry, or {} (a name ssh knows that the farm does not)."""
     return next((h for h in hosts() if h["name"] == name), {})
@@ -1132,7 +1267,8 @@ def probe(host, cfg, fell_back=False, recovered=False):
     previous = read_json(state("health", name), {})
     h = {"checked": time.time(), "ok": False, "failures": previous.get("failures", 0),
          "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0),
-         "mbps_seen": [s for s in previous.get("mbps_seen", []) if time.time() - s[0] < MBPS_MEMORY_SECONDS]}
+         "mbps_seen": [s for s in previous.get("mbps_seen", []) if time.time() - s[0] < MBPS_MEMORY_SECONDS],
+         "arch": previous.get("arch"), "memory_gb": previous.get("memory_gb"), "cpu": previous.get("cpu")}
     if previous.get("route") != route(name):
         h["mbps"], h["mbps_at"], h["mbps_seen"] = None, 0, []  # another path: its throughput is not known
     # Free disk: what macOS gives an important write (AVAILABLE_JS), then statvfs's, in KB.
@@ -1153,6 +1289,10 @@ def probe(host, cfg, fell_back=False, recovered=False):
         # Counted first; docker may be outside a plain ssh command's PATH on a Mac.
         script = ('echo "fleet $(PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin '
                   'docker ps -q --filter label=fleet.job 2>/dev/null | wc -l)"; ' + script)
+    # Its CPU architecture and memory (`host_arch`, `host_memory_gb`; test-remote's --arch and
+    # --memory), first: a VM's own, which is what a command there gets.
+    memory = "$(($(sysctl -n hw.memsize) / 1024))" if host_os(host) == "macos" else "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+    script = f'echo "hw $(uname -m) {memory}"; {CPU_SCRIPT["macos" if host_os(host) == "macos" else "linux"]}; ' + script
     # Asked twice before it counts as down, the second time with longer to answer: one lost or slow
     # connection (this Mac at a load of 90 can take seconds to start ssh) is not a host gone.
     for timeout in (10, 20):
@@ -1176,6 +1316,13 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = blocked or "unreachable (off, asleep, or off the network)"
         return h
     lines = out.stdout.splitlines()
+    if lines and lines[0].startswith("hw "):
+        words = lines.pop(0).split()
+        if len(words) == 3 and words[2].isdigit():
+            h["arch"] = ARCHES.get(words[1], words[1])
+            h["memory_gb"] = round(int(words[2]) / (1 << 20))
+    if lines and lines[0].startswith("cpu "):
+        h["cpu"] = parse_cpu(lines.pop(0)) or h.get("cpu")
     fleet_jobs = None
     if lines and lines[0].startswith("fleet "):
         fleet_jobs = h["fleet_jobs"] = int(lines.pop(0).split()[1] or 0)
@@ -1354,6 +1501,9 @@ def health(host, fresh=False):
                    "starting": "a guest, starting", "stopping": "a guest, stopping"}[g["state"]]
             return dict(h or {}, ok=False, why=why + (f" ({g['why']})" if g.get("why") and g["state"] == "stopped" else ""),
                         guest=g["state"])
+        if g.get("state") == "unknown" and g.get("why"):
+            # Its provider did not answer (a cloud guest's gcloud signed out): that, not "unreachable".
+            return dict(h or {}, ok=False, why=f"a guest, its state unknown: {g['why']}", guest="unknown")
     if h is not None and not fresh:
         if h.get("ok") and now - h.get("checked", 0) < HEALTHY_SECONDS:
             return h
@@ -1903,13 +2053,73 @@ def farm_rustc(argv0, args):
 
 def local(rustc, args):
     """Compiles here, in one of this machine's slots: held by this process, since a lock does not
-    survive an exec."""
+    survive an exec. A compile that fails on a stale library it links (`stale_externs`) has those
+    rebuilt (`rebuild_extern`) and runs once more."""
     lock = local_slot()
     try:
-        code = subprocess.run([rustc] + args).returncode
+        code, err = compile_here(rustc, args)
+        rebuilt = [name for name in stale_externs(err, args) if rebuild_extern(rustc, name, args)]
+        if code != 0 and rebuilt:
+            code, err = compile_here(rustc, args)
     finally:
         lock.release()
+    sys.stderr.buffer.write(err)
     sys.exit(code)
+
+
+def compile_here(rustc, args):
+    """rustc's exit status and its stderr (cargo's JSON diagnostics: written once the compile's fate
+    is known, so a failure the farm repairs is not shown)."""
+    p = subprocess.run([rustc] + args, stderr=subprocess.PIPE)
+    return p.returncode, p.stderr
+
+
+# rustc refusing a library it links: missing in effect (E0463, also when the file is there but was
+# built against another version of a crate below it), built against another version of a crate
+# (E0460, which names the library that depends on it), or by another rustc (E0514).
+STALE_EXTERN = [re.compile(rb"can't find crate for `(\w+)`"),
+                re.compile(rb"found possibly newer version of crate `\w+` which `(\w+)` depends on"),
+                re.compile(rb"found crate `(\w+)` compiled by an incompatible version of rustc")]
+
+
+def stale_externs(err, args):
+    """The `--extern` crates of `args` that rustc's stderr `err` refused as built against other
+    versions of what they link (2026-11-21: cranelift_frontend in a target, built against a
+    cranelift_codegen since replaced under the same file name and cargo fingerprint, with a file time
+    no newer than the frontend's: cargo saw both fresh)."""
+    externs = {e.split("=", 1)[0] for e in values(args, "--extern") if "=" in e}
+    found = []
+    for pattern in STALE_EXTERN:
+        for m in pattern.finditer(err):
+            name = m.group(1).decode()
+            if name in externs and name not in found:
+                found.append(name)
+    return found
+
+
+def rebuild_extern(rustc, name, args, depth=0):
+    """Compiles the library `--extern name=...` of `args` again, as it was compiled (its `calls`
+    record), against the libraries there now, in place of the stale one; its own stale libraries
+    first (a few levels). True when it was rebuilt."""
+    path = next((os.path.abspath(e.split("=", 1)[1]) for e in values(args, "--extern") if e.split("=", 1)[0] == name), None)
+    rec = read_json(state("calls", key(stem_of(path))), None) if path else None
+    if rec is None or depth > 3:
+        log(f"{name}: stale, and no record of its compile to repeat")
+        return False
+    run_env = dict(os.environ, **rec["env"])
+    p = subprocess.run([rustc] + rec["args"], cwd=rec["cwd"], env=run_env, stderr=subprocess.PIPE)
+    if p.returncode != 0:
+        below = [n for n in stale_externs(p.stderr, rec["args"]) if rebuild_extern(rustc, n, rec["args"], depth + 1)]
+        if below:
+            p = subprocess.run([rustc] + rec["args"], cwd=rec["cwd"], env=run_env, stderr=subprocess.PIPE)
+    ok = p.returncode == 0
+    note = (f"{name}: {os.path.basename(path)} was built against another version of a crate it links "
+            f"(same file name, same cargo fingerprint); {'compiled again here' if ok else 'compiling it again failed'}")
+    log(note)
+    with open(state("stale-externs.log"), "a") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {path}: {note}\n")
+    sys.stderr.write(f"warning: rerail-farm: {note}\n")
+    return ok
 
 
 if __name__ == "__main__" and sys.argv[1:2] == ["free-host"]:

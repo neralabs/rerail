@@ -1,0 +1,32 @@
+[package]
+name = "rerail-cpu-block"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Tier 1 on the CPU: block programs lowered to Cranelift, their byte vectors, the token loop's bytes, walks and row programs."
+# The vendored Cranelift's cfgs (`cranelift_clmul`, `cranelift_preserve_most`), set as for the compiler's front end.
+build = "../compiler/build.rs"
+
+[features]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-context/test-hooks"]
+
+[dependencies]
+# The block runs' outputs (`BlockRun`), in blocks (decision 0353).
+rerail-blocks = { path = "../blocks" }
+rerail-compiler = { path = "../compiler" }
+rerail-context = { path = "../context" }
+cranelift-codegen = "=0.125.4"
+cranelift-frontend = "=0.125.4"
+cranelift-module = "=0.125.4"
+libc = "0.2.189"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
+
+# The browser build: a page has no executable memory (the engine's `wasm/README.md`).
+[target.'cfg(target_family = "wasm")'.dependencies]
+cranelift-jit-wasm = { path = "../../wasm/cranelift-jit" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-cpu-block = { path = ".", features = ["test-hooks"] }

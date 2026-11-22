@@ -187,7 +187,7 @@ DEFINE_KERNEL2(rows, rows_scatter,
 /// low bits.
 pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, params: &[i64]) -> Result<Scanned, Error> {
     super::metal_sort::ready()?;
-    // The launch budget every submission is checked against.
+    // An evaluation of the launch budget, or the caller's when it is in one: the pass's launches are charged to it.
     let _scope = super::metal_backend::launch::LaunchScope::enter();
     let body = predicate(program, inputs, &resident.forms)?;
     let src = source(&body, &resident.forms);
@@ -218,7 +218,7 @@ pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, param
         // SAFETY: the total's word, read after the submission; with no tiles nothing writes it.
         unsafe { *offsets.buffer.contents().cast::<u32>() = 0 };
     }
-    let (gpu, ok) = pass.commit().map_err(device_err)?.wait_ok();
+    let (gpu, ok) = pass.commit().map_err(Error::from)?.wait_ok();
     if !ok {
         return Err(Error::BackendFailure);
     }

@@ -1,0 +1,105 @@
+.policy "rerail-fixed-value-lists" revision 2
+.description "Derive host, audit scope, mode, status and failure code, rule mode and pack category lists from their shared constants instead of restating the values."
+.language typescript
+.mode log
+.scope include "src/**/*.ts", "scripts/**/*.ts", "integration/**/*.ts"
+.scope exclude "src/engine/adapter-contract.ts", "src/engine/catalog/rule-mode.ts", "src/engine/audit/audit.ts", "src/engine/catalog/rule-packs.ts", "**/*.test.ts", "**/test/**", "**/*.generated.ts", "src/engine/storage/baseline-schema.ts", "src/engine/storage/migrations.ts"
+// Hosts, audit scopes, statuses, modes and failure codes, rule modes and pack categories are fixed lists, each
+// exported by its owner as a constant. A TypeScript file that restates one, in its order, as an array, the
+// arguments of a call, or a union type, drifts when the list changes. Seven text searches over each file, one per
+// list, as the JSON's regex clauses:
+//   host: z.enum(["omp", "pi", "claude-code", "codex", "cursor"]),     HOST_LIST_RESTATED
+//   type Scope = "repository" | "touched-files" | "ai-output";         AUDIT_SCOPE_LIST_RESTATED
+//   ["running", "completed", "failed", "interrupted", "superseded"]    AUDIT_STATUS_LIST_RESTATED
+//   mode: "steer" | "log" | undefined;                                 AUDIT_MODE_LIST_RESTATED
+//   z.enum(["log", "steer", "block"])                                  RULE_MODE_LIST_RESTATED
+//   ["language", "framework", "repository"]                            PACK_CATEGORY_LIST_RESTATED
+//   ["budget-exceeded", "missing-capability", "source-incomplete", …]  AUDIT_FAILURE_CODE_LIST_RESTATED
+//   z.enum(RERAIL_HOSTS), ["omp", "pi"], ["log", "steer", "block", "off"]  not reported
+// A finding sits where the match starts. The regexes are the JSON's, copied exactly.
+
+.violation HOST_LIST_RESTATED(at: span) "Use RERAIL_HOSTS from src/engine/adapter-contract.ts (via src/engine outside src/): the array, z.enum(RERAIL_HOSTS) or its [number] type. Leave lists with other values alone."
+HOST_LIST_RESTATED(m) :- source(_, sp), match_all("(?m)(?:[\\[(:=<]|^)\\s*[\"']omp[\"']\\s*[,|]\\s*[\"']pi[\"']\\s*[,|]\\s*[\"']claude-code[\"']\\s*[,|]\\s*[\"']codex[\"']\\s*[,|]\\s*[\"']cursor[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)", sp, m).
+
+.violation AUDIT_SCOPE_LIST_RESTATED(at: span) "Use AUDIT_SCOPES from src/engine/audit/audit.ts (via src/engine outside src/): the array, z.enum(AUDIT_SCOPES) or its [number] type. Leave lists with other values alone."
+AUDIT_SCOPE_LIST_RESTATED(m) :- source(_, sp), match_all("(?m)(?:[\\[(:=<]|^)\\s*[\"']repository[\"']\\s*[,|]\\s*[\"']touched-files[\"']\\s*[,|]\\s*[\"']ai-output[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)", sp, m).
+
+.violation AUDIT_STATUS_LIST_RESTATED(at: span) "Use AUDIT_STATUSES from src/engine/audit/audit.ts (via src/engine outside src/): the array, z.enum(AUDIT_STATUSES) or its [number] type. Leave lists with other values alone."
+AUDIT_STATUS_LIST_RESTATED(m) :- source(_, sp), match_all("(?m)(?:[\\[(:=<]|^)\\s*[\"']running[\"']\\s*[,|]\\s*[\"']completed[\"']\\s*[,|]\\s*[\"']failed[\"']\\s*[,|]\\s*[\"']interrupted[\"']\\s*[,|]\\s*[\"']superseded[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)", sp, m).
+
+.violation AUDIT_MODE_LIST_RESTATED(at: span) "Use AUDIT_MODES from src/engine/audit/audit.ts (via src/engine outside src/): the array, z.enum(AUDIT_MODES) or its [number] type. Leave lists with other values alone."
+AUDIT_MODE_LIST_RESTATED(m) :- source(_, sp), match_all("(?m)(?:[\\[(:=<]|^)\\s*[\"'](?:steer|log)[\"']\\s*[,|]\\s*[\"'](?:log|steer)[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)", sp, m).
+
+.violation RULE_MODE_LIST_RESTATED(at: span) "Use RULE_MODES from src/engine/catalog/rule-mode.ts (via src/engine outside src/): the array, z.enum(RULE_MODES) or its [number] type. Leave lists with other values alone."
+RULE_MODE_LIST_RESTATED(m) :- source(_, sp), match_all("(?m)(?:[\\[(:=<]|^)\\s*[\"']log[\"']\\s*[,|]\\s*[\"']steer[\"']\\s*[,|]\\s*[\"']block[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)", sp, m).
+
+.violation PACK_CATEGORY_LIST_RESTATED(at: span) "Use RULE_PACK_CATEGORIES from src/engine/catalog/rule-packs.ts (via src/engine outside src/): the array, z.enum(RULE_PACK_CATEGORIES) or its [number] type. Leave lists with other values alone."
+PACK_CATEGORY_LIST_RESTATED(m) :- source(_, sp), match_all("(?m)(?:[\\[(:=<]|^)\\s*[\"']language[\"']\\s*[,|]\\s*[\"']framework[\"']\\s*[,|]\\s*[\"']repository[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)", sp, m).
+
+.violation AUDIT_FAILURE_CODE_LIST_RESTATED(at: span) "Use AUDIT_FAILURE_CODES from src/engine/audit/audit.ts (via src/engine outside src/): the array, z.enum(AUDIT_FAILURE_CODES) or its [number] type. Leave lists with other values alone."
+AUDIT_FAILURE_CODE_LIST_RESTATED(m) :- source(_, sp), match_all("(?m)(?:(?:[\\[(:=<]|^)\\s*[\"']budget-exceeded[\"']\\s*[,|]\\s*[\"']file-budget-exceeded[\"']\\s*[,|]\\s*[\"']witness-limit[\"']\\s*[,|]\\s*[\"']input-limit[\"']\\s*[,|]\\s*[\"']missing-capability[\"']\\s*[,|]\\s*[\"']source-incomplete[\"']\\s*[,|]\\s*[\"']source-partial[\"']\\s*[,|]\\s*[\"']adapter-error[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)|(?:[\\[(:=<]|^)\\s*[\"']budget-exceeded[\"']\\s*[,|]\\s*[\"']missing-capability[\"']\\s*[,|]\\s*[\"']source-incomplete[\"']\\s*[,|]\\s*[\"']source-partial[\"']\\s*[,|]\\s*[\"']adapter-error[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b))", sp, m).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_restated_host_list_is_reported exactly
+    .fixture "src/runtime/event-protocol.ts" ```
+          host: z.enum(["omp", "pi", "claude-code", "codex", "cursor"]),
+        ```
+    .expect HOST_LIST_RESTATED at "src/runtime/event-protocol.ts":1
+.end
+
+.test each_list_is_reported exactly
+    .fixture "scripts/lists.ts" ```
+        type Host = "omp" | "pi" | "claude-code" | "codex" | "cursor" | undefined;
+        type Scope = "repository" | "touched-files" | "ai-output";
+        const statuses = ["running", "completed", "failed", "interrupted", "superseded"];
+        let mode: "steer" | "log" = "log";
+        const modes = z.enum(['log', 'steer', 'block']);
+        const categories = [
+          "language",
+          "framework",
+          "repository",
+        ];
+        const failures = ["budget-exceeded", "missing-capability", "source-incomplete", "source-partial", "adapter-error"];
+        const all = ["budget-exceeded", "file-budget-exceeded", "witness-limit", "input-limit", "missing-capability", "source-incomplete", "source-partial", "adapter-error"];
+        ```
+    .expect HOST_LIST_RESTATED at "scripts/lists.ts":1
+    .expect AUDIT_SCOPE_LIST_RESTATED at "scripts/lists.ts":2
+    .expect AUDIT_STATUS_LIST_RESTATED at "scripts/lists.ts":3
+    .expect AUDIT_MODE_LIST_RESTATED at "scripts/lists.ts":4
+    .expect RULE_MODE_LIST_RESTATED at "scripts/lists.ts":5
+    .expect PACK_CATEGORY_LIST_RESTATED at "scripts/lists.ts":6
+    .expect AUDIT_FAILURE_CODE_LIST_RESTATED at "scripts/lists.ts":11
+    .expect AUDIT_FAILURE_CODE_LIST_RESTATED at "scripts/lists.ts":12
+.end
+
+// Lists with other values, in another order, or cut short pass.
+.test other_lists_pass exactly
+    .fixture "integration/other.ts" ```
+        const hosts = ["omp", "pi"];
+        const scopes = ["touched-files", "repository", "ai-output"];
+        const statuses = ["running", "completed", "failed"];
+        const pairs = ["log", "debug"];
+        const modes = ["log", "steer", "block", "off"].map(String);
+        const kinds = ["language", "framework", "repository", "tool"];
+        const codes = ["budget-exceeded", "missing-capability"];
+        ```
+.end
+
+// The pack's passing example, and the owners the scope leaves out.
+.test the_constants_and_their_owners_pass exactly
+    .fixture "src/api/operations.ts" ```
+          host: z.enum(RERAIL_HOSTS),
+        ```
+    .fixture "src/engine/adapter-contract.ts" ```
+        export const RERAIL_HOSTS = ["omp", "pi", "claude-code", "codex", "cursor"] as const;
+        ```
+    .fixture "src/engine/catalog/rule-mode.ts" ```
+        export const RULE_MODES = ["log", "steer", "block"] as const;
+        ```
+    .fixture "src/engine/audit/audit.ts" ```
+        export const AUDIT_MODES = ["steer", "log"] as const;
+        ```
+    .fixture "src/runtime/test/lists.ts" ```
+        const modes = ["steer", "log"];
+        ```
+.end

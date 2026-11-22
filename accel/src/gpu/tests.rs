@@ -224,10 +224,10 @@ fn page_aligned_inputs_are_not_copied() {
     let Some(g) = gpu() else { return };
     let page = g.gpu.page;
     let n = page / 4 * 3;
-    // Three whole pages, page-aligned, freed at the end.
+    // Three pages, page-aligned, given back at the end.
     let layout = std::alloc::Layout::from_size_align(n * 4, page).unwrap();
     // SAFETY: a non-zero size.
-    let p = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<std::ffi::c_void>();
+    let p: *mut libc::c_void = unsafe { std::alloc::alloc_zeroed(layout) }.cast();
     assert!(!p.is_null());
     let col = unsafe { std::slice::from_raw_parts_mut(p as *mut u32, n) };
     col.iter_mut().enumerate().for_each(|(i, x)| *x = i as u32 * 7);

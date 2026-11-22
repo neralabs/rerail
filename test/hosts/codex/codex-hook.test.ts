@@ -110,10 +110,10 @@ describe("Codex one-shot hook", () => {
   });
 
   it("shows the person a plain line for a conflict a note surfaces, with its card's link printed", () => {
-    const note = conflictNote({ file: "src/model.ts", peer: "jbarnes/shape", author: null, summary: "SQLite stays the system of record", pullRequest: false });
-    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jbarnes/shape: model.ts", url: "http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678" };
+    const note = conflictNote({ file: "src/model.ts", peer: "jdoe/shape", author: null, summary: "SQLite stays the system of record", pullRequest: false });
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jdoe/shape: model.ts", url: "http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678" };
     expect(codexHookOutput("PostToolUse", [{ ...delivery("steer", note), conflict }])).toEqual({
-      systemMessage: "◆ Rerail · your edit overlaps jbarnes/shape: model.ts  ·  open → http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678",
+      systemMessage: "◆ Rerail · your edit overlaps jdoe/shape: model.ts  ·  open → http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678",
       hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: note },
     });
     expect(note).toContain("End your final message with one line telling the user which branch overlaps and what you did.");

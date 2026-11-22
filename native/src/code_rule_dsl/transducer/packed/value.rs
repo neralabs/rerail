@@ -477,7 +477,7 @@ impl LuaProgram {
     }
 
     /// Exercise the shared CPU work counter with exactly `remaining` steps available.
-    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
     pub fn test_match_with_budget(
         &self,
         bytes: &[u8],
@@ -842,7 +842,7 @@ impl ByteNfa {
     }
 
     /// Exercise the same bounded CPU matcher used by the unbounded cost oracle.
-    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
     pub fn test_match_with_budget(
         &self,
         bytes: &[u8],

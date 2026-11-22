@@ -833,6 +833,12 @@ impl Induction {
         proved
     }
 
+    /// Whether a stream that begins within the window has `v` at delay `d` (`prove`'s first solve): a stream's, so
+    /// no lemma rules it out and `never` and `never_inductive` both fail on `v`.
+    pub fn refuted(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
+        matches!(self.solve(ops, tables, v, d, None, true, &[0; 4]), Outcome::Way(..))
+    }
+
     /// A lemma proved by the caller: these values (each an operation, a lag from the position
     /// as a `prev` reads it, and its value) never hold together at a position in the stream.
     /// Over carried values, it constrains a window's edge, where they are free. The caller

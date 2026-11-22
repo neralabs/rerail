@@ -341,7 +341,7 @@ result(t) :- node(_,n,_,_,_), text(n,t).
 
 #[test]
 fn long_text_fallback_keeps_short_and_long_results_across_memo_replay() {
-    let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension("long-text-domain");
+    let base = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("long-text-domain");
     let root = base.join("src");
     std::fs::create_dir_all(&root).unwrap();
     let long = format!("[{}]", vec!["123"; 100].join(","));
@@ -376,7 +376,7 @@ result(t) :- field(_,"right",n), text(n,t).
     let caller = crate::code_rule_dsl::logic::profile::caller();
     let runs: Vec<_> = ["111", "222", "333", "444"].into_iter().map(|digits| (digits, caller.clone())).map(|(digits, caller)| std::thread::spawn(move || {
         let _caller = caller.enter();
-        let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("long-text-{digits}"));
+        let base = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension(format!("long-text-{digits}"));
         let root = base.join("src");
         std::fs::create_dir_all(&root).unwrap();
         let long = format!("[{}]", vec![digits; 100].join(","));

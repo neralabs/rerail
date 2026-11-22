@@ -132,7 +132,7 @@ fn make(path: &Path) {
 /// what a test's first run would do before it reads its own files.
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
-    let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
+    let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
     let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rerail".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
@@ -191,7 +191,7 @@ impl Drop for Store {
 /// The files under `dir` this process holds open, each named once a descriptor (macOS: `F_GETPATH`).
 #[cfg(target_vendor = "apple")]
 pub fn held_under(dir: &Path) -> Vec<String> {
-    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
+    let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
     let prefix = format!("{}/", dir.display());
     (0..8192)
         .filter_map(|fd| {
@@ -285,11 +285,10 @@ pub(super) fn is_own(path: &Path) -> bool {
 
 /// Removes the directories of test processes that have exited.
 fn sweep_copies() {
-    let me = std::process::id();
     for entry in std::fs::read_dir(copies()).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(pid) = name.split('-').next().and_then(|p| p.parse::<i32>().ok()) else { continue };
-        if pid as u32 != me && crate::content_store::process_gone(pid) {
+        if crate::content_store::process_gone(pid) {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
@@ -385,7 +384,9 @@ struct Lock(std::fs::File);
 impl Lock {
     fn take(path: &Path) -> Lock {
         let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path).expect("the template's lock");
-        file.lock().expect("the template's lock");
+        while let Err(error) = file.lock() {
+            assert_eq!(error.kind(), std::io::ErrorKind::Interrupted, "the template's lock: {error}");
+        }
         Lock(file)
     }
 }

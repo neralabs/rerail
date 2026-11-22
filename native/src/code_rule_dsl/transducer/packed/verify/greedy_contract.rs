@@ -109,7 +109,7 @@ pub fn ordered_headers(words: &[u32]) -> Result<Vec<(usize, usize)>, Error> {
 /// Budget-sensitive acyclic joins in a validated query. A complete acyclic
 /// path with no early value work executes at most words.len() instructions.
 /// Otherwise a join stays active before a different budget can exhaust.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn acyclic_joins(program: &super::Program) -> Vec<(usize, usize)> {
     let words = &program.words;
     let mut predecessors = vec![rerail_blocks::vector::Vector::new(); words.len()];

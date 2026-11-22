@@ -112,6 +112,10 @@ The user's choices, 2026-11-21: the cache is the one "which owns the GPU version
 - A document holds no cache. A read takes its batch's (`FactsIn`, `TapeDoc::in_batch`); a reader outside every
   batch (a host read by an embedder, a store-time read) makes a batch of the documents it reads
   (`TapeImage::own_cache`, `Facts::alone`).
+- A batch's cache is sized by the documents made when it grows. A document made when first read (`syntax::Pending`,
+  Q332, from the merge of django-bugs, 2026-11-22) has no tape until then, so its blocks may not fit the batch's
+  entries. Such a tape is read in a batch of its own (`TapeDoc::in_batch`, `Projected::narrowed`), and
+  `Tape16Z::reader` refuses a cache whose entries are smaller than its blocks. A misfit is never read wrong.
 - A 16z tape is not walked when it is loaded: its reads are bounded (0463), so a malicious tape cannot reach
   memory outside its block. The user's rule: "The requirement is not that we validate every tape on every
   decompression, it's to stop a malicious tape from reading or writing memory it shouldn't".

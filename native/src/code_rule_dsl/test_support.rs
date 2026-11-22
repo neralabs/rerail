@@ -2,19 +2,19 @@
 
 use super::matcher::GrammarMatcher;
 use super::model::{ClauseKind, Query};
-use super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
+use super::CompiledCodeRuleDsl;
 use napi::Result;
 use serde_json::{Map, Value, json};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 
 /// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which is not in
 /// git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch and derive it.
 pub(super) fn pack_test_data(relative: &str) -> PathBuf {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(relative);
+    let path = crate::source_tree::native()
+    .join("..")
+    .join(relative);
     assert!(
         path.exists(),
         "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each \
@@ -62,11 +62,7 @@ pub(super) fn compile_typescript_rule(rule: Value) -> Result<CompiledCodeRuleDsl
             "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
         }],
     });
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        CAPABILITIES.to_owned(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES)
 }
 
 pub(super) fn evaluate_file(
@@ -101,11 +97,7 @@ pub(super) fn compile_document_with(
     document: Value,
     capabilities: &Value,
 ) -> Result<CompiledCodeRuleDsl> {
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        capabilities.to_string(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", &capabilities.to_string())
 }
 
 pub(super) fn clause_document(clause: Value) -> Value {
@@ -437,4 +429,27 @@ pub(super) fn pattern_for<D: 'static>(
     } else {
         unfiltered_pattern(text, lang)
     }
+}
+
+/// This test binary as a child process at the lowest priority (AGENTS.md: every test run at a high nice value):
+/// through `nice -n 19` on Unix; on Windows, which has no `nice`, started in the idle priority class.
+pub(crate) fn niced_self() -> std::process::Command {
+    let exe = std::env::current_exe().expect("the test binary's path");
+    #[cfg(unix)]
+    {
+        let mut c = std::process::Command::new("nice");
+        c.args(["-n", "19"]).arg(exe);
+        c
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        /// `IDLE_PRIORITY_CLASS`: the process runs when nothing else on the machine wants the CPU.
+        const IDLE_PRIORITY_CLASS: u32 = 0x40;
+        let mut c = std::process::Command::new(exe);
+        c.creation_flags(IDLE_PRIORITY_CLASS);
+        c
+    }
+    #[cfg(not(any(unix, windows)))]
+    std::process::Command::new(exe)
 }

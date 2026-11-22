@@ -22,8 +22,18 @@ if [ -n "$installed" ] && [ "$installed" -gt "$mine" ] && [ -z "$force" ]; then
   echo "       (merge the newer farm into this checkout, or --force to go back)" >&2
   exit 1
 fi
+# The same version from another branch can hold changes this checkout lacks (2026-11-21: farm 54
+# replaced a branch's 53 with its pack-data sending, and that branch's tests lost their fixtures).
+# The commit an install came from must be in this checkout's history.
+head=$(git -C "$here" rev-parse HEAD)
+from=$(cat "$share/installed-from" 2>/dev/null || true)
+if [ -n "$from" ] && [ -z "$force" ] && ! git -C "$here" merge-base --is-ancestor "$from" "$head" 2>/dev/null; then
+  echo "setup: the installed farm came from commit $from, which this checkout has not merged: not installed over it" >&2
+  echo "       (merge that commit's farm changes into this checkout, or --force to drop them)" >&2
+  exit 1
+fi
 mkdir -p "$share/bin" "$config"
-for f in farm.py mirror.py guest.py guests rustc-wrapper farm-rustc farm-cc farm-agent gpu-guard status diagnose free-local dashboard sampler sampler.ps1 cloud-deadman; do
+for f in farm.py mirror.py guest.py guests rustc-wrapper farm-rustc farm-cc farm-agent gpu-guard status bench features diagnose free-local dashboard sampler sampler.ps1 cloud-deadman; do
   install -m 0755 "$here/$f" "$share/$f.tmp" && mv "$share/$f.tmp" "$share/$f"
 done
 install -m 0755 "$here/../../dev/clean-target" "$share/clean-target.tmp" && mv "$share/clean-target.tmp" "$share/clean-target"
@@ -33,6 +43,7 @@ for f in test-remote live-test-remote; do
   install -m 0755 "$here/../../dev/$f" "$share/$f.tmp" && mv "$share/$f.tmp" "$share/$f"
 done
 ln -sf farm-cc "$share/farm-c++"
+echo "$head" > "$share/installed-from"
 # What an earlier version installed and this one has not: copy and NFS modes.
 for f in remote-rustc shared-volume; do [ -e "$share/$f" ] && mv "$share/$f" "${TMPDIR:-/tmp}/rerail-farm-old-$f.$$"; done
 if [ $# -gt 0 ]; then install -m 0755 "$1" "$share/bin/sccache.tmp" && mv "$share/bin/sccache.tmp" "$share/bin/sccache"; fi

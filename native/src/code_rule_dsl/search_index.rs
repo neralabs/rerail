@@ -25,7 +25,7 @@ pub fn kind_code(doc: &TapeDoc, pre: u32) -> u16 {
     if doc.transducer_flags(pre) & 8 != 0 { 0 } else { doc.transducer_kind(pre) }
 }
 
-/// Version 3: kind tokens are kind atoms (the prefilter's `kind_token`), as Pulling-it-all-together's
+/// Version 3: kind tokens are kind atoms (the prefilter's `kind_token`), as PIAT's
 /// `ftsk` spelled them, so dialects never share a token. Version 5: the stream is a tape's
 /// records, which hold no implied token (RER-131), so positions renumber.
 pub const POSITIONAL_INDEX_VERSION: i64 = 5;

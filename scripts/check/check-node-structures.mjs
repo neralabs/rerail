@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Nodes live in tapes (decision 0026, after ast-index-spike: "nothing may store one row per node",
+// Nodes live in tapes (decision 0026, after the SQL index prototype: "nothing may store one row per node",
 // t4 §1.1, Representation rules 1-4; dead end D14, persisted sidecars). The rule is about what is
 // stored: the store tests `no_relation_stores_a_row_per_node` and S7 hold every table to at most
 // 0.25 rows per node. In-memory state a reader builds from a tape is not covered.

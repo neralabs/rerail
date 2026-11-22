@@ -5,7 +5,7 @@
 //! Copyright (c) 2026 Jeremy Barnes. This file is part of MLDB's forest as carried in Rerail. Apache-2.0 (see the
 //! LICENSE at `forest/src/mldb/`).
 //!
-//! - **No CUDA at build time.** The driver (`libcuda`) and NVRTC are opened at run time; without them there is no
+//! - **No CUDA at build time.** The driver (`libcuda`, Windows' `nvcuda.dll`) and NVRTC are opened at run time; without them there is no
 //!   device (`CudaDevice::system_default` is `None`), as on a Mac without Metal.
 //! - **Buffers are pinned, mapped host memory** (`cuMemHostAlloc`): the host reads and writes them in place
 //!   (`contents`), as Metal's shared storage, and kernels read them where they are. On a unified device (GB10) that
@@ -90,13 +90,29 @@ const CU_MEMHOSTREGISTER_DEVICEMAP: u32 = 0x02;
 const CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES: i32 = 1;
 const CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES: i32 = 8;
 
-/// The first of `names` the loader opens.
-fn open(names: &[String]) -> Option<Ptr> {
-    names.iter().find_map(|n| {
-        let c = CString::new(n.as_str()).ok()?;
-        let h = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) };
-        (!h.is_null()).then_some(h)
-    })
+/// The driver's library, and NVRTC's in the system's search and in the toolkit's (`CUDA_HOME`, Windows' `CUDA_PATH`).
+fn library_names() -> (&'static [&'static str], Vec<String>) {
+    if cfg!(windows) {
+        let nvrtc = ["nvrtc64_130_0.dll", "nvrtc64_120_0.dll", "nvrtc64_112_0.dll"];
+        let mut names: Vec<String> = nvrtc.iter().map(|s| s.to_string()).collect();
+        if let Ok(home) = std::env::var("CUDA_PATH") {
+            names.extend(nvrtc.iter().map(|s| format!("{home}\\bin\\{s}")));
+        }
+        (&["nvcuda.dll"], names)
+    } else {
+        let home = std::env::var("CUDA_HOME").unwrap_or_else(|_| "/usr/local/cuda".into());
+        let nvrtc = ["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"];
+        let mut names: Vec<String> = nvrtc.iter().map(|s| s.to_string()).collect();
+        names.extend(nvrtc.iter().map(|s| format!("{home}/lib64/{s}")));
+        (&["libcuda.so.1", "libcuda.so"], names)
+    }
+}
+
+/// A symbol `dlsym` found, as the function pointer type `F` its field declares.
+fn sym_as<F>(p: *mut c_void) -> F {
+    const { assert!(size_of::<F>() == size_of::<*mut c_void>()) };
+    // SAFETY: `F` is the symbol's C function pointer type, the size of a pointer (checked above).
+    unsafe { std::mem::transmute_copy(&p) }
 }
 
 /// The driver and NVRTC, opened once; `Err` says what is missing.
@@ -110,19 +126,18 @@ fn api() -> Result<&'static Api, String> {
             // SAFETY: once, before the driver loads, as the process's first use of the device.
             unsafe { std::env::set_var("CUDA_DEVICE_MAX_CONNECTIONS", MAX_CONNECTIONS.to_string()) };
         }
-        let cuda = open(&["libcuda.so.1".into(), "libcuda.so".into()]).ok_or("no CUDA driver (libcuda.so.1)")?;
-        let home = std::env::var("CUDA_HOME").unwrap_or_else(|_| "/usr/local/cuda".into());
-        let mut names: Vec<String> = ["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"].iter().map(|s| s.to_string()).collect();
-        names.extend(["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"].iter().map(|s| format!("{home}/lib64/{s}")));
-        let nvrtc = open(&names).ok_or("no NVRTC (libnvrtc.so; CUDA_HOME/lib64)")?;
+        use crate::os::{Lib, Scope};
+        let (driver, nvrtc_names) = library_names();
+        let cuda = Lib::open(driver, Scope::Global).ok_or_else(|| format!("no CUDA driver ({})", driver.join(", ")))?;
+        let nvrtc = Lib::open(&nvrtc_names, Scope::Global).ok_or_else(|| format!("no NVRTC ({})", nvrtc_names.join(", ")))?;
         macro_rules! sym {
             ($lib:expr, $($name:literal)|+) => {{
                 let mut p: *mut c_void = std::ptr::null_mut();
-                $( if p.is_null() { p = unsafe { libc::dlsym($lib, concat!($name, "\0").as_ptr().cast()) }; } )+
+                $( if p.is_null() { p = $lib.sym($name); } )+
                 if p.is_null() {
                     return Err(format!("{} not found", [$($name),+].join(" or ")));
                 }
-                unsafe { std::mem::transmute::<*mut c_void, _>(p) }
+                sym_as(p)
             }};
         }
         Ok(Api {
@@ -438,7 +453,7 @@ static REGISTERED: std::sync::Mutex<std::collections::BTreeMap<u64, Run>> = std:
 
 fn page_bytes() -> u64 {
     static PAGE: OnceLock<u64> = OnceLock::new();
-    *PAGE.get_or_init(|| (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).max(4096) as u64)
+    *PAGE.get_or_init(|| crate::os::page_bytes() as u64)
 }
 
 /// Registers the pages of `[at, at + len)` that no run holds, as runs, and holds every run in it: the runs' starts.
@@ -560,7 +575,9 @@ impl CudaComputeFunctionLibrary {
     /// Compiles CUDA C++ (UKL preprocessed for this device) with NVRTC for the device's architecture, and loads it.
     pub fn compile_from_source(device: &CudaDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = device.current();
-        let options = [format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into()];
+        let mut options = vec![format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into()];
+        // `RERAIL_CUDA_OPTIONS`: more of NVRTC's options, a measurement aid (they are in the key).
+        options.extend(std::env::var("RERAIL_CUDA_OPTIONS").unwrap_or_default().split_whitespace().map(str::to_owned));
         // The store's cubin (`crate::store`), keyed by all the compile reads: NVRTC's and the driver's builds too.
         let (mut major, mut minor, mut driver) = (0, 0, 0);
         unsafe { (a.nvrtc_version)(&mut major, &mut minor) };
@@ -575,6 +592,7 @@ impl CudaComputeFunctionLibrary {
             }
         }
         crate::store::count(false);
+        crate::store::dump(file_name_to_appear_in_error_messages, "cu", &options.join(" "), preprocessed_source);
         let src = CString::new(preprocessed_source).map_err(|e| e.to_string())?;
         let name = CString::new(file_name_to_appear_in_error_messages).map_err(|e| e.to_string())?;
         let opts: Vec<CString> = options.into_iter().map(|o| CString::new(o).unwrap()).collect();
@@ -650,7 +668,7 @@ impl CudaComputeFunctionLibrary {
         let text = self.global(&format!("{function_name}__ukl_params"))?;
         let text = CStr::from_bytes_until_nul(&text).map_err(|e| e.to_string())?.to_str().map_err(|e| e.to_string())?.to_string();
         let rows = self.global(&format!("{function_name}__ukl_rows"))?;
-        let rows: Vec<u64> = rows.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+        let rows: Vec<u64> = rows.as_chunks::<8>().0.iter().map(|&c| u64::from_le_bytes(c)).collect();
         let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
         // The shared memory a launch may take beyond the kernel's static storage.
         let a = self.device.current();
@@ -729,7 +747,8 @@ impl CudaQueueRoot {
 }
 
 /// A queue of operations (`MetalComputeQueue`): launches, copies and fills in order on one of its root's streams. `flush`
-/// records an event to await; `finish` flushes and waits.
+/// records an event to await; `finish` flushes and waits. A queue dropped without a flush runs nothing (a Metal command
+/// buffer never committed): its operations and the buffers they would use are dropped with it.
 pub struct CudaComputeQueue {
     device: CudaDevice,
     stream: Ptr,
@@ -740,6 +759,12 @@ pub struct CudaComputeQueue {
     /// The buffers the work since the last flush uses that nothing else may hold (staging): kept to the event.
     keep: RefCell<Vec<CudaBuffer>>,
 }
+
+// SAFETY: the stream is its root's (which is `Send` and `Sync`), and the functions its launches name are the device's;
+// the driver is called only in `flush`, on the thread that flushes, after `CudaDevice::current` makes the device's
+// context current there. The queue moves between threads (a forest's scratch behind its mutex); it is not `Sync`:
+// its cells are its owner's.
+unsafe impl Send for CudaComputeQueue {}
 
 /// The bytes a staging buffer holds (a larger copy gets its own).
 const STAGING_BYTES: u64 = 64 << 10;
@@ -860,9 +885,6 @@ fn issue(a: &Api, stream: Ptr, op: Op) -> Result<(), String> {
         Op::WaitValue { at, value } => ck(unsafe { (a.cu_stream_wait_value64)(stream, at, value, CU_STREAM_WAIT_VALUE_GEQ) }, "cuStreamWaitValue64"),
     }
 }
-
-/// A queue dropped without a flush runs nothing (a Metal command buffer never committed): its operations and the
-/// buffers they would use are dropped with it.
 
 /// Work dropped before it completed (an event not awaited), and the buffers it uses: Metal keeps a command buffer's
 /// resources until it completes; here they go back to the pool once `end` has passed.

@@ -1,11 +1,11 @@
-// --- P1's `#if` and `#elif` expressions (decision 0501 §4) -----------------------------------------
+// --- P1's `#if` and `#elif` expressions (decision 0467 §4) -----------------------------------------
 //
 // Each active `#if`'s and `#elif`'s line is a top of its own, its directive word a stretch: its
 // tokens read in place through `IF_NODES` (a node each, the line's operands' leaves), at its
 // directive's slot. Its names are looked up there as the serial pass's `in_if` reads them:
 // `defined X` and `defined ( X )` are answered and their operands not expanded, and the
 // `__has_*` tests' operands are left raw. The line is then expanded by the text's own passes and
-// queue (`px_top_*`, `px_worker`), and each test's output is evaluated by one thread, as
+// rounds (`px_top_*`, `px_item`), and each test's output is evaluated by one thread, as
 // `expr::eval` evaluates it.
 
 // A top token's mark (`IF_OPS`): `defined` as the operator; a `__has_*` test followed by `(`.
@@ -888,7 +888,7 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
     vals[w] = sy_end(&y) ? 1u : 0u;
 }
 
-// --- `#line` (decision 0501 §6) ------------------------------------------------------------------
+// --- `#line` (decision 0467 §6) ------------------------------------------------------------------
 
 // The next byte of a string's content destringized (`destringize`: `\"` and `\\` one byte), from
 // `i`: the byte, and the index after it.

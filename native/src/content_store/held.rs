@@ -143,6 +143,7 @@ mod tests {
         assert!(held > 7 * N && held < 7 * N + 7 * 1024, "each segment its entry and a little more: {held}");
         assert_eq!(store.compact_memo_pack(1 << 40).unwrap(), 0, "below the floor");
         assert_eq!(store.compact_memo_pack(0).unwrap(), 0, "less than half unnamed");
+        assert_eq!(store.compact_memo_pack_within(1 << 40, 7).unwrap(), 0, "no more segments than the budget");
         store.put_memo_entries(&space, (0..6).map(|i| put(200 + i, "c.py")).collect(), 1).unwrap();
         assert_eq!(store.memo_pack_bytes().unwrap().1, 6 * N);
         let before = store.memo_entries(&space, &[2, 5, 100, 205], true).unwrap();
@@ -157,6 +158,67 @@ mod tests {
             assert_eq!(after[part].bytes.bytes(), blob.bytes.bytes(), "part {part} reads the same from the new segment");
         }
         drop(before);
+    }
+
+    /// The writer runs each job as a savepoint of its batch's one immediate transaction (`in_one_transaction`), so a
+    /// job's segment is named (`SealedSegments::name`) before the batch commits, and a compaction, which takes the
+    /// store's write lock, cannot read the job's rows before then: one tried during the batch finds the store busy
+    /// and merges nothing; one after it merges both entries and forgets neither.
+    #[test]
+    fn a_compaction_cannot_run_inside_the_batch_that_names_its_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let store = ContentStore::open(&path).unwrap();
+        let space = local_space(&[9u8; 32]);
+        let put = |part: i64| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![part as u8; 100], over: false };
+        // The memo directory's files: a named segment is `<n>.seg`, one not named yet its writer's `w-<pid>-<n>.seg`.
+        let segments = || -> Vec<String> { std::fs::read_dir(dir.path().join("store.sqlite.memo")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect() };
+        let named = |files: &[String]| files.iter().all(|f| f.strip_suffix(".seg").is_some_and(|n| n.parse::<i64>().is_ok()));
+        store.put_memo_entries(&space, vec![put(0)], 4).unwrap();
+        let during = store
+            .in_one_transaction(|| {
+                store.put_memo_entries(&space, vec![put(1)], 4).unwrap();
+                let compaction = std::thread::scope(|s| s.spawn(|| ContentStore::open(&path).unwrap().compact_memo_pack_within(u64::MAX, 0)).join().unwrap());
+                (compaction.map_err(|e| e.to_string()), segments())
+            })
+            .unwrap();
+        assert_eq!(during.0, Err("content store writer is busy".to_owned()), "during the batch: busy");
+        assert!(during.1.len() == 2 && named(&during.1), "during the batch, before its commit: both segments named, none merged: {:?}", during.1);
+        ContentStore::open(&path).unwrap().compact_memo_pack_within(u64::MAX, 0).unwrap();
+        assert_eq!(segments().len(), 1, "after it: both segments merged");
+        assert_eq!(store.memo_entries(&space, &[0, 1], true).unwrap().len(), 2, "neither entry forgotten");
+    }
+
+    /// A memo's segments past a budget are merged though their bytes are named, all but the oldest half of the budget,
+    /// into one numbered after them: a path's entries keep their order (its newest the one in the newest segment), so
+    /// what is kept of a path is its newest; every entry, and what is kept over one, reads the same.
+    #[test]
+    fn a_memos_segments_past_the_budget_are_merged_in_their_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let space = local_space(&[5u8; 32]);
+        let put = |part: i64, over: bool| MemoPut { part, path: "a.py".into(), digest: [part as u8; 32], key: 1, bytes: vec![part as u8 + u8::from(over); 4000], over };
+        let segments = || std::fs::read_dir(dir.path().join("store.sqlite.memo")).unwrap().count();
+        // Seven contents of a.py, one batch each, all kept, and what is kept over the newest, in an eighth.
+        for part in 0..7 {
+            store.put_memo_entries(&space, vec![put(part, false)], 8).unwrap();
+        }
+        store.put_memo_entries(&space, vec![put(6, true)], 8).unwrap();
+        let read = || -> std::collections::BTreeMap<i64, (Vec<u8>, Option<Vec<u8>>)> {
+            let found = store.memo_entries(&space, &[0, 1, 2, 3, 4, 5, 6], true).unwrap();
+            found.into_iter().map(|(part, blob)| (part, (blob.bytes.bytes().to_vec(), blob.over.as_ref().map(|o| o.bytes().to_vec())))).collect()
+        };
+        let unmerged = read();
+        assert_eq!((segments(), unmerged.len(), unmerged[&6].1.is_some()), (8, 7, true));
+        assert_eq!(store.compact_memo_pack(0).unwrap(), 0, "named, and fewer than the budget");
+        assert_eq!(store.compact_memo_pack_within(1 << 40, 8).unwrap(), 0, "no more than the budget");
+        store.compact_memo_pack_within(1 << 40, 4).unwrap();
+        assert_eq!(segments(), 3, "the oldest two left, the newer six merged into one after them");
+        assert_eq!(read(), unmerged, "every entry reads the same");
+        // An eighth content, keeping three: a.py's newest three are kept, as before the merge.
+        store.put_memo_entries(&space, vec![put(7, false)], 3).unwrap();
+        let parts: Vec<i64> = store.connection.lock().unwrap().prepare("SELECT part FROM memo_entries WHERE space = ?1 ORDER BY part").unwrap().query_map([&space[..]], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(parts, [5, 6, 7], "the newest three contents");
     }
 
     /// Decision 0280: what a later run keeps over an entry (its identities) is read with it, from the store and from

@@ -498,7 +498,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             .expect("an AST clause")
     }
 
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = crate::source_tree::native().join("..");
     let mut pending = vec![
         root.join("packs/complexity/rules"),
         root.join("packs/javascript/rules"),
@@ -573,11 +573,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
                     "mode": "block",
                     "clauses": clauses,
                 });
-                let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
-                    document.to_string(),
-                    "json".to_owned(),
-                    crate::code_rule_dsl::test_support::CAPABILITIES.to_owned(),
-                )
+                let compiled = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", crate::code_rule_dsl::test_support::CAPABILITIES)
                 .unwrap_or_else(|error| panic!("{query}: {}", error.reason));
                 (query.to_string(), compiled)
             })

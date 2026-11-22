@@ -1038,7 +1038,7 @@ impl std::fmt::Display for Node<'_> {
         match *self {
             Node::Of { path: Some(p), local, own, by_definition, .. } if own || by_definition => write!(f, "{p}:{}", shown_local(local, by_definition)),
             Node::Guest { doc, local } => write!(f, "guest{doc}:{local}"),
-            Node::Place { path, line } => write!(f, "@place({}, {line})", crate::code_rule_dsl::logic::rr::quote(path)),
+            Node::Place { path, line } => write!(f, "@place({}, {line})", rerail_rr_syntax::syntax::quote(path)),
             n => write!(f, "{}", n.number().expect("a node shown as a number")),
         }
     }
@@ -1048,6 +1048,17 @@ impl std::fmt::Display for Node<'_> {
 fn shown_local(low: i64, by_definition: bool) -> String {
     use crate::code_rule_dsl::facts::vtab::syntax::granules::INDEX_BITS;
     if by_definition { format!("{}.{}", low >> INDEX_BITS, low & ((1 << INDEX_BITS) - 1)) } else { low.to_string() }
+}
+
+/// `liveness::COUNTS`' rows, by relation, from a run's outputs: each measure's count, absent where the relation had no row.
+pub fn read_counts(outputs: &Outputs) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
+    let mut out: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> = Default::default();
+    for row in outputs.rows(crate::code_rule_dsl::logic::liveness::COUNTS) {
+        if let (Some(rel), Some(what)) = (row.get(0).text(), row.get(1).text()) {
+            out.entry(rel.to_owned()).or_default().insert(what.to_owned(), row.get(2).int().map_or(0, |n| n as u64));
+        }
+    }
+    out
 }
 
 /// A run's outputs as a reader reads them: the stack in its directory, mapped. Every reader reads through it.
@@ -1370,13 +1381,18 @@ pub fn shown(dir: &Path, rel: &str) -> std::io::Result<Vec<Vec<String>>> {
 /// A base of the stack in `dir`'s relations `names` (those it holds), each as the stack reads it.
 pub fn base_of<'a>(dir: &Path, names: impl Iterator<Item = &'a str>) -> std::io::Result<Vec<u8>> {
     let stack = read(dir).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", dir.display())))?;
+    Ok(selected_base(&stack, names))
+}
+
+/// A single output image containing the named relations from an in-memory or mapped stack.
+pub fn selected_base<'a>(stack: &[Image], names: impl Iterator<Item = &'a str>) -> Vec<u8> {
     let mut image = Builder::new(stack.last().map_or(0, Image::flags), false);
     for name in names {
-        if let Some(view) = find(&stack, name) {
+        if let Some(view) = find(stack, name) {
             image.take(name, &view);
         }
     }
-    Ok(image.finish())
+    image.finish()
 }
 
 /// The stack in `dir` written out as `.csv` files in `to`, one per relation (for scripts that read them).

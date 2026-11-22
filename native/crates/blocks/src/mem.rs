@@ -28,7 +28,7 @@ pub fn reserve(len: usize) -> *mut u8 {
         let p = unsafe {
             libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE | crate::RESERVE_ONLY, -1, 0)
         };
-        assert!(p != libc::MAP_FAILED, "mmap of {len} bytes failed ({}), {} reserved", std::io::Error::last_os_error(), reserved());
+        assert!(p != libc::MAP_FAILED, "mmap of {len} bytes failed ({}): {} GiB reserved and not released, this one with them", std::io::Error::last_os_error(), reserved() >> 30);
         p.cast()
     }
     #[cfg(windows)]
@@ -44,9 +44,38 @@ pub fn reserve(len: usize) -> *mut u8 {
     }
 }
 
+/// Commits the pages of `[p, p + len)` of a reservation, before a device wraps them (its driver pins them, and takes
+/// no fault): on Windows, whose reservations are committed as they are touched (`windows`); elsewhere nothing (a
+/// mapping's pages are the kernel's to fault in).
+pub fn commit(p: *mut u8, len: usize) -> std::io::Result<()> {
+    #[cfg(windows)]
+    return crate::windows::commit(p, len);
+    #[cfg(not(windows))]
+    {
+        let _ = (p, len);
+        Ok(())
+    }
+}
+
 /// Counts `len` bytes about to be `release`d that `reserve` did not take (a file's mapping).
 pub(crate) fn uncounted(len: usize) {
     RESERVED.fetch_add(len, Relaxed);
+}
+
+/// Unmaps a file's mapping of `len` bytes at `p` (`Block::file`, `map_file`, `open_file`), which `uncounted` counted.
+///
+/// # Safety
+/// `p` and `len` are the mapping's, and nothing reads it after.
+pub(crate) unsafe fn release_mapping(p: *mut u8, len: usize) {
+    #[cfg(windows)]
+    {
+        RESERVED.fetch_sub(len, Relaxed);
+        crate::windows::unmap_view(p);
+    }
+    #[cfg(not(windows))]
+    unsafe {
+        release(p, len)
+    }
 }
 
 /// Gives back what `reserve` (or, on Unix, any mapping of `len` bytes at `p`) took.

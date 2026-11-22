@@ -1,0 +1,35 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "complexity",
+  "equivalent": false,
+  "untranslated": {
+    "complexity-cyclomatic-blade": "failed: examples, fixtures: the translation failed: rerail-engine: docs/rule-syntax/packs/complexity/complexity-cyclomatic-blade.rerail: invalid native table name (exit 1)",
+    "complexity-cyclomatic-java": "no .rerail translation; recorded by the suite, not yet explained"
+  },
+  "different": {
+    "complexity-cyclomatic-rust": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
+    "complexity-cyclomatic-vue": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "examples": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        },
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 0
+        }
+      }
+    }
+  }
+}

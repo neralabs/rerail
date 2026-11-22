@@ -16,7 +16,7 @@ fn a_bound_input_named_like_a_sql_keyword_is_read_in_place() {
     let all = view(&db, &table, "c0").expect("read in place");
     assert_eq!(all.src.len(), 2);
     let some = view(&db, &format!("{table} WHERE c0 = 7"), "c0").expect("read in place, filtered");
-    assert_eq!(some.ids.as_deref(), Some(&[1u32][..]));
+    assert_eq!(some.ids(), Some(&[1u32][..]));
 }
 
 /// `unquote` reads back what `ident` wrote, for a keyword, a name that is no plain identifier, and a plain one.
@@ -38,12 +38,12 @@ fn an_export_named_like_an_input_is_read_in_place_by_the_inputs_column_names() {
     let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
     let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(rerail_blocks::vector![4, 7]), Some(rerail_blocks::vector![40, 70])]);
     modules.bind(&db, "value", source).unwrap();
-    let (n, v) = (crate::code_rule_dsl::logic::plan::sql_col("value", 0), crate::code_rule_dsl::logic::plan::sql_col("value", 1));
+    let (n, v) = (crate::code_rule_dsl::logic::sql::select::sql_col("value", 0), crate::code_rule_dsl::logic::sql::select::sql_col("value", 1));
     assert_eq!((n.as_str(), v.as_str()), ("n", "v"), "the statement names `value`'s columns as the input's");
     let all = view(&db, "main.value", &format!("{n}, {v}")).expect("read in place");
     assert_eq!(all.cols, [0, 1]);
     let some = view(&db, &format!("main.value WHERE {n} = 7"), &v).expect("read in place, filtered");
-    assert_eq!((some.cols.as_slice(), some.ids.as_deref()), (&[1usize][..], Some(&[1u32][..])));
+    assert_eq!((some.cols.as_slice(), some.ids()), (&[1usize][..], Some(&[1u32][..])));
 }
 
 /// Its table is named by the base names when first bound (`vtab::named`), so a later binding of the same shape is
@@ -59,4 +59,39 @@ fn an_export_named_like_an_input_is_bound_again_with_the_same_columns() {
     assert_eq!(crate::code_rule_dsl::facts::vtab::bound_source(&db, "value").unwrap().len(), 2);
     let other = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(rerail_blocks::vector![1])]);
     assert!(modules.bind(&db, "value", other).is_err(), "another shape is refused");
+}
+
+/// A view filtered by a constant finds its rows on its first scan, not when it is opened: its probes check the filter
+/// themselves (`View::find`), so a batch's relation (decision 0494) is not made whole to open a rule that only
+/// probes it. ep2's edit: `parsed(s, "annotation", r)` made every document's rows to open its rules.
+#[test]
+fn a_filtered_view_finds_its_rows_on_its_first_scan() {
+    let db = Connection::open_in_memory().unwrap();
+    let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
+    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(rerail_blocks::vector![4, 7, 7]), Some(rerail_blocks::vector![1, 2, 3])]);
+    modules.bind(&db, "pairs", source).unwrap();
+    let some = view(&db, "main.pairs WHERE c0 = 7", "c1").expect("read in place, filtered");
+    assert!(some.ids.as_ref().is_some_and(|ids| ids.get().is_none()), "no row is found to open it");
+    assert!(!some.known_empty(), "nor is it known empty");
+    assert_eq!(some.find(0, 3), vec![2], "a probe checks the filter itself");
+    assert_eq!(some.find(0, 1), Vec::<u32>::new(), "row 0 fails the filter");
+    assert!(some.ids.as_ref().is_some_and(|ids| ids.get().is_none()), "a probe finds no view row");
+    assert_eq!((some.ids(), some.len()), (Some(&[1u32, 2][..]), 2), "the scan's rows");
+}
+
+/// A held relation that views every row of a source (an input, a changed input's version, a kept relation read in
+/// place) is estimated as its source estimates it: an index's choice of its lead column (`InRel::lead`) measured
+/// every column of every row for one column's distinct values (ep2's edit: 15% of its CPU).
+#[test]
+fn a_whole_views_estimate_is_its_sources() {
+    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["a".into(), "b".into()], vec![Some(rerail_blocks::vector![1, 1, 2, 2, 3, 3]), Some(rerail_blocks::vector![5, 6, 7, 8, 9, 10])]);
+    let held = InRel::over_source(Arc::clone(&source), vec![b'i', b'i']);
+    let viewed = held.source(vec!["a".into(), "b".into()]);
+    assert_eq!(viewed.estimated_matches(0, false), source.estimated_matches(0, false), "the source's estimate");
+    assert_eq!(viewed.estimated_matches(1, false), source.estimated_matches(1, false));
+    assert!(held.measured.get().is_none(), "no statistic of it is measured for an estimate");
+    // Statistics given (a kept relation's, measured by an earlier run) answer it, as they answer `statistics`.
+    held.give_measured(&[("a".into(), 6, 3, 12, 12), ("b".into(), 6, 6, 6, 6)]);
+    assert_eq!((viewed.estimated_matches(0, false), viewed.estimated_matches(1, false)), (2, 1));
+    assert_eq!(viewed.statistics().map(|s| s[0].2), Some(3), "the statistics given, not measured");
 }

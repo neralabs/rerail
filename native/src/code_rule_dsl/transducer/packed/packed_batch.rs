@@ -329,9 +329,9 @@ impl PackedBatch {
     /// case's states is `StatesOutgrown`: unfinished, restarted with twice the states (decision 0334 §9).
     pub(super) fn task_error(&self, at: usize, status: &TaskStatus) -> Option<Error> {
         let task = &self.tasks[at];
-        // `TEMPO_PACKED_BATCH_PROFILE`: why a task stopped, with its budgets (decision 0334's restarts read it).
-        if status.error != 0 && std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-            eprintln!("TEMPO_TASK_STATUS {status:?} work_limit={} states={}", task.work_limit, self.task_state_capacity(task));
+        // `RERAIL_PACKED_BATCH_PROFILE`: why a task stopped, with its budgets (decision 0334's restarts read it).
+        if status.error != 0 && std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+            eprintln!("RERAIL_TASK_STATUS {status:?} work_limit={} states={}", task.work_limit, self.task_state_capacity(task));
         }
         match status_error(status, task.work_limit) {
             Some(Error::BackendCapacity)
@@ -1628,9 +1628,9 @@ pub struct PackedExecution {
 
 #[track_caller]
 fn grid_result_failure() -> Error {
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_GRID_RESULT_INVARIANT {}",
+            "RERAIL_PACKED_GRID_RESULT_INVARIANT {}",
             std::panic::Location::caller()
         );
     }
@@ -2023,7 +2023,7 @@ impl PackedExecution {
         self.program_count
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
     pub fn host_arena_counts(&self) -> [usize; 4] {
         self.pages.iter().fold([0; 4], |mut counts, page| {
             for (count, length) in counts.iter_mut().zip([
@@ -2038,7 +2038,7 @@ impl PackedExecution {
         })
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
     pub fn physical_file_count(&self) -> usize {
         self.batch.files.len()
     }

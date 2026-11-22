@@ -1,1 +1,0 @@
-Rerail now checks an edit a coding agent made while a session's code rules were still opening, the first time Rerail read a large repository, when the agent edits the same file again before Rerail's first pass over the files. The first edit's lines used to go unchecked: no steer and no record of what they broke.

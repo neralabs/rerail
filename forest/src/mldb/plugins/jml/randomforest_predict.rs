@@ -1855,7 +1855,7 @@ mod tests {
             f.predict(&rows).unwrap();
         }
         let n = 300;
-        let thread_cpu = rerail_gpu::thread_cpu_seconds;
+        let thread_cpu = rerail_gpu::os::thread_cpu;
         let wait = std::env::var("WAIT").unwrap_or("wait".into());
         let mut t = [(0.0f64, 0.0f64); 8];
         let mut tt = [0.0f64; 8];

@@ -178,12 +178,12 @@ fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
 /// Per relation handed on as parts, per rule: its key and its parts (literal places).
 type Plan = BTreeMap<String, Vec<(String, Vec<Vector<usize>>)>>;
 
-/// Per relation factorized as an intermediate (decision 0500): its pair cache, where one was made (its guard, its
+/// Per relation factorized as an intermediate (decision 0488): its pair cache, where one was made (its guard, its
 /// pairs, the witness allowance), else none.
 pub type FactorCaches = BTreeMap<String, Option<(String, String, usize)>>;
 
 /// Which relations are handed on as parts: the exports (file-local relations the cross-file part reads, `local`), or
-/// the intermediates named (decision 0500's deferred joins: two factors that meet in each reader, in its own part).
+/// the intermediates named (decision 0488's deferred joins: two factors that meet in each reader, in its own part).
 #[derive(Clone, Copy)]
 enum Scope<'a> {
     Exports(&'a BTreeSet<String>),
@@ -291,7 +291,7 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys) -> (
     (rules, reads, rules_of, chosen)
 }
 
-/// The witness allowance across a program's pair caches (decision 0500): `RERAIL_JOIN_CACHE_ROWS`, 4096 by default.
+/// The witness allowance across a program's pair caches (decision 0488): `RERAIL_JOIN_CACHE_ROWS`, 4096 by default.
 fn pair_allowance() -> usize {
     std::env::var_os("RERAIL_JOIN_CACHE_ROWS").map_or(4096, |s| s.to_str().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0)).min(i64::MAX as usize)
 }
@@ -340,7 +340,7 @@ fn round<'v>(
     // made there. Where one of those reads an answer only its node's document gives (`ON_REQUEST`'s functions:
     // `value`, `str`, `node_text`), that answer is drawn into the cross-file part, which has no documents to answer
     // it from. Such a relation is not cached, decided from the program, so a run never prepares again to find it
-    // (`Deferral::after_placement`, decision 0500: on corpus0 that replan ran the sources' phase 1 twice, 23 G
+    // (`Deferral::after_placement`, decision 0488: on corpus0 that replan ran the sources' phase 1 twice, 23 G
     // instructions, and turned every cache off for one).
     let documents_answer: BTreeSet<&str> = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST
         .iter()
@@ -437,7 +437,7 @@ fn round<'v>(
                     no_inline.push(pname.clone());
                 }
                 // The first part, where it is one atom, is its own key: the next part's key and every part read that
-                // atom by the key, a probe of its index, and nothing is stored for it (decision 0500:
+                // atom by the key, a probe of its index, and nothing is stored for it (decision 0488:
                 // `str_lit(e, v) :- unparen(e, m), plain_str(m, v)` stored `unparen`'s key, every node, 464 k rows on
                 // corpus0, to reduce a part of 16 k). A later part's key is the keys it holds among the chain's, so it
                 // is stored whatever its atoms.
@@ -630,7 +630,7 @@ fn made_vars(v: &Version, m: &Made<'_>) -> BTreeSet<String> {
     out
 }
 
-/// A pair cache of `rule`'s two parts (`atoms`, its factors), read by `readers` rules (decision 0500): its guard
+/// A pair cache of `rule`'s two parts (`atoms`, its factors), read by `readers` rules (decision 0488): its guard
 /// `small()` holds while the exact sizes of both factors fit `limit` (`rr_admit_pairs`, which an edit may cross
 /// either way), and its pairs are the factors' join under the guard. The two rules join `program`; their relations
 /// are declared. The guard is written in the physical unit encoding (a nullary relation's `rr_unit` column), as the
@@ -665,7 +665,7 @@ fn cache<'v>(
 }
 
 /// The intermediates `names` of the version `v` (a derivation when not `first`) handed on as parts, each read in its
-/// readers' own part (decision 0500, the deferred joins' factors), with pair caches where `cache_reused`: the version
+/// readers' own part (decision 0488, the deferred joins' factors), with pair caches where `cache_reused`: the version
 /// made, a line per relation, and the caches; none where no relation splits so.
 pub fn factorize_intermediates(v: &std::sync::Arc<Version>, first: bool, names: &BTreeSet<String>, cache_reused: bool) -> Result<Option<(std::sync::Arc<Version>, Vec<String>, FactorCaches)>, String> {
     if names.is_empty() {

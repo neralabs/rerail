@@ -1,4 +1,4 @@
-//! A blocked Bloom filter of a column's keys (decision 0500): the probe screen's (`native::setfix::join_filter`) and
+//! A blocked Bloom filter of a column's keys (decision 0488): the probe screen's (`native::setfix::join_filter`) and
 //! the statistics' (a column's membership and the keys two columns share).
 //!
 //! ```text
@@ -169,7 +169,7 @@ impl Sample {
     }
 }
 
-/// A column's filter kept as its rows come (decision 0500). One writer adds to it, the column's sketch, while it is
+/// A column's filter kept as its rows come (decision 0488). One writer adds to it, the column's sketch, while it is
 /// read where it is: by the planner's statistics, the screens and the device's joins, which hold it (`Arc`) and never
 /// copy it. It lies in a block of the run's relations (`facts::rows::FactsBloom`, a `rerail_blocks::bloom::Bloom`):
 /// the device binds that block and tests it with the same read (`bloom_may`) the host makes. A word is a plain load
@@ -467,3 +467,32 @@ mod tests {
         assert!(shared(&full, &big).is_none() && full.full() && full.outgrown());
     }
 }
+
+/// Observations from one scan followed by a keyed probe, before the walker selects its lookup.
+#[derive(Clone, Copy, Debug)]
+pub struct BloomProbeInput {
+    pub probe_rows: usize,
+    pub build_rows: usize,
+    pub distinct_overlap: Option<f64>,
+    pub sampled: usize,
+    pub rejected: usize,
+    /// Whether the filter is the probe side's own (kept with its column, decision 0488): nothing was built for it,
+    /// and a walk backs off where it stops paying, so an eighth of the samples refused is enough.
+    pub kept: bool,
+}
+
+/// A machine's Bloom screen choice (decision 0442: the machine's): its pricer's, set with the pricer
+/// (`plan::joins::set_pricer`), which this crate cannot name.
+#[derive(Default)]
+pub struct BloomAdmission(pub parking_lot::RwLock<Option<std::sync::Arc<dyn Fn(BloomProbeInput) -> Option<bool> + Send + Sync>>>);
+
+/// Whether a probe's screen is used: the machine's pricer's choice where it has one, else whether enough of the
+/// sampled probes were refused (an eighth for a kept filter, which nothing was built for; half for one built).
+pub fn use_bloom(input: BloomProbeInput) -> bool {
+    let choose = rerail_prof::code_rule_dsl::logic::profile::machine::<BloomAdmission>().0.read().clone();
+    if let Some(choice) = choose.and_then(|f| f(input)) {
+        return choice;
+    }
+    if input.kept { input.rejected * 8 >= input.sampled } else { input.rejected * 2 >= input.sampled }
+}
+

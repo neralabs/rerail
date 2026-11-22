@@ -52,14 +52,14 @@ pub trait RowCells: Send+Sync {
 pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
 /// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub struct DeviceView<'a> {
     pub block: &'a rerail_blocks::Block,
     pub root: usize,
     pub view: u32,
     pub rows: usize,
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub in_place: Option<ViewInPlace>,
     /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0478 step
     /// 3, R4): made once by the source, which holds it (its batch's life), so every stratum on any thread finds them.
@@ -72,7 +72,7 @@ pub struct DeviceView<'a> {
 /// addresses (`device_chunk::views_in_place`).
 /// A 16z batch's views read their blocks through its cache (`cache`, decision 0353 step 4b), which its reads write:
 /// a stage that reads the view is refused when the cache's failures rise past `failed` (no room found).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[derive(Clone)]
 pub struct ViewInPlace {
     pub dir: u64,
@@ -80,10 +80,21 @@ pub struct ViewInPlace {
     pub buffers: Vec<rerail_device::device::Buffer>,
     pub cache: Option<rerail_device::device::Buffer>,
     pub failed: u32,
+    /// Its batch's tape format (`ViewsInPlace::format`; 0: several), which the stages reading it are compiled for.
+    pub format: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+/// A `has` axis read off the tape (`Source::has_walk`): its batch's `node` view in place, of `nodes` rows, through which
+/// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub struct HasWalk {
+    pub nodes: usize,
+    pub view: ViewInPlace,
+    pub kinds: Arc<[i64]>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl ViewInPlace {
     /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
     pub fn cache_counts(&self) -> Option<rerail_clif::view::cache::Counts> {
@@ -248,9 +259,15 @@ pub trait Source: Send + Sync {
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vector<u32> {
         (0..self.len()).filter(|&r| eqs.iter().all(|&(c, v)| self.value(r, c) == v)).map(|r| r as u32).collect()
     }
+    /// A `has` axis the device reads off the tape (decision 0353 step 5): a stage probes it by one column, each
+    /// binding's rows walked there (`metal_join::Batch::by_has`). `None` for any other source.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn has_walk(&self) -> Option<HasWalk> {
+        None
+    }
     /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
     /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         None
     }
@@ -318,7 +335,7 @@ pub trait Source: Send + Sync {
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>>;
     /// Whether each value of `column` is at most one row, which `key_row` finds without allocating (a node's own
-    /// column): a reader of the source's rows in its row order probes by it (`setfix::hold_view`).
+    /// column): a view of the source's columns held in place probes by it (`setfix::hold_view_in_place`).
     fn keys_rows(&self, _column: usize) -> bool {
         false
     }
@@ -1742,7 +1759,7 @@ impl Source for Relation {
         true
     }
     /// A column pushed in order whose values are each one row (`ordered`: as many distinct values as rows) is a key:
-    /// a view of the relation's rows probes it here (`setfix::hold_view`), with no index of its own.
+    /// a view of the relation's rows probes it here (`setfix::hold_view_in_place`), with no index of its own.
     fn keys_rows(&self, column: usize) -> bool {
         self.ordered[column] == Some(self.len())
     }
@@ -1759,7 +1776,7 @@ impl Source for Relation {
 /// S's `query/plan/relation.rs` as copied (0689eb25); merged into this module (decision 0008).
 #[allow(dead_code)]
 pub mod s_relation;
-// cratify: `p_table` is rerail-w's (it mounts it)
+// cratify: `p_table` is rerail-classic's (it mounts it)
 // cratify: `tests` is rerail-logic's (it mounts it)
 
 #[cfg(any(test, feature = "test-hooks"))]

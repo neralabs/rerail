@@ -1,3 +1,5 @@
+//! **Deprecated** (decision 0550): Rust from an intermediate form. A grammar's Rust is the Bitlex compiler's own (`bitlex_lex_rust`, `bitlex_rust`); no new use. Kept until Go-C-and-C-support and Parser-generators-final-shape remove theirs.
+//!
 //! The C preprocessing words' compiled code built ahead of time (decision 0348, stage 4b): with
 //! the `generated` feature, the JIT's functions as Rust (`build.rs`,
 //! `native_cpu_pp::rust_source`), its entry `pp_run` and its fingerprints. It is

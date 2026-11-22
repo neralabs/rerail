@@ -31,7 +31,7 @@ refused, and tree-sitter reads it with its own recovery. There are no modes.
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds the PHP
+- **SQL index prototype indexes:** the prototype's sample corpus holds the PHP
   repositories `framework` (Laravel) and `symfony`; 805 of their files are the oracle's first set,
   and 77 of their Blade templates its Blade set.
 - **0196 (lean C#), 0195 (lean Java), 0193 (lean Rust), 0178 (lean ECMAScript), 0163 and 0169
@@ -134,8 +134,8 @@ tree make tree-sitter's lazily (`View::root`, test builds only).
 **The oracle** (`rerail-php-lean`'s ignored `oracle` test) compares the parser's tape with
 tree-sitter's, line by line. Its sets:
 
-- **ast-index corpus:** 805 files of `framework` and `symfony` (2 with tree-sitter errors).
-- **Stored repositories:** 356 files of the sampo repositories (12 a repository; 4 with errors).
+- **Prototype corpus:** 805 files of `framework` and `symfony` (2 with tree-sitter errors).
+- **Stored repositories:** 356 files of the stored repositories (12 a repository; 4 with errors).
 - **Blade programs:** the compiled programs of 77 Blade templates, as the Blade embedding parses
   them (no `<?php` tag).
 - **Cut and edited:** every file of the first two sets, each cut at 3 places and with 3 lines cut
@@ -143,7 +143,7 @@ tree-sitter's, line by line. Its sets:
 
 | set | clean texts: same / differ / refused | texts with errors: as tree-sitter / differ / refused |
 |---|---|---|
-| ast-index corpus, 805 files | 803 / 0 / 0 | 0 / 0 / 2 |
+| prototype corpus, 805 files | 803 / 0 / 0 | 0 / 0 / 2 |
 | stored repositories, 356 files | 352 / 0 / 0 | 0 / 0 / 4 |
 | Blade programs, 77 | 77 / 0 / 0 | 0 / 0 / 0 |
 | cut and edited (corpus) | 1,245 / 0 / 2 | 0 / 0 / 3,655 |

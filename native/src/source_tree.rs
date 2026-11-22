@@ -5,6 +5,7 @@
 //! It is found as the program runs, not written into the build (decision 0224). A crate that wrote
 //! its checkout's path in (`env!("CARGO_MANIFEST_DIR")`) was a different crate in every checkout, and
 //! so was every crate above it: a compiler cache shared by the checkouts could reuse none of them.
+use rerail_store::Canonical as _;
 use std::path::{Path, PathBuf};
 
 /// The checkout's root: the directory that holds `native/Cargo.toml` and `docs/rule-syntax`. The first
@@ -24,10 +25,30 @@ pub fn root() -> Option<PathBuf> {
     find()
 }
 
-/// The checkout's `native/` directory: `native` (as the working directory has it) outside a checkout,
-/// so that what is read from it is not found, as before outside one.
+/// The checkout's or installed package's `native/` directory.
 pub fn native() -> PathBuf {
+    if std::env::var_os("RERAIL_SOURCE_ROOT").is_none()
+        && let Some(native) = beside_image("native", "src/code_rule_dsl/typing/programs/sources.rerail")
+    {
+        return native;
+    }
     root().map_or_else(|| PathBuf::from("native"), |root| root.join("native"))
+}
+
+/// The `.rerail` library from a source checkout or from the package that contains the addon.
+pub fn rule_library() -> PathBuf {
+    const LIBRARY: &str = "docs/rule-syntax/lib";
+    if let Some(root) = std::env::var_os("RERAIL_SOURCE_ROOT") {
+        return PathBuf::from(root).join(LIBRARY);
+    }
+    beside_image(LIBRARY, "core.rerail")
+        .unwrap_or_else(|| root().map_or_else(|| PathBuf::from(LIBRARY), |root| root.join(LIBRARY)))
+}
+
+fn beside_image(directory: &str, marker: &str) -> Option<PathBuf> {
+    let image = image()?;
+    let image = image.canonical().unwrap_or(image);
+    image.ancestors().map(|dir| dir.join(directory)).find(|dir| dir.join(marker).is_file())
 }
 
 fn find() -> Option<PathBuf> {

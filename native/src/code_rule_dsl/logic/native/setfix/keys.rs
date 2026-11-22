@@ -150,10 +150,13 @@ impl KeyMap {
 
     /// `reserve` of a map keyed by columns `cols` (`find_at`).
     pub(super) fn reserve_at<D: RowData + ?Sized>(&mut self, data: &D, k: usize, cols: &[usize], home: Option<&Home>) {
-        if 2 * (self.keys + 1) <= self.places() {
+        // Its relation's rows moved to another block (their tail past its room): placed again there, at its size.
+        let moved = matches!((self.slots.facts(), home), (Some(f), Some(h)) if !Arc::ptr_eq(f, h.facts()));
+        let grows = 2 * (self.keys + 1) > self.places();
+        if !grows && !moved {
             return;
         }
-        let mut grown = KeyMap::new(home, 2 * self.places());
+        let mut grown = KeyMap::new(home, if grows { 2 * self.places() } else { self.places() / 2 });
         // copy: not block data: one key's values at a time, what the hash reads.
         let mut key = vec![0i64; cols.len()];
         for s in 0..self.places() {
@@ -258,7 +261,9 @@ impl RowSet {
     /// their relation's block (`RowData::home`).
     pub(super) fn reserve<D: RowData + ?Sized>(&mut self, data: &D, k: usize, extra: usize) {
         let need = self.rows + extra;
-        if 2 * need <= self.places() {
+        // Its relation's rows moved to another block (their tail past its room): placed again there.
+        let moved = self.slots.facts().is_some_and(|f| !data.lies_in(f));
+        if 2 * need <= self.places() && !moved {
             return;
         }
         let places = (2 * need).next_power_of_two().max(LEAST);
@@ -306,6 +311,45 @@ mod tests {
             assert_eq!((rel.data.value(row, 2, 1), map.changes(s)), want[&key], "key {key}");
         }
         assert_eq!(rel.n - rel.ndead, 3000, "one live row a key");
+    }
+
+    /// A relation's tables follow its rows (decisions 0384, 0491): rows moved to another block (a tail past its
+    /// block's room, `Part::grow`; here a run's rows the next run copies into its own block) take the table with them
+    /// at its next placement, every row found there.
+    #[test]
+    fn a_moved_tail_takes_its_tables() {
+        let rows = |n: i64| -> super::super::rows::Rows {
+            let mut r = super::super::rows::Rows::new(2);
+            // copy: not block data: a test's rows
+            r.extend_from_slice(&(0..n).flat_map(|i| [i, i * 7]).collect::<Vec<i64>>());
+            r
+        };
+        let (mut set, mut map, old) = {
+            let _run = crate::code_rule_dsl::logic::profile::test_run();
+            let data = rows(3000);
+            let (mut set, mut map) = (RowSet::default(), KeyMap::new(data.home().as_ref(), 0));
+            for id in 0..3000 {
+                set.insert(&data, 2, id);
+                map.reserve(&data, 2, 1, data.home().as_ref());
+                let Err(at) = map.find(&data, 2, &[i64::from(id)]) else { unreachable!("a key held twice") };
+                map.set(at, id, 0, 0);
+            }
+            (set, map, data)
+        };
+        let _run = crate::code_rule_dsl::logic::profile::test_run();
+        let moved = rows(3001);
+        let (was, home) = (set.facts().expect("a block").clone(), moved.home().expect("a home"));
+        assert!(Arc::ptr_eq(&was, old.home().expect("a home").facts()) && !Arc::ptr_eq(&was, home.facts()), "the rows moved");
+        set.insert(&moved, 2, 3000);
+        assert!(set.facts().is_some_and(|f| Arc::ptr_eq(f, home.facts())), "the table moved after them");
+        map.reserve(&moved, 2, 1, Some(&home));
+        assert!(map.facts().is_some_and(|f| Arc::ptr_eq(f, home.facts())), "the key map moved after them");
+        for i in 0..3001i64 {
+            assert_eq!(set.find(&moved, 2, &[i, i * 7], |_| false), Some(i as u32), "row {i}");
+        }
+        for i in 0..3000i64 {
+            assert_eq!(map.find(&moved, 2, &[i]).map(|s| map.row(s)), Ok(i as u32), "key {i}");
+        }
     }
 
     /// Decision 0384: the rows a relation holds past its orders (`pending`, the dedup test's until the next wave) are

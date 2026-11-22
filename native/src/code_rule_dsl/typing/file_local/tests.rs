@@ -211,9 +211,9 @@ fn nearest_costs(cap: usize) {
     // Both timed results held (the device's runs, macOS only, are compared with `cpu`).
     std::hint::black_box((&cpu, &one));
     println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     use crate::code_rule_dsl::transducer::packed::metal_nearest;
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     for how in [metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks, metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks] {
         let target: Vector<u32> = parent.clone();
         let done: Vec<u8> = parent.iter().map(|&p| u8::from(p == NONE || sets[0].contains(&kind[p as usize]))).collect();
@@ -236,7 +236,7 @@ fn nearest_costs(cap: usize) {
             assert_eq!(solved.targets, one);
         }
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     for round in 0..3 {
         use crate::code_rule_dsl::transducer::packed::metal_lattice;
         let device = metal_lattice::System { seeds: &sys.seeds, copies: &sys.copies, bins: &[] };
@@ -291,6 +291,43 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     assert_eq!(join.head().args().count(), 2);
     // Its rows are attributable to their file: the node column is a location.
     assert_eq!(split.locations[&made[0]], [0], "{:?}", split.locations);
+}
+
+/// A cross-file join by a value (two files' identifiers of one text, `text(a, t), text(b, t)`) is each file's part,
+/// pushed apart, joined in the cross part by the value: so an edit makes the edited file's rows of it alone, and the
+/// join reads the others' kept rows, no document of theirs (Q332). A test of the value alone goes with each.
+#[test]
+fn a_cross_file_join_by_a_value_pushes_each_files_part() {
+    let text = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.input doc, node, text, docof
+.decl named(t: symbol)
+named(t) :- node(_, a, "identifier", _, _), text(a, t), docof(a, d), node(_, b, "identifier", _, _), text(b, t), docof(b, e), d < e, t != "self".
+.output named
+"#;
+    let v = read(text);
+    assert!(!split_of(&v).local.contains("named"), "named joins two files");
+    let (v, made) = pushed(v);
+    assert_eq!(made.len(), 2, "one join each file's identifiers: {made:?}");
+    let split = split_of(&v);
+    assert!(made.iter().all(|m| split.local.contains(m)), "each made join is file-local: {made:?}");
+    let named = rules_of(&v, "named");
+    assert_eq!(named.len(), 1);
+    let mut read = reads(&v, named[0]);
+    read.sort();
+    let mut want: Vec<String> = made.clone();
+    want.sort();
+    assert_eq!(read, want, "the rule reads the two joins, no base relation: {}", v.show_rule(named[0]));
+    for m in &made {
+        let join = rules_of(&v, m)[0];
+        assert_eq!(join.head().args().count(), 2, "its value and its document: {}", v.show_rule(join));
+        assert!(v.show_rule(join).contains("self"), "the value's test goes with each: {}", v.show_rule(join));
+    }
+    let parts = programs_of(Arc::clone(&v)).unwrap();
+    assert!(!parts.base.iter().any(|b| b == "text" || b == "docof"), "the cross part reads no base relation: {:?}", parts.base);
 }
 
 /// Position comparisons must retain the semantic candidate filters. Document equality alone
@@ -707,7 +744,7 @@ outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
     assert!(pass.lines[0].starts_with("fl_outer: handed on as parts"), "{:?}", pass.lines);
     assert!(rules_of(&out, "fl_outer").is_empty(), "the product is gone:\n{}", out.show());
     // Each part and its key are named from the part's content: `fz<h>_` and `fzk<h>_`, one hash. The first part is
-    // one atom (`encl`), so it is its own key, probed by the other part, and stores none (decision 0500): two parts,
+    // one atom (`encl`), so it is its own key, probed by the other part, and stores none (decision 0488): two parts,
     // one key, and the key's rule reads `encl`.
     let shown = out.show();
     let parts: std::collections::BTreeSet<&str> = shown.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| w.starts_with("fz") && w.ends_with("_fl_outer")).collect();
@@ -778,8 +815,8 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
     "#;
     // The version pass alone (0276 step 6: the tree twin it was compared with is gone). `push_equal_columns`'s
     // switch, read as it reads it (the test is compiled in crates that see only `rerail-logic`'s public items).
+    let equal_columns = push_equal_columns();
     let (result, made) = pushed(read(text));
-    let equal_columns = std::env::var("RERAIL_PUSH_EQUAL_COLUMNS").map_or(true, |value| value != "off");
     for m in &made {
         assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
     }
@@ -840,4 +877,23 @@ fn the_split_of_a_version_reads_an_undeclared_axis() {
     let split = split_of(&v);
     assert!(!split.local.contains("out"), "{:?}", split.local);
     assert!(axes.iter().any(|a| split.causes.get("out").is_some_and(|why| why.contains(a.as_str()))), "{:?}", split.causes);
+}
+
+/// A pushed join the split does not take holds back every rule that reads it in one round, not one reader a round
+/// (`passes::push::Readers`). Held against its first reader only, each other reader made it again the next round: on
+/// main's Python pack the two pushes (14,361 and 17,289 helpers) never ended; held against all, 3 rounds each.
+#[test]
+fn a_refused_join_holds_back_all_its_readers_in_one_round() {
+    let mut made = Readers::default();
+    // Six rules read one helper (one component's content); rule 9 reads another, taken; rule 2 reads both.
+    for rule in 0..6 {
+        made.read(rule, "fl1_violation".to_owned());
+    }
+    made.read(9, "fl2_violation".to_owned());
+    made.read(2, "fl2_violation".to_owned());
+    made.read(2, "fl1_violation".to_owned());
+    let taken = std::collections::BTreeSet::from(["fl2_violation".to_owned()]);
+    assert_eq!(made.refused(&taken), (0..6).collect(), "every reader of the refused helper, each once");
+    assert!(made.refused(&std::collections::BTreeSet::from(["fl1_violation".to_owned(), "fl2_violation".to_owned()])).is_empty());
+    assert_eq!(made.names(), ["fl1_violation", "fl2_violation"], "each helper once, in the order made");
 }

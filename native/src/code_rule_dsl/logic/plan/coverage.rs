@@ -27,7 +27,7 @@ use crate::content_store::ContentStore;
 use crate::code_rule_dsl::logic::front::AggOp;
 use crate::code_rule_dsl::logic::strings::functions::{Kind, all as functions};
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The facts every probe reads: symbols, numbers, pairs, edges (with a cycle) and labelled edges (`l`: routes of one
 /// length that differ in their bytes, and a route of fewer characters but more bytes).
@@ -351,9 +351,9 @@ fn metal() -> bool {
     if std::env::var_os("RERAIL_COVERAGE_NO_DEVICE").is_some() {
         return false;
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     return crate::code_rule_dsl::transducer::packed::metal_join::available();
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     false
 }
 
@@ -411,12 +411,18 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(had == text, "the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it", path.display());
+    if had != text {
+        let old: BTreeSet<&str> = had.lines().collect();
+        let new: BTreeSet<&str> = text.lines().collect();
+        let gone = old.difference(&new).copied().collect::<Vec<_>>().join("\n");
+        let came = new.difference(&old).copied().collect::<Vec<_>>().join("\n");
+        panic!("the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it\n--- ledger\n{gone}\n+++ now\n{came}", path.display());
+    }
 }
 
 /// The ledger's place.
 fn ledger() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
+    crate::source_tree::native().join("../gate/executor-coverage/matrix.tsv")
 }
 
 /// One cell, on one line: the explanation's own detail (rule numbers, slots; the rule a SQL error was in) left
@@ -597,7 +603,7 @@ fn ops_of(file: &std::sync::Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFi
 
 /// The shipped `.rerail` files: the packs and the engine's own programs.
 fn shipped() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = crate::source_tree::native();
     let mut out = Vec::new();
     let mut walk = vec![root.join("../docs/rule-syntax"), root.join("src/code_rule_dsl")];
     while let Some(d) = walk.pop() {
@@ -630,7 +636,8 @@ fn census() -> &'static (BTreeMap<String, BTreeSet<String>>, usize, usize) {
                     let text = std::fs::read_to_string(f).ok()?;
                     let file = crate::code_rule_dsl::logic::rr::from_tape::RrFile::read(text).ok()?;
                     let mut used = BTreeMap::new();
-                    ops_of(&file, &mut used, &f.display().to_string())?;
+                    // Spelled with `/` on every OS: `packs_ledger` names a file's pack by its path.
+                    ops_of(&file, &mut used, &f.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"))?;
                     Some(used)
                 })
                 .collect()

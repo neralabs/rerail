@@ -16,12 +16,16 @@ fn a_maintained_relation_starts_from_its_kept_rows_without_copying_them() {
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     db.execute_batch("CREATE TABLE gun8_s(c0, c1); CREATE TABLE gun8_kept(c0, c1); CREATE TABLE gun8_next(c0, c1);").unwrap();
     let n = 20_000i64;
+    // One transaction: each insert alone was a commit of its own, a sync each (20,000; 14 s on a Linux host, 97 s
+    // beside the package's other tests).
+    db.execute_batch("BEGIN").unwrap();
     {
         let mut insert = db.prepare("INSERT INTO gun8_s VALUES (?1, ?2)").unwrap();
         for i in 0..n {
             insert.execute([i, i % 97]).unwrap();
         }
     }
+    db.execute_batch("COMMIT").unwrap();
     let seed = format!("pos t:b:{}:{}:ii v0 v1\nhead v0 v1", hex("gun8_s"), hex("c0, c1"));
     open(&db, &format!("name gun8_kept\nrel gun8_kept ii empty\nseed 0 {}", hex(&seed))).unwrap();
     run(&db, "gun8_kept", 0).unwrap();

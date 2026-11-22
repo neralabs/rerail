@@ -31,8 +31,17 @@ pub enum ClauseRoots<'r> {
     Rule(&'r [Vec<bool>]),
 }
 
+/// A kernel the device compiles ahead of its first use: its name, and the call that asks for it as its use does
+/// (`rerail_gpu::kernels::Ahead`, which the engine makes of it).
+pub type KernelAhead = (String, Box<dyn Fn() -> Result<(), String> + Send + Sync>);
+
 /// What the transducer runs on a device.
 pub trait MatcherDevice: Send + Sync {
+    /// The device's fixed kernels (the same for every rule set), to compile ahead of their first use: the engine's
+    /// `kernels compile`, and its warm-up as a run starts.
+    fn kernels_ahead(&self) -> Vec<KernelAhead> {
+        Vec::new()
+    }
     /// The batch's programs on `engine`, from `anchors` (per file, per program), at most `result_limits` results each.
     /// The batch with each task held to `budget` (decision 0334).
     fn execute_packed(&self, engine: Engine, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vector<u32>>], result_limits: Option<&[u32]>, budget: super::Budget) -> Result<PackedExecution, Error>;
@@ -65,8 +74,9 @@ pub trait MatcherDevice: Send + Sync {
     /// Drops the label passes' pipelines (their memory) once the documents they ran over are gone.
     fn drop_label_pipelines(&self);
     /// Span prefilters' ends (`regex_block`): bit `i` of a file's words, a match can end after its byte `i`.
-    /// `Ok(None)`: a program form the device lacks, recorded in 0202's `metal-form` list (the cores run them). Any
-    /// other failure is the run's error (decision 0382: no fallback on an error).
+    /// `Ok(None)`: a program form the device lacks (the cores run them), or the set's kernels still compiling on
+    /// threads of their own (the cores run the batch meanwhile: no launch waits on the compiler). Any other failure is
+    /// the run's error (decision 0382: no fallback on an error).
     fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Result<Option<Vec<Vector<u64>>>, Error>;
     /// This thread's program invocations and host events since the last reset (tests count them).
     fn execution_metrics(&self) -> (usize, usize);

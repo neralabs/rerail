@@ -23,7 +23,7 @@
 //! store, record or version of a phase's own.
 
 use rerail_blocks::vector::Vector;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use super::super::{Error, Result};
@@ -33,7 +33,7 @@ use crate::code_rule_dsl::logic::program_image::Version;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::typing::file_local::Binding;
 
-const SEP: &str = "__";
+use crate::code_rule_dsl::logic::plan::phased::SEP;
 
 /// The phases whose runs are under way, outermost first, in the run's context: a phase reading a later phase's export
 /// runs that phase inside its own run, so a phase met again is a cycle. A run in a job is inside the same phases.
@@ -207,11 +207,8 @@ pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::sha
     Ok(out)
 }
 
-/// Whether `rel` names an earlier phase's export (`<phase>__<export>`): shared by every program of a run
-/// (`corpus::combine` does not prefix it).
-pub fn is_phased(rel: &str) -> bool {
-    rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("rr_") && !e.contains(SEP))
-}
+/// Whether `rel` is an input shared by every program of a run (the planner's, `plan::phased`).
+pub use crate::code_rule_dsl::logic::plan::phased::is_phased;
 
 /// A batch of policies run one after another over one tree (`tools::run_policies`): while it is held, phase 1's runs
 /// are kept by their inputs and taken again by a policy whose run has the same ones. Nothing is kept past it, so an
@@ -351,7 +348,7 @@ pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
 /// The facts `prog` reads from earlier phases (`<phase>__<export>`), each phase run first in its own space, and the
 /// phases' runs, in the order they ran.
-pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
+pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, root: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
     // A phase's own run: its upstream facts were worked out by the run that started it.
     if let Some(me) = declared(prog)
         && let Some(f) = crate::code_rule_dsl::logic::profile::with_bound(|h: &HandedDown| h.0.last().filter(|(n, _)| *n == me.name).map(|(_, f)| Facts::clone(f)))
@@ -409,7 +406,7 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::
         }
         // The phase's run: its own program, its own scratch, its exports written as its outputs. The earlier phases it
         // reads run first (struct, then types), and are listed with the reader's, in the order they ran, each once.
-        let out = scratch.join(format!("phase-{name}"));
+        let mut image = Vec::new();
         // Its exports are its outputs: the program read, given them (decision 0249), not its text with an `.output`
         // after it read again.
         let handed = {
@@ -420,7 +417,7 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::
             }
             b.finish().map_err(Error::Plan)?.0
         };
-        let (upstream, upstream_runs) = self::facts(&*program, &super::shape::Shape::of(&program), root, scratch, modes, binding, chunk_nodes, typing, options)?;
+        let (upstream, upstream_runs) = self::facts(&*program, &super::shape::Shape::of(&program), root, modes, binding, chunk_nodes, typing, options)?;
         for r in upstream_runs {
             if !runs.iter().any(|x: &PhaseRun| x.name == r.name) {
                 runs.push(r);
@@ -430,9 +427,9 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::
         let report = {
             // The phase's own run, its jobs' spans under it (`profile::span_at`).
             let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: run"));
-            super::run_read(&handed, root, &out, modes, binding, chunk_nodes, typing, options)?
+            super::run_read_handing(&handed, None, root, Path::new(""), modes, binding, chunk_nodes, typing, options, Some(&mut image))?
         };
-        let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &*program, &declared, &out)? };
+        let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &*program, &declared, &image)? };
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&reads, &rows, &mut facts); }
         let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();
         runs.push(PhaseRun { name, report, exports });
@@ -444,6 +441,45 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::
 /// a phase's run is a function of them as of its program, so the whole-run cutoff keys its record by them too.
 pub(super) fn handed_down_text() -> String {
     crate::code_rule_dsl::logic::profile::with_bound(|h: &HandedDown| h.0.last().map(|(n, f)| format!("{n}\0{f:?}")).unwrap_or_default())
+}
+
+/// Content already observed for source requests, available before the request waves start.
+pub(super) fn observed_source_digests() -> Vec<[u8; 32]> {
+    crate::code_rule_dsl::logic::profile::with_bound(|handed: &HandedDown| {
+        handed.0.last().and_then(|(_, facts)| facts.get("observer__source_file"))
+            .into_iter().flatten()
+            .filter_map(|row| match row.get(3) {
+                Some(Value::Str(digest)) => crate::content_store::observe::unhex(digest),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>().into_iter().collect()
+    })
+}
+
+/// The files handed down to the innermost phase under way on this thread (phase 1's `observer__source_file`, with
+/// `observer__source_path`), known before its first wave: each one's paths (as given, and as loaded where that is
+/// another), its module and its content's digest.
+pub(super) fn handed_files() -> Vec<(Vec<String>, String, [u8; 32])> {
+    crate::code_rule_dsl::logic::profile::with_bound(|handed: &HandedDown| {
+        let Some((_, facts)) = handed.0.last() else { return Vec::new() };
+        let text = |v: Option<&Value>| match v {
+            Some(Value::Str(s)) => Some(s.to_string()),
+            _ => None,
+        };
+        let loaded: HashMap<String, String> = facts.get("observer__source_path").into_iter().flatten().filter_map(|r| Some((text(r.first())?, text(r.get(1))?))).collect();
+        facts
+            .get("observer__source_file")
+            .into_iter()
+            .flatten()
+            .filter_map(|r| {
+                let path = text(r.first())?;
+                let digest = crate::content_store::observe::unhex(&text(r.get(3))?)?;
+                let mut paths = vec![path.clone()];
+                paths.extend(loaded.get(&path).filter(|f| **f != path).cloned());
+                Some((paths, text(r.get(1))?, digest))
+            })
+            .collect()
+    })
 }
 
 /// Whether a phase's run is under way on this thread (its documents are its own: phase 1 does not run inside it).
@@ -471,7 +507,6 @@ pub(super) fn sources(
     texts: &super::texts::Sources,
     label: &str,
     root: &Path,
-    scratch: &Path,
     modes: &str,
     binding: Binding,
     chunk_nodes: usize,
@@ -527,13 +562,25 @@ pub(super) fn sources(
     }
     // The observer's facts: stated, handed down as a phase's exports are (they are its inputs, not its program).
     let stated: Vec<Vec<Value>> = files.iter().map(|(p, m, g, c)| vec![Value::Str(p.clone().into()), Value::Str(m.clone().into()), Value::Str(g.clone().into()), Value::Str(c.clone().into())]).collect();
-    let _down = HandingDown::enter(NAME, Facts::from([("observer__source_file".to_owned(), stated)]));
-    let out = scratch.join(format!("phase-{NAME}"));
+    let paths = files.iter().filter_map(|(p, _, _, _)| {
+        let file = if crate::git_workspace::snapshot::contains(root) {
+            p.clone()
+        } else {
+            // Spelled with `/` on every OS, as the rules join and split paths (`corpus::slashed`).
+            super::slashed(&crate::git_workspace::snapshot::canonicalize(root.join(p)).ok()?)
+        };
+        Some(vec![Value::Str(p.clone().into()), Value::Str(file.into())])
+    }).collect();
+    let _down = HandingDown::enter(NAME, Facts::from([
+        ("observer__source_file".to_owned(), stated),
+        ("observer__source_path".to_owned(), paths),
+    ]));
+    let mut image = Vec::new();
     let report = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));
-        super::run_read_handing(&handed, Some(texts), root, &out, modes, binding, chunk_nodes, typing, &options)?
+        super::run_read_handing(&handed, Some(texts), root, Path::new(""), modes, binding, chunk_nodes, typing, &options, Some(&mut image))?
     };
-    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &*program, &declared, &out)? };
+    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &*program, &declared, &image)? };
     let text = |v: &Value| match v {
         Value::Str(s) => Some(s.to_string()),
         // A path is text: an atom (decision 0270) is none.
@@ -581,12 +628,12 @@ fn loads_documents(program: &Version, dir: Option<&Path>, seen: &mut BTreeSet<St
 
 /// A phase's exports, as its run wrote them in `out` (which goes): each row's values as the export's columns are
 /// declared, read from the outputs' image (`output::Outputs`), nothing parsed.
-fn read_exports(name: &str, program: &(impl ProgramFields + ?Sized), declared: &Declared, out: &Path) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
+fn read_exports(name: &str, program: &(impl ProgramFields + ?Sized), declared: &Declared, bytes: &[u8]) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
     use crate::code_rule_dsl::logic::plan::output;
-    let outputs = output::Outputs::open(out).map_err(|e| Error::Plan(format!("phase {name}: {}: {e}", out.display())))?;
+    let outputs = output::Outputs::of(bytes).map_err(|e| Error::Plan(format!("phase {name}: {e}")))?;
     let mut rows: BTreeMap<String, Vec<Vec<Value>>> = BTreeMap::new();
     for export in &declared.exports {
-        let rel = outputs.get(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not in its outputs (in {}, which holds {:?})", out.display(), outputs.names())))?;
+        let rel = outputs.get(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not in its outputs ({:?})", outputs.names())))?;
         let declared_types = program.columns_of(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not declared")))?;
         let types: Vec<&str> = declared_types.iter().map(|(_, t)| t.as_str()).collect();
         if rel.width() != types.len() {
@@ -607,8 +654,7 @@ fn read_exports(name: &str, program: &(impl ProgramFields + ?Sized), declared: &
         }
         rows.insert(export.clone(), read);
     }
-    drop(outputs);
-    let _ = std::fs::remove_dir_all(out);
+
     Ok(rows)
 }
 

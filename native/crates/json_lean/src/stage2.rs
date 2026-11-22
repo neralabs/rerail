@@ -235,7 +235,7 @@ impl<SZ: Cell, OF: Cell, TL: Cell> Walk<SZ, OF, TL> {
         // SAFETY: the columns hold `bound` nodes, more than any file has.
         unsafe {
             self.code.add(self.n as usize).write_unaligned(c);
-            if self.n % STRIDE == 0 {
+            if self.n.is_multiple_of(STRIDE) {
                 self.block_base = start;
                 self.base.add((self.n / STRIDE) as usize).write_unaligned(start);
             }
@@ -503,13 +503,22 @@ enum Label {
     DocumentEnd,
 }
 
+/// The walk's stacks by depth, as simdjson's parser holds them: each open container's node, each
+/// open pair's node, and whether each open container is an object.
+#[derive(Clone, Copy)]
+pub(crate) struct Stacks {
+    pub(crate) container: *mut u32,
+    pub(crate) pair: *mut u32,
+    pub(crate) object: *mut bool,
+}
+
 /// `walk`: what a walk leaves: 0 and each 2-byte column's largest value fitting, or a column's bit
 /// (1 size, 2 off, 4 tail) where one did not, 8 where `size` is 4 bytes and its values fit 2; or
 /// simdjson's error code negated.
 ///
 /// # Safety
 /// `buf` is the padded source after any byte order mark, `index` its `count` structurals and the
-/// three entries after them; `container`, `pair` and `object` hold `DEFAULT_MAX_DEPTH + 1`.
+/// three entries after them; `stacks`' each hold `DEFAULT_MAX_DEPTH + 1`.
 #[inline(never)]
 pub(crate) unsafe fn walk<SZ: Cell, OF: Cell, TL: Cell>(
     buf: *const u8,
@@ -518,10 +527,9 @@ pub(crate) unsafe fn walk<SZ: Cell, OF: Cell, TL: Cell>(
     shift: u32,
     len: u32,
     sink: &mut Sink,
-    container: *mut u32,
-    pair: *mut u32,
-    object: *mut bool,
+    stacks: Stacks,
 ) -> i32 {
+    let Stacks { container, pair, object } = stacks;
     let widths = [SZ::WIDTH, OF::WIDTH, TL::WIDTH];
     // A node starts at a byte of its own, but a pair (its key's quote) and the document (its value's
     // first byte); a pair takes four bytes or more. So the tape has at most this many nodes, and the
@@ -766,8 +774,8 @@ pub(crate) unsafe fn walk<SZ: Cell, OF: Cell, TL: Cell>(
         for c in 0..5 {
             sink.col[c].set_len(column_bytes(c, w.n, &widths));
         }
-        for c in 0..3 {
-            sink.width[c] = widths[c] as u8;
+        for (to, &w) in sink.width.iter_mut().zip(&widths) {
+            *to = w as u8;
         }
         (if SZ::WIDTH == 2 && w.high_size > 0xffff { 1 } else { 0 })
             | (if OF::WIDTH == 2 && w.high_off > 0xffff { 2 } else { 0 })

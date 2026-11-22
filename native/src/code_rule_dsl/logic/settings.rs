@@ -70,8 +70,20 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
 /// The run's settings (t21 E4): `key=value` lines of `<root>/rerail.env` (blank lines and `#` comments
 /// skipped), then each `--env key=value`, a later value for a key replacing an earlier one.
 pub fn settings(root: &std::path::Path, flags: &[String]) -> Result<Vec<(String, String)>, String> {
+    settings_with_file(root, flags, true)
+}
+
+pub(crate) fn settings_with_file(root: &std::path::Path, flags: &[String], read_file: bool) -> Result<Vec<(String, String)>, String> {
     let file = root.join("rerail.env");
-    let text = if file.exists() { std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))? } else { String::new() };
+    let text = if read_file {
+        match crate::git_workspace::snapshot::read_to_string(&file) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(format!("{}: {e}", file.display())),
+        }
+    } else {
+        String::new()
+    };
     let lines = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(|l| (l, file.display().to_string()));
     let mut settings: Vec<(String, String)> = Vec::new();
     for (line, from) in lines.chain(flags.iter().map(|f| (f.as_str(), "--env".to_owned()))) {

@@ -220,11 +220,7 @@ macro_rules! fixture {
     ($name:literal) => {
         (
             $name,
-            include_str!(concat!(
-                crate::code_rule_dsl::fixtures::fixtures_dir!(),
-                "/python/literal/ruff/",
-                $name
-            )),
+            crate::code_rule_dsl::fixtures::oracle!("python/literal/ruff/", $name),
         )
     };
 }

@@ -43,8 +43,9 @@ also kept tier 2 bigger than it needs to be, because the fact went unproved.
    tier 2 grew past its 65,533 words. Read as dead, step 35's tier 2 is 15,424 words; it was
    23,146 before the lemmas.
 
-3. **The lowering and the provers hash with a fixed seed** (`foldhash::fast::FixedState`, in
-   `bitlex_masks`, `bitlex_prove`, `bitlex_tier2` and `grammar`). A proof's search order comes
+3. **The lowering and the provers hash with a fixed hasher** (`rustc_hash`'s `FxHashMap`, which
+   has no seed, in `bitlex_masks`, `bitlex_prove`, `bitlex_tier2` and `grammar`; it was
+   `foldhash::fast::FixedState` where it was written, and the hub's 0414 had brought `rustc_hash`). A proof's search order comes
    from map iteration. With std's random seed, one grammar compiled to programs of 15,420,
    15,422 or 15,424 words from run to run. Now one grammar compiles to one program.
 
@@ -109,7 +110,8 @@ The four changes were measured together, not one by one.
 ## Kotlin's ladder removed
 
 The user, 2026-11-20: "stop keeping the whole ladder ... I said stop keeping them at all". Steps
-01 to 34 are deleted. The last step is the grammar, `kotlin_parser/kotlin.bitlex`. The AOT test
+01 to 34 are deleted (steps 1 to 35 here, where 0422 had kept step 36 alone). The last step is the
+grammar, `kotlin_parser/kotlin.bitlex`: step 36's grammar under the grammar's header. The AOT test
 takes it as Kotlin's only step: 82 s, most of it rustc's build. The nine
 `what_step_N_does_not_read_is_refused` tests are one, `what_the_grammar_does_not_read_is_refused`.
 The step timings above are from before the removal.

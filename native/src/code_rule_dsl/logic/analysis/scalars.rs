@@ -67,6 +67,10 @@ pub enum Kind {
     Exists,
 }
 
+// A scalar's kind is held in a plan's steps as it is (`setfix::steps`), in its crate (the archive's trait is foreign
+// to the steps').
+rerail_section::plain_archive!(Kind);
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Scalar {
     pub kind: Kind,

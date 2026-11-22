@@ -1,3 +1,4 @@
+use rerail_store::Canonical as _;
 use super::fs::{HeldFiles, View};
 use super::{ModuleType, Style, target};
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ impl TempDir {
         std::fs::create_dir_all(&path).unwrap();
         // std's canonical form on purpose: on Windows it is the `\\?\` verbatim path, and the Windows tests below
         // resolve against both it and its drive form.
-        Self(path.canonicalize().unwrap())
+        Self(path.canonical().unwrap())
     }
 
     fn write(&self, path: &str, text: &str) {

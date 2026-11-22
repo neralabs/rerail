@@ -44,7 +44,7 @@ pub mod verification;
 pub mod component_loop;
 pub mod versions;
 pub mod walks;
-use super::logic::sql::lattices;
+use super::logic::native::lattices;
 use super::logic::sql::program;
 pub mod runtime;
 pub mod work_graph;

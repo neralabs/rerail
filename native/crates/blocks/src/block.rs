@@ -6,7 +6,7 @@
 
 use crate::structure;
 use std::fs::File;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::fs::OpenOptions;
 use std::io;
 use std::ops::Deref;
@@ -101,6 +101,8 @@ pub struct Block {
     base: *mut u8,
     reserved: usize,
     ext: Arc<Extent>,
+    /// A file block's file: an open block's, for the truncation at its freeze, and closed then (Unix): a mapping needs
+    /// no descriptor, so a frozen block holds none.
     file: Option<File>,
     /// Its memory is a file's mapping, not a reservation (`mem::reserve`): counted neither way. A mapping read-only
     /// holds no descriptor (`map_file`), so this is not `file.is_some()`.
@@ -174,26 +176,24 @@ impl Block {
         b
     }
 
-    /// A block backed by the file at `path`: sparse, and written back by the OS (no `fsync`). Unix only: elsewhere
-    /// `Unsupported`.
-    #[cfg(not(unix))]
+    /// A block backed by the file at `path`: sparse, and written back by the OS (no `fsync`). Unix and Windows (a
+    /// shared mapping): elsewhere `Unsupported`.
+    #[cfg(not(any(unix, windows)))]
     pub fn file(_path: &Path, _kind: u32, _reserved: usize) -> io::Result<Block> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "a block in a file needs a shared mapping"))
     }
 
     /// A block backed by the file at `path`: sparse, and written back by the OS (no `fsync`).
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn file(path: &Path, kind: u32, reserved: usize) -> io::Result<Block> {
         let reserved = round_up(reserved.max(PAGE), PAGE);
         let f = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?;
+        // NTFS allocates a file's length unless it is sparse; a Unix file system leaves a hole.
+        #[cfg(windows)]
+        crate::windows::sparse(&f)?;
         f.set_len(reserved as u64)?;
-        let p = unsafe {
-            libc::mmap(std::ptr::null_mut(), reserved, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, f.as_raw_fd(), 0)
-        };
-        if p == libc::MAP_FAILED {
-            return Err(io::Error::last_os_error());
-        }
-        let b = Block::make(p.cast(), reserved, 0, Some(f), true, None);
+        let p = map_shared(&f, reserved, true)?;
+        let b = Block::make(p, reserved, 0, Some(f), true, None);
         b.init(kind);
         Ok(b)
     }
@@ -438,6 +438,8 @@ impl Block {
         if len >= 4 << 20 && std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
             eprintln!("RERAIL_DEVICE_TRACE a block wrapped, {} MB:\n{}", len >> 20, std::backtrace::Backtrace::force_capture());
         }
+        // Its pages committed first, where a reservation's are committed as they are touched (Windows: a driver pins them).
+        crate::mem::commit(self.base, len).map_err(|e| format!("committing a block's {len} bytes for the device: {e}"))?;
         // SAFETY: the block's pages outlive the wrap: it is kept by the block, and let go before they are unmapped.
         let b = unsafe { rerail_device::device::wrap_host_memory(device, self.base, len)? };
         *kept = Some((b.clone(), len));
@@ -609,7 +611,7 @@ impl Block {
             std::ptr::write_volatile(&mut h.state, FROZEN);
         }
         if let Some(f) = &self.file {
-            f.set_len(len as u64).expect("truncate a journal block");
+            cut(f, len as u64).expect("truncate a journal block");
         } else if self.backing.is_none() {
             // A free-listed block's reservation past its length goes back: nothing is written there now.
             // Whole MBs, and never under a device buffer made over it (`device_buffer`'s extent).
@@ -627,6 +629,11 @@ impl Block {
             unsafe { crate::mem::protect_read(self.base, self.reserved) };
         }
         let mut b = self;
+        // Unix: nothing is left to truncate, and the mapping outlives the file's descriptor: it is closed.
+        #[cfg(unix)]
+        {
+            b.file = None;
+        }
         b.writable = false;
         Frozen(Arc::new(b))
     }
@@ -663,7 +670,7 @@ impl Block {
     /// others read up to an end they are told, decision 0401): its magic and kind checked, its whole file mapped,
     /// writable or not. Read-only, it keeps no descriptor: the mapping outlives it, and a store's reader holds none of
     /// its files open. Without shared mappings (WASI) the file is read into memory, and a writer writes it back itself
-    /// (`bytes`).
+    /// (`bytes`). On Windows a view's length is the file's, which a frozen block's may pass (`cut`).
     pub fn map_file(path: &Path, kind: u32, writable: bool) -> io::Result<Block> {
         let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {what}", path.display()));
         let f = std::fs::OpenOptions::new().read(true).write(writable).open(path)?;
@@ -671,24 +678,22 @@ impl Block {
         if len < size_of::<Header>() {
             return Err(invalid(format!("{len} bytes, shorter than a header")));
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let b = {
-            let prot = if writable { libc::PROT_READ | libc::PROT_WRITE } else { libc::PROT_READ };
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, libc::MAP_SHARED, f.as_raw_fd(), 0) };
-            if p == libc::MAP_FAILED {
-                return Err(io::Error::last_os_error());
-            }
-            let mut b = Block::make(p.cast(), len, len, Some(f), writable, None);
+            let p = map_shared(&f, len, writable)?;
+            let mut b = Block::make(p, len, len, Some(f), writable, None);
             if !writable {
                 b.file = None;
             }
             b
         };
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let b = {
             let mut f = f;
             let reserved = len.div_ceil(PAGE) * PAGE;
             let p = crate::mem::reserve(reserved);
+            // The kernel reads and writes a reservation's pages without faulting them in (Windows: `crate::windows`).
+            crate::mem::commit(p, len)?;
             std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) })?;
             Block::make(p, reserved, len, None, writable, None)
         };
@@ -705,7 +710,7 @@ impl Block {
     /// What is written in a block mapped from its file on the disk, with `Flush::Synced`: its dirty pages written
     /// back, then the file flushed (a barrier on macOS, `fdatasync` elsewhere). Otherwise nothing: the OS writes the
     /// pages back at its own pace (decision 0481). Nothing to do for a block with no file.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn sync_mapped(&self, flush: Flush) -> io::Result<()> {
         if !flush.waits() {
             return Ok(());
@@ -713,19 +718,32 @@ impl Block {
         // The pages written: nothing past `used` is (a kept file's reservation is hundreds of MB, its facts a few;
         // asked of the whole, the kernel walked every page of it, Q361).
         let written = self.used().next_multiple_of(PAGE).min(self.reserved);
-        // SAFETY: the block's own mapping, its first `written` bytes.
-        if unsafe { libc::msync(self.base.cast(), written, libc::MS_SYNC) } != 0 {
-            return Err(io::Error::last_os_error());
+        // Windows: the view's dirty pages written, then the file's buffers flushed (`FlushViewOfFile` waits for no
+        // disk).
+        #[cfg(windows)]
+        {
+            crate::windows::flush_view(self.base, written)?;
+            return match &self.file {
+                Some(f) => f.sync_data(),
+                None => Ok(()),
+            };
         }
-        let Some(f) = &self.file else { return Ok(()) };
-        #[cfg(target_os = "macos")]
-        let done = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_BARRIERFSYNC) };
-        #[cfg(not(target_os = "macos"))]
-        let done = unsafe { libc::fdatasync(f.as_raw_fd()) };
-        if done != 0 {
-            return Err(io::Error::last_os_error());
+        #[cfg(unix)]
+        {
+            // SAFETY: the block's own mapping, its first `written` bytes.
+            if unsafe { libc::msync(self.base.cast(), written, libc::MS_SYNC) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let Some(f) = &self.file else { return Ok(()) };
+            #[cfg(target_os = "macos")]
+            let done = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_BARRIERFSYNC) };
+            #[cfg(not(target_os = "macos"))]
+            let done = unsafe { libc::fdatasync(f.as_raw_fd()) };
+            if done != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     /// The file a block maps, when it maps one.
@@ -741,27 +759,44 @@ impl Block {
         if len < size_of::<Header>() {
             return Err(format!("{}: {len} bytes, shorter than a header", path.display()));
         }
-        #[cfg(unix)]
-        let b = {
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
-            if p == libc::MAP_FAILED {
-                return Err(io::Error::last_os_error().to_string());
-            }
-            Block::make(p.cast(), len, len, Some(f), false, None)
-        };
-        // No mapping: the file read into a reservation of its own.
-        #[cfg(not(unix))]
-        let b = {
-            let mut f = f;
-            let p = crate::mem::reserve(len.div_ceil(PAGE) * PAGE);
-            std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) }).map_err(|e| e.to_string())?;
-            Block::make(p, len.div_ceil(PAGE) * PAGE, len, None, false, None)
-        };
-        let at = frozen_at(unsafe { std::slice::from_raw_parts(b.base, len) }, kind).map_err(|e| format!("{}: {e}", path.display()))?;
-        if at.length != len {
-            return Err(format!("{}: header says {} bytes, the file has {len}", path.display(), at.length));
-        }
+        let b = Block::map_read(f, len)?;
+        b.check_frozen(len, kind).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(Frozen(Arc::new(b)))
+    }
+
+    /// The whole of `f`, `len` bytes, mapped read-only. The mapping keeps the pages, so the file is closed (`f`,
+    /// dropped as this returns).
+    #[cfg(any(unix, windows))]
+    fn map_read(f: File, len: usize) -> Result<Block, String> {
+        let p = map_shared(&f, len, false).map_err(|e| e.to_string())?;
+        // A mapping (counted as one by `make`), its file let go.
+        let mut b = Block::make(p, len, len, Some(f), false, None);
+        b.file = None;
+        Ok(b)
+    }
+
+    /// No mapping (WASI): the whole of `f`, `len` bytes, read into a reservation of its own.
+    #[cfg(not(any(unix, windows)))]
+    fn map_read(mut f: File, len: usize) -> Result<Block, String> {
+        let p = crate::mem::reserve(len.div_ceil(PAGE) * PAGE);
+        // The kernel reads and writes a reservation's pages without faulting them in (Windows: `crate::windows`).
+        crate::mem::commit(p, len).map_err(|e| e.to_string())?;
+        std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) }).map_err(|e| e.to_string())?;
+        Ok(Block::make(p, len.div_ceil(PAGE) * PAGE, len, None, false, None))
+    }
+
+    /// Whether the block, its file's `len` bytes, was frozen whole as a block of `kind`: magic, kind, state, and the
+    /// length its header says is the file's.
+    fn check_frozen(&self, len: usize, kind: u32) -> Result<(), String> {
+        let at = frozen_at(unsafe { std::slice::from_raw_parts(self.base, len) }, kind)?;
+        // Windows cuts no file a view maps (`cut`; `deferrable`'s module doc): a frozen block's file can be longer than
+        // the block it holds, its header saying the block's length.
+        #[cfg(windows)]
+        let len = if at.length <= len { at.length } else { len };
+        if at.length != len {
+            return Err(format!("header says {} bytes, the file has {len}", at.length));
+        }
+        Ok(())
     }
 }
 
@@ -781,12 +816,37 @@ impl Drop for Block {
                     // A file's mapping was never `reserve`'s: it is unmapped without counting.
                     if mapped {
                         crate::mem::uncounted(reserved);
+                        unsafe { crate::mem::release_mapping(base as *mut u8, reserved) };
+                    } else {
+                        unsafe { crate::mem::release(base as *mut u8, reserved) };
                     }
-                    unsafe { crate::mem::release(base as *mut u8, reserved) };
                 }
             }
         }));
     }
+}
+
+/// `len` bytes of `f` mapped shared: read and written (`writable`), or read.
+#[cfg(any(unix, windows))]
+fn map_shared(f: &File, len: usize, writable: bool) -> io::Result<*mut u8> {
+    #[cfg(unix)]
+    {
+        let prot = if writable { libc::PROT_READ | libc::PROT_WRITE } else { libc::PROT_READ };
+        // SAFETY: the file's own descriptor, open for the call; the system picks the address.
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+        if p == libc::MAP_FAILED { Err(io::Error::last_os_error()) } else { Ok(p.cast()) }
+    }
+    #[cfg(windows)]
+    crate::windows::map_file(f, len, writable)
+}
+
+/// `f` cut to `len` bytes; on Windows, where a view maps no file it may cut, only once no view maps it
+/// (`windows::cut`).
+pub(crate) fn cut(f: &File, len: u64) -> io::Result<()> {
+    #[cfg(windows)]
+    return crate::windows::cut(f, len);
+    #[cfg(not(windows))]
+    f.set_len(len)
 }
 
 /// A frozen block: read-only, shared by any number of readers.
@@ -916,4 +976,38 @@ pub fn frame(kind: u32, root_len: usize) -> (Vec<u8>, Vec<u8>) {
     // SAFETY: `head` holds at least a header; every field is a plain integer.
     unsafe { std::ptr::write_unaligned(head.as_mut_ptr().cast::<Header>(), h) };
     (head, vec![0u8; length - root - root_len])
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// The descriptors this process has open.
+    fn open_descriptors() -> usize {
+        std::fs::read_dir("/dev/fd").expect("/dev/fd").count()
+    }
+
+    /// Frozen file blocks hold no descriptor: a store keeps many segments mapped at once (its caches hold them), and
+    /// a descriptor each reached the default limit of 1,024 (`unable to open database file` from SQLite after).
+    #[test]
+    fn frozen_file_blocks_hold_no_descriptor() {
+        const N: usize = 256;
+        let dir = std::env::temp_dir().join(format!("rerail-block-descriptors-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let before = open_descriptors();
+        let mut held = Vec::new();
+        for i in 0..N {
+            let path = dir.join(format!("{i}.block"));
+            let block = Block::file(&path, kind::JOURNAL, PAGE).unwrap();
+            block.alloc(64, 64);
+            held.push(block.freeze());
+            held.push(Block::open_file(&path, kind::JOURNAL).unwrap());
+        }
+        let grown = open_descriptors().saturating_sub(before);
+        assert_eq!(held.iter().map(|b| b.used()).min(), held.iter().map(|b| b.used()).max(), "every block read back whole");
+        drop(held);
+        std::fs::remove_dir_all(&dir).unwrap();
+        // Other tests of this binary open files meanwhile: a bound well under the blocks' count, not an exact one.
+        assert!(grown < N / 4, "{} frozen file blocks held {grown} more descriptors open", 2 * N);
+    }
 }

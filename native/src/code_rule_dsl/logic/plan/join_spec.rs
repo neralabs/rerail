@@ -3,7 +3,7 @@
 //! numbered slots, then the head. A literal with no native step (an aggregate other than `count`, `sum`, `min`, `max`
 //! and `join`, a descent, a document range, top) has no spec: that rule stays SQL.
 use rerail_blocks::vector::Vector;
-use super::body::Body;
+use super::body::{Body, VarSet};
 use super::{Mode, Run, Step, sym_char};
 use super::super::native::component::spec::{Arg, Extreme, HeadTok, InputKey, JoinItem, Join, JoinSpec, Source as JoinSource, Tok};
 use super::super::program_image::{AggRef, CmpOp, Lit, Slot, TermRef};
@@ -223,8 +223,9 @@ impl<'a> Run<'a, '_> {
     ) -> Option<Join> {
         let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
-            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`): another spec.
-            d.u64(u64::from(b.head_bound()));
+            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`), a mode line's from
+            // the variables its delta binds (`Body::with_bound`): another spec each.
+            b.digest_pre(d);
             if bare {
                 // A head of no terms, as `Body::digest_atom` writes it.
                 d.str(b.rel(b.head()));
@@ -363,6 +364,10 @@ impl<'a> Run<'a, '_> {
                                 .position(|x| x.var() == Some(o))
                                 .and_then(|c| pf.column_type(b.rel(a), c).map(str::to_owned)),
                             Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: r @ TermRef::Call(..) } if v == n && numeric_call(b, r) => Some("int".to_owned()),
+                            // A node's document (`$d = @doc($n)`, `JoinItem::DocOf`) is a document key, an integer: what
+                            // hiding's bound on it (`$d < RUN_VALUE_KEYS`) compares, once the `doc` read that typed it is
+                            // gone.
+                            Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: TermRef::Call(f, args) } if v == n && b.v.text(f) == "doc" && args.count() == 1 => Some("int".to_owned()),
                             // A variable equal to a constant (`0 = $r`, an inlined `fneed(f, 0)`) has the constant's type.
                             Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: TermRef::Int(_) | TermRef::Branded(_) } | Lit::Cmp { l: TermRef::Int(_) | TermRef::Branded(_), op: CmpOp::Eq, r: TermRef::Var(v) }
                                 if v == n =>

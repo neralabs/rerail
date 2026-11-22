@@ -53,7 +53,9 @@ instead, and only that run's output is shown.
 | `linux-sysroot` | copies a Linux host's headers and libraries for `cargo-linux` |
 | `test-mirror` | a test of the mirror against an agent run here: a file the checkout deleted goes from the host's copy |
 | `test-mac-compiles HOST` | a test of this Mac's compiles on HOST: a small crate's library compiles (proc-macros, `OUT_DIR`, bundled C) go there through the farm, and each output must be this Mac's bytes |
-| `status` | what the farm can use now: each host probed, and why one is not usable |
+| `status` | what the farm can use now: each host probed, and why one is not usable; each host's compile benchmark |
+| `features` | each host's CPU: its model, vector units and lengths, every feature by one set of names; which hosts have given features ("CPU features") |
+| `bench` | the compile benchmark: a clean `gix` build at 1, 4 and 8 jobs on each host, kept in the farm's state for `status` ("How fast each host compiles") |
 | `dashboard` | a live page of every host and this Mac: CPU (farm, fleet, the machine's own, idle), GPU, memory, disk, jobs, reachability, round trip, traffic ("Dashboard") |
 | `sampler` | the dashboard's end on each machine: one JSON line of its state every 3 seconds |
 | `free-local` | this Mac's disk floor: Rerail's least recently built builds go under `local_min_free_gb` |
@@ -77,9 +79,13 @@ The sccache is upstream at the commit `build-sccache` pins, with PRs #3021
 `~/Library/Caches/rerail-farm/sccache-src`. Until the PRs land upstream, a newer base means
 merging them again and exporting `0000` anew. The farm's patch caches
 the crate types that link when `SCCACHE_CACHE_LINKED` is set (proc macros, build scripts, the
-engine's cdylib: upstream never does), keyed also on the linker's and the SDK's versions; accepts
+engine's cdylib, test harnesses: upstream never does), keyed also on the linker's and the SDK's versions; accepts
 `--extern proc_macro` without a path; and keeps `SOURCE_DATE_EPOCH`, which upstream drops, so a C
-file that uses `__TIME__` (mimalloc's) is cached. Nothing of the farm is installed on a host:
+file that uses `__TIME__` (mimalloc's) is cached. A test harness is shared by the checkouts because
+no crate reads its checkout's path as it compiles (decision 0224; `scripts/check/ci/path-free-builds.mjs`
+checks it in CI). On Linux the wrapper copies a program it got from the cache (a build script, a
+test) to a file of its own before cargo runs it: the server's other threads hold the file it wrote
+open until they exec, and running it failed with "Text file busy". Nothing of the farm is installed on a host:
 `farm-agent` is sent with each command and run by the host's `/usr/bin/python3`.
 Each host needs ssh without a password (its name in `farm.json` is a name ssh connects to: a `Host`
 entry of `~/.ssh/config`), the toolchain of `rust-toolchain.toml` (`setup` installs it) and
@@ -134,8 +140,9 @@ alone takes 90 s at a load of 80).
 The daemon, the wrapper and the agents on the hosts are the installed farm
 (`~/.local/share/rerail-farm`), one version for every worktree; `test-remote` and
 `live-test-remote` run it too, not their checkout's copy, and say when their checkout's is newer.
-`farm.VERSION` numbers it: `setup` refuses to install an older version over a newer one (`--force`
-does), the daemon refuses a caller of another version, and stops taking compiles once `setup`
+`farm.VERSION` numbers it: `setup` refuses to install an older version over a newer one, or
+over an install from a commit this checkout has not merged (`installed-from`: a branch's farm
+changes at the same version were lost so, 2026-11-21) (`--force` does both), the daemon refuses a caller of another version, and stops taking compiles once `setup`
 installs another (it finishes the ones it has; the next compile starts the new one). A change to
 the farm's protocol or to what a host keeps raises `VERSION`.
 
@@ -210,6 +217,18 @@ turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead
 its message.
 A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
 build at the first compile. `RERAIL_FARM_QUIET=1` silences the warnings.
+
+## A crate built against a replaced one
+
+A library in a target directory can be replaced under the same file name and cargo fingerprint, and
+keep a file time no newer than the crates built against it: cargo then sees all of them fresh, and
+rustc refuses the next crate that links both (E0460 "found possibly newer version of crate", E0463,
+or "compiled by an incompatible version of rustc"; cranelift_frontend against cranelift_codegen,
+2026-11-21). A compile here that fails so compiles each refused crate again, from the record of its
+last compile (`calls/`, for Rerail checkouts and registry crates), down to 3 levels of what that
+crate links in turn, and then runs again. It says so as a `warning: rerail-farm:` line, and logs
+each one in `~/Library/Caches/rerail-farm/stale-externs.log`, since what replaced the library is
+still unknown.
 
 ## Configuration
 
@@ -741,6 +760,77 @@ sample); `ioreg` or `nvidia-smi` every 6 seconds, docker every 15. Each line rep
 sampler used, shown under each card: 0.3 to 2% of one core (2026-11-19). The dashboard adds no
 health probe: it reads the farm's records. The page and its data stay on 127.0.0.1; the hosts'
 names come from the configuration at run time.
+
+## CPU features
+
+Each health probe records the host's CPU (farm 57): its model, every feature its kernel reports, and
+the SVE and SME vector lengths. A VM's are what the VM passes on, which is less than its machine's
+(the Linux VMs on Macs show no bf16, i8mm or SME), so a VM's record is its own. The names are one
+set for macOS and Linux: x86 Linux's flags (`avx2`, `avx512f`, `avx_vnni`, `amx_tile`); on arm64,
+Linux's (`sve`, `sve2`, `sme`, `bf16`, `i8mm`), with `neon`, `fp16`, `dotprod`, `fhm` and `rdm` for
+the asimd ones, and macOS's FEAT_X as `x`.
+
+```
+scripts/build/farm/features                 # each host: model, vector units, lengths
+scripts/build/farm/features sve2 i8mm       # who has these, and what the rest lack
+scripts/build/farm/features --host NAME     # one host's every feature (`local`: this Mac)
+scripts/build/farm/features --json
+scripts/dev/test-remote --cpu-feature sve2 -- cargo nextest run ...
+```
+
+`test-remote --cpu-feature F` (repeatable) takes only hosts that have F; with none, COMMAND runs
+here only if this Mac has F. COMMAND is told its machine's CPU, on a host or here:
+RERAIL_FARM_CPU_MODEL, RERAIL_FARM_CPU_FEATURES (space-separated), RERAIL_FARM_SVE_BITS and
+RERAIL_FARM_SME_BITS (0: none). A stopped guest's record is from its last run (none before its
+first, so `--cpu-feature` leaves it out until then). As of 2026-11-21 no host has AVX-512 (both
+PCs stop at AVX2), SVE2 is on the Sparks alone (at 128 bits), and SME2 on this Mac alone (512-bit
+streaming vectors).
+
+## How fast each host compiles
+
+`bench` measures each host on one task: a clean debug build of the workspace's `gix` (121 crates, the
+same `Cargo.lock` everywhere), with no compile cache, from an empty target directory, at 1, 4 and 8
+jobs. It runs through `test-remote --host`, so on a Linux or Windows host it is that OS's build. The
+results stay in the farm's state, outside the tree, and `status` prints each host's under its line.
+`bench HOST` measures one again (after a change to a host, or a run marked contended).
+
+Measured 2026-11-21, in seconds (`*`: the host was busy with other work, so the time is high):
+
+| Machine | OS | 1 job | 4 jobs | 8 jobs | 8 jobs, against this Mac |
+|---|---|---|---|---|---|
+| M3 Max Mac | Linux VM (Lima) | 101 | 29.5 | 16.6 | 0.80 |
+| DGX Spark (two) | Linux | 116, 121 | 33.5, 33.8 | 19.3, 19.4 | 0.92 |
+| M5 Max MacBook Pro (this Mac, nice 19) | macOS | 113 | 36.1 | 20.9 | 1.00 |
+| M3 Max Mac | macOS, the first-run check off | 147* | 39.0 | 20.6 | 0.99 |
+| M1 Max Mac | macOS, the first-run check off | 156 | 46.0 | 25.6 | 1.22 |
+| M5 Max MacBook Pro | Linux VM (OrbStack) | 118 | 45.7 | 27.6 | 1.32 |
+| M5 Max MacBook Pro | Windows 11 ARM VM (Parallels) | 200 | 45.8 | 29.9 | 1.43 |
+| Mac mini M1 | Linux VM (Lima, 6 cores) | 126* | 39.1 | 31.9 | 1.52 |
+| Ryzen 7 7735HS mini PC | Linux (WSL2) | 167 | 55.4 | 40.5 | 1.94 |
+| M1 Max Mac | Linux VM (Lima) | 161 | 54.1 | 42.9 | 2.05 |
+| Core Ultra 7 268V laptop | Linux (WSL2) | 152 | 73.0 | 58.2 | 2.78 |
+| Mac mini M1 | macOS | 185 | 74* | 80* | 3.8 |
+| Ryzen 7 7735HS mini PC | Windows (MSVC) | 392 | 137* | 82 | 3.92 |
+| Core Ultra 7 268V laptop | Windows (MSVC) | 379 | 115 | 102 | 4.88 |
+
+What follows from it:
+
+- A Linux side beats macOS on the same Mac (the M3 Max: 101 s against 142 s at 1 job). One cause is
+  measured: macOS checks each new program the first time it runs, and over ssh (the farm's way in) that
+  took 290 ms a program on the M3 Max and 345 ms on the M1 Max, against 5 ms in this Mac's terminal,
+  which is a Developer Tool (System Settings, Privacy & Security, Developer Tools). A build runs a few
+  dozen new build scripts. With `/usr/libexec/sshd-keygen-wrapper` added there (it starts sshd, so
+  every ssh session counts as a developer tool), a first run takes 3 ms, and the M3 Max's macOS
+  build at 8 jobs went from 26.9 s to 20.6 s, the M1 Max's from 37.9 s to 25.6 s. On macOS 26 the
+  grant reaches only ssh sessions that start after it: the shared connections already open (ssh's
+  and the farm's, `~/Library/Caches/rerail-farm/ssh/`) keep the check until they are told
+  `ssh -O stop` (2026-11-21: the M1 Max's grant looked lost for that). macOS 15 applies it at once.
+- A Windows build costs 2 to 2.5 times the Linux side of the same PC. Defender is not the cause: with
+  the farm's directory, the toolchains and the compilers excluded (2026-11-21), the PCs' times moved by
+  under 10% at 4 and 8 jobs. Only the Windows VM gained (51 s to 30 s at 8 jobs). On Windows, add
+  exclusions with literal paths: a PowerShell command that adds them through `$env:` variables is
+  stopped as `Trojan:Win32/PowExcEnv`.
+- So a command that does not need Windows or macOS goes fastest to a Linux side.
 
 ## No benchmark leases
 

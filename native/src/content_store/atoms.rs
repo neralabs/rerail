@@ -575,6 +575,22 @@ fn memory() -> Arc<Atoms> {
     rerail_prof::code_rule_dsl::logic::profile::with_shared::<MemoryAtoms, _>(|m| Arc::clone(&m.0))
 }
 
+/// The in-memory connections that borrow a store's atoms (`share_memory`), by handle: the shared object's
+/// (decision 0442), as the connections are.
+#[derive(Default)]
+struct MemoryArenas(Mutex<HashMap<usize, Weak<Atoms>>>);
+
+fn arenas() -> Arc<MemoryArenas> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<MemoryArenas>()
+}
+
+struct MemoryArena(usize, Arc<Atoms>);
+impl Drop for MemoryArena {
+    fn drop(&mut self) {
+        arenas().0.lock().remove(&self.0);
+    }
+}
+
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
 /// run's main thread). A path that does not resolve yet is not remembered.
 pub(super) fn key(path: &Path) -> PathBuf {
@@ -584,7 +600,7 @@ pub(super) fn key(path: &Path) -> PathBuf {
     if let Some(key) = held_.0.lock().get(path) {
         return key.clone();
     }
-    match std::fs::canonicalize(path) {
+    match dunce::canonicalize(path) {
         Ok(key) => {
             rerail_prof::code_rule_dsl::logic::profile::shared::<CanonicalPaths>().0.lock().insert(path.to_path_buf(), key.clone());
             key
@@ -617,6 +633,10 @@ fn suffixed(path: &Path, suffix: &str) -> PathBuf {
 use stored::database_end;
 
 impl Atoms {
+    pub(super) fn ephemeral() -> Arc<Self> {
+        Arc::new(Self::new(None, None))
+    }
+
     fn new(path: Option<PathBuf>, identity: Option<i64>) -> Self {
         let atoms = Interner::over(path.as_deref());
         Atoms {
@@ -701,7 +721,25 @@ impl Atoms {
             let made = m.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
             Some((p.to_owned(), (m.dev(), m.ino(), made)))
         });
-        #[cfg(not(unix))]
+        // Windows: the volume's serial and the file's index, as GetFileInformationByHandle gives them. Its birth
+        // time alone would not tell the files apart: NTFS's tunnelling gives a file made again under a name, within
+        // seconds, the deleted one's.
+        #[cfg(windows)]
+        let file = connection.path().filter(|p| !p.is_empty()).and_then(|p| {
+            use std::os::windows::io::AsRawHandle as _;
+            use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
+            let opened = std::fs::File::open(p).ok()?;
+            // SAFETY: plain data, written whole by the call below.
+            let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+            // SAFETY: the handle stays open for the call.
+            if unsafe { GetFileInformationByHandle(opened.as_raw_handle(), &mut info) } == 0 {
+                return None;
+            }
+            let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+            let made = (u128::from(info.ftCreationTime.dwHighDateTime) << 32) | u128::from(info.ftCreationTime.dwLowDateTime);
+            Some((p.to_owned(), (u64::from(info.dwVolumeSerialNumber), index, made)))
+        });
+        #[cfg(not(any(unix, windows)))]
         let file: Option<(String, (u64, u64, u128))> = None;
         if let Some((path, at)) = &file
             && let Some((held, id)) = rerail_prof::code_rule_dsl::logic::profile::shared::<Identities>().0.lock().get(path)
@@ -738,8 +776,20 @@ impl Atoms {
     pub fn for_connection(connection: &Connection) -> Arc<Atoms> {
         match connection.path().filter(|path| !path.is_empty()) {
             Some(path) => Atoms::for_path(Path::new(path)),
-            None => memory(),
+            None => arenas().0.lock().get(&(unsafe { connection.handle() } as usize))
+                .and_then(std::sync::Weak::upgrade).unwrap_or_else(memory),
         }
+    }
+
+    /// Borrow the store's atoms for the life of an in-memory SQL connection.
+    pub fn share_memory(connection: &Connection, atoms: Arc<Self>) -> rusqlite::Result<()> {
+        let lease = MemoryArena(unsafe { connection.handle() } as usize, atoms);
+        arenas().0.lock().insert(lease.0, Arc::downgrade(&lease.1));
+        // SQLite drops the closure when this connection closes.
+        connection.create_scalar_function(c"rr_memory_arena", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8, move |_| {
+            let _lease = &lease;
+            Ok(0)
+        })
     }
 
     /// Shared scratch databases borrow the arena; only its owner stores atoms.
@@ -794,7 +844,7 @@ impl Atoms {
     pub fn attach(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
         let atoms = match connection.path().filter(|path| !path.is_empty()) {
             Some(path) => Atoms::for_database(Path::new(path), Atoms::identity(connection)?),
-            None => memory(),
+            None => Atoms::for_connection(connection),
         };
         vtab::install(connection, &atoms)?;
         // The kept facts beside them (decisions 0456 K8, 0439), on a store's connection.

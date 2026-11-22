@@ -8,7 +8,7 @@ use rerail_blocks::vector::Vector;
 use super::kept_source::KeptSource;
 use crate::code_rule_dsl::logic::native::component::InRel;
 use crate::content_store::atoms::Atoms;
-use crate::content_store::kept_facts::{ChainRows, KeptSpace};
+use crate::content_store::kept_facts::{ChainRows, KeptReader, KeptSpace, READERS, record_idents};
 use crate::content_store::{ContentStore, StoreResult};
 use rerail_blocks::kept::{FactKey, Kept, KeptChain, KeptRead};
 use std::collections::HashMap;
@@ -17,6 +17,8 @@ use std::sync::{Arc, Mutex};
 /// A space's chain as a commit left it, mapped: every view of one of its entries holds it.
 pub(in crate::code_rule_dsl) struct Bound {
     space: KeptSpace,
+    /// The space's identity: what a run asks of it is its program's (`KeptReader`).
+    id: [u8; 32],
 }
 
 /// Each space's chain the runs sharing a shared object mapped, by the store's file and the space, with the rows that
@@ -36,7 +38,7 @@ impl Bound {
         {
             return Ok(Some(Arc::clone(bound)));
         }
-        let bound = Arc::new(Bound { space: store.open_kept(space, &rows)? });
+        let bound = Arc::new(Bound { space: store.open_kept(space, &rows)?, id: *space });
         chains.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (rows, Arc::clone(&bound)));
         Ok(Some(bound))
     }
@@ -49,6 +51,13 @@ impl Bound {
     /// The entry of `rel` (its name and identity) at partition `part`, if the space keeps one.
     pub(in crate::code_rule_dsl) fn entry(self: &Arc<Self>, rel: &str, ident: &[u8; 32], part: i64) -> Option<Entry> {
         let rows: *const rerail_blocks::packed::Packed = self.view().get(&FactKey { rel, ident, part })?.rows;
+        // Found: the run's program reads it, and its reader record names it (decision 0401 step 8). A miss keeps
+        // nothing; what the run puts in its place, its puts' record names.
+        crate::code_rule_dsl::logic::profile::with_bound::<KeptReader, _>(|r| {
+            if let Some(log) = &r.0 {
+                log.asked(&self.id, ident, |key| self.view().get(&FactKey { rel: READERS, ident: key, part: 0 }).map(|k| record_idents(&k).collect()).unwrap_or_default());
+            }
+        });
         Some(Entry { bound: Arc::clone(self), rel: rel.to_owned(), ident: *ident, part, rows })
     }
 }

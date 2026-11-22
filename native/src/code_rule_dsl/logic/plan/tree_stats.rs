@@ -75,6 +75,17 @@ impl TreeStats {
         TreeStats(Arc::new(Section::of(&Of { kinds: ks, parents, nodes })))
     }
 
+    /// The same tree with its kinds' nodes counted exactly (`counts`, each kind's nodes by name; a kind not among them
+    /// has none): each kind's mean subtree size and each child's parents' shares stay these, as they are means.
+    pub fn with_counts(&self, counts: impl IntoIterator<Item = (String, i64)>) -> TreeStats {
+        let mut kinds: Vec<Kind> = counts.into_iter().filter(|&(_, n)| n > 0).map(|(name, nodes)| Kind { size: self.size(&name), name, nodes }).collect();
+        kinds.sort_by(|a, b| a.name.cmp(&b.name));
+        kinds.dedup_by(|a, b| a.name == b.name);
+        let nodes = kinds.iter().map(|k| k.nodes).sum();
+        let parents = self.parents().map(|(child, ps)| Parents { child: child.to_owned(), parents: ps.map(|(p, s)| (p.to_owned(), s)).collect() }).collect();
+        TreeStats(Arc::new(Section::of(&Of { kinds, parents, nodes })))
+    }
+
     fn kind(&self, name: &str) -> Option<&ArchivedKind> {
         let ks = &self.0.kinds;
         ks.binary_search_by(|k| k.name.as_str().cmp(name)).ok().map(|i| &ks[i])

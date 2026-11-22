@@ -23,11 +23,14 @@ pub fn register() {
 /// This crate's own test binary, which the engine does not load: Metal and the language packs its tests read are
 /// registered as the binary loads, as the engine registers them (`crate::install_devices`, `install_languages`), so
 /// the device's tests run on the device and no test's CPU worker meets a document before its pack is registered.
+/// What a job carries of its run is the logic's (`logic::CARRIERS`, which the engine's composition registers): a
+/// stratum's jobs on the pool carry it (`run_state::Carry::here`).
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
+        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
         super::register();
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         crate::test_languages();
     }
     #[used]
@@ -107,10 +110,6 @@ impl SolverDevice for Metal {
         packed::metal_nearest::solve_with(nodes, target, done, how).map_err(refused)
     }
 
-    fn install_launch_guard(&self) {
-        packed::metal_sort::install_guard();
-    }
-
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
         joins::column_stats(cols, k).map_err(Refused::Failed)
     }
@@ -168,7 +167,7 @@ pub mod matcher {
         }
 
         fn compile_background(&self, batch: &[Program]) -> Result<(), Error> {
-            programs::compile_sweep_cached()?;
+            programs::compile_sweep_cached(crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::run_format())?;
             programs::compile_jit_cached(batch).map(|_| ())
         }
 
@@ -200,18 +199,27 @@ pub mod matcher {
             matcher_metal::warm();
         }
 
+        fn kernels_ahead(&self) -> Vec<crate::code_rule_dsl::transducer::packed::device::KernelAhead> {
+            let mut v = crate::code_rule_dsl::transducer::packed::metal_join::kernels_ahead();
+            v.extend(programs::kernels_ahead());
+            v
+        }
+
         fn drop_label_pipelines(&self) {
             programs::label_passes::drop_pipelines();
         }
         fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Result<Option<Vec<rerail_blocks::vector::Vector<u64>>>, Error> {
-            use programs::block_program::{ClassStrategy, Executor, LaneWidth, generated_ready, run_split};
-            // Each set of patterns is a kernel of its own: until its compile (on a thread of its own) is done, the
-            // interpreter's pipeline runs the batch, so no launch waits on the compiler.
-            let executor = if generated_ready(natives, LaneWidth::W64) { Executor::Generated(ClassStrategy::Lookup) } else { Executor::Interpreter };
-            // A form Metal lacks is refused before anything runs, and recorded (`metal-form`, decision 0202): the cores'.
-            // Every other error is the run's (decision 0382).
-            match run_split(natives, batch, LaneWidth::W64, executor, 64) {
-                Ok(run) => Ok(Some(run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())),
+            use programs::block_program::serial::{Segments, compiled, run_serial_split};
+            // The forward carry (decision 0540 step 7): no group waits on another. Each set of patterns is a kernel
+            // of its own: until its compile (on a thread of its own) is done, the cores run the batch, so no launch
+            // waits on the compiler.
+            if !compiled(natives) {
+                return Ok(None);
+            }
+            // A form Metal lacks is refused before anything runs (decision 0202): the cores'. Every other error is the
+            // run's (decision 0382).
+            match run_serial_split(natives, batch, Segments { blocks: 29, warm: 1 }) {
+                Ok(run) => Ok(Some(run.run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())),
                 Err(Error::UnsupportedBackend) => Ok(None),
                 Err(error) => Err(error),
             }

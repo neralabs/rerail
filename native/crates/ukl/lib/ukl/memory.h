@@ -169,6 +169,7 @@ UKL_DEFINE_WORD_STORES(uint64_t)
 #define UKL_DEFINE_ATOMICS_AT(A)                                                                                        \
     UKL_INLINE UKL_OVERLOAD UKL_GLOBAL uint32_t* ukl_word_at(UKL_GLOBAL const uint8_t* t, A a) { return (UKL_GLOBAL uint32_t*)(t + a); } \
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_load_at(UKL_GLOBAL const uint8_t* t, A a) { return ukl_atomic_load(ukl_word_at(t, a)); } \
+    UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_poll_at(UKL_GLOBAL const uint8_t* t, A a) { return ukl_atomic_poll(ukl_word_at(t, a)); } \
     UKL_INLINE UKL_OVERLOAD void ukl_atomic_store_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { ukl_atomic_store(ukl_word_at(t, a), x); } \
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_add_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { return ukl_atomic_add(ukl_word_at(t, a), x); } \
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_or_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { return ukl_atomic_or(ukl_word_at(t, a), x); } \
@@ -176,3 +177,16 @@ UKL_DEFINE_WORD_STORES(uint64_t)
 
 UKL_DEFINE_ATOMICS_AT(uint32_t)
 UKL_DEFINE_ATOMICS_AT(uint64_t)
+
+// The same at a coherent base (a block other groups of the dispatch write, `<ukl/clif.h>`'s `CLIF_BLOCK_SPACE`,
+// decision 0603): an atomic is served where the word's writes meet already, so it is the device's.
+#define UKL_DEFINE_COHERENT_ATOMICS_AT(A)                                                                               \
+    UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_load_at(UKL_COHERENT const uint8_t* t, A a) { return ukl_atomic_load_at((UKL_GLOBAL const uint8_t*)t, a); } \
+    UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_poll_at(UKL_COHERENT const uint8_t* t, A a) { return ukl_atomic_poll_at((UKL_GLOBAL const uint8_t*)t, a); } \
+    UKL_INLINE UKL_OVERLOAD void ukl_atomic_store_at(UKL_COHERENT const uint8_t* t, A a, uint32_t x) { ukl_atomic_store_at((UKL_GLOBAL const uint8_t*)t, a, x); } \
+    UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_add_at(UKL_COHERENT const uint8_t* t, A a, uint32_t x) { return ukl_atomic_add_at((UKL_GLOBAL const uint8_t*)t, a, x); } \
+    UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_or_at(UKL_COHERENT const uint8_t* t, A a, uint32_t x) { return ukl_atomic_or_at((UKL_GLOBAL const uint8_t*)t, a, x); } \
+    UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_cas_at(UKL_COHERENT const uint8_t* t, A a, uint32_t e, uint32_t n) { return ukl_atomic_cas_at((UKL_GLOBAL const uint8_t*)t, a, e, n); }
+
+UKL_DEFINE_COHERENT_ATOMICS_AT(uint32_t)
+UKL_DEFINE_COHERENT_ATOMICS_AT(uint64_t)

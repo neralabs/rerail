@@ -5,8 +5,8 @@
 //!   them: a list gives one `option` row per element and `option_item` rows with positions; booleans are `"true"` and
 //!   `"false"`; nested objects are flattened with `/`. An ESLint-style array (`["all", {…}]`) gives `option`,
 //!   `option2`, … for its strings, and merges its objects.
-//! - `file(path)`: every file under the root, `.git`, `node_modules`, `__pycache__`, `.venv`, `venv`, `target`, `dist`
-//!   and `build` skipped.
+//! - `file(path)`: every file under the root, the host's ignored directories (`git_workspace::ignored_directories`:
+//!   `.git`, `node_modules`, `target`, …) skipped.
 //! - `package(dir, name)`, `package_field(dir, key, v)`: each `package.json`'s name and string-valued members, keys
 //!   as paths from the root (`engines/node`); `package_for(path, dir)`: a document's nearest `package.json`.
 //!
@@ -18,9 +18,7 @@ use super::vtab::Relation;
 use crate::content_store::{ContentStore, StoreResult};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::path::Path;
-
-const SKIP: [&str; 8] = [".git", "node_modules", "__pycache__", ".venv", "venv", "target", "dist", "build"];
+use std::path::{Path, PathBuf};
 
 /// At most this many files are listed; a larger tree's `file` rows are cut there.
 const MAX_FILES: usize = 200_000;
@@ -129,32 +127,46 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
     let mut packages: BTreeMap<String, Option<Value>> = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        for e in entries {
-            let name = e.file_name().to_string_lossy().into_owned();
-            let path = e.path();
-            let Ok(kind) = e.file_type() else { continue };
-            if kind.is_dir() {
-                if !SKIP.contains(&name.as_str()) {
-                    stack.push(path);
-                }
-                continue;
-            }
-            if rows.file.len() >= MAX_FILES {
-                continue;
-            }
-            let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
-            if name == "package.json" {
-                let dir = rel.rsplit_once('/').map_or("", |(d, _)| d).to_owned();
-                packages.insert(dir, std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()));
-            }
-            rows.file.push(rel);
+        for entry in sorted_entries(&dir) {
+            tree_entry(root, &entry, &mut stack, &mut packages, rows);
         }
     }
     rows.file.sort();
-    for (dir, json) in &packages {
+    package_rows(&packages, rows);
+    package_for_rows(docs, &packages, rows);
+}
+
+/// A folder's entries in name order; none where it cannot be read.
+fn sorted_entries(dir: &Path) -> Vec<std::fs::DirEntry> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok).collect();
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    entries
+}
+
+/// One entry of the tree: a folder the host's walk enters goes on `stack`; a file is a `file` row (up to
+/// `MAX_FILES`), and a `package.json` is read into `packages`, by its folder.
+fn tree_entry(root: &Path, entry: &std::fs::DirEntry, stack: &mut Vec<PathBuf>, packages: &mut BTreeMap<String, Option<Value>>, rows: &mut Rows) {
+    let name = entry.file_name().to_string_lossy().into_owned();
+    let path = entry.path();
+    let Ok(kind) = entry.file_type() else { return };
+    if kind.is_dir() {
+        stack.extend((!crate::git_workspace::ignored_directory(&name)).then_some(path));
+        return;
+    }
+    if rows.file.len() >= MAX_FILES {
+        return;
+    }
+    let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+    if name == "package.json" {
+        let dir = rel.rsplit_once('/').map_or("", |(d, _)| d).to_owned();
+        packages.insert(dir, std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()));
+    }
+    rows.file.push(rel);
+}
+
+/// `package` and `package_field` of each `package.json` that parses to an object.
+fn package_rows(packages: &BTreeMap<String, Option<Value>>, rows: &mut Rows) {
+    for (dir, json) in packages {
         let Some(json @ Value::Object(o)) = json else { continue };
         if let Some(Value::String(name)) = o.get("name") {
             rows.package.push((dir.clone(), name.clone()));
@@ -163,6 +175,10 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
         strings("", json, &mut fields);
         rows.package_field.extend(fields.into_iter().map(|(k, v)| (dir.clone(), k, v)));
     }
+}
+
+/// `package_for` of each document: the nearest folder above it that holds a `package.json`.
+fn package_for_rows(docs: &[String], packages: &BTreeMap<String, Option<Value>>, rows: &mut Rows) {
     for path in docs {
         let mut d = path.rsplit_once('/').map_or("", |(d, _)| d);
         loop {
@@ -240,7 +256,7 @@ pub mod tests {
     #[test]
     fn the_tree_gives_files_and_packages() {
         let root = std::env::temp_dir().join(format!("rerail-repo-{}-{:?}", std::process::id(), std::thread::current().id()));
-        for (p, t) in [("web/package.json", r#"{"name": "@a/web", "engines": {"node": ">=18"}, "n": 1}"#), ("web/src/a.ts", ""), ("node_modules/x/b.js", ""), ("c.py", "")] {
+        for (p, t) in [("web/package.json", r#"{"name": "@a/web", "engines": {"node": ">=18"}, "n": 1}"#), ("web/src/a.ts", ""), ("node_modules/x/b.js", ""), ("vendor/v.php", ""), ("c.py", "")] {
             let p = root.join(p);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, t).unwrap();

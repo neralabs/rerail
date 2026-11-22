@@ -65,7 +65,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::body::{Freeze as _, Placed};
 use super::fields::Fields;
 
-mod over;
+pub mod over;
 
 /// Bound while a session evaluates its cross-file part (decision 0077): the rows it keeps are each relation's whole
 /// rows, which delete-and-rederive maintains, so no relation is computed only for the keys its readers reach. A
@@ -74,7 +74,7 @@ mod over;
 struct Whole(bool);
 
 /// While the guard lives, `split_negations` splits nothing (`Whole`).
-pub(in crate::code_rule_dsl) fn whole_relations() -> crate::code_rule_dsl::logic::profile::Bound {
+pub fn whole_relations() -> crate::code_rule_dsl::logic::profile::Bound {
     crate::code_rule_dsl::logic::profile::bind(Whole(true))
 }
 
@@ -171,16 +171,16 @@ fn split_with(f: &Fields<'_>, base: &Placed, model: &super::Model, candidates: &
 }
 
 /// A reader's split (`split_with`): its `pre_<i>`, the variables it hands on, and the places of the reads it cuts.
-struct Split {
-    pre: String,
-    vars: Vec<String>,
-    cut: BTreeSet<usize>,
+pub struct Split {
+    pub pre: String,
+    pub vars: Vec<String>,
+    pub cut: BTreeSet<usize>,
 }
 
 /// The split as an overlay of `base`, the program's version (its rule `k` the program's rule `k`), its rules in the
 /// tree's order: each reader replaced by its `pre_<i>` and itself over that, each demanded relation's rules reading
 /// its demand first, then the demands.
-fn overlaid(base: &Placed, candidates: &BTreeSet<&str>, splits: &BTreeMap<usize, Split>, decls: &[(String, Vec<(String, String)>)], nullary: &[String]) -> Result<Placed, String> {
+pub fn overlaid(base: &Placed, candidates: &BTreeSet<&str>, splits: &BTreeMap<usize, Split>, decls: &[(String, Vec<(String, String)>)], nullary: &[String]) -> Result<Placed, String> {
     let v: &Version = &base.v;
     let mut b = Builder::on(&base.v);
     // The splits' and the demands' declarations, and the flags, so the version stays the whole program.
@@ -288,31 +288,4 @@ fn demand_terms<'a>(v: &'a Version, r: RuleRef<'a>, fresh: &'a [String]) -> (Vec
     (args, computed)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_demand_prefix_keeps_only_reads_not_already_proved() {
-        let program = crate::code_rule_dsl::logic::rr::parse_version(
-            "
-            .decl relation(k: number, value: number, tag: number)
-            .decl veto(value: number)
-            .decl result(k: number, value: number)
-            .input relation, veto
-            .output result
-            result(k, value) :- relation(k, _, _), relation(k, value, _), relation(k, _, 1), !veto(value).
-            ",
-        )
-        .unwrap();
-        let base = Placed::whole(program);
-        let split = Split { pre: "pre_0".into(), vars: vec!["k".into(), "value".into()], cut: BTreeSet::from([3]) };
-        let decls = [("pre_0".into(), vec![("k".into(), "int".into()), ("value".into(), "int".into())])];
-        let actual = overlaid(&base, &BTreeSet::from(["veto"]), &BTreeMap::from([(0, split)]), &decls, &[]).unwrap();
-        let pre = actual.v.rules().find(|r| actual.v.rel_name(r.head().rel()) == "pre_0").map(|r| actual.v.show_rule(r)).unwrap();
-        assert_eq!(pre, "pre_0($k, $value) :- relation($k, $value, _), relation($k, _, 1)");
-
-        let body = super::super::body::Body::of(&base.v, base.v.rule(base.id(0)).unwrap());
-        assert!(!body.implied_read(0, &[0, 3]), "a cut read cannot prove a kept read");
-    }
-}
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus)

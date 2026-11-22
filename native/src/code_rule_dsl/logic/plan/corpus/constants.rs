@@ -27,7 +27,7 @@
 //! a workspace file derives no constant again.
 
 use rerail_blocks::vector::Vector;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::super::Result;
@@ -50,8 +50,9 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
     let outputs = v.output_names();
     let world = |rel: &str| crate::code_rule_dsl::logic::rr::FILE_SYSTEM.iter().any(|(r, _)| *r == rel);
     // A language's answer is a constant where its request is (as `foldable`'s, 0327 mode (b)); not in the split's
-    // constants (`constant_relations` reads no requests).
-    let request_of = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().find(|(r, _)| *r == rel && !world(r)).map(|(_, q)| *q);
+    // constants (`constant_relations` reads no requests). Not the engine's other answers (Git's, the references'):
+    // their requests can be derived from documents and other answers.
+    let request_of = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().find(|(r, q)| *r == rel && !world(r) && crate::code_rule_dsl::language::answerer(q).is_some()).map(|(_, q)| *q);
     let mut heads: std::collections::HashMap<&str, Vec<RuleRef<'_>>> = std::collections::HashMap::new();
     for r in v.rules() {
         heads.entry(v.rel_name(r.head().rel())).or_default().push(r);
@@ -113,6 +114,19 @@ pub(super) fn as_outputs_of(v: &std::sync::Arc<Version>, wanted: &[String]) -> R
         outputs.push(copy(rel));
     }
     b.fields().set_outputs(&outputs);
+    // An included core library declares Git inputs for the whole policy. Only inputs used by this derivation
+    // (including its world requests) can make its result depend on the revision.
+    use crate::code_rule_dsl::logic::program_image::{About, RelId, analyses};
+    let about = About::of(v);
+    let reached = |roots: &BTreeSet<String>| -> BTreeSet<String> {
+        let need = analyses::needed(v, &about, roots.iter().filter_map(|r| v.rel(r)));
+        (0..v.rel_end()).filter(|&i| need[i as usize]).map(|i| v.rel_name(RelId(i)).to_owned()).collect()
+    };
+    let mut roots: BTreeSet<String> = wanted.iter().cloned().collect();
+    let needed = reached(&roots);
+    roots.extend(crate::code_rule_dsl::logic::rr::WORLD.iter().filter(|(answer, _)| needed.contains(*answer)).map(|(_, request)| request.to_string()));
+    let needed = reached(&roots);
+    b.fields().retain_inputs(|name| !super::git::INPUTS.contains(&name) || needed.contains(name));
     b.finish().map(|(v, _)| v).map_err(super::super::Error::Plan)
 }
 
@@ -130,7 +144,6 @@ pub(super) fn fold(
     read: Option<&std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     added: &super::added::Added,
     root: &Path,
-    scratch: &Path,
     modes: &str,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
     chunk_nodes: usize,
@@ -146,15 +159,20 @@ pub(super) fn fold(
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "fold the run's constants".into());
     let key = key(programs, added, root, options, &wanted);
-    let was_kept = kept(&key, root, v)?;
+    let revision = crate::git_workspace::snapshot::contains(root);
+    let was_kept = if revision { kept_revision(&key, root, v) } else { kept(&key, root, v)? };
     let reused = was_kept.is_some();
     // The plans the constants' run used, for the outer run's record (`Report::plans`): kept with the constants, so a
     // run that reuses them names the plans the run that derived them did, and records the same manifest (0252).
     let ((image, consulted), plans) = match was_kept {
         Some(kept) => kept,
         None => {
-            let (derived, plans) = derive(programs, read, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
-            keep(&key, &derived.0, &derived.1, &plans)?;
+            let (mut derived, mut plans) = derive(programs, read, root, modes, binding, chunk_nodes, typing, options, &wanted)?;
+            if revision {
+                if let Some(owner) = keep_revision(&key, root, &mut derived, &plans) { plans.push(owner); }
+            } else {
+                keep(&key, &derived.0, &derived.1, &plans)?;
+            }
             (derived, plans)
         }
     };
@@ -194,7 +212,7 @@ pub(super) fn fold(
     Ok((consulted, plans, wanted))
 }
 
-/// The constants' outputs (one base image of the wanted relations' copies, `output::base_of`) and what their run
+/// The constants' outputs (one base image of the wanted relations' copies) and what their run
 /// consulted.
 type Derived = (Vec<u8>, Vec<(String, String, String)>);
 
@@ -205,7 +223,6 @@ fn derive(
     programs: &[&str],
     read: Option<&std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     root: &Path,
-    scratch: &Path,
     modes: &str,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
     chunk_nodes: usize,
@@ -216,11 +233,12 @@ fn derive(
     let mut own = if options.is_object() { options.clone() } else { serde_json::json!({}) };
     own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
     own["inputFiles"] = serde_json::json!([]);
-    let out = scratch.join("constants");
-    let report: Report = super::run_handed(programs, read, None, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
+    let mut captured = Vec::new();
+    let report: Report = super::run_handed(programs, read, None, root, None, Path::new(""), modes, binding,
+        chunk_nodes, typing, &own, Some(&mut captured), Default::default())?;
     let copies: Vec<String> = wanted.iter().map(|rel| copy(rel)).collect();
-    let image = crate::code_rule_dsl::logic::plan::output::base_of(&out, copies.iter().map(String::as_str)).map_err(|e| super::super::Error::Plan(format!("the run's constants: {e}")))?;
-    let _ = std::fs::remove_dir_all(&out);
+    let stack = super::output::Image::stack(&captured).map_err(super::Error::Plan)?;
+    let image = super::output::selected_base(&stack, copies.iter().map(String::as_str));
     Ok(((image, report.consulted), report.plans))
 }
 
@@ -248,7 +266,12 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
     }
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    if let Some(stable) = crate::git_workspace::snapshot::fact_root(root) {
+        h.update(b"git-constants-v1\0");
+        h.update(stable.as_os_str().as_encoded_bytes());
+    } else {
+        h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    }
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -279,4 +302,92 @@ fn keep(key: &str, image: &[u8], consulted: &[(String, String, String)], plans: 
     let consulted = super::reuse::encode_consulted(&record);
     super::observe(|o| o.put_run_record(&record_key(key), &consulted, image));
     Ok(())
+}
+
+type Observation = (String, String, String);
+
+// The same program can read different paths, and each set of paths can have different values.
+// Keep both in the record name. Returning to an earlier revision can then find its result again.
+fn revision_record(base: &str, reads: &[Observation]) -> (String, [u8; 32]) {
+    use sha2::{Digest, Sha256};
+    let field = |hash: &mut Sha256, value: &str| {
+        hash.update((value.len() as u64).to_le_bytes());
+        hash.update(value.as_bytes());
+    };
+    let (mut shape, mut values) = (Sha256::new(), Sha256::new());
+    for (kind, path, value) in reads {
+        field(&mut shape, kind);
+        field(&mut shape, path);
+        // Repacking changes the observation of storage, while the blob remains the same.
+        field(&mut values, if kind == "git_file_storage" { value.split(':').next().unwrap_or(value) } else { value });
+    }
+    let hash = |h: Sha256| crate::content_store::observe::hex(&h.finalize().into());
+    let name = format!("{}:{}:{}", record_key(base), hash(shape), hash(values));
+    let owner = Sha256::digest(name.as_bytes()).into();
+    (name, owner)
+}
+
+fn kept_revision(base: &str, root: &Path, program: &Version) -> Option<(Derived, Vector<[u8; 32]>)> {
+    let mut world = super::world::World::new(root, program);
+    let samples = super::observe(|o| o.run_record_samples(&record_key(base)));
+    'sample: for sample in samples {
+        let Some(record) = super::reuse::decode_consulted(&sample) else { continue };
+        let reads: Option<Vec<_>> = record.into_iter().filter(|(k, _, _)| k != "plan" && k != "constants-owner")
+            .map(|(k, p, _)| world.observation(&k, &p).map(|now| (k, p, now))).collect();
+        let Some(reads) = reads else { continue };
+        let (name, owner) = revision_record(base, &reads);
+        let Some((record, image)) = super::observe(|o| o.stored_run_record(&name)) else { continue };
+        let Some(mut recorded) = super::reuse::decode_consulted(&record) else { continue };
+        let digests: BTreeMap<_, _> = reads.iter().filter(|(k, _, _)| k == "file" || k == "digest")
+            .map(|(_, path, digest)| (path, digest)).collect();
+        let mut updated = false;
+        let mut previous = recorded.iter_mut().filter(|(k, _, _)| k != "plan" && k != "constants-owner");
+        for (kind, path, value) in &reads {
+            let Some(old) = previous.next() else { continue 'sample };
+            if &old.0 != kind || &old.1 != path { continue 'sample; }
+            if &old.2 == value { continue; }
+            if kind != "git_file_storage" || !digests.get(path).is_some_and(|digest| verified_file(root, path, value, digest)) { continue 'sample; }
+            old.2.clone_from(value);
+            updated = true;
+        }
+        if previous.next().is_some() { continue; }
+        if updated {
+            let encoded = super::reuse::encode_consulted(&recorded);
+            super::observe(|o| o.store_run_record(&name, &encoded, &image));
+        }
+        let mut plans = recorded.iter().filter(|(k, _, _)| k == "plan")
+            .map(|(_, _, s)| crate::content_store::observe::unhex(s)).collect::<Option<Vector<_>>>()?;
+        plans.push(owner);
+        return Some(((image, reads), plans));
+    }
+    None
+}
+
+fn verified_file(root: &Path, path: &str, stamp: &str, digest: &str) -> bool {
+    use crate::git_workspace::snapshot;
+    use sha2::{Digest, Sha256};
+    let file = root.join(path);
+    let Ok(bytes) = snapshot::read(&file) else { return false };
+    let sha = crate::content_store::observe::hex(&Sha256::digest(bytes).into());
+    sha == digest && snapshot::file_stamp(&file).as_deref() == Some(stamp)
+}
+
+fn keep_revision(base: &str, root: &Path, (image, reads): &mut Derived, plans: &[[u8; 32]]) -> Option<[u8; 32]> {
+    use crate::git_workspace::snapshot;
+    let verified: BTreeSet<_> = reads.iter().filter(|(k, _, s)| k == "git_file_storage" && !s.is_empty())
+        .map(|(_, path, _)| path).collect();
+    for (kind, path, digest) in reads.iter() {
+        if kind == "git_file_storage" && digest.is_empty() { return None; }
+        if kind == "refused" && digest == "file" { return None; }
+        if (kind == "file" || kind == "digest") && !verified.contains(path) && snapshot::contains(&root.join(path)) { return None; }
+    }
+    reads.sort();
+    reads.dedup();
+    let (name, owner) = revision_record(base, reads);
+    let mut record = reads.clone();
+    record.extend(plans.iter().map(|p| ("plan".into(), String::new(), crate::content_store::observe::hex(p))));
+    record.push(("constants-owner".into(), String::new(), crate::content_store::observe::hex(&owner)));
+    let encoded = super::reuse::encode_consulted(&record);
+    super::observe(|o| o.store_run_record(&name, &encoded, image));
+    Some(owner)
 }

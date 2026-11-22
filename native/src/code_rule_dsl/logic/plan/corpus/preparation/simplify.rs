@@ -1013,7 +1013,7 @@ impl ProgramPass for InlineNodeTests {
                 _ => None,
             };
             match one {
-                Some(h) if !kept(&f, rel) => bodies.entry(rel).or_default().push((r, h)),
+                Some(h) if !kept(&f, rel) && !f.qualified(rel, "no_inline") => bodies.entry(rel).or_default().push((r, h)),
                 _ => {
                     refused.insert(rel);
                 }
@@ -1224,12 +1224,14 @@ impl ProgramPass for InlineFilters {
         for r in v.rules() {
             rules_of.entry(v.rel_name(r.head().rel())).or_default().push(r);
         }
-        let core = crate::code_rule_dsl::logic::rr::core_names();
+        let core = crate::code_rule_dsl::logic::plan::keeps::core_names();
         let mut candidates: BTreeSet<&str> = rules_of
             .iter()
             .filter(|(rel, rules)| {
                 // A request the engine reads (a guest's `embed`, the demand a `parsed` read makes) stays a relation.
+                // `.decl r(…) no_inline` (Soufflé's qualifier) keeps a relation's rows: a small one a join starts from.
                 !kept(&f, rel)
+                    && !f.qualified(rel, "no_inline")
                     && !crate::code_rule_dsl::logic::plan::corpus::guests::REQUESTS.contains(rel)
                     && !core.contains(**rel)
                     && rules.len() <= FILTER_RULES
@@ -3212,5 +3214,4 @@ impl ProgramPass for CpythonFunctors {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)

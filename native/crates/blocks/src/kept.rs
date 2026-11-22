@@ -433,7 +433,7 @@ pub struct KeptW {
     block: Block,
     root: usize,
     pending: Vec<Pending>,
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     path: std::path::PathBuf,
 }
 
@@ -449,9 +449,9 @@ impl KeptW {
     /// `reserve` bytes (its file is sparse: room not written takes no disk).
     pub fn create(path: &Path, tag: u64, reserve: usize) -> io::Result<KeptW> {
         assert_ne!(tag, 0, "a kept file's tag is not 0");
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let block = Block::file(path, kind::KEPT, reserve)?;
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let block = Block::anon(kind::KEPT, reserve);
         let root: *mut KeptRoot = block.try_alloc_t(1).ok_or_else(room)?;
         // SAFETY: the root just allocated in this open block, which has no other writer.
@@ -462,7 +462,7 @@ impl KeptW {
             block,
             root,
             pending: Vec::new(),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             path: path.to_owned(),
         })
     }
@@ -598,18 +598,21 @@ impl KeptW {
             Span::set(&raw const (*root).reads, rs, reads.len());
             Span::set(&raw const (*root).strings, ss, strings.len());
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             self.block.sync_mapped(flush)?;
             let frozen = self.block.freeze();
             frozen.sync_mapped(flush)?;
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             use std::io::Write as _;
             let frozen = self.block.freeze();
             let mut f = std::fs::File::create(&self.path)?;
-            f.write_all(frozen.bytes(0, frozen.header().length as usize))?;
+            let bytes = frozen.bytes(0, frozen.header().length as usize);
+            // The kernel reads and writes a reservation's pages without faulting them in (Windows: `crate::windows`).
+            crate::mem::commit(bytes.as_ptr().cast_mut(), bytes.len())?;
+            f.write_all(bytes)?;
             if flush.waits() {
                 f.sync_data()?;
             }

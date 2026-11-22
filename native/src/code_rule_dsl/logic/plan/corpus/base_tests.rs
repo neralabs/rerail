@@ -281,7 +281,7 @@ t(s, l) :- text(n, s), line(n, l).
 /// `node` has its ERROR nodes, by kind as W's `kind: "ERROR"` finds them, and `syntax_error` has the file.
 #[test]
 fn a_tree_rooted_at_an_error_node_is_read() {
-    let (path, source) = ("l9750_graphql/d.py", "def f(scope: PlanScope):\n    return (\n");
+    let (path, source) = ("graphql/d.py", "def f(scope: PlanScope):\n    return (\n");
     let dir = corpus("error-root", &[(path, source)]);
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
@@ -311,7 +311,7 @@ invalid(p) :- doc(d, p, _), syntax_error(d).
 /// rules run per chunk and in rules run once over every file.
 #[test]
 fn base_relations_read_are_inputs() {
-    let files = [("l9750_graphql/bad.py", "def f(:\n    ServerPlan\n"), ("l9750_graphql/ok.py", "x = 1\n")];
+    let files = [("graphql/bad.py", "def f(:\n    ServerPlan\n"), ("graphql/ok.py", "x = 1\n")];
     let dir = corpus("span-text", &files);
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
@@ -328,8 +328,8 @@ same(p, q) :- doc(d, p, _), source(d, sp), text(sp, s), doc(e, q, _), source(e, 
 .output hit, plain, same
 "#;
     let got = run(&dir, program, &["hit", "plain", "same"]);
-    assert_eq!(got[0], [["l9750_graphql/bad.py"]]);
-    assert_eq!(got[1], [["l9750_graphql/ok.py"]]);
+    assert_eq!(got[0], [["graphql/bad.py"]]);
+    assert_eq!(got[1], [["graphql/ok.py"]]);
     assert_eq!(got[2], sorted(files.iter().map(|(p, _)| r![p, p])));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -414,7 +414,7 @@ none(p) :- doc(d, p, _), source(d, sp), !match_all("needle", sp, _).
 fn text_files_are_text_only_documents() {
     let rst = "Graph query\r\n===========\n\nUse graph_query_builder( no more.\u{2028}needle here\nlast needle";
     let md = "# Title\n\nneedle\n";
-    let files = [("docs/l9700_graph_query.rst", rst), ("docs/design/a.md", md), ("notes.txt", ""), ("pkg/m.py", "f(needle)\n"), (".hidden.md", "needle\n")];
+    let files = [("docs/graph_query.rst", rst), ("docs/design/a.md", md), ("notes.txt", ""), ("pkg/m.py", "f(needle)\n"), (".hidden.md", "needle\n")];
     let dir = corpus("text-docs", &files);
     std::fs::write(dir.join("docs/logo.png"), [0x89, b'P', b'N', b'G', 0xff, 0xfe, 0x00]).unwrap();
     let program = r#"
@@ -446,10 +446,10 @@ hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), 
 .output docs, treed, advertised, lines, tape, counts, hits
 "#;
     let got = run(&dir, program, &["docs", "treed", "advertised", "lines", "tape", "counts", "hits"]);
-    let texts = [("docs/design/a.md", md), ("docs/l9700_graph_query.rst", rst), ("notes.txt", "")];
-    assert_eq!(got[0], sorted(["docs/design/a.md", "docs/l9700_graph_query.rst", "notes.txt", "pkg/m.py"].map(|p| r![p])));
+    let texts = [("docs/design/a.md", md), ("docs/graph_query.rst", rst), ("notes.txt", "")];
+    assert_eq!(got[0], sorted(["docs/design/a.md", "docs/graph_query.rst", "notes.txt", "pkg/m.py"].map(|p| r![p])));
     assert_eq!(got[1], [["pkg/m.py"]]);
-    assert_eq!(got[2], [["docs/l9700_graph_query.rst"]]);
+    assert_eq!(got[2], [["docs/graph_query.rst"]]);
     let lines = |path: &str, source: &str| w_lines(source, false).into_iter().map(|l| [vec![path.to_owned()], l].concat()).collect::<Vec<_>>();
     assert_eq!(got[3], sorted(texts.iter().flat_map(|(p, s)| lines(p, s)).chain(lines("pkg/m.py", "f(needle)\n"))));
     let table = |path: &str, source: &str| {
@@ -459,7 +459,7 @@ hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), 
     let python = LineTable::new("f(needle)\n", Terminators::of(GrammarDialect::Python));
     let python = (0..python.starts().len()).map(|i| r!["pkg/m.py", i + 1, &"f(needle)\n"[python.start(i)..python.end(i)]]);
     assert_eq!(got[4], sorted(texts.iter().flat_map(|(p, s)| table(p, s)).chain(python)));
-    assert!(got[4].contains(&r!["docs/l9700_graph_query.rst", "5", "needle here"]), "U+2028 ends a line: {:?}", got[4]);
+    assert!(got[4].contains(&r!["docs/graph_query.rst", "5", "needle here"]), "U+2028 ends a line: {:?}", got[4]);
     assert_eq!(got[5], sorted(texts.iter().map(|(p, s)| r![p, w_lines(s, false).len()]).chain([r!["pkg/m.py", 1]])));
     let hits = texts.iter().flat_map(|(p, s)| w_regex("needle", false, "text", p, s, true)).chain(w_regex("needle", false, "python", "pkg/m.py", "f(needle)\n", true));
     let hits = sorted(hits);
@@ -1167,6 +1167,40 @@ fn a_copy_of_an_inputs_columns_is_a_view_of_it() {
     };
     assert_eq!(viewed, copied);
     assert_eq!(viewed[0].len(), 5, "the five calls: {viewed:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A copy of any input's columns, not only `node`'s, is a view held in place (decisions 0329, 0353): no row of it is
+/// read or copied when it is held. Read into flat rows, a view of a batch's `string_annotation` made every document
+/// of a warm run that read none of it (ep2's `rr_ctx29`, a third of the run, Q332). Its readers find what the
+/// derived copy gave them.
+#[test]
+fn a_copy_of_any_inputs_columns_is_held_in_place() {
+    use crate::code_rule_dsl::logic::profile;
+    let dir = corpus("input-view-any", &[TREE]);
+    let program = ".decl under(x: node, y: node)\nunder(x, y) :- within(x, y).\n\
+                   .decl in_def(s: number)\nin_def(s) :- under(n, a), node(_, a, \"function_definition\", _, _), node(_, n, \"identifier\", s, _).\n\
+                   .output in_def\n";
+    let scope = || crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let (viewed, held) = {
+        let _run = scope();
+        profile::set(true);
+        profile::take_decisions();
+        let viewed = run(&dir, program, &["in_def"]);
+        let made = profile::take_decisions();
+        profile::set(false);
+        let held: BTreeSet<String> = made.into_keys().filter(|(t, _)| t == "a view held in place: its statistics (Q332)").map(|(_, x)| x).collect();
+        (viewed, held)
+    };
+    assert!(held.iter().any(|x| x.starts_with("under: ")), "under is a view of within, held in place: {held:?}");
+    let copied = {
+        let _copy = super::switches::set(&[("RERAIL_COPY_VIEWS", "1")]);
+        let _run = scope();
+        std::fs::remove_dir_all(dir.join(".out")).ok();
+        run(&dir, program, &["in_def"])
+    };
+    assert_eq!(viewed, copied);
+    assert!(!viewed[0].is_empty(), "the identifiers inside a function: {viewed:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

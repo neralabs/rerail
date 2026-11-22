@@ -144,11 +144,14 @@ const yourRuleNotice = (stored, subject, caught) => h("div.welcome.warn", { role
     `Review what it checks and what it tells the coding agent, ${onceApproved(stored)}`),
   approveButton(subject)));
 
-/** For an edited copy of a rule Rerail ships: which rule, and that approving the copy turns it off here. */
+/**
+ * For an edited copy (of a rule Rerail ships, or of your approved rule a coding agent edited): which rule, and that
+ * approving the copy turns it off here.
+ */
 function copyLine(stored) {
   const id = stored.copiedFromRuleId, original = data.rules.get(id);
-  return h("p", null, h("b", null, "This is an edited copy"),
-    ` of “${original ? titleOf(original) : id}”, a rule Rerail ships. Approving it turns the original off in ${repoName() || "this repo"}.`);
+  const what = original === undefined ? `“${id}”` : isFromPack(original) ? `“${titleOf(original)}”, a rule Rerail ships` : `your rule “${titleOf(original)}”`;
+  return h("p", null, h("b", null, "This is an edited copy"), ` of ${what}. Approving it turns the original off in ${repoName() || "this repo"}.`);
 }
 
 /** A rule or pack someone else wrote (a worktree's own rule, a pack Rerail did not publish, an edited copy) that waits. */
@@ -158,7 +161,7 @@ const otherNotice = (stored, subject, pack) => h("div.welcome.warn", { role: "st
     ? "Rerail did not publish it, so every rule in it runs in Log, steering no one, until a person approves what this version ships."
     : "Rerail did not write it, so it runs in Log, steering no one, until a person approves what it says. An edit waits again."),
   stored.copiedFromRuleId ? copyLine(stored) : null,
-  h("p", null, "Read what it tells the coding agent first, or ask your coding agent to audit it: ", h("span.mono", null, "/rerail-create approve the rules"), "."),
+  h("p", null, "Read what it tells the coding agent first, then approve it here. Your coding agent can audit it first: ", h("span.mono", null, "/rerail-create approve the rules"), "."),
   approveButton(subject)));
 
 /**

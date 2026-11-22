@@ -7,7 +7,6 @@ accel/src/exec.rs::MADE	stays	the one block policy registered once, before the f
 accel/src/gpu/join.rs::RATIO	stays	the OS's timebase ratio: a constant of the machine read once
 accel/src/gpu/shared.rs::BIG	stays	a test lock
 accel/src/gpu/shared.rs::EVICTORS	stays	code registered at load (the pool's evictors, hooks set once each by the crates above)
-accel/src/gpu/shared.rs::GUARD	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::LEASE_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::OTHER_RESERVED	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::REFUSAL_HOOK	stays	code registered at load (a hook)
@@ -22,6 +21,8 @@ accel/src/upkeep.rs::SERIAL	stays	a test lock
 native/crates/blocks/src/alloc.rs::POLICY	stays	code registered at load: the one policy accel installs, the first installed staying
 native/crates/blocks/src/ledger.rs::BLOCKS	stays	the process's mapped blocks and leases by address, each with its ledger (decision 0487 R8): what memory is, not what a run has
 native/crates/blocks/src/mem.rs::RESERVED	stays	the process's own mappings, counted as the OS counts them (address space is the process's)
+native/crates/blocks/src/windows.rs::HANDLER	stays	code registered at load (the one fault handler a Windows process has, which commits a reservation's pages as they are touched)
+native/crates/blocks/src/windows.rs::REGIONS	stays	the process's reservations, which its one fault handler commits the pages of: the process's own address space
 native/crates/c_directives/src/expand.rs::UKL	stays	computed once from the engine's own expansion program
 native/crates/c_directives/src/expand.rs::PROGRAM	stays	computed once from the engine's own expansion program
 native/crates/c_directives/src/expand.rs::SAME	stays	computed once from the engine's own constants (the ahead-of-time build against its source)
@@ -49,6 +50,7 @@ native/crates/metal/src/slabs.rs::ONE	stays	a test lock
 native/crates/prof/src/lib.rs::DROPPED	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::KEYS	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::NAMES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
+native/crates/prof/src/lib.rs::RATE	stays	computed once: the machine's TSC rate, which Windows' cycle times count in
 native/crates/prof/src/lib.rs::SIZES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::SPANS	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::START	stays	the process's start: a clock origin
@@ -108,6 +110,7 @@ native/src/code_rule_dsl/facts/vtab/syntax.rs::PRODUCERS	stays	code registered a
 native/src/code_rule_dsl/facts/vtab/syntax.rs::SEMANTIC	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs::DIALECT_FACTS	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/vtab/syntax/py_families.rs::STRINGS	stays	computed once from the engine's constants
+native/src/code_rule_dsl/fixtures.rs::DIR	stays	computed once from the environment: the test binary's fixtures directory
 native/src/code_rule_dsl/fixtures.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/fixtures.rs::SWEPT	stays	a test fixture's sweep, once
 native/src/code_rule_dsl/import_target/mod.rs::FALLBACK	stays	computed once from the engine's constants
@@ -141,7 +144,6 @@ native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	stays	the default store's pa
 native/src/code_rule_dsl/logic/plan/corpus/owner.rs::CLAIMS	stays	the process's claims of its stores' lock files: a lock file is held by a process, as the OS keeps it
 native/src/code_rule_dsl/logic/plan/corpus/owner.rs::SLOTS	shared	the slot of each base store this process owns: a one-per-store resource
 native/src/code_rule_dsl/logic/plan/corpus/owner.rs::WAITING	stays	a lock, not a result
-native/src/code_rule_dsl/logic/plan/corpus/phase0.rs::RUNS	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid
 native/src/code_rule_dsl/logic/plan/corpus/session.rs::GENERATION	stays	an id counter: append-only
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::CHANGED	stays	guards the process's environment variables, which the OS keeps per process (a test's switches)
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::STATE	stays	guards the process's environment variables, which the OS keeps per process (a test's switches)
@@ -165,8 +167,10 @@ native/src/code_rule_dsl/logic/rr.rs::CORE	stays	computed once from the engine's
 native/src/code_rule_dsl/logic/rr.rs::SHAPE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr/images.rs::SHIPPED	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr/lower.rs::ALL	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/rr/lower.rs::ENGINE	stays	computed once from the engine's own constants
 native/src/code_rule_dsl/logic/rr/lower.rs::WORLD	stays	a key, holding nothing
 native/src/code_rule_dsl/logic/rr/lower/core.rs::DECLS	stays	computed once from the engine's own files
+native/src/code_rule_dsl/logic/rr/testing.rs::RUNS	stays	an id counter: append-only (a work directory's name when no store is kept)
 native/src/code_rule_dsl/logic/strings.rs::FUNCTORS	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/strings/functions.rs::PY_REPR	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/strings/functions.rs::TO_PRECISION	stays	code a crate above registers at load
@@ -187,7 +191,6 @@ native/src/code_rule_dsl/matcher/p_anchors/sql/lower/waves.rs::IDENTIFIER	stays	
 native/src/code_rule_dsl/matcher/term.rs::TERMS	stays	code registered at load
 native/src/code_rule_dsl/matcher/transform.rs::NUMBER_TEXT	stays	code a crate above registers at load
 native/src/code_rule_dsl/matcher/value.rs::NEXT_READING_ID	stays	an id counter: append-only
-native/src/code_rule_dsl/mod.rs::MIBS	stays	jemalloc's control ids for its per-thread peak, looked up once (the allocator's own)
 native/src/code_rule_dsl/module_graph.rs::SERVER_ENTRY	stays	a regex of a literal
 native/src/code_rule_dsl/npm_ignore/mod.rs::BLANK	stays	a regex of a literal
 native/src/code_rule_dsl/npm_ignore/mod.rs::DOUBLE_BACKSLASH	stays	a regex of a literal
@@ -277,7 +280,6 @@ native/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::KINDS	stays	
 native/src/code_rule_dsl/transducer/packed/metal_join.rs::SOURCE	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::SOURCES	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::EVICTOR	stays	registers the workspaces' evictor once (code registered at load, a hook)
-native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::RESIDENT_PREFIX	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::TAPE_PREFIX	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::VIEW_PIECES	stays	computed once from the engine's own source (was metal_label_passes.rs::TAPE_VIEWS)
 native/src/code_rule_dsl/value/names.rs::TABLE	stays	computed once from the engine's own files
@@ -287,9 +289,11 @@ native/src/code_rule_dsl/waves/relational/pipeline/readers.rs::IDENTIFIER	stays	
 native/src/code_rule_dsl/waves/relational/shared/capture.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/workspace/api.rs::WORKSPACE_INSTANCES	stays	an id counter: append-only
 native/src/code_rule_dsl/workspace/calls_state.rs::SUMMARIES_EXTRACTED	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
+native/src/code_rule_dsl/workspace/index.rs::SOURCE_CLASSIFIER	stays	code registered at load (a hook)
 native/src/code_rule_dsl/workspace/ingest.rs::PACKAGE_CONTEXT_PATH_VISITS	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/code_rule_dsl/workspace/ingest.rs::PROJECT	stays	code a crate above registers at load
 native/src/code_rule_dsl/workspace/ingest.rs::REPOSITORY_CONTEXT	stays	code registered at load
+native/src/code_rule_dsl/workspace/storage.rs::NEXT	stays	an id counter: append-only
 native/src/content_store/atoms.rs::GIVEN	stays	a test's counter
 native/src/content_store/connection.rs::CONNECTION_FUNCTIONS	stays	code a crate above registers at load
 native/src/content_store/connection.rs::MADE	stays	process-unique numbers of the connection registries (a thread's connections are kept by them)
@@ -307,6 +311,7 @@ native/src/content_store/write_back.rs::TOLD	stays	a warning said once a process
 native/src/git_access/opener.rs::ASSUME_ANOTHER_OWNER	stays	a test hook (test-hooks), set in a test's own child process
 native/src/git_access/pool.rs::ROOTS	shared	one-per-repository resources (Git's opened roots)
 native/src/git_access/setup.rs::INSTALLED	stays	the Git setup the host installs once (code registered at load)
+native/src/git_workspace.rs::NAMES	stays	computed once from the engine's own files (the host's ignored folders, compiled in)
 native/src/git_workspace.rs::NEXT_FIXTURE	stays	an id counter: append-only
 native/src/git_workspace.rs::SOURCE_ALIAS_HASHES	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/lib.rs::GLOBAL	stays	the allocator (code registered at load)
@@ -315,3 +320,31 @@ native/src/lib.rs::SQLITE_ALLOCATOR	stays	code registered at load
 native/src/model.rs::SHARED_MODELS	shared	the loaded embedding models: shared by design
 native/src/process.rs::LAUNCHED	stays	this process's children's handles (Windows): an OS object of the process
 native/src/source_tree.rs::IMAGE	stays	computed once from the engine's own files
+native/crates/registry/src/lib.rs::CPU	stays	a zero-sized provider (the CPU device's name): a constant, registered at load
+native/crates/registry/src/lib.rs::FORMAT	stays	a test's own slot (the slot type's test)
+native/crates/registry/src/lib.rs::GPU	stays	a zero-sized provider (the GPU device's name): a constant, registered at load
+native/crates/corpus_memo/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/corpus_prep/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/planner/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/setfix/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/typing/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/src/code_rule_dsl/logic/costs/join_steps.rs::INSTALL	stays	code a crate above registers at load (the planner's batch pricer over a trained join model)
+native/src/code_rule_dsl/logic/plan/keeps.rs::CORE_NAMES	stays	code a crate above registers at load (the core's relation names)
+native/src/code_rule_dsl/logic/run_state.rs::CARRIERS	stays	code the program's composition registers at load (the run's carried context, in order)
+native/crates/tests_compile/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_demand/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_lang/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_logic/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_matcher/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_transducer/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/src/code_rule_dsl/boot.rs::LOAD	stays	code registered at load (an init-array entry: a test binary boots the program)
+native/src/code_rule_dsl/boot.rs::MIBS	stays	jemalloc's control ids for its per-thread peak, looked up once (the allocator's own)
+native/src/code_rule_dsl/boot.rs::ONCE	stays	the providers registered once a process (code registered at load: `boot::install`)
+native/src/code_rule_dsl/workspace/fixtures.rs::WORKSPACE_TEST_SLOT	stays	a test lock
+native/src/git_workspace.rs::NAMES	stays	the host's ignored directories, data parsed once: a constant
+native/src/code_rule_dsl/fixtures.rs::DIR	stays	the conformance fixtures' directory, cargo's RERAIL_FIXTURES_DIR for the process: one value for every caller
+native/src/code_rule_dsl/logic/rr/testing.rs::RUNS	stays	a process-unique number naming a work directory (with the pid): runs only ever get distinct values, as from the pid
+native/src/git_snapshot.rs::CHECK_SOURCES	stays	code registered at load: the source checker a crate above installs (a function pointer)
+native/src/git_snapshot.rs::NEXT	stays	a process-unique number naming a view's directory: invocations only ever get distinct values
+native/src/git_snapshot.rs::READ_INVENTORY	stays	code registered at load: the inventory reader a crate above installs (a function pointer)
+native/src/git_snapshot_message_pattern.rs::SYNTAX	stays	a value computed once from constants: Git's message-search regex syntax

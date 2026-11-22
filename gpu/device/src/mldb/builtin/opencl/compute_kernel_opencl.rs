@@ -111,19 +111,27 @@ struct Api {
     set_kernel_exec_info: Option<unsafe extern "C" fn(Ptr, ClUint, usize, *const c_void) -> ClInt>,
 }
 
+/// `clHostMemAllocINTEL`'s signature.
+type HostMemAlloc = unsafe extern "C" fn(Ptr, *const u64, usize, ClUint, *mut ClInt) -> Ptr;
+/// `clMemBlockingFreeINTEL`'s signature.
+type MemBlockingFree = unsafe extern "C" fn(Ptr, Ptr) -> ClInt;
+/// `clSetKernelArgMemPointerINTEL`'s signature.
+type SetKernelArgMemPointer = unsafe extern "C" fn(Ptr, ClUint, *const c_void) -> ClInt;
+/// `clEnqueueMemcpyINTEL`'s signature.
+type EnqueueMemcpy = unsafe extern "C" fn(Ptr, ClUint, Ptr, *const c_void, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt;
+
 /// `cl_intel_unified_shared_memory`'s entry points (the platform's extension functions): host allocations, which
 /// have an address kernels follow.
-#[allow(clippy::type_complexity)]
 struct Usm {
     /// `clHostMemAllocINTEL(context, properties, size, alignment, errcode)`.
-    host_mem_alloc: unsafe extern "C" fn(Ptr, *const u64, usize, ClUint, *mut ClInt) -> Ptr,
+    host_mem_alloc: HostMemAlloc,
     /// `clMemBlockingFreeINTEL(context, ptr)`: frees once the device's work with it has completed.
-    mem_blocking_free: unsafe extern "C" fn(Ptr, Ptr) -> ClInt,
+    mem_blocking_free: MemBlockingFree,
     set_kernel_exec_info: unsafe extern "C" fn(Ptr, ClUint, usize, *const c_void) -> ClInt,
     /// `clSetKernelArgMemPointerINTEL(kernel, index, ptr)`: an argument that is a host allocation.
-    set_kernel_arg_mem_pointer: unsafe extern "C" fn(Ptr, ClUint, *const c_void) -> ClInt,
+    set_kernel_arg_mem_pointer: SetKernelArgMemPointer,
     /// `clEnqueueMemcpyINTEL(queue, blocking, dst, src, size, waits, wait list, event)`.
-    enqueue_memcpy: unsafe extern "C" fn(Ptr, ClUint, Ptr, *const c_void, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt,
+    enqueue_memcpy: EnqueueMemcpy,
 }
 
 /// What a kernel's argument or a copy names of a buffer: an OpenCL buffer, or a host allocation's address (`Usm`),
@@ -154,6 +162,7 @@ unsafe impl Sync for Api {}
 fn api() -> Result<&'static Api, String> {
     static API: OnceLock<Result<Api, String>> = OnceLock::new();
     API.get_or_init(|| {
+        // Windows' loader is in System32, and finds the drivers the display drivers register.
         let paths: &[&str] = if cfg!(target_os = "macos") {
             &["/System/Library/Frameworks/OpenCL.framework/OpenCL"]
         } else if cfg!(windows) {
@@ -162,13 +171,10 @@ fn api() -> Result<&'static Api, String> {
         } else {
             &["libOpenCL.so.1", "libOpenCL.so"]
         };
-        // The system's OpenCL loader.
-        let handle = paths
-            .iter()
-            .find_map(|p| crate::sys::Library::open(p).ok())
-            .ok_or_else(|| format!("no OpenCL library ({})", paths.join(", ")))?;
+        let lib = crate::os::Lib::open(paths, crate::os::Scope::Local).ok_or_else(|| format!("no OpenCL library ({}): {}", paths.join(", "), crate::os::Lib::error()))?;
         let sym = |name: &str| -> Result<Ptr, String> {
-            handle.symbol(name).ok_or_else(|| format!("the OpenCL library has no {name}"))
+            let p = lib.sym(name);
+            if p.is_null() { Err(format!("the OpenCL library has no {name}")) } else { Ok(p) }
         };
         /// The symbol at `p` as the function type `F` its field declares (a function pointer: its size is checked).
         ///
@@ -272,7 +278,7 @@ fn native_subgroups(a: &Api, device: Ptr) -> bool {
         return false;
     }
     let sizes = device_info_bytes(a, device, CL_DEVICE_SUB_GROUP_SIZES_INTEL);
-    sizes.chunks_exact(8).any(|c| u64::from_ne_bytes(c.try_into().unwrap()) == 32)
+    sizes.as_chunks::<8>().0.iter().any(|c| u64::from_ne_bytes(*c) == 32)
 }
 
 /// The device's host allocations, with `RERAIL_OPENCL_USM=1`, where it has Intel's unified shared memory with host
@@ -299,11 +305,11 @@ fn usm(a: &Api, platform: Ptr, device: Ptr) -> Option<Usm> {
     };
     // SAFETY: each is the extension's function of that name, with the signature its field declares.
     Some(Usm {
-        host_mem_alloc: unsafe { std::mem::transmute::<Ptr, _>(f("clHostMemAllocINTEL")?) },
-        mem_blocking_free: unsafe { std::mem::transmute::<Ptr, _>(f("clMemBlockingFreeINTEL")?) },
+        host_mem_alloc: unsafe { std::mem::transmute::<Ptr, HostMemAlloc>(f("clHostMemAllocINTEL")?) },
+        mem_blocking_free: unsafe { std::mem::transmute::<Ptr, MemBlockingFree>(f("clMemBlockingFreeINTEL")?) },
         set_kernel_exec_info: a.set_kernel_exec_info?,
-        set_kernel_arg_mem_pointer: unsafe { std::mem::transmute::<Ptr, _>(f("clSetKernelArgMemPointerINTEL")?) },
-        enqueue_memcpy: unsafe { std::mem::transmute::<Ptr, _>(f("clEnqueueMemcpyINTEL")?) },
+        set_kernel_arg_mem_pointer: unsafe { std::mem::transmute::<Ptr, SetKernelArgMemPointer>(f("clSetKernelArgMemPointerINTEL")?) },
+        enqueue_memcpy: unsafe { std::mem::transmute::<Ptr, EnqueueMemcpy>(f("clEnqueueMemcpyINTEL")?) },
     })
 }
 
@@ -469,6 +475,13 @@ impl ClDevice {
         &self.0.name
     }
 
+    /// The device's extensions (`CL_DEVICE_EXTENSIONS`), and whether its buffers are synced at each submission's
+    /// edges (`synced`): what `kernels list` reports.
+    pub fn describe(&self) -> (String, bool) {
+        let ext = api().map(|a| device_info_string(a, self.0.device, CL_DEVICE_EXTENSIONS)).unwrap_or_default();
+        (ext, self.0.synced)
+    }
+
     /// The largest buffer the device makes.
     pub fn max_alloc(&self) -> u64 {
         self.0.max_alloc
@@ -527,10 +540,10 @@ unsafe impl Sync for Allocation {}
 impl Drop for Allocation {
     fn drop(&mut self) {
         // A queue's work keeps the buffers it uses until it has completed, so no kernel reads these pages now.
-        if let Ok(a) = api() {
-            if !self.mem.is_null() {
-                unsafe { (a.release_mem_object)(self.mem) };
-            }
+        if let Ok(a) = api()
+            && !self.mem.is_null()
+        {
+            unsafe { (a.release_mem_object)(self.mem) };
         }
         match &self.owner {
             Owner::Heap(layout) => unsafe { std::alloc::dealloc(self.ptr, *layout) },
@@ -582,7 +595,7 @@ impl ClBuffer {
 /// the buffer over it is that allocation, not a copy (`ClDevice::follows_addresses`).
 pub fn alloc_uninitialized_array_sync<T>(device: &ClDevice, length: usize) -> ClBuffer {
     let len = (length * std::mem::size_of::<T>()).max(16);
-    let page = crate::sys::page_size();
+    let page = crate::os::page_bytes();
     let layout = std::alloc::Layout::from_size_align(len.next_multiple_of(64), page).unwrap();
     let (ptr, owner) = match &device.0.usm {
         Some(u) => {
@@ -624,7 +637,7 @@ pub fn alloc_uninitialized_array_sync<T>(device: &ClDevice, length: usize) -> Cl
 /// # Safety
 /// The memory outlives the buffer and its clones, and every use of them by queued work.
 pub unsafe fn wrap_host_memory(device: &ClDevice, ptr: *mut u8, len: usize) -> Result<ClBuffer, String> {
-    let page = crate::sys::page_size();
+    let page = crate::os::page_bytes();
     if !(ptr as usize).is_multiple_of(page) || !len.is_multiple_of(64) || len == 0 {
         return Err(format!("OpenCL: host memory at {ptr:p} ({len} bytes) is not page-aligned and a whole number of cache lines: a driver would copy it"));
     }
@@ -724,8 +737,13 @@ impl ClComputeFunctionLibrary {
     pub fn compile_from_source(device: &ClDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = api()?;
         // OpenCL C 3.0 where the kernels use the device's sub-groups (its `sub_group_*` functions are 3.0's), else 1.2.
-        let options_text = if device.subgroups() { "-cl-std=CL3.0" } else { "-cl-std=CL1.2" };
-        let options = CString::new(options_text).unwrap();
+        let version = if device.subgroups() { "-cl-std=CL3.0" } else { "-cl-std=CL1.2" };
+        // `RERAIL_OPENCL_OPTIONS`: more of the driver's build options, a measurement aid (they are in the key).
+        let options_text = match std::env::var("RERAIL_OPENCL_OPTIONS") {
+            Ok(more) if !more.is_empty() => format!("{version} {more}"),
+            _ => version.to_owned(),
+        };
+        let options = CString::new(options_text.as_str()).unwrap();
         // The store's binary (`crate::store`), keyed by the device's name, version and driver beside the source.
         let driver = device_info_string(a, device.0.device, CL_DRIVER_VERSION);
         let key = crate::store::key(&[b"opencl", device.name().as_bytes(), driver.as_bytes(), options_text.as_bytes(), preprocessed_source.as_bytes()]);
@@ -743,6 +761,7 @@ impl ClComputeFunctionLibrary {
             }
         }
         crate::store::count(false);
+        crate::store::dump(file_name_to_appear_in_error_messages, "cl", &options_text, preprocessed_source);
         let src = CString::new(preprocessed_source).map_err(|_| format!("{file_name_to_appear_in_error_messages}: a NUL in the source"))?;
         let p = src.as_ptr();
         let mut e = 0;

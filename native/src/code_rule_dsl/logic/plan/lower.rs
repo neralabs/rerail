@@ -74,14 +74,14 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
 }
 
 /// Each relation's column domains.
-pub(in crate::code_rule_dsl) type Domains = BTreeMap<String, Vec<Domain>>;
+pub type Domains = BTreeMap<String, Vec<Domain>>;
 
 /// Which of relation `rel`'s columns hold atoms (decision 0170: what a forked process maps, what an entry may name):
 /// its `sym` columns whose values are names, not a grammar's kind or field ids (`Domain::Kind`, `Domain::Field`:
 /// `field_atom`'s `tag << 16 | code`, which no store numbers). A relation `domains` does not cover keeps every `sym`
 /// column.
 /// `types`: the relation's declared column types, in order (none where it is not declared).
-pub(in crate::code_rule_dsl) fn atom_columns(types: &[&str], domains: &Domains, rel: &str) -> Vec<bool> {
+pub fn atom_columns(types: &[&str], domains: &Domains, rel: &str) -> Vec<bool> {
     let ds = domains.get(rel);
     types.iter().enumerate().map(|(c, t)| *t == "sym" && ds.and_then(|d| d.get(c)).is_none_or(|d| *d == Domain::Name)).collect()
 }
@@ -271,12 +271,12 @@ pub struct Lowered {
     /// Shared by every part and edit of the program (`with_version`), never copied per part (0276 §2).
     pub domains: std::sync::Arc<Domains>,
     /// The name atoms of `flat_bin`'s operators `+`, `-` and `*`.
-    pub(in crate::code_rule_dsl) ops: [i64; 3],
+    pub ops: [i64; 3],
     pub dialect: GrammarDialect,
     /// The program normalized as a run reads it (`body::Placed::normalized`), by `apart`: made by its first run and
     /// read by every later one (Q203 item 3 (ii)). A corpus run's chunks each normalized it again, a version of
     /// their own, and so every analysis that version holds again (decision 0281 §2); now they share one.
-    pub(in crate::code_rule_dsl) normal: std::sync::Arc<[std::sync::OnceLock<std::sync::Arc<super::body::Normalized>>; 2]>,
+    pub normal: std::sync::Arc<[std::sync::OnceLock<std::sync::Arc<super::body::Normalized>>; 2]>,
 }
 
 impl Lowered {
@@ -338,7 +338,7 @@ impl Constants<'_> {
         Ok(match d {
             Domain::Name => Some(Branded::name(u32::try_from(self.names[s]).expect("a name atom is a u32"))),
             // `"sql:select"`: a kind of another grammar, as a guest's are (decision 0058 §2).
-            Domain::Kind | Domain::Field if let Some((label, name)) = super::corpus::qualified(s) => {
+            Domain::Kind | Domain::Field if let Some((label, name)) = qualified(s) => {
                 let dialect = crate::code_rule_dsl::language::dialect_by_label(label).expect("a registry label");
                 let (Some(tag), kinds) = (tape_tag(dialect), dialect.kinds()) else { return Ok(None) };
                 match d {
@@ -412,5 +412,11 @@ pub fn relocate(v: &Version, to: &HashMap<u32, u32>) -> Result<Option<std::sync:
 mod on_version;
 pub use on_version::{lower_version, lowered};
 
-#[cfg(test)]
-pub mod tests;
+
+/// `"sql:select"` as its grammar's label and the name, when the label is a registry language's.
+pub fn qualified(s: &str) -> Option<(&str, &str)> {
+    let (label, name) = s.split_once(':')?;
+    (!label.is_empty() && !name.is_empty() && crate::code_rule_dsl::language::dialect_by_label(label).is_some()).then_some((label, name))
+}
+
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus)

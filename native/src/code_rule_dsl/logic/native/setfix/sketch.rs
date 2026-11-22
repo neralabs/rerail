@@ -3,7 +3,7 @@
 //! counters, about 9% off), and, while it holds at most `SMALL` values or a bounded integer page, each value's exact count (then the distinct
 //! values and the sum are exact too). Compact labels use a 16 KiB page; sparse label sets retain at most 1,024 counters.
 //! Identity columns keep the fixed-size fallback. Exact counts are updated as rows arrive, never by a planning-time scan.
-//! Past `SMALL` values it keeps its column's keys in a blocked Bloom filter too (`bloom::Kept`, decision 0500), set
+//! Past `SMALL` values it keeps its column's keys in a blocked Bloom filter too (`bloom::Kept`, decision 0488), set
 //! from the same hash as each row is counted, and made again larger from the column where its keys outgrow it.
 //! The screens test probes against it, and the planner counts the keys two columns share by it.
 
@@ -175,33 +175,31 @@ impl Sketch {
                 }
                 self.dense=None;
             }
-        } else if self.counts.few_len().is_some() {
-            if !self.counts.add_few(v) {
-                // Its `SMALL + 1`th value: the few values and their rows, read where they lie (`counts`), make what
-                // follows them.
-                let counts = &self.counts;
-                let small = || counts.few().into_iter().flatten();
-                // Retain bounded label domains beyond SMALL without linear searches.
-                // Large identity columns retain the fixed-size sketch fallback.
-                let base=v & !((DENSE_WIDTH as i64)-1);
-                if (0..LABEL_LIMIT).contains(&v) && small().all(|e| e[0]>=base && e[0]-base<DENSE_WIDTH as i64) {
-                    let mut dense=Dense {base,counts:zeros(DENSE_WIDTH),ndv:counts.few_len().unwrap_or(0),sq:0};
-                    for [x,n] in small() {dense.counts[(x-base) as usize]=n as u32;dense.sq+=(n as u64).pow(2);}
-                    dense.add(v);
-                    self.dense=Some(dense);
-                } else if (0..LABEL_LIMIT).contains(&v) && small().all(|e|(0..LABEL_LIMIT).contains(&e[0])) {
-                    let mut sparse=Sparse::from_counts(small().map(|e|(e[0],e[1] as u32)));sparse.add(v);self.sparse=Some(sparse);
-                }
-                // Its keys from here on in a filter, from the values it held and this one.
-                let keys = Kept::new(bloom::kept_words_for(4 * SMALL));
-                for h in small().map(|e| mix(e[0])).chain([h]) {
-                    keys.add_hashed(h);
-                    self.sample.offer(h);
-                }
-                self.keys = Some(Arc::new(keys));
-                self.own_keys = true;
-                self.counts.end_few();
+        } else if self.counts.few_len().is_some() && !self.counts.add_few(v) {
+            // Its `SMALL + 1`th value: the few values and their rows, read where they lie (`counts`), make what
+            // follows them.
+            let counts = &self.counts;
+            let small = || counts.few().into_iter().flatten();
+            // Retain bounded label domains beyond SMALL without linear searches.
+            // Large identity columns retain the fixed-size sketch fallback.
+            let base=v & !((DENSE_WIDTH as i64)-1);
+            if (0..LABEL_LIMIT).contains(&v) && small().all(|e| e[0]>=base && e[0]-base<DENSE_WIDTH as i64) {
+                let mut dense=Dense {base,counts:zeros(DENSE_WIDTH),ndv:counts.few_len().unwrap_or(0),sq:0};
+                for [x,n] in small() {dense.counts[(x-base) as usize]=n as u32;dense.sq+=(n as u64).pow(2);}
+                dense.add(v);
+                self.dense=Some(dense);
+            } else if (0..LABEL_LIMIT).contains(&v) && small().all(|e|(0..LABEL_LIMIT).contains(&e[0])) {
+                let mut sparse=Sparse::from_counts(small().map(|e|(e[0],e[1] as u32)));sparse.add(v);self.sparse=Some(sparse);
             }
+            // Its keys from here on in a filter, from the values it held and this one.
+            let keys = Kept::new(bloom::kept_words_for(4 * SMALL));
+            for h in small().map(|e| mix(e[0])).chain([h]) {
+                keys.add_hashed(h);
+                self.sample.offer(h);
+            }
+            self.keys = Some(Arc::new(keys));
+            self.own_keys = true;
+            self.counts.end_few();
         }
     }
 

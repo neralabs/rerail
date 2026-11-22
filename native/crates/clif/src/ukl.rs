@@ -65,15 +65,113 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
         // Each read in its own family (a view read's source holds the lines' reads it calls too).
         let family = crate::reads::READS.get(*id as usize).map_or(family, |read| read.family);
         // Cold (a call) where 0310's policy marks the read so.
-        let hot = crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot);
+        let mut text = String::new();
+        body(&mut text, f, &named, family).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
+        // A large body is a call on the device even where the JIT inlines it: a GPU compiler inlines a hot read at
+        // every call site, with the hot reads it calls, and the transducer's interpreter (`run_batch`) took 44.7 s in
+        // the AGX back end on an M5 Max with every tape read inlined, 5.5 s with none (`DEVICE_INLINE`, decision 0548;
+        // the tape's own reads, written by hand in `<ukl/body/tape_read.h>` and the formats' reads, are marked so there).
+        let hot = crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot) && statements(&text) <= DEVICE_INLINE;
         let signature = signature(f, &format!("{prefix}{n}"), family, hot)?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();
-        body(&mut bodies, f, &named, family).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
+        bodies.push_str(&text);
         bodies.push_str("}\n");
     }
     out.push_str(&bodies);
     Ok(out)
+}
+
+/// The reads `funcs` read through a view (decision 0576), as UKL: the header (the reads that read no tape, each once,
+/// then one read per view read that does, which tells the tape's format and makes that format's read) and the body of
+/// the reads that read a tape (`<ukl/body/view_reads.h>`), included once per format. In the body a read is
+/// `CLIF_V(name)` and a tape read `CLIF_F(name)`: the format's, named by the header before each include. A 16z read is
+/// checked where the header makes it, once (`CLIF_Z_READ`): the reads it makes are 16z's own, unchecked.
+pub fn translate_view_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str) -> Result<(String, String), String> {
+    let reads = crate::reads::READS;
+    let family_of = |id: u32| reads.get(id as usize).map_or(Family::View, |read| read.family);
+    // The reads that read a tape, themselves or through another of `funcs`.
+    let calls = |f: &ir::Function| -> Vec<u32> {
+        f.dfg.ext_funcs.values().filter_map(|e| match &e.name {
+            ir::ExternalName::User(n) => Some(f.params.user_named_funcs()[*n].index),
+            _ => None,
+        }).collect()
+    };
+    let mut tape: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    loop {
+        let before = tape.len();
+        for (id, f, _) in funcs {
+            if calls(f).iter().any(|c| family_of(*c) == Family::Tape || tape.contains(c)) {
+                tape.insert(*id);
+            }
+        }
+        if tape.len() == before {
+            break;
+        }
+    }
+    let named = |id: u32| -> Result<String, String> {
+        if let Some((.., n)) = funcs.iter().find(|(f, ..)| *f == id) {
+            return Ok(format!("{prefix}{n}"));
+        }
+        let read = reads.get(id as usize).filter(|read| read.family != Family::View).ok_or(format!("a call of u0:{id}, no read"))?;
+        Ok(match read.name.strip_prefix("tape_") {
+            Some(n) if read.family == Family::Tape => format!("CLIF_F({n})"),
+            _ => format!("{prefix}{}", read.name),
+        })
+    };
+    let mut head = String::from(HELPERS);
+    let mut once = String::new();
+    let mut body_declared = String::new();
+    let mut bodies = String::new();
+    let mut each = String::new();
+    for (id, f, n) in funcs {
+        let family = family_of(*id);
+        let mut text = String::new();
+        body(&mut text, f, &named, family).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
+        let hot = reads.get(*id as usize).is_none_or(|read| read.hot) && statements(&text) <= DEVICE_INLINE;
+        if !tape.contains(id) {
+            let declared = signature(f, &format!("{prefix}{n}"), family, hot)?;
+            writeln!(head, "{declared};").unwrap();
+            writeln!(once, "{declared}{{\n{text}}}").unwrap();
+            continue;
+        }
+        // A format's body is inlined into the read (one function a read, as before: Intel's compiler makes each called
+        // function a stack call, at a cost each), and a view read it calls is that read, which tells its format again.
+        let declared = signature(f, &format!("CLIF_V({n})"), family, true)?.replacen("UKL_COLD", "UKL_INLINE", 1);
+        writeln!(body_declared, "{declared};").unwrap();
+        writeln!(bodies, "{declared}{{\n{text}}}").unwrap();
+        // The read itself: the format, then its read.
+        let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
+        let ret = ty(ret.value_type)?.0;
+        let outer = signature(f, &format!("{prefix}{n}"), family, hot)?;
+        writeln!(head, "{outer};").unwrap();
+        let args: String = (family.pointers()..f.signature.params.len()).map(|k| format!(",a{k}")).collect();
+        let pass = format!("t,a0,tt,v,ll{args}");
+        writeln!(
+            each,
+            "{outer}{{\n uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);\n if(clif_format==16u) return {prefix}f16_{n}({pass});\n if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ({ret},tt,v,{prefix}f16z_{n}({pass}))\n return {prefix}f15_{n}({pass});\n}}"
+        )
+        .unwrap();
+    }
+    head.push_str(&once);
+    for format in ["f15", "f16", "f16z"] {
+        writeln!(head, "#define CLIF_F(name) {prefix}{format}_##name\n#define CLIF_V(name) {prefix}{format}_##name\n#include <ukl/body/view_reads.h>").unwrap();
+    }
+    head.push_str(&each);
+    let body = format!(
+        "#if !defined(CLIF_F) || !defined(CLIF_V)\n#error \"ukl/body/view_reads.h is included by ukl/reads/view.h, once per format\"\n#endif\n{body_declared}{bodies}#undef CLIF_F\n#undef CLIF_V\n"
+    );
+    Ok((head, body))
+}
+
+/// The most statements a hot read's body has and is still inlined on the device: the tape's small reads (`child`,
+/// `slot`, `has_kind`, `length`: 59 or fewer), not those that decode a format's lines or a node's stated span
+/// (`start_stated`, `line`, `start_next`, `end_stated`, `size`, `line_start`: 86 to 255, each calling more reads).
+pub const DEVICE_INLINE: usize = 70;
+
+/// A body's statements, as its text counts them.
+fn statements(body: &str) -> usize {
+    body.matches(';').count()
 }
 
 /// The 64-bit values of `f` of which every use reads only the low 32 bits (a demanded-bits pass to its fixpoint):
@@ -151,7 +249,9 @@ fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::
 fn pointers(family: Family) -> (&'static str, &'static str) {
     match family {
         Family::Tape => ("UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v", "t,v"),
-        Family::Relation | Family::Lines => ("UKL_GLOBAL const uint8_t* t,uint64_t a0", "t"),
+        // A relation's block's base in the space its kernel reads blocks in (`CLIF_BLOCK_SPACE`, decision 0603); a
+        // view's tape and directory, which no dispatch writes, as they are.
+        Family::Relation | Family::Lines => ("CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0", "t"),
         Family::View => ("UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll", "t"),
     }
 }
@@ -728,14 +828,15 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             }
             let readonly = data.memflags().is_some_and(|m| m.readonly());
             if aligned && family != Family::Tape {
-                // The block's own words, at their alignment.
+                // The block's own words, at their alignment, in the space its base is in (`CLIF_BLOCK_SPACE`:
+                // coherent where other groups of its kernel's dispatch write them, decision 0603).
                 let t = match size {
                     8 => "uint8_t",
                     16 => "uint16_t",
                     32 => "uint32_t",
                     _ => "uint64_t",
                 };
-                set(format!("(({u})(*(UKL_GLOBAL const {t}*)(t+{})))", addr(&args[0])))
+                set(format!("(({u})(*(CLIF_BLOCK_SPACE const {t}*)(t+{})))", addr(&args[0])))
             } else if aligned {
                 // The view: its u32 fields.
                 if size != 32 {

@@ -9,7 +9,7 @@
 //!
 //! A document the engine parses and the grammar refuses (it goes to the engine) is no difference: it is counted.
 
-use rerail_compiler::ladder::{Compiled, IdNode, check_ladder};
+use rerail_cpu_stream::ladder::{Compiled, IdNode, check_ladder};
 use rerail_rr_syntax as rr;
 
 /// The grammar, by name.
@@ -371,18 +371,18 @@ const TO_THE_ENGINE: &[(&str, &str)] = &[("r(x) :- x = 12345678901234567890, y =
 fn rr_cases_parse() {
     let mut missing = Vec::new();
     for (name, source) in grammar() {
-        let c = rerail_compiler::ladder::compile_step(&name, &source);
+        let c = rerail_cpu_stream::ladder::compile_step(&name, &source);
         for &(doc, mark) in CASES {
             let engine = TO_THE_ENGINE.iter().find(|e| e.0 == doc);
-            let parsed = rerail_compiler::ladder::reference(&c, doc.as_bytes()).is_some();
+            let parsed = rerail_cpu_stream::ladder::reference(&c, doc.as_bytes()).is_some();
             match engine {
                 Some(&(_, why)) => {
-                    let refusal = rerail_compiler::ladder::refusal(&c, doc.as_bytes());
+                    let refusal = rerail_cpu_stream::ladder::refusal(&c, doc.as_bytes());
                     if parsed || !refusal.starts_with(why) {
                         missing.push(format!("{name}: {doc:?}: not sent to the engine by {why:?}: {}", if parsed { "parsed" } else { &refusal }));
                     }
                 }
-                None if mark == "parses" && !parsed => missing.push(format!("{name}: {doc:?}: {}", rerail_compiler::ladder::refusal(&c, doc.as_bytes()))),
+                None if mark == "parses" && !parsed => missing.push(format!("{name}: {doc:?}: {}", rerail_cpu_stream::ladder::refusal(&c, doc.as_bytes()))),
                 None => {}
             }
         }
@@ -397,7 +397,7 @@ fn rr_cases_parse() {
 #[test]
 fn a_refused_mark_is_checked() {
     let source = grammar().remove(0).1;
-    assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
+    assert_eq!(rerail_cpu_stream::ladder::compile_error(&source), None);
     let refuse = "refuse json_bad in json_document json_inner_object json_inner_array";
     for (from, to, why) in [
         (refuse, "refuse json_bad in json_document json_inner_object", "calls one that does not"),
@@ -407,7 +407,7 @@ fn a_refused_mark_is_checked() {
         ("merge json_object ']'", "merge json_object ']' [merge json_object '.']", "may end only after its last token"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
-        let e = rerail_compiler::ladder::compile_error(&source.replace(from, to));
+        let e = rerail_cpu_stream::ladder::compile_error(&source.replace(from, to));
         assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
     }
 }
@@ -417,17 +417,17 @@ fn a_refused_mark_is_checked() {
 #[test]
 fn a_reading_is_checked() {
     let source = grammar().remove(0).1;
-    assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
+    assert_eq!(rerail_cpu_stream::ladder::compile_error(&source), None);
     for (from, to, why) in [
         ("reread parenthesized_strict pattern_tail\n  provisional", "reread nowhere pattern_tail\n  provisional", "no reading of that name"),
         ("reading parenthesized_strict = ", "reading parenthesized = ", "two of that name"),
         ("conjunction gone, atom as call", "conjunction gone, conjunction gone, atom as call", "a kind twice"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
-        let e = rerail_compiler::ladder::compile_error(&source.replace(from, to));
+        let e = rerail_cpu_stream::ladder::compile_error(&source.replace(from, to));
         assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
     }
-    let c = rerail_compiler::ladder::compile_step("rr", &source);
+    let c = rerail_cpu_stream::ladder::compile_step("rr", &source);
     assert_eq!(c.program.readings.maps.len(), source.lines().filter(|l| l.trim_start().starts_with("reading ")).count());
     assert_eq!(c.program.readings.provisional, [c.ids.of("field bare")]);
     let rereads = c.native.structural.iter().filter(|b| matches!(b.operation, rerail_compiler::native_ir::StructuralOperation::Reread { .. })).count();
@@ -445,7 +445,7 @@ fn rr_look() {
         None => doc.replace("\\n", "\n"),
     };
     for (name, source) in grammar() {
-        let c = rerail_compiler::ladder::compile_step(&name, &source);
+        let c = rerail_cpu_stream::ladder::compile_step(&name, &source);
         let out = ::bitlex::eval::Ev::run(&c.stmts, doc.as_bytes(), &std::collections::HashMap::new()).expect("runs");
         eprintln!("{name}: errors {:?}", out.errors);
         if let Some(Err(e)) = out.tree.as_ref().map(|t| ::bitlex::tree::nodes(t, &out.tokens, doc.len())) {
@@ -456,12 +456,12 @@ fn rr_look() {
         for t in out.tokens.iter().filter(|_| !long) {
             eprintln!("  {:>4}..{:<4} {}{} {:?}", t.start, t.end, if t.mark { "mark " } else { "" }, t.kind, &doc[t.start..t.end]);
         }
-        eprintln!("  reference: {:?}", rerail_compiler::ladder::refusal(&c, doc.as_bytes()));
+        eprintln!("  reference: {:?}", rerail_cpu_stream::ladder::refusal(&c, doc.as_bytes()));
         let compiled = c.parser.parse(doc.as_bytes());
         eprintln!("  compiled: {:?}", compiled.as_ref().map(|n| n.len()));
         // Where the compiled tree leaves the reference's: the nodes around it.
-        if let (Ok(nodes), Some(want)) = (&compiled, rerail_compiler::ladder::reference(&c, doc.as_bytes())) {
-            let (ours, theirs) = (named(&c, &rerail_compiler::ladder::as_ids(nodes.clone())), named(&c, &want));
+        if let (Ok(nodes), Some(want)) = (&compiled, rerail_cpu_stream::ladder::reference(&c, doc.as_bytes())) {
+            let (ours, theirs) = (named(&c, &rerail_cpu_stream::ladder::as_ids(nodes.clone())), named(&c, &want));
             // By kind, field and span: a size differs first at the nodes around the place.
             let spans = |n: &Named| (n.0.clone(), n.1.clone(), n.2, n.3);
             if let Some(at) = ours.iter().zip(&theirs).position(|(a, b)| spans(a) != spans(b)) {
@@ -472,10 +472,10 @@ fn rr_look() {
             }
         }
         let theirs = engine(&doc).0;
-        if let Some(nodes) = rerail_compiler::ladder::reference(&c, doc.as_bytes()) {
+        if let Some(nodes) = rerail_cpu_stream::ladder::reference(&c, doc.as_bytes()) {
             let ours = named(&c, &nodes);
             eprintln!("  reference tree: {ours:?}");
-            let compiled = compiled.as_ref().ok().map(|n| named(&c, &rerail_compiler::ladder::as_ids(n.clone())));
+            let compiled = compiled.as_ref().ok().map(|n| named(&c, &rerail_cpu_stream::ladder::as_ids(n.clone())));
             eprintln!("  the engine's tree: {}; the compiled tree the reference's: {}", ours == theirs, compiled.as_ref() == Some(&ours));
             if let Some(at) = ours.iter().zip(&theirs).position(|(a, b)| a != b) {
                 eprintln!("  the reference leaves the engine at node {at}: {:?} / {:?}", ours.get(at), theirs.get(at));
@@ -492,8 +492,8 @@ fn rr_look() {
 #[ignore = "the corpus: run by name"]
 fn rr_corpus() {
     let (name, source) = grammar().remove(0);
-    let c = rerail_compiler::ladder::compile_step(&name, &source);
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let c = rerail_cpu_stream::ladder::compile_step(&name, &source);
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let mut files = Vec::new();
     let mut work = vec![root];
     while let Some(dir) = work.pop() {
@@ -518,7 +518,7 @@ fn rr_corpus() {
         let Ok(src) = std::str::from_utf8(&bytes) else { continue };
         match c.parser.parse(&bytes) {
             Ok(nodes) => {
-                let ours = named(&c, &rerail_compiler::ladder::as_ids(nodes));
+                let ours = named(&c, &rerail_cpu_stream::ladder::as_ids(nodes));
                 let (theirs, error) = engine(src);
                 if error {
                     refused_by_engine.push(f.display().to_string());
@@ -531,7 +531,7 @@ fn rr_corpus() {
                 }
             }
             Err(_) => {
-                let why = rerail_compiler::ladder::refusal(&c, &bytes);
+                let why = rerail_cpu_stream::ladder::refusal(&c, &bytes);
                 let mut why = why.split(" (byte").next().unwrap_or("").to_owned();
                 // The grammar's refusal: the token it stops at, and the statement's first word.
                 if why == "the token" {

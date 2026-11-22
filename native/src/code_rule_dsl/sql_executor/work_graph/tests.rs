@@ -238,9 +238,7 @@ fn shared_vm_limits_child() {
 fn worker_profiles_cover_every_statement_and_session_totals() {
     for threads in [1_u64, 2] {
         let directory = tempfile::tempdir().unwrap();
-        let mut child = std::process::Command::new("nice")
-            .args(["-n", "19"])
-            .arg(std::env::current_exe().unwrap())
+        let mut child = crate::code_rule_dsl::test_support::niced_self()
             .args([
                 "--exact",
                 "code_rule_dsl::sql_executor::work_graph::tests::profiled_graph_child",

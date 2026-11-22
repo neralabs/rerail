@@ -41,18 +41,39 @@ export class StampTreeWatch implements TreeWatch {
   readonly #lost = new Set<string>();
   readonly #ended = new Set<string>();
   readonly #held = new Set<string>();
+  /** What `until` waits for, each checked again after a watch. */
+  readonly #waiting: Array<{ readonly met: () => boolean; readonly resolve: () => void }> = [];
   closed = false;
 
   watch(root: string, folders: readonly string[]): boolean {
     if (this.#unwatchable.has(root)) return false;
     if (!this.#entries.has(root)) this.#entries.set(root, entriesOf(root));
     this.folders.set(root, folders);
+    this.#settle();
     return true;
+  }
+
+  /** Resolves once `met` holds, read now and after each watch: a test waits for that fact, not for a time. */
+  until(met: () => boolean): Promise<void> {
+    if (met()) return Promise.resolve();
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.#waiting.push({ met, resolve });
+    return promise;
+  }
+
+  #settle(): void {
+    for (const waiter of this.#waiting.filter(waiter => waiter.met())) {
+      this.#waiting.splice(this.#waiting.indexOf(waiter), 1);
+      waiter.resolve();
+    }
   }
 
   unwatch(root: string): void {
     this.#entries.delete(root);
     this.folders.delete(root);
+    // As the engine does, the notices queued for a root it lets go of go with it.
+    this.#lost.delete(root);
+    this.#ended.delete(root);
     this.unwatched.push(root);
   }
 

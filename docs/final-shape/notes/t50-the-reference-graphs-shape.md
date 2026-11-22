@@ -436,7 +436,7 @@ above and lost about as much in strata that check the same nodes again, where th
 made (`tscope` 0.21 → 1.62 s, `rf_fcond` 0.10 → 1.42 s). The projection's `size` opens no reader, and that loss is
 gone.
 
-On `all` (m1max, both sides in one session, rows unchanged), instructions retired went 3.677 T → 3.538 T and the
+On `all` (M1 Max, both sides in one session, rows unchanged), instructions retired went 3.677 T → 3.538 T and the
 rules' own CPU 312.9 → 272.0 s. By stratum: `rf_in` 6.56 → 4.32 s, `rf_fn_in` 2.24 → 0.86 s, and the generated
 `pre_379` 10.57 → 2.82 s, `pre_380` 6.23 → 1.29 s, `pre_378` 4.81 → 2.67 s. On s1000: 371.1 G → 349.6 G
 instructions. The hosts were loaded (load 4 to 31 on 10 cores), so wall and CPU moved by 10–40% from one run to the
@@ -456,6 +456,78 @@ operator, with its own decision record. The user chose step 5 next and the chain
 
 What is left of T3 is `rf_in`'s 4.3 s: 26 M rows of work in its first rule, about 185 ns a row and step. That is the
 executor's cost per row, not the chain.
+
+### Step 5, before the operator: what an index probe costs, and what else it could be (2026-11-21)
+
+The guess was that the lookup is slow because each probe is a binary search over a large sorted relation, a cache
+miss a step. Measured, it is not the main cost.
+
+**Profile of `all`** (one run, macOS `sample` at 1 ms, waiting threads taken out: 298,754 CPU samples, about
+299 s; 238 s wall, 322 s user, 3.57 T instructions, peak 12.3 GB). Shares of the run's CPU, nested:
+
+| Part | Share |
+|---|---|
+| the joins (`run_join_in_each::enter`) | 32.2% |
+| … the loop over each entering row (`Rows::each`) | 22.4% |
+| … the `any(…)` check loop inside it | 20.5% |
+| … finding candidates (`candidates`) | 15.1% |
+| … writing and deduplicating rows (`flush`) | 11.0% |
+| index probes (`Index::find_at` 4.4%, `Run::find` 2.0%, `Relation::between` 2.3%, nested in part) | ~7% |
+| view probes (`View::find_keyed` 3.1%, `View::find_read` 3.0%) | ~6% |
+| lazy derived-input orders, built on first probe | ~1.5% |
+
+**The spike** (`setfix/runs/index_spike.rs`, an ignored test over the `walk`, `wstart` and `look` captures of s1000:
+`RERAIL_INDEX_SPIKE=<capture dir>`). Each structure answers the same probes, and the found ids' checksum must
+agree. One thread, a million probes or more each; ns per probe:
+
+| Table | Probe | today (`runs`) | `printed` | hash (hashbrown) | sorted hash |
+|---|---|---|---|---|---|
+| 16 K rows | whole key, shuffled | 132 | 87 | 9 | 29 |
+| 56 K rows | lead column, shuffled | 100 | 103 | 16 | 38 |
+| 56 K rows | whole key, shuffled | 103 | 91 | 17 | 38 |
+| 244 K rows | lead column, shuffled | 264 | 268 | 45 | 68 |
+| 244 K rows | whole key, shuffled | 273 | 177 | 36 | 77 |
+| 244 K rows | miss, shuffled | 285 | 143 | 9 | 49 |
+
+| Structure | Bytes per row | Build ns per row |
+|---|---|---|
+| today (`runs`) | 6.1–6.4 | 14–25 |
+| `printed` | 7.1–7.5 | 16–34 |
+| hash | 46–81 | 25–58 |
+| sorted hash (64-bit hashes and 32-bit ids, sorted by hash) | 12 | 36–41 |
+
+- Today's index costs 100–285 ns a probe even in key order: each probe still searches a 64-id block, reading each row
+  through its id.
+- A hash or sorted-hash order answers one key set, where a sorted order answers every prefix of its columns.
+- Ranges by document (`dense`) did not apply: a node id's low half is a tape position, not a dense local, so the
+  ids are too sparse for offsets. It would need the projection's locals (`Batch::node`).
+- One 3-column tagged order of 79 K rows (`look-3:s1`) built at 1,838 ns a row once, against 34 the next time.
+
+**Decision (user, 2026-11-21): no sorted hash.** Its memory (twice today's, 7–13× for hashbrown) is not wanted, and
+faster probes would save at most 5–6% of the run's CPU. The data stays here; the structure is not built. The next
+measure is the join's per-row work (`any(…)`, `flush`, the view probes).
+
+**The join, by role** (self time under `run_join_in_each::enter`, the same sample; 32.2% of the run): the
+interpreter's own work (`enter`, `candidates`, the row closures, the `any` loops) 24.7% of the join, index probes
+15.9%, view reads 8.9%, the within/nearest axis 8.5%, `RowRef` 5.6%, alloc and free 5.4%, plain relation reads 5.3%,
+thread-locals and clock reads 4.2% (in part the profiler's own span per scalar-summary probe), the head's write and
+dedup 3.5%, lazy index builds 3.2%, strings and scalars 2.9%. The inclusive shares of the row closures (22.4%) and
+`flush` (11.0%) nest: they recurse into the next step.
+
+**The join, by rule** (`RERAIL_JOIN_LINES` on `all`, no sample: 180 s wall, 294 s user, 3.38 T instructions): 93 K
+lines, 872 M rows of work, 104.8 s of line wall over the threads, about 120 ns a row. No rule is over 4.7%. Most run
+at 90–140 ns a row: the cost is the executor's per row, spread over every rule. The outliers by ns a row:
+
+| Rule | Rows of work | Wall s | ns/row |
+|---|---|---|---|
+| `st_open` (one line) | 23 K | 1.20 | 52,329 |
+| `walk` (the recursive step: `!bound_in`, `!gbefore`, `rr_nearest_lfscope`) | 3.8 M | 3.60 | 959 |
+| `rf_fn_n` (a count) | 2.0 M | 1.18 | 591 |
+| `st_ref_at` | 3.1 M | 1.57 | 512 |
+| `rf_crossing`, `rasg` | 3.5 M, 2.9 M | 1.04, 0.84 | 293, 290 |
+
+And by size: `st_pos` (a position for every node of every document, from `node` and `doc`) is 70 M rows of work,
+4.97 s, the largest rule.
 
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 

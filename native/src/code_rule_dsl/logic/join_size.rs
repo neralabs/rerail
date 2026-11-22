@@ -1,4 +1,4 @@
-//! A join's size from its columns' count sketches (decision 0500): the AMS estimate (Alon, Matias and Szegedy; Alon,
+//! A join's size from its columns' count sketches (decision 0488): the AMS estimate (Alon, Matias and Szegedy; Alon,
 //! Gibbons, Matias and Szegedy's "tug of war"), from counters every column's sketch keeps already
 //! (`native::setfix::sketch::Sketch`), as its rows come, at no cost a probe pays.
 //!

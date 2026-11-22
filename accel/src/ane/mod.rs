@@ -201,10 +201,13 @@ struct Model {
     outputs: Vec<String>,
 }
 
+/// A constant digest's template and model key, or why it has none.
+type Plan = Result<(Template, [u8; 32]), String>;
+
 #[derive(Default)]
 struct State {
     /// Per constant digest: its template and model key, or why it has none.
-    plans: HashMap<[u8; 32], Result<(Template, [u8; 32]), String>>,
+    plans: HashMap<[u8; 32], Plan>,
     loaded: HashMap<[u8; 32], Arc<Model>>,
     order: VecDeque<[u8; 32]>,
     refused: HashMap<[u8; 32], String>,
@@ -328,11 +331,11 @@ impl Ane {
         match r {
             Ok(m) => {
                 let m = Arc::new(m);
-                if st.order.len() >= MAX_LOADED {
-                    if let Some(old) = st.order.pop_front() {
-                        st.loaded.remove(&old);
-                        let _ = std::fs::remove_dir_all(self.dir.join(format!("{}.mlmodelc", hex(&old))));
-                    }
+                if st.order.len() >= MAX_LOADED
+                    && let Some(old) = st.order.pop_front()
+                {
+                    st.loaded.remove(&old);
+                    let _ = std::fs::remove_dir_all(self.dir.join(format!("{}.mlmodelc", hex(&old))));
                 }
                 st.loaded.insert(key, m.clone());
                 st.order.push_back(key);
@@ -768,8 +771,8 @@ static EXPAND: [[u16; 8]; 256] = {
 
 /// Bits as fp16 0/1 values, one per bit.
 fn expand(words: &[u64], out: &mut [u16]) {
-    for (w, o) in words.iter().zip(out.chunks_exact_mut(64)) {
-        for (byte, o8) in w.to_le_bytes().iter().zip(o.chunks_exact_mut(8)) {
+    for (w, o) in words.iter().zip(out.as_chunks_mut::<64>().0) {
+        for (byte, o8) in w.to_le_bytes().iter().zip(o.as_chunks_mut::<8>().0) {
             o8.copy_from_slice(&EXPAND[*byte as usize]);
         }
     }

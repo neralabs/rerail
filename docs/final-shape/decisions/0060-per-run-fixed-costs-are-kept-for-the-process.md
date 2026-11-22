@@ -93,7 +93,7 @@ The first run after this change pays a one-time decision that evicts the gone ro
 
 ## Prior work consulted
 
-- **ast-index-spike, design index L1131-1136 (LA 6 findings, F3):** "per-file fixed cost, repeated processing,
+- **SQL index prototype, design index L1131-1136 (LA 6 findings, F3):** "per-file fixed cost, repeated processing,
   all-or-nothing cache invalidation". The costs here are per run, and each cache is invalidated by its own inputs
   only.
 - **History index L919-920:** key by what a value is a function of, never by object identity, and make the language

@@ -1,5 +1,5 @@
 //! The forest's device (Rerail, decision 0440): the target's GPU (Metal on macOS, compute_kernel_metal.rs; CUDA on
-//! Linux, compute_kernel_cuda.rs), an OpenCL GPU (compute_kernel_opencl.rs: integrated GPUs with no other way in) or
+//! Linux and Windows, compute_kernel_cuda.rs), an OpenCL GPU (compute_kernel_opencl.rs: integrated GPUs with no other way in) or
 //! the CPU (compute_kernel_cpu.rs: every threadgroup's threads coroutines, for debugging kernels), chosen once a
 //! process: `RERAIL_GPU=cpu` or `=opencl`, else the target's GPU. Each type below is one of them, and gives the grid
 //! runtime and the trainer one interface (MLDB's `ComputeRuntime`):
@@ -38,7 +38,7 @@ mod native {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "macos"))]
 mod native {
     pub use crate::compute_kernel_cuda::{
         alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, CudaBuffer as Buffer,
@@ -53,27 +53,6 @@ mod native {
     /// The device's own name: the backend's until the driver's is read (step E).
     pub fn device_name(_d: &Device) -> String {
         NAME.to_owned()
-    }
-}
-
-/// Windows has no GPU interface of its own here: its GPU is OpenCL's (`OpenCL.dll`, every driver's ICD loader), which
-/// the default device opens as `Device::OpenCl`, the variant each OpenCL check matches (`shared::get`). The native
-/// variants are typed as OpenCL's so the backends' matches stay one shape, and are never made on Windows.
-#[cfg(windows)]
-mod native {
-    pub use crate::compute_kernel_opencl::{
-        alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, ClBindContext as BindContext,
-        ClBuffer as Buffer, ClComputeEvent as Event, ClComputeFunction as Function, ClComputeFunctionLibrary as Library, ClComputeQueue as Queue,
-        ClDevice as Device, ClQueueRoot as QueueRoot, ClSharedEvent as SharedEvent,
-    };
-    /// The kernels' address of a buffer's first byte.
-    pub fn device_address(b: &Buffer) -> Option<u64> {
-        b.address()
-    }
-    pub const NAME: &str = "OpenCL";
-    /// The device's own name.
-    pub fn device_name(d: &Device) -> String {
-        d.name().to_owned()
     }
 }
 
@@ -150,7 +129,7 @@ impl Device {
     }
 
     /// The CUDA device, when the process's is CUDA.
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "macos"))]
     pub fn cuda(&self) -> Option<&crate::compute_kernel_cuda::CudaDevice> {
         match self {
             Device::Native(d) => Some(d),
@@ -173,9 +152,9 @@ impl Device {
     /// (`rerail_blocks::region::Region::mirror_in`).
     pub fn domain(&self) -> u32 {
         match self {
-            #[cfg(target_os = "linux")]
+            #[cfg(not(target_os = "macos"))]
             Device::Native(d) => u32::from(!d.pageable),
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(target_os = "macos")]
             Device::Native(_) => 0,
             Device::Cpu(_) | Device::OpenCl(_) => 0,
         }
@@ -243,11 +222,15 @@ impl Device {
     /// The groups of `threads` threads, each using `local` bytes of threadgroup memory, that the device holds at
     /// once, when it gives its cores (`gpu_cores`): a persistent grid's G (decision 0468 §4). Each core is taken at
     /// its least: one group of the device's largest (`max_threadgroup`) and the most threadgroup memory a group may
-    /// have (`max_threadgroup_memory`).
+    /// have (`max_threadgroup_memory`). The CPU's is exact: the groups its launches run at once
+    /// (`compute_kernel_cpu::resident_groups`, the launch's `resident`), its memory a host's.
     pub fn resident_groups(&self, threads: u32, local: u64) -> Option<u64> {
+        if let Device::Cpu(_) = self {
+            return Some(cpu::resident_groups(threads as usize) as u64);
+        }
         let cores = self.gpu_cores()? as u64;
         let by_threads = (self.max_threadgroup() / threads.max(1)).max(1) as u64;
-        let by_memory = if local == 0 { by_threads } else { (self.max_threadgroup_memory() / local).max(1) };
+        let by_memory = self.max_threadgroup_memory().checked_div(local).map_or(by_threads, |n| n.max(1));
         Some(cores * by_threads.min(by_memory))
     }
 
@@ -620,10 +603,8 @@ impl BindContext<'_> {
 enum BindKind<'a> {
     #[cfg(target_os = "macos")]
     Native(crate::compute_kernel_metal::MetalBindContext),
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "macos"))]
     Native(crate::compute_kernel_cuda::CudaBindContext<'a>),
-    #[cfg(windows)]
-    Native(native::BindContext<'a>),
     Cpu(cpu::CpuBindContext<'a>),
     OpenCl(cl::ClBindContext<'a>),
 }

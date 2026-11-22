@@ -32,7 +32,7 @@ struct Case {
 }
 
 fn cpu() -> f64 {
-    let (u, s) = super::super::corpus::thread_usage();
+    let (u, s) = crate::code_rule_dsl::prof::thread_usage();
     u + s
 }
 

@@ -1,24 +1,26 @@
 //! The device work queue (list step 17, decision 0027): device-side enqueue, on the process's device (decision
 //! 0440 step C). A persistent dispatch's workers take items from a queue and push the items their work creates;
-//! idle workers take those up, across every threadgroup, so the device, not the host, decides what runs next and
+//! running workers take those up, across every threadgroup, so the device, not the host, decides what runs next and
 //! how long the loop lasts. A kernel that uses it includes `<ukl/workqueue.h>` (`ukl_wq_take`, `ukl_wq_push`,
-//! `ukl_wq_done`, `ukl_wq_idle`).
+//! `ukl_wq_done`).
 //!
-//! A GPU promises no progress between threadgroups, so no worker waits on another without a
-//! bound (the source says how). The dispatch is sized to what the device keeps resident; a
-//! worker that has polled long enough for nothing exits, and if items remain once all have, the
-//! host launches the same dispatch again over the same queue (`run`).
+//! A GPU promises no progress between threadgroups, so no worker waits on another (decision 0540 step 7): a worker
+//! that finds nothing to take ends at once, and the worker that pushed an item is running and takes on. So does one
+//! that has taken its launch's budget of items (`budget`, decision 0540): a launch's GPU time is its workers'
+//! budgets', not the work's. If items remain once all have exited, the host launches the same
+//! dispatch again over the same queue (`run`), within a bound the budget gives.
 use super::*;
 use rerail_metal::lane;
 
 /// A worker group's threads.
 pub(in crate::code_rule_dsl) const WIDTH: u64 = 256;
-/// At most this many worker groups: about what an M-series GPU keeps resident.
+/// At most this many worker groups dispatched. Nothing waits on another worker (`<ukl/workqueue.h>`): those that run
+/// at once take the items, and one that finds none ends.
 const GROUPS: u64 = 64;
-/// An idle worker's polls before it exits.
-pub(in crate::code_rule_dsl) const POLLS: u32 = 4096;
-/// Launches of one queue before it is a failure (a re-launch is the rare case).
-const LAUNCHES: usize = 8;
+/// The items a launch is for: a worker's share is these over the workers.
+const ITEMS: u64 = 1 << 20;
+/// A worker's budget is this many shares: one that finishes its items sooner takes more.
+const SHARES: u64 = 4;
 
 /// A linear queue: `slots` (an item + 1 per slot), `control` (head, tail, active, overflow).
 pub(in crate::code_rule_dsl) struct Queue {
@@ -58,6 +60,17 @@ impl Queue {
     }
 }
 
+/// A worker's items in a launch at most (`ukl_wq_spent`) for `groups` worker groups.
+pub(in crate::code_rule_dsl) fn budget(groups: u64) -> u32 {
+    (SHARES * ITEMS.div_ceil(groups.max(1) * WIDTH)) as u32
+}
+
+/// The launches of a queue at most: a launch that leaves items had a worker that spent its
+/// budget, so each takes `budget` items at least, and a linear queue holds `capacity`.
+fn launches(capacity: u32, budget: u32) -> usize {
+    capacity.div_ceil(budget.max(1)) as usize + 1
+}
+
 /// The worker groups for `items` initial items.
 pub(in crate::code_rule_dsl) fn groups(items: usize) -> u64 {
     (items as u64).div_ceil(WIDTH * 4).clamp(1, GROUPS)
@@ -73,12 +86,13 @@ pub(in crate::code_rule_dsl) struct Ran {
     pub(in crate::code_rule_dsl) phases: [f64; 7],
 }
 
-/// Runs `kernel` (its arguments bound by `bind`) over `queue` until no item is active: one launch, or more where
-/// every worker exited with items left.
+/// Runs `kernel` (its arguments bound by `bind`, its workers' `budget` among them) over `queue` until no item is
+/// active: one launch, or more where every worker exited with items left; a failure past `launches`' bound.
 pub(in crate::code_rule_dsl) fn run(
     kernel: &lane::Kernel,
     queue: &Queue,
     groups: u64,
+    budget: u32,
     label: &str,
     bind: impl for<'c> Fn(lane::Launch<'c>) -> lane::Launch<'c>,
 ) -> Result<Ran, Error> {
@@ -87,7 +101,7 @@ pub(in crate::code_rule_dsl) fn run(
     let mut phases = [0.0f64; 7];
     let started = host_seconds();
     let mut gpu = 0.0;
-    for launch in 1..=LAUNCHES {
+    for launch in 1..=launches(queue.capacity, budget) {
         let at = host_seconds();
         let mut command = lane::Command::new(label);
         bind(command.launch(kernel, label)).groups([groups, 1, 1], [WIDTH, 1, 1]);

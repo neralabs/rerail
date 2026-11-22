@@ -13,7 +13,7 @@ pub mod grammar_shape;
 pub mod families;
 #[allow(dead_code)]
 pub mod memo;
-// cratify: `facts_a` is rerail-w's (it mounts it)
+// cratify: `facts_a` is rerail-classic's (it mounts it)
 /// D's projection batches as copied; `runs` is their adaptation (open item O19).
 #[cfg(test)]
 #[allow(dead_code)]

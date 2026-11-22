@@ -296,20 +296,8 @@ impl std::fmt::Display for Score {
     }
 }
 
-/// This thread's CPU seconds.
-pub fn thread_cpu() -> f64 {
-    #[cfg(unix)]
-    {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: a valid timespec out.
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    }
-    #[cfg(not(unix))]
-    {
-        0.0
-    }
-}
+/// This thread's CPU seconds (one clock for the crate: [`crate::exec::thread_cpu`]).
+pub use crate::exec::thread_cpu;
 
 thread_local! {
     /// The phases of the job this thread runs: (name, count, cpu, wall), in first-seen order.
@@ -379,6 +367,14 @@ pub struct Sample {
     pub load: f64,
     /// The executor's pool threads ([`crate::exec::threads`]).
     pub threads: u32,
+}
+
+impl Sample {
+    /// What a price learns from in it ([`crate::price::fit_rates`]).
+    pub fn measured(&self) -> crate::price::Measured<'_> {
+        let Sample { lane, ref forms, launches, units, wall, cpu, cold, ok, load, .. } = *self;
+        crate::price::Measured { lane, forms, launches, units, wall, cpu, load, cold, ok }
+    }
 }
 
 /// The machine's samples for its cost model, kept for the engine to take (decision 0442).
@@ -550,6 +546,17 @@ impl Scoreboard {
         Ticket { id: NEXT.fetch_add(1, Ordering::Relaxed), lane, items, queued: Instant::now(), started: None, share0: 0.0, cpu: 0.0, cpu0: None, phases: Vec::new() }
     }
 
+    /// A queued job dropped unrun (a stream's, left when its caller returned early): off the lane's queue, its
+    /// estimate no longer outstanding. It never started, so it was never running and is no job the lane ran.
+    pub fn unqueue(&self, t: Ticket) {
+        let est: f64 = t.items.iter().map(|i| i.estimate).sum();
+        self.with(|s| {
+            let u = &mut s.units[t.lane.index()];
+            u.queued -= 1;
+            u.outstanding = (u.outstanding - est).max(0.0);
+        });
+    }
+
     /// A worker took the job.
     pub fn start(&self, t: &mut Ticket) {
         let now = Instant::now();
@@ -632,7 +639,17 @@ impl Scoreboard {
         let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
         // The run prices its later launches from this one (`price::observe`): one kernel name's jobs only.
         if units > 0.0 && t.items.windows(2).all(|w| w[0].form == w[1].form) && let Some(first) = t.items.first() {
-            crate::price::observe(t.lane, first.form, t.items.len() as u32, units, share, cpu, crate::exec::cores_slowdown(), cold, ok);
+            crate::price::observe(crate::price::Measured {
+                lane: t.lane,
+                forms: first.form,
+                launches: t.items.len() as u32,
+                units,
+                wall: share,
+                cpu,
+                load: crate::exec::cores_slowdown(),
+                cold,
+                ok,
+            });
         }
         let kept = samples();
         if kept.keep.load(Ordering::Relaxed) && units > 0.0 {

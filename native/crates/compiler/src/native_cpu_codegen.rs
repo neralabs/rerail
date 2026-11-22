@@ -1,6 +1,8 @@
 use cranelift_codegen::Context;
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Module, ModuleError};
+use cranelift_codegen::ir::{Block, InstBuilder, Value, condcodes::IntCC, types};
+use cranelift_frontend::FunctionBuilder;
 
 /// The process's instructions retired and cycles so far (macOS: `proc_pid_rusage`, no root
 /// needed), for benchmarks: their difference over a run on one thread is that run's counts.
@@ -40,7 +42,7 @@ impl Default for Options {
         Options {
             optimize_tier1: Default::default(),
             optimize_tier2: Default::default(),
-            bit_test: std::sync::atomic::AtomicBool::new(crate::native_cpu_lanes::BIT_TEST_DEFAULT),
+            bit_test: std::sync::atomic::AtomicBool::new(BIT_TEST_DEFAULT),
             keep_ir: Default::default(),
             room_retries: Default::default(),
         }
@@ -55,7 +57,7 @@ pub fn options() -> std::sync::Arc<Options> {
 /// The JIT builder for tier 1 and the rows: the JIT's defaults, with `optimize_tier1`.
 pub fn tier1_builder() -> Result<cranelift_jit::JITBuilder, Box<ModuleError>> {
     let flags: &[(&str, &str)] = if options().optimize_tier1.load(std::sync::atomic::Ordering::Relaxed) { &[("opt_level", "speed")] } else { &[] };
-    cranelift_jit::JITBuilder::with_flags(flags, cranelift_module::default_libcall_names()).map_err(Box::new)
+    cranelift_jit::JITBuilder::with_flags(&rerail_clif::jit::flags(flags), cranelift_module::default_libcall_names()).map_err(Box::new)
 }
 
 /// Each jump table (`br_table`) `switch_trees` leaves made a tree of compares, for Cranelift's code only: its Arm
@@ -390,7 +392,7 @@ pub fn switch_trees(func: &mut cranelift_codegen::ir::Function) {
             f.func.layout.remove_inst(inst);
             f.switch_to_block(block);
             let end = 1u64 << f.func.dfg.value_type(index).bits();
-            crate::native_cpu_stream::dispatch(&mut f, index, &runs, end);
+            dispatch(&mut f, index, &runs, end);
         }
     }
     // Every table left (its targets take arguments, or it has more runs): a balanced tree, so no
@@ -401,3 +403,188 @@ pub fn switch_trees(func: &mut cranelift_codegen::ir::Function) {
 #[cfg(test)]
 #[path = "native_cpu_codegen_tests.rs"]
 mod tests;
+
+/// The backend tests a vector's bits against a mask in one instruction (NEON's `vtst`, which
+/// `clif_rust`'s Rust has, and the vendored Cranelift's aarch64 lowering since 0381: `cmtst`): a
+/// class's lane is then the test itself, not its complement. On by default where the vendored
+/// Cranelift is built for aarch64 (`cranelift_clmul`, its mark); upstream's has no `cmtst`.
+pub const BIT_TEST_DEFAULT: bool = cfg!(all(cranelift_clmul, target_arch = "aarch64"));
+
+/// The name of the symbol a table's address is read from (`table_address`): placed at address 0, so that its
+/// relocation, `0 + addend`, writes the table's address itself.
+pub const TABLES: &str = "rerail_tier2_tables";
+/// `TABLES`'s data, the first the module declares.
+pub const TABLES_DATA: u32 = 0;
+
+/// A table's address, as a symbol's (`TABLES`, the table's address its offset): one instruction of the same form
+/// wherever the table is. An address as a constant is moved in as many instructions as it has halfwords not zero, so
+/// the code, and regalloc2's choices round it, changed with where the heap put the table.
+pub fn table_address<T>(f: &mut FunctionBuilder<'_>, at: *const T) -> Value {
+    let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(1, TABLES_DATA));
+    let gv = f.create_global_value(cranelift_codegen::ir::GlobalValueData::Symbol {
+        name: cranelift_codegen::ir::ExternalName::user(name),
+        offset: cranelift_codegen::ir::immediates::Imm64::new(at as i64),
+        colocated: false,
+        tls: false,
+    });
+    f.ins().symbol_value(types::I64, gv)
+}
+
+/// A compare tree over a byte (or a place), as rustc lowers a `match` (LLVM's switch lowering):
+/// `runs` are runs of one target (the first from 0, the last on to `end`, past every value the
+/// switch reads: 256 for a byte). The target with the most runs is the default; the tree is over
+/// the other runs alone (the cases), split at the middle, each side knowing the range its value
+/// is in; a case is one test at its leaf (an equality, a bound, or a range), and a value in no
+/// case goes to the default. A switch that expects one kind is one compare, as `expect(kind)`.
+/// Cases of at most three targets within 64 values are bit tests, as LLVM's: one shift, then a
+/// mask a target.
+pub fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)], end: u64) {
+    let ends: Vec<u64> = runs.iter().skip(1).map(|r| u64::from(r.0)).chain([end]).collect();
+    let spans: Vec<(u64, u64, Block)> = runs.iter().zip(&ends).enumerate().map(|(i, (r, &e))| (if i == 0 { 0 } else { u64::from(r.0) }, e, r.1)).filter(|&(a, b, _)| a < b).collect();
+    // The default: the target with the most runs (the first such).
+    let mut count: Vec<(Block, usize)> = Vec::new();
+    for &(_, _, b) in &spans {
+        match count.iter_mut().find(|(x, _)| *x == b) {
+            Some(c) => c.1 += 1,
+            None => count.push((b, 1)),
+        }
+    }
+    let default = count.iter().max_by_key(|&&(_, n)| n).map(|&(b, _)| b).expect("a run");
+    let cases: Vec<(u64, u64, Block)> = spans.into_iter().filter(|&(_, _, b)| b != default).collect();
+    let clusters = clusters(&cases);
+    cases_tree(f, x, 0, end, &clusters, default);
+}
+
+/// A leaf of `dispatch`'s tree: the values `a..b`, to one target (`Range`), or tested by bits
+/// (`Bits`: each target with its mask over `x - a`; a value in none goes to the default).
+enum Cluster {
+    Range(u64, u64, Block),
+    Bits(u64, u64, Vec<(Block, u64)>),
+}
+
+impl Cluster {
+    fn start(&self) -> u64 {
+        match *self {
+            Cluster::Range(a, ..) | Cluster::Bits(a, ..) => a,
+        }
+    }
+}
+
+/// `cases` (rising, apart) as clusters: from each case on, the longest run of cases within 64
+/// values and of at most three targets, as bit tests where LLVM finds them worth it (one
+/// target and 3 compares saved, two and 5, three and 6: a range counting two), else the case.
+fn clusters(cases: &[(u64, u64, Block)]) -> Vec<Cluster> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < cases.len() {
+        let mut best = None;
+        let (mut dests, mut cmps): (Vec<Block>, usize) = (Vec::new(), 0);
+        for j in i..cases.len() {
+            let (a, b, t) = cases[j];
+            if b - cases[i].0 > 64 || b == u64::MAX {
+                break;
+            }
+            if !dests.contains(&t) {
+                if dests.len() == 3 {
+                    break;
+                }
+                dests.push(t);
+            }
+            cmps += if b == a + 1 { 1 } else { 2 };
+            let worth = match dests.len() {
+                1 => cmps >= 3,
+                2 => cmps >= 5,
+                _ => cmps >= 6,
+            };
+            if worth {
+                best = Some(j);
+            }
+        }
+        match best {
+            Some(j) => {
+                let base = cases[i].0;
+                let mut masks: Vec<(Block, u64)> = Vec::new();
+                for &(a, b, t) in &cases[i..=j] {
+                    let m = (a..b).fold(0u64, |m, v| m | 1 << (v - base));
+                    match masks.iter_mut().find(|(x, _)| *x == t) {
+                        Some(x) => x.1 |= m,
+                        None => masks.push((t, m)),
+                    }
+                }
+                // The target with the most values first, as LLVM orders them.
+                masks.sort_by_key(|&(_, m)| std::cmp::Reverse(m.count_ones()));
+                out.push(Cluster::Bits(base, cases[j].1, masks));
+                i = j + 1;
+            }
+            None => {
+                let (a, b, t) = cases[i];
+                out.push(Cluster::Range(a, b, t));
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// `dispatch`'s tree over `cases` for a value known to be in `lo..hi`.
+fn cases_tree(f: &mut FunctionBuilder<'_>, x: Value, lo: u64, hi: u64, cases: &[Cluster], default: Block) {
+    match cases {
+        [] => {
+            f.ins().jump(default, &[]);
+        }
+        [Cluster::Range(a, b, to)] => {
+            let (a, b, to) = (*a, *b, *to);
+            let inside = if a <= lo && b >= hi {
+                f.ins().jump(to, &[]);
+                return;
+            } else if a <= lo {
+                f.ins().icmp_imm(IntCC::UnsignedLessThan, x, b as i64)
+            } else if b >= hi {
+                f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, x, a as i64)
+            } else if b == a + 1 {
+                f.ins().icmp_imm(IntCC::Equal, x, a as i64)
+            } else {
+                let d = f.ins().iadd_imm(x, -(a as i64));
+                f.ins().icmp_imm(IntCC::UnsignedLessThan, d, (b - a) as i64)
+            };
+            f.ins().brif(inside, to, &[], default, &[]);
+        }
+        [Cluster::Bits(a, b, masks)] => {
+            let (a, b) = (*a, *b);
+            let d = if a == 0 { x } else { f.ins().iadd_imm(x, -(a as i64)) };
+            if a > lo || b < hi {
+                let tests = f.create_block();
+                let inside = f.ins().icmp_imm(IntCC::UnsignedLessThan, d, (b - a) as i64);
+                f.ins().brif(inside, tests, &[], default, &[]);
+                f.switch_to_block(tests);
+            }
+            let one = f.ins().iconst(types::I64, 1);
+            let bit = f.ins().ishl(one, d);
+            // Every value of the cluster some target's: the last target needs no test.
+            let full = (a.max(lo)..b.min(hi)).all(|v| masks.iter().any(|&(_, m)| m >> (v - a) & 1 != 0));
+            for (k, &(to, m)) in masks.iter().enumerate() {
+                if full && k + 1 == masks.len() {
+                    f.ins().jump(to, &[]);
+                    return;
+                }
+                let next = if k + 1 == masks.len() { default } else { f.create_block() };
+                let t = f.ins().band_imm(bit, m as i64);
+                f.ins().brif(t, to, &[], next, &[]);
+                if next != default {
+                    f.switch_to_block(next);
+                }
+            }
+        }
+        _ => {
+            let mid = cases.len() / 2;
+            let pivot = cases[mid].start();
+            let (low, high) = (f.create_block(), f.create_block());
+            let below = f.ins().icmp_imm(IntCC::UnsignedLessThan, x, pivot as i64);
+            f.ins().brif(below, low, &[], high, &[]);
+            f.switch_to_block(low);
+            cases_tree(f, x, lo, pivot, &cases[..mid], default);
+            f.switch_to_block(high);
+            cases_tree(f, x, pivot, hi, &cases[mid..], default);
+        }
+    }
+}

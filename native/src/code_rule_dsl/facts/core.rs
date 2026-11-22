@@ -1,5 +1,5 @@
 //! Core node facts from the tape (docs/final-shape/03-architecture.md §1, §5; 05 Phase 2), adapted
-//! from facts-a's per-content syntactic facts (Moti-Velz/facts-engine `spikes/facts-a/src/facts.rs`):
+//! from facts-a's per-content syntactic facts (the facts-engine branch, `spikes/facts-a/src/facts.rs`):
 //! columns indexed by preorder node id, built from Rerail's own tape so ids, kinds, fields and
 //! spans equal the matcher's (preorder transducer ids over every tree-sitter node, named and
 //! anonymous).
@@ -216,12 +216,39 @@ fn kept_tape(keep: bool, file: &dyn SourceFile, grammar: &Arc<crate::code_rule_d
     TapeDoc::restore_with_lines(Arc::clone(file.source()), Arc::clone(grammar), &image, Arc::clone(lines), &|| false).map(Some)
 }
 
+/// The files a run parsed (`record_parse`): the run's own count (decision 0442), always kept, for the tests that
+/// hold a warm run to parsing only what changed (Q332, `warm_tests`).
+#[derive(Default)]
+pub struct Parses(parking_lot::Mutex<std::collections::BTreeMap<(&'static str, String), usize>>);
+
+/// The files the run under way parsed, by the path that parsed them (`direct`: `build_with_tape`; `wave`, `cached`:
+/// a wave's build that found no tape) and their language.
+pub fn parses() -> std::collections::BTreeMap<(&'static str, String), usize> {
+    crate::code_rule_dsl::logic::profile::local::<Parses>().0.lock().clone()
+}
+
+fn record_parse(file: &dyn SourceFile, reader: &'static str) {
+    use crate::code_rule_dsl::prof;
+    *crate::code_rule_dsl::logic::profile::local::<Parses>().0.lock().entry((reader, file.language().to_owned())).or_default() += 1;
+    // A measurement aid: `RERAIL_PARSE_TRACE` prints where each parse is asked for.
+    if std::env::var_os("RERAIL_PARSE_TRACE").is_some() {
+        eprintln!("RERAIL_PARSE_TRACE {reader} {} (inside waves: {}):\n{}", file.language(), crate::code_rule_dsl::logic::profile::inside_waves(), std::backtrace::Backtrace::force_capture());
+    }
+    prof::count("source_tape.parses", 1);
+    if prof::on() {
+        use sha2::{Digest as _, Sha256};
+        let digest = Sha256::digest(file.source().as_bytes()).into();
+        prof::count_named(format!("source_tape.input.{reader}.{}.{}", file.language(), crate::content_store::observe::hex(&digest)), 1);
+    }
+}
+
 /// [`build`], with the tape the facts were read off where `keep` (decision 0106).
 pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage}};
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
     let grammar = Grammar::embedded(language)?;
     let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
+    record_parse(file, "direct");
     let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else { return Ok((Built::Unparsed, None)); };
     let image = image?;
     drop(parse);
@@ -354,7 +381,7 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
 
 /// A parse's tape in a slab's room where a device reads tapes (`placed_parse`), else as the parser made it.
 fn placed_where_read(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<crate::code_rule_dsl::tape::TapeImage, String> {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if crate::code_rule_dsl::tape::placed::device().is_some() {
         return placed_parse(image, grammar).map(|(_, image)| image);
     }
@@ -371,6 +398,29 @@ fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crat
     let mut primary = TapeImage::from_home(home.clone(), grammar)?;
     primary.source_digest = image.source_digest;
     Ok((Arc::new(home), primary))
+}
+
+/// Restore a tape already built by the source phase, including tapes awaiting publication.
+pub fn restore_tape(file: &dyn SourceFile, cache: &crate::content_store::ContentStore, digest: [u8; 32]) -> crate::content_store::StoreResult<Option<TapeDoc>> {
+    use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage, formats}};
+    use crate::content_store::{HashKey, StoreError};
+    let language = file_language(file).ok_or_else(|| StoreError::Invalid(format!("{} has no grammar", file.language())))?;
+    let tag = i64::from(tape_tag(language).ok_or_else(|| StoreError::Invalid("the dialect has no tape tag".into()))?);
+    let grammar_version = crate::code_rule_dsl::build_ids::grammar_version();
+    let format = i64::from(formats::stored_version());
+    let bytes = match cache.queued_tape(&queued_tape(&digest, tag, grammar_version, format)) {
+        Some(bytes) => bytes?,
+        None => {
+            let Some(source) = cache.source_by_hash(HashKey::from_sha256_digest(digest))? else { return Ok(None) };
+            let Some(frame) = cache.tape_frames_for(&[source], tag, grammar_version, format)?.into_iter().next().flatten()
+                else { return Ok(None) };
+            frame.bytes()?
+        }
+    };
+    let grammar = Arc::new(Grammar::new(language).map_err(StoreError::Invalid)?);
+    let primary = TapeImage::from_bytes(&bytes, &grammar).map_err(StoreError::Invalid)?;
+    let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
+    kept_tape(true, file, &grammar, &primary, &lines).map_err(StoreError::Invalid)
 }
 
 /// [`build`] in a run's waves (decision 0104): no SQL is read or written. The tape is `found` (read before the
@@ -397,7 +447,13 @@ pub fn build_in_wave_with_tape(
     named: bool,
     keep: bool,
 ) -> Result<(Built, Option<TapeDoc>), String> {
-    build_in_wave_as(file, None, cache, digest, found, named, keep)
+    build_in_wave_as(file, None, Some(cache), digest, found, named, keep)
+}
+
+/// [`build_in_wave_with_tape`] from the stored tape `found` alone, with no store: a document made when first read
+/// (`syntax::Pending`, Q332), whose tape frame was read with the run's and is held, as the store need not be.
+pub fn build_with_frame(file: &dyn SourceFile, found: &crate::content_store::TapeFrame, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
+    build_in_wave_as(file, None, None, None, Some(found), true, keep)
 }
 
 /// [`build_in_wave`] of `file` as a fragment (decision 0466): its tape stored and found under the fragment's tag.
@@ -409,14 +465,15 @@ pub fn build_fragment_in_wave(
     found: Option<&crate::content_store::TapeFrame>,
     named: bool,
 ) -> Result<Built, String> {
-    build_in_wave_as(file, Some(fragment), cache, digest, found, named, false).map(|(built, _)| built)
+    build_in_wave_as(file, Some(fragment), Some(cache), digest, found, named, false).map(|(built, _)| built)
 }
 
-/// [`build_in_wave_with_tape`], of a whole file or a fragment.
+/// [`build_in_wave_with_tape`], of a whole file or a fragment. With no store (`cache`), a tape not `found` is parsed
+/// and not queued.
 fn build_in_wave_as(
     file: &dyn SourceFile,
     fragment: Option<Fragment>,
-    cache: &crate::content_store::ContentStore,
+    cache: Option<&crate::content_store::ContentStore>,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
     named: bool,
@@ -460,7 +517,10 @@ fn build_in_wave_as(
     // Still queued for the writer: read where it is (gathered, placed, or a compressed frame).
     let kept: Option<crate::content_store::ObjectBytes> = match placed {
         Some(_) => None,
-        None => cache.queued_tape(&key).transpose().map_err(|e| e.to_string())?,
+        None => match cache {
+            Some(cache) => cache.queued_tape(&key).transpose().map_err(|e| e.to_string())?,
+            None => None,
+        },
     };
     let primary = match (placed, kept) {
         (Some(home), _) => {
@@ -475,6 +535,7 @@ fn build_in_wave_as(
         }
         (None, None) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
+            record_parse(file, "wave");
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source().len() as u64);
             let parsed = match fragment {
@@ -512,7 +573,8 @@ fn build_in_wave_as(
             Built::Facts(facts)
         }
     };
-    if let Some((canonical, tape)) = queue {
+    // With no store (`build_with_frame`), a tape parsed is not queued.
+    if let (Some(cache), Some((canonical, tape))) = (cache, queue) {
         cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, named, queued_programs(&built)?).map_err(|e| e.to_string())?;
     }
     Ok((built, doc))
@@ -615,6 +677,7 @@ pub fn build_cached_with_tape(
         }
         None => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
+            record_parse(file, "cached");
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             // Its own work: the source prepared for the parser (tree-sitter and the encoding charge their own).
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source().len() as u64);
@@ -1164,6 +1227,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "line_count" => &["d", "k"],
         "end_line" => &["n", "l"],
         "col" => &["n", "c"],
+        "rr_report_location" => &["n", "line", "column", "end_line", "end_column"],
         "docof" => &["n", "d"],
         "source" => &["d", "sp"],
         "src_line" | "src_line_lf" | "tape_line" => &["d", "l", "sp"],
@@ -1182,6 +1246,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "rx_span" => &["p", "c", "j", "g", "m"],
         "ast_match" => &["p", "n", "g", "c"],
         // Decision 0055's (`facts::vtab::syntax::guests`).
+        "doc_grammar" => &["d", "g"],
         // The document underneath a file's program and its grammar (decision 0431 §4), for the lowering's findings
         // alone: a rule names a program by its file and place (`parsed`).
         "rr_program" => &["d", "file", "grammar"],

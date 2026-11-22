@@ -23,7 +23,7 @@ pub enum Key {
     Const(i64),
 }
 
-rerail_section::plain_archive!(Key, Term, Ranged, ScalarKind);
+rerail_section::plain_archive!(Key, Term, Ranged);
 
 /// Where an atom's rows come from: the component's relation's delta or whole, or a derived relation read through
 /// one of its indexes.

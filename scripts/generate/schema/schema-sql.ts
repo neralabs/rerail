@@ -3,6 +3,9 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateSQLiteDrizzleJson, generateSQLiteMigration } from "drizzle-kit/api";
 import {
+  analysisScopeGeneration,
+  analysisScopeReleaseProbes,
+  analysisScopeReleases,
   events,
   presentationPreferences,
   repositoryAudits,
@@ -71,6 +74,9 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   ruleCatalogIdentities,
   repositories,
   checkouts,
+  analysisScopeReleases,
+  analysisScopeReleaseProbes,
+  analysisScopeGeneration,
   setupReviews,
   ruleAttachments,
   ruleSettings,
