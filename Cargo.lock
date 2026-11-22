@@ -3262,6 +3262,7 @@ dependencies = [
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
+ "flate2",
  "foldhash",
  "gix",
  "globset",
