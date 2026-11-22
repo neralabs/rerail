@@ -2708,3 +2708,49 @@ fn a_host_reads_a_context_that_read_the_host() {
     assert_eq!(alone, [["Baz"]]);
     assert_eq!(together, alone);
 }
+
+/// 0597 rung 2.7: an annotation inside an annotation (`q: "Opt['Baz']"`): a pass's roots are its host's and its own,
+/// the roots relation's rules over the pass's own nodes, so the inner string's tree is the context's too.
+#[test]
+fn an_annotation_inside_an_annotation_is_the_contexts_own_root() {
+    let file = ("a.py", "class Baz: ...\nclass Opt: ...\nq: \"Opt['Baz']\" = 1\n");
+    let (alone, together) = alone_and_together("pass-nested", file, RESOLVING_PASS, PLAIN_PASS, "quoted_resolved");
+    assert_eq!(alone, [["Baz"], ["Opt"]]);
+    assert_eq!(together, alone);
+}
+
+/// 0597 rung 2.8: a finding at a context's node stands at its string's line in the file (0431 §3, R9's
+/// `guest_place`): the unresolved name of `y: "Bar"`, on line 3.
+#[test]
+fn a_finding_at_a_contexts_node_stands_at_its_strings_line() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("pass-place");
+    let (src, rules) = (root.join("src"), root.join("rules"));
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(src.join("a.py"), "class Foo: ...\nx: \"Foo\" = 1\ny: \"Bar\" = 1\n").unwrap();
+    let policy = rules.join("unresolved.rerail");
+    std::fs::write(
+        &policy,
+        "\
+.policy \"t:unresolved\" revision 1
+.language python
+#include \"python/ast.rerail\"
+.decl defined(x: symbol)
+defined(x) :- kind(c, \"class_definition\"), field(c, \"name\", n), text(n, x).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_unresolved(i: node)
+ann_unresolved(i) :- kind(i, \"identifier\"), text(i, x), !defined(x).
+.violation Unresolved(at: node) code \"unresolved\" \"an annotation names no class\"
+Unresolved(i) :- unresolved(i).
+.context quoted of python roots quoted_root exports ann_unresolved
+.from python defined for quoted
+.from quoted ann_unresolved as unresolved
+",
+    )
+    .unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &src, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+    let found: Vec<(u64, String)> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["line"].as_u64().unwrap_or(0), d["code"].as_str().unwrap_or("").to_owned())).collect();
+    assert_eq!(found, [(3, "unresolved".to_owned())], "{report:#}");
+}
