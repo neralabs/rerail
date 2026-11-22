@@ -162,6 +162,14 @@ unchanged and CPU noted.
    dead in the export's dead bits, found by a set of row ids (an `IdTable` in a block, as `phased-facts` has it), not
    by a copy. `append_own` likewise takes the memo's rows as a part. 0353 lists this copy as found, with this step as
    its removal. Measured: `hold the export` at 0 MB; the cross part's peak and CPU noted.
+
+   Built 2026-11-22 (0384 step 1 amended, 0353 row 18). The parts are taken as segments (`Rows::append_segment`), not
+   as the tail (`append_part`), and a tail past them is the export's own (`Rows::gathered`), so nothing is written into
+   a chunk's block. The set of row ids is the export's `HashTable<u32>`, as before; an `IdTable` in a block is step 6's.
+   On `all` (m1max, under the farm's other runs): columns released 10,099 MB → 5,204 MB, `hold the export` out of the
+   top spans; rows and findings as before (the 7 `ref` and 1 `open_name` rows against W are 2026-11-20's). The
+   profiled peak is 12.8 GB against 13.6 GB for the same tree with the step switched off: the chunks' kept blocks
+   now live until the cross part ends, in place of the export's copy of their rows.
 5. **Decision 0605: one compact layout of a relation's columns.** Written before it is built, citing MLDB's frozen
    columns (`plugins/tabular/frozen_column.cc`: per chunk, the smallest of direct, table, sparse table and integer
    table, by exact size; `FrozenIntegerTable`'s slope, offset and bit-packed residual), `rerail_blocks::col` and

@@ -1769,6 +1769,9 @@ pub struct Rows {
     /// The rows its tail held when it was taken as the writer of a frozen relation's (`shared`): given back free at
     /// them when these rows are dropped with none written past them (a run abandoned, its relation not kept).
     took: Option<Took>,
+    /// Segments gathered from other relations (`append_segment`): a tail past them is a relation of its own, never a
+    /// continuation of theirs in their blocks (which may have no room, and would move every row).
+    gathered: bool,
 }
 
 /// A frozen relation's writer taken (`Rows::shared`), and the rows its relation held then: given back free at them
@@ -1908,7 +1911,7 @@ impl Clone for Rows {
             segs.push((from, t.prefix()));
             from += t.len();
         }
-        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, ..Rows::default() }
+        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, gathered: self.gathered, ..Rows::default() }
     }
 }
 
@@ -1985,7 +1988,7 @@ impl Rows {
     /// relation however many relations went on from the same rows (forks, copies); where that block has no room, a
     /// relation of its own holding every row (a growth move, `Part::moved_all`), which `absorbed` makes the only part.
     fn opened(&self, rows: usize) -> Part {
-        if self.segs.is_empty() {
+        if self.segs.is_empty() || self.gathered {
             return Part::new(self.life, self.k, rows);
         }
         let Some(end) = self.chain() else {
@@ -2267,6 +2270,30 @@ impl Rows {
             self.from = next;
         }
         self.tail = Some(part);
+    }
+
+    /// `part`'s rows as they are now after these, as a segment of their own, not copied and never written: rows gathered
+    /// from many relations (a chunk's export, `Exports::add`), read where they lie, the relation they lie in still its
+    /// own. Unlike `append_part` it does not become the tail: rows pushed after it go in a tail of these rows' own.
+    pub fn append_segment(&mut self, part: &Part) {
+        let part = part.prefix();
+        let n = part.len();
+        if n == 0 {
+            return;
+        }
+        let k = part.rel().rows.ncols as usize;
+        debug_assert!(self.k == 0 || self.k == k, "a part of {k} columns after rows of {}", self.k);
+        self.k = k;
+        self.merged.take();
+        *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
+        if let Some(t) = self.tail.take().filter(|t| t.len() > 0) {
+            let next = self.from + t.len();
+            self.segs.push((self.from, t.prefix()));
+            self.from = next;
+        }
+        self.segs.push((self.from, part));
+        self.from += n;
+        self.gathered = true;
     }
 
     /// Room for `n` rows past the tail's, for a writer other than the host (the device, decision 0384 step 3): the
