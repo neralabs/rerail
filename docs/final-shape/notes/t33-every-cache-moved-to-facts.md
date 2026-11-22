@@ -165,7 +165,7 @@ removed with nothing in its place but K1–K4.
 
 | Today | Key and check today | Becomes |
 |---|---|---|
-| `facts_results`, `facts_plan_sets`, `facts_completions` (the per-file memo, 0052) | content, path, plan digest (build, grammar, node-id scheme, program, options, facts) | the per-file part's relations in K1, partitioned by document. A document whose base relations have no delta is not run (K4 over a per-document partition). `plan_digest`, `with_options` and `with_rows` go; `doc_keys` stays (it is identity) |
+| `facts_results`, `facts_plan_sets`, `facts_completions` (the per-file memo, 0052) | content, path, plan digest (build, grammar, node-id scheme, program, options, facts) | the per-file part's relations in K1, partitioned by document. A document whose base relations have no delta is not run (K4 over a per-document partition). `plan_digest`, `with_options` and `with_rows` go; `doc_keys` stays (it is identity). **Started** (2026-11-22). The tables are a store of opaque entries with six users, not one cache. A kept partition can now be held by a source and a plan (`kept_facts::HOLDER`), so it dies when the memo row it replaces would have; `plan::kept_entry` keeps an entry of program facts that way. Moved: the prepared pointer (which had lost its collection when step 2 moved it) and the slice's content memo (`slice/memo.rs`). Left: `combined.rs`, `preparation/parts.rs` and `choices.rs`, whose entries are read inside the store writer's record steps (`name_program`, `apply_plans`), where a kept read would wait on the writer itself: they need the entry carried in the record's body, or a read of the wave's gathered puts. `facts/memo.rs` is the workspace pipeline's (step 8). The tables go with the last of them |
 | the projection spike (a075764a3) | (tape, relation) | the base relations as derived relations of `doc_tape`, in K1 per document. After RER-131 renumbers the nodes |
 | tapes: `source_objects`, `tape_objects` (kept: they are objects) | (content, tag, grammar version, format) | `doc_key` and `doc_tape` as in the Intro; the object tables hold the bytes the answer's value names |
 | `guests.rs` `KEPT` | (text, grammar) | `parse_of`'s answer rows (K3) |
@@ -200,8 +200,8 @@ rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.ph
 | Today | Key and check today | Becomes |
 |---|---|---|
 | `stat_blob`, `fact_stats`, `fact_value_stats`, `kind_size`, `edge_freq`, `tape_kind_counts`, `term_freq`, `term_kind_freq`, `term_node_freq`, `term_coverage`, own counts (a name binding) | one blob per plan; patched by its own delta code (0096) | aggregate relations over K1's relations (`count` per relation, column and document), maintained by counting like any aggregate |
-| `compiled_plans`, `compiled_plan_reads`, `plan.rs` `PLANS`, `SESSION_PLANS`, `KEPT`, `derived.rs` `MEMO`, `SESSION_MEMO` | a plan key; statistic intervals | a plan is an answer keyed by its stratum's definition and the statistics' intervals it is valid over (03 §6 already records those intervals) |
-| `plan_feedback`, `keeps.rs` `OBSERVED`, `table.rs` `PAID`, `accel_models` | what a run observed | facts the run produces about itself, stored in K1. `accel_models`: **built** (2026-11-21, `content_store/accel_models.rs`): `accel_model(key, archive)` in the store's models' space, a partition a key; the archive a source of the store by its SHA-256, pinned with no end as the table kept it |
+| `compiled_plans`, `compiled_plan_reads`, `plan.rs` `PLANS`, `SESSION_PLANS`, `KEPT`, `derived.rs` `MEMO`, `SESSION_MEMO` | a plan key; statistic intervals | a plan is an answer keyed by its stratum's definition and the statistics' intervals it is valid over (03 §6 already records those intervals). `compiled_plans`, `compiled_plan_reads`: **built** (2026-11-22, `stats/plans.rs`): a kept space, a partition a plan (`compiled_plan`, `compiled_plan_bytes`, `compiled_plan_read`); read from a space opened before a candidate transaction, written after it |
+| `plan_feedback`, `keeps.rs` `OBSERVED`, `table.rs` `PAID`, `accel_models` | what a run observed | facts the run produces about itself, stored in K1. `plan_feedback`: **built** (2026-11-22), a relation of the compiled plans' space. `accel_models`: **built** (2026-11-21, `content_store/accel_models.rs`): `accel_model(key, archive)` in the store's models' space, a partition a key; the archive a source of the store by its SHA-256, pinned with no end as the table kept it |
 
 ### Step 7: text patterns and indexes
 
@@ -249,3 +249,12 @@ Decided (user, 2026-11-21):
 4. **Typing-support-final-shape takes on the rest of this plan** (t32 5.3): K2, K3 and step 1 first, which no
    other branch is building; then steps 3, 2, 6 and 7. K4 for each document and the statistics stay with the sync
    branch's Q332, merged from the hub as they land.
+
+   Checked 2026-11-22: no branch is moving K4 or the statistics' tables to kept facts. The sync branch's Q332 is
+   about warm edits making only the changed documents. What other branches build near it is the corpus path's
+   statistics kept as kept facts: `final-rerail-shape` (a structure's statistics, `statkeep` format 4) and
+   `final-rerail-shape-rr-align` (a semi-join's rows and statistics, Q396). So this branch takes the rest too. It
+   takes the SQL path's statistics (`fact_stats`, `kind_size`, `edge_freq`, `term_*`) and the text matchers (step
+   7) once the hub brings in those branches' work and `engine-crating`'s matcher crate, so it builds on them. The
+   `corpus_*` tables are collection's bookkeeping, not caches (kept facts' own collection reads `corpus_plans`), and
+   stay; `run_record` goes with K4, not as a move of its own.
