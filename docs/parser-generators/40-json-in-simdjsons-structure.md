@@ -746,21 +746,27 @@ Tier 2 against `walk`:
 | A string's end bound | none: stage 1 refused an open string | none (tier 1 refuses it, `c_m_in_string`) |
 | An escape's second byte | one branch: `u`, else `ESCAPE_MAP` | one `match src[y]`: `0x75` the checks, the other words, else refused |
 | A number's first byte | a digit or `-` | `0x2d \| 0x30..=0x39`, else refused |
-| A number's reads | `*p`, the padding ending it; the sign one test | `b[j]`; the sign one test; no value computed (the grammar states none) |
+| A number's reads | `*p`, the padding ending it; the sign one test | `b[j]`; the sign one test |
+| A scalar's end | `is_not_structural_or_whitespace`, refused otherwise (`[1"a"]`) | the same: `ends(b)`, `matches!(ROWS[b], 0 \| 2)`, from tier 1's records |
 
 Tier 1 against `index`:
 
 | | `index` | `tier1.rs` |
 |---|---|---|
-| The records | `structural_start = (op \| scalar & ~follows) & ~string_tail` | the same expression (`v_m_structural_start`); a quote after a scalar refused by the grammar's error in tier 1, where simdjson refuses it in stage 2 |
+| The records | `structural_start = (op \| scalar & ~follows) & ~string_tail` | the same expression (`v_m_structural_start`) |
+| The errors | the control byte, UTF-8, the open string | the same: a quote after a scalar is tier 2's (`run_end_covers`) |
 | The file's bits | none: the last block padded with spaces | none (no record or error holds at a space, proved) |
 | The byte order mark | the blocks start after it | the same (`off`) |
 | The string mask's name | `in_string` | the same |
 | A string open at the end | `prev_in_string != 0` (`finish`) | `c_m_in_string != 0` |
 | The records' write | `bit_indexer::write`, the block before's at each block, the last after the loop | the same (`write_indexes`, `prev_structurals`) |
 
-What still differs is format 16's: tier 2 writes blocks of nodes, with the state's op at a block's first node and at
-a close of a node in a block before; `walk` writes simdjson's columns.
+What still differs:
+- **Format 16's blocks.** Tier 2 writes blocks of nodes, with the state's op at a block's first node and at a close of
+  a node in a block before. `walk` writes simdjson's columns.
+- **The numbers accepted.** `number_end` keeps no value, but works one out where it decides the answer: it refuses a
+  float past the doubles' range (`1e400`) and an integer past 64 bits. The grammar states neither bound, so tier 2
+  and the JIT accept those numbers.
 
 ## Step 58, done: the benchmark on the generated Rust, `rust_stream`'s tests gone (decision 0555)
 

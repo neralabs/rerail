@@ -104,17 +104,28 @@ Later, the same day, a second and a third reading found six more differences, do
     calls keep their test. JSON's `if depth == DEPTH` is then at the four calls inside the two lists' loops.
 15. **The methods take the file's length only where one reads it.** With no end bound, `string` read none: the
     methods' signature and their calls drop `len`, as `walk`'s `string` takes none.
+16. **A scalar's dirty end is tier 2's** (`[1"a"]`), as simdjson's stage 2 refuses it in `parse_number` and the atoms.
+    - A run token, and a word of its row, ends only before a byte it may end before (`ends`): a byte no token
+      starts at, or one a record may start at right after a byte of the run (`ends_after_run`, from tier 1's
+      records). For JSON this is simdjson's structural or whitespace: `matches!(ROWS[b], 0 | 2)`.
+    - At any other byte after a run, no record starts and none is skipped. The records equal the tokens' starts but
+      where an error refuses the file (5), so the grammar refuses the file there too.
+    - An error that holds only right after a run's byte, outside every region, at a byte the run may not end before
+      (`run_end_covers`), is then tier 2's. JSON's "a string right after a scalar" leaves tier 1, whose errors are
+      now `index`'s: the control byte, the UTF-8 checks and the open string. The grammar keeps the error, for the
+      JIT.
 
 Implementer's choices:
 - **The string's start.** It stays `q & ~string_tail`, not `structural_start & q`: the JIT's split of a region read
   in parts requires the opener's own mask. The records are still `structural_start`, by the proof in 5.
-- **The new error.** It is the grammar's, so the JIT refuses `[1"a"]` in tier 1 too. simdjson refuses it later, in
-  stage 2. The refused files are the same.
+- **The new error.** It is the grammar's, so the JIT refuses `[1"a"]` in tier 1. The generated tier 1 drops it
+  (16), and tier 2 refuses the file at the scalar's end, as simdjson's stage 2. The refused files are the same.
 - **The write's stepping** follows the lean parser's `write` (two at a time to 24), with `trailing_zeros` in place of
   `reverse_bits` and `leading_zeros`.
-- **The number's value.** `number_end` also computes the number's value, and refuses an integer past 64 bits
-  (`BigintError`). The grammar's check states no value and no bound on the digits, so tier 2 computes none. It accepts
-  those integers, as the JIT does.
+- **The number's value.** `number_end` keeps no value either (`no_values`). It works the value out only where the
+  value decides the answer: it refuses a float past the doubles' range (`1e400`) and an integer past 64 bits
+  (`BigintError`). The grammar's check states neither bound, so tier 2 and the JIT accept those numbers. This is a
+  difference in the files accepted, not in the code's shape.
 - **Generic over the grammar.** The proofs, the returns' loop and the separator rule are generic over a grammar's
   statements. Only JSON's grammar meets their conditions here: Kotlin's and `.rerail`'s Rust is unchanged (their
   tier 1s have stages behind).
@@ -151,6 +162,15 @@ Implementer's choices:
   - `json_tier2_is_walks_shape` checks the number's arm and the check's `b[j]` reads and one sign test.
   - A unit test checks that `refuses_open_at_end` holds for JSON's grammar and fails without its error.
   - 82 of 82 pass on an aarch64 Linux host.
+- **After item 16:**
+  - JSON's 14 tests pass. `json_tier1_masks_are_block_locals` checks that tier 1 has no "a string right after a
+    scalar". `json_tier2_is_walks_shape` checks `ends` as `matches!(ROWS[usize::from(b)], 0 | 2)` at the number's
+    and the atoms' ends.
+  - A unit test (`a_scalars_dirty_end_is_tier_2s`) runs every file of up to five bytes of `1"\ [a` through the
+    grammar's reference evaluator. It checks both directions: where the error holds, a run token ends before a byte
+    it may not end before; and where one does, the grammar refuses the file. It also checks that `ends_after_run`
+    is simdjson's structural or whitespace, and that this error is the only one covered.
+  - 83 of 83 pass on an aarch64 Linux host.
 - **New unit tests** in `bitlex_lex_rust`:
   - the records proof holds for JSON's grammar, and fails without the new error;
   - `without_lv`'s rewrites;
@@ -171,5 +191,11 @@ Implementer's choices:
 
 - Throughput was not measured.
 - x86 was not run for these changes. No `rerail_simd8` code changed.
-- The device tests' failures on the Linux hosts were not looked into.
+- **The device tests' failures on the Linux host** (`BackendCapacity` from the forward carry, `UnsupportedBackend`)
+  did not come back:
+  - All of `rerail-parser-tests` passed there later (98 of 98), and so did `block_tests::` and `compile_tests::`
+    (72 of 72). One forward-carry test failed once, then passed six times in a row with every trace on.
+  - The refusal was not in a slab's block or its device buffer: a trace of those (`RERAIL_DEVICE_TRACE`, added to
+    `Slab::lease`) printed nothing in the failing run. The budget is fixed per process. So the refusal depends on
+    the host's state. Its cause was not found.
 - Only JSON's grammar meets the conditions of the proofs (5, 6, 8) and of the separator rule.
