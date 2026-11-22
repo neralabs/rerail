@@ -114,3 +114,4 @@ rerail-tests-anchors	test
 rerail-tests-workspace	test
 rerail-tests-findings	test
 rerail-tests-lang	test
+rerail-tests-tape	test

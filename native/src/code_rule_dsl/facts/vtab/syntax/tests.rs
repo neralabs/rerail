@@ -1685,7 +1685,7 @@ fn definition_ids_are_pinned() {
         return;
     }
     use sha2::{Digest, Sha256};
-    let ruff = crate::source_tree::native().join("../packs/python/upstream/ruff/fixtures");
+    let ruff = crate::code_rule_dsl::test_support::pack_test_data("packs/python/upstream/ruff/fixtures");
     let mut files: Vec<(&str, String, String)> = [
         ("python", "a.py", "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n"),
         ("tsx", "a.tsx", "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1>{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\n"),

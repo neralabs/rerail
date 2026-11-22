@@ -1206,3 +1206,12 @@ decision record. There are no A/B triples. One run per state, with the host's lo
       - On a Linux host, both crates in full: 196 of 202. All 6 failures are device tests (4 `UnsupportedBackend`, 2
         Metal dispatch counts), as before the split.
       - On one farm Mac, those 6 tests' filter: 12 of 12.
+  - rerail-tests-lang (16.1k) is now two crates:
+
+    | crate | test lines | what it holds |
+    |---|---:|---|
+    | rerail-tests-tape | 10.7k | `tape` (its tests, tokens, residency, corpus parity) |
+    | rerail-tests-lang | 5.9k | `facts`, `language`, `vue`, `tree` |
+
+    `definition_ids_are_pinned` reads its Ruff fixtures through `pack_test_data`. Tests: on a Linux host, both crates
+    in full: 246 of 248. The 2 failures are pack data.

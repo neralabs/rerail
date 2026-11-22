@@ -338,6 +338,7 @@ native/crates/tests_calls/src/lib.rs::LOAD	stays	code registered at load (an ini
 native/crates/demand_catalog/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_demand/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_lang/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_tape/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_logic/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_corpus/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_rr/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
