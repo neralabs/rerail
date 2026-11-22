@@ -10016,13 +10016,17 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
   not read in place. (The places' part of that, Q216, is done.)
 - **The user** (2026-11-22): "record them but you may leave them as-is for now".
 
-### Q492. `reproduces_sqlfluff_rf01_and_al05` needs the SQL pack's test data pulled (the user's, 2026-11-22)
+### Q492. `reproduces_sqlfluff_rf01_and_al05` and `vue::view::tests::corpus` need their packs' test data pulled from S3 (2026-11-22)
 
 - The test reads `packs/sql/upstream/sqlfluff/fixtures.expected.json`, which is not on this Mac or the farm's
   hosts. No other worktree's copy matches this tree's `test-data.lock` (`139f92f2…`, 287 files: theirs hold 289,
   671 or 676), and this Mac has no `aws` CLI, so only `npm run fixtures:pull` gets it. Until then, decision 0612's
   change to that test's line oracle (`lines::line_of` in SQL's set) is unrun.
-- **The user** (2026-11-22): "record them but you may leave them as-is for now".
+- `vue::view::tests::corpus` reads `packs/vue/upstream/eslint-plugin-vue/fixtures`, missing the same way: the lock
+  is `8acc8d4d…`, 777 files, and the worktrees' copies hold 778, 958 or 963. These are the quick tier's only two
+  failures (2,976 of 2,979 passed on an M3, 2026-11-22, the third the text guard fixed in the same commit).
+- **The user** (2026-11-22): "record them but you may leave them as-is for now", and "I don't have the credentials
+  to get the fixtures".
 
 ---
 
