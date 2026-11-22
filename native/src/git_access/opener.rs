@@ -91,46 +91,62 @@ pub fn open(root: &Path) -> Result<gix::Repository, OpenError> {
 pub fn discover(root: &Path) -> Result<gix::Repository, OpenError> {
     let setup = installed();
     let sources = Sources::new(setup.as_deref());
-    let (found, trust) = gix::discover::upwards_opts(root, upwards_options()).map_err(|error| {
-        let message = format!("cannot discover Git repository: {error}");
-        if is_no_repository(&error) {
-            OpenError::NoRepository(message)
-        } else {
-            OpenError::Failed(message)
-        }
-    })?;
+    let (found, trust) = gix::discover::upwards_opts(root, upwards_options())
+        .map_err(|error| discovery_error("cannot discover Git repository", &error))?;
     let (git_dir, _) = found.into_repository_and_work_tree_directories();
-    // gix's discovery has read `commondir` already; the opener reads it again, bounded, to name the
-    // files it measures, also in a repository another user owns. There, before gix's open checks
-    // `safe.directory`, it reads only that file and stats the config files gix reads to open it (the
-    // common `config`, `config.worktree`); the exclude and attribute files are stat'ed once it has.
-    let common_dir = common_dir(&git_dir)?;
+    let after = measure_before_open(&sources, &git_dir, trust)?;
+    let repository = open_as_git_does(root, &sources)?;
+    check_sizes(after.into_iter().chain(global_files(&repository)))?;
+    Ok(repository)
+}
+
+/// `<what>: <error>`, as [`OpenError::NoRepository`] where no repository encloses the path.
+fn discovery_error(what: &str, error: &gix::Error) -> OpenError {
+    let message = format!("{what}: {error}");
+    if is_no_repository(error) {
+        OpenError::NoRepository(message)
+    } else {
+        OpenError::Failed(message)
+    }
+}
+
+/// Measures the files gix reads to open the repository whose Git folder is `git_dir`, before it
+/// reads them, and returns those to measure once the open has checked `safe.directory`.
+///
+/// gix's discovery has read `commondir` already; the opener reads it again, bounded, to name the
+/// files it measures, also in a repository another user owns. There, before gix's open checks
+/// `safe.directory`, it reads only that file and stats the config files gix reads to open it (the
+/// common `config`, `config.worktree`); the exclude and attribute files are stat'ed once it has.
+fn measure_before_open(
+    sources: &Sources,
+    git_dir: &Path,
+    trust: gix::sec::Trust,
+) -> Result<Vec<PathBuf>, OpenError> {
+    let common_dir = common_dir(git_dir)?;
     let [config, exclude, attributes] = repository_files(&common_dir);
     let (before, after) = match trust {
         gix::sec::Trust::Full => (vec![config, exclude, attributes], Vec::new()),
         gix::sec::Trust::Reduced => (vec![config], vec![exclude, attributes]),
     };
-    for file in sources
-        .config_files()
-        .into_iter()
-        .chain(before)
-        .chain([git_dir.join("config.worktree")])
-    {
+    let files = sources.config_files().into_iter().chain(before);
+    check_sizes(files.chain([git_dir.join("config.worktree")]))?;
+    Ok(after)
+}
+
+/// Refuses the first of `files` that [`check_size`] refuses.
+fn check_sizes(files: impl IntoIterator<Item = PathBuf>) -> Result<(), OpenError> {
+    for file in files {
         check_size(&file)?;
     }
-    let mut repository =
-        gix::discover_opts(root, upwards_options(), sources.options()).map_err(|error| {
-            let message = format!("cannot open Git repository: {error}");
-            if is_no_repository(&error) {
-                OpenError::NoRepository(message)
-            } else {
-                OpenError::Failed(message)
-            }
-        })?;
+    Ok(())
+}
+
+/// The repository around `root`, opened by gix with the config files `sources` names, then given
+/// the includes Git reads for a command run there ([`include_as_git_does`]).
+fn open_as_git_does(root: &Path, sources: &Sources) -> Result<gix::Repository, OpenError> {
+    let mut repository = gix::discover_opts(root, upwards_options(), sources.options())
+        .map_err(|error| discovery_error("cannot open Git repository", &error))?;
     include_as_git_does(&mut repository)?;
-    for file in after.into_iter().chain(global_files(&repository)) {
-        check_size(&file)?;
-    }
     Ok(repository)
 }
 
