@@ -1418,15 +1418,9 @@ UKL_INLINE bool lat_same(Longs T, uint32_t stride, uint32_t a, uint32_t b, uint3
     return true;
 }
 
-DEFINE_KERNEL2(join, lat_clear,
-               RWBUFFER, uint32_t, P,     "[pmask + 1]",
-               RWBUFFER, uint32_t, best,  "[pmask + 1]",
-               RWBUFFER, uint32_t, flags, "[pmask + 1]",
-               ARGS,     LatP,     a,     ,
-               GID0,     uint32_t, i,     )
+UKL_INLINE void lat_clear_one(JSPACE uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE const LatP* pp, uint32_t i)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
+    LatP p = *pp;
     if (i > p.pmask) return;
     P[i] = 0xffffffffu;
     best[i] = 0xffffffffu;
@@ -1434,13 +1428,9 @@ DEFINE_KERNEL2(join, lat_clear,
 }
 
 // The key map's slot `i` emptied (a map new, or grown).
-DEFINE_KERNEL2(join, lat_hclear,
-               RWBUFFER, uint8_t,  HB, "[block]",
-               ARGS,     LatP,     a,  ,
-               GID0,     uint32_t, i,  )
+UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t i)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
+    LatP p = *pp;
     if (i > p.hmask) return;
     JSPACE uint32_t* H = (JSPACE uint32_t*)(HB + p.h_at);
     H[3 * i] = 0xffffffffu;
@@ -1450,15 +1440,9 @@ DEFINE_KERNEL2(join, lat_hclear,
 
 // The old map's slot `s` (at `h0_at` in `OB`, `omask + 1` slots) into the new one (grown: every key placed again, its
 // changes and round with it); its key read in `R`'s row.
-DEFINE_KERNEL2(join, lat_rehash,
-               ROBUFFER, uint8_t,  R,  "[block]",
-               ROBUFFER, uint8_t,  OB, "[block]",
-               RWBUFFER, uint8_t,  HB, "[block]",
-               ARGS,     LatP,     a,  ,
-               GID0,     uint32_t, s,  )
+UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB, JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t s)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
+    LatP p = *pp;
     if (s > p.omask) return;
     JSPACE const uint32_t* O = (JSPACE const uint32_t*)(OB + p.h0_at);
     uint32_t t = O[3 * s];
@@ -1478,14 +1462,9 @@ DEFINE_KERNEL2(join, lat_rehash,
     }
 }
 
-DEFINE_KERNEL2(join, lat_claim,
-               ROBUFFER, int64_t,  U, "[(nkeys + 1) * n]",
-               RWBUFFER, uint32_t, P, "[pmask + 1]",
-               ARGS,     LatP,     a, ,
-               GID0,     uint32_t, x, )
+UKL_INLINE void lat_claim_one(Longs U, JSPACE uint32_t* P, JSPACE const LatP* pp, uint32_t x)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
+    LatP p = *pp;
     if (x >= p.n) return;
     int64_t key[8];
     for (uint32_t c = 0; c < p.nkeys && c < 8; c++) key[c] = U[(uint64_t)c * p.n + x];
@@ -1541,17 +1520,9 @@ UKL_INLINE bool lat_better(UKL_PRIVATE const LatP* p, JSPACE uint32_t* A, int64_
     return p->code == 0 ? a < b : a > b;
 }
 
-DEFINE_KERNEL2(join, lat_best,
-               ROBUFFER, int64_t,  U,     "[(nkeys + 1) * n]",
-               ROBUFFER, uint32_t, P,     "[pmask + 1]",
-               RWBUFFER, uint32_t, best,  "[pmask + 1]",
-               RWBUFFER, uint32_t, flags, "[pmask + 1]",
-               RWBUFFER, uint32_t, A,     "[arena]",
-               ARGS,     LatP,     a,     ,
-               GID0,     uint32_t, x,     )
+UKL_INLINE void lat_best_one(Longs U, JSPACE const uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE uint32_t* A, JSPACE const LatP* pp, uint32_t x)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
+    LatP p = *pp;
     if (x >= p.n) return;
     uint32_t s = lat_place(U, P, &p, x);
     if (s == 0xffffffffu) return;
@@ -1587,21 +1558,10 @@ UKL_INLINE int64_t lat_widen(UKL_PRIVATE const LatP* p, int64_t old, int64_t now
     return now;
 }
 
-DEFINE_KERNEL2(join, lat_merge,
-               ROBUFFER, int64_t,  U,        "[(nkeys + 1) * n]",
-               ROBUFFER, uint32_t, P,        "[pmask + 1]",
-               ROBUFFER, uint32_t, best,     "[pmask + 1]",
-               ROBUFFER, uint32_t, flags,    "[pmask + 1]",
-               RWBUFFER, uint8_t,  R,        "[block]",
-               RWBUFFER, uint8_t,  HB,       "[block]",
-               RWBUFFER, int64_t,  D,        "[(nkeys + 1) * n]",
-               RWBUFFER, uint32_t, counters, "[2]",
-               RWBUFFER, uint32_t, A,        "[arena]",
-               ARGS,     LatP,     a,        ,
-               GID0,     uint32_t, s,        )
+UKL_INLINE void lat_merge_one(Longs U, JSPACE const uint32_t* P, JSPACE const uint32_t* best, JSPACE const uint32_t* flags, JSPACE uint8_t* R, JSPACE uint8_t* HB,
+                          JSPACE int64_t* D, JSPACE uint32_t* counters, JSPACE uint32_t* A, JSPACE const LatP* pp, uint32_t s)
 {
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    LatP p = a;
+    LatP p = *pp;
     JSPACE uint32_t* H = (JSPACE uint32_t*)(HB + p.h_at);
     if (s > p.pmask) return;
     uint32_t rep = P[s];
@@ -1689,6 +1649,14 @@ DEFINE_KERNEL2(join, lat_merge,
 #define PK_SCAN_SCATTER 17u
 #define PK_ROW_SCATTER 18u
 #define PK_DEDUP_SCATTER 19u
+// A lattice fold's passes (`lat_*_one`): its key map emptied, grown, its places emptied, claimed, the best value a
+// key, merged into the relation.
+#define PK_LAT_HCLEAR 20u
+#define PK_LAT_REHASH 21u
+#define PK_LAT_CLEAR 22u
+#define PK_LAT_CLAIM 23u
+#define PK_LAT_BEST 24u
+#define PK_LAT_MERGE 25u
 
 // An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase.
 typedef struct Item { uint32_t what; uint32_t group; uint32_t phase; uint32_t pad; } Item;
@@ -1768,6 +1736,16 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         case PK_SCAN_SCATTER: scan_scatter_one(j->L, j->R, j->totals, c, j->O, j->s, t); break;
         case PK_ROW_SCATTER: row_scatter_one(j->L, j->V, j->totals, c, j->O, j->s, t); break;
         case PK_DEDUP_SCATTER: dedup_scatter_one(j->L, j->totals, c, j->O, j->dd, t); break;
+        // A fold's buffers: `L` its rows, `A` its places, `totals` the best row a place, `H` its flags, `S` the relation's
+        // block, `VC` its key map's, `G` the old map's, `O` the changed rows, `counters` theirs, `V` the arena.
+        case PK_LAT_HCLEAR: lat_hclear_one(j->VC, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_REHASH: lat_rehash_one((JSPACE const uint8_t*)j->S, j->G, j->VC, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_CLEAR: lat_clear_one(j->A, j->totals, j->H, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_CLAIM: lat_claim_one(j->L, j->A, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_BEST: lat_best_one(j->L, j->A, j->totals, j->H, (JSPACE uint32_t*)j->V, (JSPACE const LatP*)j->P, t); break;
+        case PK_LAT_MERGE:
+            lat_merge_one(j->L, j->A, j->totals, j->H, j->S, j->VC, j->O, j->counters, (JSPACE uint32_t*)j->V, (JSPACE const LatP*)j->P, t);
+            break;
         default: break;
     }
 }

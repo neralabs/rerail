@@ -83,3 +83,13 @@ levels, 9 to 14 copy levels, 6 to 12 index sorts and 59 to 120 library launches 
   `parity_combinators` now pass within the budget (one launch a round). The one left is
   `a_leveled_recursion_on_the_device_has_the_cpus_levels`, at 83 program launches (its rounds) and 117 of the
   lattice's (`lat_*`): steps 3 and 4.
+
+## Done (2026-11-22): step 4
+
+A lattice head's fold is a job of its batch's level (`JobKind::Lattice`): its key map emptied and grown, its places
+emptied, claimed, each key's best row chosen and merged into the relation are the program's phases after the level's
+scatters (`lat_*_one`). The six `lat_*` kernels are gone; the joins' one kernel is the program's worker. A round of a
+lattice head is now its program's launches alone. Measured: spark2's CPU backend 45 of 45 (the setfix device tests,
+parity, the lattice and join tests); the mini's Metal 32 of 32 (the setfix device and join tests), the three
+recursive strata among them, each within the budget. Step 3 (the rounds on the device, not the host's turns) and
+step 5 are open.

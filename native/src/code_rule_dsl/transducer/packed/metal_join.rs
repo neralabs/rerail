@@ -294,10 +294,10 @@ fn chunk_views_source() -> String {
     )
 }
 
-/// The joins' kernels (`SOURCE`) and the chunk views' (`chunk_views_source`), to compile ahead of their first use
-/// (`MatcherDevice::kernels_ahead`): each asked for as its use asks for it (`pipeline`), so its use finds it.
+/// The joins' worker (`join_run`, the program's: decision 0603) and the chunk views' kernels
+/// (`chunk_views_source`), to compile ahead of their first use (`MatcherDevice::kernels_ahead`): each asked for as its
+/// use asks for it (`pipeline`), so its use finds it.
 pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhead> {
-    const JOIN: [&str; 6] = ["lat_best", "lat_claim", "lat_clear", "lat_hclear", "lat_merge", "lat_rehash"];
     let made = |variant: &'static str, name: &'static str, source: fn() -> String| -> super::device::KernelAhead {
         let make = move || {
             let mut made = Ok(());
@@ -306,16 +306,15 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
         };
         (format!("{variant} {name}"), Box::new(make))
     };
-    let mut v: Vec<_> = JOIN.into_iter().map(|name| made("join", name, || SOURCE.to_owned())).collect();
     // The programs' worker for the run's views' format.
-    v.push({
+    let mut v: Vec<super::device::KernelAhead> = vec![{
         let make = move || {
             let mut made = Ok(());
             rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = program_pipe(run_view_format()).map(drop)))?;
             made
         };
         ("join join_run".to_owned(), Box::new(make))
-    });
+    }];
     v.extend(["axis_count", "axis_write", "view_expand"].map(|name| made("chunk_views", name, chunk_views_source)));
     v
 }
@@ -1941,7 +1940,8 @@ impl Batch {
             let mut items = Vec::new();
             for (i, j) in jobs.iter().enumerate() {
                 for &(k, what, threads) in kinds {
-                    if j.kind == k {
+                    // A fold's map left as it is has no pass to empty or grow it.
+                    if j.kind == k && !(k == JobKind::Lattice && threads(j) == 0) {
                         let n = if what == PK_ROW_TEXT { threads(j).div_ceil(rows_a_group).max(1) } else { groups(threads(j)) };
                         items.extend((0..n).map(|g| (what, (first_job + i) as u32, g as u32)));
                     }
@@ -1995,6 +1995,12 @@ impl Batch {
                 (JobKind::Dedup, PK_DEDUP_SCATTER, |j| j.scatter),
             ]);
         }
+        job_phase(prog, &[(JobKind::Lattice, PK_LAT_HCLEAR, |j| j.lattice[0])]);
+        job_phase(prog, &[(JobKind::Lattice, PK_LAT_REHASH, |j| j.lattice[1])]);
+        job_phase(prog, &[(JobKind::Lattice, PK_LAT_CLEAR, |j| j.clear)]);
+        job_phase(prog, &[(JobKind::Lattice, PK_LAT_CLAIM, |j| j.count)]);
+        job_phase(prog, &[(JobKind::Lattice, PK_LAT_BEST, |j| j.count)]);
+        job_phase(prog, &[(JobKind::Lattice, PK_LAT_MERGE, |j| j.clear)]);
         // The view format its worker is compiled for: the jobs' one, else several (0).
         for j in &jobs {
             if matches!(j.kind, JobKind::Stage | JobKind::Scan | JobKind::Witness | JobKind::Copy | JobKind::Index) {
@@ -2128,6 +2134,12 @@ const PK_STAGE_SCATTER: u32 = 16;
 const PK_SCAN_SCATTER: u32 = 17;
 const PK_ROW_SCATTER: u32 = 18;
 const PK_DEDUP_SCATTER: u32 = 19;
+const PK_LAT_HCLEAR: u32 = 20;
+const PK_LAT_REHASH: u32 = 21;
+const PK_LAT_CLEAR: u32 = 22;
+const PK_LAT_CLAIM: u32 = 23;
+const PK_LAT_BEST: u32 = 24;
+const PK_LAT_MERGE: u32 = 25;
 
 /// A batch's program (decision 0603): the levels flushed since its last launch, as phases of items (`Item`: a group
 /// of a job's, a scan level's or a sort pass's work), run by one launch of `join_run`. A phase's items follow the
@@ -2312,6 +2324,9 @@ enum JobKind {
     /// Its keys (`ix_key_one`), the level's one sort of them, its places (`ix_place_one`): after the copies, before
     /// the rest.
     Index,
+    /// A lattice relation's round (`Batch::lattice_fold`): its key map emptied and grown, its places emptied, claimed,
+    /// the best row a key, merged (`lat_*_one`), after the level's scatters.
+    Lattice,
 }
 
 impl JobKind {
@@ -2347,6 +2362,8 @@ struct Job {
     claim: usize,
     /// An index's buckets, its keys' span in the level's sort.
     buckets: usize,
+    /// A lattice fold's key map's slots to empty, and its old map's to place again (0: none).
+    lattice: [usize; 2],
     /// A copy's rows written: its destination's address, and its rows from and to.
     span: Option<(u64, usize, usize)>,
     /// The buffers it reaches by address, each with whether it writes them.
@@ -2375,6 +2392,7 @@ impl Job {
             clear: 0,
             claim: 0,
             buckets: 0,
+            lattice: [0; 2],
             span: None,
             uses: Vec::new(),
             reads: Vec::new(),
@@ -2960,34 +2978,40 @@ impl Batch {
         let hb = bound(map.home)?;
         // Its rows written in place, bounded by their chunks (decision 0463): checked when the work completes.
         self.writes(r, "a lattice's held rows");
+        // Queued in the batch's level as one job (decision 0603): its map emptied (and grown), its places emptied,
+        // claimed, each key's best row chosen, merged: the program's phases, in that order.
+        let places = Held::new(4 * pplaces)?;
+        let chosen = Held::new(4 * pplaces)?;
+        let flags = Held::new(4 * pplaces)?;
+        let mut job = Job::new(JobKind::Lattice, 0, Stage::default());
+        job.desc.l = job.reach(&u.buffer.buffer, 0, false)?;
+        job.desc.a = job.reach(&places.buffer, 0, true)?;
+        job.desc.totals = job.reach(&chosen.buffer, 0, true)?;
+        job.desc.h = job.reach(&flags.buffer, 0, true)?;
+        job.desc.s = job.reach(&r.buffer.buffer, 0, true)?;
+        job.desc.vc = job.reach(&hb.buffer, 0, true)?;
+        job.desc.o = job.reach(&delta.buffer.buffer, 0, true)?;
+        job.desc.counters = job.reach(&counters.buffer.buffer, 0, true)?;
+        let a: Buffer = arena.map_or_else(|| self.dummy.buffer.clone(), |a| a.buffer.buffer.clone());
+        job.desc.v = job.reach(&a, 0, true)?;
+        let mut maps = [0usize; 2];
         if !matches!(first, MapFirst::Ready) {
-            let hclear = pipeline("join", "lat_hclear", || SOURCE.to_owned())?;
-            let pass = self.pass()?;
-            pass.run_bytes(&hclear, &[&hb.buffer], lat_bytes(&p), groups(map.places));
+            maps[0] = map.places;
             if let MapFirst::Grow(old) = first {
                 p.omask = (old.places - 1) as u32;
                 p.h0_at = old.at as u64;
                 let ob = bound(old.home)?;
-                let rehash = pipeline("join", "lat_rehash", || SOURCE.to_owned())?;
-                pass.run_bytes(&rehash, &[&r.buffer.buffer, &ob.buffer, &hb.buffer], lat_bytes(&p), groups(old.places));
+                job.desc.g = job.reach(&ob.buffer, 0, false)?;
+                job.own.push(ob);
+                maps[1] = old.places;
             }
         }
-        let bytes = lat_bytes(&p);
-        let clear = pipeline("join", "lat_clear", || SOURCE.to_owned())?;
-        let claim = pipeline("join", "lat_claim", || SOURCE.to_owned())?;
-        let best = pipeline("join", "lat_best", || SOURCE.to_owned())?;
-        let merge = pipeline("join", "lat_merge", || SOURCE.to_owned())?;
-        let places = Held::new(4 * pplaces)?;
-        let chosen = Held::new(4 * pplaces)?;
-        let flags = Held::new(4 * pplaces)?;
-        let a: Buffer = arena.map_or_else(|| self.dummy.buffer.clone(), |a| a.buffer.buffer.clone());
-        let pass = self.pass()?;
-        let ub: &Buffer = &u.buffer.buffer;
-        pass.run_bytes(&clear, &[&places.buffer, &chosen.buffer, &flags.buffer], bytes, groups(pplaces));
-        pass.run_bytes(&claim, &[ub, &places.buffer], bytes, groups(n));
-        pass.run_bytes(&best, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &a], bytes, groups(n));
-        pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r.buffer.buffer, &hb.buffer, &delta.buffer.buffer, &counters.buffer.buffer, &a], bytes, groups(pplaces));
-        Ok(())
+        job.desc.g = if job.desc.g == 0 { job.desc.l } else { job.desc.g };
+        job.p = Some(lat_bytes(&p).to_vec());
+        (job.count, job.clear, job.lattice) = (n, pplaces, maps);
+        job.order(&[job.desc.l, job.desc.v], &[job.desc.s, job.desc.vc, job.desc.o, job.desc.counters, job.desc.v]);
+        job.own.extend([places, chosen, flags, hb]);
+        self.queue(job)
     }
 }
 
