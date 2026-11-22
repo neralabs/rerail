@@ -1,7 +1,7 @@
 //! Metal, as the engine's device (`rerail-device-metal`): the implementations of the logic's and the transducer's
-//! device interfaces (`logic::device::SolverDevice`, `transducer::packed::device::MatcherDevice`) over the Metal
+//! device interfaces (`logic::device::{Device, SolverDevice}`, `transducer::packed::device::MatcherDevice`) over the Metal
 //! code, registered as the engine loads (`crate::install_devices`). macOS only; the core never names it.
-use crate::code_rule_dsl::logic::device::{ColumnStats, JoinPlan, Refused, Report, SolverDevice, StatColumn, lattice, nearest};
+use crate::code_rule_dsl::logic::device::{ColumnStats, Device, JoinPlan, Refused, Report, SolverDevice, StatColumn, lattice, nearest};
 use crate::code_rule_dsl::logic::native::setfix::{Fresh, Interner, JoinRule, Store, device as joins};
 use crate::code_rule_dsl::transducer::packed::{self, Error};
 
@@ -13,7 +13,7 @@ pub(crate) static METAL: Metal = Metal;
 
 /// Registers Metal as the logic's and the transducer's device.
 pub fn register() {
-    crate::code_rule_dsl::logic::device::register(&METAL);
+    crate::code_rule_dsl::logic::device::register("rerail-device-metal", &METAL);
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
     // Kind-set axes solved on the device in a batch's chunk block (decision 0289 §2).
     crate::code_rule_dsl::facts::nearest::install_chunk_axis(packed::metal_join::axis_in_chunk);
@@ -24,18 +24,22 @@ pub fn register() {
 /// registered as the binary loads, as the engine registers them (`crate::install_devices`, `install_languages`), so
 /// the device's tests run on the device and no test's CPU worker meets a document before its pack is registered.
 /// What a job carries of its run is the logic's (`logic::CARRIERS`, which the engine's composition registers): a
-/// stratum's jobs on the pool carry it (`run_state::Carry::here`).
+/// stratum's jobs on the pool carry it (`run_state::Carry::here`). Strict mode on every connection and the core names,
+/// as boot registers them: without them its device tests stopped at their first job.
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
+        crate::code_rule_dsl::logic::profile::strict_on_every_connection();
         crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
+        crate::code_rule_dsl::logic::plan::keeps::CORE_NAMES.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::rr::core_names);
         super::register();
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         crate::test_languages();
     }
     #[used]
     #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
-    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
     static LOAD: extern "C" fn() = load;
 }
 
@@ -55,6 +59,20 @@ fn plans<'a>(rules: &[(&'a JoinPlan, &'a JoinRule, usize)]) -> Result<Vec<(&'a j
             Ok((plan, *join, *head))
         })
         .collect()
+}
+
+impl Device for Metal {
+    fn take_report(&self) -> Option<Report> {
+        joins::take_report()
+    }
+
+    fn lattice(&self, system: &lattice::System<'_>) -> Result<lattice::Solved, Refused> {
+        packed::metal_lattice::solve(system).map_err(refused)
+    }
+
+    fn nearest(&self, nodes: usize, target: &[u32], done: &[u8], how: nearest::Buffers) -> Result<nearest::Solved, Refused> {
+        packed::metal_nearest::solve_with(nodes, target, done, how).map_err(refused)
+    }
 }
 
 impl SolverDevice for Metal {
@@ -96,18 +114,6 @@ impl SolverDevice for Metal {
         fresh: &mut [Fresh],
     ) -> Result<Vec<u64>, String> {
         joins::fixpoint(&plans(seeds)?, &plans(deltas)?, heads, store, names, fresh)
-    }
-
-    fn take_report(&self) -> Option<Report> {
-        joins::take_report()
-    }
-
-    fn lattice(&self, system: &lattice::System<'_>) -> Result<lattice::Solved, Refused> {
-        packed::metal_lattice::solve(system).map_err(refused)
-    }
-
-    fn nearest(&self, nodes: usize, target: &[u32], done: &[u8], how: nearest::Buffers) -> Result<nearest::Solved, Refused> {
-        packed::metal_nearest::solve_with(nodes, target, done, how).map_err(refused)
     }
 
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {

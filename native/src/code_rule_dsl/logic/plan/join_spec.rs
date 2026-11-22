@@ -459,6 +459,23 @@ impl<'a> Run<'a, '_> {
                     if s.mode == Some(Mode::Range) {
                         return None;
                     }
+                    // `docof(n, d)` as it was (a removal join's read of a changed input, decision 0364), its node
+                    // bound: the node's document is its id's (decision 0083 §3), so `d` is computed from it. Read as
+                    // the old version, each probe made its node's document (decision 0494): a removal join over the
+                    // `typing_ref` nodes of an insert's edit made 121 documents. The id's document holds of every id
+                    // the old rows hold, so the join finds what it did and perhaps more; a removal's rows are
+                    // candidates, each rechecked against the rows now (`derives`), so more is sound.
+                    if let Some(JoinSource::Version(r, super::super::native::component::spec::Ver::Old)) = self.mode_reads.get(&s.at)
+                        && r == "docof"
+                        && !l.neg()
+                        && let [x, TermRef::Var(d)] = b.args(s.at)[..]
+                        && slots.bound(x)
+                    {
+                        let n = t_tok(b, x, &mut slots)?;
+                        lines.push(JoinItem::DocOf { out: var_tok(d, &mut slots), n });
+                        crate::code_rule_dsl::logic::profile::decision("a removal join's `docof` as it was, its node bound: the node's document, from its id (decision 0083 §3)", || b.rel(b.head()).to_owned());
+                        continue;
+                    }
                     let (src, args) = match self.mode_reads.get(&s.at) {
                         Some(t) => (t.clone(), arg_toks(b.args(s.at), &mut slots)?),
                         None => atom(b.rel(l), b.args(s.at), Some(idx), &mut slots)?,

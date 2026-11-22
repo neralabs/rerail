@@ -305,6 +305,9 @@ fn batch_round(d: &Dialect<'_>, cpp: bool, units: &mut [(Box<dyn Files + '_>, St
         Ok(placed) => placed,
         Err(_) if many => return Step::Split,
         Err(e) => {
+            if std::env::var_os("RERAIL_PP_WHY").is_some() {
+                eprintln!("pp: the unit's placement: {e:?}");
+            }
             out[live[0].0] = Some(Err(Refused::Device(format!("{e:?}"))));
             return Step::Done;
         }

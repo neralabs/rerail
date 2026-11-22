@@ -1,4 +1,4 @@
-    use super::{R, base, disconnected, per_node_relations, view_of};
+    use super::{R, base, candidates, disconnected, per_node_relations, view_of};
     use super::super::super::body::Placed;
     use super::super::super::fields::Fields;
 
@@ -142,4 +142,43 @@
             "#;
         assert!(!apart(p, 0, "builtin"), "docof ties $d, rr_cx_reach ties $e");
         assert!(apart(p, 0, "docof"), "nothing kept ties $d");
+    }
+
+    /// A scan's rows are carried across the base atoms its variables share: `tail($n)` binds `$n` from the children
+    /// of 30 nodes of one kind (`child`'s parent column meets 3 rows a probe), not from every `child` row, so it is
+    /// too small to demand, as python/names' `pat_tail` is. With no statistic of that column a probe meets the whole
+    /// relation, and the rule is demanded as before.
+    #[test]
+    fn a_scan_bound_through_a_small_kinds_children_is_not_demanded() {
+        use super::super::super::{Constant, Inputs, Model, Stats};
+        use std::collections::{BTreeSet, HashMap, HashSet};
+        let p = r#"
+            .decl node(d: number, n: node, kind: number, s: number, e: number)
+            .decl child(p: node, c: node, i: number)
+            .decl kind(n: node, k: number)
+            .decl tail(n: node)
+            .decl read(n: node)
+            .input node, child
+            .output read
+            kind($n, $k) :- node(_, $n, $k, _, _).
+            tail($n) :- kind($d, 7), child($d, $n, $i), $i > 0.
+            read($n) :- kind($n, 5), !tail($n).
+            "#;
+        let placed = Placed::whole(super::super::super::super::rr::parse_version(&p.replace('$', "")).unwrap());
+        let f = Fields::of(&placed).unwrap();
+        let model = |fan: Option<f64>| {
+            let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+            let derived: HashSet<String> = ["kind", "tail", "read"].into_iter().map(str::to_owned).collect();
+            let mut m = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&f), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+            m.stats.nodes = 1_000_000.0;
+            m.stats.card.insert("node", 1_000_000.0);
+            m.stats.card.insert("child", 1_000_000.0);
+            m.stats.memo.insert("node".into(), HashMap::from([(("kind".to_owned(), Constant::Int(7)), 30), (("kind".to_owned(), Constant::Int(5)), 200_000)]));
+            if let Some(fan) = fan {
+                m.stats.fan.insert(("child", 0), fan);
+            }
+            m
+        };
+        assert!(!candidates(&f, &placed, &model(Some(3.0))).contains("tail"), "90 rows of a million nodes");
+        assert!(candidates(&f, &placed, &model(None)).contains("tail"), "a probe of child unmeasured meets all of it");
     }

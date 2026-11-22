@@ -48,7 +48,7 @@ impl JsonMemory {
 
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct WitnessMemory {
+pub struct WitnessMemory {
     pub witnesses: usize,
     pub owned_bytes_estimate: usize,
     pub projection_references: usize,
@@ -62,7 +62,7 @@ pub(crate) struct WitnessMemory {
     seen: HashSet<usize>,
 }
 impl WitnessMemory {
-    pub(crate) fn visit(&mut self, witness: &Witness) {
+    pub fn visit(&mut self, witness: &Witness) {
         self.witnesses += 1;
         self.owned_bytes_estimate += size_of::<Witness>()
             + witness.path.capacity()

@@ -64,6 +64,9 @@ exemption `engine-layout`).
 | `native/crates/ukl/lib/ukl/reads/view.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these` |
 | `native/crates/ukl/lib/ukl/reads/relation.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these` |
 | `native/crates/ukl/lib/ukl/reads/ids.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these` |
+| `native/crates/ukl/lib/ukl/body/view_reads.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these` |
+| `native/crates/kotlin_aot/src/tier1.rs` | `native/crates/compiler/src/bitlex_lex_rust.rs` | `RERAIL_BLESS=1 cargo test -p rerail-kotlin-parser rust_is_current` |
+| `native/crates/kotlin_aot/src/tier2.rs` | `native/crates/compiler/src/bitlex_rust.rs` | `RERAIL_BLESS=1 cargo test -p rerail-kotlin-parser rust_is_current` |
 | `native/src/code_rule_dsl/language/adapter/pack.rs` | `tools/cratify/packgen.py` | one step of the crate split (`tools/cratify/regenerate.sh`) |
 | `tools/cratify/test-hosts.tsv` | `tools/cratify/hosts.py` | `tools/cratify/regenerate.sh <index dir> <work dir>` (its fixpoint loop) |
 | `tools/cratify/runtime-hosts.tsv` | `tools/cratify/runtime_hosts.py` | `python3 tools/cratify/runtime_hosts.py` over a split's test run |

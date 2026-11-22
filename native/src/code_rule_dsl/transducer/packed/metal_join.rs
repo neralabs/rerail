@@ -273,9 +273,12 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) v_set: u64,
     pub(in crate::code_rule_dsl) v_has: u32,
     pub(in crate::code_rule_dsl) v_nset: u32,
-    /// 1: R's rows are its length as the device claimed it, at most `nr` (`DevRel::live`, decision 0603 step 3).
+    /// The probed relation's first row (`DevRel::from`): a stage reads its rows from `r_from`, by their ids in it (a
+    /// fixpoint's delta, its head's rows past those it held: 0353 step 6); 0 for every row.
+    pub(in crate::code_rule_dsl) r_from: u32,
+    /// 1: R's rows are its length as the device claimed it past `r_from`, at most `nr` (`DevRel::live`, decision 0603
+    /// step 3).
     pub(in crate::code_rule_dsl) r_len: u32,
-    pub(in crate::code_rule_dsl) has_pad: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<Stage>() == 2352 && std::mem::size_of::<Stage>().is_multiple_of(16));
@@ -479,9 +482,9 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
     };
     let mut runs = 0;
     runs_of(&mut |_, _| runs += 1);
-    // Alone in its block, with room for an index by each column: strata probe an axis by `n` and by `a`. Each column
+    // Alone in its block, with room for an index by each key strata probe an axis by (`AXIS_KEYS`). Each column
     // its ids' low bits, under the documents' keys.
-    let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, 2, runs);
+    let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, crate::code_rule_dsl::facts::rows::AXIS_KEYS, runs);
     let mut k = 0;
     runs_of(&mut |first, key| {
         keys.put(k, first, key);
@@ -543,6 +546,9 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// Its descriptor's arity and base rows when it was made (Q265): a descriptor found otherwise later was
     /// overwritten, not misread.
     made: (u32, u32),
+    /// Its first row: it is its relation's rows `from..from + rows`, read by their ids there (`Stage::r_from`): a
+    /// fixpoint's delta, its head's rows past those it held, read in place (0353 step 6). 0 for every row.
+    pub(in crate::code_rule_dsl) from: u32,
     /// The relation's holder, for one read where it lies in its block (`in_block`): what an index built into it keeps
     /// until its batch is done (`Building`, Q268).
     kept: Option<crate::code_rule_dsl::facts::rows::Part>,
@@ -582,7 +588,7 @@ impl DevRel {
         let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None, has: None, live: false }.noted())
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -607,7 +613,11 @@ impl DevRel {
     /// rows) and its set's kind atoms `kinds`, ascending. It has no rows of its own: a stage probes it by one of its
     /// columns only (`Batch::by_has`), each binding's rows walked on the tape.
     pub(in crate::code_rule_dsl) fn has(nodes: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace, kinds: &[i64]) -> Result<DevRel, Error> {
-        let mut dev = DevRel::view(2, nodes, view)?;
+        // Nothing indexes it (`Batch::by_has` walks the tape): its relation of no columns has no room for an index.
+        let part = crate::code_rule_dsl::facts::rows::Part::for_device_unindexed(nodes).map_err(|_| Error::BackendCapacity)?;
+        let mut dev = DevRel::of_part(part, 0, nodes)?;
+        dev.cols = 2;
+        dev.view = Some(view);
         let set = Words::zeroed(2 * kinds.len())?;
         for (i, &k) in kinds.iter().enumerate() {
             set.set(2 * i, k as u32);
@@ -627,7 +637,7 @@ impl DevRel {
         if let Some(v) = &self.view {
             let buffers: Vec<&Buffer> = v.buffers.iter().collect();
             pass.use_read(&buffers);
-            if let Some(cache) = &v.cache {
+            if let Some(cache) = v.cache.as_ref().and_then(|c| c.buffer.as_ref()) {
                 pass.use_read_write(cache);
             }
         }
@@ -669,7 +679,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None, has: None, live: false }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false }
     }
 
     /// Whether it is a relation read where it lies (`in_block`): it holds the relation's block while it lives.
@@ -685,7 +695,18 @@ impl DevRel {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone(), has: None, live: false }.noted())
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), from: 0, kept: b.part.clone(), has: None, live: false }.noted())
+    }
+
+    /// Rows `from..from + rows` of `b`'s relation, of `cols` columns, read where they lie (`in_block`): a fixpoint's
+    /// delta, the rows its head took this round, past those it held (0353 step 6). Its readers read them by their ids
+    /// in the head; an index of it is of them alone, and is told from the head's by its rows.
+    pub(in crate::code_rule_dsl) fn in_block_from(b: &crate::code_rule_dsl::facts::rows::InBlock, cols: usize, from: usize, rows: usize) -> Result<DevRel, Error> {
+        assert!(from + rows <= b.rows as usize, "rows {from}..{} of a relation of {}", from + rows, b.rows);
+        let mut d = DevRel::in_block(b, cols)?;
+        d.rows = rows;
+        d.from = from as u32;
+        Ok(d)
     }
 
     /// `self` read as live (`DevRel::live`): `rows` its bound, its rows its length as the device claims it.
@@ -861,6 +882,9 @@ struct CopyParams {
     dst_stride: u32,
     dst_off: u32,
     count_slot: u32,
+    /// A source relation's first row (`DevRel::from`): its row `t` is its id `src_from + t`.
+    src_from: u32,
+    pad: u32,
     /// Where its rows go past `dst_off` when `flags & 1`: a word an earlier phase wrote (`Batch::append_rows`).
     off: u64,
     src_at: u64,
@@ -871,9 +895,9 @@ struct CopyParams {
     flags: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<CopyParams>() == 256);
+const _: () = assert!(std::mem::size_of::<CopyParams>() == 264);
 
-/// An index's bucket pass's parameters (`ix_bucket`'s `IxP`): the rows, the key's columns, the relation's descriptor's
+/// An index's key pass's parameters (`ix_key_one`'s `IxP`): the rows, the key's columns, the relation's descriptor's
 /// offset in its block, the buckets' mask, each key column, and a view read in place (its directory's address and
 /// number; 0: a relation).
 #[repr(C)]
@@ -885,9 +909,12 @@ struct IxParams {
     cols: [u32; 8],
     dir: u64,
     kind: u64,
+    /// The relation's first row (`DevRel::from`): the index is of its rows `from..from + n`, by their ids.
+    from: u32,
+    pad: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<IxParams>() == 72);
+const _: () = assert!(std::mem::size_of::<IxParams>() == 80);
 
 impl IxParams {
     fn bytes(&self) -> &[u8] {
@@ -912,6 +939,8 @@ pub(in crate::code_rule_dsl) struct DevIndex {
     /// slab of its own is bound by a wrap of its used extent (`Block::device_buffer`), which a buffer taken before the
     /// index was added (its relation's) does not reach.
     buffer: Held,
+    /// The relation's columns it is by (`Batch::index`'s `cols`), to find it again (`Batch::again`).
+    cols: Vec<usize>,
 }
 
 impl DevIndex {
@@ -960,6 +989,7 @@ pub(in crate::code_rule_dsl) struct Screen {
 /// A stage's probed relation `rel` (and its index, read by keys) into its fields.
 fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     stage.nr = rel.rows as u32;
+    stage.r_from = rel.from;
     stage.r_len = u32::from(rel.live);
     stage.r_at = rel.at;
     stage.r_dead = rel.dead;
@@ -986,6 +1016,11 @@ struct Building {
     /// The relation's descriptor as it was once the index was reserved (Q265): checked before the index is marked
     /// built, so a descriptor something overwrote meanwhile names what changed instead of being followed.
     before: Vec<u8>,
+    /// Its builder's work all queued in the batch: one that is not (an error before it was) gives its room back when
+    /// the batch is done, never marked built.
+    encoded: bool,
+    /// Its work committed, and so told to its block (`Facts::ix`, `InFlight`): another batch's probe takes it.
+    queued: bool,
     /// Whether it was queued after a gate (`Batch::gate`): not built when the gate stopped its program.
     gated: bool,
     /// A live relation's (`DevRel::live`): of its rows as a round claimed them, never marked built (a reader of the
@@ -994,6 +1029,19 @@ struct Building {
 }
 
 impl Building {
+    /// Its relation's descriptor's offset in its block: what its `InFlight` is found by.
+    fn at(&self) -> usize {
+        self.home.block.offset_of(self.rel)
+    }
+
+    /// No longer in flight: its block's list forgets it (under the block's index lock, `held`).
+    fn forget(&self, held: &mut Vec<crate::code_rule_dsl::facts::rows::InFlight>) {
+        if self.queued {
+            let at = self.at();
+            held.retain(|f| !(f.at == at && f.room.index == self.room.index));
+        }
+    }
+
     /// The descriptor's bytes now.
     fn descriptor(rel: *const rerail_blocks::relation::Relation) -> Vec<u8> {
         // SAFETY: a relation's descriptor in a block its `home` keeps; plain words.
@@ -1312,6 +1360,9 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// The indexes its work builds, marked built when it is done: those queued before a gate that stopped
     /// (`gated` then) alone.
     building: Vec<Building>,
+    /// The submissions of indexes other batches build that this one's stages read (`InFlight`): waited for at its finish,
+    /// and one the device failed fails this batch too.
+    borrowed: Vec<Submitted>,
     /// Whether a gate was queued since the last `finish`.
     gated: bool,
     /// The program a round's end yielded, and the phase it goes on from (`resume`).
@@ -1387,6 +1438,7 @@ impl Batch {
             arena: None,
             arena_cap: cap,
             building: Vec::new(),
+            borrowed: Vec::new(),
             atoms: None,
             kept: None,
             written: Vec::new(),
@@ -1502,6 +1554,14 @@ impl Batch {
         self.done.dispatches += pass.dispatches() as u32;
         rerail_accel::exec::command_committed();
         let s = pass.commit().map_err(Error::from)?;
+        // The indexes whose builders it holds are told to their blocks: a probe of another batch takes one, its work
+        // committed after this and so run after (`InFlight`). One queued after a gate, or a live relation's, may not
+        // be built (`finish`): none is told.
+        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live) {
+            let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
+            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch() });
+            b.queued = true;
+        }
         self.committed.push(s);
         self.done.submissions += 1;
         Ok(())
@@ -1536,6 +1596,10 @@ impl Batch {
         if let Some(t) = &self.program.top {
             t.set(0, 0);
         }
+        // The indexes of other batches its stages read: one whose builder the device failed is half written.
+        for s in self.borrowed.drain(..) {
+            failed += usize::from(!s.wait_ok().1);
+        }
         let overran = self.overran();
         self.written.clear();
         if !overran.is_empty() {
@@ -1549,19 +1613,40 @@ impl Batch {
         }
         if failed > 0 {
             crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch the GPU failed (its strata on the CPU)", failed as u64);
-            self.building.clear();
+            // Its indexes are half written: their room goes back (the batch's work is done, so nothing writes it).
+            for b in self.building.drain(..) {
+                let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
+                b.forget(&mut held);
+                b.check("its batch failed");
+                // SAFETY: the batch's work has completed, and no reader was given the index outside it.
+                unsafe { (*b.rel).give_back_index(&b.home.block, &b.room) };
+            }
             return Err(Error::BackendFailure);
         }
         let stopped = self.done.stopped;
         self.gated = false;
         for b in self.building.drain(..) {
+            let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
+            b.forget(&mut held);
             if (stopped && b.gated) || b.live {
                 continue;
             }
-            let _g = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
             b.check("its batch done");
+            let (r, room) = (unsafe { &*b.rel }, &b.room);
+            // Another batch built the same index meanwhile (each found none, and built its own, on another thread),
+            // or this batch's builder was not all encoded: it goes back, its room the block's again, and a later
+            // probe finds the one built.
+            let other = r.find_index_from(&room.key[..room.ncols], room.from, room.rows_n).is_some_and(|i| i != room.index);
+            if other || !b.encoded {
+                if other {
+                    crate::code_rule_dsl::prof::count_named("device.index built twice, given back".into(),4 * room.rows_n as usize);
+                }
+                // SAFETY: the batch's work has completed; its stages, which read it, are done.
+                unsafe { r.give_back_index(&b.home.block, room) };
+                continue;
+            }
             // SAFETY: the batch's work, which built it, has completed; `home` keeps the relation.
-            unsafe { (*b.rel).index_built(&b.room) };
+            unsafe { r.index_built(room) };
         }
         Ok(std::mem::take(&mut self.done))
     }
@@ -1576,7 +1661,7 @@ impl Batch {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk: 1, buffer: bound(&home)? }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk: 1, buffer: bound(&home)?, cols: Vec::new() }))
     }
 
     /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
@@ -1592,7 +1677,7 @@ impl Batch {
             _ => return Err(Error::UnsupportedFeature("a has axis probed by both its columns, or none")),
         };
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk, buffer: bound(&home)? }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk, buffer: bound(&home)?, cols: Vec::new() }))
     }
 
     /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
@@ -1600,9 +1685,28 @@ impl Batch {
     /// (read by the stages after it), and marked built when the batch is done. A relation whose block has no room for
     /// it is copied once into a block of its own that has (with no dead rows: their bits lie in the old block).
     pub(in crate::code_rule_dsl) fn index(&mut self, rel: &DevRel, cols: &[usize]) -> Result<DevIndex, Error> {
+        let mut ix = self.index_of(rel, cols)?;
+        ix.cols = cols.to_vec();
+        Ok(ix)
+    }
+
+    /// `ix`, an index a stage of an earlier batch probed `rel` by, as a stage encoded into this batch must probe it
+    /// (an overflow's stages run again, `setfix::device::complete`). An index the earlier batch built, which another
+    /// batch built meanwhile, went back when the earlier one was done (`finish`): its buckets emptied, its entry free
+    /// for the next, so a probe of it found no rows (B023's closures, 2026-11-22: a function's body lost, its loop
+    /// variable's late reads found). So a relation's index is found again (the one kept); a walk of the tape, and an
+    /// index of a relation it copied (its own, which no other batch finds), stand.
+    pub(in crate::code_rule_dsl) fn again(&mut self, rel: &DevRel, ix: &std::rc::Rc<DevIndex>) -> Result<std::rc::Rc<DevIndex>, Error> {
+        if ix.walk != 0 || ix.moved.is_some() {
+            return Ok(std::rc::Rc::clone(ix));
+        }
+        Ok(std::rc::Rc::new(self.index(rel, &ix.cols)?))
+    }
+
+    fn index_of(&mut self, rel: &DevRel, cols: &[usize]) -> Result<DevIndex, Error> {
         let home = rel.home.clone().expect("an index of a relation, not of words");
         let r = rel.relation();
-        // A continuation's index is of every row it reads (its base's first: `ix_bucket` reads by id, `rel_get`).
+        // A continuation's index is of every row it reads (its base's first: `ix_key_one` reads by id, `rel_get`).
         if r.base_rows != 0 && !r.continues() {
             // Q265: what was read, and where, so a writer that missed its own buffer can be named.
             let h = home.block.header();
@@ -1615,25 +1719,37 @@ impl Batch {
         }
         let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
         let room = {
-            let _g = home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            // A live relation's index is built again for each round (below): none found.
-            if let Some(i) = r.find_index(&key, rel.rows as u32).filter(|_| !rel.live) {
-                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
+            let held = home.ix.lock().unwrap_or_else(|e| e.into_inner());
+            // A delta read in place is its rows `from..`: its index is of those, not the relation's first rows. A live
+            // relation's index is built again for each round (below): none found.
+            if let Some(i) = r.find_index_from(&key, rel.from, rel.rows as u32).filter(|_| !rel.live) {
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
             }
-            if let Some(b) = self.building.iter().find(|b| b.live == rel.live && std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.rows_n as usize == rel.rows) {
+            if let Some(b) = self.building.iter().find(|b| b.encoded && b.live == rel.live && std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.from == rel.from && b.room.rows_n as usize == rel.rows) {
                 let room = b.room;
-                drop(_g);
+                drop(held);
                 let buffer = bound(&home)?;
                 if rel.live {
                     // A live relation's index in this batch's room for it, built again of its rows now: each round's.
                     self.queue_index(rel, cols, &room, &buffer)?;
-                    return Ok(DevIndex { index: room.index as u32, rows: rel.rows, moved: None, built: true, walk: 0, buffer });
+                    return Ok(DevIndex { index: room.index as u32, rows: rel.rows, moved: None, built: true, walk: 0, buffer, cols: Vec::new() });
                 }
-                return Ok(DevIndex { index: room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer });
+                return Ok(DevIndex { index: room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer, cols: Vec::new() });
+            }
+            // Another batch's, its work committed: this batch's, committed after, runs after it on the one queue, and
+            // waits for it at its finish (a builder the device failed fails this batch). Building it again here took
+            // the block's room twice (row 9 of 0353: two waves of a level each built [0,1], and the [0] after found
+            // no bytes left, and copied the relation). A live relation's is this batch's own, each round's.
+            let at = home.block.offset_of(std::ptr::from_ref(r));
+            if let Some(f) = held.iter().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
+                let index = f.room.index as u32;
+                self.borrowed.push(f.done.watch());
+                crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
+                return Ok(DevIndex { index, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
             }
             // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
             // before the build, which its passes order).
-            unsafe { r.try_reserve_index(&home.block, &key, rel.rows as u32) }
+            unsafe { r.try_reserve_index_from(&home.block, &key, rel.from, rel.rows as u32) }
         };
         let Some(room) = room else {
             // A live relation grows where it lies: its index has room there, or it is refused.
@@ -1644,6 +1760,7 @@ impl Batch {
             // Either is kept by the batch until its work, which builds the index into it, completes (Q265: a fresh
             // relation dropped with its stage's handle gave back its index while the GPU built it).
             if let Some(view) = &rel.view {
+                crate::code_rule_dsl::prof::count_named(format!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
                 let fresh = std::rc::Rc::new(DevRel::view(rel.cols, rel.rows, view.clone())?);
                 let ix = self.index(&fresh, cols)?;
                 return Ok(DevIndex { moved: Some(fresh), ..ix });
@@ -1660,9 +1777,20 @@ impl Batch {
                 let full = r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize >= rerail_blocks::relation::ADDED_INDEXES;
                 let free = home.block.reserved().saturating_sub(home.block.used());
                 let why = format!(
-                    "device.moved in a block: {}, {}, {} of {} MB left",
+                    "device.moved in a block: {} block, {} columns keyed by {:?}, {}, {}, {} indexes there ({} of other rows: {}), {} of {} MB left",
+                    if home.is_shared() { "a shared" } else { "its own" },
+                    rel.cols,
+                    cols,
                     if full { "its directory full" } else { "no bytes for it" },
                     if r.continues() { "a continuation" } else if rel.dead != 0 { "with dead rows" } else { "a relation" },
+                    r.nindex.load(std::sync::atomic::Ordering::Relaxed).min(9),
+                    (0..r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize).filter(|&i| r.indexes.as_slice().get(i).is_some_and(|ix| ix.rows.len() != rel.rows)).count().min(9),
+                    // Each entry's key, `o` an order (decision 0478 step 5b), `?` not built.
+                    r.indexes.as_slice().iter().take(r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize).map(|ix| {
+                        let k: Vec<String> = ix.key[..(ix.ncols as usize).min(8)].iter().map(u16::to_string).collect();
+                        let what = if ix.state == rerail_blocks::relation::DEAD { "x" } else if ix.ncols == 0 { "?" } else if ix.ordered != 0 { "o" } else { "" };
+                        format!("[{}]{what}{}", k.join(","), if ix.from != 0 { format!("@{}", ix.from) } else { String::new() })
+                    }).collect::<Vec<_>>().join(" "),
                     if free < 1 << 20 { "< 1" } else if free < 16 << 20 { "1-16" } else { ">= 16" },
                     (home.block.reserved() >> 20).next_power_of_two(),
                 );
@@ -1675,12 +1803,15 @@ impl Batch {
             return Ok(DevIndex { moved: Some(copy), ..ix });
         };
         let n = rel.rows;
+        // Held by the batch from here: an error before its builder is all encoded gives the room back when the batch
+        // is done (`finish`), as the batch's work may already write it.
+        let held = self.building.len();
+        let before = Building::descriptor(std::ptr::from_ref(r));
+        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, live: rel.live });
         let buffer = bound(&home)?;
         self.queue_index(rel, cols, &room, &buffer)?;
-        let index = room.index as u32;
-        let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, gated: self.gated, live: rel.live });
-        Ok(DevIndex { index, rows: n, moved: None, built: true, walk: 0, buffer })
+        self.building[held].encoded = true;
+        Ok(DevIndex { index: room.index as u32, rows: n, moved: None, built: true, walk: 0, buffer, cols: Vec::new() })
     }
 
     /// An index's build into its room (`room`, in the block `buffer` binds), queued in the batch's level: every index of
@@ -1694,7 +1825,7 @@ impl Batch {
             return Ok(());
         }
         assert!(cols.len() <= 8, "an index of {} columns", cols.len());
-        let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32 | if rel.live { IX_LIVE } else { 0 }, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0 };
+        let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32 | if rel.live { IX_LIVE } else { 0 }, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0, from: rel.from, pad: 0 };
         for (k, &c) in cols.iter().enumerate() {
             ix.cols[k] = c as u32;
         }
@@ -1712,6 +1843,7 @@ impl Batch {
         // A live relation's: its keys its length as claimed when it runs, its items that count's (decision 0603
         // step 5e).
         job.rows = rel.live.then(|| (job.desc.l + rel.at + REL_ROWS + ROWS_LEN, 0));
+        job.rows_from = rel.from;
         job.order(&[job.desc.l], &[]);
         self.queue(job)
     }
@@ -2006,6 +2138,13 @@ impl Batch {
         });
         let (s, src_rows, src_at, _, s_off) = src.of();
         let (d, dst_rows, _, dst_rows_at, d_off) = dst.of();
+        let src_from = match src {
+            Rows::Rel(r) => r.from,
+            Rows::Table(_) => 0,
+        };
+        if let Rows::Rel(r) = dst {
+            assert_eq!(r.from, 0, "a copy into a relation's rows from its first");
+        }
         if let Rows::Rel(r) = dst {
             self.writes(r, "rows copied");
         }
@@ -2016,7 +2155,7 @@ impl Batch {
         assert!(at_len || live || dst_off + n <= dst_rows, "a copy of {n} rows at {dst_off} into a destination of {dst_rows}");
         let mut p = CopyParams {
             konst: [0; 16], src: [NONE; 16], n: n as u32, ncols: cols.len() as u32, src_stride: src_rows as u32, dst_stride: dst_rows as u32,
-            dst_off: dst_off as u32, count_slot: count.map_or(NONE, |c| c.0 as u32), off: off.unwrap_or(0), src_at, dst_rows_at, v_dir: 0, r_view: 0, flags: u32::from(off.is_some()) | if at_len { 2 } else { 0 },
+            dst_off: dst_off as u32, count_slot: count.map_or(NONE, |c| c.0 as u32), src_from, pad: 0, off: off.unwrap_or(0), src_at, dst_rows_at, v_dir: 0, r_view: 0, flags: u32::from(off.is_some()) | if at_len { 2 } else { 0 },
         };
         let view = match src {
             Rows::Rel(r) => r.view.as_ref().map(|_| r),
@@ -2754,7 +2893,7 @@ fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize,
     }
     if let Some(ss) = sort {
         // The level's indexes' keys end to end (decision 0603 step 5e): each one's first (`eb`), a live relation's
-        // its length as claimed (at most its bound), else its bound; then each pass's keys and tiles, and its
+        // its length as claimed past its first row (at most its bound), else its bound; then each pass's keys and tiles, and its
         // histograms' scan (`UKL_RADIX_DIGITS` words a tile).
         let (sum, r, cap) = (12u32, 13u32, 11u32);
         prog.op(OpAt::of(SZ_CONST, sum, 0, 0).c(Late::Abs(0)));
@@ -2763,6 +2902,8 @@ fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize,
             match j.rows {
                 Some((word, _)) => {
                     prog.op(OpAt::of(SZ_LOAD, r, 0, 0).w(Late::Abs(word)));
+                    prog.op(OpAt::of(SZ_CONST, cap, 0, 0).c(Late::Abs(u64::from(j.rows_from))));
+                    prog.op(OpAt::of(SZ_SUB, r, r, cap));
                     prog.op(OpAt::of(SZ_CONST, cap, 0, 0).c(Late::Abs(j.count as u64)));
                     prog.op(OpAt::of(SZ_MIN, r, r, cap));
                 }
@@ -3479,6 +3620,8 @@ struct Job {
     span: Option<(u64, usize, usize)>,
     /// A copy's or a fold's rows' count on the device, and the threads past it its grids take (`Job::rows_word`).
     rows: Option<(u64, u32)>,
+    /// A live index's relation's first row (`IxP::from`): its rows are its length past it, at most `count`.
+    rows_from: u32,
     /// The buffers it reaches by address, each with whether it writes them.
     uses: Vec<(Buffer, bool)>,
     /// The tables it reads and writes, by address: its order against the jobs queued before it.
@@ -3565,6 +3708,7 @@ impl Job {
             lattice: [0; 2],
             span: None,
             rows: None,
+            rows_from: 0,
             uses: Vec::new(),
             reads: Vec::new(),
             writes: Vec::new(),
@@ -3655,6 +3799,10 @@ impl Drop for Batch {
         for s in self.committed.drain(..) {
             s.wait();
         }
+        // Its indexes, never marked built: no batch takes one from now on (their entries stay reserved).
+        for b in self.building.drain(..) {
+            b.forget(&mut b.home.ix.lock().unwrap_or_else(|e| e.into_inner()));
+        }
     }
 }
 
@@ -3670,6 +3818,42 @@ pub mod tests {
                 ((x >> 33) as i64).rem_euclid(modulus) + (3 << 32)
             })
             .collect()
+    }
+
+    /// B023's closures (2026-11-22): two batches that each found no index of a relation built one, and the second's
+    /// went back when it was done (`finish`), its buckets emptied, so a probe of it finds no rows. A stage that probed
+    /// it, encoded again in a later batch (an overflow's stages run again, `setfix::device::complete`), finds the
+    /// relation's kept index instead (`Batch::again`), and builds none.
+    #[test]
+    fn an_index_built_twice_is_found_again_where_it_is_kept() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        // Its batches' launches are an evaluation's (decision 0601).
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+        let n = 300;
+        let keys = rows(n, 11, 40);
+        let rel = DevRel::empty_indexed(1, n, 2).unwrap();
+        let r = rel.part.as_ref().expect("its own").rel();
+        for (i, &v) in keys.iter().enumerate() {
+            // SAFETY: row `i` is claimed (`for_device`), and nothing else writes the relation yet.
+            unsafe { r.rows.put(i as u32, 0, v) };
+        }
+        let (mut first, mut second) = (Batch::new().unwrap(), Batch::new().unwrap());
+        let kept = first.index(&rel, &[0]).unwrap();
+        let lost = std::rc::Rc::new(second.index(&rel, &[0]).unwrap());
+        assert!(kept.built && lost.built && kept.index != lost.index, "each batch built its own");
+        first.finish().unwrap();
+        second.finish().unwrap();
+        let r = rel.relation();
+        assert_eq!(r.find_index_from(&[0], 0, n as u32), Some(kept.index as usize), "the first's is kept");
+        let gone = &r.indexes.as_slice()[lost.index as usize];
+        assert_eq!(gone.ncols, 0, "the second's went back");
+        let mut later = Batch::new().unwrap();
+        let found = later.again(&rel, &lost).unwrap();
+        assert_eq!(found.index, kept.index, "found again: the index kept");
+        assert!(!found.built, "none built again");
+        later.finish().unwrap();
     }
 
     /// Decision 0491 steps 3 and 5: a device relation's block is held by its own region, which a kernel's bind pins by
@@ -3969,6 +4153,62 @@ pub mod tests {
             assert!(!found.built && found.index == ix.index, "a later batch finds it");
             later.finish().unwrap();
         }
+    }
+
+    /// An index one batch builds, its work committed and the batch not finished (a level's wave), is taken by another
+    /// batch's probe, not built again: one entry in the relation's directory, and the taker's reads are the index's.
+    /// One not yet committed is not taken (its work could run after the taker's): the taker builds its own, and
+    /// whichever batch finishes second gives its back. A delta read in place has an index of its own rows, not the
+    /// first rows' of its count.
+    #[test]
+    fn a_batch_takes_an_index_another_batch_has_committed() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+        let n = 20_000;
+        let (c0, c1) = (rows(n, 41, 97), rows(n, 42, 13));
+        let vals: Vec<i64> = (0..n).flat_map(|i| [c0[i], c1[i]]).collect();
+        let held = crate::code_rule_dsl::facts::rows::anon_in_block(2, &vals);
+        let placed = DevRel::in_block(&held, 2).unwrap();
+        let r = placed.relation();
+        let count =|| r.nindex.load(std::sync::atomic::Ordering::Relaxed);
+        // Committed: taken.
+        let mut builder = Batch::new().unwrap();
+        let built = builder.index(&placed, &[0]).unwrap();
+        assert!(built.built);
+        builder.commit_open().unwrap();
+        let mut taker = Batch::new().unwrap();
+        let taken = taker.index(&placed, &[0]).unwrap();
+        assert!(!taken.built && taken.index == built.index, "taken, not built again");
+        assert_eq!(count(), 1);
+        taker.finish().unwrap();
+        builder.finish().unwrap();
+        assert_eq!(r.find_index(&[0], n as u32), Some(built.index as usize));
+        // Not committed: each builds its own, and the second to finish gives its back.
+        let (mut a, mut b) = (Batch::new().unwrap(), Batch::new().unwrap());
+        let (ia, ib) = (a.index(&placed, &[1]).unwrap(), b.index(&placed, &[1]).unwrap());
+        assert!(ia.built && ib.built && ia.index != ib.index, "an uncommitted build is not taken");
+        a.finish().unwrap();
+        b.finish().unwrap();
+        assert_eq!(r.find_index(&[1], n as u32), Some(ia.index as usize));
+        let ix = r.index_at(ib.index as usize);
+        assert_eq!((ix.ncols, ix.state), (0, rerail_blocks::relation::DEAD), "the second given back");
+        // A delta read in place (its rows `from..`): its own index, though its count is that of the first rows'.
+        let half = n / 2;
+        let first = DevRel::in_block_from(&held, 2, 0, half).unwrap();
+        let delta = DevRel::in_block_from(&held, 2, half, half).unwrap();
+        let mut batch = Batch::new().unwrap();
+        let (i0, i1) = (batch.index(&first, &[0]).unwrap(), batch.index(&delta, &[0]).unwrap());
+        assert!(i0.built && i1.built && i0.index != i1.index, "the delta's index is its own");
+        batch.finish().unwrap();
+        let rows_of = |i: u32| {
+            let mut v = r.index_at(i as usize).rows.as_slice().to_vec();
+            v.sort_unstable();
+            v
+        };
+        assert_eq!(rows_of(i0.index), (0..half as u32).collect::<Vec<_>>());
+        assert_eq!(rows_of(i1.index), (half as u32..n as u32).collect::<Vec<_>>(), "the delta's rows");
     }
 
     /// Decision 0384 steps 7 and 8: a fork (a second relation started from frozen rows whose writer another took), and

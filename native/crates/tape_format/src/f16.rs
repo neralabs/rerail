@@ -41,6 +41,8 @@ pub struct Lang {
     revision: u8,
     /// Each number's kind and field: what a presence's bits are (decision 0434 §4).
     kind_field: Vec<(u16, u16)>,
+    /// `presence_words`, counted once: a tape's reader checks its presence against it at every read.
+    presence_words: (usize, usize),
 }
 
 impl Lang {
@@ -56,14 +58,15 @@ impl Lang {
         let cut = if n <= 256 { 256 } else { 255 };
         let per = if cut >= 256 { 1 } else { n - cut };
         let index = table.entries().iter().enumerate().map(|(k, e)| (e.clone(), k as u32)).collect();
-        let kind_field = table.entries().iter().map(|e| (e.kind, e.field)).collect();
-        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field })
+        let kind_field: Vec<(u16, u16)> = table.entries().iter().map(|e| (e.kind, e.field)).collect();
+        let kinds = kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
+        let fields = kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
+        let presence_words = (kinds.div_ceil(64), fields.div_ceil(64));
+        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field, presence_words })
     }
     /// The words of a presence's kinds' and fields' bitmaps: one bit a kind and a field the table names.
     pub fn presence_words(&self) -> (usize, usize) {
-        let kinds = self.kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
-        let fields = self.kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
-        (kinds.div_ceil(64), fields.div_ceil(64))
+        self.presence_words
     }
     pub fn table(&self) -> &CodeTable {
         &self.table
@@ -3431,5 +3434,99 @@ mod tests {
             assert!(n < raw.len(), "case {case}: a piece cut short decodes less");
             assert_eq!(jits(&buf[..cut], 5, cut, raw.len()), dst[..n], "case {case}: the JIT's decode of the piece cut short");
         }
+    }
+
+    /// The ops at constant widths (`writer16::Fixed`) write the bytes the state's widths do (`Run`, the methods), in
+    /// format 16 and 16z: values past each width (escapes and side lists), codes past the cut, many blocks.
+    #[test]
+    fn the_ops_at_constant_widths_write_the_state_widths_bytes() {
+        use crate::tape::Entry;
+        use crate::writer16::{CellWidths, Fixed, w_close_with, w_commit, w_leaf_with, w_open_with};
+        #[derive(Clone, Copy)]
+        enum Op {
+            Open(u32, u64),
+            Leaf(u32, u64, u64),
+            Close(u64),
+        }
+        // A tree over `len` bytes: gaps and lengths of every size, numbers up to `kinds`.
+        fn tree(len: u64, kinds: u32, seed: u64) -> Vec<Op> {
+            let mut x = seed;
+            let mut next = move || {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x
+            };
+            let (mut ops, mut at, mut open) = (vec![Op::Open(0, 0)], 0u64, 1usize);
+            while at < len {
+                let r = next();
+                let step = match r % 7 {
+                    0 => r >> 8 & 0x3ff,
+                    1 => r >> 8 & 0x1_ffff,
+                    _ => r >> 8 & 3,
+                };
+                at = (at + step).min(len);
+                let number = (r >> 40) as u32 % kinds;
+                match r >> 4 & 3 {
+                    0 if open < 40 => {
+                        ops.push(Op::Open(number, at));
+                        open += 1;
+                    }
+                    1 if open > 1 => {
+                        ops.push(Op::Close(at));
+                        open -= 1;
+                    }
+                    _ => {
+                        let end = (at + (r >> 20 & if r & 1 == 0 { 7 } else { 0x1_ffff })).min(len);
+                        ops.push(Op::Leaf(number, at, end));
+                        at = end;
+                    }
+                }
+            }
+            ops.extend(std::iter::repeat_n(Op::Close(len), open));
+            ops
+        }
+        fn both<X: CellWidths>(widths: [usize; 3]) {
+            let entries = (0..300).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+            let lang = Lang::new(CodeTable::new(entries), widths, 1).unwrap();
+            let source = source_of(300_000);
+            for seed in [1, 2, 3] {
+                let ops = tree(source.len() as u64, 300, seed);
+                for z in [false, true] {
+                    let mut a = Writer::new(&lang, &source, 0, z, true, ops.len());
+                    for &op in &ops {
+                        match op {
+                            Op::Open(n, s) => _ = a.open(n, s),
+                            Op::Leaf(n, s, e) => _ = a.leaf(n, s, e),
+                            Op::Close(e) => a.close(e),
+                        }
+                        a.commit();
+                    }
+                    let mut b = Writer::new(&lang, &source, 0, z, true, ops.len());
+                    b.reserve_run(ops.len(), 41);
+                    let d = b.state_address();
+                    for &op in &ops {
+                        // SAFETY: `d` is `b`'s state, its room reserved for every node and level.
+                        let r = unsafe {
+                            match op {
+                                Op::Open(n, s) => w_open_with::<X>(d, n, s),
+                                Op::Leaf(n, s, e) => w_leaf_with::<X>(d, n, s, e),
+                                Op::Close(e) => w_close_with::<X>(d, e),
+                            }
+                        };
+                        assert_eq!(r, 0, "widths {widths:?}: the op, its room reserved");
+                        // SAFETY: as the op's.
+                        assert_eq!(unsafe { w_commit(d) }, 0);
+                    }
+                    let (a, b) = (a.finish().unwrap(), b.finish().unwrap());
+                    assert!(a.tape.extent() == b.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the constant widths' bytes");
+                }
+            }
+        }
+        both::<Fixed<1, 1, 1>>([1, 1, 1]);
+        both::<Fixed<2, 1, 4>>([2, 1, 4]);
+        both::<Fixed<1, 2, 2>>([1, 2, 2]);
+        both::<Fixed<4, 4, 8>>([4, 4, 8]);
+        both::<Fixed<3, 1, 1>>([3, 1, 1]);
     }
 }

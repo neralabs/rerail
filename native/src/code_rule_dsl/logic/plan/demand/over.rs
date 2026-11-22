@@ -107,6 +107,21 @@ fn base_rows(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<
         .fold(all, f64::min)
 }
 
+/// The rows a probe of base atom `a` by its column `c` meets: its relation's posting-weighted fan (a view's, its
+/// input's column's), else its rows over the column's distinct values.
+fn base_fan(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<'_>, c: usize) -> f64 {
+    let view = view_of(f, a);
+    let (rel, c) = match &view {
+        Some((input, at)) => match at.get(c) {
+            Some(&c) => (input.as_str(), c),
+            None => return f64::INFINITY,
+        },
+        None => (rel, c),
+    };
+    let all = if super::super::super::front::is_transduced(rel) { model.stats.nodes } else { model.card(rel) };
+    model.stats.fan.at(rel, c).copied().unwrap_or_else(|| all / model.ndv_or_default(rel, c)).max(1.0)
+}
+
 /// An atom that restricts the rows a body reaches: a derived relation (not a text test, whose selectivity is unknown),
 /// or a base atom whose measured rows are fewer than a scan's (`node(_, $n, 1223, _, _)`, not the 6M identifiers of
 /// `node(_, $n, 1025, _, _)`).
@@ -172,7 +187,7 @@ pub fn per_node_relations(rules: &[R<'_>]) -> BTreeSet<String> {
 
 /// The relations `split_negations` demands, before its rounds (the module's conditions): derived, not kept, not
 /// recursive, read only by atoms of variable or constant arguments, and large (or `magic`).
-pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super::Model) -> BTreeSet<&'v str> {
+pub fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super::Model) -> BTreeSet<&'v str> {
     let n = p.len();
     let rules: Vec<R<'v>> = (0..n).map(|k| R::of(p, k)).collect();
     let kept = |rel: &str| {
@@ -209,19 +224,45 @@ pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super
     // `restores(s, x, a) :- binding(s, x, site, _), site != a, earlier(site, a)` a derived atom binds the key `s`,
     // and `earlier`'s `docof(a, d)` makes a row for every node after each site (1.6 M rows on the Python pack's
     // fixtures, for a reader that asks about 483).
+    // A variable's rows are also those of another variable of a base atom they share, times the rows a probe of that
+    // atom by the other's column meets: `pat_tail(n) :- kind(d, "dotted_name"), child(d, n, i), …` binds `n` from
+    // the few dotted names' children, not from every `child` row. Taken as `child`'s rows, `pat_tail` was demanded:
+    // `nameref`'s split made a `pre_` relation of every identifier, a demand of 236 k rows and a second pass, 0.45 s
+    // of a cold hogql run's strata CPU against 0.22 s for `nameref` whole.
     let scan = |r: &R<'_>| -> Option<f64> {
-        r.r.head()
-            .args()
-            .filter_map(|t| t.var())
-            .filter_map(|v| {
-                (0..r.lits.len())
-                    .filter_map(|i| match r.lits[i].view() {
-                        Lit::Atom(a) if !a.neg() && base(f, r.rel(a), a) && a.args().any(|t| t.var() == Some(v)) => Some(base_rows(f, model, r.rel(a), a)),
-                        _ => None,
-                    })
-                    .reduce(f64::min)
+        let atoms: Vec<(AtomRef<'_>, f64)> = (0..r.lits.len())
+            .filter_map(|i| match r.lits[i].view() {
+                Lit::Atom(a) if !a.neg() && base(f, r.rel(a), a) => Some((a, base_rows(f, model, r.rel(a), a))),
+                _ => None,
             })
-            .reduce(f64::max)
+            .collect();
+        let mut rows: BTreeMap<Slot, f64> = BTreeMap::new();
+        for &(a, n) in &atoms {
+            for v in a.args().filter_map(|t| t.var()) {
+                let e = rows.entry(v).or_insert(n);
+                *e = e.min(n);
+            }
+        }
+        for _ in 0..atoms.len() {
+            let mut changed = false;
+            for &(a, _) in &atoms {
+                let vars: Vec<Option<Slot>> = a.args().map(|t| t.var()).collect();
+                for (c, u) in vars.iter().enumerate() {
+                    let Some(u) = u else { continue };
+                    let reach = rows[u] * base_fan(f, model, r.rel(a), a, c);
+                    for v in vars.iter().flatten().filter(|v| *v != u) {
+                        if reach < rows[v] {
+                            rows.insert(*v, reach);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        r.r.head().args().filter_map(|t| t.var()).filter_map(|v| rows.get(&v).copied()).reduce(f64::max)
     };
     // A scan is worth demanding when it reaches at least this many rows: the rows not built must outweigh the strata
     // the split adds (`pre_<i>` and `demand_<r>`, opened in every chunk). Its other rules (a join of derived relations,

@@ -239,8 +239,15 @@ impl<B: Borrow<Block>> KeptFacts<B> {
         }
     }
 
+    /// An entry's relation name as bytes: what a search compares (`str`'s order is its bytes'), not checked as UTF-8
+    /// at each probe (`str_at` is, for the key it gives).
+    fn rel_bytes(&self, e: &KeptEntry) -> &[u8] {
+        &self.strings()[e.rel_at as usize..(e.rel_at + e.rel_len) as usize]
+    }
+
     fn find(&self, key: &FactKey) -> Option<(FactKey<'_>, Found<'_>)> {
-        let i = self.entries().binary_search_by(|e| self.key_of(e).cmp(key)).ok()?;
+        let rel = key.rel.as_bytes();
+        let i = self.entries().binary_search_by(|e| self.rel_bytes(e).cmp(rel).then_with(|| e.ident.cmp(key.ident)).then_with(|| e.part.cmp(&key.part))).ok()?;
         let e = &self.entries()[i];
         Some((self.key_of(e), self.entry(e)))
     }
@@ -248,8 +255,9 @@ impl<B: Borrow<Block>> KeptFacts<B> {
     /// The entries of `rel`, by a binary search for their range.
     fn range(&self, rel: &str) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         let es = self.entries();
-        let lo = es.partition_point(|e| str_at(self.strings(), e.rel_at, e.rel_len) < rel);
-        let hi = lo + es[lo..].partition_point(|e| str_at(self.strings(), e.rel_at, e.rel_len) == rel);
+        let r = rel.as_bytes();
+        let lo = es.partition_point(|e| self.rel_bytes(e) < r);
+        let hi = lo + es[lo..].partition_point(|e| self.rel_bytes(e) == r);
         es[lo..hi].iter().map(move |e| (self.key_of(e), self.entry(e)))
     }
 
@@ -488,6 +496,30 @@ impl KeptW {
         crate::scratch::with(|s| {
             let prepared = crate::packed::prepare(s, cols, n, a, &spec, levels, given);
             self.put(meta, &prepared)
+        })
+    }
+
+    /// `n` rows of `a` columns written by `fill` straight into the calling thread's scratch (column-major, and each
+    /// row's level where `levels`), then prepared and packed as `put_cols` does: a relation's rows read where they lie
+    /// in its block, never staged on the heap.
+    pub fn put_filled<E: From<io::Error>>(&mut self, meta: Meta, n: usize, a: usize, levels: bool, given: crate::packed::Order, fill: impl FnOnce(&mut [i64], Option<&mut [u32]>) -> Result<(), E>) -> Result<Put, E> {
+        let order = (0..a.min(MAX_ORDER) as u16).collect();
+        let spec = crate::relation::Spec { widths: vec![8; a], order, indexes: Vec::new(), min_log: 0 };
+        crate::scratch::with(|s| {
+            let raw: &mut [i64] = s.take(n * a);
+            let lv: Option<&mut [u32]> = levels.then(|| s.take(n));
+            let lv = match lv {
+                Some(l) => {
+                    fill(raw, Some(&mut *l))?;
+                    Some(&*l)
+                }
+                None => {
+                    fill(raw, None)?;
+                    None
+                }
+            };
+            let prepared = crate::packed::prepare(s, raw, n, a, &spec, lv, given);
+            Ok(self.put(meta, &prepared)?)
         })
     }
 

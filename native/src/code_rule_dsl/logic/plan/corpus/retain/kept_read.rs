@@ -37,7 +37,10 @@ impl Bound {
         {
             return Ok(Some(Arc::clone(bound)));
         }
-        let bound = Arc::new(Bound { space: store.open_kept(space, &rows)?, id: *space });
+        // Opened by the rows it was mapped by: the store's last commit's where a writer this process's rows do not
+        // follow had replaced them (`ContentStore::open_kept`).
+        let Some((rows, kept)) = store.open_kept(space, rows)? else { return Ok(None) };
+        let bound = Arc::new(Bound { space: kept, id: *space });
         chains.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (rows, Arc::clone(&bound)));
         Ok(Some(bound))
     }
@@ -49,7 +52,8 @@ impl Bound {
 
     /// The entry of `rel` (its name and identity) at partition `part`, if the space keeps one.
     pub(in crate::code_rule_dsl) fn entry(self: &Arc<Self>, rel: &str, ident: &[u8; 32], part: i64) -> Option<Entry> {
-        let rows: *const rerail_blocks::packed::Packed = self.view().get(&FactKey { rel, ident, part })?.rows;
+        let kept = self.view().entry(&FactKey { rel, ident, part })?;
+        let (rows, digest, types): (*const rerail_blocks::packed::Packed, u64, Vec<u8>) = (kept.rows, kept.digest, kept.types.to_vec());
         // Found: the run's program reads it, and its reader record names it (decision 0401 step 8). A miss keeps
         // nothing; what the run puts in its place, its puts' record names.
         crate::code_rule_dsl::logic::profile::with_bound::<KeptReader, _>(|r| {
@@ -57,7 +61,7 @@ impl Bound {
                 log.asked(&self.id, ident, |key| self.view().get(&FactKey { rel: READERS, ident: key, part: 0 }).map(|k| record_idents(&k).collect()).unwrap_or_default());
             }
         });
-        Some(Entry { bound: Arc::clone(self), rel: rel.to_owned(), ident: *ident, part, rows })
+        Some(Entry { bound: Arc::clone(self), rel: rel.to_owned(), ident: *ident, part, rows, digest, types })
     }
 }
 
@@ -71,6 +75,10 @@ pub(in crate::code_rule_dsl) struct Entry {
     part: i64,
     /// Its rows, in `bound`'s mapping.
     rows: *const rerail_blocks::packed::Packed,
+    /// What the lookup found of it, read where a run checks it: not looked up in the chain again (each of an edit's
+    /// 20,217 kept granules was looked up twice, `gathered` asking each one's types).
+    digest: u64,
+    types: Vec<u8>,
 }
 
 // SAFETY: `rows` lies in a read-only mapping `bound` holds, shared by every thread that reads it.
@@ -87,14 +95,14 @@ impl Entry {
         unsafe { &*self.rows }
     }
     pub(in crate::code_rule_dsl) fn digest(&self) -> u64 {
-        self.kept().digest
+        self.digest
     }
     pub(in crate::code_rule_dsl) fn reads(&self) -> Vec<(String, u64)> {
         self.kept().reads().map(|(r, d)| (r.to_owned(), d)).collect()
     }
     /// Its columns' value types as kept (`s` an atom).
     pub(in crate::code_rule_dsl) fn types(&self) -> Vec<u8> {
-        self.kept().types.to_vec()
+        self.types.clone()
     }
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
         self.packed().len()
@@ -105,7 +113,7 @@ impl Entry {
     /// Its rows as an engine relation, its types the engine's (an atom an integer); `None` when its atoms are not
     /// this process's numbering (`readable`).
     pub(in crate::code_rule_dsl) fn rel(&self, atoms: &Atoms) -> Option<Arc<InRel>> {
-        let types = self.kept().types.iter().map(|&t| if t == b's' { b'i' } else { t }).collect();
+        let types = self.types.iter().map(|&t| if t == b's' { b'i' } else { t }).collect();
         self.rel_as(types, atoms)
     }
     /// `rel`, held under the engine's `types` (its own, of the entry's width): a view of the entry where it lies
@@ -113,7 +121,7 @@ impl Entry {
     pub(in crate::code_rule_dsl) fn rel_as(&self, types: Vec<u8>, atoms: &Atoms) -> Option<Arc<InRel>> {
         let rows = self.packed();
         let k = rows.arity as usize;
-        if types.len() != k || !readable(&self.kept(), atoms) {
+        if types.len() != k || !readable(self, atoms) {
             return None;
         }
         let Some(levels) = rows.levels() else {
@@ -158,7 +166,7 @@ impl Entry {
 /// atoms are not this process's numbering.
 pub(in crate::code_rule_dsl) fn gathered(parts: &[Entry], width: usize, atoms: &Atoms) -> Option<Arc<InRel>> {
     let Some(first) = parts.first() else { return Some(InRel::from_flat(Vec::new(), 0, vec![b'i'; width])) };
-    if parts.iter().any(|p| p.width() != width || !Arc::ptr_eq(&p.bound, &first.bound) || !readable(&p.kept(), atoms)) {
+    if parts.iter().any(|p| p.width() != width || !Arc::ptr_eq(&p.bound, &first.bound) || !readable(p, atoms)) {
         return None;
     }
     let source = KeptSource::new(Arc::clone(&first.bound), parts.iter().map(|p| p.rows).collect());
@@ -168,11 +176,11 @@ pub(in crate::code_rule_dsl) fn gathered(parts: &[Entry], width: usize, atoms: &
 /// Whether `kept`'s atoms (its `s` columns' values, as the store numbers them) read as this process numbers them:
 /// always where this process's ids are the store's (`Atoms::holds_by_reading`: not forked, and leased); else held to
 /// their greatest (`reads_in_place`), and past a fork (decision 0170) not read in place, the entry derived again.
-fn readable(kept: &Kept<'_>, atoms: &Atoms) -> bool {
+fn readable(kept: &Entry, atoms: &Atoms) -> bool {
     if !atoms.holds_by_reading() {
         return true;
     }
-    let rel = kept.rows;
+    let rel = kept.packed();
     let mut max: Option<i64> = None;
     for (c, _) in kept.types.iter().enumerate().filter(|(_, t)| **t == b's') {
         if c >= rel.arity as usize {
@@ -184,7 +192,7 @@ fn readable(kept: &Kept<'_>, atoms: &Atoms) -> bool {
     match atoms.reads_in_place(max) {
         Ok(true) => true,
         _ => {
-            crate::code_rule_dsl::logic::profile::decision("a kept entry past a fork (decision 0170)", || format!("{}: its atoms are another numbering's; derived again", kept.key.rel));
+            crate::code_rule_dsl::logic::profile::decision("a kept entry past a fork (decision 0170)", || format!("{}: its atoms are another numbering's; derived again", kept.rel));
             false
         }
     }

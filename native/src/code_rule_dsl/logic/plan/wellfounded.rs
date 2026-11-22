@@ -194,23 +194,41 @@ fn order(rule: &Rule, helpers: &Helpers, x: u32, y: u32) -> Option<Step> {
 }
 
 /// Each relation with two node columns whose every rule relates them one way: its step from one to the other. A
-/// self-recursion keeps the way of its other rules (not strictly, when one of those is the same node).
-fn summarize(rules: &[Rule], types: &dyn Fn(&str) -> Vec<String>) -> Helpers {
-    let mut by: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
+/// self-recursion keeps the way of its other rules (not strictly, when one of those is the same node). Only the
+/// relations `roots` read through their rules, transitively: a helper's step is read only where an atom of it is, and
+/// a relation's step reads only those of the relations its rules read, so the steps are the same as over every rule.
+fn summarize<'a>(rules: &'a [Rule], types: &dyn Fn(&str) -> Vec<String>, roots: &[&str]) -> Helpers {
+    let mut heads: HashMap<&'a str, Vec<&'a Rule>> = HashMap::new();
     for r in rules {
-        by.entry(r.head.rel.as_str()).or_default().push(r);
+        heads.entry(r.head.rel.as_str()).or_default().push(r);
     }
+    let mut keep: BTreeSet<&'a str> = roots.iter().filter_map(|r| heads.get_key_value(*r).map(|(k, _)| *k)).collect();
+    let mut stack: Vec<&'a str> = keep.iter().copied().collect();
+    while let Some(rel) = stack.pop() {
+        for r in heads.get(rel).into_iter().flatten() {
+            for a in &r.atoms {
+                if let Some((k, _)) = heads.get_key_value(a.rel.as_str())
+                    && keep.insert(k)
+                {
+                    stack.push(k);
+                }
+            }
+        }
+    }
+    let by: Vec<(&str, Vec<usize>, &Vec<&Rule>)> = keep
+        .iter()
+        .map(|rel| (*rel, types(rel).iter().enumerate().filter(|(_, t)| *t == "node").map(|(i, _)| i).collect(), &heads[rel]))
+        .collect();
     let mut helpers = Helpers::new();
     for _ in 0..3 {
-        for (rel, rs) in &by {
-            let cols: Vec<usize> = types(rel).iter().enumerate().filter(|(_, t)| *t == "node").map(|(i, _)| i).collect();
-            for &i in &cols {
-                for &j in &cols {
+        for (rel, cols, rs) in &by {
+            for &i in cols {
+                for &j in cols {
                     if i == j {
                         continue;
                     }
                     let (mut ks, mut rk, mut bad) = (Vec::new(), Vec::new(), false);
-                    for r in rs {
+                    for r in rs.iter() {
                         let ha = &r.head.args;
                         if ha.len() <= i.max(j) {
                             bad = true;
@@ -313,7 +331,8 @@ pub struct Measure {
 /// Whether component `comp` of `v` cannot hold a row up by itself, and its measure; or why not.
 pub fn check(v: &Version, types: &dyn Fn(&str) -> Vec<String>, comp: &BTreeSet<String>) -> Result<Measure, String> {
     let rules = rules_of(v);
-    let helpers = summarize(&rules, types);
+    let roots: Vec<&str> = comp.iter().map(String::as_str).collect();
+    let helpers = summarize(&rules, types, &roots);
     classify(&rules, &helpers, types, comp)
 }
 
@@ -357,9 +376,6 @@ impl Analysis for Proofs {
         let f = Fields::over(cx.v(), &d);
         let types = |r: &str| f.types(r).into_iter().map(str::to_owned).collect::<Vec<_>>();
         let rules = rules_of(cx.v());
-        let summarized = crate::code_rule_dsl::logic::profile::span(|| format!("the rules' helpers summarized ({} rules)", rules.len()));
-        let helpers = summarize(&rules, &types);
-        drop(summarized);
         let comps = cx.get::<Components>()?;
         // A component is recursive when a rule of it reads it: found in one pass over the rules, by each relation's
         // component. A pass over every rule for each component took 0.16 s of the data layer's 6,842 rules (R7
@@ -373,6 +389,8 @@ impl Analysis for Proofs {
                 recursive[c] = true;
             }
         }
+        let roots: Vec<&str> = comps.0.iter().zip(&recursive).filter(|(_, r)| **r).flat_map(|(c, _)| c.iter().map(String::as_str)).collect();
+        let helpers = summarize(&rules, &types, &roots);
         let comps = comps.0.iter().zip(&recursive).filter(|(_, r)| **r).map(|(c, _)| (c.clone(), classify(&rules, &helpers, &types, c))).collect();
         Ok(Proofs { comps })
     }

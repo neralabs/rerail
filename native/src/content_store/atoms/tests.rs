@@ -601,11 +601,11 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
         digest: 9,
         reads: Vec::new(),
         types: vec![b's', b'i'],
-        what: crate::content_store::kept_facts::KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 2, 3, 3, 1, 1], n: 3, levels: None, given: false },
+        what: crate::content_store::kept_facts::KeptWhat::Picked(Box::new(crate::content_store::kept_facts::BlockFlat::of_rows(&[2, 2, 3, 3, 1, 1], 2, false))),
     };
     super::mapped(|| store.queue_kept(space, vec![put]));
     let row = store.kept_row(&space).unwrap().expect("written");
-    let kept = store.open_kept(&space, &row).unwrap();
+    let (_, kept) = store.open_kept(&space, row).unwrap().expect("kept");
     let view = kept.view();
     let entry = rerail_blocks::kept::KeptRead::get(&view, &rerail_blocks::kept::FactKey { rel: "r", ident: &[1; 32], part: 0 }).expect("the entry");
     // In canonical order (decision 0456 K3): by the store's ids.

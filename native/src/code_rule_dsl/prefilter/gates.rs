@@ -18,8 +18,11 @@
 use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Direction, Required};
 use crate::code_rule_dsl::stats::inputs::Statistics;
 use crate::code_rule_dsl::stats::plans::{Compiled, Plans, PlanId};
+use crate::content_store::kept_facts::KeptSpace;
+use crate::content_store::{ContentStore, StoreResult};
 use rusqlite::Connection;
 use sha2::{Digest as _, Sha256};
+use std::path::Path;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -266,7 +269,7 @@ fn identity(plan: &AnchorPlan, lang: u32) -> PlanId {
     hash.update(lang.to_le_bytes());
     walk(plan, &mut hash, &mut HashSet::new());
     let structure: [u8; 32] = hash.finalize().into();
-    // `compiled_plans` is keyed by `CompiledPlanId`s (list step 20): domain-separated from every
+    // `compiled_plan` is keyed by `CompiledPlanId`s (list step 20): domain-separated from every
     // other identity, so a gate's key never equals a wave program's.
     *crate::code_rule_dsl::stats::identity::CompiledPlanId::builder().text("rerail.prefilter-gate").bytes(&structure).finish().as_bytes()
 }
@@ -285,14 +288,15 @@ pub(super) struct Gated {
 }
 
 /// The gates of `plans` over the batch's `files`, compiled or reused (one statement reads every
-/// statistic; one reads every stored gate's validity).
-pub(super) fn select(db: &Connection, lang: u32, plans: &[&AnchorPlan], files: &[i64]) -> rusqlite::Result<Gated> {
+/// statistic; the stored gates are read from `kept`, the store at `store`'s compiled plans opened
+/// before the transaction `db` is in: `Plans::open`). A gate compiled is written once `flush`ed.
+pub(super) fn select(db: &Connection, store: &Path, kept: Option<&KeptSpace>, lang: u32, plans: &[&AnchorPlan], files: &[i64]) -> rusqlite::Result<Gated> {
     let statistics = Statistics::read(db, plans.iter().map(|plan| (lang, *plan)))?;
     let current = statistics.reads();
     let ids = plans.iter().map(|plan| identity(plan, lang)).collect::<Vec<_>>();
     let held_ = crate::code_rule_dsl::logic::profile::shared::<GatePlans>();
     let mut compiled = held_.0.lock().expect("gate plans mutex poisoned");
-    let valid = compiled.valid(db, &ids, &current)?;
+    let valid = compiled.valid(store, kept, &ids, &current);
     let mut gates = Vec::with_capacity(plans.len());
     for (plan, id) in plans.iter().zip(&ids) {
         let held = valid.get(id).and_then(|held| serde_json::from_slice::<Gate>(&held.program).ok());
@@ -304,7 +308,7 @@ pub(super) fn select(db: &Connection, lang: u32, plans: &[&AnchorPlan], files: &
             None => {
                 let gate = gate(plan, lang, &statistics, &mut HashSet::new());
                 let program = serde_json::to_vec(&gate).expect("a gate serialises");
-                compiled.put(db, *id, Compiled { decisions: String::new(), program }, &current)?;
+                compiled.put(store, *id, Compiled { decisions: String::new(), program }, &current);
                 crate::code_rule_dsl::prof::count("gates.compiled", 1);
                 gate
             }
@@ -346,15 +350,20 @@ pub(super) fn select(db: &Connection, lang: u32, plans: &[&AnchorPlan], files: &
     Ok(Gated { plans: per_plan, any, ids })
 }
 
+/// Writes the gates `select` compiled, behind the run: outside the candidate transaction.
+pub(super) fn flush(store: &ContentStore) {
+    crate::code_rule_dsl::logic::profile::shared::<GatePlans>().0.lock().expect("gate plans mutex poisoned").flush(store);
+}
+
 /// Folds each plan's observed selectivity (its candidates over the batch's `nodes`) and cost into
-/// `plan_feedback`.
-pub(super) fn observe(db: &Connection, gated: &Gated, candidates: &[usize], nodes: u32, backend: &str, ns_per_plan: f64) -> rusqlite::Result<()> {
+/// `plan_feedback`: outside any candidate transaction.
+pub(super) fn observe(store: &ContentStore, gated: &Gated, candidates: &[usize], nodes: u32, backend: &str, ns_per_plan: f64) -> StoreResult<()> {
     if nodes == 0 {
         return Ok(());
     }
     for (id, &found) in gated.ids.iter().zip(candidates) {
         let roots = found.max(1) as f64;
-        crate::code_rule_dsl::stats::plans::observe(db, *id, backend, found as f64 / f64::from(nodes), ns_per_plan / roots)?;
+        crate::code_rule_dsl::stats::plans::observe(store, *id, backend, found as f64 / f64::from(nodes), ns_per_plan / roots)?;
     }
     Ok(())
 }

@@ -2173,6 +2173,72 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }
 
+/// A relation whose rows are measured and its columns' distinct values are not holds no more distinct values than
+/// rows: a probe of it by a binding drawn from many values mostly misses. ep2's import edit: a finding of one row,
+/// `p49_ASYNC100($n, _)`, priced as keeping every binding, was probed after four old versions' reads of 4,672 moved
+/// nodes in each of 163 rules' lines (34.8 s of the maintain mode), where read after the delta it drops them.
+/// ep2's `violation` rule reading a finding's place, with the corpus's statistics: a finding of one row, its
+/// columns' distinct values not measured, and `line`'s delta of 4,672 moved rows.
+fn finding_place_model() -> (Arc<Version>, Model) {
+    let p = parse_version(
+        ".decl line(n:number, l:number)\n.decl col(n:number, c:number)\n.decl node(d:number, n:number)\n.decl doc(d:number, p:number)\n\
+         .decl finding(n:number, w:number)\n.decl violation(p:number, l:number, c:number)\n\
+         violation(p, l, c) :- finding(n, w), node(d, n), doc(d, p), line(n, l), col(n, c).\n.output violation\n",
+    )
+    .unwrap();
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    model.stats.nodes = 427_658.0;
+    for (rel, rows, ndv) in [
+        ("line", 556_028.0, vec![556_028.0, 7_379.0]),
+        ("col", 556_028.0, vec![556_028.0, 152.0]),
+        ("node", 427_658.0, vec![300.0, 427_658.0]),
+        ("doc", 300.0, vec![300.0, 273.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), rows / n);
+        }
+    }
+    // The finding: its rows counted, no column's.
+    model.stats.card.insert("finding", 1.0);
+    model.stats.solve(["violation"].into_iter().map(str::to_owned).collect());
+    model.stats.delta_rows.insert("line", 4_672.0);
+    (p, model)
+}
+
+#[test]
+fn a_probe_of_a_relation_measured_by_rows_alone_prices_its_misses() {
+    let (p, model) = finding_place_model();
+    let r = 0usize;
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), Some(3)).unwrap();
+    let order: Vec<String> = order.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
+    assert_eq!(order[..2], ["line", "finding"], "the moved nodes meet the finding before the old versions' reads: {order:?}, work {work}");
+    assert!(work < 10_000.0, "the misses priced: {work}");
+}
+
+/// Decision 0364: a maintain mode's removal or add line is a whole join, its delta probed through its own index
+/// where another atom binds it (`Stats::lead_free`). Its delta leads only where it is the cheapest start: the
+/// one-row finding first, and the moved lines probed by its node, priced at their share of `line`'s rows. Led by
+/// the delta, each of ep2's 163 such lines was priced at its 4,672 rows, and the mode's 1.9 M kept `violation`
+/// derived again, its finding's places making 33 documents. A semi-naive probe's line still starts from its delta.
+#[test]
+fn a_maintain_mode_line_starts_where_it_is_cheapest() {
+    let (p, mut model) = finding_place_model();
+    let r = 0usize;
+    let placed = body::Placed::whole(p.clone());
+    let fields = placed.fields().unwrap();
+    let ((led, led_work, _), _) = model.plan_rule_explained(fields, &body::nth(&p, r), Some(3)).unwrap();
+    assert_eq!(led.first().map(|s| s.at), Some(3), "a probe's line starts from its delta");
+    model.stats.lead_free = true;
+    let ((order, work, _), _) = model.plan_rule_explained(fields, &body::nth(&p, r), Some(3)).unwrap();
+    let names: Vec<String> = order.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
+    assert_eq!(names[..2], ["finding", "line"], "the finding leads, the moved lines probed by its node: {names:?}, work {work}");
+    assert!(work < 10.0 && work < led_work / 100.0, "priced at the delta's share: {work} against {led_work} led by it");
+}
+
 /// A restrictive relation outside the fixpoint has the same containment property as one inside it.
 /// The delta's name domain is wider than the four names the restrictive input can match.
 #[test]
@@ -2530,6 +2596,39 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     assert_eq!(lead(&order).as_deref(), Some("ann_str"), "2,455 fragments, each scanning every string, are searched again");
 }
 
+/// A kept plan's price is a prediction, and its line's run is what it cost: one that ran far over its kept price is
+/// not reused at that price. corpus0 (2026-11-21): `open_tuple`'s seed was kept at 753 rows of work, ran 41 M rows a
+/// stratum, and was reused at 753 by each of its 7 strata, since no size it read moved 2x. `r(x) :- a(x, y), c(y)`,
+/// priced over a search (so decision 0123 §7's misprice, for orders priced under one, does not hold it): its line
+/// ran a million times its price, and the next planning, its sizes moved under 2x, does not take the kept price.
+#[test]
+fn a_kept_plan_whose_line_ran_far_over_its_price_is_not_reused_at_it() {
+    let p = parse(".decl a(x: number, y: number)\n.decl c(y: number)\n.decl r(x: number)\nr(x) :- a(x, y), c(y).\n.output r\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [("a", 1_000_000.0, vec![1_000_000.0, 100_000.0]), ("c", 1_000.0, vec![1_000.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), (rows / n).max(1.0));
+        }
+    }
+    model.stats.nodes = 1_000_000.0;
+    let _plans = KeepPlans::start(None);
+    let placed = body::Placed::whole(p.clone());
+    let fields = placed.fields().unwrap();
+    let own = body::nth(&p, 0);
+    let ((_, work, _), _) = model.plan_rule_reused(fields, &own, None).unwrap();
+    assert!(work > search_rows(&own, None), "priced over a search, so the misprice rule does not apply: {work}");
+    model.ran_as_planned(&own, None, work * 1e6);
+    // `a` grows half again, under the 2x that keeps a price near: a re-pricing prices that, the kept price does not.
+    model.stats.card.insert("a", 1_500_000.0);
+    model.stats.fan.insert(("a", 1), 15.0);
+    let ((_, again, _), _) = model.plan_rule_reused(fields, &own, None).unwrap();
+    assert_ne!(again, work, "a line that ran a million times its kept price is not reused at that price");
+}
+
 /// A recheck (decision 0364 stage 3) runs a rule once per candidate row, its head's variables bound before its first
 /// step: the planner prices its orders from that binding and one row (Q208), and keeps the order apart from the
 /// rule's own. `r(x) :- a(x, y), c(y).`: alone, `c`'s 10 rows lead and probe `a`'s million by `y`; with `x` bound,
@@ -2652,6 +2751,38 @@ fn the_search_prices_the_steps_past_a_bound_head_as_one_witness() {
     assert!(work < 2_000.0, "a row a document through each step: {work} {order:?}");
 }
 
+/// The greedy order is taken without a search only at its price as the walk runs it (`witnessed`), not at one witness
+/// a step. ep2 (corpus0, 300 files) after the hub's hiding bound: `x(d) :- dem(d), nd(d, s), gp(v, s, l), k(d)`, a
+/// document shown where one of its nodes places a guest. The greedy order must join `nd` before `gp` (no cross product
+/// while a connected step remains) and priced `nd` past the bound head at a row a document; but `gp` is empty, so no
+/// node is a witness and the walk read every node of each document: 400,983 rows a chunk in 329 programs' strata, 131 M
+/// rows of the run. Priced so, the greedy order costs more than a search, and the search reads `gp` first.
+#[test]
+fn a_greedy_order_is_taken_at_its_witnessed_price() {
+    let p = parse(".decl dem(d: number)\n.decl nd(d: number, s: number)\n.decl gp(v: number, s: number, l: number)\n.decl k(d: number)\n.decl x(d: number)\nx(d) :- dem(d), nd(d, s), gp(v, s, l), k(d).\n.output x\n").unwrap();
+    let mut model = bare_model(&p);
+    // A later chunk's: 40 documents of 1,742 nodes each, no guest place.
+    for (rel, rows, cols) in [
+        ("dem", 40.0, vec![(40.0, 1.0)]),
+        ("nd", 69_690.0, vec![(40.0, 1_742.25), (69_690.0, 1.0)]),
+        ("gp", 0.0, vec![(1.0, 1.0), (1.0, 1.0), (1.0, 1.0)]),
+        ("k", 40.0, vec![(40.0, 1.0)]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 69_690.0;
+    // Led by the demand's wave, as the stratum's probe of it is planned.
+    let (order, work, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), Some(0)).unwrap();
+    let order: Vec<String> = order.iter().map(|s| lit_at(&p, 0, s.at)).collect();
+    let at = |name: &str| order.iter().position(|l| l.starts_with(name)).unwrap_or(usize::MAX);
+    assert!(at("gp(") < at("nd("), "the empty guest places before the documents' nodes: {order:?} at {work}");
+}
+
+
 /// Decision 0299: `within(n, a)` read from its container yields the container's descendants: the mean size of a
 /// node with children (`Stats::subtree_fan`), not the view's fanout, which is of the lookups made so far.
 #[test]
@@ -2693,6 +2824,34 @@ fn within_read_from_a_part_is_priced_by_its_parents_size() {
     assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
     // The body's descendants, each function's: 10 × 400, not 10 × 5.
     assert!(work >= 10.0 * 400.0, "work {work}: {order:?}");
+}
+
+/// A field's part is priced at the size of the kinds that field's children have (`Fielded::part_size`), not its
+/// parent's: a function's `parameters` are a few nodes, its `body` most of it. Priced at the function's size, the
+/// parameters tied with the function's every node by `nearest`, and `def_outside` (python/names.rerail) read every
+/// function's body to keep the reads in its signature (hogql: 1.27 M rows of work for 0.35 M).
+#[test]
+fn within_read_from_a_fields_part_is_priced_by_that_fields_children() {
+    let rule = |f: &str| {
+        format!(".decl kind(n: number, k: symbol)\n.decl field(p: number, f: symbol, c: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- kind(g, \"fdef\"), field(g, \"{f}\", b), within(n, b).\n.output r\n")
+    };
+    let p = parse(&rule("parameters")).unwrap();
+    let mut model = bare_model(&p);
+    model.stats.size = std::sync::Arc::new(HashMap::from([("fdef".to_owned(), 400.0), ("block".to_owned(), 380.0), ("parameters".to_owned(), 4.0), ("x".to_owned(), 3.0)]));
+    model.stats.kfreq = std::sync::Arc::new([("fdef".to_owned(), 10), ("block".to_owned(), 10), ("parameters".to_owned(), 10), ("x".to_owned(), 2_000)].into_iter().collect());
+    model.stats.nodes = 6_030.0;
+    model.stats.fielded([
+        ("fdef".to_owned(), "block".to_owned(), "body".to_owned(), 10.0),
+        ("fdef".to_owned(), "parameters".to_owned(), "parameters".to_owned(), 10.0),
+    ]);
+    // A function's parameters are their kind's size, its body its block's: not the function's 400 either.
+    assert_eq!(model.stats.fields.part_size("fdef", "parameters", &model.stats.size), Some(4.0));
+    assert_eq!(model.stats.fields.part_size("fdef", "body", &model.stats.size), Some(380.0));
+    assert_eq!(model.stats.fields.part_size("fdef", "name", &model.stats.size), None, "no such edges: the parent's size");
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
+    // Each function's parameters' descendants: 10 × 4, not 10 × 400.
+    assert!(work < 10.0 * 50.0, "work {work}: {order:?}");
 }
 
 /// Decision 0299: a relation of the program's facts alone has its rows, distinct values and counts before it is
@@ -2836,6 +2995,39 @@ fn a_probe_on_several_columns_reads_a_combinations_rows() {
     let (order, work) = priced_first_rule(&model, &p);
     assert_eq!(order, ["d($n, $x)", "w($n, $x, $s)"]);
     assert!((work - (100.0 + 100.0 * 1.0)).abs() < 1e-6, "work {work}");
+}
+
+/// Decision 0299's floor holds where the probed variables can determine each other: bound by one atom, or by atoms
+/// joined to each other. Bound by atoms nothing joins (a cross product), each pair of values is one of the bindings'
+/// product, and most pairs are in no row. corpus0 (2026-11-21): `open_tuple(t) :- kind(t, "tuple"), unparen(c, m),
+/// …, child(t, c, _)`, `$t` bound by `kind` and `$c` by `unparen`, priced `child` at a row a binding, so every one of
+/// the 2.1 M pairs had a witness: the order was priced at 753 rows and read 41 M, 790 of them a witness.
+#[test]
+fn a_probe_on_columns_bound_by_unjoined_atoms_is_not_floored_at_a_combination() {
+    let p = parse_version(".decl k(t: number)\n.decl u(c: number, m: number)\n.decl ch(t: number, c: number, o: number)\n.decl h(t: number)\nh(t) :- k(t), u(c, m), ch(t, c, o).\n.output h\n").unwrap();
+    let mut model = bare_model(&p);
+    for (rel, rows, cols) in [("k", 91.0, vec![(91.0, 1.0)]), ("u", 23_813.0, vec![(23_813.0, 1.0), (23_813.0, 1.0)]), ("ch", 70_000.0, vec![(23_000.0, 3.0), (70_000.0, 1.0), (10.0, 7_000.0)])] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 70_000.0;
+    let placed = body::Placed::whole(p.clone());
+    let pf = placed.fields().unwrap();
+    let b = body::nth(&p, 0);
+    let crossed: Vec<Step> = (0..3).map(|at| Step { at, mode: None }).collect();
+    let explain = explaining(true);
+    let x = model.explain_order(pf, &b, None, &crossed).expect("the order is priced");
+    drop(explain);
+    let (cross_work, rows) = (x.work, x.rows);
+    let pairs = 91.0 * 23_813.0;
+    // At most the least share a probe is priced at (a hundredth of its bindings), not a row each.
+    assert!(rows <= pairs / 100.0 * (1.0 + 1e-9), "few of the {pairs} pairs are rows of `ch`: priced {rows}");
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order[1], "ch($t, $c, $o)", "`ch` probed by `$t`, not a cross product: {order:?} at {work}");
+    assert!(cross_work > 10.0 * work, "the cross product prices over the joined order: {cross_work} against {work}");
 }
 
 /// Decision 0299's combination floor is for columns one reached from another: two columns bound by a cross
@@ -3557,9 +3749,10 @@ fn prepared_plans_are_stored_with_the_image_and_read_back() {
     assert_eq!(prepared::Prepared::of_rows(&v, &rows).as_ref(), Some(&*prep));
 }
 
-/// Decision 0361 step 5, end to end: a policy whose rule reads only shaped relations (`kind`, `child`) runs over
-/// three files through `run_policies`, its strata planned from the prepared plans (the lines taken counted), and its
-/// findings are what the rule says: a statement at a module's top.
+/// Decision 0361 step 5, end to end: a policy whose rule reads only shaped relations (`child`) runs over three files
+/// through `run_policies`, its rule's line planned from the prepared plans (the profile names it taken), and its findings
+/// are what the rule says: a statement at a module's top, the module the node with no parent. No literal tests a
+/// constant on a `values` column (`kind`'s), which Q242 plans at run time and does not prepare.
 #[test]
 fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-plans");
@@ -3571,13 +3764,17 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     std::fs::write(
         &policy,
         ".language python\n.violation hit(at: node) code \"X1\" \"a statement at a module's top\"\n\
-         hit(n) :- kind(n, \"expression_statement\"), child(p, n, _), kind(p, \"module\").\n",
+         hit(n) :- child(p, n, _), !child(_, p, _).\n",
     )
     .unwrap();
-    // The test's run holds the policy run (it joins it), so the plans counted taken are this run's alone.
+    // The test's run holds the policy run (it joins it): the decisions are this run's. They name the line taken, so
+    // a line of another program the run plans (phase 0's) is not counted as the policy's.
     let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    crate::code_rule_dsl::logic::profile::set(true);
+    crate::code_rule_dsl::logic::profile::reset();
     let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
-    let taken = prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed);
+    let taken: Vec<String> = crate::code_rule_dsl::logic::profile::decisions().into_keys().filter(|(t, _)| t == "prepared plans (decision 0361 step 5)").map(|(_, x)| x).collect();
+    crate::code_rule_dsl::logic::profile::set(false);
     drop(run);
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&policy);
@@ -3588,8 +3785,8 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
         .map(|d| (d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start_line"].as_i64()).unwrap_or(-1)))
         .collect();
     hits.sort();
-    assert_eq!(hits, [("a.py".to_owned(), 1), ("c.py".to_owned(), 1), ("c.py".to_owned(), 2)], "{report:#}");
-    assert!(taken > 0, "no line was taken from the prepared plans");
+    assert_eq!(hits, [("a.py".to_owned(), 1), ("b.py".to_owned(), 1), ("c.py".to_owned(), 1), ("c.py".to_owned(), 2)], "{report:#}");
+    assert!(taken.iter().any(|x| x.starts_with("hit: ")), "the policy's line was not taken from the prepared plans: {taken:?}");
 }
 
 /// A version kept with no prepared plan is read back as one (its id alone): else the next process makes it again, and
@@ -3747,6 +3944,36 @@ fn a_probe_bounded_by_comparisons_reads_a_range() {
     assert!(work < 5e6, "a range a pair: {work}");
 }
 
+/// A probe by two columns whose variables atoms joined by nothing bound is not priced at a row a binding (decision
+/// 0299's floor of one combination is for columns one row binds together). `pyflakes`' `open_tuple(t) :- kind(t,
+/// "tuple"), child(t, c, _), unparen(c, m), !py_literal(m)` was planned as the tuples crossed with every `unparen` row,
+/// then `child` by both: priced at a row a pair, every tuple looked witnessed and the tail (Q146) free, and 1,106 tuples
+/// read 47 M rows (ep2's cold run, 32 s of 95). From the tuples, `child` by its parent, then `unparen` by the child.
+#[test]
+fn a_probe_by_two_columns_crossed_in_is_not_a_row_a_pair() {
+    let p = parse(".decl tk(t:number)\n.decl un(c:number,m:number)\n.decl ch(p:number,c:number,i:number)\n.decl lit(m:number)\n.input tk, un, ch, lit\n.decl ot(t:number)\not(t) :- tk(t), un(c,m), !lit(m), ch(t,c,_).\n.output ot\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [
+        ("tk", 198.0, vec![198.0]),
+        ("un", 64_447.0, vec![64_447.0, 64_000.0]),
+        ("ch", 65_741.0, vec![22_000.0, 65_741.0, 50.0]),
+        ("lit", 30_000.0, vec![30_000.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "ot").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<&str> = order.iter().filter_map(|s| b.atom(s.at)).filter(|a| !a.neg()).map(|a| b.rel(a)).collect();
+    assert_eq!(order, ["tk", "ch", "un"], "{order:?}, work={work}");
+}
+
 /// Decision 0361 step 5, derived relations: one the facts do not size is sized from its rules' plans, in dependency
 /// order, so the rules that read it are prepared too. A union's rows are its rules' summed, and only where every rule
 /// is planned (`u` has a branch over `part`, which has no size: what reads it is not prepared); a recursion's are its
@@ -3885,4 +4112,60 @@ fn a_cross_product_past_a_bound_head_is_not_priced_as_one_witness() {
     assert_eq!(order[0], "tgt", "{order:?}, work={work}");
     assert!(first("child") < first("unparen"), "{order:?}, work={work}");
     assert!(work < 1e4, "{order:?}: {work}");
+}
+
+
+/// Past a bound head the walk stops at a binding's first witness (`witnessed`), and reads all of a binding's rows where
+/// none passes. The greedy order priced such a step at one read a binding, as if its first row were a witness, where
+/// the search and a kept order's pricing read every row walked (Q411). Decision 0431 R9's key over a tape value's
+/// findings, `exists_10(d) :- demand(d), node(d, v, …), !placed(v), finding(v)` led from its 40 documents (corpus0,
+/// one pack, 2026-11-21: 69,690 nodes, one finding), was priced at 118 rows of work through `node` by `$d`, under a
+/// search's cost, so taken unsearched: it read each document's every node, 100 k rows a call where the finding's one
+/// row, then `node` by `$d` and `$v`, reads about 80.
+#[test]
+fn a_walk_past_a_bound_head_reads_every_row_where_none_is_a_witness() {
+    let p = parse_version(".decl dm(d: number)\n.decl node(d: number, n: number, k: number, s: number, e: number)\n.decl pl(n: number)\n.decl f(n: number)\n.decl e(d: number)\ne(d) :- dm(d), node(d, v, _, _, _), !pl(v), f(v).\n.output e\n").unwrap();
+    let mut model = bare_model(&p);
+    for (rel, rows, cols) in [("dm", 40.0, vec![(40.0, 1.0)]), ("node", 69_690.0, vec![(40.0, 1_742.0), (69_690.0, 1.0), (81.0, 860.0), (69_690.0, 1.0), (69_690.0, 1.0)]), ("pl", 3_000.0, vec![(3_000.0, 1.0)]), ("f", 1.0, vec![(1.0, 1.0)])] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 69_690.0;
+    let pf = body::Placed::whole(p.clone());
+    let b = body::nth(&p, 0);
+    // Led from the demand, as its seed line is.
+    let ((order, work, _), _) = model.plan_rule_explained(pf.fields().unwrap(), &b, Some(0)).unwrap();
+    let order: Vec<String> = order.iter().map(|s| lit_at(&p, 0, s.at)).collect();
+    let at = |lit: &str| order.iter().position(|o| o.starts_with(lit)).unwrap();
+    assert!(at("f(") < at("node("), "the finding's row first, then `node` by `$d` and `$v`: {order:?} at {work}");
+    assert!(work < 1_000.0, "{order:?} at {work}");
+    // The walk of `node` by `$d` alone, priced as it runs: every node of the 40 documents.
+    let walk: Vec<Step> = (0..4).map(|at| Step { at, mode: None }).collect();
+    let explain = explaining(true);
+    let x = model.explain_order(pf.fields().unwrap(), &b, Some(0), &walk).expect("the order is priced");
+    drop(explain);
+    assert!(x.work > 10.0 * work, "the walk is priced over the finding's row first: {} against {work}", x.work);
+    assert!(x.steps[1].rows >= 69_000.0, "`node` by `$d` makes a document's nodes: {:?}", x.steps.iter().map(|s| (&s.literal, s.rows)).collect::<Vec<_>>());
+}
+
+/// Decision 0592: a relation goes when the last of its readers to finish does, whatever their order; a stratum still
+/// asking holds what it reads until it is not.
+#[test]
+fn a_relation_goes_when_its_last_reader_to_finish_does() {
+    let reads = |rs: &[&str]| rs.iter().map(|r| (*r).to_owned()).collect::<Vec<String>>();
+    // Stratum 0 makes `a` and `b`; 1 and 3 read `a`, 2 reads `b`, 4 reads `c`.
+    let mut rl = ReadsLeft::of(vec![reads(&[]), reads(&["a"]), reads(&["b"]), reads(&["a"]), reads(&["c"])]);
+    // 3's job ends first: `a` has a reader left.
+    assert!(rl.finished([3]).is_empty());
+    // Then 2's: `b` goes, though the loop is at 1.
+    assert_eq!(rl.finished([2]), reads(&["b"]));
+    // The loop passes 1 and 2; 1 is suspended on its requests, so `a` stays.
+    assert!(rl.passed(3, &|j| j == 1).is_empty());
+    // Once 1 is not asking, `a` goes; a stratum finished twice counts once.
+    assert_eq!(rl.passed(3, &|_| false), reads(&["a"]));
+    assert!(rl.finished([2, 3]).is_empty());
+    assert_eq!(rl.passed(5, &|_| false), reads(&["c"]));
 }

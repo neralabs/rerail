@@ -142,7 +142,7 @@ impl Device {
         match self {
             Device::Native(_) => 32,
             Device::Cpu(_) => cpu::simd_width(),
-            Device::OpenCl(_) => cl::simd_width(),
+            Device::OpenCl(d) => d.simd_width(),
         }
     }
 
@@ -192,6 +192,15 @@ impl Device {
             Device::Native(d) => d.max_buffer_length(),
             Device::OpenCl(d) => d.max_alloc(),
             _ => 1 << 40,
+        }
+    }
+
+    /// The alignment, in bytes, of an offset a buffer is bound at: OpenCL's sub-buffer origin
+    /// (`CL_DEVICE_MEM_BASE_ADDR_ALIGN`: 512 on NVIDIA's); 1 elsewhere, where any offset its type aligns binds.
+    pub fn bind_align(&self) -> u64 {
+        match self {
+            Device::OpenCl(d) => d.base_align(),
+            _ => 1,
         }
     }
 

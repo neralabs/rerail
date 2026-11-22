@@ -836,8 +836,6 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl syntax_error(d: int)
 .decl source(d: int, sp: node)
 .decl src_line(d: int, l: int, sp: node)
-.decl src_line_lf(d: int, l: int, sp: node)
-.decl tape_line(d: int, l: int, sp: node)
 .decl line_count(d: int, k: int)
 .decl end_line(n: node, l: int)
 .decl col(n: node, c: int)
@@ -1026,9 +1024,10 @@ pub(in crate::code_rule_dsl) fn overlay(converted: &Arc<Version>, authored: &Arc
     let authored = super::rr::lower::undone_on_request(authored)?;
     // The prelude's declarations the file does not use are core.rerail's, not the file's (`rr::drop_unread_core`).
     let a = super::rr::drop_unread_core(&authored)?;
-    // `.global library …` is what reading the file wrote of the libraries it includes (decision 0091), not a
-    // directive of its own: it goes with the merged program.
-    let (library, settings): (Vec<_>, Vec<_>) = ProgramFields::settings(&*a).into_iter().partition(|(key, _)| key == front::GLOBAL);
+    // `.global library …` is what reading the file wrote of the libraries it includes (decision 0091), and an
+    // `.answer` a library's declaration of a native step (t33 K3): no directive of its own, each goes with the merged
+    // program.
+    let (library, settings): (Vec<_>, Vec<_>) = ProgramFields::settings(&*a).into_iter().partition(|(key, _)| key == front::GLOBAL || key == "answer");
     if !ProgramFields::policies(&*a).is_empty() || !settings.is_empty() {
         return err("`.policy` and setting directives are the policy's, not the overlay's".into());
     }

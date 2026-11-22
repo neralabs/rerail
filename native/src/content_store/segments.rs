@@ -36,6 +36,10 @@ impl SegmentBytes {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+    /// The `len` bytes at `at` of these, read where they lie: one of an entry's parts (a workspace's clause result).
+    pub fn range(&self, at: usize, len: usize) -> Option<SegmentBytes> {
+        (at.checked_add(len)? <= self.len).then(|| SegmentBytes { block: self.block.clone(), at: self.at + at, len })
+    }
     /// `bytes` alone, in a block of their own (a test's entry, an entry not stored).
     pub fn of(bytes: &[u8]) -> SegmentBytes {
         let block = rerail_blocks::alloc::host(kind::JOURNAL, rerail_blocks::journal::reserve_for(1, std::iter::once(bytes.len()), ALIGN).next_multiple_of(rerail_blocks::block::PAGE));

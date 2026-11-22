@@ -73,7 +73,7 @@ pub fn settings(root: &std::path::Path, flags: &[String]) -> Result<Vec<(String,
     settings_with_file(root, flags, true)
 }
 
-pub(crate) fn settings_with_file(root: &std::path::Path, flags: &[String], read_file: bool) -> Result<Vec<(String, String)>, String> {
+pub fn settings_with_file(root: &std::path::Path, flags: &[String], read_file: bool) -> Result<Vec<(String, String)>, String> {
     let file = root.join("rerail.env");
     let text = if read_file {
         match crate::git_workspace::snapshot::read_to_string(&file) {

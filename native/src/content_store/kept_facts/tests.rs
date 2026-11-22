@@ -58,7 +58,7 @@ fn put(rel: &str, part: i64, digest: u64, what: KeptWhat) -> KeptPut {
 }
 
 fn flat(rows: &[i64]) -> KeptWhat {
-    KeptWhat::Flat { widths: vec![8, 8], rows: rows.to_vec(), n: rows.len() / 2, levels: None, given: false }
+    KeptWhat::Picked(Box::new(BlockFlat::of_rows(rows, 2, false)))
 }
 
 /// A store's file with its schema, and a connection to it.
@@ -194,6 +194,20 @@ fn a_waves_kept_puts_are_one_block_per_space() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// Outside a run's waves a job's puts are folded as a wave's are: a key put twice in one `queue_kept` is written once,
+/// its later put what the space keeps. Written as given, the writer refused the job ("put twice"), and a plan compiled
+/// twice before its flush (`stats::plans`) kept nothing.
+#[test]
+fn a_key_put_twice_outside_a_wave_is_written_once() {
+    let (path, c) = store("twice-outside");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    store.queue_kept(SPACE, vec![put("a", 0, 1, flat(&[1, 1])), put("b", 0, 2, flat(&[2, 2])), put("a", 0, 3, flat(&[3, 3]))]);
+    store.written().unwrap();
+    let got: Vec<(String, u64, Vec<Vec<i64>>)> = read(&path, &c).into_iter().map(|(r, _, d, rows)| (r, d, rows)).collect();
+    assert_eq!(got, [("a".into(), 3, vec![vec![3, 3]]), ("b".into(), 2, vec![vec![2, 2]])]);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// A program's reader record put twice in one wave (two of its puts in a space, decision 0401 step 8) is one put
 /// naming both's entries: a record only grows. Gathered as any key, the later replaced the earlier, the kept record
 /// named the last put's entries only, and the warm run after asked the others again and wrote its record (the
@@ -219,6 +233,31 @@ fn a_waves_two_puts_of_a_programs_record_are_one_naming_both() {
     let kept = KeptSpace::open(&path, &SPACE, &rows).unwrap();
     let records: Vec<([u8; 32], Vec<[u8; 32]>)> = kept.view().of(READERS).map(|k| (*k.key.ident, record_idents(&k).collect())).collect();
     assert_eq!(records, [(program, vec![one, two, asked])], "the wave's record: both puts' entries and the one asked");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// A program's reader record put in two waves names both waves' entries: a record only grows (decision 0401 step 8).
+/// A wave's flat rows are written to a file of their own as its gather closes (`KeptStage`); a record staged so was
+/// not joined with the one its chain kept, the newest file's record hid the earlier wave's, and the warm run after
+/// asked those entries again and wrote its record (the corpus's `the_run_after_a_cold_one_writes_nothing`).
+#[test]
+fn a_programs_record_put_in_two_waves_names_both_waves_entries() {
+    let (path, c) = store("two-waves-readers");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let program = [0x44u8; 32];
+    let (one, two) = ([1u8; 32], [2u8; 32]);
+    let entry = |rel: &str, ident: [u8; 32], v: i64| KeptPut { ident, ..put(rel, 0, v as u64, flat(&[v, v])) };
+    let log = std::sync::Arc::new(ReaderLog::new(program));
+    for (rel, ident, v) in [("a", one, 1), ("b", two, 2)] {
+        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptReader(Some(std::sync::Arc::clone(&log))));
+        let _waves = crate::content_store::write_back::run_waves();
+        store.queue_kept(SPACE, vec![entry(rel, ident, v)]);
+    }
+    store.written().unwrap();
+    let rows = chain_rows(&c, &SPACE).unwrap();
+    let kept = KeptSpace::open(&path, &SPACE, &rows).unwrap();
+    let records: Vec<([u8; 32], Vec<[u8; 32]>)> = kept.view().of(READERS).map(|k| (*k.key.ident, record_idents(&k).collect())).collect();
+    assert_eq!(records, [(program, vec![one, two])], "the record after two waves: each wave's entry");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -255,6 +294,31 @@ fn a_waves_puts_are_one_file_a_space() {
     assert_eq!(q, Some(vec![("r".to_owned(), 77)]));
     assert_eq!(files(&path).len(), 1, "one file for the space's wave: {:?}", files(&path));
     assert_eq!(chain_rows(&c, &OTHER).unwrap().len(), 1, "the other space written in the same job");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// A program's puts queued in one wave each name their identities in its reader record; the wave's file holds one
+/// record of them all (decision 0401 step 8). The wave's last record, alone, was the program's, and its next run asked
+/// the others' entries again and wrote its record: a warm run's write.
+#[test]
+fn a_waves_reader_records_of_one_program_are_one() {
+    let (path, c) = store("wave-readers");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let program = [0x33u8; 32];
+    let (first, second, third) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+    let entry = |rel: &str, ident: [u8; 32], v: i64| KeptPut { ident, ..put(rel, 0, v as u64, flat(&[v, v])) };
+    {
+        let log = std::sync::Arc::new(ReaderLog::new(program));
+        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptReader(Some(std::sync::Arc::clone(&log))));
+        let _waves = crate::content_store::write_back::run_waves();
+        store.queue_kept(SPACE, vec![entry("a", first, 1)]);
+        store.queue_kept(SPACE, vec![entry("b", second, 2), entry("c", third, 3)]);
+    }
+    store.written().unwrap();
+    let rows = chain_rows(&c, &SPACE).unwrap();
+    let kept = KeptSpace::open(&path, &SPACE, &rows).unwrap();
+    let records: Vec<([u8; 32], Vec<[u8; 32]>)> = kept.view().of(READERS).map(|k| (*k.key.ident, record_idents(&k).collect())).collect();
+    assert_eq!(records, [(program, vec![first, second, third])], "one record, naming every put of the wave");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -304,12 +368,15 @@ fn the_kept_relations_read_through_sql_equal_their_entries() {
 #[test]
 fn levels_follow_their_rows_and_an_entry_put_as_given_keeps_its_order() {
     let (path, c) = store("levels-given");
-    let mut with_levels = put("p", 0, 1, flat(&[3, 30, 1, 10]));
-    if let KeptWhat::Flat { levels, .. } = &mut with_levels.what {
-        *levels = Some(vec![5, 6]);
+    let mut leveled = BlockFlat::with_levels(2, 2, false, true);
+    for (r, (row, level)) in [([3, 30], 5), ([1, 10], 6)].into_iter().enumerate() {
+        leveled.put(r, 0, row[0]);
+        leveled.put(r, 1, row[1]);
+        leveled.put_level(r, level);
     }
+    let with_levels = put("p", 0, 1, KeptWhat::Picked(Box::new(leveled)));
     let granule_rows = vec![9, 2, 8, 1, 9, 2];
-    write(&path, &c, vec![with_levels, put("g", 0, 0, KeptWhat::Flat { widths: vec![8, 8], rows: granule_rows.clone(), n: 3, levels: None, given: true })]);
+    write(&path, &c, vec![with_levels, put("g", 0, 0, KeptWhat::Picked(Box::new(BlockFlat::of_rows(&granule_rows, 2, true))))]);
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
     let p = view.get(&FactKey { rel: "p", ident: &ID, part: 0 }).unwrap();
@@ -345,7 +412,7 @@ fn kept_facts_are_a_virtual_table() {
     let view = space.view();
     let p = view.all().find(|k| k.key.rel == "p").unwrap();
     assert!(p.rows.leads(0) && !p.rows.leads(1), "a canonical entry leads by its first column");
-    write(&path, &c, vec![put("r", 0, 5, KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 0, 1, 0], n: 2, levels: None, given: true })]);
+    write(&path, &c, vec![put("r", 0, 5, KeptWhat::Picked(Box::new(BlockFlat::of_rows(&[2, 0, 1, 0], 2, true))))]);
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
     let r = view.all().find(|k| k.key.rel == "r").unwrap();
@@ -474,4 +541,76 @@ fn collection_rewrites_without_dead_entries() {
     assert_eq!(store.collect_kept_facts().unwrap(), 1);
     assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["l"]);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// t33 step 3: a partition kept under a holder (`HOLDER`, a source's SHA-256 key) lives as long as the store keeps that
+/// source, as the facts memo's rows did; a partition with no holder, and the space's other partitions, stay.
+#[test]
+fn a_held_partition_goes_with_its_holder() {
+    let (path, c) = store("holder");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let text = b"rerail/holder-test\0anchor";
+    let key = crate::content_store::HashKey::sha256(text);
+    let source = store.put_source_hashed(text, key, &[]).unwrap();
+    let holder = key.sha256_bytes().unwrap();
+    store.queue_kept(SPACE, vec![put("held", 7, 1, flat(&[1, 1])), holder_put(7, holder, None), put("free", 8, 2, flat(&[2, 2]))]);
+    store.written().unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 0, "its holder kept: nothing to collect");
+    c.execute("DELETE FROM source_objects WHERE source_id=?1", [source.raw()]).unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 1, "the space rewritten");
+    assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["free"], "the held partition and its holder gone");
+    assert_eq!(store.collect_kept_facts().unwrap(), 0);
+    // A partition held by a plan goes once its plan is dead, though its source stays.
+    let plan = [0x33u8; 32];
+    let kept = store.put_source_hashed(text, key, &[]).unwrap();
+    store.queue_kept(SPACE, vec![put("planned", 9, 3, flat(&[3, 3])), holder_put(9, holder, Some(plan))]);
+    store.written().unwrap();
+    c.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1)", [&plan[..]]).unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 0, "its plan live, its source kept");
+    c.execute("UPDATE corpus_plans SET live=0", []).unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 1);
+    assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["free"], "the plan's partition gone");
+    assert!(store.source_by_hash(key).unwrap() == Some(kept), "its source stays");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// t33 step 3: a held partition is put whole (`HOLDER`): its user writes an entry without reading what it was (a run
+/// writes inside its waves, decision 0104), and the writer drops the relations the partition kept that the new entry
+/// has not, beside the space's other partitions, which stay.
+#[test]
+fn a_held_partition_is_put_whole() {
+    let (path, c) = store("whole");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let holder = [0x44u8; 32];
+    store.queue_kept(SPACE, vec![put("a", 7, 1, flat(&[1, 1])), put("b", 7, 2, flat(&[2, 2])), holder_put(7, holder, None), put("b", 8, 3, flat(&[3, 3]))]);
+    store.written().unwrap();
+    let parts = |path: &Path, c: &Connection| read(path, c).iter().map(|e| (e.0.clone(), e.1)).collect::<Vec<_>>();
+    let named = |v: &[(&str, i64)]| v.iter().map(|(r, p)| (r.to_string(), *p)).collect::<Vec<_>>();
+    assert_eq!(parts(&path, &c), named(&[("\0holder", 7), ("a", 7), ("b", 7), ("b", 8)]));
+    store.queue_kept(SPACE, vec![put("a", 7, 4, flat(&[4, 4])), holder_put(7, holder, None)]);
+    store.written().unwrap();
+    assert_eq!(parts(&path, &c), named(&[("\0holder", 7), ("a", 7), ("b", 8)]), "partition 7's `b` gone, partition 8's kept");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// Rows this process holds of a space are kept current by its own writer alone: another writer (another shared
+/// object's in this process, or another process; here a connection of its own) commits, and its next write sweeps the
+/// files the held rows name. Opened by those rows, the space is the store's last commit's, and the rows held are its.
+#[test]
+fn rows_another_writer_replaced_open_as_the_last_commit() {
+    let (path, c) = store("foreign-writer");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    write(&path, &c, vec![put("a", 0, 1, flat(&[1, 1]))]);
+    store.preload_kept_state().unwrap();
+    let held = store.kept_row(&SPACE).unwrap().expect("held");
+    write(&path, &c, vec![put("b", 0, 2, flat(&[2, 2]))]);
+    write(&path, &c, vec![put("c", 0, 3, flat(&[3, 3]))]);
+    let now = chain_rows(&c, &SPACE).unwrap();
+    assert!(held.iter().any(|(_, name, _)| !space_dir(&path, &SPACE).join(name).exists()), "the held rows name a file the foreign write swept: {held:?}");
+    assert_eq!(store.kept_row(&SPACE).unwrap().as_ref(), Some(&held), "the process still holds the rows it read");
+    let (opened, kept) = store.open_kept(&SPACE, held).unwrap().expect("kept");
+    assert_eq!(opened, now, "opened by the last commit's rows");
+    let rels: Vec<String> = kept.view().all().map(|k| k.key.rel.to_owned()).collect();
+    assert_eq!(rels, ["a", "b", "c"], "every entry the last commit keeps");
+    assert_eq!(store.kept_row(&SPACE).unwrap(), Some(now), "the rows held are the last commit's");
 }

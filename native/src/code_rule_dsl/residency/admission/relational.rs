@@ -13,12 +13,13 @@ use rusqlite::hooks::Authorization;
 pub mod authorizer;
 pub mod compile;
 pub mod pool;
-pub mod storage;
 
 pub mod admission;
 pub mod anchors;
 pub mod batch;
-pub mod database;
+// cratify: the plan types, the database and its storage are rerail-rules-base's (`base.rs`, `database.rs`,
+// `storage.rs`), re-exported here
+pub use rerail_rules_base::code_rule_dsl::residency::admission::relational::*;
 use database::Database;
 pub mod deferred;
 pub mod forest;
@@ -41,23 +42,6 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-#[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Stage {
-    pub(in crate::code_rule_dsl) name: String,
-    pub(in crate::code_rule_dsl) query: String,
-    pub(in crate::code_rule_dsl) indexes: Vec<Vec<String>>,
-    pub(in crate::code_rule_dsl) reachability: Option<Reachability>,
-    pub(in crate::code_rule_dsl) python_ast: Option<ast_stage::Spec>,
-    pub(in crate::code_rule_dsl) deferred: BTreeMap<String, String>,
-    pub(in crate::code_rule_dsl) stored_columns: Vec<String>,
-    pub(in crate::code_rule_dsl) output_columns: Vec<String>,
-    pub(in crate::code_rule_dsl) declaration: Arc<str>,
-}
-#[derive(Clone)]
-pub(in crate::code_rule_dsl) struct References {
-    pub(in crate::code_rule_dsl) query: crate::code_rule_dsl::model::Query,
-    pub(in crate::code_rule_dsl) key: crate::code_rule_dsl::calls::contracts::Key,
-}
 
 /// Source bytes per syntax node, at most: Python averages 7.9 bytes a token over the data-layer
 /// corpus (9,021 files), and a tree has more nodes than tokens.
@@ -72,22 +56,6 @@ pub(in crate::code_rule_dsl) const REFERENCE_FIELDS: &[&str] = &[
     "target_class",
 ];
 
-#[derive(Clone)]
-pub struct Plan {
-    pub(in crate::code_rule_dsl) require_nonempty: Option<usize>,
-    pub(in crate::code_rule_dsl) syntax: Option<Arc<syntax::Spec>>,
-    pub(in crate::code_rule_dsl) per_file: bool,
-    pub(in crate::code_rule_dsl) references: Option<References>,
-    pub(in crate::code_rule_dsl) locations: BTreeSet<String>,
-    pub inputs: Vec<(String, FactQuery)>,
-    pub(in crate::code_rule_dsl) stages: Vec<Stage>,
-    pub(in crate::code_rule_dsl) query: String,
-    pub(in crate::code_rule_dsl) key: Vec<String>,
-    pub(in crate::code_rule_dsl) code: Option<String>,
-    pub(in crate::code_rule_dsl) message: Option<String>,
-    pub(in crate::code_rule_dsl) last_uses: BTreeMap<String, usize>,
-    pub(in crate::code_rule_dsl) reads_source: bool,
-}
 
 pub(in crate::code_rule_dsl) fn identifier(value: &str) -> bool {
     !value.is_empty()
@@ -1059,7 +1027,7 @@ impl Drop for Session<'_> {
     }
 }
 
-pub(in crate::code_rule_dsl) fn evaluate(
+pub fn evaluate(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     _plan: &Plan,
@@ -1083,6 +1051,45 @@ pub(in crate::code_rule_dsl) fn evaluate(
     .unwrap_or_default()
 }
 
+/// The admission, as boot registers it (`ADMISSION`): the compiler's and the evaluator's calls, in the crate below
+/// (rerail-rules-base), reach it there.
+pub struct Relational;
+
+impl Admission for Relational {
+    fn compile(
+        &self,
+        value: &Value,
+        path: &str,
+        capabilities: &crate::code_rule_dsl::model::Capabilities,
+        defines: &crate::code_rule_dsl::compile::define::Defines,
+        required_ast: &mut BTreeSet<(String, String)>,
+    ) -> Result<Plan> {
+        compile::compile(value, path, capabilities, defines, required_ast)
+    }
+    fn evaluate(&self, jobs: Vec<ClauseRun<'_>>) -> Vec<Evaluation> {
+        evaluate_batch(
+            jobs.into_iter()
+                .map(|run| Job {
+                    code_rule: run.code_rule,
+                    clause: run.clause,
+                    inputs: Inputs {
+                        gate: None,
+                        file_local: false,
+                        read_bytes: 0,
+                        rows: None,
+                        facts: Vec::new(),
+                        snapshot: run.snapshot,
+                    },
+                    budget: run.budget,
+                })
+                .collect(),
+        )
+    }
+    fn syntax_pool(&self) -> Box<dyn std::any::Any> {
+        Box::new(syntax::Pool::install())
+    }
+}
+
 /// SQL remains the consumer; capacity partitions bound suspended sessions.
 pub(in crate::code_rule_dsl) fn evaluate_batch(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
     use crate::code_rule_dsl::phase_clock;
@@ -1090,7 +1097,7 @@ pub(in crate::code_rule_dsl) fn evaluate_batch(jobs: Vec<Job<'_>>) -> Vec<Evalua
 }
 
 /// Restore documents only when the scheduler prepares this consumer.
-pub(in crate::code_rule_dsl) fn evaluate_prepared(
+pub fn evaluate_prepared(
     jobs: Vec<Job<'_>>,
     prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause, Preparation) -> Result<()>,
 ) -> Vec<Evaluation> {

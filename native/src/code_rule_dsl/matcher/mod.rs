@@ -1,20 +1,9 @@
 pub mod analysis;
 pub mod anchors;
-/// P's anchors module and SQL anchor engine as copied (2814d875), test-only (O20).
-#[cfg(any(test, feature = "test-hooks"))]
-#[allow(dead_code, unused_imports)]
-pub mod p_anchors;
-// P's anchor corpus at P's paths, for P's relational workspace code and the `p-anchor-corpus` path.
-#[cfg(any(test, feature = "test-hooks"))]
-pub use p_anchors::sql::{Corpus, CorpusSlot};
-#[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
-pub use p_anchors::sql::{anchor_plans, anchor_plans_for_file};
-pub mod arguments;
-/// D's anchors module and SQL anchor engine as copied (bb79b40a), test-only: the closure of D's
-/// plan-input statistics (O19).
-#[cfg(any(test, feature = "test-hooks"))]
-#[allow(dead_code, unused_imports)]
-pub mod d_anchors;
+// cratify: `p_anchors` is rerail-rules' (it mounts it: it reads the model and the admission's database), with
+// its corpus's re-exports
+pub use rerail_adapters::code_rule_dsl::matcher::arguments;
+// cratify: `d_anchors` is rerail-rules' (it mounts it: it reads the model and the admission's database)
 // cratify: `arguments_sql` is rerail-lang-sql's (it mounts it)
 pub mod binding;
 pub mod binds;
@@ -37,9 +26,10 @@ pub mod nth_child;
 pub mod parse;
 // cratify: `python_facts` is rerail-lang-python's (it mounts it)
 pub mod relation;
-pub mod resolve;
+pub use rerail_adapters::code_rule_dsl::matcher::resolve;
 pub mod run;
 pub mod semantic;
+pub use rerail_adapters::code_rule_dsl::matcher::steps;
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 pub mod transform;
 pub mod util;
@@ -134,10 +124,10 @@ pub struct GrammarMatcher {
     /// Keeps the utility tables of the file's other document alive (`embedded`, `host`), as
     /// `utils` does the clause's own: their rules reach them only weakly (`UtilRef`).
     #[allow(dead_code)]
-    pub(super) other_utils: Vec<Arc<UtilTable>>,
+    pub other_utils: Vec<Arc<UtilTable>>,
     /// Whether the rule crosses to the file's other document (`embedded`, `host`): the syntax
     /// errors of every document of the file then bear on it, not its own document's alone.
-    pub(super) crosses: bool,
+    pub crosses: bool,
     pub matcher: AstMatcher,
     pub anchors: Arc<anchors::AnchorPlan>,
     /// What a file must contain for the matcher to match in it (`RequiredText`); `None` where
@@ -150,7 +140,7 @@ pub struct GrammarMatcher {
     pub invalid_syntax: Option<bool>,
     /// Whether the matcher or a utility it calls holds an `importTarget` term
     /// (`reads_import_targets`), worked out once when it is compiled.
-    pub(super) import_target: bool,
+    pub import_target: bool,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
     /// and lets violation compilation walk them.
     pub utils: Arc<UtilTable>,
@@ -164,18 +154,18 @@ pub struct GrammarMatcher {
     pub applies: bool,
     /// The source types `when.sourceType` lets a file have where the query leaves `sourceType`
     /// to each file (`SourceType::of_file`); a file of another matches nothing (`run_clause`).
-    pub(super) source_types: Option<Vec<SourceType>>,
+    pub source_types: Option<Vec<SourceType>>,
     /// Whether `when.sourceType` reads each file's module system by its extension and package
     /// type (`languageOptions.moduleSystem: "package-type"`, `SourceType::by_package_type`), as the
     /// query's scope does, rather than its own.
-    pub(super) package_type_gate: bool,
+    pub package_type_gate: bool,
     /// Whether the matcher can reach an unknown verdict; see `reads_values`.
     pub three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.
     pub transform: Option<Arc<Transform>>,
     /// The query's content digest and this matcher's dialect: what its lowered fact labels are
     /// keyed by (`lower::Fact::key`).
-    pub(super) source: ([u8; 32], GrammarDialect),
+    pub source: ([u8; 32], GrammarDialect),
 }
 
 impl GrammarMatcher {
@@ -202,7 +192,7 @@ impl GrammarMatcher {
 impl GrammarMatcher {
     /// The kinds of the roots its witnesses may have, as codes of the file's own tree (`None`
     /// where any, or where it reads an embedded program, whose codes are its own grammar's).
-    pub(super) fn host_root_kinds(&self) -> Option<&std::collections::BTreeSet<u16>> {
+    pub fn host_root_kinds(&self) -> Option<&std::collections::BTreeSet<u16>> {
         self.document
             .is_none()
             .then(|| self.anchors.root_kinds())
@@ -216,11 +206,24 @@ impl GrammarMatcher {
     /// Whether a file whose own source type is `file` may get this matcher: one its
     /// `when.sourceType` lists, or, while the file's syntax is unread (`None`), a module or
     /// CommonJS listed.
-    pub(super) fn may_apply_to(&self, file: Option<SourceType>) -> bool {
+    pub fn may_apply_to(&self, file: Option<SourceType>) -> bool {
         self.source_types.as_ref().is_none_or(|types| match file {
             Some(file) => types.contains(&file),
             None => types.contains(&SourceType::Module) || types.contains(&SourceType::CommonJs),
         })
+    }
+
+    /// Whether this matcher's file gates (its `when.sourceType`, its `file.jsxRuntime`) admit the file `gates`
+    /// reads, as `run_clause` reads them. A file they exclude matches nothing, so its syntax errors cannot leave the
+    /// clause's result incomplete.
+    pub fn admits<D: Doc>(&self, gates: &FileGates<'_, '_, D>) -> bool {
+        let source_type = self.source_types.as_ref().map(|_| gates.source_type(self.package_type_gate));
+        self.may_apply_to(source_type)
+            && self
+                .file
+                .as_ref()
+                .and_then(|condition| condition.jsx_runtime.as_ref())
+                .is_none_or(|runtimes| runtimes.contains(gates.jsx_runtime()))
     }
 
     /// This matcher's rule (with its constraints) at one root of the clause `begin_clause` set up:
@@ -341,7 +344,7 @@ pub struct Supertype {
 }
 
 impl Supertype {
-    pub(super) fn new(class: u16, language: GrammarDialect) -> Self {
+    pub fn new(class: u16, language: GrammarDialect) -> Self {
         Self {
             class,
             kinds: Arc::new(language.supertype_kinds(class)),
@@ -588,7 +591,7 @@ impl AstMatcher {
 
     /// Whether the rule calls a utility (whose meaning is its scope's) anywhere; `true` where it
     /// cannot tell (a semantic predicate, a count, a comparison, a constrained rule).
-    pub(in crate::code_rule_dsl) fn calls_util(&self) -> bool {
+    pub fn calls_util(&self) -> bool {
         let stop = |stop: &relation::StopBy| match stop {
             relation::StopBy::Rule(rule) => rule.calls_util(),
             _ => false,
@@ -917,48 +920,7 @@ pub fn clauses_begun() -> u64 {
     CLAUSES_BEGUN.get()
 }
 
-thread_local! {
-    static FILL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// Runs `fill`, which fills a cache later evaluations read for free (a file's scope table and
-/// usage, a parent's counted siblings), counting the steps it spends apart
-/// (`fill_steps`): a memoized verdict whose computation filled one replays only the rest, which
-/// is what computing it again would spend.
-pub fn filling<T>(fill: impl FnOnce() -> T) -> T {
-    let (steps, fills) = (UTIL_STEPS_LEFT.get(), FILL_STEPS.get());
-    let result = fill();
-    // Fills within this one are part of it.
-    FILL_STEPS.set(fills + steps.saturating_sub(UTIL_STEPS_LEFT.get()));
-    result
-}
-
-/// Counts `steps` a cache fill spent directly (`filling`).
-fn filled(steps: usize) {
-    FILL_STEPS.set(FILL_STEPS.get() + steps);
-}
-
-/// Steps cache fills have spent on this thread (`filling`).
-pub fn fill_steps() -> usize {
-    FILL_STEPS.get()
-}
-
-thread_local! {
-    static CLAUSE_STATE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// Notes that the clause in progress read state kept for it alone: a cache keyed by one of its
-/// terms (`nthChild`'s counted siblings, a same-key walk's classes) or a file table charged to
-/// each clause once (scopes, usage, PHP names). What a computation spends then depends on the
-/// clause, so its verdict is that clause's alone (`memo`).
-pub fn read_clause_state() {
-    CLAUSE_STATE_READS.set(CLAUSE_STATE_READS.get() + 1);
-}
-
-/// How many reads of a clause's own state this thread has noted (`read_clause_state`).
-pub fn clause_state_reads() -> u64 {
-    CLAUSE_STATE_READS.get()
-}
+pub use steps::{clause_state_reads, fill_steps, filling, read_clause_state};
 
 /// Ends `begin_clause`: the work left, and the limit a term hit, if any.
 pub fn end_clause() -> (usize, Option<UtilLimit>) {
@@ -975,15 +937,15 @@ fn util_stack_exceeded() -> bool {
 
 /// A `violation.each` enumeration at one root (`each::Enumeration`): while it lives, relations
 /// and `any` pass over candidates binding the capture to a recorded range.
-pub(super) struct EachScope(each::Enumeration);
+pub struct EachScope(each::Enumeration);
 
 impl EachScope {
-    pub(super) fn start(name: &str) -> Self {
+    pub fn start(name: &str) -> Self {
         Self(each::Enumeration::start(name))
     }
 
     /// Records a match's binding of `name`; false where it binds nothing new.
-    fn record<D: Doc>(&self, env: &MetaVarEnv<'_, D>, name: &str) -> bool {
+    pub fn record<D: Doc>(&self, env: &MetaVarEnv<'_, D>, name: &str) -> bool {
         self.0.record(each::binding_range(env, name))
     }
 }

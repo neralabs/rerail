@@ -7,17 +7,17 @@ use crate::git_workspace::snapshot::{self, RawTreeEntry, storage};
 use gix::bstr::ByteSlice as _;
 use std::path::{Path, PathBuf};
 
-pub(super) const REVISION: &str = "git_view_revision_request";
-pub(super) const REPO_REVISION: &str = "git_revision_request";
-pub(super) const OBJECT: &str = "git_object_request";
-pub(super) const INVENTORY_CHILD: &str = "git_inventory_child_request";
+pub const REVISION: &str = "git_view_revision_request";
+pub const REPO_REVISION: &str = "git_revision_request";
+pub const OBJECT: &str = "git_object_request";
+pub const INVENTORY_CHILD: &str = "git_inventory_child_request";
 
 // The inputs' names are the planner's (`plan::phased`), which typing reads.
 use crate::code_rule_dsl::logic::plan::phased::git::{COMMIT, LOCATION, REPOSITORY, ROOT, SELECTION, SOURCE_BLOB, TREE, VIEW};
 pub(super) use crate::code_rule_dsl::logic::plan::phased::git::{INPUTS, SELECTED_DIRECTORY};
 
 #[derive(Default)]
-pub(super) struct Git {
+pub struct Git {
     repository: Option<(snapshot::Identity, gix::Repository)>,
     tree: Option<gix::ObjectId>,
     commit: Option<gix::ObjectId>,
@@ -27,7 +27,7 @@ pub(super) struct Git {
 }
 
 /// A decoded object's records share one acquisition. The library gives them their public schemas.
-pub(super) struct Record {
+pub struct Record {
     pub field: &'static str,
     pub position: i64,
     pub first: String,
@@ -50,7 +50,7 @@ impl Record {
 }
 
 impl Git {
-    pub(super) fn new(root: &Path) -> Self {
+    pub fn new(root: &Path) -> Self {
         let (repo, tree, commit) = match crate::git_workspace::snapshot::repository(root) {
             Some((repo, _, tree, commit)) => (Some(repo), Some(tree), commit),
             None => (crate::git_access::opener::open(root).ok().map(snapshot::physical_objects), None, None),
@@ -224,7 +224,7 @@ impl Git {
     }
 
     /// Presence is a separate observation. Re-observe former misses and open the new ref each run.
-    pub(super) fn observation(&self, operation: &str, key: &str, arg: &str) -> Option<String> {
+    pub fn observation(&self, operation: &str, key: &str, arg: &str) -> Option<String> {
         match operation {
             REVISION | REPO_REVISION => {
                 let (id, status) = self.resolve(operation, key, arg);
@@ -321,7 +321,7 @@ pub(super) fn observation(program: &(impl ProgramFields + ?Sized), root: &Path) 
     })
 }
 
-pub(super) fn inputs(
+pub fn inputs(
     program: &(impl ProgramFields + ?Sized), root: &Path, options: &serde_json::Value, consulted: &mut Vec<(String, String, String)>,
 ) -> std::collections::BTreeMap<String, Vec<Vec<Value>>> {
     let mut inputs = std::collections::BTreeMap::new();
@@ -406,16 +406,27 @@ struct SourceObservation {
 
 type SourceChecks = (std::collections::HashMap<String, SourceObservation>, std::collections::HashMap<String, String>);
 
+// The Git programs the engine runs. Each includes the library's modules by name, as a policy does (the library ships
+// beside the addon, `source_tree::rule_library`): a module pasted as text and also included by path, through another
+// module's include, is read twice.
+/// The selected sources' blobs checked against the pinned inventory (`source_checks`).
+pub const SOURCE_CHECKS: &str =
+    concat!("#include \"core.rerail\"\n#include \"git.rerail\"\n", include_str!("../../../typing/programs/git-source-objects.rerail"));
+/// A root's pinned tree, its settings and ignore files read from it (`prime_root`).
+pub const ROOT_TREE: &str =
+    concat!("#include \"core.rerail\"\n#include \"git.rerail\"\n", include_str!("../../../typing/programs/git-root-tree.rerail"));
+/// The filtered tree walk and each file's language (`inventory`).
+pub const INVENTORY: &str = concat!(
+    "#include \"core.rerail\"\n#include \"git.rerail\"\n#include \"source-language.rerail\"\n#include \"git/selected-tree.rerail\"\n",
+    include_str!("../../../typing/programs/git-inventory.rerail"),
+);
+
 fn source_checks(root: &Path, paths: &[String]) -> super::Result<SourceChecks> {
     use crate::code_rule_dsl::logic::plan::output::{Outputs, Value as Cell};
     if paths.is_empty() {
         return Ok(Default::default());
     }
-    let program = concat!(
-        include_str!("../../../../../../docs/rule-syntax/lib/core.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/git.rerail"), "\n",
-        include_str!("../../../typing/programs/git-source-objects.rerail"),
-    );
+    let program = SOURCE_CHECKS;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [], "gitSourcePaths": paths });
     let image = super::run_fact_image(program, root, &options)?;
     let outputs = Outputs::of(&image).map_err(super::Error::Plan)?;
@@ -445,7 +456,7 @@ pub(super) fn check_source_digests(root: &Path, store: &Path, paths: &[String], 
     Ok(checked.into_iter().map(|(path, entry)| (path, crate::content_store::HashKey::from_sha256_digest(entry.digest))).collect())
 }
 
-pub(super) fn verify_sources(
+pub fn verify_sources(
     root: &Path,
     paths: &mut Vec<String>,
     consulted: &mut Vec<(String, String, String)>,
@@ -488,7 +499,7 @@ pub(super) fn still(root: &Path, input: &str, previous: &str) -> bool {
 
 /// An output whose dependencies are entirely Git inputs and ordinary rules
 /// can run before any source inventory is available.
-pub(super) fn metadata_only(program: &Version) -> bool {
+pub fn metadata_only(program: &Version) -> bool {
     let needed = super::world::needed(program);
     if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str()) || super::analysis_history::is_input(rel) || rel == super::analysis_history::ANSWER || rel == super::git_content::ANSWER) {
         return false;
@@ -512,20 +523,17 @@ pub(super) fn metadata_only(program: &Version) -> bool {
     })
 }
 
-/// Restore the root entries before the host looks up Git-backed control files.
-pub(super) fn prime_root(root: &Path) -> super::Result<()> {
+/// Restore the root entries before the host looks up Git-backed control files. The memo plans its run recorded
+/// manifests of; none when the root was already observed.
+pub fn prime_root(root: &Path) -> super::Result<Vec<[u8; 32]>> {
     use crate::code_rule_dsl::logic::plan::output::{Outputs, Value as Cell};
     let reads = super::ThreadStore::git_reads();
     if !snapshot::contains(root) || reads.as_deref().is_some_and(|reads| snapshot::root_observed(root, reads)) {
-        return Ok(());
+        return Ok(Vec::new());
     }
-    let program = concat!(
-        include_str!("../../../../../../docs/rule-syntax/lib/core.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/git.rerail"), "\n",
-        include_str!("../../../typing/programs/git-root-tree.rerail"),
-    );
+    let program = ROOT_TREE;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
-    let image = super::run_fact_image(program, root, &options)?;
+    let (image, plans) = super::run_fact_image_planned(program, root, &options)?;
     let outputs = Outputs::of(&image).map_err(super::Error::Plan)?;
     if let Some(row) = outputs.rows("git_root_tree_error").first() {
         return Err(super::Error::Plan(format!("cannot inventory Git tree {}: {}", row.get(0).text().unwrap_or(""), row.get(1).text().unwrap_or("unknown error"))));
@@ -544,7 +552,7 @@ pub(super) fn prime_root(root: &Path) -> super::Result<()> {
         }
     }
     snapshot::remember_root(root, stamp.to_owned(), entries, reads.as_deref());
-    Ok(())
+    Ok(plans)
 }
 
 /// Materialize the placements from the source phase. Rust only adapts the rows to
@@ -556,20 +564,13 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>, own
     use std::collections::BTreeMap;
 
     let _store = store.map(|store| super::ThreadStore::select(store, owner.map(|o| (root.to_owned(), o.clone()))));
-    prime_root(root).map_err(|error| match error {
+    let primed = prime_root(root).map_err(|error| match error {
         super::Error::Cache(error) => InventoryError::Cache(error),
         other => InventoryError::Source(other.to_string()),
     })?;
-    // Installed addons have no source checkout. Embed the same library used by .rerail policies.
-    let program = concat!(
-        include_str!("../../../../../../docs/rule-syntax/lib/core.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/git.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/source-language.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/git/selected-tree.rerail"), "\n",
-        include_str!("../../../typing/programs/git-inventory.rerail"),
-    );
+    let program = INVENTORY;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
-    let image = super::run_fact_image(program, root, &options).map_err(|error| match error {
+    let (image, mut plans) = super::run_fact_image_planned(program, root, &options).map_err(|error| match error {
         super::Error::Cache(error) => InventoryError::Cache(error),
         other => InventoryError::Source(other.to_string()),
     })?;
@@ -637,5 +638,6 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>, own
     }).collect::<Result<_, String>>()?;
     let selection = outputs.rows("git_inventory_selection").first()
         .and_then(|row| row.get(0).text()).ok_or_else(invalid)?.to_owned();
-    Ok(snapshot::Inventory { files, trees, languages, invalid_paths, tree_failures, tree_observations, selection })
+    plans.extend(primed);
+    Ok(snapshot::Inventory { files, trees, languages, invalid_paths, tree_failures, tree_observations, selection, plans, manifest_root: super::manifest_root(root) })
 }

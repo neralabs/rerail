@@ -66,6 +66,12 @@ pub fn kernel(source: &str, name: &str, constant: Option<u32>) -> Kernel {
     rerail_accel::gpu::kernels::function(source, name, constant)
 }
 
+/// The kernels `names` of `source` (UKL), with `constant` as [`kernel`]: kernels used together, made together (one
+/// program on OpenCL).
+pub fn kernels(source: &str, names: &[&str], constant: Option<u32>) -> Vec<Kernel> {
+    rerail_accel::gpu::kernels::functions(source, names, constant)
+}
+
 /// [`kernel`] of a fixed source (an interpreter's, the same for every rule set): shipped with the engine.
 pub fn kernel_fixed(source: &str, name: &str, constant: Option<u32>) -> Kernel {
     rerail_accel::gpu::kernels::function_fixed(source, name, constant)

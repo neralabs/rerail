@@ -18,6 +18,7 @@ default-filter = """not (
   | test(/^code_rule_dsl::logic::convert::tests::(a_sample_of_the_replay_gives_the_recorded_findings|the_pack_holds_the_converters_run_over_every_authored_file|reference_tests::reference_edge_is_ws_reference_graph_on_the_fixtures)$/)
   | test(/^code_rule_dsl::logic::rr::tests::(dropping_unreached_clauses_prunes_to_the_same_program|lowering_is_idempotent|library_modules_link_to_the_lowering_of_them_together)/)
   | test(=code_rule_dsl::logic::rr::tests::rule_syntax_files_pass_check_rr)
+  | test(=code_rule_dsl::logic::rr::tests::rule_files_pass_their_own_tests)
   | test(=code_rule_dsl::logic::rr::tests::library_modules_link_to_the_lowering_of_them_together)
   | test(/^code_rule_dsl::logic::program_image::tests::(pack_programs_read_back_from_their_images|the_passes_over_a_version_are_the_tree_passes|the_planners_reading_of_a_rule_is_the_trees|the_analyses_over_a_version_say_what_the_tree_says|views_and_overlays_are_the_programs_they_say)$/)
   | test(=code_rule_dsl::logic::program_text::tests::pack_programs_read_back_from_their_text)
@@ -34,7 +35,6 @@ default-filter = """not (
   | test(/^code_rule_dsl::waves::matches::tests::the_wave_/)
   | test(=class_pack::tests::random_needs_are_answered)
   | package(rerail-c-directives)
-  | (package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits))
   | (package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/))
 )"""
 # A test past this is reported as slow; past four periods it is stopped.
@@ -57,12 +57,6 @@ fsevents = { max-threads = 1 }
 platform = "cfg(target_os = \"macos\")"
 filter = "test(/^(content_store::(observe|journal)|tree_watch)::/)"
 test-group = "fsevents"
-
-# The Rust backend on every ladder step: each `.rerail` step compiles through Cranelift twice (formats 15 and 16), and
-# rustc builds each ladder's Rust (2–3 min in a debug build on an M3 Max).
-[[profile.default.overrides]]
-filter = "package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits)"
-slow-timeout = { period = "60s", terminate-after = 8 }
 
 # Kotlin's grammar compiled cold (no shipped answers, 0414: 41 s on a Linux Spark): without the walk lemmas,
 # and twice to compare programs. The rest of the crate's tests compile with the answers, in 1.5 s (Q371).

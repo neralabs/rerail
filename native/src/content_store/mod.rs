@@ -18,7 +18,7 @@ mod connection;
 pub use connection::set_connection_functions;
 mod corpus_runs;
 pub use corpus_runs::process_gone;
-pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
+pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
 pub use connection::{flush_of, store_flush};
@@ -31,7 +31,9 @@ pub mod kept_facts;
 pub mod guest_keys;
 mod object_segments;
 mod segments;
-mod facts_memo;
+mod plan_set;
+/// The demand's terminal matches' row estimate, a kept fact (t33 step 6).
+mod estimates;
 mod objects;
 pub mod journal;
 pub mod observe;
@@ -65,12 +67,7 @@ mod schema;
 mod search_index;
 mod snapshots;
 mod tree_diff;
-mod tree_pages;
 pub mod upkeep;
-/// G's tree result segments as copied, beside `tree_pages` (O19).
-#[cfg(any(test, feature = "test-hooks"))]
-#[allow(dead_code)]
-mod tree_result_segments;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
@@ -89,10 +86,9 @@ pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::{ProcessIds, StoreIds, Sym};
 pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation};
-pub use facts_memo::{FactsCompletion, FactsFrame, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
+pub use plan_set::FactsPlanSet;
 pub use schema::STORE_FILE_NAME;
 pub use tree_diff::{TreeChange, TreeDiff};
-pub use tree_pages::{TREE_PAGE_FILES, TreePage, TreePageKey, tree_pages_digest};
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub use connection::{
@@ -103,33 +99,29 @@ pub use connection::{
 pub use snapshots::AFTER_GIT_TREE_TRANSACTION;
 
 use connection::{ThreadConnection, retry_busy};
-use results::LocalResultCache;
+pub use results::WorkspaceResults;
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const HASH_SHA256: i64 = 1;
 const HASH_GIT_SHA1: i64 = 2;
 const HASH_GIT_SHA256: i64 = 3;
-/// The facts engine's content key (blake3), stored only as a source alias.
-const HASH_BLAKE3: i64 = 4;
-const CODEC_ZSTD: i64 = 1;
+// Hash kind 4 was the facts memo's content key (blake3, a source alias): taken, never reused.
 const STRING_PATH: i64 = 1;
 const STRING_REPOSITORY: i64 = 2;
 const STRING_OWNER: i64 = 3;
 const STRING_PATH_COMPONENT: i64 = 4;
-const STRING_CLAUSE_KEY: i64 = 5;
+// String domain 5 was a candidate check's clause key (`candidate_checks`): taken, never reused.
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 const MAX_PUBLICATION_BATCH: usize = 64;
 /// Largest `collect` batch: the per-statement row limit of one collection transaction.
 pub const MAX_COLLECTION_BATCH: usize = 256;
-const DEFAULT_READ_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -284,6 +276,12 @@ impl HashKey {
             *chunk = lane.to_be_bytes();
         }
         out
+    }
+
+    /// The key `key_bytes` wrote.
+    pub fn from_key_bytes(bytes: [u8; 40]) -> Option<Self> {
+        let words: Vec<i64> = bytes.as_chunks::<8>().0.iter().map(|w| i64::from_be_bytes(*w)).collect();
+        Some(Self { algorithm: words[0], lanes: [words[1], words[2], words[3], words[4]] })
     }
 
     pub fn git_sha256(bytes: [u8; 32]) -> Self {
@@ -625,30 +623,13 @@ pub struct SnapshotFilePublication<'a> {
     pub source: &'a [u8],
     pub aliases: &'a [HashKey],
     pub tape: Option<TapePayload<'a>>,
-    pub catalog: CandidateCatalogIdentity,
-    pub candidates: &'a [CandidateClause],
-}
-
-#[derive(Clone, Debug)]
-pub struct LocalResultPublication {
-    pub candidate: CandidateClause,
-    pub context: HashKey,
-    /// The result's bytes, stored as they are, in a segment (decision 0450 step 2).
-    pub bytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
 pub struct StoredLocalResult {
     pub candidate: CandidateClause,
-    /// The result's bytes where its segment holds them, mapped (decision 0450 step 2).
+    /// The result's bytes where its entry holds them, mapped (`results.rs`).
     pub bytes: ObjectBytes,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct WorkspaceCompletion {
-    pub workspace_id: WorkspaceId,
-    pub revision: i64,
-    pub completed_at: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -677,10 +658,6 @@ pub struct OverlayFilePublication<'a> {
     pub source: &'a [u8],
     pub aliases: &'a [HashKey],
     pub tape: Option<TapePayload<'a>>,
-    pub catalog: CandidateCatalogIdentity,
-    pub candidates: &'a [CandidateClause],
-    pub local_results: &'a [LocalResultPublication],
-    pub candidates_current: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -689,9 +666,6 @@ pub struct CollectionReport {
     pub retired_workspaces: usize,
     pub snapshot_files: usize,
     pub snapshots: usize,
-    pub candidate_rows: usize,
-    pub candidate_checks: usize,
-    pub candidate_catalogs: usize,
     pub tapes: usize,
     pub sources: usize,
 }
@@ -715,16 +689,10 @@ pub struct StoreCapacity {
     pub state: CapacityState,
 }
 
-/// Facts plan sets, each its plans' digests, by the set's digest.
-type PlanSets = HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>;
-
 pub struct ContentStore {
     database_path: PathBuf,
     connection: ThreadConnection,
     compression_level: i32,
-    local_result_cache: Mutex<LocalResultCache>,
-    /// Facts plan sets by digest (immutable once written: `facts_memo`).
-    facts_plan_sets: parking_lot::Mutex<PlanSets>,
     /// This process's atoms of the store (atoms.rs, decision 0049), shared with the planner's symbols.
     atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
@@ -739,12 +707,46 @@ pub struct ContentStore {
     lease: std::sync::Arc<collection_guard::SharedLease>,
     /// How long an ended store session's data is kept (decision 0450 step 3).
     session_ageing: reclamation::SessionAgeing,
+    /// An in-memory store's own folder, which its path names and its side folders (`.facts`, `.objects`, ...) are made
+    /// in: none for a store on disk, whose folders are beside its file.
+    own_folder: Option<std::sync::Arc<OwnFolder>>,
     #[cfg(any(test, feature = "test-hooks"))]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(any(test, feature = "test-hooks"))]
     git_tree_write_count: AtomicUsize,
     #[cfg(any(test, feature = "test-hooks"))]
     git_tree_transactions: AtomicUsize,
+}
+
+/// A private folder of an in-memory store's own in the system's temporary folder, removed with the store's last handle.
+struct OwnFolder {
+    path: PathBuf,
+}
+
+impl OwnFolder {
+    /// The first free `rerail-memory-store-<pid>-<n>`, made private: the file system's `create_dir` is what makes it
+    /// this store's alone.
+    fn make() -> StoreResult<Self> {
+        let parent = std::env::temp_dir();
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        for n in 0u64.. {
+            let path = parent.join(format!("rerail-memory-store-{}-{n}", std::process::id()));
+            match builder.create(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(StoreError::Io(e)),
+            }
+        }
+        unreachable!("a free name below u64::MAX")
+    }
+}
+
+impl Drop for OwnFolder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
 }
 
 impl Drop for ContentStore {
@@ -792,13 +794,12 @@ impl ContentStore {
             database_path: self.database_path.clone(),
             connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity(), self.connection.flush()),
             compression_level: self.compression_level,
-            local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
-            facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms: std::sync::Arc::clone(&self.atoms),
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
             write_back: None,
             session_ageing: self.session_ageing.clone(),
+            own_folder: self.own_folder.clone(),
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -860,7 +861,14 @@ impl ContentStore {
         atoms::Atoms::share_memory(&connection, std::sync::Arc::clone(&atoms))?;
         let flush = connection::store_flush()?;
         let identity = Self::initialize(&mut connection, flush)?;
-        Ok(Self::with_connection(PathBuf::from(":memory:"), ThreadConnection::memory(connection, identity, flush), atoms, None))
+        // Its path is its own folder's: what is kept beside a store (its kept facts, objects and memo) and what the
+        // process keys by a store's path (its bound kept spaces, its snapshots) is then this store's alone. Named
+        // `:memory:`, every in-memory store shared one folder in the working directory, and each one's write swept away
+        // the files another's rows named.
+        let folder = OwnFolder::make()?;
+        let mut store = Self::with_connection(folder.path.join("store"), ThreadConnection::memory(connection, identity, flush), atoms, None);
+        store.own_folder = Some(std::sync::Arc::new(folder));
+        Ok(store)
     }
 
     fn with_connection(database_path: PathBuf, connection: ThreadConnection, atoms: std::sync::Arc<atoms::Atoms>, write_back: Option<std::sync::Arc<write_back::Writer>>) -> Self {
@@ -868,13 +876,12 @@ impl ContentStore {
             database_path,
             connection,
             compression_level: DEFAULT_COMPRESSION_LEVEL,
-            local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
-            facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms,
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
             write_back,
             session_ageing: reclamation::SessionAgeing::default(),
+            own_folder: None,
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -891,10 +898,6 @@ impl ContentStore {
     /// resident documents: an active apply benefits from the caches, while an inactive one should
     /// not retain an arena or SQLite page cache. Connections reopen on the next read.
     pub fn release_memory(&self) -> StoreResult<()> {
-        self.local_result_cache
-            .lock()
-            .expect("local result cache mutex poisoned")
-            .clear();
         self.connection.release_all();
         Ok(())
     }

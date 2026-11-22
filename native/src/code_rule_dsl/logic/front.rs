@@ -19,6 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+pub mod answers;
 pub mod caches;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
 pub use name::{List, Lists, Name};
@@ -228,6 +229,8 @@ pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Versi
     };
     // A cache is two rules (decision 0103): a broken form refuses the program.
     caches::caches(v)?;
+    // A request a native step answers is declared so (t33 K3).
+    answers::answers(v)?;
     drop(checking);
     Ok(())
 }
@@ -408,6 +411,38 @@ fn tarjan_ids(succ: &[Vec<(u32, bool)>]) -> Vec<Vec<u32>> {
     sccs
 }
 
+/// A shortest chain of reads from `from` to `to` through `edges`, each a relation, `!` before one read negated or
+/// aggregated: the steps of a cycle an error or a decision names. Only `to` when nothing reaches it.
+pub fn path(edges: &Edges, from: &str, to: &str) -> Vec<String> {
+    let mut back: BTreeMap<&str, (&str, bool)> = BTreeMap::new();
+    let mut queue = std::collections::VecDeque::from([from]);
+    while let Some(x) = queue.pop_front() {
+        if x == to && x != from {
+            break;
+        }
+        for (w, neg) in edges.get(x).into_iter().flatten() {
+            if w != from && !back.contains_key(w.as_str()) {
+                back.insert(w.as_str(), (x, *neg));
+                queue.push_back(w.as_str());
+            }
+        }
+    }
+    let mut out = vec![to.to_owned()];
+    let mut at = to;
+    while let Some(&(x, neg)) = back.get(at) {
+        if neg {
+            out.last_mut().expect("a step").insert(0, '!');
+        }
+        out.push(x.to_owned());
+        at = x;
+        if at == from {
+            break;
+        }
+    }
+    out.reverse();
+    out
+}
+
 /// Strongly connected components of `nodes` under `edges`, dependencies first, in the same order every run.
 /// Iterative, where T's recursed (with a raised recursion limit).
 ///
@@ -488,7 +523,7 @@ pub const PRAGMA: &str = "cross-rounds";
 pub fn document_column(relation: &str) -> Option<usize> {
     match relation {
         "node" | "doc" | "pkg" | "unpackaged" | "tape_error" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
-        "source" | "src_line" | "src_line_lf" | "tape_line" | "split_line" | "lf_line" | "line_count" | "parsed"
+        "source" | "src_line" | "line_count" | "parsed"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
         | "tape_of" | "rr_program" | "doc_grammar" | "host_node" => Some(0),
         // Decision 0431: a string's parsed nodes, by the string (its file's node).

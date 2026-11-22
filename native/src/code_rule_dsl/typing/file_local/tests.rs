@@ -254,6 +254,39 @@ fn nearest_costs(cap: usize) {
     }
 }
 
+/// A helper several rules read, of one content and so one name, that the split leaves outside the chunks undoes
+/// every reader's push at once. Undone at its first reader only, it was made again by the next and failed again:
+/// ep2's `option(k, v), @rx(v, …)` helper, read by 352 `violation` rules, took 91 rounds of the pass, each a split of
+/// half the program (4 s of a cold run's prepare).
+#[test]
+fn a_helper_the_split_leaves_outside_undoes_all_its_readers_at_once() {
+    let mut text = String::from(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl option(k: symbol, v: symbol)
+.input node, text, option
+// Any file's names: no location column, so cross-file, and so is each rule that negates it.
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl finding(n: node, v: symbol)
+.output finding
+"#);
+    let kinds = ["call", "name", "attribute", "subscript", "lambda", "tuple"];
+    for k in kinds {
+        text.push_str(&format!("finding(n, v) :- node(_, n, \"{k}\", _, _), option(\"target\", v), v != \"none\", !defined(v).\n"));
+    }
+    let v = read(&text);
+    let mut pass = PushLocalJoins::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let v = p.finish().unwrap().0;
+    let split = split_of(&v);
+    assert!(pass.made.iter().all(|m| split.local.contains(m)), "what is left made is file-local: {:?}", pass.made);
+    assert!(!pass.made.iter().any(|m| rules_of(&v, m).iter().any(|r| reads(&v, *r).iter().any(|x| x == "option"))), "no helper over `option` is left");
+    // Each push: a round with the helper, and one with it a level less, whatever its readers; the pass pushes twice.
+    assert!(pass.rounds <= 2 * 2, "{} rounds for {} readers", pass.rounds, kinds.len());
+}
+
 /// A cross-file rule's file-local part is made per chunk: the rule reads one exported join, not its base relations.
 #[test]
 fn a_cross_file_rules_local_join_is_pushed_into_the_chunks() {
@@ -482,6 +515,21 @@ fn a_climb_over_the_tapes_parent_column_is_file_local() {
     assert!(split.locations["up"].contains(&0), "{:?}", split.locations);
 }
 
+/// A file-local output the cross-file part also reads (decision 0431 R9: a pack's `rr_found_through` over each
+/// policy's findings) is an export, which the file-local part keeps in the engine for the cross-file part, not
+/// decoded: the cross-file part writes it. Neither did, and the policy's findings' file was empty.
+#[test]
+fn an_exported_output_is_the_cross_file_parts_to_write() {
+    let text = ".decl kind(n: node, k: number)\n.input kind\n\
+        .decl hit(n: node)\nhit(n) :- kind(n, 3).\n\
+        .decl hits(c: number)\nhits(c) :- c = count : { hit(_) }.\n.output hit, hits\n";
+    let parts = programs_of(read(text)).unwrap();
+    assert!(parts.file_local.contains("hit") && parts.exports.iter().any(|e| e == "hit"), "{:?} {:?}", parts.file_local, parts.exports);
+    let cross = &parts.versions.cross;
+    let outputs: Vec<&str> = cross.outputs().map(|a| cross.text(a)).collect();
+    assert!(outputs.contains(&"hit") && outputs.contains(&"hits"), "{outputs:?}");
+}
+
 /// `boot-python.rerail`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
 /// The equality names one value, so the pieces are one join, pushed into the chunks whole; apart, the split pushed each
 /// and left their join to the cross-file part (decision 0093 §4, O140).
@@ -707,6 +755,43 @@ fn exports_are_cut_on_a_version() {
     for made in ["xd_fl_later(", "dm_demand_0(", "xk_text_0("] {
         assert!(shown.contains(made), "{made} in\n{shown}");
     }
+}
+
+/// A demand whose location only a `top` superset cuts is `top` itself when what is left of its chain names every node
+/// (`unwrap(n, n) :- kind(n, k), k != "paren"`, as `unparen` is): no superset of it is made and stored. The export is
+/// still cut by its reader's own key (`xk_text_0`). Left with an atom that names some nodes only (`called`), the
+/// superset is made.
+#[test]
+fn a_demand_cut_only_by_a_top_superset_is_top() {
+    let program = |unwrap: &str| {
+        format!(
+            ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
+             .decl kind(n: node, k: symbol)\n.decl calls(n: node, c: node)\n\
+             .decl within(c: node, n: node)\n.input node, text, kind, calls, within\n\
+             .decl fl_later(n: node, c: node)\nfl_later(n, c) :- within(c, n), node(_, c, \"call\", _, _).\n\
+             .decl named(n: node, s: symbol)\nnamed(n, s) :- text(n, s).\n\
+             .decl unwrap(n: node, m: node)\n{unwrap}\n\
+             .decl pair(n: node, m: node)\npair(n, m) :- named(n, s), named(m, s), n != m.\n\
+             .decl demand(n: node, m: node)\ndemand(n, m) :- unwrap(n, x), pair(x, m).\n\
+             .decl later(n: node, c: node)\nlater(n, c) :- demand(n, _), fl_later(n, c), text(c, _).\n.output later\n"
+        )
+    };
+    let cut = |unwrap: &str| {
+        let mut pass = DemandExports::default();
+        let mut p = Pipeline::new("test", read(&program(unwrap)));
+        p.program(&mut pass);
+        let (out, _) = p.finish().unwrap();
+        (out.show(), pass.lines)
+    };
+    let (shown, lines) = cut("unwrap(n, n) :- kind(n, k), k != \"paren\".");
+    assert!(lines[0].contains("through 0 supersets (2 top of 2 explored"), "{lines:?}");
+    for not in ["dm_demand_0(", "dm_pair_0("] {
+        assert!(!shown.contains(not), "{not} in\n{shown}\n{lines:?}");
+    }
+    assert!(shown.contains("xd_fl_later($n, $c) :- fl_later($n, $c), xk_text_0($c)."), "{shown}");
+    let (shown, lines) = cut("unwrap(n, n) :- calls(n, _).");
+    assert!(lines[0].contains("through 1 supersets (1 top of 2 explored"), "{lines:?}");
+    assert!(shown.contains("dm_demand_0("), "{shown}");
 }
 
 /// An export joining two parts at a key its head projects away is handed on as its parts on a version: one line, the

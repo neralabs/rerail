@@ -22,10 +22,10 @@ use crate::code_rule_dsl::language::{Family, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::literal::Grammar;
 use crate::code_rule_dsl::matcher::arguments::rust::RustArguments as _;
-use crate::code_rule_dsl::matcher::{
-    Arguments, Passed, ScopeName, SemanticText, Style, Unresolved, file_index,
-};
-use crate::code_rule_dsl::model::ViolationSpec;
+use crate::code_rule_dsl::scope::ScopeName;
+use crate::code_rule_dsl::language::adapter::format_args::Style;
+use crate::code_rule_dsl::language::adapter::value::SemanticText;
+use crate::code_rule_dsl::matcher::{Arguments, Passed, Unresolved, file_index};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::rust::{self as scope_rust, LABEL, MACRO};
@@ -53,7 +53,7 @@ pub struct Rust;
 impl Adapter for Rust {
     const FAMILY: Family = Family::Rust;
     const LABEL: &'static str = "rust";
-    const TERMINATORS: Terminators = Terminators::Newlines;
+    const TERMINATORS: Terminators = Terminators::Lf;
     const PACKAGES: bool = false;
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
@@ -86,7 +86,7 @@ impl Adapter for Rust {
     /// around it or the file, or a `#[clippy::msrv]` there older than the lint needs
     /// (`suppress/clippy.rs`).
     fn suppresses<D: Doc>(
-        _: &ViolationSpec,
+        _: &str,
         suppress: &Suppress,
         node: &Node<'_, D>,
         _: &str,

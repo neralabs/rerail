@@ -51,6 +51,11 @@ pub enum CallConv {
     /// values stay in registers across the call, as LLVM's `preserve_most`. Otherwise as
     /// System V (arguments and returns in the same registers), with at most two returns.
     PreserveMost,
+    /// A callee that keeps its caller's registers (rerail's patch): as `PreserveMost`'s general
+    /// registers, and every vector register but the returns' (aarch64 v0-v7, x86-64 xmm0 and
+    /// xmm1), whole (128 bits), saved in its prologue where it writes them. A caller's vectors
+    /// stay in registers across the call.
+    PreserveAll,
 }
 
 impl CallConv {
@@ -130,6 +135,7 @@ impl fmt::Display for CallConv {
             Self::Probestack => "probestack",
             Self::Winch => "winch",
             Self::PreserveMost => "preserve_most",
+            Self::PreserveAll => "preserve_all",
         })
     }
 }
@@ -146,6 +152,7 @@ impl str::FromStr for CallConv {
             "apple_aarch64" => Ok(Self::AppleAarch64),
             "probestack" => Ok(Self::Probestack),
             "preserve_most" => Ok(Self::PreserveMost),
+            "preserve_all" => Ok(Self::PreserveAll),
             "winch" => Ok(Self::Winch),
             _ => Err(()),
         }

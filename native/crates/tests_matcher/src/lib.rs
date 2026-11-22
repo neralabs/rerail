@@ -2,7 +2,7 @@
 //!
 //! A test crate above boot: it mounts the test files in place, under the facades the engine hosted them through,
 //! and reads every other module through boot. Its test binary is booted as it loads (`boot::install_for_tests`), as
-//! the engine's is. Written by tools/cratify/test_crates.py, and kept by hand since.
+//! the engine's is. Written by tools/cratify/split_test_crates.py, and kept by hand since.
 #![cfg(test)]
 #![allow(dead_code, unused_imports, hidden_glob_reexports, ambiguous_glob_reexports, private_interfaces, private_bounds)]
 #![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
@@ -463,6 +463,9 @@ pub mod code_rule_dsl {
             pub use rerail_boot::code_rule_dsl::matcher::d_anchors::*;
             pub mod sql {
                 pub use rerail_boot::code_rule_dsl::matcher::d_anchors::sql::*;
+                // Its profiling spikes, which read `tests` (`document`).
+                #[cfg(all(test, feature = "code-rule-profile"))]
+                pub mod retention_spikes;
                 pub mod lower {
                     pub use rerail_boot::code_rule_dsl::matcher::d_anchors::sql::lower::*;
                     #[cfg(test)]
@@ -594,6 +597,9 @@ pub mod code_rule_dsl {
             #[path = "sql"]
             pub mod sql {
                 pub use rerail_boot::code_rule_dsl::matcher::p_anchors::sql::*;
+                // Its profiling spikes, which read `tests` (`document`).
+                #[cfg(all(test, feature = "code-rule-profile"))]
+                pub mod retention_spikes;
                 pub mod lower {
                     pub use rerail_boot::code_rule_dsl::matcher::p_anchors::sql::lower::*;
                     #[cfg(test)]

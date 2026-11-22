@@ -3,8 +3,8 @@
 // carry's kernels (block_serial.rs) are compiled after it.
 //
 // Compiled for one lane word: `BW` its bits (16, 32 or 64) and `BM` its type, defined in front of the source. A
-// group is one SIMD group of 32 lanes, each owning `BW / 8` bytes of a file: its ballots are 32-bit words, and the
-// host runs block programs only where the SIMD width is 32.
+// group is one SIMD group of the device's width (`GROUP_LANES`: 16 or 32 lanes), each lane owning `BW / 8` bytes of
+// a file; the host lays a batch out for the same width (`block_program::group_lanes`).
 //
 // Carries (`docs/parser-generators/06-block-parallel.md` §2): each carried operation has a lane summary, an
 // associative combine and an apply. A group combines its lanes' summaries with SIMD-group operations; between
@@ -23,8 +23,12 @@
 #define U32(x) ((uint32_t)(x))
 #define U64(x) ((uint64_t)(x))
 #define I32(x) ((int32_t)(x))
-// A group's lanes.
-#define GROUP_LANES 32u
+// A group's lanes: the device's SIMD group, 16 or 32 lanes (a ballot is a word of its lanes' bits, and the borrow's
+// carry-lookahead adds two of them in 64 bits).
+#define GROUP_LANES UKL_SIMD_WIDTH
+#if GROUP_LANES != 16 && GROUP_LANES != 32
+#  error "block_common: a group is a SIMD group of 16 or 32 lanes"
+#endif
 
 // The lane code is straight-line (parser_tests' `check_lowering`): selects, never branches.
 UKL_INLINE int32_t clamp_i32(int32_t x, int32_t lo, int32_t hi) { return SEL(SEL(x, hi, x > hi), lo, x < lo); }
@@ -81,7 +85,7 @@ UKL_INLINE B4 b4_ands(B4 a, uint32_t s) { return b4(a.x & s, a.y & s, a.z & s, a
 UKL_INLINE uint32_t b4_any(B4 a) { return a.x | a.y | a.z | a.w; }
 
 // A file of the batch (decision 0066). Lane words are indexed in the file: output k of lane gl at
-// out_base + k * groups * 32 + gl; carry j of group g at state_base + j * groups + g (a halo's three words from
+// out_base + k * groups * GROUP_LANES + gl; carry j of group g at state_base + j * groups + g (a halo's three words from
 // halo_base + (j * groups + g) * 3); counted output c's state of group g at ext_base + c * groups + g, and its total
 // at tot_base + c; extract e's positions from pos_base + e * max(len, 1); in passes, block b's slot k at
 // slot_base + b * SLOTS + k.
@@ -236,7 +240,9 @@ UKL_INLINE uint32_t texclusive1(uint32_t t, uint32_t l, UKL_PRIVATE uint32_t* to
     u = ukl_sg_shuffle_up(x, 2u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 2u);
     u = ukl_sg_shuffle_up(x, 4u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 4u);
     u = ukl_sg_shuffle_up(x, 8u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 8u);
+#if GROUP_LANES > 16
     u = ukl_sg_shuffle_up(x, 16u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 16u);
+#endif
     *total = ukl_sg_shuffle(x, GROUP_LANES - 1u __UKL_ARGS);
     u = ukl_sg_shuffle_up(x, 1u __UKL_ARGS);
     return SEL(u, TID1, l == 0u);

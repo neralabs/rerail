@@ -70,10 +70,11 @@ UKL_INLINE uint64_t clif_tc_entry(UKL_GLOBAL const uint8_t* t, ClifTCache c, uin
     return gen + (uint64_t)clif_tc_load(t, clif_tc_offset_at(c, gen, n)) + (uint64_t)c.first;
 }
 
-// Slot `p` of a key's probes in a generation's index (its hash `h`). The index is masked by the most slots too
-// (`SLOTS_MAX`), so the compiler sees its offset bounded: on the M3 Max's GPU (its code from macOS 15's compiler
-// and from Xcode 26's alike), a compare-and-swap at an index masked only by the header's count did not act on the
-// slot. Two threads both won one, and the first claims of a cache's blocks were lost (decision 0540).
+// Slot `p` of a key's probes in a generation's index (its hash `h`).
+// The index is masked by the most slots too (`SLOTS_MAX`), so the compiler sees its offset bounded: on the M3 Max's
+// GPU (G15; its code from macOS 15's compiler and from Xcode 26's alike), a compare-and-swap at an index masked only
+// by the header's count did not act on the slot. Two threads both won one, and a load of the slot after found
+// neither's tag (decision 0540).
 UKL_INLINE uint64_t clif_tc_slot(ClifTCache c, uint64_t gen, uint32_t h, uint32_t p) { return gen + (uint64_t)(((h + p) & (c.slots - 1u) & (CLIF_T_C_SLOTS_MAX - 1u)) * 4u) + CLIF_T_G_INDEX; }
 
 // Generation `gen` (unstamped) cleared and stamped `stamp` as a spare, when no writer is in it: one thread clears it
@@ -177,9 +178,9 @@ UKL_INLINE uint64_t clif_tz_lz4(UKL_GLOBAL const uint8_t* t, uint64_t src, uint6
         if (off == 0u || off > d_lit - dst || d_end > dst_end)
             return d_lit;
         // The match's place and its source's in the output, as 32-bit offsets from its start (a block's output is
-        // far under 4 GB), each address its start plus one of them. On the M3 Max's GPU an address of the output's
-        // place less the zero-extended 16-bit offset was folded as that place plus the offset's 16-bit negation, a
-        // byte 2^16 past the source: every match read the entry's zeros (decision 0540).
+        // far under 4 GB), each address its start plus one of them. On the M3 Max's GPU (G15) an address of the
+        // output's place less the zero-extended 16-bit offset was folded as that place plus the offset's 16-bit
+        // negation, a byte 2^16 past the source: every match read the entry's zeros (decision 0540).
         uint32_t at = (uint32_t)(d_lit - dst), from = at - (uint32_t)off, end = (uint32_t)(d_end - dst);
         if (off < 8u) {
             // Its first 8 bytes a byte at a time and a word, the source moved on to a multiple of the offset at
@@ -554,7 +555,7 @@ UKL_INLINE uint64_t clif_tc_get(CLIF_T_ARGS, uint64_t cache, uint64_t key, uint3
 // The address of the cache entry that holds the tape's block `block` decoded: found in the cache the view names, or
 // decoded into its head. The dead entry (its zeros) where the cache had no room, or for a block past the tape's last
 // (a node read that is no node of it: a failure counted, so its run is refused, decision 0463).
-UKL_CALLED uint64_t clif_z_block(CLIF_T_ARGS, uint32_t block)
+UKL_LARGE uint64_t clif_z_block(CLIF_T_ARGS, uint32_t block)
 {
     uint64_t cache = clif_tz_cache(v);
     uint32_t blocks = (clif_view(v, CLIF_T_NODES) + (CLIF_T_Z_BLOCK - 1u)) >> 10;
@@ -625,18 +626,17 @@ UKL_INLINE uint32_t clif_f16b_view(CLIF_ZB_ARGS, uint32_t a) { return ukl_ldc_u3
 UKL_INLINE uint64_t clif_f16b_ld(CLIF_ZB_ARGS, uint32_t base, uint32_t off, uint32_t w)
 {
     uint64_t a = e + CLIF_T_SLOT_BYTES + (((uint64_t)base + (uint64_t)off) & m);
-    if (w == 1u)
-        return ukl_ldc_u8(clif_coherent(t), a);
-    if (w == 2u)
-        return ukl_ldc_u16(clif_coherent(t), a);
-    if (w == 4u)
-        return ukl_ldc_u32(clif_coherent(t), a);
-    return ukl_ldc_u64(clif_coherent(t), a);
+    // One coherent read, of the words that hold the `w` bytes (decision 0576 §15): a read for each width was the
+    // same read four times, and inlined at each of a 16z kernel's loads (142 in the tape reads' test kernel).
+    uint64_t x = ukl_ldc_window(clif_coherent(t), a, w);
+    return w >= 8u ? x : x & ukl_mask64(8u * w);
 }
 
 #define CLIF_16(name) clif_f16b_##name
 #define CLIF_16_ARGS CLIF_ZB_ARGS
 #define CLIF_16_PASS t, e, m
+// The side read over a decoded block, the rare case: a call (decision 0576 §19).
+#define CLIF_16_RARE UKL_COLD
 #include <ukl/body/tape_f16.h>
 
 // ---- 16z's reads: each the block's read of the node ---------------------------------------------------------------

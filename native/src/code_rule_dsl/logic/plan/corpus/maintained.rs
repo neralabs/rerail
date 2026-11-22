@@ -268,9 +268,3 @@ pub(in crate::code_rule_dsl) fn run_with(
     Ok(Ran { next, strata: cut.strata, maintained: maintained.maintained, derived_again: maintained.derived_again, changed: cut.changed.clone(), again: maintained.again.clone(), outputs: got.outputs, bound })
 }
 
-/// A relation's rows as `next` keeps them (`None`: not kept).
-pub(in crate::code_rule_dsl) fn rows_of(next: &retain::Retained, rel: &str) -> Option<Vec<Vec<i64>>> {
-    let (held, width) = next.kept(rel)?;
-    let flat = held.live_rows()?;
-    Some(flat.chunks_exact(width.max(1)).map(<[i64]>::to_vec).collect())
-}

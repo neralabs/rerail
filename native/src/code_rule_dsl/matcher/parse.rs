@@ -35,7 +35,7 @@ use std::sync::Arc;
 pub struct ParseTest {
     pub grammar: Grammar,
     /// Opaque slot text for pythonFString; other grammars ignore it.
-    pub(crate) interpolation: String,
+    pub interpolation: String,
     /// The rule matched on the parsed tree's root, compiled for the grammar.
     pub rule: AstMatcher,
     /// The captures the rule may bind, exported to the host.
@@ -46,7 +46,7 @@ pub struct ParseTest {
     pub reading: Reading,
     /// With `host` rules in the tree's rule: whether each is sound under syntax errors and none
     /// is negated (they read the file around the literal); `None` without any.
-    pub(crate) host_sound: Option<bool>,
+    pub host_sound: Option<bool>,
 }
 
 /// `host` (inside a text grammar's rule): a rule of the host language matched on the host node the
@@ -57,7 +57,7 @@ pub struct ParseTest {
 /// (`embedded::document_host`).
 #[derive(Clone)]
 pub struct HostTest {
-    pub(crate) rule: AstMatcher,
+    pub rule: AstMatcher,
 }
 
 /// A parsed tree's captures as the host reads them: name, text, host range.

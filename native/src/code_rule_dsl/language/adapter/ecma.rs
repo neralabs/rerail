@@ -46,7 +46,7 @@ impl Adapter for Ecma {
     /// an oxlint block covers a problem that overlaps it, a `biome-ignore-start` range one it
     /// holds, a `biome-ignore` one that starts in what it covers.
     fn suppresses<D: Doc>(
-        _: &ViolationSpec,
+        _: &str,
         suppress: &Suppress,
         node: &Node<'_, D>,
         source: &str,

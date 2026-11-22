@@ -522,6 +522,8 @@ export interface NativeAnalysisScopeRun {
 
 export interface NativeLoadedRrPolicies {
   load(path: string, source?: NativeGitRevisionSource): string;
+  /** The policy a failed `load` of `path` names: the one `.policy` its own text declares, read without lowering it. */
+  failedPolicy(path: string, source?: NativeGitRevisionSource): string | null;
 }
 
 export interface NativeBinding {

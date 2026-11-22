@@ -3,11 +3,9 @@
 //! (`rerail-device-metal`, `code_rule_dsl::device_metal`). Nothing here names a device.
 //!
 //! What crosses the interface is data: a stratum's report, a lattice system and its solution, the nearest
-//! ancestors' targets. A join's device plan is the device's own, held here as an opaque value.
-use std::any::Any;
-use std::sync::{Arc, OnceLock};
-
-use super::native::setfix::{Fresh, InRel, Interner, JoinRule, Store};
+//! ancestors' targets. This is the device as the run's own solvers use it (`Device`); setfix's joins and fixpoints
+//! over its store, and the column statistics the planner reads, are the solver's interface over it
+//! (`SolverDevice`, `device::solver`, setfix's), and registering a solver device registers both.
 
 /// The run's binding: the CPU only, or the device too.
 pub mod binding;
@@ -16,9 +14,7 @@ pub mod lattice;
 pub mod nearest;
 pub use crate::code_rule_dsl::logic::profile::{Report};
 
-/// A join rule's plan on the device, as the device made it (`SolverDevice::compile_join`).
-#[derive(Clone)]
-pub struct JoinPlan(pub Arc<dyn Any + Send + Sync>);
+// cratify: `solver` is rerail-setfix's (it mounts it: its joins and fixpoints name setfix's store)
 
 /// Why the device did not solve: there is none for this work (the caller solves on the CPU), or it failed.
 #[derive(Debug)]
@@ -27,80 +23,31 @@ pub enum Refused {
     Failed(String),
 }
 
-/// What the logic runs on a device.
-pub trait SolverDevice: Send + Sync {
-    /// Whether the device's join stages can run here (a device is present and has their pipelines).
-    fn join_available(&self) -> bool;
-    /// A seed join's plan on the device, or why it takes none (`spec`: the join's text, which keys its history).
-    /// `own_texts`: the component's own (relation, column) pairs whose values are texts its rounds make into one arena
-    /// (decision 0307: a `shortlex_min` relation's value).
-    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String>;
-    /// Notes that the device refused the stratum being opened or run: it runs on the CPU, and the profile names why.
-    fn refuse(&self, why: String);
-    /// The seed joins `rules` (plan, rule, head relation) in one batch, their rows into `fresh`: per rule, the rows
-    /// made. `names`: the run's symbols, for texts the device makes into heads.
-    fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
-    /// Encodes the seed joins `rules` into this thread's device wave (`lanes::wave`), to be finished by `resume`
-    /// once the wave ran: the ticket, or `None` when they cannot wait in it (they then run by `run_joins`).
-    fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String>;
-    /// Finishes the joins `submit` sent with ticket `ticket`: their rows into `fresh`, per rule the rows made.
-    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
-    /// Whether the plan reads its own component's relations (a delta join of a recursive component).
-    fn reads_own(&self, plan: &JoinPlan) -> bool;
-    /// A recursive component's fixpoint on the device: the `seeds` once, then the `deltas` round by round until no
-    /// head in `heads` grows, every row into `fresh`. Per rule (seeds, then deltas), the rows made.
-    #[allow(clippy::too_many_arguments)]
-    fn fixpoint(
-        &self,
-        seeds: &[(&JoinPlan, &JoinRule, usize)],
-        deltas: &[(&JoinPlan, &JoinRule, usize)],
-        heads: &[usize],
-        store: &Store,
-        names: &Interner,
-        fresh: &mut [Fresh],
-    ) -> Result<Vec<u64>, String>;
+/// What the logic's own solvers run on a device (and what every solver device does: `SolverDevice`).
+pub trait Device: Send + Sync {
     /// The report of the last stratum the device ran or refused on this thread (taken).
     fn take_report(&self) -> Option<Report>;
     /// A flat-lattice system's least fixpoint on the device's work queue.
     fn lattice(&self, system: &lattice::System<'_>) -> Result<lattice::Solved, Refused>;
     /// Nearest ancestors in a set by pointer jumping (`nodes` per set; `target` and `done` set-major).
     fn nearest(&self, nodes: usize, target: &[u32], done: &[u8], how: nearest::Buffers) -> Result<nearest::Solved, Refused>;
-    /// Columns' exact statistics and `k` most common values (decision 0209 §6), in one batch. A relation's column the
-    /// device holds is read where it is (decision 0261); the others are gathered. Also how many were read in place.
-    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused>;
 }
 
-/// A column for `SolverDevice::column_stats`: values on the host, or column `.1` of an engine relation.
-pub enum StatColumn<'a> {
-    Values(&'a [i64]),
-    Rel(&'a Arc<InRel>, usize),
-}
+/// The logic's device, as the program's composition registers it (boot's `install_devices`): a solver device
+/// registers here through `device::solver::register`. None in a program with no device.
+pub static DEVICE: rerail_registry::Slot<&'static dyn Device> = rerail_registry::Slot::new("the logic's device (logic::device::DEVICE)");
 
-/// A column's statistics: its rows, distinct values, sums of its values' counts squared and cubed, and its most
-/// common values with their counts, most common first.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ColumnStats {
-    pub rows: u64,
-    pub ndv: u64,
-    pub sq: u64,
-    pub cube: u64,
-    pub top: Vec<(i64, u64)>,
-}
-
-static SOLVER: OnceLock<&'static dyn SolverDevice> = OnceLock::new();
-
-/// Registers the logic's device; the first registration holds.
-pub fn register(device: &'static dyn SolverDevice) {
-    let _ = SOLVER.set(device);
+/// Registers the logic's device, by `provider`.
+pub fn register_device(provider: &'static str, device: &'static dyn Device) {
+    DEVICE.register(provider, device);
 }
 
 /// The registered device, if any.
-pub fn solver() -> Option<&'static dyn SolverDevice> {
-    SOLVER.get().copied()
+pub fn device() -> Option<&'static dyn Device> {
+    DEVICE.try_get()
 }
 
 /// The report of the last stratum the device ran or refused on this thread, when there is a device.
 pub fn take_report() -> Option<Report> {
-    solver().and_then(|d| d.take_report())
+    device().and_then(|d| d.take_report())
 }
-

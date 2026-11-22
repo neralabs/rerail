@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::code_rule_dsl::logic::plan::phased::source_languages::{NAME, PATH, REGISTRY, SUFFIX};
 pub(super) use crate::code_rule_dsl::logic::plan::phased::source_languages::is_input;
 
-pub(super) fn inputs(program: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), root: &Path, options: &serde_json::Value) -> BTreeMap<String, Vec<Vec<front::Value>>> {
+pub fn inputs(program: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), root: &Path, options: &serde_json::Value) -> BTreeMap<String, Vec<Vec<front::Value>>> {
     use front::Value::Str;
     let mut rows: BTreeMap<String, Vec<Vec<front::Value>>> = program.input_names().into_iter()
         .filter(|name| is_input(name)).map(|name| (name, Vec::new())).collect();

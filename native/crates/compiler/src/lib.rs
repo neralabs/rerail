@@ -35,21 +35,12 @@ pub mod native_cpu_pressure;
 pub mod native_cpu_shape;
 pub mod native_ir;
 pub mod program;
-pub mod pp_expr;
-pub mod pp_words;
-#[cfg(test)]
-mod pp_words_tests;
+// The RIR assembler and the preprocessor's words (`rir_asm`, `pp_words`, `pp_expr`) are rerail-rir's, over this
+// crate (step 7a).
 pub mod records;
-pub mod rir_asm;
 pub mod rir_text;
 pub mod set_mode;
 pub mod stream;
-/// What tier 2's stream program is, apart from any lowering of it.
-pub mod stream_analysis;
-/// Tier 2's stream program as a whole: where a direct run takes it, apart from any lowering.
-pub mod stream_facts;
-/// The functions tier 2's program is cut into, by the calls between its words.
-pub mod native_cpu_clusters;
 /// Tier 1's record tables, as the token loop reads them.
 pub mod record_tables;
 pub mod stream_ir;

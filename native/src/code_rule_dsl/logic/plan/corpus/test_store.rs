@@ -234,7 +234,7 @@ struct Handed(Option<PathBuf>);
 
 /// Carries the test's store to a job on another thread (`run_state`): the job's runs use the store of the test that
 /// started it, not the process's.
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+pub fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     let named = std::thread::current().name().is_some_and(|n| n.contains("::"));
     // The store this thread's runs use (`tape_cache_path`'s order): the one its test names (`TEST_TAPE_CACHE`), else
     // the one it was handed, else the process's when it names one (`RERAIL_TAPE_CACHE`, `use_store`: the job's runs

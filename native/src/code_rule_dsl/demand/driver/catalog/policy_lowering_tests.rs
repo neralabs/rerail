@@ -2066,7 +2066,7 @@ pub(super) fn sql_violation_values_for_statement(
     }
     .expect("typed SQL violation output");
     assert!(outcome.rows.is_empty(), "production returned packed rows");
-    assert!(outcome.failures.is_empty(), "production returned failures");
+    assert!(outcome.failures.is_empty(), "production returned failures: {:?}", outcome.failures);
     outcome
         .violations
         .iter()

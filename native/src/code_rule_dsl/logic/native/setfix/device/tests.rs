@@ -1051,7 +1051,7 @@
         let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
         let mut rep = super::Report::default();
-        let (dev, _, place) = super::resident(&rel, &[1, 2], &[], &mut batch, &mut rep).expect("resident");
+        let (dev, _, place, _) = super::resident(&rel, &[1, 2], &[], false, &mut batch, &mut rep).expect("resident");
         assert_eq!((rep.in_place, rep.uploads, rep.upload_bytes), (1, 0, 0), "read in place: {rep:?}");
         assert_eq!((dev.rows, dev.cols), (n, 3));
         assert_eq!(place, [0, 1, 2], "each column at its own place");
@@ -1259,13 +1259,13 @@
         let _evaluation_refused = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut refused = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
-        super::resident(&rel, &[0, 1], &[], &mut refused, &mut rep).expect("resident");
+        super::resident(&rel, &[0, 1], &[], false, &mut refused, &mut rep).expect("resident");
         assert_eq!(rep.uploads, 1, "made: {rep:?}");
         drop(refused);
         let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
-        let (dev, _, place) = super::resident(&rel, &[0, 1], &[], &mut batch, &mut rep).expect("resident");
+        let (dev, _, place, _) = super::resident(&rel, &[0, 1], &[], false, &mut batch, &mut rep).expect("resident");
         assert_eq!(rep.uploads, 1, "made again: {rep:?}");
         batch.finish().unwrap();
         let n = src.len();
@@ -1309,7 +1309,7 @@
             let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = mj::Batch::new().expect("the device");
             let mut rep = super::Report::default();
-            let (dev, ix, _) = super::resident(rel, &[], &[2], &mut batch, &mut rep).expect("resident");
+            let (dev, ix, _, _) = super::resident(rel, &[], &[2], false, &mut batch, &mut rep).expect("resident");
             batch.finish().unwrap();
             assert!(dev.view.is_some() && ix.is_some(), "a view read in place, by its index");
             (rep.sorts, rep.sort_hits, rep.uploads)
@@ -1382,10 +1382,13 @@
                     batch.finish().unwrap();
                     // A 16z batch's blocks through its cache (0353 step 4b): every read found room.
                     assert_eq!(v.cache_failed(), 0, "{name}: the 16z cache had room: {:?}", v.cache_counts());
-                    for (j, &c) in cols.iter().enumerate() {
-                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
-                        assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
-                    }
+                    // A wrong row is told with every column read and the host's, at the first rows that differ: what a
+                    // device's misread reads instead (another column, another row) shows there.
+                    let got: Vec<Vec<i64>> = (0..cols.len()).map(|j| out.column(j)).collect();
+                    let want: Vec<Vec<i64>> = cols.iter().map(|&c| (0..n).map(|r| src.value(r, c)).collect()).collect();
+                    let wrong: Vec<usize> = (0..n).filter(|&r| (0..cols.len()).any(|j| got[j][r] != want[j][r])).take(6).collect();
+                    let told: Vec<String> = wrong.iter().map(|&r| format!("row {r}: device {:#x?}, host {:#x?}", (0..cols.len()).map(|j| got[j][r]).collect::<Vec<_>>(), (0..cols.len()).map(|j| want[j][r]).collect::<Vec<_>>())).collect();
+                    assert!(wrong.is_empty(), "{name}: columns {cols:?} read in place, {} of {n} rows wrong:\n{}", (0..n).filter(|&r| (0..cols.len()).any(|j| got[j][r] != want[j][r])).count(), told.join("\n"));
                     in_place += 1;
                 }
             }
@@ -1656,6 +1659,81 @@
             }
             assert_eq!(got[0], want, "by column {col:?}: the CPU's rows are the host's lookups");
             assert_eq!(got[1], want, "by column {col:?}: the device's rows are the CPU's");
+        }
+    }
+
+    /// A view chosen by a constant (`child … WHERE idx = 0`) is its source read in place, the constant a key of the
+    /// stage's (decision 0353 step 6, `reads_source`): nothing uploaded, scanned (an index of the constant's column)
+    /// or probed by its parent (its children walked on the tape, each checked against it), the CPU's rows.
+    #[test]
+    fn a_view_chosen_by_constants_is_read_in_place() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::model::FileInput;
+        use std::sync::Arc;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        crate::test_languages();
+        let texts = ["import os\nx = f(1, y=[2, g(3)])\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "", "@d\ndef g():\n    try:\n        h(1, 2)\n    except E as e:\n        raise\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("d{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-filtered-view-{}-{nonce}.sqlite", std::process::id()))).unwrap();
+        let all = sources(&content, docs).unwrap();
+        let child = Arc::clone(&all.iter().find(|(n, s)| *n == "child" && s.python_batch().is_some()).unwrap().1);
+        assert!(child.device_view().is_some_and(|d| d.in_place.is_some()), "the batch's views are read in place");
+        let names = child.columns();
+        assert_eq!(names, ["p", "c", "idx"]);
+        // The host's rows: each first child, with its parent.
+        let mut want: Vec<(i64, i64)> = (0..child.len()).filter(|&r| child.value(r, 2) == 0).map(|r| (child.value(r, 0), child.value(r, 1))).collect();
+        want.sort_unstable();
+        assert!(want.len() > 20 && want.len() < child.len(), "{} of {} rows", want.len(), child.len());
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
+        modules.bind(&db, "child_t", Arc::clone(&child)).unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0);").unwrap();
+        let mut parents: Vec<i64> = want.iter().map(|r| r.0).collect();
+        parents.dedup();
+        for &p in &parents {
+            db.execute("INSERT INTO q VALUES (?1)", [p]).unwrap();
+        }
+        let q = format!("t:d:{}:{}:i", hex("temp.q"), hex("c0"));
+        let firsts = format!("t:d:{}:{}:ii", hex("main.child_t WHERE idx = 0"), hex("p, c"));
+        // Scanned: h0(p, c) :- child(p, c, 0). Probed by the parent: h0(p, c) :- q(p), child(p, c, 0).
+        for (how, rule) in [("scanned", format!("pos {firsts} v0 v1\nhead v0 v1")), ("by its parent", format!("pos {q} v0\npos {firsts} v0 v1\nhead v0 v1"))] {
+            let mut got = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name filtered_test".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 ii empty".into());
+                spec.push(format!("seed 0 {}", hex(&rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "filtered_test", 0).unwrap();
+                let report = super::take_report();
+                super::super::close(&db, "filtered_test").unwrap();
+                if device {
+                    let r = report.as_ref().expect("a device run");
+                    assert!(r.refused.is_none(), "{how}: {r:?}");
+                    assert_eq!(r.uploads, 0, "{how}: nothing uploaded: {r:?}");
+                }
+                let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert_eq!(got[0], want, "{how}: the CPU's rows are the host's");
+            assert_eq!(got[1], want, "{how}: the device's rows are the CPU's");
         }
     }
 

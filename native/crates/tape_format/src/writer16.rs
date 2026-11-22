@@ -1,5 +1,4 @@
-// The format 16 writer (decision 0434 §6, 0532), written in Rust directly: the host's writer (`f16::Writer`), and
-// the writer a generated tier 2 includes as its `w` module (`rust_stream`), the one source both compile. The
+// The format 16 writer (decision 0434 §6, 0532), written in Rust directly: the host's writer (`f16::Writer`). The
 // shape is simdjson's `tape_builder` and `tape_writer`: the state's named fields, each part a buffer named by its
 // offset from the state, each cell a store at its column's offset from its block. The JIT's and the device's
 // writer is the same writer in CLIF (`rerail_clif::writer`); the tests hold the three to the same bytes, and the
@@ -16,6 +15,9 @@ pub const BLOCK: u32 = 256;
 pub const HEAD16: u64 = 120;
 pub const MAX_NODES: u32 = 1 << 30;
 pub const NONE: u32 = u32::MAX;
+/// The state's flag: each node is final as it is written (no `retag` or `set_start`), so the frontier is the count
+/// and a block settles once the node after it opens or its last open node closes, as after a commit each node.
+pub const FINAL_AS_WRITTEN: u32 = 4;
 pub const MAGIC16: u64 = u64::from_le_bytes(*b"TMPTAPB6");
 pub const MAGIC16Z: u64 = u64::from_le_bytes(*b"TMPTAPBZ");
 /// An open node's frame: its node (u32 at 0), its children so far (4), its last child (8), its start (u64 at 16).
@@ -101,7 +103,7 @@ pub struct State {
     /// A block's bytes, and where each column starts in it (codes, slots, gaps, lengths, checkpoints).
     pub stride: u32,
     pub at: [u32; 5],
-    /// 1: a presence a block is kept; 2: the tape is 16z.
+    /// 1: a presence a block is kept; 2: the tape is 16z; 4: each node final as written (`FINAL_AS_WRITTEN`).
     pub flags: u32,
     pub kw: u32,
     pub fw: u32,
@@ -334,6 +336,87 @@ struct Block {
     area: usize,
 }
 
+/// Where the ops that write a node's cells (an open, a leaf, a close) take the widths from: the state's (`Run`, any
+/// language), or constants (`Fixed`, a language whose widths the caller knows, as a generated parser knows the one
+/// it makes): then a cell is one store of its width at a constant offset, not a word read and written under the
+/// state's mask. The bytes are the same.
+pub trait CellWidths {
+    /// Array `a`'s width (0 slots, 1 gaps, 2 lengths).
+    fn w(s: &State, a: usize) -> u32;
+    /// Column `r`'s offset in a block's room (1 slots, 2 gaps, 3 lengths, 4 checkpoints).
+    fn at(s: &State, r: usize) -> u32;
+    /// Array `a`'s escape: its widest value.
+    fn esc(s: &State, a: usize) -> u64;
+    /// The cell at `a` of array `k`, `v` (at most its escape `m`).
+    ///
+    /// # Safety
+    /// As `cell_put`'s.
+    unsafe fn put(s: &State, k: usize, a: usize, m: u64, v: u64);
+}
+
+/// The state's widths.
+pub struct Run;
+
+impl CellWidths for Run {
+    #[inline(always)]
+    fn w(s: &State, a: usize) -> u32 {
+        s.w[a]
+    }
+    #[inline(always)]
+    fn at(s: &State, r: usize) -> u32 {
+        s.at[r]
+    }
+    #[inline(always)]
+    fn esc(s: &State, a: usize) -> u64 {
+        s.esc[a]
+    }
+    #[inline(always)]
+    unsafe fn put(_: &State, _: usize, a: usize, m: u64, v: u64) {
+        // SAFETY: the caller's.
+        unsafe { cell_put_masked(a, m, v) }
+    }
+}
+
+/// Widths known to the caller: slots `S`, gaps `G`, lengths `L` bytes, the state's own (a debug build checks).
+pub struct Fixed<const S: u32, const G: u32, const L: u32>;
+
+impl<const S: u32, const G: u32, const L: u32> Fixed<S, G, L> {
+    const W: [u32; 3] = [S, G, L];
+    const AT: [u32; 5] = [0, Z, Z * (1 + S), Z * (1 + S + G), Z * (1 + S + G + L)];
+}
+
+impl<const S: u32, const G: u32, const L: u32> CellWidths for Fixed<S, G, L> {
+    #[inline(always)]
+    fn w(s: &State, a: usize) -> u32 {
+        debug_assert_eq!(s.w, Self::W, "the state's widths are the caller's");
+        let _ = s;
+        Self::W[a]
+    }
+    #[inline(always)]
+    fn at(s: &State, r: usize) -> u32 {
+        debug_assert_eq!(s.at[r], Self::AT[r], "the state's columns are the caller's widths'");
+        let _ = s;
+        Self::AT[r]
+    }
+    #[inline(always)]
+    fn esc(_: &State, a: usize) -> u64 {
+        mask(u64::from(Self::W[a]))
+    }
+    #[inline(always)]
+    unsafe fn put(_: &State, k: usize, a: usize, m: u64, v: u64) {
+        // SAFETY: the caller's; a store of the cell's width, the bytes past it kept as the masked word keeps them.
+        unsafe {
+            match Self::W[k] {
+                1 => st8(a, v as u32),
+                2 => st16(a, v as u32),
+                4 => st32(a, v as u32),
+                8 => st64(a, v),
+                _ => cell_put_masked(a, m, v),
+            }
+        }
+    }
+}
+
 impl State {
     /// Part `k`'s address.
     #[inline(always)]
@@ -405,8 +488,11 @@ impl State {
 
     /// Node `j` of `block`'s value `v` in array `a` (0 slots, 1 gaps, 2 lengths): its cell, or its escape and its
     /// entry in its block's side list `a + 1`. A cell written again (`set_start`) drops the entry it had.
-    unsafe fn put_at(&mut self, a: usize, j: u32, v: u64, block: Block) {
-        let esc = self.esc[a];
+    ///
+    /// Its widths `X`'s.
+    #[inline(always)]
+    unsafe fn put_at_x<X: CellWidths>(&mut self, a: usize, j: u32, v: u64, block: Block) {
+        let esc = X::esc(self, a);
         // SAFETY: the caller's: `block` is made, `j` a row of it.
         unsafe {
             let list = List::of(block.area, a + 1);
@@ -423,16 +509,23 @@ impl State {
                     list.remove(k);
                 }
             }
-            cell_put_masked(self.cell(block.room, a, j), esc, v.min(esc));
+            X::put(self, a, block.room + X::at(self, a + 1) as usize + j as usize * X::w(self, a) as usize, esc, v.min(esc));
         }
     }
 
     /// Node `i`'s value in array `a` (`w_put`).
     unsafe fn put(&mut self, a: usize, i: u32, v: u64) -> R {
+        // SAFETY: the caller's.
+        unsafe { self.put_x::<Run>(a, i, v) }
+    }
+
+    /// `put`, its widths `X`'s.
+    #[inline(always)]
+    unsafe fn put_x<X: CellWidths>(&mut self, a: usize, i: u32, v: u64) -> R {
         // SAFETY: the caller's: node `i`'s block is made.
         unsafe {
             let block = self.block(i / Z);
-            self.put_at(a, i % Z, v, block);
+            self.put_at_x::<X>(a, i % Z, v, block);
         }
         Ok(())
     }
@@ -471,7 +564,14 @@ impl State {
 
     /// Node `j`'s checkpoint: `start` at the checkpoints' width.
     unsafe fn put_checkpoint(&mut self, room: usize, j: u32, start: u64) {
-        let a = room + self.at[4] as usize + (j / K) as usize * self.cw as usize;
+        // SAFETY: the caller's.
+        unsafe { self.put_checkpoint_x::<Run>(room, j, start) }
+    }
+
+    /// `put_checkpoint`, its column's offset `X`'s.
+    #[inline(always)]
+    unsafe fn put_checkpoint_x<X: CellWidths>(&mut self, room: usize, j: u32, start: u64) {
+        let a = room + X::at(self, 4) as usize + (j / K) as usize * self.cw as usize;
         // SAFETY: as `put_at`'s.
         unsafe { cell_put(a, u64::from(self.cw), start) };
     }
@@ -545,7 +645,7 @@ impl State {
         let end = (b + 1) * Z;
         // SAFETY: block `b` is made.
         let done = unsafe { ld32(self.entry(b) + 8) };
-        if done != 0 || self.n <= end || self.frontier < end {
+        if done != 0 || self.n <= end || (self.frontier < end && self.flags & FINAL_AS_WRITTEN == 0) {
             return Ok(());
         }
         // The open nodes' indices ascend: the last below the block's end is the one that may be in it.
@@ -673,7 +773,7 @@ impl State {
     /// Fails unless node `i` is written and its block not final.
     unsafe fn changeable(&mut self, i: u32) -> R {
         // SAFETY: node `i`'s block is made where `i` is below the count.
-        if i >= self.n || unsafe { ld32(self.entry(i / Z) + 8) } != 0 {
+        if i >= self.n || self.flags & FINAL_AS_WRITTEN != 0 || unsafe { ld32(self.entry(i / Z) + 8) } != 0 {
             return self.fail(fail::FINAL, i);
         }
         Ok(())
@@ -684,6 +784,13 @@ impl State {
     /// Node `n`, of `number`, opened at `start`: its code, its gap, its checkpoint, the slot of the node before it;
     /// pushed on the open nodes where `push`. Its index, its row and its block.
     unsafe fn open_node(&mut self, number: u32, start: u64, push: bool) -> Result<(u32, u32, Block), u32> {
+        // SAFETY: the caller's.
+        unsafe { self.open_node_x::<Run>(number, start, push) }
+    }
+
+    /// `open_node`, its widths `X`'s.
+    #[inline(always)]
+    unsafe fn open_node_x<X: CellWidths>(&mut self, number: u32, start: u64, push: bool) -> Result<(u32, u32, Block), u32> {
         let (i, prev) = (self.n, self.prev_start);
         if start < prev || start > self.source_len || i.wrapping_add(1) >= MAX_NODES {
             return self.fail(fail::BOUNDS, i);
@@ -714,17 +821,17 @@ impl State {
                         u64::from(i.wrapping_sub(last)) << 2 | 1
                     };
                     if first {
-                        self.put(0, i - 1, v)?;
+                        self.put_x::<X>(0, i - 1, v)?;
                     } else {
-                        self.put_at(0, j - 1, v, block);
+                        self.put_at_x::<X>(0, j - 1, v, block);
                     }
                 }
             }
             self.put_code_at(j, number, block);
             let gap = if i == 0 { 0 } else { start.wrapping_sub(prev) };
-            self.put_at(1, j, gap, block);
+            self.put_at_x::<X>(1, j, gap, block);
             if j.is_multiple_of(K) {
-                self.put_checkpoint(block.room, j, start);
+                self.put_checkpoint_x::<X>(block.room, j, start);
             }
             self.prev_start = start;
             self.n = i + 1;
@@ -745,6 +852,13 @@ impl State {
     }
 
     unsafe fn close(&mut self, end: u64) -> R {
+        // SAFETY: the caller's.
+        unsafe { self.close_x::<Run>(end) }
+    }
+
+    /// `close`, its widths `X`'s.
+    #[inline(always)]
+    unsafe fn close_x<X: CellWidths>(&mut self, end: u64) -> R {
         let (open_len, n) = (self.open_len, self.n);
         if open_len == 0 {
             return self.fail(fail::NO_OPEN, n);
@@ -759,10 +873,10 @@ impl State {
             }
             let (b, j) = (i / Z, i % Z);
             let block = self.block(b);
-            self.put_at(2, j, end - start, block);
+            self.put_at_x::<X>(2, j, end - start, block);
             let size = n - i;
             if size > 1 {
-                self.put_at(0, j, u64::from(size) << 1, block);
+                self.put_at_x::<X>(0, j, u64::from(size) << 1, block);
             }
             // The node's block is final only once a node past its end is made.
             if n <= (b + 1) * Z {
@@ -773,13 +887,56 @@ impl State {
     }
 
     unsafe fn leaf(&mut self, number: u32, start: u64, end: u64) -> R {
+        // SAFETY: the caller's.
+        unsafe { self.leaf_x::<Run>(number, start, end) }
+    }
+
+    /// `leaf`, its widths `X`'s.
+    #[inline(always)]
+    unsafe fn leaf_x<X: CellWidths>(&mut self, number: u32, start: u64, end: u64) -> R {
         // SAFETY: the open's block, made by it.
         unsafe {
-            let (i, j, block) = self.open_node(number, start, false)?;
+            let (i, j, block) = self.open_node_x::<X>(number, start, false)?;
             if end < start || end > self.source_len {
                 return self.fail(fail::BOUNDS, i);
             }
-            self.put_at(2, j, end - start, block);
+            self.put_at_x::<X>(2, j, end - start, block);
+        }
+        Ok(())
+    }
+
+    /// A node of one leaf child, both at once (`walk`'s `string` with no escape: the string and its content): the
+    /// node from `start` to `end`, a leaf of its parent with no frame of its own, its size and length written as it
+    /// is; its child, the node after it, from `cs` to `ce`. The same slots as `open`, `leaf`, `close`.
+    #[inline(always)]
+    unsafe fn leaf_in_x<X: CellWidths>(&mut self, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) -> R {
+        // SAFETY: the open's block, made by it; the child's, made here where it is its first.
+        unsafe {
+            let (i, j, block) = self.open_node_x::<X>(number, start, false)?;
+            if cs < start || ce < cs || end < ce || end > self.source_len || i.wrapping_add(2) >= MAX_NODES {
+                return self.fail(fail::BOUNDS, i);
+            }
+            self.put_at_x::<X>(2, j, end - start, block);
+            self.put_at_x::<X>(0, j, 2 << 1, block);
+            // The child: the node's first, so no slot of the node before describes it.
+            let c = i + 1;
+            let (cb, cj) = (c / Z, c % Z);
+            if cj == 0 {
+                self.new_block(cb)?;
+            }
+            let cblock = self.block(cb);
+            self.put_code_at(cj, child, cblock);
+            self.put_at_x::<X>(1, cj, cs - start, cblock);
+            if cj.is_multiple_of(K) {
+                self.put_checkpoint_x::<X>(cblock.room, cj, cs);
+            }
+            self.put_at_x::<X>(2, cj, ce - cs, cblock);
+            self.prev_start = cs;
+            self.n = c + 1;
+            // The block before has its last slot now.
+            if cj == 0 && cb != 0 {
+                self.settle(cb - 1)?;
+            }
         }
         Ok(())
     }
@@ -1565,6 +1722,46 @@ pub unsafe fn w_close(desc: *const u8, end: u64) -> u32 {
 pub unsafe fn w_leaf(desc: *const u8, number: u32, start: u64, end: u64) -> u32 {
     // SAFETY: the caller's.
     unsafe { code(state(desc).leaf(number, start, end)) }
+}
+
+/// `w_open`, the language's widths `X`'s (`Fixed`): a caller that knows them, as a generated parser knows its own.
+///
+/// # Safety
+/// As `w_open`'s; the state's widths are `X`'s.
+#[inline(always)]
+pub unsafe fn w_open_with<X: CellWidths>(desc: *const u8, number: u32, start: u64) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { code(state(desc).open_node_x::<X>(number, start, true).map(|_| ())) }
+}
+
+/// `w_close`, as `w_open_with`.
+///
+/// # Safety
+/// As `w_close`'s; the state's widths are `X`'s.
+#[inline(always)]
+pub unsafe fn w_close_with<X: CellWidths>(desc: *const u8, end: u64) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { code(state(desc).close_x::<X>(end)) }
+}
+
+/// `w_leaf`, as `w_open_with`.
+///
+/// # Safety
+/// As `w_leaf`'s; the state's widths are `X`'s.
+#[inline(always)]
+pub unsafe fn w_leaf_with<X: CellWidths>(desc: *const u8, number: u32, start: u64, end: u64) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { code(state(desc).leaf_x::<X>(number, start, end)) }
+}
+
+/// A node of one leaf child, both written at once (`leaf_in_x`), as `w_open_with`.
+///
+/// # Safety
+/// As `w_leaf`'s; the state's widths are `X`'s.
+#[inline(always)]
+pub unsafe fn w_leaf_in_with<X: CellWidths>(desc: *const u8, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { code(state(desc).leaf_in_x::<X>(number, child, start, cs, ce, end)) }
 }
 
 /// The nodes so far final but for the open ones; the blocks the frontier passed settled.

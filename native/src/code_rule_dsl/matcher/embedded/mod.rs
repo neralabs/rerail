@@ -25,10 +25,10 @@ use std::sync::Arc;
 /// program may be written in.
 #[derive(Clone)]
 pub struct EmbeddedTest {
-    pub(crate) via: Via,
-    pub(crate) rules: Vec<(GrammarDialect, AstMatcher)>,
+    pub via: Via,
+    pub rules: Vec<(GrammarDialect, AstMatcher)>,
     /// The captures the rule binds, which the host's environment receives.
-    pub(crate) exports: Vec<String>,
+    pub exports: Vec<String>,
 }
 
 /// A program's captures as the host reads them: name, text, file range.

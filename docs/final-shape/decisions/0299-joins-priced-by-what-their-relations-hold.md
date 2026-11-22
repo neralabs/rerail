@@ -36,7 +36,11 @@ region(r, c, k) :- comp_kind(ck, k), kind(c, ck), child(c, r, _), !kind(r, "comm
 4. **A probe on several bound columns, none constant, reads at least one combination's rows**: the relation's rows
    over the product of the columns' distinct counts, capped at its rows. Independence multiplied each column's
    selectivity: `walk($n, $x, $s)` with `$n` and `$x` bound was priced as if `$x` narrowed `$n`'s rows again,
-   though `$x` is `$n`'s name and narrows nothing.
+   though `$x` is `$n`'s name and narrows nothing. Only where the atoms placed tie the bound variables together
+   (2026-11-21): two bound by atoms joined by nothing are a cross product, and independent. `open_tuple`'s
+   `child($t, $c, _)` after `kind($t, "tuple")` and a scan of `unparen($c, $m)` was priced at a row a pair (10.7 M
+   rows for 682), so the tail past the head's binding (Q146) looked witnessed at every tuple and free: 47 M rows
+   read, ep2's cold run 1,266 G instructions and 95.7 s CPU on an M3, 828 G and 61.7 s with the tie required.
 
 ## Measured
 
@@ -71,3 +75,37 @@ demand lines, renumbered from run to run); their work follows the demand each ru
 - `a_relation_of_facts_is_sized_when_planned`
 - `a_kind_bound_by_counted_values_reads_their_nodes`
 - `a_probe_on_several_columns_reads_a_combinations_rows`
+- `a_probe_by_two_columns_crossed_in_is_not_a_row_a_pair`
+
+## The combination floor holds only for joined variables (2026-11-21)
+
+The floor sets a probe on several bound columns at no less than one combination's rows. It is there for columns
+that determine each other: `walk($n, $x, $s)` by `$n` and by `$x`, where `$x` is `$n`'s name.
+
+That reasoning fails where the variables come from atoms nothing joins, as in a cross product. Each pair of values
+is then one pair of the two bindings' product, and most such pairs are in no row. The floor priced those pairs at a
+row each.
+
+corpus0 (2026-11-21), all policies as one pack, had a case:
+
+```
+open_tuple(t) :- kind(t, "tuple"), unparen(c, m), …, child(t, c, _).
+```
+
+`$t` is bound by `kind`, `$c` by `unparen`, and `child($t, $c, _)` was priced at a row a binding. So each of the
+2.1 M pairs had a witness, and past the head's binding the order cost almost nothing (Q240's witness pricing). It was
+priced at 753 rows of work. It read 41 M rows a stratum, and 790 of them were witnesses.
+
+**Now.** The floor applies only where the probed variables are joined: bound by one atom, or by a chain of the
+bound atoms that share variables (`joined` in `atom_rows`). Elsewhere the columns are priced as independent, as
+before decision 0299. A variable a constant fixes (`pinned`) has one value and is joined to any (from the sync
+branch's 94e0a6c935, the same fix made there).
+
+On corpus0 in one pack, the seed is now planned `kind`, then `child` by `$t`, then `unparen` by `$c`, its order
+before the merges:
+
+- 0.814 T instructions after the closure's cut (decision 0206), 0.786 T now.
+- The same 463 findings.
+
+Tests: `a_probe_on_columns_bound_by_unjoined_atoms_is_not_floored_at_a_combination` and
+`a_probe_by_two_columns_crossed_in_is_not_a_row_a_pair`. Each fails without the change: every pair priced as a row.
