@@ -661,6 +661,11 @@ struct Cg<'a, 'b> {
     /// the branch's side dominates (`bound`).
     idom: Vec<usize>,
     below: HashMap<V, Vec<(u64, usize)>>,
+    /// A counted loop's counter `k` (a header's parameter, from a constant up by 1 while `k + 1 < N`): its block
+    /// parameter is `k - N` (`counted`: it and `N`), so the loop runs while that is not 0 (`count_tests`: the test
+    /// of `k + 1 < N`, the counter's).
+    counted: HashMap<V, (Value, i64)>,
+    count_tests: HashMap<V, V>,
     /// Each value's block, and each block's loop depth (the natural loops it is in), for `Lin`'s order.
     block_of: Vec<u32>,
     depth: Vec<u32>,
@@ -711,6 +716,8 @@ impl<'a, 'b> Cg<'a, 'b> {
             steps: HashMap::new(),
             idom: Vec::new(),
             below: HashMap::new(),
+            counted: HashMap::new(),
+            count_tests: HashMap::new(),
             block_of: Vec::new(),
             depth: Vec::new(),
             preds: Vec::new(),
@@ -794,10 +801,16 @@ impl<'a, 'b> Cg<'a, 'b> {
         self.idom = crate::ssa::idoms(f);
         self.bounds_of_branches();
         self.loops();
+        self.counted_loops();
         let order = crate::ssa::rpo(f);
         for &bk in &order {
             if bk != 0 {
                 self.b.switch_to_block(self.blocks[bk]);
+            }
+            for &p in &f.blocks[bk].params {
+                if let Some(&(n, k)) = self.counted.get(&p) {
+                    self.vals[p as usize] = Rp::U(self.b.ins().iadd_imm(n, k));
+                }
             }
             self.splats.clear();
             self.masks64.clear();
@@ -1685,6 +1698,62 @@ impl<'a, 'b> Cg<'a, 'b> {
         }
     }
 
+    /// `counted` and `count_tests`: each loop header's parameter `k` that its loop's one entry passes a constant
+    /// `k0`, its one latch `k + 1`, where the latch is the side of a branch on `k + 1 < N` that runs again, `N` a
+    /// constant over `k0`: in the loop `k < N`, so `k + 1 < N` is `k + 1 != N`, `(k - N) + 1 != 0`.
+    fn counted_loops(&mut self) {
+        let f = self.f;
+        let int = |m: M| !m.float() && !m.is_agg() && !m.signed() && m.bytes() >= 4;
+        let through = |mut c: V| {
+            while f.inst(c).op == O::Cast && f.inst(c).shape == Shape::Uniform && int(f.inst(c).m) && int(M(f.inst(c).b)) {
+                c = f.inst(c).a;
+            }
+            c
+        };
+        for h in 0..f.blocks.len() {
+            let ps = &self.preds[h];
+            if ps.len() != 2 {
+                continue;
+            }
+            let (pre, latch) = if self.dominates(h, ps[1]) && !self.dominates(h, ps[0]) { (ps[0], ps[1]) } else if self.dominates(h, ps[0]) && !self.dominates(h, ps[1]) { (ps[1], ps[0]) } else { continue };
+            let (tp, tl) = (*f.inst(*f.blocks[pre].insts.last().expect("a terminator")), *f.inst(*f.blocks[latch].insts.last().expect("a terminator")));
+            if tp.op != O::Jump || tl.op != O::Jump || self.preds[latch].len() != 1 {
+                continue;
+            }
+            let tb = *f.inst(*f.blocks[self.preds[latch][0]].insts.last().expect("a terminator"));
+            if tb.op != O::Br || tb.b as usize != latch {
+                continue;
+            }
+            // The test's 0 or 1, through casts (each keeps 0 and 1).
+            let mut test = tb.a;
+            while f.inst(test).op == O::Cast && f.inst(test).shape == Shape::Uniform {
+                test = f.inst(test).a;
+            }
+            let ti = *f.inst(test);
+            if ti.op != O::Bin || ti.shape != Shape::Uniform || !int(M(ti.d)) || Op::of(u32::from(ti.sub)) != Op::Lt {
+                continue;
+            }
+            let Some(n) = self.konst(ti.b).and_then(|n| i64::try_from(n).ok()) else { continue };
+            for (j, &p) in f.blocks[h].params.iter().enumerate() {
+                let pi = f.inst(p);
+                if pi.shape != Shape::Uniform || !int(pi.m) {
+                    continue;
+                }
+                let (a0, a1) = (f.args_of(&tp)[j], f.args_of(&tl)[j]);
+                let Some(k0) = self.konst(a0).and_then(|k| i64::try_from(k).ok()) else { continue };
+                let xi = *f.inst(a1);
+                let one = |v: V| self.konst(v) == Some(1);
+                let next = xi.op == O::Bin && xi.shape == Shape::Uniform && Op::of(u32::from(xi.sub)) == Op::Add && M(xi.d) == pi.m
+                    && ((xi.a == p && one(xi.b)) || (xi.b == p && one(xi.a)));
+                if next && through(ti.a) == a1 && k0 < n {
+                    let Rp::U(v) = self.vals[p as usize] else { continue };
+                    self.counted.insert(p, (v, n));
+                    self.count_tests.insert(test, p);
+                }
+            }
+        }
+    }
+
     /// `block_of` and `depth`: for each back edge (a jump to a block that dominates it), its natural loop's blocks
     /// one deeper.
     fn loops(&mut self) {
@@ -1732,6 +1801,9 @@ impl<'a, 'b> Cg<'a, 'b> {
 
     fn lin_at(&mut self, x: V, depth: u32) -> Lin {
         let i = *self.f.inst(x);
+        if let Some(&(n, k)) = self.counted.get(&x) {
+            return Lin::leaf(n, self.depth[self.block_of[x as usize] as usize]).plus(Lin::konst(k));
+        }
         let unsigned = |m: M| !m.float() && !m.is_agg() && !m.signed() && m.bytes() >= 4;
         let whole = |g: &Self, m: M| m.bytes() == 8 || g.bound(x).is_some();
         if depth > 0 && i.shape == Shape::Uniform {
@@ -3295,6 +3367,11 @@ impl<'a, 'b> Cg<'a, 'b> {
                 for (&a, &p) in targs.iter().zip(&params) {
                     let pi = self.f.inst(p);
                     match pi.shape {
+                        Shape::Uniform if self.counted.contains_key(&p) => {
+                            let k = self.counted[&p].1;
+                            let l = self.lin(a).plus(Lin::konst(-k));
+                            vs.push(self.sum(&l));
+                        }
                         Shape::Uniform => vs.push(self.u(a)),
                         Shape::Lanes => vs.extend(self.lanes(a, pi.m)),
                         Shape::Mask => vs.extend(self.mask(a)),
@@ -3303,6 +3380,25 @@ impl<'a, 'b> Cg<'a, 'b> {
                 }
                 let ba: Vec<BlockArg> = vs.into_iter().map(BlockArg::Value).collect();
                 self.b.ins().jump(self.blocks[to], &ba);
+                Rp::None
+            }
+            O::Br if self.count_tests.contains_key(&{
+                let mut c = i.a;
+                while self.f.inst(c).op == O::Cast && self.f.inst(c).shape == Shape::Uniform {
+                    c = self.f.inst(c).a;
+                }
+                c
+            }) => {
+                // A counted loop's test: its counter's next value (`k + 1 - N`) not 0.
+                let mut c = i.a;
+                while self.f.inst(c).op == O::Cast && self.f.inst(c).shape == Shape::Uniform {
+                    c = self.f.inst(c).a;
+                }
+                let t = *self.f.inst(c);
+                let k = self.counted[&self.count_tests[&c]].1;
+                let l = self.lin(t.a).plus(Lin::konst(-k));
+                let n = self.sum(&l);
+                self.b.ins().brif(n, self.blocks[i.b as usize], &[], self.blocks[i.c as usize], &[]);
                 Rp::None
             }
             O::Br => {

@@ -391,6 +391,7 @@ impl<'a> Elaborator<'a> {
     /// `true` if a rewrite occurred.
     fn maybe_remat_arg(
         remat_values: &FxHashSet<Value>,
+        loop_analysis: &LoopAnalysis,
         func: &mut Function,
         remat_copies: &mut FxHashMap<(Block, Value), Value>,
         insert_block: Block,
@@ -404,7 +405,11 @@ impl<'a> Elaborator<'a> {
         // would affect, e.g., adds-with-one-constant-arg, which are
         // currently rematerialized. Right now we don't do this, to
         // avoid the need for another fixpoint loop here.
-        if arg.in_block != insert_block && remat_values.contains(&arg.value) {
+        // A value with arguments (an add of a constant) is not made again in a loop
+        // deeper than where it is (rerail's patch): that would undo its hoisting.
+        let deeper = func.dfg.value_def(arg.value).inst().is_some_and(|i| !func.dfg.inst_args(i).is_empty())
+            && loop_analysis.loop_level(insert_block) > loop_analysis.loop_level(arg.in_block);
+        if arg.in_block != insert_block && remat_values.contains(&arg.value) && !deeper {
             let new_value = match remat_copies.entry((insert_block, arg.value)) {
                 HashEntry::Occupied(o) => *o.get(),
                 HashEntry::Vacant(v) => {
@@ -637,6 +642,7 @@ impl<'a> Elaborator<'a> {
                     for arg_value in arg_values.iter_mut() {
                         if Self::maybe_remat_arg(
                             &self.remat_values,
+                            self.loop_analysis,
                             &mut self.func,
                             &mut self.remat_copies,
                             insert_block,
@@ -784,6 +790,7 @@ impl<'a> Elaborator<'a> {
                 let mut new_arg = self.elaborate_eclass_use(*arg, before);
                 Self::maybe_remat_arg(
                     &self.remat_values,
+                    self.loop_analysis,
                     &mut self.func,
                     &mut self.remat_copies,
                     block,
