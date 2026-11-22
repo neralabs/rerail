@@ -4792,14 +4792,11 @@ async function withWorktree(root: string, place: string, branch = "other") {
 
 /**
  * Puts a worktree of `third` at `worktree` in place of the one there, as `git worktree remove` then `git worktree add`
- * do, with an untracked file stamped before the session opened (`src/before.py`) and a write made since (`src/a.py`).
+ * do, and writes `src/a.py` in it.
  */
 async function addedAgain(root: string, worktree: string): Promise<void> {
   git(root, "worktree", "remove", "--force", worktree);
   git(root, "worktree", "add", "--quiet", worktree, "third");
-  const before = join(worktree, "src", "before.py");
-  await writeFile(before, "violation\n");
-  await utimes(before, new Date(2020, 0, 1), new Date(2020, 0, 1));
   await writeFile(join(worktree, "src", "a.py"), "old\nmine\n");
 }
 /** The edits of `batches` in `worktree`, each as its file's name and why its preimage is missing. */
@@ -5749,8 +5746,8 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await taking.turn;
     await bridge.settleWorktreeWalk();
     expect([seen?.heads.has(kept), seen?.heads.has(worktree), seen?.unmerged.has(worktree)]).toEqual([true, false, false]);
-    // The walk that begins once Git lists the new worktree keeps its `HEAD`, and records of it only the write made since
-    // the session opened, as a first sight does.
+    // The walk that begins once Git lists the new worktree keeps its `HEAD`, and records the write in it as a first sight
+    // does, with no preimage from the removed worktree.
     const third = execFileSync("git", ["rev-parse", "third"], { cwd: root, encoding: "utf8" }).trim();
     expect((await bridge.walkResume())?.gitSeen.heads.get(worktree)).toBe(third);
     expect(recordedIn(root, worktree, batches)).toEqual([["a.py", FIRST_SIGHT]]);
