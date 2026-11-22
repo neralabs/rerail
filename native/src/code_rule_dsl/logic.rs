@@ -68,6 +68,14 @@ pub mod front {
         #[allow(unused_imports)]
         use std::collections::BTreeSet;
     }
+    // Its files are its test modules alone.
+    #[cfg_attr(any(test, feature = "test-hooks"), path = ".")]
+    pub mod answers {
+        pub use rerail_rr::code_rule_dsl::logic::front::answers::*;
+        #[cfg(any(test, feature = "test-hooks"))]
+        #[path = "answers_tests.rs"]
+        pub mod tests;
+    }
     #[cfg(test)]
     pub mod data_layer_tests;
     #[cfg(any(test, feature = "test-hooks"))]

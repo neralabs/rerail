@@ -3616,33 +3616,4 @@ pub mod tests {
             assert_eq!(declared, ["using t: T = f();", "await using u: U = f();"]);
         }
     }
-
-    /// Every native step's answer is declared in the library (`.answer`, t33 K3), and the library declares no other:
-    /// the engine's registry (`rr::WORLD`, and `load`'s `loaded`) and the library's declarations are one list.
-    #[test]
-    fn every_native_answer_is_declared_in_the_library() {
-        use std::collections::{BTreeMap, BTreeSet};
-        crate::code_rule_dsl::install_languages();
-        let mut engine: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for (rel, req) in crate::code_rule_dsl::logic::rr::WORLD.iter().copied().chain([("loaded", "load")]) {
-            engine.entry(req.to_owned()).or_default().insert(rel.to_owned());
-        }
-        let mut library: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        let mut dirs = vec![crate::code_rule_dsl::logic::rr::library()];
-        while let Some(dir) = dirs.pop() {
-            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    dirs.push(path);
-                } else if path.extension().is_some_and(|e| e == "rerail") {
-                    for line in std::fs::read_to_string(&path).unwrap().lines() {
-                        let Some(text) = line.trim().strip_prefix(".answer ") else { continue };
-                        let answer = crate::code_rule_dsl::logic::front::answers::parse(text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-                        library.entry(answer.req).or_default().extend(answer.produces);
-                    }
-                }
-            }
-        }
-        assert_eq!(library, engine, "the library's `.answer`s and the engine's answerers");
-    }
 }

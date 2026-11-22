@@ -7,7 +7,7 @@
 //!
 //! the request relation, and the relations its answer adds rows to. The engine's answerers (`rr::WORLD`, and `load`'s
 //! `loaded`) are the native steps; every one is declared in the library, and the library declares no other
-//! (`language::tests::every_native_answer_is_declared_in_the_library`). A declaration is read like `.cache`
+//! (`rr::tests::every_native_answer_is_declared_in_the_library`). A declaration is read like `.cache`
 //! (`front::Program::settings`); no evaluation reads it.
 //!
 //! The lint here: each `.answer` is of that form, and no relation is answered by two requests. A program need not
@@ -56,27 +56,4 @@ pub fn answers(v: &Version) -> Result<Vec<Answer>, Error> {
         out.push(answer);
     }
     Ok(out)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_answer_names_its_request_and_what_it_adds_rows_to() {
-        assert_eq!(parse("rr_dir_req -> dir_entry").unwrap(), Answer { req: "rr_dir_req".into(), produces: vec!["dir_entry".into()] });
-        assert_eq!(parse("c_cc_file_req -> c_compile_command, c_compile_arg").unwrap().produces, ["c_compile_command", "c_compile_arg"]);
-        for wrong in ["rr_dir_req dir_entry", "-> dir_entry", "rr_dir_req ->", "a -> b c"] {
-            assert!(parse(wrong).is_err(), "{wrong}");
-        }
-    }
-
-    #[test]
-    fn the_lint_refuses_a_relation_answered_twice() {
-        let decls = ".decl a(x: symbol)\n.decl b(x: symbol)\n.decl r(x: symbol)\n.output r\nr(x) :- a(x).\n";
-        let lint = |extra: &str| answers(&crate::code_rule_dsl::logic::rr::parse_version(&format!("{decls}{extra}")).unwrap());
-        assert_eq!(lint(".answer q -> a, b\n").unwrap().len(), 1);
-        assert_eq!(lint(".answer q -> c\n").unwrap().len(), 1, "an answer the program reads none of");
-        assert!(format!("{:?}", lint(".answer q -> a\n.answer p -> a\n").unwrap_err()).contains("answered by both"));
-    }
 }
