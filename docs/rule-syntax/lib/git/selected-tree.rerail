@@ -1,4 +1,5 @@
-// The filtered tree walk shared by source discovery and Git document rules.
+// The filtered tree walk shared by source discovery and Git document rules, over `git/records.rerail`'s tree entries.
+#include "git/records.rerail"
 .decl git_inventory_selection(selection: symbol)
 .input git_inventory_selection
 

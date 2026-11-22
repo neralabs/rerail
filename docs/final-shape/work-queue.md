@@ -6088,16 +6088,28 @@ native join it falls back to the planner's whole-rule order.
   swapped) and passes with it. The library test passed 10 runs of 10. `differences` now prints a request relation's
   readers by rule where the rows agree as sets.
 
-### Q210. (Q176 on cost-classifier-metal-rf) `rule_syntax_files_pass_check_rr` fails on `c/includes.rerail`: a negation in a cycle (Go-C-and-C-support's)
+### Q210. (Q176 on cost-classifier-metal-rf) `rule_syntax_files_pass_check_rr` fails on `c/includes.rerail`: a negation in a cycle (Go-C-and-C-support's) — done 2026-11-22
 
 - **Found** (2026-11-18, cost-classifier at f9bfb6e05, with no change of its own; the slow tier's test): `lib/c/includes.rerail`
   line 54, `c_inc_from depends on c_found_by through ! or an aggregate in a cycle`, and line 70, `c_resolved depends on
   c_inc_before` the same. The cycle is the include search: `c_found_by` ← `c_resolved` ← `c_inc_found` ← `c_inc_try`
   ← `c_inc_from` ← `!c_found_by` (an `#include_next` starts past the entry its file was found by). The file came with
   798c03170 (0327 mode (b)).
-- **Next**: Go-C-and-C-support's: whether the search is stratified by its phases (headers in phase 1) in a way
-  `check_rr` does not see, or the rules need a level (each include's depth) that breaks the cycle.
-- **Done when**: the test passes, by the rules or by the check reading what makes the cycle well-founded.
+- **Done** (2026-11-22, by the rules): no rule of the closure negates a relation of it. The first file found is a
+  walk along the configuration's search order (`c_clear`): a directive's search reaches an entry when every path
+  before it is no file (`c_inc_miss`, a negation of `dir_entry`, whose answer for a directory is whole). The order
+  (`c_order_after`, the next entry a name's form and shape look in) is computed below the closure, from the
+  configuration alone. An `#include_next` starts after each rank its file was entered at (`c_found_at`: 0 for a
+  unit, or a file found in its includer's own directory); before, rank 0 was taken only where no entry had found
+  the file, a negation of the closure. `c_includes_resolve_by_the_search_order`, the phase 1 header test and the
+  compile-commands test pass as before.
+- **Found with it**: `lib/git/messages.rerail` and `lib/git/selected-tree.rerail` read `git_message` and
+  `git_tree_entry` with no declaration in their own programs; `git.rerail` included the first before its
+  declarations, and the Git inventory's embedded program put the second after `git.rerail`'s text. Git's records are
+  now `lib/git/records.rerail`, which both include; `git.rerail` is the records and the messages, as before. The
+  test's bad policy in `failed_batch_reports_each_policy_in_argument_order` (`git_revision_cli`) read
+  `reference_edge` without `python/references.rerail` (decision 0483), so its `.references` was never read: it
+  includes it now. The check test, the 17 `git_revision_cli` tests and the slow library tests pass.
 
 ### Q211. (Q177 on cost-classifier-metal-rf) (done) A request relation dropped as unread kept its record (`programs_hidden_alone_keep_their_attribute_copies_declared`)
 
@@ -9995,6 +10007,22 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
 - **Checked**, CPU only: the eval tests (31, macOS only) on an M1 Max; on a Linux DGX Spark, clippy has no finding in
   `rerail-device`, `-c-directives`, `-metal`, `-gpu`, `-forest` or `-accel`; tests `rerail-ukl` 9, `-gpu` 25, `-metal`
   24, `-device` 6, `-forest` 40, `-accel` 88, and the engine's lattice, work queue, label pass and 16z tests 22.
+
+### Q491. The four strata still rebuilt on ep2's edits (deferred by the user, 2026-11-22)
+
+- **Measured** (2026-11-22, ep2 on an M3, after 0563's two fixes): three edits each rebuild four small strata.
+  `later_dec`, `p255_start` and `p107_rr_agg7` take a few ms each, with 0 to 5 rows kept. `p255_rr_demand_agg_rr_agg5`
+  takes about 30 ms, 20 ms of it building 4 documents: its rebuild looks up `text`, which is made as rows (Q121),
+  not read in place. (The places' part of that, Q216, is done.)
+- **The user** (2026-11-22): "record them but you may leave them as-is for now".
+
+### Q492. `reproduces_sqlfluff_rf01_and_al05` needs the SQL pack's test data pulled (the user's, 2026-11-22)
+
+- The test reads `packs/sql/upstream/sqlfluff/fixtures.expected.json`, which is not on this Mac or the farm's
+  hosts. No other worktree's copy matches this tree's `test-data.lock` (`139f92f2…`, 287 files: theirs hold 289,
+  671 or 676), and this Mac has no `aws` CLI, so only `npm run fixtures:pull` gets it. Until then, decision 0612's
+  change to that test's line oracle (`lines::line_of` in SQL's set) is unrun.
+- **The user** (2026-11-22): "record them but you may leave them as-is for now".
 
 ---
 

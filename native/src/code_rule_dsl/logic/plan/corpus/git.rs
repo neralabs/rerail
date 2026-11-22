@@ -566,10 +566,10 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>, own
         super::Error::Cache(error) => InventoryError::Cache(error),
         other => InventoryError::Source(other.to_string()),
     })?;
-    // Installed addons have no source checkout. Embed the same library used by .rerail policies.
+    // Installed addons have no source checkout. Embed the same library used by .rerail policies. `selected-tree.rerail`
+    // includes `git/records.rerail` from the library, as `git.rerail` includes its parts.
     let program = concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rerail"), "\n",
-        include_str!("../../../../../../docs/rule-syntax/lib/git.rerail"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/source-language.rerail"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/git/selected-tree.rerail"), "\n",
         include_str!("../../../typing/programs/git-inventory.rerail"),

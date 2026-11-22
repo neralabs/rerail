@@ -295,7 +295,7 @@ fn failed_batch_reports_each_policy_in_argument_order() {
     let f = Checkout::new();
     let out = f.area.path().join("batch");
     let broken = f.area.path().join("bad references.rerail");
-    fs::write(&broken, ".policy \"broken\" revision 1\n.language python\n.references {\"unknownParameter\":true}\n.violation Edge(at: node) \"edge\"\nEdge(n) :- reference_edge(n,_,_).\n").unwrap();
+    fs::write(&broken, "#include \"python/references.rerail\"\n.policy \"broken\" revision 1\n.language python\n.references {\"unknownParameter\":true}\n.violation Edge(at: node) \"edge\"\nEdge(n) :- reference_edge(n,_,_).\n").unwrap();
     for scope in [Some("batch"), None] {
         for bad_first in [true, false] {
             let (first, second) = if bad_first {
@@ -326,7 +326,8 @@ fn failed_batch_reports_each_policy_in_argument_order() {
                 failed_run["error"]
                     .as_str()
                     .unwrap()
-                    .contains("unknownParameter")
+                    .contains("unknownParameter"),
+                "{failed_run}"
             );
             assert!(good_run.get("error").is_none());
         }
