@@ -400,6 +400,30 @@ impl Source for Layered {
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
         !self.has_parts() && self.base.lookup_read(column, value, columns, each)
     }
+    /// A range of the base's column (a node view's own), and of each part's: not made on lookup (a value's rows are
+    /// then made per key, never all read).
+    fn range_indexed(&self, column: usize) -> bool {
+        self.made.is_none() && self.base.range_indexed(column)
+    }
+    /// The base's rows in the range, then each part's, past the base's: a part with no range read is read whole (a
+    /// value's rows are few). `rr_ann_node`'s range of the annotations' nodes is the values' rows.
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+        if self.made.is_some() {
+            return None;
+        }
+        let mut out = self.base.range_lookup(column, lower, upper)?;
+        let inside = |x: i64| lower.is_none_or(|(v, eq)| if eq { x >= v } else { x > v }) && upper.is_none_or(|(v, eq)| if eq { x <= v } else { x < v });
+        self.parts(|p| {
+            for part in &p.list {
+                let at = self.base_len() + part.start;
+                match part.src.range_indexed(column).then(|| part.src.range_lookup(column, lower, upper)).flatten() {
+                    Some(rows) => out.extend(rows.into_iter().map(|r| at + r)),
+                    None => out.extend((0..part.src.len()).filter(|&r| inside(part.src.value(r, column))).map(|r| at + r)),
+                }
+            }
+        });
+        Some(out)
+    }
     fn for_rows_keyed(&self, column: usize, keys: &rustc_hash::FxHashSet<i64>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
         // The base's walk, then each part's rows of the keys (a value's rows are few: read whole where its source has
         // no walk). Made on lookup, the values' rows are made as looked up, never walked (`for_rows_in`).

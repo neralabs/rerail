@@ -7730,7 +7730,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             match src {
                 Src::In(rel, ix) => {
                     if !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
-                    if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
+                    if keys.is_empty() { scan_within(Rows::In(rel), 0, rel.len() as u32, within) }
                     else if let Some(index) = ix.runs(rel) {
                         // An order answering the key's columns, or leading with some of them (`chain_lead`: every key
                         // is checked): the key's values in the order's column order.
@@ -8302,6 +8302,14 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let mut hints = [0; runs::HINTS];
         let (rows, cands) = candidates_of(src, store, &mut hints);
         let Cands::Range(lo, hi) = cands else { return false };
+        let within: Within = j.ranges[0].map(|r| (r.col, r.lo.map(|(k, eq)| (val(slots, k), eq)), r.hi.map(|(k, eq)| (val(slots, k), eq))));
+        // A range of the scan's column read alone (`scan_within`): its rows in morsels where they are a range, else
+        // walked as the one walk reads them.
+        let (rows, cands) = scan_within(rows, lo, hi, within);
+        let Cands::Range(lo, hi) = cands else { return false };
+        if ((hi - lo) as usize) < 2 * MORSEL_ROWS * MORSELS_PER_THREAD {
+            return false;
+        }
         if ((hi - lo) as usize) < 2 * MORSEL_ROWS * MORSELS_PER_THREAD {
             return false;
         }
@@ -8545,6 +8553,32 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             Src::Full(r) => { let rel = &store.rels[*r]; (Rows::Comp(rel), Cands::Range(0, rel.n as u32)) }
         }
     }
+    /// A first scan's rows `lo..hi` of an input, those whose column `c` lies in the range: where they are in `c`'s
+    /// order, two searches; where the input is a view whose source reads a range of that column (`range_lookup`, the
+    /// node views' own column), the source's rows in it. No row outside it is walked; the comparisons stay as filters.
+    /// `rr_ann_node(n) :- kind(n, _), n >= a, n < b` read all of `kind` (4.46 M rows) for the annotations' 2,454.
+    fn scan_within<'a>(rows: Rows<'a>, lo: u32, hi: u32, within: Within) -> (Rows<'a>, Cands<'a>) {
+        let (Some((c, a, b)), Rows::In(r)) = (within, rows) else { return (rows, Cands::Range(lo, hi)) };
+        if hi <= lo {
+            return (rows, Cands::Range(lo, hi));
+        }
+        if r.sorted.within(&[c], r.k, lo, hi) == [(lo, hi)] {
+            let at = |p: usize| rows.row(p as u32).at(c);
+            let s = a.map_or(lo as usize, |(x, eq)| runs::split_at_pos(lo as usize, hi as usize, |p| if eq { at(p) < x } else { at(p) <= x }));
+            let e = b.map_or(hi as usize, |(x, eq)| runs::split_at_pos(s, hi as usize, |p| if eq { at(p) <= x } else { at(p) < x }));
+            return (rows, Cands::Range(s as u32, e.max(s) as u32));
+        }
+        if (lo, hi) == (0, r.len() as u32)
+            && let Some(v) = &r.view
+            && v.ids.is_none()
+            && v.eqs.is_empty()
+            && v.src.range_indexed(v.cols[c])
+            && let Some(ids) = v.src.range_lookup(v.cols[c], a, b)
+        {
+            return (Rows::Source(v), Cands::Owned(ids.into_iter().map(|i| i as u32).collect()));
+        }
+        (rows, Cands::Range(lo, hi))
+    }
     fn rows_of_first<'a>(src: &'a Src, store: &'a Store) -> Rows<'a> {
         let mut hints = [0; runs::HINTS];
         candidates_of(src, store, &mut hints).0
@@ -8646,7 +8680,8 @@ fn ranges(steps: &[Step]) -> Vec<Option<Ranged>> {
     let mut before: Vec<usize> = Vec::new();
     steps.iter().enumerate().map(|(i, st)| {
         let r = match st {
-            Step::Atom { neg: false, keys, binds, .. } if !keys.is_empty() => {
+            // A first scan of an input (no key) too, where its rows are in the column's order (`scan_within`).
+            Step::Atom { neg: false, keys, binds, src, .. } if !keys.is_empty() || matches!(src, Src::In(..)) => {
                 let known = |k: &Key| match *k { Key::Const(_) => true, Key::Slot(s) => before.contains(&s) };
                 let mut found: Option<Ranged> = None;
                 for later in &steps[i + 1..] {
