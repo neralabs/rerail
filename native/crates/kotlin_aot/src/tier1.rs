@@ -1076,8 +1076,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             if q < nw {
                 t52[q] = w;
             }
-            // (((lbrace | lf) | line_open) | block_open) | (dollar & next(lbrace))
-            let w = ((((r_m_lbrace[q % RING] | r_m_lf[q % RING]) | r_m_line_open[q % RING]) | r_m_block_open[q % RING]) | r_m_dollar[q % RING] & (r_m_lbrace[q % RING] >> 1 | r_m_lbrace[(q + 1) % RING] << 63));
+            // ((lbrace | line_open) | block_open) | (dollar & next(lbrace))
+            let w = (((r_m_lbrace[q % RING] | r_m_line_open[q % RING]) | r_m_block_open[q % RING]) | r_m_dollar[q % RING] & (r_m_lbrace[q % RING] >> 1 | r_m_lbrace[(q + 1) % RING] << 63));
             r_t53[q % RING] = w;
             if q < nw {
                 t53[q] = w;
@@ -2627,7 +2627,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     if span_0.0 != usize::MAX && span_0.1 == usize::MAX && s >= span_0.0 {
                         let (l, c) = (span_0.0 - 1, s);
                         let _ = (l, c);
-                        // a `${…}` template with a brace, a template, a comment or a line break
+                        // a `${…}` template with a brace, a template or a comment
                         if any_in(&t53, l + 1, c - 1) {
                             refused = true;
                             break 'tokens;
@@ -2722,7 +2722,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     if span_0.0 != usize::MAX && span_0.1 == usize::MAX && s >= span_0.0 {
                         let (l, c) = (span_0.0 - 1, s);
                         let _ = (l, c);
-                        // a `${…}` template with a brace, a template, a comment or a line break
+                        // a `${…}` template with a brace, a template or a comment
                         if any_in(&t53, l + 1, c - 1) {
                             refused = true;
                             break 'tokens;
@@ -3069,7 +3069,7 @@ pub fn lex(src: &[u8]) -> Lexed {
     if !refused && span_0.0 != usize::MAX && span_0.1 == usize::MAX {
         let (l, c) = (span_0.0 - 1, n);
         let _ = (l, c);
-        // a `${…}` template with a brace, a template, a comment or a line break
+        // a `${…}` template with a brace, a template or a comment
         if any_in(&t53, l + 1, c - 1) {
             refused = true;
         }

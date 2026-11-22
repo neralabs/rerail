@@ -779,6 +779,19 @@ fn small_readings_are_the_lean_parsers() {
         "val h = \"\"\"a\\$b c\"\"\"\n",
         "val h = \"\"\"\\\\$a\"\"\"\n",
         "val h = \"\"\"\\${a}\"\"\"\n",
+        // A line break in a template's code.
+        "val s = \"a ${\n    b\n} c\"\n",
+        "val s = \"a ${\n    f(\n        x\n    )\n} | c\"\n",
+        "val s = \"a ${b\n}\"\n",
+        "val s = \"a ${\nb}\"\n",
+        "val s = \"a ${ b\n    .c }\"\n",
+        "val s = \"\"\"a ${\n    b\n} c\"\"\"\n",
+        "val s = \"a ${b +\n c}\"\n",
+        "val s = \"a ${b\n + c}\"\n",
+        "val s = \"a ${b\n?: c}\"\n",
+        "val s = \"a ${if (x)\n 1 else 2}\"\n",
+        "val s = \"a ${b\n as C}\"\n",
+        "fun f() {\n    g(\"a ${\n        b\n    }\")\n    h()\n}\n",
     ]);
     refused(&["val h = \"\"\"a\\$$b\"\"\"\n", "val h = \"\"\"a\\$\"\"\"\n", "val s = `a\nb`\n"]);
 }
