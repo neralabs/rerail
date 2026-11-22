@@ -8983,11 +8983,19 @@ impl<'a> Run<'a, '_> {
         // them all (to measure what leaving them out saves).
         let rules: Vec<RuleKey> = if std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_some() { rules } else {
             let fillable: BTreeSet<&str> = f.answers().iter().map(|&(_, p)| f.rel_name(p)).flat_map(|p| [Some(p), f.request_of(p)]).flatten().collect();
+            // A program that answers no request grows no source while it runs (a tape value's rows are admitted as a
+            // request asks, decision 0431 §8): an input it has bound already holds all its rows. The cross-file part's
+            // inputs are such, the file-local part's exports (a context's, with no root: 0597 rung 2.10).
+            let asks_nothing = f.answers().is_empty();
             let mut empty: HashMap<String, bool> = HashMap::new();
             let mut is_empty = |rel: &str| -> bool {
-                // An input may be bound when its first reader runs, so it is not taken as empty.
-                if scc.contains(rel) || fillable.contains(rel) || !native_rels.contains(rel) {
+                if scc.contains(rel) || fillable.contains(rel) {
                     return false;
+                }
+                // An input may be bound when its first reader runs, so it is not taken as empty unless it is bound
+                // already, in a program that asks nothing.
+                if !native_rels.contains(rel) {
+                    return asks_nothing && self.inputs.contains(rel) && crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| s.len() == 0);
                 }
                 if let Some(&e) = empty.get(rel) {
                     return e;

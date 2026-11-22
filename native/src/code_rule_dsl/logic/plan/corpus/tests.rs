@@ -2754,3 +2754,35 @@ Unresolved(i) :- unresolved(i).
     let found: Vec<(u64, String)> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["line"].as_u64().unwrap_or(0), d["code"].as_str().unwrap_or("").to_owned())).collect();
     assert_eq!(found, [(3, "unresolved".to_owned())], "{report:#}");
 }
+
+/// 0597 rung 2.10: a run over files with no root runs no rule of the context (0563 A: no rule can fill it): its nodes
+/// are empty, so each of its strata is held empty, no component opened. With a root, its rules run. The profile is the
+/// process's, so each run is a child process of its own (`context_root_child`), its heads read from its `heads.tsv`.
+#[test]
+fn a_run_with_no_root_runs_no_stratum_of_the_context() {
+    let ran = |source: &str| -> Vec<String> {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = directory.path().join("profile");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_root_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("CONTEXT_ROOT_SOURCE", source);
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success());
+        // part, head, cpu_s, work (rows into the head's steps), plans
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
+        heads.lines().skip(1).filter(|l| l.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_cx_quoted_"))).map(str::to_owned).collect()
+    };
+    let none = ran("x = 1\ndef f(y: int): ...\n");
+    assert!(none.is_empty(), "no root, no rule of the context runs: {none:?}");
+    let some = ran("x: \"List[int]\" = []\n");
+    assert!(some.iter().any(|h| h.split('\t').nth(1) == Some("rr_cx_quoted_ann_ident")), "with a root they run: {some:?}");
+}
+
+#[test]
+#[ignore = "child process of a_run_with_no_root_runs_no_stratum_of_the_context"]
+fn context_root_child() {
+    let source = std::env::var("CONTEXT_ROOT_SOURCE").unwrap();
+    printed_run("pass-root", ("a.py", &source), ANNOTATION_PASS, "quoted_names");
+}
