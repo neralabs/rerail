@@ -600,12 +600,12 @@ const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 /// A record of an extra (a comment): the extra's mark in its code.
 #[inline(always)]
 fn is_extra(code: u32) -> bool {
-    code >> 25 & 1 == 1
+    code >> 26 & 1 == 1
 }
 
 /// An extra's node kind: a later extra kind's by its bit, else the first's.
 fn extra_kind(code: u32) -> u16 {
-    if code >> 26 & 1 == 1 {
+    if code >> 27 & 1 == 1 {
         return k::MULTILINE_COMMENT;
     }
     k::LINE_COMMENT
@@ -8231,18 +8231,42 @@ impl P<'_> {
         self.take_as_open()
     }
 
+    /// Mark `own_line` holds at the token, not taken there; once a token (`held`).
+    fn m_own_line(&mut self) -> bool {
+        self.taken >> 6 & 1 == 0 && self.held(6, Self::h_own_line)
+    }
+
+    fn h_own_line(&self) -> bool {
+        (self.bit_at(self.i, 6))
+    }
+
+    /// Mark `own_line` taken: it and the marks before it passed at this token.
+    fn take_own_line(&mut self) -> R {
+        self.taken |= 0x7f;
+        Ok(())
+    }
+
+    /// Mark `own_line` where the rule takes it: it must hold.
+    fn mark_own_line(&mut self) -> R {
+        if !self.m_own_line() {
+            return self.refuse();
+        }
+        self.marked = true;
+        self.take_own_line()
+    }
+
     /// Mark `apart` holds at the token, not taken there; once a token (`held`).
     fn m_apart(&mut self) -> bool {
-        self.taken >> 6 & 1 == 0 && self.held(6, Self::h_apart)
+        self.taken >> 7 & 1 == 0 && self.held(7, Self::h_apart)
     }
 
     fn h_apart(&self) -> bool {
-        (self.bit_at(self.i, 6))
+        (self.bit_at(self.i, 7))
     }
 
     /// Mark `apart` taken: it and the marks before it passed at this token.
     fn take_apart(&mut self) -> R {
-        self.taken |= 0x7f;
+        self.taken |= 0xff;
         Ok(())
     }
 
@@ -8257,16 +8281,16 @@ impl P<'_> {
 
     /// Mark `real` holds at the token, not taken there; once a token (`held`).
     fn m_real(&mut self) -> bool {
-        self.taken >> 7 & 1 == 0 && self.held(7, Self::h_real)
+        self.taken >> 8 & 1 == 0 && self.held(8, Self::h_real)
     }
 
     fn h_real(&self) -> bool {
-        (self.bit_at(self.i, 7))
+        (self.bit_at(self.i, 8))
     }
 
     /// Mark `real` taken: it and the marks before it passed at this token.
     fn take_real(&mut self) -> R {
-        self.taken |= 0xff;
+        self.taken |= 0x1ff;
         Ok(())
     }
 
@@ -8281,7 +8305,7 @@ impl P<'_> {
 
     /// Mark `bt_cref` holds at the token, not taken there; once a token (`held`).
     fn m_bt_cref(&mut self) -> bool {
-        self.taken >> 8 & 1 == 0 && self.held(8, Self::h_bt_cref)
+        self.taken >> 9 & 1 == 0 && self.held(9, Self::h_bt_cref)
     }
 
     fn h_bt_cref(&self) -> bool {
@@ -8290,7 +8314,7 @@ impl P<'_> {
 
     /// Mark `bt_cref` taken: it and the marks before it passed at this token.
     fn take_bt_cref(&mut self) -> R {
-        self.taken |= 0x1ff;
+        self.taken |= 0x3ff;
         Ok(())
     }
 
@@ -8305,7 +8329,7 @@ impl P<'_> {
 
     /// Mark `label_at` holds at the token, not taken there; once a token (`held`).
     fn m_label_at(&mut self) -> bool {
-        self.taken >> 9 & 1 == 0 && self.held(9, Self::h_label_at)
+        self.taken >> 10 & 1 == 0 && self.held(10, Self::h_label_at)
     }
 
     fn h_label_at(&self) -> bool {
@@ -8314,7 +8338,7 @@ impl P<'_> {
 
     /// Mark `label_at` taken: it and the marks before it passed at this token.
     fn take_label_at(&mut self) -> R {
-        self.taken |= 0x3ff;
+        self.taken |= 0x7ff;
         Ok(())
     }
 
@@ -8329,7 +8353,7 @@ impl P<'_> {
 
     /// Mark `lab_loop` holds at the token, not taken there; once a token (`held`).
     fn m_lab_loop(&mut self) -> bool {
-        self.taken >> 10 & 1 == 0 && self.held(10, Self::h_lab_loop)
+        self.taken >> 11 & 1 == 0 && self.held(11, Self::h_lab_loop)
     }
 
     fn h_lab_loop(&self) -> bool {
@@ -8338,7 +8362,7 @@ impl P<'_> {
 
     /// Mark `lab_loop` taken: it and the marks before it passed at this token.
     fn take_lab_loop(&mut self) -> R {
-        self.taken |= 0x7ff;
+        self.taken |= 0xfff;
         Ok(())
     }
 
@@ -8353,7 +8377,7 @@ impl P<'_> {
 
     /// Mark `lab_lam` holds at the token, not taken there; once a token (`held`).
     fn m_lab_lam(&mut self) -> bool {
-        self.taken >> 11 & 1 == 0 && self.held(11, Self::h_lab_lam)
+        self.taken >> 12 & 1 == 0 && self.held(12, Self::h_lab_lam)
     }
 
     fn h_lab_lam(&self) -> bool {
@@ -8362,7 +8386,7 @@ impl P<'_> {
 
     /// Mark `lab_lam` taken: it and the marks before it passed at this token.
     fn take_lab_lam(&mut self) -> R {
-        self.taken |= 0xfff;
+        self.taken |= 0x1fff;
         Ok(())
     }
 
@@ -8377,7 +8401,7 @@ impl P<'_> {
 
     /// Mark `this_at` holds at the token, not taken there; once a token (`held`).
     fn m_this_at(&mut self) -> bool {
-        self.taken >> 12 & 1 == 0 && self.held(12, Self::h_this_at)
+        self.taken >> 13 & 1 == 0 && self.held(13, Self::h_this_at)
     }
 
     fn h_this_at(&self) -> bool {
@@ -8386,7 +8410,7 @@ impl P<'_> {
 
     /// Mark `this_at` taken: it and the marks before it passed at this token.
     fn take_this_at(&mut self) -> R {
-        self.taken |= 0x1fff;
+        self.taken |= 0x3fff;
         Ok(())
     }
 
@@ -8401,7 +8425,7 @@ impl P<'_> {
 
     /// Mark `jump_at` holds at the token, not taken there; once a token (`held`).
     fn m_jump_at(&mut self) -> bool {
-        self.taken >> 13 & 1 == 0 && self.held(13, Self::h_jump_at)
+        self.taken >> 14 & 1 == 0 && self.held(14, Self::h_jump_at)
     }
 
     fn h_jump_at(&self) -> bool {
@@ -8410,7 +8434,7 @@ impl P<'_> {
 
     /// Mark `jump_at` taken: it and the marks before it passed at this token.
     fn take_jump_at(&mut self) -> R {
-        self.taken |= 0x3fff;
+        self.taken |= 0x7fff;
         Ok(())
     }
 
@@ -8425,7 +8449,7 @@ impl P<'_> {
 
     /// Mark `as_split` holds at the token, not taken there; once a token (`held`).
     fn m_as_split(&mut self) -> bool {
-        self.taken >> 14 & 1 == 0 && self.held(14, Self::h_as_split)
+        self.taken >> 15 & 1 == 0 && self.held(15, Self::h_as_split)
     }
 
     fn h_as_split(&self) -> bool {
@@ -8434,7 +8458,7 @@ impl P<'_> {
 
     /// Mark `as_split` taken: it and the marks before it passed at this token.
     fn take_as_split(&mut self) -> R {
-        self.taken |= 0x7fff;
+        self.taken |= 0xffff;
         Ok(())
     }
 
@@ -8449,7 +8473,7 @@ impl P<'_> {
 
     /// Mark `is_split` holds at the token, not taken there; once a token (`held`).
     fn m_is_split(&mut self) -> bool {
-        self.taken >> 15 & 1 == 0 && self.held(15, Self::h_is_split)
+        self.taken >> 16 & 1 == 0 && self.held(16, Self::h_is_split)
     }
 
     fn h_is_split(&self) -> bool {
@@ -8458,7 +8482,7 @@ impl P<'_> {
 
     /// Mark `is_split` taken: it and the marks before it passed at this token.
     fn take_is_split(&mut self) -> R {
-        self.taken |= 0xffff;
+        self.taken |= 0x1ffff;
         Ok(())
     }
 
@@ -8473,7 +8497,7 @@ impl P<'_> {
 
     /// Mark `as_q` holds at the token, not taken there; once a token (`held`).
     fn m_as_q(&mut self) -> bool {
-        self.taken >> 18 & 1 == 0 && self.held(18, Self::h_as_q)
+        self.taken >> 19 & 1 == 0 && self.held(19, Self::h_as_q)
     }
 
     fn h_as_q(&self) -> bool {
@@ -8482,7 +8506,7 @@ impl P<'_> {
 
     /// Mark `as_q` taken: it and the marks before it passed at this token.
     fn take_as_q(&mut self) -> R {
-        self.taken |= 0x7ffff;
+        self.taken |= 0xfffff;
         Ok(())
     }
 
@@ -8497,7 +8521,7 @@ impl P<'_> {
 
     /// Mark `qdot` holds at the token, not taken there; once a token (`held`).
     fn m_qdot(&mut self) -> bool {
-        self.taken >> 19 & 1 == 0 && self.held(19, Self::h_qdot)
+        self.taken >> 20 & 1 == 0 && self.held(20, Self::h_qdot)
     }
 
     fn h_qdot(&self) -> bool {
@@ -8506,7 +8530,7 @@ impl P<'_> {
 
     /// Mark `qdot` taken: it and the marks before it passed at this token.
     fn take_qdot(&mut self) -> R {
-        self.taken |= 0xfffff;
+        self.taken |= 0x1fffff;
         Ok(())
     }
 
@@ -8521,7 +8545,7 @@ impl P<'_> {
 
     /// Mark `ge` holds at the token, not taken there; once a token (`held`).
     fn m_ge(&mut self) -> bool {
-        self.taken >> 20 & 1 == 0 && self.held(20, Self::h_ge)
+        self.taken >> 21 & 1 == 0 && self.held(21, Self::h_ge)
     }
 
     fn h_ge(&self) -> bool {
@@ -8530,7 +8554,7 @@ impl P<'_> {
 
     /// Mark `ge` taken: it and the marks before it passed at this token.
     fn take_ge(&mut self) -> R {
-        self.taken |= 0x1fffff;
+        self.taken |= 0x3fffff;
         Ok(())
     }
 
@@ -8545,7 +8569,7 @@ impl P<'_> {
 
     /// Mark `sfx` holds at the token, not taken there; once a token (`held`).
     fn m_sfx(&mut self) -> bool {
-        self.taken >> 21 & 1 == 0 && self.held(21, Self::h_sfx)
+        self.taken >> 22 & 1 == 0 && self.held(22, Self::h_sfx)
     }
 
     fn h_sfx(&self) -> bool {
@@ -8554,7 +8578,7 @@ impl P<'_> {
 
     /// Mark `sfx` taken: it and the marks before it passed at this token.
     fn take_sfx(&mut self) -> R {
-        self.taken |= 0x3fffff;
+        self.taken |= 0x7fffff;
         Ok(())
     }
 
@@ -8569,7 +8593,7 @@ impl P<'_> {
 
     /// Mark `blk` holds at the token, not taken there; once a token (`held`).
     fn m_blk(&mut self) -> bool {
-        self.taken >> 22 & 1 == 0 && self.held(22, Self::h_blk)
+        self.taken >> 23 & 1 == 0 && self.held(23, Self::h_blk)
     }
 
     fn h_blk(&self) -> bool {
@@ -8578,7 +8602,7 @@ impl P<'_> {
 
     /// Mark `blk` taken: it and the marks before it passed at this token.
     fn take_blk(&mut self) -> R {
-        self.taken |= 0x7fffff;
+        self.taken |= 0xffffff;
         Ok(())
     }
 
@@ -8593,7 +8617,7 @@ impl P<'_> {
 
     /// Mark `lam_bare` holds at the token, not taken there; once a token (`held`).
     fn m_lam_bare(&mut self) -> bool {
-        self.taken >> 23 & 1 == 0 && self.held(23, Self::h_lam_bare)
+        self.taken >> 24 & 1 == 0 && self.held(24, Self::h_lam_bare)
     }
 
     fn h_lam_bare(&self) -> bool {
@@ -8602,7 +8626,7 @@ impl P<'_> {
 
     /// Mark `lam_bare` taken: it and the marks before it passed at this token.
     fn take_lam_bare(&mut self) -> R {
-        self.taken |= 0xffffff;
+        self.taken |= 0x1ffffff;
         Ok(())
     }
 
@@ -8617,7 +8641,7 @@ impl P<'_> {
 
     /// Mark `lam_params` holds at the token, not taken there; once a token (`held`).
     fn m_lam_params(&mut self) -> bool {
-        self.taken >> 24 & 1 == 0 && self.held(24, Self::h_lam_params)
+        self.taken >> 25 & 1 == 0 && self.held(25, Self::h_lam_params)
     }
 
     fn h_lam_params(&self) -> bool {
@@ -8626,7 +8650,7 @@ impl P<'_> {
 
     /// Mark `lam_params` taken: it and the marks before it passed at this token.
     fn take_lam_params(&mut self) -> R {
-        self.taken |= 0x1ffffff;
+        self.taken |= 0x3ffffff;
         Ok(())
     }
 
@@ -8641,7 +8665,7 @@ impl P<'_> {
 
     /// Mark `ann_expr` holds at the token, not taken there; once a token (`held`).
     fn m_ann_expr(&mut self) -> bool {
-        self.taken >> 25 & 1 == 0 && self.held(25, Self::h_ann_expr)
+        self.taken >> 26 & 1 == 0 && self.held(26, Self::h_ann_expr)
     }
 
     fn h_ann_expr(&self) -> bool {
@@ -8650,7 +8674,7 @@ impl P<'_> {
 
     /// Mark `ann_expr` taken: it and the marks before it passed at this token.
     fn take_ann_expr(&mut self) -> R {
-        self.taken |= 0x3ffffff;
+        self.taken |= 0x7ffffff;
         Ok(())
     }
 
@@ -8665,7 +8689,7 @@ impl P<'_> {
 
     /// Mark `decl_mod` holds at the token, not taken there; once a token (`held`).
     fn m_decl_mod(&mut self) -> bool {
-        self.taken >> 26 & 1 == 0 && self.held(26, Self::h_decl_mod)
+        self.taken >> 27 & 1 == 0 && self.held(27, Self::h_decl_mod)
     }
 
     fn h_decl_mod(&self) -> bool {
@@ -8674,7 +8698,7 @@ impl P<'_> {
 
     /// Mark `decl_mod` taken: it and the marks before it passed at this token.
     fn take_decl_mod(&mut self) -> R {
-        self.taken |= 0x7ffffff;
+        self.taken |= 0xfffffff;
         Ok(())
     }
 
@@ -8689,7 +8713,7 @@ impl P<'_> {
 
     /// Mark `use_site` holds at the token, not taken there; once a token (`held`).
     fn m_use_site(&mut self) -> bool {
-        self.taken >> 27 & 1 == 0 && self.held(27, Self::h_use_site)
+        self.taken >> 28 & 1 == 0 && self.held(28, Self::h_use_site)
     }
 
     fn h_use_site(&self) -> bool {
@@ -8698,7 +8722,7 @@ impl P<'_> {
 
     /// Mark `use_site` taken: it and the marks before it passed at this token.
     fn take_use_site(&mut self) -> R {
-        self.taken |= 0xfffffff;
+        self.taken |= 0x1fffffff;
         Ok(())
     }
 
@@ -8713,7 +8737,7 @@ impl P<'_> {
 
     /// Mark `file_at` holds at the token, not taken there; once a token (`held`).
     fn m_file_at(&mut self) -> bool {
-        self.taken >> 28 & 1 == 0 && self.held(28, Self::h_file_at)
+        self.taken >> 29 & 1 == 0 && self.held(29, Self::h_file_at)
     }
 
     fn h_file_at(&self) -> bool {
@@ -8722,7 +8746,7 @@ impl P<'_> {
 
     /// Mark `file_at` taken: it and the marks before it passed at this token.
     fn take_file_at(&mut self) -> R {
-        self.taken |= 0x1fffffff;
+        self.taken |= 0x3fffffff;
         Ok(())
     }
 
@@ -8737,7 +8761,7 @@ impl P<'_> {
 
     /// Mark `trail` holds at the token, not taken there; once a token (`held`).
     fn m_trail(&mut self) -> bool {
-        self.taken >> 29 & 1 == 0 && self.held(29, Self::h_trail)
+        self.taken >> 30 & 1 == 0 && self.held(30, Self::h_trail)
     }
 
     fn h_trail(&self) -> bool {
@@ -8746,7 +8770,7 @@ impl P<'_> {
 
     /// Mark `trail` taken: it and the marks before it passed at this token.
     fn take_trail(&mut self) -> R {
-        self.taken |= 0x3fffffff;
+        self.taken |= 0x7fffffff;
         Ok(())
     }
 
@@ -8761,7 +8785,7 @@ impl P<'_> {
 
     /// Mark `wild` holds at the token, not taken there; once a token (`held`).
     fn m_wild(&mut self) -> bool {
-        self.taken >> 30 & 1 == 0 && self.held(30, Self::h_wild)
+        self.taken >> 31 & 1 == 0 && self.held(31, Self::h_wild)
     }
 
     fn h_wild(&self) -> bool {
@@ -8770,7 +8794,7 @@ impl P<'_> {
 
     /// Mark `wild` taken: it and the marks before it passed at this token.
     fn take_wild(&mut self) -> R {
-        self.taken |= 0x7fffffff;
+        self.taken |= 0xffffffff;
         Ok(())
     }
 
@@ -8785,7 +8809,7 @@ impl P<'_> {
 
     /// Mark `obj_lit` holds at the token, not taken there; once a token (`held`).
     fn m_obj_lit(&mut self) -> bool {
-        self.taken >> 31 & 1 == 0 && self.held(31, Self::h_obj_lit)
+        self.taken >> 32 & 1 == 0 && self.held(32, Self::h_obj_lit)
     }
 
     fn h_obj_lit(&self) -> bool {
@@ -8794,7 +8818,7 @@ impl P<'_> {
 
     /// Mark `obj_lit` taken: it and the marks before it passed at this token.
     fn take_obj_lit(&mut self) -> R {
-        self.taken |= 0xffffffff;
+        self.taken |= 0x1ffffffff;
         Ok(())
     }
 
@@ -8809,7 +8833,7 @@ impl P<'_> {
 
     /// Mark `ft_dot_at` holds at the token, not taken there; once a token (`held`).
     fn m_ft_dot_at(&mut self) -> bool {
-        self.taken >> 32 & 1 == 0 && self.held(32, Self::h_ft_dot_at)
+        self.taken >> 33 & 1 == 0 && self.held(33, Self::h_ft_dot_at)
     }
 
     fn h_ft_dot_at(&self) -> bool {
@@ -8818,7 +8842,7 @@ impl P<'_> {
 
     /// Mark `ft_dot_at` taken: it and the marks before it passed at this token.
     fn take_ft_dot_at(&mut self) -> R {
-        self.taken |= 0x1ffffffff;
+        self.taken |= 0x3ffffffff;
         Ok(())
     }
 
@@ -8833,7 +8857,7 @@ impl P<'_> {
 
     /// Mark `generic` holds at the token, not taken there; once a token (`held`).
     fn m_generic(&mut self) -> bool {
-        self.taken >> 33 & 1 == 0 && self.held(33, Self::h_generic)
+        self.taken >> 34 & 1 == 0 && self.held(34, Self::h_generic)
     }
 
     fn h_generic(&self) -> bool {
@@ -8842,7 +8866,7 @@ impl P<'_> {
 
     /// Mark `generic` taken: it and the marks before it passed at this token.
     fn take_generic(&mut self) -> R {
-        self.taken |= 0x3ffffffff;
+        self.taken |= 0x7ffffffff;
         Ok(())
     }
 
@@ -8857,7 +8881,7 @@ impl P<'_> {
 
     /// Mark `fn_paren` holds at the token, not taken there; once a token (`held`).
     fn m_fn_paren(&mut self) -> bool {
-        self.taken >> 34 & 1 == 0 && self.held(34, Self::h_fn_paren)
+        self.taken >> 35 & 1 == 0 && self.held(35, Self::h_fn_paren)
     }
 
     fn h_fn_paren(&self) -> bool {
@@ -8866,7 +8890,7 @@ impl P<'_> {
 
     /// Mark `fn_paren` taken: it and the marks before it passed at this token.
     fn take_fn_paren(&mut self) -> R {
-        self.taken |= 0x7ffffffff;
+        self.taken |= 0xfffffffff;
         Ok(())
     }
 
@@ -8881,7 +8905,7 @@ impl P<'_> {
 
     /// Mark `ty_susp` holds at the token, not taken there; once a token (`held`).
     fn m_ty_susp(&mut self) -> bool {
-        self.taken >> 35 & 1 == 0 && self.held(35, Self::h_ty_susp)
+        self.taken >> 36 & 1 == 0 && self.held(36, Self::h_ty_susp)
     }
 
     fn h_ty_susp(&self) -> bool {
@@ -8890,7 +8914,7 @@ impl P<'_> {
 
     /// Mark `ty_susp` taken: it and the marks before it passed at this token.
     fn take_ty_susp(&mut self) -> R {
-        self.taken |= 0xfffffffff;
+        self.taken |= 0x1fffffffff;
         Ok(())
     }
 
@@ -8905,7 +8929,7 @@ impl P<'_> {
 
     /// Mark `ds_susp` holds at the token, not taken there; once a token (`held`).
     fn m_ds_susp(&mut self) -> bool {
-        self.taken >> 36 & 1 == 0 && self.held(36, Self::h_ds_susp)
+        self.taken >> 37 & 1 == 0 && self.held(37, Self::h_ds_susp)
     }
 
     fn h_ds_susp(&self) -> bool {
@@ -8914,7 +8938,7 @@ impl P<'_> {
 
     /// Mark `ds_susp` taken: it and the marks before it passed at this token.
     fn take_ds_susp(&mut self) -> R {
-        self.taken |= 0x1fffffffff;
+        self.taken |= 0x3fffffffff;
         Ok(())
     }
 
@@ -8929,7 +8953,7 @@ impl P<'_> {
 
     /// Mark `imp_same` holds at the token, not taken there; once a token (`held`).
     fn m_imp_same(&mut self) -> bool {
-        self.taken >> 37 & 1 == 0 && self.held(37, Self::h_imp_same)
+        self.taken >> 38 & 1 == 0 && self.held(38, Self::h_imp_same)
     }
 
     fn h_imp_same(&self) -> bool {
@@ -8938,7 +8962,7 @@ impl P<'_> {
 
     /// Mark `imp_same` taken: it and the marks before it passed at this token.
     fn take_imp_same(&mut self) -> R {
-        self.taken |= 0x3fffffffff;
+        self.taken |= 0x7fffffffff;
         Ok(())
     }
 
@@ -8953,7 +8977,7 @@ impl P<'_> {
 
     /// Mark `pm` holds at the token, not taken there; once a token (`held`).
     fn m_pm(&mut self) -> bool {
-        self.taken >> 38 & 1 == 0 && self.held(38, Self::h_pm)
+        self.taken >> 39 & 1 == 0 && self.held(39, Self::h_pm)
     }
 
     fn h_pm(&self) -> bool {
@@ -8962,7 +8986,7 @@ impl P<'_> {
 
     /// Mark `pm` taken: it and the marks before it passed at this token.
     fn take_pm(&mut self) -> R {
-        self.taken |= 0x7fffffffff;
+        self.taken |= 0xffffffffff;
         Ok(())
     }
 
@@ -8977,7 +9001,7 @@ impl P<'_> {
 
     /// Mark `tpm` holds at the token, not taken there; once a token (`held`).
     fn m_tpm(&mut self) -> bool {
-        self.taken >> 39 & 1 == 0 && self.held(39, Self::h_tpm)
+        self.taken >> 40 & 1 == 0 && self.held(40, Self::h_tpm)
     }
 
     fn h_tpm(&self) -> bool {
@@ -8986,7 +9010,7 @@ impl P<'_> {
 
     /// Mark `tpm` taken: it and the marks before it passed at this token.
     fn take_tpm(&mut self) -> R {
-        self.taken |= 0xffffffffff;
+        self.taken |= 0x1ffffffffff;
         Ok(())
     }
 
@@ -9001,7 +9025,7 @@ impl P<'_> {
 
     /// Mark `cp_mod` holds at the token, not taken there; once a token (`held`).
     fn m_cp_mod(&mut self) -> bool {
-        self.taken >> 40 & 1 == 0 && self.held(40, Self::h_cp_mod)
+        self.taken >> 41 & 1 == 0 && self.held(41, Self::h_cp_mod)
     }
 
     fn h_cp_mod(&self) -> bool {
@@ -9010,7 +9034,7 @@ impl P<'_> {
 
     /// Mark `cp_mod` taken: it and the marks before it passed at this token.
     fn take_cp_mod(&mut self) -> R {
-        self.taken |= 0x1ffffffffff;
+        self.taken |= 0x3ffffffffff;
         Ok(())
     }
 
@@ -9025,7 +9049,7 @@ impl P<'_> {
 
     /// Mark `cref` holds at the token, not taken there; once a token (`held`).
     fn m_cref(&mut self) -> bool {
-        self.taken >> 41 & 1 == 0 && self.held(41, Self::h_cref)
+        self.taken >> 42 & 1 == 0 && self.held(42, Self::h_cref)
     }
 
     fn h_cref(&self) -> bool {
@@ -9034,7 +9058,7 @@ impl P<'_> {
 
     /// Mark `cref` taken: it and the marks before it passed at this token.
     fn take_cref(&mut self) -> R {
-        self.taken |= 0x3ffffffffff;
+        self.taken |= 0x7ffffffffff;
         Ok(())
     }
 
@@ -9049,7 +9073,7 @@ impl P<'_> {
 
     /// Mark `named` holds at the token, not taken there; once a token (`held`).
     fn m_named(&mut self) -> bool {
-        self.taken >> 42 & 1 == 0 && self.held(42, Self::h_named)
+        self.taken >> 43 & 1 == 0 && self.held(43, Self::h_named)
     }
 
     fn h_named(&self) -> bool {
@@ -9058,7 +9082,7 @@ impl P<'_> {
 
     /// Mark `named` taken: it and the marks before it passed at this token.
     fn take_named(&mut self) -> R {
-        self.taken |= 0x7ffffffffff;
+        self.taken |= 0xfffffffffff;
         Ok(())
     }
 
@@ -9073,7 +9097,7 @@ impl P<'_> {
 
     /// Mark `enum_class` holds at the token, not taken there; once a token (`held`).
     fn m_enum_class(&mut self) -> bool {
-        self.taken >> 44 & 1 == 0 && self.held(44, Self::h_enum_class)
+        self.taken >> 45 & 1 == 0 && self.held(45, Self::h_enum_class)
     }
 
     fn h_enum_class(&self) -> bool {
@@ -9082,7 +9106,7 @@ impl P<'_> {
 
     /// Mark `enum_class` taken: it and the marks before it passed at this token.
     fn take_enum_class(&mut self) -> R {
-        self.taken |= 0x1fffffffffff;
+        self.taken |= 0x3fffffffffff;
         Ok(())
     }
 
@@ -9097,7 +9121,7 @@ impl P<'_> {
 
     /// Mark `fun_iface` holds at the token, not taken there; once a token (`held`).
     fn m_fun_iface(&mut self) -> bool {
-        self.taken >> 45 & 1 == 0 && self.held(45, Self::h_fun_iface)
+        self.taken >> 46 & 1 == 0 && self.held(46, Self::h_fun_iface)
     }
 
     fn h_fun_iface(&self) -> bool {
@@ -9106,7 +9130,7 @@ impl P<'_> {
 
     /// Mark `fun_iface` taken: it and the marks before it passed at this token.
     fn take_fun_iface(&mut self) -> R {
-        self.taken |= 0x3fffffffffff;
+        self.taken |= 0x7fffffffffff;
         Ok(())
     }
 
@@ -9121,7 +9145,7 @@ impl P<'_> {
 
     /// Mark `fn_recv` holds at the token, not taken there; once a token (`held`).
     fn m_fn_recv(&mut self) -> bool {
-        self.taken >> 46 & 1 == 0 && self.held(46, Self::h_fn_recv)
+        self.taken >> 47 & 1 == 0 && self.held(47, Self::h_fn_recv)
     }
 
     fn h_fn_recv(&self) -> bool {
@@ -9130,7 +9154,7 @@ impl P<'_> {
 
     /// Mark `fn_recv` taken: it and the marks before it passed at this token.
     fn take_fn_recv(&mut self) -> R {
-        self.taken |= 0x7fffffffffff;
+        self.taken |= 0xffffffffffff;
         Ok(())
     }
 
@@ -9145,7 +9169,7 @@ impl P<'_> {
 
     /// Mark `acc` holds at the token, not taken there; once a token (`held`).
     fn m_acc(&mut self) -> bool {
-        self.taken >> 47 & 1 == 0 && self.held(47, Self::h_acc)
+        self.taken >> 48 & 1 == 0 && self.held(48, Self::h_acc)
     }
 
     fn h_acc(&self) -> bool {
@@ -9154,7 +9178,7 @@ impl P<'_> {
 
     /// Mark `acc` taken: it and the marks before it passed at this token.
     fn take_acc(&mut self) -> R {
-        self.taken |= 0xffffffffffff;
+        self.taken |= 0x1ffffffffffff;
         Ok(())
     }
 
@@ -9169,7 +9193,7 @@ impl P<'_> {
 
     /// Mark `recv` holds at the token, not taken there; once a token (`held`).
     fn m_recv(&mut self) -> bool {
-        self.taken >> 49 & 1 == 0 && self.held(49, Self::h_recv)
+        self.taken >> 50 & 1 == 0 && self.held(50, Self::h_recv)
     }
 
     fn h_recv(&self) -> bool {
@@ -9178,7 +9202,7 @@ impl P<'_> {
 
     /// Mark `recv` taken: it and the marks before it passed at this token.
     fn take_recv(&mut self) -> R {
-        self.taken |= 0x3ffffffffffff;
+        self.taken |= 0x7ffffffffffff;
         Ok(())
     }
 
@@ -9193,7 +9217,7 @@ impl P<'_> {
 
     /// Mark `dotted` holds at the token, not taken there; once a token (`held`).
     fn m_dotted(&mut self) -> bool {
-        self.taken >> 50 & 1 == 0 && self.held(50, Self::h_dotted)
+        self.taken >> 51 & 1 == 0 && self.held(51, Self::h_dotted)
     }
 
     fn h_dotted(&self) -> bool {
@@ -9202,7 +9226,7 @@ impl P<'_> {
 
     /// Mark `dotted` taken: it and the marks before it passed at this token.
     fn take_dotted(&mut self) -> R {
-        self.taken |= 0x7ffffffffffff;
+        self.taken |= 0xfffffffffffff;
         Ok(())
     }
 
@@ -9401,8 +9425,15 @@ impl P<'_> {
             && ({ let j = here + 1; j < self.n && !((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::MINUS_GT_41)) })
     }
 
+    #[allow(unused_variables)]
+    fn drops_semi_3(&self, here: usize) -> bool {
+        ({ let j = here as isize + -3; if j < 0 { true } else { let j = j as usize; !((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT) || (is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::LINE_COMMENT)) } })
+            && ({ let j = here as isize + -2; if j < 0 { false } else { let j = j as usize; ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) && self.codes[j] >> 19 & 1 == 1 } })
+            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) && self.codes[j] >> 19 & 1 == 1 } })
+    }
+
     fn drops_semi(&self) -> bool {
-        self.i < self.n && !self.drops_semi_1(self.i) && !self.drops_semi_2(self.i) && (self.drops_semi_0(self.i))
+        self.i < self.n && !self.drops_semi_1(self.i) && !self.drops_semi_2(self.i) && !self.drops_semi_3(self.i) && (self.drops_semi_0(self.i))
     }
 
     #[allow(unused_variables)]
@@ -9412,6 +9443,7 @@ impl P<'_> {
         ({ let j = g as isize + 0 - 1; if j < 0 { true } else { let j = j as usize; j < here && !((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::SEMI_33)) } })
             && ({ let j = g as isize + 1 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) && self.codes[j] >> 19 & 1 == 1 } })
             && ({ let j = g as isize + 2 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) } })
+            && ({ let j = here + 0; j < self.n && true && self.codes[j] >> 22 & 1 == 0 })
     }
 
     fn refuses_semi(&self) -> bool {
@@ -9440,8 +9472,15 @@ impl P<'_> {
             && ({ let j = here + 1; j < self.n && !((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::MINUS_GT_41)) })
     }
 
+    #[allow(unused_variables)]
+    fn loses_semi_3(&self, here: usize) -> bool {
+        ({ let j = here as isize + -3; if j < 0 { true } else { let j = j as usize; !((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT) || (is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::LINE_COMMENT)) } })
+            && ({ let j = here as isize + -2; if j < 0 { false } else { let j = j as usize; ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) && self.codes[j] >> 19 & 1 == 1 } })
+            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) && self.codes[j] >> 19 & 1 == 1 } })
+    }
+
     fn loses_semi(&self) -> bool {
-        self.i < self.n && (self.loses_semi_0(self.i) || self.loses_semi_1(self.i) || self.loses_semi_2(self.i))
+        self.i < self.n && !self.loses_semi_3(self.i) && (self.loses_semi_0(self.i) || self.loses_semi_1(self.i) || self.loses_semi_2(self.i))
     }
 
     #[allow(unused_variables)]
@@ -9453,8 +9492,18 @@ impl P<'_> {
             && ({ let j = g as isize + 2 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::LINE_COMMENT)) } })
     }
 
+    #[allow(unused_variables)]
+    fn moves_semi_1(&self, here: usize) -> bool {
+        let g = self.prev_tok(here);
+        let g = if g >= self.n { 0 } else { g + 1 };
+        ({ let j = g as isize + 0 - 1; if j < 0 { true } else { let j = j as usize; j < here && !((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::SEMI_33)) } })
+            && ({ let j = g as isize + 1 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) && self.codes[j] >> 19 & 1 == 1 } })
+            && ({ let j = g as isize + 2 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) } })
+            && ({ let j = here + 0; j < self.n && true && self.codes[j] >> 22 & 1 == 1 })
+    }
+
     fn moves_semi(&self) -> bool {
-        self.i < self.n && (self.moves_semi_0(self.i))
+        self.i < self.n && (self.moves_semi_0(self.i) || self.moves_semi_1(self.i))
     }
 
     #[allow(unused_variables)]
@@ -9490,7 +9539,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_label_at_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 6) && true
+        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -9520,7 +9569,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_lab_loop_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 6) && self.pat_lab_loop_0_2(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 7) && self.pat_lab_loop_0_2(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
@@ -9538,7 +9587,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_lab_lam_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 6) && self.pat_lab_lam_0_2(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 7) && self.pat_lab_lam_0_2(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
@@ -9556,7 +9605,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_this_at_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 6) && true
+        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -9568,7 +9617,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_jump_at_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 6) && true
+        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -9620,7 +9669,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_as_split_1_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::QUEST_40) && !self.bit_at(j, 6) && self.pat_as_split_1_2(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::QUEST_40) && !self.bit_at(j, 7) && self.pat_as_split_1_2(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
@@ -9752,7 +9801,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_as_q_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::QUEST_40) && !self.bit_at(j, 6) && true
+        (self.word_at(j) == w::QUEST_40) && !self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -9764,7 +9813,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_qdot_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::DOT_32) && !self.bit_at(j, 6) && true
+        (self.word_at(j) == w::DOT_32) && !self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -9776,7 +9825,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_ge_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::EQ_12) && !self.bit_at(j, 6) && true
+        (self.word_at(j) == w::EQ_12) && !self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -9788,7 +9837,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_sfx_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j)) && !self.bit_at(j, 6) && true
+        (self.at_simple_identifier_at(j)) && !self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -9974,7 +10023,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_generic_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LT_26) && !self.bit_at(j, 6) && self.pat_generic_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::LT_26) && !self.bit_at(j, 7) && self.pat_generic_0_1(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
@@ -10739,7 +10788,7 @@ impl P<'_> {
             66 => Some(None),
             65 => Some(None),
             132 => None,
-            16431 => None,
+            16432 => None,
             82 => None,
             81 => None,
             20 => None,

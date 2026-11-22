@@ -866,11 +866,37 @@ fn templates_and_comments_in_templates_are_the_lean_parsers() {
     same(&texts.iter().copied().chain(edges.iter().map(String::as_str)).collect::<Vec<_>>());
 }
 
+/// Block comments after a line break, one after another (`semi`'s `loses since`): the first loses
+/// its bytes, at the next one's start, as the lean lexer's `asi` reads it through to another
+/// comment; the next is the line's, and a line break after it decides at the token first on its
+/// line (`own_line`), as after any token; a comment of its own line before the token is the
+/// line's, neither dropped nor lost.
+#[test]
+fn block_comments_one_after_another_are_the_lean_parsers() {
+    same(&[
+        "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
+        "val a = 1\n/* c */ /* d */ /* e */\nval b = 2\n",
+        "val a = 1\n/* c */ /* d */\n+ 2\n",
+        "val a = 1\n/* c */\n/* d */\nexternal fun f()\n",
+        "val a = 1\n/* c */ /* d */\n/* e */\nabstract class A\n",
+        "val a = 1\n/* c */ /* d */\n.f()\n",
+        "val a = 1\n/* c */ /* d */ // e\nval b = 2\n",
+        "val a = 1\n/* c */\n/* d */\n.f()\n",
+        "fun f() {\n    if (a) b()\n    /* c */\n    /* e */\n    else d()\n}\n",
+        "fun f() {\n    if (a) b()\n    /* c */ /* e */\n    else d()\n}\n",
+        "fun f() {\n    g()\n    /* c */\n    /* d */\n    h()\n}\n",
+        "class A {\n    val b = 1\n    /* c */ /* d */\n    abstract fun e()\n}\n",
+    ]);
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
-        "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
+        // A token on the line of a block comment after one that starts the line: the lean
+        // lexer's `asi` inserts no semicolon there, which a mark's questions can not say.
+        "val a = 1\n/* c */ /* d */ + 2\n",
+        "fun f() {\n    a\n    /* c */ /* d */ .b()\n}\n",
         "val s = 'x\n",
         "val s = \"${}\"\n",
         "val s = \"open\n",
@@ -881,8 +907,6 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val x = 1_\n",
         "val x = 0x\n",
         "class A { val x = 1 }\n",
-        // Two comments before an `if`'s `else`: not read yet.
-        "fun f() {\n    if (a) b()\n    /* c */\n    /* e */\n    else d()\n}\n",
     ]);
 }
 

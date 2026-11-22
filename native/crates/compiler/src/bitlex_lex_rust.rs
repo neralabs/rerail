@@ -4097,6 +4097,11 @@ impl Gen<'_> {
             name: String,
             /// The loop's accumulator of its mask (`GapAcc`), where it keeps one.
             acc: Option<usize>,
+            /// A mask that holds at a grammar token's start where an accumulator's held since the
+            /// record before (`rec_J`): `A & prev(fill(M, ~W))`, `A` at every start but an extra's
+            /// (where no gap mark is written), `W` every skipped byte, `M` the accumulator's (a
+            /// token first on its line, after a line break).
+            rec: Option<usize>,
         }
         /// A gap mark's mask made of the regions, kept by the loop as it reads (the lean lexer's
         /// "a line break since the token before"): whether it held since the grammar token before
@@ -4175,9 +4180,33 @@ impl Gen<'_> {
                     accs[j].own = true;
                 }
             }
+            // `A & prev(fill(M, ~W))`: the gap since the record before is skipped bytes alone, so
+            // the fill holds before a start where `M` held in it.
+            let mut rec = None;
+            if acc.is_none()
+                && let Expr::And(a, b) = at
+            {
+                for (st, f) in [(a, b), (b, a)] {
+                    let Expr::Call(p, pa) = &**f else { continue };
+                    let [Arg::E(fl)] = pa.as_slice() else { continue };
+                    let Expr::Call(fname, fa) = fl else { continue };
+                    let [Arg::E(m), Arg::E(Expr::Not(w))] = fa.as_slice() else { continue };
+                    if p != "prev" || fname != "fill" {
+                        continue;
+                    }
+                    let wb = self.bytes_at(w, 0, &mut HashMap::new());
+                    let covers = (0..256).all(|i| !skipped[i] || wb[i]);
+                    if let (Some(&j), true, Some(t)) = (acc_of.get(&format!("{m:?}")), covers, self.at_start(st)?)
+                        && t != "false"
+                    {
+                        accs[j].own = true;
+                        rec = Some(j);
+                    }
+                }
+            }
             let mask = match at {
                 Expr::Empty => None,
-                _ if acc.is_some() => None,
+                _ if acc.is_some() || rec.is_some() => None,
                 // A mask of the regions is made only by the regions' walk, which only a test build
                 // makes (`gate_walk`): the loop must keep it, or the product build reads a name
                 // it never makes.
@@ -4193,7 +4222,7 @@ impl Gen<'_> {
             for c in checks {
                 tests.push((c.kind.clone(), c.after, c.test, c.expr.clone(), c.least, bit));
             }
-            gaps.push(Gap { bit, mask, unless, name: kind.clone(), acc });
+            gaps.push(Gap { bit, mask, unless, name: kind.clone(), acc, rec });
         }
         let skip = match &skip {
             Some(e) => self.val(e)?,
@@ -4501,6 +4530,7 @@ impl Gen<'_> {
         let mut own_code = String::new();
         for g in &gaps {
             let since = match (&g.mask, g.acc) {
+                _ if let Some(j) = g.rec => format!("tested >> {} & 1 == 1 || rec_{j}", g.bit),
                 (_, Some(j)) => format!("tested >> {0} & 1 == 1 || acc_{j}{1}", g.bit, if accs[j].here == "false" { String::new() } else { format!(" || here_{j}") }),
                 (Some(m), None) => format!("tested >> {0} & 1 == 1 || any_in(&{m}, from, s)", g.bit),
                 (None, None) => format!("tested >> {} & 1 == 1", g.bit),

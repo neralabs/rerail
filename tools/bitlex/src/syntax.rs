@@ -1431,9 +1431,10 @@ impl P {
         }
         Ok(GapPattern { unless, since, after, before })
     }
-    /// One element of a gap pattern (`gap_pattern`).
+    /// One element of a gap pattern (`gap_pattern`): of kinds and words, or of marks and first
+    /// bytes alone (`starting "B"`, `with M`: any record).
     fn gap_elem(&mut self) -> R<Vec<TokenElem>> {
-        let mut c = if self.is_kw("starting") { vec![] } else { self.token_choices()? };
+        let mut c = if self.is_kw("starting") || self.is_kw("with") || self.is_kw("without") { vec![] } else { self.token_choices()? };
         if matches!(c.as_slice(), [TokenElem::Many(..)]) || c.contains(&TokenElem::End) {
             return self.err("a gap pattern's element of kinds and words, or a `~` of them");
         }

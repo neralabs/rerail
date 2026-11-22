@@ -390,25 +390,34 @@ mark ann_lf     = lf & code unless after ";", unless before "}" | "," | "." | ".
 #   (a `/`), and loses its bytes: a comment of no width at the next comment's start, in its
 #   place (`loses since`: from the grammar token before), and the scanner asked again after
 #   that one. After a line comment a line break comes, and the next line decides as the line
-#   break after a token does: `semi`'s other questions, at the token. After a block comment a
-#   token may come on its line, where the scanner inserts none: refused there.
+#   break after a token does: `semi`'s other questions, at the token. A block comment on its line
+#   is read through as the line's, and a line break after it decides the same (the token first
+#   on its line, `own_line`); a token on its line, where the scanner inserts none, is refused.
+#   The comment after the lost one is the token's line's, the scanner asked again past it: where
+#   it is the last before the token, neither dropped nor lost, though a line break is before it.
 # - Before `catch` or `finally`, the scanner inserts a semicolon of no width before the
 #   comment, which the parser of a `try` never asks: the comment is the `try`'s, as any other.
 mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally", unless before "else" ~"->", unless before "else" end, end, settles, ends,
   drops after ~";" multiline_comment with semi before starting "aew",
   drops unless after multiline_comment before "as" | "where",
   drops unless after multiline_comment before "else" ~"->",
+  drops unless after ~(multiline_comment | line_comment) multiline_comment with semi multiline_comment with semi,
   loses after ~";" multiline_comment with semi before starting ",.:*%><={[(?|&/",
   loses after ~";" multiline_comment with semi before "!=" | "!==" | "as" | "where" | "by",
   loses after ~";" multiline_comment with semi before "else" ~"->",
+  loses unless after ~(multiline_comment | line_comment) multiline_comment with semi multiline_comment with semi,
   loses since ~";" multiline_comment with semi line_comment,
-  refuses since ~";" multiline_comment with semi multiline_comment
+  loses since ~";" multiline_comment with semi multiline_comment before with own_line,
+  refuses since ~";" multiline_comment with semi multiline_comment before without own_line
 mark semi_close = close_at, before "}", settles, ends
 # The next line's first token after a type the lean parser may split (`as_lt`), but one no
 # operand starts: only the split's rules take it (`as_split`), so wherever the grammar reads
 # that type whole, or splits no type, the file is refused. After `semi`: a statement's end does
 # not pass it.
 mark as_open    = lf & code & prev(as_lt) & prev(gt), unless before "}" | ")" | "]" | "," | "." | "?:" | "&&" | "||" | "->" | ":" | "else" | "val" | "var"
+# A token first on its line, with no comment before it there: where a line break after a comment
+# decides at it (`semi`'s `loses since`).
+mark own_line   = solid & prev(fill(lf & code, ~ws))
 # Something between two tokens: a blank or a comment. A token without it touches the token
 # before, as the lean parser's `adjacent(0)` asks.
 mark apart      = ws & code | o_line | o_block
@@ -907,6 +916,6 @@ tree kotlin {
   # Every mark a rule takes is asked only where a rule takes it, as the lean parser asks each
   # question where it branches (decision 0492). Not hidden: `generic`, where a `<` that opens type
   # arguments no rule reads refuses the file.
-  hidden apart this_at jump_at as_q as_split is_split qdot ge sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod pm tpm imp_same
+  hidden apart own_line this_at jump_at as_q as_split is_split qdot ge sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod pm tpm imp_same
   extra line_comment multiline_comment
 }

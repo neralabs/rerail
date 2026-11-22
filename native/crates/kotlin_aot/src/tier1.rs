@@ -2204,7 +2204,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     fill_5 = false;
                     fill_6 = false;
                     fill_7 = fs_7;
-                    (l, 0, true, 0x200)
+                    (l, 0, true, 0x400)
                 }
 ,
                 1 => {
@@ -2251,7 +2251,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     fill_5 = false;
                     fill_6 = false;
                     fill_7 = fs_7;
-                    (l, 0, true, 0x600)
+                    (l, 0, true, 0xc00)
                 }
 ,
                 2 => {
@@ -2325,7 +2325,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     assert_eq!(run_last(&m_nb, s), run_last(&t70, s), "assume in integer_literal at byte {s}");
                     let l = l.max(s);
                     if count_in(&t112, s, l) >= 1 {
-                        hits |= 1 << 7;
+                        hits |= 1 << 8;
                     }
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
@@ -2998,7 +2998,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     fill_5 = false;
                     fill_6 = false;
                     fill_7 = false;
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x100)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x200)
                 }
 ,
                 13 => {
@@ -3106,13 +3106,17 @@ pub fn lex(src: &[u8]) -> Lexed {
                 if (tested >> 5 & 1 == 1 || acc_2) {
                     marks |= 1 << 5;
                 }
-                // `apart`
-                if (tested >> 6 & 1 == 1 || acc_3 || here_3) {
+                // `own_line`
+                if (tested >> 6 & 1 == 1 || rec_0) {
                     marks |= 1 << 6;
                 }
-                // `real`
-                if (tested >> 7 & 1 == 1) {
+                // `apart`
+                if (tested >> 7 & 1 == 1 || acc_3 || here_3) {
                     marks |= 1 << 7;
+                }
+                // `real`
+                if (tested >> 8 & 1 == 1) {
+                    marks |= 1 << 8;
                 }
             from = s + 1;
             before = word;

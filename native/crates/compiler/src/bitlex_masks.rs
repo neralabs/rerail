@@ -4847,7 +4847,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         }
                         not = true;
                     }
-                    _ => return Err("a gap pattern's element of extras' kinds alone, or of grammar kinds and words".into()),
+                    // A `~` of every extra's kind: a grammar token, a record of none of their bits
+                    // (any record, a `~` of none, without them).
+                    (chosen, true) if words.is_empty() && not && extra_kinds.iter().all(|k| chosen.contains(&k)) => {
+                        without |= all_kinds;
+                    }
+                    _ => return Err("a gap pattern's element of extras' kinds alone, a `~` of them all, or of grammar kinds and words".into()),
                 }
                 for (m, w) in marks_named {
                     let k = low.marks.iter().position(|x| &x.0 == m).ok_or_else(|| format!("`with {m}`: no such mark"))?;
