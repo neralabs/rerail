@@ -1741,10 +1741,12 @@ describe("an audit whose other stored lists do not read", () => {
     }
   });
 
+  // An object with a member, since SQLite's JSON functions walk an object's members as they walk an array's items.
   const BROKEN = '[{"ruleId":"typescript/broken"';
+  const OBJECT = '{"blind":"budget"}';
   it.each([
-    ["ruleRevisions", BROKEN], ["ruleProvenance", BROKEN], ["paths", "{}"], ["violations", BROKEN], ["violations", "{}"],
-    ["failures", BROKEN], ["failures", "{}"],
+    ["ruleRevisions", BROKEN], ["ruleProvenance", BROKEN], ["paths", OBJECT], ["violations", BROKEN], ["violations", OBJECT],
+    ["failures", BROKEN], ["failures", OBJECT],
   ] as const)("answers the session's summary when its latest audit's %s read as %s, with the counts of its record", async (list, text) => {
     const path = await temporaryDatabase();
     threeAudits(path);
