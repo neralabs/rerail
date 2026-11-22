@@ -3188,6 +3188,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-adapters"
+version = "0.1.0"
+dependencies = [
+ "ast-grep-core",
+ "ast-grep-language",
+ "foldhash",
+ "libc",
+ "napi",
+ "napi-derive",
+ "num-bigint",
+ "num-traits",
+ "parking_lot",
+ "rayon",
+ "regex",
+ "rerail-adapters",
+ "rerail-facts",
+ "rerail-lang",
+ "rerail-prof",
+ "rerail-rr-syntax",
+ "rerail-store",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tree-sitter",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "rerail-bitlex"
 version = "0.1.0"
 dependencies = [
@@ -3384,6 +3413,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-adapters",
  "rerail-blocks",
  "rerail-classic",
  "rerail-compiler",
