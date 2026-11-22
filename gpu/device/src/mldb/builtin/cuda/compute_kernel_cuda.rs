@@ -4,9 +4,8 @@
 //!
 //! **HIP** (AMD's GPUs, decision 0440 "HIP"): the same runtime over HIP's driver calls (`amdhip64`) and hiprtc, which
 //! are CUDA's driver API and NVRTC call for call, with the same signatures and, for every constant read here but the
-//! device attributes', the same values. `Vendor` is which the process opened: HIP's when `RERAIL_GPU=hip` asks for
-//! it, else CUDA's. HIP is asked for, not a fallback, until the engine's tests run on it: one of them reset the
-//! Radeon's host (a driver's DPC watchdog, bugcheck 0x133; decision 0440, "The HIP backend"). The few calls whose shapes differ are their own entries (`Api`), and UKL
+//! device attributes', the same values. `Vendor` is which the process opened: CUDA's driver where there is one, else
+//! HIP's (`RERAIL_GPU=hip` asks for HIP). The few calls whose shapes differ are their own entries (`Api`), and UKL
 //! preprocesses the kernels for HIP's language (`rerail_ukl::Backend::Hip`).
 //!
 //! Copyright (c) 2026 Jeremy Barnes. This file is part of MLDB's forest as carried in Rerail. Apache-2.0 (see the
@@ -231,15 +230,14 @@ pub fn opened_vendor() -> Option<Vendor> {
     API.get().and_then(|a| a.as_ref().ok()).map(|a| a.vendor)
 }
 
-/// The driver and its runtime compiler, opened once: HIP's where `RERAIL_GPU=hip` asks for it, else CUDA's; `Err`
-/// says what is missing.
+/// The driver and its runtime compiler, opened once: CUDA's, else HIP's (HIP's alone where `RERAIL_GPU=hip` asks for
+/// it); `Err` says what is missing.
 fn api() -> Result<&'static Api, String> {
     API.get_or_init(|| {
         if std::env::var("RERAIL_GPU").is_ok_and(|v| v.eq_ignore_ascii_case("hip")) {
-            hip_api()
-        } else {
-            cuda_api()
+            return hip_api();
         }
+        cuda_api().or_else(|c| hip_api().map_err(|h| format!("{c}; {h}")))
     })
     .as_ref()
     .map_err(Clone::clone)
@@ -416,8 +414,9 @@ pub struct CudaDevice {
     /// Its multiprocessors (NVIDIA's SMs, AMD's work-group processors): with a kernel's occupancy, the groups the
     /// device holds at once (`CudaComputeFunction::resident_groups`).
     pub multiprocessors: u32,
-    /// Whether registered host memory is the device's at the host's address (`CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM`):
-    /// then a wrap may span several registrations (`Registered`).
+    /// Whether registered host memory is the device's at the host's address (`CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM`,
+    /// and a page registered at open to confirm it: HIP on Windows says so, and maps it elsewhere): then a wrap may
+    /// span several registrations (`register_runs`); else each wrap lies in one (`register_mapped`).
     host_pointer: bool,
 }
 
@@ -429,6 +428,27 @@ pub type CudaDeviceRef = CudaDevice;
 
 thread_local! {
     static CURRENT: std::cell::Cell<Ptr> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+/// Whether a page of the host's, registered, is the device's at the host's address.
+fn registered_at_host_address(a: &Api) -> Result<bool, String> {
+    let page = page_bytes() as usize;
+    let layout = std::alloc::Layout::from_size_align(page, page).map_err(|e| e.to_string())?;
+    // SAFETY: a page, freed below; registered and unregistered while nothing else holds it.
+    unsafe {
+        let p = std::alloc::alloc_zeroed(layout);
+        if p.is_null() {
+            return Err("no page to register".into());
+        }
+        let r = ck((a.cu_mem_host_register)(p.cast(), page, CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP), "registering a page");
+        let mut dev = 0;
+        let same = r.is_ok() && (a.cu_mem_host_get_device_pointer)(&mut dev, p.cast(), 0) == 0 && dev == p as u64;
+        if r.is_ok() {
+            (a.cu_mem_host_unregister)(p.cast());
+        }
+        std::alloc::dealloc(p, layout);
+        r.map(|()| same)
+    }
 }
 
 impl CudaDevice {
@@ -463,7 +483,7 @@ impl CudaDevice {
             let sm = (attr(at.capability_major)? * 10 + attr(at.capability_minor)?) as u32;
             let max_shared_per_block = attr(at.max_shared_per_block_optin)? as u32;
             let pageable = attr(at.pageable_uses_host_page_tables).unwrap_or(0) != 0;
-            let host_pointer = attr(at.host_pointer_for_registered_mem).unwrap_or(0) != 0;
+            let says_host_pointer = attr(at.host_pointer_for_registered_mem).unwrap_or(0) != 0;
             let simd_width = attr(at.warp_size)? as u32;
             let multiprocessors = attr(at.multiprocessors)? as u32;
             if simd_width != 32 && simd_width != 64 {
@@ -486,6 +506,11 @@ impl CudaDevice {
             };
             let mut ctx = std::ptr::null_mut();
             ck((a.cu_device_primary_ctx_retain)(&mut ctx, dev), "cuDevicePrimaryCtxRetain")?;
+            ck((a.cu_ctx_set_current)(ctx), "cuCtxSetCurrent")?;
+            // The attribute, measured: HIP on Windows says registered memory is the device's at the host's address,
+            // and maps it elsewhere (0440, "The HIP backend": the device then read unmapped addresses, the IOMMU
+            // faulted, and the host's hypervisor missed its DPC deadline). A page registered tells.
+            let host_pointer = says_host_pointer && registered_at_host_address(a)?;
             Ok(CudaDevice { ctx, vendor: a.vendor, sm, arch, simd_width, multiprocessors, max_shared_per_block, pageable, host_pointer })
         }
     }
@@ -529,14 +554,13 @@ struct Allocation {
     len: u64,
     /// The block's size class: the bytes it holds. 0: memory wrapped in place (`wrap_host_memory`), its owner's.
     class: u64,
-    /// Wrapped memory's registration with the driver: none (read where it lies), the wrap's own (`cuMemHostRegister`
-    /// of exactly its bytes), or its share of the page runs registered (`Registered`); released when the buffer goes.
+    /// Wrapped memory's registration with the driver: none (read where it lies, or pinned by the driver itself), or
+    /// its share of the page runs registered (`REGISTERED`); released when the buffer goes.
     registered: Registration,
 }
 
 enum Registration {
     None,
-    Own,
     Runs(Vec<u64>),
 }
 
@@ -551,11 +575,6 @@ impl Drop for Allocation {
         if self.class == 0 {
             match std::mem::replace(&mut self.registered, Registration::None) {
                 Registration::None => {}
-                Registration::Own => {
-                    if let Ok(a) = api() {
-                        unsafe { (a.cu_mem_host_unregister)(self.host.cast()) };
-                    }
-                }
                 Registration::Runs(runs) => release_runs(&runs),
             }
             return;
@@ -666,14 +685,51 @@ pub unsafe fn wrap_host_memory(device: &CudaDevice, ptr: *mut u8, len: usize) ->
         let runs = register_runs(a, ptr as u64, len as u64)?;
         return wrap(ptr as DevPtr, Registration::Runs(runs));
     }
-    unsafe {
-        ck((a.cu_mem_host_register)(ptr.cast(), len, CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP), "cuMemHostRegister")?;
-        let mut dev = 0;
-        if let Err(e) = ck((a.cu_mem_host_get_device_pointer)(&mut dev, ptr.cast(), 0), "cuMemHostGetDevicePointer") {
-            (a.cu_mem_host_unregister)(ptr.cast());
-            return Err(e);
+    let (dev, registered) = register_mapped(a, ptr as u64, len as u64)?;
+    wrap(dev, registered)
+}
+
+/// A wrap's pages registered where the device maps them elsewhere (`CudaDevice::host_pointer` false): its device
+/// address, and its registration. A run that holds all its pages already gives it (its device base and the offset);
+/// else its pages become a run of their own; pages the driver pinned itself (`cuMemHostAlloc`'s, error 712) are read
+/// where it maps them, when that is one span. A wrap over pages of several registrations has no single device
+/// address: an error, never an address the device does not map.
+fn register_mapped(a: &Api, at: u64, len: u64) -> Result<(DevPtr, Registration), String> {
+    let page = page_bytes();
+    let (lo, hi) = (at / page * page, (at + len.max(1)).div_ceil(page) * page);
+    let mut runs = REGISTERED.lock().unwrap_or_else(|p| p.into_inner());
+    let over: Vec<(u64, u64, u64)> = runs.range(..hi).rev().take_while(|(_, r)| r.end > lo).map(|(&s, r)| (s, r.end, r.dev)).collect();
+    match over.as_slice() {
+        [(s, e, dev)] if *s <= lo && *e >= hi => {
+            runs.get_mut(s).expect("a run").holders += 1;
+            return Ok((dev + (at - s), Registration::Runs(vec![*s])));
         }
-        wrap(dev, Registration::Own)
+        [] => {}
+        _ => return Err(format!("{len} bytes at {at:#x} span pages of {} registrations: no one device address", over.len())),
+    }
+    let flags = CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP;
+    let r = unsafe { (a.cu_mem_host_register)(lo as Ptr, (hi - lo) as usize, flags) };
+    let device_pointer = |p: u64| {
+        let mut dev = 0;
+        ck(unsafe { (a.cu_mem_host_get_device_pointer)(&mut dev, p as Ptr, 0) }, "cuMemHostGetDevicePointer").map(|()| dev)
+    };
+    if r == CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED {
+        let (first, last) = (device_pointer(at)?, device_pointer(at + len.max(1) - 1)?);
+        if last != first + len.max(1) - 1 {
+            return Err(format!("{len} bytes at {at:#x}: pages the driver pinned, mapped apart"));
+        }
+        return Ok((first, Registration::None));
+    }
+    ck(r, "cuMemHostRegister")?;
+    match device_pointer(lo) {
+        Ok(dev) => {
+            runs.insert(lo, Run { end: hi, holders: 1, dev });
+            Ok((dev + (at - lo), Registration::Runs(vec![lo])))
+        }
+        Err(e) => {
+            unsafe { (a.cu_mem_host_unregister)(lo as Ptr) };
+            Err(e)
+        }
     }
 }
 
@@ -681,6 +737,8 @@ pub unsafe fn wrap_host_memory(device: &CudaDevice, ptr: *mut u8, len: usize) ->
 struct Run {
     end: u64,
     holders: usize,
+    /// The device's address of its first byte: the host's where the device reads registered memory there.
+    dev: u64,
 }
 
 /// The runs registered, by their first byte; they never overlap. Pages pinned otherwise (the pool's blocks,
@@ -721,7 +779,7 @@ fn register_runs(a: &Api, at: u64, len: u64) -> Result<Vec<u64>, String> {
         }
     }
     for (s, e) in made {
-        runs.insert(s, Run { end: e, holders: 0 });
+        runs.insert(s, Run { end: e, holders: 0, dev: s });
     }
     let starts: Vec<u64> = runs.range(..hi).rev().take_while(|(_, r)| r.end > lo).map(|(&s, _)| s).collect();
     for s in &starts {

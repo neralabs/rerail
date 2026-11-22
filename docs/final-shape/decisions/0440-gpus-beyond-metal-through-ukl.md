@@ -1700,8 +1700,9 @@ HIP's language.
     - HIP has no opt-in to more dynamic shared memory: a block may take all its LDS.
     - The architecture's name (`gfx1035`), which hiprtc compiles for, is read from `hipDeviceProp_tR0600`'s
       `gcnArchName`, at its measured offset.
-  - The process opens HIP's driver when `RERAIL_GPU=hip` asks for it, else CUDA's. It is asked for, not a
-    fallback, until the engine's tests run on it (below): the Radeon's host still runs OpenCL by default.
+  - The process opens CUDA's driver where there is one, else HIP's (`RERAIL_GPU=hip` asks for HIP). On Windows,
+    HIP comes before OpenCL, so the Radeon's host runs HIP by default. (HIP was opt-in for the hours between the
+    reset below and its fix.)
   - The libraries are found in the system's search and in the SDK's directory (`HIP_PATH`, else each version under
     ROCm's install). On Windows, a library named by its path now finds its own dependencies beside it
     (`LoadLibraryExW`'s altered search: hiprtc needs comgr).
@@ -1730,21 +1731,30 @@ HIP's language.
 - **Measured:** `rerail-gpu`'s library tests, 19 of 19, on HIP (the Radeon 680M, gfx1035) and on CUDA (a GB10),
   `dot_products_equal_their_references` with RDNA2's dot products among them. UKL's tests preprocess every library
   header for HIP at 32 and 64 lanes, as clang does.
-- **The engine's tests on HIP reset the host.** Four slab tests (`residency::slabs::tests`) under `RERAIL_GPU=hip`
-  lost the connection 26 s in. The host had rebooted from bugcheck 0x133 (DPC_WATCHDOG_VIOLATION, one DPC past its
-  limit).
-  - The minidump, read with cdb (the Windows SDK's debuggers, installed for it), puts the DPC in Hyper-V's root
-    scheduler, not in AMD's driver: `winhvr!WinHvpXSchedulerDpcRoutine` → `WinHvpProcessDispatchSignal` →
-    `nt!KeSetEvent`. `amdkmdag` is loaded, and is on no frame.
-  - The host's Linux guest VM had started 90 s before, after the reset before (no dump, which came before any HIP
-    run of the engine's reached the host). The farm ran nothing on the guest then.
-  - So the stall is the hypervisor's, under the host's load with a guest running. That matches the host's earlier
-    resets under load while its guest ran. Whether HIP's load differs from OpenCL's there is not settled: these slab
-    tests ran under OpenCL, with the guest up, without a reset.
-  - The library's tests, which ran right, use buffers from `hipHostMalloc` alone. The slab tests also register the
-    host's pages (`hipHostRegister`, `register_runs`) and wait on a host-written word (`hipStreamWaitValue64`).
-  - The test that settles it is the same four tests under HIP with the guest stopped. Until then, no more of the
-    engine's GPU tests run there under HIP.
+- **The engine's tests on HIP reset the host, and why.** Four slab tests (`residency::slabs::tests`) under
+  `RERAIL_GPU=hip` lost the connection 26 s in. The host had rebooted from bugcheck 0x133 (DPC_WATCHDOG_VIOLATION).
+  - The minidump, read with cdb (the Windows SDK's debuggers, installed for it), puts the stalled DPC in Hyper-V's
+    root scheduler (`winhvr!WinHvpXSchedulerDpcRoutine`), with AMD's driver on no frame.
+  - A second run did not reset the host. It lost the connection for minutes, and one test,
+    `the_device_reads_every_format_as_the_document_does`, read zeros. At that moment the IOMMU logged a fault from
+    the GPU (HAL event 15, reason 6). On this host the hypervisor owns the IOMMU, so the GPU's faults land in the
+    hypervisor's DPCs: the reset was very likely a worse case of the same faults.
+  - **The cause:** HIP on Windows says registered host memory is the device's at the host's address
+    (`hipDeviceAttributeCanUseHostPointerForRegisteredMem` = 1). It maps it elsewhere: a probe registered three
+    allocations, and `hipHostGetDevicePointer` gave another address for each, which kernels read right. The backend
+    trusted the attribute and gave the device host addresses for wrapped memory (`wrap_host_memory`), which the
+    IOMMU did not map.
+  - **The fix:** the attribute is confirmed at open by registering a page and comparing the two addresses
+    (`registered_at_host_address`). Where they differ, each registered run keeps its device base, and a wrap's
+    device address is that base and its offset (`register_mapped`). A wrap inside a run the driver pinned itself
+    (`hipHostMalloc`'s, error 712) takes the driver's pointer, checked to be one span. A wrap over several
+    registrations is an error, never an address the device does not map. The old "own registration" path, which
+    had no such check, is gone.
+  - After the fix: the four slab tests pass in 3.5 s (21 s before), with no IOMMU fault; `rerail-gpu`'s 25 tests
+    pass on HIP and on CUDA. Of the engine's transducer and residency tests under HIP, 185 pass and none fails, with no IOMMU fault and
+    no reset. The rest are the tests whose data the host lacks, slow ones past the runs' minute (as under OpenCL),
+    and `nested_optional_types_keep_interpreter_candidate_ordinals`, which ends its process on this host under
+    OpenCL too.
 
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's

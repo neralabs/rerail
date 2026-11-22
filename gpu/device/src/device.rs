@@ -1,7 +1,7 @@
 //! The forest's device (Rerail, decision 0440): the target's GPU (Metal on macOS, compute_kernel_metal.rs; CUDA on
 //! Linux and Windows, or HIP on AMD's GPUs, compute_kernel_cuda.rs), an OpenCL GPU (compute_kernel_opencl.rs: integrated GPUs with no other way in) or
 //! the CPU (compute_kernel_cpu.rs: every threadgroup's threads coroutines, for debugging kernels), chosen once a
-//! process: `RERAIL_GPU=cpu` or `=opencl`, else the target's GPU (`=hip`: HIP's, AMD's, in CUDA's place). Each type below is one of them, and gives the grid
+//! process: `RERAIL_GPU=cpu` or `=opencl`, else the target's GPU (`=hip`: HIP's where there is CUDA's too). Each type below is one of them, and gives the grid
 //! runtime and the trainer one interface (MLDB's `ComputeRuntime`):
 //!
 //! - `Device`, `DeviceRef`: the device (`gpu::shared`'s); `QueueRoot`: what a `ComputeQueue` is made from;

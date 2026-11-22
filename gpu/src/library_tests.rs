@@ -27,8 +27,8 @@ fn setup() -> Option<(&'static Program, ComputeQueue)> {
         return None;
     };
     let p = program("library_tests.uglykl", TESTS).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
-    // The device the tests ran on, said once: a backend that fails to open falls back to another (to OpenCL's on
-    // Windows).
+    // The device the tests ran on, said once: a backend that fails to open falls back to another (CUDA's to HIP's, to
+    // OpenCL's on Windows).
     static SAID: std::sync::Once = std::sync::Once::new();
     SAID.call_once(|| eprintln!("the UKL library's tests on {} ({})", crate::device::backend(), shared.device.name()));
     Some((p, ComputeQueue::new(&shared.queue)))
