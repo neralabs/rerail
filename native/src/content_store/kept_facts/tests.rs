@@ -475,3 +475,34 @@ fn collection_rewrites_without_dead_entries() {
     assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["l"]);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+/// t33 step 3: a partition kept under a holder (`HOLDER`, a source's SHA-256 key) lives as long as the store keeps that
+/// source, as the facts memo's rows did; a partition with no holder, and the space's other partitions, stay.
+#[test]
+fn a_held_partition_goes_with_its_holder() {
+    let (path, c) = store("holder");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let text = b"rerail/holder-test\0anchor";
+    let key = crate::content_store::HashKey::sha256(text);
+    let source = store.put_source_hashed(text, key, &[]).unwrap();
+    let holder = key.sha256_bytes().unwrap();
+    store.queue_kept(SPACE, vec![put("held", 7, 1, flat(&[1, 1])), holder_put(7, holder, None), put("free", 8, 2, flat(&[2, 2]))]);
+    store.written().unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 0, "its holder kept: nothing to collect");
+    c.execute("DELETE FROM source_objects WHERE source_id=?1", [source.raw()]).unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 1, "the space rewritten");
+    assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["free"], "the held partition and its holder gone");
+    assert_eq!(store.collect_kept_facts().unwrap(), 0);
+    // A partition held by a plan goes once its plan is dead, though its source stays.
+    let plan = [0x33u8; 32];
+    let kept = store.put_source_hashed(text, key, &[]).unwrap();
+    store.queue_kept(SPACE, vec![put("planned", 9, 3, flat(&[3, 3])), holder_put(9, holder, Some(plan))]);
+    store.written().unwrap();
+    c.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1)", [&plan[..]]).unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 0, "its plan live, its source kept");
+    c.execute("UPDATE corpus_plans SET live=0", []).unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 1);
+    assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["free"], "the plan's partition gone");
+    assert!(store.source_by_hash(key).unwrap() == Some(kept), "its source stays");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}

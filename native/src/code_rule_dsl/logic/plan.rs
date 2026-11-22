@@ -82,6 +82,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 // cratify: `corpus` is rerail-logic's (it mounts it: the corpus runner reads the language, above the planner)
 pub mod placement;
 pub mod choices;
+/// A memo entry of program facts kept as kept facts, held by its source (t33 step 3).
+pub mod kept_entry;
 pub mod issue;
 pub mod demand;
 pub mod keeps;
