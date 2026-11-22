@@ -113,3 +113,34 @@ pub fn of_store_rows(rows: &[Row]) -> ByVersion {
         })
         .collect()
 }
+
+/// A value of `v` and of what `given` names, kept as `kept` keeps an analysis: under the version's identity with
+/// `given` hashed in, `name` and `version`. For what is made of a version and a few things besides, not an analysis
+/// of the version alone (the semijoin bases, of the cross part and the split's base relations). Made, it is kept for
+/// the store as its `rows`; read, `of_rows` makes it. A debug build checks it reads back.
+pub fn kept_value<T: PartialEq>(v: &Version, name: &'static str, version: u32, given: &[&[u8]], make: impl FnOnce() -> T, rows: impl Fn(&T) -> Vec<Row>, of_rows: impl Fn(&[Row]) -> Option<T>) -> T {
+    if !super::run_holds_plans() {
+        return make();
+    }
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail.kept-value/v1\0");
+    h.update(manager::identity(v));
+    for g in given {
+        h.update((g.len() as u64).to_le_bytes());
+        h.update(g);
+    }
+    let key: Key = (h.finalize().into(), name.to_owned(), version);
+    if let Some(kept) = super::analysis_stored(&key)
+        && let Some(t) = of_rows(&kept)
+    {
+        return t;
+    }
+    let t = make();
+    let made = rows(&t);
+    if cfg!(debug_assertions) && of_rows(&made).as_ref() != Some(&t) {
+        panic!("{name} does not read back from its rows");
+    }
+    super::analysis_made(key, Arc::new(made));
+    t
+}

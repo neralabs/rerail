@@ -3104,6 +3104,18 @@ fn run_observed_within(
         repository
     };
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the base relations' columns".into()));
+    // The cross part's reads of each relation, found in one pass: by column, whether any read names it (a term not a
+    // wildcard). A scan of every rule's reads for each column of each base relation was most of this section.
+    let mut named_by: HashMap<&str, Vec<bool>> = HashMap::new();
+    for a in cross_run.rules().flat_map(|r| r.reads()) {
+        let named = named_by.entry(cross_run.rel_name(a.rel())).or_default();
+        for (i, t) in a.args().enumerate() {
+            if named.len() <= i {
+                named.resize(i + 1, false);
+            }
+            named[i] |= !matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Wild);
+        }
+    }
     for rel in split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)) {
         let cols = projection.columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
         let decode: &[&str] = match rel.as_str() {
@@ -3111,17 +3123,17 @@ fn run_observed_within(
             "doc" if decodes => &["d", "path"],
             _ => &[],
         };
-        let atoms = || cross_run.rules().flat_map(|r| r.reads()).filter(|a| cross_run.rel_name(a.rel()) == rel.as_str());
+        let read = named_by.get(rel.as_str());
         let mut named: Vec<&str> = cols
             .iter()
             .enumerate()
-            .filter(|(i, c)| decode.contains(c) || atoms().any(|a| a.args().nth(*i).is_some_and(|t| !matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Wild))))
+            .filter(|(i, c)| decode.contains(c) || read.is_some_and(|r| r.get(*i).copied().unwrap_or(false)))
             .map(|(_, c)| *c)
             .collect();
         // A relation read with every column a wildcard (`text(_, _)` in a negated conjunction) is read for whether it
         // has rows: its first column is held, so the cross-file part reads every chunk's rows and measures them (not
         // the last chunk's binding, or none where the files came from the per-file memo).
-        if named.is_empty() && atoms().next().is_some() {
+        if named.is_empty() && read.is_some() {
             named.push(cols[0]);
         }
         if named.is_empty() {
@@ -3203,7 +3215,26 @@ fn run_observed_within(
     // The base relations a chunk keeps only for the nodes its exports hold (`file_local::semijoin_bases`): read by
     // the cross part only as lookups of those nodes.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the semijoin bases".into()));
-    let semijoin: BTreeSet<String> = crate::code_rule_dsl::typing::file_local::semijoin_bases(&cross_run, &split.base)
+    // Kept by the cross part's identity and the base relations (t33 K4): made again in each process, it was a fixed
+    // cost of every warm run.
+    let semijoin_of = || crate::code_rule_dsl::typing::file_local::semijoin_bases(&cross_run, &split.base);
+    let base_given = split.base.join("\0");
+    let semijoin: BTreeSet<String> = super::kept_analyses::kept_value(
+        &cross_run,
+        "semijoin bases",
+        1,
+        &[base_given.as_bytes()],
+        semijoin_of,
+        |s| match s {
+            None => vec![vec![front::Value::Int(0)]],
+            Some(rels) => std::iter::once(vec![front::Value::Int(1)]).chain(rels.iter().map(|r| vec![front::Value::Str(r.as_str().into())])).collect(),
+        },
+        |rows| match rows.first()?.first()? {
+            front::Value::Int(0) => Some(None),
+            front::Value::Int(1) => rows[1..].iter().map(|r| match r.first()? { front::Value::Str(x) => Some(x.to_string()), _ => None }).collect::<Option<BTreeSet<String>>>().map(Some),
+            _ => None,
+        },
+    )
         .unwrap_or_default()
         .into_iter()
         .filter(|r| stored.iter().any(|(s, _)| s == r))
