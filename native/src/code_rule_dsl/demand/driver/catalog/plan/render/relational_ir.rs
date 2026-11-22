@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum TerminalKind {
+pub enum TerminalKind {
     Universe,
     Pattern,
     Kind,
@@ -38,7 +38,7 @@ impl TerminalSpec {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum SqlOperation {
+pub enum SqlOperation {
     PackedMaterialized,
     StatusJoin,
     ScanTerminal,
@@ -4480,7 +4480,7 @@ fn qualified_row_columns_with_node(alias: &str, node: &str) -> String {
         .join(", ")
 }
 
-pub(super) fn qualified_row_columns(alias: &str) -> String {
+pub fn qualified_row_columns(alias: &str) -> String {
     qualified_row_columns_with_overrides(alias, &[])
 }
 

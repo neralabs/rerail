@@ -24,9 +24,9 @@ use ast_grep_core::matcher::Matcher;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-#[cfg(test)]
-pub(super) use super::relational_ir::SqlOperation as SqlShape;
-pub(super) use super::relational_ir::TerminalKind;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use super::relational_ir::SqlOperation as SqlShape;
+pub use super::relational_ir::TerminalKind;
 
 #[derive(Clone)]
 struct FileApplicability {
@@ -34,7 +34,7 @@ struct FileApplicability {
     required: Option<Arc<crate::code_rule_dsl::matcher::RequiredText>>,
 }
 
-pub(super) struct TerminalPlan {
+pub struct TerminalPlan {
     kind: TerminalKind,
     language: GrammarDialect,
     program: Program,
@@ -50,37 +50,37 @@ pub(super) struct TerminalPlan {
 }
 
 impl TerminalPlan {
-    pub(super) const fn kind(&self) -> TerminalKind {
+    pub const fn kind(&self) -> TerminalKind {
         self.kind
     }
 
-    #[cfg(test)]
-    pub(super) fn language(&self) -> &'static str {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn language(&self) -> &'static str {
         label(self.language).expect("a compiled matcher has a registered dialect")
     }
 
-    #[cfg(test)]
-    pub(super) fn program_digest(&self) -> String {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn program_digest(&self) -> String {
         self.program.canonical_digest(self.language(), b"")
     }
 
-    pub(super) fn program(&self) -> &Program {
+    pub fn program(&self) -> &Program {
         &self.program
     }
 
-    pub(super) const fn dialect(&self) -> GrammarDialect {
+    pub const fn dialect(&self) -> GrammarDialect {
         self.language
     }
 
-    pub(super) fn clauses(&self) -> &[(usize, usize)] {
+    pub fn clauses(&self) -> &[(usize, usize)] {
         &self.clauses
     }
 
-    pub(super) const fn result_limit(&self) -> u32 {
+    pub const fn result_limit(&self) -> u32 {
         self.result_limit
     }
 
-    pub(super) const fn producer_kind(&self) -> ProducerKind {
+    pub const fn producer_kind(&self) -> ProducerKind {
         match self.kind {
             TerminalKind::Navigation => ProducerKind::Navigation,
             TerminalKind::Pattern => ProducerKind::Pattern,
@@ -93,31 +93,31 @@ impl TerminalPlan {
         }
     }
 
-    pub(super) fn value_fact(&self) -> Option<ValueFactDescriptor> {
+    pub fn value_fact(&self) -> Option<ValueFactDescriptor> {
         self.value_fact.clone()
     }
 
-    pub(super) fn semantic_fact(&self) -> Option<SemanticFactDescriptor> {
+    pub fn semantic_fact(&self) -> Option<SemanticFactDescriptor> {
         self.semantic_fact.clone()
     }
 
-    pub(super) fn parse_fact(&self) -> Option<ParseFactDescriptor> {
+    pub fn parse_fact(&self) -> Option<ParseFactDescriptor> {
         self.parse_fact.clone()
     }
 
-    pub(super) fn transform_fact(&self) -> Option<TransformFactDescriptor> {
+    pub fn transform_fact(&self) -> Option<TransformFactDescriptor> {
         self.transform_fact.clone()
     }
 
-    pub(super) fn file_fact(&self) -> Option<FileFactDescriptor> {
+    pub fn file_fact(&self) -> Option<FileFactDescriptor> {
         self.file_fact.clone()
     }
 
-    pub(super) const fn sound_under_errors(&self) -> bool {
+    pub const fn sound_under_errors(&self) -> bool {
         self.sound_under_errors
     }
 
-    pub(super) fn applies_to_file(
+    pub fn applies_to_file(
         &self,
         path: &str,
         source: &str,
@@ -136,12 +136,12 @@ impl TerminalPlan {
     }
 }
 
-pub(super) struct ExecutionSqlPlan {
-    pub(super) materializations: Vec<(String, String)>,
-    pub(super) query: String,
+pub struct ExecutionSqlPlan {
+    pub materializations: Vec<(String, String)>,
+    pub query: String,
 }
 
-pub(super) struct SqlCatalogPlan {
+pub struct SqlCatalogPlan {
     terminals: Vec<TerminalPlan>,
     clause_irs: Vec<RelationalIr>,
     clause_terminal_ids: Vec<Vec<usize>>,
@@ -149,11 +149,11 @@ pub(super) struct SqlCatalogPlan {
     clause_outputs: Vec<OutputPlan>,
     clause_logical_plans: Vec<super::plan::ClauseLogicalPlan>,
     utility_call_counts: BTreeMap<UtilityDefinitionId, usize>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     authored_fixture_sql: Option<String>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     all_execution_sql: std::sync::OnceLock<String>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     all_relational_sql: std::sync::OnceLock<String>,
 }
 
@@ -168,7 +168,7 @@ impl std::fmt::Debug for SqlCatalogPlan {
 }
 
 impl SqlCatalogPlan {
-    pub(super) fn compile(code_rules: &[Arc<CompiledCodeRule>]) -> Result<Self, LoweringError> {
+    pub fn compile(code_rules: &[Arc<CompiledCodeRule>]) -> Result<Self, LoweringError> {
         let mut builder = Builder::default();
         for (rule_index, code_rule) in code_rules.iter().enumerate() {
             for (clause_index, clause) in code_rule.clauses.iter().enumerate() {
@@ -371,7 +371,7 @@ impl SqlCatalogPlan {
             .any(|ir| ir.operations().contains(&SqlOperation::MapDocument))
     }
 
-    pub(super) fn terminals(&self) -> &[TerminalPlan] {
+    pub fn terminals(&self) -> &[TerminalPlan] {
         &self.terminals
     }
 
@@ -525,15 +525,15 @@ impl SqlCatalogPlan {
             .map(|plan| plan.query)
     }
 
-    pub(super) fn execution_sql_for_clauses(
+    pub fn execution_sql_for_clauses(
         &self,
         ordinals: &[usize],
     ) -> Result<ExecutionSqlPlan, String> {
         self.render_clauses_plan(ordinals, true, true)
     }
 
-    #[cfg(test)]
-    pub(super) fn shape(&self) -> &[SqlShape] {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn shape(&self) -> &[SqlShape] {
         self.clause_irs
             .first()
             .expect("a test SQL plan has one clause")
@@ -590,8 +590,8 @@ impl SqlCatalogPlan {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(super) fn structural_sql(&self) -> &str {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn structural_sql(&self) -> &str {
         self.all_relational_sql.get_or_init(|| {
             let ordinals = (0..self.clause_irs.len()).collect::<Vec<_>>();
             self.render_clauses(&ordinals, false)
@@ -599,8 +599,8 @@ impl SqlCatalogPlan {
         })
     }
 
-    #[cfg(test)]
-    pub(super) fn execution_sql(&self) -> &str {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn execution_sql(&self) -> &str {
         self.all_execution_sql.get_or_init(|| {
             if let Some(authored) = &self.authored_fixture_sql {
                 return authored.clone();
@@ -611,7 +611,7 @@ impl SqlCatalogPlan {
         })
     }
 
-    pub(super) fn clause_count(&self) -> usize {
+    pub fn clause_count(&self) -> usize {
         self.clause_terminal_ids.len()
     }
 
@@ -625,19 +625,19 @@ impl SqlCatalogPlan {
         &self.clause_logical_plans
     }
 
-    #[cfg(test)]
-    pub(super) fn clause_terminal_ids(&self) -> &[Vec<usize>] {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn clause_terminal_ids(&self) -> &[Vec<usize>] {
         &self.clause_terminal_ids
     }
 }
 
 #[derive(Debug)]
-pub(super) struct LoweringError {
+pub struct LoweringError {
     unsupported: Vec<String>,
 }
 
 impl LoweringError {
-    pub(super) fn unsupported(&self) -> &[String] {
+    pub fn unsupported(&self) -> &[String] {
         &self.unsupported
     }
 }
@@ -3343,7 +3343,7 @@ impl Builder {
         id
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn template_is_var(
         template: Option<&crate::code_rule_dsl::model::Template>,
         name: &str,
@@ -3357,7 +3357,7 @@ impl Builder {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn template_is_text_var(
         template: Option<&crate::code_rule_dsl::model::Template>,
         text: &str,
@@ -3373,7 +3373,7 @@ impl Builder {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn template_is_text_var_text(
         template: Option<&crate::code_rule_dsl::model::Template>,
         before: &str,
@@ -3390,7 +3390,7 @@ impl Builder {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn authored_fixture_shape(&self) -> Option<super::compact_output_sql::Shape> {
         use super::compact_output_sql::Shape;
 
@@ -3613,7 +3613,7 @@ impl Builder {
                 )
             })
             .collect();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         let authored_fixture_sql = self.authored_fixture_shape().map(|shape| {
             let output = &self.clause_outputs[0];
             super::compact_output_sql::render(
@@ -3632,11 +3632,11 @@ impl Builder {
             clause_outputs: self.clause_outputs,
             clause_logical_plans,
             utility_call_counts: self.utility_call_counts,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             authored_fixture_sql,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             all_execution_sql: std::sync::OnceLock::new(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             all_relational_sql: std::sync::OnceLock::new(),
         })
     }

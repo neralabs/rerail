@@ -94,6 +94,7 @@ rerail-sessions	core
 rerail-prefilter	core
 rerail-boot	root
 rerail-engine	root
+rerail-demand-catalog	test
 rerail-tests-demand	test
 rerail-tests-transducer	test
 rerail-tests-conformance	test

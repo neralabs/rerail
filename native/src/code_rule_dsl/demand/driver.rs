@@ -459,5 +459,5 @@ fn run(
     })
 }
 
-// cratify: `catalog` is rerail-engine's (it mounts it)
-// cratify: `tests` is rerail-engine's (it mounts it)
+// cratify: `catalog` is rerail-demand-catalog's (it mounts it; rerail-tests-demand mounts its suites)
+// cratify: `tests` is rerail-tests-demand's (it mounts it)

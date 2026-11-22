@@ -1,4 +1,6 @@
-//! The engine's tests of demand: the demand-driven matcher, its virtual tables and its driver (docs/final-shape/proposals/crate-split/incremental-plan.md, step 2).
+//! The engine's tests of demand: the demand-driven matcher, its virtual tables and its driver, and the contract and
+//! policy suites of the reference catalog lowering (rerail-demand-catalog) (docs/final-shape/proposals/crate-split/
+//! incremental-plan.md, steps 2 and 7i).
 //!
 //! A test crate above boot: it mounts the test files in place, under the facades the engine hosted them through,
 //! and reads every other module through boot. Its test binary is booted as it loads (`boot::install_for_tests`), as
@@ -87,8 +89,15 @@ pub mod code_rule_dsl {
         #[cfg_attr(test, path = "driver")]
         pub mod driver {
             pub use rerail_boot::code_rule_dsl::demand::driver::*;
+            // The reference catalog lowering (rerail-demand-catalog), with the contract and policy suites that
+            // drive it.
             #[cfg(test)]
-            pub mod catalog;
+            #[path = "catalog"]
+            pub mod catalog {
+                pub use rerail_demand_catalog::code_rule_dsl::demand::driver::catalog::*;
+                mod policy_lowering_tests;
+                mod production_contract_tests;
+            }
             #[cfg(test)]
             pub mod tests;
             #[allow(unused_imports)]

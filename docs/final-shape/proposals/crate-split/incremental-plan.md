@@ -1190,3 +1190,19 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     - On one farm Mac, conformance, admission and transducer: 115 of 118. All three failures are pack data.
     - The binding fixtures of `compile_matcher_tests` now read their Ruff fixtures through `pack_test_data`, so a
       missing archive gives the pack-data message rather than "No such file".
+  - rerail-tests-demand (24.2k) is now a support crate and the tests over it. 23.2k of its lines were one mount, the
+    reference catalog lowering (`demand::driver::catalog`). That is test-only code which two suites drive, not tests
+    itself.
+    - The new crate rerail-demand-catalog (class `test`, under rerail-tests-demand) holds the lowering: 14.4k lines,
+      with its 1.9k of inline tests, which run in its own test binary.
+      - Its 39 `cfg(test)` helpers that the suites call are `cfg(any(test, feature = "test-hooks"))`. Its 7 inline
+        test modules stay `cfg(test)`.
+      - What the suites read is widened to `pub`, as the split's facades are.
+    - rerail-tests-demand keeps 8.4k of tests: the contract and policy suites, mounted under the lowering's facade
+      (`catalog { pub use rerail_demand_catalog::…::catalog::*; mod policy_lowering_tests; mod
+      production_contract_tests; }`), and the driver's and the virtual tables' tests. The contract suite reads the
+      policy suite's helpers, so the two stay together.
+    - Tests:
+      - On a Linux host, both crates in full: 196 of 202. All 6 failures are device tests (4 `UnsupportedBackend`, 2
+        Metal dispatch counts), as before the split.
+      - On one farm Mac, those 6 tests' filter: 12 of 12.
