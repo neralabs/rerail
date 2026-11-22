@@ -19,9 +19,9 @@
 //!   (`ClBuffer::address`; the fused sorts and probes). It is bound and copied as itself
 //!   (`clSetKernelArgMemPointerINTEL`, `clEnqueueMemcpyINTEL`): Intel's driver keeps an OpenCL buffer made over it
 //!   apart from its pages. Memory wrapped in place has no address.
-//! - **The SIMD group** is the device's sub-group where it has OpenCL 3.0's with 32 lanes (`native_subgroups`: Intel's
-//!   GPUs), else emulated through threadgroup memory at 32 lanes (`ukl_opencl_shim.h`, Apple's OpenCL 1.2), or one
-//!   lane (`RERAIL_OPENCL_SIMD_WIDTH=1`).
+//! - **The SIMD group** is the device's sub-group at its native width where it has OpenCL 3.0's (`lanes`: Intel's
+//!   GPUs, 16 lanes on Xe2), else emulated through threadgroup memory at 32 lanes (`ukl_opencl_shim.h`, Apple's
+//!   OpenCL 1.2), or one lane (`RERAIL_OPENCL_SIMD_WIDTH=1`).
 //! - **A queue** holds its operations until a flush, which enqueues them in order on its root's in-order command
 //!   queue, then a marker: the event. A queue's work never interleaves with another's, as with Metal's command
 //!   buffers. A wait for a host-signalled event holds the rest on the host, and the root's later flushes behind it,
@@ -250,35 +250,45 @@ fn device_info_string(a: &Api, d: Ptr, param: ClUint) -> String {
     String::from_utf8_lossy(&v).trim_end_matches('\0').trim().to_string()
 }
 
-/// The SIMD groups' lanes of the OpenCL device's kernels: `RERAIL_OPENCL_SIMD_WIDTH` (1 or 32), else 32 (the device's
-/// sub-groups or emulated, `native_subgroups`).
-pub fn simd_width() -> u32 {
-    match std::env::var("RERAIL_OPENCL_SIMD_WIDTH") {
-        Err(_) => 32,
+/// The SIMD groups of the OpenCL device's kernels: their lanes, and whether they are the device's sub-groups (else
+/// emulated). The device's sub-groups where it has OpenCL 3.0's with their shuffles, relative shuffles and ballot
+/// (`cl_khr_subgroups`, `_subgroup_shuffle`, `_subgroup_shuffle_relative`, `_subgroup_ballot`), and a kernel may
+/// require a width (`cl_intel_required_subgroup_size`): at the device's native width, the narrowest of its sizes from
+/// 16 lanes (16 on Intel's GPUs, which split a 32-lane sub-group into two halves; on an Arc 140V a kernel that requires
+/// 32 lanes compiles 2-3 times slower than at 16). `RERAIL_OPENCL_SIMD_WIDTH` (1, 16 or 32) asks for a width: 1 is one
+/// lane, no group; 16 or 32 the device's sub-groups of it where it has them. Otherwise, or with
+/// `RERAIL_OPENCL_SUBGROUPS=0` (to measure one against the other), the shim emulates 32 lanes in threadgroup memory.
+/// With the device's sub-groups, also the sizes they come in (a source written for one, `UKL_SIMD_WIDTH_NEEDED`,
+/// takes it: the block programs' 32).
+fn lanes(a: &Api, device: Ptr) -> (u32, bool, Vec<u32>) {
+    let asked = match std::env::var("RERAIL_OPENCL_SIMD_WIDTH") {
+        Err(_) => None,
         Ok(w) => match w.parse::<u32>() {
-            Ok(n @ (1 | 32)) => n,
-            _ => panic!("RERAIL_OPENCL_SIMD_WIDTH={w}: 1 or 32"),
+            Ok(1) => return (1, false, Vec::new()),
+            Ok(n @ (16 | 32)) => Some(n),
+            _ => panic!("RERAIL_OPENCL_SIMD_WIDTH={w}: 1, 16 or 32"),
         },
-    }
-}
-
-/// Whether the device's sub-groups are the SIMD groups its kernels want (decision 0440, the Intel plan's step 1):
-/// OpenCL 3.0's sub-groups with their shuffles, relative shuffles and ballot (`cl_khr_subgroups`,
-/// `_subgroup_shuffle`, `_subgroup_shuffle_relative`, `_subgroup_ballot`), and a kernel may require 32 lanes
-/// (`cl_intel_required_subgroup_size`, 32 among its sizes). Otherwise, or with `RERAIL_OPENCL_SUBGROUPS=0` (to
-/// measure one against the other), the shim emulates them in threadgroup memory.
-fn native_subgroups(a: &Api, device: Ptr) -> bool {
-    if std::env::var("RERAIL_OPENCL_SUBGROUPS").is_ok_and(|v| v == "0") || simd_width() != 32 {
-        return false;
+    };
+    let emulated = || (32, false, Vec::new());
+    if std::env::var("RERAIL_OPENCL_SUBGROUPS").is_ok_and(|v| v == "0") {
+        return emulated();
     }
     let ext = device_info_string(a, device, CL_DEVICE_EXTENSIONS);
     let has = |e: &str| ext.split_ascii_whitespace().any(|x| x == e);
     let wanted = ["cl_khr_subgroups", "cl_khr_subgroup_shuffle", "cl_khr_subgroup_shuffle_relative", "cl_khr_subgroup_ballot", "cl_intel_required_subgroup_size"];
     if !wanted.iter().all(|e| has(e)) {
-        return false;
+        return emulated();
     }
     let sizes = device_info_bytes(a, device, CL_DEVICE_SUB_GROUP_SIZES_INTEL);
-    sizes.as_chunks::<8>().0.iter().any(|c| u64::from_ne_bytes(*c) == 32)
+    let sizes: Vec<u32> = sizes.as_chunks::<8>().0.iter().filter_map(|c| u32::try_from(u64::from_ne_bytes(*c)).ok()).collect();
+    let width = match asked {
+        Some(n) => sizes.contains(&n).then_some(n),
+        None => [16, 32].into_iter().find(|n| sizes.contains(n)),
+    };
+    match width {
+        Some(w) => (w, true, sizes),
+        None => emulated(),
+    }
 }
 
 /// The device's host allocations, with `RERAIL_OPENCL_USM=1`, where it has Intel's unified shared memory with host
@@ -318,8 +328,12 @@ struct DeviceInner {
     context: Ptr,
     name: String,
     max_group: usize,
-    /// Whether its kernels' SIMD groups are the device's sub-groups (`native_subgroups`), else emulated.
+    /// Whether its kernels' SIMD groups are the device's sub-groups (`lanes`), else emulated.
     subgroups: bool,
+    /// Their lanes (`UKL_SIMD_WIDTH`).
+    width: u32,
+    /// The sizes its sub-groups come in (none when emulated).
+    sizes: Vec<u32>,
     /// The alignment of a sub-buffer's origin, in bytes (`CL_DEVICE_MEM_BASE_ADDR_ALIGN`, given in bits).
     base_align: u64,
     /// The largest buffer (`CL_DEVICE_MAX_MEM_ALLOC_SIZE`).
@@ -377,20 +391,20 @@ impl ClDevice {
         let base_align = (u32::from_ne_bytes(ba[..4].try_into().unwrap()) as u64 / 8).max(1);
         let ma = device_info_bytes(a, device, CL_DEVICE_MAX_MEM_ALLOC_SIZE);
         let max_alloc = u64::from_ne_bytes(ma[..8].try_into().unwrap());
-        let subgroups = native_subgroups(a, device);
+        let (width, subgroups, sizes) = lanes(a, device);
         // Heap buffers first: memory wrapped in place (a block, a mapped tape) is read through one.
-        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, usm: None, synced: false }));
+        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, width, sizes: sizes.clone(), base_align, max_alloc, usm: None, synced: false }));
         // A driver whose kernels' writes reach the host's pages only through a map is made current at each
         // submission's edges (`synced`); a device's own memory holding a buffer while it computes is not a copy (0353).
         // `RERAIL_OPENCL_SYNCED=1` takes this path on any device (its tests on a driver that needs no map).
         let synced = !unified || std::env::var_os("RERAIL_OPENCL_SYNCED").is_some() || probe.reads_host_pages_in_place().is_err();
         drop(probe);
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, usm: None, synced }));
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, width, sizes: sizes.clone(), base_align, max_alloc, usm: None, synced }));
         if synced {
             return Ok(d);
         }
         let Some(usm) = usm(a, platform, device) else { return Ok(d) };
-        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, base_align, max_alloc, usm: Some(usm), synced }));
+        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, width, sizes, base_align, max_alloc, usm: Some(usm), synced }));
         // Without the check's pass its buffers stay the heap's, with no address (one context; nothing releases it).
         if let Err(e) = with.follows_addresses() {
             eprintln!("rerail-device: {e}: OpenCL buffers without addresses");
@@ -493,18 +507,29 @@ impl ClDevice {
     }
 
     /// The defines its kernels' preprocessing takes: the SIMD width, the largest threadgroup, and whether the SIMD
-    /// groups are the device's sub-groups (`UKL_OPENCL_SUBGROUPS`, `native_subgroups`).
+    /// groups are the device's sub-groups (`UKL_OPENCL_SUBGROUPS`, `lanes`).
     pub fn defines(&self) -> Vec<(&'static str, String)> {
-        let mut d = vec![("UKL_SIMD_WIDTH", format!("{}u", simd_width())), ("UKL_TG_MAX", format!("{}u", self.max_group()))];
+        let mut d = vec![("UKL_SIMD_WIDTH", format!("{}u", self.0.width)), ("UKL_TG_MAX", format!("{}u", self.max_group()))];
         if self.0.subgroups {
             d.push(("UKL_OPENCL_SUBGROUPS", "1".into()));
         }
         d
     }
 
-    /// Whether its kernels' SIMD groups are the device's sub-groups (`native_subgroups`), not emulated.
+    /// Whether its kernels' SIMD groups are the device's sub-groups (`lanes`), not emulated.
     pub fn subgroups(&self) -> bool {
         self.0.subgroups
+    }
+
+    /// Its SIMD groups' lanes (`lanes`).
+    pub fn simd_width(&self) -> u32 {
+        self.0.width
+    }
+
+    /// Whether a source written for `w` lanes (`UKL_SIMD_WIDTH_NEEDED`) runs here: the width, or a size of its
+    /// sub-groups.
+    pub fn offers_simd_width(&self, w: u32) -> bool {
+        self.0.width == w || self.0.sizes.contains(&w)
     }
 
     pub fn new_shared_event(&self) -> ClSharedEvent {
