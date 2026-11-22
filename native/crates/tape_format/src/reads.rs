@@ -103,17 +103,24 @@ pub mod f16 {
         let nsub = SUB.min(blocks.wrapping_sub(p * SUB));
         let j = (i / BLOCK) % SUB;
         let mut lo = if j == 0 { 0 } else { u16_at(t, list, start.wrapping_add((j - 1) * 2).min(limit)) };
-        let mut hi = u16_at(t, list, start.wrapping_add(j * 2).min(limit));
+        let hi = u16_at(t, list, start.wrapping_add(j * 2).min(limit));
         let offsets = start.wrapping_add(nsub.wrapping_mul(2));
         let low = i % BLOCK;
-        while lo < hi {
-            let middle = lo.wrapping_add(hi) >> 1;
-            if u8_at(t, list, offsets.wrapping_add(middle).min(limit)) < low {
-                lo = middle + 1;
-            } else {
-                hi = middle;
-            }
+        // The first offset at or past the node's low byte: in the ascending run, the count of its offsets below it, 8
+        // a word, each byte compared unsigned within the word (its low 7 bits by a subtraction that borrows from no
+        // other byte, its high bit apart), the bytes past the run's end masked off. No load waits on another.
+        let (h, l8) = (0x8080_8080_8080_8080u64, u64::from(low) * 0x0101_0101_0101_0101);
+        let mut found = lo;
+        let mut q = lo;
+        while q < hi {
+            let x = word_at(t, list, offsets.wrapping_add(q).min(limit));
+            let d = (x | h).wrapping_sub(l8 & !h);
+            let lt = h & ((!x & l8) | (!(x ^ l8) & !d));
+            let left = hi - q;
+            found += if left >= 8 { lt } else { lt & ((1u64 << (8 * left)) - 1) }.count_ones();
+            q += 8;
         }
+        lo = found;
         // The list's values follow the part's offsets.
         let vw = (v.widths >> (16 + 4 * k)) & 15;
         let count = u16_at(t, list, start.wrapping_add(nsub.wrapping_sub(1).wrapping_mul(2)).min(limit));

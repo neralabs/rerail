@@ -1332,6 +1332,16 @@ impl Em<'_> {
                     (Op::LNot, V::Cmp { op, first, y }) => V::Cmp { op: negated(op), first, y },
                     (Op::Not, V::S(s, _)) => V::S(format!("!({s})"), m),
                     (Op::Neg, V::S(s, _)) => V::S(format!("({s}).wrapping_neg()"), m),
+                    (op @ (Op::Not | Op::Neg), a) if wide(m) => {
+                        let l = self.lanes(&a, m)?;
+                        V::L(
+                            self.map64(|r| match op {
+                                Op::Not => format!("vreinterpretq_u64_u32(vmvnq_u32(vreinterpretq_u32_u64({l}[{r}])))"),
+                                _ => format!("vreinterpretq_u64_s64(vnegq_s64(vreinterpretq_s64_u64({l}[{r}])))"),
+                            }),
+                            m,
+                        )
+                    }
                     (op, a) => {
                         let l = self.lanes(&a, m)?;
                         match op {
@@ -1643,9 +1653,10 @@ impl Em<'_> {
         let m = if m == M::PTR && !real(a) && !real(b) { M::U64 } else { m };
         if m == M::PTR || m == M::U64 || m == M::I64 {
             match (op, a, b) {
-                (Op::Mul, V::At { base, idx, scale: 1 }, V::S(k, _)) | (Op::Mul, V::S(k, _), V::At { base, idx, scale: 1 }) if base.is_empty() => {
-                    let Some(k) = konst(k) else { return err("a lane's index times a variable") };
-                    return Ok(V::At { base: String::new(), idx: idx.clone(), scale: k });
+                // A lane's index times a scale (a constant of 32 bits): still an index; times another value, the
+                // lanes' product below.
+                (Op::Mul, V::At { base, idx, scale: 1 }, V::S(k, _)) | (Op::Mul, V::S(k, _), V::At { base, idx, scale: 1 }) if base.is_empty() && konst(k).is_some() => {
+                    return Ok(V::At { base: String::new(), idx: idx.clone(), scale: konst(k).unwrap_or(1) });
                 }
                 (_, V::S(x, xm), V::S(y, ym)) => {
                     let (x, y) = (conv(x, *xm, m), conv(y, *ym, m));
@@ -2292,6 +2303,18 @@ impl Em<'_> {
                     _ => return err(format!("{b:?} of each lane's address")),
                 }
             }
+            // The ones of each lane's `m`: each byte's (`vcnt`), summed pairwise up to the lane's width.
+            Builtin::Popcount => match &args[0] {
+                V::S(s, _) => V::S(format!("((({s}) as {}).count_ones() as {})", scalar(m).unwrap_or("u32"), scalar(m).unwrap_or("u32")), m),
+                a if wide(m) => {
+                    let l = self.lanes(a, m)?;
+                    V::L(self.map64(|r| format!("vpaddlq_u32(vpaddlq_u16(vpaddlq_u8(vcntq_u8(vreinterpretq_u8_u64({l}[{r}])))))")), m)
+                }
+                a => {
+                    let l = self.lanes(a, m)?;
+                    V::L(self.map(|r| format!("vpaddlq_u16(vpaddlq_u8(vcntq_u8(vreinterpretq_u8_u32({l}[{r}]))))")), m)
+                }
+            },
             b => return err(format!("the intrinsic {b:?}")),
         })
     }
