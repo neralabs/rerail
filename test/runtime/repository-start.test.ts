@@ -410,6 +410,17 @@ describe("repository start state", () => {
     expect(io.lines).toEqual(["○ Rerail has not been started in landing-page, so there is nothing to stop. Start it with rerail start."]);
   });
 
+  it("names a worktree whose main checkout was deleted by its own folder, as Git no longer names its repository", async () => {
+    const root = await temporary("rerail-stop-gone-");
+    const main = gitRepository(join(root, "landing-page"));
+    const worktree = join(root, "export-api");
+    git(main, "worktree", "add", "-q", "-b", "export-api", worktree);
+    await removeFolder(main);
+    const io = recorder("terminal");
+    expect(stopRerail(worktree, io, { databasePath: join(root, "rerail.sqlite") })).toBe("stopped");
+    expect(io.lines).toEqual(["○ Rerail has not been started in export-api, so there is nothing to stop. Start it with rerail start."]);
+  });
+
   it("names the rules that steered the coding agent's session, each once, in the order they first steered", async () => {
     const root = await temporary("rerail-stop-steered-");
     const checkout = gitRepository(join(root, "acme-web"));

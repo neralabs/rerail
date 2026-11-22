@@ -10174,3 +10174,12 @@ Each choice is read by both sides' invariants in `notes/roll-up-42-engine-cratin
 - **Mirrors**: the split crates re-export what ours added (`rr::UNPLACED`, `rerail_store::Canonical`).
 - **State lists**: `Device` and `INSTALL` in 0104's STATE list. The split's eight load-time registrations go in
   the global-state list.
+
+### Q464. Roll-up 43 (main 1609ac3a30 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-43-main.md`:
+
+- **Compile off the daemon's thread** (#973): the one body stays in `rule_api` (`compile_rule`). Theirs'
+  `compile_contained`, `compile_async` and `CompileTask` call it.
+- **Owners**: ours' `refreshOwners()` (one look-again point), then theirs' `prepareRules(paths)`.
+- **Identity** (#977): theirs' lazy candidate, and ours' bare-folder ids and `checkoutIdentity`.

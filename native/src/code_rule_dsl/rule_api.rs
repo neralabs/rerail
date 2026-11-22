@@ -17,9 +17,15 @@ pub static FRONTIER_AUDIT: std::sync::OnceLock<fn(&CompiledCodeRule) -> Value> =
 /// The capabilities this build grants a rule (`capabilities.json`): what the CLI and the engine's glue compile with.
 pub const CAPABILITIES: &str = include_str!("capabilities.json");
 
-/// A rule's document compiled against `capabilities_json`: parsed as `format`, canonicalized, digested and compiled.
-/// The host's entry (`CodeRuleDslRuntime::compile`, napi) and the engine's glue call this.
+/// A rule's document compiled against `capabilities_json`, for the host and the engine's glue (`compile_rule`).
 pub fn compile(source: &str, format: &str, capabilities_json: &str) -> Result<CompiledCodeRuleDsl> {
+    compile_rule(source, format, capabilities_json).map(|rule| CompiledCodeRuleDsl { inner: Arc::new(rule) })
+}
+
+/// A rule's document compiled against `capabilities_json`: parsed as `format`, canonicalized, digested and compiled.
+/// The host's entries (`CodeRuleDslRuntime::compile` on its thread, `compile_async` on a pool thread) compile
+/// through here.
+pub fn compile_rule(source: &str, format: &str, capabilities_json: &str) -> Result<CompiledCodeRule> {
     use super::compile::{compile_document, parse_capabilities, parse_document};
     use super::json::{canonicalize_value, hex_digest};
     let capabilities = parse_capabilities(capabilities_json)?;
@@ -30,18 +36,16 @@ pub fn compile(source: &str, format: &str, capabilities_json: &str) -> Result<Co
     // The regexes only validation took, or a rejected document's, go as this ends (`regexes`).
     let _compiling = super::regexes::compiling();
     let (id, rule_mode, scope, clauses, required, report_count_gt) = compile_document(&canonical_value, &capabilities)?;
-    Ok(CompiledCodeRuleDsl {
-        inner: Arc::new(CompiledCodeRule {
-            id,
-            report_count_gt,
-            rule_mode,
-            canonical,
-            digest,
-            required_capabilities: serde_json::to_string(&required).map_err(json_error)?,
-            clauses,
-            scope,
-            capabilities,
-        }),
+    Ok(CompiledCodeRule {
+        id,
+        report_count_gt,
+        rule_mode,
+        canonical,
+        digest,
+        required_capabilities: serde_json::to_string(&required).map_err(json_error)?,
+        clauses,
+        scope,
+        capabilities,
     })
 }
 
