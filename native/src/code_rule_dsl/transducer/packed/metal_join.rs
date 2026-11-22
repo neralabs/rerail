@@ -544,6 +544,9 @@ pub(in crate::code_rule_dsl) struct DevRel {
     kept: Option<crate::code_rule_dsl::facts::rows::Part>,
     /// A `has` axis read off the tape (`DevRel::has`): its set's kind atoms, ascending, two words each.
     has: Option<Words>,
+    /// The block its chain's far base lies in (decision 0353 step 6, `InBlock::far`), bound beside its own: the
+    /// kernels make its offset from the two bindings (`rel_b`).
+    far: Option<Held>,
 }
 
 impl DevRel {
@@ -575,7 +578,7 @@ impl DevRel {
         let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None, has: None }.noted())
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None, has: None, far: None }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -617,6 +620,9 @@ impl DevRel {
 
     /// Makes the buffers a view's reads reach by address resident in `pass` (none for a relation).
     pub(in crate::code_rule_dsl) fn resident_in(&self, pass: &Pass) {
+        if let Some(f) = &self.far {
+            pass.use_read(&[&f.buffer]);
+        }
         if let Some(v) = &self.view {
             let buffers: Vec<&Buffer> = v.buffers.iter().collect();
             pass.use_read(&buffers);
@@ -654,7 +660,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None, has: None }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None, has: None, far: None }
     }
 
     /// Whether it is a relation read where it lies (`in_block`): it holds the relation's block while it lives.
@@ -670,7 +676,14 @@ impl DevRel {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone(), has: None }.noted())
+        let far = b.far().map(|f| held_block(device, &f, Box::new(f.clone()))).transpose()?;
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone(), has: None, far }.noted())
+    }
+
+    /// The buffer its kernels bind as its far base's block (`far`): `bound`, the buffer its own reads bind, when its
+    /// chain reaches no other block.
+    pub(in crate::code_rule_dsl) fn far_or<'a>(&'a self, bound: &'a Buffer) -> &'a Buffer {
+        self.far.as_ref().map_or(bound, |f| &f.buffer)
     }
 
     /// What holds its relation: its own, or the one read in its block (none for words, or a test's relation no
@@ -1478,7 +1491,7 @@ impl Batch {
             // A sort refused after the bucket's dispatch leaves `words`, which the dispatch writes, with the batch
             // until its submission is done: dropped here, it would go back to the pool at once.
             rel.resident_in(pass);
-            pass.run_bytes(&bucket, &[&buffer.buffer, &words.buffer, &params.buffer], &[], groups(n));
+            pass.run_bytes(&bucket, &[&buffer.buffer, &words.buffer, &params.buffer, rel.far_or(&buffer.buffer)], &[], groups(n));
             let parts = match encode_sort(pass, &words.buffer, Width::W32, bits, n) {
                 Ok(parts) => parts,
                 Err(e) => {
@@ -1519,6 +1532,8 @@ impl Batch {
             None => self.dummy.buffer.clone(),
         };
         let fbuf = self.screen(&mut stage, screen);
+        // Its far base's block (decision 0353 step 6), bound last.
+        let rfar: Buffer = right.map_or(&rbuf, |(rel, index)| index.map_or(rel, |ix| ix.of(rel)).far_or(&rbuf)).clone();
         if left.cap == 1 && stage.mode == JOIN && right.is_some() {
             // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
             let scount = view_pipe("scan_count", format)?;
@@ -1532,9 +1547,9 @@ impl Batch {
                 index.map_or(rel, |ix| ix.of(rel)).resident_in(pass);
             }
             let lbuf: &Buffer = &left.buffer.buffer;
-            pass.run_bytes(&scount, &[lbuf, &rbuf, &counters.buffer.buffer, &counts, &totals.buffer.buffer, &sb.buffer], &[], groups(n));
+            pass.run_bytes(&scount, &[lbuf, &rbuf, &counters.buffer.buffer, &counts, &totals.buffer.buffer, &sb.buffer, &rfar], &[], groups(n));
             scan.encode(pass, &counts)?;
-            pass.run_bytes(&sscatter, &[lbuf, &rbuf, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb.buffer], &[], groups(n));
+            pass.run_bytes(&sscatter, &[lbuf, &rbuf, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb.buffer, &rfar], &[], groups(n));
             return Ok(());
         }
         let n = left.cap + 1;
@@ -1565,9 +1580,9 @@ impl Batch {
             }
             None => (&dummy, 0),
         };
-        let count_bufs: [(&Buffer, u64); 9] = [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&arena, 0), (d, d_at), (&fbuf, 0), (&sb.buffer, 0)];
-        let scatter_bufs: [(&Buffer, u64); 10] =
-            [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counts, 0), (&out.buffer.buffer, 0), (&arena, 0), (&counters.buffer.buffer, 0), (d, d_at), (&fbuf, 0), (&sb.buffer, 0)];
+        let count_bufs: [(&Buffer, u64); 10] = [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&arena, 0), (d, d_at), (&fbuf, 0), (&sb.buffer, 0), (&rfar, 0)];
+        let scatter_bufs: [(&Buffer, u64); 11] =
+            [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counts, 0), (&out.buffer.buffer, 0), (&arena, 0), (&counters.buffer.buffer, 0), (d, d_at), (&fbuf, 0), (&sb.buffer, 0), (&rfar, 0)];
         if n > sized_min() {
             // The table's space is the host's guess: the grids are sized on the device, from the rows the stage
             // before made (decision 0113's GPU-sized work); at most the table's.
@@ -1605,19 +1620,24 @@ impl Batch {
         let rel = right.1.map_or(right.0, |ix| ix.of(right.0));
         bind_right(&mut stage, rel, right.1);
         let a = right.1.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone();
+        let a_far = rel.far_or(&a).clone();
         let fbuf = self.screen(&mut stage, screen);
         let mut probes = [Stage::default(); WITNESS_PROBES];
         let mut bufs: Vec<Buffer> = Vec::new();
+        let mut fars: Vec<Buffer> = Vec::new();
         for (k, (b, rel, ix)) in rest.iter().enumerate() {
             let mut b = *b;
             let rel = ix.map_or(*rel, |ix| ix.of(rel));
             bind_right(&mut b, rel, *ix);
             b.cap_in = left.cap as u32;
             probes[k] = b;
-            bufs.push(ix.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone());
+            let bound = ix.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone();
+            fars.push(rel.far_or(&bound).clone());
+            bufs.push(bound);
         }
         while bufs.len() < WITNESS_PROBES {
             bufs.push(dummy.clone());
+            fars.push(dummy.clone());
         }
         let held = Held::of(probes.iter().flat_map(|p| p.bytes().iter().copied()).collect::<Vec<u8>>().into_iter()).map_err(|_| Error::BackendCapacity)?;
         let n = left.cap + 1;
@@ -1639,9 +1659,11 @@ impl Batch {
         count_bufs.extend(bufs.iter());
         count_bufs.push(&fbuf);
         count_bufs.push(&sb.buffer);
+        count_bufs.push(&a_far);
+        count_bufs.extend(fars.iter());
         pass.run_bytes(&count, &count_bufs, &[], groups(n));
         scan.encode(pass, &counts)?;
-        let scatter_bufs: [&Buffer; 10] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy, &dummy, &dummy, &wb.buffer];
+        let scatter_bufs: [&Buffer; 11] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy, &dummy, &dummy, &wb.buffer, &a_far];
         pass.run_bytes(&scatter, &scatter_bufs, &[], groups(n));
         Ok(())
     }
@@ -1684,7 +1706,7 @@ impl Batch {
         // A SIMD group a row, a threadgroup each.
         pass.run_bytes_simd_at(
             &text,
-            &[(lbuf, 0), (&dummy, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0), (&atoms.dir.0, atoms.dir.1), (vc, vc_at), (&sb.buffer, 0)],
+            &[(lbuf, 0), (&dummy, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0), (&atoms.dir.0, atoms.dir.1), (vc, vc_at), (&sb.buffer, 0), (&dummy, 0)],
             &[],
             ngroups,
         );
@@ -1783,6 +1805,10 @@ impl Batch {
         }
         // SAFETY: `CopyParams` is `repr(C)` integers with no padding (its size asserted above).
         let bytes = unsafe { std::slice::from_raw_parts((&p as *const CopyParams).cast::<u8>(), std::mem::size_of::<CopyParams>()) };
+        let s_far = match src {
+            Rows::Rel(r) => r.far_or(s).clone(),
+            Rows::Table(_) => s.clone(),
+        };
         let (s, d) = (s.clone(), d.clone());
         let totals = count.map_or_else(|| self.dummy.buffer.clone(), |c| c.1.buffer.buffer.clone());
         let cb = self.block(bytes)?;
@@ -1790,7 +1816,10 @@ impl Batch {
         if let Some(r) = view {
             r.resident_in(pass);
         }
-        pass.run_bytes(&copy, &[&s, &d, &totals, &cb.buffer], &[], groups(n));
+        if let Rows::Rel(r) = src {
+            r.resident_in(pass);
+        }
+        pass.run_bytes(&copy, &[&s, &d, &totals, &cb.buffer, &s_far], &[], groups(n));
         Ok(())
     }
 
@@ -2182,6 +2211,64 @@ pub mod tests {
             assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
             assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
         }
+    }
+
+    /// Decision 0353 step 6: a relation of a kept relation and rows of a run's block after it is bound as one
+    /// relation through links, nothing merged; the kernels read the kept rows in the far block bound beside the
+    /// relation's (`rel_get`'s `far`). The device's index of it is the host's over the same rows in one relation, and
+    /// a copy of it reads every row.
+    #[test]
+    fn the_device_reads_a_chain_through_its_far_base() {
+        use crate::code_rule_dsl::facts::rows::{Life, Rows as FactRows};
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let n = 5_000;
+        let (c0, c1) = (rows(n, 41, 97), rows(n, 42, 13));
+        let vals = |lo: usize, hi: usize| -> Vec<i64> { (lo..hi).flat_map(|i| [c0[i], c1[i]]).collect() };
+        let mut kept = FactRows::living(2, Life::Kept);
+        // copy: not block data: a test's rows
+        kept.extend_from_slice(&vals(0, 3_000));
+        let mut chain = kept.freeze(3_000);
+        let mut run = FactRows::living(2, Life::Run);
+        // copy: not block data: a test's rows
+        run.extend_from_slice(&vals(3_000, n));
+        chain.append_part(run.last_in_block().unwrap().part.unwrap());
+        let b = chain.in_block().expect("bound");
+        assert!(b.far().is_some() && b.rows == n as u32, "a chain bound whole, its base in another block");
+        let dev = DevRel::in_block(&b, 2).unwrap();
+        let mut host = FactRows::new(2);
+        // copy: not block data: a test's rows
+        host.extend_from_slice(&vals(0, n));
+        let host = DevRel::in_block(&host.in_block().unwrap(), 2).unwrap();
+        for cols in [vec![0usize], vec![1, 0]] {
+            let mut batch = Batch::new().unwrap();
+            let ix = batch.index(&dev, &cols).unwrap();
+            assert!(ix.built, "built in the chain's block");
+            batch.finish().unwrap();
+            let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+            let (r, h) = (dev.relation(), host.relation());
+            let hosts = {
+                let home = host.home.as_ref().unwrap();
+                // SAFETY: one thread; the rows are written.
+                let room = unsafe { h.try_reserve_index(&home.block, &key, n as u32) }.unwrap();
+                unsafe {
+                    h.build_index(&room);
+                    h.index_built(&room);
+                }
+                room.index
+            };
+            let (d, w) = (r.index_at(ix.index as usize), h.index_at(hosts));
+            assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
+            assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
+        }
+        // Every row, read through the chain by a copy into a table.
+        let out = Table::new(2, n).unwrap();
+        let mut batch = Batch::new().unwrap();
+        batch.copy(Rows::Rel(&dev), n, None, &[Col::From(0), Col::From(1)], Rows::Table(&out), 0).unwrap();
+        batch.finish().unwrap();
+        assert_eq!(out.column(0, n), &c0[..], "column 0, down the chain");
+        assert_eq!(out.column(1, n), &c1[..], "column 1, down the chain");
     }
 
     /// Decision 0325 step 3: relations read where they lie in their blocks, with dead rows marked by a delta's dead

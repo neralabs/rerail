@@ -96,7 +96,7 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "rows_width", params: &[I32], ret: I32, hot: true, body: crate::relation::rows_width },
     Read { family: Family::Relation, name: "rows_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_get },
     Read { family: Family::Relation, name: "rows_put", params: &[I32, I32, I64], ret: I32, hot: true, body: crate::relation::rows_put },
-    Read { family: Family::Relation, name: "rel_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rel_get },
+    Read { family: Family::Relation, name: "rel_get", params: &[I32, I32, I64], ret: I64, hot: true, body: crate::relation::rel_get },
     Read { family: Family::Relation, name: "rel_dead", params: &[I32], ret: I32, hot: true, body: crate::relation::rel_dead },
     Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
     Read { family: Family::Relation, name: "rel_group_row", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_row },

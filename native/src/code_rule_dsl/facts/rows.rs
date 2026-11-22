@@ -950,6 +950,8 @@ pub struct Held {
     /// Rows of a continuation's base it took when it moved (`grow`, `moved_room`): its rows start at id 0 then, and the
     /// `Rows` holding it drops the base's segment (`Rows::absorbed`).
     absorbed: u32,
+    /// The part whose rows a link reads as its own (`Part::link`), kept while it is: its chunks are not given back.
+    aliased: Option<Part>,
 }
 
 /// Room past a relation's rows lent to another writer (the device, `Part::room`): rows `at..` of it, which the writer
@@ -1417,7 +1419,7 @@ impl Part {
                 }
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0 }), cap: u32::MAX });
+                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0, aliased: None }), cap: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -1724,8 +1726,36 @@ impl Part {
         let rel = Relation::try_continue(&base.facts.block, &spec(k), base.rel(), base.reads())?;
         let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
         let held = Held { facts: base.facts.clone(), life: base.life, rel: std::ptr::from_ref(rel), cols, lent: std::sync::atomic::AtomicU32::new(0),
-                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0 };
+                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0, aliased: None };
         Some(Part { held: Arc::new(held), cap: u32::MAX })
+    }
+
+    /// A link of a chain that reads several parts as one relation, nothing copied (decision 0353 step 6,
+    /// `Relation::try_link`): in `rows_of`'s block, its ids below `base_rows` `base`'s (in that block, or another:
+    /// a far base), then `rows_of`'s rows as they are now, where they lie. `None` when the block cannot hold its
+    /// descriptor.
+    fn link(base: Option<&Part>, base_rows: u32, rows_of: &Part) -> Option<Part> {
+        let k = rows_of.rel().rows.ncols as usize;
+        let home = rows_of.facts.clone();
+        let rel = Relation::try_link(&home.block, &spec(k), base.map(|b| (&*b.facts.block, b.rel())), base_rows, rows_of.rel(), rows_of.len())?;
+        let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
+        let rel = std::ptr::from_ref(rel);
+        let held = Held { facts: home, life: rows_of.life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0),
+                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: base.map(Part::prefix), absorbed: 0, aliased: Some(rows_of.prefix()) };
+        Some(Part { held: Arc::new(held), cap: u32::MAX })
+    }
+
+    /// The block its chain's far base lies in (`link`), which a reader binds beside its own: none when every
+    /// relation it reads lies in its block.
+    pub fn far_facts(&self) -> Option<Arc<Facts>> {
+        let mut p = self;
+        loop {
+            let base = p.base.as_ref()?;
+            if p.rel().far_base() {
+                return Some(base.facts.clone());
+            }
+            p = base;
+        }
     }
 
     /// Whether it continues `base`'s rows, all it reads (`continuing`).
@@ -1785,8 +1815,11 @@ pub struct Rows {
     life: Life,
 // copy (0353 step 6): the merged part is a copy. It goes: a run's relations lie in one slab's buffer
 // (decision 0353).
-    /// Every part merged into one, made once for a reader that binds one relation (`in_block`).
+    /// Every part merged into one, made once for a reader that binds one relation (`in_block`), where its parts lie
+    /// in more blocks than `links` reads.
     merged: std::sync::OnceLock<Part>,
+    /// Its parts read as one relation through links (`links`), made once: `None` where they cannot be.
+    linked: std::sync::OnceLock<Option<Part>>,
     /// The dead rows' delta of that one relation (`in_block_dead`): kept while its dead bits are the relation's.
     kills: Mutex<Option<Arc<Kills>>>,
     /// The rows its tail held when it was taken as the writer of a frozen relation's (`shared`): given back free at
@@ -1854,6 +1887,12 @@ pub struct InBlock {
 
 impl InBlock {
     /// The relation it binds, where it lies.
+    /// The block its relation's chain reaches past its own (a far base, `Part::link`), which a reader binds beside
+    /// `facts`' (the kernels' `far`): none when it reads only its block.
+    pub fn far(&self) -> Option<Arc<Facts>> {
+        self.part.as_ref().and_then(Part::far_facts)
+    }
+
     pub fn relation(&self) -> &Relation {
         // SAFETY: `at` is a relation's descriptor in `facts`' block, whose pages `own` keeps.
         unsafe { &*self.facts.block.ptr::<Relation>(self.at) }
@@ -1900,7 +1939,8 @@ impl InBlock {
 
     fn own_index_if(&self, cols: &[u16], keys: usize, build: bool) -> Option<usize> {
         let r = self.relation();
-        if self.dead != 0 || (r.base_rows != 0 && !r.continues()) || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
+        // A chain reaching another block (`far`) is indexed by the device, which binds both; the host reads it by part.
+        if self.dead != 0 || (r.base_rows != 0 && !r.continues()) || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY || self.far().is_some() {
             return None;
         }
         let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
@@ -2059,6 +2099,7 @@ impl Rows {
         debug_assert_eq!(rows.len() % self.k, 0, "rows of {} values", self.k);
         // The rows merged for a reader that binds one relation (`in_block`) are these no longer.
         self.merged.take();
+        self.linked.take();
         *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
         let n = rows.len() / self.k;
         if self.tail.is_none() {
@@ -2246,7 +2287,12 @@ impl Rows {
             return None;
         }
         let (segs, tail) = (&self.segs[..], &self.tail);
-        // Parts that do not: merged (a part appended after rows of another relation, `append_part`, counted there).
+        // Parts that do not, read as one through links (decision 0353 step 6): each part's rows where they lie.
+        if let Some(chain) = self.linked.get_or_init(|| self.links()) {
+            return Some((chain, self.rows() as u32));
+        }
+        // Parts in more blocks than a reader binds: merged (a part appended after rows of another relation,
+        // `append_part`, counted there).
         Some((self.merged.get_or_init(|| {
                 const COPIED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation's parts merged into one for the device (Rows::in_block)");
                 COPIED.time(|| {
@@ -2265,6 +2311,31 @@ impl Rows {
             }), self.rows() as u32))
     }
 
+    /// Its parts read as one relation, nothing copied (decision 0353 step 6): a link in the last part's block for each
+    /// part there (`Part::link`), the first continuing the parts before them when they are one relation of another
+    /// block (a far base: a kept relation, this run's rows after it). `None` for parts in more blocks, a far part that
+    /// is not a relation of its own from row 0, or a block with no room for a link's descriptor.
+    fn links(&self) -> Option<Part> {
+        let parts: Vec<(u32, &Part)> = self.segs.iter().map(|(f, p)| (*f, p)).chain(self.tail.iter().map(|t| (self.from, t))).filter(|(_, p)| p.len() > 0).collect();
+        let home = &parts.last()?.1.facts;
+        let near = parts.iter().position(|(_, p)| Arc::ptr_eq(&p.facts, home))?;
+        if parts[near..].iter().any(|(_, p)| !Arc::ptr_eq(&p.facts, home)) || near > 1 {
+            return None;
+        }
+        let mut chain: Option<Part> = None;
+        if near == 1 {
+            let (first, far) = parts[0];
+            if first != 0 || far.is_continuation() || far.rel().is_delta() {
+                return None;
+            }
+            chain = Some(far.prefix());
+        }
+        for &(first, p) in &parts[near..] {
+            chain = Some(Part::link(chain.as_ref(), first, p)?);
+        }
+        chain
+    }
+
     /// `part`'s rows after these, not copied (decision 0325 step 4, a head's rows the device wrote in place): it
     /// becomes the tail, so the rows pushed after it, and the next rows the device writes (`tail_room`), go on in the
     /// same relation (decision 0384 step 3). The tail, if it has rows, becomes a segment first.
@@ -2278,6 +2349,7 @@ impl Rows {
         debug_assert!(!part.capped(), "a shared prefix appended as a tail");
         self.k = k;
         self.merged.take();
+        self.linked.take();
         *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
         // The device writes past rows in their tail (`tail_room`, which opens one past segments), so a relation of its
         // own comes only after none.
@@ -2346,6 +2418,7 @@ impl Rows {
         assert_eq!(t.len(), at, "rows pushed into a tail while another writer wrote past them");
         assert!(at + n <= t.rel().rows.reserved(), "{n} rows written at {at} into room for {}", t.rel().rows.reserved());
         self.merged.take();
+        self.linked.take();
         *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
         // SAFETY: within the rows reserved (asserted); the caller says they are written.
         unsafe { t.rel().rows.claim_reserved(n) };
@@ -2885,6 +2958,40 @@ mod tests {
         for (i, want) in [[1i64, 2], [3, 4], [5, 6], [7, 8]].iter().enumerate() {
             assert_eq!(&*next.row(i as u32, k), &want[..], "row {i}, read where it lies");
         }
+    }
+
+    /// Decision 0353 step 6: a relation of parts in two blocks (a kept relation, then rows of a run's block after
+    /// it, `append_part`) is bound as one relation through links, nothing merged: its first link continues the kept
+    /// relation in the other block (a far base), each run part's rows read where they lie, and every id reads its row.
+    #[test]
+    fn parts_in_two_blocks_are_bound_through_links() {
+        let k = 2;
+        let n = 3_000u32;
+        let row = |i: u32| [i64::from(i) * 7, i64::from(i) % 13];
+        let mut kept = Rows::living(k, Life::Kept);
+        // copy: not block data: a test's rows
+        kept.extend_from_slice(&(0..1_000).flat_map(row).collect::<Vec<i64>>());
+        let mut rows = kept.freeze(1_000);
+        for (lo, hi) in [(1_000, 1_800), (1_800, n)] {
+            let mut run = Rows::living(k, Life::Run);
+            // copy: not block data: a test's rows
+            run.extend_from_slice(&(lo..hi).flat_map(row).collect::<Vec<i64>>());
+            rows.append_part(run.last_in_block().unwrap().part.unwrap());
+        }
+        let (copied, _) = merged();
+        let b = rows.in_block().expect("bound");
+        assert_eq!(merged().0, copied, "nothing merged");
+        assert_eq!(b.rows, n, "every row");
+        let far = b.far().expect("its chain reaches the kept relation's block");
+        assert!(!Arc::ptr_eq(&far, &b.facts), "two blocks");
+        let r = b.relation();
+        assert!(r.continues() && r.base().is_some_and(|base| base.far_base()), "a link of a link of the far base");
+        for id in (0..n).step_by(7).chain([999, 1_000, 1_799, 1_800, n - 1]) {
+            for c in 0..k {
+                assert_eq!(r.get_far(Some(&far.block), id, c), row(id)[c], "row {id} column {c}, down its chain");
+            }
+        }
+        assert!(b.own_index(&[0]).is_none(), "the host indexes it by part");
     }
 
     /// Decision 0384 step 7: a fork (a second relation started from frozen rows whose writer the first took) goes on

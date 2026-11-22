@@ -1363,6 +1363,9 @@ mod tests {
         let _big = big_leases();
         let dir = std::env::temp_dir().join(format!("rerail-deferrable-pool-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        // The user's alone, whatever the umask (a mapped file's folder: decision 0574).
+        #[cfg(unix)]
+        std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
         let live = || dev().live.load(std::sync::atomic::Ordering::Relaxed);
         let before = live();
         let d = match lease_deferrable(kind::JOURNAL, 1 << 20, &dir.join("seg-1")) {

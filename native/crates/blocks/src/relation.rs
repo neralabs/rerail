@@ -38,6 +38,12 @@ pub const REWRITTEN: u32 = 8;
 /// lies in the same block at `base_off` from it (`try_continue`); every read of a row by its id goes there for them
 /// (`rel_get`), so a reader binds it as one relation of `base_rows + own` rows.
 pub const CONTINUES: u32 = 16;
+/// Its rows are another relation's of the same block, where they lie (`try_link`): its row directories are that
+/// relation's, so its release gives none of them back (that relation's holder does).
+pub const ALIASED: u32 = 32;
+/// A continuation whose base lies in another block (`try_link`, decision 0353 step 6): `base_off` is the base's
+/// descriptor's offset from that block's start, which a reader binds beside its own (`rel_get`'s `far`).
+pub const FAR_BASE: u32 = 64;
 /// A key's columns at most: the device's probes' (decision 0325 step 5).
 pub const MAX_KEY: usize = 8;
 /// Indexes and sorted orders a relation can be given after it is made (`try_add_index`, `try_add_order`): its
@@ -240,6 +246,56 @@ impl Relation {
         Some(rel)
     }
 
+    /// A relation of `block` that reads a relation of several parts as one, nothing copied (decision 0353 step 6):
+    /// rows `0..base_rows` its base's, read down the base's chain (`base`: the base and the block it lies in, this
+    /// one or another, `FAR_BASE`; none for a first part, `base_rows` 0), then `rows_of`'s first `len` own rows, where
+    /// they lie in `block` (`ALIASED`). `None` when `block` cannot hold its descriptor, or `rows_of` is not `block`'s.
+    pub fn try_link<'b>(block: &'b Block, spec: &Spec, base: Option<(&Block, &Relation)>, base_rows: u32, rows_of: &Relation, len: u32) -> Option<&'b Relation> {
+        if !block.holds(std::ptr::from_ref(rows_of)) || len > rows_of.rows.len() || rows_of.rows.ncols as usize != spec.widths.len() {
+            return None;
+        }
+        let rel = match base {
+            None if base_rows == 0 => Relation::try_create(block, spec, None)?,
+            None => return None,
+            Some((home, b)) if std::ptr::eq(home, block) => Relation::try_continue(block, spec, b, base_rows)?,
+            Some((home, b)) => {
+                let full = b.base_rows == 0 && !b.is_delta();
+                let at = home.offset_of(std::ptr::from_ref(b));
+                if !(full || b.continues()) || base_rows > b.len_all() || !home.holds(std::ptr::from_ref(b)) || at == 0 {
+                    return None;
+                }
+                let rel = Relation::try_create(block, spec, None)?;
+                // SAFETY: just made, this caller's alone.
+                unsafe { (*std::ptr::from_ref(rel).cast_mut()).base_rows = base_rows };
+                rel.base_off.store(at as i64, Release);
+                rel.flags.fetch_or(DELTA | CONTINUES | FAR_BASE, Release);
+                rel
+            }
+        };
+        // Its rows: `rows_of`'s directories, read where they lie; none of its own (its own directories, made with
+        // its descriptor, stay unused and go back with it).
+        // SAFETY: just made, this caller's alone; `rows_of` is frozen at `len` rows for as long as this lives (its
+        // holder keeps it).
+        unsafe {
+            let me = std::ptr::from_ref(rel).cast_mut();
+            let (src, dst) = (&rows_of.rows, &mut (*me).rows);
+            dst.min_log = src.min_log;
+            dst.ncols = src.ncols;
+            dst.nchunks.store(src.nchunks.load(Acquire), Relaxed);
+            dst.reserved.store(len, Relaxed);
+            dst.len.store(len, Release);
+            Span::set(&dst.cols, src.cols.as_ptr(), src.cols.len());
+        }
+        rel.flags.fetch_or(ALIASED | FROZEN, Release);
+        Some(rel)
+    }
+
+    /// Whether its base lies in another block (`try_link`).
+    #[inline]
+    pub fn far_base(&self) -> bool {
+        self.flags.load(Relaxed) & FAR_BASE != 0
+    }
+
     /// Whether it continues another relation's rows (`try_continue`).
     #[inline]
     pub fn continues(&self) -> bool {
@@ -249,8 +305,9 @@ impl Relation {
     /// The relation it continues (`try_continue`).
     pub fn base(&self) -> Option<&Relation> {
         let off = self.base_off.load(Acquire);
-        // SAFETY: a continuation's base lies in its block at `off`, kept while it is (its holder's).
-        (self.continues() && off != 0).then(|| unsafe { &*(std::ptr::from_ref(self).cast::<u8>().offset(off as isize).cast::<Relation>()) })
+        // SAFETY: a continuation's base lies in its block at `off`, kept while it is (its holder's). A base in another
+        // block is read through that block (`far_base`).
+        (self.continues() && off != 0 && !self.far_base()).then(|| unsafe { &*(std::ptr::from_ref(self).cast::<u8>().offset(off as isize).cast::<Relation>()) })
     }
 
     /// Rows it reads by id: its own, and a continuation's base's first `base_rows` before them.
@@ -263,14 +320,26 @@ impl Relation {
     /// its own rows from `base_rows` on (a delta's own ids count from its base's too).
     #[inline]
     pub fn get(&self, id: u32, c: usize) -> i64 {
+        self.get_far(None, id, c)
+    }
+
+    /// `get`, a base in another block (`FAR_BASE`) read in `far`, the block it lies in (`rel_get`'s `far`).
+    #[inline]
+    pub fn get_far(&self, far: Option<&Block>, id: u32, c: usize) -> i64 {
         let mut rel = self;
         loop {
             let off = rel.base_off.load(Relaxed);
             if id >= rel.base_rows || off == 0 {
                 break;
             }
-            // SAFETY: a continuation's base lies in its block `off` bytes from it, kept while it is (its holder's).
-            rel = unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(off as isize).cast::<Relation>() };
+            rel = if rel.far_base() {
+                let far = far.expect("a relation whose base lies in another block, read with that block");
+                // SAFETY: its base's descriptor lies `off` bytes into `far`, kept while it is (its holder's).
+                unsafe { &*far.ptr::<Relation>(off as usize) }
+            } else {
+                // SAFETY: a continuation's base lies in its block `off` bytes from it, kept while it is (its holder's).
+                unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(off as isize).cast::<Relation>() }
+            };
         }
         rel.rows.get(id.wrapping_sub(rel.base_rows), c)
     }
@@ -329,7 +398,9 @@ impl Relation {
     /// # Safety
     /// It lies in `block`, and no one reads or writes it after (its last holder's).
     pub unsafe fn release(&self, block: &Block) -> usize {
-        let given = unsafe { self.rows.release(block) + self.killed.release(block) };
+        // Aliased rows are their own relation's, given back with it.
+        let own_rows = if self.flags.load(Acquire) & ALIASED != 0 { 0 } else { unsafe { self.rows.release(block) } };
+        let given = own_rows + unsafe { self.killed.release(block) };
         let kept = self.known_kept.load(Acquire) as usize;
         if kept > 0 {
             block.free_chunk_fit(block.offset_of(self.known.as_ptr()), kept);

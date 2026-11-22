@@ -1097,7 +1097,8 @@ pub enum StatCol<'a> {
     Host(&'a [i64]),
     /// Values the device holds: `rows` of them at value `at` of `buffer`, or, with `col`, column `col` of the
     /// `rerail_blocks` relation whose descriptor is `at` bytes into the block `buffer` binds (decision 0325).
-    Device { buffer: &'a Buffer, at: usize, rows: usize, col: Option<u32> },
+    /// `far`: the block its relation's chain reaches past `buffer`'s (decision 0353 step 6), else `buffer`.
+    Device { buffer: &'a Buffer, at: usize, rows: usize, col: Option<u32>, far: &'a Buffer },
 }
 
 impl StatCol<'_> {
@@ -1130,7 +1131,7 @@ pub fn column_stats_of(cols: &[StatCol<'_>], k: usize) -> Result<Vec<ColStats>, 
     let wide: Vec<usize> = got.iter().enumerate().filter(|(_, g)| g.is_none()).map(|(i, _)| i).collect();
     if !wide.is_empty() {
         let again: Vec<StatCol<'_>> = wide.iter().map(|&i| match &cols[i] {
-            StatCol::Device { buffer, at, rows, col } => StatCol::Device { buffer, at: *at, rows: *rows, col: *col },
+            StatCol::Device { buffer, at, rows, col, far } => StatCol::Device { buffer, at: *at, rows: *rows, col: *col, far },
             StatCol::Host(v) => StatCol::Host(v),
         }).collect();
         for (i, g) in wide.into_iter().zip(stats_round(&again, k, true)?) {
@@ -1162,7 +1163,7 @@ fn stats_round(cols: &[StatCol<'_>], k: usize, wide: bool) -> Result<Vec<Option<
                 reads.push(c);
                 got
             }
-            StatCol::Device { buffer, at, rows: _, col } => {
+            StatCol::Device { buffer, at, rows: _, col, far } => {
                 let spans = fixed("col_span")?;
                 let based = fixed("col_base")?;
                 let narrow = fixed("col_narrow")?;
@@ -1173,9 +1174,9 @@ fn stats_round(cols: &[StatCol<'_>], k: usize, wide: bool) -> Result<Vec<Option<
                 let span = Held::new(16)?;
                 let width = if wide { Width::W64 } else { Width::W32 };
                 let keys = Held::new(width.bytes() * n)?;
-                pass.run(&spans, &[buffer, &part.buffer], &[nn, lo, hi, rel_col], &[], tiles);
+                pass.run(&spans, &[buffer, &part.buffer, far], &[nn, lo, hi, rel_col], &[], tiles);
                 pass.run(&based, &[&part.buffer, &span.buffer], &[tiles as u32], &[], 1);
-                pass.run(&narrow, &[buffer, &span.buffer, &keys.buffer], &[nn, lo, hi, u32::from(wide), rel_col], &[], groups(n));
+                pass.run(&narrow, &[buffer, &span.buffer, &keys.buffer, far], &[nn, lo, hi, u32::from(wide), rel_col], &[], groups(n));
                 let buf = keys.buffer.clone();
                 keep.extend([part, keys]);
                 (buf, width, if wide { 64 } else { 32 }, Err(span))

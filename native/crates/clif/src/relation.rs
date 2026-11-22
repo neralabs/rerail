@@ -38,6 +38,7 @@ const COL_CHUNK: i32 = offset_of!(ColDir, chunk) as i32;
 const COL_SIZE: i64 = size_of::<ColDir>() as i64;
 const REL_BASE_ROWS: i32 = offset_of!(Relation, base_rows) as i32;
 const REL_BASE_OFF: i32 = offset_of!(Relation, base_off) as i32;
+const REL_FLAGS: i32 = offset_of!(Relation, flags) as i32;
 const REL_ROWS: i64 = offset_of!(Relation, rows) as i64;
 const REL_DEAD: i32 = offset_of!(Relation, dead) as i32;
 const REL_INDEXES: i32 = offset_of!(Relation, indexes) as i32;
@@ -266,8 +267,11 @@ pub fn rows_get(b: &mut B<'_, '_>) -> Value {
 /// continuation (decision 0384 step 7: `base_off` set), an id below `base_rows` its base's row, the base's descriptor
 /// `base_off` bytes from its own in the same block. A base may continue another (a fork of a fork, step 8): the read
 /// walks the chain until the relation whose own rows hold `id` (a chain's length is bounded: `rows::MAX_SEGMENTS`).
+/// A base in another block (`FAR_BASE`, decision 0353 step 6: a kept relation, this run's rows continuing it) is
+/// `base_off` bytes from that block's start, `far` (as the descriptor is: the host's address, or a kernel's offset
+/// from its bound block to the far one's, made from its two bindings); a read past it goes on down its chain there.
 pub fn rel_get(b: &mut B<'_, '_>) -> Value {
-    let (id, c) = (b.arg(0), b.arg(1));
+    let (id, c, far) = (b.arg(0), b.arg(1), b.arg(2));
     let off = b.word_at(I64, b.tape, REL_BASE_OFF);
     let continues = b.f.ins().icmp_imm(IntCC::NotEqual, off, 0);
     // A relation that continues none (nearly every one): its own row, one load and one branch more than before.
@@ -290,7 +294,10 @@ pub fn rel_get(b: &mut B<'_, '_>) -> Value {
             let in_base = b.f.ins().band(below, more);
             b.f.ins().brif(in_base, step, &[], done, &[rel.into(), base_rows.into()]);
             b.f.switch_to_block(step);
-            let base = b.f.ins().iadd(rel, off);
+            let flags = b.word_at(I32, rel, REL_FLAGS);
+            let is_far = b.f.ins().band_imm(flags, i64::from(rerail_blocks::relation::FAR_BASE));
+            let from = b.f.ins().select(is_far, far, rel);
+            let base = b.f.ins().iadd(from, off);
             b.f.ins().jump(head, &[base.into()]);
             b.f.switch_to_block(done);
             let (rel, base_rows) = (b.f.block_params(done)[0], b.f.block_params(done)[1]);
@@ -469,15 +476,16 @@ mod tests {
     fn the_jits_relation_reads_are_the_hosts() {
         let reads = crate::jit::Reads::new();
         type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+        type Three = extern "C" fn(*const u8, u32, u32, u64) -> u64;
         type One = extern "C" fn(*const u8, u32) -> u32;
         type Group = extern "C" fn(*const u8, u32, u64) -> u64;
         // SAFETY: each read's signature: its descriptor's address, then its parameters.
-        let (rows_get, col_get, rel_get): (Two, Two, Two) =
+        let (rows_get, col_get, rel_get): (Two, Two, Three) =
             unsafe {
                 (
                     std::mem::transmute::<*const u8, Two>(reads.function("rows_get")),
                     std::mem::transmute::<*const u8, Two>(reads.function("col_get")),
-                    std::mem::transmute::<*const u8, Two>(reads.function("rel_get")),
+                    std::mem::transmute::<*const u8, Three>(reads.function("rel_get")),
                 )
             };
         let rel_dead: One = unsafe { std::mem::transmute(reads.function("rel_dead")) };
@@ -516,7 +524,7 @@ mod tests {
                     assert_eq!(rows_get(rows, i, c) as i64, want, "rows_get row {i} column {c}");
                     let dir = std::ptr::from_ref(cols[c as usize]).cast::<u8>();
                     assert_eq!(col_get(dir, rel.rows.min_log, i) as i64, want, "col_get row {i} column {c}");
-                    assert_eq!(rel_get(desc, id, c) as i64, want, "rel_get row {id} column {c}");
+                    assert_eq!(rel_get(desc, id, c, 0) as i64, want, "rel_get row {id} column {c}");
                 }
                 assert_eq!(rel_dead(desc, i) != 0, rel.dead_bit(i), "rel_dead row {i}");
                 let key = rel.own(id, 1);
@@ -537,12 +545,13 @@ mod tests {
     fn the_jits_key_run_reads_are_the_hosts() {
         let reads = crate::jit::Reads::new();
         type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+        type Three = extern "C" fn(*const u8, u32, u32, u64) -> u64;
         // SAFETY: each read's signature: its descriptor's address, then its parameters.
-        let (rows_get, col_get, rel_get): (Two, Two, Two) = unsafe {
+        let (rows_get, col_get, rel_get): (Two, Two, Three) = unsafe {
             (
                 std::mem::transmute::<*const u8, Two>(reads.function("rows_get")),
                 std::mem::transmute::<*const u8, Two>(reads.function("col_get")),
-                std::mem::transmute::<*const u8, Two>(reads.function("rel_get")),
+                std::mem::transmute::<*const u8, Three>(reads.function("rel_get")),
             )
         };
         let spec = Spec { widths: vec![4, 4, 4, 8], order: vec![], indexes: vec![], min_log: 4 };
@@ -583,7 +592,7 @@ mod tests {
                 assert_eq!(rows_get(rows, i, c) as i64, w, "rows_get row {i} column {c}");
                 let dir = std::ptr::from_ref(rel.rows.col(c as usize)).cast::<u8>();
                 assert_eq!(col_get(dir, rel.rows.min_log, i) as i64, w, "col_get row {i} column {c}");
-                assert_eq!(rel_get(desc, i, c) as i64, w, "rel_get row {i} column {c}");
+                assert_eq!(rel_get(desc, i, c, 0) as i64, w, "rel_get row {i} column {c}");
             }
         }
     }
@@ -597,6 +606,7 @@ mod tests {
         let reads = crate::jit::Reads::new();
         type Put = extern "C" fn(*const u8, u32, u32, u64) -> u32;
         type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+        type Three = extern "C" fn(*const u8, u32, u32, u64) -> u64;
         // SAFETY: each read's signature: its descriptor's address, then its parameters.
         let (put, get): (Put, Two) = unsafe { (std::mem::transmute::<*const u8, Put>(reads.function("rows_put")), std::mem::transmute::<*const u8, Two>(reads.function("rows_get"))) };
         let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![], min_log: 4 };

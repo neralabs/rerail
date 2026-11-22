@@ -1436,7 +1436,7 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
         .map(|((c, d), g)| match (c, d, g) {
             (StatColumn::Values(v), _, _) => StatCol::Host(v),
             // Every relation the device holds lies in a block (decision 0325 step 5), read there.
-            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: d.at as usize, rows: d.rows, col: Some(*at as u32) },
+            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: d.at as usize, rows: d.rows, col: Some(*at as u32), far: d.far_or(&d.held().buffer) },
             (_, _, g) => StatCol::Host(g.as_deref().expect("gathered")),
         })
         .collect();
