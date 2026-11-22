@@ -1,0 +1,64 @@
+# 0618: Tier 2 as one loop over tier 1's records
+
+Status: done by the implementer. The item is the user's (2026-11-22, goal: "Make the one-loop tier 2 read .rr's records
+and codes, adding those features one at a time. Each step is checked by the existing tests that compare the generated
+parser's tapes with the JIT's, on the samples and on the 1,784-file corpus"). How it is done is the implementer's
+choice. It follows 0551 and 0581-0583, which wrote JSON's tier 2 as one loop.
+
+## What was there
+
+The one loop (`bitlex_rust/one_loop.rs`, `tier2_loop`) wrote a grammar whose tokens tier 2 reads from the bytes at tier
+1's index: JSON's. It refused any grammar with marks, extras, flags or readings: "marks, extras, flags and readings
+are not written yet". `.rerail`'s grammar has all four. Its tier 2 (`rerail-rr-aot`'s `tier2.rs`) was the recursive
+form (`bitlex_rust::tier2`): a method per rule, and a level's call a Rust call.
+
+## The decision
+
+1. **The one loop has a second form, over tier 1's records** (`one_loop/records.rs`). It is for a grammar whose
+   tokens tier 1 decides: each token's first and last byte and its code (kind, word, marks). Both forms are one loop
+   (`'run: loop { match st { … } }`) whose places are the levels' parts. They differ in what a place reads:
+   - the byte form reads the bytes at the index;
+   - the records form reads the records, as the recursive form does.
+   `tier2_loop` takes the records form where the byte form refused.
+2. **A level's call is a push and a jump.** The call pushes the caller's state that the level changes, then the place
+   it returns to, onto `P::stack`, and goes to the level's first place. The state is:
+   - the questions it asks (`asks`, where some mark has them);
+   - its word (`word`, where the grammar has a `remember` choice);
+   - the marks it refuses (`refusing`, where the grammar has `refuse … in …`).
+   The level's end closes its node, pops these in reverse and goes to the return place. No call recurses. The depth is
+   counted as before (`deeper`, `DEPTH`).
+3. **The code after a call is a place.** Code that holds a call is written continuation by continuation: each
+   decision's arms go on to the place after it, a loop's head is a place, and the same code is one place.
+   - A flag set around a call (`Flag`) is pushed before its body and popped after.
+   - A rule that is no level but holds a call is places too, written once. Its call pushes only the return place.
+     That is the recursive form's method, with its follow as its exits.
+4. **What holds no call is the rules' code** (`G::code`), as the recursive form writes it:
+   - the decisions at a record's code;
+   - the marks and their questions;
+   - the comments;
+   - the rewrites (`wrap`, `relabel`, `drop`, `merge`, the readings);
+   - the regions read in parts.
+   A rule that is no level and holds no call stays a method.
+5. **The runtime is the recursive form's** (`G::assemble`, shared by both), with the stack added. So the records form
+   writes the same tape operations in the same order. Only the control flow differs.
+
+`.rerail`'s `Compiled::rust` is now the loop form, and `rerail-rr-aot`'s `tier2.rs` is generated from it.
+
+## Checked
+
+On a Linux arm64 farm host:
+
+- `rr_parser`'s `rust_tests`: `rust_is_current`, `tapes_are_the_jits` (the samples), `corpus_tapes_are_the_jits` (the
+  1,784 files) and both tier 1 record tests: 5 of 5.
+- JSON's `json_rust_is_current` and Kotlin's `rust_is_current` (unchanged files), the compiler's and bitlex's library
+  tests: all pass.
+
+## Shape
+
+The loop form's `tier2.rs` is 7,142 lines, against 6,350 for the recursive form.
+
+The first version wrote a no-level rule that holds a call at every use, and was 29,324 lines. Point 3's single copy
+replaced that.
+
+The largest places are the grammar's own merge loops over a punctuation choice. The recursive form has the same loops,
+as `punctuation` and `setting_punctuation`.

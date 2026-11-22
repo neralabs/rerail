@@ -20,6 +20,10 @@
 //! - **Checks**: a `check` of a kind is a function from the token's first byte to its match's end; a
 //!   `keywords … required` kind's piece must be one of its words.
 
+// By its path: the `bitlex` crate holds this file by its path too (`#[path]`), where a child module is found beside it.
+#[path = "one_loop/records.rs"]
+mod records;
+
 use super::{First, G, Input, Test, ident};
 use ::bitlex::syntax::{Expr, Gram, PartLen, Stmt, TokenRule};
 use std::cell::RefCell;
@@ -1328,7 +1332,8 @@ fn run_last(x: &[u64], s: usize) -> usize {
 pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     let g = G::new(x);
     if !x.marks.is_empty() || !x.extras.is_empty() || !g.flags.is_empty() || !g.readings.is_empty() {
-        return Err("tier 2 as one loop: marks, extras, flags and readings are not written yet".into());
+        // Tokens tier 1 decides (their marks, the comments, the flags, the readings): the records form.
+        return records::tier2(x);
     }
     let readers = crate::bitlex_lex_rust::readers(x.lexer);
     let mut ends = BTreeMap::new();

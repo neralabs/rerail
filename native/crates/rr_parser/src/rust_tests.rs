@@ -10,7 +10,7 @@ use crate::{Compiled, SAMPLES, compiled};
 fn rust_is_current() {
     let c = compiled().expect("the grammar compiles");
     let tier1 = c.lexer_rust.clone().unwrap_or_else(|e| panic!("tier 1 as Rust: {e}"));
-    let tier2 = c.rust.clone().unwrap_or_else(|e| panic!("tier 2 as Rust: {e}"));
+    let tier2 = c.rust.clone().unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
     for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
         let path = format!("{}/../rr_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
         if std::env::var_os("RERAIL_BLESS").is_some() {
