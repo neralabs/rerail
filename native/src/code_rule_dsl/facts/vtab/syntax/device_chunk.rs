@@ -187,7 +187,8 @@ pub struct ViewsInPlace {
 
 /// A batch's cache for `blocks` 16z blocks of entries up to `entry` bytes (`super::batch_cache`): in the device's
 /// memory where there is a device, so its host reads and its device's share it (decision 0353 step 4b), else the
-/// host's.
+/// host's. The device's is a lease of its pool, which its ledger holds while work that reads it runs (decision 0491
+/// step 2).
 pub(super) fn batch_cache(blocks: usize, entry: usize) -> rerail_tape_format::f16::ZCache {
     let spec = rerail_clif::view::cache::Spec::configured(blocks, entry);
     crate::code_rule_dsl::prof::count("zcache.batches", 1);
@@ -196,12 +197,14 @@ pub(super) fn batch_cache(blocks: usize, entry: usize) -> rerail_tape_format::f1
     crate::code_rule_dsl::prof::count("zcache.entry_kb", spec.entry_bytes() >> 10);
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     if let Some(device) = crate::code_rule_dsl::tape::placed::device() {
-        let buffer = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, spec.bytes());
-        let at = buffer.contents().cast::<u8>();
-        // SAFETY: the buffer's bytes, shared with the host, read by no one yet.
-        spec.init(unsafe { std::slice::from_raw_parts_mut(at, spec.bytes()) }).expect("a cache's buffer of its size");
-        // SAFETY: the cache just made in the buffer, which the cache holds.
-        return unsafe { rerail_tape_format::f16::ZCache::over(at, &spec, Box::new(buffer)) };
+        let _ = device;
+        if let Ok(lease) = rerail_accel::gpu::shared::lease(spec.bytes()) {
+            let at = lease.host();
+            // SAFETY: the lease's bytes (at least `spec.bytes()`), shared with the host, read by no one yet.
+            spec.init(unsafe { std::slice::from_raw_parts_mut(at, spec.bytes()) }).expect("a cache's buffer of its size");
+            // SAFETY: the cache just made in the lease, which the cache holds.
+            return unsafe { rerail_tape_format::f16::ZCache::over(at, &spec, Box::new(lease)) };
+        }
     }
     rerail_tape_format::f16::ZCache::host(blocks, entry)
 }
@@ -389,8 +392,8 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>], zcache: Option<&rerail_tape_fo
     // The batch's cache (`super::batch_cache`): the one its host reads decode into, in the device's memory.
     let cache = match (zrows.is_empty(), zcache) {
         (true, _) => None,
-        (false, Some(c)) if c.entry_size() >= zentry => match c.owner().downcast_ref::<rerail_device::device::Buffer>() {
-            Some(buffer) => Some(buffer.clone()),
+        (false, Some(c)) if c.entry_size() >= zentry => match c.owner().downcast_ref::<rerail_accel::gpu::shared::Pooled>() {
+            Some(lease) => Some(lease.device_buffer().clone()),
             None => return refused_all("views.refused.zcache_host"),
         },
         (false, _) => return refused_all("views.refused.zcache_small"),

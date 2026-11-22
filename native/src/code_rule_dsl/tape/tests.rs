@@ -8040,8 +8040,10 @@ fn a_type_fragment_is_tree_sitters_written_annotation() {
     parser.set_language(&GrammarDialect::Python.get_ts_language()).unwrap();
     // A tape's nodes from `root` on, in either format: depth, kind, field, flags, classes and span, the span less
     // `shift`, the root's field left out.
+    // Each image is read in a batch of its own (a 16z tape's blocks decoded into a cache made for it, 0569 §6).
     let plain = |image: &TapeImage, root: usize, shift: u64| -> String {
-        let t = image.tape();
+        let cache = image.own_cache();
+        let t = image.tape_in(cache.as_ref());
         let end = t.subtree_end(root);
         let mut open: Vec<usize> = Vec::new();
         let mut out = String::new();
@@ -8063,10 +8065,13 @@ fn a_type_fragment_is_tree_sitters_written_annotation() {
         let tree = parser.parse(&src, None).unwrap();
         assert!(!tree.root_node().has_error(), "{src:?}");
         let theirs = TapeImage::encode(tree.root_node(), &grammar, &src, &|| false).unwrap().primary;
-        let t = theirs.tape();
+        let theirs_cache = theirs.own_cache();
+        let t = theirs.tape_in(theirs_cache.as_ref());
         let at = (0..t.len()).find(|&i| grammar.kind_name(t.table().entry(t.code(i)).kind) == Some("type")).expect("the annotation's type");
         assert_eq!(plain(&ours, 0, 0), plain(&theirs, at, 3), "{text:?}");
-        assert_eq!(ours.tape().subtree_end(0), ours.tape().len(), "{text:?}: one root");
+        let ours_cache = ours.own_cache();
+        let o = ours.tape_in(ours_cache.as_ref());
+        assert_eq!(o.subtree_end(0), o.len(), "{text:?}: one root");
     }
 }
 
@@ -8089,7 +8094,8 @@ fn a_fragment_is_parsed_from_its_start_by_its_parser() {
     use rerail_tape_format::tape::Tape as _;
     let js = Grammar::new(GrammarDialect::JavaScript).unwrap();
     let root = |image: &FileImage| {
-        let t = image.primary.tape();
+        let cache = image.primary.own_cache();
+        let t = image.primary.tape_in(cache.as_ref());
         assert_eq!(t.subtree_end(0), t.len(), "one root");
         let e = t.table().entry(t.code(0));
         (if e.flags & CODE_ERROR != 0 { "ERROR" } else { js.kind_name(e.kind).unwrap() }, t.start(0), t.end(0))
@@ -8110,7 +8116,8 @@ fn an_html_fragment_is_one_element() {
     use rerail_tape_format::tape::Tape as _;
     let html = Grammar::new(GrammarDialect::Html).unwrap();
     let image = TapeImage::parse_from(&html, "\n<li>a <b>c</b></li>\n", "element", &|| false).unwrap().unwrap();
-    let t = image.primary.tape();
+    let cache = image.primary.own_cache();
+    let t = image.primary.tape_in(cache.as_ref());
     assert_eq!(t.subtree_end(0), t.len(), "one root");
     assert_eq!((html.kind_name(t.table().entry(t.code(0)).kind), t.start(0), t.end(0)), (Some("element"), 1, 20));
 }
