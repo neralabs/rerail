@@ -422,11 +422,11 @@ against 32.7 G before. Now the analysis run collects as it finishes (`collect_af
 Against 6fc580233a (the step 6 commit, measured again on the M3 the same day, profiling binary), the regressions
 were three, each found in the two profiles:
 
-| ep2, M3 | 6fc580233a | before the fixes | the three below | and the narrow copies |
-|---|---|---|---|---|
-| cold | 1,078-1,220 G | 2,476 G | 1,517 G | 1,022 G |
-| warm | 1.8 G | 35.9 G | 2.0 G | 2.0 G |
-| edit (`qq991`) | 43.9 G | 74-90 G | 75.8 G | 70.9 G |
+| ep2, M3 | 6fc580233a | before the fixes | the three below | and the narrow copies | and the edit's five |
+|---|---|---|---|---|---|
+| cold | 1,078-1,220 G | 2,476 G | 1,517 G | 1,022 G | 1,018 G |
+| warm | 1.8 G | 35.9 G | 2.0 G | 2.0 G | 1.9 G |
+| edit (`qq991`) | 43.9 G | 74-90 G | 75.8 G | 70.9 G | 49.6 G |
 
 - Warm (7127549186): every `logic` command begins an analysis run (0547), and the whole-run cutoff skipped any run
   with a staged owner (since 395a6ac2f7). A hit now re-owns the recorded run's manifests.
@@ -441,7 +441,29 @@ were three, each found in the two profiles:
   bound) and 0575's diffed copies with their two follow-ups (from investigate-bend-vs-datalog), which read the former
   as change points (0575, "Beside the copies within one document"). 4,434 strata.
 
-Still above the baseline:
-- An edit counts Q396's semi-joins (`docof`, `end_line`, `visit_index`, `node_order`, `ast_depth`) by walking every
-  held node's document, making all 300 (1.1 s of the edit's stats, 0.06 s before): their statistics are kept
-  under the cross program's key, which an edit changes, not beside the base relations' table.
+The edit's five, each found in the edit's profile against 6fc580233a's (`tmp/m/ep2r/q-edit.sh`). The edit changes
+a rule's literal, so the cross program's key changes and every statistic kept under it is lost; Q396's semi-joins
+(`docof`, `end_line`, `visit_index`, `node_order`, `ast_depth`) are not kept inputs (0458 keeps the exports alone),
+so `kept_input_stats` never answered for them:
+- A semi-join counted at the held nodes walked every held node's document, making all 300 (1.1 s of the edit's
+  stats, 0.06 s before). Its rows at the held nodes are kept beside the documents' table (`#semijoin-at-held/`),
+  patched by the changed documents' nodes (b82ac99d4b).
+- The three whose keyed walk is refused (`docof`, `end_line`, `visit_index`) were measured whole each run. They are
+  counted as a base relation is, kept and patched beside the documents' table (ebb6e0d6ea).
+- The held nodes were made by visiting every export's rows (1.56 s of the edit's stats, 560,675 nodes). The kept
+  rows carry the digest of the exports they were taken of, the one the cross part's kept inputs are written with;
+  exports of that digest hold the kept rows' nodes (95eec15f57).
+- A semi-join answered by its kept rows still counted every row for its statistics. The kept rows carry them
+  (2ddc67b45e).
+- Phase 0 opened the image store and asked it for each held graph's image at every lookup (1,263 lookups of 316
+  graphs), since retaining a working tree's policies in the store that evaluates them (6e3f1618e8). It opens the
+  store on the first ask, and retains a held graph once a store (6f0044f081).
+
+The edit's stats phase went from 1.74 s to 0.15 s (0.08 s before). What stays above 6fc580233a's edit, by the run's
+instructions a phase (unprofiled, 49.6 G against 43.9 G):
+- prepare, 33.9 G against 31.3 G, and combine, 6.7 G against 4.9 G: the program is larger, 11,143 rules and 4,847
+  relations against 9,472 and 4,344, with the narrow copies above.
+- stats, 2.8 G against 0.9 G: in the profile, 0.06 s of the phase's own CPU under no span inside it (0.006 s
+  before), and the kept inputs bound where they lie, 0.038 s against 0.012 s from the frames.
+- A profiled run's first phase is 1.0 s more than 6fc580233a's: the profile's join locations
+  (`profile_join_sources`) look up each file's graph and retain it. No run without the profile does that work.
