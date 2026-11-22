@@ -2212,7 +2212,7 @@ fn run_observed_within(
     // The copies hiding made for guests in the run's own language are folded where the program is prepared (decision
     // 0058, `FoldOwn`): a function of the combined program and the run's language, which the prepared key names, so a
     // program read prepared is not folded first.
-    let loading_run = world::wanted(&*v, &shape);
+    let loading_run = { let _s = crate::code_rule_dsl::logic::profile::span(|| "whether the run loads".into()); world::wanted(&*v, &shape) };
     // A program that reads the import closure's relations (`rr_cx_reach`: a closure-local lookup) has its rules
     // (`import_closure`, `components.rerail`).
     let reads_components = shape.read.iter().any(|rel| rel.starts_with("rr_cx_"));
@@ -2633,14 +2633,14 @@ fn run_observed_within(
     let head_inputs = head.input_names();
     let head_settings = ProgramFields::settings(head);
     // The run takes the split's programs apart (`part` below): its own copy, the kept one shared.
-    let mut split = shared_split.clone();
+    let mut split = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the split, the run's copy".into()); shared_split.clone() };
     // Native request answers are inputs of the cone and cross-file part. No document
     // batch binds them, even when the program declares them as inputs in core.rerail.
     split.base.retain(|rel| !WORLD.iter().any(|(answer, _)| answer == rel));
     // The prepared program's fields, read from its version (decision 0281's path, step 4): no reader below reads its
     // tree's declarations.
-    let prepared_placed = lowered.placed()?;
-    let pf = prepared_placed.fields()?;
+    let prepared_placed = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the prepared program, placed".into()); lowered.placed()? };
+    let pf = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's fields".into()); prepared_placed.fields()? };
     // `RERAIL_DUMP_MATCHERS=<file>`: the rules reading a matcher's relation, and each matcher (a debugging aid), from the prepared program, made or kept.
     if let Ok(path) = std::env::var("RERAIL_DUMP_MATCHERS") {
         let mut text = String::new();
@@ -2663,11 +2663,11 @@ fn run_observed_within(
     let local_v = Arc::clone(&local_version);
     // The file-local part's fields, as the split made it: the run reads the part's rules and fields from its version.
     let local_placed = super::body::Placed::whole(Arc::clone(&local_v));
-    let local_f = local_placed.fields()?;
+    let local_f = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the file-local part's fields".into()); local_placed.fields()? };
     // The base relations' layouts (core.rerail's, decision 0361 item 5): the columns they answer are not counted when a
     // chunk's base relations are measured (`sampled_statistics_unanswered`), but for a relation whose facts the run's
     // rows broke (step 6, `Shapes::for_run` at each measure).
-    let base_shapes = super::shapes::Shapes::of_version(&local_v);
+    let base_shapes = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' shapes".into()); super::shapes::Shapes::of_version(&local_v) };
     let constants_only = {
         // The split's (`Programs::constants`): empty where no document is read, and then so is the file-local part.
         let constant = &split.constants;
@@ -2691,7 +2691,7 @@ fn run_observed_within(
         crate::code_rule_dsl::logic::profile::decision("text tests compiled (decision 0075)", || format!("groups of automata: {} read (the bundle, the build's image store or this process), {} determinized, {} on the lazy DFA", c.read, c.built, c.lazy));
     }
     // The run's text tests, each string tested once: the batches' and every program the run evaluates (`Hooks::texts`).
-    let vocabulary = Arc::new(vocabulary.again());
+    let vocabulary = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the text tests, again for the run".into()); Arc::new(vocabulary.again()) };
     if !demanded.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("demand (magic sets)", || format!("{} negated tests computed only for the nodes their readers bind: {}", demanded.len(), demanded.join(", ")));
     }
@@ -3240,7 +3240,7 @@ fn run_observed_within(
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the atoms' lease (decision 0104)".into());
         store.atoms_handle().ready_for_run().map_err(|e| Error::Plan(e.to_string()))?
     };
-    let mapped = store.atoms_handle().forked();
+    let mapped = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the atoms, forked for the run".into()); store.atoms_handle().forked() };
     crate::code_rule_dsl::logic::profile::decision("atoms before the first wave (decision 0104)", || match (complete, mapped) {
         (true, false) => "the store's atom blocks mapped to their committed end (decision 0401): lookups probe them where they lie".into(),
         (true, true) => "forked from the store's (decision 0170): the atoms the run's stored rows name are found in its mapped blocks as they are read".into(),
@@ -3294,7 +3294,7 @@ fn run_observed_within(
     let input_atoms = store.atoms_handle();
     // The values the program tests, of any relation and column: per value, the totals count only those (and every
     // value of a column of few, `ValTotals`).
-    let tested_values: rustc_hash::FxHashSet<i64> = constants_tested_in(&prepared_placed.v).into_values().flatten().map(|(_, v)| v).collect();
+    let tested_values: rustc_hash::FxHashSet<i64> = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the constants tested".into()); constants_tested_in(&prepared_placed.v).into_values().flatten().map(|(_, v)| v).collect() };
     let mut totals = Totals::new(tested_values.clone());
     let (mut nodes, mut native, mut chunks) = (0, BTreeSet::new(), 0);
     let (mut memo_hits, mut memo_unattributed) = (0usize, 0usize);

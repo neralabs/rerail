@@ -111,6 +111,11 @@ impl Shapes {
     fn of_layouts(v: &crate::code_rule_dsl::logic::program_image::Version, l: &crate::code_rule_dsl::logic::program_image::layouts::Layouts) -> Shapes {
         use crate::code_rule_dsl::logic::program_image::layouts::Origin;
         let reads = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, out: &mut BTreeSet<String>| out.extend(r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()));
+        // Each relation's rules, by its head: found once, not by a scan of every rule for each relation.
+        let mut by_head: std::collections::HashMap<_, Vec<crate::code_rule_dsl::logic::program_image::RuleRef<'_>>> = std::collections::HashMap::new();
+        for r in v.rules() {
+            by_head.entry(r.head().rel()).or_default().push(r);
+        }
         let from = l
             .0
             .iter()
@@ -119,7 +124,7 @@ impl Shapes {
                 for (_, o) in facts {
                     match o {
                         Origin::Rule(id) => v.rule(*id).into_iter().for_each(|r| reads(r, &mut out)),
-                        Origin::Rules => v.rules().filter(|r| r.head().rel() == *rel).for_each(|r| reads(r, &mut out)),
+                        Origin::Rules => by_head.get(rel).into_iter().flatten().for_each(|r| reads(*r, &mut out)),
                         Origin::Declared | Origin::Made => {}
                     }
                 }
