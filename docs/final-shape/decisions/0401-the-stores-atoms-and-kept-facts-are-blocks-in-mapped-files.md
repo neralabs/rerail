@@ -459,11 +459,29 @@ so `kept_input_stats` never answered for them:
   graphs), since retaining a working tree's policies in the store that evaluates them (6e3f1618e8). It opens the
   store on the first ask, and retains a held graph once a store (6f0044f081).
 
-The edit's stats phase went from 1.74 s to 0.15 s (0.08 s before). What stays above 6fc580233a's edit, by the run's
-instructions a phase (unprofiled, 49.6 G against 43.9 G):
-- prepare, 33.9 G against 31.3 G, and combine, 6.7 G against 4.9 G: the program is larger, 11,143 rules and 4,847
-  relations against 9,472 and 4,344, with the narrow copies above.
-- stats, 2.8 G against 0.9 G: in the profile, 0.06 s of the phase's own CPU under no span inside it (0.006 s
-  before), and the kept inputs bound where they lie, 0.038 s against 0.012 s from the frames.
+The edit's stats phase went from 1.74 s to 0.15 s (0.08 s before). Then six passes that read the whole program
+where they need a part of it, each found in the edit's profile (`q-edit.sh`, own CPU of the span), the edit 49.6 G
+to 42.6 G (unprofiled; cold 1,010 G):
+- Export demand asked each relation whether it is a projection by a walk of its rules each time (0.162 s to 0.041 s;
+  4d135acdaf).
+- The well-founded check summarized a step for every relation of the program, three rounds; it summarizes those the
+  recursive components reach (0.153 s to 0.006 s; 20a060c098).
+- Folding own guests rechecked every rule each round of its one-document set, and rebuilt its cycle graph each round;
+  a worklist, and the graph built once (0.113 s to 0.025 s; 2ccef2cb0a).
+- The deferred joins' factorizing found keys for every relation; it finds those the intermediates reach (0.047 s to
+  0.021 s; a93b6781e0).
+- A semi-join's kept rows were copied out whole, the held nodes in each (1.4 M words each); they are read where they
+  lie when asked ("measure the base rows held" 0.142 s to 0.092 s; 39bf8dd996).
+- A module's bound families are read once (63e9d71717); "seed a scope" stayed at 0.029 s.
+
+What stays above 6fc580233a's edit, by the run's instructions a phase (42.6 G against 43.9 G):
+- combine, 6.7 G against 4.9 G: the program is larger, 11,143 rules and 4,847 relations against 9,472 and 4,344,
+  with the narrow copies above. Prepare is now under it, 27.7 G against 31.3 G.
+- stats, 1.7 G against 0.9 G: the edit takes the exports' statistics kept by file for all 1,366 exports (0.036 s,
+  0.026 s of it counting the constants the rules test in the rows held), and binds the kept inputs where they lie
+  (0.037 s); 6fc580233a's edit profile has no span of the first, and read its kept inputs from the frames
+  (0.012 s).
+- The deferred joins install each of their 10 requests as a derivation of the whole program with its components
+  found again (0.097 s), each install reading the program the one before made.
 - A profiled run's first phase is 1.0 s more than 6fc580233a's: the profile's join locations
   (`profile_join_sources`) look up each file's graph and retain it. No run without the profile does that work.
