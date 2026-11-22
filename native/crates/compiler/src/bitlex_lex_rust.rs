@@ -3679,6 +3679,9 @@ impl Gen<'_> {
             if let Some((e, _)) = &r.empty {
                 let _ = writeln!(self.body, "    let mut m_{} = vec![0u64; nw];", ident(e));
             }
+            if let Some((_, e)) = &r.nests {
+                let _ = writeln!(self.body, "    let mut m_{} = vec![0u64; nw];", ident(e));
+            }
         }
         let _ = writeln!(self.body, "    {{\n        let mut at = 0usize;\n        // The kind of string the template is in: the region closed last at its second closer (a template's `$`), of the kinds with no `after`.\n        let mut template = usize::MAX;\n        // Each kind's next opener, at or after where it was looked for (`n`: none).");
         if let Some(n) = &rg.nest {
@@ -3733,7 +3736,8 @@ impl Gen<'_> {
                     Some((c2, _)) if r.resumes => format!("{{\n                                if !bit(&{c2}, c) {{\n                                    template = usize::MAX;\n                                }}\n                                {last}\n                            }}"),
                     _ => last,
                 };
-                format!("                    match first_bit(&{c}, p + {past}) {{\n                        Some(c) => {{\n                            let last = {last};\n                            set(&mut {f}, p, c);\n                            set(&mut {hidden}, p + 1, last + 1);\n                            at = last + 1;\n                        }}\n                        None => {{\n                            set(&mut {f}, p, n);\n                            set(&mut {hidden}, p + 1, n);\n                            at = n;\n                        }}\n                    }}\n")
+                let search = self.closer_from(r, &format!("p + {past}"), true)?.replace('\n', "\n        ");
+                format!("                    match {search} {{\n                        Some(c) => {{\n                            let last = {last};\n                            set(&mut {f}, p, c);\n                            set(&mut {hidden}, p + 1, last + 1);\n                            at = last + 1;\n                        }}\n                        None => {{\n                            set(&mut {f}, p, n);\n                            set(&mut {hidden}, p + 1, n);\n                            at = n;\n                        }}\n                    }}\n")
             };
             // With a nest, a kind with `after` opens at the closer of its template's level.
             let pop = if self.nest.is_some() && !r.after.is_empty() { "                    depth -= 1;\n                    template = if depth > 0 { nest[depth - 1] } else { usize::MAX };\n" } else { "" };
@@ -3760,6 +3764,10 @@ impl Gen<'_> {
             if let Some((e, _)) = &r.empty {
                 self.names.insert(e.clone(), format!("m_{}", ident(e)));
                 self.regional.insert(e.clone());
+            }
+            // A kind that nests: its `else`, no mask of the loop's (it refuses past its levels).
+            if let Some((_, e)) = &r.nests {
+                self.names.insert(e.clone(), format!("m_{}", ident(e)));
             }
         }
         Ok(())
@@ -3797,6 +3805,40 @@ impl Gen<'_> {
     /// A read of a region of kind `kind` to its closer `c` (`found`, its last byte): where a kind
     /// with `after` names it, a close at its second closer opens a template in it (`template`), as
     /// the lean lexer's string reader keeps the string's kind over the template's code.
+    /// Region `r`'s closer from byte `from` on, an `Option<usize>`: the first of its closers, or,
+    /// where it nests itself (`Region::nests`), the first with no level open, an opener in it (not
+    /// at a closer) opening one, as the lean lexer's `block_comment_end` counts. Past its levels
+    /// the token loop refuses (`None`); the walk (`deep`) marks its `else` and opens none, as the
+    /// rounds do.
+    fn closer_from(&mut self, r: &Region, from: &str, deep: bool) -> Result<String, String> {
+        let c = self.val(&r.closers())?;
+        let Some((d, e)) = r.nests.clone() else { return Ok(format!("first_bit(&{c}, {from})")) };
+        let io = self.val(&Expr::And(Box::new(r.opener.clone()), Box::new(Expr::Not(Box::new(r.closers())))))?;
+        let past = if deep { format!("set(&mut m_{}, o + 1, o + 2);", ident(&e)) } else { "break None;".to_owned() };
+        Ok(format!("{{
+                // `{k}` nests: an opener in it opens a level, a closer closes the innermost.
+                let mut q = {from};
+                let mut lv = 0usize;
+                loop {{
+                    let Some(c) = first_bit(&{c}, q) else {{ break None }};
+                    if let Some(o) = first_bit(&{io}, q).filter(|&o| o < c) {{
+                        if lv == {d} {{
+                            {past}
+                        }} else {{
+                            lv += 1;
+                        }}
+                        q = o + 1;
+                        continue;
+                    }}
+                    if lv == 0 {{
+                        break Some(c);
+                    }}
+                    lv -= 1;
+                    q = c + 1;
+                }}
+            }}", k = r.kind))
+    }
+
     fn template_close(&mut self, kind: &str, found: String) -> Result<String, String> {
         let Some(k) = self.kinds.iter().position(|q| q.kind == kind) else { return Ok(found) };
         let named = self.kinds.iter().any(|q| q.after.iter().any(|a| a == kind));
@@ -4052,6 +4094,12 @@ impl Gen<'_> {
             // Past the nest's levels: the loop refuses where it would push one more.
             if let (Expr::Name(x), Some((.., deep))) = (e, &self.nest)
                 && x == deep
+            {
+                continue;
+            }
+            // Past a kind's own levels, likewise (`Region::nests`).
+            if let Expr::Name(x) = e
+                && self.kinds.iter().any(|r| r.nests.as_ref().is_some_and(|(_, d)| d == x))
             {
                 continue;
             }
@@ -4329,7 +4377,8 @@ impl Gen<'_> {
                             let some = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                             let some = self.template_close(&r.kind, some)?;
                             let some = if !self.keeps_close(*row, rule) { some } else { with_close(&some) };
-                            format!("match first_bit(&{c}, s + {}) {{\n                Some(c) => {some},", r.opens)
+                            let search = self.closer_from(r, &format!("s + {}", r.opens), false)?;
+                            format!("match {search} {{\n                Some(c) => {some},")
                                 + &format!("\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}")
                         };
                         if rs.len() == 1 {
@@ -4351,7 +4400,9 @@ impl Gen<'_> {
                     let found = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                     let found = self.template_close(&r.kind, found)?;
                     let found = if !self.keeps_close(*row, rule) { found } else { with_close(&found) };
-                    (format!("read {} parts, to its closer", r.kind), format!("match first_bit(&{c}, s + {}) {{\n                Some(c) => {found},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}", r.opens))
+                    let search = self.closer_from(&r, &format!("s + {}", r.opens), false)?;
+                    let _ = &c;
+                    (format!("read {} parts, to its closer", r.kind), format!("match {search} {{\n                Some(c) => {found},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}"))
                 }
                 None => match last {
                     Some(l) => (format!("last {}", show(l)), format!("first_bit(&{}, s).unwrap_or(s)", self.val(l)?)),

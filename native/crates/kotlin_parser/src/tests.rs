@@ -889,6 +889,25 @@ fn block_comments_one_after_another_are_the_lean_parsers() {
     ]);
 }
 
+/// A block comment nests (`nests`, decision 0625), as the lean lexer's `block_comment_end`
+/// counts its `/*` and `*/`: to three levels in it, a `/*/` in it, after a token, before a line
+/// break, in a function's body, a doc comment, a `/*` in a string before one.
+#[test]
+fn nested_block_comments_are_the_lean_parsers() {
+    same(&[
+        "/* /* nested */ */\npackage a\n",
+        "/* a /* b /* c */ d */ e */\nval x = 1\n",
+        "/* /* /* /* deep */ */ */ */\nval x = 1\n",
+        "/* /*/ */ */\nval x = 1\n",
+        "val a = 1 /* x /* y */ z */ + 2\n",
+        "/** doc /* inner */ more */\nfun f() {}\n",
+        "val s = \"/* not */\"\n/* /* c */ */ val t = 2\n",
+        "fun f() {\n    /* /* c */ */\n    g()\n}\n",
+        "val a = 1\n/* /* c */\n */\nexternal fun f()\n",
+        "/* ** /* * */ ** */\nval x = 1\n",
+    ]);
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
@@ -900,7 +919,10 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val s = 'x\n",
         "val s = \"${}\"\n",
         "val s = \"open\n",
-        "/* /* nested */ */\npackage a\n",
+        // A block comment nested past three levels in it, or with a `*/*/` in it.
+        "/* /* /* /* /* deep */ */ */ */ */\nval x = 1\n",
+        "/*/**/*/\nval x = 1\n",
+        "/* /* c\n",
         "/* open\n",
         "val x = 1d\n",
         "val x = 1.5L\n",

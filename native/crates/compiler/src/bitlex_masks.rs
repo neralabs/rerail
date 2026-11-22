@@ -1075,7 +1075,13 @@ impl Lowering {
                                 if r.or.is_some() {
                                     return Err(format!("token {kind}: a `read` of region {} with a second closer: read it in parts", r.kind));
                                 }
-                                let (opener, closer) = (self.expr(&r.opener)?, self.expr(&r.closer)?);
+                                // A kind that nests itself (`Region::nests`): its closers with
+                                // no level open, as the rounds close its fill.
+                                let closer = match &r.nests {
+                                    Some(_) => Expr::And(Box::new(r.closers_past(&format!("o_{}", r.kind))), Box::new(Expr::Name(format!("{}_in0", r.kind)))),
+                                    None => r.closer.clone(),
+                                };
+                                let (opener, closer) = (self.expr(&r.opener)?, self.expr(&closer)?);
                                 let off = if r.outside { -1 } else { r.bytes as i8 - 1 };
                                 let none = match (&r.empty, r.outside) {
                                     (Some((_, m)), _) => crate::records::ReadNone::Bytes(*m),
@@ -1313,7 +1319,7 @@ impl Lowering {
     /// bytes after them by `prev`s at `D`. An `else`'s "a closer after the byte" is the closer's
     /// `back_fill` at `D - 1`: the same bits, a byte on.
     pub fn regions(&mut self, regions: &::bitlex::syntax::Regions) -> Result<(), String> {
-        if regions.nest.is_some() {
+        if regions.nest.is_some() || regions.kinds.iter().any(|r| r.nests.is_some()) {
             return self.nested_regions(regions);
         }
         self.region_kinds.extend(regions.kinds.iter().cloned());
@@ -1512,7 +1518,8 @@ impl Lowering {
         Ok(())
     }
 
-    /// Regions with a nest (`::bitlex::syntax::RegionNest`, decision 0621): their rounds as any
+    /// Regions with a nest (`::bitlex::syntax::RegionNest`, decision 0621), or a kind that nests
+    /// itself (`Region::nests`): their rounds as any
     /// `rounds until settled` (`Regions::body`), every backend's form, with no walk: the stack's
     /// levels are carried as the hidden places are. Each kind's fill is a mode, as `regions`
     /// makes it.

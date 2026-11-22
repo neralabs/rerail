@@ -460,6 +460,12 @@ pub struct Region {
     /// ends that token's record, or, closed at its own second closer, leaves it open over the
     /// next template's code. Tier 2 reads the template's code's records inside the string's.
     pub resumes: bool,
+    /// `nests D else E`: the region nests itself, as the lean lexer's `block_comment_end` counts
+    /// a block comment's: in it, an opener (not at a closer) opens a level and a closer closes
+    /// the innermost; the region closes at a closer with none open. A level opens at the byte
+    /// after its opener's first, which is no closer (a `/*`'s `*`). `E`: the byte after an
+    /// opener past `D` levels (1 to 15). No `or`, `outside`, `else` or `after`.
+    pub nests: Option<(u8, String)>,
 }
 
 impl Regions {
@@ -591,7 +597,38 @@ impl Regions {
                 }
                 None => out.push(Stmt::Mask(o.clone(), open)),
             }
-            out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(r.closers_past(&o))])));
+            match &r.nests {
+                // A kind that nests itself: its levels from the round before (`K_lv{j}`), the
+                // innermost open before each byte (`K_in{j}`); it closes at a closer with none open.
+                Some((d, e)) => {
+                    let klv = |j: u8| format!("{}_lv{j}", r.kind);
+                    let kin = |j: u8| format!("{}_in{j}", r.kind);
+                    for j in 1..=*d {
+                        out.push(Stmt::Carry(klv(j), Expr::Empty));
+                    }
+                    out.push(Stmt::Mask(kin(0), not(prev(&klv(1), 1))));
+                    for j in 1..=*d {
+                        let open = prev(&klv(j), 1);
+                        let e = if j < *d { and(open, not(prev(&klv(j + 1), 1))) } else { open };
+                        out.push(Stmt::Mask(kin(j), e));
+                    }
+                    let past = r.closers_past(&o);
+                    out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(and(past.clone(), name(&kin(0))))])));
+                    // An opener in it, not at a closer (the lean lexer's closer comes first): its
+                    // level opens at the byte after its first, never a closer. So a `prev` of the
+                    // fill is on the way from every carry, though the opener reads ahead.
+                    let inner = format!("{}_io", r.kind);
+                    let io = and(r.opener.clone(), not(r.closers()));
+                    out.push(Stmt::Mask(inner.clone(), and(call("prev", vec![Arg::E(io)]), prev(&f, 2))));
+                    for j in 1..=*d {
+                        let push = and(name(&inner), name(&kin(j - 1)));
+                        let pop = and(past.clone(), name(&kin(j)));
+                        out.push(Stmt::Next(klv(j), call("fill", vec![Arg::E(push), Arg::E(pop)])));
+                    }
+                    out.push(Stmt::Mask(e.clone(), and(name(&inner), name(&kin(*d)))));
+                }
+                None => out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(r.closers_past(&o))]))),
+            }
             if r.outside {
                 or(and(prev(&f, 1), not(r.closer.clone())));
             } else if let Some((c2, m)) = &r.or {
@@ -1819,13 +1856,24 @@ impl P {
             } else {
                 None
             };
+            let nests = if self.eat_kw("nests") {
+                let d = self.int()?;
+                self.want_kw("else")?;
+                let e = self.ident()?;
+                if !(1..=15).contains(&d) || or.is_some() || outside || empty.is_some() {
+                    return self.err("`nests` of 1 to 15 levels, on a kind with no `or`, `outside` or `else`");
+                }
+                Some((d as u8, e))
+            } else {
+                None
+            };
             let mut after = Vec::new();
             let resumes = self.eat_kw("resumes");
             if resumes || self.eat_kw("after") {
                 while matches!(self.peek(), Some(Tok::Ident(_))) {
                     after.push(self.ident()?);
                 }
-                if after.is_empty() || outside || empty.is_some() {
+                if after.is_empty() || outside || empty.is_some() || nests.is_some() {
                     return self.err("`after` or `resumes` and the kinds it names, on a kind with no `outside` or `else`");
                 }
             }
@@ -1835,7 +1883,7 @@ impl P {
             if !(1..=3).contains(&bytes) || (outside && bytes != 1) || (outside && or.is_some()) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
                 return self.err("a closer of 1 to 3 bytes (`outside`: 1, and no `or`), an `else` of 1 to 3");
             }
-            kinds.push(Region { kind, opener, opens: opens as u8, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes });
+            kinds.push(Region { kind, opener, opens: opens as u8, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes, nests });
             self.nls();
         }
         if kinds.is_empty() {
