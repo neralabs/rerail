@@ -20,7 +20,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import type { AuditRecord, AuditRuleProvenance } from "../engine/audit/audit.js";
-import { SqliteAuditReader } from "../engine/audit/audit-store.js";
+import { isUnreadableList, SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { parseRuleDocument } from "../engine/catalog/rule-documents.js";
 import { worktreeRulesDirectory } from "../engine/catalog/worktree-pack.js";
@@ -269,6 +269,8 @@ interface RemoteSync {
 interface BatchSending extends RemoteSync {
   readonly rerail: Database.Database | undefined;
   readonly rules: RuleDocuments;
+  /** The audits held under their marked hash whose lists this sync found still unreadable: no later batch tests them. */
+  readonly stillUnreadable: Set<string>;
   batches: number;
   records: number;
   maxSendable: number;
@@ -448,7 +450,7 @@ export class RemoteOutbox {
     const { state, remote, options, key, configHash } = sync;
     const rerail = this.#openRerail();
     try {
-      const sending: BatchSending = { ...sync, rerail, rules: new RuleDocuments(rerail), batches: 0, records: 0, maxSendable: Number.POSITIVE_INFINITY, skipped: 0 };
+      const sending: BatchSending = { ...sync, rerail, rules: new RuleDocuments(rerail), stillUnreadable: new Set(), batches: 0, records: 0, maxSendable: Number.POSITIVE_INFINITY, skipped: 0 };
       for (let index = 0; index < (options.maxBatches ?? 50); index += 1) {
         if (options.signal?.aborted === true) break;
         const step = await this.#sendBatch(sending);
@@ -466,7 +468,7 @@ export class RemoteOutbox {
   async #sendBatch(sending: BatchSending): Promise<SyncResult | "done" | "next"> {
     const { state, rerail, rules, remote, exclusions, options, key, token } = sending;
     const budget = options.batchBytes ?? MAX_BATCH_BYTES;
-    const batch = this.#collect(state, rerail, rules, remote, exclusions, budget, sending.maxSendable);
+    const batch = this.#collect(state, rerail, rules, remote, exclusions, budget, sending.maxSendable, sending.stillUnreadable);
     if (isEmptyBatch(batch)) return "done";
     const sendable = batch.records.filter(item => item.line !== "").length;
     if (sendable === 0) {
@@ -529,7 +531,7 @@ export class RemoteOutbox {
 
   #collect(
     state: Database.Database, rerail: Database.Database | undefined, rules: RuleDocuments, remote: RemoteEntry,
-    exclusions: readonly RepositoryExclusion[], budget: number, maxSendable: number,
+    exclusions: readonly RepositoryExclusion[], budget: number, maxSendable: number, stillUnreadable: Set<string>,
   ): BatchBuilder {
     const key = remoteStateKey(remote);
     const batch = new BatchBuilder(budget - 1024, maxSendable);
@@ -570,7 +572,7 @@ export class RemoteOutbox {
       const isExcluded = (sessionId: string, at: number): boolean =>
         excludedSessions.has(sessionId) || excluded.at(sessionRepository.get(sessionId) ?? null, at);
       if (!this.#collectEvents(state, rerail, remote, batch, isExcluded)) return batch;
-      if (!this.#collectAudits(rerail, rules, batch, isExcluded, addSnapshot, unsent)) return batch;
+      if (!this.#collectAudits(rerail, rules, batch, isExcluded, addSnapshot, unsent, stillUnreadable)) return batch;
     }
 
     const scans = state.prepare("SELECT scan_id, repository_key, document_json, rules_json, queued_at FROM scans ORDER BY queued_at").all() as Array<{ scan_id: string; repository_key: string; document_json: string; rules_json: string; queued_at: number }>;
@@ -623,26 +625,47 @@ export class RemoteOutbox {
     isExcluded: (sessionId: string, at: number) => boolean,
     addSnapshot: (item: OutboxRecord) => boolean,
     unsent: (item: OutboxRecord) => boolean,
+    stillUnreadable: Set<string>,
   ): boolean {
     const rows = rerail.prepare("SELECT audit_id, session_id, origin, status, started_at, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as FinishedAuditRow[];
-    const sink: AuditSink = { rerail, rules, batch, addSnapshot, unsent };
     // Opens the database at its first read: a sync with no audit to test or send opens none.
     const reader = new SqliteAuditReader(join(this.#home, RERAIL_DATABASE_FILE));
+    const sink: AuditSink = { rerail, rules, batch, addSnapshot, unsent, reader, stillUnreadable };
     try {
-      const pending = rows.flatMap(row => (isExcluded(row.session_id, row.started_at) ? [] : pendingAudit(row, reader, unsent)));
-      return pending.every(({ auditId, hash }) => this.#addAudit(sink, reader.get(auditId), hash));
+      return rows.every(row => isExcluded(row.session_id, row.started_at) || this.#addPending(sink, row));
     } finally {
       reader.close();
     }
   }
 
-  /** One audit with the rules it ran and its violations, all in one batch or the audit waits for the next; false once the batch is full. */
-  #addAudit(sink: AuditSink, audit: AuditRecord | undefined, hash: string): boolean {
+  /**
+   * `row`'s audit unless the remote holds it as it is; false once the batch is full. One held under its readable hash
+   * is passed by unread: one sent whole is not sent again for damage to its paths, failures, rule revisions or rule
+   * provenance, which its hash leaves out. One held under its marked hash, sent with a stored list that did not read,
+   * has its lists tested in SQL once a sync: passed by while they still do not read, sent again whole once mended. Any
+   * other is read only while the batch has room, so a full batch ends the reads.
+   */
+  #addPending(sink: AuditSink, row: FinishedAuditRow): boolean {
+    const held = (unreadable: boolean): boolean => !sink.unsent({ line: "", stream: "audit", id: row.audit_id, hash: auditHash(row, unreadable) });
+    if (held(false) || sink.stillUnreadable.has(row.audit_id)) return true;
+    if (held(true) && sink.reader.unreadableListCount(row.audit_id) > 0) {
+      sink.stillUnreadable.add(row.audit_id);
+      return true;
+    }
+    return this.#addAudit(sink, sink.reader.get(row.audit_id), row);
+  }
+
+  /**
+   * One audit with the rules it ran and its violations, all in one batch or the audit waits for the next; false once the
+   * batch is full. Its hash is marked when the record sent lists a failure for a stored list it reads as none.
+   */
+  #addAudit(sink: AuditSink, audit: AuditRecord | undefined, row: FinishedAuditRow): boolean {
     if (audit === undefined) return true;
     for (const provenance of audit.ruleProvenance) {
       const rule = provenanceRule(provenance, audit.workspaceRoot);
       if (rule !== undefined && !this.#addRule(sink.rules, rule, sink.batch, sink.unsent)) return false;
     }
+    const hash = auditHash(row, audit.failures.some(isUnreadableList));
     return addTogether(sink, [auditRecord(audit, hash), ...violationRecords(audit, violationKeysOf(sink.rerail, audit))]);
   }
 
@@ -808,19 +831,6 @@ function auditHash(row: FinishedAuditRow, unreadable: boolean): string {
   return hashOf([row.status, row.finished_at, row.size, ...(row.origin === "scan" ? ["scan"] : []), ...(unreadable ? ["unreadable"] : [])]);
 }
 
-/**
- * `row`'s audit with the hash it goes under, or none when the remote holds it so. Only an audit the remote does not
- * hold under its readable hash has its lists tested, in SQL: one not sent yet, sent with a list that did not read, or
- * changed since. So an audit sent with such a list goes again, whole, once the list is mended; and one sent whole is
- * not sent again for damage to its paths, failures, rule revisions or rule provenance, which its hash leaves out.
- */
-function pendingAudit(row: FinishedAuditRow, reader: SqliteAuditReader, unsent: (item: OutboxRecord) => boolean): Array<{ auditId: string; hash: string }> {
-  const held = (hash: string): boolean => !unsent({ line: "", stream: "audit", id: row.audit_id, hash });
-  if (held(auditHash(row, false))) return [];
-  const hash = auditHash(row, reader.unreadableListCount(row.audit_id) > 0);
-  return held(hash) ? [] : [{ auditId: row.audit_id, hash }];
-}
-
 /** The rule document a provenance names, for `#addRule`; undefined for one stored without a payload hash. */
 function provenanceRule(provenance: AuditRuleProvenance, workspaceRoot: string): { ruleId: string; payloadHash: string; checkoutPath: string } | undefined {
   if (!("payloadHash" in provenance)) return undefined;
@@ -835,6 +845,8 @@ interface AuditSink {
   readonly batch: BatchBuilder;
   readonly addSnapshot: (item: OutboxRecord) => boolean;
   readonly unsent: (item: OutboxRecord) => boolean;
+  readonly reader: SqliteAuditReader;
+  readonly stillUnreadable: Set<string>;
 }
 
 /** `items` into the batch together, or none of them while the batch has records and no room for all; false then. */

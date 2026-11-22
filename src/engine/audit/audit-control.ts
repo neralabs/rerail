@@ -35,8 +35,8 @@ function isScanLimitMarker(failure: { stage?: string | undefined; code: string; 
 
 /**
  * Whether the failures `text` holds are some and each one a failed audit tolerates today. They are read as an audit
- * record reads them (`parsedList`): text that holds no JSON array of failures reads as an adapter error there, which
- * fails the same way again.
+ * record reads them (`parsedList`): text that holds no JSON array of failures is a damaged record, left for a person to
+ * mend rather than audited again at every session.
  */
 function onlyToleratedFailures(text: string): boolean {
   const failures = parsedList(text, "failures");

@@ -74,6 +74,30 @@ function setProvenanceCopyText(auditId: string, text: string): void {
   database.close();
 }
 
+/** `count` more finished audits of the session, each with no violation. */
+function addAudits(sessionId: string, count: number): string[] {
+  const audits = new SqliteAuditStore(databasePath());
+  const auditIds = Array.from({ length: count }, () => {
+    const auditId = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "repository", mode: "log", revision: 1, catalogRevision: "c1", ruleRevisions: [], paths: [] });
+    audits.finish(auditId, { status: "completed" });
+    return auditId;
+  });
+  audits.close();
+  return auditIds;
+}
+
+/** The hash the outbox keeps for an audit as sent, and the audit's readable and marked hashes (`auditHash`). */
+function auditHashes(auditId: string): { kept: unknown; readable: string; marked: string } {
+  const rerail = new Database(databasePath(), { readonly: true });
+  const row = rerail.prepare("SELECT status, finished_at, length(violations_json) AS size FROM audits WHERE audit_id = ?").get(auditId) as { status: string; finished_at: number; size: number };
+  rerail.close();
+  const state = new Database(join(home, "remote-outbox.sqlite"), { readonly: true });
+  const kept = state.prepare("SELECT hash FROM sent WHERE stream = 'audit' AND id = ?").pluck().get(auditId);
+  state.close();
+  const hash = (...mark: string[]): string => createHash("sha256").update(JSON.stringify([row.status, row.finished_at, row.size, ...mark])).digest("hex");
+  return { kept, readable: hash(), marked: hash("unreadable") };
+}
+
 function addEvent(sessionId: string, eventId: string): void {
   const store = new SqliteSessionStore(databasePath(), { repositoryId: REPOSITORY });
   store.append({ sessionId, eventId, kind: "user-prompt", observedAt: 600_000, payload: { text: "secret plans" } });
@@ -273,6 +297,46 @@ describe("remote sink outbox", () => {
     expect(await runRemoteCommand(["push"], { home, stdout })).toBe(0);
     expect(output).not.toContain("failed");
     expect(storedRecords(sink).filter(item => item.type === "audit").map(item => item.id)).toEqual([auditId]);
+  });
+
+  it("tests no stored list of an audit it never sent, over a sync of many batches", async () => {
+    const { sessionId } = seed();
+    addAudits(sessionId, 20);
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    const tests = vi.spyOn(SqliteAuditReader.prototype, "unreadableListCount");
+    onTestFinished(() => tests.mockRestore());
+    const [result] = await outbox().sync({ force: true, batchBytes: 4 * 1024 });
+    expect(result!.batches).toBeGreaterThan(1);
+    expect(tests).not.toHaveBeenCalled();
+    expect(storedRecords(sink).filter(item => item.type === "audit")).toHaveLength(21);
+  });
+
+  it("marks the hash it keeps for an audit by the record it sent, not by a test of the stored lists", async () => {
+    const { sessionId, auditId } = seed();
+    const [intact] = addAudits(sessionId, 1);
+    setPathsText(auditId, '["a.ts"');
+    // The test of the stored lists says the opposite of each record.
+    const tests = vi.spyOn(SqliteAuditReader.prototype, "unreadableListCount").mockImplementation(id => (id === auditId ? 0 : 1));
+    onTestFinished(() => tests.mockRestore());
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const damaged = auditHashes(auditId);
+    expect(damaged.kept).toBe(damaged.marked);
+    const whole = auditHashes(intact!);
+    expect(whole.kept).toBe(whole.readable);
+  });
+
+  it("tests the stored lists of an audit it sent with one that did not read once a sync, over many batches", async () => {
+    const { sessionId, auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    addAudits(sessionId, 20);
+    const tests = vi.spyOn(SqliteAuditReader.prototype, "unreadableListCount");
+    onTestFinished(() => tests.mockRestore());
+    const [result] = await outbox().sync({ force: true, batchBytes: 4 * 1024 });
+    expect(result!.batches).toBeGreaterThan(1);
+    expect(tests.mock.calls).toEqual([[auditId]]);
   });
 
   it("keeps the cursor on failure, backs off, and resends the same batch id once the remote is back", async () => {

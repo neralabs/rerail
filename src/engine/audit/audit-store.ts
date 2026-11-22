@@ -149,6 +149,13 @@ function unreadable(list: StoredList): AuditFailure {
   };
 }
 
+/** The messages of the failures `unreadable` makes, one a list. */
+const UNREADABLE_MESSAGES = new Set((Object.keys(STORED_LISTS) as StoredList[]).map(list => unreadable(list).message));
+/** Whether `failure` is one an audit record lists for a stored list it reads as none (`unreadable`). */
+export function isUnreadableList(failure: AuditFailure): boolean {
+  return UNREADABLE_MESSAGES.has(failure.message);
+}
+
 /** The JSON array of `list`'s items `text` holds, as an audit record reads it, or why it holds none. */
 export function parsedList(text: string, list: StoredList): unknown[] | string {
   let value: unknown;
