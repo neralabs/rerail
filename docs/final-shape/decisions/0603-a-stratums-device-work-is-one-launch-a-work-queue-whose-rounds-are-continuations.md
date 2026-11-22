@@ -418,3 +418,40 @@ remain; and test that a stratum takes one launch plus its budget's relaunches, w
 
   Before this step: 5 launches, 3 of them reruns. The setfix device and join tests: 36 of 36 on spark2's CPU backend
   and 36 of 36 on the mini's Metal.
+
+## Done (2026-11-22): every stratum's launches checked; a non-recursive stratum's heads placed in its program
+
+**The user's choice on memory (2026-11-22): commit within caps.** On Metal, memory the GPU writes and the host reads
+(a block: heads, deltas) is wired over its whole wrapped range, and sparse buffers cannot be shared storage. So a
+room sized from the reach is real memory there. The rooms and the first arena are the reach within their caps
+(`REACH_BYTES`, `ARENA_REACH_BYTES`), not mapped page by page with a launch for each.
+
+- **The check covers every stratum** (`one_launch`, at each stratum's report, in a test build): its launches are its
+  programs (`Report::programs`, one a stratum), their budget's relaunches and their arena's remaps, with no rerun,
+  and the relaunches at most the items over a launch's budget. A recursive stratum's breach panics. A wave's first
+  stratum's report holds the wave's programs, one a stratum.
+- **A non-recursive stratum's heads are placed in its own program** (`encode_place`). Before, its joins were one
+  program and `place` a second, because the host read the joins' counts to size the heads' union. Now the union
+  (`append_rows`, a placed table), its dedup, the anti-join against the rows the head holds and the rows placed are
+  phases after the joins, sized by the device's counts. The head's room is the rows it can reach (`reach`): its
+  columns' values, or its rules' bindings (the product of their positive atoms' rows, where no step makes more than
+  one row from a binding and none reads the component's own relations), within `PLACE_ROOM_BYTES`. A gate holds the
+  rows within the room. Past it, or after a rerun, `place` places them as before. Strata in a wave do the same
+  (`submit` takes the store).
+- **A stratum whose host reads none of its placed tables has the reserved arena** (every head placed by its
+  program): a claim past it maps more, and nothing runs again.
+- **Tried and reverted:** a first arena of the reach for every non-recursive stratum, and its text arena at the cap.
+  With many strata at once, the 160 MB leases passed the device's 1 GB budget and the strata were refused.
+- **Measured** (spark2's CPU backend, the setfix device, join and parity tests, `RERAIL_ONE_LAUNCH_CHECK=log`):
+  5,331 of 5,533 strata are one program and its budget's relaunches. Of the rest:
+  - 130 take three programs, with one rerun and no text arena's: a full program arena (not reserved, since the
+    host reads a placed table: a head read back, its texts or its fold), then `place` again;
+  - 21 take two programs, with no rerun: a head whose reach is unbounded or past its room, placed by `place`;
+  - 51 rerun past a full text arena or a full program arena, some several times.
+
+  The setfix device, join and parity tests: 48 of 48 on spark2's CPU backend and on the mini's Metal.
+
+Open: the strata the host reads placed tables of, and those that make texts. Their arenas must be readable by the
+host and grow without a rerun. On Metal that means a host-mapped range whose wrap grows between launches (each wrap
+a new GPU address, so a program's addresses are resolved again at each launch), with a text function past its
+arena parking as a size script does.

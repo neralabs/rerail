@@ -3127,6 +3127,8 @@ pub struct Report {
     pub remaps: u32,
     pub taken: u64,
     pub launch_items: u64,
+    /// Its programs: one a stratum (a wave's first stratum's report, its wave's).
+    pub programs: u32,
     /// Runs again from an overflowing stage.
     pub reruns: u32,
     /// Times it waited for the device's memory before it encoded (`gpu::shared::admit`, Q203), and the seconds.

@@ -1344,6 +1344,8 @@ pub(in crate::code_rule_dsl) struct Done {
     /// least of its programs'.
     pub(in crate::code_rule_dsl) taken: u64,
     pub(in crate::code_rule_dsl) launch_items: u64,
+    /// Its programs launched (each once, then its relaunches and remaps).
+    pub(in crate::code_rule_dsl) programs: u32,
 }
 
 /// Work encoded into one submission at a time, committed at `commit_open` and `finish`; every submission runs on the
@@ -2673,6 +2675,7 @@ impl Batch {
         if self.program.phases.is_empty() {
             return Ok(());
         }
+        self.done.programs += 1;
         let mut prog = std::mem::take(&mut self.program);
         // The next program's claims go on past this one's, in the same arena: a table one places, a later one reads.
         self.program.top = prog.top.clone();

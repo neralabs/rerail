@@ -2695,7 +2695,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             Body::Join(j) => (plan, &**j, comp.probes[*pi].head),
             Body::Sql(_) | Body::Unplanned => unreachable!("a device plan is a join's"),
         }).collect();
-        let submitted = { let syms = symbols.read().unwrap(); dev.submit(&rules, &syms) };
+        let submitted = { let syms = symbols.read().unwrap(); let s = comp.store.read().unwrap(); dev.submit(&rules, &s, &syms) };
         if let Ok(Some(t)) = submitted {
             comp.device_wait = Some(t);
             let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
