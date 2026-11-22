@@ -342,6 +342,12 @@ fn an_edit_patches_a_semi_join_inputs_statistics_and_makes_no_unchanged_document
         if !space.iter().filter(|x| x.contains("base relations' rows")).all(all_counted) {
             failed.push(format!("{route}: the corpus batch has every base relation's rows by its kept statistics: {space:?}"));
         }
+        // And every unchanged document's views' counts (3 of the 4, d.py's changed): without them a read of a view
+        // by its documents (a version's, `rows_of_documents`) projected every document to count its rows.
+        let views = |x: &String| x.split(" documents' views' counts kept").next().and_then(|n| n.split_once(" of ")).map(|(a, b)| (a.parse::<usize>().unwrap_or(0), b.parse::<usize>().unwrap_or(0)));
+        if !space.iter().filter_map(views).all(|(a, b)| a + 1 >= b) {
+            failed.push(format!("{route}: the corpus batch has its unchanged documents' views' counts: {space:?}"));
+        }
         if !whole.iter().all(|x| unmade(x) <= 1) {
             failed.push(format!("{route}: no read makes an unchanged document: {whole:?}"));
         }

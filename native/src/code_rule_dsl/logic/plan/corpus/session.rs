@@ -159,12 +159,16 @@ pub(super) fn current() -> Held {
 
 /// A session's corpus batch as its last run made it (decision 0458): each path's documents (its file's and its guests'),
 /// with the content and key they were made from; the documents' digest, which the base relations' digests are of;
-/// and each base relation's statistics, with the digest of the rows they count. An edit makes the changed files'
+/// each base relation's statistics, with the digest of the rows they count; and its documents' views' counts. An edit makes the changed files'
 /// documents alone, and the held ones of those paths are the base relations' old versions.
 pub(super) struct HeldCorpus {
     pub docs: std::collections::HashMap<String, ((memo::Content, i64), Vec<crate::code_rule_dsl::facts::vtab::syntax::Input>)>,
     pub digest: u64,
     pub stats: std::collections::HashMap<String, (u64, crate::code_rule_dsl::logic::plan::statkeep::RelStats)>,
+    /// Each document's views' counts, by key, with the digest of the document they count (decision 0494), as the
+    /// documents' table keeps them for a new process: the next run's batch knows its row space without projecting
+    /// a document to count it.
+    pub counts: std::collections::HashMap<u32, ([u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)>,
 }
 
 /// The session held for a run.

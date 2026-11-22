@@ -3900,8 +3900,11 @@ fn run_observed_within(
     };
     let mut session_corpus: Option<session::HeldCorpus> =
         session_binds.and_then(|b| session.as_ref().and_then(|s| s.corpus.lock().expect("the session's corpus batches").remove(&b)));
+    // And its documents' views' counts, as the documents' table's are (`base_counts`).
+    let mut session_counts: HashMap<u32, ([u8; 32], syntax::made::ViewCounts)> = HashMap::new();
     if let Some(held) = session_corpus.as_mut() {
         base_stats_kept = (Some(held.digest), std::mem::take(&mut held.stats));
+        session_counts = std::mem::take(&mut held.counts);
     }
     // This run's batch, for the session's next run: `None` where a document's content is not known.
     let mut session_corpus_next: Option<HashMap<String, ((memo::Content, i64), Vec<syntax::Input>)>> = None;
@@ -7111,7 +7114,13 @@ fn run_observed_within(
         };
         corpus_digest = all.iter().map(|d| super::row_digest(&words(d))).fold(0u64, u64::wrapping_add);
         // Each document's views' counts as kept, where its contents are those they were counted of (decision 0494).
-        let given: HashMap<u32, syntax::made::ViewCounts> = all.iter().filter_map(|d| base_counts.get(&d.key()).filter(|c| c.digest == d.digest()).map(|c| (d.key(), c.counts))).collect();
+        let given: HashMap<u32, syntax::made::ViewCounts> = all
+            .iter()
+            .filter_map(|d| {
+                let kept = base_counts.get(&d.key()).filter(|c| c.digest == d.digest()).map(|c| c.counts);
+                kept.or_else(|| session_counts.get(&d.key()).filter(|(digest, _)| *digest == d.digest()).map(|(_, c)| *c)).map(|c| (d.key(), c))
+            })
+            .collect();
         crate::code_rule_dsl::logic::profile::decision("the corpus batch's row space (decision 0494)", || format!("{} of {} documents' views' counts kept", given.len(), all.len()));
         let sources = syntax::with_matchers(store, all, sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &given).map_err(|e| Error::Plan(e.to_string()))?;
         corpus_batch = sources.iter().find_map(|(_, s)| s.python_batch());
@@ -8991,7 +9000,8 @@ fn run_observed_within(
                     // The corpus batch and its base statistics, for the session's next run (decision 0458).
                     if let (Some(b), Some(docs)) = (session_binds, session_corpus_next.take()) {
                         let stats = base_stats_out.iter().map(|(rel, digest, k)| (rel.clone(), (*digest, k.clone()))).collect();
-                        session.as_ref().expect("a session's run").corpus.lock().expect("the session's corpus batches").insert(b, session::HeldCorpus { docs, digest: corpus_digest, stats });
+                        let counts = corpus_batch.as_ref().map(|batch| batch.kept_counts().into_iter().map(|k| (k.key, (k.digest, k.counts))).collect()).unwrap_or_default();
+                        session.as_ref().expect("a session's run").corpus.lock().expect("the session's corpus batches").insert(b, session::HeldCorpus { docs, digest: corpus_digest, stats, counts });
                     }
                 }
                 None => {
