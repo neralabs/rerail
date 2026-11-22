@@ -4128,7 +4128,33 @@ impl Model {
             // each column's distinct values takes the columns as independent, and one often determines another:
             // `walk($n, $x, $s)` by `$n` and `$x`, `$x` being `$n`'s name, was priced at 0.0007 rows a binding for
             // about 2 (`annotated_on_chain`: 6.8 M rows of work for 0.03 M priced).
-            if cols.len() >= 2 && cols.len() < args.len() && cols.iter().all(|&c| b.constant(args[c]).is_none()) && card > 0.0 {
+            // Not where nothing placed relates them: variables bound by atoms no placed literal connects are a
+            // cross product's sides, drawn apart, and few of their pairs are a combination it holds.
+            // `tp_list($tp) :- kind($tp, type_parameter), kind($ty, type), child($tp, $ty, _), ...` (its `$x` read
+            // by no reader, so the head bound after `$tp`) priced `child` by both at one row a binding, so the kinds'
+            // cross product found a witness at once: 1.68 M rows of work on hogql, where `child` by `$tp` reads 52 K.
+            let independent = || -> bool {
+                let vs: Vec<VarSlot> = cols.iter().filter_map(|&c| args[c].var()).collect();
+                if vs.len() < 2 || !b.bound_before().is_empty() {
+                    return false;
+                }
+                let placed: Vec<VarSet> = (0..b.len())
+                    .filter(|&j| j != i && !b.plain_atom(j).is_some_and(|a| a.neg()) && !b.vars(j).is_empty() && b.vars(j).is_subset(bound))
+                    .map(|j| b.vars(j).minus(&pinned))
+                    .collect();
+                let mut covered = VarSet::new();
+                placed.iter().for_each(|p| covered.extend(p));
+                // A variable bound otherwise (a computed value, the head's) may be any other's: not shown apart.
+                if vs.iter().any(|v| !covered.contains(*v)) {
+                    return false;
+                }
+                let mut comp = VarSet::of([vs[0]]);
+                while let Some(p) = placed.iter().find(|p| !p.is_disjoint(&comp) && !p.is_subset(&comp)) {
+                    comp.extend(p);
+                }
+                !vs.iter().all(|v| comp.contains(*v))
+            };
+            if cols.len() >= 2 && cols.len() < args.len() && cols.iter().all(|&c| b.constant(args[c]).is_none()) && card > 0.0 && !independent() {
                 let combinations = cols.iter().map(|&c| t.col(c, b, i, self).ndv1).product::<f64>().clamp(1.0, card);
                 rows = rows.max(card / combinations);
             }
