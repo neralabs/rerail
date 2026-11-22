@@ -298,9 +298,12 @@ fn rr_aot_against_jit() {
             })
             .sum::<usize>()
     };
-    let mut best = [std::time::Duration::MAX; 5];
+    // The lean parser (`rr_syntax::lean`, hand-written Rust): the shape the generated Rust is to have.
+    let lean_lex = || files.iter().map(|t| crate::rr::lean::token_count(t)).sum::<usize>();
+    let lean = || files.iter().map(|t| crate::rr::lean::tape(t).len()).sum::<usize>();
+    let mut best = [std::time::Duration::MAX; 7];
     for _ in 0..rounds {
-        for (k, f) in [&lex as &dyn Fn() -> usize, &aot, &jit, &engine, &jit_lex].into_iter().enumerate() {
+        for (k, f) in [&lex as &dyn Fn() -> usize, &aot, &jit, &engine, &jit_lex, &lean_lex, &lean].into_iter().enumerate() {
             best[k] = best[k].min(time(f));
         }
     }
@@ -315,6 +318,9 @@ fn rr_aot_against_jit() {
     row("the JIT, tier 1 (the batch)", best[4]);
     row("the JIT, tier 2 (image - batch)", best[2].saturating_sub(best[4]));
     row("the JIT, whole (image)", best[2]);
+    row("the lean parser, its lexer (token_count)", best[5]);
+    row("the lean parser, its parse (tape - lexer)", best[6].saturating_sub(best[5]));
+    row("the lean parser, whole (tape)", best[6]);
     row("the engine's hand-written reader", best[3]);
     let load = std::process::Command::new("uptime").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
     eprintln!("  load: {load}");
