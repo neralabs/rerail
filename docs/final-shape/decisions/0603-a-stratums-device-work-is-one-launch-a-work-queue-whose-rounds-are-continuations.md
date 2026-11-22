@@ -455,3 +455,30 @@ Open: the strata the host reads placed tables of, and those that make texts. The
 host and grow without a rerun. On Metal that means a host-mapped range whose wrap grows between launches (each wrap
 a new GPU address, so a program's addresses are resolved again at each launch), with a text function past its
 arena parking as a size script does.
+
+## Done (2026-11-22): every stratum's arena grows in place; a placed table never overflows
+
+- **A false overflow.** `Run::overflow` skipped a placed table by `Table::placed`, which is false once its batch is
+  done, and the check runs after. So a placed table whose device count passed the host's first guess counted as an
+  overflow, and its run ran again in a new batch. That was 130 of the 202 strata past one program. It now skips any
+  table its program sized (`Table::device_sized`). `a_strata_seeds_on_the_device_are_the_cpus_rows_and_counts` had
+  asserted that rerun ("the large join overflows its first table"). It now asserts the large join in one program,
+  run once.
+- **A wrapped arena, which the host reads** (`device::reserve`'s `host_reads`; `ReservedKind::Wrapped`, macOS).
+  This is the host's address space (`os::map_zeroed`), wrapped as a Metal buffer over its mapped bytes only, since a
+  wrap is wired whole. `map` makes a larger wrap of the same pages: nothing moves, and every wrap aliases one memory.
+  Each wrap has its own GPU address, so a launch whose arena's buffer changed resolves the arena's address again
+  (`Kit::rebase`) in its size scripts' ops and its scan levels' data and sums. The kernels' reads of placed tables are
+  offsets from the arena bound at each launch. At a batch's end every place takes the arena's last wrap. The CPU
+  backend's reserved arena is the host's already.
+- **Every non-recursive stratum has a reserved arena** (`group`): wrapped on Metal where the host reads one of its
+  placed tables (a head read back), sparse otherwise. A claim past it parks, and the host maps more: no rerun.
+- **A head whose reach is past its room** is placed by its program too, in room of eight times the rows guessed
+  (at least `PLACE_ROOM_MIN`), within `PLACE_ROOM_BYTES`, behind its gate.
+- **Measured** (the setfix device, join and parity tests, `RERAIL_ONE_LAUNCH_CHECK=log`): spark2's CPU backend, 5,508
+  of 5,534 strata one program and its budget's relaunches; the mini's Metal, 5,508 of 5,535. Of the 26 or 27 left,
+  23 run again past a full text arena (`arena_reruns`), and 3 or 4 once otherwise. The tests: 48 of 48 on both.
+
+Open: the text arena. A stratum's texts go into its batch's arena (`Batch::arena`, `ARENA_START`), and a text
+function past it flags the run (`TEXTFN_FULL`), which runs again in a larger one. Making it a reserved arena the
+host reads, with a text function past its mapped bytes parking its item, removes those reruns.

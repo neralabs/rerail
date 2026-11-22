@@ -1834,11 +1834,12 @@ impl<'p> Run<'p> {
     }
 
     /// The first stage whose rows overflowed its table, with its true count; the counts of every stage before are
-    /// final. A placed table's room is its rows (decision 0603 step 5): never past.
+    /// final. A placed table's room is its rows (decision 0603 step 5): never past, before its batch is done or after
+    /// (`Table::device_sized`; `placed` is false once it is done, and its count is then past the host's guess).
     fn overflow(&self) -> Option<(usize, usize)> {
         self.plan.stages.iter().enumerate().find_map(|(k, _)| {
             let (i, o) = self.io[k];
-            if i == o || self.tables[o].as_ref().is_some_and(mj::Table::placed) {
+            if i == o || self.tables[o].as_ref().is_some_and(mj::Table::device_sized) {
                 return None;
             }
             let n = self.totals.get(o) as usize;
@@ -2137,11 +2138,11 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
     let runs = encode_runs(rules, &mut batch, rep, names)?;
     // Its heads' rows placed in the same program (decision 0603: a stratum is one launch), from the device's counts.
     let pre = encode_place(&runs, rules, store, fresh, rep, &mut batch)?;
-    // Where the host reads none of its placed tables (every head placed by the program), its arena is address space
-    // mapped as its claims reach it (`mj::Batch::arena_reserved`): a claim past it maps more, and nothing runs again.
-    if pre.as_ref().is_some_and(|p| p.heads.len() == runs.iter().zip(rules).map(|(_, r)| r.2).collect::<std::collections::BTreeSet<_>>().len()) {
-        batch.arena_reserved();
-    }
+    // Its arena is address space mapped as its claims reach it (`mj::Batch::arena_reserved`): a claim past it maps
+    // more, and nothing runs again. Where the host reads a placed table of it (a head read back, every head not placed
+    // by the program), one the host reads (on Metal a wrapped one, not private storage).
+    let placed_all = pre.as_ref().is_some_and(|p| p.heads.len() == runs.iter().zip(rules).map(|(_, r)| r.2).collect::<std::collections::BTreeSet<_>>().len());
+    batch.arena_reserved(!placed_all);
     drop(room);
     let (t0, w0) = (Instant::now(), thread_cpu());
     let done = batch.finish().map_err(|e| format!("{e:?}"))?;
@@ -2446,12 +2447,15 @@ impl PrePlaced {
 /// Metal once bound.
 const PLACE_ROOM_BYTES: usize = REACH_BYTES;
 
+/// A head's room's rows at least where its reach is not its room (`encode_place`).
+const PLACE_ROOM_MIN: usize = 1 << 16;
+
 /// `place`'s work encoded into the stratum's own program, after its joins (decision 0603: a stratum is one launch):
 /// each head's union of its rules' distinct rows from their counts on the device (`append_rows`, a placed table),
 /// made distinct, less the rows the head holds, placed into room for the rows the head can reach (`reach`, within
-/// `PLACE_ROOM_BYTES`). A gate holds each head's rows within that room; past it the program stops there, and the
-/// heads are placed by `place` once the runs are done. None where no head can be placed so (the heads `place` leaves
-/// to the rows read back, or a reach unbounded or past its bytes): `place` then.
+/// `PLACE_ROOM_BYTES`; else eight times the rows guessed, within it). A gate holds each head's rows within that room;
+/// past it the program stops there, and the heads are placed by `place` once the runs are done. None where no head
+/// can be placed so (the heads `place` leaves to the rows read back): `place` then.
 fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &[Fresh], rep: &mut Report, b: &mut mj::Batch) -> Result<Option<PrePlaced>, String> {
     fn e(e: impl std::fmt::Debug) -> String {
         format!("{e:?}")
@@ -2470,8 +2474,14 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
             continue;
         }
         let guess: usize = from.iter().map(|&x| runs[x].uniq.as_ref().map_or(0, |u| u.cap)).sum();
-        let Some(bound) = reaches.get(&h).copied().filter(|&r| r.saturating_mul(8 * k) <= PLACE_ROOM_BYTES) else { return Ok(None) };
-        let bound = bound.max(1);
+        // Its room: the rows it can reach, where they fit `PLACE_ROOM_BYTES`; else eight times the rows guessed (at least
+        // `PLACE_ROOM_MIN`), within it, the gate holding the rows to it.
+        let most = PLACE_ROOM_BYTES / (8 * k);
+        let bound = match reaches.get(&h).copied() {
+            Some(r) if r <= most => r,
+            _ => guess.saturating_mul(8).max(PLACE_ROOM_MIN).min(most),
+        }
+        .max(1);
         pre.heads.push(h);
         if guess == 0 {
             continue;
@@ -3345,7 +3355,7 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
             None => direct_batch(None)?,
         };
         batch.arena_floor(floor);
-        batch.arena_reserved();
+        batch.arena_reserved(false);
         let mut kept = Kept::default();
         // Encoded, not launched, on an error: dropped with its batch, which nothing ran. The seed round first, until it
         // has run.

@@ -1122,6 +1122,12 @@ impl Table {
         self.place.as_ref().is_some_and(|p| !p.fixed.get())
     }
 
+    /// Whether its program sized it (`Batch::table`): its room is its rows, before and after its batch is done, so it
+    /// never overflows.
+    pub(in crate::code_rule_dsl) fn device_sized(&self) -> bool {
+        self.place.is_some()
+    }
+
     /// Its rows' room: a placed table's of a batch done, as the device wrote it; else its own.
     pub(in crate::code_rule_dsl) fn room(&self) -> usize {
         match &self.place {
@@ -1393,6 +1399,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// Whether its arena is address space whose pages are mapped as its claims reach them (`arena_reserved`), and
     /// that arena once made.
     reserve_arena: bool,
+    /// Whether the host reads its arena's placed tables (`arena_reserved`'s): on Metal a wrapped arena then.
+    host_reads: bool,
     reserved: Option<std::sync::Arc<rerail_device::device::Reserved>>,
 }
 
@@ -1457,6 +1465,7 @@ impl Batch {
             pool: None,
             made: Vec::new(),
             reserve_arena: false,
+            host_reads: false,
             reserved: None,
         })
     }
@@ -1485,8 +1494,9 @@ impl Batch {
     /// maps twice what it wanted and launches the program again, where it goes on. Real memory is the pages its
     /// claims reached. For a batch whose placed tables the host does not read (a program of rounds'): on Metal the
     /// arena is private storage.
-    pub(in crate::code_rule_dsl) fn arena_reserved(&mut self) {
+    pub(in crate::code_rule_dsl) fn arena_reserved(&mut self, host_reads: bool) {
         self.reserve_arena = true;
+        self.host_reads = host_reads;
     }
 
     /// Notes that its kernels write `rel` (`what`): its rows' `needed` now, checked when the batch is done.
@@ -1625,6 +1635,11 @@ impl Batch {
         // Its placed tables lie where its programs placed them: later batches read them there (decision 0603 step 5).
         // Its next programs' arena is a new one, as large as its claims wanted.
         for p in self.made.drain(..) {
+            // Its arena's last buffer: a wrapped arena's wraps grow, and a table read from here on may lie past an
+            // earlier one's end.
+            if let Some(a) = &self.pool {
+                *p.arena.borrow_mut() = Some(a.clone());
+            }
             p.fixed.set(true);
         }
         self.pool = None;
@@ -2694,9 +2709,9 @@ impl Batch {
                 }
                 let held = if self.reserve_arena {
                     let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-                    let r = std::sync::Arc::new(rerail_device::device::reserve(device, ARENA_MAX, room).map_err(|_| Error::BackendCapacity)?);
+                    let r = std::sync::Arc::new(rerail_device::device::reserve(device, ARENA_MAX, room, self.host_reads).map_err(|_| Error::BackendCapacity)?);
                     self.reserved = Some(r.clone());
-                    Held::kept(r.buffer().clone(), Box::new(r))
+                    Held::kept(r.buffer(), Box::new(r))
                 } else {
                     Held::new(room)?
                 };
@@ -2704,6 +2719,10 @@ impl Batch {
             }
         };
         let ca = address(&counts.buffer)?;
+        // Where the arena's buffer changes (a wrapped arena mapped further: `Reserved::map`), each launch resolves
+        // its address again (`Kit::rebase`): the scripts' ops and the scan levels that name it.
+        let arena_scans: Vec<(usize, bool, bool)> = prog.scans.iter().enumerate().map(|(i, l)| (i, matches!(l.data, ScanData::Script), matches!(l.sums, Some(ScanData::Script)))).filter(|&(_, d, s)| d || s).collect();
+        let ops = prog.script.clone();
         for p in prog.made.drain(..) {
             *p.arena.borrow_mut() = Some(counts.clone());
             self.made.push(p);
@@ -2729,15 +2748,7 @@ impl Batch {
         let sorts = bytes(as_bytes(&prog.sorts))?;
         // The size scripts' addresses, now that the buffers they name are made.
         let (da, sa, xa) = (address(&descs.buffer)?, address(&scan_levels.buffer)?, address(&sorts.buffer)?);
-        let late = |l: Late| match l {
-            Late::Zero => 0,
-            Late::Abs(a) => a,
-            Late::Desc(i, o) => da + (std::mem::size_of::<JobDesc>() * i) as u64 + o.0,
-            Late::Scan(i, o) => sa + (std::mem::size_of::<ScanLevel>() * i) as u64 + o.0,
-            Late::Sort(i, o) => xa + (std::mem::size_of::<SortPass>() * i) as u64 + o.0,
-            Late::Arena(o) => ca + o,
-            Late::Pending(..) => unreachable!("a scan's word named before its scan was made"),
-        };
+        let late = |l: Late| l.at(da, sa, xa, ca);
         let mut seg_counts = prog.segs.clone();
         for &(i, l) in &prog.seg_late {
             seg_counts[i].count = late(l);
@@ -2759,7 +2770,8 @@ impl Batch {
         let capacity = workers * (budget as usize + 1) + 2 * phase_max + 1;
         let format = prog.format.unwrap_or_else(run_view_format);
         self.done.levels += prog.levels;
-        let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, capacity, workers, budget, format, uses: prog.uses, hold: prog.hold };
+        let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, capacity, workers, budget, format, uses: prog.uses, hold: prog.hold,
+                        rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa) } };
         let (ctl, slots) = (Words::zeroed(10 + 2 * kit.phase_items.len())?, Words::zeroed(kit.capacity)?);
         self.launch(kit, ctl, slots)
     }
@@ -2767,8 +2779,17 @@ impl Batch {
     /// One launch of `join_run` over `kit`'s program, its queue `slots` and control words `ctl` (decision 0603): its
     /// first, or one again where the last left items (`Ran::again`). Its arena's room, the pages mapped, in its top's
     /// second word.
-    fn launch(&mut self, kit: Kit, ctl: Words, slots: Words) -> Result<(), Error> {
+    fn launch(&mut self, mut kit: Kit, ctl: Words, slots: Words) -> Result<(), Error> {
         let nphases = kit.phase_items.len();
+        // A wrapped arena mapped further since its last launch: a new buffer at another address over the same pages.
+        if let Some(r) = &kit.reserved {
+            let now = r.buffer();
+            if address(&now)? != kit.rebase.ca {
+                let held = std::rc::Rc::new(Held::kept(now, Box::new(r.clone())));
+                self.pool = Some(held.clone());
+                kit.rebase(held)?;
+            }
+        }
         let pipe = program_pipe(kit.format)?;
         if let Some(t) = &kit.top {
             let room = kit.reserved.as_ref().map_or(kit.counts.buffer.length() as usize, |r| r.mapped());
@@ -3175,7 +3196,45 @@ pub(in crate::code_rule_dsl) enum RoundOp<'a> {
 const ROWS_LEN: u64 = std::mem::offset_of!(rerail_blocks::rows::Rows, len) as u64;
 
 /// A launched program's buffers (`Batch::launch`), kept while it may launch again (`Batch::programs_done`).
+/// What a program's launch resolves again where its arena's buffer changes (`Kit::rebase`): the arena's address it
+/// was resolved for, its size scripts' ops, its scan levels that read the arena (data, sums), and the other buffers'
+/// addresses (descriptors, scan levels, sort passes).
+struct Rebase {
+    ca: u64,
+    ops: Vec<OpAt>,
+    scans: Vec<(usize, bool, bool)>,
+    at: (u64, u64, u64),
+}
+
+impl Kit {
+    /// Its arena now `counts` (a wrapped arena's newer wrap, the same pages at another address): its size scripts'
+    /// ops resolved again, and its scan levels' arena pointers written again in place (their words, which its scripts
+    /// wrote, kept). Between launches: no work of it runs.
+    fn rebase(&mut self, counts: std::rc::Rc<Held>) -> Result<(), Error> {
+        let ca = address(&counts.buffer)?;
+        let (da, sa, xa) = self.rebase.at;
+        let script: Vec<SizeOp> = self.rebase.ops.iter().map(|o| SizeOp { w: o.w.at(da, sa, xa, ca), c: o.c.at(da, sa, xa, ca), op: o.op, k: o.k, x: o.x, y: o.y }).collect();
+        self.script = Held::of(if script.is_empty() { vec![0u8; 16] } else { as_bytes(&script).to_vec() }.into_iter()).map_err(|_| Error::BackendCapacity)?;
+        let levels = self.scans.buffer.contents().cast::<ScanLevel>();
+        for &(i, data, sums) in &self.rebase.scans {
+            // SAFETY: level `i` of the levels this buffer was made of; no work of the program runs between launches.
+            let l = unsafe { &mut *levels.add(i) };
+            if data {
+                l.data = ca;
+            }
+            if sums {
+                l.sums = ca;
+            }
+        }
+        self.rebase.ca = ca;
+        self.counts = counts;
+        Ok(())
+    }
+}
+
 struct Kit {
+    /// Its addresses as resolved, for a launch whose arena moved (`Kit::rebase`).
+    rebase: Rebase,
     descs: Held,
     items: Held,
     phases: Held,
@@ -3403,6 +3462,22 @@ impl Program {
 enum ScanData {
     Script,
     At(u64),
+}
+
+impl Late {
+    /// Its address, the program's buffers at `da` (descriptors), `sa` (scan levels), `xa` (sort passes) and `ca` (the
+    /// arena).
+    fn at(self, da: u64, sa: u64, xa: u64, ca: u64) -> u64 {
+        match self {
+            Late::Zero => 0,
+            Late::Abs(a) => a,
+            Late::Desc(i, o) => da + (std::mem::size_of::<JobDesc>() * i) as u64 + o.0,
+            Late::Scan(i, o) => sa + (std::mem::size_of::<ScanLevel>() * i) as u64 + o.0,
+            Late::Sort(i, o) => xa + (std::mem::size_of::<SortPass>() * i) as u64 + o.0,
+            Late::Arena(o) => ca + o,
+            Late::Pending(..) => unreachable!("a scan's word named before its scan was made"),
+        }
+    }
 }
 
 /// An address a size script names, known when its program launches (`run_program`): none, an address, a job's

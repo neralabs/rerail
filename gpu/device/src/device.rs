@@ -731,9 +731,12 @@ pub unsafe fn wrap_host_memory(device: &Device, ptr: *mut u8, len: usize) -> Res
 /// Address space for `bytes` whose pages are real memory only as they are mapped (decision 0603's fewer reruns): the
 /// kernels use it at one address for its life, each page below `mapped()` only, and the host maps more between
 /// launches (`map`). Metal: a placement sparse buffer, its pages from heaps (private storage: the host reads none of
-/// it). The CPU backend: the host's address space, its pages committed as they are touched (`os::map_zeroed`), its
-/// mapped bytes a count `map` raises, so its kernels keep to them as Metal's do. CUDA, OpenCL, and Windows' CPU
-/// backend: an allocation of what `reserve` first maps, which `map` cannot grow (false past it).
+/// it); or, where the host reads it (`reserve`'s `host_reads`), the host's address space, wrapped as a buffer over its
+/// mapped bytes only (a wrap is wired whole), each `map` a larger wrap of the same pages, at another address (nothing
+/// moves: the wraps alias one memory). The CPU backend: the host's address space, its pages committed as they are
+/// touched (`os::map_zeroed`), its mapped bytes a count `map` raises, so its kernels keep to them as Metal's do. CUDA,
+/// OpenCL, and Windows' CPU backend: an allocation of what `reserve` first maps, which `map` cannot grow (false past
+/// it).
 pub struct Reserved {
     buffer: Buffer,
     kind: ReservedKind,
@@ -745,6 +748,10 @@ enum ReservedKind {
     /// The host's pages, at `ptr` (`os::map_zeroed`), `len` bytes, unmapped when the last clone of the buffer is gone;
     /// and the bytes mapped.
     Host(std::sync::Arc<HostPages>, std::sync::atomic::AtomicUsize),
+    /// The host's pages, wrapped over the bytes mapped: every wrap made (the last the one the kernels use now), then
+    /// the pages, unmapped after the wraps are dropped (field order).
+    #[cfg(target_os = "macos")]
+    Wrapped(std::sync::Mutex<Vec<(Buffer, usize)>>, Device, std::sync::Arc<HostPages>),
     Fixed(usize),
 }
 
@@ -765,10 +772,24 @@ impl Drop for HostPages {
     }
 }
 
-/// `bytes` of address space (`Reserved`), its first `mapped` bytes mapped.
-pub fn reserve(device: &Device, bytes: usize, mapped: usize) -> Result<Reserved, String> {
+/// `bytes` of address space (`Reserved`), its first `mapped` bytes mapped; `host_reads`: the host reads what the
+/// kernels write there (on Metal, not a sparse buffer then: private storage).
+pub fn reserve(device: &Device, bytes: usize, mapped: usize, host_reads: bool) -> Result<Reserved, String> {
     let mapped = mapped.min(bytes).max(16);
     match device {
+        #[cfg(target_os = "macos")]
+        Device::Native(_) if host_reads => {
+            let page = crate::os::page_bytes();
+            let len = bytes.next_multiple_of(page);
+            let ptr = crate::os::map_zeroed(len).ok_or_else(|| format!("{len} bytes of address space refused"))?;
+            let pages = std::sync::Arc::new(HostPages { ptr, len });
+            let first = mapped.next_multiple_of(page).min(len);
+            // SAFETY: the pages outlive every wrap: `Reserved` drops its wraps before them (field order), and a clone
+            // a queue's work holds is let go before its `Reserved` (the engine holds both together).
+            let buffer = unsafe { wrap_host_memory(device, ptr, first)? };
+            let wraps = std::sync::Mutex::new(vec![(buffer.clone(), first)]);
+            Ok(Reserved { buffer, kind: ReservedKind::Wrapped(wraps, device.clone(), pages) })
+        }
         #[cfg(target_os = "macos")]
         Device::Native(d) => {
             if let Some(s) = crate::compute_kernel_metal::Sparse::new(d, bytes) {
@@ -793,8 +814,13 @@ pub fn reserve(device: &Device, bytes: usize, mapped: usize) -> Result<Reserved,
 }
 
 impl Reserved {
-    pub fn buffer(&self) -> &Buffer {
-        &self.buffer
+    /// The buffer the kernels use now: a wrapped one's last wrap (`map` makes another).
+    pub fn buffer(&self) -> Buffer {
+        match &self.kind {
+            #[cfg(target_os = "macos")]
+            ReservedKind::Wrapped(w, _, _) => w.lock().expect("the wraps").last().expect("a wrap").0.clone(),
+            _ => self.buffer.clone(),
+        }
     }
 
     /// The bytes the kernels may use, from its start.
@@ -803,6 +829,8 @@ impl Reserved {
             #[cfg(target_os = "macos")]
             ReservedKind::Sparse(s, _) => s.mapped(),
             ReservedKind::Host(_, m) => m.load(std::sync::atomic::Ordering::Acquire),
+            #[cfg(target_os = "macos")]
+            ReservedKind::Wrapped(w, _, _) => w.lock().expect("the wraps").last().expect("a wrap").1,
             ReservedKind::Fixed(n) => *n,
         }
     }
@@ -818,6 +846,14 @@ impl Reserved {
             ReservedKind::Sparse(s, d) if bytes as u64 <= s.buffer.length() => s.map(d, bytes).map(|()| true),
             ReservedKind::Host(p, m) if bytes <= p.len => {
                 m.store(bytes, std::sync::atomic::Ordering::Release);
+                Ok(true)
+            }
+            #[cfg(target_os = "macos")]
+            ReservedKind::Wrapped(w, d, p) if bytes <= p.len => {
+                let len = bytes.next_multiple_of(crate::os::page_bytes()).min(p.len);
+                // SAFETY: as `reserve`'s first wrap: the pages outlive it.
+                let b = unsafe { wrap_host_memory(d, p.ptr, len)? };
+                w.lock().expect("the wraps").push((b, len));
                 Ok(true)
             }
             _ => Ok(false),

@@ -83,8 +83,9 @@
             let report = super::take_report();
             assert_eq!(report.as_ref().is_some_and(|r| r.refused.is_none()), device, "{report:?}");
             if let Some(r) = &report {
-                // The first run only: the next guesses the join's growth from it (`GROWTH`).
-                assert!(held || r.reruns >= 1 && r.submissions >= 2, "the large join overflows its first table: {r:?}");
+                // Its tables are sized on the device (decision 0603 step 5c): the large join, past the host's first
+                // guess of it, runs once, in its stratum's one program.
+                assert!(r.reruns == 0 && r.programs == 1, "the large join in one program, run once: {r:?}");
                 assert!(r.placed > 1000 && r.placed == r.distinct, "the head's rows written in place: {r:?}");
                 assert!(!held || r.in_place >= 1, "the rows held read in place: {r:?}");
             }
