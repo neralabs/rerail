@@ -536,7 +536,7 @@ pub fn at_resident<T>(groups: u64, mut run: impl FnMut(u64) -> Result<T, Error>)
         match run(groups) {
             Err(Error::BackendFailure) if crate::pp_arena::residency().groups < groups => groups = crate::pp_arena::residency().groups,
             Err(Error::BackendPreempted) if stopped + 1 < PREEMPTED_RUNS => stopped += 1,
-            Err(Error::BackendPreempted) => return Err(Error::BackendFailure),
+            Err(Error::BackendPreempted) => return Err(crate::pp_arena::failure(concat!(file!(), ":", line!(), ": stopped by the system each run"))),
             r => return r,
         }
     }

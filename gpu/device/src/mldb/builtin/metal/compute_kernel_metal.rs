@@ -306,8 +306,10 @@ impl MetalComputeEvent {
                     format!(" (code {code}: {text})")
                 };
                 // Stopped by the system for the display (IOGPU's `kIOGPUCommandBufferCallbackErrorImpactingInteractivity`,
-                // under `MTLCommandBufferErrorInternal`): marked, so a caller may run the work again (`PREEMPTED`).
-                let mark = if why.contains("ImpactingInteractivity") { PREEMPTED } else { "" };
+                // under `MTLCommandBufferErrorInternal`), or discarded in its recovery from another command's hang
+                // (`kIOGPUCommandBufferCallbackErrorInnocentVictim`): marked, so a caller may run the work again
+                // (`PREEMPTED`).
+                let mark = if why.contains("ImpactingInteractivity") || why.contains("InnocentVictim") { PREEMPTED } else { "" };
                 Err(format!("{mark}Metal command buffer: {s:?}{why}"))
             }
         }

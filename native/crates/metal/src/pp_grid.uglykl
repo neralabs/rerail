@@ -149,14 +149,20 @@
     u.sc = IF_SCOPE
 
 // A group's threadgroup memory: the barrier's flag, the scans' scratch, and the sorts' counts or
-// a sorted tile (the segmented scans' two rows alias them: no phase runs two of them).
+// a sorted tile (the segmented scans' two rows alias them: no phase runs two of them); in the
+// loop's phase, which runs no scan or sort, each SIMD group's piece's run (`lp_piece`: its stacks,
+// indexed as it goes, in the group's memory, not a thread's, which Metal keeps in device memory).
 #define PP_TG_BIG UKL_GRID_SORT_WORDS
+#define LP_SLOTS (256u / UKL_SIMD_WIDTH)
 typedef struct PpTg {
     uint32_t flag;
     // The group's ticket and the grid's count (`ukl_grid_join`).
     uint32_t join[2];
     uint32_t scratch[UKL_TG_SCRATCH];
-    uint32_t big[PP_TG_BIG];
+    union {
+        uint32_t big[PP_TG_BIG];
+        LpRun lp[LP_SLOTS];
+    };
 } PpTg;
 
 // The stage word of `GRID` (after the grid's four: the barrier's three and the join's tickets,
@@ -271,7 +277,7 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
                 lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),
                        AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, LOB), AT(uint32_t, PLAST),
                        AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, s,
-                       g.lid & (UKL_SIMD_WIDTH - 1u) __UKL_ARGS);
+                       g.lid & (UKL_SIMD_WIDTH - 1u), &tg->lp[(g.lid / UKL_SIMD_WIDTH) % LP_SLOTS] __UKL_ARGS);
         }
         BARRIER();
     }
@@ -518,10 +524,12 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         {
             IF_UX(u);
             IF_FILES(fx, nm);
-            EACH(w, nd) p1_if_eval(u, fx, nm, W(OUT_CAP), AT(const uint32_t, IF_KIND), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), nodes, AT(const uint32_t, DIR_BASES), AT(const uint32_t, N_DIRS), AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_FIRST),
+            // Whole SIMD groups: a line's lanes read its tokens together (`p1_if_line`).
+            EACH(w, (nd + UKL_SIMD_WIDTH - 1u) & ~(UKL_SIMD_WIDTH - 1u)) p1_if_eval(u, fx, nm, W(OUT_CAP), AT(const uint32_t, IF_KIND), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), nodes, AT(const uint32_t, DIR_BASES), AT(const uint32_t, N_DIRS), AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_FIRST),
                                    AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, DSLOT), AT(const uint32_t, IF_OPS), AT(const uint32_t, STATE), AT(const uint32_t, OUT), AT(const uint32_t, OBASE),
                                    AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), defined_key, true_key, W(IF_TRUE), AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP),
-                                   AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), AT(uint32_t, IF_VAL), AT(uint32_t, VBAD), w);
+                                   AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), AT(uint32_t, IF_VAL), AT(uint32_t, VBAD), w,
+                                   g.lid & (UKL_SIMD_WIDTH - 1u) __UKL_ARGS);
             // The `#line` rows (§6), for the next iteration's lines and the text.
             EACH(w, nd) p1_line_row(u, AT(const uint32_t, IF_KIND), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, N_DIRS),
                                     AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, OUT), AT(const uint32_t, OBASE), AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), W(OUT_CAP),

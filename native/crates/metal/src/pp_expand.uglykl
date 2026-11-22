@@ -1008,8 +1008,8 @@ UKL_INLINE Tk pc_tok_in(Ux u, PP_GLOBAL const uint32_t* cols, uint32_t cap, uint
 // their order, the sixth, and the loop's chunks, the seventh: `lp_flush`), the
 // top level's runs and each call's expansion. Token `k` of it: its piece found by its place.
 // `ci`: the piece a reader read last (its number in the order, `OV_NONE` none), its first token's place
-// `cp` and its tokens `cn`: a reader walks forward, so a token is in it or the next, and only a jump
-// is a search.
+// `cp` and its tokens `cn`: a reader walks forward, so a token is in it or the next, a jump ahead a
+// gallop from it, and only a jump back a search of them all.
 #define OV_NONE (0xffffffffu)
 typedef struct Ov { PP_GLOBAL const uint32_t* cols; uint32_t cap, np, ci, cp, cn; } Ov;
 UKL_INLINE Ov ov_new(PP_GLOBAL const uint32_t* cols, uint32_t cap, uint32_t np) {
@@ -1030,6 +1030,14 @@ UKL_INLINE Tk ov_tok(Ux u, UKL_PRIVATE Ov* o, uint32_t k) {
         PP_GLOBAL const uint32_t* pat = o->cols + 3u * o->cap;
         PP_GLOBAL const uint32_t* ord = o->cols + 5u * o->cap;
         uint32_t lo = 0u, hi = o->np;
+        // Forward of the piece read last (a reader's window ahead): galloped from it, then searched.
+        if (o->ci != OV_NONE && k >= o->cp) {
+            lo = o->ci;
+            for (uint32_t d = 1u; d < 32u && lo + d < o->np; d *= 2u) {
+                if (pat[ord[lo + d]] > k) { hi = lo + d; break; }
+                lo += d;
+            }
+        }
         for (uint32_t step = 0u; step < 32u && hi - lo > 1u; step++) {
             uint32_t mid = (lo + hi) / 2u;
             if (pat[ord[mid]] <= k) lo = mid; else hi = mid;

@@ -965,6 +965,47 @@ fn pragma_rows_are_the_serial_passes() {
 /// counts with the text's uses in the serial reading's order: text before and after, two lines,
 /// an arm not read, the text's uses feeding an `#if`, a call whose arguments run over a
 /// directive that counts, a header's uses. Each in C and C++, 2 launches.
+/// An `#if` line longer than its SIMD group's window (`p1_if_line`: 64 tokens a lane's, past them
+/// the group's, 32 tokens a step): a token the window does not read (`defined`, `__has_include`, a
+/// character constant, an alternative operator) at each place about a window's edge, and after
+/// it, the window again. Each as the serial pass, true and false.
+#[test]
+fn a_long_if_line_is_read_by_its_group() {
+    use rerail_c_pp::files::DirKind;
+    let head = "#define X
+#define T8 1+1+1+1+1+1+1+1
+#define T32 T8+T8+T8+T8
+";
+    let mut lines = vec![
+        "T32 + T32 + defined X + defined(Y) == 65".to_string(),
+        "T32 + T32 + defined X + defined(Y) == 66".to_string(),
+        "T32 && __has_include(<h1.h>) && T32 - 31 == 1".to_string(),
+        "T32 && __has_include(<none.h>) || T32 + T32 == 63".to_string(),
+        "(T32 * 2 > 63) ? 'a' == 97 : 0".to_string(),
+        "T32 - T32 or (T32 and 0) or (0x20 == T32)".to_string(),
+        "-T32 + T32 == 0 && !(T32 < 0) && (T32 | 64) == 96".to_string(),
+    ];
+    for pad in [29, 30, 31, 32, 33, 63, 64, 65, 66] {
+        let ones = "1+".repeat(pad);
+        lines.push(format!("{ones} defined X + T32 + defined Y == {}", pad + 33));
+        lines.push(format!("{ones} 'b' - 'a' + T32 == {}", pad + 32));
+    }
+    for line in &lines {
+        let main = format!("{head}#if {line}
+yes
+#else
+no
+#endif
+end
+");
+        for cpp in [false, true] {
+            let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+            let (got, want, _, _) = expanded_in(&[("main.c", main.as_str()), ("inc/h1.h", "h\n")], cfg, &[("inc", DirKind::Angle)]);
+            same(got.map(|g| show(&g)), Ok(show(&want)), format!("{line}, C++ {cpp}"));
+        }
+    }
+}
+
 #[test]
 fn counters_in_directives_are_the_serial_passes() {
     use rerail_c_pp::files::DirKind;
