@@ -180,82 +180,95 @@ impl<'a> Slots<'a> {
     /// from `first` up, in one block, one run of `8 * w` bytes: one 64-byte load, cut into the lanes' `w` bytes by a
     /// table lookup; else each lane's address in vector code (its block's slot column, its row) and a load of each.
     /// An escaped slot (all ones) of a lane `on` marks, its side list's: the lanes' searches at once.
-    unsafe fn read(&mut self, at: &[uint32x4_t; 2], on: &[uint32x4_t; 2], first: Option<u32>) -> [u64; 8] {
-        let (t, v, w, ones) = (self.t, self.v, self.w, self.ones);
-        let mut s = [0u64; 8];
+    #[inline(always)]
+    unsafe fn read(&mut self, at: &[uint32x4_t; 2], on: &[uint32x4_t; 2], first: Option<u32>) -> [uint64x2_t; 4] {
+        let (t, v, w) = (self.t, self.v, self.w);
         unsafe {
             let base = t.as_ptr();
+            let ones = vdupq_n_u64(self.ones);
             let run = first.and_then(|p| {
                 let from = (p / F16_PART).wrapping_mul(v.stride).wrapping_add(v.columns[0]).wrapping_add(v.nodes.wrapping_sub(p / F16_PART * F16_PART).min(F16_PART).wrapping_mul(v.columns[1])).wrapping_add(p % F16_PART * w) as usize;
                 (p % F16_PART + 8 <= F16_PART && w <= 8 && from + 64 <= t.len()).then_some(from)
             });
-            if let Some(from) = run {
+            let mut s = if let Some(from) = run {
                 let p = base.add(from);
                 let tb = uint8x16x4_t(vld1q_u8(p), vld1q_u8(p.add(16)), vld1q_u8(p.add(32)), vld1q_u8(p.add(48)));
-                for (r, ix) in self.ix.iter().enumerate() {
-                    let x = vreinterpretq_u64_u8(vqtbl4q_u8(tb, *ix));
-                    s[2 * r] = vgetq_lane_u64::<0>(x);
-                    s[2 * r + 1] = vgetq_lane_u64::<1>(x);
-                }
+                let cut = |r: usize| vreinterpretq_u64_u8(vqtbl4q_u8(tb, self.ix[r]));
+                [cut(0), cut(1), cut(2), cut(3)]
             } else {
-                let mut a = [0u32; 8];
                 let (part, nodes) = (vdupq_n_u32(F16_PART), vdupq_n_u32(v.nodes));
-                for r in 0..2 {
-                    let b = vshrq_n_u32::<10>(at[r]);
+                let addr = |x: uint32x4_t| {
+                    let b = vshrq_n_u32::<10>(x);
                     let rows = vminq_u32(vsubq_u32(nodes, vshlq_n_u32::<10>(b)), part);
                     let col = vmlaq_u32(vmlaq_u32(vdupq_n_u32(v.columns[0]), b, vdupq_n_u32(v.stride)), rows, vdupq_n_u32(v.columns[1]));
-                    vst1q_u32(a.as_mut_ptr().add(4 * r), vmlaq_u32(col, vandq_u32(at[r], vdupq_n_u32(F16_PART - 1)), vdupq_n_u32(w)));
-                }
-                for k in 0..8 {
+                    vmlaq_u32(col, vandq_u32(x, vdupq_n_u32(F16_PART - 1)), vdupq_n_u32(w))
+                };
+                let a = [addr(at[0]), addr(at[1])];
+                let word = |p: u32| (base.add(p as usize) as *const u64).read_unaligned();
+                if vmaxvq_u32(vmaxq_u32(a[0], a[1])) as usize + 8 <= t.len() {
+                    // Every lane's word on the tape: one check of the largest address.
+                    let pair = |x: uint32x4_t, hi: bool| {
+                        let (p, q) = if hi { (vgetq_lane_u32::<2>(x), vgetq_lane_u32::<3>(x)) } else { (vgetq_lane_u32::<0>(x), vgetq_lane_u32::<1>(x)) };
+                        vandq_u64(vcombine_u64(vcreate_u64(word(p)), vcreate_u64(word(q))), ones)
+                    };
+                    [pair(a[0], false), pair(a[0], true), pair(a[1], false), pair(a[1], true)]
+                } else {
                     // Past the tape's end (no tape's: the host's load would refuse it): taken as escaped.
-                    s[k] = if a[k] as usize + 8 <= t.len() { (base.add(a[k] as usize) as *const u64).read_unaligned() & ones } else { ones };
+                    let mut a8 = [0u32; 8];
+                    vst1q_u32(a8.as_mut_ptr(), a[0]);
+                    vst1q_u32(a8.as_mut_ptr().add(4), a[1]);
+                    let load = |k: usize| if a8[k] as usize + 8 <= t.len() { word(a8[k]) } else { u64::MAX };
+                    let pair = |r: usize| vandq_u64(vcombine_u64(vcreate_u64(load(2 * r)), vcreate_u64(load(2 * r + 1))), ones);
+                    [pair(0), pair(1), pair(2), pair(3)]
                 }
-            }
-            let mut nodes = [0u32; 8];
-            let mut esc = [0u32; 8];
-            vst1q_u32(nodes.as_mut_ptr(), at[0]);
-            vst1q_u32(nodes.as_mut_ptr().add(4), at[1]);
-            vst1q_u32(esc.as_mut_ptr(), on[0]);
-            vst1q_u32(esc.as_mut_ptr().add(4), on[1]);
-            let (mut any, mut last) = (0, 0);
-            for k in 0..8 {
-                esc[k] &= if s[k] == ones { u32::MAX } else { 0 };
-                if esc[k] != 0 && nodes[k] == self.memo.0 {
-                    s[k] = self.memo.1;
-                    esc[k] = 0;
+            };
+            // Escaped slots of live lanes: one compare of the 8, the rare case past it.
+            let e = [vceqq_u64(s[0], ones), vceqq_u64(s[1], ones), vceqq_u64(s[2], ones), vceqq_u64(s[3], ones)];
+            let esc = [vandq_u32(on[0], vcombine_u32(vmovn_u64(e[0]), vmovn_u64(e[1]))), vandq_u32(on[1], vcombine_u32(vmovn_u64(e[2]), vmovn_u64(e[3])))];
+            if vmaxvq_u32(vorrq_u32(esc[0], esc[1])) != 0 {
+                let mut nodes = [0u32; 8];
+                let mut need = [0u32; 8];
+                let mut s8 = [0u64; 8];
+                vst1q_u32(nodes.as_mut_ptr(), at[0]);
+                vst1q_u32(nodes.as_mut_ptr().add(4), at[1]);
+                vst1q_u32(need.as_mut_ptr(), esc[0]);
+                vst1q_u32(need.as_mut_ptr().add(4), esc[1]);
+                for r in 0..4 {
+                    vst1q_u64(s8.as_mut_ptr().add(2 * r), s[r]);
                 }
-                any += esc[k] & 1;
-                if esc[k] != 0 {
-                    last = k;
-                }
-            }
-            if any == 1 {
-                // One lane's: the host's read (a search of 8 lanes costs as much as one's).
-                s[last] = rerail_tape_format::reads::f16::slot(t, v, nodes[last]);
-                self.memo = (nodes[last], s[last]);
-            } else if any > 1 {
-                let side = side8(t, v, 1, &nodes, &esc);
+                let mut any = 0;
                 for k in 0..8 {
-                    if esc[k] != 0 {
-                        s[k] = side[k];
-                        self.memo = (nodes[k], side[k]);
+                    if need[k] != 0 && nodes[k] == self.memo.0 {
+                        s8[k] = self.memo.1;
+                        need[k] = 0;
+                    }
+                    any |= need[k];
+                }
+                if any != 0 {
+                    let side = side8(t, v, 1, &nodes, &need);
+                    for k in 0..8 {
+                        if need[k] != 0 {
+                            s8[k] = side[k];
+                            self.memo = (nodes[k], side[k]);
+                        }
                     }
                 }
+                s = [0, 1, 2, 3].map(|r| vld1q_u64(s8.as_ptr().add(2 * r)));
             }
+            s
         }
-        s
     }
 }
 
-/// A slot's low two bits and its step (`s >> 2`, as the read takes it), of each of 8 lanes' values.
-unsafe fn split(s: &[u64; 8]) -> ([uint32x4_t; 2], [uint32x4_t; 2]) {
-    let mut f = [0u32; 8];
-    let mut st = [0u32; 8];
-    for k in 0..8 {
-        f[k] = s[k] as u32 & 3;
-        st[k] = (s[k] >> 2) as u32;
+/// A slot's low two bits and its step (`s >> 2`, as the read takes it), of each of 8 lanes' values: narrowing moves.
+#[inline(always)]
+unsafe fn split(s: &[uint64x2_t; 4]) -> ([uint32x4_t; 2], [uint32x4_t; 2]) {
+    unsafe {
+        let lo = |a: uint64x2_t, b: uint64x2_t| vcombine_u32(vmovn_u64(a), vmovn_u64(b));
+        let st = |a: uint64x2_t, b: uint64x2_t| vcombine_u32(vmovn_u64(vshrq_n_u64::<2>(a)), vmovn_u64(vshrq_n_u64::<2>(b)));
+        let three = vdupq_n_u32(3);
+        ([vandq_u32(lo(s[0], s[1]), three), vandq_u32(lo(s[2], s[3]), three)], [st(s[0], s[1]), st(s[2], s[3])])
     }
-    unsafe { ([vld1q_u32(f.as_ptr()), vld1q_u32(f.as_ptr().add(4))], [vld1q_u32(st.as_ptr()), vld1q_u32(st.as_ptr().add(4))]) }
 }
 
 const LANES8: [u32; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
@@ -423,10 +436,12 @@ pub unsafe fn parent_all_scan(t: &[u8], v: &rerail_clif::view::TapeView, out: &m
     }
 }
 
-/// Side list `k`'s values (`reads::f16`'s `side`) of the nodes `i` of the lanes `need` marks, the others 0: each lane's
-/// part, its block's run of offsets, and the search of the runs for the lanes' low bytes, all 8 at once (the host's
-/// read searches one node's run at a time, a chain of dependent loads; here 8 independent chains interleave). Every
-/// offset is held to the part's end, as the host's are.
+/// Side list `k`'s values (`reads::f16`'s `side`) of the nodes `i` of the lanes `need` marks, the others 0. A node's
+/// entry is its block's run of offsets (the low bytes of the block's listed nodes, ascending) searched for its low
+/// byte: the host's read halves the run, a chain of dependent loads; here a lane's index is the count of the run's
+/// offsets below its byte, the run (at most a block's 256, in practice a few to 32) compared 16 at a time and summed,
+/// no load waiting on another, the lanes' runs independent too. A run that would read past the tape's end (or past
+/// its part's, no tape's) is the host's read.
 ///
 /// # Safety
 ///
@@ -442,60 +457,73 @@ unsafe fn side8(t: &[u8], v: &rerail_clif::view::TapeView, k: usize, i: &[u32; 8
     let u32_at = |base, off| u32::from_le_bytes(at(base, off, 4).try_into().unwrap());
     let (list, parts) = (v.side[k], v.parts[k]);
     let blocks = v.nodes.wrapping_add(BLOCK - 1) / BLOCK;
-    let (mut lo, mut hi, mut offsets, mut low, mut limit, mut count) = ([0u32; 8], [0u32; 8], [0u32; 8], [0u32; 8], [0u32; 8], [0u32; 8]);
+    let vw = (v.widths >> (16 + 4 * k)) & 15;
+    let m = if vw >= 8 { u64::MAX } else { (1u64 << (8 * vw)) - 1 };
+    const IOTA: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    let mut out = [0u64; 8];
     for l in 0..8 {
         if need[l] == 0 {
             continue;
         }
         let p = i[l] / PART;
         let start = u32_at(parts, p * 4);
-        limit[l] = u32_at(parts, p * 4 + 4);
+        let limit = u32_at(parts, p * 4 + 4);
         let nsub = SUB.min(blocks.wrapping_sub(p * SUB));
         let j = (i[l] / BLOCK) % SUB;
-        lo[l] = if j == 0 { 0 } else { u16_at(list, start.wrapping_add((j - 1) * 2).min(limit[l])) };
-        hi[l] = u16_at(list, start.wrapping_add(j * 2).min(limit[l]));
-        offsets[l] = start.wrapping_add(nsub.wrapping_mul(2));
-        low[l] = i[l] % BLOCK;
-        count[l] = u16_at(list, start.wrapping_add(nsub.wrapping_sub(1).wrapping_mul(2)).min(limit[l]));
-    }
-    unsafe {
-        let ld = |a: &[u32; 8]| [vld1q_u32(a.as_ptr()), vld1q_u32(a.as_ptr().add(4))];
-        let (mut vlo, mut vhi, voff, vlow, vlim) = (ld(&lo), ld(&hi), ld(&offsets), ld(&low), ld(&limit));
-        let one = vdupq_n_u32(1);
-        loop {
-            let live = [vcltq_u32(vlo[0], vhi[0]), vcltq_u32(vlo[1], vhi[1])];
-            if vmaxvq_u32(vorrq_u32(live[0], live[1])) == 0 {
-                break;
-            }
-            let mid = [vshrq_n_u32::<1>(vaddq_u32(vlo[0], vhi[0])), vshrq_n_u32::<1>(vaddq_u32(vlo[1], vhi[1]))];
-            // Each lane's offset byte: its address in vector code, a load of each.
-            let mut a = [0u32; 8];
-            vst1q_u32(a.as_mut_ptr(), vminq_u32(vaddq_u32(voff[0], mid[0]), vlim[0]));
-            vst1q_u32(a.as_mut_ptr().add(4), vminq_u32(vaddq_u32(voff[1], mid[1]), vlim[1]));
-            let mut b = [0u32; 8];
-            for l in 0..8 {
-                b[l] = u32::from(at(list, a[l], 1)[0]);
-            }
-            let vb = ld(&b);
-            for r in 0..2 {
-                let below = vandq_u32(live[r], vcltq_u32(vb[r], vlow[r]));
-                let above = vbicq_u32(live[r], below);
-                vlo[r] = vbslq_u32(below, vaddq_u32(mid[r], one), vlo[r]);
-                vhi[r] = vbslq_u32(above, mid[r], vhi[r]);
+        let lo = if j == 0 { 0 } else { u16_at(list, start.wrapping_add((j - 1) * 2).min(limit)) };
+        let hi = u16_at(list, start.wrapping_add(j * 2).min(limit));
+        let offsets = start.wrapping_add(nsub.wrapping_mul(2));
+        let count = u16_at(list, start.wrapping_add(nsub.wrapping_sub(1).wrapping_mul(2)).min(limit));
+        let len = hi.saturating_sub(lo);
+        let from = list as usize + offsets as usize + lo as usize;
+        if offsets.wrapping_add(hi) > limit || from + len.next_multiple_of(16) as usize > t.len() {
+            out[l] = rerail_tape_format::reads::f16::slot(t, v, i[l]);
+            continue;
+        }
+        // The run's offsets below the node's low byte, 16 at a time (a piece's lanes past the run's end off).
+        let mut below = 0u32;
+        unsafe {
+            let (low, iota) = (vdupq_n_u8((i[l] % BLOCK) as u8), vld1q_u8(IOTA.as_ptr()));
+            let mut q = 0;
+            while q < len {
+                let keys = vld1q_u8(t.as_ptr().add(from + q as usize));
+                let inside = vcltq_u8(iota, vdupq_n_u8((len - q).min(16) as u8));
+                below += u32::from(vaddvq_u8(vandq_u8(vandq_u8(vcltq_u8(keys, low), inside), vdupq_n_u8(1))));
+                q += 16;
             }
         }
-        vst1q_u32(lo.as_mut_ptr(), vlo[0]);
-        vst1q_u32(lo.as_mut_ptr().add(4), vlo[1]);
-    }
-    // The list's values follow the part's offsets.
-    let vw = (v.widths >> (16 + 4 * k)) & 15;
-    let m = if vw >= 8 { u64::MAX } else { (1u64 << (8 * vw)) - 1 };
-    let mut out = [0u64; 8];
-    for l in 0..8 {
-        if need[l] != 0 {
-            let a = offsets[l].wrapping_add(count[l]).wrapping_add(lo[l].wrapping_mul(vw)).min(limit[l]);
-            out[l] = u64::from_le_bytes(at(list, a, 8).try_into().unwrap()) & m;
-        }
+        // The list's values follow the part's offsets.
+        let a = offsets.wrapping_add(count).wrapping_add((lo + below).wrapping_mul(vw)).min(limit);
+        out[l] = u64::from_le_bytes(at(list, a, 8).try_into().unwrap()) & m;
     }
     out
+}
+
+/// Every node's slot (`reads::f16::slot`) by the 8-lane reader: its runs, its gathers, its side-list count search
+/// (its tests' entry: every escaped slot of a tape read once).
+///
+/// # Safety
+///
+/// As `parent_all`'s; `out` holds the tape's nodes.
+pub unsafe fn slots_all(t: &[u8], v: &rerail_clif::view::TapeView, out: &mut [u64]) {
+    let n = v.nodes;
+    unsafe {
+        let mut slots = Slots::new(t, v);
+        let (l0, l1) = (vld1q_u32(LANES8.as_ptr()), vld1q_u32(LANES8.as_ptr().add(4)));
+        let mut c = 0;
+        while c < n {
+            let at = [vaddq_u32(vdupq_n_u32(c), l0), vaddq_u32(vdupq_n_u32(c), l1)];
+            let on = [vcltq_u32(at[0], vdupq_n_u32(n)), vcltq_u32(at[1], vdupq_n_u32(n))];
+            // A lane past the end reads node 0's.
+            let at = [vandq_u32(at[0], on[0]), vandq_u32(at[1], on[1])];
+            let s = slots.read(&at, &on, Some(c).filter(|_| c + 8 <= n));
+            let mut s8 = [0u64; 8];
+            for r in 0..4 {
+                vst1q_u64(s8.as_mut_ptr().add(2 * r), s[r]);
+            }
+            let k = (n - c).min(8) as usize;
+            out[c as usize..c as usize + k].copy_from_slice(&s8[..k]);
+            c += 8;
+        }
+    }
 }

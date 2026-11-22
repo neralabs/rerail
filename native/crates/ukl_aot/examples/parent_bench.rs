@@ -46,6 +46,24 @@ fn main() {
     let lang = parent::json_lang();
     let d = parent::json_doc(&lang, kind, text.as_bytes());
     println!("{kind}: {} bytes of JSON, {} nodes, slot width {}", text.len(), d.nodes(), d.view.widths & 15);
+    // One version only, 20 times (for a count of its instructions and cycles; `none`: the setup alone).
+    if let Ok(only) = std::env::var("PARENT_ONLY") {
+        let mut out = vec![0u32; d.nodes() as usize];
+        for _ in 0..20 {
+            match only.as_str() {
+                "host" => out = parent::scalar(&d),
+                #[cfg(target_arch = "aarch64")]
+                "hand" => unsafe { rerail_ukl_aot::hand::parent_all(&d.bytes, &d.view, &mut out) },
+                #[cfg(target_arch = "aarch64")]
+                "scan" => unsafe { rerail_ukl_aot::hand::parent_all_scan(&d.bytes, &d.view, &mut out) },
+                #[cfg(target_arch = "aarch64")]
+                "ukl" => out = unsafe { parent::run(rerail_ukl_aot::parent_all_w8::parent_all_w8, &d, 256) },
+                _ => {}
+            }
+            std::hint::black_box(&out);
+        }
+        return;
+    }
     let want = parent::scalar(&d);
     time("host", &d, &want, || parent::scalar(&d));
     #[cfg(target_arch = "aarch64")]

@@ -164,3 +164,22 @@ fn the_hand_vectorized_parent_is_the_hosts() {
         }
     }
 }
+
+/// The 8-lane slot reader (`hand::slots_all`: its runs, gathers, and side lists' count search) on every node of every
+/// document: the host's slots, every escaped one among them.
+#[test]
+fn the_hand_vectorized_slot_read_is_the_hosts() {
+    let lang = crate::parent::json_lang();
+    let mut escaped = 0;
+    for d in crate::parent::documents(&lang) {
+        let want: Vec<u64> = (0..d.nodes()).map(|i| rerail_tape_format::reads::f16::slot(&d.bytes, &d.view, i)).collect();
+        let w = d.view.widths & 15;
+        escaped += want.iter().filter(|&&s| w < 8 && s >= (1u64 << (8 * w)) - 1).count();
+        let mut got = vec![0u64; want.len()];
+        unsafe { crate::hand::slots_all(&d.bytes, &d.view, &mut got) };
+        if let Some(i) = (0..want.len()).find(|&i| got[i] != want[i]) {
+            panic!("{} ({} nodes): node {i}'s slot {} (the host's {})", d.name, want.len(), got[i], want[i]);
+        }
+    }
+    assert!(escaped > 100, "the documents escape {escaped} slots: too few to test the side lists' search");
+}
