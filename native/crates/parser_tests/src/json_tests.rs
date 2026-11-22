@@ -1291,6 +1291,10 @@ fn json_tier2_is_walks_shape() {
     }
     assert!(!primitive.contains("0x7b") && !primitive.contains("0x5b"), "a container is the place's");
     assert_eq!(tier2.matches("fn number_end(").count(), 1, "a number's end written once");
+    // No depth test at the root's calls (no level is open there, as `walk`'s document); one at each list's.
+    let root = tier2.split("\n0 => {\n").nth(1).expect("the root's place").split("\n1 | 2 => {").next().expect("its end");
+    assert!(!root.contains("depth == DEPTH"), "a depth test at the root:\n{root}");
+    assert_eq!(tier2.matches("if depth == DEPTH {").count(), 4, "an object's and an array's call in each list");
     // A number at a digit or `-` alone (`walk`'s `*v - '0' < 10 || *v == '-'`), any other byte refused.
     assert!(primitive.contains("0x2d | 0x30..=0x39 => {\nlet end = number_end(src, s)?;"), "the number's arm its check's first bytes:\n{primitive}");
     // The number's check reads its bytes with no bound (the padding ends every number, as `number_end` reads), and the

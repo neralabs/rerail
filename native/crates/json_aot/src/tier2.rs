@@ -356,9 +356,6 @@ match peek(src, starts, i) {
 if src[starts[count - 1] as usize] != 0x7d {
 return Err(at(src, starts, i));
 }
-if depth == DEPTH {
-return Err(at(src, starts, i));
-}
 if peek(src, starts, i + 1) == 0x7d {
 // `object`, empty.
 let s = starts[i] as usize;
@@ -375,9 +372,6 @@ continue 'run;
 }
 0x5b => {
 if src[starts[count - 1] as usize] != 0x5d {
-return Err(at(src, starts, i));
-}
-if depth == DEPTH {
 return Err(at(src, starts, i));
 }
 if peek(src, starts, i + 1) == 0x5d {

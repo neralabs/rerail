@@ -124,6 +124,9 @@ struct Lp<'g, 'a> {
     /// Whether the check being written reads its bytes with no bound (`b[j]`): none of its bytes the padding's, so its
     /// match stops before the padded source's end, as the lean parser's `number_end` reads.
     direct: std::cell::Cell<bool>,
+    /// Whether the code being written is the root's, outside every level: there no level is open (`depth` is 0), and
+    /// a call tests no depth, as `walk`'s document.
+    at_root: std::cell::Cell<bool>,
     /// The methods that decide every byte themselves (a choice's alternatives that call no level, `walk`'s
     /// `primitive`), refusing what none takes as a decision does: a decision's arm calling one is its `_`.
     deciding: RefCell<std::collections::BTreeSet<String>>,
@@ -971,6 +974,7 @@ impl Lp<'_, '_> {
                     let empty_end = if falls { String::new() } else { Self::go(ret) };
                     let number = self.number(kind, key)?;
                     let mut out = String::new();
+                    let depth_test = if self.at_root.get() { "" } else { "if depth == DEPTH {\nreturn Err(at(src, starts, i));\n}\n" };
                     if let Some((_, close)) = self.brackets(n)? {
                         // The level the root's value: the file's last record its closer, checked before the walk, as
                         // the lean parser's `last != '}'`.
@@ -981,11 +985,11 @@ impl Lp<'_, '_> {
                         // its depth tested as a level's.
                         let _ = write!(
                             out,
-                            "if depth == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nif peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\n{}}} else {{\n",
-                            empty_end
+                            "{}if peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\n{}}} else {{\n",
+                            depth_test, empty_end
                         );
                     } else {
-                        out.push_str("if depth == DEPTH {\nreturn Err(at(src, starts, i));\n}\n");
+                        out.push_str(depth_test);
                     }
                     let _ = write!(out, "open(d, {number}, at(src, starts, i) as u64);\nret[depth] = {ret};\ndepth += 1;\n{}", Self::go(first));
                     if self.brackets(n)?.is_some() {
@@ -1067,6 +1071,7 @@ impl Lp<'_, '_> {
         }
         let first = self.place(String::new());
         self.levels.borrow_mut().insert(rule.to_owned(), first);
+        let root = self.at_root.replace(false);
         let Some(Stmt::Node { body, .. }) = self.g.rules.get(rule) else { return self.err(format!("`{rule}`: no node")) };
         // Bracketed, `O [M] C`: each call took `O C` as the level empty, so here `M` is there.
         let there;
@@ -1087,8 +1092,9 @@ impl Lp<'_, '_> {
             _ => body,
         };
         let end = "close(d, e as u64);\n// The place the level's call returns to, by its depth (a level ends only inside its call).\ndepth -= 1;\nst = ret[depth];\ncontinue 'run;\n".to_owned();
-        let code = self.walk(body, &Key::default(), K::Code(end), T::Byte)?;
-        self.places.borrow_mut()[first] = code;
+        let code = self.walk(body, &Key::default(), K::Code(end), T::Byte);
+        self.at_root.set(root);
+        self.places.borrow_mut()[first] = code?;
         Ok(first)
     }
 
@@ -1354,7 +1360,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             _ => {}
         }
     }
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), direct: std::cell::Cell::new(false), deciding: RefCell::new(std::collections::BTreeSet::new()) };
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), direct: std::cell::Cell::new(false), at_root: std::cell::Cell::new(false), deciding: RefCell::new(std::collections::BTreeSet::new()) };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {
@@ -1366,7 +1372,9 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     let end = "close(d, len as u64);\nif i != count {\nreturn Err(at(src, starts, i));\n}\nreturn Ok(());\n".to_owned();
     let mut lp = lp;
     lp.root_end = end.clone();
+    lp.at_root.set(true);
     let code = format!("open(d, {number}, at(src, starts, i) as u64);\n{}", lp.walk(body, &Key::default(), K::Code(end), T::No)?);
+    lp.at_root.set(false);
     lp.places.borrow_mut()[first] = code;
     // The words of the kinds split by them.
     let mut words = String::new();
