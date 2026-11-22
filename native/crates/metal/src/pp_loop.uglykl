@@ -1135,6 +1135,10 @@ UKL_INLINE void lp_overruns(PP_GLOBAL const uint32_t* ovr, PP_GLOBAL const uint3
 // (`lp_ahead`), or a window of a call's arguments' `(`, `)` and `,` (`lp_delim`).
 #define LQ_NAMES (1u)
 #define LQ_PUNCT (2u)
+// ... or a list's next entries (an argument's expansion read where a body uses it), their tokens a
+// lane each: which are plain, each a token or a span of tokens no macro, so the thread takes them in
+// one step (`lp_list_take`).
+#define LQ_LIST (3u)
 // Token `p` of span `def`'s (`LP_TOPSRC`: the top text's) byte if it is `(`, `)` or `,`, else 0.
 UKL_INLINE uint8_t lp_delim(Ux u, uint32_t def, uint32_t p) {
     LpTok t; t.src = lp_span_src(def); t.st = p; t.flags = 0u; t.org = 0u;
@@ -1170,18 +1174,18 @@ UKL_INLINE bool lp_plain_run(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar 
     }
     return true;
 }
-// One lane's look ahead (`lp_run`): whether token `p` of span `def` is plain, its name no macro
-// visible at `slot` (nor popped there). A walk past its rows is not plain: the step refuses it.
-UKL_INLINE bool lp_ahead(Ux u, Ar a, uint32_t def, uint32_t p, uint32_t slot, uint32_t floor) {
-    LpTok t; t.src = lp_span_src(def); t.st = p; t.flags = 0u; t.org = 0u;
+// One lane's look ahead (`lp_run`): whether token `t` is plain, its name no macro visible at `slot`
+// (nor popped there), as the step's lookup finds it. A walk past its rows is not plain: the step
+// refuses it.
+UKL_INLINE bool lp_tok_plain(Ux u, Ar a, LpTok t, uint32_t slot, uint32_t floor) {
     uint32_t g = lp_ref(u, t);
     uint32_t lo = IR_NONE, hi = IR_NONE;
     uint64_t key = ref_key(u, g);
     if ((t.src & P_KIND) == P_BODY) {
-        uint32_t it = u.defs[t.src & ~P_KIND].ifirst + p;
+        uint32_t it = u.defs[t.src & ~P_KIND].ifirst + t.st;
         lo = u.irows[2u * it]; hi = u.irows[2u * it + 1u];
     } else if ((t.src & P_KIND) == P_TOP) {
-        lo = u.trows[2u * p]; hi = u.trows[2u * p + 1u];
+        lo = u.trows[2u * t.st]; hi = u.trows[2u * t.st + 1u];
     } else if (ref_kind(u, g) == K_IDENTIFIER) {
         lo = name_rows_lo(u.sorted, u.n_rows, key); hi = name_rows_hi(u.sorted, u.n_rows, key);
     }
@@ -1190,6 +1194,29 @@ UKL_INLINE bool lp_ahead(Ux u, Ar a, uint32_t def, uint32_t p, uint32_t slot, ui
     uint32_t m = visible_walk(u.sorted, u.perm, u.name_keys, u.values, lo, hi, key, slot, floor, &over);
     if (over || px_pops_at(u, a.tf, lo, hi, key, slot)) return false;
     return m == L_NOT_NAME || m == L_NONE || m == L_IDENT;
+}
+// Token `p` of span `def`'s (`lp_tok_plain`).
+UKL_INLINE bool lp_ahead(Ux u, Ar a, uint32_t def, uint32_t p, uint32_t slot, uint32_t floor) {
+    LpTok t; t.src = lp_span_src(def); t.st = p; t.flags = 0u; t.org = 0u;
+    return lp_tok_plain(u, a, t, slot, floor);
+}
+// The thread takes plain entry `e` of the list on top, as its steps would: a token emitted, or pushed onto
+// the argument being expanded; a span's tokens read from a frame of its own (`lp_lex`), a run of them
+// (`lp_plain_run`), and the frame left (`lp_lex`'s). A store past its room stops the run (`stop`).
+UKL_INLINE void lp_list_take(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar a, LpTok e) {
+    r->fr[(r->sp - 1u) & (LP_DEPTH - 1u)].at++;
+    if (!lp_is_span(e)) {
+        if (r->nc == 0u) lp_emit(o, u, e);
+        else lp_push(r, a, 1u, r->calls[(r->nc - 1u) & (LP_CALLS - 1u)].ocur, e);
+        return;
+    }
+    if (r->sp == LP_DEPTH) { r->stop = LP_DEEP; return; }
+    UKL_LOCAL LpFrame* g = &r->fr[(r->sp++) & (LP_DEPTH - 1u)];
+    g->kind = FK_SPAN; g->def = e.src & ~P_KIND; g->at = e.st; g->end = e.st + lp_span_len(e); g->mark = r->mem[0].top; g->nsp = e.flags & 15u; g->org = e.org;
+    if (!lp_plain_run(r, o, u, a, lp_span_len(e))) return;
+    if (!r->collecting) r->mem[0].top = g->mark;
+    else r->cfree = ukl_min(r->cfree, g->mark);
+    r->sp--;
 }
 
 // The piece that starts at top token `s0`, written where it is made (`lp_flush`; `trn[13]` counts the
@@ -1285,6 +1312,12 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     // A span, or an object-like body read in place (its items a body's span's).
                     if ((f->kind == FK_SPAN || f->kind == FK_BODY) && f->at + 1u < f->end) {
                         ask = true; q_kind = LQ_NAMES; q_def = f->def; q_at = f->at; q_end = ukl_min(f->end, f->at + UKL_SIMD_WIDTH);
+                        q_slot = lp_slot_of(rp, u, rp->last); q_floor = lp_floor(rp, u, q_slot);
+                        break;
+                    }
+                    // A list's entries next: the group looks at them, a lane an entry.
+                    if ((f->kind == FK_LIST || f->kind == FK_STOP) && f->at + 1u < f->end) {
+                        ask = true; q_kind = LQ_LIST; q_def = rp->mem[0].base; q_at = f->at; q_end = ukl_min(f->end, f->at + UKL_SIMD_WIDTH);
                         q_slot = lp_slot_of(rp, u, rp->last); q_floor = lp_floor(rp, u, q_slot);
                         break;
                     }
@@ -1425,6 +1458,48 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
             bool plain = p < q_end && lp_ahead(u, a, q_def, p, q_slot, q_floor);
             uint32_t k = ukl_min(ukl_ctz64((uint64_t)(ukl_sg_ballot(!plain __UKL_ARGS))), q_end - q_at);
             if (me) { rp->run = k; rp->noask = k == 0u; }
+        } else if (q_kind == LQ_LIST) {
+            // The list's next entries (region 0 from `q_def`), a lane each, and their tokens laid out in a
+            // row (a span its tokens, any other entry one): a lane a token of the row's first, looked up.
+            // An entry is plain where its tokens are all before the row's first that is not; the plain
+            // ones before the first that is not, each given the thread by its lane, are taken in one step.
+            LpTok x; x.src = 0u; x.st = 0u; x.flags = 0u; x.org = 0u;
+            uint32_t len = 0u;
+            bool longe = false;
+            if (p < q_end) {
+                uint32_t i = q_def + p;
+                x.src = a.psrc[i]; x.st = a.pst[i]; x.flags = a.pn[i]; x.org = a.pexp[i];
+                len = lp_is_span(x) ? lp_span_len(x) : 1u;
+                // A span longer than the row: one place, not plain (the thread reads it).
+                if (len > UKL_SIMD_WIDTH) { longe = true; len = 1u; }
+            }
+            uint32_t at0 = ukl_sg_exclusive_sum(len, ln __UKL_ARGS);
+            uint32_t tot = ukl_sg_shuffle(at0 + len, UKL_SIMD_WIDTH - 1u __UKL_ARGS);
+            // This lane's token's entry: the last whose first place is at or before it.
+            uint32_t j = 0u;
+            for (uint32_t b = UKL_SIMD_WIDTH / 2u; b != 0u; b >>= 1u)
+                if (ukl_sg_shuffle(at0, j + b __UKL_ARGS) <= ln) j += b;
+            LpTok y;
+            y.src = ukl_sg_shuffle(x.src, j __UKL_ARGS); y.st = ukl_sg_shuffle(x.st, j __UKL_ARGS);
+            y.flags = ukl_sg_shuffle(x.flags, j __UKL_ARGS); y.org = ukl_sg_shuffle(x.org, j __UKL_ARGS);
+            uint32_t yat = ukl_sg_shuffle(at0, j __UKL_ARGS);
+            bool ylong = ukl_sg_shuffle(longe ? 1u : 0u, j __UKL_ARGS) != 0u;
+            bool tok = ln < tot, ok = true;
+            if (tok) {
+                if (ylong) ok = false;
+                else if (lp_is_span(y)) ok = lp_ahead(u, a, y.src & ~P_KIND, y.st + (ln - yat), q_slot, q_floor);
+                else ok = (y.flags & T_NOEXP) != 0u || lp_tok_plain(u, a, y, q_slot, q_floor);
+            }
+            uint32_t bad = ukl_min((uint32_t)ukl_ctz64((uint64_t)(ukl_sg_ballot(tok && !ok __UKL_ARGS))), (uint32_t)UKL_SIMD_WIDTH);
+            bool plain = p < q_end && !longe && at0 + len <= bad;
+            uint32_t k = ukl_min(ukl_ctz64((uint64_t)(ukl_sg_ballot(!plain __UKL_ARGS))), q_end - q_at);
+            for (uint32_t j = 0u; j < k; j++) {
+                LpTok y;
+                y.src = ukl_sg_shuffle(x.src, j __UKL_ARGS); y.st = ukl_sg_shuffle(x.st, j __UKL_ARGS);
+                y.flags = ukl_sg_shuffle(x.flags, j __UKL_ARGS); y.org = ukl_sg_shuffle(x.org, j __UKL_ARGS);
+                if (me && rp->stop == 0u) lp_list_take(rp, &o, u, a, y);
+            }
+            if (me) rp->noask = k == 0u;
         } else {
             uint8_t c = p < q_end ? lp_delim(u, q_def, p) : ((uint8_t)(0));
             uint32_t op = (uint32_t)(ukl_sg_ballot(c == ((uint8_t)('(')) __UKL_ARGS));
