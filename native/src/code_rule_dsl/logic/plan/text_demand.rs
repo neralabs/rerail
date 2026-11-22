@@ -73,15 +73,16 @@ fn is_var(t: Option<&TermRef<'_>>, s: Slot) -> bool {
     matches!(t, Some(TermRef::Var(x)) if *x == s)
 }
 
+/// core.rerail's span columns whose text a rule may read (relation, column): a document's source, a line, and the
+/// token relations' tokens.
+const SPAN_COLUMNS: [(&str, usize); 6] = [("source", 1), ("src_line", 2), ("first_token", 1), ("last_token", 1), ("token_before", 1), ("token_after", 1)];
+
 /// The spans whose text a rule reads (a document's source, a line), and whether a token's. Plan-time provenance, not
 /// a per-file scan: only copying a span (including variable equality) carries its origin. Regex captures have their
 /// own bounded ranges and do not demand the container text.
 pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
     // Bit 1 the source, 2 a line, 4 a token (the second column of the four token relations).
-    let mut columns: HashMap<(&str, usize), u8> = [(("source", 1), 1), (("src_line", 2), 2)]
-        .into_iter()
-        .chain(["first_token", "last_token", "token_before", "token_after"].map(|rel| ((rel, 1), 4)))
-        .collect();
+    let mut columns: HashMap<(&str, usize), u8> = SPAN_COLUMNS.iter().zip([1, 2, 4, 4, 4, 4]).map(|(&c, bit)| (c, bit)).collect();
     let mut requested = 0;
     loop {
         let mut changed = false;
@@ -339,11 +340,17 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
         })
         .collect();
     let twinned = |head: &str, var: &str| twins.contains(&(head, var));
-    // Whether `s` is a span (a `span` column binds it): its text is a span's (`text_spans`), not a node's.
+    // Whether `s` is a span (a `span` column binds it, or one of `SPAN_COLUMNS`: the lowering declares a span column a
+    // node, so in a lowered program a document's source was a node of any kind, and its reader read every node's
+    // text): its text is a span's (`text_spans`, `span_text_demand`), not a node's.
     let span = |r: RuleRef<'_>, s: Slot| {
         r.body().filter_map(|l| l.atom()).filter(|a| !a.neg() && v.rel_name(a.rel()) != "text").any(|a| {
-            let types: Option<Vec<&str>> = v.decl_of(v.rel_name(a.rel())).map(|d| d.cols().map(|(_, t)| v.text(t)).collect());
-            a.args().enumerate().any(|(c, t)| matches!(t, TermRef::Var(x) if x == s) && types.as_ref().and_then(|ts| ts.get(c)).is_some_and(|ty| *ty == "span"))
+            let rel = v.rel_name(a.rel());
+            let types: Option<Vec<&str>> = v.decl_of(rel).map(|d| d.cols().map(|(_, t)| v.text(t)).collect());
+            a.args().enumerate().any(|(c, t)| {
+                matches!(t, TermRef::Var(x) if x == s)
+                    && (SPAN_COLUMNS.contains(&(rel, c)) && !rules.iter().any(|r| head_of(*r) == rel) || types.as_ref().and_then(|ts| ts.get(c)).is_some_and(|ty| *ty == "span"))
+            })
         })
     };
     // A matcher capture's node: the kinds and fields its matcher gives it (`{"pattern": "$N", "field": "name"}`, or a
@@ -410,6 +417,73 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
         }
         any.then_some((kinds, fields))
     };
+    // Each derived relation's columns as the nodes they hold, where its kinds alone (`columns`) do not narrow them: a
+    // head variable's kinds, else the fields it is in, a matcher capture's, or the kinds and fields of the node it is a
+    // child of, else a derived column it is read from (any one of them holds every node the variable can be); the
+    // union over the relation's rules, read as `TextNodes` reads its parts. What a rule reading the text of a node no
+    // literal of its own narrows reads (`ca_param`'s `text(nm, x)` over `sig_param`'s parameter names, which a field
+    // or a child narrows in each of `param_parts`' rules: every node's text was made before).
+    let own_nodes = |r: RuleRef<'_>, s: Slot| -> Option<TextNodes> {
+        if let Some(k) = of_var(r, s) {
+            return Some(TextNodes { kinds: k, ..Default::default() });
+        }
+        let f = fields_of(r, s);
+        if !f.is_empty() {
+            return Some(TextNodes { fields: f, ..Default::default() });
+        }
+        match captured(r, s) {
+            (k, _) if !k.is_empty() => return Some(TextNodes { kinds: k, ..Default::default() }),
+            (_, f) if !f.is_empty() => return Some(TextNodes { fields: f, ..Default::default() }),
+            _ => {}
+        }
+        parents_of(r, s).map(|(parents, parent_fields)| TextNodes { parents, parent_fields, ..Default::default() })
+    };
+    // The derived columns a rule's positive atoms read `s` from.
+    let read_from = |r: RuleRef<'_>, s: Slot| -> Vec<(u32, usize)> {
+        r.body()
+            .filter_map(|l| l.atom())
+            .filter(|a| !a.neg())
+            .filter_map(|a| derived_id.get(v.rel_name(a.rel())).map(|&d| (d, a)))
+            .flat_map(|(d, a)| a.args().enumerate().filter(move |(_, t)| matches!(t, TermRef::Var(x) if *x == s)).map(move |(c, _)| (d, c)))
+            .collect()
+    };
+    let mut nodes_of: Vec<Vec<Option<TextNodes>>> = columns.iter().map(|c| vec![Some(TextNodes::default()); c.len()]).collect();
+    let mut node_heads: Vec<(u32, usize, Option<TextNodes>, Vec<(u32, usize)>)> = Vec::new();
+    for &rule in &rules {
+        let h = derived_id[head_of(rule)];
+        for (c, t) in args(rule.head()).iter().enumerate() {
+            let TermRef::Var(s) = *t else { continue };
+            node_heads.push((h, c, own_nodes(rule, s), read_from(rule, s)));
+        }
+    }
+    let first_read = |nodes_of: &[Vec<Option<TextNodes>>], from: &[(u32, usize)]| -> Option<TextNodes> {
+        from.iter().find_map(|&(d, c)| nodes_of[d as usize].get(c).cloned().flatten())
+    };
+    loop {
+        let mut changed = false;
+        for (h, c, own, from) in &node_heads {
+            let got = own.clone().or_else(|| first_read(&nodes_of, from));
+            let entry = &mut nodes_of[*h as usize][*c];
+            let joined = match (&*entry, got) {
+                (None, _) | (_, None) => None,
+                (Some(a), Some(b)) => {
+                    let mut u = a.clone();
+                    u.kinds.extend(b.kinds);
+                    u.fields.extend(b.fields);
+                    u.parents.extend(b.parents);
+                    u.parent_fields.extend(b.parent_fields);
+                    Some(u)
+                }
+            };
+            if *entry != joined {
+                *entry = joined;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
     let (mut kinds, mut any, mut negated_any) = (BTreeSet::new(), Vec::new(), 0);
     let mut read = Some(TextNodes::default());
     let mut wide: Option<String> = None;
@@ -445,6 +519,13 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
                         _ if let Some((kinds, fields)) = parents_of(rule, s) => {
                             nodes.parents.extend(kinds);
                             nodes.parent_fields.extend(fields);
+                        }
+                        // A node a derived column narrows (`nodes_of`).
+                        _ if let Some(n) = first_read(&nodes_of, &read_from(rule, s)) => {
+                            nodes.kinds.extend(n.kinds);
+                            nodes.fields.extend(n.fields);
+                            nodes.parents.extend(n.parents);
+                            nodes.parent_fields.extend(n.parent_fields);
                         }
                         _ => {
                             wide = Some(format!("{head}, reading text({name}, …)"));

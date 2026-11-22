@@ -34,9 +34,26 @@ mf_up(n, o) :- nearest(n, dc, mf_mark), kind(dc, "decorator"), child(dd, dc, _),
 mf_class(n, k) :- mf_up(n, k), kind(k, "class_definition").
 mf_class(n, k) :- mf_up(n, f), kind(f, "function_definition"), mf_class(f, k).
 // mf_def(n, f): e.g. in `def f(): class B: x = 1`, mf_def(<x = 1>, f).
+// The innermost def or decorator around n, the classes between passed over (`mf_dmark`), read off the tree per node:
+// mf_up's climb through the classes, which was a relation of every node inside a def (676 K rows over the data
+// layer's 334 files) recursing over itself. Only a class a decorator decorates climbs again (`mf_defk`), from the
+// class. Held equal to the climb by `mf_def_is_the_climb_through_classes` (plan::corpus::tests).
+.decl mf_dmark(k: symbol)
+mf_dmark("function_definition"). mf_dmark("decorator").
+// mf_dec(n, o): n's innermost def or decorator is a decorator of definition o.
+.decl mf_dec(n: node, o: node)
+mf_dec(n, o) :- nearest(n, dc, mf_dmark), kind(dc, "decorator"), child(dd, dc, _), field(dd, "definition", o).
 .decl mf_def(n: node, f: node)
-mf_def(n, f) :- mf_up(n, f), kind(f, "function_definition").
-mf_def(n, f) :- mf_up(n, k), kind(k, "class_definition"), mf_def(k, f).
+mf_def(n, f) :- nearest(n, f, mf_dmark), kind(f, "function_definition").
+mf_def(n, f) :- mf_dec(n, f), kind(f, "function_definition").
+mf_def(n, f) :- mf_dec(n, k), kind(k, "class_definition"), mf_defk(k, f).
+// mf_defk(k, f): mf_def of a class k some decorator decorates.
+.decl mf_dclass(k: node)
+mf_dclass(k) :- kind(dc, "decorator"), child(dd, dc, _), field(dd, "definition", k), kind(k, "class_definition").
+.decl mf_defk(k: node, f: node)
+mf_defk(k, f) :- mf_dclass(k), nearest(k, f, mf_dmark), kind(f, "function_definition").
+mf_defk(k, f) :- mf_dclass(k), mf_dec(k, f), kind(f, "function_definition").
+mf_defk(k, f) :- mf_dclass(k), mf_dec(k, j), kind(j, "class_definition"), mf_defk(j, f).
 
 // mf_walk(n, o): e.g. in `@d(y)` / `def f(a=z): w`, mf_walk(<y>, f), mf_walk(<z>, f), mf_walk(<w>, f).
 .decl mf_walk(n: node, o: node)

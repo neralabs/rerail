@@ -662,10 +662,17 @@ impl CoreRows {
             } else if dialect.family == Family::Rr && kind == "variable" {
                 self.name.push([n, string(text) as i64]);
             }
-            let interpolated = !self.skip.literal && interpolated(f, dialect, kind, &children);
-            let mut lit = if self.skip.literal { Literal::default() } else { literal(dialect.family, kind, text, interpolated) };
+            // Where only `text` reads the literal (a prefix makes a node token-like), it is read only where that decides
+            // whether the node has text: a node whose text a rule reads, past the inline bound, with children. Decoded
+            // for every node of the walk (every node's, a program reading `op`), it was most of this walk.
+            let for_text_only = self.skip.literal_rows && self.skip.str && self.skip.literal_value;
+            let read_literal = !self.skip.literal
+                && (!for_text_only
+                    || wants_text && !token_like && !(text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) && self.reads_text(p, dialect, id));
+            let interpolated = read_literal && interpolated(f, dialect, kind, &children);
+            let mut lit = if read_literal { literal(dialect.family, kind, text, interpolated) } else { Literal::default() };
             // A format string's node: its value is its parser's (an `error`'s message, a `field_name`'s argument).
-            if !self.skip.literal
+            if read_literal
                 && dialect.family == Family::Format
                 && let Some(own) = dialect_facts(Family::Format)
             {

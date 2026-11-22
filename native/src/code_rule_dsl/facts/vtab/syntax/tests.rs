@@ -1503,6 +1503,14 @@ fn text_only_for_the_nodes_read() {
         ("out(m) :- field(_, \"module_name\", mn), child(mn, dn, 1), text(dn, m).".to_owned(), Some(TextNodes { parent_fields: BTreeSet::from(["module_name".to_owned()]), ..TextNodes::default() })),
         // A child of a node nothing narrows: every node.
         ("out(t) :- child(n, c, 0), text(c, t).".to_owned(), None),
+        // A node a derived column holds, each of its rules narrowing it by a field or a parent's kind (python/ast's
+        // `param_parts` names, read as `sig_param`'s by data-layer's `ca_param`): those fields' nodes and children.
+        (".decl pn(n: node)\npn(n) :- field(_, \"name\", n).\npn(n) :- kind(p, \"list_splat_pattern\"), child(p, n, 0).\n.decl pm(n: node)\npm(n) :- pn(n).\nout(t) :- pm(n), text(n, t).".to_owned(),
+            Some(TextNodes { fields: BTreeSet::from(["name".to_owned()]), parents: BTreeSet::from(["list_splat_pattern".to_owned()]), ..TextNodes::default() })),
+        // A span's text (a document's source): no node's.
+        ("out(t) :- source(_, sp), text(sp, t), contains(\"x\", t).".to_owned(), Some(TextNodes::default())),
+        // One of its rules narrowing nothing: every node.
+        (".decl pn(n: node)\npn(n) :- field(_, \"name\", n).\npn(n) :- child(_, n, 0).\nout(t) :- pn(n), text(n, t).".to_owned(), None),
         (format!("out(t) :- ast(d, f, {}, NAME: n), text(n, t).", fun(r#"{"all": [{"kind": "function_definition"}, {"has": {"pattern": "$NAME", "field": "name"}}]}"#)), some(&[], &["name"])),
         (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$N"}]}}]}"#)), some(&["identifier"], &[])),
         (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"inside": {"pattern": "$N", "field": "body"}}]}"#)), None),

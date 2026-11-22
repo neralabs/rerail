@@ -1231,6 +1231,48 @@ fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     assert_eq!(v.fact_rows(&threshold).len(), 1, "{threshold}: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
 }
 
+/// match-frames' `mf_def` (the innermost def around a node, read off the tree per node) has the rows of the climb it
+/// replaced: `mf_up`, the innermost def, class or decorator, a decorator standing for its definition, climbed through
+/// the classes. Over nested defs and classes, decorated defs and classes, decorators with lambdas and calls, and a
+/// decorated class inside a decorated class.
+#[test]
+fn mf_def_is_the_climb_through_classes() {
+    let program = ".language python\n#include \"data-layer/match-frames.rerail\"\n\
+        .decl om(k: symbol)\nom(\"function_definition\"). om(\"class_definition\"). om(\"decorator\").\n\
+        .decl oup(n: node, o: node)\n\
+        oup(n, o) :- nearest(n, o, om), !kind(o, \"decorator\").\n\
+        oup(n, o) :- nearest(n, dc, om), kind(dc, \"decorator\"), child(dd, dc, _), field(dd, \"definition\", o).\n\
+        .decl odef(n: node, f: node)\n\
+        odef(n, f) :- oup(n, f), kind(f, \"function_definition\").\n\
+        odef(n, f) :- oup(n, k), kind(k, \"class_definition\"), odef(k, f).\n\
+        .decl gap(side: symbol, k: symbol, l: number, lf: number)\n\
+        gap(\"new\", k, l, lf) :- mf_def(n, f), !odef(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"old\", k, l, lf) :- odef(n, f), !mf_def(n, f), kind(n, k), line(n, l), line(f, lf).\n.output gap\n\
+        .decl rows(k: number)\nrows(k) :- k = count : { mf_def(_, _) }.\n.output rows\n\
+        .decl decorated(l: number, lf: number)\n\
+        decorated(l, lf) :- mf_def(n, f), kind(n, \"identifier\"), text(n, x), (x = \"w\" ; x = \"v\" ; x = \"arg\" ; x = \"q\"), line(n, l), line(f, lf).\n.output decorated\n";
+    let py = "@top(lambda q: q)\ndef f(a=lambda: 1):\n    class B:\n        x = 1\n        @staticmethod\n        def m(self):\n            def g():\n                return h(1)\n            return g\n        @deco(arg(2))\n        class Inner:\n            y = 2\n    return B\n@cls_deco(z)\nclass C:\n    def n(self):\n        @wrap(w)\n        class D:\n            @d2(v)\n            class E:\n                pass\n        return D\nu = 3\n";
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mf-def");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), py).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    let (gap, rows, decorated) = (read("gap"), read("rows"), read("decorated"));
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(gap.is_empty(), "mf_def against the climb: {gap:?}");
+    let n: usize = rows.first().and_then(|r| r.first()).and_then(|k| k.parse().ok()).unwrap_or(0);
+    assert!(n > 40, "mf_def's rows: {rows:?}");
+    // `q` (top's lambda, f's decorator) is f's (line 2); `arg` (Inner's decorator) is f's, through B and Inner;
+    // `w` (D's decorator) is n's (line 16); `v` (E's, a class decorating inside a decorated class) is n's too.
+    let mut got: Vec<(String, String)> = decorated.iter().map(|r| (r[0].clone(), r[1].clone())).collect();
+    got.sort();
+    let want: Vec<(String, String)> = [("1", "2"), ("10", "2"), ("17", "16"), ("19", "16")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+    assert_eq!(got, want);
+}
+
 /// A library's kind set that a program reads by `nearest` (ruff-n807's `nearest(f, s, scope)` over python/names.rerail's
 /// `scope`) has the library's kinds in a pack, as alone. Lowered in its library's scope, the program was seeded the
 /// set's declaration but not its facts, so it held `scope` empty, and its `nearest` climbed to nothing: ruff-n807,
