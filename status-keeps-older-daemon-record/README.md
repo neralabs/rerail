@@ -1,6 +1,6 @@
 # Windows: a 0.1.4 daemon is found, stopped and replaced
 
-For [pull request #975](https://github.com/neralabs/rerail/pull/975), head f70406093. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #975](https://github.com/neralabs/rerail/pull/975), head 62a62137d. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #975](https://github.com/neralabs/rerail/pull/975), head f7040
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 2,260 lines in 28 files: 890 ship, 1,370 are tests and text | Fast. Medium risk, no high-risk path. | Nothing. #677, whose start read it uses, merged as c219472639. | 4 |
+| 2,266 lines in 28 files: 896 ship, 1,370 are tests and text | Fast. Medium risk, no high-risk path. | Nothing. #677, whose start read it uses, merged as c219472639. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -32,7 +32,7 @@ Found on 18 November 2026 on Windows 11 virtual machines, by probes of a 0.1.4 d
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Older daemon found, sent nothing, medium risk, 490 lines; B, Older daemon ended through its process, medium risk, 400 lines. Read first: daemon-control.ts, process-liveness.ts, process.rs. To skim: 1,280 lines of tests and 90 lines of docs, release notes, three hooks&#x27; comments.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Older daemon found, sent nothing, medium risk, 496 lines; B, Older daemon ended through its process, medium risk, 400 lines. Read first: daemon-control.ts, process-liveness.ts, process.rs. To skim: 1,280 lines of tests and 90 lines of docs, release notes, three hooks&#x27; comments.">
 
 1. **Read first**, 9 min: `daemon-control.ts`: `noProofVerdict`, `olderDaemon`, `checkedLookup`, `daemonEngineEndpoint`, `replacedOlderDaemon`, `endOlderDaemon`. Does anything carrying the token reach an endpoint that has not proved itself?
 2. **Read first**, 4 min: `process-liveness.ts`: `endProcessStartedByPowerShell`, `powerShellEnd`. Is a PowerShell cut after its mark read as still running?
