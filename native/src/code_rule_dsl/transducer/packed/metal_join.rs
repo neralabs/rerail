@@ -97,8 +97,8 @@ pub(in crate::code_rule_dsl) const CAT_DOT: u32 = 0;
 pub(in crate::code_rule_dsl) const CAT_PLAIN: u32 = 1;
 /// Mode 9: a text function's value made into the batch's text arena (`Arena`), or a range of its text, bound to
 /// `bind_slot[0]`: of X (keys 0, 1, kind `agg[1]`), Y and Z (keys 2 and 4, symbols), numbers (keys 5 and 6), by
-/// `agg[0]`. A value with none (the arena full, or `lower` past ASCII) sets the stage's counter word (`TEXTFN_FULL`,
-/// `TEXTFN_HOST`).
+/// `agg[0]`. A value with none (`lower` past ASCII) sets the stage's counter word (`TEXTFN_HOST`); the arena full, the
+/// program's flag (its phase parks while the host maps the arena further, `Arena::grow`).
 /// Mode 10: a made text per row by a SIMD group a row (`row_text`): agg[0] & 15 one of `ROW_*`, agg[0] bit 8 a test's
 /// wanted verdict; X (keys 0, 1) and Y (keys 2, 3) of kinds agg[1] & 15 and agg[1] >> 4 (`OPND_*`); its value into
 /// `bind_slot[0]`.
@@ -143,7 +143,6 @@ pub(in crate::code_rule_dsl) const TEXTFN_ASCII_UPPER: u32 = 9;
 pub(in crate::code_rule_dsl) const TEXTFN_COPY: u32 = 10;
 /// `zero_pad(n, w)`: key 5's digits zero-padded to key 6's width (0 to 64), the sign first, never truncated.
 pub(in crate::code_rule_dsl) const TEXTFN_ZERO_PAD: u32 = 11;
-pub(in crate::code_rule_dsl) const TEXTFN_FULL: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// A `ROW_VERDICT` stage met a symbol the atoms directory does not hold: the stratum runs on the host.
 pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;
@@ -1265,45 +1264,94 @@ impl DevBytes {
 
 /// A batch's text arena: the texts its text functions make (`TEXTFN`), shared by every job in the batch. Its first
 /// word is an atomic bump of the bytes given out, which counts on past the end, so a full arena says how much its
-/// jobs wanted (they then run again in one that big, or on the host); its second, its capacity.
+/// jobs wanted; its second, its capacity. Address space (`rerail_device::device::Reserved`, host-read: on Metal the
+/// host's pages, wrapped over the bytes mapped) whose pages are mapped as its texts reach them: a phase whose texts
+/// found it full parks, and the host maps twice what they wanted (`grow`) and launches the program again, which runs
+/// the phase again (decision 0603's fewer reruns). Where it cannot grow (an allocation of its first bytes), the run
+/// runs again in a batch whose arena is as big as its jobs wanted, or on the host past the device's text arena.
 pub(in crate::code_rule_dsl) struct Arena {
-    buffer: Held,
-    pub(in crate::code_rule_dsl) cap: usize,
+    reserved: Arc<rerail_device::device::Reserved>,
+    cap: std::cell::Cell<usize>,
 }
 
 /// A batch's arena, to start with: most strata make few texts.
 pub(in crate::code_rule_dsl) const ARENA_START: usize = 64 << 10;
 
+/// A text arena's address space: the device's text arena (its bytes past it run on the host), within the 32-bit
+/// bump of its header.
+fn text_arena_max() -> usize {
+    rerail_accel::budget::metal_share(64 << 20).clamp(ARENA_START, u32::MAX as usize / 2)
+}
+
 impl Arena {
     pub(in crate::code_rule_dsl) fn new(cap: usize) -> Result<Arena, Error> {
         let cap = cap.clamp(16, u32::MAX as usize / 2);
-        let buffer = Held::new(16 + cap)?;
-        // SAFETY: 16 bytes of header, written before any command buffer reads them.
-        let head = unsafe { std::slice::from_raw_parts_mut(buffer.buffer.contents().cast::<u32>(), 4) };
-        head.copy_from_slice(&[0, cap as u32, 0, 0]);
-        Ok(Arena { buffer, cap })
+        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let reserved = rerail_device::device::reserve(device, 16 + cap.max(text_arena_max()), 16 + cap, true).map_err(|_| Error::BackendCapacity)?;
+        let arena = Arena { reserved: Arc::new(reserved), cap: std::cell::Cell::new(cap) };
+        arena.header(0, 0);
+        arena.header(1, cap as u32);
+        Ok(arena)
+    }
+
+    /// Its header's word `k` set to `v` (no command buffer that uses the arena pending).
+    fn header(&self, k: usize, v: u32) {
+        // SAFETY: the 16 bytes of header, mapped from the start; no command buffer is using the arena.
+        unsafe { *self.base().cast::<u32>().add(k) = v };
+    }
+
+    fn base(&self) -> *mut u8 {
+        self.reserved.buffer().contents().cast::<u8>()
+    }
+
+    /// The buffer its jobs reach now (a wrapped arena's last wrap: `grow` makes another, at another address).
+    pub(in crate::code_rule_dsl) fn buffer(&self) -> Buffer {
+        self.reserved.buffer()
+    }
+
+    /// Its room for texts, past its header.
+    pub(in crate::code_rule_dsl) fn cap(&self) -> usize {
+        self.cap.get()
+    }
+
+    /// Room for twice what its jobs wanted, mapped further between launches where it has less (another program of
+    /// the batch's may have grown it already): false where it cannot be (past its address space, or an allocation
+    /// that cannot grow).
+    pub(in crate::code_rule_dsl) fn grow(&self) -> Result<bool, Error> {
+        let wanted = self.wanted();
+        let room = (2 * wanted).min(u32::MAX as usize / 2);
+        if wanted > room {
+            return Ok(false);
+        }
+        if room <= self.cap() {
+            return Ok(true);
+        }
+        if !self.reserved.map(16 + room).map_err(|_| Error::BackendCapacity)? {
+            return Ok(false);
+        }
+        let cap = (self.reserved.mapped() - 16).min(u32::MAX as usize / 2);
+        self.cap.set(cap);
+        self.header(1, cap as u32);
+        Ok(true)
     }
 
     /// The bytes its jobs asked for (past `cap` when it filled), once they completed.
     pub(in crate::code_rule_dsl) fn wanted(&self) -> usize {
         // SAFETY: the header's first word, read once the command buffers that write it completed.
-        unsafe { *self.buffer.buffer.contents().cast::<u32>() as usize }
+        unsafe { *self.base().cast::<u32>() as usize }
     }
 
     /// `bytes` put into the arena by the host, between batches (no command buffer writing it is pending): their
     /// value, or none when it has no room.
     pub(in crate::code_rule_dsl) fn put(&self, bytes: &[u8]) -> Option<i64> {
         let off = self.wanted();
-        if off + bytes.len() > self.cap || bytes.len() > 0xff_ffff {
+        if off + bytes.len() > self.cap() || bytes.len() > 0xff_ffff {
             return None;
         }
-        // SAFETY: the header's first word and `bytes.len()` bytes within `cap` past the header; no command buffer is
-        // using the arena (the caller's between batches).
-        unsafe {
-            let base = self.buffer.buffer.contents().cast::<u8>();
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), base.add(16 + off), bytes.len());
-            *base.cast::<u32>() = (off + bytes.len()) as u32;
-        }
+        // SAFETY: `bytes.len()` bytes within `cap` past the header, mapped; no command buffer is using the arena (the
+        // caller's between batches).
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.base().add(16 + off), bytes.len()) };
+        self.header(0, (off + bytes.len()) as u32);
         Some(ARENA_TEXT | ((off as i64) << 24) | bytes.len() as i64)
     }
 
@@ -1313,11 +1361,11 @@ impl Arena {
             return None;
         }
         let (off, len) = (((v as u64) >> 24 & ((1 << 39) - 1)) as usize, (v & 0xff_ffff) as usize);
-        if off + len > self.cap {
+        if off + len > self.cap() {
             return None;
         }
-        // SAFETY: within the arena's `cap` bytes past its header.
-        Some(unsafe { std::slice::from_raw_parts(self.buffer.buffer.contents().cast::<u8>().add(16 + off), len) })
+        // SAFETY: within the arena's `cap` bytes past its header, mapped; its pages stay where they are as it grows.
+        Some(unsafe { std::slice::from_raw_parts(self.base().add(16 + off), len) })
     }
 }
 
@@ -1540,7 +1588,7 @@ impl Batch {
     /// A batch whose text arena is `arena`, kept across batches: a recursive component's rounds (decision 0307),
     /// whose texts one round makes the next reads.
     pub(in crate::code_rule_dsl) fn with_shared_arena(arena: std::rc::Rc<Arena>) -> Result<Batch, Error> {
-        let mut b = Batch::with_arena(arena.cap)?;
+        let mut b = Batch::with_arena(arena.cap())?;
         b.arena = Some(arena);
         Ok(b)
     }
@@ -1627,7 +1675,10 @@ impl Batch {
             if again.is_empty() || failed > 0 {
                 break;
             }
-            for r in again {
+            for (r, remap) in again {
+                // A remap (an arena mapped further) is a run again with more room: its launch charges the run's
+                // reruns' budget (decision 0540), as the rerun it replaces did; a budget's relaunch, the evaluation's.
+                let _rerun = remap.then(rerail_accel::gpu::launch::rerun);
                 self.launch(r.kit, r.ctl, r.slots)?;
             }
             self.submit_open()?;
@@ -1947,7 +1998,7 @@ impl Batch {
         // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
         let from_one = left.room() == 1 && !left.placed() && stage.mode == JOIN && right.is_some();
         let arena: Buffer = if matches!(stage.mode, STRCMP | TEXTOP) && (stage.agg[1] & 15 == OPND_ARENA || stage.agg[1] >> 4 == OPND_ARENA) {
-            self.arena()?.buffer.buffer.clone()
+            self.arena()?.buffer()
         } else {
             self.dummy.buffer.clone()
         };
@@ -2077,7 +2128,7 @@ impl Batch {
         let work = Held::new(ngroups * 2 * simd_group() * kept.max(1) as usize)?;
         // Its values a row: placed with its input where that is placed (its room its input's).
         let values = Held::new(if left.placed() { 16 } else { 8 * n })?;
-        let arena = self.arena()?.buffer.buffer.clone();
+        let arena = self.arena()?.buffer();
         let (g, g_at): (Buffer, u64) = auto.map_or_else(|| (self.dummy.buffer.clone(), 0), |a| (a.0.buffer.clone(), a.0.at));
         let atoms = self.atoms.clone().ok_or(Error::BackendCapacity)?;
         let cache = self.kept.clone().ok_or(Error::BackendCapacity)?;
@@ -2771,7 +2822,7 @@ impl Batch {
         let format = prog.format.unwrap_or_else(run_view_format);
         self.done.levels += prog.levels;
         let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, capacity, workers, budget, format, uses: prog.uses, hold: prog.hold,
-                        rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa) } };
+                        rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))? } };
         let (ctl, slots) = (Words::zeroed(10 + 2 * kit.phase_items.len())?, Words::zeroed(kit.capacity)?);
         self.launch(kit, ctl, slots)
     }
@@ -2790,6 +2841,13 @@ impl Batch {
                 kit.rebase(held)?;
             }
         }
+        // A text arena mapped further since (`Arena::grow`): its jobs' descriptors that reach it, its new wrap's.
+        if let Some(a) = &self.arena {
+            let now = address(&a.buffer())?;
+            if kit.rebase.ta != 0 && now != kit.rebase.ta {
+                kit.retext(now);
+            }
+        }
         let pipe = program_pipe(kit.format)?;
         if let Some(t) = &kit.top {
             let room = kit.reserved.as_ref().map_or(kit.counts.buffer.length() as usize, |r| r.mapped());
@@ -2801,6 +2859,7 @@ impl Batch {
         let limit = ctl.get(8).saturating_add(items);
         self.done.launch_items = if self.done.launch_items == 0 { u64::from(items) } else { self.done.launch_items.min(u64::from(items)) };
         let args: Vec<u8> = [nphases as u32, kit.capacity as u32, kit.phase_items[0][1], limit].iter().flat_map(|w| w.to_ne_bytes()).collect();
+        let text = self.arena.as_ref().filter(|_| kit.rebase.ta != 0).map(|a| a.buffer());
         let pass = self.open()?;
         // What its jobs reach by address, and its own buffers: resident for the launch.
         let mut seen = std::collections::HashSet::new();
@@ -2815,6 +2874,9 @@ impl Batch {
         }
         for h in &kit.hold {
             pass.use_read_write(&h.buffer);
+        }
+        if let Some(a) = &text {
+            pass.use_read_write(a);
         }
         pass.use_read_write(&kit.counts.buffer);
         if let Some(t) = &kit.top {
@@ -2833,7 +2895,7 @@ impl Batch {
     /// The programs run since the last `finish`, each whole: its last phase done and nothing pushed past its room;
     /// and those to launch again (decision 0603 point 5): one whose workers spent their budgets with items left, and
     /// one whose size script parked past its arena's pages, mapped now for twice what it wanted, its item put back.
-    fn programs_done(&mut self) -> Result<(bool, Vec<Ran>), Error> {
+    fn programs_done(&mut self) -> Result<(bool, Vec<(Ran, bool)>), Error> {
         let mut whole = true;
         let mut again = Vec::new();
         for r in std::mem::take(&mut self.programs) {
@@ -2844,6 +2906,28 @@ impl Batch {
                 0 => r.items,
                 w => w,
             };
+            // A phase parked as its texts found the text arena full (`ctl[9]`'s top bit): the arena mapped for twice
+            // what they wanted (`Arena::grow`), and the program launched again, which pushes the phase again; else,
+            // stopped, and its runs find the arena full (`wanted` past `cap`): they run again in a larger one, or on
+            // the host past the device's text arena.
+            if !overflow && flags & 32 != 0 && r.ctl.get(9) & 0x8000_0000 != 0 {
+                let grown = match &self.arena {
+                    Some(a) => a.grow()?,
+                    None => false,
+                };
+                if grown {
+                    self.done.remaps += 1;
+                    r.compact();
+                    r.ctl.set(6, flags & !32);
+                    // Released: the next launch's first group pushes the phase again (bit 30).
+                    r.ctl.set(9, 0x4000_0000 | (r.ctl.get(9) & 0x3fff_ffff));
+                    again.push((r, true));
+                    continue;
+                }
+                self.done.stopped = true;
+                self.done.taken += u64::from(r.ctl.get(8));
+                continue;
+            }
             // A size script parked past its arena's pages (decision 0603 step 5): the arena mapped for twice what
             // its claims wanted, and the program launched again; else, an arena that cannot grow, stopped as a gate
             // stops it, and the batch's next programs' arenas twice what its claims wanted.
@@ -2856,7 +2940,7 @@ impl Batch {
                 if mapped {
                     self.done.remaps += 1;
                     r.put_back();
-                    again.push(r);
+                    again.push((r, true));
                     continue;
                 }
                 self.done.arena_full = true;
@@ -2883,7 +2967,7 @@ impl Batch {
             if !overflow && (r.ctl.get(2) > 0 || r.ctl.get(5) < r.kit.phase_items[0][1]) {
                 self.done.relaunches += 1;
                 r.compact();
-                again.push(r);
+                again.push((r, false));
                 continue;
             }
             self.done.taken += u64::from(r.ctl.get(8));
@@ -3204,6 +3288,8 @@ struct Rebase {
     ops: Vec<OpAt>,
     scans: Vec<(usize, bool, bool)>,
     at: (u64, u64, u64),
+    /// The batch's text arena's address its descriptors name (0: none), for one mapped further (`Kit::retext`).
+    ta: u64,
 }
 
 impl Kit {
@@ -3229,6 +3315,24 @@ impl Kit {
         self.rebase.ca = ca;
         self.counts = counts;
         Ok(())
+    }
+
+    /// Its batch's text arena now at `ta` (a wrapped arena's newer wrap, the same pages at another address): each
+    /// descriptor's buffer address that named the old one written again in place. Between launches: no work of it
+    /// runs.
+    fn retext(&mut self, ta: u64) {
+        const WORDS: usize = std::mem::offset_of!(JobDesc, at) / 8;
+        let n = self.descs.buffer.length() as usize / std::mem::size_of::<JobDesc>();
+        let descs = self.descs.buffer.contents().cast::<[u64; WORDS]>();
+        for i in 0..n {
+            // SAFETY: descriptor `i` of those this buffer was made of (`JobDesc`, its addresses its first `WORDS`
+            // words); no work of the program runs between launches.
+            let words = unsafe { &mut *descs.cast::<u8>().add(i * std::mem::size_of::<JobDesc>()).cast::<[u64; WORDS]>() };
+            for w in words.iter_mut().filter(|w| **w == self.rebase.ta) {
+                *w = ta;
+            }
+        }
+        self.rebase.ta = ta;
     }
 }
 
@@ -4697,7 +4801,7 @@ impl Batch {
         job.desc.vc = job.reach(&hb.buffer, 0, true)?;
         job.desc.o = delta.reach_by(&mut job, true)?;
         job.desc.counters = job.reach(&counters.buffer.buffer, 0, true)?;
-        let a: Buffer = arena.map_or_else(|| self.dummy.buffer.clone(), |a| a.buffer.buffer.clone());
+        let a: Buffer = arena.map_or_else(|| self.dummy.buffer.clone(), |a| a.buffer());
         // Its values' texts, read only (`lat_text_less`).
         job.desc.v = job.reach(&a, 0, false)?;
         let mut maps = [0usize; 2];

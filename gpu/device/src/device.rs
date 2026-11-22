@@ -772,10 +772,25 @@ impl Drop for HostPages {
     }
 }
 
+/// Whether `reserve`'s address space maps further as its users reach it (`Reserved::map`): Metal's and the CPU
+/// backend's on a Unix host. Elsewhere it is an allocation of its first bytes, which cannot grow.
+pub fn reserve_grows(device: &Device) -> bool {
+    match device {
+        #[cfg(target_os = "macos")]
+        Device::Native(_) => true,
+        #[cfg(unix)]
+        Device::Cpu(_) => true,
+        _ => false,
+    }
+}
+
 /// `bytes` of address space (`Reserved`), its first `mapped` bytes mapped; `host_reads`: the host reads what the
 /// kernels write there (on Metal, not a sparse buffer then: private storage).
 pub fn reserve(device: &Device, bytes: usize, mapped: usize, host_reads: bool) -> Result<Reserved, String> {
     let mapped = mapped.min(bytes).max(16);
+    // Only Metal's private storage is one the host cannot read.
+    #[cfg(not(target_os = "macos"))]
+    let _ = host_reads;
     match device {
         #[cfg(target_os = "macos")]
         Device::Native(_) if host_reads => {

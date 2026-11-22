@@ -848,7 +848,7 @@ parity_test!(parity_random_texts, "random text strata", |r: &Rels| [0xb0b, 0x7e4
 parity_test!(parity_random_mixed, "random mixed text and integer strata", |r: &Rels| [0x31, 0x5157, 0xab1e].into_iter().flat_map(|s| random_mixed(r, 400, s)).collect());
 
 
-/// Cats made per row past the arena's first size: the stage runs again from the first made text, at the size wanted,
+/// Cats made per row past the arena's first size: the phase parks, the arena is mapped further, and it runs again,
 /// the rows the CPU's.
 #[test]
 fn parity_row_texts_past_the_arena() {
@@ -862,7 +862,8 @@ fn parity_row_texts_past_the_arena() {
     let (crows, ccounts, _) = run(&fx, &c, 0, false).unwrap();
     let report = report.expect("a device report");
     assert!(report.refused.is_none(), "{report:?}");
-    assert!(report.arena_reruns >= 1, "the cats fill the arena's first size: {report:?}");
+    // The cats fill the arena's first size: its pages mapped further in the same program (`Arena::grow`), no rerun.
+    assert!(report.arena_reruns == 0 && report.reruns == 0 && report.remaps >= 1, "the arena grown in place: {report:?}");
     assert!(crows.len() > 10_000, "{} rows", crows.len());
     assert_eq!(drows, crows, "the device's rows are the CPU's");
     assert_eq!(dcounts, ccounts);

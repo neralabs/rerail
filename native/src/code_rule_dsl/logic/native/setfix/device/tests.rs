@@ -1051,7 +1051,7 @@
                     let r = report.as_ref().expect("a device report");
                     assert_eq!(r.refused.is_none(), on_device, "{case}: {r:?}");
                     if on_device {
-                        assert!(r.made > 2000 && r.arena_reruns >= 1, "{case}: texts made in an arena that filled once: {r:?}");
+                        assert!(r.made > 2000 && r.arena_reruns == 0 && r.remaps >= 1, "{case}: texts made in an arena that grew in place: {r:?}");
                         // Symbols' texts read in place through the atoms directory (decision 0478 step 2e): no names
                         // uploaded, no per-symbol table made.
                         assert_eq!((r.per_symbol, r.upload_by[super::profile::UPLOAD_NAMES].0), (0, 0), "{case}: symbols read in place: {r:?}");

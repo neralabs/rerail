@@ -479,6 +479,46 @@ arena parking as a size script does.
   of 5,534 strata one program and its budget's relaunches; the mini's Metal, 5,508 of 5,535. Of the 26 or 27 left,
   23 run again past a full text arena (`arena_reruns`), and 3 or 4 once otherwise. The tests: 48 of 48 on both.
 
-Open: the text arena. A stratum's texts go into its batch's arena (`Batch::arena`, `ARENA_START`), and a text
-function past it flags the run (`TEXTFN_FULL`), which runs again in a larger one. Making it a reserved arena the
-host reads, with a text function past its mapped bytes parking its item, removes those reruns.
+## Done (2026-11-22): the text arena grows in place; every stratum is one launch, checked strictly
+
+- **The text arena is reserved address space** (`metal_join::Arena`): host-read (on Metal, the host's pages wrapped
+  over the bytes mapped), as big as the device's text arena (`text_arena_max`, the 64 MB share), with its first bytes
+  mapped. Real memory is what its texts reach.
+- **A text past its room parks its phase.** `row_text` sets the program's flag 64 (`ctl[6]`) instead of the stage's
+  counter bit (`TEXTFN_FULL`, removed). The group that counts the phase's last item then parks the phase rather than
+  push the next one: `ctl[9]` holds the phase with its top bit. The host maps twice what the texts wanted
+  (`Arena::grow`) and releases the phase (bit 30). The next launch's first group then pushes the phase's `row_text`
+  items again (`phase_texts`), and the phase counts only those.
+  - Only the text items run again. Each writes every one of its rows again whole, with its texts at new offsets. The
+    phase's other items add to counts (a step's passed rows), so running them again doubled those counts. The text
+    tests caught that.
+  - The release is the host's. A group that started after the park, in the same launch, would otherwise push the phase
+    again before the arena grew, and the phase would fill again, round after round.
+- **A remap is a rerun's launch, not the evaluation's.** A launch again for a mapped arena (a size script's park or a
+  text's) charges the run's reruns' budget (decision 0540), as the rerun it replaces did. A budget's relaunch still
+  charges the evaluation's budget.
+- **A job's text arena address is resolved again** when the arena's wrap changes (`Kit::retext`): every descriptor
+  address that named the old wrap. That covers a text function's `a` and a fold's `v`.
+- **Where the arena cannot grow**, the program stops and the runs find their arena full (`wanted` past `cap`,
+  `Run::arena_full`). They then run again in a batch whose arena is as big as they wanted, or on the host past the
+  device's text arena. That covers CUDA, OpenCL, Windows' CPU backend and anything past the 64 MB share.
+- **A wave's batch has the reserved arena too** (`submit_`). It was a fixed allocation, and a claim past it reran
+  every stratum of the wave.
+- **The check is strict** (`one_launch`): a test build panics on any stratum the device runs, recursive or not,
+  past one program and its budget's relaunches and remaps. `RERAIL_ONE_LAUNCH_CHECK=log` prints one line a stratum
+  instead. The exception is a device whose arenas cannot grow in place (`device::reserve_grows`).
+- **The tests:**
+  - `parity_row_texts_past_the_arena` and `text_functions_on_the_device_are_the_cpus` assert the arena grown in place
+    (`remaps ≥ 1`, no rerun), where they asserted a rerun.
+- **Measured** (the setfix device, join and parity tests): every stratum one program and its budget's relaunches and
+  remaps, with no rerun.
+
+  | Backend | Strata one launch | Tests |
+  |---|---|---|
+  | spark2's CPU backend | 5,531 of 5,531 | 48 of 48, strict check |
+  | The mini's Metal (M1) | 5,531 of 5,531 | 48 of 48 |
+
+  The whole `rerail-device-metal` library: 83 of 83 on spark2.
+- **Memory.** As the user chose ("commit within caps"), a recursive component's first arena (the reach, at least
+  `ARENA_REACH_BYTES`) and a head's room (within `PLACE_ROOM_BYTES`) are committed on Metal, within the device's
+  share. The text arena commits what its texts reach.

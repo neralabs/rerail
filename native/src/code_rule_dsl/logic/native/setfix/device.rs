@@ -1222,15 +1222,14 @@ fn waves_kept() -> usize {
     FLUSHED.with_borrow(HashMap::len)
 }
 
-/// The report of the last stratum the device ran or refused on this thread (taken).
 /// Decision 0603's test, of every stratum the device runs in a test build: whatever its rules and rounds, its launches
-/// are one program and its budget's relaunches (and its arena's remaps), none a rerun's, and its relaunches its items
-/// over a launch's budget. A recursive stratum's breach panics with its report. A non-recursive one's is counted
-/// where `RERAIL_ONE_LAUNCH_CHECK=log` (one line a stratum), or panics where it is set otherwise: the strata whose
-/// host reads a placed table, or that make texts, still run again past a full arena (decision 0603, open).
+/// are one program and its budget's relaunches (and its arenas' remaps, a parked claim's or text's), none a rerun's,
+/// and its relaunches its items over a launch's budget. A breach panics with its report; `RERAIL_ONE_LAUNCH_CHECK=log`
+/// prints one line a stratum instead, to count them. A device whose arenas cannot grow in place (an allocation of
+/// their first bytes: `rerail_device::device::reserve_grows`) runs a stratum again past them, and is not checked.
 fn one_launch(rep: &Report) {
     #[cfg(any(test, feature = "test-hooks"))]
-    if rep.dispatches != 0 && (rep.rounds > 0 || std::env::var_os("RERAIL_ONE_LAUNCH_CHECK").is_some()) {
+    if rep.dispatches != 0 && rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::reserve_grows) {
         // A stratum is one program; a wave's first stratum's report holds the wave's, one a stratum.
         let one = rep.waved != 0 || rep.programs == 1;
         let launches = rep.programs + rep.relaunches + rep.remaps;
@@ -1245,6 +1244,7 @@ fn one_launch(rep: &Report) {
     let _ = rep;
 }
 
+/// The report of the last stratum the device ran or refused on this thread (taken).
 pub(in crate::code_rule_dsl) fn take_report() -> Option<Report> {
     LAST.with_borrow_mut(Option::take)
 }
@@ -1795,9 +1795,9 @@ impl<'p> Run<'p> {
         self.plan.stages.iter().position(|s| makes_text(s.desc.mode))
     }
 
-    /// Whether a text function's text found the arena full (`mj::TEXTFN_FULL`).
+    /// Whether its texts found the arena full and it could not grow (`mj::Arena::grow`): its jobs wanted past its room.
     fn arena_full(&self) -> bool {
-        self.plan.stages.iter().zip(&self.counter).any(|(s, c)| makes_text(s.desc.mode) && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_FULL != 0))
+        self.plan.stages.iter().any(|s| makes_text(s.desc.mode)) && self.arena.as_ref().is_some_and(|a| a.wanted() > a.cap())
     }
 
     /// Why its rows are not the CPU's, once it ran: an aggregate's sum past 64 bits (the CPU's fold holds 128).
@@ -2039,7 +2039,11 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner)
     if opened {
         let n = WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         with_open::<Wave, _>(|w| -> Result<(), String> {
-            *w = Some((n, mj::Batch::new().map_err(|e| format!("{e:?}"))?));
+            // Its arena address space mapped as its claims reach it, as `group`'s: a claim past its pages parks and
+            // the program goes on, never a rerun. Host-read, as its strata's heads may be read on the host.
+            let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+            batch.arena_reserved(true);
+            *w = Some((n, batch));
             Ok(())
         })?;
         crate::code_rule_dsl::logic::lanes::wave::defer(Box::new(move || {
