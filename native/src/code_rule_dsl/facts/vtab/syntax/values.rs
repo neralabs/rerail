@@ -185,8 +185,10 @@ impl Values {
             self.batches.write().push(b);
         }
         for (name, src) in sources {
-            // A relation made on lookup (containment, an axis) has its rows only once a lookup asks.
-            if src.len() == 0 && !src.made_on_lookup() {
+            // A relation made on lookup (containment, an axis) has its rows only once a lookup asks. The long-text
+            // nodes are the binding a node read goes through (`LongTexts::of`): kept with none, a value's node is read
+            // in its own batch (a string's value in a Vue piece, decision 0597), not looked for in the chunk's.
+            if src.len() == 0 && !src.made_on_lookup() && name != super::LONG_TEXT_NODES {
                 continue;
             }
             let p = Arc::make_mut(parts.entry(name).or_default());

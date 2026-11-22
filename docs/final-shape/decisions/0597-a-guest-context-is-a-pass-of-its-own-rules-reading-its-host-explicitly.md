@@ -311,6 +311,9 @@ The template's findings stand at the file's lines.
    | 5.5 | a Vue template's code is the context `expression`, its identifiers the template's alone; the script is the context `script` | the two passes of a component's code |
    | 5.6 | `<li v-for="item in items">` beside `const item = 1` in the script: no-template-shadow finds the shadow through the script's export | `vue/expression` reads the script's bindings |
    | 5.7 | the Vue pack's policies find on their examples what they found before | the move kept each policy's meaning |
+   | 5.8 | a context policy's finding at a template piece's node stands at the file's line and column | rule 6: findings at the host's bytes |
+   | 5.9 | the pack's policies that read the scripts find their examples, alone and beside another policy | the script policies are context policies |
+   | 5.10 | a policy's own rule of a library's context reads the library's relations of that context by their own names | a member lowered apart is completed against the library's instances |
 
    As built (2026-11-22), rungs 5.1-5.5:
    - 5.1-5.4 (474213092b, a39939f137): a region root's holes are its host's (`holes`); `python/format-spec`; an
@@ -366,8 +369,8 @@ The template's findings stand at the file's lines.
      it above. `front::graph` now orders each copy (`GUEST_COPY`) after each produced relation, never negatively,
      and not where the answer reaches the copy (a cycle). Test: `a_guest_copy_reads_the_pieces_a_request_made_in_its_run`.
    - A v-for alias is `const [A]=0`: `let [x]=0` is an assignment to `let[x]`, no declaration.
-   - `earlier` is CPython's visit order (`visit_index`, Python documents only): no-unused-vars orders a piece's
-     declarations by their bytes. Its finding stands at the declaring attribute (`tvar_at`).
+   - `earlier` was CPython's visit order (`visit_index`, Python documents only): no-unused-vars orders a piece's
+     declarations by their bytes (`used_after`). (Since 5.9 `visit_index` is the tape's order elsewhere, below.)
    - 5.7: `the_vue_packs_template_policies_find_their_examples`, alone and beside a plain program: no-unused-vars,
      no-use-v-if-with-v-for, valid-v-for, no-unused-refs, no-template-shadow.
    - **Found, open: a pack's Vue policies beside a context.** Beside no-template-shadow, which brings the contexts
@@ -376,6 +379,50 @@ The template's findings stand at the file's lines.
      the pack's 23 policies read them so (11 through `vue/component` or `vue/mutation`, 4 through `vue/code`). Rule 5
      needs each to read the contexts: their rules over the script and the template code run in the contexts, and
      their findings stand at the host's bytes (rule 6's context policy, not built).
+
+   As built (2026-11-22), rungs 5.7-5.10 (the user's choice: context policies):
+   - **The 15 policies are context policies.** Each policy's rules over the script run in `script`
+     (`.context script of vue roots vscript_root exports …`), its rules over the template code in `expression`, and
+     the host reports what they export (`.from script dupe_key_in`). A relation both read is two relations, one per
+     context (no-mutating-props' `script_mutated_in` and `template_mutated_in`, no-unused-refs' `used` read as
+     `script_reads` and `template_reads`): a relation exported from two contexts ran all its rules in both, and the
+     script's read `vcode_el` from the host. A template rule reads the script's props through `.from script tcomp,
+     tprop, props_var for expression`. `vue/code`'s `tvar_at` is gone: a finding stands at its piece node's own
+     bytes (`guest_place` rows for a program's nodes, `guests::GuestRows::document`; rung 5.8).
+   - **A member is completed against the library's instances.** A pack member's part is lowered without the
+     library's rules, and its rules read a library relation by its own name; the combined program holds it only as
+     a context's instance. `contexts::held_instance` names that instance (the reading pass's own, else the one
+     context that exports it), `Renaming::rename` reads it, and `Plan::rebind` gives the combine's `Passes` work when
+     a rule reads one (before: "Derived vname is not a relation", "no such table main.tvar"). A pass's plan stops at
+     what the engine makes on request (`on_request_rule`, `made_on_request`) and at what a made pass reads from the
+     host (`from_host`), so neither is made again inside a context.
+   - **What a pass does not hold gives nothing there.** A library relation a policy extends from two contexts
+     (`vue/mutation`'s `vmut_ask`) reaches, from one pass, a relation only the other holds (`vprops_call`, held only
+     as `rr_pass_script_vprops_call`): `contexts::unseen`. A rule that reads one gives nothing and is not written; a
+     negation of one holds and is dropped (before: "no such table: main.vprops_call" beside no-mutating-props).
+   - **A node a relation carries is not guarded.** `view_nodes` guards only the node variables a view alone binds:
+     a node a relation of the program binds is already the pass's, or a host node it carries on purpose
+     (`tfree(r, x, a)`'s attribute `a`). Guarded, a template rule's `docof(a, d)` found no file to join the
+     script's props on.
+   - **A request reads what its readers read.** `rr_value_req` and a reader's ask (`rr_value_req_by_<reader>_<col>`)
+     made for a context's rule ask of the context's nodes: hide's `as_read` keeps their guest facts, where it named
+     `kind(s, "string")` in the host's grammar and no string of a piece was asked a value. Hide joins a rule's
+     definite columns' grammars first: `value`'s node column may hold an `eslintDirective` comment's node (a library
+     asks for those), and joined with `vexpr`'s TypeScript node it left `$e` of no grammar.
+   - **A batch's long-text nodes are kept when empty.** `values::Values::add` skipped an empty source, and the
+     binding a node read goes through (`LongTexts::of`) then looked a piece's string up in the chunk's batch, not its
+     own: `value` of `props: ['foo']`'s string was none.
+   - **`visit_index` is the tape's order outside Python**, and a guest's nodes have theirs (`tree::Tree::visits`):
+     `earlier` held of no TypeScript node, so no-dupe-keys found no repeated key and no-watch-after-await no watch
+     after an await. Test: `visit_index_outside_python_is_the_tape_order` (rerail-tests-lang).
+   - Tests: `the_vue_packs_template_policies_find_their_examples` (5.7),
+     `a_finding_at_a_pieces_node_stands_at_its_own_bytes` (5.8), `the_vue_packs_script_policies_find_their_examples`
+     (5.9: no-async-in-computed-properties, no-dupe-keys, no-export-in-script-setup, no-mutating-props,
+     no-ref-as-operand, no-setup-props-reactivity-loss, no-side-effects-in-computed-properties,
+     no-watch-after-await, require-valid-default-prop, return-in-computed-property), and
+     `a_policys_rule_of_a_librarys_context_reads_the_librarys_relations` (5.10). Each case runs alone and beside
+     another policy, and its findings are the same. `a_components_code_is_pieces_made_where_a_rule_asks` reads the
+     pieces' nodes in the contexts now: with `vue/component`'s contexts in the program a host rule reads none (step 4).
 6. **Measure.** corpus0 × B-now against the targets (one pack 0.786 T, normal packs 2.428 T, 463 findings,
    d067ec2ebf6f).
 

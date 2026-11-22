@@ -2,8 +2,8 @@
 // the names each piece reads, the template's alone, and which of them a script of the component declares, read
 // through the context `script`'s export (vue/script).
 //
-// The extraction is the host's (rule 3):
-//   vexpr_root(g, role)     g is a program of the template's code in role (vue/code's vcode): the roots
+// The extraction is the host's (rule 3), vue/code's, which declares the context:
+//   vexpr_root(g, role)     g is a program of the template's code in role (vcode): the roots
 // The context's, exported (its rules are tsx/names', over the template code's nodes alone), each by its piece's root:
 //   vexpr_ref(g, x)         piece g reads x, which nothing inside it declares
 //   vexpr_script_ref(g, x)  the same, x declared by a script of g's document (`script`'s vscript_decl)
@@ -18,8 +18,6 @@
 //   <script setup>const count = base</script> <template>{{ count + other }}</template>
 //     vtemplate_ref: count, other (never the script's `base`); vtemplate_script_ref: count
 #include "vue/script.rerail"
-.decl vexpr_root(g: node, role: symbol)
-vexpr_root(g, role) :- vcode(_, g, role).
 .context expression of vue roots vexpr_root exports vexpr_ref, vexpr_script_ref, vexpr_bind
 .from script vscript_decl as vexpr_script_decl for expression
 .from expression vexpr_ref as vexpr_q_ref, vexpr_script_ref as vexpr_q_script_ref, vexpr_bind as vexpr_q_bind

@@ -317,11 +317,15 @@ struct Plan {
     new: BTreeMap<String, BTreeSet<String>>,
     /// The host's relations (`passes`'s doc).
     host: BTreeSet<String>,
+    /// Whether a made pass's rule reads a relation by its own name that the pass holds as its instance alone
+    /// (`Renaming::rename`'s last case): a member's rule of a library's context reading the library's `vname`, which
+    /// the combined library holds as `rr_pass_script_vname`.
+    rebind: bool,
 }
 
 impl Plan {
     fn work(&self, d: &Declared) -> bool {
-        d.any() || self.new.values().any(|s| !s.is_empty())
+        d.any() || self.rebind || self.new.values().any(|s| !s.is_empty())
     }
 }
 
@@ -335,7 +339,16 @@ fn plan(v: &Version, d: &Declared) -> Plan {
         // A view is read as it is, though a combined program derives `kind` and `docof` from `node`.
         let view = |x: &str| super::plan::corpus::hiding::VIEWS.contains(&x);
         let holes: BTreeSet<String> = c.holes.iter().chain(&c.other_holes).map(|h| d.name_in(&c.host, h)).collect();
-        let stop = |x: &str| of_a_context(x) || x == roots || holes.contains(x) || view(x) || if c.made { c.reads.contains(x) } else { d.read_of(&c.name, x).is_some() } || !derived(x);
+        // A host relation a pass reads `.from` the host is the host's for every pass (rule 5: one meaning): another
+        // context that reaches it (no-mutating-props' script reaching vue/code's `vcode_el` through the library's
+        // `vmut_ask`) reads it there, and does not take it from the host.
+        let from_host = |x: &str| d.reads.iter().any(|r| r.source == d.language && r.rel == x) || d.contexts.values().any(|o| o.made && o.reads.contains(x));
+        // A node's attribute answered on request (`value`, `node_text`), its requests and eager rows: the engine's,
+        // one function of the node in every pass. A pack's completion (`plan::corpus`'s tail) runs after its library's
+        // rewrite made them derived; an instance of `rr_value_req` was never answered (vue/component's `vname` of an
+        // array's string had no value in the context `script`).
+        let engine = |x: &str| super::rr::lower::on_request_rule(x) || super::rr::lower::made_on_request(x);
+        let stop = |x: &str| of_a_context(x) || engine(x) || x == roots || holes.contains(x) || view(x) || from_host(x) || if c.made { c.reads.contains(x) } else { d.read_of(&c.name, x).is_some() } || !derived(x);
         let mut set: BTreeSet<String> = BTreeSet::new();
         let mut todo: Vec<String> = Vec::new();
         if c.made {
@@ -389,7 +402,17 @@ fn plan(v: &Version, d: &Declared) -> Plan {
             }
         }
     }
-    Plan { new, host }
+    let rebind = v.rules().any(|r| {
+        let head = v.rel_name(r.head().rel());
+        (of_a_context(head) || host.contains(head)) && {
+            let pass = d.pass_of(head);
+            r.reads().any(|a| {
+                let x = v.rel_name(a.rel());
+                held_instance(v, d, pass, x).is_some() || unseen(v, d, pass, x)
+            })
+        }
+    });
+    Plan { new, host, rebind }
 }
 
 /// A rule of pass `pass` written with each relation as that pass names it.
@@ -401,6 +424,47 @@ struct Renaming<'a> {
     own: Option<&'a BTreeSet<String>>,
 }
 
+/// The instance a rule of pass `pass` reads for `rel`, a relation the program holds only as instances, where nothing
+/// else names it (`Renaming::rename`'s last cases): the pass's own (a member's rule of a library's context reading the
+/// library's `vname`); else, for an export, its exporter's, as the library's `.from` said (a member's host rule
+/// reading vue/code's `tvar`, which its part, lowered without the library's `.from`, left by its own name). One
+/// exporter only: two are no one meaning.
+fn held_instance(v: &Version, d: &Declared, pass: &str, rel: &str) -> Option<String> {
+    let derived = |x: &str| v.rel(x).is_some_and(|id| v.heads(id).next().is_some());
+    if of_a_context(rel) || derived(rel) {
+        return None;
+    }
+    if pass != d.language {
+        let held = instance(pass, rel);
+        if derived(&held) || v.declares(&held) {
+            return Some(held);
+        }
+    }
+    let mut exporters = d.contexts.values().filter(|c| c.made && c.name != pass && c.exports.contains(rel)).map(|c| instance(&c.name, rel)).filter(|i| derived(i));
+    let one = exporters.next()?;
+    exporters.next().is_none().then_some(one)
+}
+
+/// Whether `rel`, read by a rule of pass `pass`, is no relation of that pass: the program holds it only as another
+/// pass's instance, not an export (vue/component's `vprops_call`, which only `script` holds). Its rows are another
+/// pass's nodes', none of this pass's (rule 2), so it holds none here: a rule that reads it gives nothing, and its
+/// negation holds. A library relation a policy extends from two contexts (vue/mutation's `vmut_ask`, filled by
+/// no-mutating-props from the script and from the template) reaches it from the pass that cannot read it.
+fn unseen(v: &Version, d: &Declared, pass: &str, rel: &str) -> bool {
+    let derived = |x: &str| v.rel(x).is_some_and(|id| v.heads(id).next().is_some());
+    !of_a_context(rel)
+        && !derived(rel)
+        && !v.declares(rel)
+        && d.read_of(pass, rel).is_none()
+        && held_instance(v, d, pass, rel).is_none()
+        && d.contexts.values().any(|c| c.made && c.name != pass && derived(&instance(&c.name, rel)))
+}
+
+/// Whether rule `r` of pass `pass` reads, not negated, a relation the pass does not hold (`unseen`): it gives nothing.
+fn reads_unseen(v: &Version, d: &Declared, pass: &str, r: RuleRef<'_>) -> bool {
+    r.body().filter_map(|l| l.atom()).any(|a| !a.neg() && unseen(v, d, pass, v.rel_name(a.rel())))
+}
+
 impl Renaming<'_> {
     fn rename(&self, rel: &str) -> Option<String> {
         if let Some(r) = self.d.read_of(self.pass, rel) {
@@ -410,15 +474,10 @@ impl Renaming<'_> {
             if own.contains(rel) {
                 return Some(instance(self.pass, rel));
             }
-            // What the pass holds already that the host no longer does: a library's export a program's rule of the
-            // context reads by its own name (`ann_in`), which the made library holds as the instance alone.
-            let derived = |x: &str| self.v.rel(x).is_some_and(|id| self.v.heads(id).next().is_some());
-            let held = instance(self.pass, rel);
-            if !derived(rel) && derived(&held) {
-                return Some(held);
-            }
         }
-        None
+        // What the pass holds already that the host no longer does: a library's export a program's rule of the
+        // context reads by its own name (`ann_in`), which the made library holds as the instance alone.
+        held_instance(self.v, self.d, self.pass, rel)
     }
 }
 
@@ -429,11 +488,15 @@ impl Rewrite for Renaming<'_> {
     fn atom_as(&mut self, a: AtomRef<'_>) -> Option<(String, bool, bool)> {
         self.rename(self.v.rel_name(a.rel())).map(|r| (r, a.neg(), a.gated()))
     }
+    // A negation of a relation the pass does not hold (`unseen`) holds.
+    fn keep(&mut self, l: super::program_image::LitRef<'_>) -> bool {
+        l.atom().is_none_or(|a| !(a.neg() && unseen(self.v, self.d, self.pass, self.v.rel_name(a.rel()))))
+    }
 }
 
-/// The node variables of rule `r` of pass `pass` that a view reads (a positive atom of a relation no rule derives,
-/// not another pass's, in a column of type `node`): each joined with the pass's nodes, so a context's views give its
-/// roots' nodes alone (0597 rule 2). A guest's host (0431): `host_node(n, h)` and `guest_of(n, s)` give a guest node's
+/// The node variables of rule `r` of pass `pass` that only a view reads (a positive atom of a relation no rule
+/// derives, not another pass's, in a column of type `node`): each joined with the pass's nodes, so a context's views
+/// give its roots' nodes alone (0597 rule 2). A guest's host (0431): `host_node(n, h)` and `guest_of(n, s)` give a guest node's
 /// host's node, which is no node of the guest's context; another view of it is bounded (rule 1).
 const HOSTS_NODE: &[(&str, usize)] = &[("host_node", 1), ("guest_of", 1)];
 
@@ -458,8 +521,24 @@ fn view_nodes<'v>(v: &'v Version, d: &Declared, pass: &str, r: RuleRef<'v>) -> V
             (!a.neg() && read_in_place && !of_a_context(rel) && d.read_of(pass, rel).is_none()).then_some((a, rel))
         })
         .collect();
-    // The rule's tokens: never bounded.
+    // The rule's tokens: never bounded. Nor a node a relation of the program binds (a pass's own, a host's read, a
+    // library's export): its rows are already the pass's nodes, or a host's node it carries on purpose (vue/code's
+    // `tfree(r, x, a)`: `a` is the template's attribute, so a template rule's `docof(a, d)` found no file to join the
+    // script's props on, decision 0597).
     let mut seen = BTreeSet::new();
+    for l in r.body() {
+        let L::Atom(a) = l.view() else { continue };
+        let rel = v.rel_name(a.rel());
+        let in_place = super::plan::corpus::hiding::VIEWS.contains(&rel) || (base.contains(rel) && !derived(rel));
+        if a.neg() || (in_place && !of_a_context(rel) && d.read_of(pass, rel).is_none()) {
+            continue;
+        }
+        for t in a.args() {
+            if let TermRef::Var(slot) = t {
+                seen.insert(r.var(slot).0);
+            }
+        }
+    }
     for (a, rel) in &views {
         for (i, t) in a.args().enumerate() {
             if let TermRef::Var(slot) = t
@@ -530,11 +609,15 @@ fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<
     for r in v.rules() {
         let head = v.rel_name(r.head().rel());
         if plan.host.contains(head) {
-            finish(b.rewrite(v, r, &mut Renaming { v, d, pass: &d.language, own: None }).finish())?;
+            if !reads_unseen(v, d, &d.language, r) {
+                finish(b.rewrite(v, r, &mut Renaming { v, d, pass: &d.language, own: None }).finish())?;
+            }
         } else if of_a_context(head) {
             // A made pass's instance, completed: its reads of what it makes its own now read that.
             let pass = d.pass_of(head);
-            finish(b.rewrite(v, r, &mut Renaming { v, d, pass, own: plan.new.get(pass) }).finish())?;
+            if !reads_unseen(v, d, pass, r) {
+                finish(b.rewrite(v, r, &mut Renaming { v, d, pass, own: plan.new.get(pass) }).finish())?;
+            }
         }
     }
     for c in d.contexts.values().filter(|c| !c.made) {
@@ -544,7 +627,7 @@ fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<
         let nodes = instance(c, NODES);
         for rel in own {
             let Some(id) = v.rel(rel) else { continue };
-            for r in v.heads(id).filter(|&r| !reads_own_export(v, d, c, r)) {
+            for r in v.heads(id).filter(|&r| !reads_own_export(v, d, c, r) && !reads_unseen(v, d, c, r)) {
                 let guards = view_nodes(v, d, c, r);
                 let mut rb = b.rewrite(v, r, &mut Renaming { v, d, pass: c, own: Some(own) });
                 for t in &guards {

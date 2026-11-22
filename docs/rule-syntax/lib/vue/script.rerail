@@ -2,8 +2,8 @@
 // the template's code (vue/expression) and the component's rules through its exports. Its rules are vue/component's
 // and tsx/names', over the scripts' nodes alone.
 //
-// The extraction is the host's (rule 3):
-//   vscript_root(p, d)       p is the program of a <script> block of document d (vue/component's vscript): the roots
+// The extraction is the host's (rule 3), vue/component's, which declares the context:
+//   vscript_root(p, d)       p is the program of a <script> block of document d (vscript): the roots
 // The context's, exported:
 //   vscript_decl(d, x)       a script of document d declares x at its top level (imports included)
 //   vscript_option(d, g, x)  a component of document d declares x in its option g (vue/component's vname: props,
@@ -15,12 +15,8 @@
 //   <script setup>import { ref } from "vue"; const item = ref(1)</script>
 //     vscript_name(d, "ref"), vscript_name(d, "item")
 #include "vue/component.rerail"
-.decl vscript_root(p: node, d: number)
-vscript_root(p, d) :- vscript(p, _), docof(p, d).
 .context script of vue roots vscript_root exports vscript_decl, vscript_option, vscript_prop
 .from script vscript_decl as vscript_q_decl, vscript_option as vscript_q_option, vscript_prop as vscript_q_prop
-// Which programs are scripts, and which <script setup>, is the host's (its start tags): vue/component's rules read it.
-.from vue vscript for script
 .decl vscript_name(d: number, x: symbol)
 vscript_name(d, x) :- vscript_q_decl(d, x).
 .decl vscript_option_name(d: number, g: symbol, x: symbol)

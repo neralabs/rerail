@@ -90,9 +90,11 @@ only on `parsed`, `kind`, `field`, `child` and core's axes. Guest positions are 
 **As built (decision 0597, step 5).** The engine makes them: the registry's demand embeddings (`vue-script`, read
 as "typescript", and the five template roles) build a file's pieces where a rule asks (`embed::vue_code`), each at
 the file's bytes. The alias's wrapper is `const [A]=0`. `lib/vue/script.rerail` and `lib/vue/expression.rerail` are
-the contexts `script` and `expression`; no-template-shadow reads their exports. The other policies still read the
-script and the template code in host rules. Alone they find what they did; beside a context in a pack they find
-nothing there (0597's step 5, "Found, open").
+the contexts `script` and `expression`. The 15 policies that read the script or the template code are context
+policies: their rules over the script run in `script`, those over the template code in `expression`, and the host
+reports what the contexts export, each finding at its node's own bytes in the file. A relation both read is one per
+context (no-mutating-props' `script_mutated_in` and `template_mutated_in`). Each finds its examples alone and beside
+another policy (0597's rungs 5.7-5.10).
 
 ## Review fixes
 

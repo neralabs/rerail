@@ -432,6 +432,17 @@ fn modules_and_packages_follow_t() {
     assert_eq!(module("src/lib.rs"), "crate");
 }
 
+/// Outside Python, `visit_index` is the tape's order (core.rerail's `earlier`: start offset): a node, then its
+/// children. A TypeScript document had none, and `earlier` held of no node of it.
+#[test]
+fn visit_index_outside_python_is_the_tape_order() {
+    let rows = core_rows(vec![document(1, "m.ts", "typescript", "const a = { x: 1, y: 2 }\n")]);
+    let index = |node: &str| rows["visit_index"].iter().find_map(|r| r.strip_prefix(&format!("{node} "))).and_then(|i| i.parse::<i64>().ok()).unwrap_or_else(|| panic!("no {node}: {:?}", rows["visit_index"]));
+    assert_eq!(index("program"), 0);
+    let (x, y) = (index("pair'x: 1'"), index("pair'y: 2'"));
+    assert!(index("object'{ x: 1, y: 2 }'") < x && x < index("property_identifier'x'") && x < y, "{:?}", rows["visit_index"]);
+}
+
 /// One document of `source` in `label`'s dialect, keyed `key`, with its tape (W's values read it).
 fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();

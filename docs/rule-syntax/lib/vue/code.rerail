@@ -18,8 +18,6 @@
 //                           at 0 and i at 1)
 //   vcode_el(a, e)          the element whose code a is: the attribute's element, or the interpolation's parent
 //   tvar(e, x, id, k)       element e declares template variable x at identifier id; k is "v-for" or "scope"
-//   tvar_at(id, a)          the attribute a whose code declares the variable at id: where a finding at it stands (a
-//                           piece is a document never shown, decision 0597)
 //   tdestructured(id)       the variable is destructured: `{ a }`, `[a]` inside an alias or a parameter
 //   tref(r, x, a)           identifier r of a's code reads x, which nothing inside that code declares
 //   tbind(r, id)            r reads the template variable declared at id (the nearest element declaring its name)
@@ -29,6 +27,12 @@
 //   <li v-for="(item, i) in items" :key="item.id">{{ item.name }}</li>
 //     tvar(li, "item", …, "v-for"), tvar(li, "i", …, "v-for"); `item` of :key and of {{ }} tbind to it;
 //     `items` is tfree (the v-for list is read outside the element's own variables)
+//
+// The pieces are the context `expression` (decision 0597): vcode and vcode_el are the host's (rule 3), every other
+// relation here the context's, over the pieces' nodes alone, its host relations read `.from vue`. The host reads them
+// through the context: a node of a piece is a value it may hold, join and report at (a finding stands at the node's
+// own bytes), never one its views see (`text`, `kind`, `line` of it are nothing to a host rule). A policy that reads
+// a piece's tree does so in the context: its rules there, its finding's relation exported (vue/expression).
 #include "vue/template.rerail"
 #include "tsx/names.rerail"
 //   ref(r, x, space), ref_site(r, site), decl_site(s, x, site, form, space)
@@ -50,6 +54,11 @@ vcode(i, g, "vue-expression") :- kind(i, "interpolation"), child(i, raw, _), kin
 .decl vcode_el(a: node, e: node)
 vcode_el(a, e) :- vattr(e, a), vcode(a, _, _).
 vcode_el(i, e) :- kind(i, "interpolation"), vcode(i, _, _), nearest(i, e, vel_kind), vel(e).
+.decl vexpr_root(g: node, role: symbol)
+vexpr_root(g, role) :- vcode(_, g, role).
+.context expression of vue roots vexpr_root exports vexpr, vparams, vfor_pattern, vfor, vfor_alias, tvar, tdestructured, tdeclares, tref, tref_in, tbind, tfree
+.from vue vcode, vcode_el, vdir, vattr, vel_parent for expression
+.from expression vexpr, vparams, vfor_pattern, vfor, vfor_alias, tvar, tdestructured, tdeclares, tref, tref_in, tbind, tfree
 
 .decl vexpr(a: node, x: node)
 vexpr(a, x) :- vcode(a, g, role), (role = "vue-expression" ; role = "vue-for-source"),
@@ -74,8 +83,6 @@ tvar(e, x, id, "v-for") :- vdir(e, a, "for", _), vfor_pattern(a, l), has(l, id, 
 .decl tvar_kind(k: symbol)
 tvar_kind("identifier"). tvar_kind("shorthand_property_identifier_pattern").
 tvar(e, x, id, "scope") :- vattr(e, a), vparams(a, f), !vdir(e, a, "for", _), decl_site(f, x, id, "param", "value").
-.decl tvar_at(id: node, a: node)
-tvar_at(id, a) :- tvar(e, _, id, _), vattr(e, a), vcode(a, g, _), within(id, g).
 .decl tdestructured(id: node)
 tdestructured(id) :- tvar(e, _, id, "v-for"), vdir(e, a, "for", _), vfor_pattern(a, l), inside(id, q, tpattern_kind),
     q != l.

@@ -127,8 +127,12 @@ fn context_grammars(passes: &[crate::code_rule_dsl::logic::passes_made::Made], c
 /// What a rule reads of a guest (decision 0597 step 4): a guest a context reads is read by the context's rules alone.
 /// A host rule carries its nodes as values (the context's roots, an export's rows), but reads none: its facts drop
 /// them, so it is not cloned or copied for them, and its views of them are bounded, as of any node not shown.
+/// A node attribute's request (`rr_value_req`, a reader's ask `rr_value_req_by_<reader>_<col>`) reads what its
+/// readers read: made for a context's rule, it asks of the context's nodes, whose kinds are their grammar's. Its facts
+/// dropped, `kind(s, "string")` was named in the host's grammar, and no string of a Vue piece was asked a value.
 fn as_read(rule: &W, mut facts: Facts, grammars: &BTreeSet<String>) -> Facts {
-    if !grammars.is_empty() && !crate::code_rule_dsl::logic::passes_made::of_a_context(&rule.head) {
+    let request = |h: &str| crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| h == a.req || h.strip_prefix(a.req).is_some_and(|rest| rest.starts_with("_by_")));
+    if !grammars.is_empty() && !crate::code_rule_dsl::logic::passes_made::of_a_context(&rule.head) && !request(&rule.head) {
         facts.retain(|_, f| !(f.scoped && f.grammar.as_ref().is_some_and(|g| grammars.contains(g))));
     }
     facts
@@ -1382,16 +1386,23 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
             }
         }
     }
-    // Derived relations' carried columns.
-    for a in positive() {
-        if let Some(cols) = carried.get(a.rel.as_str()) {
+    // Derived relations' carried columns: the definite ones first. A rule's atoms bind one variable together, so a
+    // node a definite column names a grammar of is that grammar's whatever a column that only may hold a guest's node
+    // says: `value`'s node may be an `eslintDirective` comment's (a library asks for those), and joined with
+    // `vexpr`'s TypeScript node, a context's `kind(e, "string"), value(e, x)` knew no grammar and named the kind in
+    // the host's (decision 0597).
+    for definite in [true, false] {
+        for a in positive() {
+            let Some(cols) = carried.get(a.rel.as_str()) else { continue };
             for (c, f) in cols.iter().enumerate() {
                 // A column rules fill from guests of several grammars (`""`: a rule per dialect of a view, decision
                 // 0222) says nothing of this rule's: a guest relation here names it.
-                if (f.scoped || f.grammar.is_some())
+                if (f.definite && f.scoped) == definite
+                    && (f.scoped || f.grammar.is_some())
                     && let Some(x) = a.args.get(c).and_then(S::var)
                 {
-                    let grammar = f.grammar.clone().filter(|g| !g.is_empty());
+                    let named = facts.get(&x).is_some_and(|e| e.definite && e.grammar.as_ref().is_some_and(|g| !g.is_empty()));
+                    let grammar = f.grammar.clone().filter(|g| !g.is_empty() && (definite || !named));
                     facts.entry(x).or_default().join(&Fact { definite: f.definite && f.scoped, grammar, ..f.clone() });
                 }
             }

@@ -15,8 +15,13 @@
 //! for one is refused when it is compiled.
 //!
 //! ```text
-//! visit_index(n, i)            n's place in CPython's `ast` visit order, from 0 per document (Python documents)
+//! visit_index(n, i)            n's place in the language's visit order, from 0 per document: CPython's `ast`
+//!                              order in a Python document, the tape's elsewhere
 //! ```
+//!
+//! Outside Python the order is the tape's: a node, then its children in order, so start offset, an ancestor before
+//! the nodes it starts with (core.rerail's `earlier`). Before, only Python documents had rows, and `earlier` held of no
+//! other language's nodes: a Vue component's script (decision 0597's context `script`) found no repeated key.
 //!
 //! The visit order is `ast.NodeVisitor`'s: a node, then its fields in their `_fields` order. Where tree-sitter's
 //! children are in another order, they are taken in CPython's (`Tree::order`): a def's name, parameters, body, its
@@ -117,8 +122,14 @@ impl Tree {
                 }
             }
         }
-        if self.visit_index && python && let Some(&root) = p.nodes().next().map(|(_, x)| x).as_ref() {
-            Order { f, dialect, p, next: 0, out: &mut self.visit_indexes }.run(root);
+        self.visits(p, dialect, python);
+    }
+
+    /// `visit_index` of `p`'s nodes (`python`: in CPython's order). A guest's too: a program's nodes (a Vue
+    /// component's script, decision 0597) are a document of their own, which `earlier` orders.
+    pub(super) fn visits(&mut self, p: &Projected, dialect: &Dialect, python: bool) {
+        if self.visit_index && let Some(&root) = p.nodes().next().map(|(_, x)| x).as_ref() {
+            Order { f: &p.facts, dialect, p, python, next: 0, out: &mut self.visit_indexes }.run(root);
         }
     }
 
@@ -151,6 +162,8 @@ struct Order<'a> {
     f: &'a Facts,
     dialect: &'a Dialect,
     p: &'a Projected,
+    /// CPython's order; else the tape's.
+    python: bool,
     next: i64,
     out: &'a mut Vec<[i64; 2]>,
 }
@@ -195,6 +208,9 @@ impl Order<'_> {
     /// `id`'s children in CPython's order; `decorators`: a definition's, from the `decorated_definition` around it.
     fn children(&self, id: u32, decorators: Vec<u32>) -> Vec<Step> {
         let children = self.f.children(id);
+        if !self.python {
+            return children.iter().copied().map(visit).collect();
+        }
         let with_field = |names: &[&str]| children.iter().copied().filter(|&c| names.contains(&self.field(c))).map(visit).collect::<Vec<_>>();
         match self.kind(id) {
             "decorated_definition" => {

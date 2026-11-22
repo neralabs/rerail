@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.vue"
 #include "vue/code.rerail"
-//   tvar(e, x, id, k), tvar_at(id, a), tbind(r, id), tdestructured(id), vel_name(e, x)
+//   tvar(e, x, id, k), tbind(r, id), tdestructured(id), vel_name(e, x)
 
 // eslint-plugin-vue's no-unused-vars: a variable a template element declares (a v-for alias, a v-slot, slot-scope or
 // scope parameter) that no template code reads. Positional variables are checked from the last: an unused one
@@ -15,17 +15,19 @@
 //   <comp v-slot="{ a, b }">{{ b }}</comp>                    a is reported: it is destructured
 .violation unused_var(at: node, x: symbol) code "vue/no-unused-vars" "'{x}' is defined but never used."
     suppress eslint "vue/no-unused-vars"
-// A finding stands at the attribute that declares the variable (its identifier is a node of the attribute's code).
-unused_var(a, x) :- tvar(e, x, id, k), !used(id), !ignored(x), !used_after(e, id, k), !tag_use(e, x), tvar_at(id, a).
-unused_var(a, x) :- tvar(e, x, id, k), !used(id), !ignored(x), used_after(e, id, k), tdestructured(id),
-    !tag_use(e, x), tvar_at(id, a).
+unused_var(id, x) :- tvar(e, x, id, k), !used(id), !ignored(x), !used_after(e, id, k), !tag_use(e, x).
+unused_var(id, x) :- tvar(e, x, id, k), !used(id), !ignored(x), used_after(e, id, k), tdestructured(id),
+    !tag_use(e, x).
 .decl used(id: node)
 used(id) :- tbind(_, id).
 .decl ignored(x: symbol)
 ignored(x) :- tvar(_, x, _, _), option("ignorePattern", p), match(cat(".*(?:", p, ").*"), x).
 // used_after(e, id, k): a variable of the same kind, declared after id on e, is used. After is by source bytes
-// (`earlier` is CPython's visit order, made for Python documents only).
+// (`earlier` is CPython's visit order, made for Python documents only), which the context `expression` reads: the
+// identifiers are its nodes (decision 0597).
 .decl used_after(e: node, id: node, k: symbol)
 used_after(e, id, k) :- tvar(e, _, id, k), tvar(e, _, j, k), node(_, id, _, s, _), node(_, j, _, t, _), s < t, used(j).
+.context expression of vue roots vexpr_root exports used_after
+.from expression used_after
 .decl tag_use(e: node, x: symbol)
 tag_use(e, x) :- tvar(e, x, _, _), has(e, c, vel_kind), vel_name(c, x).

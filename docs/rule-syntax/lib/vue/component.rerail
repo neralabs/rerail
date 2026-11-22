@@ -27,6 +27,11 @@
 //
 //   export default { props: ['a'], computed: { b() { return 1 } }, data() { return { c: 1 } } }
 //     vcomp(o); vname(o, "props", "a", …), vname(o, "computed", "b", …), vname(o, "data", "c", …); vcomputed(o, "b", f)
+//
+// The scripts are the context `script` (decision 0597): vscript, vscript_setup and vsetup_doc are the host's (its
+// markup, rule 3), every other relation here the context's, over the scripts' nodes alone. A policy that reads a
+// script does so in the context: its rules there, its finding's relation exported, read by the host's `.violation`
+// (vue/script); a finding stands at the node's own bytes.
 #include "vue/code.rerail"
 #include "tsx/eslint-a-common.rerail"
 //   deparen(e, x), key_static(k, x), static_prop(n, o, x), call_arg(c, a, i), function_node(f)
@@ -43,6 +48,10 @@ vscript_setup(t) :- kind(t, "start_tag"), child(t, a, _), kind(a, "attribute"), 
 vsetup_doc(d) :- kind(se, "script_element"), child(se, t, 0), vscript_setup(t), docof(se, d).
 .decl vin_setup(n: node)  // n is code of <script setup>
 vin_setup(n) :- vscript(p, "true"), within(n, p).
+.decl vscript_root(p: node, d: number)
+vscript_root(p, d) :- vscript(p, _), docof(p, d).
+.context script of vue roots vscript_root exports vcomp
+.from vue vscript, vsetup_doc for script
 
 // ---- the component object ------------------------------------------------------------------------------------------
 .decl vcomp(o: node)

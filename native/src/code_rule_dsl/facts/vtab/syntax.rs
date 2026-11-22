@@ -3569,6 +3569,7 @@ impl Batch {
                 extra.nodes(p, &mut string);
                 if let Some(dialect) = dialect {
                     tree.operators(p, dialect, &mut string);
+                    tree.visits(p, dialect, python == Some(tag));
                 }
             }
             // A guest's are read only by a producer of guests' rows (string annotations); the others' are its file's.
