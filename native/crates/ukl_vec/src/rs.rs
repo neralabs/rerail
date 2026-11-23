@@ -639,12 +639,18 @@ impl Em<'_> {
         32 * self.p as usize
     }
 
-    /// The variables function `id` keeps (its locals but its parameters), by offset.
+    /// Variable node `local`'s number in its function (its parameters first, then its declarations in order):
+    /// what names a variable, not its offset in the frame, which variables of scopes apart share (a loop's counter
+    /// and a later declaration's), each its own Rust variable, of one value or each lane's apart.
+    fn vid(&self, local: usize) -> u32 {
+        self.v.w(local, 3) & crate::vector::VAR_IN_FUNCTION
+    }
+
+    /// The variables function `id` keeps (its locals but its parameters), by number (`vid`).
     fn kept(&self, id: u32) -> Vec<u32> {
         let b = self.bodies[&id];
         let np = self.v.w(b, 6) as usize;
-        let params: Vec<u32> = (0..np).map(|k| self.v.w(b, 7 + 2 * k)).collect();
-        let mut offs: Vec<u32> = (b + 1..b + self.v.size(b)).filter(|&i| self.v.kind(i) == Kind::Local).map(|i| self.v.w(i, 0)).filter(|o| !params.contains(o)).collect();
+        let mut offs: Vec<u32> = (b + 1..b + self.v.size(b)).filter(|&i| self.v.kind(i) == Kind::Local).map(|i| self.vid(i)).filter(|&o| o as usize >= np).collect();
         offs.sort();
         offs.dedup();
         offs
@@ -671,7 +677,7 @@ impl Em<'_> {
         let v = &self.v;
         let ret = M(v.w(n, 4));
         let np = v.w(n, 6) as usize;
-        let params: Vec<(u32, M)> = (0..np).map(|k| (v.w(n, 7 + 2 * k), M(v.w(n, 8 + 2 * k)))).collect();
+        let params: Vec<(u32, M)> = (0..np).map(|k| (k as u32, M(v.w(n, 8 + 2 * k)))).collect();
         let mut ps = vec!["l: &Launch".to_string(), "lid0: u32".to_string()];
         if !full {
             ps.push(format!("k: [uint32x4_t; {}]", self.p));
@@ -863,7 +869,7 @@ impl Em<'_> {
 
     /// Whether function `b`'s first statement, which every call runs, reads or writes through its parameter `k`.
     fn first_access(&self, b: usize, k: usize) -> bool {
-        let off = self.v.w(b, 7 + 2 * k);
+        let off = k as u32;
         let mut s = self.v.child(b, 0);
         while self.v.kind(s) == Kind::Block {
             let Some(c) = self.v.children(s).next() else { return false };
@@ -890,7 +896,7 @@ impl Em<'_> {
             if self.v.kind(i) != Kind::Local {
                 continue;
             }
-            let off = self.v.w(i, 0);
+            let off = self.vid(i);
             if params.iter().any(|&(o, _)| o == off) || out.contains_key(&off) {
                 continue;
             }
@@ -944,7 +950,7 @@ impl Em<'_> {
             Kind::Func => {
                 // The kernel's: its parameters the launch's arguments, then its body.
                 let np = v.w(n, 4) as usize;
-                let ps: Vec<(u32, M)> = (0..np).map(|k| (v.w(n, 5 + 2 * k), M(v.w(n, 6 + 2 * k)))).collect();
+                let ps: Vec<(u32, M)> = (0..np).map(|k| (k as u32, M(v.w(n, 6 + 2 * k)))).collect();
                 for (k, (off, m)) in ps.into_iter().enumerate() {
                     // A buffer: `arg{k}`, as every function that is passed it names it.
                     let name = if m == M::PTR { format!("arg{k}") } else { format!("x{off}") };
@@ -963,7 +969,7 @@ impl Em<'_> {
                 let stmts: Vec<usize> = kids.into_iter().filter(|&c| self.v.kind(c) != Kind::Body).collect();
                 let block = stmts.len() == 1 && self.v.kind(stmts[0]) == Kind::Block;
                 let inner: Vec<usize> = if block { self.v.children(stmts[0]).collect() } else { stmts.clone() };
-                if block && !(stmts[0]..stmts[0] + self.v.size(stmts[0])).any(|i| self.v.kind(i) == Kind::Local && !self.vars.contains_key(&(u32::MAX, self.v.w(i, 0)))) {
+                if block && !(stmts[0]..stmts[0] + self.v.size(stmts[0])).any(|i| self.v.kind(i) == Kind::Local && !self.vars.contains_key(&(u32::MAX, self.vid(i)))) {
                     for c in inner {
                         if self.of_lanes(c) { self.phased_chunks(c, cx)? } else { self.stmt(c, cx)? }
                     }
@@ -1378,7 +1384,7 @@ impl Em<'_> {
     /// The variable whose whole value node `n` loads, if it is one.
     fn loaded(&self, n: usize) -> Option<u32> {
         let n = self.bare(n);
-        (self.v.kind(n) == Kind::Load && self.v.kind(self.v.child(n, 0)) == Kind::Local && self.v.w(self.v.child(n, 0), 2) == 0).then(|| self.v.w(self.v.child(n, 0), 0))
+        (self.v.kind(n) == Kind::Load && self.v.kind(self.v.child(n, 0)) == Kind::Local && self.v.w(self.v.child(n, 0), 2) == 0).then(|| self.vid(self.v.child(n, 0)))
     }
 
     /// Whether `if` statement `n` is `if (x > 0) r(x)` (or `x != 0`), `x` unsigned and `r` the unread reduction of
@@ -1421,7 +1427,7 @@ impl Em<'_> {
                 let Some(&b) = self.bodies.get(&v.w(e, 3)) else { return false };
                 let args: Vec<usize> = v.children(e).collect();
                 let Some(k) = args.iter().position(|&a| self.loaded(a) == Some(x)) else { return false };
-                let pk = v.w(b, 7 + 2 * k);
+                let pk = k as u32;
                 // Its body: one statement, the reduction of the parameter (its value, if returned, read by none).
                 let mut s = v.child(b, 0);
                 while v.kind(s) == Kind::Block && v.children(s).count() == 1 {
@@ -1443,7 +1449,7 @@ impl Em<'_> {
                 i += self.v.size(i);
                 continue;
             }
-            if self.v.kind(i) == Kind::Local && self.v.w(i, 0) == off {
+            if self.v.kind(i) == Kind::Local && self.vid(i) == off {
                 out.push(i);
             }
             i += 1;
@@ -1567,7 +1573,7 @@ impl Em<'_> {
                 V::S(literal(m, x)?, m)
             }
             Kind::Local => {
-                let off = p[0];
+                let off = self.vid(n);
                 match self.vars.get(&(cx.ctx, off)) {
                     // An aggregate's (a structure's bytes where they are): its address.
                     Some(var) if var.m == M::PTR && !var.lanes => V::S(var.name.clone(), M::PTR),
@@ -1710,6 +1716,19 @@ impl Em<'_> {
                     let t = self.tmp();
                     let lanes = self.lane_conds.contains(&(cx.ctx, n));
                     let x = truth(x, *xm);
+                    // A right side of lanes that reads no memory (but variables) and calls nothing: evaluated whole,
+                    // the left side's mask and its (no branch to skip a few operations).
+                    let cheap = !(kids[1]..kids[1] + self.v.size(kids[1])).any(|i| match self.v.kind(i) {
+                        Kind::Load => self.v.kind(self.v.child(i, 0)) != Kind::Local,
+                        Kind::Call | Kind::Inline | Kind::Builtin | Kind::Store | Kind::Update => true,
+                        _ => false,
+                    });
+                    if lanes && cheap {
+                        let b = self.expr(kids[1], cx)?;
+                        let kb = self.mask(&b)?;
+                        let f = if and { "vandq_u32" } else { "vorrq_u32" };
+                        return Ok(V::K(self.map(|r| format!("{f}(vdupq_n_u32(if {x} {{ u32::MAX }} else {{ 0 }}), {kb}[{r}])"))));
+                    }
                     if lanes {
                         self.line(format!("let mut {t}: [uint32x4_t; {}] = [vdupq_n_u32(if {x} {{ u32::MAX }} else {{ 0 }}); {}];", self.p, self.p));
                         self.line(format!("if {}({x}) {{", if and { "" } else { "!" }));
@@ -2130,8 +2149,8 @@ impl Em<'_> {
         if self.v.kind(a) != Kind::Local || self.v.w(a, 2) != 0 {
             return None;
         }
-        let var = self.vars.get(&(cx.ctx, self.v.w(a, 0)))?.clone();
-        (var.m != M::PTR || var.lanes || !self.agg_param(cx, self.v.w(a, 0))).then_some(var)
+        let var = self.vars.get(&(cx.ctx, self.vid(a)))?.clone();
+        (var.m != M::PTR || var.lanes || !self.agg_param(cx, self.vid(a))).then_some(var)
     }
 
     /// Whether address `a` is an aggregate parameter's plus constants, and the function writes none of its bytes.
@@ -2140,7 +2159,7 @@ impl Em<'_> {
         for i in a..a + self.v.size(a) {
             match self.v.kind(i) {
                 Kind::Const | Kind::Cast | Kind::Bin => {}
-                Kind::Local if self.agg_param(cx, self.v.w(i, 0)) => agg = Some(self.v.w(i, 0)),
+                Kind::Local if self.agg_param(cx, self.vid(i)) => agg = Some(self.vid(i)),
                 _ => return false,
             }
         }
@@ -2150,17 +2169,18 @@ impl Em<'_> {
         !(f..f + self.v.size(f)).any(|i| {
             matches!(self.v.kind(i), Kind::Store | Kind::Update) && {
                 let t = self.v.child(i, 0);
-                (t..t + self.v.size(t)).any(|j| self.v.kind(j) == Kind::Local && self.v.w(j, 0) == off)
+                (t..t + self.v.size(t)).any(|j| self.v.kind(j) == Kind::Local && self.vid(j) == off)
             } && (cx.kernel || !self.bodies.values().any(|&b| b != f && b > f && b < i && i < b + self.v.size(b)))
         })
     }
 
-    /// Whether variable `off` of `cx`'s function is an aggregate parameter (its value its address).
+    /// Whether variable `off` (a number, `vid`) of `cx`'s function is an aggregate parameter (its value its address):
+    /// parameter `off`, a function's parameters its first variables.
     fn agg_param(&self, cx: &Cx, off: u32) -> bool {
         let n = if cx.kernel { 0 } else { self.bodies[&cx.body] };
         let (at, k0) = if cx.kernel { (4, 5) } else { (6, 7) };
         let np = self.v.w(n, at) as usize;
-        (0..np).any(|k| self.v.w(n, k0 + 2 * k) == off && M(self.v.w(n, k0 + 1 + 2 * k)).is_agg())
+        (off as usize) < np && M(self.v.w(n, k0 + 1 + 2 * off as usize)).is_agg()
     }
 
     fn assign(&mut self, var: &Var, x: V, cx: &Cx) -> R<()> {

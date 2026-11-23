@@ -58,7 +58,6 @@ DEFINE_KERNEL2(wide, wide_lanes,
   uint32_t z=c[i];
   uint32_t sh=z&63u;
   uint32_t n=args.n;
-  uint32_t w=(args.k&1u)!=0u?8u:4u;
   out[0u*n+i]=x+y;
   out[1u*n+i]=x-y;
   out[2u*n+i]=x<<sh;
@@ -88,6 +87,8 @@ DEFINE_KERNEL2(wide, wide_lanes,
   out[21u*n+i]=(x&0xFFFFFFFFu)==(y&0xFFFFFFFFu)?1u:2u;
   out[22u*n+i]=x?5u:6u;
   out[23u*n+i]=ukl_umulhi64(x,y);
+  // A declaration after the loop: its slot the loop's counter's (each lane's), itself one value.
+  uint32_t w=(args.k&1u)!=0u?8u:4u;
   out[24u*n+i]=ukl_ld_window((UKL_GLOBAL const uint8_t*)a,i*w,8u);
   out[25u*n+i]=wide_part(i+3u);
   out[26u*n+i]=(x&3u)==0u?wide_rare(y,z):x;
