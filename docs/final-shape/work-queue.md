@@ -10536,3 +10536,10 @@ Three test faults the merge showed, fixed after it (Q500):
   call) left one. Retrying is now asserted on a job busy twice then done, and giving up on one always busy.
 
 Relax: the engine checks clean; the reuse and session tests (30) and rerail-store (232) pass.
+
+### Q500. Roll-up 74's red tests fixed: Relax's test build id, a shared test store, a timed retry
+
+Roll-up 74's red tests, at their causes (the three faults Q499 lists): a test build's engine id covers the engine's
+sources by `stat`, so under Relax a checkout's edit, or another checkout, is another build; the two kept-facts tests
+that shared `store("wave-readers")` have a store each; the write-back retry test asserts retrying without counting
+on the clock.
