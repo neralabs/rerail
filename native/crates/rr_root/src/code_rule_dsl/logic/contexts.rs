@@ -470,10 +470,10 @@ impl Renaming<'_> {
         if let Some(r) = self.d.read_of(self.pass, rel) {
             return Some(self.d.name_in(&r.source, &r.rel));
         }
-        if let Some(own) = self.own {
-            if own.contains(rel) {
-                return Some(instance(self.pass, rel));
-            }
+        if let Some(own) = self.own
+            && own.contains(rel)
+        {
+            return Some(instance(self.pass, rel));
         }
         // What the pass holds already that the host no longer does: a library's export a program's rule of the
         // context reads by its own name (`ann_in`), which the made library holds as the instance alone.

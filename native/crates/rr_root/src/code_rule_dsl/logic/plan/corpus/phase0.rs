@@ -84,6 +84,28 @@ pub struct Graph {
     /// names them in its record, so they stay live. A graph kept as an image keeps them (`Images`, Q150), so a run
     /// that reads it names what the run that derived it named. Not part of the graph's digest.
     pub plans: Vec<[u8; 32]>,
+    /// The module plan (decision 0639 §1, `bootstrap.rerail`'s `p0_module_*`): each module the seed's includes reach,
+    /// by its name (its variant and its members' digests, `core:<d>+<d>`), with its rank, its key and its scope. Made
+    /// of the graph's digests and edges, so not part of its digest.
+    pub plan: BTreeMap<String, PlanModule>,
+}
+
+/// A module of the plan (`Graph::plan`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PlanModule {
+    /// The files of its closure (`p0_module_rank`): it ranks above every module in its scope.
+    pub rank: i64,
+    /// Its key (`p0_module_key`), hex: the engine's build, its name, and its closure's digests and edges.
+    pub key: String,
+    /// The modules it is lowered against (`p0_scope`).
+    pub scope: std::collections::BTreeSet<String>,
+}
+
+impl PlanModule {
+    /// The digests of a module's files, hex, from its name.
+    pub fn members(name: &str) -> impl Iterator<Item = &str> {
+        name.split_once(':').map_or("", |(_, ds)| ds).split('+').filter(|d| !d.is_empty())
+    }
 }
 
 impl Graph {
@@ -166,6 +188,7 @@ impl Graph {
             diff("digests", self.digests.iter().map(|(p, d)| (p.clone(), *d)), other.digests.iter().map(|(p, d)| (p.clone(), *d))),
             diff("rules", self.rules.iter().map(|(p, d)| (p.clone(), *d)), other.rules.iter().map(|(p, d)| (p.clone(), *d))),
             diff("phases", self.phases.iter().map(|(k, v)| (k.clone(), v.clone())), other.phases.iter().map(|(k, v)| (k.clone(), v.clone()))),
+            diff("plan", self.plan.iter().map(|(k, v)| (k.clone(), v.rank, v.key.clone(), v.scope.clone())), other.plan.iter().map(|(k, v)| (k.clone(), v.rank, v.key.clone(), v.scope.clone()))),
         ]
         .concat()
     }
@@ -381,12 +404,14 @@ pub fn keep_files<'p>(paths: impl IntoIterator<Item = &'p std::path::PathBuf>) {
 /// found as `bootstrap.rerail` finds a text's names (the library alone). The graph is the one that run would give, so
 /// its digest is too. False when a name is not such a module (the text then gets its own run when asked).
 pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs) -> bool {
-    let Seed::Text { t_shape, includes, phases } = seed else {
+    // A text in T's shape plans its modules without `core.rerail` (the plan's `bare` variant), which a file's graph does
+    // not hold: its own run derives them.
+    let Seed::Text { t_shape: false, includes, phases } = seed else {
         return false;
     };
     let lib = &dirs.lib;
     let mut asks: Vec<(i64, String, PathBuf)> = Vec::with_capacity(includes.len() + 1);
-    let names = includes.iter().cloned().chain((!t_shape).then(|| (-1, "core.rerail".to_owned())));
+    let names = includes.iter().cloned().chain([(-1, "core.rerail".to_owned())]);
     for (at, name) in names {
         // `bootstrap.rerail`'s candidate: `cat(lib, "/", name)`, as written, not made canonical.
         let path = candidate_path(&lib.to_string_lossy(), &name);
@@ -444,6 +469,11 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
             (path.to_string_lossy().into_owned(), names, phases, Some((path.clone(), digest)))
         }
     };
+    // A program in T's shape reads its files without `core.rerail`: its modules are the plan's `bare` variant, which
+    // the library's own graphs (each a file seed, read with it) do not hold. Its run derives them.
+    if !names.iter().any(|(at, n)| *at == -1 && n == "core.rerail") {
+        return Ok(None);
+    }
     let lib = dirs.lib.to_string_lossy();
     let mut asks: Vec<(i64, String, PathBuf)> = Vec::with_capacity(names.len());
     let mut files: Vec<Seed> = Vec::new();
@@ -493,6 +523,7 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
         whole.digests.extend(g.digests.iter().map(|(p, d)| (p.clone(), *d)));
         whole.rules.extend(g.rules.iter().map(|(p, d)| (p.clone(), *d)));
         whole.plans.extend(g.plans.iter().copied());
+        whole.plan.extend(g.plan.iter().map(|(m, row)| (m.clone(), row.clone())));
     }
     whole.absent.extend(absent);
     whole.includes.insert(start.clone(), asks);
@@ -546,7 +577,7 @@ pub fn same_graph(a: &Graph, b: &Graph) -> bool {
         v.dedup();
         v
     };
-    a.digest() == b.digest() && a.rules == b.rules && sorted(&a.absent) == sorted(&b.absent) && a.phases == b.phases
+    a.digest() == b.digest() && a.rules == b.rules && sorted(&a.absent) == sorted(&b.absent) && a.phases == b.phases && a.plan == b.plan
 }
 
 /// The rule library and the engine's phase programs' directory, canonical, as `bootstrap.rerail` is handed them: found
@@ -621,7 +652,7 @@ impl Images {
             }
             Seed::File(p) => format!("file\0{}", self.rel(&p.to_string_lossy())),
         };
-        crate::content_store::HashKey::sha256(format!("rerail phase 0 graph image 1\0{}\0{seed}", crate::code_rule_dsl::build_ids::engine()).as_bytes())
+        crate::content_store::HashKey::sha256(format!("rerail phase 0 graph image 2\0{}\0{seed}", crate::code_rule_dsl::build_ids::engine()).as_bytes())
     }
 
     fn encode(&self, g: &Graph) -> Vec<u8> {
@@ -634,11 +665,12 @@ impl Images {
         let phases: Vec<String> = g.phases.iter().flat_map(|(from, to)| to.iter().flat_map(move |(ph, path)| [self.rel(from), ph.clone(), p(path)])).collect();
         let rules: Vec<String> = g.rules.iter().flat_map(|(path, d)| [p(path), hex(d)]).collect();
         let plans: Vec<String> = g.plans.iter().map(hex).collect();
-        crate::content_store::observe::encode_lists(&[&includes[..], &missing[..], &absent[..], &digests[..], &phases[..], &rules[..], &plans[..]])
+        let plan: Vec<String> = g.plan.iter().flat_map(|(m, r)| [m.clone(), r.rank.to_string(), r.key.clone(), r.scope.iter().cloned().collect::<Vec<_>>().join(",")]).collect();
+        crate::content_store::observe::encode_lists(&[&includes[..], &missing[..], &absent[..], &digests[..], &phases[..], &rules[..], &plans[..], &plan[..]])
     }
 
     fn decode(&self, bytes: &[u8]) -> Option<Graph> {
-        let [includes, missing, absent, digests, phases, rules, plans]: [Vec<String>; 7] = crate::content_store::observe::decode_lists(bytes)?.try_into().ok()?;
+        let [includes, missing, absent, digests, phases, rules, plans, plan]: [Vec<String>; 8] = crate::content_store::observe::decode_lists(bytes)?.try_into().ok()?;
         let unhex = |s: &str| -> Option<[u8; 32]> {
             let mut out = [0u8; 32];
             for (i, b) in out.iter_mut().enumerate() {
@@ -671,6 +703,11 @@ impl Images {
             g.rules.insert(PathBuf::from(self.abs(path)?), unhex(d)?);
         }
         g.plans = plans.iter().map(|d| unhex(d)).collect::<Option<_>>()?;
+        for r in plan.chunks(4) {
+            let [m, rank, key, scope] = r else { return None };
+            let scope = scope.split(',').filter(|s| !s.is_empty()).map(str::to_owned).collect();
+            g.plan.insert(m.clone(), PlanModule { rank: rank.parse().ok()?, key: key.clone(), scope });
+        }
         Some(g)
     }
 }
@@ -780,6 +817,22 @@ impl Graph {
         {
             g.digests.insert(p.clone(), *d);
         }
+        // The plan's modules of the seed's own variant (a seed outside T's shape names `core.rerail` at -1) whose
+        // files the seed reaches: those a run over the seed alone plans.
+        // `core.rerail` as a seed of its own is planned as the programs that read it have it (`p0_seed_variant`).
+        let is_core = |p: &PathBuf| lib.as_deref().is_some_and(|l| *p == candidate_path(l, "core.rerail"));
+        let core_seed = matches!(seed, Seed::File(p) if is_core(p));
+        let variant = if core_seed || g.includes.get(&if matches!(seed, Seed::Text { .. }) { TEXT.to_owned() } else { start.clone() }).is_some_and(|to| to.iter().any(|(at, n, _)| *at == -1 && n == "core.rerail")) { "core:" } else { "bare:" };
+        let hex = |d: &[u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let reached: std::collections::BTreeSet<String> = g.digests.values().map(hex).collect();
+        // A file seed is a module of the programs that include it (`p0_seed_reaches(f, f)`): a library file's or a
+        // phase program's graph holds its own module, which a text including it is composed with. A program file of
+        // the run's own is a program's text, no module (decision 0639 §2).
+        let own = match seed {
+            Seed::File(p) if !lib.as_deref().is_some_and(|l| p.starts_with(l)) && !phase_lib().is_some_and(|d| p.starts_with(d)) => self.digests.get(p).map(|d| format!("{variant}{}", hex(d))),
+            _ => None,
+        };
+        g.plan = self.plan.iter().filter(|(m, _)| m.starts_with(variant) && Some(*m) != own.as_ref() && PlanModule::members(m).all(|d| reached.contains(d))).map(|(m, r)| (m.clone(), r.clone())).collect();
         g
     }
 }
@@ -796,6 +849,8 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     #[cfg(windows)]
     text.push_str("env(\"rerail.windows_paths\", \"1\").\n");
     text.push_str(&format!("env(\"rerail.lib\", {}).\n", quote(&bootstrap_spelling(&lib.to_string_lossy()))));
+    // The engine's build, which a module's key names (`p0_module_key`).
+    text.push_str(&format!("env(\"rerail.build\", {}).\n", quote(crate::code_rule_dsl::build_ids::engine())));
     // The library's parent is a root too: packs include their tables beside the library (`#include
     // "../packs/python/….names.rerail"`), which the resolver before phase 0 read, and the loader confines reads to roots.
     if let Some(parent) = lib.parent() {
@@ -881,6 +936,21 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
             v.sort();
             v.dedup();
         }
+        for r in outputs.rows("p0_module_rank") {
+            if let (V::Text(m), Some(k)) = (r.get(0), r.get(1).int()) {
+                g.plan.entry(m.to_owned()).or_default().rank = k;
+            }
+        }
+        for r in outputs.rows("p0_module_key") {
+            if let (V::Text(m), V::Text(key)) = (r.get(0), r.get(1)) {
+                g.plan.entry(m.to_owned()).or_default().key = key.to_owned();
+            }
+        }
+        for r in outputs.rows("p0_scope") {
+            if let (V::Text(m), V::Text(s)) = (r.get(0), r.get(1)) {
+                g.plan.entry(m.to_owned()).or_default().scope.insert(s.to_owned());
+            }
+        }
         drop(outputs);
         let files = seeds.iter().filter_map(|s| match s {
             Seed::File(p) => Some(p.clone()),
@@ -898,46 +968,5 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rerail` libraries).
-
-
-#[cfg(test)]
-pub mod benchmarks {
-    /// Phase 0 over every `.rerail` file of `RERAIL_P0_RULES` (a pack's directory), as a pack's run reads them
-    /// (`tools::program_texts`): one run of `bootstrap.rerail` for all. Run it twice for the warm figure.
-    #[test]
-    #[ignore = "a benchmark: RERAIL_P0_RULES=<a pack's directory>"]
-    fn benchmark_phase_0_rules() {
-        let dir = std::path::PathBuf::from(std::env::var("RERAIL_P0_RULES").expect("RERAIL_P0_RULES"));
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rerail")).collect();
-        files.sort();
-        let before = super::super::observe(|o| {
-            o.begin();
-            o.counts
-        });
-        let start = super::super::thread_usage();
-        let refs: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
-        let texts = crate::code_rule_dsl::logic::settings::program_texts(&refs).unwrap();
-        let resolved = super::super::thread_usage();
-        let seeds: Vec<super::Seed> = texts.iter().filter_map(|t| crate::code_rule_dsl::logic::rr::text_seed(t).unwrap()).collect();
-        let graphs = super::graphs(&seeds).unwrap();
-        let keyed = super::super::thread_usage();
-        let did = super::super::observe(|o| {
-            o.flush();
-            o.counts.since(&before)
-        });
-        let modules: std::collections::BTreeSet<&std::path::PathBuf> = graphs.iter().flat_map(|g| g.digests.keys()).collect();
-        let cpu = |a: (f64, f64), b: (f64, f64)| (b.0 - a.0) + (b.1 - a.1);
-        println!(
-            "phase 0 over {} files of {}: {} texts with includes, {} modules; files {:.2} s, texts' graphs {:.2} s CPU (thread); peak RSS {:.0} MB\n  {did}",
-            files.len(),
-            dir.display(),
-            seeds.len(),
-            modules.len(),
-            cpu(start, resolved),
-            cpu(resolved, keyed),
-            super::super::usage().2
-        );
-    }
-}
-
+// engine registers as it loads (the languages, their `.rerail` libraries). Its benchmark (`tests.rs`'s
+// `benchmark_phase_0_rules`) too: a run of phase 0 needs the corpus runner registered.

@@ -103,7 +103,6 @@
         let dir = tempfile::tempdir().unwrap();
         let files = [
             ("two.rerail", "\n#include \"python/env.rerail\"\n// between\n#include \"core.rerail\"\n.decl x(s: symbol)\n"),
-            ("t.rerail", "#include \"python/env.rerail\"\n.decl doc(d: number, p: symbol, m: symbol)\n"),
             ("phase.rerail", "#include \"core.rerail\"\n.decl values__x(s: symbol)\n.decl y(s: symbol)\ny(s) :- values__x(s).\n"),
             ("none.rerail", ".decl z(s: symbol)\n"),
         ];
@@ -115,6 +114,11 @@
             let derived = super::derive(std::slice::from_ref(&s)).unwrap().of(&s, 0);
             assert!(super::same_graph(&composed, &derived), "{name}: {}", composed.differences(&derived));
         }
+        // A program in T's shape reads its files without `core.rerail`: its modules are the plan's `bare` variant, which
+        // the library's graphs do not hold (decision 0639 §1), so its run derives its graph.
+        let t = dir.path().join("t.rerail");
+        std::fs::write(&t, "#include \"python/env.rerail\"\n.decl doc(d: number, p: symbol, m: symbol)\n").unwrap();
+        assert!(super::composed_here(&super::Seed::File(dunce::canonicalize(&t).unwrap())).unwrap().is_none());
         // A name whose file stands beside the program file: its run resolves it.
         std::fs::write(dir.path().join("core.rerail"), ".decl w(s: symbol)\n").unwrap();
         let beside = super::Seed::File(dunce::canonicalize(dir.path().join("none.rerail")).unwrap());
@@ -178,4 +182,105 @@
         assert!(!described.contains("rules/../packs/rerail-p0-absent-table.rerail"), "{described}");
         assert!(graph.holds_now(), "{described}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T3 (decision 0639 §1): phase 0 plans a program's modules as the library's lowering does (`rr::library_plan`):
+    /// the same modules (each named by its variant and its files' digests), scopes and ranks, for programs of a pack,
+    /// a program in T's shape (its modules without `core.rerail`) and a phase program. Every module has a key, one key
+    /// whichever seed's graph holds it and whatever order the seeds are stated in.
+    #[test]
+    fn phase_0_plans_the_modules_as_the_library_lowering_does() {
+        use std::collections::{BTreeMap, BTreeSet};
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let native = crate::source_tree::native();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(lib.join("../packs/python")).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rerail")).collect();
+        files.sort();
+        files.truncate(6);
+        files.push(native.join("src/code_rule_dsl/typing/programs/calls.rerail"));
+        files.push(native.join("src/code_rule_dsl/typing/programs/struct.rerail"));
+        let texts: Vec<String> = files.iter().map(|f| crate::code_rule_dsl::logic::settings::program_text(f).unwrap()).collect();
+        let seeds: Vec<super::Seed> = texts.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t).unwrap().expect("includes")).collect();
+        let hex = |d: &[u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let forward = super::derive(&seeds).unwrap();
+        let reversed: Vec<super::Seed> = seeds.iter().rev().cloned().collect();
+        let backward = super::derive(&reversed).unwrap();
+        let mut keys: BTreeMap<String, String> = BTreeMap::new();
+        let mut bare = 0;
+        for (k, (seed, (file, text))) in seeds.iter().zip(files.iter().zip(&texts)).enumerate() {
+            let graph = forward.of(seed, k);
+            assert_eq!(graph.plan, backward.of(seed, seeds.len() - 1 - k).plan, "{}: the plan with the seeds stated in reverse", file.display());
+            // Rust's plan over the program's library files.
+            let paths: Vec<PathBuf> = crate::code_rule_dsl::logic::rr::modules(text).unwrap().expect("modular").files.into_iter().map(|(p, _, _)| p).collect();
+            let plan = crate::code_rule_dsl::logic::rr::library_plan(&paths).unwrap();
+            let variant = if paths.iter().any(|p| p.ends_with("core.rerail") && p.starts_with(&lib)) { "core" } else { "bare" };
+            bare += usize::from(variant == "bare");
+            let name = |u: usize| {
+                let mut ds: Vec<String> = plan.units[u].iter().map(|&i| hex(&plan.digests[i])).collect();
+                ds.sort();
+                format!("{variant}:{}", ds.join("+"))
+            };
+            let rust: BTreeMap<String, (i64, BTreeSet<String>)> = (0..plan.units.len())
+                .map(|u| {
+                    let closure: BTreeSet<usize> = plan.units[u].iter().flat_map(|&i| plan.reach[i].iter().copied().chain([i])).collect();
+                    (name(u), (closure.len() as i64, plan.scopes[u].iter().map(|&v| name(v)).collect()))
+                })
+                .collect();
+            let rules: BTreeMap<String, (i64, BTreeSet<String>)> = graph.plan.iter().map(|(m, r)| (m.clone(), (r.rank, r.scope.clone()))).collect();
+            assert_eq!(rules, rust, "{}: phase 0's plan against Rust's", file.display());
+            for (m, r) in &graph.plan {
+                assert_eq!(r.key.len(), 64, "{}: {m} has a key", file.display());
+                assert_eq!(keys.entry(m.clone()).or_insert_with(|| r.key.clone()), &r.key, "{m}: one key in every graph");
+            }
+        }
+        assert!(bare > 0, "a program in T's shape among them");
+        assert_eq!(keys.values().collect::<BTreeSet<_>>().len(), keys.len(), "a key a module");
+    }
+
+    /// Phase 0 over every `.rerail` file of `RERAIL_P0_RULES` (a pack's directory), as a pack's run reads them
+    /// (`tools::program_texts`): one run of `bootstrap.rerail` for all. Run it twice for the warm figure.
+    #[test]
+    #[ignore = "a benchmark: RERAIL_P0_RULES=<a pack's directory>"]
+    fn benchmark_phase_0_rules() {
+        let dir = std::path::PathBuf::from(std::env::var("RERAIL_P0_RULES").expect("RERAIL_P0_RULES"));
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rerail")).collect();
+        files.sort();
+        let before = crate::code_rule_dsl::logic::plan::corpus::observe(|o| {
+            o.begin();
+            o.counts
+        });
+        let start = crate::code_rule_dsl::logic::plan::corpus::thread_usage();
+        let refs: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
+        let texts = crate::code_rule_dsl::logic::settings::program_texts(&refs).unwrap();
+        let resolved = crate::code_rule_dsl::logic::plan::corpus::thread_usage();
+        let seeds: Vec<super::Seed> = texts.iter().filter_map(|t| crate::code_rule_dsl::logic::rr::text_seed(t).unwrap()).collect();
+        let graphs = super::graphs(&seeds).unwrap();
+        let keyed = crate::code_rule_dsl::logic::plan::corpus::thread_usage();
+        let did = crate::code_rule_dsl::logic::plan::corpus::observe(|o| {
+            o.flush();
+            o.counts.since(&before)
+        });
+        let modules: std::collections::BTreeSet<&std::path::PathBuf> = graphs.iter().flat_map(|g| g.digests.keys()).collect();
+        let cpu = |a: (f64, f64), b: (f64, f64)| (b.0 - a.0) + (b.1 - a.1);
+        println!(
+            "phase 0 over {} files of {}: {} texts with includes, {} modules; files {:.2} s, texts' graphs {:.2} s CPU (thread); peak RSS {:.0} MB\n  {did}",
+            files.len(),
+            dir.display(),
+            seeds.len(),
+            modules.len(),
+            cpu(start, resolved),
+            cpu(resolved, keyed),
+            crate::code_rule_dsl::logic::plan::corpus::usage().2
+        );
+        // A run of `bootstrap.rerail` over the texts and over the library's files (a store's template), each timed
+        // three times: the rules' cost, the files' tapes kept from the first.
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let library: Vec<super::Seed> = modules.iter().filter(|p| p.starts_with(&lib)).map(|p| super::Seed::File((*p).clone())).collect();
+        for (what, seeds) in [("the texts", &seeds), ("the library's files", &library)] {
+            let times: Vec<String> = (0..3).map(|_| {
+                let at = crate::code_rule_dsl::logic::plan::corpus::thread_usage();
+                let g = super::derive(seeds).unwrap();
+                format!("{:.3} s ({} modules planned)", cpu(at, crate::code_rule_dsl::logic::plan::corpus::thread_usage()), g.plan.len())
+            }).collect();
+            println!("  a run of bootstrap.rerail over {what} ({}): {}", seeds.len(), times.join(", "));
+        }
     }

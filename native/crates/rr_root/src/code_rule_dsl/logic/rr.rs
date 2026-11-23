@@ -651,11 +651,24 @@ fn closed_program(files: &SharedFiles, own: &[Stmt]) -> Result<(), Error> {
     closed_heads("the program", own, &open)
 }
 
-/// `library_modules`, with each module's files and its key; their images read from and kept in `store` (decision
-/// 0264), and read from the shipped bundle first.
-#[allow(clippy::type_complexity)]
-fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&crate::content_store::ContentStore>) -> Result<(Vec<lower::Module>, Vec<Vec<PathBuf>>, Vec<crate::content_store::HashKey>), Error> {
-    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("lower the library one module at a time ({} files)", paths.len()));
+/// The module plan of library files `paths` (canonical, includes first), as Rust derives it: files that reach each
+/// other are one module, in the order of their first file; a module's scope is the modules its files reach.
+/// `core.rerail`, where it is one of `paths`, is in every other file's scope. Phase 0 derives the same plan as rules
+/// (`bootstrap.rerail`'s `p0_module_*`, decision 0639 §1).
+pub struct LibraryPlan {
+    /// Each file's digest, by position in `paths`.
+    pub digests: Vec<[u8; 32]>,
+    /// What each file reaches, itself not counted unless through a cycle.
+    pub reach: Vec<BTreeSet<usize>>,
+    /// Each module's files, by position, in the list's order.
+    pub units: Vec<Vec<usize>>,
+    /// The module of each file.
+    pub unit_of: Vec<usize>,
+    /// Each module's scope, by module.
+    pub scopes: Vec<BTreeSet<usize>>,
+}
+
+pub fn library_plan(paths: &[PathBuf]) -> Result<LibraryPlan, Error> {
     let core = library().join("core.rerail").canonical().ok();
     // An include is found by its canonical path, so the run's files are compared canonical too: on Windows a path
     // through a link, or with `/` past a `\`-joined root, names the same file another way.
@@ -685,7 +698,6 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
         mine.remove(&i);
         direct.push(mine);
     }
-    // What each file reaches, itself not counted unless through a cycle.
     let mut reach: Vec<BTreeSet<usize>> = direct.clone();
     loop {
         let mut grew = false;
@@ -719,6 +731,16 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
             return Err(Error::Syntax(format!("{} includes {}, listed after it", paths[units[u][0]].display(), paths[units[v][0]].display())));
         }
     }
+    Ok(LibraryPlan { digests, reach, units, unit_of, scopes })
+}
+
+/// `library_modules`, with each module's files and its key; their images read from and kept in `store` (decision
+/// 0264), and read from the shipped bundle first.
+#[allow(clippy::type_complexity)]
+fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&crate::content_store::ContentStore>) -> Result<(Vec<lower::Module>, Vec<Vec<PathBuf>>, Vec<crate::content_store::HashKey>), Error> {
+    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("lower the library one module at a time ({} files)", paths.len()));
+    let n = paths.len();
+    let LibraryPlan { digests, reach, units, unit_of, scopes } = library_plan(paths)?;
     // Each module is kept in the store as its image (decision 0246 §6), by its key: the image's format, the engine's
     // build, its files' bytes and the keys of the modules in its scope. A module whose image the store holds is read
     // from it, not lowered.
@@ -846,10 +868,10 @@ impl HoldImages {
 
 impl Drop for HoldImages {
     fn drop(&mut self) {
-        if let Some(held) = &self.0 {
-            if held.calls.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
-                held.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
-            }
+        if let Some(held) = &self.0
+            && held.calls.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1
+        {
+            held.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
         }
     }
 }

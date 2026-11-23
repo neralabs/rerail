@@ -92,6 +92,21 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- env("rerail.build
 `source-language.rerail` builds its selector key with. A key reads digests, not other keys, so no recursion runs
 through an aggregate.
 
+**Two variants, as built (step 1).** A file is read with `core.rerail` first, so Rust's plan puts `core.rerail` in
+every other file's scope, though no file names it. A program in T's shape declares `doc` itself and reads its files
+without it: `calls.rerail` includes `python/modules.rerail` and `python/conditions.rerail`, which a Python policy
+includes too. The same file is then two modules, so the rules plan each file reached in the variant of the seeds that
+reach it, and a module's name says which: `core:<digest>+<digest>` or `bare:<digest>`. The `core` variant adds the
+implicit edge to `core.rerail` from every file. `core.rerail` as a seed of its own declares `doc` too, but read with
+itself first is itself, so it is planned `core`. A file seed is a module of the programs that include it
+(`p0_seed_reaches(f, f)`), so a library file's graph holds its own module and a text is composed of them; a program
+file of the run's own is a program's text and no module (§2), and `Graph::of` leaves it out. A text in T's shape is
+not composed: the library's graphs hold the `core` variant alone, so its run derives its graph (the typing programs).
+
+**Its cost.** A cold run of `bootstrap.rerail` over the Python pack's 537 texts (63 modules planned): 49 ms against 36
+ms without the plan's rules; over the library's 64 files, 36 ms against 25 ms (spark2, one thread). A reused run's
+check is 3–8 ms either way.
+
 **The link order is canonical:** by rank, then by name. It depends on a module's files and what they reach, never on
 the program that reached it.
 - **The rank counts the module's own files.** Counting only what it reaches is not a topological order when a file
@@ -409,7 +424,8 @@ silently. Each place a digest stands for content, what can collide, and what is 
 
 ## Steps
 
-1. §1 in `bootstrap.rerail` and the plan rows in `Graph` and its image (§2). T3.
+1. §1 in `bootstrap.rerail` and the plan rows in `Graph` and its image (§2). T3. **Done**: T3 is
+   `phase_0_plans_the_modules_as_the_library_lowering_does`; Rust's plan is `rr::library_plan`, which step 4 removes.
 2. §3: the engine answer, its reuse check, and `Graph::holds` over images. T4, T5.
 3. §4's names: `content_names` in the walk's end, `once_key` on SHA-256, the findings' and rule positions' counters
    per module. T6, T7.
