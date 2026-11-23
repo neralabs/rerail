@@ -1660,7 +1660,7 @@ fn the_label_parents_kernels_rust_is_the_checked_in_one() {
     // The digest of the source it was written from: the CPU device runs it for a program of that text and those
     // defines alone (`rerail_ukl_rust::kernels`), and the engine's test checks its label source has it.
     let sources = format!(
-        "//! The digests (`digest`) of the sources the kernels here were written from: rerail-ukl-vec's tests write them\n//! with the kernels (`UKL_RS_WRITE=1`), and fail if they differ.\n\n/// `label_passes.uglykl` as the engine assembles it for a batch of format 16 (`label_parents_w8`).\npub const LABEL_PASSES_16: u64 = {:#018x};\n",
+        "//! The digests (`digest`) of the sources the kernels here were written from: rerail-ukl-vec's tests write them\n//! with the kernels (`UKL_RS_WRITE=1`), and fail if they differ.\n\n/// `label_passes.uglykl` as the engine assembles it for a batch of format 16 (`label_parents_w8`, `label_leaves_w8`).\npub const LABEL_PASSES_16: u64 = {:#018x};\n",
         rerail_ukl_rust::digest(&label_passes_text(), &[])
     );
     let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_rust/src/sources.rs");
@@ -1670,11 +1670,21 @@ fn the_label_parents_kernels_rust_is_the_checked_in_one() {
     assert!(std::fs::read_to_string(at).unwrap_or_default() == sources, "{at} is not the digest of the kernels' source (UKL_RS_WRITE=1 writes it)");
 }
 
+/// The label passes' `label_leaves` (each node's leaf tests, a word of 32 nodes a thread) as Rust at 8 lanes, as
+/// checked in (rerail-ukl-aot's tests run it against the CPU device's c++ of the same UKL): its `bits[LEAF_BLOCK]`,
+/// a thread's array, is registers of the chunk's lanes, each element one, at an index of one value for all lanes.
 #[test]
-fn probe_leaves_tape_tmp() {
+fn the_label_leaves_kernels_rust_is_the_checked_in_one() {
     let src = label_passes_source();
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
-    let k = super::vector::vectorize(&p, p.kernel("label_leaves").unwrap()).unwrap();
-    std::fs::write("/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-uglykl-CPU-SIMD-parallelization/d3436575-20de-4e6e-bfe4-4edeaf4b6d5f/scratchpad/leaves.tape", super::k::View::new(&k.tape).listing()).unwrap();
+    let k = super::vector::vectorize(&p, p.kernel("label_leaves").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&p, &k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()));
+    assert!(rust.contains(": [[uint32x4_t; 2]; 8] = [[vdupq_n_u32(0); 2]; 8];"), "the bits are not registers");
+    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_rust/src/label_leaves_w8.rs");
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it)");
 }

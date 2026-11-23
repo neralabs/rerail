@@ -43,6 +43,10 @@ fn main() {
     let want = parent::scalar(&d);
     println!("{kind}: {} nodes", d.nodes());
     let b = Batch::new(&[&d]);
+    if std::env::var("LABEL_KERNEL").is_ok_and(|k| k == "leaves") {
+        leaves(&only, &d, &b);
+        return;
+    }
     match only.as_str() {
         "rust" => {
             for _ in 0..runs() {
@@ -68,6 +72,49 @@ fn main() {
                 q.flush().await_().unwrap();
                 let got = read::<u32>(&pb, d.nodes() as usize);
                 assert!(got == want, "cpu: not the host's parents");
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `LABEL_KERNEL=leaves`: `label_leaves` (the tests `label::leaf_tests`) instead, the device's run the c++ build
+/// whatever `RERAIL_CPU_RUST` (a text the Rust was not written from), checked against the Rust's.
+fn leaves(only: &str, d: &Doc, b: &Batch) {
+    // `LABEL_TESTS=codes`: the tests of a node's code alone (kind, class, field, flags); `walks`: those that walk the
+    // tape (18, 19, 21, 22); a number: that test alone.
+    let mut tests = label::leaf_tests();
+    match std::env::var("LABEL_TESTS").as_deref() {
+        Ok("codes") => tests.retain(|t| t & 255 <= 4),
+        Ok("walks") => tests.retain(|t| t & 255 > 4),
+        Ok(op) if op.parse::<u32>().is_ok() => tests.retain(|t| t & 255 == op.parse::<u32>().unwrap()),
+        _ => {}
+    }
+    let want = unsafe { label::run_leaves(rerail_ukl_rust::label_leaves_w8::label_leaves_w8, b, &tests) };
+    match only {
+        "rust" => {
+            for _ in 0..runs() {
+                let got = unsafe { label::run_leaves(rerail_ukl_rust::label_leaves_w8::label_leaves_w8, b, &tests) };
+                assert!(got == want);
+            }
+        }
+        "cpu" => {
+            use rerail_gpu::kernels::{buffer_of, launch, program_with, read};
+            let shared = rerail_gpu::shared::get().expect("a device");
+            let p = program_with("label_passes_cpp", &format!("{}\n// The compiler's build.\n", label::source()), &[("UKL_CONSTANT_0", "16")]).unwrap_or_else(|e| panic!("label_passes: {e}"));
+            let k = p.function("label_leaves").unwrap();
+            let words = b.words();
+            let shape = label::Shape { recursive: words, file_count: 1, target_count: tests.len() as u32, ..label::Shape::default() };
+            // SAFETY: the views and the shape are plain u32s.
+            let (views, shape) = unsafe {
+                (std::slice::from_raw_parts(b.views.as_ptr().cast::<u32>(), size_of_val(&b.views[..]) / 4), std::slice::from_raw_parts((&raw const shape).cast::<u8>(), size_of::<label::Shape>()))
+            };
+            let (vb, tb, cb, lb) = (buffer_of(views).unwrap(), buffer_of(&tests).unwrap(), buffer_of(&d.bytes).unwrap(), buffer_of(&vec![0u32; want.len()]).unwrap());
+            let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
+            for _ in 0..runs() {
+                launch(&q, k).buffer("docs", &vb).buffer("tests", &tb).buffer("leaves", &lb).bytes("shape", shape).buffer("chunk", &cb).run(&[u64::from(words.div_ceil(label::GROUP))], &[u64::from(label::GROUP)]).unwrap();
+                q.flush().await_().unwrap();
+                assert!(read::<u32>(&lb, want.len()) == want, "cpu: not the Rust's leaves");
             }
         }
         _ => {}

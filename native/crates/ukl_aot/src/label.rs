@@ -100,3 +100,38 @@ pub fn source() -> String {
     )
 }
 
+
+/// `label_leaves` as Rust over `b`: test `t`'s word `w` of file `f` at `[t][region(f) + w]`, as the engine's
+/// `leaves` (each test `op | arg << 8`).
+///
+/// # Safety
+///
+/// `k` is a kernel of `label_leaves`' arguments.
+pub unsafe fn run_leaves(k: crate::Kernel, b: &Batch, tests: &[u32]) -> Vec<u32> {
+    let words = b.words();
+    let shape = Shape { recursive: words, file_count: b.views.len() as u32, target_count: tests.len() as u32, ..Shape::default() };
+    let mut leaves = vec![0u32; tests.len() * words as usize];
+    let (dp, tp, lp, cp) = (b.views.as_ptr().cast::<u8>(), tests.as_ptr().cast::<u8>(), leaves.as_mut_ptr().cast::<u8>().cast_const(), b.chunk);
+    let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
+    let p = |x: &*const u8| (&raw const *x).cast::<u8>();
+    let argv = [p(&dp), p(&tp), p(&lp), (&raw const shape).cast::<u8>(), p(&cp), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>()];
+    unsafe { crate::launch(k, &argv, words.div_ceil(GROUP), GROUP) };
+    leaves
+}
+
+/// The leaf tests the tests run: each kind of test, at several arguments, a count not a multiple of a block's 8.
+pub fn leaf_tests() -> Vec<u32> {
+    let mut t = Vec::new();
+    for arg in 0..6 {
+        t.push(1 | arg << 8); // kind
+        t.push(4 | arg << 8); // a class
+    }
+    for arg in 0..3 {
+        t.push(2 | arg << 8); // field
+    }
+    for (m, a) in [(1, 0), (0, 1), (2, 1), (3, 0)] {
+        t.push(3 | (m | a << 8) << 8); // flags
+    }
+    t.extend([18, 19, 21, 22]);
+    t
+}

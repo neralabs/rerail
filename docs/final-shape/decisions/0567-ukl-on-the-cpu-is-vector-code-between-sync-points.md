@@ -749,6 +749,48 @@ The device's run (`label_bench`, `cpu`), instructions (cycles) a node:
 | the device, its Rust | 99.1 (20.9) | 119.4 (25.9) | 105.0 (23.6) |
 | the device, `RERAIL_CPU_RUST=0` (c++) | 111.6 (33.0) | 156.1 (38.9) | 117.6 (53.5) |
 
+## Step 3, the leaf tests: `label_leaves` (2026-11-23)
+
+The next kernel of the label passes: each node's leaf tests, a thread a word of 32 nodes, its tests' bits a block
+of 8 in `bits[LEAF_BLOCK]`. rs.rs writes it now (`rerail_ukl_rust::label_leaves_w8`, checked in by rerail-ukl-vec's
+`the_label_leaves_kernels_rust_is_the_checked_in_one`). rerail-ukl-aot's `the_label_passes_leaves_are_the_cpu_devices`
+holds it to the CPU device's c++ build of the same UKL, over each document alone and all of them in one batch. What
+rs.rs gained:
+
+1. **A thread's array** (a variable over 8 bytes, its every access a 4-byte integer's at it plus an offset) is an
+   array of registers of the chunk's lanes, each element one (`arrays`, `elem`). Its offset is one value for all
+   lanes, or an index the vector tape proves one value in the lanes that run, kept as each lane's: the largest of
+   the running lanes'. Not under barriers yet (a phase's state would have to hold it).
+2. **A variable whose every read is of one value in the lanes that run** (the tape's `Uniform`: where control
+   rejoins, a variable written apart is raised to the level that split it) is one value, wherever its writes run
+   (`read_uniform`). The test loop's `j` was each lane's, because it is set inside the varying node loop. That made
+   every test's dispatch a mask, where it is one branch.
+3. **A `break` all the lanes in a round take together** (each statement between the loop and it an `if` of a
+   condition of one value) is Rust's `break` of the loop's label (`Cx::exit`). It is not a mask of lanes that left.
+4. **Each lane's addresses of a pointer** (64-bit lanes, as `[usize; W]`) are made once where the variable is set,
+   and reused by its every read in that block (`addrs`, in `memo`). The same holds for the pointer plus one offset
+   (a field). A loop forgets those of the variables it sets. The code's kind, field and flags were one rebuild each.
+5. A function returning a pointer starts its result at null, not `0`.
+
+The test documents had no code table. Their views pointed past their bytes, so both builds read whatever lay there,
+and differed from run to run. `parent::json_doc` now places the language's codes after the tape, as a slab does.
+
+`label_bench`, `LABEL_KERNEL=leaves`, 23 tests (each kind at several arguments), instructions (cycles) a node:
+
+| | records | numbers | random |
+|---|---|---|---|
+| the Rust | 1577.1 (460.2) | 2120.8 (544.5) | 1712.2 (522.0) |
+| the CPU device's c++ | 1734.2 (277.5) | 3313.8 (618.2) | 1856.0 (394.9) |
+| the Rust, the code's tests alone (19) | 475.1 (92.5) | | |
+| the c++, the code's tests alone | 822.1 (123.4) | | |
+| the Rust, tests 18 / 19 / 21 / 22 | 342.1 (101.5) / 118.2 (24.8) / 394.0 (125.1) / 547.0 (179.1) | | |
+| the c++, tests 18 / 19 / 21 / 22 | 340.2 (62.1) / 171.5 (31.5) / 287.9 (56.9) / 407.3 (79.1) | | |
+
+The tests of a node's code are faster than the c++, and so is test 19 (a node's size). Tests 18, 21 and 22 are
+slower. Each walks the tape (`tape_next`, a node's children, its siblings) in loops whose rounds differ from lane to
+lane, and a round is a gather of each lane's. On records and random the whole is more cycles than the c++, so the
+device does not run it yet (`rerail_ukl_rust::kernels` names `label_parents` alone). Next: the walks' loops.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

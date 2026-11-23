@@ -327,3 +327,54 @@ fn the_label_passes_parents_take_no_more_instructions() {
         assert!(rust <= most && rust < host, "{kind}: {rust:.1} instructions a node (at most {most}, and under the host read's {host:.1})");
     }
 }
+
+/// The label passes' leaf tests as rerail-ukl-vec's Rust are the CPU device's c++ build's of the same UKL (its text
+/// with a line more, so that the device has no Rust of it), over each document alone.
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn the_label_passes_leaves_are_the_cpu_devices() {
+    use rerail_gpu::kernels::{buffer_of, launch, program_with, read};
+    // SAFETY: no other test of this crate reads the environment or a device.
+    unsafe { std::env::set_var("RERAIL_GPU", "cpu") };
+    let Some(shared) = rerail_gpu::shared::get() else {
+        eprintln!("no CPU device: skipped");
+        return;
+    };
+    assert!(rerail_gpu::device::cpu_chosen(), "not the CPU device");
+    let p = program_with("label_passes_cpp", &format!("{}\n// The compiler's build.\n", crate::label::source()), &[("UKL_CONSTANT_0", "16")]).unwrap_or_else(|e| panic!("label_passes: {e}"));
+    let k = p.function("label_leaves").unwrap();
+    let tests = crate::label::leaf_tests();
+    let lang = crate::parent::json_lang();
+    let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
+    let docs = crate::parent::documents(&lang);
+    let mut alone = Vec::new();
+    for d in &docs {
+        let b = crate::label::Batch::new(&[d]);
+        let got = unsafe { crate::label::run_leaves(rerail_ukl_rust::label_leaves_w8::label_leaves_w8, &b, &tests) };
+        let words = b.words();
+        let shape = crate::label::Shape { recursive: words, file_count: 1, target_count: tests.len() as u32, ..crate::label::Shape::default() };
+        // SAFETY: the views and the shape are plain u32s.
+        let (views, shape) = unsafe {
+            (std::slice::from_raw_parts(b.views.as_ptr().cast::<u32>(), size_of_val(&b.views[..]) / 4), std::slice::from_raw_parts((&raw const shape).cast::<u8>(), size_of::<crate::label::Shape>()))
+        };
+        let (vb, tb, cb, lb) = (buffer_of(views).unwrap(), buffer_of(&tests).unwrap(), buffer_of(&d.bytes).unwrap(), buffer_of(&vec![0u32; got.len()]).unwrap());
+        launch(&q, k).buffer("docs", &vb).buffer("tests", &tb).buffer("leaves", &lb).bytes("shape", shape).buffer("chunk", &cb).run(&[u64::from(words.div_ceil(crate::label::GROUP))], &[u64::from(crate::label::GROUP)]).unwrap();
+        q.flush().await_().unwrap();
+        let want = read::<u32>(&lb, got.len());
+        assert!(want.iter().any(|&w| w != 0), "{}: no test held", d.name);
+        let again = unsafe { crate::label::run_leaves(rerail_ukl_rust::label_leaves_w8::label_leaves_w8, &b, &tests) };
+        let apart: Vec<(usize, u32, u32, u32)> = (0..got.len()).filter(|&i| got[i] != want[i] || again[i] != got[i]).map(|i| (i, got[i], again[i], want[i])).take(8).collect();
+        assert!(apart.is_empty(), "{}: not the CPU device's leaves ({} nodes, {words} words; at, Rust, Rust again, c++: {apart:?})", d.name, d.nodes());
+        alone.push((got, words));
+    }
+    // All in one batch, each where it lies: each file's words its own leaves.
+    let all: Vec<&crate::parent::Doc> = docs.iter().collect();
+    let b = crate::label::Batch::new(&all);
+    let got = unsafe { crate::label::run_leaves(rerail_ukl_rust::label_leaves_w8::label_leaves_w8, &b, &tests) };
+    for (f, (one, words)) in alone.iter().enumerate() {
+        for t in 0..tests.len() {
+            let (at, n) = (t * b.words() as usize + b.region(f) as usize, b.views[f].nodes.div_ceil(32) as usize);
+            assert!(got[at..at + n] == one[t * *words as usize..][..n], "{}: its leaves in a batch are not its own", docs[f].name);
+        }
+    }
+}

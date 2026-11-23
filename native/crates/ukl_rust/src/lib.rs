@@ -6,6 +6,8 @@
 
 #[cfg(target_arch = "aarch64")]
 pub mod label_parents_w8;
+#[cfg(target_arch = "aarch64")]
+pub mod label_leaves_w8;
 mod sources;
 
 pub use sources::*;
