@@ -178,6 +178,20 @@ pub fn read(name: &str) -> Option<&'static Read> {
     READS.iter().find(|read| read.name == name)
 }
 
+/// How a kernel calls `read` (the UKL backend): the source it includes, made from the same CLIF (`lines_ukl_source`,
+/// `relation_ukl_source`, `ids_ukl_source`), and its function there. The call passes the base its pointer counts from
+/// (`t`, the memory's byte 0) before the read's own parameters, the CLIF's. `None` for the tape's and the views' reads,
+/// whose UKL takes their bases apart (`<ukl/reads/tape.h>`, `<ukl/reads/view.h>`).
+pub fn ukl_call(read: &Read) -> Option<(&'static str, String)> {
+    let source = match read.family {
+        Family::Lines => "ukl/reads/lines.h",
+        Family::Relation if numbering(read) => "ukl/reads/ids.h",
+        Family::Relation => "ukl/reads/relation.h",
+        Family::Tape | Family::View => return None,
+    };
+    Some((source, format!("clif_{}", read.name)))
+}
+
 /// A read's signature: its family's pointers (the tape's base and its view; a relation's descriptor), then its own
 /// parameters.
 pub fn signature(read: &Read, call_conv: CallConv) -> Signature {
