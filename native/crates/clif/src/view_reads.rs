@@ -58,8 +58,16 @@ pub struct ViewDoc {
     /// guest's placement gives its span (`Placement::host`; u64s). A placement no word maps (an embedder's segments,
     /// a string's normalized pieces): its spans placed once, as the host places them.
     pub placed: Run,
+    /// The tape's rows' derived columns (`tape_rows`), each made on a program's first read of its relation, empty
+    /// before: each row's gap's atom of `structural_before` and `structural_after` (u32s, by row); `rr_token_named`'s
+    /// parent and place among its parent's tape children (`[u32; 2]`s, by row); each node's place in `visit_index`'s
+    /// order and its `tree_digest` atom (u32s, by local id).
+    pub gaps: [Run; 2],
+    pub named: Run,
+    pub visits: Run,
+    pub digests: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24 + 16 * 5);
 
 /// `ViewDoc::placement`'s kinds.
 pub const PLACED_COPIED: u32 = 1;
@@ -229,7 +237,7 @@ pub const ORDER_COLUMNS: u32 = 2;
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 18] = [
+    let fields: [(&str, &str, usize); 22] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -248,6 +256,10 @@ pub fn ukl() -> String {
         ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
         ("Run", "placed", offset_of!(ViewDoc, placed)),
+        ("Run", "gaps[2]", offset_of!(ViewDoc, gaps)),
+        ("Run", "named", offset_of!(ViewDoc, named)),
+        ("Run", "visits", offset_of!(ViewDoc, visits)),
+        ("Run", "digests", offset_of!(ViewDoc, digests)),
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
@@ -277,6 +289,8 @@ pub fn ukl() -> String {
     s += "} ViewDoc;\n";
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDoc) == {}, \"ViewDoc: size\");\n", std::mem::size_of::<ViewDoc>());
     for (_, name, at) in fields.iter() {
+        // An array's offset is its first element's: its name without the length.
+        let name = name.split('[').next().unwrap_or(name);
         s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, {name}) == {at}, \"ViewDoc.{name}\");\n");
     }
     s

@@ -127,17 +127,56 @@ pub fn simd_group() -> usize {
     device().map_or(32, |d| d.simd_width() as usize)
 }
 
-thread_local! {
-    /// This thread's scratch buffers, two sets by slot: a sort's or probe's intermediates, kept for the next. A
-    /// submission uses one set (`scratch_set`); the lane has at most two in flight, each on its own set, and starts
-    /// a third only once the first completed, so no two in flight share one.
-    static SCRATCH: RefCell<[Vec<Option<shared::Pooled>>; 2]> = const { RefCell::new([Vec::new(), Vec::new()]) };
-    static SET: Cell<usize> = const { Cell::new(0) };
+/// A submission's scratch: a sort's or probe's intermediates by slot, kept for the next submission given it. The GPU
+/// lane's space holds a few (`space::start` gives a submission one no other in flight holds); the submission carries
+/// it, and its second pass encodes on it on whichever thread finishes it (`on_scratch`).
+///
+/// Each thread's scratch, two sets the thread alternated, was a lane submission's before: a submission begins on one
+/// of the lanes' pool threads and is finished on any of them, and its second pass (a probe's spill, a tile's scatter)
+/// encoded on the set of that number of the thread that finished it, which a submission begun on that thread could be
+/// running on: two submissions' intermediates in one buffer, and pairs past their sides (`setfix::level::take`, the
+/// M3's 300-file run ab218, a pair's left 31,379 of 5,735 rows).
+#[derive(Default)]
+pub struct Scratch(std::sync::Mutex<Vec<Option<shared::Pooled>>>);
+
+/// Dropped, its buffers go back as `scratch_return`'s do: to Metal, which frees each once the command buffers that
+/// hold it completed, not to the pool, whose next lease a command buffer still running could write.
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        release(self.0.get_mut().unwrap_or_else(std::sync::PoisonError::into_inner));
+    }
 }
 
-/// Makes `set` (0 or 1) this thread's scratch set; the previous one.
-pub fn scratch_set(set: usize) -> usize {
-    SET.with(|c| c.replace(set & 1))
+thread_local! {
+    /// This thread's own scratch by slot (a device stratum's stages on its thread), where no submission's is bound.
+    static SCRATCH: RefCell<Vec<Option<shared::Pooled>>> = const { RefCell::new(Vec::new()) };
+    /// The scratch of the submission this thread encodes for (`on_scratch`).
+    static BOUND: RefCell<Option<Arc<Scratch>>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with `scratch` as every `scratch` slot's (a lane submission's, on the thread that encodes it now).
+pub fn on_scratch<R>(scratch: &Arc<Scratch>, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Arc<Scratch>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let was = self.0.take();
+            BOUND.with_borrow_mut(|b| *b = was);
+        }
+    }
+    let _restore = Restore(BOUND.with_borrow_mut(|b| b.replace(Arc::clone(scratch))));
+    f()
+}
+
+fn release(slots: &mut Vec<Option<shared::Pooled>>) -> usize {
+    let mut n = 0;
+    for b in slots.drain(..).flatten() {
+        n += b.length() as usize;
+        b.release();
+    }
+    if n > 0 {
+        shared::kept_change(shared::Kept::Scratch, -(n as isize));
+    }
+    n
 }
 
 /// A join kernel: its function, and its buffer arguments' names in the order it declares them (`Pass` binds a
@@ -364,25 +403,19 @@ pub const FREE: usize = 16;
 /// write it (returned to the pool, a sort still running wrote into the block the pool's next lease made of it: Q265's
 /// check, `metal_join`), and Metal frees it once every command buffer that holds it completed.
 pub fn scratch_return() -> usize {
-    let n = SCRATCH.with_borrow_mut(|sets| {
-        let mut n = 0;
-        for b in sets.iter_mut().flat_map(|s| s.drain(..)).flatten() {
-            n += b.length() as usize;
-            b.release();
-        }
-        n
-    });
-    if n > 0 {
-        shared::kept_change(shared::Kept::Scratch, -(n as isize));
-    }
-    n
+    SCRATCH.with_borrow_mut(release)
 }
 
 /// Scratch slot `slot`, at least `bytes` long (grown to a power of two when it is shorter).
 pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
-    let set = SET.with(Cell::get);
-    SCRATCH.with_borrow_mut(|sets| {
-        let s = &mut sets[set];
+    match BOUND.with_borrow(Clone::clone) {
+        Some(bound) => slot_of(&mut bound.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner), slot, bytes),
+        None => SCRATCH.with_borrow_mut(|s| slot_of(s, slot, bytes)),
+    }
+}
+
+fn slot_of(s: &mut Vec<Option<shared::Pooled>>, slot: usize, bytes: usize) -> Result<Buffer, String> {
+    {
         if s.len() <= slot {
             s.resize_with(slot + 1, || None);
         }
@@ -400,7 +433,7 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
             s[slot] = Some(new);
         }
         Ok(s[slot].as_ref().expect("a scratch buffer").device_buffer().clone())
-    })
+    }
 }
 
 /// A device buffer of the one manager's pool (decision 0100 §2): a free one of its size class when there is one,

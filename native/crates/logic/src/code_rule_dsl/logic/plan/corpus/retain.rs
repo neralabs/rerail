@@ -1234,6 +1234,12 @@ impl Source for Renamed {
     fn lookup_cost(&self, column: usize) -> f64 {
         self.0.lookup_cost(column)
     }
+    fn scan_cost(&self) -> f64 {
+        self.0.scan_cost()
+    }
+    fn known_empty(&self) -> bool {
+        self.0.known_empty()
+    }
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {
         self.0.estimated_matches_all(columns)
     }
@@ -1460,6 +1466,9 @@ impl Source for Layered {
     }
     fn lookup_cost(&self, column: usize) -> f64 {
         self.kept.lookup_cost(column)
+    }
+    fn scan_cost(&self) -> f64 {
+        self.kept.scan_cost()
     }
     fn indexed(&self, column: usize) -> bool {
         self.kept.indexed(column)

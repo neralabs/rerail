@@ -302,6 +302,18 @@ pub trait Source: Send + Sync {
     fn lookup_cost(&self, _column: usize) -> f64 {
         1.0
     }
+    /// A scan's work a row it gives, as a multiple of a derived relation's: one, but where the rows a scan gives are
+    /// a few of what it reads (a text test of a batch not yet made: every string of every document, made and
+    /// tested). The planner prices a scan of it so (`Stats::scan_cost`), and leads with what probes it.
+    fn scan_cost(&self) -> f64 {
+        1.0
+    }
+    /// Whether it is known to have no rows, its rows not made for it (`holds_none` by default): a caller that drops what
+    /// reads an empty relation asks this, not `len` or `holds_none`, which for a text test of a batch not made whole
+    /// test every string of it (decision 0494, `scan_cost`). Not known is not empty: what reads it is kept.
+    fn known_empty(&self) -> bool {
+        self.holds_none()
+    }
     /// The rows estimated to match one value on each of `columns` at once. By default the columns are taken
     /// as independent (each keeps its share of the rows), bounded by the most selective one.
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {

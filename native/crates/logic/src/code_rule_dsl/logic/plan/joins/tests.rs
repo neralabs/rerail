@@ -899,3 +899,34 @@ fn a_chunks_notes_enter_the_memo_at_its_filing_whatever_its_threads_order() {
     assert_eq!(rows(), filed);
     clear();
 }
+
+/// Decision 0243, as `WalkSnap::take` keeps it: a request holds its line's relations, never a view held in place
+/// (`hold_view_in_place`), whose rows are its source's: held, it held the source whole, and a batch's view the chunk's
+/// every relation, in its block of sources, until the search ran (61 MB at a 300-file run's peak, on the M3). A line
+/// reading a view is priced; a negated view is not held, and the line is walked over the rest.
+#[test]
+fn a_held_walk_never_holds_a_view_in_place() {
+    use crate::code_rule_dsl::logic::native::{self, component};
+    use crate::code_rule_dsl::logic::plan::WalkSnap;
+    let path = crate::code_rule_dsl::fixtures::temp();
+    let _store = crate::content_store::ContentStore::open(&path).unwrap();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    native::register(&db).unwrap();
+    native::register_symbols(&db).unwrap();
+    component::retain(&db, "r", vec![rerail_blocks::vector![1, 2], rerail_blocks::vector![2, 3]], vec![b'i'; 2]).unwrap();
+    let source = component::columns_source(vec!["a".into(), "b".into()], vec![Some(rerail_blocks::vector![2, 3]), Some(rerail_blocks::vector![5, 6])]);
+    component::hold_view_in_place(&db, "v", std::sync::Arc::clone(&source), rerail_blocks::vector![0, 1], vec![b'i'; 2]);
+    let held = |rule: &str| -> Option<Vec<String>> {
+        let p = parse(&format!(".decl r(x: number, y: number)\n.decl v(x: number, y: number)\n.decl h(x: number)\n{rule}\n.output h\n")).unwrap();
+        let b = body::nth(&p, 0);
+        let snap = WalkSnap::take(crate::code_rule_dsl::facts::vtab::Db::of(&db), "h", 0, &b, None, &|_, _| None)?;
+        let mut rels: Vec<String> = snap.rels.into_keys().collect();
+        rels.sort();
+        Some(rels)
+    };
+    assert_eq!(held("h(x) :- r(x, y), r(y, _)."), Some(vec!["r".to_owned()]), "a line of held relations is held");
+    assert_eq!(held("h(x) :- r(x, y), v(y, _)."), None, "a line reading a view is priced, not held");
+    assert_eq!(held("h(x) :- r(x, y), !v(y, y)."), Some(vec!["r".to_owned()]), "a negated view is not held");
+    // The view's source is held by the run alone: no request keeps it.
+    assert_eq!(std::sync::Arc::strong_count(&source), 2, "the run's view and this test's");
+}

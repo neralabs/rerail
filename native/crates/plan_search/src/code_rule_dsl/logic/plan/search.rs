@@ -316,6 +316,9 @@ impl Fielded {
     }
 }
 
+/// The column `Stats::lookup` keeps a relation's scan cost under (`Source::scan_cost`): no column's name.
+const SCAN: &str = "";
+
 #[derive(Clone, Debug)]
 pub struct Stats {
     /// (table, column) → (rows, ndv, sum of squared postings, the same within documents).
@@ -574,9 +577,15 @@ impl Stats {
         }
     }
 
-    /// The lookup costs `source` declares for relation `rel`'s columns, those not one (`Source::lookup_cost`).
+    /// The lookup costs `source` declares for relation `rel`'s columns, those not one (`Source::lookup_cost`), and
+    /// its scan's (`Source::scan_cost`), under the column `SCAN`.
     pub fn lookup_costs(&mut self, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source) {
         let mut costs: Vec<(String, f64)> = self.lookup.decoded(rel).unwrap_or_default();
+        let scan = source.scan_cost();
+        if scan != 1.0 {
+            costs.retain(|(c, _)| c != SCAN);
+            costs.push((SCAN.to_owned(), scan));
+        }
         for (c, col) in source.columns().into_iter().enumerate() {
             let cost = source.lookup_cost(c);
             if cost != 1.0 {
@@ -588,6 +597,11 @@ impl Stats {
         if !costs.is_empty() {
             self.lookup = self.lookup.with([(rel.to_owned(), costs)]);
         }
+    }
+
+    /// A scan of `rel`'s work a row out, as a multiple of a derived relation's: one unless its source said.
+    pub fn scan_cost(&self, rel: &str) -> f64 {
+        self.lookup_cost(rel, SCAN)
     }
 
     /// A lookup on `rel`'s column `col`, as a multiple of a derived relation's: one unless its source said.
@@ -4186,6 +4200,14 @@ impl Model {
         }
         // What is bound before the first step: a recheck's head (`Body::with_head_bound`, Q208), one candidate row.
         let pre = b.bound_before();
+        // A scan's work a row it gives (`Source::scan_cost`): a positive atom with no column bound, of a source whose
+        // scan reads more than it gives (a text test of a batch not made: every string of it). One elsewhere.
+        let scan_cost = |l: usize, bound: &VarSet| -> f64 {
+            match b.view(l) {
+                Lit::Atom(a) if !a.neg() && b.args(l).iter().all(|&t| b.constant(t).is_none() && !matches!(t, TermRef::Var(v) if bound.contains(v))) => stats.scan_cost(b.rel(a)),
+                _ => 1.0,
+            }
+        };
         let step_all = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
             // In a long body's greedy order, a step that reads with no bound variable (a scan, a cross product) is
             // priced from at least one binding (Postgres's `clamp_row_est`): an estimate near 0 would make every next
@@ -4203,7 +4225,7 @@ impl Model {
                         let out = rows * r;
                         return Some((out, out, Some(Mode::Range)));
                     }
-                    Some((out, out, None))
+                    Some((out * scan_cost(l, bound), out, None))
                 }
                 Lit::Nearest { n, a, kindset } => {
                     if !b.ready(l, bound) {
@@ -4569,8 +4591,9 @@ impl Model {
         #[derive(Clone, Copy)]
         enum Price {
             No,
-            /// Rows a binding, a range's where it reads one, and the rule `atom_rows` priced it by.
-            Atom(f64, Option<f64>, &'static str),
+            /// Rows a binding, a range's where it reads one, the rule `atom_rows` priced it by, and a scan's work a
+            /// row (`scan_cost`).
+            Atom(f64, Option<f64>, &'static str, f64),
             Climb(f64),
             Descend(f64),
         }
@@ -4603,7 +4626,7 @@ impl Model {
                 Lit::Atom(_) => {
                     let rows = atom_rows(j, bound);
                     let by = basis.get();
-                    Price::Atom(rows, doc_range(j, bound).map(|(_, r)| r), by)
+                    Price::Atom(rows, doc_range(j, bound).map(|(_, r)| r), by, scan_cost(j, bound))
                 }
                 Lit::Nearest { n, a, kindset } => {
                     if !b.ready(j, bound) {
@@ -4623,7 +4646,7 @@ impl Model {
         let priced = |p: Price, rows: f64| -> Option<(f64, f64, Option<Mode>)> {
             match p {
                 Price::No => None,
-                Price::Atom(ar, range, _) => {
+                Price::Atom(ar, range, _, scan) => {
                     let out = rows * ar;
                     if let Some(r) = range
                         && rows * r < out
@@ -4631,7 +4654,7 @@ impl Model {
                         let out = rows * r;
                         return Some((out, out, Some(Mode::Range)));
                     }
-                    Some((out, out, None))
+                    Some((out * scan, out, None))
                 }
                 Price::Climb(steps) => Some((rows * steps, rows, Some(Mode::Climb))),
                 Price::Descend(size) => Some((rows * size, rows * size, Some(Mode::Descend))),
@@ -4729,7 +4752,7 @@ impl Model {
                     let crossed = prev != 0 && jmask[i] & *bound == 0;
                     let left = if crossed && from.unfounded { from.rows.max(SEARCH_WORK) } else { from.rows };
                     let p = price(i, *bound);
-                    let by = match p { Price::Atom(_, _, by) => by, _ => "" };
+                    let by = match p { Price::Atom(_, _, by, _) => by, _ => "" };
                     let Some((w, mut out, mode)) = priced(p, left) else { continue };
                     let w = w * range_pass(i, *bound);
                     let fan = if left > 0.0 { out / left } else { 0.0 };

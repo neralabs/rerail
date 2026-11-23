@@ -43,15 +43,12 @@ pub(super) struct Tree {
     prev_token: bool,
     token: bool,
     /// `token` answered on request (decision 0174): its anonymous children's rows (`rr_token_anon`, their text their
-    /// kind) and its named children's by node (`rr_token_named(p, i, c, start, end)`, the text `node_text`'s).
+    /// kind). Its named children's (`rr_token_named`) are a view of the tape (`tape_rows::NamedChild`).
     token_parts: bool,
-    visit_index: bool,
     op_ats: Vector<[i64; 3]>,
     prev_tokens: Vector<[i64; 2]>,
     tokens: Vector<[i64; 5]>,
     anon_tokens: Vector<[i64; 5]>,
-    named_tokens: Vector<[i64; 5]>,
-    visit_indexes: Vector<[i64; 2]>,
 }
 
 impl Tree {
@@ -61,8 +58,7 @@ impl Tree {
             op_at: read("op_at"),
             prev_token: read("prev_token"),
             token: read("token"),
-            token_parts: read("rr_token_anon") || read("rr_token_named"),
-            visit_index: read("visit_index"),
+            token_parts: read("rr_token_anon"),
             ..Self::default()
         }
     }
@@ -84,8 +80,8 @@ impl Tree {
         }
     }
 
-    /// Document `p`'s rows (`python`: it is Python's). A text document (no `dialect`) has none.
-    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, python: bool, string: &mut dyn FnMut(&str) -> usize) {
+    /// Document `p`'s rows. A text document (no `dialect`) has none.
+    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize) {
         let f = p.f();
         let Some(dialect) = dialect else { return };
         self.operators(p, dialect, string);
@@ -93,10 +89,8 @@ impl Tree {
             for (_, id, n) in p.node_ids() {
                 for (i, &c) in f.children(id).iter().enumerate() {
                     let (a, b) = (i64::from(f.start(c)), i64::from(f.end(c)));
-                    let at = p.local_of_node(c);
-                    if f.named(c) && at != NONE {
-                        self.named_tokens.push([n, i as i64, p.global(at), a, b]);
-                    } else {
+                    // A named child a node is: `rr_token_named`'s, a view (`tape_rows::NamedChild`).
+                    if !(f.named(c) && p.local_of_node(c) != NONE) {
                         // A named child no node is (a comment, a withheld node) keeps its text here.
                         let text = if f.named(c) { f.text(c) } else { dialect.name(f, c) };
                         self.anon_tokens.push([n, i as i64, string(text) as i64, a, b]);
@@ -124,15 +118,6 @@ impl Tree {
                 }
             }
         }
-        self.visits(p, dialect, python);
-    }
-
-    /// `visit_index` of `p`'s nodes (`python`: in CPython's order). A guest's too: a program's nodes (a Vue
-    /// component's script, decision 0597) are a document of their own, which `earlier` orders.
-    pub(super) fn visits(&mut self, p: &Projected, dialect: &Dialect, python: bool) {
-        if self.visit_index && let Some(&root) = p.nodes().next().map(|(_, x)| x).as_ref() {
-            Order { f: p.f(), dialect, p, python, next: 0, out: &mut self.visit_indexes }.run(root);
-        }
     }
 
     /// The relations read, their strings as atoms (`atom` of a string index).
@@ -149,16 +134,12 @@ impl Tree {
         }
         if self.token_parts {
             out.push(("rr_token_anon", relation(&["p", "i", "s", "start", "end_"], &mut self.anon_tokens.iter().map(|&[p, i, s, a, b]| rerail_blocks::vector![p, i, atom(s), a, b]))));
-            out.push(("rr_token_named", relation(&["p", "i", "c", "start", "end_"], &mut self.named_tokens.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
-        }
-        if self.visit_index {
-            out.push(("visit_index", relation(&["n", "i"], &mut self.visit_indexes.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
         }
         out
     }
 }
 
-/// CPython's visit order over one Python document's tape (the module doc), with a stack rather than recursion: a
+/// The visit order over one document's tape (CPython's in a Python document), with a stack rather than recursion: a
 /// chain of 10,000 `+` is that deep.
 struct Order<'a> {
     f: FactsIn<'a>,
@@ -166,8 +147,17 @@ struct Order<'a> {
     p: &'a Projected,
     /// CPython's order; else the tape's.
     python: bool,
-    next: i64,
-    out: &'a mut Vector<[i64; 2]>,
+    next: u32,
+    each: &'a mut dyn FnMut(u32, u32),
+}
+
+/// `visit_index`'s numbering of a document `p`, a file's own or a guest's (a Vue component's script, decision 0597):
+/// each node of the projection with its place in the visit order (CPython's where `python`, else the tape's),
+/// `(local, i)`, in that order (`tape_rows::VisitIndex` reads it).
+pub fn visit_order(p: &Projected, dialect: &Dialect, python: bool, each: &mut dyn FnMut(u32, u32)) {
+    if let Some((_, root)) = p.nodes().next() {
+        Order { f: p.f(), dialect, p, python, next: 0, each }.run(root);
+    }
 }
 
 /// What the order does next: number a node and take its children (with a definition's decorators), or number it only.
@@ -198,7 +188,7 @@ impl Order<'_> {
             };
             let local = self.p.local_of_node(id);
             if local != NONE {
-                self.out.push([self.p.global(local), self.next]);
+                (self.each)(local, self.next);
                 self.next += 1;
             }
             if let Some(decorators) = decorators {

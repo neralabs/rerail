@@ -1,6 +1,8 @@
 //! A document's entry for its views' reads (decision 0353 step 4c, `rerail_clif::view_reads::ViewDoc`): in the
 //! block its projection's numbering is in, which it refers to, with the derived table of its tape's codes (each
-//! code's kind atom and field atom, a few hundred u32s). No per-node column: a node's row is read off the tape.
+//! code's kind atom and field atom, a few hundred u32s). No per-node column: a node's row is read off the tape. The
+//! tape's rows' derived columns (`tape_rows::Derived`: a gap's or a digest's atom, a child's place, the visit order),
+//! where its program reads them, are runs of it too.
 
 use super::cells::{Block, Cells, Desc};
 use super::{Dialect, Placement, Projected, field_atom};
@@ -66,6 +68,17 @@ impl ViewEntry {
             Run::set(&raw mut (*d).fields, fields.as_ptr(), fields.len());
             let places = p.places_column();
             Run::set(&raw mut (*d).places, places.as_ptr(), places.len());
+            // The tape's rows' derived columns made by now (`tape_rows::derive`: those its program reads).
+            let (columns, named) = p.derived.made();
+            let [before, after, visits, digests] = columns;
+            for (run, cells) in [(&raw mut (*d).gaps[0], before), (&raw mut (*d).gaps[1], after), (&raw mut (*d).visits, visits), (&raw mut (*d).digests, digests)] {
+                if let Some(c) = cells {
+                    Run::set(run, c.as_ptr(), c.len());
+                }
+            }
+            if let Some(c) = named {
+                Run::set(&raw mut (*d).named, c.as_ptr(), c.len());
+            }
             // core.rerail's positions (`Locs`), for the `Loc` views: their places are read in the lines the document's
             // row points at (`ViewRow::lines`: the file's `LineTable`, a guest's host's).
             if let Some(x) = Self::locs(p) {

@@ -257,6 +257,8 @@ fn docs_of(batch: &Batch, past: [u32; NVIEWS]) -> Vec<DirDoc<'_>> {
         .iter()
         .enumerate()
         .map(|(i, p)| {
+            // Its tape's rows' derived columns its program reads, which its entry points at (`ViewDoc::gaps`, …).
+            super::tape_rows::derive(batch, i);
             let (n, loc) = (nodes[i] as u32, locs.get(i).map_or(0, |&r| r as u32));
             let own = [n, children[i] as u32, fields[i] as u32, n, n, loc, loc, loc, loc, n, n, n];
             DirDoc { p, dialect: &batch.dialects[p.tag], rows: std::array::from_fn(|v| past[v] + own[v]) }

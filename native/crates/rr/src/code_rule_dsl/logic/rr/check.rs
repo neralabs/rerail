@@ -435,8 +435,14 @@ pub fn clause_reads(f: &RrFile, lits: &[LitAt], out: &mut Vec<String>) {
 pub fn undeclared(statements: &Statements) -> Vec<String> {
     let mut declared = BTreeSet::new();
     for s in statements {
-        if let Some(S::Decl(name) | S::Edit(name) | S::Violation(name)) = s.what() {
-            declared.insert(name.to_owned());
+        match s.what() {
+            Some(S::Decl(name) | S::Edit(name) | S::Violation(name)) => {
+                declared.insert(name.to_owned());
+            }
+            // `.from PASS rel [as local], … [for READER]`: each local name is another pass's relation, which a run
+            // declares where it rewrites the read (`contexts::Declared`'s reads).
+            Some(S::Setting { key: "from", text }) => declared.extend(from_names(text)),
+            _ => {}
         }
     }
     // The import closure's relations (`rr_cx_*`) are the engine's: a run adds `components.rerail` to a program that reads
@@ -458,6 +464,20 @@ pub fn undeclared(statements: &Statements) -> Vec<String> {
         }
     }
     out.into_iter().collect()
+}
+
+/// The local names a `.from` setting's text gives (`PASS rel [as local], … [for READER]`), as `contexts` reads them.
+fn from_names(text: &str) -> Vec<String> {
+    let spaced = text.replace(',', " , ");
+    let words: Vec<&str> = spaced.split_whitespace().skip(1).take_while(|w| *w != "for").collect();
+    words
+        .split(|w| *w == ",")
+        .filter_map(|name| match name {
+            [rel] => Some((*rel).to_owned()),
+            [_, "as", local] => Some((*local).to_owned()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Stratification problems of one program (every statement of its files): "h depends on d" per problem.

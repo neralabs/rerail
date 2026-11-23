@@ -598,6 +598,9 @@ impl Source for Layered {
     fn lookup_cost(&self, column: usize) -> f64 {
         self.base.lookup_cost(column)
     }
+    fn scan_cost(&self) -> f64 {
+        self.base.scan_cost()
+    }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.base.statistics()
     }
