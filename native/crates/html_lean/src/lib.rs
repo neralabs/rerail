@@ -116,6 +116,14 @@ pub const STARTS: &[&str] = &["document", "element"];
 /// [`tape_into`] from the node kind `start` (one of [`STARTS`]): its tape's root is one node of that kind over `src`,
 /// less blanks. `None` for a kind it does not start at.
 pub fn tape_from_into<T>(src: &[u8], start: &str, finish: &mut dyn rerail_tape_format::Sink<T>) -> Option<Result<T, Refusal>> {
+    let mut kept = rerail_tape_format::Kept::new(finish);
+    tape_from_into_kept(src, start, &mut kept).map(|r| r.map(|()| kept.take()))
+}
+
+/// `tape_from_into` writing through `Sink<()>` (`rerail_tape_format::Kept`): the parse is one instance, compiled in this
+/// crate (optimized in dev builds), whatever the caller's output.
+#[inline(never)]
+fn tape_from_into_kept(src: &[u8], start: &str, finish: &mut dyn rerail_tape_format::Sink<()>) -> Option<Result<(), Refusal>> {
     let start = match start {
         "document" => parse::Start::Document,
         "element" => parse::Start::Element,

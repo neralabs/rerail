@@ -1,4 +1,11 @@
 .scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.answer rr_dir_req -> dir_entry
+.answer rr_file_req -> file_line
+.answer rr_digest_req -> file_digest
+.answer load -> loaded
+.answer git_revision_request -> git_revision_of
+.answer git_view_revision_request -> git_view_revision_of
+.answer git_object_request -> git_object_of
 .decl doc(d: number, path: symbol, module: symbol)
 .decl in_scope(d: number)
 .decl source(d: number, sp: node)

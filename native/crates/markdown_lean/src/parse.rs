@@ -154,7 +154,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     }
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut p = P { src, sc: Scanner::new(src), at: 0, last: 0, w: Writer::new(widths, src.len() / 2 + 16).to(finish.target(), src), open: Vec::new(), title_at: usize::MAX, gap: Vec::new() };
+        let mut p = P { src, sc: Scanner::new(src), at: 0, last: 0, w: Writer::new(widths, src.len() / 2 + 16).to(finish.target(), src).omitting(finish.omissions()), open: Vec::new(), title_at: usize::MAX, gap: Vec::new() };
         p.document()?;
         if p.sc.unsure {
             return Err(Refusal::Parse(0));

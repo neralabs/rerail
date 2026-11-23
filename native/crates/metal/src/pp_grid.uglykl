@@ -151,7 +151,8 @@
 // A group's threadgroup memory: the barrier's flag, the scans' scratch, and the sorts' counts or
 // a sorted tile (the segmented scans' two rows alias them: no phase runs two of them); in the
 // loop's phase, which runs no scan or sort, each SIMD group's piece's run (`lp_piece`: its stacks,
-// indexed as it goes, in the group's memory, not a thread's, which Metal keeps in device memory).
+// indexed as it goes, in the group's memory, not a thread's, which Metal keeps in device memory);
+// and in the tests' phase each SIMD group's window of a long `#if` line (`p1_if_line`).
 #define PP_TG_BIG UKL_GRID_SORT_WORDS
 #define LP_SLOTS (256u / UKL_SIMD_WIDTH)
 typedef struct PpTg {
@@ -162,6 +163,7 @@ typedef struct PpTg {
     union {
         uint32_t big[PP_TG_BIG];
         LpRun lp[LP_SLOTS];
+        IfWin ifw[LP_SLOTS];
     };
 } PpTg;
 
@@ -267,16 +269,25 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
             }
             BARRIER();
         }
+        // The pieces' starts in order (`lp_queue`), the list the SIMD groups claim from (`TRN` 26 the next, 27
+        // the count). `XAT` and `XPOS` are the overruns' only in a pass run again, before this.
+        SCAN(nt, XFLAG, XAT, XTOTAL);
+        EACH(s, nt) lp_queue(AT(const uint32_t, XFLAG), AT(const uint32_t, XAT), toks, AT(uint32_t, XPOS), s);
+        // The memo's table (`lp_memo_*`): the tokens' store's first pairs, free (the store is empty here: its
+        // front is 0), and its definitions' hot bits (`LP_MEMO_HOT`); the front past them.
+        uint32_t mt = lp_memo_size(nt, AT(const uint32_t, WORDS)[1]);
+        EACH(i, mt) AT(uint32_t, TOKENS)[LP_MEMO_STRIDE * i] = 0u;
+        EACH(i, mt != 0u ? LP_MEMO_HOT : 0u) AT(uint32_t, TOKENS)[LP_MEMO_STRIDE * mt + i] = 0u;
+        ONE(x) { AT(uint32_t, TRN)[26] = 0u; AT(uint32_t, TRN)[27] = AT(const uint32_t, XTOTAL)[0]; AT(uint32_t, TRN)[30] = mt; AT(uint32_t, CTL)[0] = mt != 0u ? LP_MEMO_STRIDE * mt + LP_MEMO_HOT : 0u; }
+        BARRIER();
         {
             PX_UA(DR);
-            // A thread a token, the pieces' starts running: a start about every 32 tokens, so a SIMD group
-            // mostly holds one piece, and its other lanes look ahead for it (`lp_piece`). Packed in a
-            // list, a group's pieces branch apart and it runs each one's path in turn (twice the time
-            // on GB10, 2026-11-21). Whole SIMD groups: every lane takes each of its group's turns.
-            EACH(s, (nt + UKL_SIMD_WIDTH - 1u) & ~(UKL_SIMD_WIDTH - 1u))
+            // A piece a SIMD group at a time, claimed from the list (`lp_run`): its lanes look ahead for it
+            // (`lp_piece`). Each thread once: its SIMD group claims until the list is empty.
+            EACH(s, g.groups * g.lsz)
                 lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),
                        AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, LOB), AT(uint32_t, PLAST),
-                       AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, s,
+                       AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, AT(const uint32_t, XPOS),
                        g.lid & (UKL_SIMD_WIDTH - 1u), &tg->lp[(g.lid / UKL_SIMD_WIDTH) % LP_SLOTS] __UKL_ARGS);
         }
         BARRIER();
@@ -426,10 +437,18 @@ UKL_ONCE void pp_unit(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
             break;
         }
         uint32_t nd = N(N_DIRS), ng = N(N_GAPS), nq = N(P1_NGRP);
+        // The first iteration of a round started from the last round's tree: its groups as they were.
+        bool seed = iter == 0u && W(P1_NSEED) != 0u;
+        if (seed) grp_from = ukl_min(W(P1_NSEED), nq);
         EACH(i, ni) p1_insts(nodes, ni, AT(const uint32_t, P1_DFIRST), AT(const uint32_t, P1_GFIRST), AT(PpInst, INSTS), AT(uint32_t, P1_LIVE), i);
         EACH(q, nq) p1_grp_init(AT(const uint32_t, P1_GRPF), ni, AT(const uint32_t, P1_NGRP), grp_from, AT(uint32_t, P1_GA), AT(uint32_t, P1_TAKEN), q);
+        EACH(q, seed ? grp_from : 0u) { AT(uint32_t, P1_GA)[q] = AT(const uint32_t, P1_SEEDG)[q]; AT(uint32_t, P1_TAKEN)[q] = PP_NONE; }
         grp_from = nq;
         BARRIER();
+        if (seed) {
+            EACH(i, ni) p1_seed_words(nodes, AT(const uint32_t, N_INSTS), AT(const PpInst, INSTS), AT(const uint32_t, P1_SEEDE), W(DC), AT(uint32_t, P1_MADE), AT(uint32_t, P1_MADEF), AT(uint32_t, P1_ENTER), AT(uint32_t, P1_DEPTHN), i);
+            BARRIER();
+        }
         for (uint32_t dep = 1u; dep <= N(P1_DEPTHN); dep++) {
             EACH(i, ni) p1_live(nodes, ni, AT(const PpInst, INSTS), AT(const uint32_t, P1_ENTER), AT(uint32_t, P1_LIVE), dep, i);
             BARRIER();
@@ -535,7 +554,7 @@ UKL_ONCE void pp_unit(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
                                    AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, DSLOT), AT(const uint32_t, IF_OPS), AT(const uint32_t, STATE), AT(const uint32_t, OUT), AT(const uint32_t, OBASE),
                                    AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), defined_key, true_key, W(IF_TRUE), AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP),
                                    AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), AT(uint32_t, IF_VAL), AT(uint32_t, VBAD), w,
-                                   g.lid & (UKL_SIMD_WIDTH - 1u) __UKL_ARGS);
+                                   g.lid & (UKL_SIMD_WIDTH - 1u), &tg->ifw[(g.lid / UKL_SIMD_WIDTH) % LP_SLOTS] __UKL_ARGS);
             // The `#line` rows (§6), for the next iteration's lines and the text.
             EACH(w, nd) p1_line_row(u, AT(const uint32_t, IF_KIND), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, N_DIRS),
                                     AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, OUT), AT(const uint32_t, OBASE), AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), W(OUT_CAP),

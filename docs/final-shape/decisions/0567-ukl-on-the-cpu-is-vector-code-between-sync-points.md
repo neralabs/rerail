@@ -293,6 +293,401 @@ Gate: the library's tests, `join_stages` and `pp_grid` equal on each back end; a
 not the test's host side, which is the same on every back end) 1000 times the interpreter's; the generated code
 read beside hand-written SIMD Rust of the same kernel, with each difference fixed.
 
+## Step 3, an idea noted, not built: a scalar version below x lanes
+
+The user's (2026-11-22): a pragma that, where it is on, runs a fully scalar version (recursion included) once fewer
+than x lanes of the group's are still running.
+
+- **Why.** A vector round costs about the same with one lane on as with all (a gather is a load a lane either way,
+  and the mask's work and the test of any lane left are the same). A loop's last rounds, run for its slowest lanes,
+  and a recursion, whose lanes part further at each depth, are where few lanes run. `nearest_jump` on a deep forest
+  is one: 3.5 ms vectorized (hand or written), against 2.4 ms scalar, its chunks' last rounds for one lane or two.
+- **How it fits `rs.rs`.** A function's scalar version is one more instance: every parameter one value (`Sh::S`),
+  nothing masked, recursion Rust's (a lanes' instance is `#[inline(always)]`, so a recursive one is a call anyway).
+  At a loop's round or a call, with fewer than x lanes on: each lane's live values out of the registers, the scalar
+  rest of the loop (or the call) for each lane in turn, the results back in their lanes, and the vector code on from
+  the loop's end. The pragma names x; its sense is per width (of 8 lanes on NEON at W=8, of 32 on a GPU).
+- **When it may.** The lanes one after another is one interleaving of their threads, so only where the region holds
+  no barrier, no SIMD-group operation, and no wait on another thread's progress (a lane run alone first would wait
+  forever). The vectorizer marks the first two; the third is a check to write. Otherwise the pragma is refused.
+- **Not for the GPU.** A warp's idle lanes cost the same, and there is no cheaper scalar unit; the GPU's form of it
+  is to gather the few running lanes of many SIMD groups into full ones, through the work queue (continuations).
+- **The cost**: a second, scalar copy of each marked loop or function. x is a vector round's fixed cost against a
+  lane's scalar one, high (3–4 of 8) for a loop of gathers. The first measure: the hand-vectorized `nearest_jump`
+  going scalar at 2 lanes or fewer, on the deep forest.
+
+## Step 3, format 16's parent: written, by hand, measured
+
+`kernels/f16_parent.uglykl` is `clif_f16_parent` for every node; `parent_all_w8.rs` its Rust at 8 lanes, its values
+of 64 bits two registers of 2 lanes a register of 4 (`the_f16_parent_kernels_rust_is_the_checked_in_one`). The tests
+(`crates/ukl_aot`) read real tapes: JSON documents parsed by `rerail-json-aot` into the engine's format 16 writer,
+the host's `reads::f16::parent` the reference, every node of each, the written kernel at 5 group sizes. By hand
+(`hand.rs`): `parent_all`, the kernel's walks 8 lanes in lock-step, and `parent_all_scan`, not the kernel's
+algorithm: a walk's only state is its `j`, so a node whose walk steps to a sibling `j'` has `j'`'s parent, an answer
+made before (or a lane to its left, by 3 rounds of pointer jumping in registers); one slot read a node.
+
+What the documents' walks are: short (1.7 to 4.5 steps on average, never more than 8: a checkpoint every 8
+siblings steps to the parent), and at width 1 a checkpoint's step is escaped (its side list's, a binary search):
+a long array's walks visit one each. Times (`examples/parent_bench`, profiling build, M-series Mac at load 10–15):
+
+| Document | Nodes | Host | Walks by hand | Scan by hand | Written, W=8 |
+|---|---|---|---|---|---|
+| 40,000 records | 1.4 M | 6.1 ms | 10.7 ms | 3.0 ms | 18.9 ms |
+| 200,000 numbers | 200 k | 5.2 ms | 4.1 ms | 0.66 ms | 34.5 ms |
+| random values | 53 k | 0.41 ms | 0.67 ms | 0.18 ms | 1.25 ms |
+
+- **The walks don't pay in lock-step.** A walk is a few dependent steps; 8 lanes wait for the longest (1.8–2.3
+  times the steps), and a vector round's gathers are a load a lane anyway.
+- **The escape is the cost, and its search is where lanes run alone.** A chunk's lanes reach the same checkpoint in
+  different rounds, so each side read is one lane's. By hand: only live lanes' escapes (a done lane reads node 0's,
+  the root's, escaped), one lane's search the host's read, several lanes' searches interleaved (`side8`), and the
+  checkpoint read last kept in a register. Written: the call is under `if any` of live and escaped lanes, right, but
+  its search runs 8 lanes' loads for one lane, 8 times a chunk, the 7 times the host's time on the numbers. That is
+  the idea above (a scalar version below x lanes), its first case outside `nearest_jump`.
+
+## Step 3, format 16's parent: the parallel shape (the user's, 2026-11-22)
+
+The user: "there should be a more efficient shape for this computation / do all 8 steps in lockstep / do all of the
+binary searching in parallel ... I would prefer to take advantage of parallelism", then "go ahead with them / they
+should also improve the speed on Metal, but please verify that it is true".
+
+1. **The side search is a count, in every copy of the read** (CLIF, the host's Rust, the kernels' UKL body). A run of
+   offsets is ascending, so the first at or past a node's low byte is the count below it: 8 a word, each byte compared
+   unsigned within the word, summed by popcount, no load waiting on another.
+2. **A walk's first step is a read of its own** (`parent_step`, host Rust and UKL; `parent` is a loop of it). A walk's
+   only state is its node, so a node whose step goes on from a previous sibling's node `j` has `j`'s parent: no
+   walk, a chain of at most K - 1 = 7 links (`every_chain_of_links_is_at_most_seven`).
+3. **The kernel is one step a node and a chase of the links**, as one launch (`parent_group`, its Rust checked in: below).
+
+Metal, an M3, the GPU's clock, the median of 9 (`examples/parent_gpu`); every node checked against the host's:
+
+| Kernel | 40,000 records (1.4 M nodes) | 200,000 numbers | random values (53 k) |
+|---|---|---|---|
+| The walk, the halving search (before) | 0.474 ms | 0.382 ms | 0.069 ms |
+| The walk, the count search | 0.509 ms | 0.231 ms | 0.070 ms |
+| Step, 3 rounds of pointer jumping (4 launches) | 1.027 ms | 0.197 ms | 0.061 ms |
+| Step, then the links' chase (2 launches, removed) | 0.581 ms | 0.120 ms | 0.037 ms |
+| One launch: steps in threadgroup memory, a barrier, the chase there | 0.400 ms | 0.127 ms | 0.049 ms |
+
+- **Not faster everywhere as first built.** Pointer jumping reads and writes two arrays of every node each round:
+  on records, whose walks are short (1.7 steps), twice the walk's time. The traffic, not the threads.
+- **The chase** reads one word a node and hops through the steps' words only where linked: 3.2 and 1.9 times the
+  walk's speed where escapes and long sibling runs are, but its second launch's 8 bytes a node keep it 23% behind the
+  walk on records.
+- **One launch is faster than the walk on all three** (1.2, 3.0 and 1.4 times): a group's links mostly stay in it,
+  and a link that leaves it is the walk from that node. It is the one kernel now; the two-launch form is removed.
+
+The two-launch kernels' Rust on the CPU (instructions and cycles a node, this Mac at load 10–50, `PARENT_ONLY` with
+`/usr/bin/time -l`): records 167 → 71 and 52 → 17 cycles; numbers 1,525 → 345 and 558 → 89; random 258 → 92 and
+101 → 23. The host's scalar read then 18, 95 and 33 cycles.
+
+## Step 3, a barrier's Rust: phases (the user's, 2026-11-22)
+
+The user, of `parent_group`'s barrier: "implement it as phase splits". `rs.rs` writes a kernel whose function has
+threadgroup barriers at its top as phases:
+
+- **The group's threadgroup memory is an array of the kernel's function** (`let mut tg = [0u64; bytes / 8]`), named
+  as one more buffer argument (`arg{k}`, after the launch's), so its reads and writes are a buffer's: consecutive
+  lanes' a register's, others a gather.
+- **The function's top-level statements between barriers are its phases.** Its Rust takes the phase and its chunk's
+  state: `if phase == j { 'phase: { ... } }` for each, a return that ends every lane `live = 0; break 'phase`. A
+  phase's end saves the chunk's lanes that go on (`live`) and each variable (a slot of the widest lanes each, 32 P
+  bytes); the next phase's start reads them, and a chunk with no lane left returns. That is what the GPU's threads
+  keep in their registers across the barrier. A later phase is written for a mask of lanes, whatever its instance's.
+- **The kernel runs each phase's loop of the chunks in turn**, the phase a constant there (the function inlined in
+  it is that phase's), every chunk's phase before any chunk's next: the barrier's meaning, with no thread waiting.
+  The state is the group's chunks' (`Vec::with_capacity`, written before it is read).
+- **A barrier elsewhere is refused**: in a branch or a loop, or in a function the kernel's function calls
+  (`a_barrier_not_at_the_top_of_the_kernels_function_is_refused`); so is a function with barriers that returns a
+  value.
+
+`parent_group_w8.rs` is checked in (`the_f16_parent_kernels_rust_is_the_checked_in_one`), and matches the host's
+parents on every node of the test documents, at groups of 8, 20, 32, 36 and 256 threads
+(`the_kernels_rust_parent_is_the_hosts`). `parent_step` and `parent_link` are removed, with their Rust.
+
+On the CPU, the same counts (this Mac at load 30–45, its cycles ±3 a node; the host's read 105, 479 and 133
+instructions, 17–21, 93 and 20–29 cycles):
+
+| Document | Two launches (removed) | One launch, in phases |
+|---|---|---|
+| 40,000 records | 71 instr, 17 cycles | 114 instr, 32–34 cycles |
+| 40,000 numbers | 345, 89 | 377, 94 |
+| random values | 92, 23 | 130, 36 |
+
+- **The phases' cost is not the difference**: the saved state is 256 bytes a chunk of 8, a load and a store of 16
+  registers. A loop of both phases with the phase a value (not a constant) was 5 instructions a node more.
+- **The links that leave a group are the difference**: each is the walk, which the two launches never took (their
+  steps were every node's, in device memory). A record's elements of the top-level array are 35 nodes apart, so a chain of 7
+  links spans about 245, and nearly every element's leaves its group of 256; with the walk skipped (wrong parents,
+  for the count only) records took 36 instructions a node fewer. On the CPU a chunk with one such lane runs the walk
+  masked for all 8. On the GPU the same kernel is 1.45 times the two launches' speed on records.
+
+## Step 3, a spike: chains pushed forward, no barrier (the user's, 2026-11-22)
+
+The user: "why do we need a threadgroup barrier here?", then "go ahead with a spike on option 1". The barrier is
+only there to share steps: a thread a node puts a parent's children far apart (each child's subtree between it and
+the next), so a chain of 7 links spans warps and groups. The spike turned the chase around: a link is always to the
+previous sibling, `i = j + size(j)` (held on every link of the test documents), so a chain's head (a node whose step
+names its parent) writes its parent, then each sibling after it whose step links back, by sizes. Every node is
+written once by one thread; none reads another's result. Its Rust matched the host's on every node at every group.
+
+| | records (1.4 M nodes) | numbers (200 k) | random (10 k) |
+|---|---|---|---|
+| Metal, an M3: group | 0.399 ms | 0.058 ms | 0.040 ms |
+| Metal, an M3: push | 0.878 ms | 0.100 ms | 0.066 ms |
+| CPU, Rust at 8 lanes: group (instr, cycles a node) | 114, 28 | 381, 94 | 129, 32 |
+| CPU, Rust at 8 lanes: push | 293, 74 | 921, 216 | 390, 100 |
+
+Slower everywhere, 1.7 to 2.6 times. Every node still reads its own step to learn whether it heads a chain, and a
+head then reads its chain's slots again (an inner sibling's twice: its size, and the slot before the next): two to
+three slot reads a node against about one. And only the heads work in the loop, one lane in 8 at most, for as many
+rounds as the chunk's longest chain: the threads a node keep the lanes busy, the threads a chain leave them idle.
+The kernel and its Rust are removed; `parent_group` stays the one parent kernel.
+
+## Step 3, a spike: a look-back, no barrier (the user's, 2026-11-22)
+
+The user: "what exactly is shared? and what happens if no other thread produces it? How do we ensure that each step
+is calculated exactly once? Why would we stop and wait for coordination rather than just take what is already
+calculated?", then "yes, please do / on the GPU, we can ensure rising order by making waves each take a ticket (once
+per wave, not 32 times) via an atomic add".
+
+`parent_group` shares a group's steps, and only those: a chain that leaves the group recomputes its tail, each
+thread of it apart, and the barrier is there only because threadgroup memory starts as garbage. A step is the same
+whoever computes it, so it needs computing at least once, not exactly once, and nothing needs to wait.
+`parent_back` (`kernels/f16_parent.uglykl`) is the look-back:
+
+- **`out` is the shared word, every node's**: `NOT_READY` before the launch (`parent_back_clear`), then the node's
+  step (its parent, or `LINKED | j`), then its parent. A thread stores its step first, then follows its links
+  through the words: a parent ends the chase, a link hops on, and only `NOT_READY` is a step computed again. Every
+  word a reader sees is true, so a stale one costs a step, never a wrong parent. (With final parents alone shared,
+  numbers' links, each to the node before, all in the same 8 lanes, were recomputed back to the chunk's start: 1,785
+  instructions a node.)
+- **A thread's place is its SIMD group's ticket** (`ukl_sg_ticket`, `<ukl/simd.h>`): lane 0 takes one atomic add of
+  the group's width and shuffles it to the lanes, so groups started later hold later nodes and look back at nodes
+  mostly written. On the CPU's backends, whose groups and chunks run in their ids' order, it is the id (a macro,
+  so the lanes stay consecutive). The node's work is a function of its place (`parent_back_node`): a local
+  variable assigned the id would be each lane's in `rs.rs`, a parameter keeps the shape.
+- `rs.rs`: a store of lanes' values at one address, seen in a pass before a call's result is found to be each
+  lane's, is an error only if the passes settle with it.
+- `rerail-ukl-aot` builds at opt-level 3 in dev: unoptimized, the generated Rust's inlined calls overflowed a test
+  thread's stack.
+
+Its Rust matches the host's on every node of the test documents at every group size. This Mac at load 7–11:
+
+| Instructions, cycles a node | records (1.4 M nodes) | numbers (40 k) | random (107 k) |
+|---|---|---|---|
+| The host's read | 105, 18 | 479, 88 | 132, 33 |
+| `parent_group` | 114, 29 | 377, 90 | 134, 40 |
+| `parent_back` (its `NOT_READY` fill counted) | 60, 16 | 334, 76 | 84, 25 |
+
+Metal, an M3, the GPU's clock, every node checked against the host's:
+
+| | records | numbers (200 k) | random (107 k) |
+|---|---|---|---|
+| `parent_group` | 0.400 ms | 0.127 ms | 0.064 ms |
+| `parent_back`: the clear, then the launch | 0.540 ms | 0.127 ms | 0.061 ms |
+| the clear alone | 0.121 ms | 0.022 ms | 0.014 ms |
+
+On the CPU the look-back is the fastest form yet on all three, the two launches' too (71, 345, 92 instructions).
+On Metal its launch alone is at or under `parent_group`'s, and the clear (a write of every node's word) is what
+puts it behind on records.
+
+### The fill in the same launch, then a bitmap of published groups (the user's, 2026-11-22)
+
+The user: "couldn't we do it in the same launch by having the threads cooperate by taking and filling large ranges,
+incrementing a started and finished count, and then having them spin on the finished count once there is no more
+work to do?", then "I am fucking telling you to do that", then "what about a bitmap with one bit per 32-bit value
+saying whether it's occupied or not?".
+
+- **The fill** (`ukl_sg_fill_lanes`, `<ukl/simd.h>`): a SIMD group takes a range from `started` (lane 0, read
+  first, then one atomic add), its lanes fill it together, a fence, then `finished`; a group with no range left waits
+  for `finished`. It waits only for ranges groups that are running took, which wait for nothing (0540 point 1), and
+  boundedly (`UKL_FILL_SPINS`): a thread whose wait runs out reads no shared word, and its parent is the walk. On the
+  CPU's backends each thread takes ranges alone. With `started` and `finished` in one cache line, records took 97 ms
+  (the waits' polls slowed the takes); a line apart, 0.787 ms, no wait run out.
+- **What is filled**: not `out`, but `seen`, a bit a SIMD group (a bit a 32-bit word would be `out`'s 1/32, 175 KB
+  at 1.4 M nodes; a bit a group of 32 words is 5.5 KB). A group stores its steps, then publishes (a fence, the
+  group's barrier, lane 0's or of its bit); a reader takes `out[j]` only where `j`'s group's bit is set (then a
+  fence), else computes the step. `out` is never cleared. On the CPU a node of the reader's own launch group is
+  written already (its chunks run in turn), and a group's last lane sets its bit.
+- Correct on both from poison: `out` zeros (wrong parents), `seen` all ones (every group published), on the CPU at
+  every group size and on the M3.
+- `rs.rs` along the way: an atomic add of one value at one address was one atomic for the chunk, every lane given
+  its old value (a miscompile: C's is each thread's); it is now the value times the running lanes, each lane's old
+  value its own (`a_uniform_atomic_add_is_each_lanes`), another operation each running lane's in turn. An atomic at
+  each lane's address, a shift right by each lane's count, and a function's one `bool` result are written too.
+
+| M3, the GPU's clock | records | numbers (200 k) | random (107 k) |
+|---|---|---|---|
+| `parent_group` | 0.398 ms | 0.127 ms | 0.063 ms |
+| `out` filled in the launch | 0.787 ms | 0.415 ms | 0.298 ms |
+| `seen` filled in the launch | 0.554 ms | 0.175 ms | 0.083 ms |
+| the same, `finished` read plainly first | 0.563 ms | 0.201 ms | 0.091 ms |
+
+On the CPU (load 12–18) the bitmap's form is 106, 402 and 132 instructions a node (25, 116, 40 cycles), against
+`parent_group`'s 115, 380, 135. Still behind on Metal: against the separate clear's launch (0.42 ms on records), it
+adds a group's publish (a fence, a barrier, an or) and, before each hop's word, the bit's atomic load and a fence.
+
+Tried next, at the user's word ("please test it"): a thread keeps the group it last saw published (its own first),
+and a hop into it reads `out[j]` without the bit's load and fence. Correct on both; on the M3 0.584, 0.173 and
+0.085 ms, the same as without it. The per-hop bit and fence are not the cost, and the change is not kept.
+
+### Where the look-back's time goes (the user's: "find what is expensive in the shape", 2026-11-22)
+
+Measured by switches in the kernel (each part taken out in turn; kept as `tmp/parent-back-ablation-switches.patch`,
+not in the tree) and by counters of its hops, on the M3 and in the Rust at 8 lanes.
+
+- **The hops mostly hit.** Records: 595 k nodes chase, 940 k hops, 52 k into a group not yet published (5.6%), 660 k
+  into the reader's own group, 199 k into the one before. Numbers: 688 k hops, 14 k unpublished (2%), 625 k own
+  group. Random: 96 k hops, 8 k unpublished (8%), 68 k own group. No chain is walked past 7.
+- **On the GPU the shared-word protocol is free.** The publish's fence and barrier, the fence after the bit and an
+  atomic read of `out[j]`, all three taken out: 0.553, 0.200, 0.087 ms against 0.560, 0.205, 0.090.
+- **On the GPU the fill is the cost, as a barrier, not as bytes.** An empty launch is 0.109, 0.020, 0.013 ms; the
+  fill alone 0.236, 0.056, 0.044. Neither its fence nor every wave's read of `finished` costs anything (a hot word
+  read by every lane, read-write or read-only: the empty launch's time). But 2,613, 1,912 and 1,938 waves (a
+  GPU's resident waves) find the fill unfinished and wait: the launch's whole first round idles until 5.5 KB is
+  cleared. That is the separate clear's cost again (0.121 ms on records): a grid-wide sync point, whatever it
+  writes. Without it the launch would be about 0.43, 0.15, 0.05 ms against `parent_group`'s 0.400, 0.127, 0.064.
+- **On the CPU the fill is 13 instructions a node** (each thread's own counter loads and mask work, a chunk of 8
+  at a time), **and its result known only at run time 17 more** (the walk for a fill that ran out stays in the
+  node's code): 106, 402, 132 instructions a node; the fill run but `filled` then true, 89, 399, 117; no fill, 76,
+  384, 104 (`parent_group` 114, 380, 134). Without the fill the look-back is the CPU's best on records and random;
+  on numbers every form is the step's own cost (slot width 1: each escaped step a search of the side list).
+
+### The two launches, taken apart (the user's: "can they be stacked sequentially?", 2026-11-22)
+
+`parent_step` then `parent_link` (as removed above), each part on the M3 by the GPU's clock (the measuring example
+and the old kernels kept as `tmp/parent-two/`, not in the tree):
+
+| M3 | records | numbers | random |
+|---|---|---|---|
+| step alone | 0.306 ms | 0.078 ms | 0.032 ms |
+| links alone | 0.281 ms | 0.042 ms | 0.030 ms |
+| both, one command buffer | 0.586 ms | 0.116 ms | 0.059 ms |
+| both, two buffers, no host wait / a host wait between | 0.583 / 0.550 ms | 0.121 / 0.121 ms | 0.063 / 0.062 ms |
+| links without the walk past 7 | 0.151 ms | 0.025 ms | 0.018 ms |
+| `out[i] = steps[i]` alone | 0.124 ms | 0.022 ms | 0.015 ms |
+| `parent_group` | 0.399 ms | 0.127 ms | 0.065 ms |
+
+- **Stacked, they cost their sum and nothing more.** The two launches share the command buffer's serial compute
+  encoder; a host wait between adds only the host's wall (about 0.2 ms), not GPU time. Nothing needs the host.
+- **The second launch's cost is the walk it never takes.** A chain is at most 7 links
+  (`every_chain_of_links_is_at_most_seven`), so `clif_f16_parent` after the chase does not run on any tape; but its
+  code in the kernel halves the launch's speed (0.281 against 0.151 ms on records), within 22% of a plain copy's.
+  Without it the two launches would be 0.457, 0.103 and 0.050 ms: behind `parent_group` on records only.
+
+### The two launches are the parent kernel again, a chain past 7 a corrupt tape (the user's, 2026-11-22)
+
+The user: "isn't 'at most 7 hops' a guarantee of the format?", then "go ahead / if we hit more than 7, this should
+be reported as tape corruption somehow; it should not be a silent failure".
+
+- **It is the format's.** A leaf's slot names the next node's parent on every K-th sibling (K = 8,
+  `rerail_tape_format::f16`, decision 0156 §1), and the writer sets it in one place (`writer16.rs`, a sibling index
+  a multiple of K); a first child's step is its parent (the node before). A chain from sibling m runs back to the
+  first multiple of 8 or the first child: at most 7 links on any tape the writer made.
+- **`parent_step` and `parent_link` are back, the links with no walk.** A node still linked after 7 is a corrupt
+  tape: its word NONE, and `out`'s word past the nodes' (0 before the launch) 1 more than one such node. The host's
+  runner (`parent::run_two`, `parent::run_link`) returns it as an error, `parent::Corrupt` ("corrupt format 16
+  tape: node N's parent is more than 7 links of siblings back"); the GPU harness reads the word after every run and
+  runs a chain of 8 on the device (`a_chain_past_seven_links_is_a_corrupt_tape` on the CPU, at groups of 8, 20 and
+  256: a chain of 7 a parent, of 8 the error).
+- **The report is a word of `out`, by a plain store.** A store to a second buffer, under the chase's condition,
+  made the launch as slow as the walk had (records 0.278 against 0.150 ms; numbers 0.040 against 0.026): an atomic
+  max, a plain store, a SIMD group's vote and one lane's store, a store after `out[i]`'s, all the same. Binding the
+  buffer and not writing it, or choosing NONE by a select, cost nothing; the store to `out[nodes]` costs nothing
+  (0.150 ms). Why the second buffer costs this on Metal is not known; measured only.
+- **`rs.rs`**: a store of each lane's value at one address (C's threads racing, any one's value standing) is each
+  running lane's in lane order, the last one's left (`a_store_of_lanes_values_at_one_address_is_a_running_lanes`);
+  it was refused.
+
+| | records (1.4 M nodes) | numbers (200 k) | random (107 k) |
+|---|---|---|---|
+| Metal, an M3: two launches | 0.454 ms | 0.101 ms | 0.047 ms |
+| Metal, an M3: `parent_group` | 0.399 ms | 0.127 ms | 0.064 ms |
+| CPU, Rust at 8 lanes: two launches (instr, cycles a node) | 72, 20 | 344, 84 | 93, 32 |
+| CPU, Rust at 8 lanes: `parent_group` | 114, 29 | 381, 97 | 134, 40 |
+| CPU: the host's scalar read | 105, 17 | 482, 95 | 132, 33 |
+
+(This Mac at load 7–13.) The two launches are faster than `parent_group` on both backends, but for records on
+Metal (14% behind); `parent_group` stays beside them, and its walk past a group's links is a real case (its walk
+past 7 is not reported: the host's read, `clif_f16_parent`, walks any chain).
+
+### The step's Rust as hand-written SIMD would be (the user's: "please address all of these", 2026-11-22)
+
+The step's Rust was slower than the host's scalar step because it did per lane what a hand-written NEON loop does
+once a chunk. Each gap, and what `rs.rs` writes now (commits 6c931fa5d2, 94388e3d25):
+
+1. **The window load, a gather.** Each lane's aligned word, shift and second word at its own 64-bit pointer.
+   Now `ukl_ld_window` of 8 bytes is one unaligned load under `UKL_VEC` (memory.h: it touches exactly the words the
+   aligned form reads), and an index of lanes `first + j * stride` (`V::Lin`, the stride a value read from the tape,
+   carried through `+ - * <<`, a zero extension and a 64-bit base in `V::At`) is loaded as `vld2q_u32` pairs where
+   the program finds `stride == 8` and no lane's index wraps, else gathered.
+2. **64-bit lanes as `uint64x2_t`.** Now `[uint32x4_t; 2P]`, low halves then high, one mask register for both;
+   `V::Z` where the high half is known zero. Carries, borrows, the product's cross terms, shifts across 32, compares.
+3. **An `any()` after each early return.** A short side that ends (no loop, call or effect) merges by its mask.
+4. **Values uniform across the chunk, per lane.** `i - 1` stays a `u32` of its first lane (a variable stored where
+   all lanes run, or where the lanes off have returned, `Cx::left`), passed as `Sh::Iota`. A function that shifts
+   it down by K or masks it to K bits asks its callers for `Sh::Run(K)`; the caller that made the lanes tests the
+   chunk once (`(f & (2^K - 1)) <= 2^K - W`) and calls that instance, where `i >> 10` is one value (the block's
+   lookup scalar code) and `i & 1023` consecutive lanes. A `?:`, a short circuit or a loop whose condition is one
+   value in an instance of uniform arguments is Rust's, whatever the tape's level says.
+5. **The side search for the whole chunk.** A `?:` arm that is a call of a function that reads no lane id, SIMD
+   group or barrier runs, where at most 2 of the chunk's lanes take it, its instance of one value once a lane
+   (a loop over the mask's bits); its offset loop is then a plain scalar loop. 4 lanes measured the same as 2.
+6. **The links as a second launch.** Measured against the walk inline (`parent_group`, `parent_back`): the two
+   launches cost fewer instructions and cycles on every document, so they stay.
+
+A test kernel, `ukl_aot/kernels/wide.uglykl`, checks every 64-bit operation, the stride-tested window (8 and 4),
+a `Run` instance and a rare call against a scalar model, at groups that end in part of a chunk.
+
+Instructions (cycles) a node, `parent_bench`, profiling build, this Mac at load 11–21:
+
+| | records (`parent_bench records 40000`) | numbers (`numbers 200000`) | random (`random 400000`) |
+|---|---|---|---|
+| the step, before | 50.0 | 330 | 73.5 |
+| the step, now | 27.5 (5.0) | 58.3 (9.6) | 31.2 (7.4) |
+| the host's scalar step | 53.9 (10.6) | 86.3 (10.8) | 57.3 (16.1) |
+| two launches, now | 54.9 (11.0) | 112.0 (29.0) | 59.7 (17.5) |
+| `parent_group` (walk inline) | 79.7 (19.0) | 135.7 (38.9) | 85.9 (25.3) |
+| `parent_back` | 83.7 (21.2) | 172.8 (63.3) | 95.2 (33.9) |
+| the host's scalar read | 104.7 (17.6) | 482.0 (94.9) | 132.1 (34.1) |
+| hand-written scan (`hand::parent_all_scan`) | 27.9 (4.5) | 73.5 (9.8) | 34.5 (9.6) |
+
+Then three more, each in the compiler or the library, none in a kernel:
+
+7. **A variable is its number in its function.** The C lowering gives variables of scopes apart one frame offset (a
+   loop's counter, then a later declaration), and rs.rs named its Rust variables by it: the two were one, each
+   lane's if either was. A `Local`'s word 3 is the variable's number (`vector::VAR_IN_FUNCTION`), and rs.rs keys
+   every variable by it. `wide.uglykl` declares a uniform width in the loop counter's slot again: one value.
+8. **Narrow slots.** Under `UKL_VEC` the window of a whole value's bytes (1, 2, 4 or 8) is one unaligned load of
+   those bytes alone (`memory.h`): only the words the aligned form touches, never past its last byte's. A lane's
+   consecutive slots are then a vector load of their elements under the stride's runtime test, as 8-byte ones
+   were. No table lookup across the chunk, which would read past the C's words. Widths 3, 5, 6, 7 (`ukl_ld_bits`)
+   take the word path. `wide.uglykl` row 27 reads every width, 1 to 8.
+9. **The link launch.** A round of a lanes loop costs as much for 1 running lane as for 8 (each address a
+   gather). Where at most 2 lanes go on, each one's rounds to the loop's end are Rust's rounds of one value
+   (`finish_scalar`): the lane's copies of the variables the loop reads, written back after. Only for a loop that
+   leaves by its condition, calls nothing, writes only variables, and reads no lane id, SIMD group, barrier or
+   atomic (a lane's rounds alone are then one interleaving of the threads'). A short circuit of one value and a
+   cheap right side of lanes (variables only, no call) is the two masks and-ed, not a branch. A store of lanes'
+   values at one address (C's race) is one store of the last running lane's value, not 8 tested ones.
+
+| now | records | numbers | random |
+|---|---|---|---|
+| the step | 26.9 | 53.0 | 30.1 |
+| the link | 22.8 | 55.2 | 26.1 |
+| two launches | 49.7 | 108.7 | 56.7 |
+| the host's scalar step | 54.2 | 86.4 | 57.9 |
+| `parent_group` | 77.8 | 134.8 | 84.0 |
+| `parent_back` | 82.5 | 166.7 | 93.0 |
+
+Instructions a node, this Mac at load 31–35 (cycles not compared at that load). Two launches now cost fewer
+instructions than the host's scalar step on records and random.
+
+Left: numbers' link (55 a node, half of its two). Its chains are long and many lanes run them together, so each
+round is a gather. Those rounds' indices are consecutive only among the running lanes, and a vector over them
+reads past every address the C proves valid.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

@@ -1641,4 +1641,14 @@ mod unescape_tests {
         assert!(super::unescape("\\uD800\\uD800").is_err());
         assert!(super::unescape("\\uD800\\uE000").is_err());
     }
+
+    /// A `\u` surrogate pair is one character; a high surrogate before any other `\u` escape is no pair, and a
+    /// lone surrogate is refused, not read past (`low - 0xDC00` took a high surrogate's second half as low).
+    #[test]
+    fn a_surrogate_pair_joins_only_a_low_half() {
+        assert_eq!(super::unescape(r"😀").as_deref(), Ok("\u{1F600}"));
+        assert!(super::unescape(r"\uD83DA").is_err());
+        assert!(super::unescape(r"\uD83D\uD83D").is_err());
+        assert!(super::unescape(r"\uD83D").is_err());
+    }
 }

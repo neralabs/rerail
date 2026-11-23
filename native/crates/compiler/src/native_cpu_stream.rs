@@ -238,13 +238,13 @@ struct Doc16<'a> {
     lang: &'a rerail_tape_format::f16::Lang,
     numbers: &'a Numbers,
     z: bool,
-    lines: &'a dyn Fn(&mut Vec<u8>),
+    lines: &'a dyn Fn(&mut rerail_tape_format::Vector<u8>),
 }
 
 /// A language's numbers by tier 2's slot keys (`native_cpu_tape::id_slots`, as `native_cpu_tape::commit` keys a
 /// node): what a format 16 run passes each node's number by (decision 0434 §6, R17). `u32::MAX` where the
 /// language's table has none for the key.
-pub struct Numbers(Vec<u32>);
+pub struct Numbers(rerail_tape_format::Vector<u32>);
 
 /// A compiled tier-2 program.
 pub struct CompiledStream {
@@ -1837,6 +1837,8 @@ struct Table<'a> {
     /// A format 16 run whose every node's key is known at its word (`stream_facts::direct_keys`): each node word's key
     /// bits from the words after it, by its place. Each node then goes to the writer's ops at its word, with no row.
     direct: Option<&'a [(u32, u32)]>,
+    /// A padded root (`Structure::padded`): its start given at its pass (`pass`).
+    padded: bool,
 }
 
 /// The first bit of output `o` at or after byte `from`, a word at a time (`records::first_bit`),
@@ -2125,6 +2127,27 @@ impl Table<'_> {
     fn pass(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, from: Value, to: Value, keep: bool) {
         let s = &self.fns.sixteen;
         let (desc, rows, size_c, numbers) = ((e.ctx)(f, WRITER), (e.ctx)(f, ROWS), (e.ctx)(f, SIZE_C), (e.ctx)(f, NUMBERS));
+        // The root passed first: its start the node's after it (none: the file's end), as
+        // tree-sitter's root starts past the file's leading blanks. That node is made: a pass
+        // leaves the last node, and at the end there is none after the root only in a file of
+        // no token or comment.
+        let (root, on) = (f.create_block(), f.create_block());
+        let from_root = if self.padded { from } else { f.ins().iconst(types::I64, 1) };
+        f.ins().brif(from_root, on, &[], root, &[]);
+        f.switch_to_block(root);
+        let nodes = (e.get)(f, Mem::Nodes);
+        let more = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, nodes, 1);
+        let one = f.ins().iconst(types::I64, 1);
+        let zero = f.ins().iconst(types::I64, 0);
+        let after = f.ins().select(more, one, zero);
+        let after_row = NodeCol::row(f, rows, after);
+        let first = NodeCol::of(rows, AT_START).get_row(f, after_row);
+        let len = (e.ctx)(f, LEN);
+        let first = f.ins().select(more, first, len);
+        let root_row = NodeCol::row(f, rows, zero);
+        NodeCol::of(rows, AT_START).put_row(f, root_row, first);
+        f.ins().jump(on, &[]);
+        f.switch_to_block(on);
         let (snode, skind, supers) = ((e.ctx)(f, SUPER_NODE), (e.ctx)(f, SUPER_KIND), (e.get)(f, Mem::Supers));
         let keep = f.ins().iconst(types::I64, i64::from(keep));
         call_own(f, s.pass.0, &s.pass.1, &[desc, rows, size_c, numbers, snode, skind, supers, from, to, keep]);
@@ -2707,6 +2730,73 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
         }
     }
     f.switch_to_block(record);
+    split_resume(f, e, sp, bw, fetched, heads);
+}
+
+/// With a string's record open over its template's code (`Mem::Strings`, decision 0600): where
+/// the next opener of a reader that resumes (the template's `}`) comes before the next record,
+/// that reader entered there, with no record, as the lean parser goes back to its string after
+/// the template's code. Else on in the current block, to the next record.
+fn split_resume(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw: &crate::native_cpu_bytes::Bytewise<'_>, fetched: Block, heads: &mut Vec<(Block, Step)>) {
+    let Some((k, rd)) = sp.readers.iter().enumerate().find(|(_, rd)| rd.resumes) else { return };
+    let (open, enter, on) = (f.create_block(), f.create_block(), f.create_block());
+    let n = (e.get)(f, Mem::Strings);
+    f.ins().brif(n, open, &[], on, &[]);
+    f.switch_to_block(open);
+    f.set_cold_block(open);
+    let from = (e.get)(f, Mem::Limit);
+    let (p, _) = first_bit_from(f, e, bw, rd.opener, from, heads);
+    // The next record's start (none: past the file).
+    let next = (e.get)(f, Mem::Next);
+    let count = (e.ctx)(f, NSTARTS);
+    let stride = (e.ctx)(f, RECORD_STRIDE);
+    let starts = (e.ctx)(f, STARTS);
+    let more = f.ins().icmp(IntCC::UnsignedLessThan, next, count);
+    let (read, cmp) = (f.create_block(), f.create_block());
+    f.append_block_param(cmp, types::I64);
+    let len = (e.ctx)(f, LEN);
+    f.ins().brif(more, read, &[], cmp, &[len.into()]);
+    f.switch_to_block(read);
+    let off = f.ins().imul(next, stride);
+    let a = f.ins().iadd(starts, off);
+    let s = f.ins().uload32(MemFlags::trusted(), a, 0);
+    f.ins().jump(cmp, &[s.into()]);
+    f.switch_to_block(cmp);
+    let s = f.block_params(cmp)[0];
+    let first = f.ins().icmp(IntCC::UnsignedLessThan, p, s);
+    f.ins().brif(first, enter, &[], on, &[]);
+    f.switch_to_block(enter);
+    let p1 = f.ins().iadd_imm(p, 1);
+    (e.set)(f, Mem::PartAt, p1);
+    let kv = f.ins().iconst(types::I64, k as i64);
+    (e.set)(f, Mem::PartRd, kv);
+    let (c, _) = first_bit_from(f, e, bw, rd.closer, p1, heads);
+    (e.set)(f, Mem::PartClose, c);
+    let pe = closer_last(f, e, bw, rd, c, heads);
+    (e.set)(f, Mem::PartEnd, pe);
+    let code = match rd.code {
+        Some(x) => f.ins().iconst(types::I64, i64::from(x)),
+        None => {
+            let bytes = (e.ctx)(f, BYTES);
+            let kc = crate::native_cpu_block::tables_consts(f, &sp.tables);
+            let one = f.ins().iconst(types::I64, 1);
+            crate::native_cpu_block::plain_code(f, &sp.tables, kc, bytes, p, one)
+        }
+    };
+    (e.set)(f, Mem::Start, p);
+    (e.set)(f, Mem::Limit, p1);
+    (e.set)(f, Mem::Taken, code);
+    f.ins().jump(fetched, &[]);
+    f.switch_to_block(on);
+}
+
+/// A split reader's closer's last from its first byte `c`: its last's first bit from `c`
+/// (`ReadArm::last`), else `c` and its offset, as `records::read_parts` ends it.
+fn closer_last(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cpu_bytes::Bytewise<'_>, rd: &SplitReader, c: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+    match rd.last {
+        Some(o) => first_bit_from(f, e, bw, o, c, heads).0,
+        None => f.ins().iadd_imm(c, i64::from(rd.off)),
+    }
 }
 
 /// A split region's next piece by its reader `rd`, as `records::read_parts` and the lean
@@ -2721,10 +2811,23 @@ fn split_next_reader(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitPar
     let (closer, look) = (f.create_block(), f.create_block());
     let here = f.ins().icmp(IntCC::Equal, at, c0);
     f.ins().brif(here, closer, &[], look, &[]);
-    // The closer: the region's last token, its own kind by its byte.
+    // The closer: the region's last token, its own kind by its byte. At a template's `$`
+    // (decision 0600), the string's record stays open over the code; a read that resumes one
+    // and closes at its quote ends it.
     f.switch_to_block(closer);
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::PartAt, zero);
+    if let Some(t) = rd.template {
+        let q = f.ins().ushr_imm(c0, 6);
+        let x = output_word(f, e, bw, t, q, heads);
+        let sh = f.ins().band_imm(c0, 63);
+        let x = f.ins().ushr(x, sh);
+        let tb = f.ins().band_imm(x, 1);
+        let n = (e.get)(f, Mem::Strings);
+        let n = f.ins().iadd(n, tb);
+        let n = if rd.resumes { f.ins().iadd_imm(n, -1) } else { n };
+        (e.set)(f, Mem::Strings, n);
+    }
     split_piece(f, e, sp, c0, pe, Piece::Closer(&rd.closers), fetched);
     f.switch_to_block(look);
     if rd.parts.is_empty() {
@@ -2964,12 +3067,16 @@ fn split_enter_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts
     f.switch_to_block(on);
 }
 
-/// A record that is a whole split region (`SplitParts`): at its opener's bit and past its byte.
-/// Its opener's byte is the token, its parts pending from the byte after (`Mem::PartAt`) to its
-/// last (`Mem::PartEnd`). Records split already (tier 1's, `Split::Tier1`; Metal's masks) are
-/// tokens as they are.
+/// A record of a split region (`SplitParts`, `Split::Tier2`): at its opener's bit and past its
+/// byte. Its opener's byte is the token, its parts pending from the byte after (`Mem::PartAt`)
+/// to its closer's last (`Mem::PartEnd`, as `records::read_parts` ends them). The record is the
+/// whole region (the token loop's, the masks'), its last not read. In a grammar with templates
+/// (decision 0600) it is also its opener alone, the masks' of every region, its parts no records;
+/// in another, a record of its opener alone is split already (tier 1's, `Split::Tier1`): a token
+/// as it is.
 fn split_enter(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw: &crate::native_cpu_bytes::Bytewise<'_>, (s, l): (Value, Value), words: Option<&[u8]>, heads: &mut Vec<(Block, Step)>) {
     let _ = words;
+    let templates = sp.readers.iter().any(|rd| rd.template.is_some());
     let whole = f.ins().icmp(IntCC::UnsignedGreaterThan, l, s);
     let whole = f.ins().uextend(types::I64, whole);
     let on = f.create_block();
@@ -2979,19 +3086,22 @@ fn split_enter(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw
         let sh = f.ins().band_imm(s, 63);
         let x = f.ins().ushr(x, sh);
         let opens = f.ins().band_imm(x, 1);
-        let both = f.ins().band(opens, whole);
+        let opens = if templates { opens } else { f.ins().band(opens, whole) };
         let (enter, next) = (f.create_block(), f.create_block());
-        f.ins().brif(both, enter, &[], next, &[]);
+        f.ins().brif(opens, enter, &[], next, &[]);
         f.switch_to_block(enter);
         let s1 = f.ins().iadd_imm(s, 1);
         (e.set)(f, Mem::PartAt, s1);
-        (e.set)(f, Mem::PartEnd, l);
         let kv = f.ins().iconst(types::I64, k as i64);
         (e.set)(f, Mem::PartRd, kv);
         // Its closer's first byte, by the closer's bits past the opener, as the record's last
         // was read (`records::read_last`).
         let (c, _) = first_bit_from(f, e, bw, rd.closer, s1, heads);
         (e.set)(f, Mem::PartClose, c);
+        // Its closer piece to the closer's own last: a string's record runs to its last quote
+        // (decision 0600), and the masks' to its opener.
+        let pe = closer_last(f, e, bw, rd, c, heads);
+        (e.set)(f, Mem::PartEnd, pe);
         // The opener's token: the record's code (its marks), its word its byte's alone where it
         // has no tag.
         let taken = (e.get)(f, Mem::Taken);
@@ -3677,7 +3787,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     // The records `TOKEN` makes from each start (page 40).
     let fetch = fetch_of(native)?;
     let direct = crate::stream_facts::direct_keys(native, widths_tag.0, widths_tag.1);
-    let table = Table { inner: crate::stream_facts::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()), fetch: fetch.as_deref(), direct: direct.as_deref() };
+    let table = Table { inner: crate::stream_facts::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()), fetch: fetch.as_deref(), direct: direct.as_deref(), padded: native.padded };
     let passes: Vec<u32> = table_fns.shift.iter().chain(&table_fns.drop).map(|f| f.0.as_u32()).collect();
     let row_fns: Vec<u32> = [&table_fns.sixteen.pass, &table_fns.sixteen.retag].map(|f| f.0.as_u32()).to_vec();
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
@@ -5402,6 +5512,23 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.ins().brif(bit, done, &[i.into()], head, &[i1.into()]);
                     f.switch_to_block(done);
                     let stop = f.block_params(done)[0];
+                    // An extra a `loses since` moved (of no width: no other pending is) and the
+                    // one after it go with those before: the lean lexer's semicolon is past that
+                    // one.
+                    let (ask, moved, stopped) = (f.create_block(), f.create_block(), f.create_block());
+                    f.append_block_param(stopped, types::I64);
+                    let stop2 = f.ins().iadd_imm(stop, 2);
+                    let two = f.ins().icmp(IntCC::UnsignedLessThanOrEqual, stop2, nodes);
+                    f.ins().brif(two, ask, &[], stopped, &[stop.into()]);
+                    f.switch_to_block(ask);
+                    let (s0, e0) = (NodeCol::of(end_c.rows, AT_START).get(&mut f, stop), end_c.get(&mut f, stop));
+                    let none = f.ins().icmp(IntCC::Equal, s0, e0);
+                    f.ins().brif(none, moved, &[], stopped, &[stop.into()]);
+                    f.switch_to_block(moved);
+                    f.set_cold_block(moved);
+                    f.ins().jump(stopped, &[stop2.into()]);
+                    f.switch_to_block(stopped);
+                    let stop = f.block_params(stopped)[0];
                     let settled = f.ins().isub(stop, first);
                     let (some, after) = (f.create_block(), f.create_block());
                     f.ins().brif(settled, some, &[], after, &[]);
@@ -5516,6 +5643,49 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let le = g.ins().select(p, le, keep);
                         (e.set)(g, Mem::LastEnd, le);
                     });
+                }
+                Op::MoveFirst { pattern, flag } => {
+                    // `loses since`: two extras pending or more, and the question holding at the
+                    // token (the lean lexer's `asi`, which reads a block comment through to
+                    // another comment): the first of no width at the next one's start, in its
+                    // place. Twice at a token (a nested level's test) is once.
+                    let pending = mget(&mut f, Mem::Pending);
+                    let some = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, pending, 1);
+                    let next = mget(&mut f, Mem::Next);
+                    let at_end = ended_now(&mut f, next);
+                    let not_end = f.ins().bxor_imm(at_end, 1);
+                    let some = f.ins().band(some, not_end);
+                    let some = f.ins().uextend(types::I64, some);
+                    let some = match flag {
+                        Some(k) => {
+                            let fl = mget(&mut f, Mem::Flags);
+                            let fl = f.ins().ushr_imm(fl, i64::from(k));
+                            let fl = f.ins().band_imm(fl, 1);
+                            f.ins().band(some, fl)
+                        }
+                        None => some,
+                    };
+                    let ask = f.create_block();
+                    f.ins().brif(some, ask, &[], fall, &[]);
+                    f.switch_to_block(ask);
+                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern), native.extras.first().map(|e| e.0), &mut heads);
+                    let moving = f.create_block();
+                    f.ins().brif(holds, moving, &[], fall, &[]);
+                    f.switch_to_block(moving);
+                    f.set_cold_block(moving);
+                    let rows = env_ctx(&mut f, ROWS);
+                    let (n, p) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending));
+                    let first = f.ins().isub(n, p);
+                    let second = f.ins().iadd_imm(first, 1);
+                    let (a, b) = (NodeCol::row(&mut f, rows, first), NodeCol::row(&mut f, rows, second));
+                    let s = NodeCol::of(rows, AT_START).get_row(&mut f, b);
+                    NodeCol::of(rows, AT_START).put_row(&mut f, a, s);
+                    NodeCol::of(rows, AT_END).put_row(&mut f, a, s);
+                    // Its size again (a leaf): the format 16 writer's pass reads its row and size when the
+                    // nodes are passed (`Table::pass`), the extras pending not yet.
+                    let one = f.ins().iconst(types::I64, 1);
+                    table.close_cells(&mut f, &env, first, one);
+                    f.ins().jump(fall, &[]);
                 }
                 // A keyword's: its token's word's kind (`WORD_KIND`), in a word of its own.
                 Op::Remember { kind: WORD_KIND } => {
@@ -6068,6 +6238,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let root = f.ins().uload32(flags, open_c, 0);
                         let root_row = NodeCol::row(&mut f, rows_here, root);
                         end_c.put_row(&mut f, root_row, len);
+                        // A padded root's start (past the file's leading blanks, as tree-sitter's) was given
+                        // to its writer when it was passed (`Table::pass`).
                         let size = f.ins().isub(nodes, root);
                         table.close_cells(&mut f, &env, root, size);
                     }
@@ -6970,6 +7142,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::DropLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE],
         Op::LoseLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE, ROWS],
         Op::RefuseIf { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE],
+        Op::MoveFirst { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE, ROWS],
         Op::Open { .. } => vec![ROWS, OPEN],
         Op::Close { .. } => vec![OPEN, ROWS],
         Op::Leaf { .. } => vec![ROWS],
@@ -7036,22 +7209,31 @@ fn fed_bound(tier1: &Tier1View, len: usize) -> usize {
     if tier1.feed != 0 { len + 1 } else { tier1.nstarts }
 }
 
+use rerail_tape_format::Vector;
+
+/// `n` copies of `v`, in the run's room.
+fn filled<T: rerail_blocks::Pod + Copy>(n: usize, v: T) -> Vector<T> {
+    let mut c = Vector::with_capacity(n);
+    c.resize(n, v);
+    c
+}
+
 /// The buffers one call writes, sized from the stream and the program's `Bounds`: tier 2's working state, never
 /// part of the tape, which the writer writes (`Tape::writer`).
 pub struct Tape {
     /// The working rows, 12 bytes a node (key, start, end), and their sizes (`SLACK` bytes past them), which the
     /// writer's pass reads.
-    rows: Vec<u8>,
-    size: Vec<u8>,
-    pub super_node: Vec<u32>,
-    pub super_kind: Vec<u32>,
-    open: Vec<u32>,
-    returns: Vec<u32>,
+    rows: Vector<u8>,
+    size: Vector<u8>,
+    pub super_node: Vector<u32>,
+    pub super_kind: Vector<u32>,
+    open: Vector<u32>,
+    returns: Vector<u32>,
     /// The node count and the supertype count.
     pub counts: [u64; 2],
     /// A program with `WRAP`'s: frames, chains, places (a drop's stack: two slots a node).
-    frames: [Vec<u32>; 3],
-    chains: [Vec<u32>; 3],
+    frames: [Vector<u32>; 3],
+    chains: [Vector<u32>; 3],
     /// The nodes, supertypes and calls it has room for: the code's room checks (`Ctx::room_nodes`). A direct run
     /// (`CompiledStream::direct`) holds no working row, so the room is not a buffer's.
     room: [usize; 3],
@@ -7074,7 +7256,7 @@ impl CompiledStream {
     /// (`rerail_tape_format::Named`, by names, decision 0631).
     pub fn numbers_by(&self, number: &dyn Fn(u16, u16, &[u16], bool) -> Option<u32>) -> Numbers {
         use rerail_tape_format::KIND_BITS;
-        let mut by = vec![u32::MAX; crate::stream_analysis::id_slots(self.classes.len())];
+        let mut by = filled(crate::stream_analysis::id_slots(self.classes.len()), u32::MAX);
         for (slot, n) in by.iter_mut().enumerate() {
             let (kind, field, bits) = ((slot & ((1 << KIND_BITS) - 1)) as u16, (slot >> KIND_BITS & 0x3f) as u16, slot >> 16);
             let classes: Vec<u16> = self.classes.iter().enumerate().filter(|&(j, _)| bits >> j & 1 == 1).map(|(_, &c)| c).collect();
@@ -7132,18 +7314,18 @@ impl CompiledStream {
         let poison = std::env::var_os("RERAIL_TAPE_POISON").is_some();
         // The working rows, their sizes and the supertypes only where the nodes are passed from rows (not `direct`).
         let rowed = !self.direct;
-        let room = |n: usize, used: bool| -> Vec<u32> {
+        let room = |n: usize, used: bool| -> Vector<u32> {
             match (used, poison) {
-                (false, _) => Vec::new(),
-                (true, true) => vec![u32::MAX; n],
-                (true, false) => Vec::with_capacity(n),
+                (false, _) => Vector::new(),
+                (true, true) => filled(n, u32::MAX),
+                (true, false) => Vector::with_capacity(n),
             }
         };
-        let bytes = |n: usize, used: bool| -> Vec<u8> {
+        let bytes = |n: usize, used: bool| -> Vector<u8> {
             match (used, poison) {
-                (false, _) => Vec::new(),
-                (true, true) => vec![u8::MAX; n],
-                (true, false) => Vec::with_capacity(n),
+                (false, _) => Vector::new(),
+                (true, true) => filled(n, u8::MAX),
+                (true, false) => Vector::with_capacity(n),
             }
         };
         let wraps = |n: usize| if self.wraps { n } else { 0 };
@@ -7252,7 +7434,7 @@ impl CompiledStream {
     /// `Parser::image16` over tier 1's run `tier1` (a test's: the interpreter's tier 1, apart from the compiled one).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn image16_on(&self, bytes: &[u8], terminators: rerail_tape_format::newlines::Terminators, tier1: &crate::block::BlockRun, lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
-        let scan = |out: &mut Vec<u8>| rerail_tape_format::newlines::index_into(out, bytes, terminators);
+        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, bytes, terminators);
         let doc = Doc16 { source: bytes, lang, numbers, z, lines: &scan };
         self.write16(&mut rerail_tape_format::f16::Writer::empty(), self.tokens(self.records_of(tier1), bytes.len()), &doc, |tape| self.run_raw(bytes, tier1, tape)).map_err(Fail16::text)
     }
@@ -7267,7 +7449,7 @@ impl CompiledStream {
     /// `against`, its keys numbered in `lang`, both in format 16z where `z`.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn against_in(&self, bytes: &[u8], tier1: &crate::block::BlockRun, want: Result<Vec<crate::stream::Node>, Refused>, lang: &rerail_tape_format::f16::Lang, z: bool) -> (Result<Vec<u8>, usize>, Result<Vec<u8>, usize>) {
-        let scan = |out: &mut Vec<u8>| rerail_tape_format::newlines::index_into(out, bytes, rerail_tape_format::newlines::Terminators::Newlines);
+        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, bytes, rerail_tape_format::newlines::Terminators::Newlines);
         against_by(self, bytes, want, lang, z, |numbers| {
             let doc = Doc16 { source: bytes, lang, numbers, z, lines: &scan };
             self.write16(&mut rerail_tape_format::f16::Writer::empty(), self.tokens(self.records_of(tier1), bytes.len()), &doc, |tape| self.run_raw(bytes, tier1, tape))
@@ -7280,7 +7462,7 @@ impl CompiledStream {
     /// (the device's buffers, `rerail_cpu_stream::tier2_on`) writes its tapes by.
     pub fn image16_by(&self, source: &[u8], out: Out16<'_>, tokens: usize, call: impl FnMut(&mut Tape) -> u64) -> Result<rerail_tape_format::f16::Written, String> {
         let Out16 { lang, numbers, terminators, z } = out;
-        let scan = |out: &mut Vec<u8>| rerail_tape_format::newlines::index_into(out, source, terminators);
+        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, source, terminators);
         let doc = Doc16 { source, lang, numbers, z, lines: &scan };
         self.write16(&mut rerail_tape_format::f16::Writer::empty(), tokens, &doc, call).map_err(Fail16::text)
     }
@@ -7327,8 +7509,8 @@ impl CompiledStream {
         let mut padded = vec![0u8; bytes.len() + 65];
         padded[1..=bytes.len()].copy_from_slice(bytes);
         // Each stream ended in two entries of the file's length, as the batch's (`Batch::end_streams`).
-        let stream = |e: Option<usize>| -> (Vec<u32>, usize) {
-            let mut v = e.map_or_else(Vec::new, |e| tier1.positions[e].clone());
+        let stream = |e: Option<usize>| -> (rerail_blocks::vector::Vector<u32>, usize) {
+            let mut v = e.map_or_else(rerail_blocks::vector::Vector::new, |e| tier1.positions[e].clone());
             let n = v.len();
             v.extend([bytes.len() as u32; 2]);
             (v, n)
@@ -7336,7 +7518,7 @@ impl CompiledStream {
         let starts = stream(self.starts);
         // The outputs interleaved, as a batch holds them: output `o`'s word `w` at `o + w * n`.
         let n = tier1.outputs.len().max(1);
-        let count = tier1.outputs.iter().map(Vec::len).max().unwrap_or(0);
+        let count = tier1.outputs.iter().map(|w| w.len()).max().unwrap_or(0);
         let mut all = vec![0u64; n * count.max(1)];
         for (o, words) in tier1.outputs.iter().enumerate() {
             for (w, &x) in words.iter().enumerate() {
@@ -7346,7 +7528,7 @@ impl CompiledStream {
         let lasts = stream(self.lasts);
         let mut codes = tier1.codes.clone();
         codes.extend([0, 0]);
-        let totals = if tier1.totals.is_empty() { vec![0] } else { tier1.totals.clone() };
+        let totals = if tier1.totals.is_empty() { rerail_blocks::vector![0] } else { tier1.totals.clone() };
         // SAFETY: `padded` has the byte before and 64 after; each stream two slots past its count;
         // the tape is sized for the stream; every output has `count` words in `all`.
         let view = Tier1View {
@@ -7606,7 +7788,7 @@ impl Parser {
         // document's terminators: no scan of the source. Bit `p` of the output's words is byte `p` of the file: the host puts a stripped prefix's bytes back
         // (`Batch::call`), and a prefix holds no newline.
         let row = batch.rows[0];
-        let from_bits = |out: &mut Vec<u8>| {
+        let from_bits = |out: &mut rerail_tape_format::Vector<u8>| {
             let (o, n) = (self.tier1.newlines.expect("tier 1's line ends").0, self.tier1.outputs);
             let at = |w: usize| batch.out[row.out as usize + o + w * n];
             // The candidates kept where they end a terminator: a test of the bytes at each, no scan.
@@ -7615,8 +7797,8 @@ impl Parser {
             #[cfg(debug_assertions)]
             debug_assert!(out[..] == rerail_tape_format::newlines::index(bytes, terminators)[..], "the line index from tier 1's bits is the scan's");
         };
-        let scan = |out: &mut Vec<u8>| rerail_tape_format::newlines::index_into(out, bytes, terminators);
-        let lines: &dyn Fn(&mut Vec<u8>) = if self.tier1.newlines.is_some_and(|(_, set)| set == terminators) { &from_bits } else { &scan };
+        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, bytes, terminators);
+        let lines: &dyn Fn(&mut rerail_tape_format::Vector<u8>) = if self.tier1.newlines.is_some_and(|(_, set)| set == terminators) { &from_bits } else { &scan };
         t2.write16(w, tokens, &Doc16 { source: bytes, lang, numbers, z, lines }, |tape| self.words_raw(t2, batch, tape))
     }
 }

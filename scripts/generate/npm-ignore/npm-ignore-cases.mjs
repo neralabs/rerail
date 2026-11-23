@@ -1,4 +1,4 @@
-// Writes native/src/code_rule_dsl/npm_ignore/cases.json: the oracle npm_ignore/mod.rs's tests check the port of
+// Writes native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/cases.json: the oracle npm_ignore/mod.rs's tests check the port of
 // eslint-plugin-n's getNpmignore (and the ignore and globrex packages under it) against. Each case holds one answer per
 // path of `paths`, in order, as a string of `1` (true), `0` (false) and `-` (throws). `ignore` holds
 // `[patterns, answers]`: node-ignore's `ignore().add(patterns).ignores(path)` for every pattern set below;
@@ -141,7 +141,7 @@ for (const pkg of PACKAGES) {
   }
 }
 
-const out = resolve(import.meta.dirname, "../../../native/src/code_rule_dsl/npm_ignore/cases.json");
+const out = resolve(import.meta.dirname, "../../../native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/cases.json");
 const line = value => JSON.stringify(value);
 writeFileSync(
   out,

@@ -66,7 +66,7 @@ pub fn parse_from<Out>(src: &[u8], start: Start, finish: &mut dyn Sink<Out>) -> 
     let b = Blocks::of(src);
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut p = P { src, b: &b, w: Writer::new(widths, src.len() / 4 + 16).to(finish.target(), src), open: Vec::new(), serialized: tags::SERIALIZED_EMPTY, at: 0 };
+        let mut p = P { src, b: &b, w: Writer::new(widths, src.len() / 4 + 16).to(finish.target(), src).omitting(finish.omissions()), open: Vec::new(), serialized: tags::SERIALIZED_EMPTY, at: 0 };
         match start {
             Start::Document => p.document()?,
             Start::Element => p.element_fragment()?,

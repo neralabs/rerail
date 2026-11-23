@@ -5,8 +5,8 @@
 //! name: the prefilter, the functors, the `ast` wave compiler and the waves' glue, and the syntax-only adapters.
 //! The engine (napi and the CLI) stands on it, and so can any test binary that needs a booted program.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, under the facades the engine
-//! mounted them through (tools/cratify/boot_mounts.py wrote them from the engine's `code_rule_dsl/mod.rs`; kept by
+//! Its sources are in its own `src/` (the crate split, step 9), under the facades the engine mounted them
+//! through (tools/cratify/boot_mounts.py wrote them from the engine's `code_rule_dsl/mod.rs`; kept by
 //! hand since step 2). A facade's re-exports are `pub`, and its tests' helpers are behind `test-hooks`: the test
 //! crates above (`native/crates/tests_*`) read every module through it.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
@@ -42,7 +42,7 @@ mod test_watchdog;
 #[path = "../../../src/test_flush.rs"]
 mod test_flush;
 pub use code_rule_dsl::prof::{lower_hex, purge_allocator_pages};
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     // The facades re-export their dependency's module by glob, and the mounted sources import the same items under
     // the same names: the glob's name and the private one are one item.
@@ -745,6 +745,8 @@ pub mod code_rule_dsl {
         pub use rerail_lang_php::code_rule_dsl::embed::compiled_view;
         #[allow(unused_imports)] // boot's mount: only boot's files read it
         pub use rerail_lang_ecma::code_rule_dsl::embed::script_block;
+        #[allow(unused_imports)] // boot's mount: only boot's files read it
+        pub use rerail_lang_ecma::code_rule_dsl::embed::vue_code;
         #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_python::code_rule_dsl::embed::call_argument;
         #[allow(unused_imports)]
@@ -1588,7 +1590,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::borrow::Cow;
                 #[allow(unused_imports)]
-                use hashbrown::HashTable;
+                use rerail_blocks::maps::IdTable as HashTable;
                 #[allow(unused_imports)]
                 use rustc_hash::{FxHashMap as HashMap, FxHasher};
                 #[allow(unused_imports)]
@@ -1602,7 +1604,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::time::Instant;
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::logic::native::setfix::spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
+                use crate::code_rule_dsl::logic::native::setfix::spec::{ComponentSpec, InputKey, JoinItem, Join, JoinSpec, Line, Reprobe, Source, Start, Tok};
                 #[allow(unused_imports)]
                 pub use crate::code_rule_dsl::logic::device::{Report as DeviceReport, take_report as device_report};
                 #[allow(unused_imports)]
@@ -1721,7 +1723,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::native::TOP;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::native::component::spec::{Arg, ComponentSpec, EdgeSpec, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Line as SpecLine, Reprobe, Source as JoinSource, Start, Tok};
+            use crate::code_rule_dsl::logic::native::component::spec::{Arg, ComponentSpec, EdgeSpec, Extreme, HeadTok, InputKey, JoinItem, Join as PlanJoin, JoinSpec, Line as SpecLine, Reprobe, Source as JoinSource, Start, Tok};
             #[allow(unused_imports)]
             use std::sync::Arc;
             #[allow(unused_imports)]
@@ -3386,6 +3388,7 @@ pub mod code_rule_dsl {
 
     pub use rerail_facts::code_rule_dsl::text;
     #[cfg(test)]
+    #[path = "../../../../src/code_rule_dsl/test_support.rs"]
     pub mod test_support;
     /// The engine's text tools without Node (the CLI's commands); the engine adds their napi wrappers.
     pub mod tools;

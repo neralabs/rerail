@@ -1,0 +1,33 @@
+// A test kernel of rerail-ukl-aot (decision 0567 step 3): each thread's value through the control flow whose lanes
+// part where nothing proves they agree, each shape once.
+//
+// - An `if` that rejoins, with no hint: both sides run, each its lanes masked.
+// - An `if` that is likely, and one that is unlikely: the chunk whose lanes all agree with the hint runs its side
+//   unmasked, the others both sides masked.
+// - A loop whose bound is each lane's own, its lanes said to go on together (`UKL_LIKELY`): full rounds while every
+//   lane's condition holds, then rounds masked.
+// - A loop whose bound is one value: full rounds, its test the loop's own.
+
+#include <ukl/backend.h>
+
+typedef struct MixArgs { uint32_t n, rounds, pad1, pad2; } MixArgs;
+UKL_REFLECT_STRUCT(MixArgs, n, rounds, pad1, pad2)
+
+DEFINE_KERNEL2(mix, mix_lanes,
+               RWBUFFER, uint32_t, in,   "[args.n]",
+               RWBUFFER, uint32_t, out,  "[args.n]",
+               ARGS,     MixArgs,  args, ,
+               GID0,     uint32_t, i,    )
+{
+  if(i>=args.n)return;
+  uint32_t x=in[i];
+  uint32_t y;
+  if(x&1u){ y=x*3u+1u; } else { y=x>>1; }
+  if(UKL_LIKELY(x<0xF0000000u)){ y=y+x; }
+  if(UKL_UNLIKELY(x==0u)){ y=0xDEADu; } else { y=y^7u; }
+  uint32_t s=0u;
+  uint32_t r=0u;
+  for(uint32_t k=0u;UKL_LIKELY(k<(x&15u));k++){ s+=k*y; }
+  for(;r<args.rounds;r++){ s=s*31u+r; }
+  out[i]=y+s;
+}

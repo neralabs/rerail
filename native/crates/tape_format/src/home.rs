@@ -1,4 +1,5 @@
-//! Where a tape's bytes live (decision 0353 step 4a). A tape just written holds its own vector. A loaded one is
+//! Where a tape's bytes live (decision 0353 step 4a). A tape just written holds its own vector, in the run's blocks
+//! (`rerail_vector`, decision 0628 §3). A loaded one is
 //! placed: its bytes are in a room someone else holds, a residency slab that the device reads too, and every reader
 //! reads them there. Nothing copies a placed tape.
 
@@ -14,13 +15,13 @@ pub trait Room: Send + Sync + std::fmt::Debug {
 /// A tape's bytes: its own, or placed in a room.
 #[derive(Clone, Debug)]
 pub enum Home {
-    Own(Vec<u8>),
+    Own(crate::Vector<u8>),
     Placed(Arc<dyn Room>),
 }
 
 impl Home {
     /// The bytes, mutable: a tape's own only (a writer's header fix-up). A placed tape is never written.
-    pub fn own_mut(&mut self) -> &mut Vec<u8> {
+    pub fn own_mut(&mut self) -> &mut crate::Vector<u8> {
         match self {
             Home::Own(v) => v,
             Home::Placed(_) => panic!("a placed tape is never written"),
@@ -65,8 +66,8 @@ impl PartialEq for Home {
 }
 impl Eq for Home {}
 
-impl From<Vec<u8>> for Home {
-    fn from(v: Vec<u8>) -> Self {
+impl From<crate::Vector<u8>> for Home {
+    fn from(v: crate::Vector<u8>) -> Self {
         Home::Own(v)
     }
 }

@@ -123,7 +123,7 @@ export function isFileWorkStopped(failure: AuditFailure): boolean {
 /**
  * The head of the message every AST clause fails with (`source-incomplete`) on a file the parser did not read: its
  * syntax-error regions cover half of its bytes or more. The full message follows it with `: error regions cover N% of
- * it, first at line L, column C` (`native/src/code_rule_dsl/soundness.rs` `UNREAD`).
+ * it, first at line L, column C` (`native/crates/matcher/src/code_rule_dsl/soundness.rs` `UNREAD`).
  */
 export const UNREAD_FAILURE_HEAD = "file did not parse";
 

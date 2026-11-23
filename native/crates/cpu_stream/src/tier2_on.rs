@@ -1,8 +1,8 @@
-//! Tier 2 on tier 1's buffers as the Metal backend left them (`rerail_metal::block_program`): the compiled words
+//! Tier 2 on tier 1's buffers as the Metal backend left them (`rerail_metal_programs::block_program`): the compiled words
 //! (`native_cpu_stream`) read a file's bytes, records (positions and codes), mask words and totals in the device's
 //! shared memory, where tier 1 wrote them.
 
-use rerail_metal::block_program::serial::Resident;
+use rerail_metal_programs::block_program::serial::Resident;
 use crate::native_cpu_stream::{CompiledStream, Parser, Tier1View};
 
 /// File `i`'s tape in format 16 (16z where `z`) from tier 1's buffers as the device left them (`Resident`), by tier 2

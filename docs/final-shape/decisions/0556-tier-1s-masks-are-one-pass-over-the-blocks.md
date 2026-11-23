@@ -39,3 +39,17 @@ Now tier 1 has a stage 1 of the same shape, written from the grammar:
 - What is still apart from the lean lexer is the next steps' (the masks the regions' walk and the masks made
   of the regions read, kept as the file's words, go when the token loop reads the regions, step 2), not a
   choice.
+
+## The escapes the token loop tests (step 2)
+
+An escape made of the regions is a test where the token loop reads its bytes, as the lean lexer refuses a
+byte where it reads it, not a mask over the file:
+
+- **In a region**: at its token's start, after it to the closer, over the closer (`in_region`,
+  `region_tests`), where the region's token reads it.
+- **Outside every region**: over each token of code's bytes (`any_in(&V, s, l)` in the rows that read no
+  region), its mask there a mask of stage 1, which it must hold at no skipped byte. Kotlin's `code & dollar`
+  and `code & high` are `$` and a byte above 0x7f in a token of code.
+- **By the bytes a mask can hold at** (`bytes_at`): a class's at its own byte, shifted through a `prev` or
+  `next`, both sides' of a `&`. In a `&`, a side that holds at none of the bytes the other side does is none
+  there: `code` is `~region & ~t_brace`, and `t_brace` is a template's `{`, never a `$` or a high byte.

@@ -45,7 +45,8 @@ pub struct ViewDoc {
     pub ends: u32,
     pub source_len: u32,
     /// A guest's placement in its host (`Placement`): 0 none (a file's own tree), `PLACED_COPIED` (host byte = guest
-    /// byte + `delta`, clamped to `within`), `PLACED_AT` (every span at `within`).
+    /// byte + `delta`, clamped to `within`), `PLACED_AT` (every span at `within`), `PLACED_TABLE` (each position's
+    /// host span in `placed`).
     pub placement: u32,
     /// The key of the file the document is part of (decision 0431 §4): its own, or a program's file's. Its
     /// `docof`; its ids keep `key`.
@@ -53,12 +54,17 @@ pub struct ViewDoc {
     pub delta: i64,
     pub within_lo: u32,
     pub within_hi: u32,
+    /// `PLACED_TABLE`'s: by local id (a node, then each position past them), the host span `start << 32 | end` the
+    /// guest's placement gives its span (`Placement::host`; u64s). A placement no word maps (an embedder's segments,
+    /// a string's normalized pieces): its spans placed once, as the host places them.
+    pub placed: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24);
 
 /// `ViewDoc::placement`'s kinds.
 pub const PLACED_COPIED: u32 = 1;
 pub const PLACED_AT: u32 = 2;
+pub const PLACED_TABLE: u32 = 3;
 
 /// A document of a batch, as an executor finds its views' rows (decision 0353 step 4d, and step 3 on the CPU): its
 /// entry's offset in the batch's block, its tape's and its lines' places (a home of the directory's, `ViewHome`, and
@@ -200,6 +206,7 @@ pub mod at {
     pub const DELTA: i32 = offset_of!(ViewDoc, delta) as i32;
     pub const WITHIN_LO: i32 = offset_of!(ViewDoc, within_lo) as i32;
     pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
+    pub const PLACED: i32 = offset_of!(ViewDoc, placed) as i32;
 }
 
 /// The `node` view's columns (`Viewed::columns`): the document, the node's id, its kind, start and end.
@@ -222,7 +229,7 @@ pub const ORDER_COLUMNS: u32 = 2;
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 17] = [
+    let fields: [(&str, &str, usize); 18] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -240,6 +247,7 @@ pub fn ukl() -> String {
         ("int64_t", "delta", offset_of!(ViewDoc, delta)),
         ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
+        ("Run", "placed", offset_of!(ViewDoc, placed)),
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
@@ -595,8 +603,17 @@ impl B<'_, '_> {
             if place == Place::Docof {
                 return b.entry_u32(at::FILE);
             }
-            let span = b.loc_span(l);
-            let span = b.placed(span);
+            // Placed by its table, else its span as read, placed (`Placement::host`).
+            let placement = b.word_at(I32, b.tape, at::PLACEMENT);
+            let tabled = b.f.ins().icmp_imm(IntCC::Equal, placement, i64::from(PLACED_TABLE));
+            let span = b.either(I64, tabled, |b| {
+                let items = b.follow(b.tape, at::PLACED);
+                let p = b.item(items, l, 8);
+                b.word_at(I64, p, 0)
+            }, |b| {
+                let span = b.loc_span(l);
+                b.placed(span)
+            });
             let s = b.f.ins().ushr_imm(span, 32);
             let s = b.f.ins().ireduce(I32, s);
             let e = b.f.ins().ireduce(I32, span);

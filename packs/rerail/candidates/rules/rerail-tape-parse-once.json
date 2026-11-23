@@ -6,15 +6,28 @@
   "description": "Build a source file's tape in the native engine only through TapeImage::parse, not with a parser and encoder of your own; each extra copy must be changed in step with it.",
   "scope": {
     "include": [
-      "native/src/**/*.rs"
+      "native/src/**/*.rs",
+      "native/crates/*/src/code_rule_dsl/**/*.rs",
+      "native/crates/*/src/content_store/**/*.rs",
+      "native/crates/*/src/git_access/**/*.rs",
+      "native/crates/*/src/tree_watch/**/*.rs",
+      "native/crates/*/src/git_*.rs",
+      "native/crates/*/src/source_tree.rs",
+      "native/crates/*/src/threads.rs",
+      "native/crates/*/src/panic_boundary.rs"
     ],
     "exclude": [
-      "native/src/code_rule_dsl/tape.rs",
+      "native/crates/lang/src/code_rule_dsl/tape.rs",
       "native/src/code_rule_dsl/tape/**",
+      "native/crates/*/src/code_rule_dsl/tape/**",
       "native/src/code_rule_dsl/blade/forte/**",
+      "native/crates/*/src/code_rule_dsl/blade/forte/**",
       "native/src/**/tests.rs",
+      "native/crates/*/src/**/tests.rs",
       "native/src/**/*_tests.rs",
-      "native/src/**/tests/**"
+      "native/crates/*/src/**/*_tests.rs",
+      "native/src/**/tests/**",
+      "native/crates/*/src/**/tests/**"
     ]
   },
   "clauses": [

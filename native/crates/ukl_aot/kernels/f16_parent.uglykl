@@ -1,0 +1,150 @@
+// A test kernel of rerail-ukl-aot (decision 0567 step 3): every node's parent over a format 16 tape in place, by one
+// step a node and a chase of the steps' links, no walk over the slots. A walk's only state is its node, so a node
+// whose first step (`clif_f16_parent_step`, `<ukl/reads/tape_f16.h>`) goes on from a previous sibling's node `j` has
+// `j`'s parent. Each node's step is one word, its parent or (`LINKED`) the node `j` it is linked to (a node's number
+// is below 2^31: a node takes 2 bytes of the tape at least, whose offsets are u32, so the high bit is free; NONE is a
+// parent).
+//
+// The parent kernel is two launches, stacked on one queue (no host between them):
+//
+// - `parent_step`: each node's step into `steps`, a word a node.
+// - `parent_link`: each linked node follows its links through `steps`, at most K - 1 = 7: format 16 names the parent
+//   on every K-th sibling (K = 8, `rerail_tape_format::f16`), so no tape its writer made holds a longer chain. A node
+//   still linked after 7 is a corrupt tape, reported, never walked: `out`'s word past the nodes' (0 before the
+//   launch) is then 1 more than one such node, and that node's word NONE. The launch reads only `steps` and writes
+//   only `out`: a walk in it, which no tape takes, halved its speed on an M3, and so did a store to a second buffer
+//   for the report (0567).
+//
+// `parent_group` is one launch: the steps in its group's threadgroup memory, a barrier, the chase there; a link that
+// leaves the group, or a chain still linked after 7, is the walk from that link's node (`clif_f16_parent`). On the
+// CPU the barrier parts its Rust in two phases, each chunk's first before any chunk's second (`rs.rs`).
+
+#define CLIF_VIEW_SPACE UKL_GLOBAL
+#include <ukl/backend.h>
+#include <ukl/reads/tape.h>
+
+#define LINKED 2147483648u
+
+typedef struct ParentArgs { uint32_t nodes, pad0, pad1, pad2; } ParentArgs;
+UKL_REFLECT_STRUCT(ParentArgs, nodes, pad0, pad1, pad2)
+
+DEFINE_KERNEL2(f16, parent_step,
+               ROBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[words]",
+               RWBUFFER, uint32_t,   steps, "[args.nodes]",
+               ARGS,     ParentArgs, args,  ,
+               GID0,     uint32_t,   i,     )
+{
+  if(i>=args.nodes)return;
+  uint64_t r=clif_f16_parent_step(tape,view,i);
+  steps[i]=(r&CLIF_T_LINK)!=0u?LINKED|(uint32_t)r:(uint32_t)r;
+}
+
+DEFINE_KERNEL2(f16, parent_link,
+               ROBUFFER, uint32_t,   steps, "[args.nodes]",
+               RWBUFFER, uint32_t,   out,   "[args.nodes + 1]",
+               ARGS,     ParentArgs, args,  ,
+               GID0,     uint32_t,   i,     )
+{
+  if(i>=args.nodes)return;
+  uint32_t r=steps[i];
+  for(uint32_t k=0u;k<7u&&r!=CLIF_T_NONE&&(r&LINKED)!=0u;k++)
+    r=steps[r&(LINKED-1u)];
+  bool corrupt=r!=CLIF_T_NONE&&(r&LINKED)!=0u;
+  out[i]=corrupt?CLIF_T_NONE:r;
+  if(corrupt)
+    out[args.nodes]=i+1u;
+}
+
+DEFINE_KERNEL2(f16, parent_group,
+               ROBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[words]",
+               RWBUFFER, uint32_t,   out,   "[args.nodes]",
+               ARGS,     ParentArgs, args,  ,
+               SHARED,   uint32_t,   steps, 256,
+               GID0,     uint32_t,   i,     ,
+               LID0,     uint32_t,   lid,   )
+{
+  uint32_t first=i-lid;
+  uint32_t r=CLIF_T_NONE;
+  if(i<args.nodes){
+    uint64_t s=clif_f16_parent_step(tape,view,i);
+    r=(s&CLIF_T_LINK)!=0u?LINKED|(uint32_t)s:(uint32_t)s;
+  }
+  steps[lid]=r;
+  ukl_tg_barrier();
+  if(i>=args.nodes)return;
+  for(uint32_t k=0u;k<7u&&r!=CLIF_T_NONE&&(r&LINKED)!=0u&&(r&(LINKED-1u))>=first;k++)
+    r=steps[(r&(LINKED-1u))-first];
+  if(r!=CLIF_T_NONE&&(r&LINKED)!=0u)
+    r=clif_f16_parent(tape,view,r&(LINKED-1u));
+  out[i]=r;
+}
+
+// Spike, no barrier, a look-back: `out` is the shared word, every node's: its step (its parent, or `LINKED | j`),
+// then its parent. A node's link goes to an earlier node `j` (whose parent is its own), so a thread takes `out[j]`
+// where `j`'s word is written, and only where it is not takes `j`'s step itself and goes on: a step at most computed
+// again, the same, and no wait for another's result. Whether a word is written is its SIMD group's bit in `seen`
+// (one bit a group of 32 nodes, 1/1024 of `out`'s bytes: 5.5 KB for 1.4 M nodes), set once the group's steps are
+// stored (`ukl_sg_publish`). `out` is never cleared: only `seen` is, by the launch's own threads first, together
+// (`ukl_sg_fill_lanes`: ranges taken and counted, a bounded wait for the ranges running groups have taken). The
+// threads' places are the SIMD groups' tickets (`ukl_sg_ticket`), so the groups started earlier hold the earlier
+// nodes, mostly published by the time a later one looks back. `counts`, 0 before the launch, a cache line apart (32
+// words): the ticket, the ranges started and finished, the threads whose wait for the fill ran out.
+#define UKL_FILL_RANGE 256u
+#include <ukl/simd.h>
+
+#define NOT_READY 4294967294u
+
+// Whether word `r` is a link (`LINKED | j`), not a parent (NONE among them) nor `NOT_READY`.
+#define PARENT_BACK_LINKED(r) (((r)&LINKED)!=0u&&(r)<NOT_READY)
+
+// Node `i`'s parent into `out[i]` (its place: a parameter, so its lanes stay consecutive where it is the id). Its
+// step goes there first, its group published, for the nodes after it; then each link is the word there, a step's
+// only where its group's is not published. Where the fill's wait ran out (`filled` false) nothing is published or
+// read: the walk.
+UKL_INLINE void parent_back_node(UKL_GLOBAL const uint8_t* tape, UKL_GLOBAL const uint32_t* view, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* seen, uint32_t nodes, bool filled, uint32_t first, uint32_t lane, uint32_t i)
+{
+  if(!filled){
+    if(i<nodes)ukl_atomic_store(&out[i],clif_f16_parent(tape,view,i));
+    return;
+  }
+  uint32_t r=CLIF_T_NONE;
+  if(i<nodes){
+    uint64_t s=clif_f16_parent_step(tape,view,i);
+    r=(s&CLIF_T_LINK)!=0u?LINKED|(uint32_t)s:(uint32_t)s;
+    ukl_atomic_store(&out[i],r);
+  }
+  ukl_sg_publish(seen,i,lane);
+  if(i>=nodes)return;
+  for(uint32_t k=0u;k<7u&&PARENT_BACK_LINKED(r);k++){
+    uint32_t j=r&(LINKED-1u);
+    uint32_t q=NOT_READY;
+    if(ukl_sg_published(seen,j,first))
+      q=ukl_atomic_load(&out[j]);
+    if(q==NOT_READY){
+      uint64_t t=clif_f16_parent_step(tape,view,j);
+      q=(t&CLIF_T_LINK)!=0u?LINKED|(uint32_t)t:(uint32_t)t;
+    }
+    r=q;
+  }
+  if(PARENT_BACK_LINKED(r))
+    r=clif_f16_parent(tape,view,r&(LINKED-1u));
+  ukl_atomic_store(&out[i],r);
+}
+
+DEFINE_KERNEL2(f16, parent_back,
+               ROBUFFER, uint8_t,    tape,   "[bytes]",
+               ROBUFFER, uint32_t,   view,   "[words]",
+               RWBUFFER, uint32_t,   out,    "[args.nodes]",
+               RWBUFFER, uint32_t,   seen,   "[(args.nodes + 1023) / 1024 + 1]",
+               RWBUFFER, uint32_t,   counts, "[128]",
+               ARGS,     ParentArgs, args,   ,
+               GID0,     uint32_t,   g,      ,
+               LID0,     uint32_t,   lid,    )
+{
+  uint32_t lane=lid&(UKL_SIMD_WIDTH-1u);
+  bool filled=ukl_sg_fill_lanes(seen,(args.nodes+1023u)/1024u+1u,0u,&counts[32],lane);
+  if(!filled)ukl_atomic_add(&counts[96],1u);
+  parent_back_node(tape,view,out,seen,args.nodes,filled,g-lid,lane,ukl_sg_ticket(counts,g,lane));
+}

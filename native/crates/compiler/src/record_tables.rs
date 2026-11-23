@@ -3,6 +3,7 @@
 //! (`stream_analysis::fetch_of`) read them too. Nothing here emits code.
 
 use crate::Error;
+use rerail_blocks::vector::Vector;
 /// What a token compares past a word's first eight bytes, by the table's longest word: as
 /// little as the words need, as the lean lexer's `word_code` compares the ninth byte of its one
 /// nine-byte word alone.
@@ -33,7 +34,7 @@ pub const META_CODE: i32 = 4;
 pub const LONG_WORD: u64 = 1;
 
 pub struct RecordTables {
-    pub words: Vec<u64>,
+    pub words: Vector<u64>,
     /// The word slots, 16 bytes each: the key (the word's first eight bytes), then its meta
     /// (`META_TOP`, `META_CODE`), each field a load, as the lean lexer's `WORDS` entry. Where a word
     /// is past nine bytes and none past 16 (`WordRest::Second`), 32 bytes each: then its bytes
@@ -62,7 +63,7 @@ pub struct RecordTables {
     /// Each pair table holds no pair (`pair empty`, 0355): its tokens are one byte, no row read.
     pub pairless: Vec<bool>,
     /// Each pair table's triples (`PairTable::thirds`): a pair and the byte after, three bytes.
-    pub thirds: Vec<Vec<[u8; 3]>>,
+    pub thirds: Vec<Vector<[u8; 3]>>,
     /// Where each first byte's entry is, eight bytes each (`TOKEN_*`): its kind, its end rule,
     /// whether a word starts with it, its pair row. A token's one load, as the lean lexer's
     /// `TOKEN`. Where the codes are in the entries (`punct_in_entry`), 512 of them, as the lean
@@ -171,7 +172,7 @@ impl RecordTables {
             }
         }
         let table = crate::records::WordTable::new(&r.words).map_err(|_| Error::InvalidTarget(0))?;
-        let mut words: Vec<u64> = r.kinds.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 kinds"))).collect();
+        let mut words: Vector<u64> = r.kinds.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 kinds"))).collect();
         let slots = 8 * words.len();
         // Each slot's length, then the code bits its word gives (`len | bits << 8`): the word at
         // `KIND_BITS`, and the marks of that word alone at `MARK_SHIFT` (`Records::marks`), so
@@ -186,7 +187,7 @@ impl RecordTables {
         if !parted.is_empty() && rest == WordRest::Tails {
             return Err(Error::UnsupportedFeature("a region read in parts, on the CPU, with words past sixteen bytes"));
         }
-        let metas: Vec<u64> = table.meta.iter().map(|&m| {
+        let metas: Vector<u64> = table.meta.iter().map(|&m| {
             let word = u64::from(m >> 8);
             let alone = r.marks.iter().enumerate().filter(|(_, x)| x.0 == crate::records::WORD_ALONE && u64::from(x.1) == word && word != 0).fold(0u64, |a, (k, _)| a | 1 << k);
             // A word past eight bytes: its top bit (`LONG_WORD`), whose other words a token
@@ -243,7 +244,7 @@ impl RecordTables {
         }
         // The fused rules, as the loop chooses them with the main run's word in a register (as
         // `record_tokens` puts it there).
-        let main_run: Vec<u16> = main_run(r).into_iter().collect();
+        let main_run: Vector<u16> = main_run(r).into_iter().collect();
         let fused = if r.skip.is_some() { fused_of(r, &filters, Some(made), &main_run) } else { None };
         // The fused pair rule's tokens' code bits, by first byte and length, where one value
         // each is the word table's (the code's own lookup, `WordTable::slot`): every pair of
@@ -276,7 +277,7 @@ impl RecordTables {
             for (b, e) in punct_codes.iter_mut().enumerate() {
                 let Some(pt) = r.ends.get(b).and_then(|&x| pair_of(x)) else { continue };
                 let one = lookup(&[b as u8]);
-                let twos: Vec<u64> = (0..=255u8).filter(|&c| pt.holds(b as u8, c)).map(|c| lookup(&[b as u8, c])).collect();
+                let twos: Vector<u64> = (0..=255u8).filter(|&c| pt.holds(b as u8, c)).map(|c| lookup(&[b as u8, c])).collect();
                 let two = twos.first().copied().unwrap_or(0);
                 // A byte that starts a triple (`===` after `==`): its codes not by its length
                 // alone, so looked up.
@@ -586,7 +587,7 @@ pub fn plain_end(r: &crate::records::Records, made: &crate::block_native::BlockN
 /// zero. Each distinct set of low nibbles a high nibble has is a bit (eight at most); none
 /// past eight.
 pub fn set_nibbles(set: &[bool; 256]) -> Option<[[u8; 16]; 2]> {
-    let mut groups: Vec<u16> = Vec::new();
+    let mut groups: Vector<u16> = rerail_blocks::vector::Vector::new();
     let mut n = [[0u8; 16]; 2];
     for h in 0..16 {
         let lows = (0..16).filter(|&l| set[h << 4 | l]).fold(0u16, |a, l| a | 1 << l);

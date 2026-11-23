@@ -11,6 +11,7 @@ const HEADERS: &[(&str, &str)] = &[
     ("mldb/builtin/cuda/ukl/ukl_cuda_shim.h", include_str!("../mldb/builtin/cuda/ukl/ukl_cuda_shim.h")),
     ("mldb/builtin/cpu/ukl/ukl_cpu_shim.h", include_str!("../mldb/builtin/cpu/ukl/ukl_cpu_shim.h")),
     ("mldb/builtin/opencl/ukl/ukl_opencl_shim.h", include_str!("../mldb/builtin/opencl/ukl/ukl_opencl_shim.h")),
+    ("mldb/builtin/vec/ukl/ukl_vec_shim.h", include_str!("../mldb/builtin/vec/ukl/ukl_vec_shim.h")),
 ];
 
 /// The library's headers, by the name a kernel includes them by (`#include <ukl/memory.h>`), each after the ones it
@@ -18,9 +19,11 @@ const HEADERS: &[(&str, &str)] = &[
 pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/backend.h", include_str!("../lib/ukl/backend.h")),
     ("ukl/bits.h", include_str!("../lib/ukl/bits.h")),
+    ("ukl/dot.h", include_str!("../lib/ukl/dot.h")),
     ("ukl/memory.h", include_str!("../lib/ukl/memory.h")),
     ("ukl/simd.h", include_str!("../lib/ukl/simd.h")),
     ("ukl/group.h", include_str!("../lib/ukl/group.h")),
+    ("ukl/matrix.h", include_str!("../lib/ukl/matrix.h")),
     // A body over a type (decision 0440 §3.5): its header includes it once per type, with its parameters defined.
     ("ukl/body/lz4_decode.h", include_str!("../lib/ukl/body/lz4_decode.h")),
     ("ukl/body/histogram_part.h", include_str!("../lib/ukl/body/histogram_part.h")),

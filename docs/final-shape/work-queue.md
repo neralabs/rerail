@@ -6972,6 +6972,8 @@ Open:
   guests stratified by their nesting (a string's names never decide whether its host is a type context); or
   `type_ctx` asks for every string in an annotation place, without its negations, and filters after the parse.
 - **Done when**: both tests pass, unignored.
+- **Done** (2026-11-22, 83c9cd2e4e): both pass after the hub's merges of roll-ups 38-49 (Linux, CPU only), and
+  are un-ignored.
 
 ### Q323. Five tests red at rr-align's pin on macOS (roll-up 4)
 
@@ -9534,6 +9536,8 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Here** (roll-up 25, Q422): the test is not ignored, and it passes (`rerail-engine`'s `plan::corpus` tests on a
   Linux DGX Spark, held to the CPU). Its third edit's rows are a full run's.
 
+- **Here again** (2026-11-22): a later merge brought the sync branch's ignore back ("Q407"). The test passes, and the
+  ignore is removed (83c9cd2e4e).
 ### Q421. (Q287 on final-rerail-shape-phased-facts; Q361 on sync-integration-hub-tape) An edit keeps the rows of the cross part's `kind`, a view of `node` (done)
 
 Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one-file edit).
@@ -9623,8 +9627,10 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
     packages unresolved), over the 49 changed files. That found the three merge errors above (the scope audit,
     the duplicate `globalSetup`, an optional `sourcePaths`). The vitest suites were not run: no farm host has the
     project's packages installed.
-- **Open**: Q421 is theirs, as they left it. `r2_a_new_process_reads_its_kept_rows_in_place` stays ignored, as on
-  ours (19 kept rows decoded: 0401 step 7).
+- **Open**: Q421 is theirs, as they left it. `r2_a_new_process_reads_its_kept_rows_in_place` stayed ignored, as on
+  ours (19 kept rows decoded: 0401 step 7). That was the merge's miss: theirs at b4222a2d6f had 0439's form, the
+  kept entries bound in place and no row decoded. Taken 2026-11-22 (83c9cd2e4e), with `shape::rows_decoded` removed
+  as theirs removed it; the test passes.
 ### Q440. (Q414 on investigate-bend-vs-datalog; Q383 on rr-align) Roll-up 22 (final-rerail-shape-phased-facts onto rr-align): what the merge chose
 
 - **Here** (the hub's merge of rr-align at 48ce04a06b): this record keeps the numbers of its time. Its 0513 is
@@ -10464,9 +10470,8 @@ The width census, 0165 §3's in-place local original, and t52 step 4 (`notes/rol
 ### Q491. Roll-up 70 (engine-crating 001841e689 onto Pulling-it-all-together): what the merge chose
 
 Crate split steps 7b to 7i (`notes/roll-up-70-engine-crating.md`):
-- **rerail-observe is rerail-store again.** On ours, the observer's answers are the store's kept facts (t33 K2), and
-  the store's collection sweeps the observer. Git reads both. rerail-store mounts the observer and git over
-  rerail-store-base.
+- **Theirs' 7b stands** (corrected, Q494): the observer and git are below the store, and reach its kept facts and
+  manifests through an interface the store registers at load.
 - **Ours' `mod.rs` changes on theirs' split**: t33's removals and the in-memory store's own folder, in `mod.rs` and
   `base.rs`.
 - **Ours' code on theirs' interfaces**: `Places::syntax_batch`, the `CHUNK_AXIS` slot in `within.rs`, and boot's
@@ -10489,3 +10494,371 @@ Roll-up 71 had kept roll-up 55's `native_cpu_facts` over Parser-generators-final
 - `stream_facts` and `stream_analysis` are the front end's, and `native_cpu_clusters` is the compiler's.
 - `native_cpu_facts` goes.
 - 0565 is amended (`notes/roll-up-71-parser-generators.md`, "Correction").
+
+### Q494. Roll-up 70, corrected: theirs' 7b kept, t33 K2's store reads inverted (the user's choice)
+
+Roll-up 70 had folded rerail-observe into rerail-store, reversing engine-crating's 7b. The user chose (2026-11-22)
+to keep 7b and invert t33 K2 (`notes/roll-up-70-engine-crating.md`, "Correction"):
+- rerail-observe is below rerail-store again.
+- The observer's kept facts and git's `owned_again` reach the store through rerail-store-base's
+  `observer_store::base` (`Store`, `Kept`, the `STORE` slot), which rerail-store fills at load.
+- The puts' types are the base's (`kept_facts/base.rs`).
+- The store's sweep of the observer stays in the store.
+
+### Q495. A warm run over a Git snapshot takes the whole-run cutoff
+
+Every run over a Git snapshot root evaluated again, warm or not: `reuse::reused` and `reuse::record` returned early for
+any snapshot root (since 395a6ac2f7). So each warm run of a Git policy derived its views and fact relations again,
+the Git inventory's among them. Now the cutoff (t23 §4) applies to a snapshot run as to a run over files:
+- **The record's key** names a snapshot's root by what it is of: the repository's facts root under the selected
+  object, its commit or else its tree (`snapshot::run_identity`). A named analysis's view is another path in each run
+  (its invocation's), so a key of the view's path never found the last run's record.
+- **A loaded document** under a snapshot's root is recorded by its path from the root (`World::load_name`), as its
+  loaded identity already was. An absolute name carried the last run's view path, so the check found it gone.
+- What else a snapshot run read is checked as before: the documents by their blobs (the observer), and the
+  revisions, objects and file storage by the world's Git observations.
+- The test `an_unchanged_git_snapshot_run_writes_its_kept_outputs` covers a cold run, a warm run that is kept, a new
+  commit that runs again, and the next run kept in turn.
+
+On the way:
+- `RERAIL_WIDTH_CENSUS` only measures (`profile::memory`), so the run's key leaves it out.
+- The converter's overlay carries a library's `.pass` settings (decision 0597 step 2) with the merged program, as it
+  does `.global library` and `.answer`.
+
+### Q496. The converter's overlay keeps a made pass with what it names, or drops it whole
+
+`an_overlay_includes_the_python_library` failed: ".context annotation: its roots ann_tree are not declared". The
+overlay's merged program keeps only what `violation` reaches (`convert::reachable`). That undeclared every relation
+no rule left reads, but it kept every `.pass` setting (decision 0597 step 2). So a pass nothing reached kept a `.pass`
+naming roots no longer declared, and the next read of the program refused it. Now a made pass, as the unpruned
+program declares it, stays while a rule left reaches one of its exports' instances. Its roots, its exports' instances
+and what it reads stay declared with it. A pass's reads may be another pass's exports, which keeps that pass in turn.
+A pass nothing reaches goes, with its `.pass` setting, as its rules went.
+
+The pack's stored converter output (`candidates/datalog/`, compared byte for byte by
+`the_pack_holds_the_converters_run_over_every_authored_file`) predated t33 K3's `.answer` lines and the Python
+library's later rules. It is regenerated (`convert_the_data_layer_pack`) and staged in the lint tool-pack's
+`publish/` (`npm run fixtures:stage -- --pack data-layer --tool lint`) for the pack-data publish workflow.
+
+### Q497. Roll-up 72 (engine-crating a9b970f074 onto Pulling-it-all-together): what the merge chose
+
+Crate split 9a and 9b: each crate's sources move into its own `src/`, and every source reader follows. The hub's
+changes since the crating branch last merged it (Q495, Q496, the job-scope and gzip fixes) follow their files: the
+converter to `boot/src`, the wave to `run/src`, reuse and world to `rr_root/src`, git snapshots to `observe/src`, and
+the reuse and session tests to `tests_corpus/src`. One conflict, `reuse.rs`'s `NOT_OUTPUTS`: both sides added
+`RERAIL_WIDTH_CENSUS`; theirs' comment, which names the census, is kept. No architectural clash.
+
+Relax: the engine checks clean; the reuse and session tests (30), the converter's overlay, pack, replay and
+reference-fixture tests (4) and rerail-observe (42) pass.
+
+### Q498. Roll-up 73 (django-bugs 2ab40098ce onto Pulling-it-all-together): what the merge chose
+
+Decision 0603's arenas from django-bugs: every stratum one launch within its budget's relaunches, arenas and rooms
+mapped as a recursive component's rounds reach them, and the text arena growing in place. No conflict: every file
+lands in its crate after the crate split (setfix, device_metal, blocks, prof, facts, ukl). No architectural clash.
+
+Relax: the engine checks clean; rerail-blocks (77) passes; the global-state check passes. The new device tests are
+Metal's and do not run on this Mac.
+
+### Q499. Roll-up 74 (final-rerail-shape-rr-align 18922f09dd onto Pulling-it-all-together): what the merge chose
+
+rr-align's test and store work: tests apart in one process (each test thread its own shared object), a named store
+begun from the test template, the store's schema checked in two statements and its checking connection kept, kept
+entries recording their greatest atom (store floor 10), opt-level 1 in dev and test builds. No conflict; every file
+lands in its crate after the crate split. No architectural clash.
+
+Three test faults the merge showed, fixed after it (Q500):
+- **The template, and every kept record, under Relax.** A test build's engine id was its binary's path and build
+  time. Under Relax every checkout's tests run in one host binary that no edit rebuilds, so the template a floor-9
+  build made (another checkout's, or this one's before the merge) was opened at floor 10 and 30 corpus tests
+  failed; kept records and the whole-run cutoff, keyed by the same id, could reuse other code's results. The id now
+  also covers the engine's sources by `stat` (`build_ids::sources_stamp`), as `build.rs`'s covers their bytes.
+- **Two kept-facts tests shared a store** (`store("wave-readers")`): run in parallel, each removed and swept the
+  other's files (a staged block gone, then the memory cap). One is `wave-reader-puts`.
+- **The write-back retry test counted retries in 20 ms of wall time**: a first run slower than that (a cold first
+  call) left one. Retrying is now asserted on a job busy twice then done, and giving up on one always busy.
+
+Relax: the engine checks clean; the reuse and session tests (30) and rerail-store (232) pass.
+
+### Q500. Roll-up 74's red tests fixed: Relax's test build id, a shared test store, a timed retry
+
+Roll-up 74's red tests, at their causes (the three faults Q499 lists): a test build's engine id covers the engine's
+sources by `stat`, so under Relax a checkout's edit, or another checkout, is another build; the two kept-facts tests
+that shared `store("wave-readers")` have a store each; the write-back retry test asserts retrying without counting
+on the clock.
+
+### Q501. Roll-up 75 (build-and-test-loop-time 58567d2eaa onto Pulling-it-all-together): what the merge chose
+
+build-and-test-loop-time: farm 58 (the bench rates each host at its own cores, SMT included) and the Relax fork's
+latest (NEON's `vqtbx1q`, `relax check`'s replay of the substituted smallvec's `smallvec!`, and edition 2024's
+`#[unsafe(link_section = ..)]` placing an item, so load hooks run). Two conflicts, `scripts/dev/relax/build` and
+`rerail.patch`: the hub's 6e4f47c1c6 (the crate split's) had written the same link-section change into the patch by
+hand; the feeder's is that change as the fork made it, with its own test, and `rerail.patch` is the fork's commits,
+so both files are the feeder's. No architectural clash.
+
+Checks: no engine code changed; `farm.py` parses and `build` passes `sh -n`.
+
+### Q502. Roll-up 76 (Go-C-and-C-support c30524e3dd onto Pulling-it-all-together): what the merge chose
+
+Go-C-and-C-support: decision 0613, macro expansions as memoized requests run in waves (pieces claimed from a queue,
+teams by measured work, arguments as references run by continuations), and 0588's span look. Two conflicts:
+- **The decisions index**: both added rows (0612 the hub's, 0613 the feeder's); both kept.
+- **`pp_arena`'s split test**: the hub's side counts 9 units 5 deep (0576's two-call tape reads); the feeder's makes
+  the look for a `(` (`lp_next_is_lparen`) a unit, 10 deep 7. Neither changed `ukl::split`: a barrier-free
+  `UKL_ONCE` function under 8 KB with its helpers stays in its callers' units, and over the hub's smaller tape reads
+  this one is under it. The feeder's requirement (its e9b46b3ea3) is that it is called, never inlined (inlined it
+  crashed the M3's back end); kept local it is still `noinline`, so that holds. The test asserts it is a unit or
+  kept local, and the merged split's counts, 9 and 5. Its Metal run, local and noinline rather than its own
+  library, is the feeder's to confirm on a farm Mac as it merges the hub. No architectural clash.
+
+Relax: the engine checks clean; `rerail-metal`'s `pp_arena` tests (9) pass (source splitting, no device).
+
+### Q503. Roll-up 77 (sync-integration-hub-tape b4a1562740 onto Pulling-it-all-together): what the merge chose
+
+sync-integration-hub-tape: decision 0612's one line index (every reader reads the tape's in place), 0626's format
+16 alone (format 15 out of the engine; every language's table from its grammar), Q210 and Q216. Conflicts:
+- **`v9np`** (format 15's module): the hub had only moved it (the crate split's one-line path fix); the feeder
+  removed it, so it goes.
+- **`build.rs`**: the feeder's view sources (the line terminators, the format 16 tables), `tokens.rs` at its crate's
+  path.
+- **The text guard's allowances**: the hub's paths. The feeder raised `coverage.rs`'s to 3 as "the sites there are";
+  the file, the same on both sides but for a path, has 2 (lines 376 and 487), and the guard wants the count exact:
+  2, as before.
+- **rr tests' comments on 0612**: the feeder's wording.
+
+One fault in the feeder's code: 6f5c722247 made `TapeDoc::line_table` a product read (`packed_batch`'s resident and
+copied lines) but left it `#[cfg(any(test, feature = "test-hooks"))]`, which only a build without test hooks shows
+(two E0599s in `relax check rerail-engine`): the gate goes. No architectural clash.
+
+Relax: the engine checks clean; the text guards, the two rr tests and rerail-lang's tape tests pass. rerail-tests-tape
+failed as it did before this merge (checked at f5bf47bb18), from two Relax gaps, fixed in d8ffdccc9d: std's
+`ExactSizeIterator::len` and a fatal fault's program handler (scripts/dev/relax/README.md, changes 13 and 14).
+
+### Q504. Relax: std ExactSizeIterator::len and a fatal fault program handler, as rustc (the tape tests roll-up 77 found red)
+
+Done in d8ffdccc9d. rerail-tests-tape was red on the hub under Relax: 10 tape tests (`NoContent` for every pattern
+built over tree-sitter's tree) and the watchdog's fault test. Two gaps in Relax, fixed in the fork (rerail branch
+0e3de688 and ce53d4c9; scripts/dev/relax/README.md, changes 13 and 14):
+- **std's `ExactSizeIterator::len`**: Relax's adapters took `len` from `size_hint`, where rustc's core forwards it
+  (`Map`, `Enumerate`, `Rev`, `Cloned`, `Copied`, `Fuse`, `Inspect`, `&mut I`). ast-grep's `NodeWalker` implements
+  `len` alone, so `children().len()` read 0. The default now asserts `size_hint` is exact, as rustc's does, and the
+  vendored walker has an exact `size_hint` (native/vendor/ast-grep-core-0.51.0/PATCHES.md).
+- **A fatal fault's program handler**: a contained fault the run ends by went straight to the default action; the
+  program's own `SIGSEGV` handler (the watchdog's, naming the tests running) now runs first, as under rustc.
+Relax: rerail-tests-tape 111 passed.
+
+### Q505. Roll-up 78 (benchmarks-on-integration 85db055ca0 onto Pulling-it-all-together): what the merge chose
+
+benchmarks-on-integration (85db055ca0): the heap's spans charged across threads (`rerail_context::HEAP_SPAN`), a
+batch's sources and run-life arrays accounted, the planner's statistics with no row on the heap (`places`'
+statistics from their arrays, `value_runs` in the run's blocks, sketches only past `few`), and B023's device-index
+race (a probe binds its builder's buffer and waits for a taken build). Conflicts:
+- **Moved files** (`places.rs`, `run_state.rs`, `metal_join.rs`): the feeder's edits applied at their crates' paths.
+- **`run_state`'s ledger**: prof's `SPAN` out, `rerail_context`'s `HEAP_SPAN` in, as Carried.
+- **`granules::is_extra`**: both sides added it; `EXTRA_FIRST + EXTRA_SLOTS` is `SPAN_FIRST` by definition, so ours
+  stands.
+- **`places`**: both sides' methods (ours' lookups, the feeder's `statistics`).
+- **`exec.rs`**: the job's heap span around the submission and ours' launch-budget abort, both.
+- **`corpus.rs`**: the feeder's "the source's own, whole" arm is already ours' (`base_counted` asks
+  `Source::statistics` before counting); `scaled_statistics` is `syntax`'s (the feeder moved it); the corpus
+  listing stays where the crate split put it (rr_root's `corpus/base.rs`).
+- **`metal_join.rs`**: ours' gated and live builds with the feeder's race fix. A build keeps its builder's buffer; a
+  probe of this batch's build binds it, one committed is waited for, as another batch's (`lent`); a live relation's
+  index is never found or taken and is built again each round; a build is skipped at finish when gated and stopped,
+  or live, after the lent bookkeeping.
+- **`rows.rs`'s heap report** read `syntax::made::sources_held`, above facts_base since the crate split: a hook,
+  installed by boot (`install_sources_held`), as the crate's other upward reads are.
+
+No architectural clash. Relax: the engine and rerail-device-metal's tests check clean; run_state's ledger tests, the
+feeder's syntax tests (6) and the two cross-views tests it changed pass. The Metal tests (B023's among them) are
+farm-only.
+
+Found while testing, older than this merge: since the crate split, rerail-logic's own test binary runs the rule
+library without the languages, embedders and parsers boot installs (`install_languages`), so each `.rr` document's
+build there fails, caught (144 per fresh build id). Roll-up 77 moved where it fails (the Rr base 0612's line table
+asks for), not whether. How a crate below boot gets the engine's installs for its tests is the crate split's to
+decide; nothing here changes it.
+
+### Q506. Roll-up 79 (cost-classifier-metal-rf aa879a01f5 onto Pulling-it-all-together): what the merge chose
+
+cost-classifier-metal-rf (aa879a01f5): decision 0597's steps 4-6 and rule 8 (contexts: a region root's holes are
+its host's, f-string templates and format specs, SQL in a template, a Vue component's script and template as
+contexts, guest copies above the answers; hiding's narrow copies removed; the quick tier's gate). The feeder had
+merged the hub through roll-up 72 (the crate split), so the merge is clean: no conflict, nothing at an old path.
+
+Relax: the engine checks clean; the feeder's new tests pass: rerail-tests-corpus's 12, rerail-rr-root's contexts
+test, rerail-tests-rr's f-string guest, rerail-tests-lang's `visit_index` order, rerail-logic's guest-kind hide test.
+
+### Q507. Roll-up 80 (CUDA-support 7203302d47 onto Pulling-it-all-together): what the merge chose
+
+CUDA-support (7203302d47): HIP on AMD's driver (0440), UKL's matrix fragments and dot products (0617), and a join
+program's worker that compiles under NVRTC. django-bugs (3e487a00f4, 0603, already in the hub) had made `join_run`
+compile for CUDA too, another way, so the two clashed in the kernel source and in `ukl/backend.h`, where the
+automatic merge kept both sets of coherent atomic overloads, which redefine each other on CUDA. **The user chose
+CUDA-support's mechanism** (asked 2026-11-22):
+- **`ukl/backend.h`**: one set of coherent atomic overloads for both C++ backends whose coherence is a qualifier
+  (Metal's `coherent(device)`, CUDA's and HIP's `volatile`); the CUDA-only set goes.
+- **`join_stages.uglykl`**: `LatP`, a structure of integers alone, is read whole by `clif_struct` (one coherent load
+  per 8-byte word; a copy on Metal); `lat_load` goes. `GateCheck` and `RoundOp` hold pointers, so they keep
+  django-bugs' reads field by field through `p`. A coherent load of a structure holding pointers crashed the M1's
+  Metal compiler (f327c559dc, `UKL_WORD_RECORD`), and on Metal `clif_struct` is that load. The gate keeps 0603's
+  mapped rooms (`has` bit 1, the park flag 128).
+
+Red tests found on the way, fixed: the device setfix tests of 0603 (roll-up 73) set `RERAIL_PROGRAM_BUDGET`,
+`RERAIL_PROGRAM_ARENA` and `RERAIL_ROOMS_MAPPED` through `switches::set` (roll-up 74's lists), but `metal_join` read
+them with `std::env::var`. They are now read through `profile::var` and listed in SCOPED.
+
+Relax: the engine checks clean; the device setfix tests pass on the CPU backend (27, `RERAIL_GPU=cpu`: UKL's CPU
+build of `join_stages`). CUDA, HIP and Metal are farm-only.
+
+### Q508. Roll-up 81 (engine-crating ebbcd015a8 onto Pulling-it-all-together): what the merge chose
+
+engine-crating (ebbcd015a8): crate split 10a (the compiler's device programs leave the runtime for
+`rerail-metal-programs`; unnamed dependencies go) and 10b-1 (the store's records move into `rerail-store-base`),
+UKL's misaligned 16z line reads on CUDA, and its merge of the hub at roll-up 80. Its own CUDA commit (542b9352a4,
+`UKL_COHERENT_COPY`) was settled to the hub's roll-up 80 choice when it merged the hub: backend.h, clif.h and
+join_stages.uglykl are the hub's. Merged without conflicts.
+
+Relax: the engine checks clean.
+
+### Q509. Roll-up 82 (build-and-test-loop-time 8bc7d69011 onto Pulling-it-all-together): what the merge chose
+
+build-and-test-loop-time (8bc7d69011): farm 59, a hot compile passes the remaps the patched sccache gives a miss,
+so a crate's incremental state serves both ways (`scripts/build/farm/`). Merged without conflicts; no engine source.
+
+### Q510. Roll-up 83 (cost-classifier-metal-rf c0b4e37876 onto Pulling-it-all-together): what the merge chose
+
+cost-classifier-metal-rf (c0b4e37876): 0597 step 7, rungs 7.1 and 7.2. A pass's tape-local rows are kept per tape
+value (`corpus_prep`'s new `preparation/kept.rs`), rule 7 on the memo path, rule 8 across chunks, and a pack's
+passes kept too. Merged without conflicts.
+
+Relax: the engine checks clean (with roll-up 84).
+
+### Q511. Roll-up 84 (final-rerail-shape-rr-align 16455bce23 onto Pulling-it-all-together): what the merge chose
+
+final-rerail-shape-rr-align (16455bce23): its merge of the hub at roll-up 80, then phase 0 composing a program
+file's and a text's graph from its modules' graphs (no bootstrap run), builtin phases' lowered programs kept in the
+store, the test template's run with phase 1, a guest placed by segments or pieces read in place (0353/0603), the
+watchdog's segfault child writing no core, the test crates on the engine's jemalloc, and the Vue pack tests as one
+pack run beside each case's. Merged without conflicts.
+
+Relax: the engine checks clean (with roll-up 83).
+
+### Q512. Roll-up 85 (uglykl-CPU-SIMD-parallelization 218499dd23 onto Pulling-it-all-together): what the merge chose
+
+uglykl-CPU-SIMD-parallelization (218499dd23): 0567 step 3, UKL as register-resident NEON Rust ahead of time
+(`rerail-ukl-vec`'s `rs.rs`, the new `rerail-ukl-aot` crate with its checked-in kernels' Rust, hand-written and scalar
+versions to compare), format 16's parent read vectorized, the f16_parent spikes, and its merges of roll-ups 8-10.
+- **`Cargo.toml`**: the hub's members, with `native/crates/ukl_aot`; the feeder's opt-level 3 for it kept.
+- **`ukl/memory.h`**: both. The feeder's whole-value window on the CPU's vector code (`__UKL_WINDOW_WHOLE`, under
+  `UKL_VEC` only) before the hub's word found from the address (`__UKL_OFF`, engine-crating's CUDA misaligned reads).
+- **ukl-aot's checked-in Rust** (`parent_back`, `parent_group`, `parent_step`, `wide_lanes` at 8 lanes): written
+  again (`UKL_RS_WRITE=1`), as their tests say. The windows' word offset is now the address's (`(t + a) & 7`, the
+  hub's `__UKL_OFF`), not the base's, so the generated Rust differs there; the feeder's measured counts were of the
+  older form.
+
+Relax: `rerail-ukl-aot`'s Rust called NEON intrinsics and an atomic Relax's std lacked (`vmull_high_u32`,
+`vcntq_u8`, `vclzq_u32`, `Atomic::from_ptr`): added to the fork (1f2868e6). The engine checks clean; rerail-ukl-aot
+(12), rerail-ukl-vec (50), rerail-ukl (13) and the device setfix tests on the CPU backend (27) pass, the last two
+after the fixes that follow (eccfb213de: Relax tells a program it starts the disk's paths; the next commit: a
+store's atoms written on a pool thread whose run ended read no run).
+
+### Q513. Roll-up 86 (Parser-generators-final-shape 9727d90b86 onto Pulling-it-all-together): what the merge chose
+
+Parser-generators-final-shape (9727d90b86): 0623, tier 2's writer calls plain (one push a level, leaves with their
+field, wrap and close one call each, its stack a local, look-ahead with one bounds test), rr's tier 1 masks from one
+classify of a block, comments kept as records between tokens (the user's choice), and its merge of roll-up 80.
+- **`metal/src/slabs.rs`**: the same change on both sides (a refusal says why under `RERAIL_POOL_DEBUG` or
+  `RERAIL_PP_WHY`), worded twice: the hub's (roll-up 85's) kept.
+
+Relax: the engine checks clean; rerail-rr-parser 52/52, rerail-json-aot. rerail-rr-parser segfaulted in safe code
+(`bitlex_lex_rust`'s `matches!(t, A(_, e) | B(_, e) if { let … })`): Relax lowered a guarded or-arm's guard once per
+alternative and made the guard's locals' slots in the first alternative's blocks. Fixed in the fork (0a98714e), the
+next commit. Under the full suites' parallel load, three kotlin-parser tests (panics inside std's `str` formatting,
+code tiered to O3 mid-run) and `rust_is_current` once failed, then passed alone, three together and in a second full
+run: not the merge's, and not chased further here (the kotlin suite runs past ten minutes under Relax, a test of it
+alone 99 s).
+
+### Q514. Roll-up 87 (Typing-support-final-shape afddb3a15d onto Pulling-it-all-together): what the merge chose
+
+Typing-support-final-shape (afddb3a15d): t33 steps 1–3 and K4: phase 1's run kept as a frame across processes and
+taken when every read is as it was, kept statistics read as kept, phase 0's graphs as facts, the corpus runs' tables
+written as kept facts too (stage 1, checked against the tables in test builds).
+- **`rr_root/…/corpus/phases.rs`**: the feeder's frame identity and frame read, with the hub's `lowered_entry`
+  (its program and its stored entry) for the feeder's `lowered`.
+- **`store/…/derivation.rs`, `object_segments.rs`, `prefilter.rs`**: the types roll-up 72 moved to `store_base` stay
+  there. The feeder's changes to them are made there: `ObjectBytes`' `Deref` `#[inline]`, and `TapePrefilter` without
+  `edges` (prefilter version 9). Its kept-facts derivation graph sits beside the re-export, and a closing brace both
+  sides' last items shared is removed.
+- **Fixed, the feeder's red test** `parallel_writers_and_a_collector_share_one_store` (red at its tip too): the
+  check of the corpus runs' kept form read the chain and the tables as separate statements, so a write another
+  handle committed between them showed the tables one write ahead. It reads both in one read transaction.
+
+Relax: the engine checks clean; rerail-store's corpus_runs 53/53 and the conflicted files' tests; the feeder's new
+tests (keptstats, the machine model, statkeep, phase 1's frame) pass.
+
+### Q515. Roll-up 88 (investigate-bend-vs-datalog 1eaf01e953 onto Pulling-it-all-together): what the merge chose
+
+investigate-bend-vs-datalog (1eaf01e953): format 16's codes the grammar's, numbered by a corpus's counts (0638;
+code-counts), the closure's levels in bounded launches, a split Metal library's units compiled on the executor's
+threads, probes of views read through a step's cursor (the source's membership test, a field by parent, a made
+group's index its rows in the column's order), the text and op demands narrowed by derived columns, 0616.
+- **`store/…/atoms.rs`**: the same fix on both sides (a key asked with no run on the thread is resolved): the hub's.
+- **`tape_format/src/reads.rs`**: both made a side list's entry a count, not a search. The hub's (c3e2acafa9) is in
+  every copy of the read (CLIF, the host's Rust, UKL) and keeps them equal: kept, one mechanism.
+- **`planner/…/plan.rs`**: the feeder's emptiness of a relation with no held copy (its bound source's), with the
+  hub's `holds_none()` for a held one.
+- **`plan_base/…/text_demand.rs`**: the hub's `span_columns` (spans carried through the rules that copy them) for the
+  feeder's per-atom test, over the feeder's `SPAN_COLUMNS`. The feeder's `op` and `op_wide` go into the demand's kept
+  rows too (`demand_rows`, `demand_of_rows`), the kept value's version 2.
+- **`tests_lang/…/syntax/tests.rs`**: the feeder's four cases by the hub's count of formats. **decisions README**:
+  both, by number.
+
+Relax: the engine checks clean; rerail-tape-format 44/44, the vtab syntax tests 79/79, rerail-planner, the warm
+corpus tests 8/8 (the kept demand reads back). The Metal compile change is not run here (no Metal on this Mac).
+
+### Q516. Roll-up 89 (CUDA-support 47f47a51ef onto Pulling-it-all-together): what the merge chose
+
+CUDA-support (47f47a51ef): 0617's matrix units through UKL (f16, bf16, i8 and 1-bit fragments on NVIDIA's mma.sync,
+Apple's simdgroup_matrix, Intel's DPAS, the 680M's and the V100's emulation, R7 read from PTX and AIR), accel's
+closure in one dispatch on the work queue, its GPU price bench, and join programs that reach a block through one wrap.
+- **`accel/src/gpu/mod.rs`, `relational.uglykl`**: both branches fixed the closure past the launch budget (0601):
+  bend's `cl_level` (roll-up 88, at most 33 launches, a group barrier a narrow level) and this branch's `cl_dag`
+  (UKL's work queue, 0540: a predecessor pushed by its last successor, 3 launches). The user's choice (2026-11-23):
+  `cl_dag`. `cl_level`, `level_launches` and `closure_levels_take_bounded_launches` are removed.
+- **`device_metal/…/metal_join.rs`**: the branch's side was its merge base's round yield (`resume`, `yielded`), which
+  the hub replaced with 0603's relaunches: the hub's. Its new change (d98a947506, G15 misread a block written through
+  two wraps) is kept whole: `Done::rewrapped` beside the hub's counts, `again_on_rewrap`, and the refusal at the top
+  of the hub's `launch` (a relaunch reaches the blocks the first launch did, so it passes when that did).
+- **`setfix/device.rs`**: the hub's `arena_reserved(false)` and `finish`, with the branch's `again_on_rewrap` and its
+  encoding again of a program not launched; no yield loop.
+
+Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device tests 39/39 on UKL's CPU backend
+(the recursive stratum among them). The matrix units and Metal are not run here.
+
+### Q517. Roll-up 90 (final-rerail-shape-phased-facts 4de2121865 onto Pulling-it-all-together): what the merge chose
+
+- The branch's run data in blocks (0628: `Vector`, `BlockHash`, `BlockInterner`, `StringsView`, sections) taken throughout; the hub's newer code carried onto it, not the other way round.
+- Facts read through the batch's 16z cache (`Projected::f()`, 0569 §6) in the hub's new code too: `TextReads::reads` by codes, `KIND`/`OP` columns, `unit_flags`, token ranks.
+- `Totals` (corpus.rs): the branch's block-backed, generation-per-relation form; the hub's one-pass `forget_all` kept as a call of `forget` per relation (each a generation of its own, no pass over the measures). The hub's `fresh`/`given_rows`, `drop(psec.take())` and the spanned `own::tested_constants` kept.
+- `Shapes`' kept rows (t33 K4) written and read over the branch's section (`Of`: rels, from, left, each sorted); `Proofs`' kept rows rebuild the recursive components alone, each at its place (`Proofs::of` reads only its own). Round trip test passes.
+- Source `lookup_columns` returns a `Vector` like the trait's other lookups; `find_columns` likewise.
+- The branch's closure relaunch loop in accel (`Job::again`) left out: roll-up 89 chose CUDA's `cl_dag` on the work queue.
+- `metal_programs` takes `rerail-blocks` (its block_serial now holds outputs in blocks).
+- `from_tape::Tape::start` was moved by both sides: one kept. `Held` has two forms: the dead wildcard arm dropped.
+- Checked: Relax engine check 0 errors; lib tests of every changed crate compile; run: plan-base, logic (wellfounded, kept strata, choices, cross views, totals), tests-logic (layout pricing round trip, kept), setfix (cands, statkeep), facts, accel closure.
+
+### Q518. Roll-up 91 (Go-C-and-C-support f6ce3b2f96 onto Pulling-it-all-together): what the merge chose
+
+- The branch's 0613 work (memo in the expansion loop, arguments as holes, rounds from the last round's tree) taken whole: its eight files were at their hub paths.
+- `pp_loop.uglykl`: the hub had moved `LP_WIN`/`LP_WIN_N` up beside the frames (0588's SIMD-group exchanges); the branch's `LpMemo` and its comment go after them. Independent: both kept.
+- Its new round test reads tapes as the file's `Tape` (the format's `Vector<u8>`), as the hub's other tests there do.
+- Checked: Relax check of rerail-metal 0 errors; rerail-c-directives eval tests 45 passed on the CPU (RERAIL_GPU=cpu; no Metal on this Mac).
+
+### Q519. Roll-up 92 (django-bugs a2548c02dd onto Pulling-it-all-together): what the merge chose
+
+- A pre-72 feeder: its `native/src` files followed into their crates by git's rename detection (device_metal's device.rs, parity.rs, tests.rs, metal_join.rs, metal_label_passes.rs, join_stages.uglykl; facts_base's rows.rs; prof's profile.rs). Its 0603 rooms, 0637 idle-group polling and 0540 gate taken whole; 0637 is a new number on the hub.
+- `profile.rs`: the branch's `maps_grown` (of the room remaps) and the hub's `expanded` both kept; `tally` adds both.
+- `join_stages.uglykl`: the hub's `clif_struct` load with the branch's no-growth exit (`omask` all ones) in both lattice-map kernels.
+- `device.rs`: the hub's rewrap check first (nothing ran: encoded again), then the branch's lattice-map handover to the program's tail. The branch's `BlockVec::unwritten_in` is the hub's free `rows::unwritten_in`.
+- Checked: Relax check of rerail-device-metal and rerail-engine 0 errors; device-metal's tests compile (90 listed). They are Metal tests: not run on this Mac, and no farm runs (the user's order).

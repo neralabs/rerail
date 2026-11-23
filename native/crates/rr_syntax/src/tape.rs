@@ -361,7 +361,7 @@ pub fn entry(key: u32) -> rerail_tape_format::tape::Entry {
 }
 
 /// An entry's kind and field, as `kind_field` reads them off its key: ERROR's for an error.
-pub fn entry_kind_field(e: &rerail_tape_format::tape::Entry) -> (u16, u16) {
+pub fn entry_kind_field(e: rerail_tape_format::tape::EntryRef<'_>) -> (u16, u16) {
     if e.flags & rerail_tape_format::CODE_ERROR != 0 { (ERROR, 0) } else { (e.kind, e.field) }
 }
 

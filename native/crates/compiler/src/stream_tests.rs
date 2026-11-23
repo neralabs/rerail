@@ -37,7 +37,7 @@ fn tier1(bytes: &[u8], starts: &[u32], lasts: &[u32]) -> crate::block::BlockRun 
     let lasts = if lasts.is_empty() { starts } else { lasts };
     let n = starts.len().min(lasts.len());
     let codes = starts[..n].iter().map(|&s| u32::from(bytes.get(s as usize).copied().unwrap_or(0))).collect();
-    crate::block::BlockRun { outputs: vec![vec![0], vec![0]], positions: vec![starts.to_vec(), lasts.to_vec()], totals: vec![0], codes }
+    crate::block::BlockRun { outputs: vec![rerail_blocks::vector![0], rerail_blocks::vector![0]], positions: vec![rerail_blocks::vector::Vector::from(starts), rerail_blocks::vector::Vector::from(lasts)], totals: rerail_blocks::vector![0], codes }
 }
 
 /// The compiled tier 2's tape of `src` over `t1` and the interpreter's of `p`'s run, in a language of the
@@ -395,7 +395,7 @@ fn edits_of_nodes_passed_reach_the_ops() {
         let compiled = crate::native_cpu_stream::compile(&native).expect("compiles");
         // The language: the nodes' codes, and the program's other kinds (the root's before its retag, the leaves'
         // before the fold).
-        let mut entries = lang_of(&nodes, &p.readings.extras).table().entries().to_vec();
+        let mut entries: Vec<rerail_tape_format::tape::Entry> = lang_of(&nodes, &p.readings.extras).table().entries().map(|e| e.to_owned()).collect();
         for kind in 1..8 {
             if !entries.iter().any(|e| e.kind == kind) {
                 entries.push(rerail_tape_format::tape::Entry { kind, field: 0, flags: 0, alias: None, classes: Vec::new() });

@@ -178,7 +178,7 @@ pub fn parse_from<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], start: Start, f
             extras: &lexed.extras,
             i: 0,
             e: 0,
-            w: Writer::new(widths, lexed.toks.len() + lexed.extras.len() + 1).to(finish.target(), src),
+            w: Writer::new(widths, lexed.toks.len() + lexed.extras.len() + 1).to(finish.target(), src).omitting(finish.omissions()),
             last_end: 0,
             depth: 0,
             relex: None,

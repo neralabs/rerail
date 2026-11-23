@@ -705,8 +705,14 @@ impl P<'_> {
                         return Some(0);
                     }
                     if self.op_at(j - 1) == op::STAR {
-                        let before = self.peek_at(j - 2);
-                        return if j >= 3 && self.op_at(j - 3) == op::COLON && before.kind == T::Id && before.code == w::UNDERSCORE && last.start == before.end {
+                        // `before` only past the third token back (`f(*)` has none: `j` is 1).
+                        let before = (j >= 3).then(|| self.peek_at(j - 2));
+                        return if let Some(before) = before
+                            && self.op_at(j - 3) == op::COLON
+                            && before.kind == T::Id
+                            && before.code == w::UNDERSCORE
+                            && last.start == before.end
+                        {
                             // `a op b: _*` is an ascription (`repeated_parameter_type`), not a
                             // vararg: a vararg's expression is a simple one.
                             if self.simple_before(j - 3) { Some(0) } else { None }

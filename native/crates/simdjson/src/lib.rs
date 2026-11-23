@@ -14,6 +14,7 @@
 
 pub use rerail_simdjson_native::{Error, Kernel, implementation, structurals};
 use rerail_simdjson_native::{KEEP, Sink, release_above};
+pub use rerail_vector::vector::Vector;
 
 /// The kinds and fields a JSON tape is written with: tree-sitter-json's ids, which the caller looks up.
 #[derive(Clone, Copy, Debug)]

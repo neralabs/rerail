@@ -6,7 +6,15 @@
   "description": "Pass a Rust repository walk its skipped folders and file and byte limits in the host's index options instead of restating them; budgets for other inputs may differ.",
   "scope": {
     "include": [
-      "native/src/**/*.rs"
+      "native/src/**/*.rs",
+      "native/crates/*/src/code_rule_dsl/**/*.rs",
+      "native/crates/*/src/content_store/**/*.rs",
+      "native/crates/*/src/git_access/**/*.rs",
+      "native/crates/*/src/tree_watch/**/*.rs",
+      "native/crates/*/src/git_*.rs",
+      "native/crates/*/src/source_tree.rs",
+      "native/crates/*/src/threads.rs",
+      "native/crates/*/src/panic_boundary.rs"
     ],
     "exclude": [
       "**/tests.rs",

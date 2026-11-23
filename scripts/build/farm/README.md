@@ -21,9 +21,13 @@ keyed on the checkout's path saw each worktree's crates as different. The farm f
   same environment, from `~/.cargo/config.toml`, and a build that differs is stopped, not quietly
   compiled apart. Every worktree runs the one installed farm.
 - **Editing.** A workspace crate that misses is being edited here: it compiles incrementally on
-  this Mac, never on another, so its next edit starts from that state. For the next 2 hours it
-  skips the cache, as without the farm. A crate that was a hit has no incremental state: its first
-  edit compiles it whole.
+  this Mac, never on another, so its next edit starts from that state. Until 2 hours after its last
+  compile it skips the cache, as without the farm. A crate that was a hit has no incremental state: its first
+  edit compiles it whole. A hot compile runs rustc with the `--remap-path-prefix` arguments sccache
+  gives a miss (`sccache_remaps`): rustc counts them in its incremental state's options, and
+  without them each change between the two ways threw the state away. The first edit after a
+  miss then compiled every crate it reached whole: 10 crates, 524 s CPU, against 45 s with them
+  (farm 59).
 
 ```
 cargo ──▶ rustc-wrapper ──┬─ hot crate ───────────────▶ rustc -C incremental (here)
@@ -55,7 +59,7 @@ instead, and only that run's output is shown.
 | `test-mac-compiles HOST` | a test of this Mac's compiles on HOST: a small crate's library compiles (proc-macros, `OUT_DIR`, bundled C) go there through the farm, and each output must be this Mac's bytes |
 | `status` | what the farm can use now: each host probed, and why one is not usable; each host's compile benchmark |
 | `features` | each host's CPU: its model, vector units and lengths, every feature by one set of names; which hosts have given features ("CPU features") |
-| `bench` | the compile benchmark: a clean `gix` build at 1, 4 and 8 jobs on each host, kept in the farm's state for `status` ("How fast each host compiles") |
+| `bench` | the compile benchmark: a clean `gix` build at 1, 4 and 8 jobs and at its own cores on each host, kept in the farm's state for `status` ("How fast each host compiles") |
 | `dashboard` | a live page of every host and this Mac: CPU (farm, fleet, the machine's own, idle), GPU, memory, disk, jobs, reachability, round trip, traffic ("Dashboard") |
 | `sampler` | the dashboard's end on each machine: one JSON line of its state every 3 seconds |
 | `free-local` | this Mac's disk floor: Rerail's least recently built builds go under `local_min_free_gb` |
@@ -790,28 +794,35 @@ streaming vectors).
 
 `bench` measures each host on one task: a clean debug build of the workspace's `gix` (121 crates, the
 same `Cargo.lock` everywhere), with no compile cache, from an empty target directory, at 1, 4 and 8
-jobs. It runs through `test-remote --host`, so on a Linux or Windows host it is that OS's build. The
-results stay in the farm's state, outside the tree, and `status` prints each host's under its line.
-`bench HOST` measures one again (after a change to a host, or a run marked contended).
+jobs and at the host's own cores as the farm counts them, SMT threads included (the configuration's
+`cores`: the jobs the farm gives it). It runs through `test-remote --host`, so on a Linux or Windows
+host it is that OS's build. The results stay in the farm's state, outside the tree, and `status`
+prints each host's under its line. A host is rated by its time at its own cores, against this Mac's at
+its own (18). `bench HOST` measures one again (after a change to a host, or a run marked contended);
+`bench HOST --jobs own` only at its own cores.
 
-Measured 2026-11-21, in seconds (`*`: the host was busy with other work, so the time is high):
+Rating at 8 jobs undersold the hosts with more: the Ryzen 7 7735HS mini PC (8 cores with SMT, 16 threads)
+built in 46.4 s at 8 jobs on its Linux side and 34.6 s at 16, and in 82 s and 70 s on Windows
+(2026-11-22, back to back; one run at 8 jobs there varies from 40 to 46 s).
 
-| Machine | OS | 1 job | 4 jobs | 8 jobs | 8 jobs, against this Mac |
-|---|---|---|---|---|---|
-| M3 Max Mac | Linux VM (Lima) | 101 | 29.5 | 16.6 | 0.80 |
-| DGX Spark (two) | Linux | 116, 121 | 33.5, 33.8 | 19.3, 19.4 | 0.92 |
-| M5 Max MacBook Pro (this Mac, nice 19) | macOS | 113 | 36.1 | 20.9 | 1.00 |
-| M3 Max Mac | macOS, the first-run check off | 147* | 39.0 | 20.6 | 0.99 |
-| M1 Max Mac | macOS, the first-run check off | 156 | 46.0 | 25.6 | 1.22 |
-| M5 Max MacBook Pro | Linux VM (OrbStack) | 118 | 45.7 | 27.6 | 1.32 |
-| M5 Max MacBook Pro | Windows 11 ARM VM (Parallels) | 200 | 45.8 | 29.9 | 1.43 |
-| Mac mini M1 | Linux VM (Lima, 6 cores) | 126* | 39.1 | 31.9 | 1.52 |
-| Ryzen 7 7735HS mini PC | Linux (WSL2) | 167 | 55.4 | 40.5 | 1.94 |
-| M1 Max Mac | Linux VM (Lima) | 161 | 54.1 | 42.9 | 2.05 |
-| Core Ultra 7 268V laptop | Linux (WSL2) | 152 | 73.0 | 58.2 | 2.78 |
-| Mac mini M1 | macOS | 185 | 74* | 80* | 3.8 |
-| Ryzen 7 7735HS mini PC | Windows (MSVC) | 392 | 137* | 82 | 3.92 |
-| Core Ultra 7 268V laptop | Windows (MSVC) | 379 | 115 | 102 | 4.88 |
+Measured 2026-11-21 and 22, in seconds (`*`: the host was busy with other work, so the time is high):
+
+| Machine | OS | 1 job | 4 jobs | 8 jobs | own cores | own cores, against this Mac |
+|---|---|---|---|---|---|---|
+| DGX Spark (two) | Linux | 116, 121 | 33.5, 33.8 | 20.8, 19.4 | 11.0, 14.0* (20) | 0.78, 0.99 |
+| M3 Max Mac | Linux VM (Lima) | 101 | 29.5 | 16.6 | 13.9 (12) | 0.98 |
+| M5 Max MacBook Pro (this Mac, nice 19) | macOS | 113 | 36.1 | 20.9 | 14.1 (18) | 1.00 |
+| M3 Max Mac | macOS, the first-run check off | 147* | 39.0 | 20.6 | 15.8 (16) | 1.12 |
+| M1 Max Mac | macOS, the first-run check off | 156 | 46.0 | 25.6 | 26.4 (10) | 1.87 |
+| M5 Max MacBook Pro | Linux VM (OrbStack) | 118 | 45.7 | 27.6 | 27.6 (8) | 1.95 |
+| M5 Max MacBook Pro | Windows 11 ARM VM (Parallels) | 200 | 45.8 | 29.9 | 29.9 (8) | 2.12 |
+| Mac mini M1 | Linux VM (Lima, 6 cores) | 126* | 39.1 | 31.9 | 31.9 (at 8) | 2.25 |
+| Ryzen 7 7735HS mini PC | Linux (WSL2) | 167 | 55.4 | 46.4 | 34.6 (16) | 2.45 |
+| M1 Max Mac | Linux VM (Lima) | 161 | 54.1 | 42.9 | 42.9 (8) | 3.03 |
+| Core Ultra 7 268V laptop | Linux (WSL2) | 152 | 73.0 | 58.2 | 58.2 (8) | 4.11 |
+| Ryzen 7 7735HS mini PC | Windows (MSVC) | 392 | 137* | 82 | 70.0 (16) | 4.95 |
+| Mac mini M1 | macOS | 185 | 74* | 80* | 80* (8) | 5.66 |
+| Core Ultra 7 268V laptop | Windows (MSVC) | 379 | 115 | 102 | 102 (8) | 7.21 |
 
 What follows from it:
 
@@ -825,7 +836,7 @@ What follows from it:
   grant reaches only ssh sessions that start after it: the shared connections already open (ssh's
   and the farm's, `~/Library/Caches/rerail-farm/ssh/`) keep the check until they are told
   `ssh -O stop` (2026-11-21: the M1 Max's grant looked lost for that). macOS 15 applies it at once.
-- A Windows build costs 2 to 2.5 times the Linux side of the same PC. Defender is not the cause: with
+- A Windows build costs about twice the Linux side of the same PC. Defender is not the cause: with
   the farm's directory, the toolchains and the compilers excluded (2026-11-21), the PCs' times moved by
   under 10% at 4 and 8 jobs. Only the Windows VM gained (51 s to 30 s at 8 jobs). On Windows, add
   exclusions with literal paths: a PowerShell command that adds them through `$env:` variables is

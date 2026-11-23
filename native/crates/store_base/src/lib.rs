@@ -2,7 +2,7 @@
 //! of the store reads that read no `ContentStore`: the segments, the rows, the postings, the vocabulary,
 //! compression, the journal, the hazards, the scope leases and the private files. With the analysis scope's owner
 //! and names (`analysis_scope::base`), the checkout's source tree, the prefilter's probes and `Canonical`. Below
-//! the store (rerail-store), with its observer and git, which re-exports it.
+//! the observer and git (rerail-observe) and the store (rerail-store), which re-export it.
 //!
 //! The sources are the engine's, in place (`native/src`): only the build moved.
 
@@ -23,12 +23,39 @@ impl<P: AsRef<std::path::Path> + ?Sized> Canonical for P {
     }
 }
 
-#[path = "../../../src/content_store"]
+#[path = "content_store"]
 pub mod content_store {
     pub mod base;
     pub use base::*;
     /// The analysis scope's owner, its run's source and the scopes' names; the scope's records are the store's.
     pub mod analysis_scope {
+        pub mod base;
+        pub use base::*;
+    }
+    /// A put of a space's kept facts; the space's chain and its writer are the store's.
+    pub mod kept_facts {
+        pub mod base;
+    }
+    /// The store as the observer and git below it reach it; its provider is the store's.
+    pub mod observer_store {
+        pub mod base;
+    }
+    /// The records the store's readers hold: objects, tapes, programs, derivations (`stored.rs`).
+    pub mod stored;
+    pub use stored::*;
+    /// A tape's prefilter rows, as their builder hands them over.
+    pub mod prefilter {
+        pub mod base;
+        pub use base::*;
+    }
+    pub use prefilter::TapePrefilter;
+    /// A tape's positional search index and its lookups.
+    pub mod positional_search {
+        pub mod base;
+        pub use base::*;
+    }
+    /// The name a queued write goes by.
+    pub mod write_back {
         pub mod base;
         pub use base::*;
     }
@@ -54,8 +81,8 @@ pub mod content_store {
     pub use rerail_blocks::block::Flush;
 }
 /// The checkout the engine runs from, found as it runs (decision 0224).
-#[path = "../../../src/source_tree.rs"]
+#[path = "source_tree.rs"]
 pub mod source_tree;
 /// A regex's literal probe (the prefilter's; the store's vocabulary uses it too).
-#[path = "../../../src/code_rule_dsl/prefilter/probes.rs"]
+#[path = "code_rule_dsl/prefilter/probes.rs"]
 pub mod probes;

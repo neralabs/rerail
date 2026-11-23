@@ -528,7 +528,7 @@ fn source_room(len: usize) -> usize {
 /// Zero bytes past each source in its slab (a slab is mapped zeroed, and nothing else is written
 /// there): tier 2 reads its words in place, a window past the file's end reading zeros, as the
 /// batch's layout (`block_native::BACK`).
-pub const SOURCE_MARGIN: usize = rerail_compiler::block_native::BACK;
+pub const SOURCE_MARGIN: usize = 256;
 
 /// Files' bytes resident as sources, in order: hits by SHA-256 from the residency, misses copied
 /// into slabs once (the one copy a file's bytes take on their way to the device). The slabs of
@@ -607,10 +607,12 @@ pub fn resident(digests: &[[u8; 32]]) -> Result<Vec<Arc<Resident>>, Error> {
     digests.iter().map(|digest| state.documents.get(digest).cloned().ok_or_else(|| refused("a document not resident"))).collect()
 }
 
-/// A refusal for room (`BackendCapacity`); `RERAIL_PP_WHY` says why.
+/// A refusal for room (`BackendCapacity`), which says why under `RERAIL_POOL_DEBUG` or `RERAIL_PP_WHY`.
 fn refused(why: &str) -> Error {
-    if std::env::var_os("RERAIL_PP_WHY").is_some() {
-        eprintln!("pp: the residency: {why}");
+    // The pool's switch (`RERAIL_POOL_DEBUG`, as the pool's refusals print) and the preprocessor's (`RERAIL_PP_WHY`,
+    // decision 0588: every refusal of its run says why).
+    if std::env::var_os("RERAIL_POOL_DEBUG").is_some() || std::env::var_os("RERAIL_PP_WHY").is_some() {
+        eprintln!("residency: {why}");
     }
     Error::BackendCapacity
 }

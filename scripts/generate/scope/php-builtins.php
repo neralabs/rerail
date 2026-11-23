@@ -1,5 +1,5 @@
 <?php
-// Writes native/src/code_rule_dsl/scope/data/php_builtins.generated.json: the global names PHP 8.5.11
+// Writes native/crates/lang_php/src/code_rule_dsl/scope/data/php_builtins.generated.json: the global names PHP 8.5.11
 // defines before any application code runs, read from a `php -n` process (no ini file, so only the
 // extensions compiled into the binary): internal functions (lowercased, as PHP compares them),
 // constants (their canonical spelling, compared case-sensitively), and classes, interfaces, traits
@@ -50,6 +50,6 @@ $data = [
     'enums' => $lower(array_values(array_filter(get_declared_classes(), 'enum_exists'))),
 ];
 file_put_contents(
-    __DIR__ . '/../../../native/src/code_rule_dsl/scope/data/php_builtins.generated.json',
+    __DIR__ . '/../../../native/crates/lang_php/src/code_rule_dsl/scope/data/php_builtins.generated.json',
     json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n",
 );

@@ -356,6 +356,12 @@ it counts pages that are not resident. The different store states may be the cau
 writable shared mapping of `d4` (50 MB): the writer is opened only to append, and this warm run appended one atom.
 Neither `footprint` nor `vmmap` can attach to a process over the farm's ssh session, so it is not yet known (Q230).
 
+Answered (Q230, 2026-11-19), measured from inside the process: the profile reads the footprint and its high-water
+mark (`proc_pid_rusage`'s `ri_phys_footprint` and `ri_lifetime_max_phys_footprint`, `profile::memory`) every 5 ms,
+with each holder's share, so neither tool is needed. The peak was the cost model's training, begun in every process
+beside its run and never finished; it now waits until no run is under way. On 2026-11-22 the warm run's peak is
+70.1 MB profiled and 28 MB without the profile.
+
 ### The keep beside the frames (step 6, 2026-11-18)
 
 ep2 on m3 with the profiling build, at load 40–60. A fresh store `k0` (cold), then `k1` and `k2` (warm). The old v6
@@ -516,12 +522,17 @@ Three costs left after the hub merge (2026-11-22, m3, ep2):
 - Stats after an edit was not the counting of constants new to the keeper. The cold run already watches all 61
   tested constants, and the first edit counted none. The cost was binding all 1,181 kept inputs (20,217 granules):
   each lookup compared the relation names as strings, and each granule's entry was looked up again for its types and
-  digest. The lookup now compares bytes (`KeptFacts::rel_bytes`), and the entry keeps what it read. Stats is 0.75 G
-  on the first edit and 0.71 G on the second. Each granule's atom columns are still scanned for their greatest atom
-  (`readable`); knowing it without the scan needs it written with the granule.
+  digest. The lookup now compares bytes (`KeptFacts::rel_bytes`), and the entry keeps what it read. Stats was 0.75 G
+  on the first edit and 0.71 G on the second.
+- Each kept granule's atom columns were scanned for their greatest atom, to check that the store's numbering holds
+  its atoms (decision 0170, `readable`). The greatest is recorded as the granule is written: packing finds each
+  column's greatest value as it chooses the column's encoding, and the entry keeps the greatest of its atom columns
+  (`KeptEntry::atoms_max`; a roll-up's copy carries it, a reads-only entry reads its rows'). The entry's layout
+  changed, so the store's floor is 10 (`content-v10.sqlite`). Stats is 0.54 G on the first edit and 0.58 G on the
+  second.
 - The edit's extra 1.6 G in prepare was the fold of own guests' copies (`one_document`, decision 0165). It found what
   each relation keeps in every row (`Kept::of`) by rounds over every rule, remaking each rule's graph and searching it
   once a pair, and it did so again for each round of `same`: 2.98 G of the edit. `Kept::of` is now a worklist over
   readers, with each variable's reach found once, and the shape it reads (`Shape`) is made once a fold.
 
-The edit is 30.9 G (35.0 G after the merge, 33.4 G before it), cold 711.7 G, warm 1.6 G, the rows h1's.
+The edit is 30.9 G (35.0 G after the merge, 33.4 G before it), cold 712.3 G, warm 1.5 G, the rows h1's.

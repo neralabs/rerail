@@ -39,7 +39,7 @@ mod test_load {
     static LOAD: extern "C" fn() = load;
 }
 
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_boot::code_rule_dsl::*;
     pub use rerail_boot::code_rule_dsl::rule_api::CodeRuleDslEditor;

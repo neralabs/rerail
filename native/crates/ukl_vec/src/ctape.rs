@@ -3,7 +3,7 @@
 
 use rerail_c_lean::Tape;
 use rerail_tape_format::f16::{F16, Lang, Written, lang};
-use rerail_tape_format::tape::{Entry, Tape as _};
+use rerail_tape_format::tape::Tape as _;
 
 /// The C tape and the text it was parsed from.
 pub struct C<'t> {
@@ -28,8 +28,8 @@ impl<'t> C<'t> {
         self.tape.is_empty()
     }
 
-    fn entry(&self, i: usize) -> &'static Entry {
-        &self.lang.table().entries()[self.tape.code(i) as usize]
+    fn entry(&self, i: usize) -> rerail_tape_format::tape::EntryRef<'static> {
+        self.lang.table().entry(self.tape.code(i))
     }
 
     /// Node `i`'s kind, as tree-sitter-c names it (`binary_expression`, `+`).

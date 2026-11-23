@@ -1834,7 +1834,8 @@ fn cmd_gcodes(path: &str) {
 
 /// Decisions 0293 §3 and 0631: each language's format 16 choices, from its grammar, written for the engine to ship.
 #[cfg(feature = "grammar")]
-fn cmd_table(tags: &[&str], out: &str) {
+fn cmd_table(tags: &[&str], out: &str, counts: &[&str]) {
+    let counts = rerail_tape_lab::table::Counts::read(counts).unwrap_or_else(|e| die(&e));
     // Every tape tag the engine stores (the languages' registry, `languages/*.json`), or those named.
     const ALL: [u8; 32] = [1, 2, 3, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 250];
     let tags: Vec<u8> = if tags.is_empty() || tags == ["all"] { ALL.to_vec() } else { tags.iter().map(|t| t.parse().unwrap_or_else(|_| die(&format!("{t}: not a tape tag")))).collect() };
@@ -1844,7 +1845,7 @@ fn cmd_table(tags: &[&str], out: &str) {
     println!("|---|---|---|");
     let mut failed = Vec::new();
     for &tag in &tags {
-        match rerail_tape_lab::table::run(tag, &scratch, out) {
+        match rerail_tape_lab::table::run(tag, &scratch, out, &counts) {
             Ok(r) => println!("| {}{} | {tag} | {} |", capture::language(tag), if r.bound { " (bound)" } else { "" }, r.codes),
             Err(e) => {
                 println!("| {} | {tag} | {e} |", capture::language(tag));
@@ -1986,8 +1987,9 @@ fn main() {
         #[cfg(feature = "grammar")]
         "table" => {
             let out = args.iter().position(|a| a == "--out").and_then(|i| args.get(i + 1)).map_or("../../crates/tape_format/tables", String::as_str);
-            let tags: Vec<&str> = args[1..].iter().take_while(|a| *a != "--out").map(String::as_str).collect();
-            cmd_table(&tags, out)
+            let tags: Vec<&str> = args[1..].iter().take_while(|a| !a.starts_with("--")).map(String::as_str).collect();
+            let counts: Vec<&str> = args.iter().position(|a| a == "--counts").map_or(Vec::new(), |i| args[i + 1..].iter().take_while(|a| !a.starts_with("--")).map(String::as_str).collect());
+            cmd_table(&tags, out, &counts)
         }
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),

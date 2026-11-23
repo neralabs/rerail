@@ -104,17 +104,24 @@ pub mod f16 {
         let nsub = SUB.min(blocks.wrapping_sub(p * SUB));
         let j = (i / BLOCK) % SUB;
         let mut lo = if j == 0 { 0 } else { u16_at(t, list, start.wrapping_add((j - 1) * 2).min(limit)) };
-        let mut hi = u16_at(t, list, start.wrapping_add(j * 2).min(limit));
+        let hi = u16_at(t, list, start.wrapping_add(j * 2).min(limit));
         let offsets = start.wrapping_add(nsub.wrapping_mul(2));
         let low = i % BLOCK;
-        while lo < hi {
-            let middle = lo.wrapping_add(hi) >> 1;
-            if u8_at(t, list, offsets.wrapping_add(middle).min(limit)) < low {
-                lo = middle + 1;
-            } else {
-                hi = middle;
-            }
+        // The first offset at or past the node's low byte: in the ascending run, the count of its offsets below it, 8
+        // a word, each byte compared unsigned within the word (its low 7 bits by a subtraction that borrows from no
+        // other byte, its high bit apart), the bytes past the run's end masked off. No load waits on another.
+        let (h, l8) = (0x8080_8080_8080_8080u64, u64::from(low) * 0x0101_0101_0101_0101);
+        let mut found = lo;
+        let mut q = lo;
+        while q < hi {
+            let x = word_at(t, list, offsets.wrapping_add(q).min(limit));
+            let d = (x | h).wrapping_sub(l8 & !h);
+            let lt = h & ((!x & l8) | (!(x ^ l8) & !d));
+            let left = hi - q;
+            found += if left >= 8 { lt } else { lt & ((1u64 << (8 * left)) - 1) }.count_ones();
+            q += 8;
         }
+        lo = found;
         // The list's values follow the part's offsets.
         let vw = (v.widths >> (16 + 4 * k)) & 15;
         let count = u16_at(t, list, start.wrapping_add(nsub.wrapping_sub(1).wrapping_mul(2)).min(limit));
@@ -225,26 +232,43 @@ pub mod f16 {
         if !i.is_multiple_of(K) { prev.wrapping_add(get(t, v, 1, i) as u32) } else { checkpoint(t, v, i / K) as u32 }
     }
 
-    /// The node's parent, or `NONE` at the root: the node before is the parent (an inner node), or a leaf naming
-    /// the previous sibling or, every `K`-th sibling, the parent. A step of 1 to `j` back, else the slot is no
-    /// tape's and the walk ends (decision 0463).
-    pub fn parent(t: &[u8], v: &TapeView, i: u32) -> u32 {
-        let mut j = i;
-        while j != 0 {
-            let s = get(t, v, 0, j - 1);
-            if s & 1 == 0 {
-                return j - 1;
-            }
-            let step = (s >> 2) as u32;
-            if step.wrapping_sub(1) >= j {
-                return NONE;
-            }
-            j -= step;
-            if s & 2 != 0 {
-                return j;
-            }
+    /// `parent_step`'s mark of a link: the walk goes on from the node in the low 32 bits.
+    pub const LINK: u64 = 1 << 32;
+
+    /// A parent walk's first step from node `i` (`NONE` at the root): the parent, or (`LINK` set) the node `j` the
+    /// walk goes on from, a previous sibling's. The node before is the parent (an inner node), or a leaf naming the
+    /// previous sibling or, every `K`-th sibling, the parent. A walk's only state is its node, so `i`'s parent is
+    /// `j`'s, and `j` is before `i`; a step that would not move back (a slot no tape's) ends the walk (decision 0463).
+    pub fn parent_step(t: &[u8], v: &TapeView, i: u32) -> u64 {
+        if i == 0 {
+            return u64::from(NONE);
         }
-        NONE
+        let s = get(t, v, 0, i - 1);
+        if s & 1 == 0 {
+            return u64::from(i - 1);
+        }
+        let step = (s >> 2) as u32;
+        if step.wrapping_sub(1) >= i {
+            return u64::from(NONE);
+        }
+        let j = i - step;
+        if s & 2 != 0 {
+            u64::from(j)
+        } else if j == 0 {
+            u64::from(NONE)
+        } else {
+            LINK | u64::from(j)
+        }
+    }
+
+    /// The node's parent, or `NONE` at the root: its walk's steps (`parent_step`), each to a node before the last
+    /// (at most `K - 1` siblings).
+    pub fn parent(t: &[u8], v: &TapeView, i: u32) -> u32 {
+        let mut r = parent_step(t, v, i);
+        while r & LINK != 0 {
+            r = parent_step(t, v, r as u32);
+        }
+        r as u32
     }
 
     // ---- lines: the newline index (`crate::newlines`) ------------------------------------------------------------

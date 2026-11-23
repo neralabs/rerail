@@ -1,14 +1,19 @@
 .scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
 .references {"constructorFields":{"fieldToParameter":{"by":"","replace":"^_+"}},"scope":{"exclude":["**/.git/**","**/.venv/**","**/tmp/**","**/__pycache__/**","**/tests/**"],"include":["api/**/*.py","impl/**/*.py","data_layer/**/*.py","_internal/**/*.py","l1000_cache/**/*.py","l1000_schema/**/*.py","l1050_model_registry/**/*.py","l1050_polymorphism/**/*.py","l1100_exceptions/**/*.py","l1200_capabilities/**/*.py","l1200_content_hash/**/*.py","l1200_json/**/*.py","l1200_versioned_ids/**/*.py","l1250_security/**/*.py","l1300_session/**/*.py","l1350_foundational_types/**/*.py","l1400_config/**/*.py","l1400_types/**/*.py","l1450_index_policy_contracts/**/*.py","l1450_keys/**/*.py","l1470_matching_contracts/**/*.py","l1500_llm/**/*.py","l1900_retry/**/*.py","l2000_connection/**/*.py","l2050_transaction/**/*.py","l2055_lazy_result/**/*.py","l2060_query_builder/**/*.py","l2070_batching/**/*.py","l2080_lazy_orm/**/*.py","l2090_byte_tracking/**/*.py","l2090_response/**/*.py","l2091_rtt_tracking/**/*.py","l2092_timing_tracking/**/*.py","l2100_include/**/*.py","l2110_limits/**/*.py","l2150_prepared_cache/**/*.py","l2200_notification/**/*.py","l2500_binary_diff/**/*.py","l3000_schema_builder/**/*.py","l3100_schema_introspector/**/*.py","l3150_schema_diff/**/*.py","l3200_metadata/**/*.py","l3250_migrations/**/*.py","l3260_startup/**/*.py","l3500_bulk_ops/**/*.py","l4000_permissions/**/*.py","l4050_background_reaper/**/*.py","l4100_queue/**/*.py","l4150_scheduler/**/*.py","l4170_inbound_bridge/**/*.py","l4200_event_pipeline/**/*.py","l4250_timers/**/*.py","l4300_ipc/**/*.py","l4300_timers/**/*.py","l4350_timer_driver/**/*.py","l4400_scheduler/**/*.py","l4500_trust/**/*.py","l5000_search_index_policy/**/*.py","l5000_subscriptions/**/*.py","l5100_fts/**/*.py","l5100_llm_router/**/*.py","l5175_chunking/**/*.py","l5195_embedding_compute_tables/**/*.py","l5200_vector_index/**/*.py","l5250_matching/**/*.py","l5300_config_compatibility/**/*.py","l6000_log_table/**/*.py","l6300_config/**/*.py","l6500_evidence/**/*.py","l6510_credentials/**/*.py","l6520_auth/**/*.py","l6530_managed_secrets/**/*.py","l6600_cleanup/**/*.py","l7000_versioned_schema/**/*.py","l7100_versioned_operations/**/*.py","l7200_versioned_transactions/**/*.py","l7250_versioned_operations/**/*.py","l7350_versioned_timer_driver/**/*.py","l7390_versioned_diff_entrypoint/**/*.py","l7400_versioned_diff/**/*.py","l7450_versioned_revert/**/*.py","l7500_commit_triggers/**/*.py","l7800_versioned_merge/**/*.py","l7900_versioned_rebase/**/*.py","l8000_admin/**/*.py","l8100_ops_analytics/**/*.py","l9600_graphs/**/*.py","l9700_graph_query/**/*.py","l9710_graph_algorithms/**/*.py","l9720_sparql/**/*.py","l9750_graphql/**/*.py","l9800_rippling/**/*.py","l9850_workflow/**/*.py","l9875_mcp/**/*.py","l9900_auto_api/**/*.py"]},"siblingLinks":[{"decorator":"(?:legacy_sync|legacy_module_sync|direct_legacy_module_sync)$","name":{"by":"_lazy","replace":"$"}},{"decorator":"(?:legacy_async|legacy_module_async|direct_legacy_module_async)$","name":{"by":"_lazy","replace":"(?:_async)?$"}}]}
-.global library stmt_of, before, in_branch, branch_kind, always_raises, alt_first, alt_next, tail_raises, fn_or_lambda, impmod, rifrom, ribind, irel_open, star, import_stmt, rel_base, module_text, import_alias, dotted, import_site, binds, module_of, module_path, workspace_module, loads, pkg_above, import_time, runs, reaches, exports, export_from, star_from, exported, resolve_export, export_query, dunder_all, public_name, has_all, top_import, last_top_import, module_doc, top_has, scope, fscope, fdef, comp_scope, lscope, lfscope, first_for, modnode, modname, nameref, kwpat_key, pat_tail, rdefn, rasg, param, param_list, patkind, tgt, capture_parent, tscope, walrus_tgt, rotgt, decl, rnl, nl_try, nl_owns, rbound, home, defn, asg, otgt, ifrom, ibind, bound_in, walk, gbefore, gbind, cls_late, cls_early, wstart, def_outside, in_first_iter, tp_name, tp_list, tp_decl, tp_ref, tp_doc, look, miss, builtin_ref, stmt, defstmt, asgstmt, sbinds, shadowed, live_def, live_asg, attr_of, qn, cmp, scope_node, def_name, qualname, scope_name, is_async, decorator, params, binding, site_form, bind_name, main_form, main_form_name, ann_site, tp_site, tp_ident, tp_decl_id, glob_site, del_site, del_unbinds, del_conditional, ref_site, bind_only, tp_alias_read, aug_target, binding_value, sym_of, global_ref, annotation, ann_root, parsed_in, ann_ctx, str_node, ann_str, concat_part, literal_str, type_checking_block, catches, caught, class_def, class_base, subclass, method, mro_method, assigned_attr, target_form, target_stmt, form_of_kind, imported_sym, site_scope, scope_kind, site_annotation, site_used, site_only, site_latest, site_exported, site_outer, site_stop_at_global, typing_mod, py_keyword, builtin, references_given, references_include, references_exclude, references_sibling, references_field, rf_dc, rf_def, rf_module, rf_pydoc, rf_scope_out, rf_doc_name, rf_qn, rf_start, rf_is_class, rf_is_function, rf_body, rf_in, rf_fn_in, rf_top, rf_owner, rf_owner_class, rf_site, rf_object, rf_read, rf_deleted, rf_expr, rf_bind, rf_forward, rf_annot_head, rf_in_annot, rf_annot, rf_future, rf_head, rf_param_of, rf_local, rf_mbind, rf_from_function, rf_bscope, rf_member_scope, rf_condk, rf_condstop, rf_cond, rf_muncond, rf_mreset, rf_mlast, rf_mlive, rf_mlive_n, rf_mlive_other, rf_mlatest_at, rf_mlatest, rf_names, rf_rebound, rf_fn_at, rf_fn_read, rf_crossing, rf_fnl, rf_fn_seen_at, rf_fn_seen, rf_fn_n, rf_fn_follows, rf_fn_last_at, rf_fn_last, rf_fcond, rf_loopstop, rf_in_loop, rf_dead_import, rf_import_target, rf_ref, rf_named, rf_builtin, rf_after_310, rf_resolved, rf_has_resolved, rf_unq_bare, rf_attr, rf_selfish, rf_plain_attr, rf_param_site, rf_param_splat, rf_is_param_head, rf_alias, rf_decl_def, rf_decl_fn, rf_decl_cls, rf_declared, rf_cls_at, rf_class_named, rf_from_at, rf_imported, rf_member_import, rf_field_decl, rf_base, rf_named_def, rf_path_module, rf_spelled, rf_shadowed, rf_same_qn, rf_redefines, rf_dcond, rf_class_name, rf_nonclass_name, rf_module_name, rf_by_import, rf_by_class, rf_global_class, rf_named_class, rf_base_spelled, rf_base_class, rf_order, rf_method_at, rf_member_fn, rf_method_first, rf_method_later, rf_method, rf_super_at, rf_super_first, rf_super_later, rf_super_method, rf_want, rf_link, rf_any_named, rf_via_import, rf_bare_imported, rf_member_key, rf_via_member, rf_walk, rf_hit, rf_alias_target, rf_module_alias, rf_aliased, rf_binder, rf_field_key, rf_renamed, rf_only_classes, rf_class_own, rf_class_field, rf_link_via, rf_target, rf_bare_declared, rf_own_fn, rf_has_method, rf_compose_at, rf_compose, rf_compose_later, rf_field_cand, rf_field_want, rf_field_first, rf_field_later, rf_field_type, rf_init_param, rf_init_named, rf_init, rf_init_def, rf_init_later, rf_init_arg, rf_positional_only, rf_receiver_name, rf_receiver_word, rf_keyword_only, rf_star_kind, rf_sibling, rf_sib_match, rf_sib_earlier, rf_dec_name, rf_dec_code, rf_dec_child, rf_unparen, rf_unparen_in, rf_dec_fn, rf_dec_callee, rf_dec_last, rf_type_want, rf_type_by_import, rf_has_type_import, rf_type_class, rf_fq_want, rf_fq_class, rf_edge, rf_in_graph, rf_head_open, rf_bound_at, rf_seen_at, rf_seen_bind, rf_value_head, rf_value_last, rf_literal, rf_opaque_site, rf_opaque, rf_file_open, rf_open_name, rf_open
+.answer rr_dir_req -> dir_entry
+.answer rr_file_req -> file_line
+.answer rr_digest_req -> file_digest
+.answer load -> loaded
+.answer git_revision_request -> git_revision_of
+.answer git_view_revision_request -> git_view_revision_of
+.answer git_object_request -> git_object_of
+.global library ann_root, ann_ctx, str_node, ann_str, concat_part, literal_str, ann_parse, ann_host, ann_tree, ann_in, stmt_of, before, in_branch, branch_kind, always_raises, alt_first, alt_next, tail_raises, fn_or_lambda, impmod, rifrom, ribind, irel_open, star, import_stmt, rel_base, module_text, import_alias, dotted, import_site, binds, module_of, module_path, workspace_module, loads, pkg_above, import_time, runs, reaches, exports, export_from, star_from, exported, resolve_export, export_query, dunder_all, public_name, has_all, top_import, last_top_import, module_doc, top_has, scope, fscope, fdef, comp_scope, lscope, lfscope, first_for, modnode, modname, nameref, kwpat_key, pat_tail, rdefn, rasg, param, param_list, patkind, tgt, capture_parent, tscope, walrus_tgt, rotgt, decl, rnl, nl_try, nl_owns, rbound, home, defn, asg, otgt, ifrom, ibind, bound_in, walk, gbefore, gbind, cls_late, cls_early, wstart, def_outside, in_first_iter, tp_name, tp_list, tp_decl, tp_ref, tp_doc, look, miss, builtin_ref, ann_start, scope_up, stmt, defstmt, asgstmt, sbinds, shadowed, live_def, live_asg, attr_of, qn, cmp, scope_node, def_name, qualname, scope_name, is_async, decorator, params, binding, site_form, bind_name, main_form, main_form_name, ann_site, tp_site, tp_ident, tp_decl_id, glob_site, del_site, del_unbinds, del_conditional, ref_site, bind_only, tp_alias_read, aug_target, binding_value, sym_of, global_ref, annotation, type_checking_block, catches, caught, class_def, class_base, subclass, method, mro_method, assigned_attr, target_form, target_stmt, form_of_kind, imported_sym, site_scope, scope_kind, site_annotation, site_used, site_only, site_latest, site_exported, site_outer, site_stop_at_global, typing_mod, py_keyword, builtin, references_given, references_include, references_exclude, references_sibling, references_field, rf_dc, rf_def, rf_module, rf_pydoc, rf_scope_out, rf_doc_name, rf_qn, rf_start, rf_is_class, rf_is_function, rf_body, rf_in, rf_fn_in, rf_top, rf_owner, rf_owner_class, rf_site, rf_object, rf_read, rf_deleted, rf_expr, rf_bind, rf_forward, rf_annot_head, rf_in_annot, rf_annot, rf_future, rf_head, rf_param_of, rf_local, rf_mbind, rf_from_function, rf_bscope, rf_member_scope, rf_condk, rf_condstop, rf_cond, rf_muncond, rf_mreset, rf_mlast, rf_mlive, rf_mlive_n, rf_mlive_other, rf_mlatest_at, rf_mlatest, rf_names, rf_rebound, rf_fn_at, rf_fn_read, rf_crossing, rf_fnl, rf_fn_seen_at, rf_fn_seen, rf_fn_n, rf_fn_follows, rf_fn_last_at, rf_fn_last, rf_fcond, rf_loopstop, rf_in_loop, rf_dead_import, rf_import_target, rf_ref, rf_named, rf_builtin, rf_after_310, rf_resolved, rf_has_resolved, rf_unq_bare, rf_attr, rf_selfish, rf_plain_attr, rf_param_site, rf_param_splat, rf_is_param_head, rf_alias, rf_decl_def, rf_decl_fn, rf_decl_cls, rf_declared, rf_cls_at, rf_class_named, rf_from_at, rf_imported, rf_member_import, rf_field_decl, rf_base, rf_named_def, rf_path_module, rf_spelled, rf_shadowed, rf_same_qn, rf_redefines, rf_dcond, rf_class_name, rf_nonclass_name, rf_module_name, rf_by_import, rf_by_class, rf_global_class, rf_named_class, rf_base_spelled, rf_base_class, rf_order, rf_method_at, rf_member_fn, rf_method_first, rf_method_later, rf_method, rf_super_at, rf_super_first, rf_super_later, rf_super_method, rf_want, rf_link, rf_any_named, rf_via_import, rf_bare_imported, rf_member_key, rf_via_member, rf_walk, rf_hit, rf_alias_target, rf_module_alias, rf_aliased, rf_binder, rf_field_key, rf_renamed, rf_only_classes, rf_class_own, rf_class_field, rf_link_via, rf_target, rf_bare_declared, rf_own_fn, rf_has_method, rf_compose_at, rf_compose, rf_compose_later, rf_field_cand, rf_field_want, rf_field_first, rf_field_later, rf_field_type, rf_init_param, rf_init_named, rf_init, rf_init_def, rf_init_later, rf_init_arg, rf_positional_only, rf_receiver_name, rf_receiver_word, rf_keyword_only, rf_star_kind, rf_sibling, rf_sib_match, rf_sib_earlier, rf_dec_name, rf_dec_code, rf_dec_child, rf_unparen, rf_unparen_in, rf_dec_fn, rf_dec_callee, rf_dec_last, rf_type_want, rf_type_by_import, rf_has_type_import, rf_type_class, rf_fq_want, rf_fq_class, rf_edge, rf_in_graph, rf_head_open, rf_bound_at, rf_seen_at, rf_seen_bind, rf_value_head, rf_value_last, rf_literal, rf_opaque_site, rf_opaque, rf_file_open, rf_open_name, rf_open
 .decl fdef(kind: symbol)
 fdef("function_definition").
 .decl fscope(kind: symbol)
 fscope("module"). fscope("function_definition"). fscope("lambda").
 .decl lfscope(kind: symbol)
 lfscope("module"). lfscope("function_definition"). lfscope("lambda"). lfscope("list_comprehension"). lfscope("set_comprehension"). lfscope("dictionary_comprehension"). lfscope("generator_expression").
-.decl lscope(kind: symbol)
-lscope("module"). lscope("function_definition"). lscope("class_definition"). lscope("lambda"). lscope("list_comprehension"). lscope("set_comprehension"). lscope("dictionary_comprehension"). lscope("generator_expression").
 .decl rf_condstop(kind: symbol)
 rf_condstop("module"). rf_condstop("function_definition"). rf_condstop("class_definition"). rf_condstop("lambda"). rf_condstop("if_statement"). rf_condstop("elif_clause"). rf_condstop("else_clause"). rf_condstop("for_statement"). rf_condstop("while_statement"). rf_condstop("try_statement"). rf_condstop("except_clause"). rf_condstop("except_group_clause"). rf_condstop("finally_clause"). rf_condstop("with_statement"). rf_condstop("match_statement"). rf_condstop("case_clause"). rf_condstop("conditional_expression"). rf_condstop("boolean_operator"). rf_condstop("list_comprehension"). rf_condstop("dictionary_comprehension"). rf_condstop("set_comprehension"). rf_condstop("generator_expression").
 .decl rf_fnl(kind: symbol)
@@ -36,7 +41,10 @@ unreachable_imports_k("import_statement"). unreachable_imports_k("import_from_st
 .decl unreachable_nest_k(kind: symbol)
 unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"). unreachable_nest_k("if_statement"). unreachable_nest_k("try_statement").
 .decl ann_ctx(s: node)
+.decl ann_host(h: node, s: node)
+.decl ann_parse(s: node, r: node)
 .decl ann_root(t: node)
+.decl ann_start(h: node, s: node)
 .decl ann_str(s: node)
 .decl asg(s: node, x: symbol, r: node, a: node)
 .decl aug_target(t: node)
@@ -67,6 +75,7 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl gbind(s: node, x: symbol, b: node)
 .decl guest_of(n: node, s: node)
 .decl home(s: node, x: symbol, t: node)
+.decl host_node(n: node, h: node)
 .decl ibind(s: node, x: symbol, q: symbol)
 .decl impmod(i: node, m: symbol)
 .decl import_alias(i: node, a: node, m: symbol, x: symbol, local: symbol)
@@ -79,6 +88,7 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl line(n: node, l: number)
 .decl literal_str(s: node)
 .decl look(n: node, x: symbol, s: node)
+.decl lscope(kind: symbol)
 .decl modnode(d: number, m: node)
 .decl module_text(i: node, m: symbol)
 .decl name(n: node, s: symbol)
@@ -94,7 +104,6 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl param(f: node, x: symbol, i: number)
 .decl param_list(f: node, ps: node)
 .decl parsed(s: node, grammar: symbol, root: node)
-.decl parsed_in(e: node, s: node)
 .decl pat_tail(n: node)
 .decl patkind(k: symbol)
 .decl pkg(d: number, p: symbol)
@@ -292,24 +301,26 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl rifrom(s: node, x: symbol, m: symbol, y: symbol)
 .decl rnl(s: node, x: symbol)
 .decl rotgt(s: node, x: symbol)
-.decl rr_agg10(c: node, g: node, i: number, j: number)
-.decl rr_agg13(a: node, f: node, st: node)
-.decl rr_agg21(m: node, t: number, x: symbol)
-.decl rr_agg24(s: node, t: number, x: symbol)
-.decl rr_agg25(c: symbol, o: symbol, x: node, y: node)
-.decl rr_agg27(j: number, n: symbol, o: symbol)
-.decl rr_ctx11(c: node, i: number)
-.decl rr_ctx14(a: node, st: node)
-.decl rr_ctx26(o: symbol, x: node)
-.decl rr_demand_agg_rr_agg10(c: node, i: number)
-.decl rr_demand_agg_rr_agg13(a: node, st: node)
-.decl rr_demand_agg_rr_agg21(m: node, x: symbol)
-.decl rr_demand_agg_rr_agg24(s: node, x: symbol)
-.decl rr_demand_agg_rr_agg25(o: symbol, x: node)
-.decl rr_demand_agg_rr_agg27(n: symbol, o: symbol)
+.decl rr_agg13(c: node, g: node, i: number, j: number)
+.decl rr_agg16(a: node, f: node, st: node)
+.decl rr_agg18(m: node, t: number, x: symbol)
+.decl rr_agg21(s: node, t: number, x: symbol)
+.decl rr_agg22(c: symbol, o: symbol, x: node, y: node)
+.decl rr_agg24(j: number, n: symbol, o: symbol)
+.decl rr_ctx14(c: node, i: number)
+.decl rr_ctx17(a: node, st: node)
+.decl rr_ctx23(o: symbol, x: node)
+.decl rr_demand_agg_rr_agg13(c: node, i: number)
+.decl rr_demand_agg_rr_agg16(a: node, st: node)
+.decl rr_demand_agg_rr_agg18(m: node, x: symbol)
+.decl rr_demand_agg_rr_agg21(s: node, x: symbol)
+.decl rr_demand_agg_rr_agg22(o: symbol, x: node)
+.decl rr_demand_agg_rr_agg24(n: symbol, o: symbol)
 .decl scope(kind: symbol)
+.decl scope_up(s: node, p: node)
 .decl source(d: number, sp: node)
 .decl src_line(d: number, l: number, sp: node)
+.decl string_annotation(s: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
 .decl target_form(t: node, form: symbol)
@@ -463,7 +474,7 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl walrus_tgt(t: node)
 .decl within(n: node, a: node)
 .decl wstart(n: node, s: node)
-.input doc, syntax_error, pkg, unpackaged, node, field, child, text, docof, line, name, source, src_line, col, guest_of, within, parsed, node_order, node_text, value
+.input doc, syntax_error, pkg, unpackaged, node, field, child, text, docof, line, name, source, src_line, col, host_node, guest_of, within, parsed, string_annotation, node_order, node_text, value
 .output violation
 .pragma "magic-transform" "reaches"
 builtin("abs").
@@ -825,6 +836,24 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 tape_syntax_error(d) :- syntax_error(d).
 kind(n, k) :- node(_, n, k, _, _).
+ann_root(t) :- kind(p, k), (k = "typed_parameter" ; k = "typed_default_parameter"), field(p, "type", t).
+ann_root(t) :- kind(f, "function_definition"), field(f, "return_type", t).
+ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
+ann_ctx(s) :- ann_root(a), s = a.
+ann_ctx(s) :- ann_root(a), within(s, a).
+ann_str(s) :- kind(s, "string"), !concat_part(s), !literal_str(s).
+ann_str(s) :- kind(s, "concatenated_string"), !concat_part(s), !literal_str(s).
+concat_part(s) :- kind(c, "concatenated_string"), child(c, s, _).
+literal_str(s) :- kind(l, "subscript"), field(l, "value", v), kind(v, "identifier"), text(v, t), t = "Literal", within(s, l), !within(s, v).
+literal_str(s) :- kind(l, "subscript"), field(l, "value", v), kind(v, "identifier"), text(v, t), suffix(".Literal", t), within(s, l), !within(s, v).
+literal_str(s) :- kind(l, "subscript"), field(l, "value", v), kind(v, "attribute"), text(v, t), t = "Literal", within(s, l), !within(s, v).
+literal_str(s) :- kind(l, "subscript"), field(l, "value", v), kind(v, "attribute"), text(v, t), suffix(".Literal", t), within(s, l), !within(s, v).
+literal_str(s) :- kind(l, "generic_type"), child(l, v, 0), text(v, "Literal"), within(s, l).
+ann_parse(s, r) :- ann_ctx(s), ann_str(s), parsed(s, "annotation", r).
+ann_parse(s, r) :- string_annotation(s), host_node(s, h), ann_host(h, _), parsed(s, "annotation", r).
+ann_host(h, s) :- ann_ctx(s), ann_parse(s, r), host_node(r, h), h = s.
+ann_host(h, s) :- ann_ctx(s), ann_parse(s, r), host_node(r, h), within(h, s).
+ann_host(h, t) :- ann_parse(s, r), host_node(s, h0), ann_host(h0, t), host_node(r, h), h != h0.
 impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m).
 impmod(i, p) :- rel_base(i, p), p != "", field(i, "module_name", mn), !child(mn, _, 1).
 impmod(i, @dot(p, m)) :- rel_base(i, p), p != "", field(i, "module_name", mn), child(mn, dn, 1), text(dn, m).
@@ -848,9 +877,11 @@ import_alias(i, n, m, x, l) :- kind(i, "import_from_statement"), module_text(i, 
 dotted(n, s) :- kind(n, "dotted_name"), text(n, s).
 dotted(n, s) :- kind(n, "aliased_import"), field(n, "name", d), text(d, s).
 import_site(a, l) :- import_alias(_, a, _, _, l).
-rr_ctx11(c, i) :- comp_scope(k), kind(c, k), child(c, fc, i), kind(fc, "for_in_clause").
-rr_agg10(c, g, i, j) :- rr_demand_agg_rr_agg10(c, i), rr_ctx11(c, i), child(c, g, j), kind(g, "for_in_clause"), j < i.
-first_for(c, fc) :- comp_scope(k), kind(c, k), child(c, fc, i), kind(fc, "for_in_clause"), !rr_agg10(c, _, i, _).
+lscope(k) :- scope(k).
+lscope(k) :- comp_scope(k).
+rr_ctx14(c, i) :- comp_scope(k), kind(c, k), child(c, fc, i), kind(fc, "for_in_clause").
+rr_agg13(c, g, i, j) :- rr_demand_agg_rr_agg13(c, i), rr_ctx14(c, i), child(c, g, j), kind(g, "for_in_clause"), j < i.
+first_for(c, fc) :- comp_scope(k), kind(c, k), child(c, fc, i), kind(fc, "for_in_clause"), !rr_agg13(c, _, i, _).
 modnode(d, m) :- node(d, m, "module", _, _).
 nameref(n, x) :- kind(n, "identifier"), text(n, x), !field(_, "attribute", n), !field(_, "name", n), !kwpat_key(n), !pat_tail(n).
 kwpat_key(n) :- kind(k, "keyword_pattern"), child(k, n, 0).
@@ -913,8 +944,8 @@ bound_in(s, x) :- ibind(s, x, _).
 bound_in(c, x) :- kind(c, "class_definition"), x = "__qualname__".
 bound_in(c, x) :- kind(c, "class_definition"), x = "__module__".
 walk(n, x, s) :- nameref(n, x), wstart(n, s), !tp_ref(n, x).
-walk(n, x, p) :- walk(n, x, s), !bound_in(s, x), !gbefore(n, x, s), nearest(s, p, lfscope).
-walk(n, x, p) :- walk(n, x, s), cls_late(n, x, s), nearest(s, p, lfscope).
+walk(n, x, p) :- walk(n, x, s), !bound_in(s, x), !gbefore(n, x, s), scope_up(s, p).
+walk(n, x, p) :- walk(n, x, s), cls_late(n, x, s), scope_up(s, p).
 gbefore(n, x, s) :- gbind(s, x, b), nameref(n, x), node_order(b, rr_ord0), node_order(n, rr_ord1), rr_ord0 < rr_ord1, !within(n, b).
 gbind(s, x, b) :- decl(s, x, m), kind(m, "module"), rasg(s, x, _, b).
 gbind(s, x, b) :- decl(s, x, m), kind(m, "module"), rdefn(s, x, b).
@@ -926,8 +957,7 @@ wstart(n, s) :- nameref(n, _), nearest(n, s, lscope), kind(s, k), scope(k), !def
 wstart(n, c) :- nameref(n, _), nearest(n, c, lscope), kind(c, k), comp_scope(k), !in_first_iter(n, c).
 wstart(n, s) :- def_outside(n, f), nearest(f, s, lscope).
 wstart(n, s) :- in_first_iter(n, c), nearest(c, s, lscope).
-wstart(n, s) :- nameref(n, _), parsed_in(n, h), nearest(h, s, lscope), kind(s, k), scope(k).
-wstart(n, c) :- nameref(n, _), parsed_in(n, h), nearest(h, c, lscope), kind(c, k), comp_scope(k).
+wstart(n, s) :- nameref(n, _), host_node(n, h), ann_start(h, s).
 def_outside(n, f) :- nameref(n, _), !bind_only(n), nearest(n, f, lscope), kind(f, "function_definition"), field(f, "parameters", p), within(n, p).
 def_outside(n, f) :- nameref(n, _), !bind_only(n), nearest(n, f, lscope), kind(f, "function_definition"), field(f, "return_type", p), within(n, p).
 def_outside(n, f) :- nameref(n, _), !bind_only(n), nearest(n, f, lscope), kind(f, "lambda"), field(f, "parameters", p), within(n, p).
@@ -946,6 +976,8 @@ tp_ref(n, x) :- tp_doc(d), docof(n, d), nameref(n, x), tp_name(o, x), docof(o, d
 tp_doc(d) :- tp_name(o, _), docof(o, d).
 look(n, x, s) :- walk(n, x, s), bound_in(s, x), !cls_late(n, x, s).
 look(n, x, s) :- walk(n, x, s), !bound_in(s, x), gbefore(n, x, s).
+ann_start(h, s) :- ann_host(h, t), nearest(t, s, lscope).
+scope_up(s, p) :- kind(s, k), lscope(k), nearest(s, p, lfscope).
 binding(s, x, f, "def") :- defn(s, x, f), kind(f, "function_definition").
 binding(s, x, f, "class") :- defn(s, x, f), kind(f, "class_definition").
 binding(s, x, a, "assign") :- asg(s, x, _, a).
@@ -972,12 +1004,12 @@ del_conditional(st) :- kind(st, "delete_statement"), within(st, a), kind(a, "mat
 del_conditional(st) :- kind(st, "delete_statement"), within(st, a), kind(a, "else_clause"), child(p, a, _), kind(p, "for_statement").
 del_conditional(st) :- kind(st, "delete_statement"), within(st, a), kind(a, "else_clause"), child(p, a, _), kind(p, "while_statement").
 del_conditional(st) :- kind(st, "delete_statement"), within(st, a), kind(a, "else_clause"), child(p, a, _), kind(p, "try_statement").
-rr_ctx14(a, st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_clause").
-rr_ctx14(a, st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_group_clause").
-rr_agg13(a, f, st) :- rr_demand_agg_rr_agg13(a, st), rr_ctx14(a, st), within(st, f), within(f, a), kind(f, "function_definition").
-rr_agg13(a, f, st) :- rr_demand_agg_rr_agg13(a, st), rr_ctx14(a, st), within(st, f), within(f, a), kind(f, "class_definition").
-del_conditional(st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_clause"), !rr_agg13(a, _, st).
-del_conditional(st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_group_clause"), !rr_agg13(a, _, st).
+rr_ctx17(a, st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_clause").
+rr_ctx17(a, st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_group_clause").
+rr_agg16(a, f, st) :- rr_demand_agg_rr_agg16(a, st), rr_ctx17(a, st), within(st, f), within(f, a), kind(f, "function_definition").
+rr_agg16(a, f, st) :- rr_demand_agg_rr_agg16(a, st), rr_ctx17(a, st), within(st, f), within(f, a), kind(f, "class_definition").
+del_conditional(st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_clause"), !rr_agg16(a, _, st).
+del_conditional(st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_group_clause"), !rr_agg16(a, _, st).
 bind_only(l) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier").
 bind_only(t) :- tgt(t), kind(t, "identifier"), !aug_target(t).
 bind_only(id) :- field(f, "parameters", ps), child(ps, p, _), id = p, kind(id, "identifier").
@@ -992,23 +1024,6 @@ bind_only(n) :- kind(i, "future_import_statement"), within(n, i), kind(n, "ident
 bind_only(n) :- kind(g, "global_statement"), child(g, n, _), kind(n, "identifier").
 bind_only(n) :- kind(g, "nonlocal_statement"), child(g, n, _), kind(n, "identifier").
 aug_target(l) :- kind(a, "augmented_assignment"), field(a, "left", l).
-ann_root(t) :- kind(p, k), (k = "typed_parameter" ; k = "typed_default_parameter"), field(p, "type", t).
-ann_root(t) :- kind(f, "function_definition"), field(f, "return_type", t).
-ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
-ann_ctx(s) :- ann_root(a), s = a.
-ann_ctx(s) :- ann_root(a), within(s, a).
-parsed_in(e, s) :- ann_ctx(s), ann_str(s), parsed(s, "annotation", r), e = r.
-parsed_in(e, s) :- ann_ctx(s), ann_str(s), parsed(s, "annotation", r), within(e, r).
-parsed_in(e, s0) :- parsed_in(s, s0), ann_str(s), parsed(s, "annotation", r), e = r.
-parsed_in(e, s0) :- parsed_in(s, s0), ann_str(s), parsed(s, "annotation", r), within(e, r).
-ann_str(s) :- kind(s, "string"), !concat_part(s), !literal_str(s).
-ann_str(s) :- kind(s, "concatenated_string"), !concat_part(s), !literal_str(s).
-concat_part(s) :- kind(c, "concatenated_string"), child(c, s, _).
-literal_str(s) :- kind(l, "subscript"), field(l, "value", v), kind(v, "identifier"), text(v, t), t = "Literal", within(s, l), !within(s, v).
-literal_str(s) :- kind(l, "subscript"), field(l, "value", v), kind(v, "identifier"), text(v, t), suffix(".Literal", t), within(s, l), !within(s, v).
-literal_str(s) :- kind(l, "subscript"), field(l, "value", v), kind(v, "attribute"), text(v, t), t = "Literal", within(s, l), !within(s, v).
-literal_str(s) :- kind(l, "subscript"), field(l, "value", v), kind(v, "attribute"), text(v, t), suffix(".Literal", t), within(s, l), !within(s, v).
-literal_str(s) :- kind(l, "generic_type"), child(l, v, 0), text(v, "Literal"), within(s, l).
 target_form(t, f) :- nearest(t, a, target_stmt), kind(a, k), form_of_kind(k, f).
 rf_def(f, x) :- kind(f, k), rf_dc(k), field(f, "name", n), text(n, x).
 rf_module(d, m) :- rf_pydoc(d, p), !unpackaged(d), doc(d, p, m).
@@ -1078,8 +1093,8 @@ rf_mlast(m, x, site) :- rf_mbind(m, x, site, _), !rf_mreset(m, x, _).
 rf_mlive(m, x, site, form) :- rf_mlast(m, x, site), rf_mbind(m, x, site, form), form != "del".
 rf_mlive_n(m, x, k) :- rf_mlive(m, x, _, _), k = count : { rf_mlive(m, x, _, _) }.
 rf_mlive_other(m, x) :- rf_mlive(m, x, _, f), f != "def", f != "class".
-rr_agg21(m, t, x) :- rr_demand_agg_rr_agg21(m, x), rf_mbind(m, x, b, _), rf_start(b, t).
-rf_mlatest_at(m, x, s) :- rf_mbind(m, x, _, _), s = max t : { rr_agg21(m, t, x) }.
+rr_agg18(m, t, x) :- rr_demand_agg_rr_agg18(m, x), rf_mbind(m, x, b, _), rf_start(b, t).
+rf_mlatest_at(m, x, s) :- rf_mbind(m, x, _, _), s = max t : { rr_agg18(m, t, x) }.
 rf_mlatest(m, x, site, form) :- rf_mlatest_at(m, x, s), rf_mbind(m, x, site, form), rf_start(site, s).
 rf_names(i, q) :- rf_bind(i, x, m), kind(m, "module"), rf_mlive_n(m, x, 1), rf_mlatest(m, x, site, "import"), rf_import_target(site, q).
 rf_names(i, q) :- rf_bind(i, x, m), kind(m, "module"), rf_mlive_n(m, x, k), k >= 1, rf_mlatest(m, x, f, form), (form = "def" ; form = "class"), !rf_mlive_other(m, x), rf_qn(f, q).
@@ -1191,8 +1206,8 @@ rf_via_import(q, t, h) :- rf_want(q, h), !rf_any_named(q), q = @dot(m, x), !cont
 rf_bare_imported(m, x) :- rf_imported(m, x, _).
 rf_member_key(q) :- rf_member_import(q, _).
 rf_via_member(q, t, h) :- rf_want(q, h), !rf_any_named(q), q = @dot(m, x), !contains(".", x), !rf_bare_imported(m, x), rf_member_import(q, t).
-rf_walk(q, p, h) :- rf_want(q, h), !rf_any_named(q), q = @dot(m, x), !contains(".", x), !rf_bare_imported(m, x), !rf_member_key(q), !rf_opaque(q), q = @dot(p, rr_part22), !contains(".", rr_part22).
-rf_walk(q, p2, h) :- rf_walk(q, p, h), !rf_binder(p), p = @dot(p2, rr_part23), !contains(".", rr_part23).
+rf_walk(q, p, h) :- rf_want(q, h), !rf_any_named(q), q = @dot(m, x), !contains(".", x), !rf_bare_imported(m, x), !rf_member_key(q), !rf_opaque(q), q = @dot(p, rr_part19), !contains(".", rr_part19).
+rf_walk(q, p2, h) :- rf_walk(q, p, h), !rf_binder(p), p = @dot(p2, rr_part20), !contains(".", rr_part20).
 rf_hit(q, p, r, h) :- rf_walk(q, p, h), rf_binder(p), r = @substr(q, @add(@strlen(p), 1), @sub(@sub(@strlen(q), @strlen(p)), 1)).
 rf_alias_target(p, t) :- rf_member_import(p, t), t != p, !rf_module_alias(t).
 rf_module_alias(t) :- rf_member_import(_, t), rf_module_name(t), !rf_any_named(t).
@@ -1296,8 +1311,8 @@ rf_bound_at(h) :- look(h, _, _).
 rf_head_open(h) :- rf_seen_bind(h, _, "param").
 rf_head_open(h) :- rf_seen_bind(h, b, "assign"), asg(_, _, r, b), rf_value_last(r, g), rf_head_open(g).
 rf_head_open(h) :- rf_seen_bind(h, _, f), f != "def", f != "class", f != "import", f != "assign", f != "param", f != "del".
-rr_agg24(s, t, x) :- rr_demand_agg_rr_agg24(s, x), binding(s, x, b, _), rf_start(b, t).
-rf_seen_at(h, u) :- rf_value_last(_, h), kind(h, "identifier"), look(h, x, s), rf_start(h, r), u = max t : { rr_agg24(s, t, x), t < r }.
+rr_agg21(s, t, x) :- rr_demand_agg_rr_agg21(s, x), binding(s, x, b, _), rf_start(b, t).
+rf_seen_at(h, u) :- rf_value_last(_, h), kind(h, "identifier"), look(h, x, s), rf_start(h, r), u = max t : { rr_agg21(s, t, x), t < r }.
 rf_seen_bind(h, b, form) :- rf_seen_at(h, u), look(h, x, s), binding(s, x, b, form), rf_start(b, u).
 rf_value_head(r, r) :- asg(_, _, r, _).
 rf_value_head(r, h) :- rf_value_head(r, a), kind(a, "attribute"), field(a, "object", h).
@@ -1383,17 +1398,17 @@ unreachable_base_edge(id, b, s) :- unreachable_bname(id, m, bn, s), !unreachable
 unreachable_base_edge(id, b, s) :- unreachable_bname(id, _, bn, s), !unreachable_has_bi(id, bn), !unreachable_has_bm(id, bn), unreachable_unique_class(bn, b).
 unreachable_reach(id, id) :- unreachable_decl(id, _, _, _, "class", _, _).
 unreachable_reach(o, b) :- unreachable_reach(o, x), unreachable_base_edge(x, b, _).
-rr_ctx26(o, x) :- unreachable_reach(o, b), unreachable_decl_node(x, b).
-rr_agg25(c, o, x, y) :- rr_demand_agg_rr_agg25(o, x), rr_ctx26(o, x), unreachable_reach(o, c), unreachable_decl_node(y, c), node_order(y, rr_ord18), node_order(x, rr_ord19), rr_ord18 <= rr_ord19.
-unreachable_hops(o, k) :- unreachable_reach(o, b), unreachable_decl_node(x, b), k = count : { rr_agg25(_, o, x, _) }.
+rr_ctx23(o, x) :- unreachable_reach(o, b), unreachable_decl_node(x, b).
+rr_agg22(c, o, x, y) :- rr_demand_agg_rr_agg22(o, x), rr_ctx23(o, x), unreachable_reach(o, c), unreachable_decl_node(y, c), node_order(y, rr_ord18), node_order(x, rr_ord19), rr_ord18 <= rr_ord19.
+unreachable_hops(o, k) :- unreachable_reach(o, b), unreachable_decl_node(x, b), k = count : { rr_agg22(_, o, x, _) }.
 unreachable_hier_l(id, id, 0) :- unreachable_decl(id, _, _, _, "class", _, _).
 unreachable_hier_l(o, b, j) :- unreachable_hier_l(o, x, i), unreachable_base_edge(x, b, _), unreachable_hops(o, j), j = @add(i, 1).
 unreachable_hier_d(o, b, k) :- unreachable_hier_l(o, b, _), k = min j : { unreachable_hier_l(o, b, j) }.
 unreachable_property(x) :- unreachable_deco(x, n), (suffix("property", n) ; suffix(".setter", n) ; suffix(".deleter", n)).
 unreachable_pub(c, n, id) :- unreachable_decl(c, _, _, cn, _, cm, _), unreachable_decl(id, x, _, n, "method", cm, _), unreachable_decl_class(id, cn), !prefix("_", n), !unreachable_excluded(n), !unreachable_property(x).
-rr_agg27(j, n, o) :- rr_demand_agg_rr_agg27(n, o), unreachable_hier_d(o, c2, j), unreachable_pub(c2, n, _).
-unreachable_pdist(o, n, k) :- unreachable_hier_d(o, c, _), unreachable_pub(c, n, _), k = min j : { rr_agg27(j, n, o) }.
-unreachable_next_c(x, n, k, y, ord) :- unreachable_pdist(x, n, k), k > 0, unreachable_base_edge(x, y, ord), rr_t28 = @sub(k, 1), unreachable_pdist(y, n, rr_t28).
+rr_agg24(j, n, o) :- rr_demand_agg_rr_agg24(n, o), unreachable_hier_d(o, c2, j), unreachable_pub(c2, n, _).
+unreachable_pdist(o, n, k) :- unreachable_hier_d(o, c, _), unreachable_pub(c, n, _), k = min j : { rr_agg24(j, n, o) }.
+unreachable_next_c(x, n, k, y, ord) :- unreachable_pdist(x, n, k), k > 0, unreachable_base_edge(x, y, ord), rr_t25 = @sub(k, 1), unreachable_pdist(y, n, rr_t25).
 unreachable_next_min(x, n, k, m) :- unreachable_next_c(x, n, k, _, _), m = min q : { unreachable_next_c(x, n, k, _, q) }.
 unreachable_next(x, n, k, y) :- unreachable_next_min(x, n, k, m), unreachable_next_c(x, n, k, y, m).
 unreachable_walk(o, n, o) :- unreachable_pdist(o, n, _).
@@ -1547,10 +1562,10 @@ unreachable_category(id, x, d, "high_confidence_other_classes") :- unreachable_h
 unreachable_shown(d) :- unreachable_doc(d, _, _), option_on("oracleAnalyzer").
 unreachable_shown(d) :- unreachable_doc(d, p, _), !option_on("oracleAnalyzer"), !prefix("impl/browser/", p).
 violation("data-layer-internal-dead-code", "unreachable-internal-symbols", c, p, l) :- unreachable_category(_, x, d, c), unreachable_shown(d), doc(d, p, _), line(x, l).
-rr_demand_agg_rr_agg10(c, i) :- comp_scope(k), kind(c, k), child(c, fc, i), kind(fc, "for_in_clause").
-rr_demand_agg_rr_agg13(a, st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_clause").
-rr_demand_agg_rr_agg13(a, st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_group_clause").
-rr_demand_agg_rr_agg21(m, x) :- rf_mbind(m, x, _, _).
-rr_demand_agg_rr_agg24(s, x) :- rf_value_last(_, h), kind(h, "identifier"), look(h, x, s), rf_start(h, r).
-rr_demand_agg_rr_agg25(o, x) :- unreachable_reach(o, b), unreachable_decl_node(x, b).
-rr_demand_agg_rr_agg27(n, o) :- unreachable_hier_d(o, c, _), unreachable_pub(c, n, _).
+rr_demand_agg_rr_agg13(c, i) :- comp_scope(k), kind(c, k), child(c, fc, i), kind(fc, "for_in_clause").
+rr_demand_agg_rr_agg16(a, st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_clause").
+rr_demand_agg_rr_agg16(a, st) :- kind(st, "delete_statement"), within(st, a), kind(a, "except_group_clause").
+rr_demand_agg_rr_agg18(m, x) :- rf_mbind(m, x, _, _).
+rr_demand_agg_rr_agg21(s, x) :- rf_value_last(_, h), kind(h, "identifier"), look(h, x, s), rf_start(h, r).
+rr_demand_agg_rr_agg22(o, x) :- unreachable_reach(o, b), unreachable_decl_node(x, b).
+rr_demand_agg_rr_agg24(n, o) :- unreachable_hier_d(o, c, _), unreachable_pub(c, n, _).

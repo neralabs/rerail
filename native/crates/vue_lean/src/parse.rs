@@ -102,7 +102,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
         let mut p = P {
             src,
             b: &b,
-            w: Writer::new(widths, src.len() / 4 + 16).to(finish.target(), src),
+            w: Writer::new(widths, src.len() / 4 + 16).to(finish.target(), src).omitting(finish.omissions()),
             open: Vec::new(),
             serialized: tags::SERIALIZED_EMPTY,
             frames: Vec::new(),

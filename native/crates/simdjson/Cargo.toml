@@ -8,6 +8,8 @@ description = "JSON's tape from simdjson: the portable side (format 16's events 
 [dependencies]
 memchr = "=2.8.3"
 rerail-simdjson-native = { path = "../simdjson_native" }
+# The tape's columns, in the run's blocks (decision 0628 §3).
+rerail-vector = { path = "../vector" }
 
 [dev-dependencies]
 libc = "0.2.189"

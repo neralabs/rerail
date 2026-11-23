@@ -1,5 +1,5 @@
 // Reads Biome's source at @biomejs/biome@2.5.15 and writes what Rerail needs to honour its `biome-ignore` comments:
-//   - native/src/code_rule_dsl/suppress/biome_registry.generated.rs: every diagnostic category (a suppression comment
+//   - native/crates/lang_ecma/src/code_rule_dsl/suppress/biome_registry.generated.rs: every diagnostic category (a suppression comment
 //     naming any other is refused) and the rules of the JavaScript analyzer's registry (a comment naming another rule
 //     or group suppresses nothing), which the engine's port of Biome's suppressions reads;
 //   - conformance/biome-same-sources.generated.ts: for each ESLint-family rule name (`no-debugger`,
@@ -114,7 +114,7 @@ const rust = [
   "];",
   "",
 ].join("\n");
-writeFileSync(join(ROOT, "native/src/code_rule_dsl/suppress/biome_registry.generated.rs"), rust);
+writeFileSync(join(ROOT, "native/crates/lang_ecma/src/code_rule_dsl/suppress/biome_registry.generated.rs"), rust);
 
 /** ESLint-family rule name → the Biome lint rules (`lint/<group>/<rule>`) whose sources mark it `.same()`. */
 const sameSources = new Map();

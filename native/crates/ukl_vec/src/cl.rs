@@ -14,7 +14,7 @@
 //!   integer, a gather) is done a lane at a time, each lane's the uniform code's (`u_bin` and the rest), so a value's
 //!   result is the same whichever way it is made.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F32, F32X4, F64, F64X2, I8, I8X16, I16, I16X8, I32, I32X4, I64, I64X2};
@@ -787,6 +787,9 @@ struct Cg<'a, 'b> {
     reg_ids: HashMap<crate::ssa::Lab, usize>,
     reg_blocks: Vec<ir::Block>,
     over: Vec<Vec<(V, Rp, Option<Steps>)>>,
+    /// The values each region reads again (not made again): their own values are this region's, their operands' not
+    /// (an operand not live at the region's start is another region's), so a pattern of operands (`based`) skips them.
+    reloaded: HashSet<(usize, V)>,
     applied: Vec<(V, Rp, Option<Steps>, Option<Vec<Value>>)>,
     region: usize,
     /// The values kept across regions: each one's place in the save area (a chunk's at `16 * parts * chunk` past
@@ -860,6 +863,7 @@ impl<'a, 'b> Cg<'a, 'b> {
             reg_ids: HashMap::new(),
             reg_blocks: Vec::new(),
             over: Vec::new(),
+            reloaded: HashSet::new(),
             applied: Vec::new(),
             region: 0,
             saved: HashMap::new(),
@@ -1147,6 +1151,34 @@ impl<'a, 'b> Cg<'a, 'b> {
             self.b.ins().vany_true(a)
         };
         self.b.ins().uextend(I64, c)
+    }
+
+    /// The lanes where bool `x` is true, as a mask, where it is known: a compare's (`raw`), a uniform's.
+    fn bool_mask(&mut self, x: V) -> Option<Vec<Value>> {
+        if let Some(k) = self.raw.get(&x) {
+            return Some(k.clone());
+        }
+        match self.vals[x as usize].clone() {
+            Rp::U(u) => {
+                let t = self.b.ins().icmp_imm(IntCC::NotEqual, u, 0);
+                let s = self.b.ins().bmask(I32, t);
+                Some(if self.w == 1 { vec![s] } else { vec![self.b.ins().splat(I32X4, s); mask_parts(self.w)] })
+            }
+            _ => None,
+        }
+    }
+
+    /// Nonzero where a lane of `mask` is on (a branch's test, at 4 lanes or more): its lanes (each 0 or all ones,
+    /// so no two sum to 0) added pairwise, the low 64 bits: `addp`, `fmov`, as written by hand.
+    fn any_nonzero(&mut self, mask: V) -> Value {
+        let k = self.mask(mask);
+        let mut a = k[0];
+        for &x in &k[1..] {
+            a = self.b.ins().bor(a, x);
+        }
+        let p = self.b.ins().iadd_pairwise(a, a);
+        let d = self.b.ins().bitcast(I64X2, le(), p);
+        self.b.ins().extractlane(d, 0)
     }
 
     fn konst_u(&mut self, m: M, x: u64) -> Value {
@@ -1556,6 +1588,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let old = std::mem::replace(&mut self.vals[v as usize], rp.clone());
                 self.applied.push((v, old, old_st, old_raw));
                 self.over[k].push((v, rp, None));
+                self.reloaded.insert((k, v));
             }
         }
     }
@@ -3447,6 +3480,10 @@ impl<'a, 'b> Cg<'a, 'b> {
             }
         }
         if to == M::B && !from.float() {
+            // Where it is not 0: known already (a compare's mask, carried by its casts), or made.
+            if let Some(k) = self.raw.get(&a).cloned() {
+                return self.bools_of(&k);
+            }
             let z = self.zero_lanes(from);
             let k = self.cmp_lanes(Op::Ne, from, &p, &z);
             self.raw.insert(a, k.clone());
@@ -3605,9 +3642,10 @@ impl<'a, 'b> Cg<'a, 'b> {
             }
         }
         if w > 1 {
-            if let Some((base, off, from)) = self.based(addr) {
-                // A uniform base and each lane's 32-bit offset: a load of base and the offset, extended, a lane; a
-                // lane that does not run reads the first running lane's place (none running: the scratch area's).
+            if let Some((base, off, from, shift)) = self.based(addr) {
+                // A uniform base and each lane's 32-bit index: a lane's load of base and the index, extended and
+                // scaled (`ldr w, [x, w, uxtw #2]`), the index out of its vector; a lane that does not run reads the
+                // first running lane's place (none running: the scratch area's).
                 let po = self.lanes(off, from);
                 let (base, po) = if full {
                     (base, po)
@@ -3629,6 +3667,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                 return self.gather(m, &mut |g, j| {
                     let o = g.b.ins().extractlane(po[(j / 4) as usize], (j % 4) as u8);
                     let o = if from.signed() { g.b.ins().sextend(I64, o) } else { g.b.ins().uextend(I64, o) };
+                    let o = if shift == 0 { o } else { g.b.ins().ishl_imm(o, i64::from(shift)) };
                     g.b.ins().iadd(base, o)
                 });
             }
@@ -3659,25 +3698,47 @@ impl<'a, 'b> Cg<'a, 'b> {
         self.gather(m, &mut |g, j| g.extract(&pa, M::PTR, j))
     }
 
-    /// If lanes address `addr` is a uniform base plus each lane's 32-bit integer, extended: the base, the integer's
-    /// value and its type.
-    fn based(&mut self, addr: V) -> Option<(Value, V, M)> {
+    /// If lanes address `addr` is a uniform base plus each lane's 32-bit integer, extended and scaled by 1, 2, 4 or 8
+    /// (a subscript's `base + (uint64_t)i * size`): the base, the integer's value, its type and the scale's shift.
+    fn based(&mut self, addr: V) -> Option<(Value, V, M, u8)> {
         let i = *self.f.inst(addr);
-        if i.op != O::Bin || Op::of(u32::from(i.sub)) != Op::Add {
+        if self.reloaded.contains(&(self.region, addr)) || i.op != O::Bin || Op::of(u32::from(i.sub)) != Op::Add {
             return None;
         }
         for (u, o) in [(i.a, i.b), (i.b, i.a)] {
             let Rp::U(base) = self.vals[u as usize] else { continue };
+            let (o, shift) = self.scaled(o);
             let c = *self.f.inst(o);
             if c.op != O::Cast || c.shape != Shape::Lanes {
                 continue;
             }
             let from = M(c.b);
             if from.bytes() == 4 && !from.float() && !from.is_agg() && matches!(self.vals[c.a as usize], Rp::L(_)) {
-                return Some((base, c.a, from));
+                return Some((base, c.a, from, shift));
             }
         }
         None
+    }
+
+    /// `x` as a value times 2, 4 or 8 (a product by the constant, or a shift by one): the value and the shift; else
+    /// `x` itself, unshifted.
+    fn scaled(&self, x: V) -> (V, u8) {
+        let i = *self.f.inst(x);
+        if i.op != O::Bin || i.shape != Shape::Lanes {
+            return (x, 0);
+        }
+        let k = |v: V| {
+            let c = self.f.inst(v);
+            (c.op == O::Const).then(|| u64::from(c.a) | u64::from(c.b) << 32)
+        };
+        match Op::of(u32::from(i.sub)) {
+            Op::Mul => [(i.a, i.b), (i.b, i.a)]
+                .into_iter()
+                .find_map(|(v, c)| k(c).filter(|n| matches!(n, 2 | 4 | 8)).map(|n| (v, n.trailing_zeros() as u8)))
+                .unwrap_or((x, 0)),
+            Op::Shl => k(i.b).filter(|n| (1..=3).contains(n)).map_or((x, 0), |n| (i.a, n as u8)),
+            _ => (x, 0),
+        }
     }
 
     /// The parts of `m` whose lane `j` is the value of `m` at the address `addr(j)` gives, each part made as its lanes
@@ -3922,12 +3983,34 @@ impl<'a, 'b> Cg<'a, 'b> {
                 return;
             }
         }
+        // Each lane's address as written by hand: the first lane's plus the lane's place (consecutive), a uniform
+        // base plus the lane's 32-bit index scaled (`str w, [x, w, uxtw #2]`), else the lane's of the addresses.
         let k = self.mask(mask);
-        let pa = self.lanes(addr, M::PTR);
+        enum At {
+            Next(Value),
+            Based(Value, Vec<Value>, M, u8),
+            Lanes(Vec<Value>),
+        }
+        let at = if let Some(a) = self.consecutive(addr, m.bytes()) {
+            At::Next(a)
+        } else if let Some((base, off, from, shift)) = self.based(addr).filter(|_| w > 1) {
+            At::Based(base, self.lanes(off, from), from, shift)
+        } else {
+            At::Lanes(self.lanes(addr, M::PTR))
+        };
         let px = self.lanes(x, m);
         let scratch = self.b.ins().load(I64, mf(), self.env, self.pl.scratch);
         for j in 0..w {
-            let a = self.extract(&pa, M::PTR, j);
+            let a = match &at {
+                At::Next(a) => self.b.ins().iadd_imm(*a, i64::from(j * m.bytes())),
+                At::Based(base, po, from, shift) => {
+                    let o = self.b.ins().extractlane(po[(j / 4) as usize], (j % 4) as u8);
+                    let o = if from.signed() { self.b.ins().sextend(I64, o) } else { self.b.ins().uextend(I64, o) };
+                    let o = if *shift == 0 { o } else { self.b.ins().ishl_imm(o, i64::from(*shift)) };
+                    self.b.ins().iadd(*base, o)
+                }
+                At::Lanes(pa) => self.extract(pa, M::PTR, j),
+            };
             let on = self.mask_lane(&k, j);
             let a = self.b.ins().select(on, a, scratch);
             let s = self.extract(&px, m, j);
@@ -3992,6 +4075,58 @@ impl<'a, 'b> Cg<'a, 'b> {
         }
     }
 
+    /// Whether atomic `bi` of operand `x` leaves its word as it is (a poll: `atomic_or(p, 0)`, ...).
+    fn leaves_word(&self, bi: Builtin, x: V) -> bool {
+        if x == NONE || self.f.inst(x).op != O::Const {
+            return false;
+        }
+        let c = self.f.inst(x);
+        let v = crate::ops::norm(c.m, u64::from(c.a) | u64::from(c.b) << 32);
+        match bi {
+            Builtin::AtomicOr | Builtin::AtomicAdd | Builtin::AtomicSub | Builtin::AtomicXor => v == 0,
+            Builtin::AtomicAnd => v == crate::ops::norm(c.m, u64::MAX),
+            _ => false,
+        }
+    }
+
+    /// The lanes of `mask` of `x` folded by SIMD-group reduction `bi` (add, minimum, maximum), this chunk's alone.
+    fn reduce_here(&mut self, bi: Builtin, m: M, mask: V, x: V) -> Value {
+        let px = self.lanes(x, m);
+        if self.w >= 4 && !m.float() && (bi == Builtin::SubGroupReduceAdd || !wide(m)) {
+            self.reduce_lanes(bi, m, mask, px)
+        } else {
+            let k = self.mask(mask);
+            let w = self.w;
+            self.fold(bi, m, w, &mut |g, l| {
+                let on = g.mask_lane(&k, l);
+                let s = g.extract(&px, m, l);
+                (on, g.uniform_of(s, m))
+            })
+        }
+    }
+
+    /// A store of `x` (`m`) at `a` by the lanes of `mask`.
+    fn store_of(&mut self, m: M, a: V, x: V, mask: V) {
+        match (self.vals[a as usize].clone(), self.vals[x as usize].clone()) {
+            (Rp::U(_), Rp::U(v)) => {
+                let (at, off) = self.addr_u_at(a, mask);
+                self.store_u(m, at, v, off)
+            }
+            (Rp::U(at), Rp::L(p)) => {
+                // Each running lane's in order: the last one's stays.
+                let at = self.guarded(at, mask);
+                let k = self.mask(mask);
+                let bits = self.mask_bits(&k);
+                let c = self.b.ins().clz(bits);
+                let idx = self.b.ins().irsub_imm(c, 31);
+                let idx = self.b.ins().band_imm(idx, i64::from(self.w - 1));
+                let v = self.lane_at(&p, m, idx);
+                self.store_u(m, at, v, 0);
+            }
+            _ => self.store_lanes(m, a, x, mask),
+        }
+    }
+
     /// One lane's atomic at `ptr` (uniform values): the old value.
     fn atomic_u(&mut self, bi: Builtin, m: M, ptr: Value, x: Value, y: Value) -> Value {
         let old = self.load_u(m, ptr, 0);
@@ -4001,7 +4136,8 @@ impl<'a, 'b> Cg<'a, 'b> {
             Builtin::AtomicAnd => self.b.ins().band(old, x),
             Builtin::AtomicOr => self.b.ins().bor(old, x),
             Builtin::AtomicXor => self.b.ins().bxor(old, x),
-            Builtin::AtomicXchg => x,
+            Builtin::AtomicXchg | Builtin::AtomicStore => x,
+            Builtin::AtomicLoad => old,
             Builtin::AtomicInc => self.b.ins().iadd_imm(old, 1),
             Builtin::AtomicDec => self.b.ins().iadd_imm(old, -1),
             Builtin::AtomicMin | Builtin::AtomicMax => {
@@ -4109,6 +4245,14 @@ impl<'a, 'b> Cg<'a, 'b> {
                     if let Some(r) = self.group_bin(op, om, i.a, i.b, x) {
                         return Ok(Rp::L(r));
                     }
+                    if matches!(op, Op::And | Op::Or) && om == M::B {
+                        // Of bools whose masks are known (a compare's, a uniform's): the masks combined.
+                        if let (Some(ka), Some(kb)) = (self.bool_mask(i.a), self.bool_mask(i.b)) {
+                            let k: Vec<Value> = ka.iter().zip(&kb).map(|(&a, &b)| if op == Op::And { self.b.ins().band(a, b) } else { self.b.ins().bor(a, b) }).collect();
+                            self.raw.insert(x, k.clone());
+                            return Ok(Rp::L(self.bools_of(&k)));
+                        }
+                    }
                     let (r, k) = self.bin_lanes(op, om, i.a, i.b, i.c);
                     if let Some(k) = k {
                         self.raw.insert(x, k);
@@ -4165,7 +4309,10 @@ impl<'a, 'b> Cg<'a, 'b> {
                         }
                     }
                     let r = self.cast_lanes(from, m, i.a);
-                    if let Some(k) = self.raw.get(&i.a).cloned().filter(|_| m == M::B && from != M::B) {
+                    // Its mask (where it is not 0) its operand's: of a value to a bool, or of a bool to an integer (its
+                    // 0 or 1).
+                    let keeps = (m == M::B && from != M::B) || (from == M::B && !m.float() && !m.is_agg());
+                    if let Some(k) = self.raw.get(&i.a).cloned().filter(|_| keeps) {
                         self.raw.insert(x, k);
                     }
                     Rp::L(r)
@@ -4180,6 +4327,11 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let mk = self.mask(i.b);
                 match self.vals[i.a as usize].clone() {
                     Rp::U(u) => Rp::U(u),
+                    Rp::L(p) if w >= 4 && !m.float() && !wide(m) => {
+                        // The mask's lanes' maximum: a lane's value (each lane's the same, or the code takes any one),
+                        // in registers. With no lane of the mask, no lane uses it.
+                        Rp::U(self.reduce_lanes(Builtin::SubGroupReduceMax, m, i.b, p))
+                    }
                     Rp::L(p) => {
                         // A chunk whose mask has no lane (another chunk's has): its entry's first lane, whose value
                         // the code computed; no lane uses it.
@@ -4297,24 +4449,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                 _ => Rp::L(self.load_lanes(m, i.a, i.b)),
             },
             O::Store => {
-                match (self.vals[i.a as usize].clone(), self.vals[i.b as usize].clone()) {
-                    (Rp::U(_), Rp::U(v)) => {
-                        let (a, off) = self.addr_u_at(i.a, i.c);
-                        self.store_u(m, a, v, off)
-                    }
-                    (Rp::U(a), Rp::L(p)) => {
-                        // Each running lane's in order: the last one's stays.
-                        let a = self.guarded(a, i.c);
-                        let k = self.mask(i.c);
-                        let bits = self.mask_bits(&k);
-                        let c = self.b.ins().clz(bits);
-                        let idx = self.b.ins().irsub_imm(c, 31);
-                        let idx = self.b.ins().band_imm(idx, i64::from(w - 1));
-                        let v = self.lane_at(&p, m, idx);
-                        self.store_u(m, a, v, 0);
-                    }
-                    _ => self.store_lanes(m, i.a, i.b, i.c),
-                }
+                self.store_of(m, i.a, i.b, i.c);
                 Rp::None
             }
             O::Copy | O::Zero => {
@@ -4610,20 +4745,43 @@ impl<'a, 'b> Cg<'a, 'b> {
                         let s = g.b.ins().load(lt, mf(), at, (l * size) as i32);
                         (on, g.uniform_of(s, m))
                     }))
-                } else if self.w >= 4 && !m.float() && (bi == Builtin::SubGroupReduceAdd || !wide(m)) {
-                    Rp::U(self.reduce_lanes(bi, m, i.b, px))
                 } else {
-                    let w = self.w;
-                    Rp::U(self.fold(bi, m, w, &mut |g, l| {
-                        let on = g.mask_lane(&k, l);
-                        let s = g.extract(&px, m, l);
-                        (on, g.uniform_of(s, m))
-                    }))
+                    Rp::U(self.reduce_here(bi, m, i.b, i.a))
                 }
             }
             O::Atomic => {
                 let bi = Builtin::of(u32::from(i.sub));
-                if i.shape == Shape::Uniform && self.chunked {
+                // Its old value read by no one: an exchange is a store, and an atomic whose lanes combine (a sum, a
+                // minimum, a maximum) at one address the lanes' combination and one atomic, as written by hand.
+                let unread = self.nuse[x as usize] == 0;
+                let combined = match bi {
+                    Builtin::AtomicAdd => Some(Builtin::SubGroupReduceAdd),
+                    Builtin::AtomicMin => Some(Builtin::SubGroupReduceMin),
+                    Builtin::AtomicMax => Some(Builtin::SubGroupReduceMax),
+                    _ => None,
+                }
+                .filter(|_| unread && i.shape == Shape::Lanes && !m.float() && matches!(self.vals[i.a as usize], Rp::U(_)));
+                if bi == Builtin::AtomicLoad || self.leaves_word(bi, i.b) {
+                    // A load, or an atomic that leaves its word (`or 0`): a load, each lane's.
+                    match self.vals[i.a as usize].clone() {
+                        Rp::U(a) => {
+                            let a = if i.shape == Shape::Uniform { a } else { self.guarded(a, i.d) };
+                            Rp::U(self.load_u(m, a, 0))
+                        }
+                        _ => Rp::L(self.load_lanes(m, i.a, i.d)),
+                    }
+                } else if unread && matches!(bi, Builtin::AtomicXchg | Builtin::AtomicStore) {
+                    self.store_of(m, i.a, i.b, i.d);
+                    Rp::None
+                } else if let Some(rb) = combined {
+                    // This chunk's lanes combined (each chunk's atomic its own), to the scratch area with no lane.
+                    let r = self.reduce_here(rb, m, i.d, i.b);
+                    let a = self.u(i.a);
+                    let a = self.guarded(a, i.d);
+                    let y = self.konst_u(m, 0);
+                    self.atomic_u(bi, m, a, r, y);
+                    Rp::None
+                } else if i.shape == Shape::Uniform && self.chunked {
                     // Once for the SIMD group: by the chunk that has its first lane of the mask, whose result every
                     // chunk reads.
                     let k = self.mask(i.d);
@@ -4856,6 +5014,10 @@ impl<'a, 'b> Cg<'a, 'b> {
                         self.b.ins().jump(self.blocks[t as usize], &[]);
                     }
                     None => {
+                        // On whether a lane of a mask is on, at 4 lanes or more: a test of its lanes themselves.
+                        let any = *self.f.inst(i.a);
+                        let group = self.chunked && self.group_dec[self.cur_block];
+                        let c = if any.op == O::Any && self.w >= 4 && !group { self.any_nonzero(any.a) } else { c };
                         self.b.ins().brif(c, self.blocks[i.b as usize], &[], self.blocks[i.c as usize], &[]);
                     }
                 }

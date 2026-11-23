@@ -1,6 +1,6 @@
 //! Metal, as the logic's and the transducer's device (macOS only; registered by the engine).
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -19,7 +19,7 @@ pub use rerail_store::content_store;
 pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 extern crate self as rerail_device_metal;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
@@ -187,7 +187,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::borrow::Cow;
                 #[allow(unused_imports)]
-                use hashbrown::HashTable;
+                use rerail_blocks::maps::IdTable as HashTable;
                 #[allow(unused_imports)]
                 use rustc_hash::{FxHashMap as HashMap, FxHasher};
                 #[allow(unused_imports)]
@@ -201,7 +201,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::time::Instant;
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::logic::native::setfix::spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
+                use crate::code_rule_dsl::logic::native::setfix::spec::{ComponentSpec, InputKey, JoinItem, Join, JoinSpec, Line, Reprobe, Source, Start, Tok};
                 #[allow(unused_imports)]
                 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::device::{Report as DeviceReport, take_report as device_report};
                 #[allow(unused_imports)]
@@ -284,7 +284,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::native::TOP;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::native::component::spec::{Arg, ComponentSpec, EdgeSpec, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Line as SpecLine, Reprobe, Source as JoinSource, Start, Tok};
+            use crate::code_rule_dsl::logic::native::component::spec::{Arg, ComponentSpec, EdgeSpec, Extreme, HeadTok, InputKey, JoinItem, Join as PlanJoin, JoinSpec, Line as SpecLine, Reprobe, Source as JoinSource, Start, Tok};
             #[allow(unused_imports)]
             use std::sync::Arc;
             #[allow(unused_imports)]

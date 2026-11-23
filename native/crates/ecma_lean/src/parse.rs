@@ -337,7 +337,7 @@ pub fn parse_from<Out>(src: &[u8], dialect: Dialect, start: Start, finish: &mut 
             cover: u32::MAX,
             extras: Vec::new(),
             e: 0,
-            w: Writer::new(widths, src.len() / 3 + 16).to(finish.target(), src),
+            w: Writer::new(widths, src.len() / 3 + 16).to(finish.target(), src).omitting(finish.omissions()),
             last_end: 0,
             depth: 0,
             after: 0,

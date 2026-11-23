@@ -94,6 +94,14 @@ committing consistent, durable waves. **No statistic is ever written, read or co
   memo entries it counts by their content, so it agrees with the entries whatever the timing of the writes, and
   a later process patches it by the files whose content changed.
 
+  *Amended (t33 step 6, 2026-11-22):* the blob and `stat_blob` went. The keeper is kept facts of its own space
+  (`keptstats::space`), one partition a memo plan, as eight kept relations put whole (`Keeper::into_kept`,
+  `of_kept`): the plan and engine build it was counted under, the relation names, the files' contents and paths,
+  each relation's `RelStats` bytes, the symbol columns' exact counts as an atom column (`keeper_exact`, mapped by
+  the store's writer and back as read, decision 0170), the holders and the identities. The partition is held by
+  the memo program its plan is made of (`kept_facts::plan_holder_put`), so the store's collection drops a dead
+  program's statistics, which the table never did.
+
 ```sql
 -- One row per memo plan: the base relations' statistics, and the files' contents they count.
 CREATE TABLE stat_blob(plan BLOB PRIMARY KEY, blob BLOB NOT NULL) WITHOUT ROWID;

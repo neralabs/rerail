@@ -64,7 +64,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     loop {
         // A leading byte order mark is skipped (tree-sitter's lexer skips it): the text starts after.
         let start = if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 };
-        let mut p = P { src, at: start, pending: Vec::new(), seen: 0, w: Writer::new(widths, src.len() / 3 + 16).to(finish.target(), src), b: Blocks::of(src), last_end: 0, depth: 0 };
+        let mut p = P { src, at: start, pending: Vec::new(), seen: 0, w: Writer::new(widths, src.len() / 3 + 16).to(finish.target(), src).omitting(finish.omissions()), b: Blocks::of(src), last_end: 0, depth: 0 };
         p.stylesheet()?;
         match finish.finish(p.w) {
             Ok(done) => return Ok(done),

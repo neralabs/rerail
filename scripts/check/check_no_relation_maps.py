@@ -26,7 +26,7 @@ DIRS = (
     "native/src/code_rule_dsl/logic/native/",
     "native/src/code_rule_dsl/facts/",
     "native/src/code_rule_dsl/transducer/packed/",
-    "native/src/code_rule_dsl/device_metal.rs",
+    "native/crates/device_metal/src/code_rule_dsl/device_metal.rs",
     "native/src/code_rule_dsl/residency/",
     "native/src/code_rule_dsl/text/",
     "native/src/content_store/",
@@ -34,6 +34,11 @@ DIRS = (
     "native/crates/blocks/src/",
     "native/crates/device_metal/src/",
     "accel/src/gpu/",
+)
+# A directory of the engine's module tree is in every crate that keeps a part of it (native/crates/*/src/...), as well
+# as in the engine's own native/src: each crate's sources are in its own src/.
+DIRS = DIRS + tuple(
+    "native/crates/*/src/" + d[len("native/src/"):] + ("*" if d.endswith("/") else "") for d in DIRS if d.startswith("native/src/")
 )
 STATIC = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+(?:mut\s+)?[A-Z_][A-Z0-9_]*\s*:\s*(?P<ty>.*)$")
 COLLECTION = re.compile(r"\b(?:Fx)?Hash(?:Map|Set)\b|\bBTree(?:Map|Set)\b|\bVec(?:Deque)?\s*<|\bHashTable\b|\bDashMap\b|\bIndexMap\b")
