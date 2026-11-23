@@ -353,3 +353,25 @@ What is left, from a time profile of the warm run's main thread (about 290 ms; e
 
 The cutoff goes when these are made only where a stratum reads them: a run whose leaves have no delta then reads
 the rule files, the prepared program's entry and the kept outputs, as the cutoff's run does.
+
+After the hub's roll-ups 56–80 (2026-11-22, the same 30 files, load 19–23): 0.37–0.52 s CPU without the cutoff,
+0.09–0.15 s with it. A time profile of the warm run's main thread (420 ms): the CLI's own 345, of which the rule files'
+texts 53 (the cutoff's run pays them) and the run's call 288; within it `run_observed_within` 266:
+
+| Part | ms | What it does |
+|---|---|---|
+| The prepared program (`prepared::lookup`) | 35 | `prepared_of` 24 (the split's parts, the text tests), the pointer entry 9 |
+| Phase 1's run (`run_atoms_native_hooked`, `phases::sources`) | 30 | evaluated whole: the native-inputs path keeps no frames, so a phase whose handed files and reads are as they were runs again; only the batch's in-process memo (`Batch`) takes a run again |
+| The kept statistics (`Keeper::of_kept`) | 13 | as above |
+| The kept inputs bound (`bind_kept_named`, `kept_inputs`) | 14 | as above |
+| The kept plans (`Durable::start`) | 8 | as above |
+| The constants (`constants::fold`) | 7 | |
+| The rest | about 160 | diffuse: the combine's name (6), the projection (5), the kept part written (5), the strata kept (4), the unfillable pass (4), … |
+
+Phase 0's graph images (22 ms of opens: some 110 segment files, a segment a single-source record) are written as
+one record a call now; most calls keep one text's graph, so the small segments stay until the store's writer places
+a transaction's small sources in one segment.
+
+Phase 1 is the next structural piece: its nested run's strata kept as frames by identity with their reads'
+digests (the files handed down, the directories its imports list), so a clean phase is not run. The same frames
+replace `unchanged_phase` and the phase records of step 1.
