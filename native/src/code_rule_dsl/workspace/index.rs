@@ -226,15 +226,19 @@ pub fn repository_package(
         .flatten()
 }
 
-/// A file a restore may take from the store: its pending entry, its evaluation input, the stored
-/// source its blob alias names, the blob's length, and the key of its stored results.
-type RestoreCandidate<'a> = (
-    &'a PendingFile,
-    FileInput,
-    &'a StoredPathObjects,
-    u64,
-    (HashKey, HashKey),
-);
+/// A file a restore may take from the store.
+struct RestoreCandidate<'a> {
+    /// Its pending entry.
+    file: &'a PendingFile,
+    /// Its evaluation input.
+    input: FileInput,
+    /// The stored source its blob alias names.
+    stored: &'a StoredPathObjects,
+    /// The blob's length.
+    length: u64,
+    /// The key of its stored results.
+    key: (HashKey, HashKey),
+}
 
 /// Stored results by the key a candidate names (`RestoreCandidate`).
 type StoredResults = HashMap<(HashKey, HashKey), Arc<Vec<StoredLocalResult>>>;
@@ -288,7 +292,13 @@ fn restore_candidates<'a>(
             &file.path,
         )?;
         let key = (stored.source_hash, file_context(&input));
-        prepared.push((file, input, stored, *length, key));
+        prepared.push(RestoreCandidate {
+            file,
+            input,
+            stored,
+            length: *length,
+            key,
+        });
     }
     Ok(prepared)
 }
@@ -307,11 +317,11 @@ fn holding_blob_bytes<'a>(
     // changed stat costs a hash.
     prepared
         .into_iter()
-        .filter_map(|(file, input, stored, length, key)| {
-            let results = result_manifest.get(&key)?;
+        .filter_map(|candidate| {
+            let results = result_manifest.get(&candidate.key)?;
             repository
-                .holds_blob_bytes(&file.repository_path, length)
-                .then_some((input, stored, results))
+                .holds_blob_bytes(&candidate.file.repository_path, candidate.length)
+                .then_some((candidate.input, candidate.stored, results))
         })
         .collect()
 }
@@ -649,7 +659,7 @@ impl WorkspaceIndexTask {
         let prepared = restore_candidates(repository, accepted, &stored_paths, manifests)?;
         let keys = prepared
             .iter()
-            .map(|(_, _, _, _, key)| *key)
+            .map(|candidate| candidate.key)
             .collect::<Vec<_>>();
         let result_manifest = storage
             .store
