@@ -21,11 +21,17 @@ function toggleRule(id) {
     `Couldn’t turn ${title} ${state}`);
 }
 
-/** What an added pack turns on: its rules, but not the opt-in ones the pack starts off. */
+/**
+ * What an added pack turns on: its rules, but not the opt-in ones the pack starts off; and of those it starts on, how
+ * many this Rerail no longer runs as the pack writes them (`reads-left-out-token`), which its next version runs again.
+ */
 function addedRulesText(id) {
   const pack = packById(id);
   const off = pack ? pack.rules.filter(r => !r.on).length : 0;
-  return off === 0 ? "Its rules are on." : `${off} of its rules start off; turn them on from its page.`;
+  const notRun = pack ? pack.rules.filter(r => r.on && r.inactive?.code === "reads-left-out-token").length : 0;
+  const start = off === 0 ? "Its rules are on." : `${off} of its rules start off; turn them on from its page.`;
+  if (notRun === 0) return start;
+  return `${start} ${notRun === 1 ? "One it starts on doesn’t" : `${notRun} it starts on don’t`} run on this Rerail until the pack’s next version.`;
 }
 
 /** After a switch in the review. */
