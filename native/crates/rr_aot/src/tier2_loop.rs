@@ -910,6 +910,17 @@ impl<L: Layout> P<'_, L> {
         Ok(())
     }
 
+    /// `lattice_functor`.
+    fn lattice_functor(&mut self) -> R {
+        self.open(UNSET);
+        self.retag(k::FUNCTOR_CALL);
+        self.word_skip_as::<false, false>(w::AT_23)?;
+        self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::FUNCTION)?;
+        self.close()?;
+        self.marked = false;
+        Ok(())
+    }
+
     /// `declaration_tail`.
     fn declaration_tail(&mut self) -> R {
         self.retag(k::DECLARATION);
@@ -922,8 +933,11 @@ impl<L: Layout> P<'_, L> {
                 break;
             } else {
                 match self.word() {
-                    w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::LBRACE_20 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
+                    w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
                         self.punctuation()?;
+                    }
+                    w::LBRACE_20 => {
+                        self.tk_as::<false, false>(true, k::LBRACE, 0)?;
                     }
                     _ if self.at_identifier() || self.at_number() || self.at_string() || self.at_code_literal() => {
                         self.r_word()?;
@@ -1251,116 +1265,6 @@ impl<L: Layout> P<'_, L> {
             w::AMP_33 => {
                 self.tk_as::<false, false>(true, k::AMP, 0)?;
             }
-            w::LBRACE_20 => {
-                self.tk_as::<false, false>(true, k::LBRACE, 0)?;
-            }
-            w::RBRACE_21 => {
-                self.tk_as::<false, false>(true, k::RBRACE, 0)?;
-            }
-            w::COLON_MINUS_3 => {
-                self.tk_as::<false, false>(true, k::COLON_MINUS, 0)?;
-            }
-            w::EQ_GT_4 => {
-                self.tk_as::<false, false>(true, k::EQ_GT, 0)?;
-            }
-            w::BANG_EQ_5 => {
-                self.tk_as::<false, false>(true, k::BANG_EQ, 0)?;
-            }
-            w::LT_EQ_6 => {
-                self.tk_as::<false, false>(true, k::LT_EQ, 0)?;
-            }
-            w::GT_EQ_7 => {
-                self.tk_as::<false, false>(true, k::GT_EQ, 0)?;
-            }
-            w::LT_COLON_8 => {
-                self.tk_as::<false, false>(true, k::LT_COLON, 0)?;
-            }
-            w::MINUS_GT_9 => {
-                self.tk_as::<false, false>(true, k::MINUS_GT, 0)?;
-            }
-            w::HASH_INCLUDE_34 => {
-                self.tk_as::<false, false>(true, k::HASH_INCLUDE, 0)?;
-            }
-            _ if self.at_hash_word() => {
-                self.tk_as::<false, false>(true, k::IDENTIFIER, 0)?;
-            }
-            _ => {
-                return self.refuse();
-            }
-        }
-        self.marked = false;
-        Ok(())
-    }
-
-    /// `setting_punctuation`.
-    fn setting_punctuation(&mut self) -> R {
-        match self.word() {
-            w::LPAREN_10 => {
-                self.tk_as::<true, false>(true, k::LPAREN, 0)?;
-            }
-            w::RPAREN_11 => {
-                self.tk_as::<false, false>(true, k::RPAREN, 0)?;
-            }
-            w::COMMA_12 => {
-                self.tk_as::<false, false>(true, k::COMMA, 0)?;
-            }
-            w::DOT_13 => {
-                self.tk_as::<true, false>(true, k::DOT, 0)?;
-            }
-            w::SEMI_14 => {
-                self.tk_as::<false, false>(true, k::SEMI, 0)?;
-            }
-            w::COLON_15 => {
-                self.tk_as::<false, false>(true, k::COLON, 0)?;
-            }
-            w::EQ_16 => {
-                self.tk_as::<false, false>(true, k::EQ, 0)?;
-            }
-            w::LT_17 => {
-                self.tk_as::<false, false>(true, k::LT, 0)?;
-            }
-            w::GT_18 => {
-                self.tk_as::<false, false>(true, k::GT, 0)?;
-            }
-            w::BANG_19 => {
-                self.tk_as::<false, false>(true, k::BANG, 0)?;
-            }
-            w::BAR_22 => {
-                self.tk_as::<false, false>(true, k::BAR, 0)?;
-            }
-            w::AT_23 => {
-                self.tk_as::<false, false>(true, k::AT, 0)?;
-            }
-            w::STAR_24 => {
-                self.tk_as::<false, false>(true, k::STAR, 0)?;
-            }
-            w::LBRACK_25 => {
-                self.tk_as::<false, false>(true, k::LBRACK, 0)?;
-            }
-            w::RBRACK_26 => {
-                self.tk_as::<false, false>(true, k::RBRACK, 0)?;
-            }
-            w::MINUS_27 => {
-                self.tk_as::<false, false>(true, k::MINUS, 0)?;
-            }
-            w::PLUS_28 => {
-                self.tk_as::<false, false>(true, k::PLUS, 0)?;
-            }
-            w::SLASH_29 => {
-                self.tk_as::<false, false>(true, k::SLASH, 0)?;
-            }
-            w::PERCENT_30 => {
-                self.tk_as::<false, false>(true, k::PERCENT, 0)?;
-            }
-            w::TILDE_31 => {
-                self.tk_as::<false, false>(true, k::TILDE, 0)?;
-            }
-            w::CARET_32 => {
-                self.tk_as::<false, false>(true, k::CARET, 0)?;
-            }
-            w::AMP_33 => {
-                self.tk_as::<false, false>(true, k::AMP, 0)?;
-            }
             w::RBRACE_21 => {
                 self.tk_as::<false, false>(true, k::RBRACE, 0)?;
             }
@@ -1568,14 +1472,14 @@ impl<L: Layout> P<'_, L> {
                                 } else {
                                     match self.word() {
                                         w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
-                                            self.setting_punctuation()?;
+                                            self.punctuation()?;
                                         }
                                         _ if self.at_identifier() || self.at_number() || self.at_string() || self.at_code_literal() => {
                                             self.r_word()?;
                                             self.field_made(f::ARGUMENT);
                                         }
                                         _ if self.at_hash_word() => {
-                                            self.setting_punctuation()?;
+                                            self.punctuation()?;
                                         }
                                         _ => {
                                             break;
@@ -1590,7 +1494,7 @@ impl<L: Layout> P<'_, L> {
                             } else {
                                 match self.word() {
                                     w::LBRACE_20 => {
-                                        stack.push(189);
+                                        stack.push(181);
                                         st = 35;
                                         continue 'run;
                                     }
@@ -1622,14 +1526,14 @@ impl<L: Layout> P<'_, L> {
                                 0 => {
                                     match self.word() {
                                         w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
-                                            self.setting_punctuation()?;
+                                            self.punctuation()?;
                                         }
                                         _ if self.at_identifier() || self.at_number() || self.at_string() || self.at_code_literal() => {
                                             self.r_word()?;
                                             self.field_made(f::ARGUMENT);
                                         }
                                         _ if self.at_hash_word() => {
-                                            self.setting_punctuation()?;
+                                            self.punctuation()?;
                                         }
                                         _ => {
                                             return self.refuse();
@@ -1641,14 +1545,14 @@ impl<L: Layout> P<'_, L> {
                                         } else {
                                             match self.word() {
                                                 w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
-                                                    self.setting_punctuation()?;
+                                                    self.punctuation()?;
                                                 }
                                                 _ if self.at_identifier() || self.at_number() || self.at_string() || self.at_code_literal() => {
                                                     self.r_word()?;
                                                     self.field_made(f::ARGUMENT);
                                                 }
                                                 _ if self.at_hash_word() => {
-                                                    self.setting_punctuation()?;
+                                                    self.punctuation()?;
                                                 }
                                                 _ => {
                                                     break;
@@ -1663,7 +1567,7 @@ impl<L: Layout> P<'_, L> {
                                     } else {
                                         match self.word() {
                                             w::LBRACE_20 => {
-                                                stack.push(189);
+                                                stack.push(181);
                                                 st = 35;
                                                 continue 'run;
                                             }
@@ -4478,8 +4382,11 @@ impl<L: Layout> P<'_, L> {
                             break;
                         } else {
                             match self.word() {
-                                w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::LBRACE_20 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
+                                w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
                                     self.punctuation()?;
+                                }
+                                w::LBRACE_20 => {
+                                    self.tk_as::<false, false>(true, k::LBRACE, 0)?;
                                 }
                                 _ if self.at_identifier() || self.at_number() || self.at_string() || self.at_code_literal() => {
                                     self.r_word()?;
@@ -4781,283 +4688,46 @@ impl<L: Layout> P<'_, L> {
                     self.open(k::LATTICE_OPERATION);
                     self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     self.word_skip_as::<false, false>(w::MINUS_GT_9)?;
-                    stack.push(180);
-                    st = 181;
-                    continue 'run;
-                }
-                180 => {
-                    self.field_made(f::VALUE);
-                    self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
-                    continue 'run;
-                }
-                181 => {
-                    self.deeper()?;
-                    stack.push(182);
-                    st = 184;
-                    continue 'run;
-                }
-                182 => {
-                    match self.word() {
-                        w::PLUS_28 | w::MINUS_27 => {
-                            self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
-                            self.additive()?;
-                            self.field_made(f::OPERATOR);
-                            stack.push(183);
-                            st = 21;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 12;
-                            continue 'run;
-                        }
-                    }
-                }
-                183 => {
-                    self.field_made(f::RIGHT);
-                    self.close()?;
-                    st = 182;
-                    continue 'run;
-                }
-                184 => {
                     let arm: usize;
-                    match self.word() {
-                        w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 | w::LPAREN_10 => {
-                            arm = 1;
-                        }
-                        _ if self.at_number() => {
-                            arm = 0;
-                        }
-                        _ if self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                            arm = 1;
-                        }
-                        _ => {
-                            arm = usize::MAX;
+                    if self.m_bare_functor() {
+                        arm = 0;
+                    } else {
+                        match self.word() {
+                            w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 | w::LPAREN_10 => {
+                                arm = 1;
+                            }
+                            _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
+                                arm = 1;
+                            }
+                            _ => {
+                                arm = usize::MAX;
+                            }
                         }
                     }
                     match arm {
                         0 => {
-                            self.numeric()?;
-                            st = 185;
-                            continue 'run;
-                        }
-                        1 => {
-                            stack.push(185 | u64::from(self.word) << 32);
-                            st = 187;
-                            continue 'run;
-                        }
-                        _ => {
-                            return self.refuse();
-                        }
-                    }
-                }
-                185 => {
-                    match self.word() {
-                        w::STAR_24 | w::SLASH_29 | w::PERCENT_30 => {
-                            self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
-                            self.multiplicative()?;
-                            self.field_made(f::OPERATOR);
-                            stack.push(186);
-                            st = 24;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 5;
-                            continue 'run;
-                        }
-                    }
-                }
-                186 => {
-                    self.field_made(f::RIGHT);
-                    self.close()?;
-                    st = 185;
-                    continue 'run;
-                }
-                187 => {
-                    self.deeper()?;
-                    match self.word() {
-                        w::X_54 => {
-                            self.tk_as::<false, false>(true, k::WILDCARD, 0)?;
-                            st = 26;
-                            continue 'run;
-                        }
-                        w::MINUS_27 => {
-                            stack.push(26);
-                            st = 27;
-                            continue 'run;
-                        }
-                        w::AT_23 => {
-                            stack.push(26);
-                            st = 188;
-                            continue 'run;
-                        }
-                        w::LBRACE_20 => {
-                            stack.push(26);
-                            st = 35;
-                            continue 'run;
-                        }
-                        w::COUNT_47 => {
-                            self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                            match self.word() {
-                                w::COLON_15 => {
-                                    stack.push(26);
-                                    st = 41;
-                                    continue 'run;
-                                }
-                                w::LPAREN_10 => {
-                                    self.wrap(k::CALL, f::FUNCTION)?;
-                                    self.retype_moved(k::IDENTIFIER);
-                                    stack.push(39);
-                                    st = 31;
-                                    continue 'run;
-                                }
-                                _ => {
-                                    st = 26;
-                                    continue 'run;
-                                }
-                            }
-                        }
-                        w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
-                            match self.word() {
-                                w::MIN_48 => {
-                                    self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                                    self.word = k::MIN;
-                                }
-                                w::MAX_49 => {
-                                    self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                                    self.word = k::MAX;
-                                }
-                                w::SUM_50 => {
-                                    self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                                    self.word = k::SUM;
-                                }
-                                w::MEAN_51 => {
-                                    self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                                    self.word = k::MEAN;
-                                }
-                                w::JOIN_52 => {
-                                    self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                                    self.word = k::JOIN;
-                                }
-                                w::PRODUCT_55 => {
-                                    self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                                    self.word = k::IDENTIFIER;
-                                }
-                                _ => {
-                                    return self.refuse();
-                                }
-                            }
-                            let arm: usize;
-                            if self.m_empty_parens() {
-                                arm = 1;
-                            } else {
-                                match self.word() {
-                                    w::X_54 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
-                                        arm = 0;
-                                    }
-                                    w::LPAREN_10 => {
-                                        arm = 2;
-                                    }
-                                    _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                                        arm = 0;
-                                    }
-                                    _ => {
-                                        arm = usize::MAX;
-                                    }
-                                }
-                            }
-                            match arm {
-                                0 => {
-                                    stack.push(26);
-                                    st = 75;
-                                    continue 'run;
-                                }
-                                1 => {
-                                    self.mark_empty_parens()?;
-                                    self.wrap(k::CALL, f::FUNCTION)?;
-                                    self.retype_moved(k::IDENTIFIER);
-                                    stack.push(39);
-                                    st = 31;
-                                    continue 'run;
-                                }
-                                2 => {
-                                    self.wrap(k::CALL, f::FUNCTION)?;
-                                    self.retype_moved(k::IDENTIFIER);
-                                    stack.push(122);
-                                    st = 93;
-                                    continue 'run;
-                                }
-                                _ => {
-                                    st = 26;
-                                    continue 'run;
-                                }
-                            }
-                        }
-                        w::LPAREN_10 => {
-                            stack.push(26);
-                            st = 123;
-                            continue 'run;
-                        }
-                        _ if self.at_string() => {
-                            self.tk_as::<false, false>(true, k::STRING, 0)?;
-                            st = 26;
-                            continue 'run;
-                        }
-                        _ if self.at_code_literal() => {
-                            self.tk_as::<false, false>(true, k::CODE_LITERAL, 0)?;
-                            st = 26;
-                            continue 'run;
-                        }
-                        _ if self.at_identifier() => {
-                            self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                            match self.word() {
-                                w::LPAREN_10 => {
-                                    self.wrap(k::CALL, f::FUNCTION)?;
-                                    self.retype_moved(k::IDENTIFIER);
-                                    stack.push(39);
-                                    st = 31;
-                                    continue 'run;
-                                }
-                                w::COLON_15 => {
-                                    self.wrap(k::NAMED_ARGUMENT, f::NAME)?;
-                                    self.retype_moved(k::IDENTIFIER);
-                                    self.word_skip_as::<false, false>(w::COLON_15)?;
-                                    stack.push(40);
-                                    st = 18;
-                                    continue 'run;
-                                }
-                                _ => {
-                                    st = 26;
-                                    continue 'run;
-                                }
-                            }
-                        }
-                        _ => {
-                            return self.refuse();
-                        }
-                    }
-                }
-                188 => {
-                    self.open(UNSET);
-                    self.retag(k::FUNCTOR_CALL);
-                    self.word_skip_as::<false, false>(w::AT_23)?;
-                    self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::FUNCTION)?;
-                    match self.word() {
-                        w::LPAREN_10 => {
-                            stack.push(131);
-                            st = 31;
-                            continue 'run;
-                        }
-                        _ => {
+                            self.mark_bare_functor()?;
+                            self.lattice_functor()?;
+                            self.field_made(f::VALUE);
                             st = 3;
                             continue 'run;
                         }
+                        1 => {
+                            stack.push(180);
+                            st = 18;
+                            continue 'run;
+                        }
+                        _ => {
+                            return self.refuse();
+                        }
                     }
                 }
-                189 => {
+                180 => {
+                    self.field_made(f::VALUE);
+                    st = 3;
+                    continue 'run;
+                }
+                181 => {
                     self.field_made(f::ARGUMENT);
                     st = 3;
                     continue 'run;
@@ -5483,6 +5153,32 @@ impl<L: Layout> P<'_, L> {
         self.take_comma_rule()
     }
 
+    /// Mark `bare_functor` holds at the token, not taken there; once a token (`held`).
+    #[inline]
+    fn m_bare_functor(&mut self) -> bool {
+        matches!(self.word(), w::AT_23) && self.taken >> 16 & 1 == 0 && self.held(16, Self::h_bare_functor)
+    }
+
+    #[inline]
+    fn h_bare_functor(&self) -> bool {
+        (self.pat_bare_functor_0_0(self.i, self.n))
+    }
+
+    /// Mark `bare_functor` taken: it and the marks before it passed at this token.
+    fn take_bare_functor(&mut self) -> R {
+        self.taken |= 0x1ffff;
+        Ok(())
+    }
+
+    /// Mark `bare_functor` where the rule takes it: it must hold.
+    fn mark_bare_functor(&mut self) -> R {
+        if !self.m_bare_functor() {
+            return self.refuse();
+        }
+        self.marked = true;
+        self.take_bare_functor()
+    }
+
     #[allow(unused_variables)]
     fn pat_fix_on_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
@@ -5649,6 +5345,24 @@ impl<L: Layout> P<'_, L> {
     fn pat_comma_rule_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.at_string_at(j)) && true
+    }
+
+    #[allow(unused_variables)]
+    fn pat_bare_functor_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::AT_23) && self.pat_bare_functor_0_1(j + 1, j)
+    }
+
+    #[allow(unused_variables)]
+    fn pat_bare_functor_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_identifier_at(j)) && self.pat_bare_functor_0_2(j + 1, j)
+    }
+
+    #[allow(unused_variables)]
+    fn pat_bare_functor_0_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        ((j < self.n && !((self.word_at(j) == w::LPAREN_10)))) && true
     }
 
     /// A mark no rule takes holds at the token (a mark not hidden).

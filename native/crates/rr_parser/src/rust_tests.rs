@@ -158,7 +158,7 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
 fn cases() -> Vec<String> {
     let mut out: Vec<String> = SAMPLES.iter().map(|s| (*s).to_owned()).collect();
     // Lean's `Bad` tokens (decision 0650 step 5): a statement recovered.
-    out.extend(crate::bad_token_cases());
+    out.extend(crate::bad_token_cases().into_iter().chain(crate::lattice_cases()));
     // A region whose closer is blocks past its opener: tier 1's one pass reads the token again as stage 1 makes them
     // (decision 0619), and a `` `` `` with its closer there is no empty literal (`else e_t2`).
     for n in [60, 200, 700] {

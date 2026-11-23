@@ -314,6 +314,8 @@ mark io_bare     = tokens "." "input" | "output" hash_word | "#include" | end | 
 # Token marks past the code's bits: tier 2 tests their tokens alone, as the engine peeks.
 # A `,` and a string: a suppress line's next rule. A `,` before anything else ends the line, as the engine reads it.
 mark comma_rule  = tokens "," string
+# `@` and a name with no `(` after it: a lattice's functor named, not called, as the engine peeks.
+mark bare_functor = tokens "@" identifier ~"("
 
 # --- The tree ----------------------------------------------------------------------------------
 
@@ -329,8 +331,8 @@ tree rr {
   # declaration's and a functor's, whose modifiers may hold one.
   node setting          = '.' (directive
                               | line (directive | name: identifier | name: ('policy' as identifier))
-                              | name: identifier (argument: word | setting_punctuation)* (argument: json | newline)
-                              | name: ('policy' as identifier) ((argument: word | setting_punctuation)+ (argument: json | newline) | newline))
+                              | name: identifier (argument: word | punctuation)* (argument: json | newline)
+                              | name: ('policy' as identifier) ((argument: word | punctuation)+ (argument: json | newline) | newline))
   # A `.test` or a `.fixtures` block (decision 0130): the node opened as a setting at the `.` is
   # the block. Its statements are a file's, read with `in_block` set: no block opens there.
   flag in_block
@@ -346,7 +348,7 @@ tree rr {
   # the `.`.
   choice directive      = unless in_block test_tail | unless in_block fixtures_tail | policy_tail | declaration_tail | violation_tail | edit_tail | functor_tail | type_tail | io_tail | lattice_tail | pragma_tail
   choice edit_tail      = drop retag edit_declaration 'edit' name: identifier columns: column_list
-  choice functor_tail   = retag functor_declaration 'functor' name: identifier columns: column_list ':' return_type: functor_type (modifier: word | punctuation)* line
+  choice functor_tail   = retag functor_declaration 'functor' name: identifier columns: column_list ':' return_type: functor_type (modifier: word | punctuation | '{')* line
   # A type of its own level: a `<` after its name is its own, not a modifier's (the engine reads
   # the type first).
   node functor_type nested = retag type name: identifier ['<' (drop argument: identifier '>' | angle_close)]
@@ -361,18 +363,10 @@ tree rr {
   choice io_inner nested = (merge raw_text any except '(' ')' | merge raw_text '(' io_inner)* merge raw_text ')'
   choice pragma_tail    = drop retag pragma 'pragma' (argument: string)*
   choice lattice_tail   = drop retag lattice_declaration 'lattice' name: identifier '<' [base: identifier] '>' '{' [operation: lattice_operation (',' operation: lattice_operation)*] '}'
-  node lattice_operation = name: identifier '->' value: lattice_term
-  # A term whose first primary may be a functor named, not called.
-  choice lattice_term nested = lattice_product (wrap binary_expression left operator: additive right: product)*
-  choice lattice_product = (numeric | lattice_unsigned) (wrap binary_expression left operator: multiplicative right: primary)*
-  choice lattice_unsigned nested = string | code_literal | '_' as wildcard | minus | lattice_functor | json
-                        | identifier as variable [wrap call function as identifier arguments: argument_list
-                                                 | wrap named_argument name as identifier ':' value: term]
-                        | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list]
-                        | aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value agg_body]]
-                        | parenthesized_expression
-  node lattice_functor  = retag functor_call '@' function: identifier [arguments: argument_list]
+  # A value: `@` and a name with no `(` after it, a functor named, not called (`bare_functor`); else a term, as
+  # the engine reads it.
+  node lattice_operation = name: identifier '->' (bare_functor value: lattice_functor | value: term)
+  node lattice_functor  = retag functor_call '@' function: identifier
   # The setting's `.` and name, one `.policy` leaf; the node a policy document.
   choice policy_tail    = policy_on drop retag policy_document 'policy' document: json_document
   # JSON, every token merged into the document's leaf.
@@ -385,7 +379,7 @@ tree rr {
   choice json_inner_array nested = merge json_object '[' [json_value (merge json_object ',' json_value)*] merge json_object ']'
   refuse json_bad in json_document json_inner_object json_inner_array
   # A `.decl`: the node opened as a setting at the `.` is a declaration.
-  choice declaration_tail = retag declaration 'decl' name: identifier columns: column_list (modifier: word | punctuation)* line
+  choice declaration_tail = retag declaration 'decl' name: identifier columns: column_list (modifier: word | punctuation | '{')* line
   # A `.violation`: the node opened as a setting at the `.` is one. It goes on while a part
   # follows.
   choice violation_tail = drop retag violation_declaration 'violation' name: identifier columns: column_list (code_part | tag_part)* message: string (fix_on fix: fix_line | suppress_on suppress: suppress_line | options_on 'options' options: json)*
@@ -534,10 +528,9 @@ tree rr {
   # An aggregate's word in a value, read as in any other term.
   choice word_in_value nested = aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
                              | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value agg_body]] more
-  choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '{' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include' | hash_word as identifier
+  # Every punctuation but `{`, which opens a setting's JSON object: a declaration's tail takes it besides.
+  choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include' | hash_word as identifier
   # A `#` word but `#include`: an identifier with no field, as the engine stores any token on the line.
-  # A setting's: every punctuation but `{`, which opens a JSON object.
-  choice setting_punctuation = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include' | hash_word as identifier
   # A type's `<>`, and an io relation's `()`: stored, as the named children do not say them.
   choice angle_close    = '>'
   choice paren_close    = ')'
@@ -556,7 +549,6 @@ tree rr {
   implied pragma_tail 'pragma'
   implied lattice_tail 'lattice' '<' '>' '{' ',' '}'
   implied lattice_operation '->'
-  implied lattice_unsigned ':'
   implied lattice_functor '@'
   implied declaration_tail 'decl'
   implied violation_tail 'violation' 'options'
@@ -582,6 +574,6 @@ tree rr {
   implied aggregated ','
   implied agg_body '{' '}'
   implied keyed_body '}'
-  hidden float_after line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens at_on comma_rule
+  hidden float_after line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens at_on comma_rule bare_functor
   extra comment
 }

@@ -54,3 +54,19 @@ So `raw_line` has three arms where it had one per token: the words, the two word
 by the same pass.
 
 All tests pass: rr, JSON, Kotlin, clippy.
+
+## Step 2, first part: the lattice's value and the punctuation are one rule each (done)
+
+- **A lattice's value is lean's `lattice_operation`.** The engine reads `@` and a name with no `(` after it as a
+  functor named, not called, and any other value as a term. The grammar's `lattice_term`, `lattice_product` and
+  `lattice_unsigned` were a second copy of the term for its first primary. Now a token mark, `bare_functor` (`tokens "@"
+  identifier ~"("`, asked by tier 2 as the engine peeks), picks `lattice_functor` (`@` and the name), else the value is
+  `term`. This also reads as the engine where the copy did not: `@f * 2` was a product there, and the engine refuses it
+  (its statement recovered now).
+- **`punctuation` is one rule.** A setting's `setting_punctuation` was `punctuation` without `{`, which opens its JSON
+  object. Now `punctuation` has no `{`, and the two declaration tails that take one say so: `(modifier: word |
+  punctuation | '{')*`, as lean's loops test for the `{` where they read it.
+
+Tests: `lattice_values_are_the_engines` holds each executor to the engine on lattices (a named functor, a call, a
+term, a comment after the name, a named argument) and to lean where the engine refuses (`@f * 2`); the generated
+Rust's tapes on the same cases.

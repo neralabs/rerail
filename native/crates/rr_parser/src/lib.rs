@@ -47,6 +47,23 @@ const SAMPLES: [&str; 12] = [
 /// before a quote outside a string (the quote opens one, as the lean lexer's), and an escape
 /// the engine checks in a string open at the end (a `bad` token: no check). Each is a `bad`
 /// record in tier 1, which no state takes: its statement recovers.
+/// Lattices' values (decision 0655): a functor named, not called (`@max`, lean's `lattice_operation` peek), a call, a
+/// term, a named functor before an operator (which the engine refuses).
+#[cfg(test)]
+fn lattice_cases() -> Vec<String> {
+    [
+        ".lattice l<number> { join -> @max, meet -> @min }\n",
+        ".lattice l<> { join -> @max(a, b), bottom -> 0 }\n",
+        ".lattice l<number> { join -> a + b * 2, top -> -1 }\n",
+        ".lattice l<number> { join -> @f(x) + 1, meet -> @g }\n",
+        ".lattice l<number> { join -> @f /* a comment */ , meet -> x }\n",
+        ".lattice l<number> { join -> @f * 2 }\n",
+        ".lattice l<symbol> { join -> n: 1 }\n",
+    ]
+    .map(str::to_owned)
+    .to_vec()
+}
+
 #[cfg(test)]
 fn bad_token_cases() -> Vec<String> {
     let mut out: Vec<String> = [
@@ -276,6 +293,22 @@ pub mod tests {
     pub(crate) fn interp_tape(c: &crate::Compiled, src: &str) -> Result<Vec<u8>, String> {
         let run = c.program.block_programs[0].run(src.as_bytes());
         rerail_compiler::stream::run(&c.program, src.as_bytes(), &run).map(|n| rerail_compiler::stream::image(&n, &c.program.readings.extras, rerail_tape_format::RR_TAG, src.as_bytes())).map_err(|r| r.why.to_owned())
+    }
+
+    /// A lattice's value (decision 0655): a functor named, not called, by the token mark `bare_functor`, as lean's
+    /// `lattice_operation` peeks; else the term any value is. Each executor reads it as the engine (whole) or as lean
+    /// (a statement recovered).
+    #[test]
+    fn lattice_values_are_the_engines() {
+        let c = crate::compiled().expect("compiles");
+        let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        for src in &crate::lattice_cases() {
+            let src = src.as_str();
+            let tapes = [("the interpreter", interp_tape(&c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}"))), ("the machine", machine.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
+            // A named functor before an operator is no value: its statement recovered.
+            reads_as_lean(src, !src.contains("@f * 2"), &tapes);
+            assert!(tapes.iter().all(|t| t.1.is_ok()), "{src:?}: every executor reads it");
+        }
     }
 
     /// How each executor's tape of `src` reads it (decision 0650), the interpreter's first: all take it, or all refuse
@@ -1746,7 +1779,9 @@ pub mod tests {
             // A token mark past the code's bits needs the token step's extras; its `,` reads as before it.
             .replace("mark comma_rule  = tokens \",\" string", "")
             .replace("(comma_rule ',' rule: string)*", "(',' rule: string)*")
-            .replace(" at_on comma_rule", " at_on")
+            .replace(" at_on comma_rule bare_functor", " at_on")
+            .replace("mark bare_functor = tokens \"@\" identifier ~\"(\"", "")
+            .replace("(bare_functor value: lattice_functor | value: term)", "value: term")
             .lines()
             .filter(|l| !(l.starts_with("escape ") && l.contains(" at number when ")))
             .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
