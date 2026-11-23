@@ -212,6 +212,22 @@ UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { re
 UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicMin(p, v); }
 UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicMax(p, v); }
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomicCAS(p, e, n); }
+// The same on a word in coherent memory (`UKL_COHERENT`, a block a join program's groups write, decision 0603), as
+// Metal's: CUDA's atomics act at L2 whatever the pointer's qualifier, and its loads and stores here are volatile.
+#define __UKL_COHERENT_ATOMIC(op)                                                                                     \
+    UKL_INLINE uint32_t ukl_atomic_##op(UKL_COHERENT uint32_t* p, uint32_t v) { return ukl_atomic_##op((UKL_GLOBAL uint32_t*)p, v); }
+__UKL_COHERENT_ATOMIC(add)
+__UKL_COHERENT_ATOMIC(sub)
+__UKL_COHERENT_ATOMIC(or)
+__UKL_COHERENT_ATOMIC(and)
+__UKL_COHERENT_ATOMIC(exchange)
+__UKL_COHERENT_ATOMIC(min)
+__UKL_COHERENT_ATOMIC(max)
+#undef __UKL_COHERENT_ATOMIC
+UKL_INLINE uint32_t ukl_atomic_load(UKL_COHERENT uint32_t* p) { return ukl_atomic_load((UKL_GLOBAL uint32_t*)p); }
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_COHERENT uint32_t* p) { return ukl_atomic_poll((UKL_GLOBAL uint32_t*)p); }
+UKL_INLINE void ukl_atomic_store(UKL_COHERENT uint32_t* p, uint32_t v) { ukl_atomic_store((UKL_GLOBAL uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_cas(UKL_COHERENT uint32_t* p, uint32_t e, uint32_t n) { return ukl_atomic_cas((UKL_GLOBAL uint32_t*)p, e, n); }
 UKL_INLINE void ukl_fence_device() { __threadfence(); }
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomicAdd(p, v); }
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile uint32_t*)p; }
@@ -592,5 +608,24 @@ UKL_INLINE uint32_t ukl_mask_rank(ukl_mask_t m, uint32_t l) { return ukl_mask_co
 UKL_INLINE uint64_t ukl_clock_ns(void) { uint64_t t; asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t)); return t; }
 #else
 #define ukl_clock_ns() ((uint64_t)0)
+#endif
+#endif
+
+// A record (a struct of 32-bit words) copied out of coherent memory (`UKL_COHERENT`, a block another group of the
+// dispatch writes): on CUDA, whose `UKL_COHERENT` is `volatile`, a C++ struct has no copy from a volatile one, and a
+// plain copy through the pointer cast would take L1's, so each word is a volatile load. Elsewhere a copy.
+#ifndef UKL_COHERENT_COPY
+#if defined(UKL_CUDA)
+template<typename T> static __device__ __forceinline__ T ukl_coherent_copy(UKL_COHERENT const T* p) {
+    static_assert(sizeof(T) % 4u == 0u, "ukl_coherent_copy: a record of 32-bit words");
+    T out;
+    UKL_COHERENT const uint32_t* from = (UKL_COHERENT const uint32_t*)p;
+    uint32_t* to = (uint32_t*)&out;
+    for (uint32_t i = 0u; i < sizeof(T) / 4u; i++) to[i] = from[i];
+    return out;
+}
+#define UKL_COHERENT_COPY(T, p) ukl_coherent_copy<T>(p)
+#else
+#define UKL_COHERENT_COPY(T, p) (*(p))
 #endif
 #endif

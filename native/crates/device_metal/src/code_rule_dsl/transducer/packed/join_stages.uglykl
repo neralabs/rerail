@@ -1448,7 +1448,7 @@ UKL_INLINE bool lat_same(Longs T, uint32_t stride, uint32_t a, uint32_t b, uint3
 
 UKL_INLINE void lat_clear_one(JSPACE uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE const LatP* pp, uint32_t i)
 {
-    LatP p = *pp;
+    LatP p = UKL_COHERENT_COPY(LatP, pp);
     if (i > p.pmask) return;
     P[i] = 0xffffffffu;
     best[i] = 0xffffffffu;
@@ -1458,7 +1458,7 @@ UKL_INLINE void lat_clear_one(JSPACE uint32_t* P, JSPACE uint32_t* best, JSPACE 
 // The key map's slot `i` emptied (a map new, or grown).
 UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t i)
 {
-    LatP p = *pp;
+    LatP p = UKL_COHERENT_COPY(LatP, pp);
     if (i > p.hmask) return;
     JSPACE uint32_t* H = (JSPACE uint32_t*)(HB + p.h_at);
     H[3 * i] = 0xffffffffu;
@@ -1470,7 +1470,7 @@ UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32
 // changes and round with it); its key read in `R`'s row.
 UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB, JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t s)
 {
-    LatP p = *pp;
+    LatP p = UKL_COHERENT_COPY(LatP, pp);
     if (s > p.omask) return;
     JSPACE const uint32_t* O = (JSPACE const uint32_t*)(OB + p.h0_at);
     uint32_t t = O[3 * s];
@@ -1492,7 +1492,7 @@ UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB
 
 UKL_INLINE void lat_claim_one(Longs U, JSPACE uint32_t* P, JSPACE const uint32_t* cnt, JSPACE const LatP* pp, uint32_t x)
 {
-    LatP p = *pp;
+    LatP p = UKL_COHERENT_COPY(LatP, pp);
     // Its rows: `n` (the stride of `U`'s columns), or as many as the word an earlier phase wrote (`counted`).
     if (x >= ((p.counted & 1u) != 0u ? ukl_min(*cnt, p.n) : p.n)) return;
     int64_t key[8];
@@ -1552,7 +1552,7 @@ UKL_INLINE bool lat_better(UKL_PRIVATE const LatP* p, JSPACE uint32_t* A, int64_
 UKL_INLINE void lat_best_one(Longs U, JSPACE const uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE uint32_t* A, JSPACE const uint32_t* cnt,
                          JSPACE const LatP* pp, uint32_t x)
 {
-    LatP p = *pp;
+    LatP p = UKL_COHERENT_COPY(LatP, pp);
     // Its rows: `n` (the stride of `U`'s columns), or as many as the word an earlier phase wrote (`counted`).
     if (x >= ((p.counted & 1u) != 0u ? ukl_min(*cnt, p.n) : p.n)) return;
     uint32_t s = lat_place(U, P, &p, x);
@@ -1593,7 +1593,7 @@ UKL_INLINE void lat_merge_one(Longs U, JSPACE const uint32_t* P, JSPACE const ui
                           JSPACE int64_t* D, JSPACE uint32_t* counters, JSPACE uint32_t* A, JSPACE const uint32_t* round, JSPACE const LatP* pp, uint32_t s)
 {
     // Its parameter block, a private copy (helpers take its address).
-    LatP p = *pp;
+    LatP p = UKL_COHERENT_COPY(LatP, pp);
     // A relation grown on the device (`counted & 2`): its rows held are its length as the device claimed it; its
     // round (`counted & 4`) the program's round word (decision 0603 step 3).
     if ((p.counted & 2u) != 0u) p.had = clif_rows_len((JSPACE const uint8_t*)R, p.r_rows_at);
@@ -1675,7 +1675,7 @@ typedef struct GateP { uint32_t m, pad0, pad1, pad2; GateCheck check[1]; } GateP
 UKL_INLINE void gate_one(JSPACE const GateP* p, UKL_GLOBAL uint32_t* ctl, uint32_t t)
 {
     if (t >= p->m) return;
-    GateCheck c = p->check[t];
+    GateCheck c = UKL_COHERENT_COPY(GateCheck, &p->check[t]);
     uint64_t n = (uint64_t)*c.count + (c.has != 0u ? (uint64_t)*c.plus : 0u);
     if (n > (uint64_t)c.cap) ukl_atomic_or(&ctl[6], 2u);
 }
@@ -1698,7 +1698,7 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
     for (uint32_t i = 0u; i < p->nops; i++) if (p->ops[i].op == 4u && *p->ops[i].from != 0u) any = true;
     uint32_t cur = *p->round;
     for (uint32_t i = 0u; i < p->nops; i++) {
-        RoundOp o = p->ops[i];
+        RoundOp o = UKL_COHERENT_COPY(RoundOp, &p->ops[i]);
         if (o.op == 0u) *o.to += *o.from;
         else if (o.op == 1u) *o.to = *o.from;
         else if (o.op == 2u) for (uint32_t k = 0u; k < o.n; k++) o.to[k] = 0u;
