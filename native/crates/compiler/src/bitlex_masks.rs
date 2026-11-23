@@ -1854,6 +1854,57 @@ impl Lowering {
         self.proofs.never(key, || !prover.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never_in(&work, &ops, tables, x.v, x.d) || prover.never(&ops, tables, x.v, x.d)))
     }
 
+    /// Each of `xs` as `either_never` answers it (decision 0654): the questions not answered
+    /// before, answered together on the machine's threads, each by a fork of `prover` within its
+    /// share of the budget fixed when the batch begins, so the answers are those of one thread. A
+    /// question asked twice in the batch is proved once.
+    pub fn either_never_many(&mut self, prover: &bitlex_prove::Induction, xs: &[Val]) -> Vec<bool> {
+        use rayon::prelude::*;
+        let ops = proof_ops(&self.program, &self.prefix);
+        let tables = &self.program.tables;
+        let mut out: Vec<Option<bool>> = vec![None; xs.len()];
+        // The questions to prove: each its text, value and places in `xs`.
+        let mut asked: Vec<(Vec<u8>, Val, Vec<usize>)> = Vec::new();
+        let mut by_key: HashMap<bitlex_prove::Key, usize> = HashMap::default();
+        for (i, &x) in xs.iter().enumerate() {
+            if bitlex_prove::never_by_shape(&ops, &self.apart, x.v) {
+                out[i] = Some(true);
+                continue;
+            }
+            let text = bitlex_prove::question_given(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("either never"), prover.given());
+            let key = bitlex_prove::key_of(&text);
+            if let Some(&bitlex_prove::Answer::Never(b)) = self.proofs.known.get(&key) {
+                self.proofs.used.push((key, bitlex_prove::Answer::Never(b)));
+                out[i] = Some(b);
+                continue;
+            }
+            match by_key.get(&key) {
+                Some(&j) => asked[j].2.push(i),
+                None => {
+                    by_key.insert(key, asked.len());
+                    asked.push((text, x, vec![i]));
+                }
+            }
+        }
+        let budgets: Vec<bitlex_prove::Budget> = asked.iter().map(|_| self.proofs.work.child()).collect();
+        let answers: Vec<bool> = asked
+            .par_iter()
+            .zip(&budgets)
+            .map(|((_, x, _), work)| {
+                let mut p = prover.fork(work);
+                work.left() > 0 && !p.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never_in(work, &ops, tables, x.v, x.d) || p.never(&ops, tables, x.v, x.d))
+            })
+            .collect();
+        for (((text, _, places), a), work) in asked.into_iter().zip(answers).zip(&budgets) {
+            self.proofs.work.spend(work.spent());
+            let a = self.proofs.never(text, || a);
+            for i in places {
+                out[i] = Some(a);
+            }
+        }
+        out.into_iter().map(|a| a.unwrap_or(false)).collect()
+    }
+
     /// A prefix's value (`Stmt::Prefix`): the file's first `n` positions, where it starts with
     /// the prefix's bytes. One leaf (`BlockOp::Prefix`), which an executor makes once a file
     /// from the file's first word, as simdjson strips a byte order mark before its loop: a full
@@ -5408,6 +5459,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         });
         let unplaced: u32 = low.unplaced.iter().fold(0, |a, &k| a | 1 << k);
         let tested_only: u32 = low.tested_only.iter().fold(0, |a, &k| a | 1 << k);
+        // Each mark's class, then the marks' claims in three batches (decision 0654): that the
+        // class is the mark outside the regions; for a mark whose class is, per token's bytes
+        // that the class misses them (a lexer's token's); then that the mark misses the bytes the
+        // class did not.
+        let mut outside: Vec<(usize, Val, Val)> = Vec::new();
+        let mut questions: Vec<Val> = Vec::new();
         for k in 0..in_code.len() {
             let bit = 1u32 << k;
             if gaps & bit == 0 || in_code[k].0 == crate::records::WORD_ALONE || (tested | unplaced | tested_only) & bit != 0 || extra_mark == Some(k as u8) {
@@ -5419,29 +5476,51 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 continue;
             }
             let class = low.class_set(class_bytes);
-            // Each claim: the class misses the bytes, or else the mark does.
-            let mut held = true;
-            for &(b, lexed) in &bytes_of {
-                let by_class = low.and(class, b)?;
-                let by_class = low.andnot(by_class, refused)?;
-                if lexed && low.either_never(&mut settled, by_class) {
-                    continue;
-                }
-                let by_mark = low.and(m, b)?;
-                let by_mark = low.andnot(by_mark, refused)?;
-                if !low.either_never(&mut settled, by_mark) {
-                    held = false;
-                    break;
-                }
-            }
             let x = low.andnot(class, m)?;
             let x = match regions {
                 Some(r) => low.andnot(x, r)?,
                 None => x,
             };
-            let x = low.andnot(x, refused)?;
-            held = held && low.either_never(&mut settled, x);
-            if held {
+            questions.push(low.andnot(x, refused)?);
+            outside.push((k, class, m));
+        }
+        let held = low.either_never_many(&settled, &questions);
+        let mut claimed: Vec<(usize, Val, Val, Vec<Option<usize>>)> = Vec::new();
+        let mut questions: Vec<Val> = Vec::new();
+        for ((k, class, m), held) in outside.into_iter().zip(held) {
+            if !held {
+                continue;
+            }
+            let mut each = Vec::new();
+            for &(b, lexed) in &bytes_of {
+                each.push(if lexed {
+                    let c = low.and(class, b)?;
+                    questions.push(low.andnot(c, refused)?);
+                    Some(questions.len() - 1)
+                } else {
+                    None
+                });
+            }
+            claimed.push((k, class, m, each));
+        }
+        let by_class = low.either_never_many(&settled, &questions);
+        let mut marks_asked: Vec<(usize, Val, Vec<usize>)> = Vec::new();
+        let mut questions: Vec<Val> = Vec::new();
+        for (k, class, m, each) in claimed {
+            let mut asked = Vec::new();
+            for (&(b, _), q) in bytes_of.iter().zip(&each) {
+                if q.is_some_and(|q| by_class[q]) {
+                    continue;
+                }
+                let by_mark = low.and(m, b)?;
+                questions.push(low.andnot(by_mark, refused)?);
+                asked.push(questions.len() - 1);
+            }
+            marks_asked.push((k, class, asked));
+        }
+        let by_mark = low.either_never_many(&settled, &questions);
+        for (k, class, asked) in marks_asked {
+            if asked.iter().all(|&q| by_mark[q]) {
                 blanks.push((k as u8, mask_of_val(class, &mut mark_masks)));
             }
         }
@@ -5605,9 +5684,8 @@ fn row_modes(
     if low.program.walks.is_empty() {
         regions_apart(low, &mut settled)?;
     }
-    // A stream a solve found refutes most questions first (`Induction::refutes`): most fail.
-    let mut proved = |low: &mut Lowering, v: Val| low.either_never(&mut settled, v);
-    // The toggles whose `x` bits are all token starts, at most eight.
+    // The toggles whose `x` bits are all token starts, at most eight: each asked, in one batch
+    // (decision 0654).
     let mut starts: Option<Val> = None;
     for (_, s, _) in token_rows {
         starts = Some(match starts {
@@ -5615,34 +5693,51 @@ fn row_modes(
             None => *s,
         });
     }
+    let toggles = low.toggles.clone();
+    let mut strays = Vec::new();
+    if let Some(s) = starts {
+        for &(_, x) in &toggles {
+            strays.push(low.andnot(x, s)?);
+        }
+    }
+    let stray_never = low.either_never_many(&settled, &strays);
     let mut modes: Vec<(Val, Val)> = Vec::new();
-    for (t, x) in low.toggles.clone() {
-        let Some(s) = starts else { break };
-        let stray = low.andnot(x, s)?;
-        if modes.len() < 8 && proved(low, stray) {
+    for (&(t, x), &never) in toggles.iter().zip(&stray_never) {
+        if modes.len() < 8 && never {
             modes.push((t, x));
         }
     }
     // Each row's mode at its start, and its flips: per toggle, `Some(bit)` when fixed. Both proved, the row's
     // start never holds (`s & ~v` and `s & v`): the row is dead, and meets no state.
     // A row's scope first (`TokenRule::Inside`): its start is in it, so what holds of the scope
-    // holds of the row, one question for its region's rows.
+    // holds of the row, one question for its region's rows. Every question asked in one batch
+    // (decision 0654): the scope's and the start's, for the toggle and its `x`, on and off.
     let scope_of = low.scope_of.clone();
-    let mut fixed = |low: &mut Lowering, r: usize, s: Val, v: Val, dead: &mut bool| -> Result<Option<bool>, String> {
-        // Whether the start never holds with `v` (`on`) or without it.
-        let mut never = |low: &mut Lowering, on: bool| -> Result<bool, String> {
-            let at = |low: &mut Lowering, x: Val| if on { low.and(x, v) } else { low.andnot(x, v) };
-            if let Some(Some(scope)) = scope_of.get(r) {
-                let wide = at(low, *scope)?;
-                if proved(low, wide) {
-                    return Ok(true);
+    let mut questions: Vec<Val> = Vec::new();
+    let mut index: HashMap<(usize, usize, bool, bool, bool), usize> = HashMap::default();
+    for (r, (_, s, _)) in token_rows.iter().enumerate() {
+        for (m, &(t, x)) in modes.iter().enumerate() {
+            for (is_t, v) in [(false, x), (true, t)] {
+                for on in [false, true] {
+                    let at = |low: &mut Lowering, y: Val| if on { low.and(y, v) } else { low.andnot(y, v) };
+                    if let Some(Some(scope)) = scope_of.get(r) {
+                        let wide = at(low, *scope)?;
+                        index.insert((r, 2 * m + usize::from(is_t), on, true, false), questions.len());
+                        questions.push(wide);
+                    }
+                    let x = at(low, *s)?;
+                    index.insert((r, 2 * m + usize::from(is_t), on, false, false), questions.len());
+                    questions.push(x);
                 }
             }
-            let x = at(low, s)?;
-            Ok(proved(low, x))
-        };
-        let (o, n) = (never(low, false)?, never(low, true)?);
-        Ok(match (o, n) {
+        }
+    }
+    let answered = low.either_never_many(&settled, &questions);
+    // Whether row `r`'s start never holds with value `k` (`2m` the mode's `x`, `2m + 1` its toggle)
+    // `on` or off: its scope's answer, else its start's.
+    let never = |r: usize, k: usize, on: bool| index.get(&(r, k, on, true, false)).is_some_and(|&q| answered[q]) || answered[index[&(r, k, on, false, false)]];
+    let fixed = |r: usize, k: usize, dead: &mut bool| -> Option<bool> {
+        match (never(r, k, false), never(r, k, true)) {
             (true, false) => Some(true),
             (false, true) => Some(false),
             (true, true) => {
@@ -5650,20 +5745,20 @@ fn row_modes(
                 None
             }
             _ => None,
-        })
+        }
     };
     let mut need: Vec<Vec<Option<bool>>> = Vec::new();
     let mut flip: Vec<Vec<Option<bool>>> = Vec::new();
     let mut dead: Vec<bool> = vec![false; token_rows.len()];
-    for (r, (_, s, _)) in token_rows.iter().enumerate() {
+    for r in 0..token_rows.len() {
         let (mut n, mut f) = (Vec::new(), Vec::new());
-        for &(t, x) in &modes {
+        for m in 0..modes.len() {
             // The mode before the token: the toggle at its start, less `x` there (the toggle's
-            // asked only where `x`'s is fixed: else the mode is free). A row whose start never
-            // holds is dead (`fixed`): `x` asked first finds it.
-            let xv = fixed(low, r, *s, x, &mut dead[r])?;
+            // read only where `x`'s is fixed: else the mode is free). A row whose start never
+            // holds is dead (`fixed`): `x` read first finds it.
+            let xv = fixed(r, 2 * m, &mut dead[r]);
             n.push(match xv {
-                Some(b) => fixed(low, r, *s, t, &mut dead[r])?.map(|a| a != b),
+                Some(b) => fixed(r, 2 * m + 1, &mut dead[r]).map(|a| a != b),
                 None => None,
             });
             f.push(xv);

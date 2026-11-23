@@ -104,7 +104,7 @@ takes a bounded number of rounds, and the host launches again while nodes are le
 
 1. `speculate gap ends`: the statement, the escape, the compile's time (done: see Results).
 2. The warm compile's uncached questions through the answers (done).
-3. Batches on the CPU: rounds, with the CDCL solver; the same answers.
+3. Batches on the CPU: rounds, with the CDCL solver; the same answers (done).
 4. Refuting on the GPU (the mini first, one test).
 5. Propagating on the GPU.
 6. Speculating gap marks; row modes after.
@@ -129,3 +129,24 @@ The gap marks' fact ("the mark is its class in the blanks") is used by tier 1 so
 mark's mask: checked as an escape, it would make that mask again. The row modes' facts (a row's start is in a
 toggle's mode) are masks every mask executor makes anyway (the row's start, the toggle), so a speculated row
 mode is an escape of a few operations: the candidate next step.
+
+**Step 3: batches on the CPU** (spark1, 20 threads, the same cold compile):
+
+- **Where a solve's time goes** (the serial compile, timed by part): building the windows 8.8 s (8,126 of them),
+  a solve's own clauses 5.5 s, the solver 34.5 s over 12,415 solves. Of the solver's time, 17.1 s is loading
+  the clauses (`reset`, `add_all`); 7,739 solves are unsatisfiable at level 0 (6.5 s), 674 need conflicts
+  (6.7 s), 4,002 are satisfiable (5.0 s). The plain search (`never_in`) takes 22.5 s. So the cost is making and
+  loading formulas that propagation decides, as the GPU design assumes.
+- **`Lowering::either_never_many`**: a caller's questions, those not answered before, proved together on
+  rayon's threads, each by a fork of the caller's prover (`Induction::fork`: its settings and given lemmas, its
+  own windows, solver and streams) within its own budget (`Budget::child`: the question's share of what is
+  left, fixed when the batch begins, so the answers do not depend on the threads). Answers go through
+  `Proofs` in the batch's order.
+- **Rounds, not one batch.** Asking every claim of the gap marks at once took 113 s and 470M steps more: the
+  serial loop stopped at a mark's first failed claim, and most claims of a failing mark are hard. The marks are
+  asked in three rounds, each only for the marks still standing: the class outside the regions; the class
+  misses a lexer token's bytes; the mark misses the rest. Row modes: two rounds (the toggles' strays, then
+  every row's scope and start, on and off).
+- **The cold compile**: row modes 33 s to 5.6 s, gap marks 33 s to 2.4 s; proving 83 s to 24 s, and 226M
+  steps to 191M; the compile 136 s to 78 s. The answers file grows from 131 KB to 154 KB: a round answers a
+  row's start where its scope's answer already settled it.

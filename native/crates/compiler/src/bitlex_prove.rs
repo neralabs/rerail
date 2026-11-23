@@ -48,16 +48,24 @@ const BUDGET: u32 = 1 << 12;
 /// floor are not its. One hard question (an induction of 100,000 conflicts a solve)
 /// took all of Kotlin's, and every question after it was answered not proved.
 #[derive(Clone, Debug)]
-pub struct Budget(std::sync::Arc<(std::sync::atomic::AtomicU64, std::sync::atomic::AtomicU64, u64)>);
+pub struct Budget(std::sync::Arc<(std::sync::atomic::AtomicU64, std::sync::atomic::AtomicU64, u64, u64)>);
 
 impl Budget {
     pub fn new(steps: u64) -> Self {
-        Budget(std::sync::Arc::new((std::sync::atomic::AtomicU64::new(steps), std::sync::atomic::AtomicU64::new(0), steps / 16)))
+        Budget(std::sync::Arc::new((std::sync::atomic::AtomicU64::new(steps), std::sync::atomic::AtomicU64::new(0), steps / 16, steps)))
     }
 
     /// The steps the compile has taken: its budget less those left.
     pub fn spent(&self) -> u64 {
-        (self.0.2 * 16).saturating_sub(self.total())
+        self.0.3.saturating_sub(self.total())
+    }
+
+    /// A budget of its own for one question of a batch (decision 0654): a question's share of
+    /// what is left, as `question` gives it, fixed when the batch begins, so the questions of a
+    /// batch answered on several threads are answered as on one. The caller spends what each
+    /// took ([`Budget::spend`] of its [`Budget::spent`]) when the batch is done.
+    pub fn child(&self) -> Budget {
+        Budget::new(self.left().min(self.0.2))
     }
 
     /// No limit: a question asked apart from a compile (the provers' own tests).
@@ -966,6 +974,16 @@ impl Induction {
     pub fn within(mut self, work: &Budget) -> Self {
         self.work = work.clone();
         self
+    }
+
+    /// A prover of these settings and given lemmas, with its own windows, solver and streams, and
+    /// `work` for its budget: for a question of a batch answered on another thread (decision
+    /// 0654). Its answers are this one's: the streams it has not seen only refute questions a
+    /// solve would refute.
+    pub fn fork(&self, work: &Budget) -> Induction {
+        let mut p = Induction::new(&self.rounds, self.horizon, self.conflicts).within(work);
+        p.given = self.given.clone();
+        p
     }
 
     /// This prover and its settings, asking `what`: a part of each question's key (`question`).
