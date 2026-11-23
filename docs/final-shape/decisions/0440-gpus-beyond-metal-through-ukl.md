@@ -1756,6 +1756,82 @@ HIP's language.
     and `nested_optional_types_keep_interpreter_candidate_ordinals`, which ends its process on this host under
     OpenCL too.
 
+**HIP's copies and fills, and its other overheads (2026-11-22).** The library's bench (`bench_device_and_host`) first ran
+HIP several times slower than OpenCL on the same Radeon 680M: a 256K-key sort 13.8 ms against 0.94, a copy or a scan
+7 times OpenCL's. The user: "no, figure out where the overhead is coming from and address it". There were four
+sources, each found by a probe on the host:
+
+- **The measure.** The two backends' device times are not the same quantity:
+  - OpenCL's is the sum of its kernels' execution (`CL_PROFILING_COMMAND_START` to `_END`), without the gaps between
+    them or the first kernel's start.
+  - HIP's (as CUDA's) runs from an event before the first operation to one after the last, gaps included.
+  - So a 1 MB copy alone took 0.05 ms by OpenCL's measure and 0.15 to 0.4 ms by HIP's, in about the same wall time.
+  - The bench now also reports each stage's wall time, from the flush to the event's end, and backends are compared
+    by it.
+- **The runtime's copies and fills.** HIP's runtime is slow at copies and fills on host memory, which every buffer
+  here is:
+  - `hipMemsetD8Async` fills 1 MB in 2.7 ms and 16 MB in 31 ms (0.5 ms in device memory).
+  - `hipMemcpyDtoDAsync` copies 1 MB in 0.25 ms, against 0.1 ms for a kernel.
+  - The grid's sort and scan fill and copy between their passes, so they ran 4 to 15 times OpenCL's time.
+  - So on HIP, copies and fills are kernels (`Blit`), which move 16, 4 or 1 bytes an element, the widest that
+    divides both addresses and the length. That is how OpenCL's driver does them.
+- **Fine-grained memory's atomics.** `hipHostMalloc`'s default memory is fine-grained, which the host and the device
+  keep coherent while a kernel runs, and AMD's device does atomics on it past its caches.
+  - A 1 Mi-key histogram took 150 ms there, against 0.76 ms in coarse-grained memory and 0.94 ms in the device's own.
+    Reads ran alike in all three.
+  - The pool's memory is now coarse-grained. Only a shared event's word, which the host writes while the device waits
+    on it, stays fine-grained.
+- **The scatter of the radix sort.** After those fixes, the 4M-key sort still took 68 ms against OpenCL's 54. One
+  timing a part found the gap in the scatter: 19.2 ms a pass against 13.8. The cases, each measured:
+  - **Not the kernel's code.** The two compilers' code for it is nearly the same, instruction for instruction: 128
+    `ds_bpermute`s, the same loads, stores and barriers, wave32 in WGP mode on both.
+  - **Not its registers.** HIP's build took 51 VGPRs, against 20 when the shuffle was `ds_bpermute` itself (then
+    `v_readlane`s), at the same time.
+  - **Not the clocks.** A compute-bound kernel took 97.3 ms on HIP and 96.4 ms on OpenCL.
+  - **Not CU mode** (`-mcumode`), and not the memory for one stream of writes. Random or bucketed writes of one array
+    took the same time in each kind of memory and on each backend.
+  - **Its stores alone made the gap.** Without them the scatter took 1.6 ms on both.
+  - **The barriers.** HIP's `__syncthreads()` fences every address space. At each of the scatter's barriers, the wave
+    waited for its global stores (`s_waitcnt_vscnt 0`) and invalidated its vector L0 cache (`buffer_gl0_inv`).
+    `ukl_tg_barrier` orders threadgroup memory alone, as Metal's (`mem_threadgroup`) and OpenCL's
+    (`CLK_LOCAL_MEM_FENCE`) do. So on HIP it is now `s_barrier` between workgroup fences on LDS. The waits are gone
+    from the code; alone, this was worth about 1 ms a pass. `ukl_tg_barrier_device` keeps `__syncthreads()`.
+  - **The pool's memory: the gap.** Two streams of writes spread over many pages (a radix pass's: a row to each of 256
+    buckets, keys and values) took 4M rows in:
+
+    | Memory | ms |
+    |---|---|
+    | `hipHostMalloc`'s coarse-grained (the pool's) | 65.8 |
+    | the device's own (`hipMalloc`) | 62.7 |
+    | the host's own, registered (`malloc` and `hipHostRegister`) | 52.6 |
+    | OpenCL's buffers | 57 |
+
+    OpenCL's buffers are the host's own memory (`CL_MEM_USE_HOST_PTR`), as the engine's wrapped blocks are on HIP.
+    Registered memory's atomics ran as coarse-grained memory's (a 0.91 ms histogram). So on HIP, a pool block of a page
+    or more is now the host's memory, page-aligned and registered (`registered_block`). A smaller block stays
+    `hipHostMalloc`'s, as registering it would pin a page for it. The scatter then took 13.6 ms a pass, against
+    OpenCL's 14.7.
+
+The bench after these changes, in wall ms:
+
+| Rows | Stage | HIP | OpenCL |
+|---|---|---|---|
+| 256K | sort | 1.04 | 2.60 |
+| 256K | copy | 0.33 | 0.43 |
+| 256K | scan | 0.16 | 0.99 |
+| 256K | hash build and probe | 4.38 | 4.15 |
+| 1M | sort | 4.99 | 8.75 |
+| 1M | copy | 0.69 | 0.56 |
+| 1M | scan | 0.54 | 1.52 |
+| 1M | hash build and probe | 20.8 | 21.7 |
+| 4M | sort | 45.2 | 48.5 |
+| 4M | copy | 1.33 | 1.86 |
+| 4M | scan | 1.69 | 2.92 |
+| 4M | hash build and probe | 132 | 126 |
+
+`rerail-gpu`'s 25 tests pass on HIP and on CUDA (a GB10). The engine's slab tests and a sample of 20 of its tests that
+passed under HIP before pass again, with no IOMMU fault.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

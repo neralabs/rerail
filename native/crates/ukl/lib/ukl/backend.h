@@ -195,7 +195,21 @@ UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { re
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return __ballot_sync(0xffffffffu, b); }
 UKL_INLINE void ukl_sg_barrier() { __syncwarp(); }
 #endif
+#if defined(UKL_HIP)
+// A threadgroup barrier orders threadgroup memory alone, as Metal's (`mem_threadgroup`) and OpenCL's
+// (`CLK_LOCAL_MEM_FENCE`): the fences are the workgroup's on LDS ("local"). HIP's `__syncthreads()` fences every
+// address space, so at each barrier it waited for the wave's global stores (`s_waitcnt_vscnt 0`) and invalidated the
+// vector L0 cache (`buffer_gl0_inv`): in the radix sort's scatter, after each round's writes. That was about 1 ms of
+// a 19 ms pass of 4M rows on a Radeon 680M (0440, "HIP's copies and fills, and its other overheads").
+UKL_INLINE void ukl_tg_barrier()
+{
+    __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup", "local");
+    __builtin_amdgcn_s_barrier();
+    __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup", "local");
+}
+#else
 UKL_INLINE void ukl_tg_barrier() { __syncthreads(); }
+#endif
 UKL_INLINE void ukl_tg_barrier_device() { __syncthreads(); }
 
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return *(volatile uint32_t*)p; }

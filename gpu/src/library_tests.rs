@@ -870,9 +870,14 @@ fn the_grid_sort_is_stable_and_equals_the_host() {
 
 /// A measurement of a machine's GPU and CPU on one workload, the same on every backend: the library's sort (32-bit
 /// keys with their rows), exclusive scan and hash join (build, then a probe of every key) of 4 Mi keys, each the median
-/// of 9 device times after a warm run; and the host's sorts of the same keys, on one core and on every core at once
+/// of 9 device times after a warm run, and of 9 wall times, each from the work's flush to its end; and the host's sorts of the same keys, on one core and on every core at once
 /// (one sort each, of their own copy). A line a size, for comparing machines: 256 Ki, 1 Mi, then 4 Mi keys, so a device
 /// not yet measured meets the larger sizes last, or `RERAIL_BENCH_N` keys alone.
+///
+/// Compare backends by the wall times: each backend's device time is its own measure. OpenCL's sums its kernels'
+/// execution alone (`CL_PROFILING_COMMAND_START` to `_END`), without the gaps between them or the start of the
+/// first; CUDA's and HIP's run from an event before the first operation to one after the last, gaps included. On a
+/// Radeon 680M a 1 MB copy alone was 0.05 ms by OpenCL's and 0.15 to 0.4 by HIP's, in about the same wall time.
 #[test]
 #[ignore = "a measurement: run by name with --nocapture, on a profiling build"]
 fn bench_device_and_host() {
@@ -885,7 +890,7 @@ fn bench_device_and_host() {
 
 fn bench_at(q: &mut ComputeQueue, n: usize) {
     // Each stage said as it ends: a device that stops shows where.
-    let said = |what: &str, ms: f64| eprintln!("bench: {what} {ms:.2} ms");
+    let said = |what: &str, (ms, wall): (f64, f64)| eprintln!("bench: {what} {ms:.2} ms, {wall:.2} ms wall");
     let mut rng = Rng(47);
     let keys: Vec<u32> = (0..n).map(|_| rng.next() as u32).collect();
     let rows: Vec<u32> = (0..n as u32).collect();
@@ -893,17 +898,20 @@ fn bench_at(q: &mut ComputeQueue, n: usize) {
         v.sort_by(f64::total_cmp);
         v[v.len() / 2]
     };
+    // The medians of the device's time and the wall's, in ms.
     let time = |q: &mut ComputeQueue, f: &dyn Fn(&mut ComputeQueue)| {
-        let mut t = Vec::new();
+        let (mut t, mut w) = (Vec::new(), Vec::new());
         for i in 0..10 {
             f(q);
+            let wall = std::time::Instant::now();
             let e = q.flush();
             e.await_().unwrap();
             if i > 0 {
+                w.push(wall.elapsed().as_secs_f64() * 1e3);
                 t.push(e.gpu_seconds() * 1e3);
             }
         }
-        median(t)
+        (median(t), median(w))
     };
     let (kb, vb) = (buffer_of(&keys).unwrap(), buffer_of(&rows).unwrap());
     let (tk, tv) = (alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap());
@@ -944,12 +952,15 @@ fn bench_at(q: &mut ComputeQueue, n: usize) {
     });
     let all = t.elapsed().as_secs_f64() * 1e3;
     let mkeys = |ms: f64| n as f64 / ms / 1e3;
+    let ((sort, sort_wall), (copy, copy_wall), (scan, scan_wall), (join, join_wall)) = (sort, copy, scan, join);
     println!(
-        "BENCH {} ({}) | {n} rows | device ms: sort {:.2} ({:.0} Mkeys/s), copy {copy:.2}, scan {scan:.2}, hash build+probe {join:.2} | host: sort one core {one:.1} ms ({:.0} Mkeys/s), {cores} cores at once {all:.1} ms ({:.0} Mkeys/s)",
+        "BENCH {} ({}) | {n} rows | device ms: sort {:.2} ({:.0} Mkeys/s), copy {copy:.2}, scan {scan:.2}, hash build+probe {join:.2} | wall ms: sort {:.2} ({:.0} Mkeys/s), copy {copy_wall:.2}, scan {scan_wall:.2}, hash build+probe {join_wall:.2} | host: sort one core {one:.1} ms ({:.0} Mkeys/s), {cores} cores at once {all:.1} ms ({:.0} Mkeys/s)",
         crate::device::backend(),
         crate::shared::get().map_or_else(String::new, |s| s.device.name()),
         sort - copy,
         mkeys(sort - copy),
+        sort_wall - copy_wall,
+        mkeys(sort_wall - copy_wall),
         mkeys(one),
         mkeys(all / cores as f64),
     );
@@ -1070,3 +1081,4 @@ fn dot_products_equal_their_references() {
     }
     eprintln!("{backend}: dot2 forms equal to the reference {exact}, within one rounding {rounded}");
 }
+

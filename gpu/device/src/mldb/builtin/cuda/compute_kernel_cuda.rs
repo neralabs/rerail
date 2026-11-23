@@ -540,7 +540,8 @@ impl CudaDevice {
 
     /// An event the host signals and a queue waits on (`metal::SharedEvent`): a word of pinned memory.
     pub fn new_shared_event(&self) -> CudaSharedEvent {
-        let b = alloc_uninitialized_array_sync::<u64>(self, 1);
+        // Coherent: the device's wait reads the host's writes while it runs.
+        let b = alloc(self, 8, true);
         unsafe { b.contents().cast::<u64>().write_volatile(0) };
         CudaSharedEvent { word: b }
     }
@@ -554,6 +555,8 @@ struct Allocation {
     len: u64,
     /// The block's size class: the bytes it holds. 0: memory wrapped in place (`wrap_host_memory`), its owner's.
     class: u64,
+    /// Whether its pool's memory is kept coherent with the host while a kernel runs (`alloc`).
+    coherent: bool,
     /// Wrapped memory's registration with the driver: none (read where it lies, or pinned by the driver itself), or
     /// its share of the page runs registered (`REGISTERED`); released when the buffer goes.
     registered: Registration,
@@ -579,7 +582,7 @@ impl Drop for Allocation {
             }
             return;
         }
-        POOL.lock().unwrap().entry(self.class).or_default().push(Block { host: self.host, dev: self.dev });
+        POOL.lock().unwrap().entry((self.class, self.coherent)).or_default().push(Block { host: self.host, dev: self.dev });
     }
 }
 
@@ -592,7 +595,7 @@ struct Block {
 unsafe impl Send for Block {}
 
 /// The free pinned blocks, by size (a power of two, at least 256 bytes).
-static POOL: std::sync::Mutex<std::collections::BTreeMap<u64, Vec<Block>>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+static POOL: std::sync::Mutex<std::collections::BTreeMap<(u64, bool), Vec<Block>>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 /// A buffer (`metal::Buffer`): shared by its clones, freed when the last goes (a queue keeps those it uses until
 /// its work is awaited).
@@ -651,19 +654,61 @@ impl CudaSharedEvent {
 /// The block is of the bytes' size class (a power of two, at least 256), from the pool when one is free; it is
 /// uninitialized (a reused block holds what it last held).
 pub fn alloc_uninitialized_array_sync<T>(device: &CudaDevice, length: usize) -> CudaBuffer {
-    let len = (length * std::mem::size_of::<T>()).max(16) as u64;
+    alloc(device, (length * std::mem::size_of::<T>()) as u64, false)
+}
+
+/// `hipHostMalloc`'s kinds of host memory: kept coherent with the host while a kernel runs (fine-grained), or not
+/// (coarse-grained: the device caches it, and the host sees the device's writes once the kernel ends, as it reads
+/// them, after an event).
+const HIP_HOST_MALLOC_COHERENT: u32 = 0x4000_0000;
+const HIP_HOST_MALLOC_NON_COHERENT: u32 = 0x8000_0000;
+
+/// Pinned host memory of at least `bytes`, from its size class's pool. On HIP it is coarse-grained but where
+/// `coherent` asks (a word the host writes while the device waits on it, `new_shared_event`): AMD's device does its
+/// atomics on fine-grained memory in the host's, past its caches. A Radeon 680M built a 1 Mi-key histogram in 150 ms
+/// there, 0.76 ms in coarse-grained memory and 0.94 ms in its own (0440, "HIP's copies and fills"). Reads ran alike.
+///
+/// On HIP a block of a page or more is the host's own memory, page-aligned, registered with the driver: what
+/// OpenCL's buffers are (`CL_MEM_USE_HOST_PTR`) and what a wrap of the engine's blocks is (`register_mapped`). Its
+/// atomics ran as coarse-grained memory's (0.91 ms the histogram), and writes spread over many pages ran faster: a
+/// radix pass's (a row to each of 256 buckets, keys and values) took 52.6 ms over 4 Mi rows there, 65.8 ms in
+/// `hipHostMalloc`'s coarse-grained memory and 62.7 in the device's own. A smaller block stays `hipHostMalloc`'s,
+/// as registering it would pin a page for it.
+fn alloc(device: &CudaDevice, bytes: u64, coherent: bool) -> CudaBuffer {
+    let len = bytes.max(16);
     let class = len.max(256).next_power_of_two();
     sweep_pending(device.current());
-    let reused = POOL.lock().unwrap().get_mut(&class).and_then(Vec::pop);
+    let reused = POOL.lock().unwrap().get_mut(&(class, coherent)).and_then(Vec::pop);
     let Block { host, dev } = reused.unwrap_or_else(|| {
         let a = device.current();
+        if a.vendor == Vendor::Hip && !coherent && class >= page_bytes() {
+            return registered_block(a, class);
+        }
         let mut host = std::ptr::null_mut();
-        must(unsafe { (a.cu_mem_host_alloc)(&mut host, class as usize, CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP) }, "cuMemHostAlloc");
+        let kind = match a.vendor {
+            Vendor::Cuda => 0,
+            Vendor::Hip if coherent => HIP_HOST_MALLOC_COHERENT,
+            Vendor::Hip => HIP_HOST_MALLOC_NON_COHERENT,
+        };
+        must(unsafe { (a.cu_mem_host_alloc)(&mut host, class as usize, CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP | kind) }, "cuMemHostAlloc");
         let mut dev = 0;
         must(unsafe { (a.cu_mem_host_get_device_pointer)(&mut dev, host, 0) }, "cuMemHostGetDevicePointer");
         Block { host: host.cast(), dev }
     });
-    CudaBuffer(Arc::new(Allocation { host, dev, len, class, registered: Registration::None }))
+    CudaBuffer(Arc::new(Allocation { host, dev, len, class, coherent, registered: Registration::None }))
+}
+
+/// A pool block of `class` bytes (a page or more) of the host's memory, registered and mapped (`alloc` on HIP). It is
+/// the pool's for the process's life, as `cuMemHostAlloc`'s blocks are.
+fn registered_block(a: &Api, class: u64) -> Block {
+    let layout = std::alloc::Layout::from_size_align(class as usize, page_bytes() as usize).expect("a pool block's layout");
+    // SAFETY: a non-zero size; the block is never freed (the pool keeps it).
+    let host = unsafe { std::alloc::alloc(layout) };
+    assert!(!host.is_null(), "out of memory for a {class}-byte block");
+    must(unsafe { (a.cu_mem_host_register)(host.cast(), class as usize, CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP) }, "cuMemHostRegister");
+    let mut dev = 0;
+    must(unsafe { (a.cu_mem_host_get_device_pointer)(&mut dev, host.cast(), 0) }, "cuMemHostGetDevicePointer");
+    Block { host, dev }
 }
 
 /// A buffer over `len` bytes of the host's memory at `ptr`, read in place (decision 0353): at the host's address
@@ -676,7 +721,7 @@ pub fn alloc_uninitialized_array_sync<T>(device: &CudaDevice, length: usize) -> 
 /// # Safety
 /// The memory outlives the buffer and its clones, and every use of them by queued work.
 pub unsafe fn wrap_host_memory(device: &CudaDevice, ptr: *mut u8, len: usize) -> Result<CudaBuffer, String> {
-    let wrap = |dev: DevPtr, registered: Registration| Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev, len: len as u64, class: 0, registered })));
+    let wrap = |dev: DevPtr, registered: Registration| Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev, len: len as u64, class: 0, coherent: true, registered })));
     if device.pageable {
         return wrap(ptr as DevPtr, Registration::None);
     }
@@ -1031,6 +1076,76 @@ const MAX_CONNECTIONS: usize = 32;
 pub struct CudaQueueRoot {
     device: CudaDevice,
     stream: Ptr,
+    /// HIP's copies and fills, as kernels (`Blit`); `None` on CUDA, whose driver's are fast.
+    blit: Option<Arc<Blit>>,
+}
+
+/// Copies and fills as kernels, for HIP: its runtime's own (`hipMemcpyDtoDAsync`, `hipMemsetD8Async`) are slow on
+/// host memory, which every buffer here is. Measured on a Radeon 680M, 1 MB: a copy 0.25 ms (a kernel's 0.1), a fill
+/// 2.7 ms; 16 MB, a fill 31 ms (0.5 in device memory). OpenCL's driver copies and fills by kernels, and the grid's
+/// sort and scan, which fill and copy between their passes, ran 4 to 15 times OpenCL's time (0440, "HIP's copies and
+/// fills"). Each kernel moves elements of its width (16, 4 or 1 bytes): the widest that divides both addresses and the
+/// length.
+struct Blit {
+    /// The functions by width: 16, 4 and 1 bytes.
+    copy: [Ptr; 3],
+    fill: [Ptr; 3],
+    _library: CudaComputeFunctionLibrary,
+}
+
+unsafe impl Send for Blit {}
+unsafe impl Sync for Blit {}
+
+const BLIT_SOURCE: &str = r#"
+typedef unsigned int u32;
+typedef unsigned long long u64;
+typedef u32 u32x4 __attribute__((ext_vector_type(4)));
+#define BLIT(W, T) \
+extern "C" __global__ void rerail_copy##W(T* d, const T* s, u64 n) { \
+    for (u64 i = (u64)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += (u64)gridDim.x * blockDim.x) d[i] = s[i]; } \
+extern "C" __global__ void rerail_fill##W(T* d, u64 n) { \
+    for (u64 i = (u64)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += (u64)gridDim.x * blockDim.x) d[i] = (T)0; }
+BLIT(16, u32x4)
+BLIT(4, u32)
+BLIT(1, unsigned char)
+"#;
+
+/// The threads of a blit's group, and the most groups a blit launches (each thread strides past the grid).
+const BLIT_THREADS: u32 = 256;
+const BLIT_GROUPS: u64 = 4096;
+
+impl Blit {
+    fn new(device: &CudaDevice) -> Blit {
+        let library = CudaComputeFunctionLibrary::compile_from_source(device, BLIT_SOURCE, "rerail_blit.hip").unwrap_or_else(|e| panic!("HIP's copy and fill kernels: {e}"));
+        let f = |name: String| library.function_handle(&name).unwrap_or_else(|e| panic!("{e}"));
+        let widths = [16, 4, 1];
+        Blit { copy: widths.map(|w| f(format!("rerail_copy{w}"))), fill: widths.map(|w| f(format!("rerail_fill{w}"))), _library: library }
+    }
+
+    /// The widest of 16, 4 and 1 bytes that divides every one of `parts`: the width's index.
+    fn width(parts: &[u64]) -> (usize, u64) {
+        let bits = parts.iter().fold(0, |m, p| m | p);
+        [16u64, 4, 1].iter().enumerate().find(|(_, w)| bits % **w == 0).map(|(i, w)| (i, *w)).expect("1 divides all")
+    }
+
+    fn launch(a: &Api, stream: Ptr, func: Ptr, args: &mut [u64], elements: u64, what: &str) -> Result<(), String> {
+        if elements == 0 {
+            return Ok(());
+        }
+        let groups = elements.div_ceil(BLIT_THREADS as u64).min(BLIT_GROUPS) as u32;
+        let mut ptrs: Vec<Ptr> = args.iter_mut().map(|p| (p as *mut u64).cast::<c_void>()).collect();
+        ck(unsafe { (a.cu_launch_kernel)(func, groups, 1, 1, BLIT_THREADS, 1, 1, 0, stream, ptrs.as_mut_ptr(), std::ptr::null_mut()) }, what)
+    }
+
+    fn copy(&self, a: &Api, stream: Ptr, dst: u64, src: u64, bytes: usize) -> Result<(), String> {
+        let (i, w) = Blit::width(&[dst, src, bytes as u64]);
+        Blit::launch(a, stream, self.copy[i], &mut [dst, src, bytes as u64 / w], bytes as u64 / w, "a copy kernel")
+    }
+
+    fn fill(&self, a: &Api, stream: Ptr, dst: u64, bytes: usize) -> Result<(), String> {
+        let (i, w) = Blit::width(&[dst, bytes as u64]);
+        Blit::launch(a, stream, self.fill[i], &mut [dst, bytes as u64 / w], bytes as u64 / w, "a fill kernel")
+    }
 }
 
 /// Held while a submission's operations go onto a stream (`CudaComputeQueue::flush`): one submission's are
@@ -1056,7 +1171,8 @@ impl CudaQueueRoot {
         let a = device.current();
         let mut stream = std::ptr::null_mut();
         must(unsafe { (a.cu_stream_create)(&mut stream, CU_STREAM_NON_BLOCKING) }, "cuStreamCreate");
-        CudaQueueRoot { device, stream }
+        let blit = (device.vendor == Vendor::Hip).then(|| Arc::new(Blit::new(&device)));
+        CudaQueueRoot { device, stream, blit }
     }
 }
 
@@ -1066,6 +1182,7 @@ impl CudaQueueRoot {
 pub struct CudaComputeQueue {
     device: CudaDevice,
     stream: Ptr,
+    blit: Option<Arc<Blit>>,
     /// The operations encoded since the last flush, in order (`Op`).
     ops: RefCell<Vec<Op>>,
     /// The staging memory for `enqueue_copy_from_host`, and how much is used (as on Metal).
@@ -1092,7 +1209,7 @@ fn new_event(a: &Api) -> Ptr {
 impl CudaComputeQueue {
     /// A queue on `root`'s stream.
     pub fn new(root: &CudaQueueRoot) -> Self {
-        CudaComputeQueue { device: root.device, stream: root.stream, ops: Default::default(), staging: Default::default(), keep: Default::default() }
+        CudaComputeQueue { device: root.device, stream: root.stream, blit: root.blit.clone(), ops: Default::default(), staging: Default::default(), keep: Default::default() }
     }
 
     /// `newBindContext`: one launch of `function`, on the queue's stream.
@@ -1167,7 +1284,7 @@ impl CudaComputeQueue {
             let _issue = ISSUE.lock().unwrap_or_else(|p| p.into_inner());
             must(unsafe { (a.cu_event_record)(start, self.stream) }, "cuEventRecord");
             for op in ops {
-                if let Err(e) = issue(a, self.stream, op) {
+                if let Err(e) = issue(a, self.stream, self.blit.as_deref(), op) {
                     failed = Some(e);
                     break;
                 }
@@ -1183,8 +1300,8 @@ impl CudaComputeQueue {
     }
 }
 
-/// One operation onto `stream`.
-fn issue(a: &Api, stream: Ptr, op: Op) -> Result<(), String> {
+/// One operation onto `stream`: copies and fills by `blit`'s kernels where it is given (HIP's).
+fn issue(a: &Api, stream: Ptr, blit: Option<&Blit>, op: Op) -> Result<(), String> {
     match op {
         Op::Launch { func, grid, block, shared, mut params, name } => {
             // The driver reads each parameter's bytes during the call.
@@ -1194,8 +1311,14 @@ fn issue(a: &Api, stream: Ptr, op: Op) -> Result<(), String> {
                 &format!("launching {name}"),
             )
         }
-        Op::Memset { dst, bytes } => ck(unsafe { (a.cu_memset_d8_async)(dst, 0, bytes, stream) }, "cuMemsetD8Async"),
-        Op::Memcpy { dst, src, bytes } => ck(unsafe { (a.cu_memcpy_async)(dst, src, bytes, stream) }, "cuMemcpyAsync"),
+        Op::Memset { dst, bytes } => match blit {
+            Some(b) => b.fill(a, stream, dst, bytes),
+            None => ck(unsafe { (a.cu_memset_d8_async)(dst, 0, bytes, stream) }, "cuMemsetD8Async"),
+        },
+        Op::Memcpy { dst, src, bytes } => match blit {
+            Some(b) => b.copy(a, stream, dst, src, bytes),
+            None => ck(unsafe { (a.cu_memcpy_async)(dst, src, bytes, stream) }, "cuMemcpyAsync"),
+        },
         Op::WaitValue { at, value } => match (a.cu_stream_wait_value64, a.hip_stream_wait_value64) {
             (Some(wait), _) => ck(unsafe { wait(stream, at, value, CU_STREAM_WAIT_VALUE_GEQ) }, "cuStreamWaitValue64"),
             // The word is pinned host memory, at the same address for the device (`hipHostMalloc`'s): all its bits.
