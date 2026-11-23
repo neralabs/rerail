@@ -80,6 +80,8 @@ mod maintain_mode_tests;
 #[cfg(test)]
 mod cut_tests;
 #[cfg(test)]
+mod refusal_tests;
+#[cfg(test)]
 mod key_tests;
 #[cfg(test)]
 mod index_order_tests;
@@ -2835,16 +2837,16 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             }
         };
         if tried && !on_device {
-            // The seeds were parsed without the CPU's indexes: parse them again with them.
+            // The seeds were parsed without the CPU's indexes: each input step gets its index now, on the relation
+            // the seed was parsed with. Parsed again from its spec, it looked each relation up by name on the
+            // connection, which a stratum that waited for its wave reaches later, on the run's thread, after other
+            // chunks' jobs had bound or dropped their own under those names: it could read another chunk's relation, or
+            // find it gone ("no native relation": t50 step 9, Metal at 32 MB on s1000, every run).
             drop(guard);
-            let specs = std::mem::take(&mut comp.seed_specs);
-            {
-                let mut syms = Interner::for_loading(&symbols);
-                for (pi, js) in &specs {
-                    let j = join_rule(conn, js, &mut syms)?;
-                    comp.probes[*pi].body = Body::Join(Box::new(j));
+            for (pi, _) in std::mem::take(&mut comp.seed_specs) {
+                if let Body::Join(j) = &mut comp.probes[pi].body {
+                    j.indexed();
                 }
-                syms.check()?;
             }
             comp.device = None;
             guard = comp.store.write().unwrap();
@@ -6923,6 +6925,19 @@ impl JoinRule {
             Step::Atom { src: Src::In(rel, _), .. } => rel.view.as_ref().and_then(|v| v.src.failed()),
             _ => None,
         })
+    }
+
+    /// The CPU's indexes of its inputs, on the relations its steps hold: what `join_rule` gives a rule parsed with
+    /// them, for one parsed without (a seed placed on the device, which then refused it).
+    fn indexed(&mut self) {
+        for (st, r) in self.steps.iter_mut().zip(&self.ranges) {
+            if let Step::Atom { src: Src::In(rel, ix), .. } = st {
+                *ix = rel.index(&ix.cols);
+                if let Some(r) = r && ix.ordered.is_some() && ix.then.is_none() {
+                    *ix = rel.index_then(&ix.cols, r.col);
+                }
+            }
+        }
     }
 }
 impl JoinRule {
