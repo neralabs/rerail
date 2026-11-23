@@ -415,7 +415,7 @@ pub struct GpuTotal {
     pub screened: u64,
     /// Rounds the recursive components ran on the device (`fixpoint`).
     pub rounds: u64,
-    /// Recursive components handed back to the CPU after a narrow round (decision 0656).
+    /// Recursive components handed back to the CPU after a narrow round (decision 0657).
     pub handed: u64,
 }
 
@@ -3172,7 +3172,7 @@ pub struct Report {
     pub made: u64,
     /// The rounds a recursive component ran on the device (`fixpoint`; 0 for seeds alone).
     pub rounds: u32,
-    /// Whether its component was handed back to the CPU after its last round (decision 0656): a round too narrow
+    /// Whether its component was handed back to the CPU after its last round (decision 0657): a round too narrow
     /// for the device, the CPU's waves going on from its rows.
     pub handed: bool,
     /// Why the device refused the stratum (at open, or at run time: a table past its budget), which then ran on the

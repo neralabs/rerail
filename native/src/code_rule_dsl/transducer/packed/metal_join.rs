@@ -1063,7 +1063,7 @@ struct Building {
     gated: bool,
     /// Queued after its program's round ends (`Batch::round_end`): its program's round count, and how many ends lie
     /// before it. It is built only where the program passed them: one stopped at an earlier end (no new rows, or handed
-    /// back to the CPU, decision 0656) never ran its phase, and its room goes back.
+    /// back to the CPU, decision 0657) never ran its phase, and its room goes back.
     behind: Option<Behind>,
     /// A live relation's (`DevRel::live`): of its rows as a round claimed them, never marked built (a reader of the
     /// relation as it lies finds none of its rows' count).
@@ -1449,7 +1449,7 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) ended: bool,
     /// Whether a round's end stopped it past its rounds.
     pub(in crate::code_rule_dsl) past_rounds: bool,
-    /// Whether a round's end handed its component back to the CPU (`round_end`'s `narrow`, decision 0656): a round
+    /// Whether a round's end handed its component back to the CPU (`round_end`'s `narrow`, decision 0657): a round
     /// that did less work than a round on the device costs.
     pub(in crate::code_rule_dsl) narrow: bool,
     /// Whether a size script parked past its program's arena (decision 0603 step 5), an arena whose pages could not
@@ -1805,7 +1805,7 @@ impl Batch {
                 continue;
             }
             let (r, room) = (unsafe { &*b.rel }, &b.room);
-            // Behind a round end its program stopped at: never built, its room the block's again (decision 0656: a stratum
+            // Behind a round end its program stopped at: never built, its room the block's again (decision 0657: a stratum
             // handed back after its seed round left its delta rules' index of an input marked built and empty, and the
             // CPU's readers by it found no rows).
             if !b.ran() {
@@ -1830,7 +1830,7 @@ impl Batch {
             // SAFETY: the batch's work, which built it, has completed; `home` keeps the relation.
             unsafe { r.index_built(room) };
             // A test build checks what it marked: its first, middle and last rows found by their own keys (decision
-            // 0656: an index whose build never ran was marked built, and every probe of it found nothing).
+            // 0657: an index whose build never ran was marked built, and every probe of it found nothing).
             #[cfg(any(test, feature = "test-hooks"))]
             check_built(r, room);
         }
@@ -2551,7 +2551,7 @@ impl Batch {
     /// counted in slot 0 of `round`; then the round after, from phase `next` (`next_phase`; none: the phase after its
     /// own). The program ends when no `RoundOp::Any` word is non-zero (`Done::ended`) and fails past round `max`
     /// (`Done::past_rounds`). A round that made rows and whose `RoundOp::Work` words sum under `narrow` (0: never)
-    /// stops it, handed back to the CPU (`Done::narrow`, decision 0656). Its rounds go on across its launches: a
+    /// stops it, handed back to the CPU (`Done::narrow`, decision 0657). Its rounds go on across its launches: a
     /// launch's GPU time is its workers' budgets' (decision 0603 point 5).
     pub(in crate::code_rule_dsl) fn round_end(&mut self, ops: &[RoundOp<'_>], round: &Words, max: u32, narrow: u32, next: Option<u32>) -> Result<(), Error> {
         // Alone in its level: the round's work all before it, the next round's after. Its phase is the next one

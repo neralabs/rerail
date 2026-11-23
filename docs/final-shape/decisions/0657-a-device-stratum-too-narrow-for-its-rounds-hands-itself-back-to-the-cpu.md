@@ -1,4 +1,4 @@
-# 0656. A device stratum too narrow for its rounds hands itself back to the CPU
+# 0657. A device stratum too narrow for its rounds hands itself back to the CPU
 
 Status: done (2026-11-23).
 

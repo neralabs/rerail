@@ -2173,6 +2173,55 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }
 
+/// Decision 0658: a relation being solved whose values all come from one column outside it is a sample of that
+/// column's values, and a probe by them hits where that column's do. `runs_at_import`'s shape: its values are
+/// `run_scope`'s first column's (every node with a scope), and its delta rule probes `run_scope` by its second (the
+/// scopes). Priced as every binding hitting, the delta rule was 7.8 M rows for a few hundred, and the device's tables
+/// were sized for them.
+#[test]
+fn a_solved_relations_column_is_priced_by_the_column_its_values_come_from() {
+    let p = parse_version(
+        ".decl rs(n:number, s:number, k:number)\n.decl late(n:number)\n.decl ri(n:number)\n\
+         ri(n) :- rs(n, _, 1), !late(n).\n\
+         ri(n) :- rs(n, s, k), k != 1, ri(s), !late(n).\n.output ri\n",
+    )
+    .unwrap();
+    let vs = body::Versions::of_placed(body::Placed::whole(p.clone()));
+    let keys: Vec<body::RuleKey> = body::Versions::keys(0, p.rules().count()).collect();
+    let scc: BTreeSet<String> = ["ri".to_owned()].into_iter().collect();
+    let sources = column_sources(&vs, &scc, &keys);
+    assert_eq!(sources.get(&("ri".to_owned(), 0)), Some(&("rs".to_owned(), 0)), "ri's values are rs's first column's: {sources:?}");
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    model.stats.nodes = 450_000.0;
+    // Every node with a scope, 4,000 scopes of 5 kinds; 2,000 nodes run at import so far.
+    for (rel, rows, ndv) in [("rs", 400_000.0, vec![400_000.0, 4_000.0, 5.0]), ("late", 10.0, vec![10.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), rows / n);
+        }
+    }
+    model.stats.card.insert("ri", 2_000.0);
+    model.stats.delta_rows.insert("ri", 2_000.0);
+    let r = 1usize;
+    // The delta rule, led by `ri(s)`: the third literal.
+    let mut plan = |sources: Sources| {
+        model.stats.solve(scc.clone());
+        model.stats.sourced(sources);
+        let ((_, work, rows), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), Some(2)).unwrap();
+        (work, rows)
+    };
+    let (work, rows) = plan(Sources::new());
+    let (sourced_work, sourced_rows) = plan(sources);
+    // Each of the 2,000 bindings hits a scope's 100 nodes: 200,000 rows priced. Drawn from all 400,000 nodes, one in a
+    // hundred is a scope: 2,000.
+    assert!(rows > 100_000.0, "unsourced, every binding hits: {rows} rows, {work} work");
+    assert!(sourced_rows < rows / 50.0, "sourced, a binding hits as rs's first column's values do: {sourced_rows} rows against {rows}");
+    assert!(sourced_work < work / 10.0, "{sourced_work} work against {work}");
+}
+
 /// A relation whose rows are measured and its columns' distinct values are not holds no more distinct values than
 /// rows: a probe of it by a binding drawn from many values mostly misses. ep2's import edit: a finding of one row,
 /// `p49_ASYNC100($n, _)`, priced as keeping every binding, was probed after four old versions' reads of 4,672 moved

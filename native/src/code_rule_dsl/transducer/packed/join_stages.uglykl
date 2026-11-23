@@ -1709,7 +1709,7 @@ UKL_INLINE void gate_one(JSPACE const GateP* p, UKL_GLOBAL uint32_t* ctl, uint32
 // runs from the next template's first phase (`next`), which the host encodes after it (decision 0638). With no new
 // rows the program ends (`ctl[6]` bit 16), and with a round past `max` next it stops (bit 4): the phases encoded
 // after it run no groups (`join_grid`). A round that made rows but did less work than `narrow` (none: never) hands
-// the component back to the CPU (bit 8, decision 0656): its rows so far are the CPU's to go on from.
+// the component back to the CPU (bit 8, decision 0657): its rows so far are the CPU's to go on from.
 typedef struct RoundOp { JSPACE uint32_t* to; JSPACE const uint32_t* from; uint32_t op, n; } RoundOp;
 typedef struct RoundP { JSPACE uint32_t* round; uint32_t nops, max, next, narrow; RoundOp ops[1]; } RoundP;
 UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint32_t t)

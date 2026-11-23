@@ -398,6 +398,9 @@ pub struct Stats {
     pub obs: HashMap<u64, HashMap<Sig, [i64; 2]>>,
     /// The recursive component being planned (`atom_rows`).
     pub solving: BTreeSet<String>,
+    /// Its columns whose values all come from one column of a relation outside it (`column_sources`, decision 0658):
+    /// a probe bound by one is priced by that column's keys, as its own are not measured while it is solved.
+    pub sources: Sources,
     /// Members of `solving` that had rows when its component opened (a maintained stratum's survivors, rows SQL
     /// wrote): a first scan of one reads its live rows, which its card holds, not the corpus (`atom_rows`; `sized`).
     pub sized: BTreeSet<String>,
@@ -449,7 +452,13 @@ impl Stats {
             scc.iter().for_each(|r| d.str(r));
         });
         self.solving = scc;
+        self.sources.clear();
         self.sized.clear();
+    }
+
+    /// The component's column sources (`column_sources`), set after `solve` where its rules are at hand.
+    pub fn sourced(&mut self, sources: Sources) {
+        self.sources = sources;
     }
 
     /// `rels` of `solving` had rows when its component opened, measured (`live_stats`): the plans made from here
@@ -538,6 +547,7 @@ impl Stats {
             heavy_shared: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
+            sources: Sources::new(),
             held: Default::default(),
             sized: BTreeSet::new(),
             solving_digest: 0,
@@ -733,6 +743,7 @@ impl Stats {
             heavy_shared: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
+            sources: Sources::new(),
             held: Default::default(),
             sized: BTreeSet::new(),
             solving_digest: 0,
@@ -920,6 +931,7 @@ impl Model {
             heavy_shared: std::sync::Arc::clone(&st.heavy_shared),
             obs: rules.iter().filter_map(|r| Some((*r, st.obs.get(r)?.clone()))).collect(),
             solving: BTreeSet::new(),
+            sources: Sources::new(),
             held: st.held.clone(),
             sized: BTreeSet::new(),
             solving_digest: 0,
@@ -2202,6 +2214,21 @@ impl Model {
         (0..b.args(i).len()).map(|c| self.ndv.at(rel, c).map(|n| n.min(cap))).collect()
     }
 
+    /// The column outside the component being solved that column `c` of `rel`, a relation of it, takes all its values
+    /// from (`Stats::sources`).
+    fn source_of(&self, rel: &str, c: usize) -> Option<(&str, usize)> {
+        self.stats.sources.get(&(rel.to_owned(), c)).map(|(r, c)| (r.as_str(), *c))
+    }
+
+    /// Column `c` of `rel`'s kept keys (decision 0488); for a column of the component being solved, its source's
+    /// (decision 0658): its values are among them.
+    fn keys_or_source(&self, rel: &str, c: usize) -> Option<&super::super::bloom::Keys> {
+        self.stats.keys.at(rel, c).or_else(|| {
+            let (r, c) = self.stats.solving.contains(rel).then(|| self.source_of(rel, c)).flatten()?;
+            self.stats.keys.at(r, c)
+        })
+    }
+
     /// Complete small value sets already in statistics. SQL can load only the constants requested by a rule,
     /// so an absent memo entry proves nothing unless both its distinct count and total cover the column.
     fn small_values(&self, rel: &str, c: usize) -> Option<Vec<&Constant>> {
@@ -2420,6 +2447,7 @@ impl Model {
                 rec.into_iter().map(|(ai, _)| (b, Some(ai))).chain(seed.then_some((b, None))).collect::<Vec<_>>()
             }).collect();
             self.stats.solve(solving_of(vs, scc, &rules).unwrap_or_default());
+            self.stats.sourced(column_sources(vs, scc, &rules));
             self.wants(lines, into);
         }
         self.stats.solve(was);
@@ -3975,14 +4003,22 @@ impl Model {
                         .iter()
                         .filter_map(|(d, vars, domains)| {
                             if *d == i || !vars.is_subset(bound) { return None; }
-                            b.args(*d).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v)).and_then(|c2| Some((domains[c2]?, (*d, c2))))
+                            let c2 = b.args(*d).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v))?;
+                            // A column of the component being solved, unmeasured, whose values are all its source's
+                            // (decision 0658): a sample of that column's, which hits where the source's values do.
+                            let sourced = || {
+                                let r = b.rel(b.atom(*d)?);
+                                let (sr, sc) = stats.solving.contains(r).then(|| self.source_of(r, c2)).flatten()?;
+                                self.ndv.at(sr, sc).copied()
+                            };
+                            Some((domains[c2].or_else(sourced)?, (*d, c2)))
                         })
                         .fold((f64::INFINITY, None), |m, (n, at)| if n < m.0 { (n, Some(at)) } else { m });
                     // Where both columns' keys are kept (decision 0488), the bindings that hit are the share of the
                     // domain's keys this column holds too, whichever has more: two columns of disjoint values
                     // (a node's ids against another kind's) hit nothing, which distinct counts cannot tell.
                     let kept = at.and_then(|(d, c2)| {
-                        let (mine, theirs) = (self.stats.keys.at(rel, c)?, self.stats.keys.at(b.rel(b.atom(d)?), c2)?);
+                        let (mine, theirs) = (self.stats.keys.at(rel, c)?, self.keys_or_source(b.rel(b.atom(d)?), c2)?);
                         let of = theirs.distinct();
                         (of >= 1.0).then(|| Some((mine.shared(theirs)? / of).clamp(0.5 / of, 1.0))).flatten()
                     });
@@ -5691,6 +5727,69 @@ pub fn solving_of(vs: &body::Versions, scc: &BTreeSet<String>, rules: &[RuleKey]
         let (v, rule) = vs.rule_at(r);
         rule.body().any(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && scc.contains(v.rel_name(a.rel()))))
     }).then(|| scc.clone())
+}
+
+/// A component's columns and the one column of a relation outside it that each takes all its values from.
+pub type Sources = BTreeMap<(String, usize), (String, usize)>;
+
+/// Decision 0658: the columns of `scc`'s relations whose values all come from one column of a relation outside it.
+/// Each of their rules binds the head's column by a positive atom outside the component (at that column: its values
+/// are among that column's), or by the component's own columns that do. `runs_at_import(n)` is made by
+/// `run_scope(n, _, "module")` and by `run_scope(n, s, k), runs_at_import(s)`: its values are `run_scope`'s first
+/// column's, and a probe of `run_scope`'s second by them hits where that column's keys meet the first's. Priced as
+/// every binding hitting, its delta rule was 7.8 M rows a round for a few hundred, and its device tables sized so.
+pub fn column_sources(vs: &body::Versions, scc: &BTreeSet<String>, rules: &[RuleKey]) -> Sources {
+    type Col = (String, usize);
+    // Each column's sources outside the component, and its own columns it takes values from; `None`, a rule that
+    // binds it by no positive atom (a computed or constant term).
+    let mut from: BTreeMap<Col, Option<(BTreeSet<Col>, BTreeSet<Col>)>> = BTreeMap::new();
+    for &r in rules {
+        let b = vs.at(r);
+        let head = b.rel(b.head());
+        if !scc.contains(head) {
+            continue;
+        }
+        for (c, t) in b.head().args().enumerate() {
+            let entry = from.entry((head.to_owned(), c)).or_insert_with(|| Some(Default::default()));
+            let Some((outside, inside)) = entry else { continue };
+            let Some(v) = t.var() else {
+                *entry = None;
+                continue;
+            };
+            let (mut out, mut ins) = (None, None);
+            for i in 0..b.len() {
+                let Some(a) = b.plain_atom(i).filter(|a| !a.neg()) else { continue };
+                let Some(c2) = b.args(i).iter().position(|x| x.var() == Some(v)) else { continue };
+                let rel = b.rel(a);
+                if scc.contains(rel) { ins.get_or_insert((rel.to_owned(), c2)); } else { out.get_or_insert((rel.to_owned(), c2)); }
+            }
+            match (out, ins) {
+                (Some(o), _) => { outside.insert(o); }
+                (None, Some(l)) => { inside.insert(l); }
+                (None, None) => *entry = None,
+            }
+        }
+    }
+    // A column's sources: its own and those of the columns it takes values from, unless any of them is unknown.
+    let mut out = Sources::new();
+    for col in from.keys() {
+        let (mut seen, mut todo, mut srcs) = (BTreeSet::new(), vec![col.clone()], BTreeSet::new());
+        let mut known = true;
+        while let Some(x) = todo.pop() {
+            if !seen.insert(x.clone()) { continue; }
+            match from.get(&x) {
+                Some(Some((o, i))) => {
+                    srcs.extend(o.iter().cloned());
+                    todo.extend(i.iter().cloned());
+                }
+                _ => { known = false; break; }
+            }
+        }
+        if known && srcs.len() == 1 {
+            out.insert(col.clone(), srcs.into_iter().next().expect("one source"));
+        }
+    }
+    out
 }
 
 /// The positive atoms of `scc` in `b` (its recursive atoms): each one's place in the body and its relation.

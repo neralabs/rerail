@@ -201,7 +201,7 @@ pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
 const DEVICE_ROUND: f64 = 1.0e-3;
 
 /// The work (rows its stages make) under which a recursive component's round costs the CPU less than a device round
-/// (decision 0656): the device hands such a component back to the CPU at that round's end.
+/// (decision 0657): the device hands such a component back to the CPU at that round's end.
 pub fn narrow_round_work() -> f64 {
     DEVICE_ROUND / CPU_PER_WORK
 }

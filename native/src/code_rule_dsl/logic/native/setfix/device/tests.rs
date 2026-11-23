@@ -232,7 +232,7 @@
         assert!(r.rounds > 4, "the closure takes rounds: {r:?}");
     }
 
-    /// Decision 0656's test: a round that does less work than the component's `narrow` hands it back to the CPU, its
+    /// Decision 0657's test: a round that does less work than the component's `narrow` hands it back to the CPU, its
     /// rows so far placed where the device wrote them, and the CPU's waves go on from them to the same fixpoint
     /// (`closure` compares the rows). The closure's seed round does about a hundred rows of work, and each round after
     /// it more: past that, its seed round hands it back; under it, every round runs on the device.
@@ -249,7 +249,7 @@
         assert!(!wide.handed && wide.rounds == whole.rounds, "every round past 30 rows of work: {wide:?}");
     }
 
-    /// Decision 0656: a relation a component handed back to the CPU is read by a later stratum on the device as the
+    /// Decision 0657: a relation a component handed back to the CPU is read by a later stratum on the device as the
     /// CPU reads it. The closure's seed round hands it back (the CPU's waves add its rounds' rows to the rows the device
     /// placed), and a later stratum looks it up by its first column on the device: the CPU's rows.
     #[test]
@@ -330,7 +330,7 @@
         assert_eq!(got[0], got[3], "the CPU's reader after the device's, by the index it left");
     }
 
-    /// Decision 0656: an index a stratum's delta rules probe an input by is built in its rounds' phases. Handed back
+    /// Decision 0657: an index a stratum's delta rules probe an input by is built in its rounds' phases. Handed back
     /// to the CPU at its seed round's end, those phases never ran: the index is not built, and is not marked built in
     /// the input's block, where a later stratum's CPU reader by the same key found it and no rows (the django run's
     /// `unparen`, read by `exc_arg` and `call_kw`).

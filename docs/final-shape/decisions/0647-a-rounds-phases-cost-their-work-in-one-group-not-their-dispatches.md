@@ -181,5 +181,5 @@ Measured, cold (a fresh store), on the M3:
 
 The costliest recursive stratum on the device, `runs_at_import`, took 102 ms of GPU time for 3 rounds, where the CPU
 took 2 ms. (An earlier version of this record said it made 6.7 million rows: that was the planner's estimate of its
-rows, `gpu_rows`, not rows made.) Its tables are sized from that estimate. 0656 hands it back after its first round. The strata of many rounds and few rows
+rows, `gpu_rows`, not rows made.) Its tables are sized from that estimate. 0657 hands it back after its first round. The strata of many rounds and few rows
 (`py_minor`: 44 rounds, 3 rows) are where a round's fixed cost shows.

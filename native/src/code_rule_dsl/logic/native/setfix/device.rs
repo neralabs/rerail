@@ -2919,7 +2919,7 @@ fn tally(rep: &mut Report, done: &mj::Done) {
 /// none. Each relation's rows stay on the device between rounds; the host reads one count per relation a round, and
 /// the new rows once, at the end, into `fresh` as the CPU's waves would add them. `heads` are the component's
 /// relations, which must be empty when it starts. Returns each rule's rows made, seeds then deltas, and whether the
-/// device reached the fixpoint: a round too narrow for the device hands the component back (decision 0656, `narrow`),
+/// device reached the fixpoint: a round too narrow for the device hands the component back (decision 0657, `narrow`),
 /// its rows so far in `fresh` for the CPU's waves to go on from.
 pub(in crate::code_rule_dsl) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<(Vec<u64>, bool), String> {
     fixpoint_(seeds, deltas, heads, store, names, fresh)
@@ -3018,7 +3018,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     // Every round on the device, the seed round's first: a program of them (`device_rounds`, decision 0603), whose
     // rounds go on across its launches.
     let mut rounds = 0;
-    // A round's work under which the component goes back to the CPU (decision 0656): one whose heads are sets that
+    // A round's work under which the component goes back to the CPU (decision 0657): one whose heads are sets that
     // keep no levels, whose rows the CPU's waves take as they lie and go on from.
     let narrow = if heads.iter().all(|&h| !lattices.contains_key(&h) && !leveled(h)) { narrow_work() } else { 0 };
     {
@@ -3087,14 +3087,14 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     one_launch(&rep);
     let fixed = !rep.handed;
     if rep.handed {
-        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "recursive components handed back to the CPU (decision 0656)", 1);
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "recursive components handed back to the CPU (decision 0657)", 1);
     }
     LAST.with_borrow_mut(|l| *l = Some(rep));
     Ok((made, fixed))
 }
 
 /// The rows a round's stages make under which the CPU does the round's work in less time than a device round costs
-/// (decision 0656, `placement::narrow_round_work`). `RERAIL_DEVICE_NARROW` sets it (0: never hand back), for a test or
+/// (decision 0657, `placement::narrow_round_work`). `RERAIL_DEVICE_NARROW` sets it (0: never hand back), for a test or
 /// a measure. The library's tests run the device's rounds on small inputs to test them, so there it is none unless a
 /// test sets it.
 fn narrow_work() -> u32 {
@@ -3523,7 +3523,7 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
         if done.past_rounds {
             return Err(format!("a recursive component past {ROUNDS_MAX} rounds"));
         }
-        // Ended, or handed back to the CPU after a narrow round (decision 0656): its rows so far are its heads'.
+        // Ended, or handed back to the CPU after a narrow round (decision 0657): its rows so far are its heads'.
         if done.ended || done.narrow {
             lp.rep.handed = done.narrow && !done.ended;
             // The rules' counts, summed over the rounds, as one run's each (`counted`): the seeds' then the deltas'.
@@ -3783,7 +3783,7 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
     }
     for (x, r) in runs.iter().enumerate() {
         let Some(r) = r else { continue };
-        // The round's work: the rows each of its stages made (decision 0656), read before its totals are emptied.
+        // The round's work: the rows each of its stages made (decision 0657), read before its totals are emptied.
         if lp.narrow > 0 {
             for &(i, o) in &r.io {
                 if i != o {

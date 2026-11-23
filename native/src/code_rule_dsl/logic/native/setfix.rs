@@ -2768,7 +2768,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         let tried = !resuming && !seeded && comp.device.is_some() && dev.is_some();
         // The component's fixpoint ran on the device (a recursive one): its rows are all of them, and it is done.
         let mut device_fixed = false;
-        // Or the device handed it back after a round too narrow for it (decision 0656): its rows so far are this
+        // Or the device handed it back after a round too narrow for it (decision 0657): its rows so far are this
         // wave's, and the CPU's waves go on from them.
         let mut handed_back = false;
         let on_device = resumed_on_device || tried && {

@@ -287,6 +287,8 @@ enum Native {
 struct Driving {
     scc: BTreeSet<String>,
     solving: bool,
+    /// Its component's column sources (`column_sources`), set again when it resumes.
+    sources: Sources,
     name: String,
     spec: ComponentSpec,
     rels: Vec<String>,
@@ -2446,6 +2448,7 @@ impl<'a> Run<'a, '_> {
         // Planned as solving what the stratum will (`solving_of`): their keys are the stratum's.
         let was = std::mem::take(&mut self.model.stats.solving);
         self.model.stats.solve(solving_of(&versions, scc, rules).unwrap_or_default());
+        self.model.stats.sourced(column_sources(&versions, scc, rules));
         // A round (decision 0123): the statistics of the seeds that will be priced, in one batch.
         let mut wanted = BTreeSet::new();
         self.model.wants(bodies.iter().map(|b| (b, None)), &mut wanted);
@@ -3073,7 +3076,8 @@ impl<'a> Run<'a, '_> {
             std::time::Instant::now()
         });
         let solving = solving_of(&self.versions, scc, rules);
-        let out = self.lent(solving, |this, native_rels| this.native_stratum_(scc, rules, native_rels));
+        let sources = if solving.is_some() { column_sources(&self.versions, scc, rules) } else { Sources::new() };
+        let out = self.lent(solving, sources, |this, native_rels| this.native_stratum_(scc, rules, native_rels));
         if let Some(t0) = t0 {
             eprintln!("RERAIL_STRATA_LIVE end {scc:?} {:.3} s", t0.elapsed().as_secs_f64());
         }
@@ -3084,7 +3088,8 @@ impl<'a> Run<'a, '_> {
     /// suspended it.
     fn native_resume(&mut self, d: Box<Driving>) -> Result<Native> {
         let solving = d.solving.then(|| d.scc.clone());
-        self.lent(solving, |this, native_rels| this.drive(d, native_rels))
+        let sources = d.sources.clone();
+        self.lent(solving, sources, |this, native_rels| this.drive(d, native_rels))
     }
 
     /// `native_stratum`, finished here: a stratum that waits on its device wave has the wave flushed (with whatever
@@ -3113,9 +3118,11 @@ impl<'a> Run<'a, '_> {
         }
     }
 
-    /// Runs `f` with the relations run natively so far lent to it, and `solving` as the component being solved.
-    fn lent<T>(&mut self, solving: Option<BTreeSet<String>>, f: impl FnOnce(&mut Self, &BTreeSet<String>) -> Result<T>) -> Result<T> {
+    /// Runs `f` with the relations run natively so far lent to it, and `solving` as the component being solved, its
+    /// columns' `sources` (decision 0658).
+    fn lent<T>(&mut self, solving: Option<BTreeSet<String>>, sources: Sources, f: impl FnOnce(&mut Self, &BTreeSet<String>) -> Result<T>) -> Result<T> {
         self.model.stats.solve(solving.unwrap_or_default());
+        self.model.stats.sourced(sources);
         // The relations run natively so far, lent to the stratum (it reads them, and adds its own only at the end):
         // cloning them per stratum was quadratic in strata (3% of a combined run's main thread).
         let native_rels = std::mem::take(&mut self.native_rels);
@@ -3746,6 +3753,7 @@ impl<'a> Run<'a, '_> {
         let d = Driving {
             scc: scc.clone(),
             solving: !self.model.stats.solving.is_empty(),
+            sources: self.model.stats.sources.clone(),
             name,
             spec,
             rels: rels.iter().map(|r| (*r).clone()).collect(),
@@ -3815,7 +3823,7 @@ impl<'a> Run<'a, '_> {
         let versions = Arc::clone(&self.versions);
         let pf = versions.whole(self.version);
         let fields = vs.whole(self.version);
-        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut stepped, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff, mut expected, mut walled, mut wholes } = *d;
+        let Driving { scc: scc_owned, solving, sources, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut stepped, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff, mut expected, mut walled, mut wholes } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         // Each line's rule as the planner reads it: the seeds' orders, then the probes' (their rules fixed, their
@@ -3909,7 +3917,7 @@ impl<'a> Run<'a, '_> {
                 () => {{
                     drop(rels);
                     Box::new(Driving {
-                        scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
+                        scc: scc_owned, solving, sources, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
                         explained, counted, earlier, timed, stepped, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff, expected, walled, wholes,
                         cpu_own: if profiling { let (u, s) = crate::code_rule_dsl::prof::thread_usage(); u + s - cpu_at } else { 0.0 },
                     })

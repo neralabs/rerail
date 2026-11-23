@@ -34,7 +34,7 @@ pub trait SolverDevice: Device {
     fn reads_own(&self, plan: &JoinPlan) -> bool;
     /// A recursive component's fixpoint on the device: the `seeds` once, then the `deltas` round by round until no
     /// head in `heads` grows, every row into `fresh`. Per rule (seeds, then deltas), the rows made, and whether the
-    /// device reached the fixpoint: where a round was too narrow for it, it hands the component back (decision 0656),
+    /// device reached the fixpoint: where a round was too narrow for it, it hands the component back (decision 0657),
     /// its rows so far in `fresh` for the CPU's waves to go on from.
     #[allow(clippy::too_many_arguments)]
     fn fixpoint(
