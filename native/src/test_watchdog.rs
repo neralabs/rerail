@@ -288,6 +288,13 @@ mod tests {
             // Past the watchdog's first listing of the tests (200 ms after `main`, then every 125 ms under the
             // parent's limit of 1 s).
             std::thread::sleep(Duration::from_millis(500));
+            // Its fault writes no core: where the kernel hands cores to a program (a `|` core pattern, which no core
+            // limit stops), the dump was most of the test's time. Still ended by the signal.
+            // SAFETY: a flag of this process alone.
+            #[cfg(target_os = "linux")]
+            unsafe {
+                libc::prctl(libc::PR_SET_DUMPABLE, 0);
+            }
             // SAFETY: none: the fault is the test.
             unsafe { std::ptr::null_mut::<u64>().write_volatile(1) };
             return;
