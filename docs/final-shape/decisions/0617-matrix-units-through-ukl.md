@@ -359,7 +359,8 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
     - then the words became 64 bits: the gap above.
     - Staging C through threadgroup memory, and storing it directly, did not change it.
 - **Open:**
-  - the M1's remaining gap, which needs its compiled shader read;
+  - the M1's remaining gap, which needed its compiled shader read. Read 2026-11-23 ("The M1's compiled bit
+    product"): it is the inner loop's address arithmetic, under register pressure;
   - the tile's reads, which bound both machines: larger tiles, or both sides' rows read once for several tiles.
     Measured 2026-11-23: they bind neither ("The bit product's reads").
 
@@ -415,7 +416,7 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
 
 - **The M5 runs f16, bf16 and i8 on Metal 4's `matmul2d`** (MetalPerformancePrimitives; `UKL_MMA_M5`). The host
   asks the device for Apple's GPU family 10 (`supportsFamily:` 1010, which the metal crate does not name) and gives
-  its kernels `UKL_METAL_APPLE10`; `RERAIL_METAL_UNITS=0` leaves it out. The M1-M4 keep `simdgroup_matrix`.
+  its kernels `UKL_METAL_APPLE10`; `RERAIL_METAL_MATRIX_UNITS=0` leaves it out. The M1-M4 keep `simdgroup_matrix`.
 - **The shape is 16×16×32, one SIMD group an owner.** A probe of `matmul2d` on the M5 Max (macOS 26.4) settled what
   the headers leave open:
   - With A and B in registers (cooperative input tensors), the operation takes one SIMD group only ("Input
@@ -451,6 +452,9 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
   The native form stays on. The rate kernel holds every type in one kernel, and its b1 branch ran at half the
   emulated programs' speed (0.206 against 0.105 ms) while `matmul2d`'s branches shared the kernel. The bit
   product's own kernel has none of them.
+- **The engine's own Metal kernels do not take it yet.** `accel` preprocesses them with `rerail_ukl::metal_source`,
+  without the device's defines, so on the M5 the bit product keeps `simdgroup_matrix`'s C layout (its b1 is emulated
+  either way). A kernel there that wants the M5's f16, bf16 or i8 needs those defines passed on that path.
 - **Passing:**
   - On the M5, the nine matrix tests and `accel`'s `bit_product_counts_and_pairs`.
   - UKL's preprocessor tests, on Linux. Their clang comparison had pointed at the forest's shim directories since
@@ -503,6 +507,37 @@ The 1-bit section left the tile's reads open, as the limit on the GB10 and the M
   threadgroup a core, where the 64 tile's 9.7 KB leaves three.
 - So `bp_tile` stays as it was. The M1's gap of the 1-bit section (6-13%) is not its reads either; its compiled
   shader remains the way to it.
+
+### The M1's compiled bit product (2026-11-23)
+
+- **How it was read.** The engine's kernel store keeps each pipeline as a serialized `MTLBinaryArchive`, which holds
+  the device's own machine code. A run of `bit_product_counts_and_pairs` on the M1 with a fresh store
+  (`RERAIL_METAL_KERNELS=<dir>`, `RERAIL_SHIPPED_KERNELS=off`, and `RERAIL_METAL_UNITS=off` so that the kernel is
+  one library, not decision 0571's units) leaves the archives. Dougall Johnson's `applegpu` disassembles them: its
+  `metal-archive-extractor` takes the compute shader out of the archive and its `_agc.main` out of that, and
+  `disassemble.py` reads G13's instructions. `bp_tile` is the pipeline with 32 popcounts.
+- **What it shows.** Both kernels, the current one and the one before the port (8dfbbf1389), run an inner loop of 8
+  steps, each with 32 popcounts and 32 ANDs:
+
+  | Kernel | Inner loop | Integer adds | Threadgroup loads | Registers |
+  |---|---|---|---|---|
+  | before the port | 122 instructions | 45 | 8, 2 words each | 50 |
+  | current | 130 instructions | 56 | 6, 2 or 4 words each | 56 |
+
+  The current loop loads wider and fewer times, as the port meant. But before its six loads it rebuilds the six
+  threadgroup addresses from the step's counter: 23 instructions (shifts, adds, a mask), where the earlier kernel
+  spends about 12. Those six lanes' bases do not change from step to step. The compiler rebuilds them rather than
+  hold them in six registers.
+- **Register pressure is why.** The loop unrolled (`#pragma clang loop unroll(full)`: `#pragma unroll` alone was
+  ignored), every offset a constant, takes 127 registers and spills: 161 stack loads and 158 stack stores in 1,962
+  instructions. Holding more values live costs more than rebuilding them.
+- **So the M1's gap is the ported loop's register use, not its reads.** Its 8 extra instructions a step against 122
+  are close to the 9% measured at W1 on the M1 (and less than 1% at W5 on the M1 Max).
+- **The fragments' loop kept rolled** (`#pragma clang loop unroll(disable)` on `n`, so that the two fragments of B
+  are not both loaded first) is worse: a step of about 191 instructions, as the accumulators `c[n]` are then chosen
+  by selects (24 `icmpsel` a fragment), and still 55 registers. So the current loop stays: the compiler's choice to
+  rebuild addresses is the cheaper of the forms tried, and closing the gap would take a loop of fewer live values
+  than either, which the fragments' interface does not give by itself.
 
 ### Step 5, built (2026-11-23)
 

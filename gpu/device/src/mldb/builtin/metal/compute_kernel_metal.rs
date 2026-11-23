@@ -112,9 +112,9 @@ fn get_kernel_type_from_data_type(data_type: MTLDataType) -> Result<KernelBaseTy
 }
 
 /// The defines a device's kernels compile with (decision 0617): `UKL_METAL_APPLE10` on Apple's GPU family 10 (the M5),
-/// whose matrix units UKL reaches through Metal 4's `matmul2d`. `RERAIL_METAL_UNITS=0` leaves them out.
+/// whose matrix units UKL reaches through Metal 4's `matmul2d`. `RERAIL_METAL_MATRIX_UNITS=0` leaves them out (`RERAIL_METAL_UNITS` is decision 0571's).
 pub fn defines(device: &DeviceRef) -> Vec<(&'static str, String)> {
-    if std::env::var("RERAIL_METAL_UNITS").is_ok_and(|v| v == "0") {
+    if std::env::var("RERAIL_METAL_MATRIX_UNITS").is_ok_and(|v| v == "0") {
         return Vec::new();
     }
     // `MTLGPUFamilyApple10` (1010), which the metal crate does not name.
