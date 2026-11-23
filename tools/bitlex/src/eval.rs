@@ -468,6 +468,8 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
+            // The executors' (decision 0650): this evaluator refuses a file whose statement fails, as before.
+            Stmt::Recover { .. } => {}
             Stmt::Mark { kind, at, end, unless, unplaced, checks, next, settles, drops, loses, refuses, refuses_taken, .. } => {
                 let m = self.mask(at)?;
                 if !refuses_taken.is_empty() {

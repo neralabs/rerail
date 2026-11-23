@@ -30,26 +30,37 @@ fn image_nodes(image: &[u8]) -> Nodes {
     (0..v.len()).map(|i| (v.key(i), v.start(i), v.end(i), v.size(i))).collect()
 }
 
-/// Where the parser as Rust's tape is not the JIT's: whether it refuses the file, and where neither does, the first
-/// node that differs.
+/// The first node where tapes `a` and `b` of `text` differ, each named by its text.
+fn node_differs(text: &str, a: &Nodes, b: &Nodes, an: &str, bn: &str) -> Option<String> {
+    // The first node whose kind or span differs (a size differs at every node around it), else whose size does.
+    let span = |n: Option<&(u32, u32, u32, usize)>| n.map(|n| (n.0, n.1, n.2));
+    let k = (0..a.len().max(b.len())).find(|&k| span(a.get(k)) != span(b.get(k))).or_else(|| (0..a.len().max(b.len())).find(|&k| a.get(k) != b.get(k)))?;
+    let at = |n: Option<&(u32, u32, u32, usize)>| n.map_or(String::new(), |n| text[n.1 as usize..].chars().take(40).collect::<String>().replace('\n', "⏎"));
+    Some(format!("node {k} of {}/{}: {an} {:x?} `{}`, {bn} {:x?} `{}`", a.len(), b.len(), a.get(k), at(a.get(k)), b.get(k), at(b.get(k))))
+}
+
+/// Where the parser as Rust's tape is not the lean parser's or the JIT's. A tape it writes is the lean parser's: a
+/// statement that fails is one ERROR leaf (decision 0650). A file the JIT takes, it takes, with the JIT's tape. The
+/// device's form (the one loop) recovers no statement yet: it refuses a file the calls take that way, else its tape is
+/// the calls'.
 fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
     let theirs = c.parser.image(text.as_bytes()).ok().map(|i| image_nodes(&i));
     let buf = rerail_rr_aot::padded(text.as_bytes());
     let ours = rerail_rr_aot::parse(&buf, text.len()).ok().map(|i| image_nodes(&i));
-    // The device's form (the one loop) parses as the CPU's: the same tape, or both refuse.
     let looped = rerail_rr_aot::parse_loop(&buf, text.len()).ok().map(|i| image_nodes(&i));
-    if looped != ours {
+    if looped.is_some() && looped != ours {
         return Some(format!("the one loop's tape is not the calls': {} nodes, {} nodes", looped.map_or(0, |l| l.len()), ours.as_ref().map_or(0, |o| o.len())));
     }
-    match (theirs, ours) {
-        (None, None) => None,
-        (Some(_), None) => Some("the JIT parses it, the parser as Rust refuses it".into()),
-        (None, Some(_)) => Some("the parser as Rust parses it, the JIT refuses it".into()),
-        (Some(a), Some(b)) => {
-            let k = (0..a.len().max(b.len())).find(|&k| a.get(k) != b.get(k))?;
-            let at = |n: Option<&(u32, u32, u32, usize)>| n.map_or(String::new(), |n| text[n.1 as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
-            Some(format!("node {k} of {}/{}: the JIT {:x?} `{}`, the parser as Rust {:x?} `{}`", a.len(), b.len(), a.get(k), at(a.get(k)), b.get(k), at(b.get(k))))
+    if let Some(b) = &ours {
+        let lean = image_nodes(&crate::rr::lean::tape(text));
+        if let Some(d) = node_differs(text, &lean, b, "the lean parser", "the parser as Rust") {
+            return Some(d);
         }
+    }
+    match (theirs, ours) {
+        (Some(_), None) => Some("the JIT parses it, the parser as Rust refuses it".into()),
+        (Some(a), Some(b)) => node_differs(text, &a, &b, "the JIT", "the parser as Rust"),
+        _ => None,
     }
 }
 
@@ -88,11 +99,16 @@ fn tier2_checked_marks() -> u32 {
 #[test]
 fn deep_nesting_ends_in_a_refusal() {
     for n in [128, 200, 3_000, 100_000] {
-        for text in [format!("a(X) :- b(X), X = {}1{}.\n", "[".repeat(n), "]".repeat(n)), format!(".policy {}{}\n", "{\"a\": ".repeat(n), "}".repeat(n))] {
-            let got = rerail_rr_aot::parse(&rerail_rr_aot::padded(text.as_bytes()), text.len());
-            if n >= 3_000 {
-                assert!(got.is_err(), "{n} deep: refused");
-            }
+        // `[` starts no term: its statement fails, and is recovered as the lean parser recovers it (decision 0650).
+        let text = format!("a(X) :- b(X), X = {}1{}.\n", "[".repeat(n), "]".repeat(n));
+        if let Ok(t) = rerail_rr_aot::parse(&rerail_rr_aot::padded(text.as_bytes()), text.len()) {
+            assert!(image_nodes(&t) == image_nodes(&crate::rr::lean::tape(&text)), "{n} deep `[`: the lean parser's tape");
+        }
+        // A JSON document's levels past the depth: a limit, refused whole.
+        let text = format!(".policy {}{}\n", "{\"a\": ".repeat(n), "}".repeat(n));
+        let got = rerail_rr_aot::parse(&rerail_rr_aot::padded(text.as_bytes()), text.len());
+        if n >= 3_000 {
+            assert!(got.is_err(), "{n} deep: refused");
         }
     }
 }
@@ -250,6 +266,82 @@ fn corpus_tier1s_records_are_the_interpreters() {
         }
     }
     eprintln!("{} files", files.len());
+}
+
+/// A statement that fails is one ERROR leaf, from its first token to where the next can start, and the parse goes on
+/// (decision 0650): the lean parser's tape, wherever the failure is (a token no state takes, a bare term held to the
+/// statement's end, a reading that refuses, a `.end` outside a block, a block that does not end), with comments
+/// inside the leaf and around it, at each resume point (a `#` word, a `.` first on its line before a name, past
+/// another `.`). A file nested past the calls' depth is refused whole: a limit, not its syntax.
+#[test]
+fn a_statement_that_fails_is_one_error_leaf() {
+    let cases = [
+        "a(x) :- b(x) c(x).\nd(1).\n",
+        "a(x) :- b.\nd(1).\n",
+        "B409(n) :- bl.acklisted(n, \"B409\").\n",
+        "a(X) :- X = sum(Y, Z) : { b(Y) }.\nc(1).\n",
+        ".end\na(1).\n",
+        ".test t exactly\n    a(1).\nb(2).\n",
+        "a(x) :- /* c */ b(x) @ c(x). // d\n// e\nd(1).\n",
+        "a(x) :- b(x) ) .decl c(x: number)\n.decl d(y: number)\n",
+        "a(x) :- b(x) ) #include \"x\"\nd(1).\n",
+        "a(x) :- b(x) )\n  .decl d(y: number)\n",
+        "a(x) :- b(x) ) /* c */ .decl d(y: number)\n",
+        "a(1) b(2) c(3)",
+        "n\n// a comment\n.decl d(y: number)\n",
+        ".mode{ steer\n.scope include \"*\"\na(1).\n",
+        // A suppress line ends at a `,` before anything but a string: the violation is whole, the `,` the next statement's.
+        ".violation v(n: number) \"m\" suppress t \"a\", \"b\", .\"c\"\nd(1).\n",
+    ];
+    for text in cases {
+        let buf = rerail_rr_aot::padded(text.as_bytes());
+        let ours = rerail_rr_aot::parse(&buf, text.len()).unwrap_or_else(|at| panic!("{text:?}: refused at {at}"));
+        let lean = crate::rr::lean::tape(text);
+        if let Some(d) = node_differs(text, &image_nodes(&lean), &image_nodes(&ours), "the lean parser", "the parser as Rust") {
+            panic!("{text:?}: {d}");
+        }
+        assert_ne!(rerail_rr_aot::parse_loop(&buf, text.len()).ok(), Some(ours), "{text:?}: the one loop recovers none yet");
+    }
+    let deep = format!("a(X) :- b(X), X = {}1{}.\nc(1).\n", "(".repeat(500), ")".repeat(500));
+    assert!(rerail_rr_aot::parse(&rerail_rr_aot::padded(deep.as_bytes()), deep.len()).is_err(), "past the depth: refused");
+}
+
+/// The lean parser's edited copies of the corpus (`edited_corpus`): a tape the parser as Rust writes, a statement
+/// recovered or none, is the lean parser's. Counts the files taken whole, those taken with a statement recovered, and
+/// those refused (tier 1's errors, a limit).
+#[test]
+#[ignore = "the corpus: run by name"]
+fn corpus_edited_tapes_are_the_lean_tapes() {
+    let texts = crate::tests::edited_corpus();
+    let (mut whole, mut recovered, mut refused) = (0, 0, 0);
+    let mut differ = Vec::new();
+    for (k, text) in texts.iter().enumerate() {
+        let buf = rerail_rr_aot::padded(text.as_bytes());
+        let Ok(ours) = rerail_rr_aot::parse(&buf, text.len()) else {
+            refused += 1;
+            continue;
+        };
+        let lean = crate::rr::lean::tape(text);
+        let nodes = image_nodes(&lean);
+        if let Some(d) = node_differs(text, &nodes, &image_nodes(&ours), "the lean parser", "the parser as Rust") {
+            if differ.is_empty()
+                && let Ok(dir) = std::env::var("RERAIL_RR_DIFFERS")
+            {
+                std::fs::write(format!("{dir}/differs.rerail"), text).expect("writes");
+            }
+            eprintln!("differs: text {k}: {d}");
+            if differ.len() < 4 {
+                let first = image_nodes(&ours).iter().zip(&nodes).find(|(a, b)| (a.0, a.1, a.2) != (b.0, b.1, b.2)).map_or(0, |(a, b)| a.1.min(b.1) as usize);
+                let to = (first + 400..=text.len()).find(|&i| text.is_char_boundary(i)).unwrap_or(text.len());
+                eprintln!("  {:?}", &text[first..to]);
+            }
+            differ.push(format!("text {k}: {d}"));
+            continue;
+        }
+        if nodes.iter().any(|n| n.0 >> 16 & u32::from(rerail_tape_format::CODE_ERROR) != 0) { recovered += 1 } else { whole += 1 }
+    }
+    eprintln!("{} texts: {whole} taken whole, {recovered} with a statement recovered, {refused} refused", texts.len());
+    assert!(differ.is_empty(), "{} texts differ; the first: {}", differ.len(), differ[0]);
 }
 
 /// `tapes_are_the_jits` over the repository's `.rerail` files. `RERAIL_RR_DIFFERS=<dir>`: the first file that

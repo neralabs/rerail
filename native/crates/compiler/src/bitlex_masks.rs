@@ -829,7 +829,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                     }
                 })
                 .collect();
-            let x = crate::bitlex_rust::Input { tree: &low.tree_desugared, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds };
+            let x = crate::bitlex_rust::Input { tree: &low.tree_desugared, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds, terminators: symbols.terminators.last_bytes() };
             // Tier 2 as calls, the CPU's form, and as one loop, the device's (decision 0618): over tier 1's records
             // where its tokens are decided there, else the rules' methods.
             let calls = crate::bitlex_rust::tier2_calls_reads(&x);
@@ -1180,7 +1180,7 @@ impl Lowering {
                 }
                 Stmt::Tree { body, .. } => self.stmts(body)?,
                 // The grammar's rules: the state machine is built once the token rows are known.
-                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Provisional(_) | Stmt::Remember(_) | Stmt::Flags(_) => self.tree.push(stmt.clone()),
+                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Provisional(_) | Stmt::Remember(_) | Stmt::Flags(_) | Stmt::Recover { .. } => self.tree.push(stmt.clone()),
                 // Applied by the parser: each token it names marked `A as IMPLIED` in its rule.
                 Stmt::Implied { .. } => {}
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),

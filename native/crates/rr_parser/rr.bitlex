@@ -298,14 +298,23 @@ mark json_bad    = ff,
 
 # Token marks that refuse: the tokens after a token, comments between them skipped. Declared
 # last, a state tests each only in its switch's arms for its token's first byte.
-# `.input` and `.output` with no relation: before a `#` word (`#include` or another), or at the file's end. Refused
-# as the engine refuses them.
-mark io_bare     = tokens "." "input" | "output" hash_word | "#include" | end
+# `.input` and `.output` with no relation: before any token but a `.` or a name (which is one), or at the file's end.
+# Refused as the engine refuses them: it reads a relation there.
+mark io_bare     = tokens "." "input" | "output" hash_word | "#include" | end | string | number | code_literal
+                   | "(" | ")" | "," | ";" | ":" | "=" | "<" | ">" | "!" | "|" | "@" | "*" | "[" | "]" | "-" | "+" | "/"
+                   | "%" | "~" | "^" | "&" | "{" | "}" | ":-" | "=>" | "!=" | "<=" | ">=" | "<:" | "->"
+
+# Token marks past the code's bits: tier 2 tests their tokens alone, as the engine peeks.
+# A `,` and a string: a suppress line's next rule. A `,` before anything else ends the line, as the engine reads it.
+mark comma_rule  = tokens "," string
 
 # --- The tree ----------------------------------------------------------------------------------
 
 tree rr {
   node source_file whole = (include | setting | clause)*
+  # A statement that fails: cut back to its first token, and one ERROR leaf from it to where the next can start, as the
+  # engine's parser recovers (decision 0650): at a `#` word, at a `.` first on its line before a name, past any other `.`.
+  recover source_file at hash_word | "#include", at first "." identifier, past "."
   node include          = '#include' path: string
   # A setting's arguments to its line's end; a JSON object ends it.
   # `.policy`: a setting, or before a `{` a policy document.
@@ -382,7 +391,7 @@ tree rr {
   # `fix safe rel "…"`; before a string `safe` is the relation.
   node fix_line         = 'fix' ('safe' (relation: identifier description: string | relabel relation as identifier description: string)
                                | relation: identifier description: string)
-  node suppress_line    = 'suppress' tool: identifier rule: string (',' rule: string)* [over_on 'over' (one_name '{' over: identifier '}' | over: raw_braces)]
+  node suppress_line    = 'suppress' tool: identifier rule: string (comma_rule ',' rule: string)* [over_on 'over' (one_name '{' over: identifier '}' | over: raw_braces)]
   choice json           = balanced json_object '{' '}'
   node column_list      = '(' [column: column (',' column: column)*] ')'
   node column           = name: identifier ':' type: type
@@ -566,6 +575,6 @@ tree rr {
   implied aggregated ','
   implied agg_body '{' '}'
   implied keyed_body '}'
-  hidden float_after line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens at_on
+  hidden float_after line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens at_on comma_rule
   extra comment
 }

@@ -1,6 +1,6 @@
 # 0650: `.rerail`'s tier 2 recovers a statement, as the lean parser does
 
-Status: designed; the steps below are under way. The item is the user's (2026-11-23): lean's statement-level error
+Status: steps 1 and 2 done; 3 to 5 under way. The item is the user's (2026-11-23): lean's statement-level error
 recovery in every executor of `rr.bitlex`'s tier 2, with A20 kept (no trial reads inside an expression; `reread` and
 the lookahead patterns stay).
 
@@ -58,17 +58,22 @@ an ERROR leaf in lean's tape. Of the refusals:
 **A grammar statement, `recover`.** In `rr.bitlex`'s tree:
 
 ```
-recover source_file before hash_word | line_dot identifier, after "."
+recover source_file at hash_word | "#include", at first "." identifier, past "."
 ```
 
 It makes the repetition of a `whole` node lean's statement loop: each repetition is a statement, marked before it is
-read. `line_dot` is a token mark tier 1 sets on a `.` first on its line, from the bytes, as lean's `line_start`
-reads them. The resume rule is lean's, read off records: a record's kind, its mark bit, and the next record's kind.
+read. Each clause is a token pattern, as a token mark's (`tokens …`), tested at a record from the failed statement's
+second token on: `at` stops the scan there, `past` stops it past the record. `first` asks that the record be first
+on its line: only blanks before it back to a line terminator's last byte, read off the bytes as lean's `line_start`
+reads them. It is read only in the scan, so it needs no mark of tier 1's.
 
 **Which refusals recover.** A refusal is syntax or a limit. The syntax ones recover:
 
 - a token no state takes, or one a rule needs and does not find;
 - a `refuse M in L` mark, once each is exact (the gaps above);
+- a decision lean makes on two tokens. Where tier 2 had a mark too wide for it, the mark is now lean's test: a suppress
+  line's `,` goes on only before a string (`comma_rule`), and `.input` or `.output` with no relation is refused
+  before every token but a `.` or a name (`io_bare`).
 - a bare term held at the statement's end.
 
 The limits keep the whole-file refusal. In the calls form this is lean's shape: `refuse()` fails the statement, and
@@ -114,8 +119,31 @@ lean's, byte for byte. The probe stays, as the tally of what still refuses.
 
    The probe now finds no refusal of a text lean reads with no error, but for the limits and tier 1's.
    `the_grammar_reads_what_the_engine_reads` holds each case.
-2. `recover` in the grammar language, the `line_dot` mark, the calls form's recovery, the provisional check at the
-   statement's end, and the fuzz over the calls form.
+2. `recover` in the grammar language, the calls form's recovery, the provisional check at the statement's end, and
+   the fuzz over the calls form. Done:
+   - `recover` in `bitlex`'s syntax (`Stmt::Recover`, `RecoverClause`). The interpreter of `tools/bitlex` and
+     the masks' compile pass it by: the other executors take it in steps 3 and 4.
+   - `bitlex_rust` writes the root's loop as lean's: `mark()` before each statement, then `statement()` and
+     `settled(save.w)`; when either fails, `recover(save)`. `Mark` holds every field a statement changes that the
+     parser has: the record index, the comment cursors, the tape's length, the levels, the level's state, the
+     word, and the strings open over a template. `reset` truncates the tape and the levels and drops the dropped
+     nodes past the mark. `recover` scans by the clauses and writes the ERROR leaf (the tape's `CODE_ERROR`). The
+     comments inside it are its text. Then it goes on.
+   - A limit is no syntax: past the depth, `limited` is set, and `recover` refuses the file. Tier 1's errors,
+     escapes and local checks refuse before tier 2 runs, as before.
+   - The provisional field `bare` is checked at each statement's end (`settled`), not at the root's close.
+   - Only a grammar that declares `recover` gets it: Kotlin's and JSON's generated Rust is unchanged.
+   - `comma_rule`: a suppress line's `,` goes on only before a string, as lean's. The code's 16 mark bits are full,
+     so it is declared after `io_bare`, the last mark that holds one. A token mark there holds no bit, and tier 2
+     tests its tokens alone, as lean peeks (`bitlex_masks`'s `code_marks`).
+   - `io_bare` names every token lean refuses after `.input` or `.output`.
+
+   Tests: `a_statement_that_fails_is_one_error_leaf` (a case for each resume rule, comments in and after the leaf,
+   a `.test` block, a bare term, and the suppress line's `,`; past the depth, refused).
+   `corpus_edited_tapes_are_the_lean_tapes` (run by name) parses the corpus and lean's edited copies of it: each
+   text the calls form takes, whole or with statements recovered, has lean's tape, node for node. Each other
+   text is refused for a limit or for tier 1. `deep_nesting_ends_in_a_refusal` covers the limits. The one loop
+   recovers nothing yet, and its tests check that it refuses those texts.
 3. The device loop.
 4. The interpreter and the JIT.
 5. Tier 1's errors as lean's `Bad` tokens, so a byte no token takes and a region open at the end recover too.

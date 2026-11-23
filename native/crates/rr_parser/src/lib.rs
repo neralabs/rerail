@@ -295,8 +295,9 @@ pub mod tests {
         // number's 19 digits checked at its token (`CHECK`, 0133) in the arms that take one: 3,563.
         // A float one token, made a float by the mark after it (`relabel _ as float`): 3,322.
         // What the engine reads and the grammar refused, read (0650: `#` words on a line, a named
-        // argument at a literal's start, `product`, a pattern's selector): 406 states, 3,097 arms.
-        assert!(states <= 413 && arms <= 3097 && c.program.words.len() <= 3322, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // argument at a literal's start, `product`, a pattern's selector): 406 states, 3,097 arms. A suppress line's `,`
+        // before a string alone (`comma_rule`): 407 states, 3,098 arms.
+        assert!(states <= 413 && arms <= 3098 && c.program.words.len() <= 3322, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
@@ -834,42 +835,7 @@ pub mod tests {
     fn where_the_grammar_refuses_against_leans_errors() {
         use std::collections::BTreeMap;
         let c = crate::compiled().expect("compiles");
-        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-        let mut next = move || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed
-        };
-        const ALPHABET: &[u8] = b"(){}[],.:;!=<>+-*/%@$#_|&~?\\\"'`\n \taz09";
-        let mut files = corpus();
-        files.sort();
-        let mut texts = Vec::new();
-        for text in &files {
-            texts.push(text.clone());
-            for round in 0..4 {
-                let mut bytes = text.as_bytes().to_vec();
-                for _ in 0..=round {
-                    if bytes.is_empty() {
-                        break;
-                    }
-                    let at = (next() % bytes.len() as u64) as usize;
-                    match next() % 3 {
-                        0 => bytes.insert(at, ALPHABET[(next() % ALPHABET.len() as u64) as usize]),
-                        1 => {
-                            bytes.remove(at);
-                        }
-                        _ => {
-                            let to = (at + 1 + (next() % 8) as usize).min(bytes.len() - 1);
-                            bytes.swap(at, to);
-                        }
-                    }
-                }
-                if let Ok(s) = String::from_utf8(bytes) {
-                    texts.push(s);
-                }
-            }
-        }
+        let texts = edited_corpus();
         let mut tally: BTreeMap<(&str, &str), usize> = BTreeMap::new();
         let mut shown: BTreeMap<(&str, &str), usize> = BTreeMap::new();
         let mut taken_with_error = 0;
@@ -1506,9 +1472,13 @@ pub mod tests {
     #[test]
     fn token_marks_refuse_and_take() {
         let c = crate::compiled().expect("compiles");
-        // Each token mark's bit in the record is its first word's alone: no mask read.
-        let alone = c.block.records.as_ref().expect("records").marks.iter().filter(|m| m.0 == rerail_compiler::records::WORD_ALONE).count();
-        assert_eq!(alone, c.program.token_marks.len(), "the token marks' bits by their words");
+        // Each token mark's bit in the record is its first word's alone: no mask read. A token mark past the code's
+        // bits (`comma_rule`) holds none: tier 2 tests its tokens alone.
+        let records = c.block.records.as_ref().expect("records");
+        let alone = records.marks.iter().filter(|m| m.0 == rerail_compiler::records::WORD_ALONE).count();
+        let held = c.program.token_marks.iter().filter(|m| usize::from(m.order) < records.mark_bits()).count();
+        assert_eq!(alone, held, "the token marks' bits by their words");
+        assert!(held < c.program.token_marks.len(), "a token mark tested alone");
         let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         let head = ".decl a(n: number, j: number)\n.decl d(n: number, k: number)\n";
         let rule = |agg: &str| format!("{head}d(n, k) :- a(n, _), k = {agg} : {{ a(n, j) }}.\n");
@@ -1546,6 +1516,9 @@ pub mod tests {
             format!("{head}b(k) :- a(_, k), k = product(w) : {{ a(w, _) }}.\n"),
             format!("{head}b(n) :- a(n, _), n ~ `x` at \"call\".\n"),
             format!("{head}b(n) :- a(n, _), !n ~ `x` at /* c */ \"call\", n ~ `y`.\n"),
+            // A `,` then a string after a pattern: the next literal, not a selector.
+            format!("{head}b(n) :- a(n, _), n ~ `x`, \"s\" = \"s\".\n"),
+            ".violation v(n: number) \"m\" suppress t \"a\", /* c */ \"b\" over {n}\n".to_owned(),
         ];
         for src in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
@@ -1658,6 +1631,10 @@ pub mod tests {
             // The marks' token tests need the loop too: their masks alone.
             .replace(", after number when count(dot) at least 1", "")
             .replace("mark json_bad    = ff,", "mark json_bad    = ff")
+            // A token mark past the code's bits needs the token step's extras; its `,` reads as before it.
+            .replace("mark comma_rule  = tokens \",\" string", "")
+            .replace("(comma_rule ',' rule: string)*", "(',' rule: string)*")
+            .replace(" at_on comma_rule", " at_on")
             .lines()
             .filter(|l| !(l.starts_with("escape ") && l.contains(" at number when ")))
             .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
@@ -3179,6 +3156,47 @@ pub mod tests {
     /// This thread's CPU time (user and sys), to the nanosecond.
     fn thread_cpu() -> std::time::Duration {
         rerail_prof::thread_cpu()
+    }
+
+    /// The corpus and lean's edited copies of it: each file, then four copies of it after one to four edits (a
+    /// character of `.rerail`'s syntax inserted, a byte deleted, two swapped), the edits and the seed those of
+    /// `lean_tape_is_the_engines_on_edited_files`, the copies that are still UTF-8.
+    pub fn edited_corpus() -> Vec<String> {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        const ALPHABET: &[u8] = b"(){}[],.:;!=<>+-*/%@$#_|&~?\\\"'`\n \taz09";
+        let mut texts = Vec::new();
+        for text in corpus() {
+            for round in 0..4 {
+                let mut bytes = text.as_bytes().to_vec();
+                for _ in 0..=round {
+                    if bytes.is_empty() {
+                        break;
+                    }
+                    let at = (next() % bytes.len() as u64) as usize;
+                    match next() % 3 {
+                        0 => bytes.insert(at, ALPHABET[(next() % ALPHABET.len() as u64) as usize]),
+                        1 => {
+                            bytes.remove(at);
+                        }
+                        _ => {
+                            let to = (at + 1 + (next() % 8) as usize).min(bytes.len() - 1);
+                            bytes.swap(at, to);
+                        }
+                    }
+                }
+                if let Ok(s) = String::from_utf8(bytes) {
+                    texts.push(s);
+                }
+            }
+            texts.push(text);
+        }
+        texts
     }
 
     /// The repository's `.rerail` files.

@@ -645,10 +645,6 @@ impl<'a, L: Layout> P<'a, L> {
             self.src.len() as u32
         };
         let end = if whole { self.src.len() as u32 } else { self.last_end };
-        // A field that a later token decides (`provisional`), held still at the file's end: refused.
-        if (0..self.w.len()).any(|i| matches!((self.w.plain_key(i) >> 10 & 0x3f) as u16, 63)) {
-            return self.refuse();
-        }
         self.w.plain_set_start(0, first);
         self.w.plain_close(0, end);
         Ok(())
@@ -4660,16 +4656,12 @@ impl<L: Layout> P<'_, L> {
                     loop {
                         if self.m_over_on() {
                             break;
+                        } else if self.m_comma_rule() {
+                            self.mark_comma_rule()?;
+                            self.word_skip_as::<false, false>(w::COMMA_12)?;
+                            self.tk_as::<false, false>(self.at_string(), k::STRING, f::RULE)?;
                         } else {
-                            match self.word() {
-                                w::COMMA_12 => {
-                                    self.word_skip_as::<false, false>(w::COMMA_12)?;
-                                    self.tk_as::<false, false>(self.at_string(), k::STRING, f::RULE)?;
-                                }
-                                _ => {
-                                    break;
-                                }
-                            }
+                            break;
                         }
                     }
                     if self.m_over_on() {
@@ -6503,6 +6495,32 @@ impl<L: Layout> P<'_, L> {
         self.take_io_bare()
     }
 
+    /// Mark `comma_rule` holds at the token, not taken there; once a token (`held`).
+    #[inline]
+    fn m_comma_rule(&mut self) -> bool {
+        matches!(self.word(), w::COMMA_12) && self.taken >> 15 & 1 == 0 && self.held(15, Self::h_comma_rule)
+    }
+
+    #[inline]
+    fn h_comma_rule(&self) -> bool {
+        (self.pat_comma_rule_0_0(self.i, self.n))
+    }
+
+    /// Mark `comma_rule` taken: it and the marks before it passed at this token.
+    fn take_comma_rule(&mut self) -> R {
+        self.taken |= 0xffff;
+        Ok(())
+    }
+
+    /// Mark `comma_rule` where the rule takes it: it must hold.
+    fn mark_comma_rule(&mut self) -> R {
+        if !self.m_comma_rule() {
+            return self.refuse();
+        }
+        self.marked = true;
+        self.take_comma_rule()
+    }
+
     #[allow(unused_variables)]
     fn pat_fix_on_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
@@ -6656,7 +6674,19 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_io_bare_0_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_hash_word_at(j) || self.word_at(j) == w::HASH_INCLUDE_34 || j >= self.n) && true
+        (self.at_hash_word_at(j) || self.word_at(j) == w::HASH_INCLUDE_34 || j >= self.n || self.at_string_at(j) || self.at_number_at(j) || self.at_code_literal_at(j) || self.word_at(j) == w::LPAREN_10 || self.word_at(j) == w::RPAREN_11 || self.word_at(j) == w::COMMA_12 || self.word_at(j) == w::SEMI_14 || self.word_at(j) == w::COLON_15 || self.word_at(j) == w::EQ_16 || self.word_at(j) == w::LT_17 || self.word_at(j) == w::GT_18 || self.word_at(j) == w::BANG_19 || self.word_at(j) == w::BAR_22 || self.word_at(j) == w::AT_23 || self.word_at(j) == w::STAR_24 || self.word_at(j) == w::LBRACK_25 || self.word_at(j) == w::RBRACK_26 || self.word_at(j) == w::MINUS_27 || self.word_at(j) == w::PLUS_28 || self.word_at(j) == w::SLASH_29 || self.word_at(j) == w::PERCENT_30 || self.word_at(j) == w::TILDE_31 || self.word_at(j) == w::CARET_32 || self.word_at(j) == w::AMP_33 || self.word_at(j) == w::LBRACE_20 || self.word_at(j) == w::RBRACE_21 || self.word_at(j) == w::COLON_MINUS_3 || self.word_at(j) == w::EQ_GT_4 || self.word_at(j) == w::BANG_EQ_5 || self.word_at(j) == w::LT_EQ_6 || self.word_at(j) == w::GT_EQ_7 || self.word_at(j) == w::LT_COLON_8 || self.word_at(j) == w::MINUS_GT_9) && true
+    }
+
+    #[allow(unused_variables)]
+    fn pat_comma_rule_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::COMMA_12) && self.pat_comma_rule_0_1(j + 1, j)
+    }
+
+    #[allow(unused_variables)]
+    fn pat_comma_rule_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_string_at(j)) && true
     }
 
     /// A mark no rule takes holds at the token (a mark not hidden).

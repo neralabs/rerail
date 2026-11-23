@@ -381,6 +381,8 @@ pub struct P<'a, L: Layout> {
     /// again where it returns.
     word: u16,
     depth: u32,
+    /// A limit refused the file (the depth), not its syntax: no statement recovers (`recover`).
+    limited: bool,
     /// A mark taken last, no token or rule's end since (`G::after_mark`).
     marked: bool,
     /// The marks whose questions a level that may end at them asks (`ask_M`), by order: those
@@ -402,7 +404,7 @@ impl<'a, L: Layout> P<'a, L> {
         let (recs, xs) = (&lx.recs[..], &lx.extras[..]);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, cur: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, dead: Vec::new(), strings: 0 };
+        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, cur: 0, flags: 0, word: 0, depth: 0, limited: false, marked: false, asks: 0, refusing: 0, dead: Vec::new(), strings: 0 };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
@@ -511,6 +513,7 @@ impl<'a, L: Layout> P<'a, L> {
     fn deeper(&mut self) -> R {
         self.depth += 1;
         if self.depth > DEPTH {
+            self.limited = true;
             return self.refuse();
         }
         Ok(())
@@ -642,10 +645,6 @@ impl<'a, L: Layout> P<'a, L> {
             self.src.len() as u32
         };
         let end = if whole { self.src.len() as u32 } else { self.last_end };
-        // A field that a later token decides (`provisional`), held still at the file's end: refused.
-        if (0..self.w.len()).any(|i| matches!((self.w.plain_key(i) >> 10 & 0x3f) as u16, 63)) {
-            return self.refuse();
-        }
         self.w.plain_set_start(0, first);
         self.w.plain_close(0, end);
         Ok(())
@@ -814,26 +813,35 @@ impl<L: Layout> P<'_, L> {
     /// `source_file`.
     fn source_file(&mut self) -> R {
         self.open_root(k::SOURCE_FILE);
-        loop {
-            match self.word() {
-                w::HASH_INCLUDE_34 => {
-                    self.include()?;
-                }
-                w::DOT_13 => {
-                    self.setting()?;
-                }
-                w::MUST_35 | w::MAY_36 => {
-                    self.clause()?;
-                }
-                _ if self.at_identifier() => {
-                    self.clause()?;
-                }
-                _ => {
-                    break;
-                }
+        while self.i < self.n {
+            let save = self.mark();
+            if self.statement().and_then(|()| self.settled(save.w)).is_err() {
+                self.recover(save)?;
             }
         }
         self.close_root(true, false)
+    }
+
+    /// A statement of `source_file`: one of its repetition, as the lean parser's `statement`.
+    fn statement(&mut self) -> R {
+        match self.word() {
+            w::HASH_INCLUDE_34 => {
+                self.include()?;
+            }
+            w::DOT_13 => {
+                self.setting()?;
+            }
+            w::MUST_35 | w::MAY_36 => {
+                self.clause()?;
+            }
+            _ if self.at_identifier() => {
+                self.clause()?;
+            }
+            _ => {
+                return self.refuse();
+            }
+        }
+        Ok(())
     }
 
     /// `include`.
@@ -2664,16 +2672,12 @@ impl<L: Layout> P<'_, L> {
         loop {
             if self.m_over_on() {
                 break;
+            } else if self.m_comma_rule() {
+                self.mark_comma_rule()?;
+                self.word_skip_as::<false, false>(w::COMMA_12)?;
+                self.tk_as::<false, false>(self.at_string(), k::STRING, f::RULE)?;
             } else {
-                match self.word() {
-                    w::COMMA_12 => {
-                        self.word_skip_as::<false, false>(w::COMMA_12)?;
-                        self.tk_as::<false, false>(self.at_string(), k::STRING, f::RULE)?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
+                break;
             }
         }
         if self.m_over_on() {
@@ -5576,6 +5580,32 @@ impl<L: Layout> P<'_, L> {
         self.take_io_bare()
     }
 
+    /// Mark `comma_rule` holds at the token, not taken there; once a token (`held`).
+    #[inline]
+    fn m_comma_rule(&mut self) -> bool {
+        matches!(self.word(), w::COMMA_12) && self.taken >> 15 & 1 == 0 && self.held(15, Self::h_comma_rule)
+    }
+
+    #[inline]
+    fn h_comma_rule(&self) -> bool {
+        (self.pat_comma_rule_0_0(self.i, self.n))
+    }
+
+    /// Mark `comma_rule` taken: it and the marks before it passed at this token.
+    fn take_comma_rule(&mut self) -> R {
+        self.taken |= 0xffff;
+        Ok(())
+    }
+
+    /// Mark `comma_rule` where the rule takes it: it must hold.
+    fn mark_comma_rule(&mut self) -> R {
+        if !self.m_comma_rule() {
+            return self.refuse();
+        }
+        self.marked = true;
+        self.take_comma_rule()
+    }
+
     #[allow(unused_variables)]
     fn pat_fix_on_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
@@ -5729,7 +5759,19 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_io_bare_0_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_hash_word_at(j) || self.word_at(j) == w::HASH_INCLUDE_34 || j >= self.n) && true
+        (self.at_hash_word_at(j) || self.word_at(j) == w::HASH_INCLUDE_34 || j >= self.n || self.at_string_at(j) || self.at_number_at(j) || self.at_code_literal_at(j) || self.word_at(j) == w::LPAREN_10 || self.word_at(j) == w::RPAREN_11 || self.word_at(j) == w::COMMA_12 || self.word_at(j) == w::SEMI_14 || self.word_at(j) == w::COLON_15 || self.word_at(j) == w::EQ_16 || self.word_at(j) == w::LT_17 || self.word_at(j) == w::GT_18 || self.word_at(j) == w::BANG_19 || self.word_at(j) == w::BAR_22 || self.word_at(j) == w::AT_23 || self.word_at(j) == w::STAR_24 || self.word_at(j) == w::LBRACK_25 || self.word_at(j) == w::RBRACK_26 || self.word_at(j) == w::MINUS_27 || self.word_at(j) == w::PLUS_28 || self.word_at(j) == w::SLASH_29 || self.word_at(j) == w::PERCENT_30 || self.word_at(j) == w::TILDE_31 || self.word_at(j) == w::CARET_32 || self.word_at(j) == w::AMP_33 || self.word_at(j) == w::LBRACE_20 || self.word_at(j) == w::RBRACE_21 || self.word_at(j) == w::COLON_MINUS_3 || self.word_at(j) == w::EQ_GT_4 || self.word_at(j) == w::BANG_EQ_5 || self.word_at(j) == w::LT_EQ_6 || self.word_at(j) == w::GT_EQ_7 || self.word_at(j) == w::LT_COLON_8 || self.word_at(j) == w::MINUS_GT_9) && true
+    }
+
+    #[allow(unused_variables)]
+    fn pat_comma_rule_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::COMMA_12) && self.pat_comma_rule_0_1(j + 1, j)
+    }
+
+    #[allow(unused_variables)]
+    fn pat_comma_rule_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_string_at(j)) && true
     }
 
     /// A mark no rule takes holds at the token (a mark not hidden).
@@ -5959,6 +6001,114 @@ impl<L: Layout> P<'_, L> {
 
 /// A reading's way to the level's word (`remember`).
 const REMEMBERED: u16 = u16::MAX - 2;
+
+/// Where a statement starts (the lean parser's `Mark`): its token, the comments, the tape's length, the levels and the
+/// level's state, which a statement that fails is cut back to.
+#[derive(Clone, Copy)]
+struct Mark {
+    i: usize,
+    pend: usize,
+    xi: usize,
+    next_x: u32,
+    w: usize,
+    levels: usize,
+    top: (u32, u32),
+    last_end: u32,
+    flags: u32,
+    depth: u32,
+    marked: bool,
+    word: u16,
+    asks: u64,
+    refusing: u32,
+    strings: usize,
+}
+
+/// The last bytes of the language's line terminators (`recover`'s `first`).
+const TERMINATORS: &[u8] = &[0x0a, 0x0d];
+
+#[allow(clippy::all, dead_code)]
+impl<L: Layout> P<'_, L> {
+    /// The statement's mark (the lean parser's `mark`).
+    fn mark(&self) -> Mark {
+        Mark { i: self.i, pend: self.pend, xi: self.xi, next_x: self.next_x, w: self.w.len(), levels: self.levels.len(), top: self.top, last_end: self.last_end, flags: self.flags, depth: self.depth, marked: self.marked, word: self.word, asks: self.asks, refusing: self.refusing, strings: self.strings }
+    }
+
+    /// Back at mark `m` (the lean parser's `reset`): its token and comments, the tape and the levels as they were.
+    fn reset(&mut self, m: Mark) {
+        self.i = m.i;
+        self.pend = m.pend;
+        self.xi = m.xi;
+        self.next_x = m.next_x;
+        self.w.plain_truncate(m.w);
+        self.levels.truncate(m.levels);
+        self.top = m.top;
+        self.last_end = m.last_end;
+        self.flags = m.flags;
+        self.depth = m.depth;
+        self.marked = m.marked;
+        self.word = m.word;
+        self.asks = m.asks;
+        self.refusing = m.refusing;
+        self.strings = m.strings;
+        self.dead.retain(|&o| o != NONE && (o as usize) < m.w);
+        self.taken = 0;
+        let _ = self.arrive();
+    }
+
+    /// No node the statement made from `from` on holds a field a later token decides (`provisional`): one that does
+    /// failed, as the lean parser's literal fails where no comparison follows a bare term.
+    fn settled(&self, from: usize) -> R {
+        if (from..self.w.len()).any(|i| matches!((self.w.plain_key(i) >> 10 & 0x3f) as u16, 63)) {
+            return self.refuse();
+        }
+        Ok(())
+    }
+
+    /// A statement that failed, from mark `m` (the lean parser's `recover`): cut back to it, one ERROR leaf from its
+    /// first token to the resume point, the comments inside it its text; then on from there. A limit refuses the file.
+    fn recover(&mut self, m: Mark) -> R {
+        if self.limited {
+            return self.refuse();
+        }
+        let first = m.i;
+        self.reset(m);
+        let mut k = first + 1;
+        while k < self.n {
+            if (self.at_hash_word_at(k) || self.word_at(k) == w::HASH_INCLUDE_34) || self.first_on_line(k) && (self.word_at(k) == w::DOT_13) && (self.at_identifier_at(k + 1)) {
+                break;
+            }
+            if (self.word_at(k) == w::DOT_13) {
+                k += 1;
+                break;
+            }
+            k += 1;
+        }
+        let k = k.min(self.n);
+        self.flush();
+        let end = self.recs[k - 1].last + 1;
+        let at = self.w.plain_leaf(ERROR, self.recs[first].start, end);
+        self.set_made(at as u32);
+        while self.xi < self.xs.len() && self.xs[self.xi].start < end {
+            self.xi += 1;
+        }
+        self.pend = self.xi;
+        self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);
+        self.i = k;
+        self.last_end = end;
+        self.pass_comments();
+        self.arrive()
+    }
+
+    /// Whether token `j` is first on its line: only blanks before it back to a line's terminator (the lean parser's
+    /// `line_start`).
+    fn first_on_line(&self, j: usize) -> bool {
+        let at = self.recs[j].start as usize;
+        self.src[..at].iter().rev().take_while(|c| !TERMINATORS.contains(c)).all(|c| c.is_ascii_whitespace())
+    }
+}
+
+/// An ERROR leaf's key: the tape's error code (`rerail_tape_format::CODE_ERROR`), of no kind or field.
+const ERROR: u32 = (rerail_tape_format::CODE_ERROR as u32) << 16;
 
 #[allow(clippy::all, dead_code)]
 impl<L: Layout> P<'_, L> {

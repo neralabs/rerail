@@ -852,6 +852,21 @@ pub enum Stmt {
     /// them out (`docs/parser-generators/32-named-only-rr-tapes.md`). The parser marks each one
     /// `A as IMPLIED`; the statement stays, for the record.
     Implied { rule: String, tokens: Vec<String> },
+    /// `recover NODE at P, past P, …` (in a tree): `NODE`'s repetition is a file's statement loop, as a
+    /// hand-written parser's. A statement that fails is cut back to its first token and made one ERROR
+    /// leaf, from that token to the resume point: the first token after it where an `at` pattern holds,
+    /// or past the first where a `past` pattern holds (decision 0650).
+    Recover { node: String, clauses: Vec<RecoverClause> },
+}
+
+/// One of `recover`'s patterns: `at` (the resume point at its first token) or `past` (past it), its
+/// tokens (each a choice, as a token mark's), and `first`: its first token first on its line (only
+/// blanks before it since a line terminator of the language).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoverClause {
+    pub past: bool,
+    pub first: bool,
+    pub seq: Vec<Vec<TokenElem>>,
 }
 
 /// The kind `implied` gives a token (`A as IMPLIED`): it makes no leaf.
@@ -2213,6 +2228,25 @@ impl P {
                     return self.err("remember CHOICE …");
                 }
                 Stmt::Remember(names)
+            }
+            "recover" => {
+                let node = self.ident()?;
+                let mut clauses = vec![];
+                loop {
+                    let past = match self.peek() {
+                        Some(Tok::Ident(w)) if w == "at" => false,
+                        Some(Tok::Ident(w)) if w == "past" => true,
+                        _ => return self.err("recover NODE at P | past P, …"),
+                    };
+                    self.ident()?;
+                    let first = self.eat_kw("first");
+                    clauses.push(RecoverClause { past, first, seq: self.token_seq()? });
+                    if !self.is_p(",") {
+                        break;
+                    }
+                    self.want_p(",")?;
+                }
+                Stmt::Recover { node, clauses }
             }
             "provisional" => {
                 let mut fields = vec![];

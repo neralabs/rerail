@@ -77,6 +77,8 @@ pub struct Input<'a> {
     pub row_kinds: &'a [Option<u8>],
     /// Each byte's record kind as a token's first byte (`Records::kinds`).
     pub kinds: &'a [u8],
+    /// The last bytes of the language's line terminators: `recover`'s `first` asks for only blanks back to one.
+    pub terminators: &'a [u8],
 }
 
 /// What a decision tests at the token.
@@ -103,6 +105,8 @@ struct G<'a> {
     remember: Vec<String>,
     /// The `provisional` fields: a node that holds one at the file's end refuses it.
     provisional: Vec<String>,
+    /// `recover NODE …`: the node whose repetition is the statement loop, and its resume patterns (decision 0650).
+    recover: Option<(&'a str, &'a [::bitlex::syntax::RecoverClause])>,
     /// `refuse M in L …`: each level's refused marks, their bits in a record's code: a token the level takes with one
     /// refuses the file (`P::refusing`).
     refusing: HashMap<String, u32>,
@@ -216,7 +220,7 @@ impl<'a> G<'a> {
         let mut order = Vec::new();
         let mut flags = Vec::new();
         let mut readings = HashMap::new();
-        let (mut remember, mut provisional) = (Vec::new(), Vec::new());
+        let (mut remember, mut provisional, mut recover) = (Vec::new(), Vec::new(), None);
         let mut refusing: HashMap<String, u32> = HashMap::new();
         for s in x.tree {
             match s {
@@ -234,6 +238,7 @@ impl<'a> G<'a> {
                 }
                 Stmt::Remember(n) => remember.extend(n.iter().cloned()),
                 Stmt::Provisional(f) => provisional.extend(f.iter().cloned()),
+                Stmt::Recover { node, clauses } => recover = Some((node.as_str(), clauses.as_slice())),
                 // A mark tier 1 gives no bit is refused nowhere here: `source` refuses the grammar.
                 Stmt::Refuse { mark, levels } => {
                     let bit = x.marks.iter().find(|m| &m.name == mark).and_then(|m| m.bit).map_or(0, |b| 1u32 << b);
@@ -245,7 +250,7 @@ impl<'a> G<'a> {
             }
         }
         let reads = refusing.values().filter(|&&b| b != u32::MAX).fold(0, |a, &b| a | b) | x.extra_bits.iter().fold(0, |a, (b, _)| a | 1 << b);
-        G { x, rules, order, flags, readings, remember, provisional, refusing, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default() }
+        G { x, rules, order, flags, readings, remember, provisional, recover, refusing, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -966,7 +971,25 @@ impl<'a> G<'a> {
         if nested {
             out.push_str("        self.deeper()?;\n");
         }
-        if root {
+        if root && self.recover.is_some_and(|r| r.0 == name) {
+            // The statement loop (decision 0650), as the lean parser's: a mark before each statement; one that fails
+            // (or holds a provisional field at its end) is cut back to it and made one ERROR leaf.
+            let one = match body {
+                Gram::Star(a) => &**a,
+                Gram::Seq(v) if v.len() == 1 && matches!(&v[0], Gram::Star(_)) => match &v[0] {
+                    Gram::Star(a) => &**a,
+                    _ => unreachable!(),
+                },
+                _ => return Err(format!("recover {name}: its body is one repetition, the statements")),
+            };
+            let settled = if self.provisional.is_empty() { "" } else { ".and_then(|()| self.settled(save.w))" };
+            let _ = writeln!(out, "        self.open_root({});", self.kind_const(name)?);
+            let _ = writeln!(out, "        while self.i < self.n {{\n            let save = self.mark();\n            if self.statement(){settled}.is_err() {{\n                self.recover(save)?;\n            }}\n        }}");
+            let _ = writeln!(out, "        self.close_root({whole}, {padded})\n    }}\n");
+            let _ = write!(out, "    /// A statement of `{name}`: one of its repetition, as the lean parser's `statement`.\n    fn statement(&mut self) -> R {{\n");
+            out.push_str(&self.code(one, &[], name, "        ")?);
+            out.push_str("        Ok(())\n");
+        } else if root {
             let _ = writeln!(out, "        self.open_root({});", self.kind_const(name)?);
             out.push_str(&self.code(body, &[], name, "        ")?);
             let _ = writeln!(out, "        self.close_root({whole}, {padded})");
@@ -990,6 +1013,82 @@ impl<'a> G<'a> {
             out.push_str("        self.marked = false;\n        Ok(())\n");
         }
         out.push_str("    }\n\n");
+        Ok(out)
+    }
+
+    /// `recover`'s runtime (decision 0650), added to `out`: the statement's `Mark` (what a statement changes of the
+    /// parser's state, as the lean parser's), `mark` and `reset`, `settled` (no provisional field held at the
+    /// statement's end), `recover` (the ERROR leaf to the resume point), and `limited` (a limit refuses the file).
+    fn recovery(&self, mut out: String, clauses: &[::bitlex::syntax::RecoverClause]) -> Result<String, String> {
+        if !crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() || out.contains("    lost: Option<") && out.contains("self.lose_pending()") {
+            return Err("tier 2 as Rust: `recover` with regions read in parts or extras lost: not yet".into());
+        }
+        for (a, b) in [
+            ("    depth: u32,\n", "    depth: u32,\n    /// A limit refused the file (the depth), not its syntax: no statement recovers (`recover`).\n    limited: bool,\n"),
+            ("depth: 0,", "depth: 0, limited: false,"),
+            ("        if self.depth > DEPTH {\n            return self.refuse();", "        if self.depth > DEPTH {\n            self.limited = true;\n            return self.refuse();"),
+        ] {
+            if out.matches(a).count() != 1 {
+                return Err(format!("tier 2 as Rust: `recover`'s place in the runtime: {a:?}"));
+            }
+            out = out.replace(a, b);
+        }
+        // The level state a statement may leave changed, where the parser has it.
+        let has = |f: &str| out.contains(&format!("    {f}: "));
+        let mut fields = vec![("i", "usize"), ("pend", "usize"), ("xi", "usize"), ("next_x", "u32"), ("w", "usize"), ("levels", "usize"), ("top", "(u32, u32)"), ("last_end", "u32"), ("flags", "u32"), ("depth", "u32"), ("marked", "bool")];
+        for (f, t) in [("word", "u16"), ("asks", "u64"), ("refusing", "u32"), ("strings", "usize")] {
+            if has(f) {
+                fields.push((f, t));
+            }
+        }
+        let mut code = String::from("\n/// Where a statement starts (the lean parser's `Mark`): its token, the comments, the tape's length, the levels and the\n/// level's state, which a statement that fails is cut back to.\n#[derive(Clone, Copy)]\nstruct Mark {\n");
+        for (f, t) in &fields {
+            let _ = writeln!(code, "    {f}: {t},");
+        }
+        code.push_str("}\n\n");
+        let terminators: Vec<String> = self.x.terminators.iter().map(|b| format!("{b:#04x}")).collect();
+        let _ = writeln!(code, "/// The last bytes of the language's line terminators (`recover`'s `first`).\nconst TERMINATORS: &[u8] = &[{}];\n", terminators.join(", "));
+        code.push_str("#[allow(clippy::all, dead_code)]\nimpl<L: Layout> P<'_, L> {\n    /// The statement's mark (the lean parser's `mark`).\n    fn mark(&self) -> Mark {\n        Mark { ");
+        let saved: Vec<String> = fields.iter().map(|(f, _)| match *f {
+            "w" => "w: self.w.len()".to_owned(),
+            "levels" => "levels: self.levels.len()".to_owned(),
+            f => format!("{f}: self.{f}"),
+        }).collect();
+        code.push_str(&saved.join(", "));
+        code.push_str(" }\n    }\n\n    /// Back at mark `m` (the lean parser's `reset`): its token and comments, the tape and the levels as they were.\n    fn reset(&mut self, m: Mark) {\n");
+        for (f, _) in &fields {
+            let _ = match *f {
+                "w" => writeln!(code, "        self.w.truncate(m.w);"),
+                "levels" => writeln!(code, "        self.levels.truncate(m.levels);"),
+                f => writeln!(code, "        self.{f} = m.{f};"),
+            };
+        }
+        if has("dead") {
+            code.push_str("        self.dead.retain(|&o| o != NONE && (o as usize) < m.w);\n");
+        }
+        code.push_str("        self.taken = 0;\n        let _ = self.arrive();\n    }\n\n");
+        if !self.provisional.is_empty() {
+            let fields: Vec<String> = self.provisional.iter().map(|f| self.field_id(f).map(|id| id.to_string())).collect::<Result<_, _>>()?;
+            let _ = write!(code, "    /// No node the statement made from `from` on holds a field a later token decides (`provisional`): one that does\n    /// failed, as the lean parser's literal fails where no comparison follows a bare term.\n    fn settled(&self, from: usize) -> R {{\n        if (from..self.w.len()).any(|i| matches!((self.w.key(i) >> 10 & 0x3f) as u16, {})) {{\n            return self.refuse();\n        }}\n        Ok(())\n    }}\n\n", fields.join(" | "));
+        }
+        // The resume point's tests at record `k`: each clause's tokens from `k` on, its first first on its line.
+        let mut at = Vec::new();
+        let mut past = Vec::new();
+        for c in clauses {
+            let mut test = Vec::new();
+            if c.first {
+                test.push("self.first_on_line(k)".to_owned());
+            }
+            for (j, e) in c.seq.iter().enumerate() {
+                let place = if j == 0 { "k".to_owned() } else { format!("k + {j}") };
+                test.push(self.elem(e, &place)?);
+            }
+            if c.past { past.push(test.join(" && ")) } else { at.push(test.join(" && ")) }
+        }
+        let or = |v: &[String]| if v.is_empty() { "false".to_owned() } else { v.join(" || ") };
+        let _ = write!(code, "    /// A statement that failed, from mark `m` (the lean parser's `recover`): cut back to it, one ERROR leaf from its\n    /// first token to the resume point, the comments inside it its text; then on from there. A limit refuses the file.\n    fn recover(&mut self, m: Mark) -> R {{\n        if self.limited {{\n            return self.refuse();\n        }}\n        let first = m.i;\n        self.reset(m);\n        let mut k = first + 1;\n        while k < self.n {{\n            if {} {{\n                break;\n            }}\n            if {} {{\n                k += 1;\n                break;\n            }}\n            k += 1;\n        }}\n        let k = k.min(self.n);\n        self.flush();\n        let end = self.recs[k - 1].last + 1;\n        let at = self.w.push_leaf(ERROR, self.recs[first].start, end);\n        self.set_made(at as u32);\n        while self.xi < self.xs.len() && self.xs[self.xi].start < end {{\n            self.xi += 1;\n        }}\n        self.pend = self.xi;\n        self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);\n        self.i = k;\n        self.last_end = end;\n        self.pass_comments();\n        self.arrive()\n    }}\n\n", or(&at), or(&past));
+        code.push_str("    /// Whether token `j` is first on its line: only blanks before it back to a line's terminator (the lean parser's\n    /// `line_start`).\n    fn first_on_line(&self, j: usize) -> bool {\n        let at = self.recs[j].start as usize;\n        self.src[..at].iter().rev().take_while(|c| !TERMINATORS.contains(c)).all(|c| c.is_ascii_whitespace())\n    }\n}\n\n/// An ERROR leaf's key: the tape's error code (`rerail_tape_format::CODE_ERROR`), of no kind or field.\nconst ERROR: u32 = (rerail_tape_format::CODE_ERROR as u32) << 16;\n");
+        out.push_str(&code);
         Ok(out)
     }
 
@@ -1631,7 +1730,7 @@ impl<'a> G<'a> {
             }
         }
         // A grammar's `provisional` fields: the root closed, a node that holds one refuses the file.
-        if !self.provisional.is_empty() {
+        if !self.provisional.is_empty() && self.recover.is_none() {
             let fields: Vec<String> = self.provisional.iter().map(|f| self.field_id(f).map(|id| id.to_string())).collect::<Result<_, _>>()?;
             let a = "        self.w.set_start(0, first);\n";
             if out.matches(a).count() != 1 {
@@ -1654,6 +1753,10 @@ impl<'a> G<'a> {
                 }
                 out = out.replace(a, b);
             }
+        }
+        // A grammar's `recover`: the statement's mark, the cut back, and the resume point (decision 0650).
+        if let Some((_, clauses)) = self.recover.filter(|_| rules.contains("self.recover(")) {
+            out = self.recovery(out, clauses)?;
         }
         // The helpers only some grammars' rules call, each written where it is called.
         let used: Vec<&str> = MORE.iter().filter(|(name, _)| rules.contains(&format!("self.{name}("))).map(|(_, code)| *code).collect();
