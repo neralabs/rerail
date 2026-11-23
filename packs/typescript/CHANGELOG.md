@@ -10,7 +10,7 @@ Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- This version needs Rerail 0.2.0 or newer, where rules that test punctuation or keywords such as `,`, `=>` or `require` run again; 0.2.0 skips the previous version's. What they report is unchanged.
+- This version needs Rerail 0.2.1 or newer (0.2.0 was never published), where rules that test punctuation or keywords such as `,`, `=>` or `require` run again; 0.2.1 skips the previous version's. What they report is unchanged.
 
 ### Fixed
 
