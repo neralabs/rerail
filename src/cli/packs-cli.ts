@@ -7,11 +7,12 @@ import { existsSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
-import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { activeCoreVersion, installedPackDirectories, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog, worktreeRulesDirectory } from "../engine/catalog/worktree-pack.js";
 import { openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { approvalKey, packSubject, readApprovals, ruleSubject, type RuleApprovalSubject } from "../engine/catalog/rule-approval.js";
 import { ruleDocumentDigest } from "../engine/stable-json.js";
+import { streamProgress } from "../runtime/progress.js";
 import { workspaceStartState } from "../runtime/repository-start.js";
 import {
   packIdOfPackage,
@@ -32,9 +33,13 @@ import {
   discoverPacks,
   installedPackagesOf,
   npmPackStore,
+  updateChannel,
+  updatePacks,
   type DiscoveredPack,
   type PackDiscovery,
   type PackStore,
+  type PackUpdate,
+  type PackUpdateRun,
   type PackVersion,
 } from "../setup/rule-pack-store.js";
 import { withPacksLock } from "../setup/packs-lock.js";
@@ -281,6 +286,57 @@ function list(args: readonly string[], usage: () => string, store: PackStore): n
   return 0;
 }
 
+/**
+ * What a moved pack's line adds, in parentheses: the tag npm has it under when that is not the update channel (`next`,
+ * for a pack the channel has no version of), and, for a third party's pack, that its new version waits for a person's
+ * approval, its rules running in Log until then.
+ */
+function packUpdateNotes(pack: PackUpdate, channel: string): string {
+  const notes = [
+    ...pack.tag === channel ? [] : [`from ${clean(pack.tag)}`],
+    ...rulePackPublisher(pack.packageName) === RERAIL_PUBLISHER
+      ? []
+      : [`Rerail has not reviewed it: its rules run in Log until you approve this version, rerail rules approve ${clean(pack.packageName)}`],
+  ];
+  return notes.length === 0 ? "" : ` (${notes.join("; ")})`;
+}
+
+/** What `rerail packs update` says on stdout: each pack it moved, or that every pack it could check is the newest that fits. */
+function packUpdateLines({ updated, failed, problems }: PackUpdateRun, channel: string, coreVersion: string): string[] {
+  if (updated.length === 0) {
+    return failed.length === 0 && problems.length === 0 ? [`Your rule packs are the newest versions that fit Rerail ${coreVersion}.`] : [];
+  }
+  const one = updated.length === 1;
+  return [
+    `Updated ${one ? "a rule pack" : `${updated.length} rule packs`}; every repository that adds ${one ? "it" : "one"} runs its new rules:`,
+    ...updated.map(pack => `  ${clean(rulePackShortName(pack.packageName))} ${clean(pack.installed)} → ${clean(pack.available)}${packUpdateNotes(pack, channel)}`),
+  ];
+}
+
+/**
+ * `rerail packs update`: moves each installed pack to the newest version on the update channel that the active core
+ * loads, one at a time, each step on stderr as it starts. A pack npm could not be asked about is a warning; one that
+ * could not be installed, or does not load, is put back and fails the command, naming why.
+ */
+async function update(args: readonly string[], usage: () => string, store: PackStore): Promise<number> {
+  parseArguments(args, { flags: [], options: [] }, argument => `Unknown packs update option: ${argument}\n\n${usage()}`);
+  if (installedPackDirectories(store.home).length === 0) {
+    write(["No rule packs are installed. `rerail packs recommend` suggests them for what a repository is built with."]);
+    return 0;
+  }
+  const run = await updatePacks(store, streamProgress(process.stderr));
+  if (run.problems.length > 0) {
+    process.stderr.write(`warning: could not check every rule pack for a newer version: ${run.problems.map(clean).join("; ")}\n`);
+  }
+  write(packUpdateLines(run, updateChannel(store.home), activeCoreVersion(store.home)));
+  for (const { update: pack, problem } of run.failed) {
+    process.stderr.write(`rerail: could not update ${clean(rulePackShortName(pack.packageName))} to ${clean(pack.available)}: ${clean(problem)}\n`);
+  }
+  if (run.failed.length === 0) return 0;
+  process.stderr.write("Run `rerail packs update` to try again.\n");
+  return 1;
+}
+
 type PacksSubcommand = (args: readonly string[], usage: () => string, store: PackStore) => number | Promise<number>;
 
 /** By the word a person types: a Map, so a word like `toString` is no subcommand. */
@@ -288,13 +344,14 @@ const PACKS_SUBCOMMANDS: ReadonlyMap<string, PacksSubcommand> = new Map<string, 
   ["list", list],
   ["add", add],
   ["remove", remove],
+  ["update", update],
   ["recommend", recommend],
   ["calibrate", (args, usage, store) => runPacksCalibrateCommand(args, usage, { home: store.home })],
 ]);
 
 /**
- * `rerail packs list|add|remove|recommend|calibrate`, on `store`'s home (`list` without a subcommand). `add` and
- * `remove` hold the packs lock while npm runs.
+ * `rerail packs list|add|remove|update|recommend|calibrate`, on `store`'s home (`list` without a subcommand). `add`,
+ * `remove` and `update` hold the packs lock while npm installs or removes.
  */
 export async function runPacksCommand(args: readonly string[], usage: () => string, store: PackStore = npmPackStore()): Promise<number> {
   const [subcommand = "list", ...rest] = args;

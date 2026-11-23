@@ -38,9 +38,18 @@ function ofLanguage(language: string | null, path: string): boolean {
   return dialect !== undefined && codeRuleLanguageDialects(language).includes(dialect);
 }
 
-/** Whether the rule reads `path` as a file: one of its `.language`, or one a `.scope text` glob matches. */
+/**
+ * Whether a `.scope text` glob of `text` reads `path` as text. The engine reads no hidden file (`.draft.html`) as text
+ * (`corpus::scoped`), so a write of one starts no run.
+ */
+function readsAsText(text: readonly string[], path: string): boolean {
+  if (text.length === 0 || path.slice(path.lastIndexOf("/") + 1).startsWith(".")) return false;
+  return matchesAny(text, path) !== false;
+}
+
+/** Whether the rule reads `path` as a file: one of its `.language`, or one a `.scope text` glob reads as text. */
 function readsAsFile(rule: Pick<RerailRuleEntry, "scope" | "language">, path: string): boolean {
-  return ofLanguage(rule.language, path) || (rule.scope.text.length > 0 && matchesAny(rule.scope.text, path) !== false);
+  return ofLanguage(rule.language, path) || readsAsText(rule.scope.text, path);
 }
 
 /**
