@@ -119,7 +119,6 @@ native/crates/boot/src/code_rule_dsl/boot.rs::MIBS	stays	jemalloc's control ids 
 native/crates/boot/src/code_rule_dsl/boot.rs::ONCE	stays	the providers registered once a process (code registered at load: `boot::install`)
 native/crates/lang/src/code_rule_dsl/build_ids.rs::ENGINE	stays	computed once from the engine's own build
 native/crates/lang/src/code_rule_dsl/build_ids.rs::GRAMMAR	stays	computed once from the engine's own build
-native/crates/lang/src/code_rule_dsl/build_ids.rs::REBUILT	stays	computed once from the engine's own grammar
 native/crates/rules_base/src/code_rule_dsl/compile/ast_rule.rs::BY_DIALECT	stays	each grammar's supertype names, computed once from its kind catalog (the engine's own constants)
 native/crates/rules_base/src/code_rule_dsl/compile/mod.rs::DATA_LAYER	stays	code registered at load (a slot a crate above fills: rerail-registry)
 native/crates/rules_base/src/code_rule_dsl/compile/resolve.rs::FLOW_RESOLVES	stays	computed once from the engine's constants

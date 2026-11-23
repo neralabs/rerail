@@ -159,7 +159,7 @@ fn a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady() {
     assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
     assert!(cold.cross_handed > 0, "a cold run hands its cross-file relations off as it goes, not all held to its end: {} handed; strata {:?}", cold.cross_handed, cold.cross_kept);
     assert_steady(&edit("\nhelper(4)\n").0, "an edit of the first build");
-    crate::code_rule_dsl::build_ids::rebuild_for_tests();
+    let _rebuilt = crate::code_rule_dsl::build_ids::rebuild_for_tests();
     let (first, _) = edit("\nhelper(5)\n");
     assert_eq!(first.memo.0, 0, "no entry of the old build's is a hit");
     assert_eq!(first.stats_kept, Some(Ok((3, 0))), "the new build's first edit counts every file in");

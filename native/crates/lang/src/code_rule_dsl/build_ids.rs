@@ -17,10 +17,8 @@ pub fn set(engine: &'static str, grammar: &'static str) {
 pub fn engine() -> &'static str {
     #[cfg(any(test, feature = "test-hooks"))]
     {
-        let rebuilt = REBUILT.load(std::sync::atomic::Ordering::Acquire);
-        if !rebuilt.is_null() {
-            // SAFETY: set only by `rebuild_for_tests`, from a leaked box that is never freed.
-            return unsafe { *rebuilt };
+        if let Some(rebuilt) = crate::code_rule_dsl::logic::profile::bound::<Rebuilt>().0 {
+            return rebuilt;
         }
         if ENGINE.get().is_none() {
             set_for_tests();
@@ -38,17 +36,22 @@ pub fn grammar() -> &'static str {
     GRAMMAR.get().copied().expect("the engine sets its build identity as it loads")
 }
 
+/// The engine's identity a test's runs take as another build's (`rebuild_for_tests`), in the run's context.
 #[cfg(any(test, feature = "test-hooks"))]
-static REBUILT: std::sync::atomic::AtomicPtr<&'static str> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+#[derive(Clone, Copy, Default)]
+struct Rebuilt(Option<&'static str>);
 
-/// A test's next runs as another build of the engine's (the next of this process's), over the stores the earlier
-/// runs left: what a rebuild of the engine gives a store's next run. The grammar's identity stays. The whole
-/// process's: a test calling it runs in a process of its own (nextest's).
+/// A test's next runs as another build of the engine's (the next of the one they ran as), over the stores the earlier
+/// runs left: what a rebuild of the engine gives a store's next run, until the guard drops. The grammar's identity
+/// stays. Bound in the test's context, so its runs and their jobs take it and no other test's do: set for the process,
+/// it made the runs of the tests beside it in one process (`cargo test`'s threads) find their own entries an older
+/// build's (`partial_tests`, four red at 20 threads).
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn rebuild_for_tests() {
+#[must_use = "the runs are another build's only while the guard is held"]
+pub fn rebuild_for_tests() -> crate::code_rule_dsl::logic::profile::Bound {
     let now = engine();
     let next: &'static str = Box::leak(format!("{now}+rebuilt").into_boxed_str());
-    REBUILT.store(Box::into_raw(Box::new(next)), std::sync::atomic::Ordering::Release);
+    crate::code_rule_dsl::logic::profile::bind(Rebuilt(Some(next)))
 }
 
 /// A crate's own test binary, which the engine does not load: identities of that binary (its path and when it was
