@@ -136,6 +136,11 @@ pub fn blocks_from(f: &mut FunctionBuilder<'_>, p: &[Value], off_width: u8, head
     f.ins().return_(&[last, wide]);
 }
 
+/// A row's kind for an ERROR leaf, a statement recovered (decision 0650, `native_cpu_stream::recover_statement`):
+/// the last of a kind's bits, which no grammar's kind takes (`native_cpu_stream::compile_with` checks). Its code has
+/// no kind and `CODE_ERROR`, as the interpreter's `ERROR_LEAF`'s (`stream::image`).
+pub const ERROR_ROW: u16 = 0x3ff;
+
 /// `(rows, code, id_of, code_kf, code_first, from, to, codes, snode, skind, supers)`: nodes
 /// `from..to` final, their codes written: each key's id, numbered by first use (a new id where
 /// none has it). A key is a node's kind and field and, where the program names supertypes
@@ -404,6 +409,13 @@ pub fn finish(f: &mut FunctionBuilder<'_>, p: &[Value], x: Image<'_>, heads: &mu
     }
     let extra = f.ins().uextend(types::I64, extra);
     let fl = f.ins().imul_imm(extra, i64::from(CODE_EXTRA));
+    // A statement recovered (`ERROR_ROW`): no kind, its code's flag.
+    let error = f.ins().icmp_imm(IntCC::Equal, kind, i64::from(ERROR_ROW));
+    let zero_k = f.ins().iconst(types::I64, 0);
+    let k = f.ins().select(error, zero_k, k);
+    let error = f.ins().uextend(types::I64, error);
+    let error = f.ins().imul_imm(error, i64::from(rerail_tape_format::CODE_ERROR));
+    let fl = f.ins().bor(fl, error);
     f.ins().istore16(flags, k, e, 0);
     f.ins().istore8(flags, fl, e, 2);
     let s = f.ins().iconst(types::I64, i64::from(SENTINEL));

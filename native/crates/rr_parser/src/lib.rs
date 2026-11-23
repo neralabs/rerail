@@ -241,17 +241,13 @@ pub mod tests {
 
     /// How each executor's tape of `src` reads it (decision 0650), the interpreter's first: all take it, or all refuse
     /// it; where `taken`, whole, the engine's tape; else a statement recovered (the lean parser's tape, an ERROR leaf in
-    /// it) or, for a limit, refused. Until the JIT recovers (0650 step 4b), it refuses what the others recover.
+    /// it) or, for a limit, refused.
     pub(crate) fn reads_as_lean(src: &str, taken: bool, tapes: &[(&str, Result<Vec<u8>, String>)]) {
         let error = |t: &[u8]| {
             let v = rerail_tape_format::View::new(t).expect("an image");
             (0..v.len()).any(|i| v.key(i) >> 16 & u32::from(rerail_tape_format::CODE_ERROR) != 0)
         };
-        let recovered = tapes[0].1.as_ref().is_ok_and(|t| error(t));
         for (who, t) in tapes {
-            if recovered && t.is_err() && *who != "the interpreter" {
-                continue;
-            }
             assert_eq!(t.is_ok(), tapes[0].1.is_ok(), "{src:?}: {who} takes it as {} does: {:?}", tapes[0].0, t.as_ref().err());
             match t {
                 Ok(t) if taken => assert_eq!(*t, crate::engine_tape(src), "{src:?}: {who}: the engine's tape"),
@@ -396,9 +392,12 @@ pub mod tests {
             "r(x).\n.end",
             ".test a\nr(x).",
         ];
+        // Each refused by every executor, or a statement recovered as the lean parser recovers it (decision 0650).
+        let c = crate::compiled().expect("compiles");
+        let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         for src in refused {
-            assert!(super::compiled_tape(src).is_none(), "the grammar takes {src:?}");
-            assert_eq!(super::tape(src), super::engine_tape(src), "{src:?}");
+            let tapes = [("the interpreter", interp_tape(c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}"))), ("the machine", machine.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
+            reads_as_lean(src, false, &tapes);
         }
     }
 
@@ -422,8 +421,8 @@ pub mod tests {
     /// placed at once, before the node it wraps (a leaf's swap, or a larger node's rows moved,
     /// their parents with them); a dropped node taken out where it is dropped. Chains of wraps,
     /// wraps over large operands and inside them, and comments among them, as the engine's.
-    /// A reread that meets a dropped node's place refuses, as the interpreter, which keeps the
-    /// dropped row there, and the reference do.
+    /// A reread that meets a dropped node's place refuses its statement, as the interpreter, which keeps the
+    /// dropped row there, and the reference do: recovered as the lean parser recovers it (decision 0650).
     #[test]
     fn the_table_is_written_in_place() {
         let parsed = [
@@ -438,8 +437,9 @@ pub mod tests {
             assert_eq!(super::tape(src), super::engine_tape(src), "{src:?}");
         }
         let src = "r(n) :- n = min (a, b) : { s(a, b) }.";
-        assert!(super::compiled_tape(src).is_none(), "the grammar takes {src:?}");
-        assert_eq!(super::tape(src), super::engine_tape(src), "{src:?}");
+        let c = crate::compiled().expect("compiles");
+        let tapes = [("the interpreter", interp_tape(c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
+        reads_as_lean(src, false, &tapes);
     }
 
     /// Tier 2's state machine is built once per rule, not once per place a rule is used: rules
@@ -2547,9 +2547,7 @@ pub mod tests {
             // cases (the corpus: its tape where it takes the file; two files of 500 KB it
             // refuses as before, the work queue's).
             let image = new.parser.image(f);
-            // Until the JIT recovers (0650 step 4b), it refuses what the interpreter recovers.
-            let recovered = x.as_ref().is_ok_and(|n| n.iter().any(|n| n.kind == rerail_compiler::stream::ERROR_LEAF));
-            assert!(!cased || image.is_ok() == x.is_ok() || recovered && image.is_err(), "file {k} {:?}: the CPU's tier 2 takes it as the interpreter: {:?} / {:?}", String::from_utf8_lossy(&f[..f.len().min(80)]), image.as_ref().err(), x.as_ref().err());
+            assert!(!cased || image.is_ok() == x.is_ok(), "file {k} {:?}: the CPU's tier 2 takes it as the interpreter: {:?} / {:?}", String::from_utf8_lossy(&f[..f.len().min(80)]), image.as_ref().err(), x.as_ref().err());
             if let (Ok(i), Ok(x)) = (&image, &x) {
                 assert!(*i == rerail_compiler::stream::image(x, &new.program.readings.extras, rerail_tape_format::RR_TAG, f), "file {k}: the CPU's tape");
             }

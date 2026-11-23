@@ -439,7 +439,20 @@ pub enum Mem {
 
 impl Mem {
     pub const COUNT: u32 = 32;
+    /// Every field, in order: what a statement's mark keeps (decision 0650).
+    pub const ALL: [Mem; Mem::COUNT as usize] = [
+        Mem::Supers, Mem::Pending, Mem::Keep, Mem::Moved, Mem::Sel, Mem::Shift, Mem::LastMade, Mem::Word, Mem::Flags, Mem::Next, Mem::Taken, Mem::Lw, Mem::Start, Mem::End, Mem::Limit, Mem::LastEnd,
+        Mem::Nodes, Mem::Open, Mem::Ret, Mem::Need, Mem::Live, Mem::Depth, Mem::BlockBase, Mem::Coded, Mem::Codes, Mem::Wide, Mem::PartAt, Mem::PartEnd, Mem::PartClose, Mem::PartRd, Mem::Lost, Mem::Strings,
+    ];
 }
+
+const _: () = {
+    let mut k = 0;
+    while k < Mem::COUNT as usize {
+        assert!(Mem::ALL[k] as usize == k);
+        k += 1;
+    }
+};
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
 /// back with their results (`Cut::pass`): none. The whole state stays in memory, read and

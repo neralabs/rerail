@@ -497,7 +497,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
         strings: usize,
     }
     let mut stmt: Option<Mark> = None;
-    // A token mark refused the token (`TOKEN`), where statements recover: refused where it is taken.
+    // A token mark refused the token (`TOKEN`), where statements recover: refused in the statement that takes it.
     let recovers = !program.recover.is_empty();
     let mut held = false;
     // Where a statement resumes: the `TOKEN` of the root's first head, where none is open.
@@ -513,6 +513,10 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
         match opcode {
             TOKEN if !need => {}
             TOKEN => {
+                // A token a refusing mark held, taken: its statement fails here (`held`).
+                if std::mem::take(&mut held) {
+                    refuse!('step, pc - 1, "a token mark that refuses");
+                }
                 if at_end {
                     refuse!('step, pc - 1, "a token past the stream's end");
                 }
@@ -589,8 +593,9 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 // its tokens following, the file is refused.
                 let extra_bit = program.extras.first().map(|e| u32::from(e.0));
                 let refused = !at_end && program.token_marks.iter().any(|t| t.refuses && code >> (crate::records::MARK_SHIFT + u32::from(t.order)) & 1 == 1 && token_mark_holds(t, &tier1.codes, next, extra_bit));
-                // Where statements recover, the statement's that takes the token (`SPAN`): a level that reads it ahead,
-                // to end, may be the statement's before.
+                // Where statements recover, the statement's that takes the token: refused at the next `TOKEN` that
+                // takes one, or at `STATEMENT` where it is the next statement's first. A level that reads it ahead, to
+                // end, may be the statement's before.
                 held = refused && recovers;
                 if refused && !recovers {
                     refuse!('step, pc - 1, "a token mark that refuses");
@@ -602,9 +607,6 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 let e = if mode == 0 { start + u32::from(operand) } else { rec_end };
                 if e != rec_end {
                     refuse!('step, pc - 1, "a token's length not its record's");
-                }
-                if std::mem::take(&mut held) {
-                    refuse!('step, pc - 1, "a token mark that refuses");
                 }
                 end = e;
                 need = true;
@@ -1086,6 +1088,9 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     counts: counts.clone(),
                     strings,
                 });
+                if std::mem::take(&mut held) {
+                    refuse!('step, pc - 1, "a token mark that refuses");
+                }
             }
             _ => refuse!('step, pc - 1, "the stream program refuses here"),
         }
@@ -1135,6 +1140,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             nodes[at].end = if pending > 0 { keep } else { last_end };
             nodes[at].size = (nodes.len() - pending - base) as u32;
         }
+        held = false;
         (moved, dead, word, flags, counts, strings, lost) = (m.moved, m.dead, m.word, m.flags, m.counts, m.strings, None);
         // The resume point: the first record after the statement's first token where a pattern holds, `at` it or
         // `past` it; the extras skipped.

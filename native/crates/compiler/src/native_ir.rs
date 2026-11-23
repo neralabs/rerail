@@ -393,6 +393,8 @@ pub struct Structure {
     pub extras: Vec<(u8, u16)>,
     /// The token marks (`Words::token_marks`).
     pub token_marks: Vec<crate::program::TokenMark>,
+    /// Where a statement that fails resumes (`Words::recover`, decision 0650): empty where none recovers.
+    pub recover: Vec<crate::program::Recover>,
     /// The marks done where each mark is taken (`Words::taken`), by order: 64 at most.
     pub taken: Vec<u64>,
     /// The gap patterns (`Words::gap_patterns`).
@@ -584,6 +586,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         word_kinds: program.word_kinds.clone(),
         extras: program.extras.clone(),
         token_marks: program.token_marks.clone(),
+        recover: program.recover.clone(),
         taken: (0..64u8).map(|k| program.taken(k)).collect(),
         gap_patterns: program.gap_patterns.clone(),
         local_checks: program.local_checks.clone(),

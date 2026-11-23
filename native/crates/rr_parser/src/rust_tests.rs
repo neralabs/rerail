@@ -317,6 +317,10 @@ fn a_statement_that_fails_is_one_error_leaf() {
 fn corpus_edited_tapes_are_the_lean_tapes() {
     let texts = crate::tests::edited_corpus();
     let c = compiled().expect("the grammar compiles");
+    let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+    let mut native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+    native.tag = rerail_tape_format::RR_TAG;
+    let one = rerail_cpu_stream::native_cpu_stream::Parser::with_cut(&native, &rerail_compiler::native_cpu_clusters::Cut::one(native.structural.len())).expect("compiles as one function");
     let (mut whole, mut recovered, mut refused) = (0, 0, 0);
     let mut differ = Vec::new();
     for (k, text) in texts.iter().enumerate() {
@@ -336,6 +340,16 @@ fn corpus_edited_tapes_are_the_lean_tapes() {
             (Ok(_), Err(_)) => Err("the interpreter takes it, the calls form refuses it".to_owned()),
             (Err(r), Ok(_)) => Err(format!("the interpreter refuses it ({}), the calls form takes it", r.why)),
         };
+        // The JIT's (`native_cpu_stream`, its `STATEMENT`), a function a rule, one function and one machine: the
+        // interpreter's, taken, recovered or refused alike.
+        let same = [("the JIT", &c.parser), ("one function", &one), ("the machine", &machine.parser)].into_iter().fold(same, |same, (who, p)| {
+            same.and_then(|()| match (&interp, p.image(text.as_bytes())) {
+                (Ok(a), Ok(b)) => node_differs(text, &image_nodes(a), &image_nodes(&b), "the interpreter", who).map_or(Ok(()), Err),
+                (Err(_), Err(_)) => Ok(()),
+                (Ok(_), Err(e)) => Err(format!("the interpreter takes it, {who} refuses it ({e:?})")),
+                (Err(r), Ok(_)) => Err(format!("the interpreter refuses it ({}), {who} takes it", r.why)),
+            })
+        });
         if let Err(d) = same {
             eprintln!("differs: text {k}: {d}");
             if differ.len() < 3 {
