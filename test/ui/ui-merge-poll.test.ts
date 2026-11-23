@@ -16,6 +16,8 @@ let holding = false;
 let mergeRead: () => Response;
 /** The daemon's process id, which a restart changes. */
 let pid = 1;
+/** The experiments /healthz says this daemon runs. */
+let experiments: string[] = ["MERGE_ASSIST"];
 
 const json = (body: unknown, code = 200): Response => new Response(JSON.stringify(body), { status: code });
 
@@ -29,7 +31,7 @@ const status = (conflictStatus: "open" | "dismissed"): MergeAssistStatus => samp
 
 /** Every other read a poll makes, each empty. */
 function emptyDaemon(url: URL): Response {
-  if (url.pathname === "/healthz") return json({ version: "1", pid });
+  if (url.pathname === "/healthz") return json({ version: "1", pid, experiments });
   if (url.pathname === "/api/repositories") return json({ repositories: [] });
   if (url.pathname === "/api/repository") return json({ repository: data.repository, checkout: null });
   if (url.pathname === "/api/repository/rules") return json({ rules: [], unavailable: [] });
@@ -47,6 +49,7 @@ beforeEach(() => {
   holding = false;
   mergeRead = () => json(status("open"));
   pid = 1;
+  experiments = ["MERGE_ASSIST"];
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { method?: string } = {}) => {
     const url = new URL(input);
@@ -60,7 +63,7 @@ beforeEach(() => {
   });
   setScope({ repository: "A", checkout: "/work/a" });
   data.repository = { setUp: true, repositoryKey: "A" };
-  Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: null });
+  Object.assign(data, { health: null, mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: null });
   ui.view = "merge";
   ui.panel = null;
   setNeeds(currentNeeds);
@@ -144,6 +147,15 @@ describe("Merge Assist reads and writes", () => {
     expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(1);
   });
 
+  it("does not request Merge Assist when /healthz says its experiment is off", async () => {
+    experiments = [];
+
+    await refresh();
+
+    expect(data.mergeAssistExperiment).toBe(false);
+    expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(0);
+  });
+
   it("reads Merge Assist again once the daemon restarts, since it may run with the experiment on now", async () => {
     mergeRead = () => json({ error: "experimental-off", message: "Merge Assist is experimental and off." }, 404);
     await refresh();
@@ -151,8 +163,6 @@ describe("Merge Assist reads and writes", () => {
 
     pid = 2;
     mergeRead = () => json(status("open"));
-    // The poll that sees the restart has already passed over Merge Assist; the next one reads it.
-    await refresh();
     await refresh();
 
     expect(data.mergeAssistExperiment).toBe(true);
@@ -165,7 +175,7 @@ describe("Merge Assist reads and writes", () => {
 
     await refresh();
 
-    expect(data.mergeAssistExperiment).toBeNull();
+    expect(data.mergeAssistExperiment).toBe(true);
     expect(data.mergeAssistError).not.toBeNull();
   });
 

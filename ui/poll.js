@@ -248,11 +248,21 @@ async function loadPacks() {
   return true;
 }
 
-/** The daemon's health. A daemon that restarted may run Merge Assist now, so one that said it did not is asked again. */
+/** The daemon's health. Its experiment list gates reads and resets that gate when the daemon restarts. */
 async function loadHealth() {
   const { body } = await get("/healthz");
   const changed = data.health?.version !== body.version || data.health?.pid !== body.pid;
-  if (changed && data.health !== null && data.mergeAssistExperiment === false) data.mergeAssistExperiment = null;
+  if (changed && data.health !== null) {
+    Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: null });
+  }
+  if (Array.isArray(body.experiments) && (changed || data.mergeAssistExperiment === null)) {
+    const enabled = body.experiments.includes("MERGE_ASSIST");
+    Object.assign(data, {
+      mergeAssist: enabled ? data.mergeAssist : null,
+      mergeAssistError: enabled ? data.mergeAssistError : null,
+      mergeAssistExperiment: enabled,
+    });
+  }
   data.health = body;
   return changed;
 }
@@ -770,20 +780,21 @@ export function setNeeds(needs) {
   pageNeeds = needs;
 }
 
-function neededJobs(since) {
+function neededJobs(since, health) {
   const jobs = [];
   for (const name of new Set(pageNeeds())) {
     const load = NEEDS[name];
     if (load === undefined) throw new Error(`No poll need is called "${name}"`);
-    jobs.push(...[load(since)].flat());
+    if (name === "mergeAssist" || name === "mergeAssistCount") jobs.push(health.then(() => load(since)));
+    else jobs.push(...[load(since)].flat());
   }
   return jobs;
 }
 
 /** The scoped repository's context (first, when its key is not known yet), then what the page needs. */
-async function scopedJobs(since) {
+async function scopedJobs(since, health) {
   const context = data.repository === null ? [await loadContext()] : [loadContext()];
-  return [...context, ...neededJobs(since)];
+  return [...context, ...neededJobs(since, health)];
 }
 
 async function poll() {
@@ -792,9 +803,11 @@ async function poll() {
   try {
     // Every read is under the one `Promise.all` from the start: a context read that fails while the shared reads are
     // still out must not leave their failures unhandled.
-    const scoped = ui.scope === null ? [] : scopedJobs(since).then(jobs => Promise.all(jobs));
-    const results = (await Promise.all([loadRepositories(), loadHealth(), scoped])).flat();
-    if (started === generation) pollAnswered(results, since);
+    const health = loadHealth();
+    const scoped = ui.scope === null ? [] : scopedJobs(since, health).then(jobs => Promise.all(jobs));
+    const results = (await Promise.all([loadRepositories(), health, scoped])).flat();
+    if (started !== generation) return;
+      pollAnswered(results, since);
   } catch (error) {
     if (started === generation) pollFailed(error);
   }
