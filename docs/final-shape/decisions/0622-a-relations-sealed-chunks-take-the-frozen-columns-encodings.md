@@ -123,6 +123,11 @@ they lie.**
   gone by then, so its gain at the peak is a few tens of MB. Every reader (host, CLIF, the kernels' header) would
   pay a dictionary load per read. Kinds already pack to their range (`PACK`). Not built.
 
+- **Its cost, measured again (2026-11-23, t53 §4).** On `all` at the head (m1max, the same binary): with
+  `RERAIL_SEAL_CHUNKS=off`, instructions 1,644 G → 1,561 G (−5%), CPU 169 s → 165 s, the peak 2,433 → 2,586 MB
+  (+153 MB), the rows the same. `IntCol::get` is the second busiest function in a sample of s1000's joins. So sealing
+  buys 153 MB at the peak for 5% of the run's instructions; a dictionary would add a dependent load to the same reads.
+
 ## Test
 
 For each step: a relation's rows read through every reader equal the raw layout's; the findings on `all` are
