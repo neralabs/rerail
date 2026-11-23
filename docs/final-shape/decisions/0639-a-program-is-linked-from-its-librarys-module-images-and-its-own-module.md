@@ -222,10 +222,58 @@ so their printed rules and digests stay the same (0225's incremental work).
 **Why the tail stays Rust.** The tail's whole-program questions (which core relations are read, which kind sets are
 read) belong to preparation's fact spaces (0246 §3, 0225 §5).
 
+**A module depends on its scope's interface, not its scope's rules.** `Lowerer::seed` and `seeds` read from a scope:
+its header less its helpers (`Given`), its lattices, three-valued relations, `.violation`s, dependency edges
+(`deps`, which a clause's context reads: `reaches_heads`), printed demands, bound families and column types as
+written. E9 lowered every module against its scope lowered from its statements less its rules: 170 of 213 modules
+gave the same image. Each of the other 43 reuses a declaration its scope's *lowering* made, never its dependency
+edges or rule bodies: a kind set helper (`rr_kind_class_definition`, `rr_inside_rr_kind_…`), the `tape` input,
+`rr_embed_req`, `rr_dir_req`/`rr_file_req`, `rx_span`. So a module declares those itself where it uses them, as it
+does against a header-only scope. Their names are their content already, so the union holds each once. A module's
+key can then name its scope's interface digests, not its scope's files: an edit of a rule body that leaves a module's
+interface unchanged lowers that module again, and no module that includes it.
+
 ### 5. The template holds every module
 
 `test_store::fill` already gives phase 0 every library file and phase program as seeds, in one run. With §3, that run
 asks for every module, so the template's store holds every module's image, and every test's copy of it finds them.
+
+### 6. The tail, by module
+
+After the link, a program's lowering is the tail. Per tail run (Python, 152 runs, `RERAIL_SPIKE_PROFILE`):
+
+| Step | ms | Reads | Where it goes |
+|---|---|---|---|
+| `check_given`: cycles, caches, answers | 5.1 | SCCs of the program; a cache's two rules; a request's answer | SCCs compose over modules: per module, and per program only through E8's relations. The cache and answer checks are per relation |
+| (inside the tail, outside every span) | 4.6 | unknown | open: not the lowerer's drop, nor the pipeline's making (0 ms) |
+| guest context passes (0597), crossing cycles | 4.0 | guest contexts | not yet classified |
+| `lower::link_versions` | 2.9 | every module | gone: the union view (§4) |
+| sources on request (two rounds) | 3.0 | what the program reads | downward: per program, as rules |
+| aggregate demand | 3.1 | a helper's readers (in its module) and strata | per module; the strata check per program only through E8's relations |
+| kind sets | 2.0 | which sets a rule reads | downward: three rules (E10), per program |
+| span patterns | 1.6 | the columns' spans, from the scope | upward: per module |
+| order the nodes compared | 1.3 | a rule and its relations' column types | local: per module (its `rr_ordered<k>` counter named by content) |
+| append a module | 1.2 | every module | gone: the union view |
+| findings, core declarations, the rest | ≈3 | a `.violation`'s rules; what rules read | local, or a union of each module's |
+
+Each tail step is one of four kinds, and each kind has its place:
+- **Local** (a rule or a relation, with declarations): at module time, in the module's image.
+- **Upward** (a scope's results into a module: three-valued closure, span columns, SCCs): at module time, over the
+  scope's kept results.
+- **Downward** (from what the program reads: kind sets read, sources on request, demand): per program, as rules over
+  the union's rows (E10), maintained by delta (0225) as the program's own module changes.
+- **Across modules**: a relation that a module other than the reader's scope defines or adds rules to. E8 counted
+  them: in all libraries 12,459 of 12,934 rules (96%) read nothing but their module and its scope. The rest sit below
+  `layout_at` and `token_text_ask` (JavaScript, TypeScript, Node), `node_module` (Node), `php_dynamic` (Blade),
+  `cc_decision` and `cc_name` (complexity), `rr_embed_req`, `rr_dir_req`/`rr_file_req`, `c_include_dir`/`c_tu`
+  (phases) and `cmp_same_ask` (Python). Only those relations' SCCs, three-valued closures and strata are completed per
+  program.
+
+**Use edges.** A relation a module reads that a later module defines is the rules' function-local import: lowering
+needs only its declaration, so the plan stays a DAG; evaluation has the cycle. Phase 0 has one such edge today:
+`p0_phase` (a `<phase>__<export>` declaration loads the phase program as a rule file of the run, not into the module's
+scope). An explicit `#use` would add the general case: the file joins the program's link set and not the module's
+scope, so two files that need each other's rules stop being one module.
 
 ## Spike (2026-11-23)
 
@@ -250,14 +298,21 @@ spark2, `RERAIL_THREADS=1`, over every pack and the engine's phase programs.
 | E7 | Fields two modules give different values | none, every library |
 | E7 | Shared inputs; relations with facts from several modules | one input in four packs; `cc_boundary`, `api_known`, `node_global`, `seen_ask` |
 | E4 | A module's image holds its file's path or name | no image does (some hold a stem that is also a word of the file, such as `annotation`) |
+| E8 | Rules whose every relation below them comes from their module and its scope | 12,459 of 12,934, summed over the 17 libraries; django, next, php, rerail, rust, sql all; Blade 83 of 113 the fewest |
+| E8 | Relations with different rules from more than one module | `php_dynamic`, `cc_decision`, `cc_name`, `layout_at`, `token_text_ask`, `rr_embed_req`, `rr_dir_req`, `rr_file_req`. The 73 `extensible` declarations add facts across modules far more than rules |
+| E9 | A module against its scope lowered without its rules | 170 of 213 the same image; the 43 others reuse a declaration the scope's lowering made (kind set helpers in 10 files, `tape` in 8, `rr_embed_req` in 3, `rr_dir_req`/`rr_file_req`, `rx_span`) |
+| E10 | The tail's `KindSets` pass against three `.rerail` rules over the same input's reads | the same sets taken out in all 17 libraries (django 10, Python 7, Vue 7, ...) |
+| — | The link and the tail per run, by span | `link_versions` 2.9 ms, the tail 28.6 ms (§6's table) |
 
 The 7 inline failures fail the same without this change: `ruff-perf403` (refused at reading, open items),
 `eslint-curly`, `eslint-no-object-constructor` and `clippy-redundant-field-names` ("message: no column"),
 `eslint-one-var` (`ordered` on a `.decl`), and `next-no-page-custom-font` and `eslint-plugin-vue-no-child-content`
 (`match_all` over an unbound node).
 
-What the spike leaves: the link, tail and passes are now most of a program's lowering (33 of 39 ms for Python). The tail runs
-over the whole library again for every program, so moving its questions per module (0246 §3) is the next lever.
+What the spike leaves: the link, tail and passes are most of a program's lowering (33 of 39 ms for Python). §6 places
+each step: the link goes with the union view, most of the tail moves to module time, and what stays per program is
+downward rules over the union's rows and the few relations E8 lists. Not yet known: 4.6 ms of the tail outside any
+span, and what the guest context passes read.
 
 ## Collisions
 
@@ -325,6 +380,8 @@ silently. Each place a digest stands for content, what can collide, and what is 
   count; no image holds its path.
 - **T7.** Every field that names a relation is in a helper's content key (Collisions 4), and two helpers differing
   only in such a field get two names.
+- **T9.** E9 as a test: every module lowers to the same image against its scope's headers alone.
+- **T10.** E10 as a test: the kind set rules take out what `KindSets` takes out, every pack.
 - **T8.** `link_conflict` and `helper_conflict` fail a link built to clash, and are empty on every pack. The
   suite's outputs do not change when the settings' and demands' module order is reversed.
 
@@ -336,5 +393,9 @@ silently. Each place a digest stands for content, what can collide, and what is 
    per module. T6, T7.
 4. §4's link: the union rules, the engine's view over module images, the conflicts. Single programs and
    `lower_library` onto it, and `link_versions` and the Rust plan removed. T1, T2, T8.
-5. §5 checked by T4 on the template, and the template's fill time measured.
-6. The cold run measured by span before and after (`tmp/cold2.sh`, spark2), and recorded here.
+5. §4's interface: a module declares the lowering-made declarations it uses; its key names its scope's interface
+   digests. T9.
+6. §6: the local and upward tail steps at module time; kind sets, then sources on request, as rules per program.
+   T10.
+7. §5 checked by T4 on the template, and the template's fill time measured.
+8. The cold run measured by span before and after (`tmp/cold2.sh`, spark2), and recorded here.
