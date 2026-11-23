@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonHealth, DaemonState } from "../../../src/runtime/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { stubUserHome } from "../../support/user-home.js";
 
 /** What a Windows lookup hands on for a daemon of 0.1.4 or earlier. */
 interface OlderFound { status: "running"; state: DaemonState; older: true }
@@ -42,7 +43,8 @@ let root: string;
 
 beforeEach(async () => {
   root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-older-daemon-")));
-  for (const name of ["RERAIL_HOME", "HOME", "USERPROFILE"]) vi.stubEnv(name, root);
+  vi.stubEnv("RERAIL_HOME", root);
+  stubUserHome(root);
   answers.lookup = OLDER_FOUND;
 });
 
