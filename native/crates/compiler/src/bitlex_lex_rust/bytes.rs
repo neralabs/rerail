@@ -403,6 +403,76 @@ fn ident(n: &str) -> String {
     n.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect()
 }
 
+/// `code` with each run of a token's tests over the same bytes (`if wcount_in(n, s, l, w_A) >= 1 { … }`, one after
+/// another, comments between) read in one window loop (`wany_in`), as the lean lexer reads a string once: the tests'
+/// classes are then loaded once a window, not once a test.
+pub(super) fn fuse_tests(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    // A test's head: its indent, its span and its window function.
+    let head = |l: &str| -> Option<(usize, String, String)> {
+        let ind = l.len() - l.trim_start().len();
+        let rest = l.trim_start().strip_prefix("if wcount_in(n, ")?.strip_suffix("::<S>(src, n, p, esc) }) >= 1 {")?;
+        let (span, f) = rest.split_once(", |p: isize, esc: &mut u64| unsafe { ")?;
+        (f.starts_with("w_") && !f.contains(' ')).then(|| (ind, span.to_owned(), f.to_owned()))
+    };
+    // The line after a test's block, from its head at `i`.
+    let end = |i: usize, ind: usize| -> Option<usize> {
+        let close = format!("{}}}", " ".repeat(ind));
+        (i + 1..lines.len()).find(|&j| lines[j] == close).map(|j| j + 1)
+    };
+    let mut out = String::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let Some((ind, span, _)) = head(lines[i]) else {
+            out.push_str(lines[i]);
+            out.push('\n');
+            i += 1;
+            continue;
+        };
+        // The run: tests of the same span and indent, only comments between.
+        let mut tests = Vec::new();
+        let (mut j, mut last) = (i, i);
+        while j < lines.len() {
+            match head(lines[j]) {
+                Some((d, sp, f)) if d == ind && sp == span => {
+                    let Some(e) = end(j, ind) else { break };
+                    tests.push((j, f));
+                    j = e;
+                    last = e;
+                }
+                _ if lines[j].trim_start().starts_with("//") && lines[j].len() - lines[j].trim_start().len() == ind => j += 1,
+                _ => break,
+            }
+        }
+        if tests.len() < 2 {
+            out.push_str(lines[i]);
+            out.push('\n');
+            i += 1;
+            continue;
+        }
+        let pad = " ".repeat(ind);
+        let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| format!("{f}::<S>(src, n, p, &mut esc[{k}])")).collect();
+        let _ = writeln!(out, "{pad}// The token's tests of its bytes, in one window loop: their classes loaded once a window.");
+        let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ [{}] }});", tests.len(), calls.join(", "));
+        for (k, line) in lines.iter().enumerate().take(last).skip(i) {
+            match tests.iter().position(|(h, _)| *h == k) {
+                Some(t) => {
+                    let _ = writeln!(out, "{pad}if hit[{t}] {{");
+                }
+                None => {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+        i = last;
+    }
+    if !code.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
 /// `code` without the counts' scans (`scan … max N`, decision 0623): where tier 1 reads the bytes, tier 2 is one loop
 /// over its own stack, which refuses a level past its `DEPTH`. So a file nested too deep still ends in a refusal, and
 /// no token counts its brackets.
@@ -550,6 +620,25 @@ fn wcount_in(n: usize, a: usize, b: usize, mut w: impl FnMut(isize, &mut u64) ->
         p += 64;
     }
     c
+}
+
+/// Whether each of `K` masks has a bit in bytes `a..=b`, their windows `w` from `a` on: one loop, so each window's
+/// bytes are loaded and classified once for them all (each mask its own escape carry).
+#[inline(always)]
+fn wany_in<const K: usize>(n: usize, a: usize, b: usize, mut w: impl FnMut(isize, &mut [u64; K]) -> [u64; K]) -> [bool; K] {
+    let mut esc = [0u64; K];
+    let mut any = [0u64; K];
+    let mut p = a as isize;
+    while p <= b as isize && p < n as isize {
+        let bits = w(p, &mut esc);
+        let left = b as isize - p + 1;
+        let keep = if left < 64 { (1u64 << left) - 1 } else { !0 };
+        for k in 0..K {
+            any[k] |= bits[k] & keep;
+        }
+        p += 64;
+    }
+    any.map(|x| x != 0)
 }
 
 /// The first byte at or after `from`, before `to`, that a mask does not hold, its windows `w` from `from` on.

@@ -320,3 +320,14 @@ tests (`m_*`) are `#[inline]`, so `open_mark`'s word guards read that once. On s
 35.9 ms. Kotlin's file gets the `#[inline]` only: its tokens can be a record's pieces.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
+
+## A token's tests of its bytes in one window loop (done)
+
+A string ran three tests over its bytes (`str_bad`, a bad `\u`, a `\u` the engine checks), each a loop of its own
+windows (`wcount_in`), each loading and classifying the string's bytes again. Lean reads a string once. Now, in the
+bytes form, a run of tests of the same span (`if wcount_in(n, s, l, w_A) >= 1 { … }`, one after another) is one loop
+(`wany_in`). It calls each test's window function on the same window, so their shared classes (the backslash) are
+loaded once a window, and each keeps its escape carry. On spark2 tier 1 went from 18.4 ms to 17.7 ms. Kotlin's file is
+unchanged.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.

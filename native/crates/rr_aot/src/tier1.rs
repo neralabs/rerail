@@ -777,14 +777,16 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         }
                     };
                     let l = l.max(s);
-                    if wcount_in(n, s, l, |p: isize, esc: &mut u64| unsafe { w_m_str_bad::<S>(src, n, p, esc) }) >= 1 {
+                    // The token's tests of its bytes, in one window loop: their classes loaded once a window.
+                    let hit = wany_in(n, s, l, |p: isize, esc: &mut [u64; 3]| unsafe { [w_m_str_bad::<S>(src, n, p, &mut esc[0]), w_t12::<S>(src, n, p, &mut esc[1]), w_t13::<S>(src, n, p, &mut esc[2])] });
+                    if hit[0] {
                         hits |= 1 << 28;
                     }
-                    if wcount_in(n, s, l, |p: isize, esc: &mut u64| unsafe { w_t12::<S>(src, n, p, esc) }) >= 1 {
+                    if hit[1] {
                         hits |= 1 << 28;
                     }
                     // a \u escape the engine checks
-                    if wcount_in(n, s, l, |p: isize, esc: &mut u64| unsafe { w_t13::<S>(src, n, p, esc) }) >= 1 {
+                    if hit[2] {
                         refused = true;
                         break 'tokens;
                     }
@@ -1088,6 +1090,25 @@ fn wcount_in(n: usize, a: usize, b: usize, mut w: impl FnMut(isize, &mut u64) ->
         p += 64;
     }
     c
+}
+
+/// Whether each of `K` masks has a bit in bytes `a..=b`, their windows `w` from `a` on: one loop, so each window's
+/// bytes are loaded and classified once for them all (each mask its own escape carry).
+#[inline(always)]
+fn wany_in<const K: usize>(n: usize, a: usize, b: usize, mut w: impl FnMut(isize, &mut [u64; K]) -> [u64; K]) -> [bool; K] {
+    let mut esc = [0u64; K];
+    let mut any = [0u64; K];
+    let mut p = a as isize;
+    while p <= b as isize && p < n as isize {
+        let bits = w(p, &mut esc);
+        let left = b as isize - p + 1;
+        let keep = if left < 64 { (1u64 << left) - 1 } else { !0 };
+        for k in 0..K {
+            any[k] |= bits[k] & keep;
+        }
+        p += 64;
+    }
+    any.map(|x| x != 0)
 }
 
 /// The first byte at or after `from`, before `to`, that a mask does not hold, its windows `w` from `from` on.
