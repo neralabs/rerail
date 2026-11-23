@@ -123,7 +123,9 @@ opt-level = 3
 
 # The tape writer (`rerail-tape-format`) runs a step per node of every parser that writes the tape
 # directly (the lean Python parser, `.rerail`'s): its non-generic code (`block`, `put`) unoptimized was
-# most of the lean parser's time in dev builds.
+# most of the lean parser's time in dev builds. Its generic code is a parser's: each lean parser writes
+# through `Sink<()>` (`tape_format::Kept`, `rr_syntax::lean::tape_to`), so its parse is one instance,
+# compiled in its own crate, optimized here, not one per output type in the crate that calls it.
 [profile.dev.package.rerail-tape-format]
 opt-level = 3
 

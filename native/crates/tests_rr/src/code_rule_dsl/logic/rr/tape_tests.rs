@@ -634,9 +634,9 @@ fn a_policy_refused_its_kept_inputs_runs_again_over_its_store() {
 #[test]
 fn statements_from_the_tape_are_the_parsers() {
     use super::clause::Reads;
-    use super::from_tape::{RrFile, S, Stmt};
+    use super::from_tape::{RrFile, S, Statements, Stmt};
     use super::syntax::{Item, Statement};
-    fn same(path: &Path, parsed: &[Statement], taped: &[Stmt]) {
+    fn same(path: &Path, parsed: &[Statement], taped: &Statements) {
         assert_eq!(parsed.len(), taped.len(), "{}", path.display());
         for ((item, line), st) in parsed.iter().zip(taped) {
             let at = format!("{}:{line}", path.display());
@@ -655,7 +655,7 @@ fn statements_from_the_tape_are_the_parsers() {
                 (Item::Test { items, .. } | Item::Fixtures { items, .. }, S::Test | S::Fixtures) => {
                     let (t, n) = st.tape();
                     let (_, _, _, body) = t.block(n).unwrap();
-                    same(path, items, &body.into_iter().map(|c| Stmt::at(st.file(), c)).collect::<Vec<_>>());
+                    same(path, items, &body.into_iter().map(|c| Stmt::at(st.file(), c)).collect::<Statements>());
                 }
                 (item, what) => panic!("{at}: parser {item:?}, tape {what:?}"),
             }

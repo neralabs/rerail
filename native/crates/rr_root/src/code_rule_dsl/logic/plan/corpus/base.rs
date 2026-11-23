@@ -316,14 +316,35 @@ impl ProgramFields for Summary {
     }
 }
 
-/// The program `programs` combine to, as `changes` combines them: the root's settings (`<root>/rerail.env`, the `env`
-/// option) as the rows the run adds (decision 0249), the texts as the run's keys read them, messages masked
-/// (`texts_digest`, decision 0225 §3).
-pub fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+/// The run's settings (t21 E4): `<root>/rerail.env`, then the `env` option's `key=value`s (the command line's `--env`),
+/// and whether the run reads no file (`true`): a run of a workspace's language paths, or a program over a Git snapshot
+/// whose outputs read the snapshot's metadata alone and no setting (the selected commit may have no tree to read the
+/// file from). `masked` are `programs` as the run's keys read them (`masked`). The one decision, the run's and its
+/// record's summary's (`combined_with_settings`).
+pub fn run_settings(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<(Vec<(String, String)>, bool)> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    let metadata_without_env = if options.get("workspaceLanguagePaths").is_some() {
+        true
+    } else if crate::git_workspace::snapshot::contains(root) {
+        // The program without the root's settings: whether its outputs read Git metadata alone, and no setting.
+        let (probe, _) = combine_version(programs, masked, graphs, &added::Added::of(&[], options), read)?;
+        use crate::code_rule_dsl::logic::program_image::{About, analyses};
+        let need = analyses::needed(&probe, &About::of(&probe), probe.output_names().iter().filter_map(|o| probe.rel(o)));
+        super::git::metadata_only(&probe) && !probe.rel("env").is_some_and(|env| need[env.index()])
+    } else {
+        false
+    };
+    let settings = crate::code_rule_dsl::logic::settings::settings_with_file(root, &flags, !metadata_without_env).map_err(Error::Plan)?;
+    Ok((settings, metadata_without_env))
+}
+
+/// The program `programs` combine to, as `changes` combines them: the run's settings (`run_settings`) as the rows the
+/// run adds (decision 0249), the texts as the run's keys read them, messages masked (`texts_digest`, decision 0225 §3).
+pub fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let masked = masked(programs);
-    Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read)?.0)
+    let masked: Vec<&str> = masked.iter().map(|t| t.as_ref()).collect();
+    let (settings, _) = run_settings(programs, &masked, graphs, read, root, options)?;
+    Ok(combine_version(programs, &masked, graphs, &added::Added::of(&settings, options), read)?.0)
 }
 
 /// `changes`, reading the program's parts off `summary` where one is given (the whole-run cutoff's record), else off

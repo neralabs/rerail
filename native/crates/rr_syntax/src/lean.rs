@@ -620,6 +620,48 @@ pub fn tape(src: &str) -> rerail_tape_format::Vector<u8> {
     tape_into(src, &mut Image(src))
 }
 
+/// A `.rerail` file's tape as the engine holds it (`tape_to`): format 15's image, or format 16 or 16z written by its
+/// ops as the statements are committed.
+pub enum Taped {
+    Image(rerail_tape_format::Vector<u8>),
+    Written(Box<rerail_tape_format::f16::Finished>),
+}
+
+/// `src`'s tape to `sixteen`'s target (format 16 or 16z), else format 15's image; and why format 16 was not written,
+/// where it was asked (a code its table lacks: the parse runs again for format 15). Not generic, so the parser is
+/// compiled here (optimized in dev builds), not in the engine's crate (`tape_into`'s caller).
+#[inline(never)]
+pub fn tape_to(src: &str, sixteen: Option<rerail_tape_format::Sixteen>) -> (Taped, Option<String>) {
+    struct To<'s> {
+        src: &'s str,
+        sixteen: Option<rerail_tape_format::Sixteen>,
+        failed: Option<String>,
+    }
+    impl Finish for To<'_> {
+        type Out = Taped;
+        fn target(&self) -> rerail_tape_format::Target {
+            self.sixteen.clone().map_or(rerail_tape_format::Target::F15, rerail_tape_format::Target::F16)
+        }
+        fn finish<L: Layout>(&mut self, mut w: Writer<L>) -> Result<Taped, Redo> {
+            if w.writes_16() {
+                match w.finish_16()? {
+                    Ok(f) => return Ok(Taped::Written(Box::new(f))),
+                    Err(e) => self.failed = Some(e),
+                }
+                // The window gave back the nodes passed on: the parse runs again for format 15.
+                self.sixteen = None;
+                if !w.holds_all() {
+                    return Err(Redo(w.widths()));
+                }
+            }
+            w.finish(self.src.as_bytes()).map(Taped::Image)
+        }
+    }
+    let mut to = To { src, sixteen, failed: None };
+    let taped = tape_into(src, &mut to);
+    (taped, to.failed)
+}
+
 /// [`tape`], the writer writing to `finish`'s target and finished by it: format 15's image (`tape`), or format 16
 /// written by its ops as the statements are committed (`Writer::finish_16`, decision 0434).
 pub fn tape_into<F: Finish>(src: &str, finish: &mut F) -> F::Out {

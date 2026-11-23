@@ -294,7 +294,7 @@ fn rule_syntax_files_pass_check_rr() {
     // Phase 0 resolves every file's includes in one run of `bootstrap.rerail`, not one run each.
     let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonical().unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
-    let programs: Vec<(PathBuf, Vec<(PathBuf, Vec<from_tape::Stmt>)>)> = rr_files().into_iter().map(|f| {
+    let programs: Vec<(PathBuf, Vec<(PathBuf, from_tape::Statements)>)> = rr_files().into_iter().map(|f| {
         let program = program(&f).unwrap().0;
         (f, program)
     }).collect();
@@ -322,9 +322,9 @@ fn rule_syntax_files_pass_check_rr() {
         if !program.iter().any(|(p, _)| *p == core) {
             program.push((core.clone(), read(&core).unwrap().0));
         }
-        let named: Vec<(String, Vec<from_tape::Stmt>)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
+        let named: Vec<(String, from_tape::Statements)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
         problems.extend(check::declarations(&named).into_iter().map(|p| format!("{}: {p}", short(&f))));
-        let all: Vec<&from_tape::Stmt> = program.iter().flat_map(|(_, s)| s).collect();
+        let all: from_tape::Statements = program.iter().flat_map(|(_, s)| s).collect();
         problems.extend(check::strata(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
         // A relation read and declared nowhere in the file's program, as check-rr and a run refuse it.
         problems.extend(check::undeclared(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
@@ -346,15 +346,15 @@ fn check_rr_finds_problems() {
     let cat = statements(".decl a(m: symbol)\n.decl b(q: symbol)\nb(q) :- a(m), m = @cat(q, x).\nb(q) :- a(q), m = @cat(q, x).\n");
     assert_eq!(check::grounded(&cat, &BTreeSet::new()), vec![(4, vec!["m".to_owned()])]);
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
-    let refs: Vec<&from_tape::Stmt> = cyclic.iter().collect();
+    let refs: from_tape::Statements = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
     // A negation in a component that reads a world answer is the engine's gated negation (decision 0065 §2a, as
     // `c/includes.rerail`'s `#include_next`); an aggregate there is still refused.
     let world = ".decl dir_entry(d: symbol, n: symbol, k: number)\n.input dir_entry\n.decl a(x: symbol)\n.decl b(x: symbol)\n";
     let gated = statements(&format!("{world}a(x) :- b(x), dir_entry(x, _, 0), !a(x).\nb(x) :- a(x).\n"));
-    assert!(check::strata(&gated.iter().collect::<Vec<_>>()).is_empty());
+    assert!(check::strata(&gated).is_empty());
     let counted = statements(&format!("{world}.decl c(x: symbol, n: number)\nc(x, n) :- b(x), dir_entry(x, _, 0), n = count : {{ c(x, _) }}.\nb(x) :- c(x, _).\n"));
-    assert_eq!(check::strata(&counted.iter().collect::<Vec<_>>()).len(), 1);
+    assert_eq!(check::strata(&counted).len(), 1);
     let twice = vec![("a.rerail".to_owned(), statements(".decl a(x: number)")), ("b.rerail".to_owned(), statements(".decl a(x: number)\n.decl glob(x: symbol)"))];
     assert_eq!(check::declarations(&twice).len(), 2);
 }
@@ -2326,7 +2326,8 @@ Subtree(n) :- kind(n, "module"), text(n, _).
     let mut lines: Vec<_> = rows.iter().filter(|row| row["code"] == "LINE")
         .map(|row| (row["line"].as_i64().unwrap(), row["parameters"]["body"].as_str().unwrap())).collect();
     lines.sort();
-    assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass")]);
+    // The empty line after the final terminator is a line too (decision 0612).
+    assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass"), (3, "")]);
     // Decision 0108: a kind the rule reads by `kind` has its text at any length (the module's here, named by
     // `Subtree`); the source span and the lines are exact either way.
     assert_eq!(rows.iter().filter(|row| row["code"] == "TREE").count(), 1, "the module, a kind the rule reads, has its whole text");
@@ -4420,7 +4421,7 @@ fn library_modules_link_to_the_lowering_of_them_together() {
             continue;
         }
         let files: Files = paths.iter().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect())).collect();
-        let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
+        let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter()).collect()).unwrap();
         let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         // Each module read back from its image (decision 0246 §6) links to the same program, on versions (0377).
         let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(std::sync::Arc::new(module_image::encode(m).unwrap())).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
@@ -5462,7 +5463,8 @@ fn a_host_files_own_nodes_are_not_shown() {
     assert!(own.is_empty(), "the host file's own nodes are not: {own:?}");
     // The run's own rule file (`g.rerail`) is a file of another grammar in its root too, shown as this one is.
     let lines: Vec<&Vec<String>> = lines.iter().filter(|r| r[0] == "rules/r.rerail").collect();
-    assert_eq!(lines, [&["rules/r.rerail", "1", ".decl a(x: symbol)"], &["rules/r.rerail", "2", "a({\"k\": 1})."]], "the host file's lines and their text are shown");
+    // Every line, the empty one after the final terminator too (decision 0612: `src_line` is the lines `line` numbers).
+    assert_eq!(lines, [&["rules/r.rerail", "1", ".decl a(x: symbol)"], &["rules/r.rerail", "2", "a({\"k\": 1})."], &["rules/r.rerail", "3", ""]], "the host file's lines and their text are shown");
 }
 
 /// Q324 (decision 0431 §4, "a program is named by its file and place"): where a program declares `docof` over nodes

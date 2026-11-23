@@ -5480,6 +5480,7 @@ dependencies = [
  "rerail-prefilter",
  "rerail-prof",
  "rerail-run",
+ "rerail-tape-format",
  "rerail-transducer",
  "rerail-workspace",
  "ruff_python_ast",
@@ -5602,6 +5603,7 @@ version = "0.1.0"
 name = "rerail-rir"
 version = "0.1.0"
 dependencies = [
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-rir",
 ]

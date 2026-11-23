@@ -63,7 +63,7 @@ pub use self::core::is_core;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::from_tape::{S, Stmt};
+use super::from_tape::{S, Statements, Stmt};
 use rerail_rr_syntax::syntax::quote;
 use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, Error, LatticeDecl, List, Native, RESERVED, SCOPE_NOT, SpanIn, Value, axis};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
@@ -729,7 +729,7 @@ pub fn seeds(scope: &[&Module]) -> Seeds {
 /// `statements` lowered as a module of a scope seeded already (`seeds`), its rules written as a version in the walk
 /// (decision 0377 step 3), which `link_seeded_parts` links without editing its rules and `rr::link_seeded_version`
 /// appends onto its scope.
-pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Result<Module, Error> {
+pub fn lower_module_seeded_written(statements: Statements, seeds: &Seeds) -> Result<Module, Error> {
     // A group's first by an order, written as a self-join (decision 0515), is a lattice relation: the module is read
     // so (`first::Firsts`).
     let firsts = first::Firsts::of(&first::recognize(&statements));
@@ -956,7 +956,7 @@ fn layout(prog: &(impl ProgramFields + ?Sized), text: &str) -> Result<(String, V
 
 /// A module of the modules `scope` reaches (each once), its rules written as a version in the walk: a library's
 /// module (`rr::lower_library`).
-pub fn lower_module_in_written(statements: Vec<Stmt>, scope: &[&Module]) -> Result<Module, Error> {
+pub fn lower_module_in_written(statements: Statements, scope: &[&Module]) -> Result<Module, Error> {
     lower_module_seeded_written(statements, &seeds(scope))
 }
 

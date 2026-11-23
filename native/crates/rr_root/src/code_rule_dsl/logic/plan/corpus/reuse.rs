@@ -159,10 +159,13 @@ fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
 /// The record's entry of the program's parts the check reads (`corpus::Summary`), as JSON.
 const SUMMARY: &str = "program";
 
-/// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).
+/// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249). A Git
+/// snapshot's file is not read: the key names the snapshot's commit or tree (`snapshot::run_identity`), which fixes
+/// the file's bytes, and a run that reads Git metadata alone has no tree to read it from (`metadata_without_env`).
 fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Added> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    let read_file = crate::git_workspace::snapshot::run_identity(root).is_none();
+    let settings = crate::code_rule_dsl::logic::settings::settings_with_file(root, &flags, read_file).map_err(Error::Plan)?;
     Ok(super::added::Added::of(&settings, options))
 }
 

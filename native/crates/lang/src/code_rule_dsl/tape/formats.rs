@@ -452,52 +452,21 @@ impl TapeImage {
 
 /// A `.rerail` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
 /// writer, as `lean` writes the other languages', else format 15's image.
-pub(super) enum RrTape {
-    Image(rerail_tape_format::Vector<u8>),
-    Written(Box<f16::Finished>),
-}
+pub(super) use rerail_rr_syntax::lean::Taped as RrTape;
 
-/// The finish the `.rerail` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
-/// keys are the codes (`kf | flags << 16`, no supertypes).
-struct Rr<'s> {
-    source: &'s str,
-    /// Format 16 failed: format 15's image, parsed again.
-    f15: bool,
-}
-
-impl rerail_tape_format::Finish for Rr<'_> {
-    type Out = RrTape;
-    fn target(&self) -> rerail_tape_format::Target {
-        if self.f15 {
-            return rerail_tape_format::Target::F15;
-        }
-        let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
-        let entry = move |key: u32| {
-            let kf = (key & 0xffff) as u16;
-            Entry { kind: kf & kind_mask, field: kf >> rerail_tape_format::KIND_BITS, flags: (key >> 16 & 7) as u8, alias: None, classes: Vec::new() }
-        };
-        sixteen(GrammarDialect::Rr, move |lang, key| lang.number(&entry(key))).map_or(rerail_tape_format::Target::F15, rerail_tape_format::Target::F16)
-    }
-
-    fn finish<L: rerail_tape_format::Layout>(&mut self, mut w: Writer<L>) -> Result<RrTape, Redo> {
-        if w.writes_16() {
-            match w.finish_16()? {
-                Ok(f) => return Ok(RrTape::Written(Box::new(f))),
-                Err(e) => keeps_15(GrammarDialect::Rr, rerail_tape_format::RR_TAG, &e),
-            }
-            // As `Lean`'s: the parse runs again for format 15.
-            self.f15 = true;
-            if !w.holds_all() {
-                return Err(Redo(w.widths()));
-            }
-        }
-        w.finish(self.source.as_bytes()).map(RrTape::Image)
-    }
-}
-
-/// `source`'s tape from the `.rerail` parser, in the run's format (`Rr`).
+/// `source`'s tape from the `.rerail` parser, in the run's format (`rerail_rr_syntax::lean::tape_to`): its keys are
+/// the codes (`kf | flags << 16`, no supertypes), numbered in the language's table.
 pub(super) fn rr_tape(source: &str) -> RrTape {
-    rerail_rr_syntax::lean::tape_into(source, &mut Rr { source, f15: false })
+    let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
+    let entry = move |key: u32| {
+        let kf = (key & 0xffff) as u16;
+        Entry { kind: kf & kind_mask, field: kf >> rerail_tape_format::KIND_BITS, flags: (key >> 16 & 7) as u8, alias: None, classes: Vec::new() }
+    };
+    let (taped, failed) = rerail_rr_syntax::lean::tape_to(source, sixteen(GrammarDialect::Rr, move |lang, key| lang.number(&entry(key))));
+    if let Some(e) = failed {
+        keeps_15(GrammarDialect::Rr, rerail_tape_format::RR_TAG, &e);
+    }
+    taped
 }
 
 impl FileImage {

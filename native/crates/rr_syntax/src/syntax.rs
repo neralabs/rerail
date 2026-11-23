@@ -85,7 +85,7 @@ pub fn unescape(body: &str) -> Result<String, String> {
                 // A JSON surrogate pair.
                 if (0xD800..0xDC00).contains(&code) && chars.peek() == Some(&'\\') {
                     let rest: String = chars.clone().take(6).collect();
-                    if let Some(low) = rest.strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()) {
+                    if let Some(low) = rest.strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()).filter(|low| (0xDC00..0xE000).contains(low)) {
                         chars.by_ref().take(6).for_each(drop);
                         let joined = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
                         out.push(char::from_u32(joined).ok_or("bad surrogate pair")?);
@@ -1621,5 +1621,18 @@ mod punct_tests {
                 assert_eq!(super::punct(c, d), scan, "{text:?}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod unescape_tests {
+    /// A `\u` surrogate pair is one character; a high surrogate before any other `\u` escape is no pair, and a
+    /// lone surrogate is refused, not read past (`low - 0xDC00` took a high surrogate's second half as low).
+    #[test]
+    fn a_surrogate_pair_joins_only_a_low_half() {
+        assert_eq!(super::unescape(r"😀").as_deref(), Ok("\u{1F600}"));
+        assert!(super::unescape(r"\uD83DA").is_err());
+        assert!(super::unescape(r"\uD83D\uD83D").is_err());
+        assert!(super::unescape(r"\uD83D").is_err());
     }
 }

@@ -145,5 +145,12 @@ choice for its 16z reads' cost: "Faster 16z reads".
   (`cache::still`: its generation not turned, its key and completion unchanged), checked again after the read, as a
   lookup's readers check. `a_hinted_read_answers_while_the_cache_turns` reads through a cache of two entries a
   generation from four threads.
-- What stays a list: a program's statements (`Vec<Stmt>`, `rr::Files`), which name the nodes of its files it reads,
-  in its order, includes resolved. They are a program's choice across files, not one file's nodes.
+- A program's statements (`rr::from_tape::Statements`, in `rr::Files` and every reader of a program's text), which
+  name the nodes of its files it reads, in its order, includes resolved, are a column in a block (`Vector<[u32; 2]>`:
+  each its file's index and its node), its files held once each. A statement (`Stmt`) is a position read off the
+  column as it is reached, not a list of its own; a reader that keeps what a statement's tape reads borrows the list's
+  file (`Statements::places`). The user, of that list as a `Vec<Stmt>`: "yes, this also needs to live in blocks and
+  to be read in place".
+- The lean `.rerail` parser writes its tape through `Sink<()>` (`rr_syntax::lean::tape_to`, `tape_format::Kept`): one
+  instance of the parse, compiled in its crate and optimized in dev builds, not one per output type in the engine's
+  crate, unoptimized there. The user: "make the writer optimize even in debug builds".

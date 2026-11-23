@@ -72,12 +72,12 @@ impl RrFile {
     }
 
     /// Its statements, in order.
-    pub fn statements(self: &std::sync::Arc<Self>) -> Vec<Stmt> {
+    pub fn statements(self: &std::sync::Arc<Self>) -> Statements {
         let t = self.tape();
         if t.t.is_empty() {
-            return Vec::new();
+            return Statements::default();
         }
-        t.kids(0).map(|node| Stmt { file: std::sync::Arc::clone(self), node }).collect()
+        Statements { files: vec![std::sync::Arc::clone(self)], at: t.kids(0).map(|node| [0, node]).collect() }
     }
 }
 
@@ -87,6 +87,114 @@ impl RrFile {
 pub struct Stmt {
     file: std::sync::Arc<RrFile>,
     node: u32,
+}
+
+/// A program's statements, in its order: each a node of one of its files' tapes (`rr::Files`, its includes resolved,
+/// its own after). The list is a column in a block (`Vector`: each statement its file's index and its node), read in
+/// place; the files are held once each. A statement read off it (`Stmt`) is a position, made as it is read.
+#[derive(Clone, Default)]
+pub struct Statements {
+    files: Vec<std::sync::Arc<RrFile>>,
+    at: Vector<[u32; 2]>,
+}
+
+impl std::fmt::Debug for Statements {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Statements({} of {} files)", self.at.len(), self.files.len())
+    }
+}
+
+impl Statements {
+    pub fn len(&self) -> usize {
+        self.at.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.at.is_empty()
+    }
+
+    /// Statement `i`.
+    pub fn get(&self, i: usize) -> Option<Stmt> {
+        self.at.as_slice().get(i).map(|&[f, node]| Stmt { file: std::sync::Arc::clone(&self.files[f as usize]), node })
+    }
+
+    pub fn first(&self) -> Option<Stmt> {
+        self.get(0)
+    }
+
+    /// Its statements in order, each read off the column as it is reached.
+    pub fn iter(&self) -> impl Iterator<Item = Stmt> + '_ {
+        (0..self.len()).map(|i| self.get(i).expect("a statement of the list"))
+    }
+
+    /// Its statements in order, each with its file as the list holds it: a reader that keeps what a statement's tape
+    /// reads (a clause's names) borrows the list's file, not the statement read off it.
+    pub fn places(&self) -> impl Iterator<Item = (&std::sync::Arc<RrFile>, Stmt)> + '_ {
+        self.at.as_slice().iter().map(|&[f, node]| (&self.files[f as usize], Stmt { file: std::sync::Arc::clone(&self.files[f as usize]), node }))
+    }
+
+    /// Those `keep` keeps, in order, over the same files.
+    pub fn filtered(&self, mut keep: impl FnMut(&Stmt) -> bool) -> Statements {
+        let at = self.at.as_slice().iter().copied().filter(|&[f, node]| keep(&Stmt { file: std::sync::Arc::clone(&self.files[f as usize]), node })).collect();
+        Statements { files: self.files.clone(), at }
+    }
+
+    /// `s` after the list's statements: its file held once (the last one's first, as a list is made file by file).
+    pub fn push(&mut self, s: Stmt) {
+        let f = match self.files.iter().rposition(|f| std::sync::Arc::ptr_eq(f, &s.file)) {
+            Some(f) => f,
+            None => {
+                self.files.push(s.file);
+                self.files.len() - 1
+            }
+        };
+        self.at.push([f as u32, s.node]);
+    }
+}
+
+impl FromIterator<Stmt> for Statements {
+    fn from_iter<I: IntoIterator<Item = Stmt>>(items: I) -> Self {
+        let mut out = Statements::default();
+        out.extend(items);
+        out
+    }
+}
+
+impl Extend<Stmt> for Statements {
+    fn extend<I: IntoIterator<Item = Stmt>>(&mut self, items: I) {
+        items.into_iter().for_each(|s| self.push(s));
+    }
+}
+
+impl<'a> IntoIterator for &'a Statements {
+    type Item = Stmt;
+    type IntoIter = Box<dyn Iterator<Item = Stmt> + 'a>;
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.iter())
+    }
+}
+
+impl IntoIterator for Statements {
+    type Item = Stmt;
+    type IntoIter = Owned;
+    fn into_iter(self) -> Owned {
+        Owned { list: self, next: 0 }
+    }
+}
+
+/// A list's statements, the list held (`Statements::into_iter`).
+pub struct Owned {
+    list: Statements,
+    next: usize,
+}
+
+impl Iterator for Owned {
+    type Item = Stmt;
+    fn next(&mut self) -> Option<Stmt> {
+        let s = self.list.get(self.next)?;
+        self.next += 1;
+        Some(s)
+    }
 }
 
 /// What a statement is, read off its node (`Stmt::read`): its kind, with the names its readers match on.

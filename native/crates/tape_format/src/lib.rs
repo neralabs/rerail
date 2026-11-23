@@ -327,6 +327,42 @@ pub trait Sink<Out> {
     }
 }
 
+/// A sink's output kept aside, so that a parser writes through `Sink<()>`: its code is then one instance, compiled in
+/// its own crate (optimized in dev builds, `Cargo.toml`'s profiles), not one for each output type in the crate that
+/// calls it (the engine's, unoptimized there). A parser's entry is a shell over its `_kept` function
+/// (`rerail_python_lean::tape_into`): `Kept::new(finish)`, the parse, then `take`.
+pub struct Kept<'a, T> {
+    sink: &'a mut dyn Sink<T>,
+    out: Option<T>,
+}
+
+impl<'a, T> Kept<'a, T> {
+    pub fn new(sink: &'a mut dyn Sink<T>) -> Self {
+        Kept { sink, out: None }
+    }
+
+    /// What the sink's `finish` gave, once the parse finished its tape.
+    pub fn take(&mut self) -> T {
+        self.out.take().expect("a parse that finished its tape")
+    }
+}
+
+impl<T> Sink<()> for Kept<'_, T> {
+    fn target(&self) -> Target {
+        self.sink.target()
+    }
+    fn omissions(&self) -> Vector<[u32; 2]> {
+        self.sink.omissions()
+    }
+    fn finish(&mut self, w: Writer) -> Result<(), Redo> {
+        self.out = Some(self.sink.finish(w)?);
+        Ok(())
+    }
+    fn again(&mut self) -> bool {
+        self.sink.again()
+    }
+}
+
 impl<Out, F: FnMut(Writer) -> Result<Out, Redo>> Sink<Out> for F {
     fn finish(&mut self, w: Writer) -> Result<Out, Redo> {
         self(w)
