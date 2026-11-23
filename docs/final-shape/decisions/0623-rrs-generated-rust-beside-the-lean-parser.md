@@ -340,3 +340,24 @@ otherwise. Every other word calls only the latter, and in `.rerail` there are no
 from 35.7 ms to 35.1 ms. Kotlin's `open_mark` is the same `match`, its four unguarded marks in every arm.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
+
+## A block's masks from one classify of it, as lean's `Window` (done)
+
+Each block word (`k_m_word`, `k_m_num_run`, `k_m_dot`, `k_m_digit`, `k_m_ws`) was its window function at the block.
+Each class in it, at each offset, was a window loaded, classified, tested, turned into bits and masked to the file
+(`cls_digit(p - 1)`, `cls_digit(p + 1)`). Lean classifies a block once and derives its masks from that.
+
+Now, where every block word reads only classes within 63 bytes and no escapes, the bytes form writes
+`block_classes`. It loads the block at `base` once, classifies it once a pair of nibble tables, and returns each
+class's bits there, masked to the file. A block word is an expression of those bits. A class `d` bytes on is the
+block's bits shifted down, the next block's shifted in (`cur[i] >> d | next[i] << (64 - d)`), and one back the same
+way from the block before. Each block's classes are made once. The next block's, made for the shifts, are its
+`ahead`. The block's own are the next block's `behind`, where the loop goes on to the next block rather than past it
+(after a token over several blocks, the loop makes the neighbour's again). A word with escapes, or a class 64 bytes
+away, keeps its window function. The windows past the block, which a token's reads go on to, are unchanged.
+
+`.rerail`'s blocks now take one load and one classify (`LO_0`/`HI_0`) and four masks. `num_run` is
+`digit | dot & prev(digit) & next(digit)` of those bits. On spark2 tier 1 went from 18.0 ms to 16.7 ms (the JIT's:
+16.6 ms). Kotlin's file is unchanged.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.

@@ -342,13 +342,131 @@ impl<'a> Bytes<'a> {
         Ok(format!("!{}", self.block_word(skip)))
     }
 
-    /// The block's words, made once a block where the loop comes to it: the lean lexer's `Window`.
-    pub(super) fn block_words(&self) -> String {
-        let mut out = String::from("        // The block's masks, from its bytes (the lean lexer's `Window`): what its tokens read of it.\n");
-        for m in &self.block {
-            let _ = writeln!(out, "        let k_{m} = unsafe {{ w_{m}::<S>(src, n, base as isize, &mut 0) }};");
+    /// The block's words, made once a block where the loop comes to it, as the lean lexer's `Window`: each class the
+    /// words read classified once a block (`block_classes`, one load and one classify a pair of nibble tables), a class
+    /// a few bytes on or back its bits shifted, the neighbour block's shifted in. Each block's classes are made once: the
+    /// next block's are its `ahead`, and the last block's its `behind`. With the declarations the loop's head needs
+    /// before it. A word of escapes, or of a class 64 bytes away, reads its windows as a window past the block.
+    pub(super) fn block_words(&mut self) -> (String, String) {
+        match self.block_from_classes() {
+            Some(r) => r,
+            None => {
+                let mut out = String::from("        // The block's masks, from its bytes (the lean lexer's `Window`): what its tokens read of it.\n");
+                for m in &self.block {
+                    let _ = writeln!(out, "        let k_{m} = unsafe {{ w_{m}::<S>(src, n, base as isize, &mut 0) }};");
+                }
+                (String::new(), out)
+            }
         }
-        out
+    }
+
+    /// `block_words` from the block's classes: none where a word reads escapes or a class 64 bytes away.
+    fn block_from_classes(&mut self) -> Option<(String, String)> {
+        let mut used: Vec<String> = Vec::new();
+        let (mut back, mut on) = (false, false);
+        let mut words = Vec::new();
+        for m in self.block.clone() {
+            let e = self.expr(&m).ok()?;
+            words.push((m, self.blk(&e, 0, 0, &mut used, &mut back, &mut on)?));
+        }
+        if used.is_empty() {
+            return None;
+        }
+        // The classes' bits of the block at `base` (in the file), each its class's test of its nibble tables' pair.
+        let mut tables = String::new();
+        for k in 0..8 {
+            if used.iter().any(|c| self.class_code.get(c.as_str()).is_some_and(|code| code.contains(&format!("c{k},")) || code.contains(&format!("c{k})")))) {
+                let _ = writeln!(tables, "        let c{k} = S::classify(v, &LO_{k}, &HI_{k});");
+            }
+        }
+        let bits: Vec<String> = used.iter().map(|c| self.class_bits(c)).collect::<Option<_>>()?;
+        let k = used.len();
+        let _ = write!(
+            self.code,
+            "/// The classes the block's words read ({}), each's bits in the block at `base`, a byte of the file: one load, and one\n/// classify a pair of nibble tables, as the lean lexer's `Window`. None past the file.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: usize) -> [u64; {k}] {{\n    let block: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let lv = valid(n, base as isize);\n    // SAFETY: the caller's.\n    unsafe {{\n        let v = S::load(block);\n{tables}        [{}]\n    }}\n}}\n\n",
+            used.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", "),
+            bits.iter().map(|b| format!("{b} & lv")).collect::<Vec<_>>().join(", ")
+        );
+        let mut decl = String::new();
+        let mut head = String::from("        // The block's masks, from its classes (the lean lexer's `Window`): what its tokens read of it.\n");
+        if on {
+            let _ = writeln!(decl, "    // The next block's classes, made with the block before it: the block's own, where the loop goes on to it.\n    let (mut ahead_b, mut ahead) = (usize::MAX, [0u64; {k}]);");
+            let _ = writeln!(head, "        // SAFETY: `base` is in the file.\n        let cur = if ahead_b == b {{ ahead }} else {{ unsafe {{ block_classes::<S>(src, n, base) }} }};");
+            let _ = writeln!(head, "        // SAFETY: `base + 64` is in the file.\n        let next = if base + 64 < n {{ unsafe {{ block_classes::<S>(src, n, base + 64) }} }} else {{ [0u64; {k}] }};\n        (ahead_b, ahead) = (b + 1, next);");
+        } else {
+            let _ = writeln!(head, "        // SAFETY: `base` is in the file.\n        let cur = unsafe {{ block_classes::<S>(src, n, base) }};");
+        }
+        if back {
+            let _ = writeln!(decl, "    // The last block's classes: the block before's, where the loop came to it from there.\n    let (mut behind_b, mut behind) = (usize::MAX, [0u64; {k}]);");
+            let _ = writeln!(head, "        // SAFETY: `base - 64` is in the file.\n        let prev = if behind_b.wrapping_add(1) == b {{ behind }} else if b > 0 {{ unsafe {{ block_classes::<S>(src, n, base - 64) }} }} else {{ [0u64; {k}] }};\n        (behind_b, behind) = (b, cur);");
+        }
+        if words.iter().any(|(_, w)| w.contains("lv")) {
+            head.push_str("        let lv = valid(n, base as isize);\n");
+        }
+        for (m, w) in words {
+            let _ = writeln!(head, "        let k_{m} = {w};");
+        }
+        Some((decl, head))
+    }
+
+    /// Class `c`'s bits of the byte vector `v` (its nibble tables' `cP`, or its ranges' tests).
+    fn class_bits(&self, c: &str) -> Option<String> {
+        if let Some(code) = self.class_code.get(c) {
+            return Some(code.trim_end_matches(" & lv").to_owned());
+        }
+        let rs = self.classes.get(c)?;
+        let bits: Vec<String> = rs
+            .iter()
+            .map(|&(lo, hi)| match (lo, hi) {
+                (lo, hi) if lo == hi => format!("S::eq_mask(v, {lo:#04x})"),
+                (lo, 255) => format!("S::to_bitmask(S::ge(v, {lo:#04x}))"),
+                (0, hi) => format!("!S::to_bitmask(S::ge(v, {:#04x}))", hi + 1),
+                (lo, hi) => format!("(S::to_bitmask(S::ge(v, {lo:#04x})) & !S::to_bitmask(S::ge(v, {:#04x})))", hi + 1),
+            })
+            .collect();
+        Some(if bits.is_empty() { "0".to_owned() } else { format!("({})", bits.join(" | ")) })
+    }
+
+    /// `e`'s bits in the block, `off` bytes on (back, negative), from the block's classes (`cur`, and the neighbours'
+    /// `prev` and `next`): none where it reads escapes or a class 64 bytes away.
+    #[allow(clippy::too_many_arguments)]
+    fn blk(&self, e: &Expr, off: i64, depth: usize, used: &mut Vec<String>, back: &mut bool, on: &mut bool) -> Option<String> {
+        if depth > 64 || off.abs() >= 64 {
+            return None;
+        }
+        Some(match e {
+            Expr::Empty => "0u64".to_owned(),
+            Expr::Name(n) if self.classes.contains_key(n.as_str()) => {
+                let i = match used.iter().position(|c| c == n) {
+                    Some(i) => i,
+                    None => {
+                        used.push(n.clone());
+                        used.len() - 1
+                    }
+                };
+                match off {
+                    0 => format!("cur[{i}]"),
+                    o if o > 0 => {
+                        *on = true;
+                        format!("(cur[{i}] >> {o} | next[{i}] << {})", 64 - o)
+                    }
+                    o => {
+                        *back = true;
+                        format!("(cur[{i}] << {} | prev[{i}] >> {})", -o, 64 + o)
+                    }
+                }
+            }
+            Expr::Name(n) => self.blk(self.defs.get(n)?, off, depth + 1, used, back, on)?,
+            Expr::Not(a) => format!("(!{} & lv)", self.blk(a, off, depth + 1, used, back, on)?),
+            Expr::And(a, b) => format!("({} & {})", self.blk(a, off, depth + 1, used, back, on)?, self.blk(b, off, depth + 1, used, back, on)?),
+            Expr::Or(a, b) => format!("({} | {})", self.blk(a, off, depth + 1, used, back, on)?, self.blk(b, off, depth + 1, used, back, on)?),
+            Expr::Xor(a, b) => format!("({} ^ {})", self.blk(a, off, depth + 1, used, back, on)?, self.blk(b, off, depth + 1, used, back, on)?),
+            Expr::Call(f, args) => {
+                let (a, k) = Self::shift(f, args)?;
+                self.blk(&a, off + k, depth + 1, used, back, on)?
+            }
+            Expr::Test { .. } => return None,
+        })
     }
 
     /// The window functions and helpers the rewritten reads call.

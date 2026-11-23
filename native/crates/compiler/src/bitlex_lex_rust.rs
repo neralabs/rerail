@@ -6001,9 +6001,10 @@ impl Gen<'_> {
                 }
                 let starts = by.starts(&skip)?;
                 let pair_words: String = pair_rows.iter().filter(|(f, _)| pieces.iter().any(|q| q.contains(&format!("k_{f}")))).map(|(f, _)| format!("        let k_{f} = unsafe {{ w_{f}::<S>(src, base) }};\n")).collect();
-                Ok((pieces, format!("{}{pair_words}        let mut firsts = {starts}", by.block_words())))
+                let (decl, words) = by.block_words();
+                Ok((pieces, format!("{words}{pair_words}        let mut firsts = {starts}"), decl))
             };
-            go().ok().map(|(p, st)| (p, st, by.code()))
+            go().ok().map(|(p, st, decl)| (p, st, by.code(), decl))
         } else {
             None
         };
@@ -6036,7 +6037,8 @@ impl Gen<'_> {
                 &format!(" = {{\n        let Stage1 {{ {}, refused: _ }} = stage1_best(&src[..n]);\n        // Each word's bits inside the file.\n        let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n {{ !0 }} else {{ (1u64 << (n % 64)) - 1 }}).collect();\n", kept.join(", ")),
                 1,
             );
-            (walk, "    'tokens: while b < nw {\n".to_owned(), "")
+            let decl = from_bytes.as_ref().map_or("", |f| f.3.as_str());
+            (walk, format!("{decl}    'tokens: while b < nw {{\n"), "")
         } else if fused {
             // Stage 1 to the blocks the token loop waits for (every one, once it waits for the file's end), then its
             // tests once after its last step; a test build's walk; then the token loop, to a token in a block not made.
@@ -6074,7 +6076,7 @@ impl Gen<'_> {
             stage = if fused { walk.as_str() } else { "" },
             word_read = if word_table.is_some() { "word_at(src, s, l + 1 - s)" } else { "word(&src[s..=l])" },
             block_starts = match &from_bytes {
-                Some((_, st, _)) => st.clone(),
+                Some((_, st, ..)) => st.clone(),
                 None => format!("        let mut firsts = !{skip}[b]"),
             },
             masks_init = if fields.is_empty() { String::new() } else { format!("        masks: Masks {{\n{fields_init}        }},\n") },
@@ -6082,7 +6084,7 @@ impl Gen<'_> {
         if fused {
             out.push_str("\nrerail_simd8::dispatch! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].iter().all(|&b| b == b' '), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
         }
-        if let Some((_, _, code)) = &from_bytes {
+        if let Some((_, _, code, _)) = &from_bytes {
             out.push_str(code);
             for (f, two) in &pair_rows {
                 if !out.contains(&format!("k_{f} >>")) {
