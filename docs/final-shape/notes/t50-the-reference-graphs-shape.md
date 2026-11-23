@@ -1011,6 +1011,13 @@ Then, step by step (each device run's step counts against a CPU run of the same 
   on the host side of the hand-off between chunks (what one chunk's batch encodes reading what another's left, or
   refused), not by the GPU running two submissions at once. The device-side dump of the failed probes' keys is still
   the next instrument.
+- **The probes' own counts, read back (2026-11-23).** A temporary dump waited for each keyed probe of a view and read
+  its bindings and per-binding counts back on the host (no kernel change: both are shared memory). At 512 MB the run
+  lost `dbg_rd` rows (470,445) while `docof` (kind 9) found a row for every one of its 1.5 M bindings, so the loss
+  moves between runs and relations. Against the 4 GB run, probes can not be matched one to one: the chunks differ
+  with the budget (their views' row counts differ), and where a probe's group is in both runs its counts are the same.
+  So the next instrument has to judge each empty probe within its own run: the binding's key read against the view's
+  values on the host (the index check's `key_hash`), not against another run.
 
 ## Open
 
