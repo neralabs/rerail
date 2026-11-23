@@ -1394,23 +1394,29 @@ UKL_INLINE void ix_key_one(JSPACE const uint8_t* B, JSPACE uint32_t* out, JSPACE
     out[eb + t] = kb + (uint32_t)(h & p->mask);
 }
 
-// The index's rows and buckets written into its relation's block, from the level's keys sorted (stably) with their
-// places: its sorted place `t` is the level's `eb + t`, its row's id the place it came from less `eb`, past the
-// relation's first row `from` (so a bucket's rows are in id order, as the host's builder places them). A place
-// whose bucket is not the one before's starts it, and sets the empty buckets' before it; the last place the rest.
-// `offs` the buckets in the block, `rows` the rows.
-UKL_INLINE void ix_place_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys, JSPACE const uint32_t* places, JSPACE uint32_t* offs, JSPACE uint32_t* rows,
-                             JSPACE const IxP* p, uint32_t kb, uint32_t eb, uint32_t t)
+// The index's rows written into its relation's block, from the level's keys sorted (stably) with their places: its
+// sorted place `t` is the level's `eb + t`, its row's id the place it came from less `eb`, past the relation's first
+// row `from` (so a bucket's rows are in id order, as the host's builder places them). `rows` the rows.
+UKL_INLINE void ix_place_one(JSPACE const uint8_t* B, JSPACE const uint32_t* places, JSPACE uint32_t* rows, JSPACE const IxP* p, uint32_t eb, uint32_t t)
 {
-    uint32_t n = ix_rows(B, p), cap = (uint32_t)p->mask + 1u;
-    // No rows: every bucket empty.
-    if (n == 0u && t == 0u) for (uint32_t x = 0u; x <= cap; x++) offs[x] = 0u;
-    if (t >= n) return;
+    if (t >= ix_rows(B, p)) return;
     rows[t] = p->from + places[eb + t] - eb;
-    uint32_t b = keys[eb + t] - kb;
-    uint32_t from = t == 0 ? 0u : keys[eb + t - 1u] - kb + 1u;
-    for (uint32_t x = from; x <= b; x++) offs[x] = t;
-    if (t == n - 1u) for (uint32_t x = b + 1u; x <= cap; x++) offs[x] = n;
+}
+
+// The index's bucket `x`'s first row (decision 0647), of its `cap + 1` (the last, its rows'): the first sorted place
+// whose bucket is `x` or past it, a search of the sorted keys. A thread a bucket: a bucket's offset depends on no other
+// thread's, however few the rows (a round's) and many the buckets (its room's).
+UKL_INLINE void ix_offs_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys, JSPACE uint32_t* offs, JSPACE const IxP* p, uint32_t kb, uint32_t eb, uint32_t x)
+{
+    uint32_t cap = (uint32_t)p->mask + 1u;
+    if (x > cap) return;
+    uint32_t lo = 0u, hi = ix_rows(B, p);
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (keys[eb + mid] - kb < x) lo = mid + 1u;
+        else hi = mid;
+    }
+    offs[x] = lo;
 }
 
 
@@ -1773,6 +1779,8 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 #define PK_GATE 27u
 #define PK_ROUND 28u
 #define PK_SIZE 29u
+// An index's buckets' offsets (`ix_offs_one`), a thread a bucket, beside its rows placed (`PK_IX_PLACE`).
+#define PK_IX_OFFS 30u
 
 // An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase, its
 // segment and one (`Seg`; 0: none).
@@ -2005,7 +2013,8 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
     switch (kind) {
         case PK_COPY: rows_copy_one((JSPACE const uint8_t*)L, (JSPACE uint8_t*)O, j->totals, (JSPACE const Copy*)j->P, t); break;
         case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)L, H, (JSPACE uint32_t*)j->S, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
-        case PK_IX_PLACE: ix_place_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, (JSPACE const uint32_t*)j->VC, j->A, j->counters, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
+        case PK_IX_PLACE: ix_place_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)j->VC, j->counters, (JSPACE const IxP*)j->P, JOB_WORD(jw, eb), t); break;
+        case PK_IX_OFFS: ix_offs_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, j->A, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
         case PK_DEDUP_CLEAR: dedup_clear_one(H, j->dd, t); break;
         case PK_DEDUP_CLAIM: dedup_claim_one(L, j->totals, H, j->dd, t); break;
         case PK_MAP: stage_map_one(O, j->totals, j->s, t); break;

@@ -2845,7 +2845,8 @@ impl Batch {
             }
             debug_assert!(std::ptr::eq(from, f), "the sort ends where `sorted` says");
             prog.rooms.sorts.extend(sort_room.take());
-            job_phase(prog, &[(JobKind::Index, PK_IX_PLACE, |j| j.count)]);
+            // Its rows placed, and beside them its buckets' offsets, a thread a bucket (decision 0647).
+            job_phase(prog, &[(JobKind::Index, PK_IX_PLACE, |j| j.count), (JobKind::Index, PK_IX_OFFS, |j| j.buckets + 1)]);
         }
         job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLEAR, |j| j.clear), (JobKind::Map, PK_MAP, |j| j.count)]);
         job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLAIM, |j| j.claim)]);
@@ -3978,6 +3979,7 @@ const PK_SUM: u32 = 26;
 const PK_GATE: u32 = 27;
 const PK_ROUND: u32 = 28;
 const PK_SIZE: u32 = 29;
+const PK_IX_OFFS: u32 = 30;
 /// The phases whose items are their jobs' rows' (`Job::rows_word`): each kernel's threads past its rows do nothing.
 /// Not a row's text (its SIMD groups stride its rows), an index (its sort is of every key), a clear, a fold's map or
 /// places, a scan's or a sort's tiles.

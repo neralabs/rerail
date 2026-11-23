@@ -75,3 +75,23 @@ work of four scan phases that each did one tile's, which was little.
   descriptor, a scan level's words) before any row is read, and a size script runs on one thread. Neither is measured
   yet. The M3 has no shader clock, and its counters sample at a stage's boundaries only, not a dispatch's.
 - **Whether the three stay.** Each is correct and none is a measured gain. 0641 is the design they would be removed to.
+
+## A phase timed alone
+
+Each phase of the leveled reach was timed alone: a stack a phase (`RERAIL_STACK_PHASES=1`, chains off), so each is a
+command buffer of its own and its GPU time is the phase's. The launch budget stops the run at 200 phases, about two
+rounds. A command buffer's own cost sets a floor: about 13 µs here, and 40 µs on a second, busier run.
+
+- **The scans are most of a round's phases**: 105 of the 200 (63 tiles' passes, 42 sums' passes), each at the floor.
+  The size scripts are 27 more.
+- **An index's placing was one thread's loop** (`ix_place_one`). The place before an empty bucket set that bucket's
+  offset, and with no rows thread 0 set all `cap + 1`. A round's few rows against the room's many buckets made one
+  thread write nearly the whole table: 247 µs a phase (median), 1.8 ms at most. An index's offsets are now a thread
+  a bucket (`ix_offs_one`, `PK_IX_OFFS`, beside the rows' `PK_IX_PLACE` in its phase): a search of the sorted keys
+  for the bucket's first row. Timed alone, the phase is now within 40 µs of the floor. The measure's totals did not
+  move: in a stack, the phase's loop was not what a round waited on.
+
+A phase that starts a group pays its descriptors' dependent loads before its first row: its item, its phase, its
+segment and that segment's count, then its job's or scan level's words. The small scans emptied four scan phases but
+each still started a group (a phase starts one when its counts need none) and made those loads, which fits their null
+result. Phases removed, not emptied, are what this leaves to try.
