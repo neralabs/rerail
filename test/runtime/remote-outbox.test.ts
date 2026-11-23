@@ -531,6 +531,17 @@ describe("remote sink outbox", () => {
     expect(storedRecords(sink).filter(item => item.id === owned || item.auditId === owned)).toEqual([]);
   });
 
+  // An audit with no session is told by its own repository: a test of its session would read as a repository not
+  // known, which any exclusion covers.
+  it("sends an audit the repository owns while only another repository is excluded", async () => {
+    const { sessionId } = seed();
+    const owned = seedRepositoryAudit(sessionId);
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    setRepositoryExcluded("remote:example.com/team/other", true, home);
+    await outbox().sync({ force: true });
+    expect(storedRecords(sink).filter(item => item.type === "audit").map(item => item.id)).toContain(owned);
+  });
+
   it("sends an audit the repository owns whose stored paths do not read with no session, its repository and a failure that names them, and again whole once they are mended", async () => {
     const { sessionId } = seed();
     const owned = seedRepositoryAudit(sessionId);
