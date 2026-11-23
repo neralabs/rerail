@@ -874,6 +874,17 @@ are `pre_306` (the matcher's `nameref`, 1.46 s) and `pre_309` (`rf_read` led by 
 Instructions 1,691 → 1,648 G, own CPU 155.1 → 152.5 s. What is left in each is one probe at about 0.5 µs a row
 (`text($n, $x)`, 882 ms; `rr_ast_35($i)`, 754 ms).
 
+### Step 8, the writing: entries encoded in parallel (2026-11-23)
+
+Both of step 8's remaining costs were on the run's thread in the local phase, under `memo remember`: writing a
+chunk's entries into their segments (1.05 s over 36 chunks) and counting each file's entry into the kept
+statistics (0.94 s over 3,089 files). Each entry's image is now encoded in parallel and written in order. Each
+relation's statistics, which are its rows' alone, are counted in parallel, 16 relations a task (in order when
+traced). On `all` (m1max at load 21): rows unchanged; on the run's thread the writing went 1.05 → 0.27 s and the
+statistics 0.94 → 0.73 s, the local phase's own time 4.72 → 3.71 s. Its wall did not fall (5.32 → 5.45 s), on a host
+whose cores were taken (16 s of "no core" in the phase). A file's entry is too small to split well; counting a
+chunk's files relation by relation would be the next form.
+
 ### A run's exit waited on idle upkeep (2026-11-23; cause not confirmed)
 
 Three runs on `all` (two Metal, one CPU) took 304–340 s of wall at a 17–18 GB peak, where the same binary takes

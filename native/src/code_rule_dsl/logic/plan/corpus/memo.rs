@@ -906,12 +906,22 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
     let mut w = crate::content_store::SegmentWriter::new(&store.memo_dir(), digests.iter().flatten().count(), estimate);
     let mut rows: Vec<crate::content_store::MemoRow> = Vec::with_capacity(held.len());
     let mut contents: Vec<Content> = Vec::with_capacity(held.len());
-    for ((content, path, e), digest) in held.into_iter().zip(digests) {
-        let Some(digest) = digest else { continue };
-        let over = standing.contains(&(path.clone(), e.key));
-        let key = e.key;
-        let image = if over { image::encode_parts(&identities_of(&e), &program.syms, &made_under)? } else { image::encode_parts(&e, &program.syms, &made_under)? };
-        drop(e);
+    // Each entry's image encoded in parallel (they are independent), then written in order (t50 step 8: on the run's
+    // thread, about 30 ms a chunk).
+    let encoded: Vec<StoreResult<(Content, String, i64, [u8; 32], bool, crate::code_rule_dsl::logic::plan::output::Finished)>> = {
+        use rayon::prelude::*;
+        let items: Vec<((Content, String, Entry), [u8; 32])> = held.into_iter().zip(digests).filter_map(|(h, d)| Some((h, d?))).collect();
+        items
+            .into_par_iter()
+            .map(|((content, path, e), digest)| {
+                let over = standing.contains(&(path.clone(), e.key));
+                let image = if over { image::encode_parts(&identities_of(&e), &program.syms, &made_under)? } else { image::encode_parts(&e, &program.syms, &made_under)? };
+                Ok((content, path, e.key, digest, over, image))
+            })
+            .collect()
+    };
+    for done in encoded {
+        let (content, path, key, digest, over, image) = done?;
         w.put(image.len(), key, &digest, |out| image.write(out))?;
         rows.push(crate::content_store::MemoRow { part: part_of(&digest, &path), path, digest, key, over });
         contents.push(content);
