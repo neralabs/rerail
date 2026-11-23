@@ -404,3 +404,22 @@ fn a_kernel_shipped_for_a_target_the_device_runs_is_loaded() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Decision 0645 step 3: every CUDA target a release ships compiles without a GPU, from its own text (Windows' with
+/// its 32-bit `long`), by the newest of the build's toolkits that compiles for it. Where a build's toolkits are named
+/// (`RERAIL_SHIP_CUDA_HOMES`, as the release job names NVIDIA's NVRTC 13 and 12).
+#[test]
+fn every_shipped_cuda_target_compiles_without_a_gpu() {
+    if std::env::var_os("RERAIL_SHIP_CUDA_HOMES").is_none_or(|v| v.is_empty()) {
+        return;
+    }
+    let name = "device_tests_ship.uglykl";
+    for n in rerail_ukl::target::SHIPPED.iter().filter(|n| n.starts_with("sm_") || n.starts_with("compute_")) {
+        let t = rerail_ukl::Target::named(n).unwrap();
+        let text = crate::kernels::preprocess_for(&t, name, KERNELS, &[]).unwrap();
+        let code = rerail_device::device::compile_offline(n, None, &text, name).unwrap_or_else(|e| panic!("{n}: {e}"));
+        let ptx = n.starts_with("compute_");
+        assert!(if ptx { code.starts_with(b"//") } else { code.starts_with(b"\x7fELF") }, "{n}: {} bytes, not {}", code.len(), if ptx { "PTX" } else { "a cubin" });
+        eprintln!("{n}: {} bytes", code.len());
+    }
+}

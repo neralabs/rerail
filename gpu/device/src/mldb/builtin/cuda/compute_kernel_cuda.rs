@@ -244,7 +244,8 @@ pub fn compile_offline(target: &str, source: &str, name: &str) -> Result<Vec<u8>
     let form = if target.starts_with("compute_") { "ptx" } else { "cubin" };
     let sm: i32 = target.trim_start_matches("sm_").trim_start_matches("compute_").parse().map_err(|_| format!("{target}: no CUDA target"))?;
     // A toolkit's libraries: Windows' `bin`; Linux's `lib64`, or `lib` (NVIDIA's NVRTC wheel, `nvidia-cuda-nvrtc-cu12`);
-    // or the directory holding them, named itself.
+    // or the directory holding them, named itself. Not Windows' `.alt.` build (the wheel's `nvrtc64_120_0.alt.dll`),
+    // whose builtins library the wheel does not hold.
     let (sep, libs): (char, &[&str]) = if cfg!(windows) { (';', &["bin", "."]) } else { (':', &["lib64", "lib", "."]) };
     let homes: Vec<String> = std::env::var("RERAIL_SHIP_CUDA_HOMES").unwrap_or_default().split(sep).filter(|h| !h.is_empty()).map(str::to_owned).collect();
     let mut candidates: Vec<Vec<String>> = homes
@@ -255,12 +256,22 @@ pub fn compile_offline(target: &str, source: &str, name: &str) -> Result<Vec<u8>
                 .flatten()
                 .flatten()
                 .map(|e| e.path())
-                .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(if cfg!(windows) { "nvrtc64_" } else { "libnvrtc.so" }) && !n.contains("builtins")))
+                .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(if cfg!(windows) { "nvrtc64_" } else { "libnvrtc.so" }) && !n.contains("builtins") && !n.contains(".alt.")))
                 .map(|p| p.display().to_string())
                 .collect()
         })
         .collect();
     candidates.push(cuda_library_names().1);
+    // NVRTC loads its builtins library (`nvrtc-builtins64_129.dll`) by name when it compiles, which Windows finds on
+    // `PATH`: the CUDA Toolkit's installer puts its `bin` there, and a build's toolkit (a wheel's) is put there here.
+    #[cfg(windows)]
+    for h in &homes {
+        let path = std::env::var("PATH").unwrap_or_default();
+        if !path.split(';').any(|p| p.eq_ignore_ascii_case(h)) {
+            // SAFETY: Windows' environment calls are thread-safe (`SetEnvironmentVariableW`, behind std's lock).
+            unsafe { std::env::set_var("PATH", format!("{h};{path}")) };
+        }
+    }
     // The newest that compiles for the architecture.
     let mut tried = Vec::new();
     let mut best: Option<Rtc> = None;
