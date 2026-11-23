@@ -1403,7 +1403,7 @@ impl<'a> G<'a> {
                 close = rd.close
             );
         }
-        let _ = write!(out, "    /// Past the token, to the next grammar token's record{}.\n    #[inline(always)]\n    fn advance(&mut self, from: usize) -> R {{\n{resume}        self.i = self.next_tok(self.i + 1);\n        self.arrive()\n    }}\n\n", if resume.is_empty() { "" } else { ", or the string's parts a template's `}` resumes, at the record before the next (decision 0600)" });
+        let _ = write!(out, "    /// Past the token, to the next grammar token's record{}.\n    #[inline(always)]\n    fn advance(&mut self, from: usize) -> R {{\n{resume}        // The record after the token: the next token, but for comments; with none between, nothing is pending.\n        let j = self.i + 1;\n        self.i = if j < self.n && is_extra(self.recs[j].code) {{\n            self.next_tok(j + 1)\n        }} else {{\n            if self.pend + 1 == j {{\n                self.pend = j;\n            }}\n            j\n        }};\n        self.arrive()\n    }}\n\n", if resume.is_empty() { "" } else { ", or the string's parts a template's `}` resumes, at the record before the next (decision 0600)" });
         let _ = write!(out, "    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {{\n        let s = self.recs[j].start as usize;\n{at}        let _ = s;\n        Ok(())\n    }}\n\n");
         // A piece's word: its kind's keywords', as the lean lexer finds a word.
         let mut arms = String::new();

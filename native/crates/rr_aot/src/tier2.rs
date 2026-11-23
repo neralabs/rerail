@@ -6955,7 +6955,16 @@ impl<L: Layout> P<'_, L> {
     /// Past the token, to the next grammar token's record.
     #[inline(always)]
     fn advance(&mut self, from: usize) -> R {
-        self.i = self.next_tok(self.i + 1);
+        // The record after the token: the next token, but for comments; with none between, nothing is pending.
+        let j = self.i + 1;
+        self.i = if j < self.n && is_extra(self.recs[j].code) {
+            self.next_tok(j + 1)
+        } else {
+            if self.pend + 1 == j {
+                self.pend = j;
+            }
+            j
+        };
         self.arrive()
     }
 

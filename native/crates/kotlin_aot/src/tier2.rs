@@ -10502,7 +10502,16 @@ impl<L: Layout> P<'_, L> {
             self.known = 0;
             return self.resume_1(p);
         }
-        self.i = self.next_tok(self.i + 1);
+        // The record after the token: the next token, but for comments; with none between, nothing is pending.
+        let j = self.i + 1;
+        self.i = if j < self.n && is_extra(self.recs[j].code) {
+            self.next_tok(j + 1)
+        } else {
+            if self.pend + 1 == j {
+                self.pend = j;
+            }
+            j
+        };
         self.arrive()
     }
 

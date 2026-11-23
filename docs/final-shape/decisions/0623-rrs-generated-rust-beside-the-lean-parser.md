@@ -446,3 +446,11 @@ the same way.
 
 `size`, `end` and `truncate` (the relabels, the readings again, `merge`) have plain calls too (`plain_size`, `plain_end`,
 `plain_truncate`), so every writer call tier 2 makes is plain but `push` and `len`, which check nothing.
+
+### A token with no comment after it reads one record
+
+Comments stay records between the tokens (tier 1 writes them in order), but the walk past them is off a token's path
+when none follows it. `advance` reads the record after the token once: a comment sends it to `next_tok`'s walk, else
+that record is the next token, and nothing is pending (`pend` moves with `i`), so the next take's `flush` is one
+compare instead of a step over the token taken last. Lean's take is `i += 1` beside a separate comment list; this is the
+same work on a token with no comment. On spark1 tier 2 was 30.3 ms (the plain calls' 29.9–31.6 ms); all tests pass.
