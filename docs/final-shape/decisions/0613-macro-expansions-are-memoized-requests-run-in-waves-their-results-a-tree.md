@@ -348,6 +348,31 @@ So:
      serial pass's tokens on CUDA and Metal. The M3 Max's batch: 31.4 ms before, 33.1 and 29.2 ms after (first and
      second evaluation).
 
+   **Built: the memo in the loop** (2026-11-22, `lp_memo_*` in `pp_loop.uglykl`).
+   - A call whose arguments are read in one frame is looked up at its `)`. Its key is its definition, the macros
+     disabled where it is read, its stretch (the text between two directives) and its arguments' entries. A top
+     call's arguments are keyed by their tokens' spelling, its pieces re-emitted from where the first wrote them,
+     their places moved. A call in a list or an argument's expansion is keyed by its entries as they are, a node
+     by the hash of what it holds (kept in its header when it is made), not by where it is.
+   - A miss is expanded and its result kept when its list is read to its end without reading below it, a
+     built-in or the text past it: a top call's as the output's pieces (three chunks at most), another's as its
+     entries, none, one or a node. Calls nest in the capture three deep (the outermost leaves first).
+   - The table is a block's front, 4,096 pairs at least (an eighth of the top tokens, within a quarter of the
+     store), probed 8 deep. Sized by the top text alone (64 pairs for a short unit), it filled: 418 of Boost
+     `control`'s 484 results were not kept.
+   - Only a dear definition is looked up: one with an expansion of 16 steps or more (a bit for each definition,
+     set the first time it is seen). Most calls cost less than their key and lookup, which cost the corpus's
+     answer rounds about 3% with every call keyed and nothing gained.
+   - GB10, CUDA, warm, a second evaluation: the corpus's C round 1.94 (no memo) to 2.11 ms, C++'s 2.50 to
+     2.46 ms, within the runs' noise; 2 hits in C, none in C++. Boost `control` (3 units): the slowest piece
+     66,449 to 59,567 steps, median run 290 to 256 ms, 31 hits and 466 results kept. Every unit gives the serial
+     pass's tokens on the CPU backend, CUDA and Metal.
+   - Measured against §"In the loop's steps" (a unit's memo by spelling reads 11.6% of Boost's serial steps),
+     the loop's memo finds few repeats. A call's arguments in a body are entries keyed as they are, so the same
+     tokens by spelling at another place are another key. The repeats the serial measure counts come from
+     parameters bound to equal spellings from different places, which need the arguments as holes (§"Arguments
+     as references"): a result kept with its arguments' places open, filled at each hit.
+
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

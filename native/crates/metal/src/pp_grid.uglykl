@@ -271,7 +271,12 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
         // the count). `XAT` and `XPOS` are the overruns' only in a pass run again, before this.
         SCAN(nt, XFLAG, XAT, XTOTAL);
         EACH(s, nt) lp_queue(AT(const uint32_t, XFLAG), AT(const uint32_t, XAT), toks, AT(uint32_t, XPOS), s);
-        ONE(x) { AT(uint32_t, TRN)[26] = 0u; AT(uint32_t, TRN)[27] = AT(const uint32_t, XTOTAL)[0]; }
+        // The memo's table (`lp_memo_*`): the tokens' store's first pairs, free (the store is empty here: its
+        // front is 0), and its definitions' hot bits (`LP_MEMO_HOT`); the front past them.
+        uint32_t mt = lp_memo_size(nt, AT(const uint32_t, WORDS)[1]);
+        EACH(i, mt) AT(uint32_t, TOKENS)[2u * i] = 0u;
+        EACH(i, mt != 0u ? LP_MEMO_HOT : 0u) AT(uint32_t, TOKENS)[2u * mt + i] = 0u;
+        ONE(x) { AT(uint32_t, TRN)[26] = 0u; AT(uint32_t, TRN)[27] = AT(const uint32_t, XTOTAL)[0]; AT(uint32_t, TRN)[30] = mt; AT(uint32_t, CTL)[0] = mt != 0u ? 2u * mt + LP_MEMO_HOT : 0u; }
         BARRIER();
         {
             PX_UA(DR);

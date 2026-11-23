@@ -1302,6 +1302,12 @@ impl Exp {
         unsafe { *self.trn.host().cast::<u32>().add(16) }
     }
 
+    /// The memo's hits and the results it kept (`TRN[28]`, `TRN[29]`, decision 0613 §2).
+    pub fn memo(&self) -> (u32, u32) {
+        // SAFETY: the device finished; `trn` holds 32 words.
+        unsafe { (*self.trn.host().cast::<u32>().add(28), *self.trn.host().cast::<u32>().add(29)) }
+    }
+
     /// The last text pass's pieces (`TRN[13]`, decision 0588).
     pub fn loop_pieces(&self) -> u32 {
         // SAFETY: the device finished; `trn` holds 32 words.
@@ -1429,6 +1435,8 @@ pub struct Expanded {
     pub gives: u32,
     /// The longest piece's steps (`TRN[16]`, decision 0588): a measurement, and the tests' bound on a chain.
     pub steps: u32,
+    /// The memo's hits and the results it kept (`TRN[28]`, `TRN[29]`, decision 0613 §2), every pass's.
+    pub memo: (u32, u32),
     pub def_rung: u32,
     /// The command it ran in (`next_run`): a batch's units ran in one, and its GPU time is that command's.
     pub run: u64,
@@ -1714,7 +1722,7 @@ impl<'u> Runs<'u> {
         if std::env::var_os("RERAIL_PP_LOOP_LOG").is_some() {
             // SAFETY: the device finished; `trn` holds 32 words, 16 to 19 the longest piece's, 20 to 23 the slowest's.
             let w = |k: usize| unsafe { *exp.trn.host().cast::<u32>().add(k) };
-            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25));
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29));
         }
         // The loop's work, where the run reached the text (a round that ends at its requests did not): the
         // unit's, kept for its next run and its next evaluation.
@@ -1727,7 +1735,7 @@ impl<'u> Runs<'u> {
         };
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
-            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), def_rung, run })
+            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), def_rung, run })
         };
         // SAFETY: the device finished writing `room`.
         let why = |room: &str| {

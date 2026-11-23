@@ -1229,6 +1229,96 @@ fn an_argument_passed_on_is_read_once() {
     eprintln!("{} shapes, {tokens} tokens", shapes.len() * 2);
 }
 
+/// Decision 0613 §1: a top call's result kept, and every call with its key read from the memo, read
+/// where the first wrote it: `F(1)` 100 times is expanded by a few groups (those that run its first
+/// calls at once each miss), and each gives the serial pass's tokens. The macros are dear enough to be
+/// looked up (`LP_MEMO_COST` steps: `D`'s), as a cheap one's calls are not.
+#[test]
+fn a_repeated_invocation_is_expanded_once() {
+    let d = "#define A(x) x\n#define D A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a)\n";
+    let calls: Vec<&str> = (0..100).map(|_| "F(1)").collect();
+    let src = format!("{d}#define G(x) [x]\n#define F(x) G(x) G(x x) D\n{}\n", calls.join(" "));
+    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", &src)], false);
+    same(show(&got.expect("refused")), show(&want), "100 calls");
+    eprintln!("memo: {hits} hits, {kept} kept");
+    assert!(hits >= 50 && kept <= 20, "F(1) is expanded by a few groups: {hits} hits, {kept} kept");
+    // Its arguments' tokens are the hit's own, wherever it is and however spaced.
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define F(a, b) a b a\nF(x,y) F( x , y ) F(x,y)\nF(x,y) F(x, y)\n")],
+        &[("main.c", "#define I(x) x\n#define F(x) I(x) I((x))\nF(1) F(1) F(2) F(1)\n")],
+        &[("main.c", "#define E()\n#define F(x) #x x ## 1\nE() a E() F(b) F(b) F( b ) F(b)\n")],
+    ];
+    shapes_agree(shapes);
+    // A call in a body whose arguments are the body's own (`P(r, g)`) is one result for every call of
+    // the body's macro, whatever its arguments; one whose arguments are a parameter's is the call's.
+    // (`Y(1)`'s finds `P` dear, `Y(2)`'s keeps its result, the two after read it.)
+    let src = format!("{d}#define P(a, b) <a b> D\n#define Y(x) P(r, g) P(x, x) x\nY(1) Y(2) Y(3) Y(4)\n");
+    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", &src)], false);
+    same(show(&got.expect("refused")), show(&want), "a body's call");
+    eprintln!("a body's call: {hits} hits, {kept} kept");
+    assert!(hits >= 2, "P(r, g) is one result: {hits} hits, {kept} kept");
+}
+
+/// Decision 0613 §1: the macros disabled where a call is read are its key's: `B(1)` entered at the top
+/// and inside `A` (where `A` is painted) are two results.
+#[test]
+fn a_disabled_macro_paints_alike_in_a_memoized_expansion() {
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define A(x) B(x) B(x)\n#define B(x) A(x) x\nA(1) B(1) A(1) B(1)\n")],
+        &[("main.c", "#define A(x) [B(x)] [B(x)]\n#define B(x) <A(x)>\n#define C(x) B(x) A(x)\nC(1) C(1) B(1) A(1)\n")],
+        // A call in a body that ends in a function-like name, its `(` after the body's call.
+        &[("main.c", "#define g(x) <x>\n#define f(x) x g\n#define h(x) f(x)(2) f(x) x\nh(1) h(1) (3) h(1)\n")],
+    ];
+    shapes_agree(shapes);
+}
+
+/// Decision 0613 §1: a definition changed between two calls (a directive between them): the second
+/// is expanded again; two calls with no directive between are one.
+#[test]
+fn a_definition_changed_between_uses_is_expanded_again() {
+    // `F` dear enough to be looked up (`LP_MEMO_COST`), from its first call on.
+    let src = "#define G 1\n#define A G\n#define F() A A A A A A A A A A A A A A A A A A A A\nF()\n#undef G\n#define G 2\nF() F()\n";
+    let (got, want, (hits, _)) = expanded_memo(&[("main.c", src)], false);
+    same(show(&got.expect("refused")), show(&want), "G changed");
+    same(hits, 1, "the hits: the last call's");
+}
+
+/// Decision 0613 §1: a result that reads a place's built-in (`__LINE__`, `__COUNTER__`) or the text
+/// past its `)` (a function-like name at its end) is not kept.
+#[test]
+fn place_builtins_are_not_memoized() {
+    let src = "#define L(x) x __LINE__\nL(a)\nL(a)\nL(a) L(a)\n";
+    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", src)], false);
+    same(show(&got.expect("refused")), show(&want), "__LINE__");
+    same((hits, kept), (0, 0), "the memo's hits and results");
+    let src = "#define g(x) <x>\n#define f(x) x g\nf(1)(2) f(1) f(1)(3) f(1) x\n";
+    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", src)], false);
+    same(show(&got.expect("refused")), show(&want), "an open tail");
+    same((hits, kept), (0, 0), "the memo's hits and results");
+    let shapes: &[&[(&str, &str)]] = &[&[("main.c", "#define C(x) x __COUNTER__\nC(a) C(a)\nC(a)\n")]];
+    shapes_agree(shapes);
+}
+
+/// `expanded_run`, and the memo's hits and results.
+fn expanded_memo(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, (u32, u32)) {
+    use rerail_c_pp::files::Search;
+    let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+    let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+    let mut serial = Spelled::default();
+    let m2 = m.clone();
+    let mut io = Search::new(Vec::new(), move |p: &str| m2.get(p).cloned());
+    let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+    assert!(pp.run("main.c"));
+    drop(pp);
+    let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
+    let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
+    let x = &*s.part.x;
+    if x.refused != 0 {
+        return (Err(x.refused), serial.0, x.memo);
+    }
+    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.memo)
+}
+
 /// `expanded_run`, and the longest piece's steps.
 fn expanded_steps(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32, u32) {
     use rerail_c_pp::files::Search;
