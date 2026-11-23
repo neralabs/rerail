@@ -52,7 +52,10 @@ impl Bound {
 
     /// The entry of `rel` (its name and identity) at partition `part`, if the space keeps one.
     pub(in crate::code_rule_dsl) fn entry(self: &Arc<Self>, rel: &str, ident: &[u8; 32], part: i64) -> Option<Entry> {
-        let rows: *const rerail_blocks::packed::Packed = self.view().get(&FactKey { rel, ident, part })?.rows;
+        let found = self.view().entry(&FactKey { rel, ident, part })?;
+        // SAFETY: what it borrows (its rows, key, types and reads) lies in the read-only mappings `self` holds, which
+        // the entry holds too (`bound`), as `rows` was held before; `kept` gives it back borrowed from the entry.
+        let kept: Kept<'static> = unsafe { std::mem::transmute::<Kept<'_>, Kept<'static>>(found) };
         // Found: the run's program reads it, and its reader record names it (decision 0401 step 8). A miss keeps
         // nothing; what the run puts in its place, its puts' record names.
         crate::code_rule_dsl::logic::profile::with_bound::<KeptReader, _>(|r| {
@@ -60,7 +63,7 @@ impl Bound {
                 log.asked(&self.id, ident, |key| self.view().get(&FactKey { rel: READERS, ident: key, part: 0 }).map(|k| record_idents(&k).collect()).unwrap_or_default());
             }
         });
-        Some(Entry { bound: Arc::clone(self), rel: rel.to_owned(), ident: *ident, part, rows })
+        Some(Entry { bound: Arc::clone(self), kept })
     }
 }
 
@@ -69,25 +72,26 @@ impl Bound {
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Entry {
     bound: Arc<Bound>,
-    rel: String,
-    ident: [u8; 32],
-    part: i64,
-    /// Its rows, in `bound`'s mapping.
-    rows: *const rerail_blocks::packed::Packed,
+    /// The entry as found, its rows resolved, in `bound`'s mappings: read again per question, each a search of
+    /// every file of the chain (a warm run asks a thousand entries their digests, types and reads).
+    kept: Kept<'static>,
 }
 
-// SAFETY: `rows` lies in a read-only mapping `bound` holds, shared by every thread that reads it.
+// SAFETY: `kept` lies in a read-only mapping `bound` holds, shared by every thread that reads it.
 unsafe impl Send for Entry {}
 unsafe impl Sync for Entry {}
 
 impl Entry {
     fn kept(&self) -> Kept<'_> {
-        self.bound.view().entry(&FactKey { rel: &self.rel, ident: &self.ident, part: self.part }).expect("an entry of its space")
+        self.kept
+    }
+    fn rows(&self) -> *const rerail_blocks::packed::Packed {
+        std::ptr::from_ref(self.kept.rows)
     }
     /// Its rows where they lie.
     pub(in crate::code_rule_dsl) fn packed(&self) -> &rerail_blocks::packed::Packed {
         // SAFETY: as above: the mapping lives as long as `bound`, which this holds.
-        unsafe { &*self.rows }
+        unsafe { &*self.rows() }
     }
     pub(in crate::code_rule_dsl) fn digest(&self) -> u64 {
         self.kept().digest
@@ -120,7 +124,7 @@ impl Entry {
             return None;
         }
         let Some(levels) = rows.levels() else {
-            return Some(InRel::over_source(Arc::new(KeptSource::new(Arc::clone(&self.bound), vec![self.rows])), types));
+            return Some(InRel::over_source(Arc::new(KeptSource::new(Arc::clone(&self.bound), vec![self.rows()])), types));
         };
         // copy: load: the rows and their levels into the run's relation, which maintains a recursive stratum by them.
         let n = rows.len();
@@ -164,7 +168,7 @@ pub(in crate::code_rule_dsl) fn gathered(parts: &[Entry], width: usize, atoms: &
     if parts.iter().any(|p| p.width() != width || !Arc::ptr_eq(&p.bound, &first.bound) || !readable(&p.kept(), atoms)) {
         return None;
     }
-    let source = KeptSource::new(Arc::clone(&first.bound), parts.iter().map(|p| p.rows).collect());
+    let source = KeptSource::new(Arc::clone(&first.bound), parts.iter().map(Entry::rows).collect());
     Some(InRel::over_source(Arc::new(source), vec![b'i'; width]))
 }
 

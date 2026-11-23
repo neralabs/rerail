@@ -240,7 +240,10 @@ impl<B: Borrow<Block>> KeptFacts<B> {
     }
 
     fn find(&self, key: &FactKey) -> Option<(FactKey<'_>, Found<'_>)> {
-        let i = self.entries().binary_search_by(|e| self.key_of(e).cmp(key)).ok()?;
+        // By the name's bytes, as `FactKey`'s order is (a `str`'s is its bytes'): a probe makes no `str` of them.
+        let strings = self.strings();
+        let want = (key.rel.as_bytes(), key.ident, key.part);
+        let i = self.entries().binary_search_by(|e| (&strings[e.rel_at as usize..(e.rel_at + e.rel_len) as usize], &e.ident, e.part).cmp(&want)).ok()?;
         let e = &self.entries()[i];
         Some((self.key_of(e), self.entry(e)))
     }
@@ -248,8 +251,10 @@ impl<B: Borrow<Block>> KeptFacts<B> {
     /// The entries of `rel`, by a binary search for their range.
     fn range(&self, rel: &str) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         let es = self.entries();
-        let lo = es.partition_point(|e| str_at(self.strings(), e.rel_at, e.rel_len) < rel);
-        let hi = lo + es[lo..].partition_point(|e| str_at(self.strings(), e.rel_at, e.rel_len) == rel);
+        let (strings, rel) = (self.strings(), rel.as_bytes());
+        let name = |e: &KeptEntry| &strings[e.rel_at as usize..(e.rel_at + e.rel_len) as usize];
+        let lo = es.partition_point(|e| name(e) < rel);
+        let hi = lo + es[lo..].partition_point(|e| name(e) == rel);
         es[lo..hi].iter().map(move |e| (self.key_of(e), self.entry(e)))
     }
 
