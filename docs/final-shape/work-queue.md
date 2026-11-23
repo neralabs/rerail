@@ -10754,4 +10754,5 @@ versions to compare), format 16's parent read vectorized, the f16_parent spikes,
 Relax: `rerail-ukl-aot`'s Rust called NEON intrinsics and an atomic Relax's std lacked (`vmull_high_u32`,
 `vcntq_u8`, `vclzq_u32`, `Atomic::from_ptr`): added to the fork (1f2868e6). The engine checks clean; rerail-ukl-aot
 (12), rerail-ukl-vec (50), rerail-ukl (13) and the device setfix tests on the CPU backend (27) pass, the last two
-after the fixes in Q513 and Q514.
+after the fixes that follow (eccfb213de: Relax tells a program it starts the disk's paths; the next commit: a
+store's atoms written on a pool thread whose run ended read no run).
