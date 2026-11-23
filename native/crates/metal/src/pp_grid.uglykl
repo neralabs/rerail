@@ -151,7 +151,8 @@
 // A group's threadgroup memory: the barrier's flag, the scans' scratch, and the sorts' counts or
 // a sorted tile (the segmented scans' two rows alias them: no phase runs two of them); in the
 // loop's phase, which runs no scan or sort, each SIMD group's piece's run (`lp_piece`: its stacks,
-// indexed as it goes, in the group's memory, not a thread's, which Metal keeps in device memory).
+// indexed as it goes, in the group's memory, not a thread's, which Metal keeps in device memory);
+// and in the tests' phase each SIMD group's window of a long `#if` line (`p1_if_line`).
 #define PP_TG_BIG UKL_GRID_SORT_WORDS
 #define LP_SLOTS (256u / UKL_SIMD_WIDTH)
 typedef struct PpTg {
@@ -162,6 +163,7 @@ typedef struct PpTg {
     union {
         uint32_t big[PP_TG_BIG];
         LpRun lp[LP_SLOTS];
+        IfWin ifw[LP_SLOTS];
     };
 } PpTg;
 
@@ -539,7 +541,7 @@ UKL_ONCE void pp_unit(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
                                    AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, DSLOT), AT(const uint32_t, IF_OPS), AT(const uint32_t, STATE), AT(const uint32_t, OUT), AT(const uint32_t, OBASE),
                                    AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), defined_key, true_key, W(IF_TRUE), AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP),
                                    AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), AT(uint32_t, IF_VAL), AT(uint32_t, VBAD), w,
-                                   g.lid & (UKL_SIMD_WIDTH - 1u) __UKL_ARGS);
+                                   g.lid & (UKL_SIMD_WIDTH - 1u), &tg->ifw[(g.lid / UKL_SIMD_WIDTH) % LP_SLOTS] __UKL_ARGS);
             // The `#line` rows (§6), for the next iteration's lines and the text.
             EACH(w, nd) p1_line_row(u, AT(const uint32_t, IF_KIND), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, N_DIRS),
                                     AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, OUT), AT(const uint32_t, OBASE), AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), W(OUT_CAP),

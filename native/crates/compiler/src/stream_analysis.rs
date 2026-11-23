@@ -431,10 +431,14 @@ pub enum Mem {
     /// An extra a mark lost (`SETTLE m=2`): its kind and field, plus one (0: none), made again
     /// by the next `TOKEN` that takes a token, of no width at the token taken.
     Lost,
+    /// The strings whose template's code is being read (decision 0600): their records left open
+    /// at a template's `$`, their parts going on at the next opener of a reader that resumes
+    /// (`SplitParts::resumers`).
+    Strings,
 }
 
 impl Mem {
-    pub const COUNT: u32 = 31;
+    pub const COUNT: u32 = 32;
 }
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
@@ -500,6 +504,16 @@ pub struct SplitReader {
     pub closers: Vec<(u8, u8)>,
     /// Its opener's token has the reader's tag (`Reader::retag`): the record's code, no word.
     pub tagged: bool,
+    /// Its closer at a template (`ReadArm::template`, decision 0600), and its closer's last
+    /// (`ReadArm::last`, else its offset), where it has one: its closer piece ends there, not at
+    /// the record's last, which is the string's.
+    pub template: Option<u16>,
+    pub last: Option<u16>,
+    pub off: i8,
+    /// Its regions resume a string's (`Reader::resumes`): entered at the template's `}`, with
+    /// no record, its opener's code its tag's (`code`).
+    pub resumes: bool,
+    pub code: Option<u32>,
 }
 
 /// A region read in parts that tier 2's `TOKEN` splits (`Split::Tier2`, decision 0323): its
@@ -535,7 +549,8 @@ pub fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error>
             let a = &rd.arms[0];
             let mut parts: Vec<(u16, u8, Option<u16>, Option<u8>)> = rd.parts.iter().map(|p| (p.start, p.bytes, p.last, p.kind)).collect();
             parts.sort_by_key(|&(o, n, _, _)| (n, o));
-            SplitReader { opener: a.opener, closer: a.closer, parts, content: rd.content, closers: rd.closers.clone(), tagged: a.retag.or(rd.retag).is_some() }
+            let code = a.retag.or(rd.retag).map(|(kind, marks)| u32::from(kind) | marks << crate::records::MARK_SHIFT);
+            SplitReader { opener: a.opener, closer: a.closer, parts, content: rd.content, closers: rd.closers.clone(), tagged: a.retag.or(rd.retag).is_some(), template: a.template, last: a.last, off: a.off, resumes: rd.resumes, code }
         })
         .collect();
     // simdjson's `parse_string`: one reader, its parts of bytes, no kinds of their own.

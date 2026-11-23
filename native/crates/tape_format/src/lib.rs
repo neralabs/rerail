@@ -709,6 +709,11 @@ impl<L: Layout> Writer<L> {
             // runs again for format 15 (`passed_node`).
             return self.passed_node(node).map_or(1, |e| if e.end_at == usize::MAX { 0 } else { (e.end_at - node) as u32 });
         }
+        self.size_here(node)
+    }
+
+    #[inline(always)]
+    fn size_here(&self, node: usize) -> u32 {
         let w = self.layout.widths().size;
         let at = self.cell(node) * usize::from(w);
         if w == 2 { u32::from(u16::from_le_bytes([self.size[at], self.size[at + 1]])) } else { u32::from_le_bytes(self.size[at..at + 4].try_into().expect("4 bytes")) }
@@ -725,11 +730,16 @@ impl<L: Layout> Writer<L> {
         if node < self.base {
             return self.passed_node(node).map_or(0, |e| e.end);
         }
+        self.end_here(node)
+    }
+
+    #[inline(always)]
+    fn end_here(&self, node: usize) -> u32 {
         let w = self.layout.widths();
         let c = self.cell(node);
         let at = c * usize::from(w.tail);
         let tail = if w.tail == 2 { u32::from(u16::from_le_bytes([self.tail[at], self.tail[at + 1]])) } else { u32::from_le_bytes(self.tail[at..at + 4].try_into().expect("4 bytes")) };
-        let from = if w.from_start { self.starts[c] } else { self.starts[c + self.size(node) as usize - 1] };
+        let from = if w.from_start { self.starts[c] } else { self.starts[c + self.size_here(node) as usize - 1] };
         from.wrapping_add(tail)
     }
 
@@ -850,6 +860,193 @@ impl<L: Layout> Writer<L> {
     fn close_marks(&mut self, node: usize, end: u32, last: u32, from: u32, tail: u32) {
         self.mark(node, EARLY, end < last);
         self.mark(node, TAIL_WIDE, tail > 0xffff && end >= from);
+    }
+
+    /// A closed leaf at the end, in preorder: `push` and `close` at once, as a token is written (its tail from its start,
+    /// as `insert_leaf`'s). At a chain's node, the two.
+    #[inline(always)]
+    pub fn push_leaf(&mut self, key: u32, start: u32, end: u32) -> usize {
+        if self.n == self.chain_at {
+            let at = self.push(key, start);
+            self.close(at, end);
+            return at;
+        }
+        self.leaf_here(key, start, end)
+    }
+
+    #[inline(always)]
+    fn leaf_here(&mut self, key: u32, start: u32, end: u32) -> usize {
+        let at = self.push(key, start);
+        let tail = end.wrapping_sub(start);
+        if tail >= self.wide_from {
+            self.close_marks(at, end, start, start, tail);
+        }
+        let (c, ws) = (self.cell(at), self.layout.widths());
+        Self::put(&mut self.size, c, ws.size, 1);
+        Self::put(&mut self.tail, c, ws.tail, tail);
+        at
+    }
+
+    /// `node`'s key given the bits `field` where its bits `mask` are none (a field set after the node was made, where
+    /// it has none): `key` and `set_key` at once.
+    #[inline]
+    pub fn set_field(&mut self, node: usize, mask: u32, field: u32) {
+        if node == self.chain_at || node < self.base {
+            let k = self.key(node);
+            if k & mask == 0 {
+                self.set_key(node, k | field);
+            }
+            return;
+        }
+        self.field_here(node, mask, field);
+    }
+
+    #[inline(always)]
+    fn field_here(&mut self, node: usize, mask: u32, field: u32) {
+        let c = self.cell(node);
+        let k = self.keys[c];
+        if k & mask == 0 {
+            self.uncode_from(node);
+            self.keys[c] = k | field;
+        }
+    }
+
+    /// `node` closed at `end`, or at its start where that is later (a node of no token), as `close`: its key, read before.
+    /// `key`, `start` and `close` at once.
+    #[inline(always)]
+    pub fn close_from(&mut self, node: usize, end: u32) -> u32 {
+        if node == self.chain_at || node < self.base {
+            let k = self.key(node);
+            let e = end.max(self.start(node));
+            self.close(node, e);
+            return k;
+        }
+        self.close_from_here(node, end)
+    }
+
+    #[inline(always)]
+    fn close_from_here(&mut self, node: usize, end: u32) -> u32 {
+        let c = self.cell(node);
+        let (k, s) = (self.keys[c], self.starts[c]);
+        self.close_at(node, end.max(s), self.n);
+        k
+    }
+
+    /// A node of key `key` put over node `at`, open (an operator found after its left operand, as `insert`): it takes
+    /// `at`'s key's bits `mask`, and those become `bits` (the wrapped node's field). `key`, `set_key`, `start` and
+    /// `insert` at once.
+    #[inline(always)]
+    pub fn wrap(&mut self, at: usize, mask: u32, bits: u32, key: u32) {
+        if at == self.chain_at || at < self.base {
+            let k = self.key(at);
+            self.set_key(at, k & !mask | bits);
+            let start = self.start(at);
+            self.insert(at, key | (k & mask), start);
+            return;
+        }
+        self.wrap_here(at, mask, bits, key);
+    }
+
+    #[inline(always)]
+    fn wrap_here(&mut self, at: usize, mask: u32, bits: u32, key: u32) {
+        let c = self.cell(at);
+        let (k, start) = (self.keys[c], self.starts[c]);
+        self.uncode_from(at);
+        self.keys[c] = k & !mask | bits;
+        self.insert_node(at, key | (k & mask), start);
+    }
+
+    /// Whether the tape holds no chain and has passed no node on: a parse to an image or the columns that opens no
+    /// chain (tier 2's), whose calls are then the `plain_` ones.
+    fn plain(&self) -> bool {
+        self.chain_at == usize::MAX && self.chains.is_empty() && self.base == 0
+    }
+
+    /// `key`, on a tape with no chain held and no node passed on (`plain`): neither checked.
+    #[inline(always)]
+    pub fn plain_key(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.keys[node]
+    }
+
+    /// `start`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_start(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.starts[node]
+    }
+
+    /// `set_key`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_set_key(&mut self, node: usize, key: u32) {
+        debug_assert!(self.plain());
+        self.uncode_from(node);
+        self.keys[node] = key;
+    }
+
+    /// `set_start`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_set_start(&mut self, node: usize, start: u32) {
+        debug_assert!(self.plain() && self.is_open(node));
+        self.starts[node] = start;
+    }
+
+    /// `close`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_close(&mut self, node: usize, end: u32) {
+        debug_assert!(self.plain());
+        self.close_at(node, end, self.n);
+    }
+
+    /// `push_leaf`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_leaf(&mut self, key: u32, start: u32, end: u32) -> usize {
+        debug_assert!(self.plain());
+        self.leaf_here(key, start, end)
+    }
+
+    /// `set_field`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_field(&mut self, node: usize, mask: u32, field: u32) {
+        debug_assert!(self.plain());
+        self.field_here(node, mask, field);
+    }
+
+    /// `close_from`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_close_from(&mut self, node: usize, end: u32) -> u32 {
+        debug_assert!(self.plain());
+        self.close_from_here(node, end)
+    }
+
+    /// `size`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_size(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.size_here(node)
+    }
+
+    /// `end`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_end(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.end_here(node)
+    }
+
+    /// `truncate`, on a plain tape.
+    #[inline]
+    pub fn plain_truncate(&mut self, len: usize) {
+        debug_assert!(self.plain());
+        if len < self.n {
+            self.truncate_here(len);
+        }
+    }
+
+    /// `wrap`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_wrap(&mut self, at: usize, mask: u32, bits: u32, key: u32) {
+        debug_assert!(self.plain());
+        self.wrap_here(at, mask, bits, key);
     }
 
     /// `node`'s key changed (a field set after it was made, a kind found later).
@@ -1153,6 +1350,11 @@ impl<L: Layout> Writer<L> {
         } else {
             len
         };
+        self.truncate_here(len);
+    }
+
+    #[inline(always)]
+    fn truncate_here(&mut self, len: usize) {
         self.n = len;
         self.uncode_from(len);
         self.marks.retain(|m| (m.0 as usize) < len);
@@ -1679,6 +1881,72 @@ mod tests {
             };
             assert_eq!(build(false), build(true), "{places:?} over {n}");
         }
+    }
+
+    /// A leaf written at once (`push_leaf`), a field set where there is none (`set_field`), a wrap (`wrap`) and its close
+    /// (`close_from`) give the tape the calls they join give: wide tails among the leaves, a field set where one is and
+    /// where none is, a wrap closed past its leaf and at its start.
+    #[test]
+    fn a_leaf_at_once_and_a_field_are_the_calls_they_join() {
+        let src = vec![b' '; 200_000];
+        // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
+        let build = |way: u8| {
+            let joined = way > 0;
+            let mut w = Widths::guess(src.len());
+            loop {
+                let mut o = Writer::new(1, w, 8);
+                let r = o.push(key(1, 0, 0), 0);
+                for i in 0..40u32 {
+                    let (s, e) = (10 * i, if i % 7 == 3 { 10 * i + 70_000 } else { 10 * i + 3 });
+                    let k = key(2 + (i % 3) as u16, if i % 5 == 0 { 3 } else { 0 }, 0);
+                    let x = if way == 2 {
+                        o.plain_leaf(k, s, e)
+                    } else if joined {
+                        o.push_leaf(k, s, e)
+                    } else {
+                        let x = o.push(k, s);
+                        o.close(x, e);
+                        x
+                    };
+                    let field = u32::from(1 + (i % 4) as u16) << 10;
+                    if way == 2 {
+                        o.plain_field(x, 0x3f << 10, field);
+                    } else if joined {
+                        o.set_field(x, 0x3f << 10, field);
+                    } else if o.key(x) >> 10 & 0x3f == 0 {
+                        let k = o.key(x);
+                        o.set_key(x, k | field);
+                    }
+                    // A wrap over the leaf, closed past it or at its start (a later end, an earlier one).
+                    if i % 3 == 1 {
+                        let wk = key(9, 0, 0);
+                        let end = if i % 2 == 0 { e + 4 } else { s };
+                        if way == 2 {
+                            o.plain_wrap(x, 0x3f << 10, 5 << 10, wk);
+                            let _ = o.plain_close_from(x, end);
+                        } else if joined {
+                            o.wrap(x, 0x3f << 10, 5 << 10, wk);
+                            let _ = o.close_from(x, end);
+                        } else {
+                            let k = o.key(x);
+                            o.set_key(x, k & !(0x3f << 10) | 5 << 10);
+                            let st = o.start(x);
+                            o.insert(x, wk | (k & (0x3f << 10)), st);
+                            let e2 = end.max(o.start(x));
+                            o.close(x, e2);
+                        }
+                    }
+                }
+                o.close(r, 199_999);
+                o.commit();
+                match o.finish(&src) {
+                    Ok(t) => break decode(&t).unwrap(),
+                    Err(Redo(wider)) => w = wider,
+                }
+            }
+        };
+        assert_eq!(build(0), build(1));
+        assert_eq!(build(0), build(2));
     }
 
     /// A leaf put in later, between closed nodes (`insert_leaf`), gives the tape written in order.

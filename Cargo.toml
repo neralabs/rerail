@@ -123,6 +123,24 @@ opt-level = 3
 [profile.dev.package.rerail-compiler]
 opt-level = 3
 
+# The crates split from it hold the same code, so they are built as it is: Bitlex's
+# lowering and its prover (`rerail-bitlex`), and the lowerings to Cranelift (`rerail-rir`, `rerail-cpu-block`,
+# `rerail-cpu-stream`, `rerail-cpu-pp`). Unoptimized, Kotlin's tier 1 alone takes minutes to write.
+[profile.dev.package.rerail-bitlex]
+opt-level = 3
+
+[profile.dev.package.rerail-rir]
+opt-level = 3
+
+[profile.dev.package.rerail-cpu-block]
+opt-level = 3
+
+[profile.dev.package.rerail-cpu-stream]
+opt-level = 3
+
+[profile.dev.package.rerail-cpu-pp]
+opt-level = 3
+
 # simdjson's operations (`rerail-simd8`) are each a few instructions, inlined into the kernels that use them.
 [profile.dev.package.rerail-simd8]
 opt-level = 3

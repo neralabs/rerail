@@ -10756,3 +10756,19 @@ Relax: `rerail-ukl-aot`'s Rust called NEON intrinsics and an atomic Relax's std 
 (12), rerail-ukl-vec (50), rerail-ukl (13) and the device setfix tests on the CPU backend (27) pass, the last two
 after the fixes that follow (eccfb213de: Relax tells a program it starts the disk's paths; the next commit: a
 store's atoms written on a pool thread whose run ended read no run).
+
+### Q513. Roll-up 86 (Parser-generators-final-shape 9727d90b86 onto Pulling-it-all-together): what the merge chose
+
+Parser-generators-final-shape (9727d90b86): 0623, tier 2's writer calls plain (one push a level, leaves with their
+field, wrap and close one call each, its stack a local, look-ahead with one bounds test), rr's tier 1 masks from one
+classify of a block, comments kept as records between tokens (the user's choice), and its merge of roll-up 80.
+- **`metal/src/slabs.rs`**: the same change on both sides (a refusal says why under `RERAIL_POOL_DEBUG` or
+  `RERAIL_PP_WHY`), worded twice: the hub's (roll-up 85's) kept.
+
+Relax: the engine checks clean; rerail-rr-parser 52/52, rerail-json-aot. rerail-rr-parser segfaulted in safe code
+(`bitlex_lex_rust`'s `matches!(t, A(_, e) | B(_, e) if { let … })`): Relax lowered a guarded or-arm's guard once per
+alternative and made the guard's locals' slots in the first alternative's blocks. Fixed in the fork (0a98714e), the
+next commit. Under the full suites' parallel load, three kotlin-parser tests (panics inside std's `str` formatting,
+code tiered to O3 mid-run) and `rust_is_current` once failed, then passed alone, three together and in a second full
+run: not the merge's, and not chased further here (the kotlin suite runs past ten minutes under Relax, a test of it
+alone 99 s).

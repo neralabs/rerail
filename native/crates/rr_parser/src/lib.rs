@@ -74,7 +74,8 @@ pub struct Compiled {
     /// Tier 1 as Rust, written by the Bitlex compiler from the grammar in this compile (`bitlex_lex_rust`), so its
     /// codes are the JIT's, or why it is not written (`rerail-rr-aot` holds it).
     pub lexer_rust: Result<String, String>,
-    /// Tier 2 as Rust, from the tree rules in this compile (`bitlex_rust`), or why it is not written.
+    /// Tier 2 as Rust, from the tree rules in this compile as one loop over tier 1's records (`bitlex_rust::tier2_loop`,
+    /// its records form), or why it is not written.
     pub rust: Result<String, String>,
 }
 
@@ -144,7 +145,7 @@ pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> 
         rerail_compiler::native_cpu_clusters::Cut { pick_traffic: traffic.clone(), near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(&native) }
     };
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program, lexer_rust: compiled.lexer_rust.clone().unwrap_or_else(|| Err("no tree section".into())), rust: compiled.rust.clone().unwrap_or_else(|| Err("no tree section".into())) })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program, lexer_rust: compiled.lexer_rust.clone().unwrap_or_else(|| Err("no tree section".into())), rust: compiled.rust_loop.clone().unwrap_or_else(|| Err("no tree section".into())) })
 }
 
 /// `src`'s tape, the engine's bytes (decision 0140): from the compiled grammar, or, for a file
@@ -1516,8 +1517,8 @@ pub mod tests {
     fn token_rules_are_their_last_masks() {
         let old = crate::GRAMMAR
             .replace("start hash & directive run word", "start hash & directive last hashword & ~next(hashword & ~directive)")
-            .replace("start alpha & ident & ~prev(ident) run word", "start alpha & ident & ~prev(ident) last ident & ~next(ident)")
-            .replace("start digit & int & ~prev(int) run num_run once dot", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
+            .replace("start id_first run word", "start id_first last ident & ~next(ident)")
+            .replace("start int_first run num_run once dot", "start int_first last numeral & ~next(numeral)")
             .replace("start punct & p_start pair two_start", "start punct & p_start last p_last")
             .replace("read str", "last prev(f_str) & ~f_str")
             .replace("read line | block", "last (f_line & ~next(f_line)) | (prev(f_block) & ~f_block)")

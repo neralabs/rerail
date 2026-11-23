@@ -121,6 +121,9 @@ typedef struct LpOut {
     PP_GLOBAL uint32_t* out; PP_GLOBAL uint32_t* front; uint32_t cap;
 } LpOut;
 
+// The window's tokens (`lp_window`, `LQ_PUNCT`'s).
+#define LP_WIN (64u)
+#define LP_WIN_N (LP_WIN / UKL_SIMD_WIDTH)
 typedef struct LpRun {
     LpFrame fr[LP_DEPTH];
     LpCall calls[LP_CALLS];
@@ -147,6 +150,12 @@ typedef struct LpRun {
     // the top text's), at most `LP_WIN`, and which are `(`, `)` and `,`, a bit each from `w_at`.
     uint32_t w_src, w_at, w_end;
     uint64_t w_open, w_close, w_comma;
+    // What the piece's thread and its group's lanes give each other past one meeting (the group's
+    // memory, not a shuffle or a ballot a word: on the CPU backend each is a pass through the lanes).
+    // The thread's ask (`lp_piece`): whether it asks, then its query, `q_kind` to `q_fend`. The
+    // window's (`lp_window`): a token's `(`, `)` or `,` at its place from `at`, written by its lane.
+    uint32_t q[8];
+    uint8_t wc[LP_WIN];
     // A directive's line (`#if`'s, an include's), not the text: its tokens' states (`STATE`: 2 read in a
     // call's arguments, for the tests' evaluator) and marks (`IF_OPS`), and a test's operand being read
     // raw (`raw`: 1 its `(` next, past it 1 + its depth).
@@ -1305,23 +1314,23 @@ UKL_INLINE bool lp_collect_whole(UKL_LOCAL LpRun* r, Ux u, Ar a, LpTok e) {
 }
 
 // The window `at..end` of source `def` (`LQ_PUNCT`'s, at most `LP_WIN` tokens): a lane reads
-// `LP_WIN / UKL_SIMD_WIDTH` of them, a group's width apart, their reads all issued before the votes.
-#define LP_WIN (64u)
-#define LP_WIN_N (LP_WIN / UKL_SIMD_WIDTH)
+// `LP_WIN / UKL_SIMD_WIDTH` of them, a group's width apart, their reads all issued before the
+// meeting; the thread then makes the masks from them (`wc`).
 UKL_INLINE void lp_window(UKL_LOCAL LpRun* r, Ux u, uint32_t def, uint32_t at, uint32_t end, uint32_t ln, bool me __UKL_PARAMS) {
-    uint8_t c[LP_WIN_N];
     for (uint32_t h = 0u; h < LP_WIN_N; h++) {
         uint32_t p = at + h * UKL_SIMD_WIDTH + ln;
-        c[h] = p < end ? lp_delim(u, def, p) : ((uint8_t)(0));
+        r->wc[h * UKL_SIMD_WIDTH + ln] = p < end ? lp_delim(u, def, p) : ((uint8_t)(0));
     }
+    ukl_sg_barrier();
+    if (!me) return;
     uint64_t op = 0ul, cl = 0ul, cm = 0ul;
-    for (uint32_t h = 0u; h < LP_WIN_N; h++) {
-        uint32_t sh = h * UKL_SIMD_WIDTH;
-        op |= ((uint64_t)(ukl_sg_ballot(c[h] == ((uint8_t)('(')) __UKL_ARGS))) << sh;
-        cl |= ((uint64_t)(ukl_sg_ballot(c[h] == ((uint8_t)(')')) __UKL_ARGS))) << sh;
-        cm |= ((uint64_t)(ukl_sg_ballot(c[h] == ((uint8_t)(',')) __UKL_ARGS))) << sh;
+    for (uint32_t i = 0u; i < LP_WIN; i++) {
+        uint8_t c = r->wc[i];
+        op |= (uint64_t)(c == ((uint8_t)('('))) << i;
+        cl |= (uint64_t)(c == ((uint8_t)(')'))) << i;
+        cm |= (uint64_t)(c == ((uint8_t)(','))) << i;
     }
-    if (me) { r->w_src = def; r->w_at = at; r->w_end = end; r->w_open = op; r->w_close = cl; r->w_comma = cm; }
+    r->w_src = def; r->w_at = at; r->w_end = end; r->w_open = op; r->w_close = cl; r->w_comma = cm;
 }
 // The next `k` tokens of the span on top, plain (the group's look ahead, `lp_ahead`): emitted, or
 // pushed onto the argument being expanded, as `k` steps would. Its tokens past the first are
@@ -1707,9 +1716,16 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
             }
         }
         // The group's lanes look ahead for the piece's thread.
-        if (ukl_sg_shuffle(ask ? 1u : 0u, lead __UKL_ARGS) == 0u) break;
-        q_kind = ukl_sg_shuffle(q_kind, lead __UKL_ARGS); q_def = ukl_sg_shuffle(q_def, lead __UKL_ARGS); q_at = ukl_sg_shuffle(q_at, lead __UKL_ARGS); q_end = ukl_sg_shuffle(q_end, lead __UKL_ARGS);
-        q_slot = ukl_sg_shuffle(q_slot, lead __UKL_ARGS); q_floor = ukl_sg_shuffle(q_floor, lead __UKL_ARGS); q_fend = ukl_sg_shuffle(q_fend, lead __UKL_ARGS);
+        // Every branch below meets again (a ballot, a scan or the window's) before the thread can
+        // write its next ask: a lane has read this one by then.
+        if (me) {
+            rp->q[0] = ask ? 1u : 0u; rp->q[1] = q_kind; rp->q[2] = q_def; rp->q[3] = q_at;
+            rp->q[4] = q_end; rp->q[5] = q_slot; rp->q[6] = q_floor; rp->q[7] = q_fend;
+        }
+        ukl_sg_barrier();
+        if (rp->q[0] == 0u) break;
+        q_kind = rp->q[1]; q_def = rp->q[2]; q_at = rp->q[3]; q_end = rp->q[4];
+        q_slot = rp->q[5]; q_floor = rp->q[6]; q_fend = rp->q[7];
         uint32_t p = q_at + ln;
         if (q_kind == LQ_NAMES) {
             bool plain = p < q_end && lp_ahead(u, a, q_def, p, q_slot, q_floor);
