@@ -80,8 +80,12 @@ The same run shows what crosses cheaply and what does not. `rr_ctx50` reads `vis
    one rule, positive atoms of other relations as its domain, and comparisons that test or define head variables
    from what the domain binds. A read may leave a column as `_`. It is inlined only where the reader reads its
    domain already, as before, so the copy adds the function and nothing else.
-3. **A location column filled by a location or by `unset` is a same-document column.** The same holds for a
-   column of a base or file-local relation and for one carried through a derived relation's rules.
+3. **A column filled in every rule by a location or by `unset` is a nullable location** (`FileLocal::nullable`).
+   A read's nullable column joins its row's document only where a location column of the same rule places its
+   variable too: there it is no -1. Two rows joined by nullable columns alone may both be -1, of two documents, so
+   such a rule stays cross-file. It is kept apart from `locations` and `same_doc`, not added to them, because a row's
+   document is read off those (located rows, retained groups, cone digests), and -1 has none. A nullable column
+   carries through a derived relation's rules as a location column does.
 4. **Preparation reports position reads in the cross part.** Each read of `visit_index`, `node_order`, `line`,
    `col`, `end_line` or `ast_depth` by a cross-file rule, other than one placing a finding, is reported with the
    relation that reads it. `RERAIL_STRICT_POSITIONS=1` refuses the program instead, as warm mode refuses work.
@@ -91,14 +95,32 @@ The same run shows what crosses cheaply and what does not. `rr_ctx50` reads `vis
 
 ## Tests
 
-- A computed view defined by comparisons, read with a wildcard, is inlined into a reader that reads its domain,
-  and is not inlined into one that does not.
-- A relation whose location column is a node in one rule and `unset` in another keeps it as a same-document
-  column, and a rule joining through it stays file-local.
-- `conditional-architecture`'s `ca_alias_at` is file-local, and its cross part reads no position relation.
-- A cross-file rule reading `visit_index` is reported, and refused under `RERAIL_STRICT_POSITIONS=1`.
+- `a_view_computed_by_comparisons_is_inlined_where_its_domain_is_read` (tests_logic): inlined into a reader that
+  reads its domain, with a wildcard read; not inlined where another reader does not; the same rows either way.
+- `a_location_or_unset_column_keeps_a_rule_through_it_on_one_document` (the split's tests): the column is nullable,
+  a rule joining through it with a node column stays file-local, and a rule joining two rows by it alone does not.
+- `a_cross_file_rule_reading_a_position_is_reported` (the split's tests): the cross rule reading `visit_index` is
+  reported, a finding's `line` and a file-local rule's are not, and `positions_checked` refuses under strict.
+- `conditional-architecture`'s session under `RERAIL_STRICT_POSITIONS=1` runs, with the same findings (below).
+
+The switch is in `PREPARING`: it decides whether a program is prepared, so a program prepared without it is not
+reused under it.
 
 ## Measured
 
-To be filled when it is built: the same session, edits' CPU and the strata derived again, against the figures
-above.
+Commit 4420df69e9 (steps 2 and 3), the same 334-file session, M3, two runs each, CPU:
+
+| | first run (00) | edit 01 | edit 02 | edit 03 |
+|---|---|---|---|---|
+| before | 8.0–8.9 s | 0.61–0.66 s | 1.37–1.53 s | 0.93–1.36 s |
+| after | 7.20–7.62 s | 0.43–0.44 s | 1.00–1.01 s | 0.71 s |
+
+- `ca_alias_at`, `ca_split`'s readers and the aggregate's helpers are file-local. The split dump's cross part reads
+  `docof` (6 reads, placing findings) and no position relation, `node` or `child`.
+- After an edit no stratum is derived again. Every cross-file stratum the edits reach is maintained on deltas of
+  2–14 rows (`document`, `ca_base`, `ca_conditional`, `ca_valid`, `CONDA005`).
+- Findings are identical to the earlier builds' (masked of ids and paths).
+- Under `RERAIL_STRICT_POSITIONS=1` the session runs with no report and the same findings. That run's CPU was about
+  20% above the pair's on every step, the first run included, which the change does not touch: the M3's load.
+
+Q352 does not arise on this history any more: no mode line is priced against a derive after these edits.

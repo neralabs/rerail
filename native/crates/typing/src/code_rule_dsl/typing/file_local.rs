@@ -288,6 +288,58 @@ pub struct Programs {
     /// Why each derived relation is cross-file (`cross_causes`), as the split found it; empty for a split read from
     /// the store (`assemble` of what a prepared program kept), which keeps no causes.
     pub causes: std::collections::BTreeMap<String, String>,
+    /// The cross part's position reads (decision 0649): `(rule's head, position relation)`, outside the rules that
+    /// place a finding.
+    pub positions: Vec<(String, String)>,
+}
+
+/// The relations a node's place in its document is (decision 0649): an edit moves them for every node after it, so
+/// a cross-file rule reading one reads the whole edited file's rows again.
+pub const POSITIONS: &[&str] = &["visit_index", "node_order", "line", "col", "end_line", "ast_depth"];
+
+/// `RERAIL_STRICT_POSITIONS=1`: a program whose cross part reads a position is refused (decision 0649).
+fn strict_positions() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("RERAIL_STRICT_POSITIONS").is_ok_and(|v| !matches!(v.as_str(), "" | "0")))
+}
+
+/// The cross part's rules that read a position (`POSITIONS`), but for those whose head is one of the program's
+/// outputs: a finding is placed by its line and column, once, where it is written.
+fn position_reads(cross: &crate::code_rule_dsl::logic::program_image::Version, outputs: &std::collections::BTreeSet<&str>) -> Vec<(String, String)> {
+    let mut out: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
+    for r in cross.rules() {
+        let head = cross.rel_name(r.head().rel());
+        if outputs.contains(head) {
+            continue;
+        }
+        for l in r.body() {
+            use crate::code_rule_dsl::logic::program_image::Lit as L;
+            if let L::Atom(a) | L::Agg { atom: a, .. } = l.view()
+                && let rel = cross.rel_name(a.rel())
+                && POSITIONS.contains(&rel)
+            {
+                out.insert((head.to_owned(), rel.to_owned()));
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// The cross part's position reads `positions` (`position_reads`) refused under `strict`, else reported once per
+/// process for each program that has them.
+pub fn positions_checked(positions: &[(String, String)], strict: bool) -> Result<(), String> {
+    if positions.is_empty() {
+        return Ok(());
+    }
+    let line = positions.iter().map(|(h, p)| format!("{h} reads {p}")).collect::<Vec<_>>().join(", ");
+    if strict {
+        return Err(format!("RERAIL_STRICT_POSITIONS: the cross-file part reads positions, which every edit moves (decision 0649): {line}"));
+    }
+    static SAID: std::sync::Mutex<Option<std::collections::BTreeSet<String>>> = std::sync::Mutex::new(None);
+    if SAID.lock().map(|mut s| s.get_or_insert_with(Default::default).insert(line.clone())).unwrap_or(true) {
+        eprintln!("rerail: the cross-file part reads positions, which every edit moves (decision 0649): {line}");
+    }
+    Ok(())
 }
 
 /// The versions of a split's parts (`Programs::versions`): the file-local and the cross-file part.
@@ -350,7 +402,10 @@ pub fn assemble(
             assert_eq!(part.constants.contains(r.as_str()), constants.contains(r.as_str()), "the split's constants and the file-local part's disagree on {r}");
         }
     }
-    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, program: version, causes: Default::default() })
+    let outputs: std::collections::BTreeSet<&str> = f.outputs().collect();
+    let positions = position_reads(&versions.cross, &outputs);
+    positions_checked(&positions, strict_positions())?;
+    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, program: version, causes: Default::default(), positions })
 }
 
 /// Whether the factorized store is on (decision 0099): it is, unless `RERAIL_FACTORIZE=off` or the run's option

@@ -459,6 +459,35 @@ same_ann(f, g) :- ann_of(f, a), ann_of(g, a), f != g.
     assert_eq!(split.same_doc.get("ann_of").map(Vec::as_slice), Some(&[0][..]), "{:?}", split.same_doc);
 }
 
+/// A cross-file rule reading a node's position (decision 0649) is reported, with the relation it reads; one placing a
+/// finding (its head an output) is not, and a file-local rule reading one is not.
+#[test]
+fn a_cross_file_rule_reading_a_position_is_reported() {
+    let v = read(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl visit_index(n: node, i: number)
+.decl line(n: loc, l: number)
+.decl text(n: node, s: symbol)
+.input node, visit_index, line, text
+.decl call(n: node, s: symbol)
+call(n, s) :- node(_, n, "call", _, _), text(n, s).
+.decl first_of(s: symbol, i: number)
+first_of(s, i) :- call(n, s), call(m, s), n != m, visit_index(n, i).
+.decl local_at(n: node, l: number)
+local_at(n, l) :- call(n, _), line(n, l).
+.decl found(n: node, l: number)
+found(n, l) :- call(n, s), first_of(s, _), line(n, l).
+.output found, local_at
+"#);
+    let parts = programs_of(Arc::clone(&v)).unwrap();
+    assert!(!parts.file_local.contains("first_of"), "{:?}", parts.file_local);
+    assert_eq!(parts.positions, [("first_of".to_owned(), "visit_index".to_owned())], "{:?}", parts.positions);
+    let refused = positions_checked(&parts.positions, true).unwrap_err();
+    assert!(refused.contains("first_of reads visit_index"), "{refused}");
+    assert!(positions_checked(&parts.positions, false).is_ok());
+    assert!(positions_checked(&[], true).is_ok());
+}
+
 /// A relation stated with no rows is a constant, as one with rows is: reading it, or its negation, joins no document
 /// (t50 step 1). The `.references` setting's relations, which the lowering states empty when the program has no
 /// setting, are such. Declared and not stated, a relation has no location, and its readers are cross-file.

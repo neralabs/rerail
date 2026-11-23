@@ -128,6 +128,8 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
     "RERAIL_RULE_ORDER",
+    // The split (`file_local::assemble`): a cross part reading positions is refused (decision 0649).
+    "RERAIL_STRICT_POSITIONS",
 ];
 
 pub mod owner {
