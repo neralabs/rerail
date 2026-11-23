@@ -1790,15 +1790,16 @@ UKL_STATIC_ASSERT(sizeof(Item) == 16, "Item: size");
 // `ceil((*count + plus) / per)`, at most its phase's cap (`seg_cap`); all its `items` from `first` where `per` is 0 (a
 // job of no count). Its items past its first `items` are its first's, as another group (`phase_group`): its count's
 // rows when it runs, not the room its input had when it was encoded (a round's placed table's, the first round's
-// guess). A phase of segments hands theirs out, at least one item in all.
+// guess). A phase of segments hands theirs out, at least one item in all, unless every segment's `per` has
+// `SEG_EMPTY`: a count of none then starts no group (decision 0647).
 typedef struct Seg { JSPACE const uint32_t* count; uint32_t first, items, per, plus; } Seg;
 UKL_STATIC_ASSERT(sizeof(Seg) == 24, "Seg: size");
 // A phase's groups at most (decision 0638): its indirect dispatch's bound, which a CUDA or OpenCL launch starts, those
 // past the count its grid wrote (`join_grid`) returning. A segment's in a phase of `ns` segments, their share; past it, a group strides its job's rows
 // (`prog_item`). `metal_join::PHASE_GROUPS`.
 #define PHASE_GROUPS (1u << 12)
-// A sized scan's first level that fits one tile scanned whole by its sums' pass (decision 0647).
-#define SMALL_SCANS true
+// A segment whose count of none starts no group (decision 0647): its `per`'s top bit.
+#define SEG_EMPTY (1u << 31)
 // A phase's groups at most that a chain (`join_chain`, decision 0647) runs, one after another in its one group.
 #define CHAIN_GROUPS 4u
 // A loop's turns at most: an item's strides past its groups (its rows, its tiles), every loop bounded.
@@ -1806,18 +1807,21 @@ UKL_STATIC_ASSERT(sizeof(Seg) == 24, "Seg: size");
 UKL_INLINE uint32_t seg_cap(uint32_t ns) { return PHASE_GROUPS / ukl_max(ns, 1u); }
 UKL_INLINE uint32_t seg_groups(UKL_GLOBAL const Seg* g, uint32_t cap)
 {
-    if (g->per == 0u) return g->items;
-    uint64_t need = ((uint64_t)*g->count + g->plus + g->per - 1u) / g->per;
+    uint32_t per = g->per & ~SEG_EMPTY;
+    if (per == 0u) return g->items;
+    uint64_t need = ((uint64_t)*g->count + g->plus + per - 1u) / per;
     return need < (uint64_t)cap ? (uint32_t)need : cap;
 }
 
-// A scan's level: its `n` values scanned in place, its tiles' sums (their offsets once scanned), whether it has them.
-// A level a size script sizes (decision 0603 step 5) has its `n` and its values' first word in `in` (`at`, its arena
-// there) set by it: read as words, coherent, as the script wrote them.
-typedef struct ScanWords { uint32_t n; uint32_t offsets; uint32_t at; uint32_t sums_at; } ScanWords;
-UKL_WORD_RECORD(ScanWords, n, offsets, at, sums_at);
+// A scan's level: its `n` values scanned in place, its tiles' sums (their offsets once scanned), whether it has them
+// (`offsets`' 1). A level a size script sizes (decision 0603 step 5) has its `n` and its values' first word in `in`
+// (`at`, its arena there) set by it: read as words, coherent, as the script wrote them. A sized scan's first level
+// (`offsets`' 2, decision 0647): its tiles whose sums its sums' pass writes (`summed`: none for one tile), and where
+// the level after it is empty (its tiles 1,024 at most), each of its tiles adds the tiles' sums before it itself.
+typedef struct ScanWords { uint32_t n; uint32_t offsets; uint32_t at; uint32_t sums_at; uint32_t summed; uint32_t pad; } ScanWords;
+UKL_WORD_RECORD(ScanWords, n, offsets, at, sums_at, summed, pad);
 typedef struct ScanLevel { JSPACE uint32_t* in; JSPACE uint32_t* sums; ScanWords w; } ScanLevel;
-UKL_STATIC_ASSERT(sizeof(ScanLevel) == 32, "ScanLevel: size");
+UKL_STATIC_ASSERT(sizeof(ScanLevel) == 40, "ScanLevel: size");
 // A sort's pass: its keys and places in, its histograms (scanned: each digit's offset for each tile), out.
 // A sort pass's words (a word record): its keys, the byte it sorts by, its tiles. A level's size script sets its keys
 // and tiles from its indexes' rows as claimed (decision 0603 step 5e): read as words, coherent.
@@ -1947,24 +1951,20 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         // Its tiles: this item's, then each `step` on (its segment's items pushed) while below its values'; tile 0
         // at least (its total).
         uint32_t tiles = (lv.w.n + JOIN_TG * UKL_SCAN_ITEMS - 1u) / (JOIN_TG * UKL_SCAN_ITEMS), tstep = step / JOIN_TG;
-        // A sized scan's first level whose values fit one tile (decision 0647): its sums' pass, its one group, scans
-        // them whole from 0, its total after them, and empties the two levels after it, whose passes' groups are
-        // their counts' (none now), its tiles' pass's too (its tiles the second level's count).
-        if (SMALL_SCANS && kind == PK_SCAN_SUMS && (lv.w.offsets & 2u) != 0u && tiles == 1u) {
-            a.hasOffsets = 0u;
-            ukl_scan_tile_prog(lv.in, lv.in, lv.sums, a, m.scratch, 0u, l, JOIN_TG __UKL_ARGS);
-            ukl_tg_barrier();
-            if (l == 0u) {
-                ((JSPACE uint32_t*)&scans[x + 1u].w)[UKL_WORD_INDEX(ScanWords, n)] = 0u;
-                ((JSPACE uint32_t*)&scans[x + 2u].w)[UKL_WORD_INDEX(ScanWords, n)] = 0u;
-            }
-            return true;
-        }
-        // Its tiles' pass, then, has nothing left: its phase, its segment's count none, still starts a group.
-        if (SMALL_SCANS && kind == PK_SCAN_TILES && (lv.w.offsets & 2u) != 0u && tiles == 1u) return true;
+        // A sized scan's first level whose next level is empty (decision 0647): its tiles 1,024 at most, their sums
+        // not scanned. Each tile adds the sums before it itself, a few words a thread; its offset, past them.
+        bool own = kind == PK_SCAN_TILES && (lv.w.offsets & 2u) != 0u && ((JSPACE const uint32_t*)&scans[x + 1u].w)[UKL_WORD_INDEX(ScanWords, n)] == 0u;
         for (uint32_t tile = g; tile < PHASE_TURNS; tile += tstep) {
-            if (kind == PK_SCAN_SUMS) ukl_scan_tile_sum_prog(lv.in, lv.sums, a, m.scratch, tile, l, JOIN_TG __UKL_ARGS);
-            else ukl_scan_tile_prog(lv.in, lv.in, lv.sums, a, m.scratch, tile, l, JOIN_TG __UKL_ARGS);
+            if (kind == PK_SCAN_SUMS) {
+                ukl_scan_tile_sum_prog(lv.in, lv.sums, a, m.scratch, tile, l, JOIN_TG __UKL_ARGS);
+            } else if (own) {
+                uint32_t before = 0u;
+                for (uint32_t i = l; i < tile; i += JOIN_TG) before += lv.sums[i];
+                before = ukl_tg_sum(before, l, JOIN_TG, m.scratch __UKL_ARGS);
+                ukl_scan_tile_from_prog(lv.in, lv.in, before, a, m.scratch, tile, l, JOIN_TG __UKL_ARGS);
+            } else {
+                ukl_scan_tile_prog(lv.in, lv.in, lv.sums, a, m.scratch, tile, l, JOIN_TG __UKL_ARGS);
+            }
             if (tstep == 0u || tile + tstep >= tiles) break;
             // Its group's memory the next tile's: every lane done with this one's.
             ukl_tg_barrier();
@@ -2056,8 +2056,12 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
 UKL_INLINE uint32_t phase_groups(UKL_GLOBAL const uint32_t* phases, UKL_GLOBAL const Seg* segs, uint32_t q)
 {
     uint32_t count = phases[4u * q + 1u], s0 = phases[4u * q + 2u], ns = phases[4u * q + 3u], m = 0u, cap = seg_cap(ns);
-    for (uint32_t g = 0u; g < ns; g++) m += seg_groups(&segs[s0 + g], cap);
-    return ns == 0u ? count : ukl_max(m, 1u);
+    bool empty = true;
+    for (uint32_t g = 0u; g < ns; g++) {
+        m += seg_groups(&segs[s0 + g], cap);
+        empty = empty && (segs[s0 + g].per & SEG_EMPTY) != 0u;
+    }
+    return ns == 0u ? count : empty ? m : ukl_max(m, 1u);
 }
 
 // Phase `q`'s `k`th group (decisions 0637, 0638): its item, and in `group` the group it runs as. A phase of no segments, its
@@ -2250,18 +2254,19 @@ DEFINE_KERNEL2(join, join_chain,
     for (; q < end; q++) {
         // Its groups, as `join_grid` finds them; none where the flags stop it, or it hands back.
         if (l == 0u) {
-            uint32_t flags = ukl_atomic_poll(&ctl[6]), n = 0u;
+            uint32_t flags = ukl_atomic_poll(&ctl[6]), n = NONE;
             if ((flags & (2u | 4u | 16u | 32u | 64u | 128u)) == 0u) {
                 n = phase_groups(phases, segs, q);
                 if (n <= CHAIN_GROUPS) ukl_atomic_store(&ctl[11], q + 1u);
-                else n = 0u;
+                else n = NONE;
             }
             scratch[0] = n;
         }
         ukl_tg_barrier();
         uint32_t n = scratch[0];
         ukl_tg_barrier();
-        if (n == 0u) break;
+        // Stopped, or handed back; a phase of no groups (its segments' counts none) run as it is, nothing.
+        if (n == NONE) break;
         for (uint32_t k = 0u; k < n; k++) {
             uint32_t group = 0u;
             uint32_t item = phase_group(items, phases, segs, q, k, &group);

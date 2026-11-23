@@ -2973,7 +2973,7 @@ impl Batch {
                     ScanData::At(a) => a,
                 };
                 let data = at(l.data);
-                ScanLevel { data, sums: l.sums.map_or(data, at), w: ScanWords { n: l.n, offsets: u32::from(l.sums.is_some() && l.offsets) | if l.small { 2 } else { 0 }, at: 0, sums_at: 0 } }
+                ScanLevel { data, sums: l.sums.map_or(data, at), w: ScanWords { n: l.n, offsets: u32::from(l.sums.is_some() && l.offsets) | if l.sized { 2 } else { 0 }, at: 0, sums_at: 0, summed: l.n.div_ceil(SCAN_TILE as u32), pad: 0 } }
             })
             .collect();
         // Each in a buffer of its own (an empty one of a few bytes: a buffer is never empty).
@@ -3401,8 +3401,17 @@ fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize,
 /// `guess` values guessed), its tiles' sums claimed in the arena, level by level, and the next level's values and
 /// count with them. `level`: a level's word's place (`Late::Scan`, or `Late::Pending` before the scan is made).
 fn size_scan(prog: &mut Program, top: u64, n0: u32, guess: usize, level: impl Fn(usize, WordAt) -> Late) {
-    let (s0, t0, w) = (9u32, 10u32, 6u32);
-    let (lat, ln, lsums) = (word_at!(ScanLevel, w.at), word_at!(ScanLevel, w.n), word_at!(ScanLevel, w.sums_at));
+    // Its registers: `x` a scratch, `big` 2^32 where the first level's tiles are past 1,024 (its sums scanned as a
+    // level of their own), else none: `min(t, big)` is then `t` or none, as `min(t, many)` with `many` 2^32 where
+    // `t` is past `at_most`, else none (the script multiplies by constants alone).
+    let (s0, t0, w, x, big) = (9u32, 10u32, 6u32, 7u32, 12u32);
+    let past = |prog: &mut Program, into: u32, t: u32, at_most: u64| {
+        prog.op(OpAt::of(SZ_CONST, into, 0, 0).c(Late::Abs(at_most)));
+        prog.op(OpAt::of(SZ_SUB, into, t, into));
+        prog.op(OpAt::of(SZ_MIN, into, into, R_ONE));
+        prog.op(OpAt::of(SZ_MUL, into, into, 0).c(Late::Abs(1 << 32)));
+    };
+    let (lat, ln, lsums, lsummed) = (word_at!(ScanLevel, w.at), word_at!(ScanLevel, w.n), word_at!(ScanLevel, w.sums_at), word_at!(ScanLevel, w.summed));
     prog.op(OpAt::of(SZ_PUT32, n0, 0, 0).w(level(0, ln)));
     let mut guess = guess;
     for l in 0..2 {
@@ -3412,7 +3421,16 @@ fn size_scan(prog: &mut Program, top: u64, n0: u32, guess: usize, level: impl Fn
         claim(prog, top, s0, w, 4, false);
         prog.op(OpAt::of(SZ_PUT32, s0, 0, 0).w(level(l, lsums)));
         prog.op(OpAt::of(SZ_PUT32, s0, 0, 0).w(level(l + 1, lat)));
-        prog.op(OpAt::of(SZ_PUT32, t0, 0, 0).w(level(l + 1, ln)));
+        if l == 0 {
+            // The first level's tiles whose sums its pass writes: none for one tile, whose offset is none.
+            past(prog, x, t0, 1);
+            prog.op(OpAt::of(SZ_MIN, x, t0, x));
+            prog.op(OpAt::of(SZ_PUT32, x, 0, 0).w(level(0, lsummed)));
+            past(prog, big, t0, ProgramSizes::now().own_tiles.unwrap_or(SCAN_TILE as u64).clamp(1, SCAN_TILE as u64));
+        }
+        // The next level's count: its values (this level's tiles' sums) a level only where they are past one tile.
+        prog.op(OpAt::of(SZ_MIN, x, t0, big));
+        prog.op(OpAt::of(SZ_PUT32, x, 0, 0).w(level(l + 1, ln)));
         prog.op(OpAt::of(SZ_ADD, n0, t0, ZERO));
         guess = guess.div_ceil(SCAN_TILE).max(1);
         prog.arena += units(4 * (guess + 1));
@@ -3999,6 +4017,9 @@ struct SegAt {
 
 const _: () = assert!(std::mem::size_of::<SegAt>() == 24);
 
+/// A segment whose count of none starts no group (`join_stages`' `SEG_EMPTY`, decision 0647): its `per`'s top bit.
+const SEG_EMPTY: u32 = 1 << 31;
+
 /// A batch's program (decision 0603): the levels flushed since its last launch, as phases of items (`Item`: a group
 /// of a job's, a scan level's or a sort pass's work), each phase a dispatch of `join_phase`, its groups as the counts
 /// before it set (`join_grid`), stacked into launches (decision 0638). A phase reads what the phases before it wrote.
@@ -4088,34 +4109,31 @@ impl Program {
         let t0 = n.div_ceil(SCAN_TILE).max(1);
         let t1 = t0.div_ceil(SCAN_TILE).max(1);
         for (k, m) in [(0, n), (1, t0), (2, t1)] {
-            self.scans.push(ScanAt { data: if k == 0 { data } else { ScanData::Script }, sums: (k < 2).then_some(ScanData::Script), n: m as u32, offsets: k < 2, small: k == 0 && small_scans() });
+            self.scans.push(ScanAt { data: if k == 0 { data } else { ScanData::Script }, sums: (k < 2).then_some(ScanData::Script), n: m as u32, offsets: k < 2, sized: k == 0 });
         }
         first
     }
 
-    /// The phases of a scan whose levels are `scan_levels_sized`'s from `first`, `n` values guessed: as many tiles'
-    /// items as each level's count, set by its size script, needs.
+    /// The phases of a scan whose levels are `scan_levels_sized`'s from `first`, `n` values guessed (decision 0647):
+    /// its first level's tiles' sums, its second level's tiles' sums, its third level scanned, its second's tiles,
+    /// its first's. Each pass's groups are a count its size script set. Where the first level's tiles are 1,024 at
+    /// most (`size_scan`), the second and third levels' counts are none and their three passes start no group, its
+    /// first level's tiles adding the sums before them themselves; where it is one tile, its sums' pass starts none.
     fn scan_sized_phases(&mut self, first: usize, n: usize) {
         let t0 = n.div_ceil(SCAN_TILE).max(1);
         let t1 = t0.div_ceil(SCAN_TILE).max(1);
-        let n_word = word_at!(ScanLevel, w.n);
-        let tiles = |p: &mut Program, kind: u32, level: usize, items: usize| {
-            p.phase_of((0..items).map(|g| (kind, (first + level) as u32, g as u32)).collect(), vec![SegAt { count: 0, first: 0, items: items as u32, per: SCAN_TILE as u32, plus: 0 }]);
-            p.seg_late.push((p.segs.len() - 1, Late::Scan(first + level, n_word)));
+        let (n_word, summed) = (word_at!(ScanLevel, w.n), word_at!(ScanLevel, w.summed));
+        let pass = |p: &mut Program, kind: u32, level: usize, items: usize, word: WordAt, per: u32| {
+            p.phase_of((0..items).map(|g| (kind, (first + level) as u32, g as u32)).collect(), vec![SegAt { count: 0, first: 0, items: items as u32, per, plus: 0 }]);
+            p.seg_late.push((p.segs.len() - 1, Late::Scan(first + level, word)));
         };
-        // Each pass's groups from a level's count, so that where the first level's values fit one tile, its sums'
-        // pass scanning them whole and emptying the levels after it (decision 0647), the four passes after it start
-        // none: the top level's one tile as its values' (one, or none), the first level's tiles as the second
-        // level's values (its tiles' sums, one a tile).
-        let level_items = |p: &mut Program, kind: u32, level: usize, items: usize, by: usize, per: usize| {
-            p.phase_of((0..items).map(|g| (kind, (first + level) as u32, g as u32)).collect(), vec![SegAt { count: 0, first: 0, items: items as u32, per: per as u32, plus: 0 }]);
-            p.seg_late.push((p.segs.len() - 1, Late::Scan(first + by, n_word)));
-        };
-        tiles(self, PK_SCAN_SUMS, 0, t0);
-        tiles(self, PK_SCAN_SUMS, 1, t1);
-        level_items(self, PK_SCAN_TILES, 2, 1, 2, SCAN_TILE);
-        tiles(self, PK_SCAN_TILES, 1, t1);
-        level_items(self, PK_SCAN_TILES, 0, t0, 1, 1);
+        let tile = SCAN_TILE as u32;
+        pass(self, PK_SCAN_SUMS, 0, t0, summed, 1 | SEG_EMPTY);
+        pass(self, PK_SCAN_SUMS, 1, t1, n_word, tile | SEG_EMPTY);
+        pass(self, PK_SCAN_TILES, 2, 1, n_word, tile | SEG_EMPTY);
+        pass(self, PK_SCAN_TILES, 1, t1, n_word, tile | SEG_EMPTY);
+        // Its first level's tiles at least one: the total, after its values, of none.
+        pass(self, PK_SCAN_TILES, 0, t0, n_word, tile);
     }
 
     /// An exclusive scan of the `n` values at `data` in place, with their total after them, as phases: each level's
@@ -4139,7 +4157,7 @@ impl Program {
         let mut at = Vec::with_capacity(levels.len());
         for &(d, m, sums) in &levels {
             at.push(self.scans.len() as u32);
-            self.scans.push(ScanAt { data: d, sums: sums.map(|s| ScanData::At(s.0)), n: m as u32, offsets: sums.is_some(), small: false });
+            self.scans.push(ScanAt { data: d, sums: sums.map(|s| ScanData::At(s.0)), n: m as u32, offsets: sums.is_some(), sized: false });
         }
         for (k, &(_, _, sums)) in levels.iter().enumerate() {
             if let Some((_, tiles)) = sums {
@@ -4255,9 +4273,9 @@ struct ScanAt {
     sums: Option<ScanData>,
     n: u32,
     offsets: bool,
-    /// The first of a sized scan's three levels (`scan_levels_sized`): where its values fit one tile, its sums' pass
-    /// scans them whole and empties the levels after it (`ScanWords::offsets` bit 2, decision 0647).
-    small: bool,
+    /// The first of a sized scan's three levels (`scan_levels_sized`): where the level after it is empty, each of its
+    /// tiles adds the tiles' sums before it itself (`ScanWords::offsets` bit 2, decision 0647).
+    sized: bool,
 }
 
 /// `join_stages.uglykl`'s `ScanLevel`, byte for byte.
@@ -4278,9 +4296,12 @@ struct ScanWords {
     /// Its values' and its sums' first words past `data` and `sums` (a size script's).
     at: u32,
     sums_at: u32,
+    /// A sized scan's first level's tiles whose sums its sums' pass writes: none for one tile (decision 0647).
+    summed: u32,
+    pad: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<ScanLevel>() == 32);
+const _: () = assert!(std::mem::size_of::<ScanLevel>() == 40);
 
 /// `join_stages.uglykl`'s `SortPass`, byte for byte.
 #[repr(C)]
@@ -4327,12 +4348,6 @@ struct Ran {
 /// A stack's phases at most (decision 0638): its grids' room.
 const STACK_PHASES: usize = 1024;
 
-/// Whether a sized scan's first level that fits one tile is scanned whole by its sums' pass (decision 0647);
-/// `RERAIL_SMALL_SCANS=0` turns it off for a measure.
-fn small_scans() -> bool {
-    std::env::var("RERAIL_SMALL_SCANS").map_or(true, |v| v != "0")
-}
-
 /// A chain's phases at most (`join_chain`, decision 0647); `RERAIL_CHAIN_PHASES` sets it for a measure, 0 none.
 fn chain_phases() -> u32 {
     std::env::var("RERAIL_CHAIN_PHASES").ok().and_then(|v| v.parse().ok()).unwrap_or(16)
@@ -4376,6 +4391,9 @@ struct ProgramSizes {
     rounds: Option<u32>,
     phases: Option<usize>,
     arena: Option<usize>,
+    /// A sized scan's first level's tiles at most that add the sums before them themselves (`SCAN_TILE`, decision
+    /// 0647): 1, and every scan of two tiles or more scans its sums as levels of their own.
+    own_tiles: Option<u64>,
 }
 
 impl ProgramSizes {
@@ -4385,7 +4403,7 @@ impl ProgramSizes {
             fn var<T: std::str::FromStr>(name: &str) -> Option<T> {
                 std::env::var(name).ok().and_then(|v| v.parse().ok())
             }
-            ProgramSizes { rounds: var("RERAIL_STACK_ROUNDS"), phases: var("RERAIL_STACK_PHASES"), arena: var("RERAIL_PROGRAM_ARENA") }
+            ProgramSizes { rounds: var("RERAIL_STACK_ROUNDS"), phases: var("RERAIL_STACK_PHASES"), arena: var("RERAIL_PROGRAM_ARENA"), own_tiles: var("RERAIL_SCAN_OWN_TILES") }
         }
         #[cfg(not(any(test, feature = "test-hooks")))]
         ProgramSizes::default()

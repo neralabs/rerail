@@ -220,6 +220,18 @@
         assert!(gpu_jobs() > jobs0, "the device's rounds are a job on the GPU lane's scoreboard");
     }
 
+    /// Decision 0647's test: a sized scan whose first level's tiles are past those that add the sums before them
+    /// themselves scans its sums as levels of their own. With every scan of two tiles past them (its levels' counts
+    /// and its sorts' histograms), the closure's rows are the CPU's.
+    #[test]
+    fn a_sized_scan_past_its_own_tiles_scans_its_sums_as_levels() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let r = closure(&[("RERAIL_SCAN_OWN_TILES", "1")]);
+        assert!(r.rounds > 4, "the closure takes rounds: {r:?}");
+    }
+
     /// Decisions 0603 and 0638's test: a stratum is one program's stacks, whatever its rules and rounds. The closure's
     /// seed round and its rounds are one program, its phases a dispatch each, several rounds' to a stack, a stack one
     /// launch. With a stack of one round and a first arena of 16 bytes, its stacks go on (one a round, its walk past

@@ -1,7 +1,8 @@
 # 0647. A round's phases cost their work in one group, not their dispatches
 
-Status: spike (2026-11-23). Measured; nothing here changes 0641's times past the M3's run-to-run noise. Each of the
-three mechanisms below is in the tree, on, with a switch for a measure.
+Status: spike (2026-11-23). Measured; nothing here changes 0641's times past the M3's run-to-run noise. The direct
+dispatch and the chains are in the tree, on, the chains with a switch for a measure. The small scans are replaced by
+a sized scan's levels that start no groups (below, "A scan's levels, started only where needed").
 
 ## Intro
 
@@ -22,7 +23,7 @@ so they can skip join_grid and do its flag checks themselves." Then, on the resu
 - **A phase of no segments is dispatched directly** (`phase_begins`). Its groups are its items, known when it is
   encoded, so it has no `join_grid`. The first of its groups to begin makes `join_grid`'s checks of the program's flags
   and its parks, and swaps its dispatch's sequence and the flags into `ctl[12]`. Every other group reads them there.
-- **Small scans** (`SMALL_SCANS`, `RERAIL_SMALL_SCANS=0` off). A sized scan's first level that fits one tile (`2` in
+- **Small scans** (since replaced, below). A sized scan's first level that fits one tile (`2` in
   its offsets word) is scanned whole by its sums' pass. That pass empties the two levels after it, so the second
   level's tiles pass and the first level's segments (its count, the second level's) start no groups. The first level's
   tiles pass returns at once: its phase still starts a group, a segment's first item when its count needs none.
@@ -95,3 +96,46 @@ A phase that starts a group pays its descriptors' dependent loads before its fir
 segment and that segment's count, then its job's or scan level's words. The small scans emptied four scan phases but
 each still started a group (a phase starts one when its counts need none) and made those loads, which fits their null
 result. Phases removed, not emptied, are what this leaves to try.
+
+## A scan's levels, started only where needed
+
+The user, 2026-11-23, on the next step (a sized scan in fewer phases): "go ahead". The small scans' path is removed.
+
+- **A segment may start no group** (`SEG_EMPTY`, its `per`'s top bit). A phase whose segments all have it starts
+  none where their counts need none: its `join_grid` writes a grid of none and the dispatch starts nothing. Every other
+  phase of segments still starts one group at least. A chain (`join_chain`) runs such a phase as nothing and goes on.
+- **A sized scan's second and third levels are counted only where they are needed.** Its size script (`size_scan`)
+  writes the second level's count (the first level's tiles) and the third's (the second's tiles) only where the
+  first level's tiles are past 1,024, else none. It does so with saturating subtraction, a minimum and a constant
+  product, as the script has no comparisons. The three passes over those levels then start no group.
+- **Its first level's sums' pass is counted by `summed`** (a new word of `ScanWords`; `ScanLevel` is 40 bytes): its
+  tiles where they are two or more, else none. One tile's offset is none.
+- **Its first level's tiles add the sums before them themselves** where the second level's count is none
+  (`ScanWords::offsets`' 2, `ukl_scan_tile_from`): at most 1,023 sums, four words a thread, then the tile scanned
+  from that base.
+
+So the usual scan (its values one tile) starts one group in one phase, where it started five. A scan of up to 1,024
+tiles starts groups in two phases.
+
+Tested: `a_sized_scan_past_its_own_tiles_scans_its_sums_as_levels` runs the closure with the threshold at one tile
+(`RERAIL_SCAN_OWN_TILES=1`, a test build's switch), so every scan of two tiles or more takes the levels. With the
+levels' offsets broken for a check, that test failed and the recursive stratum's own test passed: no other test
+reaches the levels. `setfix::device` (40) passes on the M3 and on the CPU backend on a Linux host.
+
+On the M3, the measure (medians of seven runs):
+
+| Stratum | Chains off | Chains of 16 |
+|---|---|---|
+| seeds | 8.8 ms | 10.9 ms |
+| seeds ×10 | 46.8 ms | 48.4 ms |
+| closure | 50.2 ms | 59.9 ms |
+| leveled reach | 53.0 ms | 42.5 ms |
+| leveled dist (min) | 28.3 ms | 20.0 ms |
+
+None of it moved past the noise. A scan phase's group (its descriptors' loads and a tile of one group) is not what a
+round waits on either.
+
+From the per-phase table above, the size scripts are the largest kind left above the floor: 27 of 200 phases, a
+median of 22.6 µs against a floor of 13, up to 167 µs. One thread runs each script's ops in turn, its claims atomic
+adds on the arena's top. That is a lead from phases timed alone, which the index's placing showed can differ from a
+stack's.
