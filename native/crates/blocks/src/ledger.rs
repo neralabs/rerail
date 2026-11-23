@@ -580,12 +580,16 @@ pub struct Fence {
     committed: AtomicBool,
     /// The regions its binds by address pinned (`region::bind_address`), by address and access: each once.
     pinned: Mutex<Vec<(usize, bool)>>,
+    /// The addresses its binds by address held already (`region::bind_address`), each with the ledger it found, or
+    /// none (a buffer of no block's): a program's stack binds the same buffers at each of its thousands of
+    /// dispatches (decision 0641).
+    bound: Mutex<std::collections::HashMap<usize, Option<Arc<Ledger>>>>,
     signal: Condvar,
 }
 
 impl Fence {
     pub fn new() -> Arc<Fence> {
-        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), signal: Condvar::new() })
+        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), bound: Mutex::new(std::collections::HashMap::new()), signal: Condvar::new() })
     }
 
     fn add(&self, ledger: &Arc<Ledger>, access: Access, chunk: Option<(usize, usize)>) {
@@ -601,12 +605,27 @@ impl Fence {
     /// Its work reads or writes the block whose memory holds `addr` (a buffer bound for a kernel, by its contents),
     /// once however often it is bound. Whether a block holds it: a buffer of no block's is not the ledger's.
     pub fn uses_address(&self, addr: usize) -> bool {
-        let Some(l) = of_address(addr) else { return false };
+        self.held_at(addr).is_some()
+    }
+
+    /// The ledger `addr` lies in, its block's use held by it (once however often it is bound). Found once a fence
+    /// and address: it holds the ledger until it completes, so nothing frees what lies there and puts another block
+    /// there before. An address no ledger held at its first bind is none of a ledger's at the next: the buffer
+    /// bound there, held by its submission, keeps the memory from any block for the fence's life.
+    pub(crate) fn held_at(&self, addr: usize) -> Option<Arc<Ledger>> {
+        if let Some(l) = self.bound.lock().unwrap_or_else(|e| e.into_inner()).get(&addr) {
+            return l.clone();
+        }
+        let Some(l) = of_address(addr) else {
+            self.bound.lock().unwrap_or_else(|e| e.into_inner()).insert(addr, None);
+            return None;
+        };
         let known = self.uses.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|u| Arc::ptr_eq(&u.0, &l));
         if !known {
             self.add(&l, Access::Write, None);
         }
-        true
+        self.bound.lock().unwrap_or_else(|e| e.into_inner()).insert(addr, Some(Arc::clone(&l)));
+        Some(l)
     }
 
     /// Whether `key` (a region, with its access) is pinned on it for the first time now.
@@ -659,6 +678,7 @@ impl Fence {
             }
             std::mem::take(&mut *uses)
         };
+        self.bound.lock().unwrap_or_else(|e| e.into_inner()).clear();
         // Pins first: a region its work held may go now, its chunk freed while the block's use still holds it.
         let after = std::mem::take(&mut *self.after.lock().unwrap_or_else(|e| e.into_inner()));
         for f in after {

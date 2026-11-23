@@ -10933,3 +10933,12 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
 - `lp_run`'s idle polling: the branch called `ukl_wq_idle`, which the hub removed (0540 step 7). It polls through 0637's `ukl_wq_ready`/`ukl_wq_take_ready` instead: once idle, a poll takes only a written item, so no slot is given up at a poll; it ends when no item is being read or its polls are spent.
 - Not changed, the branch's: the requests' table claim polls (`LP_CLAIM_POLLS`) and a team's wait for its helpers to leave (`PG_HELP_WAIT`) wait on another thread's stores.
 - Checked (Relax, RERAIL_GPU=cpu): c-directives' three new tests and the two device-rung tests pass on the CPU backend. Metal not run.
+
+### Q525. Roll-up 98 (django-bugs b17b83eb64 onto Pulling-it-all-together): what the merge chose
+
+- A program's levels as stacked dispatches, one launch a stack (the branch's 0638, here 0648: the hub's 0638 is format 16's codes; sync-integration-hub-tape numbered it 0648 too), its phases indirect on Metal with call-free kernels (0641), and a round's phases costed in one group (0647). They supersede 0637's polling program, the branch's own; its budget counters (`Report::taken`, `launch_items`) go with it.
+- Kept from the hub in the branch's stack launch: the one-wrap refusal (d98a947506: a block written through two wraps is not run, `Done::rewrapped`) and the expanded views counted as no launch (afddb3a15d, `Report::expanded`) in 0603/0648's check.
+- `Pass::residents` (the hub's name) for the branch's `resident`: one function.
+- The branch's own "0639" (its draft number for 0641) in accel, device, ledger and region read 0641.
+- `RERAIL_STACK_ROUNDS`, `RERAIL_STACK_PHASES` and `RERAIL_SCAN_OWN_TILES` are read through `profile::var` and listed as scoped; `RERAIL_PROGRAM_BUDGET`, read nowhere now, is dropped from the list.
+- Checked (Relax, RERAIL_GPU=cpu): device-metal, accel, prof, blocks, device, gpu 0 errors. device-metal's tests on the CPU backend: 83 passed, 4 failed (aggregate and random-integer parity, `an_index_built_twice_that_a_batch_took_is_kept`, `local_joins_are_pushed_on_a_version`). The same four fail at the hub before the merge; they are fixed on their own after the roll-ups.

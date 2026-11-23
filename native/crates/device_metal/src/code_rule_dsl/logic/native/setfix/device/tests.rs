@@ -221,43 +221,52 @@ use rerail_blocks::vector::Vector;
         assert!(gpu_jobs() > jobs0, "the device's rounds are a job on the GPU lane's scoreboard");
     }
 
-    /// Decision 0603's test: a stratum is one launch and its budget's relaunches, whatever its rules and rounds. The
-    /// closure's seed round and its rounds are one program; with a worker's share of one item and a first arena of 16
-    /// bytes, its launches go again (each past the launch's budget, its workers' shares, with items left, or where a
-    /// size script parked past the arena's pages, mapped then), and nothing else launches; its rows are the CPU's. On
-    /// every backend alike: a launch's budget is shared by its groups, so groups that end idle while a phase runs
-    /// leave it to the one that goes on.
+    /// Decision 0647's test: a sized scan whose first level's tiles are past those that add the sums before them
+    /// themselves scans its sums as levels of their own. With every scan of two tiles past them (its levels' counts
+    /// and its sorts' histograms), the closure's rows are the CPU's.
     #[test]
-    fn a_stratum_is_one_launch_and_its_budgets_relaunches() {
-        use crate::code_rule_dsl::transducer::packed::metal_join::PROGRAM_BUDGET;
+    fn a_sized_scan_past_its_own_tiles_scans_its_sums_as_levels() {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }
-        for (budget, arena) in [(None, None), (Some(1), Some(16))] {
-            let (bs, as_) = (budget.map(|b: u32| b.to_string()), arena.map(|a: usize| a.to_string()));
+        let r = closure(&[("RERAIL_SCAN_OWN_TILES", "1")]);
+        assert!(r.rounds > 4, "the closure takes rounds: {r:?}");
+    }
+
+    /// Decisions 0603 and 0648's test: a stratum is one program's stacks, whatever its rules and rounds. The closure's
+    /// seed round and its rounds are one program, its phases a dispatch each, several rounds' to a stack, a stack one
+    /// launch. With a stack of one round and a first arena of 16 bytes, its stacks go on (one a round, its walk past
+    /// it) and its arena's pages are mapped as its size scripts reach them (a park each, then its phase's rest), and
+    /// nothing else launches; its rows are the CPU's. Its stacks' rounds doubling (the default), its launches are
+    /// fewer than its rounds.
+    #[test]
+    fn a_stratum_is_one_programs_stacks() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        for (rounds, arena) in [(None, None), (Some(1), Some(16))] {
+            let (rs, as_) = (rounds.map(|b: u32| b.to_string()), arena.map(|a: usize| a.to_string()));
             let mut sizes = Vec::new();
-            sizes.extend(bs.as_deref().map(|b| ("RERAIL_PROGRAM_BUDGET", b)));
+            sizes.extend(rs.as_deref().map(|b| ("RERAIL_STACK_ROUNDS", b)));
             sizes.extend(as_.as_deref().map(|a| ("RERAIL_PROGRAM_ARENA", a)));
             let r = closure(&sizes);
-            let b = u64::from(budget.unwrap_or(PROGRAM_BUDGET));
-            assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "budget {b}: one launch, and its relaunches: {r:?}");
-            assert_eq!(r.reruns, 0, "budget {b}: no round runs again: {r:?}");
-            // A launch that leaves items spent its budget's items (its groups' shared tickets, however many of them run
-            // at once), so its relaunches are its items over a launch's budget: none of them a phase's or a round's.
-            assert!(r.launch_items >= b, "budget {b}: a launch's budget is its workers' shares': {r:?}");
-            assert!(u64::from(r.relaunches) <= r.taken / r.launch_items + 1, "budget {b}: its relaunches its budget's: {r:?}");
+            assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "rounds {rounds:?}: one program's stacks and remaps: {r:?}");
+            assert_eq!(r.reruns, 0, "rounds {rounds:?}: no round runs again: {r:?}");
+            assert!(r.rounds > 4, "the closure takes rounds: {r:?}");
+            match rounds {
+                // A round a stack: a stack each round's end, its seed round's the first's.
+                Some(1) => assert!(r.relaunches + 2 >= r.rounds && r.relaunches <= r.rounds + 1, "a round a stack: {r:?}"),
+                // Doubling from two: its stacks the rounds' logarithm.
+                _ => assert!(r.relaunches < r.rounds / 2, "rounds doubling a stack: {r:?}"),
+            }
             if arena.is_none() {
                 // Its first arena is what a round's tables can reach where mapping commits nothing (the CPU backend):
                 // its claims map no more pages. On Metal a mapped page is real memory: its first arena is its claims'
                 // guess, the rest mapped as they reach it, a remap each, a doubling each, none a rerun.
                 let commits = crate::code_rule_dsl::transducer::packed::metal_join::map_commits();
                 let arena = r.remaps - r.room_remaps;
-                assert!(if commits { arena <= 8 } else { arena == 0 }, "budget {b}: the closure's first arena (mapping commits: {commits}): {r:?}");
-            }
-            if budget.is_some() {
-                assert!(r.relaunches > 0, "budget {b}: the closure's items past one launch's budgets: {r:?}");
-            }
-            if arena.is_some() {
+                assert!(if commits { arena <= 8 } else { arena == 0 }, "the closure's first arena (mapping commits: {commits}): {r:?}");
+            } else {
                 assert!(r.remaps > 0, "a first arena of 16 bytes: its pages mapped as its claims reach them: {r:?}");
             }
         }
@@ -1977,6 +1986,7 @@ use rerail_blocks::vector::Vector;
         for (name, lines) in strata.iter().filter(|(n, _)| only.as_deref().is_none_or(|o| n.starts_with(o))) {
             let mut m: [Vec<f64>; 4] = Default::default();
             let mut counts = (0, 0, 0);
+            let mut rounds = (0, 0, 0);
             for run in 0..runs + 2 {
                 db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
                 let mut spec = vec!["name dev_measure".to_owned(), "device".to_owned(), "rel h0 ii empty".to_owned()];
@@ -1985,6 +1995,7 @@ use rerail_blocks::vector::Vector;
                 let started = std::time::Instant::now();
                 super::super::run(&db, "dev_measure", 0).unwrap();
                 let wall = started.elapsed().as_secs_f64();
+
                 let r = super::take_report().expect("a device report");
                 assert!(r.refused.is_none(), "{name}: {r:?}");
                 super::super::close(&db, "dev_measure").unwrap();
@@ -1994,9 +2005,11 @@ use rerail_blocks::vector::Vector;
                     }
                     let rows: i64 = db.query_row("SELECT count(*) FROM temp.h0", [], |r| r.get(0)).unwrap();
                     counts = (r.dispatches, r.submissions, rows);
+                    rounds = (r.rounds, r.relaunches, r.remaps);
                 }
             }
             let [wall, gpu, encode, wait] = m.map(median);
             eprintln!("MEASURE {name:<20} wall {wall:8.2} ms  gpu {gpu:8.2} ms  encode {encode:7.2} ms  wait {wait:8.2} ms  launches {:4}  submissions {:3}  rows {}", counts.0, counts.1, counts.2);
+            eprintln!("MEASURE {name:<20} rounds {}, stacks after the first {}, remaps {}", rounds.0, rounds.1, rounds.2);
         }
     }
