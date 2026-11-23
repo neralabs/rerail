@@ -1834,17 +1834,26 @@ describe("an audit whose other stored lists do not read", () => {
     const path = await temporaryDatabase();
     threeAudits(path);
     const store = new SqliteAuditStore(path);
-    const prepared = vi.spyOn(Database.prototype, "prepare");
-    let sources: string[] = [];
+    const probe = new Database(path, { readonly: true });
+    const reads = vi.spyOn(Object.getPrototypeOf(probe.prepare("SELECT 1")) as Database.Statement, "get");
+    let statements: Array<{ source: string; params: unknown[] }> = [];
     try {
-      store.latestSummary("session-a");
-      sources = prepared.mock.calls.map(([source]) => source);
+      expect(store.latestSummary("session-a")).toMatchObject({ violationCount: 1, failureCount: 1 });
+      statements = reads.mock.contexts.map((statement, index) => ({ source: (statement as Database.Statement).source, params: reads.mock.calls[index]! }))
+        .filter(statement => statement.source.includes("json_valid"));
     } finally {
-      prepared.mockRestore();
+      reads.mockRestore();
       store.close();
     }
-    // Each test of a list in SQL begins with `json_valid`; the summary reads five lists.
-    expect(sources.map(source => source.split("json_valid(").length - 1).filter(count => count > 0)).toEqual([5]);
+    try {
+      // Each test of a list in SQL begins with `json_valid`: the program SQLite compiles calls it once for each of the
+      // five lists, so neither the statement nor the planner tests a list twice.
+      expect(statements).toHaveLength(1);
+      const program = probe.prepare(`EXPLAIN ${statements[0]!.source}`).all(...statements[0]!.params) as Array<{ p4: unknown }>;
+      expect(program.filter(step => String(step.p4).startsWith("json_valid("))).toHaveLength(5);
+    } finally {
+      probe.close();
+    }
   });
 
   it.each([
