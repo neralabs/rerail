@@ -29,7 +29,7 @@ function rule(id: string, placement: CodeRulePlacement): RerailRuleEntry {
     id,
     path: `/packs/rr-sample/rules/${id}.rerail`,
     placement,
-    scope: { include: ["**/*.py"], exclude: [] },
+    scope: { include: ["**/*.py"], exclude: [], text: [] },
     language: "python",
     files: [],
     provenance: {
@@ -245,7 +245,7 @@ describe("a session's .rerail runs when the session or its rules change", () => 
 
   it("keeps a run going when only rules that take none of its files change", async () => {
     const assert = rule("rr-sample-assert", [{ folder: "", mode: "steer" }]);
-    const templates = { ...rule("rr-templates", [{ folder: "", mode: null }]), scope: { include: ["**/*.html"], exclude: [] } };
+    const templates = { ...rule("rr-templates", [{ folder: "", mode: null }]), scope: { include: ["**/*.html"], exclude: [], text: [] } };
     const rules = [assert, templates];
     const { runs, finished, edits, write } = session(rules);
     write(1, written("a.py"));

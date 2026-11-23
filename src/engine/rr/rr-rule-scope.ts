@@ -39,13 +39,27 @@ function ofLanguage(language: string | null, path: string): boolean {
 }
 
 /**
- * Whether the rule reads `path`: a file of its `.language`, which one of its `.scope include` globs matches (any, when
- * it has none) and none of its `exclude` globs does.
+ * Whether `path` is in the scope of `scope`, as the engine chooses a run's documents (`front::in_doc_scopes`): one of
+ * the `include` globs matches it, or there are none, and no `exclude` glob does. The engine folds `.scope dirs` into
+ * `include` and `.scope tests false` into `exclude`.
+ */
+function inScopeGlobs(scope: RerailRuleEntry["scope"], path: string): boolean {
+  const included = scope.include.length === 0 || (matchesAny(scope.include, path) ?? true);
+  return included && matchesAny(scope.exclude, path) !== true;
+}
+
+/** Whether a `.scope text` glob of `text` reads `path` as text: the engine reads no hidden file as text. */
+function readAsText(text: readonly string[], path: string): boolean {
+  if (text.length === 0 || path.slice(path.lastIndexOf("/") + 1).startsWith(".")) return false;
+  return matchesAny(text, path) !== false;
+}
+
+/**
+ * Whether the rule reads `path`, as the engine chooses a run's documents (`corpus::scoped`): the file is in its scope,
+ * and it is a file of the rule's `.language`, or one a `.scope text` glob reads as text.
  */
 export function inRuleScope(rule: Pick<RerailRuleEntry, "scope" | "language">, path: string): boolean {
-  const { include, exclude } = rule.scope;
-  const included = include.length === 0 || (matchesAny(include, path) ?? true);
-  return included && ofLanguage(rule.language, path) && matchesAny(exclude, path) !== true;
+  return inScopeGlobs(rule.scope, path) && (ofLanguage(rule.language, path) || readAsText(rule.scope.text, path));
 }
 
 /** Whether a write of `path` is one for `rule` to judge: its placement turns it on there and its scope takes the file. */
