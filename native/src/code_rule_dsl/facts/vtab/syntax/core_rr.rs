@@ -684,8 +684,6 @@ pub(super) struct CoreRows {
     str_part_word: Vec<[i64; 5]>,
     /// `end_point(n, p)`: node n's end point, a zero-width span (`Locs::ends`).
     end_point: Vec<[i64; 2]>,
-    structural_before: Vec<[i64; 2]>,
-    structural_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
     /// `def_digest(n, h)`: each definition unit's own-content hash (`digests`).
     def_digest: Vec<[i64; 2]>,
@@ -695,7 +693,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.split_line.as_slice()) + std::mem::size_of_val(self.lf_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.end_point.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.split_line.as_slice()) + std::mem::size_of_val(self.lf_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.end_point.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -727,8 +725,6 @@ pub(super) struct Skip {
     /// `str`, `strprefix`, `value` rows themselves. `literal` may be off for `text` alone (a prefix makes a node
     /// token-like), which reads no literal's value: 139 k of execution_authority_bypass's strings were string values.
     pub(super) literal_rows: bool,
-    /// `structural_before`, `structural_after`.
-    pub(super) structural: bool,
 }
 
 /// Every match of `re` in `text`, each named group (and the whole match, group 0) that takes part: (match, group,
@@ -766,7 +762,7 @@ impl CoreRows {
     /// its rows without a second walk of every node of every document (the main phase's).
     pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_text = s.ops && s.structural && s.comment && s.spread && s.name && s.literal_rows
+        let only_text = s.ops && s.comment && s.spread && s.name && s.literal_rows
             && !(wants_parts || wants_part_starts || wants_words);
         match (only_text, wants_text, self.text_nodes.is_some()) {
             (false, _, _) | (true, true, false) => Visits::All,
@@ -810,29 +806,6 @@ impl CoreRows {
             self.op_at.push([n, i as i64, string(t) as i64]);
             if t.contains(' ') {
                 self.op.push([n, string(t) as i64]);
-            }
-        }
-        // `structural_before`, `structural_after`: the source between each stored child and its
-        // neighbours (the sibling before or after it, else the parent's edge); a root's, between
-        // it and the source's edges.
-        if !self.skip.structural {
-            let (start, end) = (f.start(id), f.end(id));
-            let between = |a: u32, b: u32| if a < b { &f.source[a as usize..b as usize] } else { "" };
-            // Only the root has no parent.
-            if id == 0 {
-                self.structural_before.push([n, string(between(0, start)) as i64]);
-                self.structural_after.push([n, string(between(end, f.source.len() as u32)) as i64]);
-            }
-            for (k, &c) in children.iter().enumerate() {
-                let local_c = p.local_of_node(c);
-                if local_c == crate::code_rule_dsl::facts::core::NONE {
-                    continue;
-                }
-                let a = if k == 0 { start } else { f.end(children[k - 1]) };
-                let b = children.get(k + 1).map_or(end, |&d| f.start(d));
-                let c_global = p.global(local_c);
-                self.structural_before.push([c_global, string(between(a, f.start(c))) as i64]);
-                self.structural_after.push([c_global, string(between(f.end(c), b)) as i64]);
             }
         }
         let mut token_like = children.is_empty();
@@ -917,9 +890,9 @@ impl CoreRows {
     }
 
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
-    /// its tokens (none for a text-only document, `dialect` `None`: it has no node).
+    /// its tokens (none for a text-only document: it has no node).
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
+    pub(super) fn document(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rerail's spans");
         let key = i64::from(p.key);
@@ -1170,8 +1143,6 @@ impl CoreRows {
             ("str_part_word", make(&["lit", "i", "w", "at", "spec"], &self.str_part_word, [false, false, true, false, false], atom)),
             ("str_part_start", make(&["lit", "i", "l", "c"], &self.str_part_start, [false; 4], atom)),
             ("end_point", pair(&["n", "p"], &self.end_point)),
-            ("structural_before", node_sym(&self.structural_before)),
-            ("structural_after", node_sym(&self.structural_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
             ("def_digest", node_sym(&self.def_digest)),
             ("ast_match", make(&["p", "n", "g", "c"], &self.ast_match, [true, false, true, false], atom)),

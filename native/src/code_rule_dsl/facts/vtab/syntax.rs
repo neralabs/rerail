@@ -3384,9 +3384,8 @@ impl Batch {
             str: !projection.wants("str"),
             literal_value: !wants_any(&["value", "static_value", "value_type", "rr_value_lit"]),
             literal_rows: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit"]),
-            structural: !wants_any(&["structural_before", "structural_after"]),
         };
-        let core_nodes = core && (scalar_nodes || !c.skip.structural);
+        let core_nodes = core && scalar_nodes;
         // `rr_value_lit` holds the literals of the documents W reads no values of (`unvalued`, `values_of`): where no
         // other relation reads a literal's value or rows, a document W values makes none, and its walk visits only the
         // nodes whose text a rule reads. Made for every node and dropped, hogql's literals had `node rows` visit all
@@ -3561,7 +3560,7 @@ impl Batch {
             // A text-only document has core.rerail's text rows too (its lines, `split_line`), and no tokens.
             if core && (!withheld || guest.is_none()) {
                 let s = crate::code_rule_dsl::logic::profile::span(|| "core document rows".into());
-                c.document(p, dialect, &mut string, wants_text, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
+                c.document(p, &mut string, wants_text, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
                 drop(s);
                 if let Some(dialect) = dialect
                     && wants_digests

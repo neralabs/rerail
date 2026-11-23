@@ -869,8 +869,23 @@ impl Batch {
             profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || format!("the batch's vocabulary (a text test), read in {}", profile::here().unwrap_or_default()));
         }
         self.complete();
-        let shared = self.shared.lock();
-        (shared.strings.clone(), shared.atoms.clone())
+        // And the strings the batch's views hold, interned as they are read (`tape_rows::strings`): walked outside the
+        // lock (a read may make a document, which takes it), then those the rows' strings lack.
+        let mut added: HashSet<String> = HashSet::new();
+        super::tape_rows::strings(self, &|rel| self.projection.wants(rel), &mut |s| {
+            if !added.contains(s) {
+                added.insert(s.to_owned());
+            }
+        });
+        let (mut strings, mut atoms, added) = {
+            let shared = self.shared.lock();
+            let added: Vec<String> = added.into_iter().filter(|s| !shared.at.contains_key(s)).collect();
+            (shared.strings.clone(), shared.atoms.clone(), added)
+        };
+        let refs: Vec<&str> = added.iter().map(String::as_str).collect();
+        atoms.extend(self.atoms.intern_all(&refs).expect("the views' strings interned"));
+        strings.extend(added);
+        (strings, atoms)
     }
 }
 

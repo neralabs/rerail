@@ -2824,7 +2824,7 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
 #[test]
 fn tape_row_views_hold_the_rows_their_makers_made() {
     use super::ranks::Item;
-    use super::tape_rows::{NAMED, TOKENS};
+    use super::tape_rows::{NAMED, STRUCTURAL, TOKENS};
     let store = ContentStore::open(&temp("tape-rows")).unwrap();
     let docs: Vec<Document> = vec![
         document(1, "m.py", "python", "# top\nimport os.path as p\ndef f(a, b):  # tail\n    \"\"\"d\"\"\"\n    x = a not in b\n    g(*a, f\"v{a}w\", 0xff)\n    return x\n"),
@@ -2847,6 +2847,25 @@ fn tape_row_views_hold_the_rows_their_makers_made() {
                     want.entry(NAMED).or_default().insert(vec![n, i as i64, p.global(at), i64::from(f.start(c)), i64::from(f.end(c))]);
                 }
             }
+        }
+        // The gaps, by each node's parent (`Facts::parent`, a search of the tape), not a walk of the children: a
+        // node's whose parent is a node of the projection, and the root's, to the source's edges.
+        let between = |a: u32, b: u32| if a < b { &f.source[a as usize..b as usize] } else { "" };
+        for (_, x, n) in p.node_ids() {
+            let (before, after) = match f.parent(x) {
+                None if x == 0 => (between(0, f.start(0)), between(f.end(0), f.source.len() as u32)),
+                Some(q) if p.local_of_node(q) != core::NONE => {
+                    let ch = f.children(q);
+                    let k = ch.iter().position(|&c| c == x).expect("a child of its parent");
+                    let a = if k == 0 { f.start(q) } else { f.end(ch[k - 1]) };
+                    let b = ch.get(k + 1).map_or(f.end(q), |&d| f.start(d));
+                    (between(a, f.start(x)), between(f.end(x), b))
+                }
+                _ => continue,
+            };
+            let atoms = store.intern_atoms(&[before, after]).unwrap();
+            want.entry(STRUCTURAL[0]).or_default().insert(vec![n, i64::from(atoms[0])]);
+            want.entry(STRUCTURAL[1]).or_default().insert(vec![n, i64::from(atoms[1])]);
         }
         let Some(dialect) = batch.dialects.get(p.tag) else { continue };
         let mut toks: Vec<(u32, u32, i64)> = p
@@ -2880,7 +2899,7 @@ fn tape_row_views_hold_the_rows_their_makers_made() {
             }
         }
     }
-    for name in std::iter::once(NAMED).chain(TOKENS) {
+    for name in std::iter::once(NAMED).chain(TOKENS).chain(STRUCTURAL) {
         let (s, want) = (&views[name], want.remove(name).unwrap_or_default());
         assert!(want.len() > 3, "{name}: rows to compare");
         let width = s.columns().len();
@@ -2904,4 +2923,26 @@ fn tape_row_views_hold_the_rows_their_makers_made() {
         }
     }
     assert_eq!(batch.groups(), 0, "the views made no group");
+}
+
+/// A text test's scan tests the batch's strings (`Batch::vocabulary`), the strings its views hold among them
+/// (`tape_rows::strings`): a gap (`structural_after`, a view of the tape) is interned only when read, and a scan that
+/// tested the rows' strings alone missed it where a probe found it (ab218: 463 or 467 violations by the plan chosen).
+#[test]
+fn a_scanned_text_test_tests_the_strings_a_view_holds() {
+    let store = ContentStore::open(&temp("view-strings")).unwrap();
+    // The gap after `1`, before `+`: a tab, a space, a tab, which no other string of the file is.
+    let docs = vec![document(1, "m.py", "python", "x = 1\t \t+ 2\n")];
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::from_specs(&["strtest_0".to_owned()], vec![("equals".to_owned(), vec!["\t \t".to_owned()])]).unwrap());
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "structural_after", "strtest_0"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let sources = with_matchers(&store, docs, &[], &Matchers::default(), &tests, crate::code_rule_dsl::facts::nearest::Binding::Cpu, &projection, &HashMap::new()).unwrap();
+    let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("no {name}")).1);
+    let gap = store.intern_atoms(&["\t \t"]).unwrap()[0];
+    // Scanned: its rows read whole, before any probe.
+    let test = source("strtest_0");
+    let mut scanned = Vec::new();
+    test.for_rows(&[0], &mut |_, row| scanned.push(row[0]));
+    assert_eq!(scanned, [i64::from(gap)], "the scan tests the view's strings");
+    let after = source("structural_after");
+    assert!((0..after.len()).any(|r| after.value(r, 1) == i64::from(gap)), "the view holds the gap");
 }

@@ -342,9 +342,12 @@ pub const NAMED: &str = "rr_token_named";
 /// `doc(d, path, module)` (`DocRow`).
 pub const DOC: &str = "doc";
 
+/// core.rerail's `structural_before(n, s)`, `structural_after(n, s)` (`Gap`).
+pub const STRUCTURAL: [&str; 2] = ["structural_before", "structural_after"];
+
 /// The relations `RowsView` serves, a batch of `shape`'s: none of them made as rows.
 pub(super) fn served(shape: Shape) -> impl Iterator<Item = &'static str> {
-    [DOC, NAMED].into_iter().chain(TOKENS.into_iter().filter(move |_| shape == Shape::Core))
+    [DOC, NAMED].into_iter().chain(TOKENS.into_iter().chain(STRUCTURAL).filter(move |_| shape == Shape::Core))
 }
 
 /// The views `served` names over `batch`.
@@ -354,8 +357,125 @@ pub(super) fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> 
         for which in [Neighbour::First, Neighbour::Last, Neighbour::Before, Neighbour::After] {
             out.push((TOKENS[which as usize], Arc::new(RowsView::new(batch, TokenNeighbour(which)))));
         }
+        for side in [Side::Before, Side::After] {
+            out.push((STRUCTURAL[side as usize], Arc::new(RowsView::new(batch, Gap(side)))));
+        }
     }
     out
+}
+
+/// The strings the views of `batch` that its projection reads hold (each interned when read), of every document: a
+/// text test's scan tests the batch's strings (`Batch::vocabulary`), which a relation made as rows put in its strings
+/// as it was made. Without them, a scan missed what a probe found: `match(…, g)` over `structural_before(n, g)`
+/// found 463 or 467 violations by the plan the run chose (ab218).
+pub(super) fn strings(batch: &Batch, wants: &dyn Fn(&str) -> bool, each: &mut dyn FnMut(&str)) {
+    let doc = wants(DOC);
+    let gaps: Vec<Gap> = [Side::Before, Side::After].into_iter().filter(|&s| batch.shape == Shape::Core && wants(STRUCTURAL[s as usize])).map(Gap).collect();
+    for d in 0..batch.docs.len() {
+        if doc {
+            let docs = &batch.docs;
+            each(docs.path(d));
+            each(&super::doc_module(docs.path(d), docs.module(d), batch.shape == Shape::Core));
+        }
+        if gaps.is_empty() {
+            continue;
+        }
+        let p = At { batch, doc: d };
+        let p = p.p();
+        let source = p.facts.source.as_str();
+        for g in &gaps {
+            g.walk(p, &mut |_, a, b| each(if a < b { &source[a as usize..b as usize] } else { "" }));
+        }
+    }
+}
+
+/// Which side of a node its gap is (`Gap`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+pub(super) enum Side {
+    Before,
+    After,
+}
+
+/// core.rerail's `structural_before(n, s)` and `structural_after(n, s)`: the source between node `n` and its
+/// neighbour on that side (the sibling before or after it on the tape, anonymous ones too, else its parent's edge); a
+/// root's, between it and the source's edge. A row per node of the projection that is the tape's root or a child of
+/// one of its nodes. `n` is the tape's; `s` is the gap's text interned, once per row on the document's first read
+/// (a derived fact: the tape holds the gap, not its atom). Made as rows they were 27 MB of each chunk's block of
+/// sources at the M3's 300-file peak (ab217), `n` and `s` a row each.
+pub(super) struct Gap(pub(super) Side);
+
+impl Gap {
+    /// Each member's gap, `(local, from, to)` in bytes of the source, in the tape's order of their parents.
+    fn walk(&self, p: &Projected, each: &mut dyn FnMut(u32, u32, u32)) {
+        let f = &*p.facts;
+        if f.len() > 0 {
+            let root = p.local_of_node(0);
+            if root != NONE {
+                match self.0 {
+                    Side::Before => each(root, 0, f.start(0)),
+                    Side::After => each(root, f.end(0), f.source.len() as u32),
+                }
+            }
+        }
+        for (_, q) in p.nodes() {
+            let children = f.children(q);
+            for (k, &c) in children.iter().enumerate() {
+                let l = p.local_of_node(c);
+                if l == NONE {
+                    continue;
+                }
+                match self.0 {
+                    Side::Before => each(l, if k == 0 { f.start(q) } else { f.end(children[k - 1]) }, f.start(c)),
+                    Side::After => each(l, f.end(c), children.get(k + 1).map_or(f.end(q), |&d| f.start(d))),
+                }
+            }
+        }
+    }
+}
+
+impl TapeRows for Gap {
+    /// Each row's gap's atom, in row order: made on the document's first read of a row, in one walk.
+    type Doc = OnceLock<Cells<u32>>;
+    fn name(&self) -> &'static str {
+        STRUCTURAL[self.0 as usize]
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["n", "s"]
+    }
+    fn own(&self) -> usize {
+        0
+    }
+    fn doc(&self, _: &At) -> Self::Doc {
+        OnceLock::new()
+    }
+    fn items(&self, at: &At, _: &Self::Doc) -> u32 {
+        at.p().len()
+    }
+    fn members(&self, at: &At, _: &Self::Doc, each: &mut dyn FnMut(u32)) {
+        self.walk(at.p(), &mut |l, _, _| each(l));
+    }
+    fn row(&self, at: &At, d: &Self::Doc, marked: &Marked, item: u32, row: u32, out: &mut [i64]) {
+        let p = at.p();
+        let atoms = d.get_or_init(|| {
+            let source = p.facts.source.as_str();
+            let mut texts: Vec<&str> = vec![""; marked.count() as usize];
+            self.walk(p, &mut |l, a, b| {
+                if a < b {
+                    texts[marked.rank(l) as usize] = &source[a as usize..b as usize];
+                }
+            });
+            let syms = at.batch.atoms.intern_all(&texts).expect("a document's gaps interned");
+            // copy: derived (each row's gap's text interned: the tape holds the gap, not its atom)
+            Cells::build(p.block(), syms.len().max(1), |out: &mut [u32]| {
+                out[..syms.len()].copy_from_slice(&syms);
+                syms.len().max(1)
+            })
+            .expect("a projection's block holds a view's atoms")
+        });
+        out[0] = p.global(item);
+        out[1] = i64::from(atoms[row as usize]);
+    }
 }
 
 /// Which token of a node or token (`TokenNeighbour`).
