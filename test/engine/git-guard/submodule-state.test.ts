@@ -203,7 +203,8 @@ describe("worktreeGitFolder", () => {
   it("reads a linked worktree's `.git` file in one read, into a buffer of the file's own size", async () => {
     const { linked } = repositories(await folder());
     const found = gitFolderFound(linked);
-    const gitfile = join(linked, ".git");
+    // Rerail opens the `.git` by the folder's real path: the temp folder sits behind a link on macOS.
+    const gitfile = join(realFs.realpathSync.native(linked), ".git");
     const open = new Set<number>();
     let reads = 0;
     vi.mocked(openSync).mockImplementation((path, flags, mode) => {
