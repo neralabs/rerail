@@ -21,7 +21,7 @@ use ::bitlex::syntax::{Gram, Stmt, TokenElem};
 // Mounted by `rerail-bitlex` from the compiler's folder (`#[path]`): its submodule is found beside it.
 #[path = "bitlex_rust/one_loop.rs"]
 mod one_loop;
-pub use one_loop::tier2_loop;
+pub use one_loop::{tier2_loop, tier2_loop_reads};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -106,6 +106,9 @@ struct G<'a> {
     /// `refuse M in L …`: each level's refused marks, their bits in a record's code: a token the level takes with one
     /// refuses the file (`P::refusing`).
     refusing: HashMap<String, u32>,
+    /// The mark bits the code written so far reads of a record's code (`16 + bit`): tier 1 writes only these where its
+    /// loop reads the bytes (decision 0623).
+    reads: std::cell::Cell<u32>,
     /// The field ids past a key's 6 bits, each given the slot `63 - its place` (`field_id`).
     own_fields: std::cell::RefCell<Vec<u16>>,
     /// The largest field id under 64 named: the slots must be above it.
@@ -233,7 +236,8 @@ impl<'a> G<'a> {
                 _ => {}
             }
         }
-        G { x, rules, order, flags, readings, remember, provisional, refusing, own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default() }
+        let reads = refusing.values().filter(|&&b| b != u32::MAX).fold(0, |a, &b| a | b) | x.extra_bits.iter().fold(0, |a, (b, _)| a | 1 << b);
+        G { x, rules, order, flags, readings, remember, provisional, refusing, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -1000,8 +1004,12 @@ impl<'a> G<'a> {
     }
 
     fn bit_of(&self, m: &str) -> Result<String, String> {
-        let k = self.x.marks.iter().find(|x| x.name == m && x.bit.is_some()).ok_or_else(|| format!("mark {m}: no bit in the code"))?;
-        Ok(format!("{}", k.bit.expect("a bit")))
+        Ok(self.bit_num(m)?.to_string())
+    }
+
+    /// Mark bit `b` read of a record's code (`reads`).
+    fn read_bit(&self, b: u32) {
+        self.reads.set(self.reads.get() | 1 << b);
     }
 
     /// A run of token elements from `j` (the token before: `prev`), as a function's body: whether
@@ -1069,7 +1077,9 @@ impl<'a> G<'a> {
     }
 
     fn bit_num(&self, m: &str) -> Result<u32, String> {
-        Ok(u32::from(self.x.marks.iter().find(|x| x.name == m && x.bit.is_some()).and_then(|x| x.bit).ok_or_else(|| format!("mark {m}: no bit in the code"))?))
+        let b = u32::from(self.x.marks.iter().find(|x| x.name == m && x.bit.is_some()).and_then(|x| x.bit).ok_or_else(|| format!("mark {m}: no bit in the code"))?);
+        self.read_bit(b);
+        Ok(b)
     }
 
     /// A gap question as a function of the token's record (`gap_pattern_holds`): `after`'s
@@ -1150,6 +1160,7 @@ impl<'a> G<'a> {
                         c.push(if negated { format!("{{ let p = self.prev_tok(self.i); p >= self.n || {p} }}") } else { format!("{{ let p = self.prev_tok(self.i); p < self.n && {p} }}") });
                     }
                 } else if let Some(b) = def.bit {
+                    self.read_bit(u32::from(b));
                     if def.word != 0 {
                         c.push(format!("self.word() == {}", def.word));
                     }
@@ -1191,6 +1202,7 @@ impl<'a> G<'a> {
             if m.settles
                 && let Some(b) = m.bit
             {
+                self.read_bit(u32::from(b));
                 let _ = writeln!(take, "        self.settle({b});");
             }
             let drops = qs(|d| d.drops);

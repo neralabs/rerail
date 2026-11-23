@@ -205,3 +205,23 @@ Tier 2's `parse` takes a `Finish` (`rerail_tape_format::Finish`), as the lean pa
 (`columns_nodes`) is gone. `rr_parser`'s 51 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes included.
 
 That is the last step of the order.
+
+## Item 5's first half: tier 1 writes only the token marks tier 2 reads (done)
+
+Tier 1 set eleven token marks by a chain of compares on the word (`if word == 40 { marks |= 1 << 2 }`, …). `.rerail`'s
+tier 2 asks each of them of the tokens themselves (`pat_fix_on`, … read the words), so it read none of those bits.
+Lean's lexer sets no mark.
+
+- **Tier 2's generator keeps the mark bits its code reads** (`G::reads`): a mark asked by its bit (`bit_at`), a token
+  question's `with` and `without`, a refused mark, a settling mark, and the extras' bits. `tier2_loop_reads` returns
+  them with the code.
+- **Tier 1 writes only those**, where its loop reads the bytes and no region is read in parts. It lists the others
+  with the asked gap marks in `UNRECORDED`, which the records test leaves out of what it compares.
+
+`.rerail`'s tier 1 now sets no token mark by its word. Its records hold `float_after` and the token tests' hits of
+the asked gap marks. Kotlin's files are unchanged but for `UNRECORDED = 0`.
+
+`rr_parser`'s 51 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes and records included.
+
+What 0623's list still has for tier 1 is the rest of step 3. A common token is still sent through the dispatch's rows,
+where lean reads its kind and length from one table load (`TOKEN`).

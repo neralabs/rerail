@@ -2988,6 +2988,10 @@ pub fn lex(src: &[u8]) -> Lexed {
     }
 }
 
+/// The marks tier 1's records leave to tier 2 (decision 0623): those it asks of the bytes (`ASKED`: a record holds only
+/// its token tests' hits of them), and the token marks its code reads no bit of (it asks them of the tokens).
+pub const UNRECORDED: u32 = 0x0;
+
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
 /// records hold only its token tests' hits of them.
 pub const ASKED: u32 = 0x0;

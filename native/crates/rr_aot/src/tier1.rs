@@ -980,39 +980,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
 ;
         let word = if extra { 0 } else { word_at(src, s, l + 1 - s) };
         // The token marks: tier 2 tests the rest of each.
-        if word == 40 {
-            marks |= 1 << 2;
-        }
-        if word == 42 {
-            marks |= 1 << 3;
-        }
-        if word == 44 {
-            marks |= 1 << 4;
-        }
-        if word == 43 {
-            marks |= 1 << 5;
-        }
-        if word == 53 {
-            marks |= 1 << 6;
-        }
-        if word == 20 {
-            marks |= 1 << 7;
-        }
-        if word == 10 {
-            marks |= 1 << 8;
-        }
-        if word == 10 {
-            marks |= 1 << 9;
-        }
-        if word == 13 {
-            marks |= 1 << 11;
-        }
-        if word == 23 {
-            marks |= 1 << 13;
-        }
-        if word == 13 {
-            marks |= 1 << 14;
-        }
         if extra {
             // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.
             pending |= hits & 0xffff | hits >> 16;
@@ -2023,6 +1990,10 @@ fn word_at(src: &[u8], s: usize, len: usize) -> u32 {
     if key == k && l == len && (len <= 8 || src[s + 8..s + len] == *tail) { code } else { 0 }
 }
 
+
+/// The marks tier 1's records leave to tier 2 (decision 0623): those it asks of the bytes (`ASKED`: a record holds only
+/// its token tests' hits of them), and the token marks its code reads no bit of (it asks them of the tokens).
+pub const UNRECORDED: u32 = 0x7ffe;
 
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
 /// records hold only its token tests' hits of them.

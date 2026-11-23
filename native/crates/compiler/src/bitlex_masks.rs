@@ -829,13 +829,15 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
             let x = crate::bitlex_rust::Input { tree: &low.tree_desugared, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds };
             let rust = crate::bitlex_rust::tier2(&x);
             low.rust = Some(rust);
-            low.rust_loop = Some(crate::bitlex_rust::tier2_loop(&x));
+            let looped = crate::bitlex_rust::tier2_loop_reads(&x);
+            let tier2_reads = looped.as_ref().ok().and_then(|l| l.1);
+            low.rust_loop = Some(looped.map(|l| l.0));
             // Tier 1 as Rust, from the lexer's statements and the tables (`bitlex_lex_rust`).
             let mark_bits: Vec<Option<u8>> = t.mark_bits.iter().map(|b| b.0).collect();
             let lexer = if t.mark_bits.iter().any(|b| b.0.is_some() && b.1 != 0) {
                 Err("tier 1 as Rust: a mark of one word is not written yet".to_owned())
             } else {
-                let x = crate::bitlex_lex_rust::Input { stmts, kinds: &r.kinds, row_kinds: &t.row_kinds, words: &r.words, mark_bits: &mark_bits, extra_bits: &t.extra_bits, own: r.own, token_bits: &t.token_bits, assumed: &low.assumed, assumed_ends: &low.assumed_ends };
+                let x = crate::bitlex_lex_rust::Input { stmts, kinds: &r.kinds, row_kinds: &t.row_kinds, words: &r.words, mark_bits: &mark_bits, extra_bits: &t.extra_bits, own: r.own, token_bits: &t.token_bits, assumed: &low.assumed, assumed_ends: &low.assumed_ends, tier2_reads };
                 crate::bitlex_lex_rust::tier1(&x)
             };
             low.lexer_rust = Some(lexer);

@@ -1330,10 +1330,15 @@ fn run_last(x: &[u64], s: usize) -> usize {
 
 /// Tier 2 of the grammar as one loop (the module's doc), or why it is not written.
 pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
+    tier2_loop_reads(x).map(|(out, _)| out)
+}
+
+/// [`tier2_loop`], and in the records form the mark bits its code reads of a record's code.
+pub fn tier2_loop_reads(x: &Input<'_>) -> Result<(String, Option<u32>), String> {
     let g = G::new(x);
     if !x.marks.is_empty() || !x.extras.is_empty() || !g.flags.is_empty() || !g.readings.is_empty() {
         // Tokens tier 1 decides (their marks, the comments, the flags, the readings): the records form.
-        return records::tier2(x);
+        return records::tier2(x).map(|(out, reads)| (out, Some(reads)));
     }
     let readers = crate::bitlex_lex_rust::readers(x.lexer);
     let mut ends = BTreeMap::new();
@@ -1540,7 +1545,7 @@ matches!(ROWS[usize::from(b)], {pat})
     if !reads_ident(&methods.replace(sig, "").replace(call, ""), "len") {
         out = out.replace(sig, "src: &[u8], starts: &[u32]").replace(call, "(src, starts, d, &mut i, [");
     }
-    Ok(drop_uncalled(out, &parts))
+    Ok((drop_uncalled(out, &parts), None))
 }
 
 /// Whether `code` names `id` (not as part of a longer name, a field or a method).

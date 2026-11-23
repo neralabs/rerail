@@ -53,6 +53,9 @@ pub struct Input<'a> {
     /// The masks assumed only at a region token's last byte (`assume … at ends`), each with
     /// whether the prover proved it.
     pub assumed_ends: &'a [(String, bool)],
+    /// The mark bits tier 2 as one loop reads of a record's code, where it is written: where the loop reads the bytes,
+    /// tier 1 writes no other token mark (decision 0623).
+    pub tier2_reads: Option<u32>,
 }
 
 /// What the token loop knows of a mask at a byte: never, always, or a test there, as code.
@@ -5421,6 +5424,18 @@ impl Gen<'_> {
         // A mark of rows alone is decided by the row the dispatch picks, where every row decides it
         // (`row_marks`).
         let mut token_code = String::new();
+        // The same with only the marks tier 2 reads (`tier2_reads`), and the bits of the others.
+        let mut token_read = String::new();
+        let mut unread = 0u32;
+        let tests_of = |code: &mut String, read: &mut String, unread: &mut u32, test: &str, bit: u32| {
+            let line = format!("        if {test} {{\n            marks |= 1 << {bit};\n        }}\n");
+            code.push_str(&line);
+            if x.tier2_reads.is_none_or(|r| r >> bit & 1 == 1) {
+                read.push_str(&line);
+            } else {
+                *unread |= 1 << bit;
+            }
+        };
         let mut row_marks: Vec<(u32, Vec<usize>, Vec<usize>, String)> = Vec::new();
         for (bit, mask, w) in x.token_bits {
             let starts = |rs: &[usize]| rs.iter().filter_map(|&r| rows.iter().find(|q| q.0 == r)).filter_map(|(_, s)| if let Stmt::Token { start, .. } = s { Some(start.clone()) } else { None }).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b)));
@@ -5454,7 +5469,7 @@ impl Gen<'_> {
                 row_marks.push((u32::from(*bit), a.clone(), b.clone(), test));
                 continue;
             }
-            let _ = write!(token_code, "        if {test} {{\n            marks |= 1 << {bit};\n        }}\n");
+            tests_of(&mut token_code, &mut token_read, &mut unread, &test, u32::from(*bit));
         }
         // The masks tier 2 reads (`readers`), as `plan_fields` made them.
         let mut fields: Vec<String> = Vec::new();
@@ -5496,7 +5511,7 @@ impl Gen<'_> {
                     }
                 }
             } else {
-                let _ = write!(token_code, "        if {test} {{\n            marks |= 1 << {bit};\n        }}\n");
+                tests_of(&mut token_code, &mut token_read, &mut unread, test, *bit);
             }
         }
         let _ = write!(open_code, "        // The token's first byte's group, by the dispatch tables (simdjson's `classify`).\n        let c = src[s];\n        let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();\n");
@@ -5920,7 +5935,8 @@ impl Gen<'_> {
             let mut by = bytes::Bytes::new(x.stmts, locals, class_code);
             let mut go = || -> Result<_, String> {
                 let mut pieces = Vec::new();
-                for t in [&open_code, &branches, &token_code, &own_code, if readers(x.stmts).is_empty() { &gap_asked } else { &gap_code }, &acc_after] {
+                let alone = readers(x.stmts).is_empty();
+                for t in [&open_code, &branches, if alone { &token_read } else { &token_code }, &own_code, if alone { &gap_asked } else { &gap_code }, &acc_after] {
                     let t = by.rewrite(&bytes::strip_pauses(t))?;
                     if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
                         return Err("a pause the loop still reads".into());
@@ -6017,8 +6033,10 @@ impl Gen<'_> {
         }
         // The gap marks tier 2 asks of the bytes (decision 0623 step 5): where the loop reads the bytes, and no region is
         // read in parts (a piece's start is not its record's).
-        let asked = if from_bytes.is_some() && readers(x.stmts).is_empty() { asked } else { Vec::new() };
+        let alone = from_bytes.is_some() && readers(x.stmts).is_empty();
+        let (asked, unread) = if alone { (asked, unread) } else { (Vec::new(), 0) };
         let bits = asked.iter().fold(0u32, |m, a| m | 1 << a.0);
+        let _ = write!(out, "\n/// The marks tier 1's records leave to tier 2 (decision 0623): those it asks of the bytes (`ASKED`: a record holds only\n/// its token tests' hits of them), and the token marks its code reads no bit of (it asks them of the tokens).\npub const UNRECORDED: u32 = {:#x};\n", bits | unread);
         let _ = write!(out, "\n/// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's\n/// records hold only its token tests' hits of them.\npub const ASKED: u32 = {bits:#x};\n\n/// Whether gap mark `b` holds over `src[from..to]`, the bytes since the grammar token before's first byte (`before` its\n/// word), as the lean parser asks whether a token is on a line.\n#[inline]\npub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {{\n");
         if asked.is_empty() {
             out.push_str("    let _ = (src, from, to, before, b);\n    false\n}\n");

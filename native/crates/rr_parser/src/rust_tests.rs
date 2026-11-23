@@ -46,11 +46,12 @@ fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
     }
 }
 
-/// The gap marks tier 2 asks of the bytes (`tier1::ASKED`, decision 0623 step 5), by their bits.
+/// The marks no record of tier 1's holds (`tier1::UNRECORDED`, decision 0623): those tier 2 asks of the bytes or of the
+/// tokens, by their bits.
 fn tier2_asked_marks() -> u32 {
     let tier1 = std::fs::read_to_string(format!("{}/../rr_aot/src/tier1.rs", env!("CARGO_MANIFEST_DIR"))).expect("reads");
-    let Some(at) = tier1.find("pub const ASKED: u32 = 0x") else { return 0 };
-    let rest = &tier1[at + 25..];
+    let Some(at) = tier1.find("pub const UNRECORDED: u32 = 0x") else { return 0 };
+    let rest = &tier1[at + 30..];
     u32::from_str_radix(&rest[..rest.find(';').expect("the constant's end")], 16).expect("the bits")
 }
 
@@ -78,7 +79,7 @@ fn tier2_checked_marks() -> u32 {
 /// engine, and where neither does, each token's first and last byte and code. In the bits of the marks tier 2 checks
 /// (`tier2_checked_marks`), the Rust's are the interpreter's and those tier 2 tests.
 fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
-    // The gap marks tier 2 asks of the bytes (decision 0623 step 5) are in no record of tier 1's: the tapes test them.
+    // The marks tier 2 asks of the bytes or the tokens (decision 0623) are in no record of tier 1's: the tapes test them.
     let asked = tier2_asked_marks() << 16;
     let late = tier2_checked_marks() << 16 & !asked;
     let run = c.program.block_programs[0].run(text.as_bytes());
