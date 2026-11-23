@@ -4318,12 +4318,18 @@ impl View {
     /// Whether a probe of `cols` is `find_read`'s read as found (`Source::lookup_read_at`), which a step can read its
     /// rows from as the source finds them (`Cands::Stream`): one key column, no equalities or ids of its own, and not
     /// a document-kept lookup.
+    /// Whether a probe by `cols` is read into the step as found (`Cands::Stream`): by its lead column, the other key
+    /// columns checked by the step from the values read (they are in its `need`: no exact probe). Not where the
+    /// source looks several columns up together (`Source::looks_up_columns`) or keeps the probe to a document
+    /// (`find_read`'s order).
     fn streams(&self, cols: &[usize]) -> bool {
+        let dc = self.src.doc_column();
         self.eqs.is_empty()
             && self.ids.is_none()
             && self.cols.len() <= READ
-            && cols.len() == 1
-            && !self.src.doc_column().is_some_and(|dc| self.cols[cols[0]] == dc && self.src.kept_to_doc(self.cols[cols[0]]))
+            && cols.len() <= STREAM_KEY
+            && (cols.len() == 1 || !self.src.looks_up_columns())
+            && !(dc.is_some_and(|dc| cols.iter().any(|&k| self.cols[k] == dc)) && cols.iter().any(|&k| self.src.kept_to_doc(self.cols[k])))
     }
     /// `find_read`'s read of probe `s`, each match given to `each` with its values of view columns `need` as the
     /// source finds it; `false` where the source has no such read (before any match).

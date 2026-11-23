@@ -1457,6 +1457,9 @@ impl Source for MadeRows {
         }
         self.routed(column, values, |_, _| true).map(|(_, rows)| rows).or_else(|| self.target().lookup(column, values))
     }
+    fn looks_up_columns(&self) -> bool {
+        self.done().is_none()
+    }
     fn lookup_columns(&self, columns: &[usize], values: &[i64]) -> Option<Vec<usize>> {
         if self.done().is_some() || columns.len() != values.len() {
             return None;

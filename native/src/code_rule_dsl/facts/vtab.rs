@@ -316,6 +316,11 @@ pub trait Source: Send + Sync {
     fn lookup_columns(&self, _columns: &[usize], _values: &[i64]) -> Option<Vec<usize>> {
         None
     }
+    /// Whether `lookup_columns` may answer: a probe of several columns is then that lookup, not one column's
+    /// streamed read with the rest checked.
+    fn looks_up_columns(&self) -> bool {
+        false
+    }
     /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).
     fn doc_column(&self) -> Option<usize> {
         None
