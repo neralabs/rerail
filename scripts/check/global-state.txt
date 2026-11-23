@@ -152,6 +152,7 @@ native/src/code_rule_dsl/logic/plan/keeps.rs::OBSERVED	stays	a key, holding noth
 native/src/code_rule_dsl/logic/plan/output.rs::WRITES	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid
 native/src/code_rule_dsl/logic/profile.rs::EXITED	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): every thread that opened a span, and the accounts of those that ended
 native/src/code_rule_dsl/logic/profile.rs::EXITED_GAPS	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): every thread that opened a span, and the accounts of those that ended
+native/src/code_rule_dsl/logic/profile.rs::QUEUE_LABELS	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): the dispatch queue each nameless system thread was seen serving
 native/src/code_rule_dsl/logic/profile.rs::THREADS	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): every thread that opened a span, and the accounts of those that ended
 native/src/code_rule_dsl/logic/profile.rs::TICK	stays	the OS's timebase ratio: a constant of the machine read once
 native/src/code_rule_dsl/logic/profile.rs::WARM_FAULTS	stays	the process's exit status (RERAIL_WARM=list): an atexit handler reads it

@@ -242,8 +242,14 @@ pub(super) fn sample() {
             rerail_prof::heap::name_thread("profile memory (the memory sampler)");
             let start = std::time::Instant::now();
             let mut last_max = footprint().1;
+            let mut ticks = 0u64;
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(every_ms));
+                // The queues the system's nameless threads serve, about every 50 ms (`note_dispatch_labels`).
+                ticks += 1;
+                if ticks.is_multiple_of((50 / every_ms.max(1)).max(1)) {
+                    super::note_dispatch_labels();
+                }
                 let (now, max) = footprint();
                 let (live, resident) = heap();
                 let at = start.elapsed().as_secs_f64();

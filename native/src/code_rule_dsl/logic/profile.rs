@@ -1131,6 +1131,48 @@ pub fn process_cpu() -> f64 {
     }
 }
 
+/// Each nameless system thread's dispatch queue, by its port, as it was last seen serving one (`note_dispatch_labels`):
+/// a worker's CPU is spent while it serves a queue, and at the report it may serve none.
+#[cfg(target_os = "macos")]
+static QUEUE_LABELS: LazyLock<Mutex<HashMap<u32, String>>> = LazyLock::new(Default::default);
+
+/// Notes the queue each nameless thread serves now (macOS; the memory sampler calls it as it samples), so the CPU by
+/// thread names it by that queue.
+pub(super) fn note_dispatch_labels() {
+    #[cfg(target_os = "macos")]
+    {
+        let seen: Vec<(u32, String)> = live_threads().into_iter().filter_map(|(port, name)| Some((port, name.strip_prefix("dispatch: ")?.to_owned()))).collect();
+        let mut labels = QUEUE_LABELS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        labels.extend(seen);
+    }
+}
+
+/// The label of the dispatch queue thread `port` serves now, if it serves one with a label (macOS).
+#[cfg(target_os = "macos")]
+fn dispatch_label(port: libc::mach_port_t) -> Option<String> {
+    unsafe extern "C" {
+        fn dispatch_queue_get_label(queue: *const libc::c_void) -> *const libc::c_char;
+    }
+    let mut info: libc::thread_identifier_info = unsafe { std::mem::zeroed() };
+    let mut count = libc::THREAD_IDENTIFIER_INFO_COUNT;
+    // SAFETY: a thread of this task, its identifier info into a struct of the size given.
+    if unsafe { libc::thread_info(port, libc::THREAD_IDENTIFIER_INFO as libc::thread_flavor_t, (&raw mut info).cast(), &mut count) } != 0 || info.dispatch_qaddr == 0 {
+        return None;
+    }
+    // SAFETY: `dispatch_qaddr` is the thread's slot of its current queue, which the thread keeps while it lives (the
+    // port's right holds it); a queue a thread serves is retained while it serves it.
+    let queue = unsafe { *(info.dispatch_qaddr as *const *const libc::c_void) };
+    if queue.is_null() {
+        return None;
+    }
+    let label = unsafe { dispatch_queue_get_label(queue) };
+    if label.is_null() {
+        return None;
+    }
+    let label = unsafe { std::ffi::CStr::from_ptr(label) }.to_string_lossy().into_owned();
+    (!label.is_empty()).then_some(label)
+}
+
 /// The live threads' Mach ports (macOS) or thread ids (Linux, Windows), and names; none elsewhere.
 fn live_threads() -> Vec<(u32, String)> {
     #[cfg(target_os = "macos")]
@@ -1158,6 +1200,14 @@ fn live_threads() -> Vec<(u32, String)> {
                     String::new()
                 } else {
                     unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_string_lossy().into_owned()
+                };
+                // A thread the system made with no name (a libdispatch worker: Metal's completion handlers, the
+                // driver's) is named by the queue it serves (2 threads, 0.54 s "unnamed" in the M3's 300-file run).
+                // A worker serving no queue now is named by the one it was seen serving (`note_dispatch_labels`).
+                let name = if name.is_empty() {
+                    dispatch_label(port).or_else(|| QUEUE_LABELS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&port).cloned()).map(|l| format!("dispatch: {l}")).unwrap_or_default()
+                } else {
+                    name
                 };
                 (port, if name.is_empty() { "unnamed".to_owned() } else { name })
             })
@@ -2826,6 +2876,31 @@ pub fn projection_plan_of(users: impl FnOnce() -> std::collections::BTreeMap<Str
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// A thread serving a dispatch queue is named by the queue's label (`dispatch_label`): the system's threads that
+    /// have no name of their own (Metal's completion handlers) were "unnamed" in the CPU by thread.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_thread_serving_a_dispatch_queue_is_named_by_its_label() {
+        unsafe extern "C" {
+            fn dispatch_queue_create(label: *const libc::c_char, attr: *const libc::c_void) -> *mut libc::c_void;
+            fn dispatch_sync_f(queue: *mut libc::c_void, context: *mut libc::c_void, work: extern "C" fn(*mut libc::c_void));
+            fn dispatch_release(object: *mut libc::c_void);
+            fn mach_thread_self() -> libc::mach_port_t;
+        }
+        extern "C" fn work(out: *mut libc::c_void) {
+            // SAFETY: the `Option<String>` the caller passed, which outlives the synchronous call.
+            let out = unsafe { &mut *out.cast::<Option<String>>() };
+            *out = dispatch_label(unsafe { mach_thread_self() });
+        }
+        let queue = unsafe { dispatch_queue_create(c"rerail.test.profile-label".as_ptr(), std::ptr::null()) };
+        let mut seen: Option<String> = None;
+        // A synchronous call on a serial queue runs on this thread, the queue its current one.
+        unsafe { dispatch_sync_f(queue, (&raw mut seen).cast(), work) };
+        unsafe { dispatch_release(queue) };
+        assert_eq!(seen.as_deref(), Some("rerail.test.profile-label"));
+        assert_eq!(dispatch_label(unsafe { mach_thread_self() }), None, "a thread serving no queue has no label");
+    }
 
     /// Each stratum's CPU in the executors' report is its spans' (`stratum <key>`, alone or the last part of a path),
     /// a key of several relations (`a/b`) among them, and no other span's.
