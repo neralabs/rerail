@@ -163,8 +163,10 @@ describe("describeRerailPolicies", () => {
 
   it("stops a describe past its own deadline, which a run's deadline does not change, and names the setting that raises it", () => {
     const { rule } = checkout({});
-    vi.stubEnv("RERAIL_RR_DEADLINE_MS", "1");
+    vi.stubEnv("RERAIL_RR_DEADLINE_MS", "abc");
     try {
+      expect(describeRerailPoliciesSync([rule])).toMatchObject([{ path: rule, ok: true }]);
+      vi.stubEnv("RERAIL_RR_DEADLINE_MS", "1");
       expect(describeRerailPoliciesSync([rule])).toMatchObject([{ path: rule, ok: true }]);
       vi.stubEnv("RERAIL_RR_DESCRIBE_DEADLINE_MS", "1");
       expect(describeRerailPoliciesSync([rule])).toEqual([{

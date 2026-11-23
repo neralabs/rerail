@@ -85,18 +85,25 @@ export const RUNNER_SETTINGS: ReadonlySet<string> = new Set([
  * default. Throws for a variable that holds no value it takes.
  */
 export function rrBudgets(deadlineMs?: number, environment: NodeJS.ProcessEnv = process.env): RrBudgets {
+  return { deadlineMs: positive(environment, "RERAIL_RR_DEADLINE_MS") ?? Math.min(deadlineMs ?? DEADLINE_MS, MAX_OVERRIDE), ...childLimits(environment) };
+}
+
+/**
+ * The budgets of reading rule files (`describeRerailPolicies`): a run's threads, memory and store, with the describe's
+ * own deadline. The runs' deadline is not read: a value it does not take fails runs, never the catalog's reads.
+ */
+export function describeBudgets(environment: NodeJS.ProcessEnv = process.env): RrBudgets {
+  return { deadlineMs: positive(environment, RR_DESCRIBE_DEADLINE) ?? DESCRIBE_DEADLINE_MS, ...childLimits(environment) };
+}
+
+/** A child's threads, memory and store: each `RERAIL_RR_*` variable that is set, else the default. */
+function childLimits(environment: NodeJS.ProcessEnv): Omit<RrBudgets, "deadlineMs"> {
   const memoryMb = positive(environment, "RERAIL_RR_MEMORY_MB");
   return {
-    deadlineMs: positive(environment, "RERAIL_RR_DEADLINE_MS") ?? Math.min(deadlineMs ?? DEADLINE_MS, MAX_OVERRIDE),
     threads: positive(environment, "RERAIL_RR_THREADS") ?? defaultThreads(),
     memoryBytes: memoryMb === undefined ? defaultMemoryBytes() : memoryMb * 1024 ** 2,
     store: keepsStore(environment),
   };
-}
-
-/** The budgets of reading rule files (`describeRerailPolicies`): a run's, with the describe's own deadline. */
-export function describeBudgets(environment: NodeJS.ProcessEnv = process.env): RrBudgets {
-  return { ...rrBudgets(undefined, environment), deadlineMs: positive(environment, RR_DESCRIBE_DEADLINE) ?? DESCRIBE_DEADLINE_MS };
 }
 
 /** Whether `RR_STORE` asks for the checkout's store: `checkout`; `off` or unset, no store. */
