@@ -83,7 +83,13 @@ pub struct InFlight {
     pub at: usize,
     pub room: rerail_blocks::relation::IndexRoom,
     pub done: rerail_accel::gpu::join::Submitted,
+    /// Whether its builder's program ran it to its end, read once `done` completed: a program stopped before it (an
+    /// arena passed, decision 0603 step 5) left it unwritten.
+    pub whole: Whole,
 }
+
+/// `InFlight::whole`'s reading.
+pub type Whole = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {

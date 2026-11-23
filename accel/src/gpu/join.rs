@@ -648,6 +648,14 @@ impl Pass {
     /// work completes (decision 0491 step 2): what drops it meanwhile keeps it from the pool until then. A block's
     /// own region, while a handle holds it, is pinned as the kernel declares the argument, read or written (step 5). Every mapped
     /// buffer a kernel binds is one: a test build fails on one that is not, which nothing would keep.
+    /// Holds `b`'s block or pooled lease by this submission's fence until its work completes (decision 0491 step 2),
+    /// as a launch's bind does, before any launch binds it: a job queued now (its buffers reached by address) and
+    /// launched later in the pass, whose caller may drop what it reaches meanwhile. Without it the lease is back in
+    /// the pool at its drop, and the next buffer taken (a program's control words) is the one the job writes.
+    pub fn hold(&self, b: &Buffer, write: bool) {
+        self.holds(b, "a queued job's buffer", 0, write);
+    }
+
     fn holds(&self, b: &Buffer, kernel: &'static str, arg: usize, write: bool) {
         let at = b.contents() as usize;
         let known = at == 0 || rerail_blocks::region::bind_address(self.queue.fence(), at, write, kernel);

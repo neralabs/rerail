@@ -304,15 +304,19 @@ thread_local! {
     static PHASES: std::cell::RefCell<Vec<(&'static str, u64, f64, f64)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Adds `cpu` and `wall` seconds to this thread's job under `name`.
+/// Adds `cpu` and `wall` seconds to this thread's job under `name`. In the thread's teardown (a submission a
+/// thread-local held, waited as it drops) the phases are gone with the job: nothing is counted.
 pub fn add(name: &'static str, cpu: f64, wall: f64) {
-    PHASES.with_borrow_mut(|p| match p.iter_mut().find(|e| e.0 == name) {
-        Some(e) => {
-            e.1 += 1;
-            e.2 += cpu;
-            e.3 += wall;
+    let _ = PHASES.try_with(|p| {
+        let mut p = p.borrow_mut();
+        match p.iter_mut().find(|e| e.0 == name) {
+            Some(e) => {
+                e.1 += 1;
+                e.2 += cpu;
+                e.3 += wall;
+            }
+            None => p.push((name, 1, cpu, wall)),
         }
-        None => p.push((name, 1, cpu, wall)),
     });
 }
 
@@ -321,9 +325,12 @@ pub fn count(name: &'static str, n: u64) {
     if n == 0 {
         return;
     }
-    PHASES.with_borrow_mut(|p| match p.iter_mut().find(|e| e.0 == name) {
-        Some(e) => e.1 += n,
-        None => p.push((name, n, 0.0, 0.0)),
+    let _ = PHASES.try_with(|p| {
+        let mut p = p.borrow_mut();
+        match p.iter_mut().find(|e| e.0 == name) {
+            Some(e) => e.1 += n,
+            None => p.push((name, n, 0.0, 0.0)),
+        }
     });
 }
 

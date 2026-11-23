@@ -1029,6 +1029,26 @@ struct Building {
     /// A live relation's (`DevRel::live`): of its rows as a round claimed them, never marked built (a reader of the
     /// relation as it lies finds none of its rows' count).
     live: bool,
+    /// The program its builder's last job launched in (`Ran::ctl`), once launched: whether it built the index whole.
+    whole: Option<Built>,
+}
+
+/// A program a builder ran in, read once its work completes: whether it built its indexes whole. A program stops
+/// early where a gate stops it (`Batch::gate`), which comes alone in its level after everything queued before it, so
+/// the builders before it ran (and those after are `Building::gated`); or where a size script's claim passes its
+/// arena (decision 0603 step 5), which may be at any level, before a builder's last phase: none of its builders is
+/// built then. Nor is any where a push passed its queue's room.
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct Built {
+    ctl: std::sync::Arc<Words>,
+}
+
+impl Built {
+    /// Whether the program built its indexes whole. Read after its work completed.
+    pub(in crate::code_rule_dsl) fn whole(&self) -> bool {
+        let flags = self.ctl.get(6);
+        flags & (1 | 32) == 0 && self.ctl.get(3) == 0
+    }
 }
 
 impl Building {
@@ -1352,6 +1372,9 @@ pub(in crate::code_rule_dsl) struct Batch {
     queued: Vec<Job>,
     /// The levels flushed since the program last launched (`flush`, `run_program`, decision 0603).
     program: Program,
+    /// A level's encoding failed partway (`flush`: a lease refused): its program is dropped unlaunched, and the batch
+    /// launches nothing more and fails at `finish` (its strata on the CPU).
+    spoiled: bool,
     /// The programs launched since the last `finish`: read when their work is done.
     programs: Vec<Ran>,
     committed: Vec<Submitted>,
@@ -1365,7 +1388,7 @@ pub(in crate::code_rule_dsl) struct Batch {
     building: Vec<Building>,
     /// The submissions of indexes other batches build that this one's stages read (`InFlight`): waited for at its finish,
     /// and one the device failed fails this batch too.
-    borrowed: Vec<Submitted>,
+    borrowed: Vec<(Submitted, crate::code_rule_dsl::facts::rows::Whole)>,
     /// Whether a gate was queued since the last `finish`.
     gated: bool,
     /// The program a round's end yielded, and the phase it goes on from (`resume`).
@@ -1432,6 +1455,7 @@ impl Batch {
             pass: None,
             queued: Vec::new(),
             program: Program::default(),
+            spoiled: false,
             programs: Vec::new(),
             gated: false,
             resume: None,
@@ -1574,10 +1598,12 @@ impl Batch {
         let s = pass.commit().map_err(Error::from)?;
         // The indexes whose builders it holds are told to their blocks: a probe of another batch takes one, its work
         // committed after this and so run after (`InFlight`). One queued after a gate, or a live relation's, may not
-        // be built (`finish`): none is told.
-        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live) {
+        // be built (`finish`): none is told. Nor is any of a spoiled batch's (`flush`): its builders may never launch.
+        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live && !self.spoiled) {
+            // Launched, or not told: its program is what says whether it was built.
+            let Some(whole) = b.whole.clone() else { continue };
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch() });
+            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch(), whole: std::sync::Arc::new(move || whole.whole()) });
             b.queued = true;
         }
         self.committed.push(s);
@@ -1591,6 +1617,18 @@ impl Batch {
         self.submit_open()
     }
 
+    /// Its programs launched so far, their work waited for, marked stopped where a size script's claim passed their
+    /// arena (decision 0603 step 5), as the device marks one: a test's stop at a level the test does not place.
+    #[cfg(test)]
+    fn stop_programs_as_arena_full(&mut self) {
+        for s in &self.committed {
+            s.watch().wait();
+        }
+        for r in &self.programs {
+            r.ctl.set(6, r.ctl.get(6) | 2 | 32);
+        }
+    }
+
     /// Commits what is open and waits for every submission. A submission the device failed fails the batch: its
     /// outputs are partly written, so its strata run on the CPU, and the indexes it built are not marked built (a
     /// later batch would find one half written).
@@ -1602,7 +1640,7 @@ impl Batch {
             self.done.gpu_seconds += seconds;
             failed += usize::from(!ok);
         }
-        if !self.programs_done() {
+        if !self.programs_done() || self.spoiled {
             failed += 1;
         }
         // Its placed tables lie where its programs placed them: later batches read them there (decision 0603 step 5).
@@ -1614,9 +1652,10 @@ impl Batch {
         if let Some(t) = &self.program.top {
             t.set(0, 0);
         }
-        // The indexes of other batches its stages read: one whose builder the device failed is half written.
-        for s in self.borrowed.drain(..) {
-            failed += usize::from(!s.wait_ok().1);
+        // The indexes of other batches its stages read: one whose builder the device failed, or whose program stopped
+        // before it, is half written.
+        for (s, whole) in self.borrowed.drain(..) {
+            failed += usize::from(!s.wait_ok().1 || !whole());
         }
         let overran = self.overran();
         self.written.clear();
@@ -1647,6 +1686,13 @@ impl Batch {
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
             b.forget(&mut held);
             if (stopped && b.gated) || b.live {
+                continue;
+            }
+            // Its program stopped before its last phase (an arena passed, decision 0603 step 5): never written whole.
+            if !b.whole.as_ref().is_some_and(Built::whole) {
+                crate::code_rule_dsl::prof::count_named("device.index its program stopped before, given back".into(), 4 * b.room.rows_n as usize);
+                // SAFETY: the batch's work has completed; nothing reads the room as an index.
+                unsafe { (*b.rel).give_back_index(&b.home.block, &b.room) };
                 continue;
             }
             b.check("its batch done");
@@ -1762,7 +1808,7 @@ impl Batch {
             let at = home.block.offset_of(std::ptr::from_ref(r));
             if let Some(f) = held.iter().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
                 let index = f.room.index as u32;
-                self.borrowed.push(f.done.watch());
+                self.borrowed.push((f.done.watch(), f.whole.clone()));
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
                 return Ok(DevIndex { index, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
             }
@@ -1816,7 +1862,7 @@ impl Batch {
         // is done (`finish`), as the batch's work may already write it.
         let held = self.building.len();
         let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, live: rel.live });
+        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, live: rel.live, whole: None });
         let buffer = bound(&home)?;
         self.queue_index(rel, cols, &room, &buffer)?;
         self.building[held].encoded = true;
@@ -2408,6 +2454,12 @@ impl Batch {
         if after {
             self.flush()?;
         }
+        // What it reaches held from now to its pass's end (`Pass::hold`): it launches with the level's program, after
+        // its caller may have dropped them.
+        let pass = self.open()?;
+        for (b, write) in &job.uses {
+            pass.hold(b, *write);
+        }
         self.queued.push(job);
         Ok(())
     }
@@ -2418,6 +2470,30 @@ impl Batch {
     /// scatters. Nothing launches here: the program runs as one launch before the next launch made at once, and at
     /// the commit (`run_program`).
     fn flush(&mut self) -> Result<(), Error> {
+        if self.spoiled {
+            self.queued.clear();
+            return Err(Error::BackendCapacity);
+        }
+        let flushed = self.flush_level();
+        if flushed.is_err() {
+            // Its program half made (a scan's words named, not made).
+            self.spoil();
+        }
+        flushed
+    }
+
+    /// The batch spoiled: its work not launched yet is dropped and never launched, it launches nothing more, and its
+    /// `finish` fails (its strata on the CPU). For an encoding that failed partway: a level half flushed, or a
+    /// stratum half encoded into a batch other strata share (a wave's), whose work would launch beside theirs.
+    pub(in crate::code_rule_dsl) fn spoil(&mut self) {
+        self.spoiled = true;
+        self.queued.clear();
+        let top = self.program.top.take();
+        self.program = Program { top, ..Program::default() };
+    }
+
+    /// `flush`'s work: the level's jobs into the program.
+    fn flush_level(&mut self) -> Result<(), Error> {
         if self.queued.is_empty() {
             return Ok(());
         }
@@ -2614,6 +2690,9 @@ impl Batch {
     /// of `join_run`, a group an item. Its control words are read when the batch is done (`finish`): a phase left
     /// undone, or a push past the queue's room, fails the batch.
     fn run_program(&mut self) -> Result<(), Error> {
+        if self.spoiled {
+            return Ok(());
+        }
         self.flush()?;
         if self.program.phases.is_empty() {
             return Ok(());
@@ -2695,7 +2774,7 @@ impl Batch {
     /// One launch of `join_run` over `kit`'s program from its phase `first` (its first, or where a round yielded).
     fn launch(&mut self, kit: Kit, first: usize) -> Result<(), Error> {
         let nphases = kit.phase_items.len();
-        let ctl = Words::zeroed(10 + 2 * nphases)?;
+        let ctl = std::sync::Arc::new(Words::zeroed(10 + 2 * nphases)?);
         let slots = Words::zeroed(kit.capacity)?;
         let pipe = program_pipe(kit.format)?;
         let args: Vec<u8> = [nphases as u32, kit.capacity as u32, kit.phase_items[first][1], first as u32].iter().flat_map(|w| w.to_ne_bytes()).collect();
@@ -2724,6 +2803,13 @@ impl Batch {
             &args,
             kit.workers,
         );
+        // The builders whose jobs it holds (every one encoded and not launched yet): whether it built their indexes
+        // whole is read from its control words (`Built`).
+        if first == 0 {
+            for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
+                b.whole = Some(Built { ctl: ctl.clone() });
+            }
+        }
         self.programs.push(Ran { ctl, last: nphases - 1, phases: nphases, items: kit.phase_items[nphases - 1][1], kit });
         Ok(())
     }
@@ -3314,7 +3400,7 @@ const _: () = assert!(std::mem::size_of::<SortPass>() == 64);
 
 /// A program launched (`Batch::run_program`): its control words, its last phase and that phase's items.
 struct Ran {
-    ctl: Words,
+    ctl: std::sync::Arc<Words>,
     last: usize,
     phases: usize,
     items: u32,
@@ -3975,6 +4061,43 @@ pub mod tests {
         };
         assert_eq!(rows_of(i0.index), (0..half as u32).collect::<Vec<_>>());
         assert_eq!(rows_of(i1.index), (half as u32..n as u32).collect::<Vec<_>>(), "the delta's rows");
+    }
+
+    /// A program stopped where a size script's claim passed its arena (decision 0603 step 5) may stop at any level,
+    /// before an index's builder ran: the index is not marked built, and a batch that took it from the builder's
+    /// committed work fails (its strata on the CPU), as one whose builder the device failed. The bench's wrong
+    /// findings (C409, F823, PYI047 by turns) were CPU probes of such an index, its buckets never written.
+    #[test]
+    fn an_index_whose_program_stopped_at_its_arena_is_not_built() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+        let n = 20_000;
+        let (c0, c1) = (rows(n, 41, 97), rows(n, 42, 13));
+        let vals: Vec<i64> = (0..n).flat_map(|i| [c0[i], c1[i]]).collect();
+        let held = crate::code_rule_dsl::facts::rows::anon_in_block(2, &vals);
+        let placed = DevRel::in_block(&held, 2).unwrap();
+        let r = placed.relation();
+        let mut builder = Batch::new().unwrap();
+        let built = builder.index(&placed, &[0]).unwrap();
+        assert!(built.built);
+        builder.commit_open().unwrap();
+        let mut taker = Batch::new().unwrap();
+        let taken = taker.index(&placed, &[0]).unwrap();
+        assert!(!taken.built && taken.index == built.index, "taken from the builder's committed work");
+        builder.stop_programs_as_arena_full();
+        assert!(taker.finish().is_err(), "a batch that read the index its builder's program stopped before fails");
+        builder.finish().unwrap();
+        assert_eq!(r.find_index(&[0], n as u32), None, "not marked built");
+        let ix = r.index_at(built.index as usize);
+        assert_eq!((ix.ncols, ix.state), (0, rerail_blocks::relation::DEAD), "its room given back");
+        // Built again by the next batch that probes the key, whole.
+        let mut again = Batch::new().unwrap();
+        let rebuilt = again.index(&placed, &[0]).unwrap();
+        assert!(rebuilt.built);
+        again.finish().unwrap();
+        assert_eq!(r.find_index(&[0], n as u32), Some(rebuilt.index as usize));
     }
 
     /// Decision 0384 steps 7 and 8: a fork (a second relation started from frozen rows whose writer another took), and

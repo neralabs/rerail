@@ -1690,8 +1690,10 @@ impl<'p> Run<'p> {
     fn encode_head(&mut self, batch: &mut mj::Batch) -> Result<(), String> {
         let last = self.io.last().map_or(0, |io| io.1);
         let table = self.tables[last].as_ref().expect("the last table");
-        let uniq = batch.table(self.uniq_cols.len(), table.cap).map_err(|e| format!("{e:?}: the head's table of {} rows", table.cap))?;
-        batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}: the head's dedup over {} rows", table.cap))?;
+        // Its room: the guess while its batch runs, the rows the device wrote once it is done (a stage not run again).
+        let room = table.room();
+        let uniq = batch.table(self.uniq_cols.len(), room).map_err(|e| format!("{e:?}: the head's table of {room} rows"))?;
+        batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}: the head's dedup over {room} rows"))?;
         self.uniq = Some(uniq);
         Ok(())
     }
@@ -1992,6 +1994,11 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
     let encoded = with_open::<Wave, _>(|w| {
         let (n, batch) = w.as_mut().expect("the open wave");
         let runs = encode_runs(rules, batch, &mut rep, names);
+        if runs.is_err() {
+            // Half encoded into the wave's batch, beside its other strata's work: the wave fails, and its strata run
+            // on the CPU.
+            batch.spoil();
+        }
         let committed = batch.commit_open().map_err(|e| format!("{e:?}"));
         runs.and_then(|runs| committed.map(|()| (*n, runs)))
     })?;
@@ -2568,7 +2575,9 @@ fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: us
     let text_head = matches!(store.rels[h].device_lattice(), Some(Ok((3, ..))));
     let k = store.rels[h].k;
     let from: Vec<(usize, &Run<'_>)> = runs.iter().enumerate().filter_map(|(x, r)| r.as_ref().filter(|_| rules[x].2 == h).map(|r| (x, r))).collect();
-    let cap: usize = from.iter().map(|(_, r)| r.uniq.as_ref().map_or(0, |u| u.cap)).sum();
+    // A run not run again in a round a gate stopped keeps its rows of the finished batch: their room is the rows the
+    // device wrote (`Table::room`), not the guess.
+    let cap: usize = from.iter().map(|(_, r)| r.uniq.as_ref().map_or(0, mj::Table::room)).sum();
     if cap == 0 {
         return Ok(None);
     }
@@ -2589,7 +2598,7 @@ fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: us
     }).collect();
     let srcs: Vec<(&mj::Table, usize, &mj::Words, usize, &[mj::Col])> = from.iter().zip(&cols).map(|((_, r), c)| {
         let u = r.uniq.as_ref().expect("the head's rows");
-        (u, u.cap, &r.totals, r.totals.len - 1, c.as_slice())
+        (u, u.room(), &r.totals, r.totals.len - 1, c.as_slice())
     }).collect();
     batch.append_rows(&srcs, &union, (&words, 0)).map_err(|e| format!("{e:?}"))?;
     Ok(Some((union, words, cap)))
@@ -2742,7 +2751,7 @@ fn round_index(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], he
             continue;
         }
         // Its relation's room for the round's rows first, then its index: the index's room is reserved past it.
-        let cap: usize = runs.iter().enumerate().filter_map(|(x, r)| r.as_ref().filter(|_| rules[x].2 == h)).map(|r| r.uniq.as_ref().map_or(0, |u| u.cap)).sum();
+        let cap: usize = runs.iter().enumerate().filter_map(|(x, r)| r.as_ref().filter(|_| rules[x].2 == h)).map(|r| r.uniq.as_ref().map_or(0, mj::Table::room)).sum();
         let had = own.total.get(&h).map_or(0, |t| t.rows);
         if let Some(part) = sets.get(&h).and_then(|s| s.part.as_ref()) && !part.reserve((had + cap) as u64) {
             return Err(format!("a recursive head of {} rows past its block's room", had + cap));

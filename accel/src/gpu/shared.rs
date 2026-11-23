@@ -910,9 +910,10 @@ pub struct Admitted {
 }
 
 impl Drop for Admitted {
+    /// In the thread's teardown (a reservation a thread-local held) its counts are gone: what it reserved is not.
     fn drop(&mut self) {
-        let left = RESERVE_LEFT.with(|r| r.replace(0));
-        ADMITTED.with(|a| a.set(0));
+        let left = RESERVE_LEFT.try_with(|r| r.replace(0)).unwrap_or(0);
+        let _ = ADMITTED.try_with(|a| a.set(0));
         dev().reserved.fetch_sub(left, std::sync::atomic::Ordering::Relaxed);
     }
 }
