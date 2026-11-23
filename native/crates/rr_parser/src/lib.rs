@@ -304,7 +304,7 @@ pub mod tests {
         let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         for src in &crate::lattice_cases() {
             let src = src.as_str();
-            let tapes = [("the interpreter", interp_tape(&c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}"))), ("the machine", machine.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
+            let tapes = [("the interpreter", interp_tape(c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}"))), ("the machine", machine.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
             // A named functor before an operator is no value: its statement recovered.
             reads_as_lean(src, !src.contains("@f * 2"), &tapes);
             assert!(tapes.iter().all(|t| t.1.is_ok()), "{src:?}: every executor reads it");

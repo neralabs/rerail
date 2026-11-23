@@ -70,3 +70,18 @@ All tests pass: rr, JSON, Kotlin, clippy.
 Tests: `lattice_values_are_the_engines` holds each executor to the engine on lattices (a named functor, a call, a
 term, a comment after the name, a named argument) and to lean where the engine refuses (`@f * 2`); the generated
 Rust's tapes on the same cases.
+
+## Step 3: tier 1 holds no checker (done)
+
+Where tier 1's loop reads its masks from the bytes (decision 0623 step 1), `bitlex_lex_rust` no longer writes the
+test build's checker into it: no stage 1 of its own (`Stage1`, `stage1`, `stage1_best`), no walk of the regions over
+the file, and no assert at a region's opener or an assumption's byte (`no_test_checks`, which also turns the `if {
+assert; E } {` the asserts left into `if E {`). The nibble tables stay: the loop's classify reads them. The functions
+the loop no longer calls go too (`drop_uncalled_fns`, until none is left): the whole-file mask helpers and the window
+readers only the checker read.
+
+The lean lexer holds no checker either. Its tests live apart, and so do tier 1's: `rust_tests` holds the records and
+the tapes of the generated Rust to the interpreter's and the JIT's on every case, and the interpreter's own tests hold
+the regions' walk.
+
+JSON's and Kotlin's tier 1 read their masks in stage 1 and are unchanged.

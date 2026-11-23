@@ -5979,14 +5979,17 @@ impl Gen<'_> {
         out.push_str(&word_fn);
         out.push_str(&pair_fns);
         let s1 = self.stage1_parts(fused);
+        // Stage 1 as a function of its own, for the test build's walk: none where the loop reads the bytes (below).
+        let mut alone_text = String::new();
         if fused {
             let alone = self.stage1_parts(false);
             // Stage 1 as a function of its own too, for the test build's walk alone.
             let test = "#[cfg(feature = \"test-hooks\")]\n";
+            // Its nibble tables are the loop's too.
+            out.push_str(&alone.tables);
             let _ = write!(
-                out,
-                "{}{test}{}{test}{}{}    let mut refused = false;\n    for t in 0..{} {{\n{}    }}\n{}{}",
-                alone.tables,
+                alone_text,
+                "{test}{}{test}{}{}    let mut refused = false;\n    for t in 0..{} {{\n{}    }}\n{}{}",
                 alone.record,
                 alone.header,
                 alone.decls,
@@ -5995,6 +5998,7 @@ impl Gen<'_> {
                 alone.finals,
                 alone.ret.replacen("rerail_simd8::dispatch!", &format!("{test}rerail_simd8::dispatch!"), 1)
             );
+            out.push_str(&alone_text);
         } else {
             out.push_str(&self.stage1());
         }
@@ -6084,15 +6088,10 @@ impl Gen<'_> {
         // A token's word from one load (decision 0623 step 4): the padded source's, or one that stops at the file's end.
         let word_table = bytes::word_table(x.words, from_bytes.is_some());
         let (walk, loop_head, pass_end) = if fused && from_bytes.is_some() {
-            // No stage 1: the test build's walk alone, of its own stage 1 over the file.
-            let walk = walk.replacen("    let mut refused = escapes;\n", "", 1);
-            let walk = walk.replacen(
-                " = {\n",
-                &format!(" = {{\n        let Stage1 {{ {}, refused: _ }} = stage1_best(&src[..n]);\n        // Each word's bits inside the file.\n        let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n {{ !0 }} else {{ (1u64 << (n % 64)) - 1 }}).collect();\n", kept.join(", ")),
-                1,
-            );
+            // No stage 1, and no walk of the regions: the lean lexer's loop holds no checker. The tests hold the records
+            // to the interpreter's (decision 0655 step 3).
             let decl = from_bytes.as_ref().map_or("", |f| f.3.as_str());
-            (walk, format!("{decl}    'tokens: while b < nw {{\n"), "")
+            (String::new(), format!("{decl}    'tokens: while b < nw {{\n"), "")
         } else if fused {
             // Stage 1 to the blocks the token loop waits for (every one, once it waits for the file's end), then its
             // tests once after its last step; a test build's walk; then the token loop, to a token in a block not made.
@@ -6134,6 +6133,10 @@ impl Gen<'_> {
             },
             masks_init = if fields.is_empty() { String::new() } else { format!("        masks: Masks {{\n{fields_init}        }},\n") },
         );
+        if from_bytes.is_some() {
+            out = out.replacen(&alone_text, "", 1);
+            out = no_test_checks(&out);
+        }
         if fused {
             out.push_str("\nrerail_simd8::dispatch! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
         }
@@ -6208,6 +6211,10 @@ impl Gen<'_> {
         out.push_str(HELPERS);
         if self.body.contains("toggle(&") {
             out.push_str(TOGGLE);
+        }
+        // Only what the loop calls, where it reads the bytes (decision 0655 step 3).
+        if from_bytes.is_some() {
+            out = drop_uncalled_fns(&out);
         }
         Ok(out)
     }
@@ -7123,6 +7130,91 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
     Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new() }.source()
+}
+
+/// `code` with no test build's checks (decision 0655 step 3): each `#[cfg(feature = "test-hooks")]` assert and the
+/// comment that says why, and a block left holding its value alone (`if {\n    E\n} {`) as that value (`if E {`), as
+/// the lean lexer holds no checker.
+fn no_test_checks(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut kept: Vec<String> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim_start();
+        if t == "#[cfg(feature = \"test-hooks\")]" && lines.get(i + 1).is_some_and(|n| n.trim_start().starts_with("assert")) {
+            if kept.last().is_some_and(|l| l.trim_start().starts_with("//") && l.contains("test build")) {
+                kept.pop();
+            }
+            i += 2;
+            continue;
+        }
+        kept.push(lines[i].to_owned());
+        i += 1;
+    }
+    let mut out: Vec<String> = Vec::with_capacity(kept.len());
+    let mut i = 0;
+    while i < kept.len() {
+        if kept[i].ends_with("if {") && i + 2 < kept.len() && kept[i + 2].trim_start() == "} {" {
+            let head = &kept[i][..kept[i].len() - 1];
+            out.push(format!("{head}{} {{", kept[i + 1].trim()));
+            i += 3;
+            continue;
+        }
+        out.push(kept[i].clone());
+        i += 1;
+    }
+    let mut s = out.join("\n");
+    if code.ends_with('\n') {
+        s.push('\n');
+    }
+    s
+}
+
+/// `code` with no top-level function that nothing names: its doc and attributes with it, again until none is left, as
+/// the lean lexer holds only what its loop calls.
+fn drop_uncalled_fns(code: &str) -> String {
+    let mut lines: Vec<String> = code.lines().map(str::to_owned).collect();
+    loop {
+        // Each top-level function: its first line (its doc's), its `fn` line, its last line, its name.
+        let mut items: Vec<(usize, usize, String)> = Vec::new();
+        let mut i = 0;
+        while i < lines.len() {
+            let l = &lines[i];
+            let name = l.strip_prefix("unsafe fn ").or_else(|| l.strip_prefix("fn ")).map(|r| r.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).next().unwrap_or("").to_owned());
+            if let Some(name) = name.filter(|n| !n.is_empty()) {
+                let mut first = i;
+                while first > 0 && (lines[first - 1].starts_with("///") || lines[first - 1].starts_with("#[")) {
+                    first -= 1;
+                }
+                let Some(end) = (i..lines.len()).find(|&j| lines[j] == "}") else { break };
+                items.push((first, end, name));
+                i = end + 1;
+                continue;
+            }
+            i += 1;
+        }
+        let named = |n: &str| {
+            lines.iter().map(|l| l.match_indices(n).filter(|&(k, _)| {
+                let before = l[..k].chars().next_back();
+                let after = l[k + n.len()..].chars().next();
+                !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') && !after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            }).count()).sum::<usize>()
+        };
+        let gone: Vec<(usize, usize)> = items.iter().filter(|(_, _, n)| named(n) <= 1).map(|&(a, b, _)| (a, b)).collect();
+        if gone.is_empty() {
+            break;
+        }
+        for &(a, b) in gone.iter().rev() {
+            // The blank line after it too.
+            let b = if lines.get(b + 1).is_some_and(|l| l.is_empty()) { b + 1 } else { b };
+            lines.drain(a..=b);
+        }
+    }
+    let mut s = lines.join("\n");
+    if code.ends_with('\n') {
+        s.push('\n');
+    }
+    s
 }
 
 #[cfg(test)]
