@@ -517,3 +517,36 @@ fn level_batches(ex: &Executor, seed: u64, lanes: &str) {
         }
     }
 }
+
+/// A submission begun on one of the lanes' pool threads is finished on any of them (`exec::Flight::end_on`), while
+/// another begun on that thread may run. Each encodes on its own scratch: the space gives a submission scratch no
+/// other in flight holds, and its slots are the same buffers on whichever thread encodes for it. On each thread's
+/// own two sets, alternated per thread, a submission begun on thread A and one begun on thread B both took set 1,
+/// and the first, finished on B, encoded its second pass (a tile join's sorts) on the second's.
+#[test]
+fn a_submissions_scratch_is_its_own_on_any_thread() {
+    if !has_device() {
+        return;
+    }
+    let mut space = super::space::Space::default();
+    let (x, y) = (space.free_scratch(), space.free_scratch());
+    assert!(!Arc::ptr_eq(&x, &y), "two in flight: each its own");
+    let slot = |s: Option<&Arc<join::Scratch>>| -> usize {
+        let get = || join::scratch(join::FREE, 4096).expect("a scratch buffer").contents() as usize;
+        match s {
+            Some(s) => join::on_scratch(s, get),
+            None => get(),
+        }
+    };
+    let on_a = slot(Some(&x));
+    let (on_b, y_on_b, own_b) = std::thread::scope(|sc| sc.spawn(|| (slot(Some(&x)), slot(Some(&y)), slot(None))).join().unwrap());
+    assert_eq!(on_a, on_b, "a submission's slot is one buffer on every thread");
+    assert_ne!(on_b, y_on_b, "another submission's is not");
+    assert_ne!(on_b, own_b, "nor the thread's own");
+    // Finished (its handle dropped), a submission's scratch is the next one's.
+    drop(y);
+    let z = space.free_scratch();
+    assert!(!Arc::ptr_eq(&x, &z), "x is in flight");
+    assert_eq!(slot(Some(&z)), y_on_b, "the scratch y used, given to z");
+    join::scratch_return();
+}
