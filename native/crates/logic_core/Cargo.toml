@@ -128,6 +128,8 @@ block = "0.1.6"
 metal = "0.33.0"
 
 [dev-dependencies]
+# The store, registered as the tests' binary loads (`test_load`): the learned model is a kept fact of its files.
+rerail-store-above = { package = "rerail-store", path = "../store", features = ["test-hooks"] }
 # The learned models, registered as the tests' binary loads (`test_load`).
 rerail-accel-gpu = { path = "../../../accel/gpu", features = ["test-hooks"] }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

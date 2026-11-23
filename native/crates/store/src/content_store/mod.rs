@@ -11,7 +11,7 @@ pub mod analysis_scope;
 /// The atoms (rerail-atoms), at their old path.
 pub use rerail_atoms as atoms;
 mod atoms_store;
-pub use atoms_store::{attach_atoms, install_atoms};
+pub use atoms_store::{attach_atoms, install_atoms, install_kept_tables};
 pub use atoms::{ProcessIds, StoreIds, Sym};
 #[cfg(target_os = "macos")]
 mod accel_models;
@@ -23,7 +23,7 @@ mod connection;
 pub use connection::set_connection_functions;
 mod corpus_runs;
 pub use corpus_runs::process_gone;
-pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, stat_blob_key};
+pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
 pub use connection::{flush_of, store_flush};

@@ -46,7 +46,7 @@ fn a_plan_stays_valid_while_every_statistic_it_read_stays_in_its_bucket() {
     let kept = Plans::open(&store).unwrap();
     assert!(kept.is_some(), "the plans are kept facts of the store");
     let now = reads(&[("rows:1:5", 64)]);
-    let valid = plans.valid(&at, kept.as_ref(), &[a, b, [3; 32]], &now);
+    let valid = plans.valid(&at, kept.as_deref(), &[a, b, [3; 32]], &now);
     assert_eq!(valid.keys().copied().collect::<Vec<_>>(), [a, b]);
     assert_eq!(*valid[&b], compiled("b"));
     assert_eq!(valid[&a].program, b"a2");

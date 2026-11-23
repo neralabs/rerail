@@ -515,9 +515,38 @@ struct ClosureArgs {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct LevelArgs {
-    lo: u32,
-    hi: u32,
+    first: u32,
+    last: u32,
     words: u32,
+    groups: u32,
+}
+
+/// The closure's wide levels that get a launch of their own (`cl_level`): the rest run in one group per run of
+/// levels between them, so a closure takes at most `2 * CL_WIDE + 1` level launches, at any depth (decision 0601).
+const CL_WIDE: usize = 16;
+
+/// The closure's level launches: `(first, last, groups)` per launch, levels `[first, last)` from 1, a level `l`
+/// holding `width(l)` components. The `CL_WIDE` widest levels that fill more than one group run alone over their
+/// groups; each run of levels between them runs in one group.
+fn level_launches(levels: usize, width: impl Fn(usize) -> u32, per_group: u32) -> Vec<(u32, u32, u32)> {
+    let mut wide: Vec<usize> = (1..levels).filter(|&l| width(l) > per_group).collect();
+    wide.sort_by_key(|&l| (std::cmp::Reverse(width(l)), l));
+    wide.truncate(CL_WIDE);
+    wide.sort_unstable();
+    let mut out = Vec::new();
+    let mut from = 1;
+    for l in wide.into_iter().chain([levels]) {
+        if from + 1 == l {
+            out.push((from as u32, l as u32, width(from).div_ceil(per_group)));
+        } else if from < l {
+            out.push((from as u32, l as u32, 1));
+        }
+        if l < levels {
+            out.push((l as u32, l as u32 + 1, width(l).div_ceil(per_group)));
+        }
+        from = l + 1;
+    }
+    out
 }
 
 #[derive(Clone)]
@@ -888,7 +917,7 @@ impl Planner<'_> {
             lfill[l as usize] += 1;
         }
         let (boff, bdst) = (self.input(off), self.input(dst));
-        let (bcomp, bcyc, border, bsoff, bsdst) = (self.upload(&comp), self.upload(&cyclic), self.upload(&order), self.upload(&soff), self.upload(&sdst));
+        let (bcomp, bcyc, border, bsoff, bsdst, blstart) = (self.upload(&comp), self.upload(&cyclic), self.upload(&order), self.upload(&soff), self.upload(&sdst), self.upload(&lstart));
         let row32 = (ncomp * words * 2) as u64;
         let r = self.alloc(row32 * 4);
         let out = self.alloc((nu * words * 8) as u64);
@@ -898,11 +927,10 @@ impl Planner<'_> {
             Stage::one(Step::Kernel(Dispatch::per(Pipe::ClInit, vec![("off", Bind::Buf(boff)), ("dst", Bind::Buf(bdst)), ("comp", Bind::Buf(bcomp.clone())), ("cyclic", Bind::Buf(bcyc)), ("R", Bind::Buf(r.clone())), ("args", args.clone())], n as u64))),
         ];
         // Level 0 has no successors: its rows are final after the init.
-        for l in 1..levels {
-            let (lo, hi) = (lstart[l], lstart[l + 1]);
-            let level = Bind::Bytes(bytes_of(&LevelArgs { lo, hi, words: words as u32 }));
-            let d = Dispatch::new(Pipe::ClLevel, vec![("R", Bind::Buf(r.clone())), ("order", Bind::Buf(border.clone())), ("soff", Bind::Buf(bsoff.clone())), ("sdst", Bind::Buf(bsdst.clone())), ("args", level)], ((hi - lo) as u64).div_ceil(TG / 32));
-            st.push(Stage::one(Step::Kernel(d)));
+        for (first, last, groups) in level_launches(levels, |l| lstart[l + 1] - lstart[l], (TG / 32) as u32) {
+            let level = Bind::Bytes(bytes_of(&LevelArgs { first, last, words: words as u32, groups }));
+            let binds = vec![("R", Bind::Buf(r.clone())), ("order", Bind::Buf(border.clone())), ("soff", Bind::Buf(bsoff.clone())), ("sdst", Bind::Buf(bsdst.clone())), ("lstart", Bind::Buf(blstart.clone())), ("args", level)];
+            st.push(Stage::one(Step::Kernel(Dispatch::new(Pipe::ClLevel, binds, u64::from(groups)))));
         }
         let total = (nu * words) as u64;
         st.push(Stage::one(Step::Kernel(Dispatch::per(Pipe::ClGather, vec![("R", Bind::Buf(r)), ("comp", Bind::Buf(bcomp)), ("out", Bind::Buf(out.clone())), ("args", args)], total))));

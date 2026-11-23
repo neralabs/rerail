@@ -48,7 +48,7 @@ pub mod content_store {
         pub mod base;
         pub use base::*;
     }
-    pub use prefilter::TapePrefilter;
+    pub use prefilter::{TapePrefilter, VOCABULARY_REGEX, VOCABULARY_TEXT, VocabularyTest};
     /// A tape's positional search index and its lookups.
     pub mod positional_search {
         pub mod base;

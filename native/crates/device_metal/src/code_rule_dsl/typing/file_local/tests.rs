@@ -321,8 +321,15 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     let join = rules_of(&v, &made[0])[0];
     assert_eq!(join.body().count(), 5, "{}", v.show_rule(join));
     assert_eq!(join.head().args().count(), 2);
-    // Its rows are attributable to their file: the node column is a location.
-    assert_eq!(split.locations[&made[0]], [0], "{:?}", split.locations);
+    // Its rows are attributable to their file: the node column is a location. The interface's order is the join's
+    // canonical one (its literals by their text, decision 0575), so the node's column is found by its variable.
+    let shown = v.show_rule(join);
+    let (head, body) = shown.split_once(" :- ").expect("a rule");
+    let head_vars: Vec<&str> = head[head.find('(').unwrap() + 1..head.rfind(')').unwrap()].split(", ").collect();
+    let node_at = body.find("node(").expect("the join reads node");
+    let node_var = body[node_at + 5..].split(", ").nth(1).expect("node's node column");
+    let column = head_vars.iter().position(|x| *x == node_var).expect("the node is in the interface");
+    assert_eq!(split.locations[&made[0]], [column], "{shown}: {:?}", split.locations);
 }
 
 /// A cross-file join by a value (two files' identifiers of one text, `text(a, t), text(b, t)`) is each file's part,

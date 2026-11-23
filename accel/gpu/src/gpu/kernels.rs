@@ -771,6 +771,7 @@ fn linked(device: &Device, split: &rerail_ukl::split::Split) -> Result<(Library,
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut made: HashMap<&str, metal::DynamicLibrary> = HashMap::new();
     for level in split.levels() {
+        // A level's units compile side by side on the caller's scoped threads (the one executor's, decision 0100).
         let built: Vec<(&str, Result<metal::DynamicLibrary, String>)> = rerail_accel::exec::scoped(|scope| {
             let running: Vec<_> = level
                 .iter()

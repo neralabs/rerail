@@ -42,6 +42,7 @@ rerail-vue-lean	core
 rerail-ukl	core
 rerail-ukl-vec	core
 rerail-gpu	core
+rerail-ukl-aot	core
 rerail-forest	core
 rerail-accel	core
 rerail-accel-gpu	core

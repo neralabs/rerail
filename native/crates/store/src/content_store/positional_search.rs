@@ -5,9 +5,10 @@
 //! (open item O21).
 //!
 //! Mutations: G's `TapeSearchIndex` publication is `put_positional_search_indexes_bulk` (W's
-//! `put_search_indexes_bulk` takes W's index); G's value and text FTS tables, the kind instance
+//! `put_search_indexes_bulk` takes W's index); G's kind, value and text FTS tables, the kind instance
 //! vocabulary and their delete trigger are created on first use (`POSITIONAL_SCHEMA`), since W's
-//! schema has only the kind stream; `search_index_sets` rows take W's `has_errors` default.
+//! index is kind presence only; its publication writes W's index of the tapes too (`search_index_sets`, kept facts),
+//! with no syntax errors.
 #[allow(unused_imports)]
 use crate::content_store::Cached as _;
 use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};
@@ -17,8 +18,12 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
-/// G's value and text streams and the kind instance vocabulary, as in G's schema.
+/// G's kind, value and text streams and the kind instance vocabulary, as in G's schema (its kind stream named its own:
+/// W's search index is kept facts, `search_index`).
 const POSITIONAL_SCHEMA: &str = r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS positional_kind_fts USING fts5(
+    token, content='', contentless_delete=1, detail=full, tokenize='ascii'
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS search_value_fts USING fts5(
     token, content='', contentless_delete=1, detail=none, tokenize='ascii'
 );
@@ -26,8 +31,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_text_fts USING fts5(
     token, content='', contentless_delete=1, detail=none,
     tokenize='unicode61 remove_diacritics 0'
 );
-CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_instances USING fts5vocab(search_kind_fts, 'instance');
+CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_instances USING fts5vocab(positional_kind_fts, 'instance');
 CREATE TRIGGER IF NOT EXISTS delete_tape_positional_search_index BEFORE DELETE ON tape_objects BEGIN
+    DELETE FROM positional_kind_fts WHERE rowid=OLD.tape_id;
     DELETE FROM search_value_fts WHERE rowid=OLD.tape_id;
     DELETE FROM search_text_fts WHERE rowid=OLD.tape_id;
 END;
@@ -60,15 +66,20 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
-        Self::put_search_indexes_transaction(&transaction, indexes)?;
+        // W's index of the tapes (its sets, `search_index_sets`, and kinds), kept facts, in the same transaction: its
+        // tokens are the store's ids.
+        let written = super::atoms::mapped(|| self.put_search_indexes_transaction(&transaction, indexes))?;
         self.commit(transaction)?;
+        drop(connection);
+        self.note_kept(&super::search_index::space(), written);
         Ok(())
     }
 
     fn put_search_indexes_transaction(
+        &self,
         transaction: &Connection,
         indexes: &[TapeSearchIndex],
-    ) -> StoreResult<()> {
+    ) -> StoreResult<Option<super::kept_facts::ChainRows>> {
         if indexes.len() > MAX_PUBLICATION_BATCH {
             return Err(StoreError::Invalid(
                 "search-index publication exceeds 64 tapes".to_owned(),
@@ -129,7 +140,7 @@ impl ContentStore {
         if !rebuild.is_empty() {
             let ids: Array = Rc::new(rebuild.iter().copied().map(SqlValue::Integer).collect());
             transaction.execute_cached(
-                "DELETE FROM search_kind_fts WHERE rowid IN (SELECT value FROM rarray(?1))",
+                "DELETE FROM positional_kind_fts WHERE rowid IN (SELECT value FROM rarray(?1))",
                 [ids.clone()],
             )?;
             transaction.execute_cached(
@@ -140,10 +151,6 @@ impl ContentStore {
                 "DELETE FROM search_text_fts WHERE rowid IN (SELECT value FROM rarray(?1))",
                 [ids.clone()],
             )?;
-            transaction.execute_cached(
-                "DELETE FROM search_index_sets WHERE tape_id IN (SELECT value FROM rarray(?1))",
-                [ids],
-            )?;
         }
         let missing = unique
             .into_iter()
@@ -152,7 +159,7 @@ impl ContentStore {
             })
             .collect::<Vec<_>>();
         if missing.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let documents: Array = Rc::new(
             missing
@@ -180,7 +187,7 @@ impl ContentStore {
         // The three stable statements scan one shared packed BLOB array. Tape objects and their
         // indexes are immutable, so existing rows are retained instead of deleted/reindexed.
         transaction.execute_cached(
-            "INSERT INTO search_kind_fts(rowid,token) \
+            "INSERT INTO positional_kind_fts(rowid,token) \
              SELECT CAST(substr(value,1,20) AS INTEGER), \
                     CAST(substr(value,41,CAST(substr(value,21,10) AS INTEGER)) AS TEXT) \
              FROM rarray(?1)",
@@ -202,28 +209,12 @@ impl ContentStore {
              FROM rarray(?1)",
             [documents],
         )?;
-        let index_sets: Array = Rc::new(
-            missing
-                .iter()
-                .map(|index| {
-                    SqlValue::Blob(
-                        format!(
-                            "{:020}{:020}{:010}",
-                            index.tape_id.0, index.index_version, index.node_count
-                        )
-                        .into_bytes(),
-                    )
-                })
-                .collect(),
-        );
-        transaction.execute_cached(
-            "INSERT INTO search_index_sets(tape_id,index_version,node_count,complete) \
-             SELECT CAST(substr(value,1,20) AS INTEGER), \
-                    CAST(substr(value,21,20) AS INTEGER), \
-                    CAST(substr(value,41,10) AS INTEGER),1 FROM rarray(?1)",
-            [index_sets],
-        )?;
-        Ok(())
+        let documents: Vec<super::search_index::Document<'_>> = missing
+            .iter()
+            .map(|index| super::search_index::Document { tape: index.tape_id.0, version: index.index_version, nodes: index.node_count, errors: false, kinds: &index.kind_tokens })
+            .collect();
+        let puts = self.search_index_puts(transaction, &documents)?;
+        super::kept_facts::write_space(&self.database_path, transaction, &super::search_index::space(), puts, None)
     }
 
 
@@ -418,7 +409,7 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         let mut statement = connection.prepare(
-            "SELECT CASE WHEN name LIKE 'search_kind_fts%' THEN 1 \
+            "SELECT CASE WHEN name LIKE 'positional_kind_fts%' THEN 1 \
                          WHEN name LIKE 'search_value_fts%' THEN 2 \
                          WHEN name LIKE 'search_text_fts%' THEN 3 ELSE 0 END family, \
                     sum(pgsize) FROM dbstat WHERE name LIKE 'search_%' GROUP BY family",

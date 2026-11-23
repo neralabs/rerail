@@ -843,30 +843,11 @@ impl Within {
     /// one (`covered`), the members' subtree sizes and depths. Exact rows; postings of the side that holds several
     /// rows per value are spread evenly where the tree does not give them.
     fn axis_shape(&self, axis: Axis) -> Shape {
-        let (mut members, mut covered, mut below, mut below_sq, mut above, mut above_sq, mut nodes) = (0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64);
-        for (doc, p) in self.batch.docs.iter().enumerate() {
-            // The end of the outermost member's subtree the walk is in.
-            let mut until: Option<u32> = None;
-            self.each_member(doc, |l, member| {
-                nodes += 1;
-                if until.is_some_and(|u| l <= u) {
-                    covered += 1;
-                }
-                if !member {
-                    return;
-                }
-                let size = p.size(l as usize);
-                if !until.is_some_and(|u| l <= u) {
-                    until = Some(l + size);
-                }
-                let (s, d) = (i64::from(size), i64::from(p.depth(l as usize)));
-                members += 1;
-                below += s;
-                below_sq += s * s;
-                above += d;
-                above_sq += d * d;
-            });
+        let mut c = AxisCounts::default();
+        for doc in 0..self.batch.docs.len() {
+            c.add(self.axis_counts(doc));
         }
+        let AxisCounts { members, covered, below, below_sq, above, above_sq, nodes } = c;
         let spread = |rows: i64, ndv: i64| rows * rows / ndv.max(1);
         match axis {
             // A member that is a leaf holds no row: at most one value per row.
@@ -876,6 +857,86 @@ impl Within {
                 let ancestors = above.min(nodes);
                 Shape { rows: above, ndv: [members, ancestors], sq: [above_sq, spread(above, ancestors)] }
             }
+        }
+    }
+
+    /// Document `doc`'s part of `axis_shape`'s counts: one walk of its nodes.
+    fn axis_counts(&self, doc: usize) -> AxisCounts {
+        let p = &self.batch.docs[doc];
+        let mut c = AxisCounts::default();
+        // The end of the outermost member's subtree the walk is in.
+        let mut until: Option<u32> = None;
+        self.each_member(doc, |l, member| {
+            c.nodes += 1;
+            if until.is_some_and(|u| l <= u) {
+                c.covered += 1;
+            }
+            if !member {
+                return;
+            }
+            let size = p.size(l as usize);
+            if !until.is_some_and(|u| l <= u) {
+                until = Some(l + size);
+            }
+            let (s, d) = (i64::from(size), i64::from(p.depth(l as usize)));
+            c.members += 1;
+            c.below += s;
+            c.below_sq += s * s;
+            c.above += d;
+            c.above_sq += d * d;
+        });
+        c
+    }
+
+    /// Whether the relation has no row, found without counting them all: an axis's documents are walked until one
+    /// holds a row (a native stratum asks this of each relation its rules join, and counted, every document's every
+    /// containment pair was walked; 14 ms of a warm run that ran no rule).
+    fn holds_no_row(&self) -> bool {
+        if self.solvable() {
+            if self.solved.get().is_some() {
+                return self.solved_rows().len() == 0;
+            }
+            if let Some(shape) = self.shape.get() {
+                return shape.rows == 0;
+            }
+            if let Mode::Axis(axis) = self.mode {
+                return (0..self.batch.docs.len()).all(|doc| self.axis_counts(doc).rows(axis) == 0);
+            }
+            return self.shape().rows == 0;
+        }
+        self.len() == 0
+    }
+}
+
+/// An axis's counts over documents (`Within::axis_counts`): its members, the nodes inside a member's subtree, the
+/// members' subtree sizes and depths (and their squares), and the nodes walked.
+#[derive(Clone, Copy, Default)]
+struct AxisCounts {
+    members: i64,
+    covered: i64,
+    below: i64,
+    below_sq: i64,
+    above: i64,
+    above_sq: i64,
+    nodes: i64,
+}
+
+impl AxisCounts {
+    fn add(&mut self, o: AxisCounts) {
+        self.members += o.members;
+        self.covered += o.covered;
+        self.below += o.below;
+        self.below_sq += o.below_sq;
+        self.above += o.above;
+        self.above_sq += o.above_sq;
+        self.nodes += o.nodes;
+    }
+    /// The axis's rows of these counts (`axis_shape`'s `rows`).
+    fn rows(&self, axis: Axis) -> i64 {
+        match axis {
+            Axis::Nearest => self.covered,
+            Axis::Inside => self.below,
+            Axis::Has => self.above,
         }
     }
 }
@@ -922,6 +983,9 @@ impl Source for Within {
     }
     fn estimated_len(&self) -> usize {
         self.shape().rows as usize
+    }
+    fn holds_none(&self) -> bool {
+        self.holds_no_row()
     }
     /// By `n`: its containers listed up the tree, 5.5 derived lookups; a kind-set axis's, 3 (decision 0312). By
     /// `a`: the solved pairs searched, one.

@@ -1282,10 +1282,37 @@ const FROZEN_RUNS: usize = 1;
 
 /// Candidate row ids: a range, a list, or a key's ranges of an index's runs.
 /// A join step's last probe of a source's lookup: its key and the candidates it gave.
-type LastProbe = Option<(Vec<i64>, Probed)>;
-/// A probe's candidates: their ids, or their ids with their rows' values read as they were found (`View::find_read`).
+/// A step's probe state, kept across its probes: the last probe's key and answer (`memo`, replayed when the next key
+/// is the same: probes in key order repeat adjacent keys), the source's cursor (`ProbeCursor`: where the last probe ended
+/// and the plan of a match's reads, made on the step's first probe), and the match list of the probe before, refilled
+/// in place once no candidate list holds it (`spare`): a probe of several matches allocates nothing after the first.
+#[derive(Clone, Default)]
+struct LastProbe {
+    memo: Option<(Vec<i64>, Probed)>,
+    cursor: crate::code_rule_dsl::facts::vtab::ProbeCursor,
+    spare: Option<Arc<Vec<(u32, [i64; READ])>>>,
+    /// The run's settings a probe reads, read at the step's first probe (`Settings`), not at each.
+    settings: Option<ProbeSettings>,
+}
+/// The run's settings a step's probes read (decision 0442): the probe report's (`probed::on`) and the within test's.
+#[derive(Clone, Copy)]
+struct ProbeSettings {
+    noted: bool,
+    within_test: bool,
+}
+impl LastProbe {
+    #[inline]
+    fn settings(&mut self) -> ProbeSettings {
+        *self.settings.get_or_insert_with(|| ProbeSettings {
+            noted: probed::on(),
+            within_test: rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_WITHIN_TEST").map_or(true, |v| v != "off")),
+        })
+    }
+}
+/// A probe's candidates: their ids, or their ids with their rows' values read as they were found (`View::find_read`);
+/// `Pending`: a probe read into its step as found (`Cands::Stream`) and not yet read through, which is no answer.
 #[derive(Clone)]
-enum Probed { Ids(Vec<u32>), Read(Found, u64) }
+enum Probed { Ids(Vec<u32>), Read(Found, u64), Pending }
 /// A read probe's rows, each with the values the step reads: none or one (the usual answer of a node's view or axis
 /// probe) held as they are, more in a list the step's last-probe memo shares, so a probe of one row allocates nothing.
 #[derive(Clone)]
@@ -1302,7 +1329,23 @@ impl Found {
 #[derive(Clone)]
 enum Cands<'a> { Range(u32, u32), Slice(&'a [u32]), Owned(Vec<u32>), Runs(runs::Found<'a>), Pending(runs::Found<'a>, u32, u32),
     /// Rows with the values a step reads, read as the probe found them (`View::find_read`).
-    Read(Found) }
+    Read(Found),
+    /// A probe of a view read into the step as it finds its rows (`Rows::each`).
+    Stream(Stream<'a>) }
+
+/// A probe of a view whose rows the step reads as the source finds them (`Rows::each`): the join goes on inside the
+/// source's walk of its matches, which are kept only for the step's next probe of the same key (`LastProbe::memo`,
+/// adjacent in a sorted batch of probes). Its key (at most `STREAM_KEY` columns) is kept for the probe of ids a
+/// source that refuses the read is asked instead (`View::find_keyed`).
+#[derive(Clone, Copy)]
+struct Stream<'a> {
+    view: &'a View,
+    cols: &'a [usize],
+    lead: usize,
+    key: [i64; STREAM_KEY],
+    len: usize,
+}
+const STREAM_KEY: usize = 4;
 impl Cands<'_> {
     /// Calls `f` on each id until it returns true; returns whether one did.
     fn any(self, mut f: impl FnMut(u32) -> bool) -> bool {
@@ -1313,6 +1356,7 @@ impl Cands<'_> {
             Cands::Runs(found) => found.ids().any(f),
             Cands::Pending(found, lo, hi) => found.ids().any(&mut f) || (lo..hi).any(f),
             Cands::Read(rows) => rows.rows().iter().any(|&(id, _)| f(id)),
+            Cands::Stream(s) => s.view.find_keyed(s.cols, &s.key[..s.len], s.lead).into_iter().any(f),
         }
     }
 }
@@ -3433,10 +3477,29 @@ impl Counts {
 
     /// Key `key`'s slot: where it is, or the empty one it would go in.
     fn slot(&self, key: u64) -> usize {
-        let bits = self.keys.len().trailing_zeros();
-        let mask = self.keys.len() - 1;
-        let mut i = (key.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - bits)) as usize;
-        while self.counts[i] != 0 && self.keys[i] != key {
+        Self::slot_in(&self.keys, &self.counts, key)
+    }
+
+    /// A key's hash, its slot the top bits: every bit of the key mixed into every bit of the hash (splitmix64's
+    /// finalizer). A multiply's top bits alone (Fibonacci hashing) clustered ids, a document's hash above a node's
+    /// number: a 296k-row histogram's inserts walked runs of thousands at 2^16 and 2^17 slots, 2.7 s of a run's 15.
+    #[inline]
+    fn mix(key: u64) -> u64 {
+        let mut x = key ^ (key >> 30);
+        x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        x ^= x >> 27;
+        x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+        x ^ (x >> 31)
+    }
+
+    /// `slot` in the table's two arrays, each taken once (a `BlockVec`'s read is checked against the GPU's queued
+    /// uses of its chunk: once a call, not twice a probe).
+    #[inline]
+    fn slot_in(keys: &[u64], counts: &[u32], key: u64) -> usize {
+        let bits = keys.len().trailing_zeros();
+        let mask = keys.len() - 1;
+        let mut i = (Self::mix(key) >> (64 - bits)) as usize;
+        while counts[i] != 0 && keys[i] != key {
             i = (i + 1) & mask;
         }
         i
@@ -3452,12 +3515,13 @@ impl Counts {
             }
             *self = next;
         }
-        let i = self.slot(key);
-        if self.counts[i] == 0 {
-            self.keys[i] = key;
+        let (keys, counts) = (&mut *self.keys, &mut *self.counts);
+        let i = Self::slot_in(keys, counts, key);
+        if counts[i] == 0 {
+            keys[i] = key;
             self.len += 1;
         }
-        self.counts[i] += u32::try_from(n).expect("a histogram counts at most HISTOGRAM_ROWS rows");
+        counts[i] += u32::try_from(n).expect("a histogram counts at most HISTOGRAM_ROWS rows");
     }
 
     /// Every count times `by`: a strided read's, scaled to the rows read past.
@@ -3482,6 +3546,25 @@ impl Counts {
     /// Each key and its count, in no order.
     pub fn iter(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
         self.keys.iter().zip(self.counts.iter()).filter(|(_, c)| **c != 0).map(|(&k, &c)| (k, c as u64 * self.scale))
+    }
+}
+
+#[cfg(test)]
+mod counts_tests {
+    use super::Counts;
+
+    /// Every bit of a key moves a slot's bits (the top 17, a table of 2^17 slots): flipped, each flips about half
+    /// of them. A multiply alone (Fibonacci hashing) moves only those at and above the bit: a key's high bits (a
+    /// document's hash) barely place it, and one session's 233k ids walked runs of 14,700 slots at 2^16.
+    #[test]
+    fn every_key_bit_moves_a_histograms_slot() {
+        let mut h = 0x2545_f491_4f6c_dd1du64;
+        let keys: Vec<u64> = (0..256).map(|_| { h ^= h << 13; h ^= h >> 7; h ^= h << 17; h }).collect();
+        for bit in 0..64 {
+            let flipped: u32 = keys.iter().map(|&k| ((Counts::mix(k) ^ Counts::mix(k ^ 1 << bit)) >> 47).count_ones()).sum();
+            let mean = f64::from(flipped) / keys.len() as f64;
+            assert!((6.5..=10.5).contains(&mean), "key bit {bit} flips {mean:.1} of a slot's 17 bits");
+        }
     }
 }
 
@@ -4230,6 +4313,13 @@ impl View {
     fn len(&self) -> usize {
         self.ids().map_or(self.src.len(), <[u32]>::len)
     }
+    /// Whether it has no row: of a whole source, asked of the source (`Source::holds_none`), which need not count.
+    fn holds_none(&self) -> bool {
+        match &self.ids {
+            None => self.src.holds_none(),
+            Some(_) => self.len() == 0,
+        }
+    }
     /// The source's rows that pass every filter, through the source's index of one filtered column where it has one.
     fn filtered(&self) -> Vec<u32> {
         let src = &self.src;
@@ -4278,21 +4368,67 @@ impl View {
         {
             return rows.into_iter().map(|r| r as u32).collect();
         }
+        if let Some(rows) = self.find_columns(cols, key) {
+            return rows;
+        }
         self.find(cols[lead], key[lead])
+    }
+    /// The rows of a probe binding several key columns, where the source keeps it to the rows they name together
+    /// (`Source::lookup_columns`: a made relation's documents every column routes to, none made for the others).
+    fn find_columns(&self, cols: &[usize], key: &[i64]) -> Option<Vec<u32>> {
+        if cols.len() < 2 || !self.eqs.is_empty() {
+            return None;
+        }
+        let src: Vec<usize> = cols.iter().map(|&k| self.cols[k]).collect();
+        self.src.lookup_columns(&src, key).map(|rows| rows.into_iter().map(|r| r as u32).collect())
     }
     /// `find_keyed`'s rows, each with its values of view columns `need` (bit `c`: column `c`), read as the source's
     /// probe found them (`Source::lookup_read`); `None` where it has no such read, or the probe is not `find`'s.
-    fn find_read(&self, cols: &[usize], key: &[i64], lead: usize, need: u64) -> Option<Found> {
-        if !self.eqs.is_empty() || self.ids.is_some() || self.cols.len() > READ {
-            return None;
+    /// `cursor`: the step's probe cursor (`Source::lookup_read_at`); `spare`: the step's list of the probe before,
+    /// refilled where no candidate list still holds it.
+    /// Whether a probe of `cols` is `find_read`'s read as found (`Source::lookup_read_at`), which a step can read its
+    /// rows from as the source finds them (`Cands::Stream`): one key column, no equalities or ids of its own, and not
+    /// a document-kept lookup.
+    /// Whether a probe by `cols` is read into the step as found (`Cands::Stream`): by its lead column, the other key
+    /// columns checked by the step from the values read (they are in its `need`: no exact probe). Not where the
+    /// source looks several columns up together (`Source::looks_up_columns`) or keeps the probe to a document
+    /// (`find_read`'s order).
+    fn streams(&self, cols: &[usize]) -> bool {
+        let dc = self.src.doc_column();
+        self.eqs.is_empty()
+            && self.ids.is_none()
+            && self.cols.len() <= READ
+            && cols.len() <= STREAM_KEY
+            && (cols.len() == 1 || !self.src.looks_up_columns())
+            && !(dc.is_some_and(|dc| cols.iter().any(|&k| self.cols[k] == dc)) && cols.iter().any(|&k| self.src.kept_to_doc(self.cols[k])))
+    }
+    /// Whether a probe binding every key column `cols` (two or more, nothing else read) is a test of the source
+    /// (`tests_keys`): a whole view, no constants, each key read with the lead's matches.
+    fn keys_tested(&self, cols: &[usize]) -> bool {
+        self.eqs.is_empty() && self.ids.is_none() && (2..=READ).contains(&cols.len())
+    }
+    /// Whether some row of the view has values `key` in view columns `cols`: the source's matches by the lead column
+    /// read with the other key columns and compared as found, the first equal one ending it (a membership step's
+    /// probe, `exists`: no row of it read into the step). `None` where the source has no such read.
+    fn tests_keys(&self, cols: &[usize], key: &[i64], lead: usize, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> Option<bool> {
+        let (mut src, mut want, mut m) = ([0usize; READ], [0i64; READ], 0);
+        for (j, &c) in cols.iter().enumerate() {
+            if j != lead {
+                src[m] = self.cols[c];
+                want[m] = key[j];
+                m += 1;
+            }
         }
-        // `find_keyed`'s document-kept lookup goes first where it applies.
-        if let Some(dc) = self.src.doc_column()
-            && cols.iter().any(|&k| self.cols[k] == dc)
-            && cols.iter().any(|&k| self.src.kept_to_doc(self.cols[k]))
-        {
-            return None;
-        }
+        let mut found = false;
+        // The other key's value, which the source may keep its matches to (checked here all the same).
+        cursor.also = (m == 1).then(|| (src[0], want[0]));
+        let read = self.src.lookup_read_at(self.cols[cols[lead]], key[lead], &src[..m], cursor, &mut |_, got| found |= got == &want[..m]);
+        cursor.also = None;
+        read.then_some(found)
+    }
+    /// `find_read`'s read of probe `s`, each match given to `each` with its values of view columns `need` as the
+    /// source finds it; `false` where the source has no such read (before any match).
+    fn read_each(&self, s: &Stream<'_>, need: u64, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, each: &mut dyn FnMut(u32, [i64; READ])) -> bool {
         let (mut src, mut at, mut m) = ([0usize; READ], [0usize; READ], 0);
         for c in 0..self.cols.len() {
             if need >> c & 1 != 0 {
@@ -4301,26 +4437,116 @@ impl View {
                 m += 1;
             }
         }
-        let (mut first, mut more) = (None, Vec::new());
-        let read = self.src.lookup_read(self.cols[cols[lead]], key[lead], &src[..m], &mut |row, got| {
+        // A probe by two columns: the other's value, which the source may keep its matches to (the step checks it).
+        cursor.also = (s.len == 2).then(|| (self.cols[s.cols[1 - s.lead]], s.key[1 - s.lead]));
+        let read = self.src.lookup_read_at(self.cols[s.cols[s.lead]], s.key[s.lead], &src[..m], cursor, &mut |row, got| {
             let mut vals = [0i64; READ];
             for j in 0..m {
                 vals[at[j]] = got[j];
             }
-            match first {
-                None => first = Some((row as u32, vals)),
-                Some(one) => {
-                    if more.is_empty() {
-                        more.push(one);
-                    }
-                    more.push((row as u32, vals));
-                }
-            }
+            each(row as u32, vals);
         });
-        read.then(|| match first {
-            None => Found::None,
-            Some(one) if more.is_empty() => Found::One(one),
-            Some(_) => Found::Many(Arc::new(more)),
+        cursor.also = None;
+        read
+    }
+    fn find_read(&self, cols: &[usize], key: &[i64], lead: usize, need: u64, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, spare: &mut Option<Arc<Vec<(u32, [i64; READ])>>>) -> Option<Found> {
+        // A version's or a pick's rows (`ids` with no constants) are refused; a view chosen by constants has its
+        // constants' rows as its ids (`filtered`), which the checks below find as `find` does, in the source's rows.
+        if (self.ids.is_some() && self.eqs.is_empty()) || self.cols.len() > READ {
+            return None;
+        }
+        // A view chosen by constants (`field(p, #f, c)`): probed by one column, each match's constant columns read
+        // with its others and checked here, and one constant given to the source (`ProbeCursor::also`), which may
+        // keep its matches to it (a field's children under that field alone): no row list of the matches, each row
+        // then found again by number (`find`), and no list of the constants' rows made first.
+        if !self.eqs.is_empty() && (cols.len() > 1 || self.eqs.len() > 2) {
+            return None;
+        }
+        // `find_keyed`'s probe of several columns goes first where the source keeps it to them.
+        if cols.len() > 1 {
+            let src: Vec<usize> = cols.iter().map(|&k| self.cols[k]).collect();
+            if let Some(rows) = self.src.lookup_columns(&src, key) {
+                let all: Vec<usize> = self.cols.clone();
+                let mut got = vec![0i64; all.len()];
+                let mut found: Vec<(u32, [i64; READ])> = rows
+                    .into_iter()
+                    .map(|row| {
+                        self.src.row_at(row, &all, &mut got);
+                        let mut vals = [0i64; READ];
+                        for c in 0..all.len() {
+                            if need >> c & 1 != 0 {
+                                vals[c] = got[c];
+                            }
+                        }
+                        (row as u32, vals)
+                    })
+                    .collect();
+                return Some(match found.len() {
+                    0 => Found::None,
+                    1 => Found::One(found.pop().expect("one row")),
+                    _ => Found::Many(Arc::new(found)),
+                });
+            }
+        }
+        // `find_keyed`'s document-kept lookup goes first where it applies.
+        if let Some(dc) = self.src.doc_column()
+            && cols.iter().any(|&k| self.cols[k] == dc)
+            && cols.iter().any(|&k| self.src.kept_to_doc(self.cols[k]))
+        {
+            return None;
+        }
+        let (mut src, mut at, mut m) = ([0usize; READ + 2], [0usize; READ], 0);
+        for c in 0..self.cols.len() {
+            if need >> c & 1 != 0 {
+                src[m] = self.cols[c];
+                at[m] = c;
+                m += 1;
+            }
+        }
+        let (mut eq, k) = ([0i64; 2], self.eqs.len());
+        for (j, &(c, v)) in self.eqs.iter().enumerate() {
+            src[m + j] = c;
+            eq[j] = v;
+        }
+        // The step's list of the probe before, when nothing else holds it now; else a new one, on a second match.
+        let mut list = spare.take().filter(|l| Arc::strong_count(l) == 1);
+        let (mut first, mut n) = (None, 0usize);
+        cursor.also = self.eqs.first().copied();
+        let read = self.src.lookup_read_at(self.cols[cols[lead]], key[lead], &src[..m + k], cursor, &mut |row, got| {
+            if got[m..m + k] != eq[..k] {
+                return;
+            }
+            let mut vals = [0i64; READ];
+            for j in 0..m {
+                vals[at[j]] = got[j];
+            }
+            n += 1;
+            if n == 1 {
+                first = Some((row as u32, vals));
+                return;
+            }
+            let rows = Arc::get_mut(list.get_or_insert_with(|| Arc::new(Vec::new()))).expect("the step's own list");
+            if n == 2 {
+                rows.clear();
+                rows.extend(first);
+            }
+            rows.push((row as u32, vals));
+        });
+        cursor.also = None;
+        if !read {
+            *spare = list;
+            return None;
+        }
+        Some(match (n, first) {
+            (0, _) | (_, None) => {
+                *spare = list;
+                Found::None
+            }
+            (1, Some(one)) => {
+                *spare = list;
+                Found::One(one)
+            }
+            _ => Found::Many(list.expect("a list of several matches")),
         })
     }
     fn find(&self, c: usize, v: i64) -> Vec<u32> {
@@ -5393,6 +5619,13 @@ impl InRel {
     }
     pub fn rows(&self) -> usize {
         self.len() - self.ndead
+    }
+    /// Whether it has no live row (`rows() == 0`), asked of a view without counting its rows (`Source::holds_none`).
+    pub fn holds_none(&self) -> bool {
+        match &self.view {
+            Some(v) if self.ndead == 0 => v.holds_none(),
+            _ => self.rows() == 0,
+        }
     }
     /// Whether none of its rows are in its table: a reader of it sees them all only in the engine.
     pub fn none_stored(&self) -> bool {
@@ -7287,8 +7520,17 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
         bound[o] = true;
         Ok((o, bind))
     }
-    for item in &spec.items {
+    // The items whose steps are left out: an anti-join with a relation held empty passes every row (a narrow copy
+    // read in place reads `!rr_gone_<x>`, empty for most copies: 286 such steps read 2 M rows, 145 ms, on leg-083).
+    let mut dropped: Vec<usize> = Vec::new();
+    for (at, item) in spec.items.iter().enumerate() {
         let is_bound = |b: &Vec<bool>, k: Key| match k { Key::Slot(s) => b.get(s).copied().unwrap_or(false), Key::Const(_) => true };
+        if let JoinItem::Atom { neg: true, src: Source::Native(table), .. } = item
+            && on(conn).derived.lock().get(table.as_str()).is_some_and(|r| r.len() == 0)
+        {
+            dropped.push(at);
+            continue;
+        }
         match item {
             JoinItem::Atom { src, args: atoks, .. } | JoinItem::Count { src, args: atoks, .. } | JoinItem::Extreme { src, args: atoks, .. } | JoinItem::StrJoin { src, args: atoks, .. } => {
                 let neg = matches!(item, JoinItem::Atom { neg: true, .. });
@@ -7454,7 +7696,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                     }
                     Key::Slot(_) => None,
                 };
-                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(&m.plans));
+                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(m.plans()));
                 steps.push(Step::Test { op, s, p, matcher, test, want: *want });
             }
             JoinItem::DocOf { out: o, n } => {
@@ -7474,7 +7716,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                 let matcher = strings::Matcher::new(op, &patterns).ok().map(Arc::new);
                 // A set that does not compile matches nothing, as SQL's `str_test`.
                 let p = Key::Const(syms.id(&patterns.join(&strings::SET_SEP.to_string())));
-                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(&m.plans));
+                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(m.plans()));
                 steps.push(Step::Test { op, s, p, matcher, test, want: *want });
             }
             JoinItem::In { a, want, set } => {
@@ -7522,8 +7764,8 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
     let probes = probes(&steps, &out);
     let step_ns = (0..=steps.len()).map(|_| Default::default()).collect();
     // Each step's plan step, where the planner said (a spec read from text did not: each step is its own).
-    let (from, plan_steps) = if spec.from.len() == steps.len() {
-        (spec.from.iter().map(|&p| p as usize).collect(), spec.plan_steps as usize)
+    let (from, plan_steps) = if spec.from.len() == steps.len() + dropped.len() {
+        (spec.from.iter().enumerate().filter(|(k, _)| !dropped.contains(k)).map(|(_, &p)| p as usize).collect(), spec.plan_steps as usize)
     } else {
         ((0..steps.len()).collect(), steps.len())
     };
@@ -7905,7 +8147,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         /// The candidates: an input's index on exactly the key columns, a component relation's composite index, or
         /// its shortest posting chain among its key columns (every key is then checked), or every tuple when none is
         /// bound.
-        use self::cands::candidates;
+        use self::cands::{candidates, scan_within};
         match step {
             Step::Atom { src, neg, keys, binds, tests } => {
                 // A screened probe (`join_filter`) whose key the filter refuses has no rows: a negated one holds.
@@ -7924,6 +8166,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     _ if handed || keys.is_empty() => 0,
                     Src::In(rel, ix) if rel.view.is_some() && ix.runs(rel).is_none() => {
                         if ix.composite { ix.cols.iter().fold(0, |m, &c| m | 1 << c) }
+                        // A membership probe of a view by several columns, nothing else read: a test of the source
+                        // (`View::tests_keys`), every key compared there.
+                        else if ix.source && !ix.sorted && binds.is_empty() && tests.is_empty() && j.fused[i].is_none() && j.ranges[i].is_none()
+                            && rel.view.as_ref().is_some_and(|v| v.keys_tested(&ix.cols)) { ix.cols.iter().fold(0, |m, &c| m | 1 << c) }
                         else if ix.sorted || (ix.source && ix.cols.len() == 1) { 1 << ix.cols[ix.lead] }
                         else { 0 }
                     }
@@ -7934,7 +8180,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     | binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c)
                     | j.fused[i].as_deref().map_or(0, |f| f.gather.iter().fold(0u64, |m, &(_, c)| m | 1 << c));
                 let within: Within = j.ranges[i].map(|r| (r.col, r.lo.map(|(k, eq)| (val(slots, k), eq)), r.hi.map(|(k, eq)| (val(slots, k), eq))));
-                let (rows, mut cands) = given.unwrap_or_else(|| candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], need, within));
+                // The step's probe state, held apart from `cx` while the step runs: its probe is read into the join as
+                // found (`Cands::Stream`), inside which the steps after it use `cx`. Put back at the step's end.
+                let mut last = std::mem::take(&mut cx.last[i]);
+                let (rows, mut cands) = given.unwrap_or_else(|| candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut last, need, within, true));
                 // A scan's rows in the next step's key order: its probes are then one sorted batch (decision 0112).
                 // A morsel's rows are in that order already (`morsels`).
                 // Decision 0206: the rows still to read, at the step restricted to them (rows of another place, an
@@ -8030,7 +8279,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     }
                     let cut = cut.then_some(made);
                     let witnessed = |cx: &Ctx<'_, '_>| cut.is_some_and(|made| cx.n > made);
-                    rows.each(cands, need, |id, row| {
+                    rows.each(cands, need, &mut last, |id, row| {
                         if cx.stop || witnessed(cx) { return true; }
                         if rows.dead(id) || only.as_ref().is_some_and(|o| !o.has(id)) { return false; }
                         if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
@@ -8049,6 +8298,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     s.columns.iter_mut().for_each(Vec::clear);
                     cx.scratch[i] = s;
                     if reads_delta { cx.only = only; }
+                    cx.last[i] = last;
                     return;
                 }
                 // An atom that binds nothing (`ann_root(_)`, a key all bound) is a test: every row it matches leads to
@@ -8059,7 +8309,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 // tested against `fv` by `$m` alone and every one rejected, where few distinct `$m` were tested.
                 let factor = if exists { None } else { cx.factor[i] };
                 if factor.is_some() { cx.failed[i].begin_probe(); }
-                let found = rows.each(cands, need, |id, row| {
+                let found = rows.each(cands, need, &mut last, |id, row| {
                     if cx.stop { return true; }
                     if rows.dead(id) || only.as_ref().is_some_and(|o| !o.has(id)) { return false; }
                     if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
@@ -8095,6 +8345,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     i >= cx.cut_from && cx.n > made
                 });
                 if reads_delta { cx.only = only; }
+                cx.last[i] = last;
                 if exists && found != *neg { go(cx, i + 1, slots); }
             }
             Step::Scalar { src, keys, tests, col, kind, out, bind, bound: Some((limit, strict)), .. } => {
@@ -8104,7 +8355,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let (limit, max) = (val(slots, *limit), *kind == ScalarKind::Max);
                 let Some(c) = *col else { return };
-                let (rows, cands) = candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], 0, None);
+                let (rows, cands) = candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], 0, None, false);
                 let mut best: Option<i64> = None;
                 let mut inspected = 0;
                 cands.any(|id| {
@@ -8142,7 +8393,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let build = |value: Option<usize>| {
                     let _cpu=crate::code_rule_dsl::logic::profile::span(||"native scalar summary fold".into());
                     let mut inspected=0;
-                    let (rows, cands) = candidates(src, store, &cx.key, keys, &mut [0; runs::HINTS], &mut None, 0, None);
+                    let (rows, cands) = candidates(src, store, &cx.key, keys, &mut [0; runs::HINTS], &mut LastProbe::default(), 0, None, false);
                     let mut summary = scalars::Summary::default();
                     cands.any(|id| {
                         inspected+=1;
@@ -8187,7 +8438,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 enum Sortable { Number(i64), Text(String) }
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
-                let (rows, cands) = candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], 0, None);
+                let (rows, cands) = candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], 0, None, false);
                 let mut got: Vec<(Vec<Sortable>, String)> = Vec::new();
                 let syms = &cx.syms;
                 let sortable = |v: i64, sym: bool| if sym { Sortable::Text(syms.name(v).to_string()) } else { Sortable::Number(v) };
@@ -8390,6 +8641,14 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let mut hints = [0; runs::HINTS];
         let (rows, cands) = candidates_of(src, store, &mut hints);
         let Cands::Range(lo, hi) = cands else { return false };
+        let within: Within = j.ranges[0].map(|r| (r.col, r.lo.map(|(k, eq)| (val(slots, k), eq)), r.hi.map(|(k, eq)| (val(slots, k), eq))));
+        // A range of the scan's column read alone (`scan_within`): its rows in morsels where they are a range, else
+        // walked as the one walk reads them.
+        let (rows, cands) = self::cands::scan_within(rows, lo, hi, within);
+        let Cands::Range(lo, hi) = cands else { return false };
+        if ((hi - lo) as usize) < 2 * MORSEL_ROWS * MORSELS_PER_THREAD {
+            return false;
+        }
         if ((hi - lo) as usize) < 2 * MORSEL_ROWS * MORSELS_PER_THREAD {
             return false;
         }
@@ -8442,7 +8701,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let failed = factor.iter().map(|_| Default::default()).collect();
                     let mut w = Ctx { j, head, store, syms: &mut syms, fresh: &mut fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, cap, pending: Vec::new(),
                                       scratch: j.steps.iter().map(|_| rowcode::Scratch::default()).collect(), texts: Vec::new(),
-                                      collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
+                                      collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![LastProbe::default(); j.steps.len()],
                                       factor, screen, screening: Default::default(), failed, snap: Vec::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
                                       only_step: usize::MAX, only: None, list0: None, cut_from,
                                       counts: j.counts.iter().map(|_| Default::default()).collect(), first: Some((rows_of_first(src, store), first)),
@@ -8643,7 +8902,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let screen = if limit.is_none() && each.is_none() && paired.is_none() && preset.is_empty() {
         join_filter::JoinFilter::choose(j, store)
     } else { None };
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![LastProbe::default(); j.steps.len()],
                        factor, screen: screen.as_ref(), screening: Default::default(), failed, snap: Vec::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
@@ -8742,7 +9001,8 @@ fn ranges_from(steps: &[Step], bound: &[usize]) -> Vec<Option<Ranged>> {
     let mut before: Vec<usize> = bound.to_vec();
     steps.iter().enumerate().map(|(i, st)| {
         let r = match st {
-            Step::Atom { neg: false, keys, binds, .. } if !keys.is_empty() => {
+            // A first scan of an input (no key) too, where its rows are in the column's order (`scan_within`).
+            Step::Atom { neg: false, keys, binds, src, .. } if !keys.is_empty() || matches!(src, Src::In(..)) => {
                 let known = |k: &Key| match *k { Key::Const(_) => true, Key::Slot(s) => before.contains(&s) };
                 let mut found: Option<Ranged> = None;
                 for later in &steps[i + 1..] {

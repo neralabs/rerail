@@ -338,6 +338,7 @@ pub mod tests {
         let mut c = s.clone();
         assert!(Arc::ptr_eq(&c.counts, &s.counts) && Arc::strong_count(&s.sharing) == 2, "a clone reads them");
         c.add(10);
+        assert!(!Arc::ptr_eq(&c.counts, &s.counts), "a clone writes its own once it adds");
         assert_eq!((counts.join(&ten).rows, c.counts().join(&ten).rows), (1.0, 2.0));
         // Past its few values, the counters, still the sketch's own.
         for v in 11..1_000 {

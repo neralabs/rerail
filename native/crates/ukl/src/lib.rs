@@ -81,6 +81,16 @@ pub enum Backend {
     /// OpenCL: OpenCL C 1.2 for the device's driver (`ukl_opencl_shim.h`). The device's SIMD width is a define
     /// (`UKL_SIMD_WIDTH`, 32 by default: emulated through threadgroup memory on a device without subgroups).
     OpenCl,
+    /// The CPU's vector code (`rerail-ukl-vec`, decision 0567): C whose every UKL operation is one `__ukl_*` intrinsic
+    /// (`ukl_vec_shim.h`, `ukl/backend.h`'s `UKL_VEC` section), which its compiler knows by name.
+    Vec,
+}
+
+impl Backend {
+    /// Whether the backend's language is C (OpenCL C, the vector code's): every other's is C++.
+    pub fn is_c(self) -> bool {
+        matches!(self, Backend::OpenCl | Backend::Vec)
+    }
 }
 
 impl Backend {
@@ -97,6 +107,7 @@ impl Backend {
             Backend::Cuda { .. } | Backend::Hip { .. } => "cuda",
             Backend::Cpu => "cpu",
             Backend::OpenCl => "opencl",
+            Backend::Vec => "vec",
         }
     }
 
@@ -138,6 +149,7 @@ impl Backend {
                 d("__OPENCL_C_VERSION__", "120".into()),
                 d("__UKL_OPENCL_PREPROCESSING", "1".into()),
             ],
+            Backend::Vec => vec![d("__UKL_VEC_PREPROCESSING", "1".into())],
         }
     }
 }
@@ -269,7 +281,7 @@ impl Preprocess {
     /// `main` preprocessed for a frontend (decision 0327, mode (b)): the expanded text, the C parser's tokens over
     /// it and where each part came from (no line markers), and the paths of the files those name, by file id.
     pub fn expanded(&self, main: &str) -> Result<(rerail_c_pp::tokens::Expanded, Vec<String>), Error> {
-        let (tokens, paths) = self.pass(main, rerail_c_pp::tokens::TokenSink::new(self.backend != Backend::OpenCl))?;
+        let (tokens, paths) = self.pass(main, rerail_c_pp::tokens::TokenSink::new(!self.backend.is_c()))?;
         Ok((tokens.finish(), paths))
     }
 
@@ -289,7 +301,7 @@ impl Preprocess {
     /// One pass of the preprocessor over `main` into `sink`: the sink, and the paths of the files, by file id.
     fn pass<S: Sink>(&self, main: &str, sink: S) -> Result<(S, Vec<String>), Error> {
         // OpenCL C is C (C99 with clang's extensions); every other backend's language is C++.
-        let mut cfg = if self.backend == Backend::OpenCl {
+        let mut cfg = if self.backend.is_c() {
             Config::new(Options::c(99, true))
         } else {
             let mut c = Config::new(Options::cpp(20, true));

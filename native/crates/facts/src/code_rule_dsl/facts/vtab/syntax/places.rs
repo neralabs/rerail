@@ -252,6 +252,9 @@ impl Source for Places {
     fn indexed(&self, column: usize) -> bool {
         self.view.indexed(column) && self.spans.indexed(column)
     }
+    fn keys_documents(&self, column: usize) -> bool {
+        self.view.keys_documents(column)
+    }
     fn lookup_cost(&self, column: usize) -> f64 {
         self.view.lookup_cost(column).max(self.spans.lookup_cost(column))
     }
@@ -273,15 +276,39 @@ impl Source for Places {
         self.view.key_row(column, value)
     }
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        // A node's place is the view's read; a span's, its rows.
-        if column == 0 && !is_span(value) {
-            return self.view.lookup_read(column, value, columns, each);
+        self.lookup_read_at(column, value, columns, &mut super::super::ProbeCursor::default(), each)
+    }
+    /// The view's matches read as found (its cursor), then the spans' (read as found, else looked up, else
+    /// filtered, and read): a place relation's probe reads no row of the view a point read each. By a row's id, the
+    /// side that holds it alone (`is_span`). Only the view may refuse, before any row is given; the spans always answer.
+    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let width = columns.len();
+        if width > 8 {
+            return false;
         }
-        let Some(rows) = self.lookup(column, &[value]) else { return false };
-        let mut row = vec![0; columns.len()];
+        let mut row = [0i64; 8];
+        let routed = column == 0;
+        if !(routed && is_span(value)) {
+            if !self.view.lookup_read_at(column, value, columns, cursor, each) {
+                let Some(rows) = self.view.lookup(column, &[value]) else { return false };
+                for r in rows {
+                    self.view.row_at(r, columns, &mut row[..width]);
+                    each(r, &row[..width]);
+                }
+            }
+            // A node's place is the view's read alone.
+            if routed {
+                return true;
+            }
+        }
+        let first = self.first();
+        if self.spans.lookup_read(column, value, columns, &mut |r, got| each(first + r, got)) {
+            return true;
+        }
+        let rows = self.spans.lookup(column, &[value]).unwrap_or_else(|| (0..self.spans.len()).filter(|&r| self.spans.value(r, column) == value).collect());
         for r in rows {
-            self.row_at(r, columns, &mut row);
-            each(r, &row);
+            self.spans.row_at(r, columns, &mut row[..width]);
+            each(first + r, &row[..width]);
         }
         true
     }

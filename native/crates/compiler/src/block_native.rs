@@ -422,7 +422,7 @@ impl BlockNative {
             EndRule::Run(o) | EndRule::Pair(o) | EndRule::Last(o) => Some(o),
             EndRule::Read(_) | EndRule::Next(_) => None,
         }));
-        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last))));
+        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last).chain(a.template))));
         read.extend(r.readers.iter().flat_map(|rd| rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))));
         read.extend(r.checks.iter().map(|c| c.o));
         // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
@@ -460,7 +460,7 @@ impl BlockNative {
             .readers
             .iter()
             .filter(|rd| rd.split == crate::records::Split::Tier2 && !rd.parts.is_empty() && !rd.parts.iter().any(|p| unread.contains(&p.start)))
-            .flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last)).chain(rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))))
+            .flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last).chain(a.template)).chain(rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))))
             .collect();
         let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o) && !split_read.contains(&o)).map(usize::from).collect();
         v.sort_unstable();

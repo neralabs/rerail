@@ -552,7 +552,7 @@
         let sym = |s: &str| u32::try_from(syms.write().unwrap().id(s)).unwrap();
         let (foo1, longs, bar, zzz) = (sym("foo1"), sym(&long), sym("bar"), sym("zzz"));
         let m = crate::code_rule_dsl::logic::strings::Matcher::new("prefix", &["foo".to_owned()]).unwrap();
-        let test = crate::code_rule_dsl::text::table::test_id(&m.plans).unwrap();
+        let test = crate::code_rule_dsl::text::table::test_id(m.plans()).unwrap();
         let atoms = std::sync::Arc::clone(syms.read().unwrap().atoms());
         let verdicts = atoms.kept();
         assert!(verdicts.put(test, zzz, true));
@@ -723,7 +723,7 @@
         assert!(report.as_ref().is_some_and(|r| r.refused.is_none()), "the stratum ran on the device: {report:?}");
         super::super::close(&db, "dev_verdicts").unwrap();
         let m = crate::code_rule_dsl::logic::strings::Matcher::new("prefix", &["foo".to_owned()]).unwrap();
-        let test = crate::code_rule_dsl::text::table::test_id(&m.plans).unwrap();
+        let test = crate::code_rule_dsl::text::table::test_id(m.plans()).unwrap();
         let syms = super::super::symbols(&db).unwrap();
         let atoms = std::sync::Arc::clone(syms.read().unwrap().atoms());
         let runs = atoms.runs();

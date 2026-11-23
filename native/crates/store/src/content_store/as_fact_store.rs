@@ -122,6 +122,9 @@ impl FactStore for ContentStore {
     fn candidate_transaction_with(&self, writes: bool, operation: &mut dyn FnMut(&rusqlite::Connection) -> rusqlite::Result<()>) -> StoreResult<()> {
         ContentStore::candidate_transaction(self, writes, operation)
     }
+    fn vocabulary_terms(&self, kind: i64, lang: i64, keys: &[String], test: rerail_store_base::content_store::prefilter::VocabularyTest<'_>, literals: &dyn Fn(&str) -> Option<Vec<String>>) -> StoreResult<Vec<Vec<i64>>> {
+        ContentStore::vocabulary_terms(self, kind, lang, keys, test, literals)
+    }
     fn put_search_indexes_bulk(&self, indexes: &[TapeSearchIndex]) -> StoreResult<()> {
         ContentStore::put_search_indexes_bulk(self, indexes)
     }

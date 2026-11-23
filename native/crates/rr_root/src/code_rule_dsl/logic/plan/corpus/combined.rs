@@ -84,6 +84,7 @@ fn shipped_key(key: &[u8; 32]) -> HashKey {
 
 /// An embedded phase program's entry: its key, and, when the store had none, the program compiled, which the phase's
 /// run records (`Embedded::record`).
+#[derive(Clone)]
 pub struct Embedded {
     pub key: [u8; 32],
     made: Option<(Vec<LibraryFile>, std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>)>,
@@ -107,7 +108,13 @@ pub(super) fn embedded_program(source: &str, store: Option<&ContentStore>) -> su
     let mut hash = Sha256::new();
     hash.update(b"rerail/embedded-phase/v1\0");
     hash.update(source.as_bytes());
-    let key = hash.finalize().into();
+    keyed_program(source, hash.finalize().into(), store)
+}
+
+/// `embedded_program` under the caller's `key` (a builtin phase's program, `phases::lowered`, keys its text with the
+/// switches set and its include graph): the store's entry when it keeps one whose library files still read as
+/// recorded, else the program compiled, which the phase's run records.
+pub(super) fn keyed_program(source: &str, key: [u8; 32], store: &ContentStore) -> super::Result<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<Embedded>)> {
     store.settle(&queued(&key));
     if let Some(v) = lookup_version(store, &key)? {
         crate::code_rule_dsl::prof::count("rr.embedded_program_hits", 1);

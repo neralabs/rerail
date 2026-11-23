@@ -326,6 +326,14 @@ and each line span's place.
   reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
 - What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
   rows), deferred (Q121).
+- core.rerail's tape answers that `core_rr` made as rows are views (2026-11-22): `op` (`View::Op`: a numbered node's
+  anonymous children, the rank item `Item::Op`, zero-width ones included; a Python two-word operator is one child,
+  the grammar's alias, so no row is made for it or for any other), `end_point` (`View::End`: a node's position among `Locs::ends`),
+  `spread` (`View::Spread`: a rank item the walk marks from the code table) and the token order, `first_token`,
+  `last_token`, `token_before`, `token_after` (`View::Tok`, `syntax/tokens.rs`): the lexemes are a rank item,
+  each answer a rank and a select, each relation's rows the places marked as having one. The rank index's groups
+  are 15 words for its ten items. Tests hold each to what `core_rr` made (`the_token_order_is_the_sorted_tokens`,
+  `core_rr_relations_hold_what_core_rr_says`, `op_is_every_anonymous_child_and_op_ats_two_word_operators`).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by
@@ -676,10 +684,13 @@ Each step ends with:
          `[ns, starts[ns], ne, ends[ne]]`; the byte loop goes). The entry holds the positions' counts and a run to the
          lines; `loc_line` (a relation's read of the same body as `lines_line`) finds a line. A guest's places are
          its host's lines through its placement, a copied stretch or a point, from the entry's scalars (decision
-         0055). A normalized string's pieces and an embedder's segments live in no block: such a batch makes its
-         places (counted, `views.refused.locs.guest_*`). On hogql every guest is a copied stretch.
-       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent); a
-         batch with a guest whose placement is not a copied stretch or a point. `expand_view`, `VIEW_EXPAND`,
+         0055). A normalized string's pieces and an embedder's segments live in no block: such a guest's entry holds
+         its spans placed (`ViewDoc::placed`, `PLACED_TABLE`: each position's host span, made once into the block
+         as the host places it, `Placement::host`), so its batch's places are read in place too (2026-11-22: a
+         stratum over a Vue guest made `line` and `docof` by launches of their own, past decision 0603's one
+         launch). On hogql every guest is a copied stretch.
+       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent).
+         `expand_view`, `VIEW_EXPAND`,
          ChunkDoc's node columns and `fill_lines`/`fill_locs` (row 14) stay for them.
        - Found on the way: the slabs holding tapes were never retired (4d's first part); now they are retired once
          only the pool holds them, so a long session frees them with its tapes.

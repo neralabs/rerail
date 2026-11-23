@@ -528,6 +528,9 @@ pub fn document_column(relation: &str) -> Option<usize> {
         | "tape_of" | "rr_program" | "doc_grammar" | "host_node" => Some(0),
         // Decision 0431: a string's parsed nodes, by the string (its file's node).
         "docof" | "guest_of" | "guest_place" => Some(1),
+        // Decision 0597 rule 8: a pass's tape-local relations and their kept rows (`guests::TAPE`, `guests::KEPT`),
+        // each row led by its tape value's document.
+        _ if relation.ends_with("_rr_kept") || relation.ends_with("_rr_kd") => Some(0),
         _ => None,
     }
 }

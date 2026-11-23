@@ -79,6 +79,9 @@ pub trait FactStore: Send + Sync + std::any::Any {
     /// `operation` in the candidate statement's transaction (`ContentStore::candidate_transaction`; callers use
     /// `dyn FactStore`'s `candidate_transaction`, which returns its value).
     fn candidate_transaction_with(&self, writes: bool, operation: &mut dyn FnMut(&rusqlite::Connection) -> rusqlite::Result<()>) -> StoreResult<()>;
+    /// A vocabulary's keys' matching terms of language `lang`, kept facts brought up to date first
+    /// (`ContentStore::vocabulary_terms`; kinds `prefilter::VOCABULARY_*`).
+    fn vocabulary_terms(&self, kind: i64, lang: i64, keys: &[String], test: super::prefilter::VocabularyTest<'_>, literals: &dyn Fn(&str) -> Option<Vec<String>>) -> StoreResult<Vec<Vec<i64>>>;
     fn put_search_indexes_bulk(&self, indexes: &[TapeSearchIndex]) -> StoreResult<()>;
     // The positional search index (`positional_search.rs`).
     fn put_positional_search_indexes_bulk(&self, indexes: &[positional_search::TapeSearchIndex]) -> StoreResult<()>;

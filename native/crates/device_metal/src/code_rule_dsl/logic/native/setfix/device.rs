@@ -657,8 +657,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 // A text test by automaton of a made text (an arena text, a held cat's): its table walked per row, a
                 // SIMD group a row, 32 bytes at a time (`ROWTEXT`).
                 let Some(m) = matcher else { return Err(format!("the text test @{op} of a pattern that is not a constant has no device form")) };
-                let table = crate::code_rule_dsl::text::table::table(&m.plans).map_err(|e| format!("the text test @{op} has no device form: {e}"))?;
-                let key = m.plans.iter().map(|p| p.key.0.as_str()).collect::<Vec<_>>().join(",");
+                let table = crate::code_rule_dsl::text::table::table(m.plans()).map_err(|e| format!("the text test @{op} has no device form: {e}"))?;
+                let key = m.plans().iter().map(|p| p.key.0.as_str()).collect::<Vec<_>>().join(",");
                 stages.push(row_stage(i, mj::ROW_TEST | u32::from(*want) << 8, Key::Slot(*x), Key::Slot(*x), RowAuto::Test { table, key }, &deferred, &origin, &known)?);
                 i += 1;
             }
@@ -671,8 +671,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 if origin.get(x).cloned().flatten().is_none() {
                     return Err(format!("the text test @{op} of a slot no input relation's column bound has no device form"));
                 }
-                let table = crate::code_rule_dsl::text::table::table(&m.plans).map_err(|e| format!("the text test @{op} has no device form: {e}"))?;
-                let test = crate::code_rule_dsl::text::table::test_id(&m.plans).ok_or("the automata block's index is full")?;
+                let table = crate::code_rule_dsl::text::table::table(m.plans()).map_err(|e| format!("the text test @{op} has no device form: {e}"))?;
+                let test = crate::code_rule_dsl::text::table::test_id(m.plans()).ok_or("the automata block's index is full")?;
                 let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
                 d.agg = [mj::ROW_VERDICT | u32::from(*want) << 8, 0];
                 d.nkeys = 1;
@@ -1232,7 +1232,8 @@ fn one_launch(rep: &Report) {
     if rep.dispatches != 0 && rerail_accel_gpu::gpu::join::device().is_ok_and(rerail_device::device::reserve_grows) {
         // A stratum is one program; a wave's first stratum's report holds the wave's, one a stratum.
         let one = rep.waved != 0 || rep.programs == 1;
-        let launches = rep.programs + rep.relaunches + rep.remaps;
+        // A view expanded for it (copy 0353 step 4) is a dispatch of its pass, not a launch.
+        let launches = rep.programs + rep.relaunches + rep.remaps + rep.expanded;
         let budget = rep.launch_items.max(1);
         let ok = one && rep.dispatches == launches && rep.reruns == 0 && u64::from(rep.relaunches) <= rep.taken / budget + rep.programs as u64;
         if std::env::var_os("RERAIL_ONE_LAUNCH_CHECK").is_some_and(|v| v == "log") {
@@ -2873,6 +2874,7 @@ fn tally(rep: &mut Report, done: &mj::Done) {
     rep.relaunches += done.relaunches;
     rep.remaps += done.remaps;
     rep.room_remaps += done.room_remaps;
+    rep.expanded += done.expanded;
     rep.taken += done.taken;
     rep.programs += done.programs;
     if done.launch_items != 0 {

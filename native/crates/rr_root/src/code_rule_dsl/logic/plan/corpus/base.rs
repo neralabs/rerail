@@ -181,15 +181,6 @@ pub struct Report {
     pub run: Option<crate::code_rule_dsl::logic::run::Record>,
 }
 
-/// Whether a run of `programs` over `root` that consulted `consulted` (`Report::consulted`) would consult the same
-/// now: the same workspace documents with the same bytes, and every request answered alike (decision 0083 §2). It
-/// reads what the run read, and derives nothing. A program whose inputs come from elsewhere too (declarations,
-/// earlier phases, an explicit batch) is never judged unchanged.
-/// `graphs`: each program text's include graph's digest, as the run found it (`run_handed`).
-pub fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<bool> {
-    Ok(changes_of(programs, graphs, read, root, typing, options, consulted, summary)?.is_some_and(|c| c.is_empty()))
-}
-
 /// The parts of a run's combined program that `changes` reads, and nothing else: whether it reads `declared_ret`,
 /// its settings (its language, its artifacts), its scopes and text globs, its JSON policies (their scopes), and its
 /// `env` facts (the world's roots). A function of the texts and the rule files they read: the whole-run cutoff's
@@ -1904,6 +1895,13 @@ pub struct FactPhase<'a> {
     _run: std::marker::PhantomData<&'a ()>,
 }
 
+impl<'a> FactPhase<'a> {
+    /// A phase's run of the program `program_entry` keeps (a builtin phase's, `phases::lowered_entry`).
+    pub fn of(program_entry: Option<&'a combined::Embedded>) -> Self {
+        Self { program_entry, _run: std::marker::PhantomData }
+    }
+}
+
 /// Runs under way here, in the run's context: a run started inside another (a phase, the constants, phase 0) is
 /// nested, and so is a run in a job of one (decision 0442: the context goes with the job).
 #[derive(Clone, Copy, Default)]
@@ -2171,10 +2169,11 @@ pub fn run_read_handing(
     typing: &Typing,
     options: &serde_json::Value,
     image: Option<&mut Vec<u8>>,
+    phase: FactPhase<'_>,
 ) -> Result<Report> {
     added::check_tool_calls(options).map_err(Error::Plan)?;
     let key = read_key(read)?;
-    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, image, Default::default())
+    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, image, phase)
 }
 
 pub fn run_fact_image(source: &str, root: &Path, options: &serde_json::Value) -> Result<Vec<u8>> {

@@ -302,18 +302,19 @@ fn decay(t: Ty) -> Ty {
     }
 }
 
-/// OpenCL's builtins' fixed results.
+/// A reinterpretation's result (`__ukl_as_<type>`, `k::as_type`).
 fn as_target(name: &str) -> Ty {
-    match name {
-        "as_int" => I32,
-        "as_uint" => U32,
-        "as_long" => I64,
-        "as_ulong" => U64,
-        "as_short" => Ty::Int { bits: 16, signed: true },
-        "as_ushort" => Ty::Int { bits: 16, signed: false },
-        "as_char" => Ty::Int { bits: 8, signed: true },
-        "as_uchar" => Ty::Int { bits: 8, signed: false },
-        "as_double" => Ty::Float(64),
+    let int = |bits, signed| Ty::Int { bits, signed };
+    match crate::k::as_type(name).unwrap_or("float") {
+        "int8_t" => int(8, true),
+        "uint8_t" => int(8, false),
+        "int16_t" => int(16, true),
+        "uint16_t" => int(16, false),
+        "int32_t" => I32,
+        "uint32_t" => U32,
+        "int64_t" => I64,
+        "uint64_t" => U64,
+        "double" => Ty::Float(64),
         _ => Ty::Float(32),
     }
 }
@@ -889,8 +890,12 @@ impl L<'_> {
             },
             "if_statement" => {
                 let site = self.site(s, "if");
-                let n = self.b.open(Kind::If, &[site]);
-                self.cond(self.c.child(s, "condition").expect("a condition"))?;
+                // A hint (`UKL_LIKELY`, `UKL_UNLIKELY`): the `if`'s second word (`IF_LIKELY`, `IF_UNLIKELY`), its
+                // condition the hint's argument.
+                let c = self.c.child(s, "condition").expect("a condition");
+                let (hint, c) = self.hinted(c)?;
+                let n = self.b.open(Kind::If, &[site, hint]);
+                self.cond(c)?;
                 self.stmt(self.c.child(s, "consequence").expect("a consequence"))?;
                 if let Some(e) = self.c.child(s, "alternative") {
                     let x = self.inner(e)?;
@@ -900,8 +905,9 @@ impl L<'_> {
             }
             "while_statement" => {
                 let site = self.site(s, "while");
-                let n = self.b.open(Kind::While, &[site]);
-                self.cond(self.c.child(s, "condition").expect("a condition"))?;
+                let (hint, c) = self.hinted(self.c.child(s, "condition").expect("a condition"))?;
+                let n = self.b.open(Kind::While, &[site, hint]);
+                self.cond(c)?;
                 self.scoped(|l| l.stmt(l.c.child(s, "body").expect("a body")))?;
                 self.b.close(n);
             }
@@ -925,8 +931,15 @@ impl L<'_> {
                         }
                     }
                     let site = l.site(s, "for");
-                    let f = l.b.open(Kind::For, &[site]);
-                    match l.c.child(s, "condition") {
+                    let (hint, c) = match l.c.child(s, "condition") {
+                        Some(c) => {
+                            let (h, c) = l.hinted(c)?;
+                            (h, Some(c))
+                        }
+                        None => (0, None),
+                    };
+                    let f = l.b.open(Kind::For, &[site, hint]);
+                    match c {
                         Some(c) => l.cond(c)?,
                         None => {
                             l.b.leaf(Kind::Const, &words_of(M::B, 1));
@@ -1131,7 +1144,6 @@ impl L<'_> {
             "string_literal" => Ty::Array(Box::new(Ty::Int { bits: 8, signed: true }), self.string(e)?.len() as u64 + 1),
             "identifier" => match self.lookup(self.c.text(e)) {
                 Some(v) => v.ty.clone(),
-                None if self.c.text(e).starts_with("CLK_") => U32,
                 None => return self.err(e, "an unknown name"),
             },
             "parenthesized_expression" => {
@@ -1185,7 +1197,7 @@ impl L<'_> {
                 } else {
                     a
                 };
-                if s == Ty::Uint4 { U32 } else { self.field_of(e, &s)?.0 }
+                self.field_of(e, &s)?.0
             }
             "assignment_expression" => self.ty(self.c.child(e, "left").expect("an lvalue"))?,
             "update_expression" => decay(self.ty(self.c.child(e, "argument").expect("an operand"))?),
@@ -1226,11 +1238,11 @@ impl L<'_> {
         let Some(b) = Builtin::named(&name) else { return self.err(f, "a call of an unknown function") };
         let arg = |k: usize| tys.get(k).cloned().unwrap_or(U32);
         let (ret, params) = match b {
-            Builtin::LocalId | Builtin::LocalSize | Builtin::GlobalId | Builtin::GlobalSize | Builtin::GroupId | Builtin::NumGroups => (U64, vec![U32]),
+            Builtin::LocalId | Builtin::LocalSize | Builtin::GlobalId | Builtin::GlobalSize | Builtin::GroupId | Builtin::NumGroups => (U32, vec![U32]),
             Builtin::SubGroupLocalId => (U32, vec![]),
-            Builtin::Barrier | Builtin::MemFence | Builtin::SubGroupBarrier => (Ty::Void, vec![U32]),
+            Builtin::Barrier | Builtin::SubGroupBarrier | Builtin::MemFence => (Ty::Void, vec![]),
             Builtin::Yield => (Ty::Void, vec![]),
-            Builtin::SubGroupBallot => (Ty::Uint4, vec![I32]),
+            Builtin::SubGroupBallot => (U32, vec![I32]),
             Builtin::SubGroupShuffle | Builtin::SubGroupShuffleUp | Builtin::SubGroupShuffleDown | Builtin::SubGroupShuffleXor => {
                 let t = arg(0).promoted();
                 (t.clone(), vec![t, U32])
@@ -1243,15 +1255,15 @@ impl L<'_> {
                 let t = arg(0).pointee().cloned().unwrap_or(U32);
                 (t.clone(), vec![arg(0), t.clone(), t])
             }
-            Builtin::AtomicInc | Builtin::AtomicDec => {
+            Builtin::AtomicInc | Builtin::AtomicDec | Builtin::AtomicLoad => {
                 let t = arg(0).pointee().cloned().unwrap_or(U32);
                 (t, vec![arg(0)])
             }
-            Builtin::AtomicAdd | Builtin::AtomicSub | Builtin::AtomicAnd | Builtin::AtomicOr | Builtin::AtomicXor | Builtin::AtomicXchg | Builtin::AtomicMin | Builtin::AtomicMax => {
+            Builtin::AtomicAdd | Builtin::AtomicSub | Builtin::AtomicAnd | Builtin::AtomicOr | Builtin::AtomicXor | Builtin::AtomicXchg | Builtin::AtomicMin | Builtin::AtomicMax | Builtin::AtomicStore => {
                 let t = arg(0).pointee().cloned().unwrap_or(U32);
                 (t.clone(), vec![arg(0), t])
             }
-            Builtin::Popcount | Builtin::Clz => (arg(0), vec![arg(0)]),
+            Builtin::Popcount | Builtin::Clz | Builtin::Likely | Builtin::Unlikely => (arg(0), vec![arg(0)]),
             Builtin::MulHi | Builtin::Min | Builtin::Max => {
                 let t = Ty::common(&arg(0), &arg(1));
                 (t.clone(), vec![t.clone(), t])
@@ -1310,6 +1322,23 @@ impl L<'_> {
     }
 
     // Expressions' nodes.
+
+    /// Condition `e`'s hint (`IF_LIKELY`, `IF_UNLIKELY`, else 0) and the condition it hints.
+    fn hinted(&self, e: usize) -> R<(u32, usize)> {
+        let x = if self.c.kind(e) == "parenthesized_expression" { self.inner(e)? } else { e };
+        if self.c.kind(x) == "call_expression"
+            && let Some(f) = self.c.child(x, "function")
+            && let Some(a) = self.c.child(x, "arguments")
+            && let [arg] = self.named(a).as_slice()
+        {
+            match self.c.text(f) {
+                "__ukl_likely" => return Ok((crate::k::IF_LIKELY, *arg)),
+                "__ukl_unlikely" => return Ok((crate::k::IF_UNLIKELY, *arg)),
+                _ => {}
+            }
+        }
+        Ok((0, e))
+    }
 
     /// A condition: `e` as a `bool`.
     fn cond(&mut self, e: usize) -> R<()> {
@@ -1420,35 +1449,13 @@ impl L<'_> {
             }
             "true" => self.konst(&I32, 1),
             "false" => self.konst(&I32, 0),
-            "identifier" if self.lookup(self.c.text(e)).is_none() => {
-                // OpenCL's fence flags: no fence on the CPU's coherent memory.
-                let v = match self.c.text(e) {
-                    "CLK_LOCAL_MEM_FENCE" => 1,
-                    "CLK_GLOBAL_MEM_FENCE" => 2,
-                    _ => 0,
-                };
-                self.konst(&U32, v);
-            }
             "identifier" | "subscript_expression" | "string_literal" => self.load(e, &t)?,
             "pointer_expression" if self.operator(e) == "*" => self.load(e, &t)?,
             "pointer_expression" => {
                 self.lv(self.c.child(e, "argument").expect("an operand"))?;
             }
             "field_expression" => {
-                let a = self.c.child(e, "argument").expect("a structure");
-                if self.ty(a)? == Ty::Uint4 {
-                    // A ballot's mask: its first word, the others zero at 32 lanes.
-                    if self.c.text(self.c.child(e, "field").expect("a field")) == "x" {
-                        self.rv(a)?;
-                    } else {
-                        let n = self.b.open(Kind::Comma, &[]);
-                        self.rv(a)?;
-                        self.konst(&U32, 0);
-                        self.b.close(n);
-                    }
-                } else {
-                    self.load(e, &t)?;
-                }
+                self.load(e, &t)?;
             }
             "parenthesized_expression" => {
                 let x = self.inner(e)?;
@@ -1680,6 +1687,12 @@ impl L<'_> {
                 }
                 self.b.close(n);
             }
+            // A hint elsewhere than an `if`'s condition: its condition.
+            Callee::Builtin(Builtin::Likely | Builtin::Unlikely, params) => {
+                for (a, p) in args.into_iter().zip(params) {
+                    self.rv_as(a, &p)?;
+                }
+            }
             Callee::Builtin(b, params) => {
                 let ret = if b == Builtin::SubGroupBallot { M::U32 } else { self.m(t) };
                 let name = self.c.text(self.c.child(e, "function").expect("a callee")).to_string();
@@ -1702,3 +1715,4 @@ enum Callee {
     Func(u32),
     Builtin(Builtin, Vec<Ty>),
 }
+

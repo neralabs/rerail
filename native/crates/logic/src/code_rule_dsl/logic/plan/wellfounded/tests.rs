@@ -108,6 +108,10 @@
         assert_eq!(proofs.of(&set(&["below"])).map(|m| m.order), Ok(Order::Down));
         assert!(proofs.of(&set(&["reach"])).is_err());
         assert_eq!(proofs.of(&set(&["below", "reach"])), Err("not the program's component".into()));
+        // Kept by the version's identity (t33 K4): its rows read back as it.
+        use crate::code_rule_dsl::logic::program_image::manager::Analysis as _;
+        let rows = proofs.rows(&placed.v).expect("rows");
+        assert_eq!(Proofs::of_rows(&placed.v, &rows).as_ref(), Some(&*proofs));
     }
 
     /// Same-node steps without a cycle are ranked: a relation after the ones it reads at its node.

@@ -130,12 +130,6 @@ const SCRATCH: &[&str] = &[
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
 const NOT_YET_TABLES: &[(&str, &str)] = &[
-    // The cost model fitted from `samples`, per machine (planning's placement).
-    ("models", "6"),
-    ("run_record", "1"),
-    ("derivations", "1"),
-    ("derivation_inputs", "1"),
-    ("name_bindings", "1"),
     ("corpus_plans", "3"),
     ("corpus_plan_relations", "3"),
     ("corpus_manifests", "3"),
@@ -144,24 +138,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("corpus_live", "3"),
     ("corpus_state", "3"),
     ("corpus_decided", "3"),
-    ("stat_blob", "6"),
-    ("kind_size", "6"),
-    ("edge_freq", "6"),
-    ("tape_kind_counts", "6"),
-    ("term_freq", "6"),
-    ("term_kind_freq", "6"),
-    ("term_node_freq", "6"),
-    ("term_coverage", "6"),
-    ("text_matcher", "7"),
-    ("text_term", "7"),
-    ("text_pending", "7"),
-    ("prefilter_sets", "7"),
-    ("term_postings", "7"),
-    ("vocabulary_predicate", "7"),
-    ("vocabulary_term", "7"),
-    ("vocabulary_literal", "7"),
-    ("vocabulary_pending", "7"),
-    ("search_index_sets", "7"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
 /// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
@@ -175,8 +151,15 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// predecessor's tree result segments, which nothing called outside their tests (t33 step 3); 33 when the workspace's
 /// results, their catalogs and checks and its completed directories became entries of the per-file memo (t33 step 8); 31
 /// when the fact relations' column statistics went, which nothing wrote but the demand's terminal estimate, now a kept
-/// fact (t33 step 6).
-const NOT_YET_TABLES_PIN: usize = 31;
+/// fact (t33 step 6); 30 when the corpus path's statistics (`stat_blob`) became kept relations, one partition a memo
+/// plan (t33 step 6); 14 when the prefilter's per-tape access paths, its store-wide counts and both vocabularies became
+/// kept facts of the store, read through virtual tables of their names (t33 steps 6 and 7); 13 when the search index
+/// did (t33 step 7); 12 when the observer's run records (the Git files' listing, the cone's rounds, the Git functors'
+/// answers, the constants, the whole-run cutoff) became kept facts of the observer's space (t33 step 1); 9 when the
+/// derivation graph (names' bindings, derivations and their inputs) became kept facts of the store, read through virtual
+/// tables of their names (t33 step 1); 8 when the cost model saved per machine became a kept fact of the statistics' store
+/// (`costs::models`, t33 step 6).
+const NOT_YET_TABLES_PIN: usize = 8;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
@@ -318,6 +301,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/search.rs", "OWN_PLANNED"),
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
+    ("content_store/prefilter.rs", "REJECT_TERM"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.

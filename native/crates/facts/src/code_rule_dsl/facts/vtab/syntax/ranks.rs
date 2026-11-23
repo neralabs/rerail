@@ -29,6 +29,21 @@ pub enum Item {
     /// A node after a numbered sibling: its parent's child past the first (the `next_sibling` view's rows, by the
     /// later node).
     Sibling = 3,
+    /// A spread node (`granules::SPREAD`: `*args`, `...xs`; the `spread` view's rows).
+    Spread = 4,
+    /// A lexical token (ESLint's token store, `tokens`): a numbered token, or a numbered node that is a tape leaf with
+    /// text and no comment. In tape order their spans only grow.
+    Lexeme = 5,
+    /// A numbered node or token whose subtree holds a lexeme (`first_token`'s and `last_token`'s rows).
+    Leads = 6,
+    /// One with a lexeme before it (`token_before`'s rows).
+    Follows = 7,
+    /// One with a lexeme after its subtree (`token_after`'s rows).
+    Precedes = 8,
+    /// An anonymous child of a numbered node, of any width (`op`'s rows: a token, or a zero-width child the tape
+    /// stores, which no token numbers). A Python two-word operator is one (`not in`, `is not`: the grammar's alias
+    /// of the two words, one anonymous node).
+    Op = 9,
 }
 
 /// The items, as `Item`'s numbers.
@@ -39,12 +54,8 @@ const WORDS: usize = rerail_clif::ids::WORDS as usize;
 /// Item `item`'s count before group `g` (the words after the bits).
 #[inline]
 fn before_of(g: &[u64; WORDS], item: Item) -> u32 {
-    match item {
-        Item::Node => g[ITEMS] as u32,
-        Item::Token => (g[ITEMS] >> 32) as u32,
-        Item::Field => g[ITEMS + 1] as u32,
-        Item::Sibling => (g[ITEMS + 1] >> 32) as u32,
-    }
+    let i = item as usize;
+    (g[ITEMS + i / 2] >> (32 * (i & 1))) as u32
 }
 
 /// Items a select sample stands for.
@@ -81,7 +92,66 @@ impl Marks<'_> {
     }
 }
 
+impl Marks<'_> {
+    /// The token order's items (`Item::Lexeme`, `Leads`, `Follows`, `Precedes`), after the walk has marked the nodes and
+    /// tokens: a numbered token is a lexeme, a numbered node one where `leaf` says so; then, back from the last, each
+    /// numbered place's: a lexeme in its subtree (up to `subtree_end`), one before it, one past its subtree.
+    pub fn token_order(&mut self, leaf: impl Fn(u32) -> bool, subtree_end: impl Fn(u32) -> u32) {
+        let (node, token) = (Item::Node as usize, Item::Token as usize);
+        let (mut first, mut last) = (None, 0);
+        for g in 0..self.groups.len() {
+            let base = (self.first + g as u32) * 64;
+            let group = self.groups[g];
+            let mut lexemes = group[token];
+            let mut m = group[node];
+            while m != 0 {
+                let j = m.trailing_zeros();
+                m &= m - 1;
+                if leaf(base + j) {
+                    lexemes |= 1 << j;
+                }
+            }
+            if lexemes != 0 {
+                first.get_or_insert(base + lexemes.trailing_zeros());
+                last = base + 63 - lexemes.leading_zeros();
+            }
+            self.groups[g][Item::Lexeme as usize] = lexemes;
+        }
+        let Some(first) = first else { return };
+        // The first lexeme at or after the place being read, back from the end.
+        let mut next = u32::MAX;
+        for g in (0..self.groups.len()).rev() {
+            let base = (self.first + g as u32) * 64;
+            let group = self.groups[g];
+            let mut m = group[node] | group[token];
+            let (mut leads, mut follows, mut precedes) = (0u64, 0u64, 0u64);
+            while m != 0 {
+                let j = 63 - m.leading_zeros();
+                m &= !(1 << j);
+                let x = base + j;
+                if group[Item::Lexeme as usize] >> j & 1 != 0 {
+                    next = x;
+                }
+                let end = subtree_end(x);
+                leads |= u64::from(next < end) << j;
+                follows |= u64::from(first < x) << j;
+                precedes |= u64::from(last >= end) << j;
+            }
+            let w = &mut self.groups[g];
+            w[Item::Leads as usize] = leads;
+            w[Item::Follows as usize] = follows;
+            w[Item::Precedes as usize] = precedes;
+        }
+    }
+}
+
 impl Ranks {
+    /// Numbered `item`s before tape node `x`, `x` anywhere past the index too (its count there).
+    #[inline]
+    pub fn rank_to(&self, item: Item, x: u32) -> u32 {
+        if x / 64 >= self.first + self.groups.len() as u32 - 1 { self.count(item) } else if x < self.first * 64 { 0 } else { self.rank(item, x) }
+    }
+
     /// The numbered items among tape nodes `a..b`, marked by `walk`, in `block`.
     pub fn build(block: &Arc<Block>, a: u32, b: u32, walk: impl FnOnce(&mut Marks<'_>)) -> Self {
         let first = a / 64;
@@ -90,8 +160,12 @@ impl Ranks {
         let groups = Cells::build(block, n, |groups| {
             walk(&mut Marks { first, groups });
             for g in groups.iter_mut() {
-                g[ITEMS] = u64::from(count[0]) | u64::from(count[1]) << 32;
-                g[ITEMS + 1] = u64::from(count[2]) | u64::from(count[3]) << 32;
+                for (k, c) in count.iter().enumerate() {
+                    if k & 1 == 0 {
+                        g[ITEMS + k / 2] = 0;
+                    }
+                    g[ITEMS + k / 2] |= u64::from(*c) << (32 * (k & 1));
+                }
                 for (c, bits) in count.iter_mut().zip(&g[..ITEMS]) {
                     *c += bits.count_ones();
                 }
@@ -114,7 +188,7 @@ impl Ranks {
             })
             .expect("a batch's block holds its projection")
         };
-        let samples = [sample(Item::Node), sample(Item::Token), sample(Item::Field), sample(Item::Sibling)];
+        let samples = [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes, Item::Op].map(sample);
         let desc = Desc::<Numbering>::new(block);
         let d = desc.as_ptr();
         // SAFETY: the descriptor is this build's alone, and the runs point at cells of the same block, which live

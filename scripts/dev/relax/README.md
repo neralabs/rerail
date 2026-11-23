@@ -267,6 +267,30 @@ kernel runs that handler first. `progsig::fatal_fault` now delivers the fault to
 handler on the faulting thread, at its recovery point and outside any compile. The handler gets
 a siginfo naming the address and no context. The process then ends by the signal as before.
 
+### 15. NEON's `vmull_high_u32`, `vcntq_u8`, `vclzq_u32` and `Atomic::from_ptr`
+
+`rerail-ukl-aot`'s checked-in kernels (UKL written as NEON Rust, decision 0567) call them, and
+Relax's std had none of them. They are in the fork's `core::arch::aarch64` and
+`core::sync::atomic`, as rustc's core has them.
+
+### 16. A program the run starts is told the disk's paths
+
+Under `RELAX_SHARE` a crate's `CARGO_MANIFEST_DIR` is the share's mount
+(`~/.relax/vfs/share/<name>/...`), which only the run's own file calls can open. So a program the
+run started was handed paths that are not there: `clang -E` over a UKL header in rerail-ukl's
+tests found no such file. std's Unix `Command` now passes the program's name and its arguments
+through `relax_vfs_shown`, the host's `shown`, which names each folder mount's paths as the disk
+does. A run that starts its own program again keeps the mount's paths, because its stores are
+keyed by them.
+
+### 17. A guarded or-arm's guard locals are made at the arm's start
+
+Relax lowers a guarded arm's guard once per or-alternative, as rustc tries each candidate. A local
+the guard declares (`matches!(t, A(_, e) | B(_, e) if { let mut v = …; v.contains(n) })`) had its
+slot address made at the first lowering, in the first alternative's blocks, and the other
+alternatives read that register undefined: a segfault in safe code (rerail-rr-parser). The
+lowering now makes those addresses at the arm's start (`guard_slots` in `lower.rs`).
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every

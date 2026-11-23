@@ -193,10 +193,18 @@ impl Sketch {
         for c in s.words[..D * W].iter_mut() {
             *c = i64::from(int()?);
         }
-        let mask = int()? as u32;
+        // Every level's page made at once, in level order (as `level_mut` would make them one at a time, each a
+        // growth of the block).
+        let mask = int()? as u32 & ((1u64 << LEVELS) - 1) as u32;
+        s.words.resize(D * W + mask.count_ones() as usize * M, 0);
+        let mut pages = 0;
         for level in 0..LEVELS {
             if mask & 1 << level != 0 {
-                for c in s.level_mut(level).iter_mut() {
+                pages += 1;
+                s.page[level] = pages as u8;
+                s.open |= 1 << level;
+                let at = D * W + (pages - 1) * M;
+                for c in s.words[at..at + M].iter_mut() {
                     *c = i64::from(int()?);
                 }
             }

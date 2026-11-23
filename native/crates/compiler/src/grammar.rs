@@ -801,7 +801,7 @@ pub fn desugared(stmts: &[Stmt], tokens: &[String]) -> Vec<Stmt> {
     let mut out: Vec<Stmt> = stmts
         .iter()
         .map(|s| match s {
-            Stmt::Node { kind, nested, whole, body } => Stmt::Node { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced, tokens) },
+            Stmt::Node { kind, nested, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, whole: *whole, padded: *padded, body: desugar(body, &mut balanced, tokens) },
             Stmt::Choice { name, supertype, nested, body } => Stmt::Choice { name: name.clone(), supertype: supertype.clone(), nested: *nested, body: desugar(body, &mut balanced, tokens) },
             s => s.clone(),
         })
@@ -820,7 +820,7 @@ fn gather(stmts: &[Stmt], tokens: &[String]) -> (Vec<Rule>, Vec<(String, Option<
     let mut balanced = Vec::new();
     for s in stmts {
         match s {
-            Stmt::Node { kind, nested, whole, body } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced, tokens), own: true, supertype: None }),
+            Stmt::Node { kind, nested, whole, body, .. } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced, tokens), own: true, supertype: None }),
             Stmt::Choice { name, supertype, nested: true, body } => nested_choices.push(Rule { kind: name.clone(), nested: true, whole: false, body: desugar(body, &mut balanced, tokens), own: false, supertype: supertype.clone() }),
             Stmt::Choice { name, supertype, body, .. } => choices.push((name.clone(), supertype.clone(), desugar(body, &mut balanced, tokens))),
             _ => {}

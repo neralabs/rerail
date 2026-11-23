@@ -230,6 +230,11 @@ pub struct Mark {
     /// extra pending last no width, at the token (`SETTLE m=2`), as the lean lexer's `asi`
     /// loses it.
     pub lose: Option<u16>,
+    /// `, loses since …`: its questions' first entry, at whose tokens each test of the mark gives
+    /// the first extra pending no width, at the next one's start (`SETTLE m=36`), and the
+    /// questions.
+    pub moved: Option<u16>,
+    pub moves: Vec<::bitlex::syntax::GapPattern>,
     /// The questions themselves (`GapPattern`), whose rows `lower` writes (`Lowered::gap_patterns`).
     pub drops: Vec<::bitlex::syntax::GapPattern>,
     pub loses: Vec<::bitlex::syntax::GapPattern>,
@@ -248,6 +253,14 @@ pub struct Mark {
     /// `, ends`: hidden, and a level that may end where it holds and does not take it ends
     /// there, its caller to take it.
     pub ends: bool,
+}
+
+impl Mark {
+    /// Whether a level that may end at it asks its questions (`loses`, `loses since`, `refuses`):
+    /// it has a flag (`lose_flag`).
+    pub fn asks(&self) -> bool {
+        self.lose.is_some() || self.moved.is_some() || self.refuse.is_some()
+    }
 }
 
 /// What a state does at a mark it tests: its arm, a refusal, or its level's end (`Mark::ends`).
@@ -269,6 +282,8 @@ struct Emit<'a> {
     /// where an extra opens the root (`grammar::with_extras`).
     token_extras: bool,
     whole: bool,
+    /// A `whole padded` root: `ACCEPT m=1`, its start its first token's or comment's.
+    padded: bool,
     /// The counts of tokens (`COUNT`): each one's ups' and downs' kinds.
     counts: Vec<(Vec<u16>, Vec<u16>)>,
     /// The local checks (`CHECK`): each one's token kinds, and the mark whose refusing states
@@ -929,6 +944,21 @@ impl Emit<'_> {
                 let s = self.string(&w);
                 self.mark_words.insert(k as u8, s);
             }
+            // A hidden mark that ends levels, with a flag (`lose_flag`): it ends this level only
+            // where a caller's level is the mark's, as the lean parser asks `asi` only at a
+            // statement's level (`stmt`); elsewhere (inside parentheses) it is skipped, and the
+            // level reads on. `FLAG m=2` runs the next word where the flag is set.
+            let m = &self.marks[k];
+            let (gated, flag) = (at == AtMark::End && m.ends && m.hidden && m.asks(), m.lose_flag);
+            let over = gated.then(|| {
+                self.push("FLAG", 2, Arg::Num(flag));
+                let test = self.pc();
+                self.push("GOTO", 0, Arg::Pc(0));
+                let over = self.pc();
+                self.push("GOTO", 0, Arg::Pc(0));
+                self.words[test as usize].2 = Arg::Pc(self.pc());
+                over
+            });
             let m = &self.marks[k];
             // Its order, and 32 when the end has it.
             // An arm that calls: the mark kept, for the callee, which tests it again and takes it.
@@ -952,6 +982,13 @@ impl Emit<'_> {
                 _ => {}
             }
             let m = &self.marks[k];
+            let moving = crate::program::SETTLE_MOVE;
+            match (m.moved, at) {
+                (Some(l), AtMark::Arm(_)) => self.push("SETTLE", moving, Arg::Num(l)),
+                (Some(l), AtMark::End) => self.push("SETTLE", moving + 1 + m.lose_flag as u8, Arg::Num(l)),
+                _ => {}
+            }
+            let m = &self.marks[k];
             self.push("MARK", k as u8 | if m.end { crate::program::MARK_END } else { 0 } | if keep { MARK_KEEP } else { 0 }, Arg::Num(m.mask));
             match at {
                 AtMark::Arm(a) => {
@@ -963,6 +1000,9 @@ impl Emit<'_> {
                     self.push("GOTO", 0, Arg::Pc(0));
                 }
                 AtMark::Refuse => self.push("STOP", 0, Arg::None),
+            }
+            if let Some(over) = over {
+                self.words[over as usize].2 = Arg::Pc(self.pc());
             }
         }
     }
@@ -1043,7 +1083,7 @@ impl Emit<'_> {
     /// `i` returning to state `ret[i]`: set where that state takes the mark (the level it returns
     /// to is the mark's), kept where it ends at it (its caller decides), else cleared.
     fn lose_flags(&self, ret: &[u16], flags: &mut Vec<(u8, u16, bool)>) {
-        for (k, m) in self.marks.iter().enumerate().filter(|(_, m)| m.lose.is_some() || m.refuse.is_some()) {
+        for (k, m) in self.marks.iter().enumerate().filter(|(_, m)| m.asks()) {
             for (i, &p) in ret.iter().enumerate() {
                 match self.tests_at(usize::from(p)).iter().find(|t| t.0 == k).map(|t| t.1) {
                     Some(AtMark::Arm(_)) => flags.push((i as u8, m.lose_flag, true)),
@@ -1173,7 +1213,7 @@ impl Emit<'_> {
                 for _ in 0..c + u8::from(nested && st.own) {
                     self.push("CLOSE", 0, Arg::None);
                 }
-                self.push(if nested { "RETURN" } else { "ACCEPT" }, u8::from(nested), Arg::None);
+                self.push(if nested { "RETURN" } else { "ACCEPT" }, u8::from(nested || self.padded), Arg::None);
                 pc
             }
         };
@@ -1404,12 +1444,13 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool, token_extras: bool, counts: &[(Vec<u16>, Vec<u16>)], checks: &[(Vec<u16>, Option<u16>)]) -> Result<Lowered, String> {
+pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, (whole, padded): (bool, bool), survey: bool, rules: bool, token_extras: bool, counts: &[(Vec<u16>, Vec<u16>)], checks: &[(Vec<u16>, Option<u16>)]) -> Result<Lowered, String> {
     let mut e = Emit {
         counts: counts.to_vec(),
         checks: checks.to_vec(),
         token_extras,
         whole,
+        padded,
         rule_of: Vec::new(),
         rule: 0,
         by_rules: rules,
@@ -1549,7 +1590,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     // in this order), their elements at offsets from the token: `after`'s before it, the last
     // at -1; `before`'s from it.
     let mut gap_patterns = Vec::new();
-    for (p, qs) in marks.iter().flat_map(|m| [&m.drops, &m.loses, &m.refuses, &m.refuses_taken]).filter(|q| !q.is_empty()).enumerate() {
+    for (p, qs) in marks.iter().flat_map(|m| [&m.drops, &m.loses, &m.moves, &m.refuses, &m.refuses_taken]).filter(|q| !q.is_empty()).enumerate() {
         for q in qs.iter() {
             // `since`: `after`'s from the grammar token before (0).
             let a = q.after.len() as i8;

@@ -2448,7 +2448,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let refusal = crate::pool::zeroed::<u32>(rows.len() * 6)?;
     let group = group_lanes()?;
     assert!(2 * segments.warm < segments.blocks, "a segment is longer than its two warm-ups");
-    // Every pass's kernel, made together (one program on OpenCL).
+    // Every pass's kernel (`serial_kernels`), made together (one program on OpenCL).
     let [cone, cone_prefix, group_pass, lanes_run, lanes_again, run, check, count, prefix, write, lanes_write, records_pass] =
         kernels(source_key, source, serial_kernels())?;
     let lanes = lanes_on();

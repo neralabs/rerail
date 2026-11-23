@@ -112,9 +112,15 @@ pub const CHECK: u8 = 0x66;
 /// lost: of no width, after the token (decision 0451, the lean lexer's `asi`). `m=19`, and
 /// `m=20+F` where flag `F` is set (`mark … , refuses …`): where gap pattern `operand` holds, the
 /// file is refused (what the lean lexer's `asi` reads there the grammar does not say yet).
+/// `m=36`, and `m=37+F` where flag `F` is set (`mark … , loses since …`): where gap pattern
+/// `operand` holds, the first extra pending is of no width at the start of the one after it, in
+/// its place (the lean lexer's `asi` reads a block comment through to another comment, loses its
+/// bytes there, and is asked again after that one).
 pub const SETTLE: u8 = 0x84;
 /// `SETTLE`'s first refusing mode (`m=19`; `m=20+F` with a flag).
 pub const SETTLE_REFUSE: u8 = 19;
+/// `SETTLE`'s first moving mode (`m=36`; `m=37+F` with a flag).
+pub const SETTLE_MOVE: u8 = 36;
 
 // The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
 // sources (a file's tape, a range of the TU's arena), with a token register `T`, a macro register

@@ -452,6 +452,48 @@ The template's findings stand at the file's lines.
 
    Both are under their targets with the same findings. Against this decision's measurement before the passes
    (one pack 0.983 T, normal packs 2.179 T), the narrow copies' cost is gone and more.
+7. **Rule 8 across chunks and runs; rule 7 on the memo path.** A pass's tape-local rows of a value are kept under
+   the value, and a later chunk or run that places its text is given them and runs none of the pass's strata over it.
+   Chosen (2026-11-22, the user: "Value entries"): a memo entry per tape value, keyed by its text and the program,
+   holding the pass's frontier rows with a document column; not a block format of its own.
+
+   Done (2026-11-22):
+   - **The rewrite** (`preparation::kept::Kept`: in `front_of` for a whole program, before `BaseInputs`; for a pack,
+     in `parts::front` on its whole program before it is split, since a pass's relations and their readers may lie
+     in different parts). For each kept pass (`kept::groups`):
+     - each tape-local relation `R` becomes `R_rr_kd(rr_kd, …)`, led by its value's document;
+     - the pass's nodes become `rr_pass_<p>_rr_fresh(rr_kd, n)`, the nodes of its fresh roots;
+     - `rr_fresh_roots_<p>(r) :- roots(r), !rr_kept_roots_<p>(r)`: the roots no entry gave;
+     - each frontier relation (one a rule outside the pass reads) gets an input of kept rows, `R_rr_kept`, and the
+       host's read of it, `rr_read_<p>_<R>`: its made rows and its kept ones;
+     - each rule outside reads that read in place of `R`.
+
+     A pass is kept only where its roots are named once and have no holes, no tape-local relation is an output, and
+     each tape-local rule binds its document. Otherwise it runs as before, and the profile names why
+     (`the passes kept by their tapes`).
+   - **What stays as written.** Two names say so:
+     - `rr:by-name` (`plan::fields::BY_NAME`): the relations the run reads by name at a chunk's end (the fresh roots,
+       the frontier's tape rows, and the host's read, whose document column is the split's location). Merge, inline
+       and `columns no reader reads` leave them alone.
+     - `front::document_column`: the `_rr_kd` and `_rr_kept` relations' column 0, so the split keeps them file-local.
+   - **The engine** (`plan::corpus`):
+     - A chunk binds each kept input empty, grown with its values (`Values::add`).
+     - A value made in the chunk (`Got::New`) is looked up as `tape:<grammar>:<key>` by its text's digest
+       (`value_entry`). That is no statement inside the waves: the run admits each path's newest entry before its
+       first wave, and reads what it queued. Its rows are given as the request's answer and bound as the value's part.
+     - At the chunk's end, each value whose root ran fresh is written as its entry (`kept_rows`): its roots and its
+       frontier rows. The run holds those relations to the chunk's end with its exports.
+   - **Rungs.**
+     - 7.1 `a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context` (rule 7 on the memo path): a comment added
+       to a file runs no stratum of the pass, and its rows stand; a new annotation text runs it, with the new rows.
+     - 7.2 `a_text_a_later_chunk_places_runs_no_stratum_of_the_context` (rule 8 across chunks): two files holding one
+       annotation text, each a chunk of its own, do the pass's work of one file, and both files' rows stand. With the
+       entry lookup off, the second chunk doubles the work, so the rung fails then.
+     - 2.10 now names the pass's relation `rr_pass_quoted_ann_ident_rr_kd`.
+   - **Checks.** The pass, context, tape and memo tests of rerail-tests-corpus and rerail-rr-root (48) pass.
+     corpus0 x B-now, normal packs, gives 463 findings, digest 75193ca656bd. Its profile keeps the annotation pass:
+     23 tape-local relations, 5 in its frontier (`def_outside`, `dotted_expr`, `in_first_iter`, `nameref`,
+     `tp_ref`).
 
 ## Rule 8, measured (2026-11-22)
 
@@ -486,9 +528,11 @@ texts, and 6 chunks.
 
 ## Open
 
-- The declarations' names (`.context`, `.from`, `.export`, `.root`) and the qualified read (`annotation.ann_type`),
-  against Soufflé's own components (`.comp`, `.init`, `inst.rel`), which instantiate rules textually but say nothing
-  of a document set.
-- Planning: decided interleaved (2026-11-21, the user: "try interleaved planning then"): a pass's strata are planned
-  in one plan with its host's, ordered by rule 4; a program of its own, with its own plan and image, stays the
-  alternative if one plan's size or its replanning costs show.
+Both items closed (2026-11-22):
+
+- **The declarations' names.** `.context`, `.from`, `.export`, `.root` and the qualified read stay (the user: "Keep
+  our names"). Soufflé's `.comp`/`.init`/`inst.rel` instantiate rules textually, and say nothing of a document set:
+  a context's roots and its host are what these declarations name.
+- **Planning.** One plan, the passes' strata ordered by rule 4 among the host's, stays. On the 40-file hogql run, the
+  passes took 0.005 s of 0.035 s of planning, 26 of 214 strata and 75 of 561 rules. Neither the plan's size nor its
+  replanning cost argues for a program of its own.

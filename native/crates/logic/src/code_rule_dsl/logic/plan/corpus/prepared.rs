@@ -34,8 +34,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155; 106: the
-/// decisions preparing made, decision 0269). It names the shipped pointer (`shipped_key`).
-const POINTER: u32 = 106;
+/// decisions preparing made, decision 0269; 107: the memo's strata's leaves, each set of them once). It names the
+/// shipped pointer (`shipped_key`).
+const POINTER: u32 = 108;
 
 /// The pointer's plan: the engine build, the grammar version and `key` (the program's texts, the dialect and the
 /// run's additions).
@@ -58,7 +59,9 @@ pub(super) fn plans(key: &[u8; 32]) -> Vec<[u8; 32]> {
 /// The relations a prepared program adds to the program schema, and their columns.
 pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
-        ("prepared_domain", &["rel:sym", "i:int", "domain:sym"]),
+        // A relation's columns' domains, one letter a column (`domain_code`): a row a relation, not a column (t33 K4:
+        // the pointer's rows are what each new process reads).
+        ("prepared_domain", &["rel:sym", "domains:sym"]),
         ("prepared_op", &["k:int", "atom:int"]),
         ("prepared_set", &["k:int", "rel:sym"]),
         ("prepared_set_kind", &["k:int", "i:int", "kind:int"]),
@@ -78,15 +81,17 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         // The split (`file_local::programs_of`): what it found, the file-local relations and those of constants. Its two
         // parts are the lowered program's rules, a part each, made from it again on reading (`file_local::assemble`).
         // The per-file memo's strata of the file-local part (`memo::Strata`, decision 0246 §4): the part's digest,
-        // each relation's strata identity and the leaves it reaches.
+        // each relation's strata identity and the set of leaves it reaches (`set`), each set once (relations of one
+        // stratum and their readers reach the same leaves: kept a relation each, they were most of the pointer's rows).
         ("prepared_memo_part", &["digest:sym"]),
-        ("prepared_memo_stratum", &["k:int", "rel:sym", "id:sym"]),
-        ("prepared_memo_reach", &["k:int", "i:int", "rel:sym"]),
+        ("prepared_memo_stratum", &["k:int", "rel:sym", "id:sym", "set:int"]),
+        ("prepared_memo_reach", &["set:int", "rels:sym"]),
         ("prepared_split", &["ok:int"]),
         ("prepared_file_local", &["k:int", "rel:sym"]),
         ("prepared_constant", &["k:int", "rel:sym"]),
-        ("prepared_location", &["rel:sym", "i:int", "col:int"]),
-        ("prepared_same_doc", &["rel:sym", "i:int", "col:int"]),
+        // A relation's columns, in order, comma-separated (empty for none): a row a relation.
+        ("prepared_location", &["rel:sym", "cols:sym"]),
+        ("prepared_same_doc", &["rel:sym", "cols:sym"]),
         // The decisions preparing made (decision 0269): a run that reuses the program states them.
         ("prepared_decided", &["k:int", "topic:sym", "text:sym", "count:int"]),
     ];
@@ -96,25 +101,38 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         .collect()
 }
 
-fn domain_name(d: lower::Domain) -> &'static str {
+/// A domain's letter in `prepared_domain`'s `domains`.
+fn domain_code(d: lower::Domain) -> char {
     match d {
-        lower::Domain::Int => "int",
-        lower::Domain::Node => "node",
-        lower::Domain::Kind => "kind",
-        lower::Domain::Field => "field",
-        lower::Domain::Name => "name",
+        lower::Domain::Int => 'i',
+        lower::Domain::Node => 'n',
+        lower::Domain::Kind => 'k',
+        lower::Domain::Field => 'f',
+        lower::Domain::Name => 'm',
     }
 }
 
-fn domain_of(name: &str) -> Option<lower::Domain> {
-    Some(match name {
-        "int" => lower::Domain::Int,
-        "node" => lower::Domain::Node,
-        "kind" => lower::Domain::Kind,
-        "field" => lower::Domain::Field,
-        "name" => lower::Domain::Name,
+fn domain_of_code(c: char) -> Option<lower::Domain> {
+    Some(match c {
+        'i' => lower::Domain::Int,
+        'n' => lower::Domain::Node,
+        'k' => lower::Domain::Kind,
+        'f' => lower::Domain::Field,
+        'm' => lower::Domain::Name,
         _ => return None,
     })
+}
+
+/// A list of columns as `prepared_location`'s `cols` keeps it, and back.
+fn cols_text(cols: &[usize]) -> String {
+    cols.iter().map(usize::to_string).collect::<Vec<_>>().join(",")
+}
+
+fn cols_of_text(text: &str) -> Option<Vec<usize>> {
+    if text.is_empty() {
+        return Some(Vec::new());
+    }
+    text.split(',').map(|c| c.parse().ok()).collect()
 }
 
 /// What preparing found, as facts: `prepared`'s other than its two programs.
@@ -130,9 +148,7 @@ fn rest_of(prepared: &Prepared) -> Facts {
     let n = |x: usize| Value::Int(x as i64);
     let mut row = |rel: &str, values: Vec<Value>| facts.entry(rel.to_owned()).or_default().push(values.into());
     for (rel, domains) in prepared.lowered.domains.iter() {
-        for (i, d) in domains.iter().enumerate() {
-            row("prepared_domain", vec![s(rel), n(i), s(domain_name(*d))]);
-        }
+        row("prepared_domain", vec![s(rel), s(&domains.iter().map(|d| domain_code(*d)).collect::<String>())]);
     }
     for (k, atom) in prepared.lowered.ops.iter().enumerate() {
         row("prepared_op", vec![n(k), Value::Int(*atom)]);
@@ -173,10 +189,13 @@ fn rest_of(prepared: &Prepared) -> Facts {
     // The per-file memo's strata (decision 0246 §4), with the digest of the file-local part they are of.
     if let Some((digest, strata)) = prepared.memo_strata.get() {
         row("prepared_memo_part", vec![s(&hex(digest))]);
+        let mut sets: std::collections::HashMap<&[String], usize> = std::collections::HashMap::new();
         for (k, (rel, (id, reached))) in strata.by_rel.iter().enumerate() {
-            row("prepared_memo_stratum", vec![n(k), s(rel), s(&hex(id))]);
-            for (i, r) in reached.iter().enumerate() {
-                row("prepared_memo_reach", vec![n(k), n(i), s(r)]);
+            let fresh = sets.len();
+            let set = *sets.entry(&reached[..]).or_insert(fresh);
+            row("prepared_memo_stratum", vec![n(k), s(rel), s(&hex(id)), n(set)]);
+            if set == fresh {
+                row("prepared_memo_reach", vec![n(set), s(&reached.join(","))]);
             }
         }
     }
@@ -189,11 +208,7 @@ fn rest_of(prepared: &Prepared) -> Facts {
     }
     for (which, map) in [("prepared_location", &prepared.split.locations), ("prepared_same_doc", &prepared.split.same_doc)] {
         for (rel, cols) in map {
-            // A presence row (index -1), so a relation with no columns reads back as itself.
-            row(which, vec![s(rel), Value::Int(-1), Value::Int(-1)]);
-            for (i, c) in cols.iter().enumerate() {
-                row(which, vec![s(rel), n(i), n(*c)]);
-            }
+            row(which, vec![s(rel), s(&cols_text(cols))]);
         }
     }
     for (k, ((rel, _), (op, patterns))) in prepared.vocabulary.tests.iter().zip(&prepared.vocabulary.specs).enumerate() {
@@ -265,18 +280,16 @@ pub fn prepared_of(
     version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     dialect: GrammarDialect,
 ) -> Result<Prepared, String> {
-    let mut by_rel: BTreeMap<String, Vec<(i64, lower::Domain)>> = BTreeMap::new();
-    for r in facts.get("prepared_domain").into_iter().flatten() {
-        let d = text(&r[2])?;
-        by_rel.entry(text(&r[0])?).or_default().push((int(&r[1])?, domain_of(&d).ok_or_else(|| bad(format!("no domain {d}")))?));
-    }
-    let domains: lower::Domains = by_rel
+    let domains: lower::Domains = facts
+        .get("prepared_domain")
         .into_iter()
-        .map(|(rel, mut ds)| {
-            ds.sort_by_key(|(i, _)| *i);
-            (rel, ds.into_iter().map(|(_, d)| d).collect())
+        .flatten()
+        .map(|r| {
+            let codes = text(&r[1])?;
+            let ds = codes.chars().map(|c| domain_of_code(c).ok_or_else(|| bad(format!("no domain {c}")))).collect::<Result<Vec<_>, String>>()?;
+            Ok((text(&r[0])?, ds))
         })
-        .collect();
+        .collect::<Result<_, String>>()?;
     let ops: Vec<i64> = indexed(facts, "prepared_op")?.iter().map(|(_, r)| int(&r[0])).collect::<Result<_, _>>()?;
     let ops: [i64; 3] = ops.try_into().map_err(|_| bad("not three operators"))?;
     let kinds = nested(facts, "prepared_set_kind")?;
@@ -323,7 +336,7 @@ pub fn prepared_of(
     }
     let vocabulary = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the text tests' vocabulary".into());
-        let mut vocabulary = Vocabulary::from_specs(&relations, specs)?;
+        let mut vocabulary = Vocabulary::from_kept_specs(&relations, specs);
         vocabulary.matches = indexed(facts, "prepared_match")?
             .iter()
             .map(|(_, r)| regex::Regex::new(&text(&r[0])?).map(Arc::new).map_err(bad))
@@ -335,17 +348,10 @@ pub fn prepared_of(
         true => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the split's parts, of the lowered program and what the split found".into());
             let columns = |rel: &str| -> Result<BTreeMap<String, Vec<usize>>, String> {
-                let mut by: BTreeMap<String, Vec<(i64, usize)>> = BTreeMap::new();
-                for r in facts.get(rel).into_iter().flatten() {
-                    let at = by.entry(text(&r[0])?).or_default();
-                    if int(&r[1])? >= 0 {
-                        at.push((int(&r[1])?, int(&r[2])? as usize));
-                    }
-                }
-                Ok(by.into_iter().map(|(rel, mut cs)| {
-                    cs.sort_by_key(|(i, _)| *i);
-                    (rel, cs.into_iter().map(|(_, c)| c).collect())
-                }).collect())
+                facts.get(rel).into_iter().flatten().map(|r| {
+                    let cols = text(&r[1])?;
+                    Ok((text(&r[0])?, cols_of_text(&cols).ok_or_else(|| bad(format!("columns {cols}")))?))
+                }).collect()
             };
             let set = |rel: &str| -> Result<std::collections::BTreeSet<String>, String> { Ok(list(rel)?.into_iter().collect()) };
             crate::code_rule_dsl::typing::file_local::assemble(version.clone(), set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
@@ -359,17 +365,18 @@ pub fn prepared_of(
     let memo_strata = std::sync::OnceLock::new();
     if let Some(part) = facts.get("prepared_memo_part").and_then(|rows| rows.first()) {
         let digest = unhex(&text(&part[0])?).ok_or_else(|| bad("a memo part's digest".to_owned()))?;
-        let mut reach: BTreeMap<i64, Vec<(i64, String)>> = BTreeMap::new();
+        // Each set once, shared by the relations that reach it.
+        let mut sets: BTreeMap<i64, Arc<[String]>> = BTreeMap::new();
         for r in facts.get("prepared_memo_reach").into_iter().flatten() {
-            reach.entry(int(&r[0])?).or_default().push((int(&r[1])?, text(&r[2])?));
+            let rels = text(&r[1])?;
+            let rels: Arc<[String]> = if rels.is_empty() { Arc::from(Vec::new()) } else { rels.split(',').map(str::to_owned).collect() };
+            sets.insert(int(&r[0])?, rels);
         }
         let mut by_rel = BTreeMap::new();
         for r in facts.get("prepared_memo_stratum").into_iter().flatten() {
-            let k = int(&r[0])?;
             let id = unhex(&text(&r[2])?).ok_or_else(|| bad("a memo stratum's identity".to_owned()))?;
-            let mut reached = reach.remove(&k).unwrap_or_default();
-            reached.sort();
-            by_rel.insert(text(&r[1])?, (id, reached.into_iter().map(|(_, r)| r).collect()));
+            let reached = sets.get(&int(&r[3])?).cloned().unwrap_or_else(|| Arc::from(Vec::new()));
+            by_rel.insert(text(&r[1])?, (id, reached));
         }
         let _ = memo_strata.set((digest, super::memo::Strata { by_rel }));
     }
@@ -442,7 +449,7 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
     super::memo::off();
     let start = std::time::Instant::now();
     // The store's, where its program's text is stored (a pointer is kept only beside its text, `record`).
-    let kept = source.and_then(|_| pointer::get(store, key));
+    let kept = source.and_then(|_| { let _s = crate::code_rule_dsl::logic::profile::span(|| "the pointer, read".into()); pointer::get(store, key) });
     let (mut facts, size) = match kept {
         Some(facts) => (facts, 0),
         None => match crate::code_rule_dsl::logic::rr::images::shipped().and_then(|b| b.get(shipped_key(key))) {
@@ -490,7 +497,7 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
         }
         None => return Ok(None),
     };
-    let got = prepared_of(&facts, source, version, dialect);
+    let got = { let _s = crate::code_rule_dsl::logic::profile::span(|| "what preparing found, read".into()); prepared_of(&facts, source, version, dialect) };
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of shipped facts; read {:.3} s, to a prepared program {:.3} s{}",
             super::phases::current().unwrap_or_else(|| "main".into()), size as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),

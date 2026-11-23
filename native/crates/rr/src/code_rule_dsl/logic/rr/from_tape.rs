@@ -131,6 +131,11 @@ impl Stmt {
         self.file.tape().line(self.node)
     }
 
+    /// Its first byte in its file's text.
+    pub fn start(&self) -> usize {
+        self.file.tape().start(self.node)
+    }
+
     /// Its text, as written.
     pub fn text(&self) -> &str {
         self.file.tape().text(self.node)
@@ -211,6 +216,11 @@ impl<'a> Tape<'a> {
 
     pub fn line(&self, n: u32) -> usize {
         self.lines.line(self.v.start(n as usize) as usize)
+    }
+
+    /// `n`'s first byte in the text.
+    pub fn start(&self, n: u32) -> usize {
+        self.v.start(n as usize) as usize
     }
 
     /// `n`'s children in order, extras (comments) left out.

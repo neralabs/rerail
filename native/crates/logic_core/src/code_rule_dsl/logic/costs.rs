@@ -10,7 +10,7 @@
 //! The writer's thread and the training's work behind the run: what they send to SQLite no wave waits for.
 //!
 //! - **The learned model** (`rerail_accel::cost_model`): after the rates, the model saved for this machine (table
-//!   `models`) is put in place, on a thread of its own. Without one, the prices are the rates (the statistics).
+//!   `models::cost_model`, a kept fact of the store) is put in place, on a thread of its own. Without one, the prices are the rates (the statistics).
 //!   Training is upkeep's alone (decision 0190): idle work, on an idle machine and never beside a run (`Retrain`),
 //!   in a pool of two threads at upkeep's quality of service. A process that exits with its run never trains (a
 //!   training beside the run held 345 MB of ep2's 610 MB peak, and never finished, Q230). A model that beats the
@@ -25,6 +25,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 pub mod join_steps;
+pub mod models;
 pub mod sql_plans;
 use rerail_accel::program_steps;
 
@@ -91,13 +92,13 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
          -- the indexes above stepped through all of them, a third of a 1-file run's CPU (decision 0285).
          CREATE INDEX IF NOT EXISTS samples_priced ON samples(machine, at) WHERE units > 0;
          CREATE INDEX IF NOT EXISTS samples_priced_by_form ON samples(machine, lane, forms, at) WHERE units > 0;
-         CREATE TABLE IF NOT EXISTS models(machine TEXT PRIMARY KEY, at REAL, trained_on INTEGER, comparison TEXT, model BLOB);
          CREATE TABLE IF NOT EXISTS program_steps(
            program TEXT PRIMARY KEY, steps REAL, size REAL, evaluations INTEGER, overruns INTEGER, last_at REAL);
          CREATE TABLE IF NOT EXISTS kernel_forms(
            machine TEXT, kind TEXT, key TEXT, name TEXT, interpreted INTEGER, compiled INTEGER, compile_seconds REAL,
            failed INTEGER, missing TEXT, first_at REAL, last_at REAL, PRIMARY KEY(machine, kind, key));",
     )?;
+    db.execute_batch(models::SCHEMA)?;
     sql_plans::create(&db)?;
     join_steps::create(&db)?;
     Ok(db)
@@ -360,14 +361,8 @@ fn read() {
         if let Ok(rates) = read_program_rates(&db) {
             program_steps::install_sums(rates);
         }
-        // The saved model's age, and the samples written since it was trained (no `models` table: none).
-        let saved = db
-            .query_row(
-                "SELECT (SELECT count(*) FROM samples s WHERE s.machine = m.machine AND s.at > m.at), m.at FROM models m WHERE m.machine = ?1",
-                [machine()],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)),
-            )
-            .ok();
+        // The saved model's age, and the samples written since it was trained (none saved: none).
+        let saved = saved_age(&db, &path);
         Ok((read_samples(&db, READ, READ_PER_FORM)?, saved))
     })();
     match r {
@@ -403,6 +398,13 @@ fn read() {
 }
 
 
+/// The saved model's samples written since it was trained, and when it was: none saved, `None`.
+fn saved_age(db: &rusqlite::Connection, path: &std::path::Path) -> Option<(i64, f64)> {
+    let saved = models::read(db, path, &machine())?;
+    let since: i64 = db.query_row("SELECT count(*) FROM samples WHERE machine = ?1 AND at > ?2", rusqlite::params![machine(), saved.at], |r| r.get(0)).ok()?;
+    Some((since, saved.at))
+}
+
 fn model_state(s: String) {
     *costs().model_state.lock().unwrap_or_else(|p| p.into_inner()) = s;
 }
@@ -412,9 +414,8 @@ fn model_state(s: String) {
 #[cfg(target_os = "macos")]
 fn load_saved(path: &PathBuf, due: bool) {
     let Ok(db) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return };
-    let saved: rusqlite::Result<(Vec<u8>, i64)> = db.query_row("SELECT model, trained_on FROM models WHERE machine = ?1", [machine()], |r| Ok((r.get(0)?, r.get(1)?)));
-    // No `models` table yet (a store from before it) reads as no model.
-    let Ok((bytes, trained_on)) = saved else {
+    // A store from before the model was a kept fact reads as none saved.
+    let Some(models::Saved { model: bytes, trained_on, .. }) = models::read(&db, path, &machine()) else {
         model_state("none saved: the prices are the rates; a training is due on an idle machine (upkeep)".into());
         return;
     };
@@ -565,20 +566,10 @@ impl rerail_accel::upkeep::Job for Retrain {
 #[cfg(target_os = "macos")]
 fn save(path: &PathBuf, model: Option<&dyn rerail_accel::models::LearnedCost>, comparison: &rerail_accel::cost_model::Comparison) -> rusqlite::Result<()> {
     let _warm = writing();
-    let db = open(path)?;
-    match model {
-        Some(m) => {
-            let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-            db.execute(
-                "INSERT OR REPLACE INTO models VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![machine(), at, m.trained_on() as i64, comparison.to_string(), m.to_bytes()],
-            )?;
-        }
-        None => {
-            db.execute("DELETE FROM models WHERE machine = ?1", [machine()])?;
-        }
-    }
-    Ok(())
+    let mut db = open(path)?;
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+    let saved = model.map(|m| models::Saved { at, trained_on: m.trained_on() as i64, comparison: comparison.to_string(), model: m.to_bytes() });
+    models::write(&mut db, path, &machine(), saved.as_ref()).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
 }
 
 
@@ -683,14 +674,7 @@ pub fn upkeep_jobs() -> Vec<rerail_accel::upkeep::Registered> {
     #[cfg(target_os = "macos")]
     {
         use std::sync::atomic::Ordering;
-        let saved = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok().and_then(|db| {
-            db.query_row(
-                "SELECT (SELECT count(*) FROM samples s WHERE s.machine = m.machine AND s.at > m.at), m.at FROM models m WHERE m.machine = ?1",
-                [machine()],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)),
-            )
-            .ok()
-        });
+        let saved = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok().and_then(|db| saved_age(&db, &path));
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
         match saved {
             Some((since, at)) => {
@@ -847,15 +831,16 @@ pub mod tests {
     #[ignore = "writes the store it is given: COSTS_COPY=<a copy of costs.sqlite> --ignored --nocapture"]
     fn a_trained_model_is_saved_and_put_in_place_again() {
         let path = std::path::PathBuf::from(std::env::var("COSTS_COPY").expect("COSTS_COPY"));
-        let db = super::open(&path).unwrap();
-        db.execute("DELETE FROM models", []).unwrap();
+        let mut db = super::open(&path).unwrap();
+        super::models::write(&mut db, &path, &super::machine(), None).unwrap();
         let samples = super::read_samples(&db, super::READ, super::READ_PER_FORM).unwrap();
         let t = std::time::Instant::now();
         assert!(!super::fit(&path, &samples, false, &|| false), "not stopped");
         let state = super::costs().model_state.lock().unwrap().clone();
         eprintln!("trained in {:.1} s: {state}", t.elapsed().as_secs_f64());
         let installed = rerail_accel::cost_model::current().expect("the model in place");
-        let (trained_on, bytes): (i64, Vec<u8>) = db.query_row("SELECT trained_on, model FROM models WHERE machine = ?1", [super::machine()], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        let saved = super::models::read(&db, &path, &super::machine()).expect("the model saved");
+        let (trained_on, bytes) = (saved.trained_on, saved.model);
         assert_eq!(trained_on as usize, installed.trained_on());
         assert_eq!(bytes, installed.to_bytes());
         eprintln!("saved: {} bytes", bytes.len());
@@ -873,7 +858,7 @@ pub mod tests {
     fn the_retraining_is_an_upkeep_job() {
         use rerail_accel::upkeep::{Due, Job, Slice, Step};
         let path = super::path().expect("RERAIL_COSTS");
-        super::open(&path).unwrap().execute("DELETE FROM models", []).unwrap();
+        super::models::write(&mut super::open(&path).unwrap(), &path, &super::machine(), None).unwrap();
         rerail_accel::cost_model::install(None);
         let jobs = super::upkeep_jobs();
         assert_eq!(jobs.len(), 2);
@@ -885,7 +870,7 @@ pub mod tests {
         assert_eq!(job.step(&Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop)), Ok(Step::Done));
         eprintln!("trained at upkeep's priority in {:.2} s wall {:.2} s CPU: {}", t.elapsed().as_secs_f64(), rerail_accel::exec::process_cpu() - c, super::costs().model_state.lock().unwrap().lines().next().unwrap_or(""));
         assert_eq!(job.due(), Due::No, "trained: not due");
-        let saved: i64 = super::open(&path).unwrap().query_row("SELECT count(*) FROM models", [], |r| r.get(0)).unwrap();
+        let saved = super::models::read(&super::open(&path).unwrap(), &path, &super::machine()).is_some();
         assert_eq!(saved as usize, rerail_accel::cost_model::current().is_some() as usize, "saved when it won");
     }
 

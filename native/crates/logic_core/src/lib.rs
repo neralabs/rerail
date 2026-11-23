@@ -111,6 +111,8 @@ pub mod code_rule_dsl {
 mod test_load {
     extern "C" fn load() {
         rerail_accel_gpu::install();
+        // The learned model's file (`costs::models`) is the store's kept facts, as boot registers it.
+        rerail_store_above::content_store::observer_store::register();
     }
     #[used]
     #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]

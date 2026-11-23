@@ -5,24 +5,19 @@ use crate::code_rule_dsl::{
 };
 use crate::content_store::ContentStore;
 
-type Counts = (Vec<(i64, i64, i64)>, Vec<(i64, i64, i64, i64)>);
+use crate::code_rule_dsl::search_index::kind_code;
+use std::collections::BTreeMap;
 
+type Counts = Vec<(i64, i64, i64)>;
+
+/// The store's kind sizes, as the SQL route reads them (`kind_size`, a table over the kept counts).
 fn counts(store: &ContentStore) -> Counts {
-    let kinds = store
-        .query_rows("SELECT kind,n,size FROM kind_size ORDER BY 1", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-        .unwrap();
-    let edges = store
-        .query_rows("SELECT pkind,ckind,field,n FROM edge_freq ORDER BY 1,2,3", [], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-        })
-        .unwrap();
-    (kinds, edges)
+    store.query_rows("SELECT kind,n,size FROM kind_size ORDER BY 1", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap()
 }
 
 /// The counts of `docs`, from their nodes directly.
 fn direct(docs: &[(GrammarDialect, &TapeDoc)]) -> Counts {
     let mut kinds = BTreeMap::<i64, (i64, i64)>::new();
-    let mut edges = BTreeMap::<(i64, i64, i64), i64>::new();
     for (lang, doc) in docs {
         let base = i64::from(language::tape_tag(*lang).unwrap()) * i64::from(LANG_STRIDE);
         for pre in 0..doc.transducer_len() as u32 {
@@ -30,16 +25,9 @@ fn direct(docs: &[(GrammarDialect, &TapeDoc)]) -> Counts {
             let entry = kinds.entry(kind).or_default();
             entry.0 += 1;
             entry.1 += doc.transducer_children(pre).map(|child| 1 + doc.transducer_descendants(child).len() as i64).sum::<i64>();
-            if let Some(parent) = doc.transducer_parent(pre) {
-                let key = (base + i64::from(kind_code(doc, parent)), kind, i64::from(doc.transducer_field(pre)));
-                *edges.entry(key).or_default() += 1;
-            }
         }
     }
-    (
-        kinds.into_iter().map(|(kind, (n, size))| (kind, n, size)).collect(),
-        edges.into_iter().map(|((p, c, f), n)| (p, c, f, n)).collect(),
-    )
+    kinds.into_iter().map(|(kind, (n, size))| (kind, n, size)).collect()
 }
 
 const SOURCES: [(&str, GrammarDialect); 5] = [
@@ -50,16 +38,17 @@ const SOURCES: [(&str, GrammarDialect); 5] = [
     ("function f( {\n debugger;\n", GrammarDialect::TypeScript),
 ];
 
+/// The kind sizes the store counts (runs of deltas, `content_store::prefilter::kept`) equal a direct count of the
+/// tapes it holds, through a collected tape, a republished one and every one removed.
 #[test]
-fn kind_sizes_and_edges_equal_a_direct_count_and_follow_removal() {
+fn kind_sizes_equal_a_direct_count_and_follow_removal() {
     let store = open(&temp());
     let published = SOURCES.map(|(source, lang)| (put(&store, source, lang), lang));
     let docs = published.iter().map(|((_, doc), lang)| (*lang, doc)).collect::<Vec<_>>();
     let all = direct(&docs);
-    assert!(all.1.iter().any(|edge| edge.2 != 0), "some edge hangs under a field");
     assert_eq!(counts(&store), all);
 
-    // A collected tape counts down through the cascade; a republished one replaces itself.
+    // A collected tape counts down with its rows; a republished one replaces itself.
     let (tape, _) = &published[1].0;
     store.delete_tape_for_test(*tape).unwrap();
     let rest = docs.iter().enumerate().filter(|(i, _)| *i != 1).map(|(_, d)| *d).collect::<Vec<_>>();
@@ -71,7 +60,7 @@ fn kind_sizes_and_edges_equal_a_direct_count_and_follow_removal() {
     for ((tape, _), _) in &published {
         store.remove_prefilter(*tape).unwrap();
     }
-    assert_eq!(counts(&store), (vec![], vec![]));
+    assert_eq!(counts(&store), Vec::new());
 }
 
 #[test]
@@ -87,7 +76,7 @@ fn incremental_publication_equals_one_shot() {
     for tape in &stored {
         store.remove_prefilter(*tape).unwrap();
     }
-    assert_eq!(counts(&store), (vec![], vec![]));
+    assert_eq!(counts(&store), Vec::new());
     use crate::code_rule_dsl::prefilter::publish;
     for range in [2..4, 0..2, 4..5] {
         publish(&store, &stored[range.clone()], &docs[range]).unwrap();

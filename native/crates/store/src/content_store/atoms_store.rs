@@ -29,6 +29,8 @@ pub fn attach_atoms(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
 fn kept_beside(connection: &Connection) -> rusqlite::Result<()> {
     if let Some(path) = connection.path().filter(|path| !path.is_empty()) {
         super::kept_facts::vtab::install(connection, Path::new(path))?;
+        // The prefilter's tables as its kept facts (t33 steps 6 and 7).
+        super::prefilter::vtab::install(connection, Path::new(path))?;
     }
     Ok(())
 }
@@ -137,3 +139,12 @@ impl super::ContentStore {
 #[cfg(test)]
 #[path = "atoms/tests.rs"]
 mod tests;
+
+/// The store's kept facts as the SQL tables of their names (`prefilter::vtab`: the derivation graph, the search
+/// index, the prefilter's) on `connection`, a plain connection to a store's file: for checks of what a store holds on
+/// disk, beside `materialize_stored`.
+pub fn install_kept_tables(connection: &Connection) -> StoreResult<()> {
+    let path = connection.path().filter(|path| !path.is_empty()).ok_or_else(|| StoreError::Invalid("a connection to no store's file".to_owned()))?;
+    super::prefilter::vtab::install(connection, Path::new(path))?;
+    Ok(())
+}
