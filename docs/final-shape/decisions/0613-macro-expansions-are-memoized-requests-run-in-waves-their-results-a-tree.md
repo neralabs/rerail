@@ -548,6 +548,28 @@ So:
      CPU backend, `arguments_read_elsewhere_are_the_serial_passes` among them. Boost.Preprocessor's `control`
      passes on the CPU backend, which runs one group, so it posts no arguments.
 
+   **Stage 5, the design** (2026-11-23): provenance, the serial pass's `Expansion` rows.
+   - **What a row is.** The serial pass makes a row each time it enters a macro. The row's parent is the expansion
+     its name token came from (`Tk::exp`). Its `called` is the file position at the root of that parent chain. So
+     a row is determined by its macro and its parent row, and a root row also by its name's position. Body tokens
+     take the new row's id; argument tokens keep theirs. The test compares the device's rows with the serial
+     pass's as a multiset of (macro, defined, called, the parent's key). Ids are made in entry order, so they
+     differ, and the device's rows say nothing more.
+   - **Each entry carries its expansion** (`pxp`, a fifth column beside `psrc`, `pst`, `pn` and `pexp`). It is
+     written where a body's token or piece enters a list, and copied with the entry wherever the entry goes.
+   - **A run's rows are relative to the run.**
+     - A piece's run makes absolute rows, from the unit's counter.
+     - A request's run (a call's, or an argument's) makes local rows `L(i)`. Its own call is `SELF`. An entry
+       from its raw arguments carries `ARG(j)`, raw entry `j`'s expansion in the holder's frame.
+     - A memoized result stores its rows as a template in the same terms. A hit instantiates the template where
+       it is used: `SELF` becomes the hit's call row, `ARG(j)` becomes the hit's raw entry `j`'s `pxp`, and each
+       `L(i)` becomes a row of the hit's frame.
+   - **A hole is an occurrence.** Its holder makes the posted call's row (its parent is the name's `pxp`) and keeps
+     its raw entries' `pxp`, so a request's result shared by holders in other contexts is resolved by each
+     holder's own arguments. The roll-up (`lp_roll_place`, `lp_leaves`) walks the occurrences top down. It gives
+     each one its result's rows at the occurrence's base, resolving `SELF` and `ARG` through the path, and writes
+     them to the unit's `EXPANSION` store. The host reads that store into `ExpansionRow`s.
+
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 
