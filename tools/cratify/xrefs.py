@@ -75,7 +75,7 @@ def join(d):
         if inline == 'inline':
             continue  # an inline module is its file's: `sites` gives its range
         file = os.path.normpath(file)
-        r = 'test' if test else ('lib' if kind in ('lib', 'proc-macro', 'rlib') else 'bin')
+        r = 'test' if test else ('bin' if kind == 'bin' else 'lib')
         # A file two targets mount is the library's when one of them is, else a program's.
         rank = {'test': 0, 'bin': 1, 'lib': 2}
         if rank[r] > rank.get(role.get(file), -1):

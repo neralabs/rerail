@@ -1,5 +1,5 @@
 //! The logic language's core, under the planner: the typed SQL its plans emit (`sql`), the program's analyses
-//! (`analysis`), the cost model (`costs`), the bloom filters and join sizes, the liveness rules, and the derived
+//! (`analysis`), the bloom filters and join sizes, the liveness rules, and the derived
 //! relations' names. setfix (with the run, the lanes, the device interface, the waves and the thread pool), the planner
 //! and the corpus are the crates above.
 //!
@@ -24,7 +24,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
     pub use rerail_lang::code_rule_dsl::embed;
-    pub use rerail_facts::code_rule_dsl::facts;
+    pub use rerail_facts_base::code_rule_dsl::facts;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
     pub use rerail_lang::code_rule_dsl::json;
@@ -34,13 +34,13 @@ pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {
         // The lower crates' modules of the logic language, under its paths.
-        pub use rerail_rr::code_rule_dsl::logic::front;
+        pub use rerail_rr_syntax::code_rule_dsl::logic::front;
         pub use rerail_prof::code_rule_dsl::logic::profile;
         pub use rerail_program_image::code_rule_dsl::logic::{program_facts, program_image};
-        pub use rerail_facts::code_rule_dsl::logic::strings;
+        pub use rerail_facts_base::code_rule_dsl::logic::strings;
+        pub use rerail_facts_base::code_rule_dsl::logic::sql_names;
         pub mod analysis;
         pub mod bloom;
-        pub mod costs;
         #[path = "../../../../facts_base/src/code_rule_dsl/logic/crypto.rs"]
         pub mod crypto;
         pub mod derived;
@@ -52,12 +52,12 @@ pub mod code_rule_dsl {
     }
     pub use rerail_lang::code_rule_dsl::module_path;
     pub use rerail_prof::code_rule_dsl::phase_clock;
-    pub use rerail_facts::code_rule_dsl::producers;
+    pub use rerail_facts_base::code_rule_dsl::producers;
     pub use rerail_prof::code_rule_dsl::prof;
-    pub use rerail_facts::code_rule_dsl::search_index;
+    pub use rerail_facts_base::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
     pub mod stats {
-        pub use rerail_facts::code_rule_dsl::stats::identity;
+        pub use rerail_facts_base::code_rule_dsl::stats::identity;
     }
     pub mod suppress {
         pub use rerail_lang::code_rule_dsl::suppress::kinds;
@@ -67,7 +67,7 @@ pub mod code_rule_dsl {
         pub(crate) use crate::code_rule_dsl::suppress::kinds::*;
     }
     pub use rerail_lang::code_rule_dsl::tape;
-    pub use rerail_facts::code_rule_dsl::text;
+    pub use rerail_facts_base::code_rule_dsl::text;
     pub use rerail_lang::code_rule_dsl::tree;
     pub mod value {
         pub use rerail_lang::code_rule_dsl::value::text_regex;
@@ -103,20 +103,4 @@ pub mod code_rule_dsl {
     use serde_json::Value;
     #[allow(unused_imports)]
     use std::sync::Arc;
-}
-
-/// This crate's own test binary, which the engine does not load: its learned models registered as it loads, as boot
-/// registers them (rerail-accel-gpu), so the cost model's tests train on the device.
-#[cfg(test)]
-mod test_load {
-    extern "C" fn load() {
-        rerail_accel_gpu::install();
-        // The learned model's file (`costs::models`) is the store's kept facts, as boot registers it.
-        rerail_store_above::content_store::observer_store::register();
-    }
-    #[used]
-    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
-    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
-    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
-    static LOAD: extern "C" fn() = load;
 }

@@ -103,5 +103,5 @@ fn sweep() {
 /// 0224): this module is in every test build of `rerail-lang`, and with its checkout's path in, that crate and every
 /// crate above it were a different crate in every checkout.
 pub fn repository() -> PathBuf {
-    rerail_observe::source_tree::root().expect("no directory above the test, CARGO_MANIFEST_DIR or the working directory holds native/Cargo.toml and docs/rule-syntax")
+    rerail_store_base::source_tree::root().expect("no directory above the test, CARGO_MANIFEST_DIR or the working directory holds native/Cargo.toml and docs/rule-syntax")
 }

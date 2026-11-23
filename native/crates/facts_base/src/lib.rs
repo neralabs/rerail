@@ -73,6 +73,7 @@ pub mod code_rule_dsl {
         }
         pub mod crypto;
         pub use rerail_prof::code_rule_dsl::logic::profile;
+        pub mod sql_names;
         pub mod strings;
     }
     pub use rerail_lang::code_rule_dsl::module_path;

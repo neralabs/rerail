@@ -67,6 +67,7 @@ rerail-rr-aot	core
 rerail-c-directives	core
 rerail-rr	core
 rerail-adapters	core
+rerail-costs	core
 rerail-logic-core	core
 rerail-json-rules	core
 rerail-matcher	core

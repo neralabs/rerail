@@ -37,6 +37,7 @@ const READ: i64 = 20_000;
 /// newest `READ`, and one run less often (the GPU's matcher wave) would fall out of them, its prior never replaced.
 const READ_PER_FORM: i64 = 2_000;
 /// The fewest samples a model is trained from.
+#[cfg(target_os = "macos")]
 const MIN_TRAIN: usize = 500;
 /// The samples written after a training that start another.
 pub const RETRAIN_AFTER: usize = 2_000;
@@ -130,9 +131,11 @@ struct Costs {
     writer: Mutex<Option<rusqlite::Connection>>,
     /// Samples written since the last training began.
     written: std::sync::atomic::AtomicUsize,
-    /// A training is running.
+    /// A training is running (macOS: the model trains on the device).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     training: std::sync::atomic::AtomicBool,
     /// When the last training began.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     trained_at: Mutex<Option<std::time::Instant>>,
     /// The model's state, for the profile.
     model_state: Mutex<String>,
@@ -405,6 +408,7 @@ fn saved_age(db: &rusqlite::Connection, path: &std::path::Path) -> Option<(i64, 
     Some((since, saved.at))
 }
 
+#[cfg(target_os = "macos")]
 fn model_state(s: String) {
     *costs().model_state.lock().unwrap_or_else(|p| p.into_inner()) = s;
 }

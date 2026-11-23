@@ -1500,3 +1500,29 @@ dropped the `--timings` runs (2026-11-22).
     - Then: the longest chain is 25 (28 before). An edit to rr-syntax rebuilds 66 crates (80).
     - Checks: the workspace with `--tests` is clean (Linux). typing's and prof's tests pass (44). The repository's
       checks pass.
+  - **10e-2, the mounts with no code behind them, by the compiler's resolution.** `tools/cratify/xrefs.sh` indexes
+    the workspace with rust-analyzer's SCIP on a farm Mac and joins each reference with the target that mounts its
+    file; `chainplan.py` reads it. A glob, a re-export or a mount no longer hides a use, and an import is not one
+    (10e-1's planner cut failed on uses its module analysis could not see). With no code moved, the chain's floor
+    was 20 (cargo's 25); these edges carried no code, or code a lower crate can hold:
+    - logic-core and run mounted rr's `front` and facts' modules, and read rr-syntax's and facts-base's: they mount
+      those. setfix mounts facts' `facts` (the syntax table) and logic-core's modules itself, as the run no longer
+      carries them; setfix reads nothing of rr.
+    - run -> logic-core carried two calls. The cost statistics (`logic::costs`, 1,764 lines) stand on accel, the
+      store's interface and prof alone: they are rerail-costs, below the run, with their test binary's
+      registrations (accel-gpu, the store). A relation's name in SQL (`ident`, `table`, `unquote`, the keywords) is
+      facts-base's `logic::sql_names`, which `logic::sql` re-exports.
+    - adapters mounted facts and reads facts-base. lang mounted observe for `content_store` and reads the store's
+      base: it mounts store-base (one test of the observer's digest has observe as a dev-dependency).
+    - sessions-base and sessions mounted logic and read none of its own files: sessions-base mounts corpus-memo's
+      tree (with rr's `translate`), sessions rr-root's `logic`. device-metal mounts rr-root's tree; logic is its
+      tests' dev-dependency (`CARRIERS`).
+    - transducer-base re-exported rr-parser for one test in tests-tape, which names it.
+    - demand-catalog mounted boot's tree: it mounts prefilter's (the rule API, the transducer's `space` and
+      `transducer`), transducer's `demand`, logic-core's `sql` and the packs' suppressions; boot boots its test
+      binary as a dev-dependency (with its languages). Its test binary declares the engine's allocator, as the test
+      crates do (`test_flush`'s jemalloc test was red without it).
+    - Then: the longest chain is 19 (25 before). An edit to observe rebuilds 65 crates; to facts, 54.
+    - Checks: the workspace with `--tests` is clean on Linux and macOS. logic-core's, costs' and demand-catalog's
+      tests pass, but for demand-catalog's Metal dispatch test on a Linux host without the device; it passes on a
+      Mac.

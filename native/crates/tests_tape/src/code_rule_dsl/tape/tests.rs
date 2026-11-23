@@ -1805,7 +1805,8 @@ fn rr_tapes_from_the_lean_parser_are_the_statement_parsers() {
 #[test]
 #[ignore = "a measurement: run by name with --nocapture"]
 fn rr_parse_costs() {
-    use crate::code_rule_dsl::transducer::packed::rr_parser;
+    // The `.rerail` parser (rerail-rr-parser): the Bitlex grammar compiled.
+    use rerail_rr_parser as rr_parser;
     let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
     let mut files: Vec<String> = rr_files().into_iter().map(|(_, t)| t).collect();
     let all = files.len();

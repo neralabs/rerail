@@ -80,7 +80,7 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/facts/src/code_rule_dsl/facts/vtab/syntax.rs", "LOCATED", Call, "the state of one call in progress on this thread, set and read within it"),
     ("crates/lang_ecma/src/code_rule_dsl/import_target/mod.rs", "VIEW", Call, "the state of one call in progress on this thread, set and read within it"),
     ("crates/rr_root/src/code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE", Thread, "the rule files' entries read on this thread before its run, which the outermost run names"),
-    ("crates/logic_core/src/code_rule_dsl/logic/costs.rs", "READING", Thread, "the cost statistics' read runs on this thread: it never waits for itself"),
+    ("crates/costs/src/code_rule_dsl/logic/costs.rs", "READING", Thread, "the cost statistics' read runs on this thread: it never waits for itself"),
     ("crates/logic_core/src/code_rule_dsl/logic/derived.rs", "SESSION_MEMO", Outermost, "a session's derived values between its runs: taken and put back by the outermost run"),
     ("crates/run/src/code_rule_dsl/logic/lanes.rs", "DEFERRED", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("crates/run/src/code_rule_dsl/logic/lanes.rs", "DONE", Thread, "this thread's device queue: what it issued, it flushes and waits for"),

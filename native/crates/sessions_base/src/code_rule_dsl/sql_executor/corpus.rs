@@ -149,8 +149,8 @@ impl Corpus {
 
     /// A memo entry's typed rows as rows of values: an int, node or location column's integers as they are, a text
     /// column's texts as atoms. A row of another width, or with a text where an integer is declared, is left out.
-    fn values(&self, rows: &rerail_logic::code_rule_dsl::logic::plan::output::Rows) -> Vec<Vec<i64>> {
-        use rerail_logic::code_rule_dsl::logic::plan::output::Cell;
+    fn values(&self, rows: &crate::code_rule_dsl::logic::plan::output::Rows) -> Vec<Vec<i64>> {
+        use crate::code_rule_dsl::logic::plan::output::Cell;
         let w = self.width();
         if rows.width() != w {
             return vec![];
