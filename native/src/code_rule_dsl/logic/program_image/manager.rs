@@ -252,6 +252,9 @@ impl Delta {
                 facts: delta.fact_count() > 0 || !delta.u32s(super::R::FactGone).is_empty(),
                 about: delta.owns() & 4 != 0,
             },
+            // A view states none of its own: its declarations, facts and `.about` rows are its parent's, which are
+            // the input's where it numbers its rules as the input does (the input, or a view of the same parent).
+            Version::View { .. } if same_numbering(input, output) => States { decls: false, facts: false, about: false },
             _ => States { decls: true, facts: true, about: true },
         };
         fields_delta(input, output, &mut d, states);
