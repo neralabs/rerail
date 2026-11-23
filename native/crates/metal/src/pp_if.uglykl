@@ -981,23 +981,43 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
 
 // --- `#line` (decision 0467 §6) ------------------------------------------------------------------
 
-// The next byte of a string's content destringized (`destringize`: `\"` and `\\` one byte), from
-// `i`: the byte, and the index after it.
-UKL_INLINE uint32_t ds_next(UKL_PRIVATE const uint8_t* p, uint32_t i, uint32_t n, UKL_PRIVATE uint8_t* c) {
-    if (p[i] == ((uint8_t)('\\')) && i + 1u < n && (p[i + 1u] == ((uint8_t)('"')) || p[i + 1u] == ((uint8_t)('\\')))) { *c = p[i + 1u]; return i + 2u; }
-    *c = p[i];
+// Token `r`'s byte at `i`, past the line splices there, before `end` (its phase-2 byte, read where it is):
+// the byte, and the index after it; `end + 1` where there is none before `end`.
+UKL_INLINE uint32_t sp_byte(Span r, uint32_t i, uint32_t end, UKL_PRIVATE uint8_t* c) {
+    for (uint32_t k = 0u; k < end && i < end && r.p[i] == ((uint8_t)('\\')); k++) {
+        uint32_t e = splice_end(r.p, i, end);
+        if (e == i) break;
+        i = e;
+    }
+    if (i >= end) { *c = 0u; return end + 1u; }
+    *c = r.p[i];
     return i + 1u;
 }
 
-// The literal of a string's content destringized from `from` (`__FILE__`'s: `"`, the bytes with
-// `"` and `\` escaped, `"`): its length, written at `dst` where it is not null.
-UKL_INLINE uint32_t ds_literal(UKL_PRIVATE const uint8_t* p, uint32_t from, uint32_t n, PP_GLOBAL uint8_t* dst, bool write) {
+// The next byte of a string's content destringized (`destringize`: `\"` and `\\` one byte), from
+// `i` of token `r`, before `n`: the byte, and the index after it (`sp_byte`'s `n + 1` for none).
+UKL_INLINE uint32_t ds_next(Span r, uint32_t i, uint32_t n, UKL_PRIVATE uint8_t* c) {
+    uint32_t j = sp_byte(r, i, n, c);
+    if (j <= n && *c == ((uint8_t)('\\'))) {
+        uint8_t d;
+        uint32_t k = sp_byte(r, j, n, &d);
+        if (k <= n && (d == ((uint8_t)('"')) || d == ((uint8_t)('\\')))) { *c = d; return k; }
+    }
+    return j;
+}
+
+// The literal of a string's content destringized from `from` to `n` of token `r` (`__FILE__`'s: `"`, the
+// bytes with `"` and `\` escaped, `"`): its length, written at `dst` where it is not null. Read where the
+// token is, any length.
+UKL_INLINE uint32_t ds_literal(Span r, uint32_t from, uint32_t n, PP_GLOBAL uint8_t* dst, bool write) {
     uint32_t m = 0u;
     if (write) dst[m] = ((uint8_t)('"'));
     m++;
     for (uint32_t i = from; i < n;) {
         uint8_t c;
-        i = ds_next(p, i, n, &c);
+        uint32_t j = ds_next(r, i, n, &c);
+        if (j > n) break;
+        i = j;
         if (c == ((uint8_t)('"')) || c == ((uint8_t)('\\'))) { if (write) dst[m] = ((uint8_t)('\\')); m++; }
         if (write) dst[m] = c;
         m++;
@@ -1044,33 +1064,53 @@ UKL_INLINE void p1_line_row(Ux u, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL con
             }
         }
         if (on && o0 + 1u < o1) {
+            // The name read where its token is (a path of any length: `__FILE__`'s is absolute), its line
+            // splices passed over: its quote among its first four bytes (a prefix's), its content to its last
+            // byte (a string's `"`).
             Span sr = ref_span(u, ov_ref(u, &out, o0 + 1u));
-            uint32_t n = if_bytes(sr, b);
-            uint32_t q = 0u;
-            while (q < n && q < 4u && b[q] != ((uint8_t)('"')) && b[q] != ((uint8_t)('\''))) q++;
-            if (n > IF_TOKB) {
-                ukl_atomic_or(flags, P1_IF_BIG);
-            } else if (sr.kind == K_LITERAL && q < n && b[q] == ((uint8_t)('"')) && n >= q + 2u) {
+            uint32_t q = 0u, c0 = 0u;
+            uint8_t qc = 0u;
+            for (uint32_t i = 0u; q < 4u; q++) {
+                uint32_t j = sp_byte(sr, i, sr.len, &qc);
+                if (j > sr.len || qc == ((uint8_t)('"')) || qc == ((uint8_t)('\''))) { c0 = j; break; }
+                i = j;
+            }
+            uint32_t c1 = sr.len - 1u;
+            if (sr.kind == K_LITERAL && q < 4u && qc == ((uint8_t)('"')) && sr.len > 0u && c0 <= c1) {
                 named = true;
-                uint32_t c0 = q + 1u, c1 = n - 1u;
                 // The last component: after the last `/` destringized.
-                uint32_t last = c0;
+                uint32_t last = c0, nb = 0u;
                 for (uint32_t k = c0; k < c1;) {
                     uint8_t c;
-                    k = ds_next(b, k, c1, &c);
+                    uint32_t j = ds_next(sr, k, c1, &c);
+                    if (j > c1) break;
+                    k = j;
                     if (c == ((uint8_t)('/'))) last = k;
                 }
-                KeyAcc ka = ka_new(c1 - c0);
-                for (uint32_t k = c0; k < c1; k++) ka_byte(&ka, b[k]);
+                for (uint32_t k = c0; k < c1;) {
+                    uint8_t c;
+                    uint32_t j = sp_byte(sr, k, c1, &c);
+                    if (j > c1) break;
+                    k = j;
+                    nb++;
+                }
+                KeyAcc ka = ka_new(nb);
+                for (uint32_t k = c0; k < c1;) {
+                    uint8_t c;
+                    uint32_t j = sp_byte(sr, k, c1, &c);
+                    if (j > c1) break;
+                    k = j;
+                    ka_byte(&ka, c);
+                }
                 nk = ka_end(ka);
-                uint32_t lf = ds_literal(b, c0, c1, sbytes, false), ln = ds_literal(b, last, c1, sbytes, false);
+                uint32_t lf = ds_literal(sr, c0, c1, sbytes, false), ln = ds_literal(sr, last, c1, sbytes, false);
                 uint32_t base = ukl_atomic_add(&lctl[2], lf + ln);
                 if (base + lf + ln > lb_cap) {
                     ukl_atomic_or(flags, P1_ROOM);
                 } else {
                     uint32_t at0 = lctl[1] + base, tk = lctl[0] + 2u * w;
-                    ds_literal(b, c0, c1, sbytes + at0, true);
-                    ds_literal(b, last, c1, sbytes + at0 + lf, true);
+                    ds_literal(sr, c0, c1, sbytes + at0, true);
+                    ds_literal(sr, last, c1, sbytes + at0 + lf, true);
                     stoks[tk].start = at0; stoks[tk].end = at0 + lf; stoks[tk].kind = K_LITERAL;
                     stoks[tk + 1u].start = at0 + lf; stoks[tk + 1u].end = at0 + lf + ln; stoks[tk + 1u].kind = K_LITERAL;
                 }

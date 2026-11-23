@@ -441,6 +441,214 @@ So:
      take 3 and 2 take 4. The front and the definitions over the files round 1 read are under 0.1 ms of a
      round-2 unit's 1.3 ms setup.
 
+   **The plan for §4 and §6** (2026-11-23). Each stage keeps the eval tests, the corpus and Boost.Preprocessor
+   the serial pass's, token for token:
+   - **Stage 1: a top call is a request.** At the top, a call whose `)` (or an object-like name) is read posts a
+     request, and the piece writes a hole into its output and reads on:
+     - the request is its definition, its raw arguments and their table where the piece read them (the piece's
+       regions move past them, so they stay where they are), its name's space and its `)`'s origin;
+     - the memo's table keys it, so a key already posted, or done, is a hole for that request, not a second one
+       (§2's pending entries);
+     - a SIMD group takes a request from the unit's queue (`ukl/workqueue.h`), and runs today's loop over it in
+       isolation: its arguments expanded, its substitution read to its end, the result's entries a node;
+     - its edges are checked when it ends. An open tail (a function-like name whose look for `(` reached the
+       request's end, or a call whose arguments do) and a `(` after the hole in the piece, or a result the
+       loop cannot make in isolation (a pragma), make the piece read again from its start, inline (today's
+       loop), as a continuation;
+     - a piece is done when its holes are; then its counts are final.
+   - **Stage 2: the roll-up** (§6). The output's order is made through the holes: each result's tokens and
+     output pieces counted bottom up, as it completes; each occurrence's places top down (the pieces' scans,
+     then a hole's places from its piece's); `ORDER` over the occurrences, an occurrence's place its own (a
+     result used at k places has k). `Ov` and the host's `read` read a leaf where it is.
+   - **Stage 3: calls in a request are requests.** A call a request reads where nothing but its own list is
+     open posts a child request, whose context is the macros disabled there. A child's open tail with a `(`
+     after it makes its parent read again inline; a tail at the parent's end is the parent's.
+   - **Stage 4: arguments as references.** A call's arguments used plainly are requests posted with it, and its
+     substitution holds their holes. Its reading waits on a hole, by continuation, only when it reaches it.
+   - **Stage 5: provenance.** The device's `Expansion` rows: each occurrence of a result, its parent the
+     occurrence it is read in.
+
+   **Stages 1 to 3, built** (2026-11-23):
+   - **A call followed by `(` is not posted.** Its tail could only be guessed, and a wrong guess read the whole
+     piece again (117 calls a level, `a_done_calls`). A tail at its holder's end (`RQ_ATEND`) is the holder's.
+   - **A request's result reads what its holes read.** A hole whose result reads a place's built-in (`RQ_OWN`)
+     makes its holder's result its place's own too, so it is not shared. Without that, a `tensorflow` test
+     printed another line's `__LINE__` (`place_builtins_are_not_memoized`, the nested `L()` and `K()` shapes).
+   - **A request's record names its root piece** (row 6). A reread of that piece voids what the request recorded
+     (its `#pragma` rows, its `__COUNTER__` uses), as it voids the piece's own.
+   - **A claim given up.** A poster out of room marks its table entry void, so a call of the same key does not
+     wait on it. The wait on an entry being written is bounded by `LP_CLAIM_POLLS`, far more than its writer's
+     few stores.
+   - **A request's run reuses its group's blocks.** Each run claims its regions from the store, which never
+     takes them back. Requests made this 3 to 10 times the store's use: 443,000 rows against 40,000 for one
+     corpus unit, `nodes 9925` with 2,116 requests. The unit's first run was refused for room, and its batch's
+     GPU time went from 70 to 580 ms. Now:
+     - a region's first room is 8 rows, not 64;
+     - a request run's lists' block (region 0) is scratch: its sub-requests copy their arguments into their
+       records. So the group keeps it for its next request;
+     - a block a request's run moves out of, and its result's room past its end, are the group's spare. The
+       next request's region takes it when it is large enough;
+     - a request's run claims at least `LP_RQ_CHUNK` (64) rows, so the room left after a result serves the
+       group's next ones.
+
+     That unit's claims went from about 450,000 rows to 270,000. What is left: a request's first lists block
+     (its raw arguments, copied there as a region's growth moves them) and its record. Of the record's rows,
+     16 are its looked-up set.
+   - **Measured on m3** (Metal, load 5 to 7). Every corpus unit is the serial pass's. GPU time per slice, the
+     work against the commit before it:
+
+     | Slice (`RERAIL_PP_FIRST`/`COUNT`) | Before | Stages 1 to 3 |
+     |---|---|---|
+     | 0/500 (1,000 units) | 218 ms | 187 ms |
+     | 500/600 (1,200 units) | 242 ms | 272 ms |
+     | 1100/all (935 units) | 499 ms | 359 ms |
+
+     The eval tests pass on the CPU backend, on CUDA and on Metal. Boost.Preprocessor's `control` passes on the
+     CPU backend. In its slowest piece (45,434 steps), 25 requests are posted: its calls' arguments are still
+     read inline, which is stage 4's work.
+   - **A line's expansion posts no requests.** The `#if` evaluator reads a line's output flat. So
+     `a_line_past_its_room_runs_again_larger`'s 8⁴ fan-out is one serial piece: 25,747 steps and 131,073
+     tokens out, about 1 s of GPU a run. Under load, m3's GPU watchdog sometimes stops it as a hang, and the
+     commit before this one does the same. It is fixed when the evaluator reads the results' tree (stage 2's
+     roll-up, on the device).
+
+   **Stage 4, built** (2026-11-23): a call's arguments are requests.
+   - **An argument's request.** At a call's first argument turn (`lp_call_next`), each argument it uses plainly
+     but the next to be read is posted (`lp_args_post`). Its record holds its own copy of the raw entries, the
+     macros disabled there, its looked-up set and its level. The table entry holds the request
+     (`rq | LP_HOLDRQ`). A group that takes it reads the entries to their end in isolation, under a list frame of
+     no macro: `LP_OFF` keeps that frame out of the disabled macros, the memo's keys and the dead lists, so its
+     keys are an inline reading's. Its expansion is a node in the store, written once, then marked done.
+   - **A claim, never a wait.** At its turn, the caller takes a done result (`lp_arg_take`). Otherwise it claims
+     the record and reads the argument inline, as before. If a taker holds the claim, the caller reads it inline
+     anyway and posts nothing under it (`LP_BI_DUP`). Nothing waits on another group.
+   - **Order is kept.** Arguments are read in their order, because `__COUNTER__`'s ranks follow the reading's
+     order. A run that reaches `__COUNTER__` or a pragma stops, and its caller reads it inline.
+   - **Posting gate.** Arguments are posted only while the unit's queue has nothing waiting. With every group busy,
+     a posted argument was read by its own caller, and its record was work for nothing: the corpus slices ran 12
+     to 18% slower before this gate.
+   - **Helpers.** A group left with no team seat helps the units whose loop is open and has items waiting
+     (`PG_LOOP`, `PG_HELP`). The team waits for its helpers to leave before it resets its queue.
+   - **The M3's back end.** The kernel failed on m3 from build to build, by a hang or a page fault, while it
+     passed on the CPU backend and on CUDA, and also passed when a run-time word was read in each argument path.
+     These are now masked by constants: the memo's slots (`LP_MO`), a run's regions (`LP_RG`), the template
+     builder's stacks, the memo and request table rows (`LP_ROW`), and `lp_leaves`'s stack (`LP_RD`, now 64
+     deep). `lp_leaves`'s walk was an unbounded loop: a hang there kept the GPU busy for 17 minutes after its
+     process was killed. It is now bounded by the output's room and the store's, and past that it refuses.
+   - **Measured on m3** (Metal, load 2 to 8). Every corpus unit is the serial pass's, and none is refused. GPU time
+     per slice, two runs:
+
+     | Slice | Stages 1 to 3 | Stage 4 |
+     |---|---|---|
+     | 0/500 | 187 ms | 153 to 158 ms |
+     | 500/600 | 272 ms | 184 to 213 ms |
+     | 1100/all | 359 ms | 191 to 199 ms |
+
+     The last slice's longest run went from 209 to about 76 ms. The eval tests pass on Metal, on CUDA and on the
+     CPU backend, `arguments_read_elsewhere_are_the_serial_passes` among them. Boost.Preprocessor's `control`
+     passes on the CPU backend, which runs one group, so it posts no arguments.
+
+   **Stage 5, the design** (2026-11-23): provenance, the serial pass's `Expansion` rows.
+   - **What a row is.** The serial pass makes a row each time it enters a macro. The row's parent is the expansion
+     its name token came from (`Tk::exp`). Its `called` is the file position at the root of that parent chain. So
+     a row is determined by its macro and its parent row, and a root row also by its name's position. Body tokens
+     take the new row's id; argument tokens keep theirs. The test compares the device's rows with the serial
+     pass's as a multiset of (macro, defined, called, the parent's key). Ids are made in entry order, so they
+     differ, and the device's rows say nothing more.
+   - **Each entry carries its expansion** (`pxp`, a fifth column beside `psrc`, `pst`, `pn` and `pexp`). It is
+     written where a body's token or piece enters a list, and copied with the entry wherever the entry goes.
+   - **A run's rows are its own log.** Each run (a piece's, a request's, an argument's) logs its events in a region
+     of its own. An entry's `pxp` is a reference in its run's terms: 0 for the text (the name's position is its
+     origin), `L(i)` for the log's row `i`, and in a request's run `L(0)` for its own call and `ARG(j)` for its raw
+     entry `j`. An event is a call, which is a row whose parent is its name's `pxp`, or an occurrence of another
+     result.
+   - **A memo capture is a template.** While a capture is open, its call's raw entries carry `ARG(j)` marks; their
+     own references are kept with the capture's copy of them in region 4. When the capture closes:
+     - the rows logged in it become the memo entry's template, relative to its first row, with its call `L(0)`
+       and its arguments `ARG(j)`. A top call's text positions are relative to its `(`, as its pieces' are;
+     - the run's own log and the entries written in the capture get the marks back as the kept references.
+   - **A hit is the template's rows copied into the run's log** at a base `B`, with `L(0)` its call's row and
+     `ARG(j)` its raw entry `j`'s reference. These are rows the run makes, written once where they are computed:
+     not a block copy. A node read by reference is read in a frame that carries its `B`, so its tokens'
+     `L(i)` are the run's `L(B + i)`. Nested nodes of the same result take the same `B`.
+   - **A hole is an occurrence.** Its holder logs it with its call's row and its raw entries' references, since
+     a request's result can be shared by holders in other contexts. A taken argument's node is logged the same
+     way. After the loop, the roll-up walks each piece's log top down. A call becomes a row of the unit's
+     `EXPANSION` store, and an occurrence walks its result's log with its call and arguments resolved in the
+     holder's terms; the walk's depth is bounded, as `lp_leaves`'s is. The host reads the store into
+     `ExpansionRow`s.
+
+
+   **Stage 5, built** (2026-11-23): the device's `Expansion` rows are the serial pass's
+   (`expansions_are_the_serial_passes`: chains, painting, arguments eight deep, a memo hit, on the CPU backend,
+   on CUDA and on Metal). The design above holds, with three changes.
+   - **A text-level occurrence is its hole.** A request posted from a piece logs nothing in the piece. Its hole
+     carries the call's row (the output piece's fifth word, `lp_hole_out`), and the roll-up walks the piece's
+     output chunks as `lp_roll_place` does: at each hole it reads the request's log, its row 0 the hole's call
+     and its text positions moved by the hole's shift, as the result's tokens are. So such a request's raw
+     tokens are the text's and carry no `ARG` marks. A memo hit's replayed holes carry the hitting call's row.
+     Only a request posted inside a request logs an occurrence (`LG_OCC`, with its shift and a row a raw entry).
+     On the M3 the occurrence block in `lp_rq_post` for every request failed from build to build (outputs memoized
+     wrong, faults and hangs) while the CPU backend and CUDA passed; with text occurrences in the roll-up it is
+     gone.
+   - **A taken argument is an occurrence with room.** `lp_arg_occ` logs `LG_TAKE` and reserves the request's row
+     count after it; the node's entry carries that base (`xp`), so a name read through the node refers to the
+     row the roll-up gives the request's. The request's raw tokens keep the caller's references, a caller's row
+     marked `XP_H` (read one level up). Nothing is copied: the rows are made by the roll-up, once.
+   - **The frame's kind and space share a word** (`kn`), the frame's seventh word its `xp`.
+
+   Every eval test passes on the CPU backend and on Metal; the corpus (m3, Metal) and Boost.Preprocessor's
+   `control` (CPU backend) are the serial pass's.
+
+   **A run's frames are as deep as its input** (2026-11-23). Boost.Preprocessor's `array` and `tuple` tests were
+   refused for depth, before stage 5 too. At the refusal a request held 58 live lists. They were
+   `BOOST_PP_REPEAT_1_n(m, d)`, whose body is `BOOST_PP_REPEAT_1_{n-1}(m, d) m(2, n-1, d)`: each level keeps its
+   tail to read under the next, 256 deep. The serial pass nests the same (its stack measured 149 to 531 contexts
+   deep on Boost's tests, nearly all of them bodies read to their end). The chain was read inside an argument's
+   expansion, where nothing is posted, so one run's 64 frames held it.
+   - The group's 64 frames are the stack's top (`fr_lo` up); a push past them writes the lowest to the run's
+     region 6 (`lp_fpush`, two rows a frame at its index), and a pop reads them back (`lp_fsync`). Walks over
+     the frames (the disabled macros, the dead groups, the levels) read a frame below the slots from there
+     (`lp_fget`). A store with no room stops the run for room, which runs again larger; no depth is refused.
+   - `the_frames_are_as_deep_as_the_input`: chains 100 and 300 deep, each level a tail, object-like and
+     function-like, at the top and in an argument. Boost's `array` and `tuple` (C, C++) are the serial pass's on
+     the CPU backend. The eval tests pass on the CPU backend and on Metal, with the corpus and `control`.
+   - Posting the chain's calls as requests (§4) would make it parallel; inline readings (a line's, a reread, an
+     argument its caller reads) still need the depth.
+   - Boost's `debug` tests were refused as an `#if` past the evaluator's room: `#line BOOST_PP_LINE(100, __FILE__)`
+     names the file by its absolute path, past the evaluator's 128 bytes (`IF_TOKB`) on a farm host. A `#line`'s
+     name is now read where its token is (`sp_byte`, its line splices passed over), any length; the `#line`
+     case of `the_refused_cases_are_the_serial_passes` names a 180-byte path and names with splices.
+   - Still refused in Boost: `seq.c`. Before stage 5 its run passed the work bound (`LP_WORK`); now the store
+     runs out first (its log the largest share of the rows claimed, a row a call, the run's region doubling).
+     Its one run reads about 2 M steps serially: posting its calls as requests (§4) is what bounds it.
+
+   **Calls read in an argument's expansion, the design** (2026-11-23). Boost's `seq.c` reads about 2 M steps in
+   one run and passes the work bound. On the CPU backend (one group, so no argument is posted), its second rung
+   read 1.42 M calls inline inside an argument's expansion, 577 K nested in a piece's own reading, and 3 K past
+   the request levels. A call in an argument's expansion is the next to post.
+   - **Where its hole goes.** Into the argument's expansion list (`calls[nc - 1].ocur`), as a request's own-level
+     hole goes into its result. Posting checks what it checks now: flat arguments, and no `(` after the `)`
+     (`RQ_NEXTP`). Inside an argument nothing past its end is read, so the argument's own expansion is right
+     with the hole whatever the result is.
+   - **The rescan reads it as a leaf.** The expansion is substituted into the caller's body and rescanned. A hole
+     there passes through to the output (the caller's list, or the piece's output) as a request's result does,
+     with two exceptions. The serial pass acts on its edges in a rescan only through a `(`:
+     - a function-like name before it, whose look for `(` reaches the hole: the result's first token decides;
+     - a `(` after it (or another hole or node, which may begin with one): the result's last token decides.
+     A hole at neither edge needs nothing of its result, done or not.
+   - **At an edge, the run is read again.** The run (a piece's or a request's) stops and is read again from its
+     start with no post in an argument (a flag of its piece or its record), as a piece is read again for a wrong
+     guess (`RQ_*`). The loop keeps no state to resume at the argument's start, and the hole is never read inline
+     in the rescan: there the caller's macro is disabled, and the serial pass expanded the call under the
+     argument's disabled macros. The holes the first reading posted finish unread.
+   - **Its rows** (stage 5): a hole in an argument logs `LG_OCC` with its raw entries, as a request's own-level
+     post does.
+   - **Tests first.** A call in an argument that becomes a hole, then: the rescan passing it through; a
+     function-like name before it whose `(` the result begins; a result ending in a function-like name with a
+     `(` after the parameter; two holes side by side; the parameter stringized and pasted; the argument read
+     twice in the body; `__COUNTER__` in it. Each the serial pass's, on the CPU backend and Metal, and Boost's
+     `seq.c` under the work bound.
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

@@ -10925,3 +10925,11 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
 
 - No conflicts. Decisions 0645 (kernels prepared for a named target, shipped per target, the user installs the GPU compiler) and 0651 (GPU kernels as npm packages, proposed) come in whole, with 0617's Metal 4 tensor-op matmul2d and the M1 read.
 - Checked (Relax, RERAIL_GPU=cpu): rerail-ukl, accel, gpu, device, boot, metal 0 errors; ukl's target tests 2 passed. The CUDA, HIP and Metal kernels themselves are not run here.
+
+### Q524. Roll-up 97 (Go-C-and-C-support 900b0171ad onto Pulling-it-all-together): what the merge chose
+
+- 0613 stages 4 and 5 (calls are requests in a work queue, taken by idle groups and helpers; each token entry carries its expansion) and the frames as deep as the input come in whole.
+- `lp_piece`'s ask: the hub's (0588) group-memory hand-over, not the branch's shuffles, with the branch's two new words (`q_off`, `q_hoff`) added to it (`LpRun::q` 8 to 10).
+- `lp_run`'s idle polling: the branch called `ukl_wq_idle`, which the hub removed (0540 step 7). It polls through 0637's `ukl_wq_ready`/`ukl_wq_take_ready` instead: once idle, a poll takes only a written item, so no slot is given up at a poll; it ends when no item is being read or its polls are spent.
+- Not changed, the branch's: the requests' table claim polls (`LP_CLAIM_POLLS`) and a team's wait for its helpers to leave (`PG_HELP_WAIT`) wait on another thread's stores.
+- Checked (Relax, RERAIL_GPU=cpu): c-directives' three new tests and the two device-rung tests pass on the CPU backend. Metal not run.

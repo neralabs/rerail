@@ -1066,6 +1066,9 @@ pub const X_QUEUE: u32 = 64;
 const P_TOP: u32 = 0;
 const P_BODY: u32 = 1 << 30;
 const P_KIND: u32 = 3 << 30;
+/// A piece of a source in the tokens' store (`pp_loop.uglykl`'s `P_SPAN`), the top text's (`LP_TOPSRC`).
+const P_SPAN: u32 = 3 << 30;
+const LP_TOPSRC: u32 = 0x3fff_ffff;
 const PN_LEN: u32 = 0xff_ffff;
 pub const X_HASH: u32 = 128;
 pub const X_ACROSS: u32 = 256;
@@ -1125,6 +1128,12 @@ pub struct Exp {
     /// The tokens' columns, `tok_cap` words each: the source, the length and flags, the start and
     /// the origin (decision 0520).
     tokens: Buf,
+    /// The loop's queue and its pieces' words (`LPQ`, decision 0613 §4), for tops of `lpq_top` tokens.
+    lpq: Buf,
+    lpq_top: u32,
+    /// The expansions' rows (`XROWS`, decision 0613 §6: `lp_roll_rows`), 3 words each, `xrows_cap` of them.
+    xrows: Buf,
+    xrows_cap: u32,
     pub ctl: Buf,
     // `__COUNTER__`'s uses and their room.
     cnt: Buf,
@@ -1220,7 +1229,13 @@ impl Exp {
             opv: zeroed(top)?,
             opbase: zeroed(top)?,
             opscan: Scan::new(arena)?,
-            tokens: zeroed(tok * 4)?,
+            tokens: zeroed(tok * 5)?,
+            // The queue's slots (`lpq_cap`: the pieces', the requests' and their ends', a request's record
+            // `RQ_ENTRIES` of the tokens' rows), then the pieces' three words.
+            lpq: zeroed(16 + 3 * top + 64 + tok / 3 + 5 * top)?,
+            xrows: zeroed(3 * tok)?,
+            xrows_cap: tok as u32,
+            lpq_top: top as u32,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
             tr_sk: arena.zeroed::<u64>(cnt_cap)?,
@@ -1237,7 +1252,7 @@ impl Exp {
             lb_cap: lb_cap as u32,
             // The output's pieces: five columns, `out` words each (decision 0520 §3), their order and
             // the loop's chunks (`lp_flush`).
-            out: zeroed(7 * out)?,
+            out: zeroed(8 * out)?,
             sc_tok: [(); 6].map(|()| zeroed(sc)).into_iter().collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| crate::pp_arena::failure(concat!(file!(), ":", line!())))?,
             sc_ckeys: arena.zeroed::<u64>(sc)?,
             sc_sort: Sort::new(arena, sc)?,
@@ -1253,6 +1268,8 @@ impl Exp {
         l.at("XPOS", &self.xpos).at("V", &self.v).at("OBASE", &self.obase).at("LOB", &self.lob).at("PLAST", &self.plast).at("VTOTAL", &self.vscan.total);
         l.at("OPV", &self.opv).at("OPBASE", &self.opbase).at("OPTOTAL", &self.opscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
+        l.at("LPQ", &self.lpq).word("LPQ_TOP", self.lpq_top);
+        l.at("XROWS", &self.xrows).word("XROWS_CAP", self.xrows_cap);
         l.word("OUT_CAP", self.out_cap);
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
@@ -1335,6 +1352,32 @@ impl Exp {
     }
 
     /// The longest piece's steps in the run (`TRN[16]`, decision 0588).
+    /// The expansions' rows (decision 0613 §6), numbered from 1 in their order here: each one's definition's name,
+    /// its parent (0 the text) and its root call's name (`Expanded::expansions`).
+    pub fn expansions(&self) -> Vec<[u32; 3]> {
+        // SAFETY: the device finished; `ctl` holds 32 words and `xrows` 3 a row for its `xrows_cap` rows.
+        let (n, rows) = unsafe { (*self.ctl.host().cast::<u32>().add(26) as usize, std::slice::from_raw_parts(self.xrows.host().cast::<u32>(), 3 * self.xrows_cap as usize)) };
+        let n = n.min(self.xrows_cap as usize);
+        let mut id = vec![0u32; n + 1];
+        let mut out = Vec::new();
+        for g in 0..n {
+            if rows[3 * g] != 0 {
+                out.push([rows[3 * g] - 1, rows[3 * g + 1], rows[3 * g + 2]]);
+                id[g + 1] = out.len() as u32;
+            }
+        }
+        for r in &mut out {
+            r[1] = id.get(r[1] as usize).copied().unwrap_or(0);
+        }
+        out
+    }
+
+    /// The rows the roll-up walked (`CTL` 26, `lp_roll_rows`).
+    pub fn log_rows(&self) -> u32 {
+        // SAFETY: the device finished; `ctl` holds 32 words.
+        unsafe { *self.ctl.host().cast::<u32>().add(26) }
+    }
+
     pub fn steps(&self) -> u32 {
         // SAFETY: the device finished; `trn` holds 32 words.
         unsafe { *self.trn.host().cast::<u32>().add(16) }
@@ -1390,7 +1433,7 @@ impl Exp {
         let n = *words(&self.vscan.total).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize;
         let cap = self.out_cap as usize;
         let np = (*words(&self.opscan.total).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize).min(cap);
-        let o = words(&self.out).get(..6 * cap).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
+        let o = words(&self.out).get(..8 * cap).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let n_gaps = *words(&vis.n_gaps).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize;
         let gat = words(&vis.gat).get(..n_gaps).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let firsts = words(&vis.gfirsts);
@@ -1399,13 +1442,31 @@ impl Exp {
         let d = unsafe { std::slice::from_raw_parts(defs.defs.host().cast::<PpDef>(), defs.defs.byte_length() / std::mem::size_of::<PpDef>()) };
         let mut out = Vec::with_capacity(n);
         let show = std::env::var_os("RERAIL_PP_PIECES").is_some();
+        // The tokens' store: its columns (`Ar`'s), the leaves of the requests' results among its entries.
+        let tw = words(&self.tokens);
+        let tc = tw.len() / 5;
         for i in 0..np {
-            // The loop's order of its pieces (`lp_place`).
+            // The loop's order of its pieces (`lp_roll_place`): an output piece of its own, or (`cap` past its
+            // entry's) a leaf of a request's result in the tokens' store (decision 0613 §6), read in place.
             let e = o[5 * cap + i] as usize;
-            if e >= cap {
-                return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
-            }
-            let (src, len, st) = (o[e], o[cap + e] & PN_LEN, o[2 * cap + e]);
+            let (src, len, st) = if e < cap {
+                (o[e], o[cap + e] & PN_LEN, o[2 * cap + e])
+            } else {
+                let x = e - cap;
+                if x >= tc {
+                    return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
+                }
+                // A hit's leaves of the text are its own call's tokens, its `(` this far past the first's (the
+                // order's eighth column, `lp_rq_post`).
+                let (src, fl, st) = (tw[x], tw[tc + x], tw[2 * tc + x]);
+                let (src, len) = if src & P_KIND == P_SPAN {
+                    let sub = src & !P_KIND;
+                    (if sub == LP_TOPSRC { P_TOP } else { P_BODY | sub }, fl >> 4)
+                } else {
+                    (src, 1)
+                };
+                (src, len, if src & P_KIND == P_TOP { st.wrapping_add(o[7 * cap + i]) } else { st })
+            };
             if show {
                 eprintln!("piece {i}: kind {} def {} start {st} len {len} at {}", src >> 30, src & !P_KIND, o[3 * cap + e]);
             }
@@ -1478,6 +1539,13 @@ pub struct Expanded {
     /// A round that made requests: the tree its P1 settled at, the next round's start (`Layout::entered`).
     pub tree: Option<Tree>,
     pub def_rung: u32,
+    /// The unit's expansions (decision 0613 §6, the sink's `Expansion` rows), in the roll-up's order: each one's
+    /// definition (its name's top token), its parent (a row's number from 1, 0 the text), and the top token its
+    /// root call's name is.
+    pub expansions: Vec<[u32; 3]>,
+    /// The rows the roll-up walked (`CTL` 26: each run's log, an occurrence's rows each time it is read): the
+    /// logs' use of the tokens' store, as the output's is the output's.
+    pub log_rows: u32,
     /// The command it ran in (`next_run`): a batch's units ran in one, and its GPU time is that command's.
     pub run: u64,
 }
@@ -1762,7 +1830,10 @@ impl<'u> Runs<'u> {
         if std::env::var_os("RERAIL_PP_LOOP_LOG").is_some() {
             // SAFETY: the device finished; `trn` holds 32 words, 16 to 19 the longest piece's, 20 to 23 the slowest's.
             let w = |k: usize| unsafe { *exp.trn.host().cast::<u32>().add(k) };
-            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29));
+            // SAFETY: as `w`: the queue's control words (`LPQ`, 16), 5 to 7 the requests posted, the pieces read
+            // again and the requests' steps.
+            let q = |k: usize| unsafe { *exp.lpq.host().cast::<u32>().add(k) };
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept; requests {}, {} steps, pieces read again {}; arguments taken {}, read by their caller {}, read twice {}; tokens {:?} rung {} top {}", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29), q(5), q(7), q(6), q(8), q(9), q(10), exp.room()[0], x.rung, p1.top);
         }
         // The loop's work, where the run reached the text (a round that ends at its requests did not): the
         // unit's, kept for its next run and its next evaluation.
@@ -1775,7 +1846,7 @@ impl<'u> Runs<'u> {
         };
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
-            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, run })
+            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, expansions: exp.expansions(), log_rows: exp.log_rows(), run })
         };
         // SAFETY: the device finished writing `room`.
         let why = |room: &str| {
@@ -1828,7 +1899,7 @@ impl<'u> Runs<'u> {
         // out, its items read what was never written (a list cut short reads as a call past its
         // end), so its other refusals are the larger run's to give.
         if refused & X_ROOM != 0 && self.x_tries + 1 < EXP_RUNGS {
-            why("the expansion");
+            why(&format!("the expansion: {:?} (tok, sb, st, out: used, room)", exp.room()));
             if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
                 eprintln!("expansion room at rung {rung}: (used, cap) {:?} {:?}", ROOM_STORES, exp.room());
             }
