@@ -473,7 +473,7 @@ function hookHealthLines(home: string): string[] {
 
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */
 function printDaemonStatus(lookup: DaemonLookup): number {
-  if (lookup.status !== "running" || lookup.older === true) return printDaemonWithoutHealth(lookup);
+  if (lookup.status !== "running") return printDaemonWithoutHealth(lookup);
   printDaemon({ state: lookup.state, health: lookup.health });
   return lookup.health.healthy === false ? 5 : 0;
 }
@@ -482,7 +482,7 @@ function printDaemonStatus(lookup: DaemonLookup): number {
  * What `rerail status` says of a daemon it has no health of, and the exit code: 3 when none runs, 4 for one that is
  * alive and not answering, refused the capability, or runs a release before the engine's proof, which is asked nothing.
  */
-function printDaemonWithoutHealth(lookup: DaemonLookup): number {
+function printDaemonWithoutHealth(lookup: Exclude<DaemonLookup, { status: "running" }>): number {
   if (lookup.status === "absent") {
     if (lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
     process.stdout.write(`${daemonNotRunningMessage()}\n`);
@@ -492,8 +492,8 @@ function printDaemonWithoutHealth(lookup: DaemonLookup): number {
   return 4;
 }
 
-/** The line {@link printDaemonWithoutHealth} prints for a daemon that is alive: a running one is an older daemon. */
-function daemonWithoutHealthLine(lookup: Exclude<DaemonLookup, { status: "absent" }>): string {
+/** The line {@link printDaemonWithoutHealth} prints for a daemon that is alive. */
+function daemonWithoutHealthLine(lookup: Exclude<DaemonLookup, { status: "absent" | "running" }>): string {
   if (lookup.status === "unresponsive") {
     return `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.`;
   }

@@ -108,7 +108,7 @@ async function targetDaemon(options: AuditCliOptions): Promise<DaemonEndpoint> {
   const daemon = await findRunningDaemon(options.home);
   if (daemon === undefined) throw new Error("Rerail is not running. Start it with rerail daemon start.");
   // A daemon of a release before the engine's proof proved nothing, and is sent nothing.
-  if (daemon.older === true) throw new Error(olderDaemonMessage(daemon.state));
+  if (daemon.status === "older") throw new Error(olderDaemonMessage(daemon.state));
   return daemonEndpoint(daemon.state);
 }
 

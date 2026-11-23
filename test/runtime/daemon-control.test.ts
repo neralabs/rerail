@@ -10,10 +10,11 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
 import {
   type DaemonHealth,
+  type DaemonLookup,
   type DaemonMachine,
   type DaemonState,
   type EngineEndpoint,
@@ -884,8 +885,8 @@ describe("a state file Windows left behind", () => {
         },
       };
       const found = await lookupDaemon(home, slowProof);
-      expect(found).toEqual({ status: "running", state: { ...state, accessToken: undefined }, older: true });
-      expect(found.status === "running" && "accessToken" in found.state).toBe(false);
+      expect(found).toEqual({ status: "older", state: { ...state, accessToken: undefined } });
+      expect(found.status === "older" && "accessToken" in found.state).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -947,11 +948,18 @@ describe("a state file Windows left behind", () => {
           return OLDER_STARTED_AT - 600;
         },
       };
-      expect(await lookupDaemon(home, slowRead)).toMatchObject({ status: "running", older: true });
+      expect(await lookupDaemon(home, slowRead)).toMatchObject({ status: "older" });
     } finally {
       vi.useRealTimers();
     }
     expect(sent).toEqual([]);
+  });
+
+  // A status of its own: a caller that checks only for a running daemon gets one with health, which it may ask, and the
+  // compiler names every caller that must say what it does with this one.
+  it("gives a daemon whose engine has no proof a status of its own, so a running daemon always has its health", () => {
+    expectTypeOf<Extract<DaemonLookup, { status: "running" }>["health"]>().toEqualTypeOf<DaemonHealth>();
+    expectTypeOf<Extract<DaemonLookup, { status: "older" }>>().not.toHaveProperty("health");
   });
 
   // The audit and every other caller of findRunningDaemon learns it found such a daemon, with no capability to send it.
@@ -959,7 +967,7 @@ describe("a state file Windows left behind", () => {
     const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native", startedAt: OLDER_STARTED_AT });
     await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state));
     const found = await findRunningDaemon(home, olderEngine(OLDER_STARTED_AT - 600));
-    expect(found?.older).toBe(true);
+    expect(found?.status).toBe("older");
     expect(found?.state.accessToken).toBeUndefined();
     expect(found?.state.nativeToken).toBeUndefined();
   });
@@ -1446,7 +1454,7 @@ describe("a state file Windows left behind", () => {
       vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "ok", pid: daemon.pid })));
       await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state));
       const spawned = vi.mocked(childProcess.spawnSync).mock.calls.length;
-      expect(await lookupDaemon(home)).toMatchObject({ status: "running", state: { pid: daemon.pid }, older: true });
+      expect(await lookupDaemon(home)).toMatchObject({ status: "older", state: { pid: daemon.pid } });
       expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(spawned);
     } finally {
       engine.close();

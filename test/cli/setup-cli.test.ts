@@ -28,7 +28,8 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
       const found = daemonStop.lookup!;
       const port = args[1].port ?? found.state.port;
       const state = { ...found.state, pid: found.state.pid + 1, port, url: `http://127.0.0.1:${port}/`, packageRoot: args[0].packageRoot };
-      return { started: true, daemon: { state, health: found.health } };
+      // Set-up reads the started daemon's state alone and passes its health on unread.
+      return { started: true, daemon: { state, health: found.status === "running" ? found.health : undefined } };
     },
   };
 });
@@ -70,13 +71,8 @@ import { fixturesPath } from "../support/oracles.js";
 
 const temporaryDirectories: string[] = [];
 
-/** A running daemon a lookup finds; `older` marks one of a release before the engine's proof, as a lookup on Windows does. */
-interface FoundDaemon {
-  status: "running";
-  state: DaemonState;
-  health: DaemonHealth;
-  older?: true;
-}
+/** A running daemon a lookup finds: status `older`, with no health, for one of a release before the engine's proof, as a lookup on Windows finds it. */
+type FoundDaemon = { status: "running"; state: DaemonState; health: DaemonHealth } | { status: "older"; state: DaemonState };
 
 /** The content cache in the user home `home`: `AppData\Local\rerail` on Windows, out of a roaming profile; `.cache/rerail` elsewhere. */
 const contentCache = (home: string): string =>
@@ -945,7 +941,7 @@ describe("rerail install --refresh", () => {
 describe("the daemon set-up links the dashboard to", () => {
   /**
    * The running daemon a lookup finds, recorded with `packageRoot`, as an upgrade in place leaves a daemon's record:
-   * `older` where its engine has no proof, Rerail 0.1.4 or earlier, which a lookup tells on Windows.
+   * status `older` where its engine has no proof, Rerail 0.1.4 or earlier, which a lookup tells on Windows.
    */
   function foundDaemon(packageRoot: string, older: boolean): FoundDaemon {
     const state: DaemonState = {
@@ -955,7 +951,7 @@ describe("the daemon set-up links the dashboard to", () => {
     // Set-up reads the state alone; the health the lookup brings is the probe's, and set-up passes it on unread.
     const health: Partial<DaemonHealth> = { status: "ok", pid: 4242, version: "0.1.4", ui: "bundled" };
     const found: FoundDaemon = { status: "running", state, health: health as DaemonHealth };
-    return older ? { ...found, older: true } : found;
+    return older ? { status: "older", state } : found;
   }
 
   // A daemon of a release before the engine's proof predates what set-up's package sends it wherever it ran from, so

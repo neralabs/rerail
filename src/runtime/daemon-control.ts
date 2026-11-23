@@ -333,7 +333,6 @@ const MAX_MACOS_UNIX_SOCKET_PATH_BYTES = 103;
 export interface RunningDaemon {
   state: DaemonState;
   health: DaemonHealth;
-  older?: undefined;
 }
 
 /**
@@ -342,15 +341,20 @@ export interface RunningDaemon {
  * holds neither capability: no caller can send it one. It is ended through its process ({@link endOlderDaemon}).
  */
 export interface OlderDaemon {
+  status: "older";
   state: DaemonState;
-  older: true;
 }
+
+/** A daemon a lookup found running: one that answered as itself, or one of a release before the proof ({@link OlderDaemon}). */
+export type FoundRunning = Extract<DaemonLookup, { status: "running" | "older" }>;
 
 /**
  * What the state file says, checked against reality.
  *
- * - `running`: the recorded pid is alive and `/healthz` answers with that pid; or, marked `older`, a daemon of a
- *   release before the engine's proof found by its process's start on Windows, which is not asked ({@link OlderDaemon}).
+ * - `running`: the recorded pid is alive and `/healthz` answers with that pid.
+ * - `older`: a daemon of a release before the engine's proof, found by its process's start on Windows, which is not
+ *   asked ({@link OlderDaemon}). A status of its own, so a caller that takes a `running` daemon for one it may ask never
+ *   gets this one, and the compiler names each caller that must say what it does with it.
  * - `unresponsive`: the pid is alive but the probe failed. The state is kept:
  *   a transient timeout must not orphan a live daemon, and `stop` still needs
  *   the pid. `start` refuses rather than spawning a second instance.
@@ -361,7 +365,8 @@ export interface OlderDaemon {
  *   home's daemon ({@link recordedProcess}).
  */
 export type DaemonLookup =
-  | ({ status: "running" } & (RunningDaemon | OlderDaemon))
+  | ({ status: "running" } & RunningDaemon)
+  | OlderDaemon
   | { status: "unresponsive"; state: DaemonState }
   | { status: "refused"; state: DaemonState }
   | { status: "absent"; notDaemon?: number };
@@ -920,7 +925,7 @@ export async function lookupDaemon(
   if (state === undefined) return { status: "absent" };
   const deadline = Date.now() + readLimitMs;
   const found = await checkedLookup(stateFile, state, machine, probeTimeoutMs, deadline);
-  if (found.status === "running" || found.status === "absent" || recordedProcess(home, state, machine, deadline) !== "not-ours") return found;
+  if (foundRunning(found) || found.status === "absent" || recordedProcess(home, state, machine, deadline) !== "not-ours") return found;
   await rm(stateFile, { force: true });
   return { status: "absent", notDaemon: state.pid };
 }
@@ -942,7 +947,7 @@ async function checkedLookup(stateFile: string, state: DaemonState, machine: Dae
   if (recorded === "silent") return { status: "unresponsive", state };
   // A daemon of a release before the proof proved nothing, and its health route wants the capability: it is asked
   // nothing, and its state goes on without either capability, so no caller can send it one.
-  if (recorded === "older") return { status: "running", state: withoutCapabilities(state), older: true };
+  if (recorded === "older") return { status: "older", state: withoutCapabilities(state) };
   return await probedLookup(stateFile, state, Math.max(0, deadline - Date.now()));
 }
 
@@ -965,10 +970,15 @@ async function probedLookup(stateFile: string, state: DaemonState, timeoutMs: nu
   return { status: "running", state, health: probe.health };
 }
 
-/** The daemon recorded in `home` that a lookup finds running, `older` marked as there, or undefined when there is none. */
-export async function findRunningDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<RunningDaemon | OlderDaemon | undefined> {
+/** Whether `lookup` found a daemon running, one of a release before the proof included ({@link FoundRunning}). */
+export function foundRunning(lookup: DaemonLookup): lookup is FoundRunning {
+  return lookup.status === "running" || lookup.status === "older";
+}
+
+/** The daemon recorded in `home` that a lookup finds running ({@link FoundRunning}), or undefined when there is none. */
+export async function findRunningDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<FoundRunning | undefined> {
   const lookup = await lookupDaemon(home, machine);
-  return lookup.status === "running" ? lookup : undefined;
+  return foundRunning(lookup) ? lookup : undefined;
 }
 
 export interface StartLockOptions {
@@ -1158,7 +1168,7 @@ export async function startDaemon(
 ): Promise<StartDaemonResult> {
   return await startUnderLock(control.home, async () => {
     const lookup = await lookupHomeDaemon(control.home, machine, PROBE_TIMEOUT_MS, holderNotRecorded);
-    if (lookup.status === "running" && lookup.older === true) return await replacedOlderDaemon(control, options, lookup, machine);
+    if (lookup.status === "older") return await replacedOlderDaemon(control, options, lookup, machine);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options, machine);
@@ -1172,7 +1182,7 @@ export async function startDaemon(
 async function replacedOlderDaemon(
   control: DaemonControl,
   options: DaemonLaunchOptions,
-  older: OlderDaemon & { status: "running" },
+  older: OlderDaemon,
   machine: DaemonMachine,
 ): Promise<StartDaemonResult> {
   const ended = await stopFound(control.home, older, machine);
@@ -1210,8 +1220,8 @@ export async function startDaemonForPackage(
 ): Promise<StartDaemonResult> {
   return await startUnderLock(control.home, async () => {
     const lookup = await lookupHomeDaemon(control.home, machine, PROBE_TIMEOUT_MS, holderNotRecorded);
-    if (lookup.status === "running") {
-      if (lookup.older === undefined && await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
+    if (foundRunning(lookup)) {
+      if (lookup.status === "running" && await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
         return { started: false, daemon: { state: lookup.state, health: lookup.health } };
       }
       await stopFoundDaemon(control.home, lookup, machine);
@@ -1227,8 +1237,8 @@ export async function startDaemonForPackage(
  * own package (`packageRoot`), unless it runs a release before the engine's proof (`older`, known on Windows), which
  * predates the fields the hook sends whichever package it ran from.
  */
-export async function daemonServesPackage(found: RunningDaemon | OlderDaemon, packageRoot: string): Promise<boolean> {
-  return found.older !== true && await daemonUsesPackageRoot(found.state, packageRoot);
+export async function daemonServesPackage(found: FoundRunning, packageRoot: string): Promise<boolean> {
+  return found.status === "running" && await daemonUsesPackageRoot(found.state, packageRoot);
 }
 
 /** Whether a healthy daemon was launched from the package the caller is executing. */
@@ -1309,7 +1319,7 @@ export async function daemonEngineEndpoint(
   if (daemon === undefined) {
     throw new AutostartOffError(`RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
   }
-  if (daemon.older === true || (replaceOtherPackage && !(await daemonServesPackage(daemon, control.packageRoot)))) {
+  if (daemon.status === "older" || (replaceOtherPackage && !(await daemonServesPackage(daemon, control.packageRoot)))) {
     throw otherPackageDaemon(machine.env);
   }
   return engineEndpointOf(daemon.state);
@@ -1333,10 +1343,10 @@ function otherPackageDaemon(env: NodeJS.ProcessEnv): Error {
  * (`patientLookup`); one that still does not answer, or refuses the capability, throws `LiveDaemonError` and is not
  * waited for again.
  */
-async function runningDaemon(home: string, deadline: number | undefined, machine: DaemonMachine): Promise<RunningDaemon | OlderDaemon | undefined> {
+async function runningDaemon(home: string, deadline: number | undefined, machine: DaemonMachine): Promise<FoundRunning | undefined> {
   const lookup = await patientLookup(home, machine, deadline);
   if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
-  return lookup.status === "running" ? lookup : undefined;
+  return foundRunning(lookup) ? lookup : undefined;
 }
 
 /**
@@ -1350,14 +1360,14 @@ async function startedDaemon(
   replaceOtherPackage: boolean,
   deadline: number | undefined,
   machine: DaemonMachine,
-): Promise<RunningDaemon | OlderDaemon> {
+): Promise<FoundRunning> {
   const start = replaceOtherPackage ? startDaemonForPackage : startDaemon;
   try {
-    return (await start(control, { dev: false }, machine)).daemon;
+    return { status: "running", ...(await start(control, { dev: false }, machine)).daemon };
   } catch (error) {
     if (!(error instanceof LiveDaemonError) || error.lookup.status !== "unresponsive") throw error;
     const answered = await patientLookup(control.home, machine, deadline, error.lookup);
-    if (answered.status !== "running") throw error;
+    if (!foundRunning(answered)) throw error;
     return answered;
   }
 }
@@ -1366,7 +1376,7 @@ async function startedDaemon(
  * The daemon a hook found after a session's start: its engine endpoint, or why no daemon takes the event. `absent`
  * means none runs; `unresponsive` and `refused` name a daemon that is alive, which a start would only refuse to replace.
  */
-export type HookDaemon = { status: "running"; endpoint: EngineEndpoint } | Exclude<DaemonLookup, { status: "running" }>;
+export type HookDaemon = { status: "running"; endpoint: EngineEndpoint } | Exclude<DaemonLookup, FoundRunning>;
 
 /**
  * The engine endpoint for a hook after a session's start, or why there is none. A daemon that is down is not started:
@@ -1378,7 +1388,7 @@ export type HookDaemon = { status: "running"; endpoint: EngineEndpoint } | Exclu
  */
 export async function runningDaemonEngineEndpoint(deadline?: number, machine: DaemonMachine = THIS_MACHINE): Promise<HookDaemon> {
   const lookup = await patientLookup(defaultRerailHome(machine.env), machine, deadline);
-  if (lookup.status !== "running") return lookup;
+  if (!foundRunning(lookup)) return lookup;
   const endpoint = await daemonServesPackage(lookup, PACKAGE_ROOT)
     ? engineEndpointOf(lookup.state)
     : await daemonEngineEndpoint(true, deadline, machine);
@@ -1921,7 +1931,7 @@ export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MAC
   return await stopFoundDaemon(home, lookup, machine);
 }
 
-/** A daemon a lookup found alive: running, unresponsive or refusing the capability. */
+/** A daemon a lookup found alive: running, of a release before the proof, unresponsive or refusing the capability. */
 export type FoundDaemon = Exclude<DaemonLookup, { status: "absent" }>;
 
 /**
@@ -1943,8 +1953,11 @@ type StopProof = "lock" | "answer" | "holder" | "record";
 /** The proofs that rest on the home's lock held as the daemon's when the stop began. */
 const LOCK_PROOFS: ReadonlySet<StopProof> = new Set(["lock", "holder"]);
 
-/** The {@link provenNow} a stop asks just before each signal to the daemon `found` names. */
-function signalCheck(home: string, found: FoundDaemon, machine: DaemonMachine): () => SignalVerdict {
+/**
+ * The {@link provenNow} a stop asks just before each signal to the daemon `found` names. Never one of a release before
+ * the engine's proof, which proved nothing and is ended through its process ({@link endOlderDaemon}).
+ */
+function signalCheck(home: string, found: Exclude<FoundDaemon, OlderDaemon>, machine: DaemonMachine): () => SignalVerdict {
   const held = lockVerdict(home, found.state.pid, machine) === "ours";
   const proof: StopProof = found.status === "running" ? (held ? "lock" : "answer") : (held ? "holder" : "record");
   return () => provenNow(home, found.state, proof, machine);
@@ -2071,7 +2084,7 @@ async function stopFound(home: string, found: FoundDaemon, machine: DaemonMachin
  * its process ({@link endOlderDaemon}); any other is asked to stop, then killed while it is proven the home's daemon.
  */
 async function endFoundDaemon(home: string, found: FoundDaemon, machine: DaemonMachine): Promise<StopAsk> {
-  if (found.status === "running" && found.older === true) return await endOlderDaemon(home, found.state, machine);
+  if (found.status === "older") return await endOlderDaemon(home, found.state, machine);
   const check = signalCheck(home, found, machine);
   const asked = await askDaemonToStop(found.state, check, home, machine);
   if (asked === "asked") await endWhenStopped(home, found.state.pid, check, machine);

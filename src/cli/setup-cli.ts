@@ -35,6 +35,7 @@ import {
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
   daemonServesPackage,
+  foundRunning,
   lookupDaemon,
   MACHINE_WITHOUT_ENGINE,
   mainInstanceHolderRuns,
@@ -1027,9 +1028,12 @@ async function keepsDaemon(found: Extract<DaemonLookup, { status: "running" }>, 
   return await daemonServesPackage(found, packageRoot) && (port === undefined || found.state.port === port);
 }
 
-/** Stops the daemon `lookup` found running, set-up's start taking its place, and gives the port it had. */
+/**
+ * Stops the daemon `lookup` found running, one of a release before the proof included, set-up's start taking its place,
+ * and gives the port it had.
+ */
 async function stoppedPort(home: string, lookup: DaemonLookup): Promise<number | undefined> {
-  if (lookup.status !== "running") return undefined;
+  if (!foundRunning(lookup)) return undefined;
   await stopDaemon(home);
   return lookup.state.port;
 }

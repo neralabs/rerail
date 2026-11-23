@@ -10,7 +10,7 @@ import { removeFolder } from "../../support/platform/remove-folder.js";
 import { stubUserHome } from "../../support/user-home.js";
 
 /** What a Windows lookup hands on for a daemon of 0.1.4 or earlier. */
-interface OlderFound { status: "running"; state: DaemonState; older: true }
+interface OlderFound { status: "older"; state: DaemonState }
 
 /** What a start that ended such a daemon and launched this release's answers. */
 interface ReplacingStart { started: true; daemon: { state: DaemonState; health: DaemonHealth }; replaced: Pick<DaemonState, "pid" | "version"> }
@@ -22,7 +22,7 @@ vi.mock("../../../src/runtime/daemon-control.js", async () => {
   return {
     ...actual,
     lookupDaemon: async () => answers.lookup,
-    findRunningDaemon: async () => (answers.lookup?.status === "running" ? answers.lookup : undefined),
+    findRunningDaemon: async () => answers.lookup,
     startDaemon: async () => answers.start,
   };
 });
@@ -36,7 +36,7 @@ const OLDER: DaemonState = {
   pid: 4242, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "0.1.4", databasePath: "/nowhere/rerail.sqlite",
   kernelSocketPath: "/nowhere/engine.sock", ui: "bundled", startedAt: 0, packageRoot: "/nowhere/rerail",
 };
-const OLDER_FOUND: OlderFound = { status: "running", state: OLDER, older: true };
+const OLDER_FOUND: OlderFound = { status: "older", state: OLDER };
 const OLDER_LINE = "Rerail daemon pid 4242 runs Rerail 0.1.4, a release before 0.1.5, which Rerail sends nothing; run rerail daemon start to end it and start this release's daemon.";
 
 let root: string;
