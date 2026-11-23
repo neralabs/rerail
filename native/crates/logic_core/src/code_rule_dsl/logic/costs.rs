@@ -344,7 +344,7 @@ fn read() {
         let p = path.clone();
         let _ = rerail_accel::exec::service("rerail-join-model", None, move || {
             crate::code_rule_dsl::logic::profile::behind_the_run();
-            rerail_accel::cost_model::set_qos(rerail_accel::cost_model::Qos::Utility);
+            rerail_accel::cost_model::utility();
             match rusqlite::Connection::open_with_flags(&p, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
                 Ok(db) => join_steps::install_model(&db, &machine()),
                 Err(e) => eprintln!("rerail: join model: steps not read from {}: {e}", p.display()),
@@ -418,14 +418,14 @@ fn load_saved(path: &PathBuf, due: bool) {
         model_state("none saved: the prices are the rates; a training is due on an idle machine (upkeep)".into());
         return;
     };
-    match rerail_accel::cost_model::CostModel::from_bytes(&bytes) {
+    match rerail_accel::cost_model::from_bytes(&bytes) {
         Ok(m) => {
             let t = std::time::Instant::now();
             if let Err(e) = m.warm() {
                 model_state(format!("the saved model does not predict ({e}): the prices are the rates"));
                 return;
             }
-            rerail_accel::cost_model::install(Some(std::sync::Arc::new(m)));
+            rerail_accel::cost_model::install(Some(m));
             let next = if due { "a training due on an idle machine (upkeep)" } else { "no training due" };
             model_state(format!("the saved model ({trained_on} samples) in place, warmed in {:.2} s; {next}", t.elapsed().as_secs_f64()));
         }
@@ -439,7 +439,7 @@ fn load_saved(path: &PathBuf, due: bool) {
 fn place_saved(path: PathBuf, due: bool) {
     let spawned = rerail_accel::exec::service("rerail-cost-model", None, move || {
         crate::code_rule_dsl::logic::profile::behind_the_run();
-        rerail_accel::cost_model::set_qos(rerail_accel::cost_model::Qos::Utility);
+        rerail_accel::cost_model::utility();
         load_saved(&path, due);
     });
     if spawned.is_err() {
@@ -468,15 +468,14 @@ fn fit(path: &PathBuf, samples: &[rerail_accel::score::Sample], upkeep: bool, st
                 if upkeep {
                     rerail_accel::upkeep::lower_this_thread();
                 } else {
-                    rerail_accel::cost_model::set_qos(rerail_accel::cost_model::Qos::Utility);
+                    rerail_accel::cost_model::utility();
                 }
             })
             .build();
         let started = std::time::Instant::now();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let config = rerail_accel::cost_model::CostConfig::default();
             match &pool {
-                Ok(pool) => pool.install(|| rerail_accel::cost_model::train_until(samples, &config, MIN_TRAIN, stop)),
+                Ok(pool) => pool.install(|| rerail_accel::cost_model::train_until(samples, MIN_TRAIN, stop)),
                 Err(e) => Err(e.to_string()),
             }
         }));
@@ -564,7 +563,7 @@ impl rerail_accel::upkeep::Job for Retrain {
 
 /// Saves the model for this machine, or takes the saved one out when there is none.
 #[cfg(target_os = "macos")]
-fn save(path: &PathBuf, model: Option<&rerail_accel::cost_model::CostModel>, comparison: &rerail_accel::cost_model::Comparison) -> rusqlite::Result<()> {
+fn save(path: &PathBuf, model: Option<&dyn rerail_accel::models::LearnedCost>, comparison: &rerail_accel::cost_model::Comparison) -> rusqlite::Result<()> {
     let _warm = writing();
     let db = open(path)?;
     match model {
@@ -572,7 +571,7 @@ fn save(path: &PathBuf, model: Option<&rerail_accel::cost_model::CostModel>, com
             let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
             db.execute(
                 "INSERT OR REPLACE INTO models VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![machine(), at, m.trained_on as i64, comparison.to_string(), m.to_bytes()],
+                rusqlite::params![machine(), at, m.trained_on() as i64, comparison.to_string(), m.to_bytes()],
             )?;
         }
         None => {
@@ -768,9 +767,8 @@ pub mod tests {
         let db = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
         let limit: i64 = std::env::var("COSTS_READ").ok().and_then(|v| v.parse().ok()).unwrap_or(super::READ);
         let samples = super::read_samples(&db, limit, super::READ_PER_FORM).unwrap();
-        let config = rerail_accel::cost_model::CostConfig::default();
         let (cpu, t) = (rerail_accel::exec::process_cpu(), std::time::Instant::now());
-        let (c, model) = rerail_accel::cost_model::compare(&samples, &config).unwrap();
+        let (c, model) = rerail_accel::cost_model::compare(&samples).unwrap();
         eprintln!("{} samples; trained in {:.2} s wall {:.2} s CPU; {model:?}", samples.len(), t.elapsed().as_secs_f64(), rerail_accel::exec::process_cpu() - cpu);
         eprintln!("{c}");
         eprintln!("model wins: {}", c.model_wins());
@@ -810,9 +808,8 @@ pub mod tests {
         };
         let (train, held) = (blank(train), blank(held));
         if !drop.is_empty() { eprintln!("features dropped: {drop}"); }
-        let config = rerail_accel::cost_model::CostConfig::default().forest;
         let (cpu, t) = (rerail_accel::exec::process_cpu(), std::time::Instant::now());
-        let (c, model) = rerail_accel::join_model::compare_on(&train, &held, &config).unwrap();
+        let (c, model) = rerail_accel::join_model::compare_on(&train, &held).unwrap();
         eprintln!("{} steps trained on, {} held out ({}); trained in {:.2} s wall {:.2} s CPU; {model:?}", train.len(), held.len(), if by_run { "the newest run" } else { "the newest fifth" }, t.elapsed().as_secs_f64(), rerail_accel::exec::process_cpu() - cpu);
         eprintln!("{c}");
         eprintln!("model wins: {}", c.model_wins());
@@ -857,7 +854,7 @@ pub mod tests {
         eprintln!("trained in {:.1} s: {state}", t.elapsed().as_secs_f64());
         let installed = rerail_accel::cost_model::current().expect("the model in place");
         let (trained_on, bytes): (i64, Vec<u8>) = db.query_row("SELECT trained_on, model FROM models WHERE machine = ?1", [super::machine()], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-        assert_eq!(trained_on as usize, installed.trained_on);
+        assert_eq!(trained_on as usize, installed.trained_on());
         assert_eq!(bytes, installed.to_bytes());
         eprintln!("saved: {} bytes", bytes.len());
         rerail_accel::cost_model::install(None);

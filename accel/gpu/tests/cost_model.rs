@@ -3,7 +3,8 @@
 //! process's.
 #![cfg(target_os = "macos")]
 
-use rerail_accel::cost_model::{CostConfig, CostModel, install, predict_batch, sample};
+use rerail_accel::cost_model::{install, predict_batch};
+use rerail_accel_gpu::cost_model::{CostConfig, CostModel, Learned, sample};
 use rerail_accel::score::Sample;
 use rerail_accel::{Batch, Executor, Kernel, Lane, Launch};
 use std::sync::Arc;
@@ -65,7 +66,7 @@ fn an_installed_model_places_by_its_costs_and_the_rates_without_it() {
 
     let config = CostConfig { forest: rerail_forest_config(), ..Default::default() };
     let model = CostModel::train(&samples().iter().map(sample).collect::<Vec<_>>(), &config).unwrap();
-    install(Some(Arc::new(model)));
+    install(Some(Arc::new(Learned(model))));
     let p = predict_batch(&[(&k, vec![Lane::Cpu, Lane::Gpu])], 1.0);
     let (cpu, gpu) = (p[0][Lane::Cpu.index()].unwrap(), p[0][Lane::Gpu.index()].unwrap());
     assert!(cpu.wall < 1e-4 && gpu.wall > 0.5, "{cpu:?} {gpu:?}");
@@ -100,8 +101,8 @@ impl rerail_accel::kernel::Program for Unknown {
 }
 
 /// A small forest: the test's data is simple.
-fn rerail_forest_config() -> rerail_accel::cost_model::ForestConfig {
-    rerail_accel::cost_model::ForestConfig { feature_vector_samplings: 20, ..CostConfig::default().forest }
+fn rerail_forest_config() -> rerail_accel_gpu::cost_model::ForestConfig {
+    rerail_accel_gpu::cost_model::ForestConfig { feature_vector_samplings: 20, ..CostConfig::default().forest }
 }
 
 /// A program of `units`, priced like `Priced` (the model knows its name).
@@ -133,7 +134,7 @@ fn placement_prediction_cost() {
         return;
     }
     let model = CostModel::train(&samples().iter().map(sample).collect::<Vec<_>>(), &CostConfig::default()).unwrap();
-    install(Some(Arc::new(model)));
+    install(Some(Arc::new(Learned(model))));
     for n in [1usize, 16, 256, 1024] {
         let ks: Vec<Kernel> = (0..n).map(|i| Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(Sized(1e9 * (1.0 + (i % 50) as f64 * 0.02)))))).collect();
         let asked: Vec<(&Kernel, Vec<Lane>)> = ks.iter().map(|k| (k, vec![Lane::Cpu, Lane::Gpu])).collect();

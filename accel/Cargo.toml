@@ -20,7 +20,8 @@ rayon = "=1.12.0"
 parking_lot = "0.12"
 sha2 = "0.10"
 libc = "0.2.189"
-rerail-forest = { path = "../forest" }
+# The learned models' trainer, registered by rerail-accel-gpu (`models::MODELS`).
+rerail-registry = { path = "../native/crates/registry" }
 # The join model's name tables (`join_model`): a short name's lookup is 150 ns under std's SipHash.
 rustc-hash = "=2.1.3"
 # The one block policy (`blocks`, decision 0342) on every target: host blocks everywhere, blocks leased from the

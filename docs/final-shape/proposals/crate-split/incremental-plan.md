@@ -1406,3 +1406,28 @@ dropped the `--timings` runs (2026-11-22).
     - Then: facts-base 15.8k lines, 61 above (the new crate is one of them). rerail-overlay 1.4k lines, 23 above.
     - Checks: the workspace with `--tests` is clean on Linux and macOS. clippy has nothing in the moved files. The
       repository's checks pass. Tests (Linux): the overlay's and runs', 11; observe's, 3; families', 5.
+- **10d, accel off the device's stack.** The engine's crates stand one per level from boot down to prof, so a cut
+  between two of them shortens the longest chain by one at most (34: any one edge on it, 33). Below prof the chain
+  ran prof > accel > forest > gpu > ukl-vec > ukl > c-pp > c-lean > tape-format > clif > blocks, one crate a level
+  too: the executor every crate uses sat on the GPU's compiler. So an edit to UKL rebuilt 86 crates, and ukl-vec
+  (19.3k lines) cost the most of any crate. Its users take the pool and the executor (`exec`, `upkeep`, `budget`,
+  `gpu::shared`). Only the GPU lane's kernels and device join, and the models the forest trains on the device, need
+  the stack. They move to `rerail-accel-gpu` (`accel/gpu`), registered as the engine boots. With lang's tape home
+  off metal too, the longest chain is 28 and an edit to UKL rebuilds 40 (`fanout.py`, simulated).
+  - **10d-1:** the shared pool opens the device through rerail-device's `shared`, not forest's re-export of it.
+  - **10d-2, the models.** accel's `models` is their interface:
+    - `LearnedCost` and `LearnedJoin`, the models as the prices and the planner ask them;
+    - `Models`, what trains them and reads a saved cost model, in a `rerail_registry::Slot` (`MODELS`).
+
+    `cost_model` keeps the installed model's version and each thread's copy over `dyn LearnedCost`, and trains
+    through the slot (`train_until`, `compare`, `from_bytes`, `utility`). Each model keeps its memo of predictions.
+    `join_model` keeps the steps and their comparisons. Its `JoinModel` is `Arc<dyn LearnedJoin>`, and
+    `train`, `compare` and `compare_on` go through the slot. The forests' side, the cost model's memo and
+    comparison and the join model's forest and device queue, is rerail-accel-gpu's (`cost_model`, `join_model`,
+    macOS). It registers `Forest` in boot's install, and in logic-core's test binary as it loads. Callers pass no
+    configuration: every one passed the forest's default. The forest's own tests keep theirs.
+    - Then: accel no longer depends on forest. An edit to forest rebuilds 25 crates, from 80. The longest chain
+      is 33.
+    - Checks: the workspace with `--tests` is clean on macOS and Linux. clippy has nothing in the changed files.
+      The repository's checks pass. Tests (macOS): accel's, the forests' (three join-model tests and the model in
+      placement) and logic-core's cost and join-step tests, 22.

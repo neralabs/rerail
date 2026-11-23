@@ -104,3 +104,17 @@ pub mod code_rule_dsl {
     #[allow(unused_imports)]
     use std::sync::Arc;
 }
+
+/// This crate's own test binary, which the engine does not load: its learned models registered as it loads, as boot
+/// registers them (rerail-accel-gpu), so the cost model's tests train on the device.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        rerail_accel_gpu::install();
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}

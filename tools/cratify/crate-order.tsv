@@ -44,6 +44,7 @@ rerail-ukl-vec	core
 rerail-gpu	core
 rerail-forest	core
 rerail-accel	core
+rerail-accel-gpu	core
 rerail-prof	core
 rerail-metal	core
 rerail-metal-programs	core

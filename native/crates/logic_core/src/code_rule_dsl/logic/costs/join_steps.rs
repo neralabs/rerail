@@ -175,10 +175,9 @@ pub fn install_model(db: &Connection, machine: &str) {
     if steps.len() < 10_000 {
         return eprintln!("rerail: join model: {} steps stored, under 10,000: the planner's estimates choose", steps.len());
     }
-    let config = rerail_accel::cost_model::CostConfig::default().forest;
-    match rerail_accel::join_model::JoinModel::train(&steps, &config) {
+    match rerail_accel::join_model::train(&steps) {
         Ok(m) => {
-            eprintln!("rerail: join model in place: trained on {} steps in {:.2} s: {:.2} s of this thread's CPU, {:.2} s of the GPU (the forest's device: {}); a dispatch {:.1} µs of CPU, a host walk {:.2} µs a step: the device from {} steps", steps.len(), t.elapsed().as_secs_f64(), rerail_accel::exec::thread_cpu() - cpu, rerail_forest_gpu_seconds() - gpu, m.on_device(), m.costs.0 * 1e6, m.costs.1 * 1e6, m.device_rows);
+            eprintln!("rerail: join model in place: trained on {} steps in {:.2} s: {:.2} s of this thread's CPU, {:.2} s of the GPU (the forest's device: {}); a dispatch {:.1} µs of CPU, a host walk {:.2} µs a step: the device from {} steps", steps.len(), t.elapsed().as_secs_f64(), rerail_accel::exec::thread_cpu() - cpu, rerail_forest_gpu_seconds() - gpu, m.on_device(), m.costs().0 * 1e6, m.costs().1 * 1e6, m.device_rows());
             match INSTALL.get() {
                 Some(install) => install(m),
                 None => eprintln!("rerail: join model: trained, but nothing takes it (no planner registered)"),

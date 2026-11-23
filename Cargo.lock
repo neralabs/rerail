@@ -3180,12 +3180,23 @@ dependencies = [
  "rerail-blocks",
  "rerail-context",
  "rerail-device",
- "rerail-forest",
  "rerail-gpu",
+ "rerail-registry",
  "rerail-ukl",
  "rustc-hash",
  "serde",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "rerail-accel-gpu"
+version = "0.1.0"
+dependencies = [
+ "rerail-accel",
+ "rerail-accel-gpu",
+ "rerail-device",
+ "rerail-forest",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -3303,6 +3314,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-accel-gpu",
  "rerail-blocks",
  "rerail-boot",
  "rerail-c-directives",
@@ -4967,6 +4979,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-accel-gpu",
  "rerail-blocks",
  "rerail-facts",
  "rerail-lang",
