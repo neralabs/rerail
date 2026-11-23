@@ -589,11 +589,17 @@ pub fn sources(
         }
         b.finish().map_err(Error::Plan)?.0
     };
+    // Its run asks for the whole-run cutoff (`reuse`), whatever the run's own options say, as phase 0's runs do: its
+    // key holds the files handed down to it, and its record what it consulted (the directories, files and library
+    // documents its imports read). A run over the same files as the last one (a session's run with nothing edited,
+    // a full run beside it, a rule's edit) writes its exports again and evaluates nothing. Asked only where the run
+    // asked, every run of a session evaluated `sources.rerail` over its unchanged files again.
     let mut options = options.clone();
     if let Some(o) = options.as_object_mut() {
         o.insert("inputFiles".to_owned(), serde_json::Value::Array(Vec::new()));
+        o.insert("reuse".to_owned(), serde_json::Value::Bool(true));
     } else {
-        options = serde_json::json!({ "inputFiles": [] });
+        options = serde_json::json!({ "inputFiles": [], "reuse": true });
     }
     // The observer's facts: stated, handed down as a phase's exports are (they are its inputs, not its program).
     let stated: Vec<Vec<Value>> = files.iter().map(|(p, m, g, c)| vec![Value::Str(p.clone().into()), Value::Str(m.clone().into()), Value::Str(g.clone().into()), Value::Str(c.clone().into())]).collect();
