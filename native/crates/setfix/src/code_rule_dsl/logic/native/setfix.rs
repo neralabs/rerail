@@ -4419,7 +4419,16 @@ impl View {
         read
     }
     fn find_read(&self, cols: &[usize], key: &[i64], lead: usize, need: u64, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, spare: &mut Option<Arc<Vec<(u32, [i64; READ])>>>) -> Option<Found> {
-        if !self.eqs.is_empty() || self.ids.is_some() || self.cols.len() > READ {
+        // A version's or a pick's rows (`ids` with no constants) are refused; a view chosen by constants has its
+        // constants' rows as its ids (`filtered`), which the checks below find as `find` does, in the source's rows.
+        if (self.ids.is_some() && self.eqs.is_empty()) || self.cols.len() > READ {
+            return None;
+        }
+        // A view chosen by constants (`field(p, #f, c)`): probed by one column, each match's constant columns read
+        // with its others and checked here, and one constant given to the source (`ProbeCursor::also`), which may
+        // keep its matches to it (a field's children under that field alone): no row list of the matches, each row
+        // then found again by number (`find`), and no list of the constants' rows made first.
+        if !self.eqs.is_empty() && (cols.len() > 1 || self.eqs.len() > 2) {
             return None;
         }
         // `find_keyed`'s probe of several columns goes first where the source keeps it to them.
@@ -4455,7 +4464,7 @@ impl View {
         {
             return None;
         }
-        let (mut src, mut at, mut m) = ([0usize; READ], [0usize; READ], 0);
+        let (mut src, mut at, mut m) = ([0usize; READ + 2], [0usize; READ], 0);
         for c in 0..self.cols.len() {
             if need >> c & 1 != 0 {
                 src[m] = self.cols[c];
@@ -4463,10 +4472,19 @@ impl View {
                 m += 1;
             }
         }
+        let (mut eq, k) = ([0i64; 2], self.eqs.len());
+        for (j, &(c, v)) in self.eqs.iter().enumerate() {
+            src[m + j] = c;
+            eq[j] = v;
+        }
         // The step's list of the probe before, when nothing else holds it now; else a new one, on a second match.
         let mut list = spare.take().filter(|l| Arc::strong_count(l) == 1);
         let (mut first, mut n) = (None, 0usize);
-        let read = self.src.lookup_read_at(self.cols[cols[lead]], key[lead], &src[..m], cursor, &mut |row, got| {
+        cursor.also = self.eqs.first().copied();
+        let read = self.src.lookup_read_at(self.cols[cols[lead]], key[lead], &src[..m + k], cursor, &mut |row, got| {
+            if got[m..m + k] != eq[..k] {
+                return;
+            }
             let mut vals = [0i64; READ];
             for j in 0..m {
                 vals[at[j]] = got[j];
@@ -4483,6 +4501,7 @@ impl View {
             }
             rows.push((row as u32, vals));
         });
+        cursor.also = None;
         if !read {
             *spare = list;
             return None;
