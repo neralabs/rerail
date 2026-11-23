@@ -1166,6 +1166,8 @@ impl<'a> G<'a> {
         let mut fns = String::new();
         // Each mark's guard words (`first_words`), by its name: none where a definition starts otherwise.
         let mut guards: std::collections::BTreeMap<String, Option<Vec<String>>> = std::collections::BTreeMap::new();
+        // Each mark's bit where its test reads only the tokens (`open_mark` asks it with no cache).
+        let mut direct: std::collections::BTreeMap<String, Option<usize>> = std::collections::BTreeMap::new();
         for (order, m) in self.x.marks.iter().enumerate() {
             if !done.insert(m.name.as_str()) {
                 continue;
@@ -1222,6 +1224,10 @@ impl<'a> G<'a> {
                 holds.push(format!("({})", c.join(" && ")));
             }
             guards.insert(n.clone(), firsts.clone());
+            // A test of the tokens alone (no state the rules set): `open_mark` asks it afresh, not through the cache.
+            let body = holds.join(" || ");
+            let pure = ["self.flags", "self.asks", "self.word ", "self.word)", "self.refusing", "self.taken", "self.marked"].iter().all(|s| !body.contains(s));
+            direct.insert(n.clone(), pure.then_some(order));
             let guard = match firsts {
                 Some(mut ws) if !ws.is_empty() => {
                     ws.sort();
@@ -1230,7 +1236,7 @@ impl<'a> G<'a> {
                 }
                 _ => String::new(),
             };
-            let _ = writeln!(out, "    /// Mark `{}` holds at the token, not taken there; once a token (`held`).\n    #[inline]\n    fn m_{n}(&mut self) -> bool {{\n        {guard}self.taken >> {order} & 1 == 0 && self.held({order}, Self::h_{n})\n    }}\n\n    fn h_{n}(&self) -> bool {{\n        {}\n    }}\n", m.name, holds.join(" || "));
+            let _ = writeln!(out, "    /// Mark `{}` holds at the token, not taken there; once a token (`held`).\n    #[inline]\n    fn m_{n}(&mut self) -> bool {{\n        {guard}self.taken >> {order} & 1 == 0 && self.held({order}, Self::h_{n})\n    }}\n\n    #[inline]\n    fn h_{n}(&self) -> bool {{\n        {}\n    }}\n", m.name, holds.join(" || "));
             // Taken: `refuses taken` asked; the extras before its bit settled; `drops` asked.
             let qs = |f: fn(&Mark<'a>) -> &'a [::bitlex::syntax::GapPattern]| -> Vec<::bitlex::syntax::GapPattern> { defs.iter().flat_map(|(_, d)| f(d).iter().cloned()).collect() };
             let mut take = String::new();
@@ -1281,7 +1287,11 @@ impl<'a> G<'a> {
         // others at every token.
         let mut open: Vec<String> = self.x.marks.iter().filter(|m| !m.hidden).map(|m| ident(&m.name)).collect::<HashSet<_>>().into_iter().collect();
         open.sort();
-        let call = |n: &String| format!("self.m_{n}()");
+        // A mark whose test reads only the tokens, asked once a token taken: its test, as its cache would give it.
+        let call = |n: &String| match direct.get(n) {
+            Some(Some(o)) => format!("(self.taken >> {o} & 1 == 0 && self.h_{n}())"),
+            _ => format!("self.m_{n}()"),
+        };
         let always: Vec<String> = open.iter().filter(|n| !matches!(guards.get(*n), Some(Some(_)))).map(call).collect();
         let mut by_word: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
         for n in &open {

@@ -7845,6 +7845,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 0 & 1 == 0 && self.held(0, Self::h_head_ctor)
     }
 
+    #[inline]
     fn h_head_ctor(&self) -> bool {
         (self.bit_at(self.i, 0) && (self.next_head_ctor_0_0_0(self.i, self.n) || self.next_head_ctor_0_1_0(self.i, self.n) || self.next_head_ctor_0_2_0(self.i, self.n) || self.next_head_ctor_0_3_0(self.i, self.n)))
     }
@@ -7873,6 +7874,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 1 & 1 == 0 && self.held(1, Self::h_by_lf)
     }
 
+    #[inline]
     fn h_by_lf(&self) -> bool {
         (self.bit_at(self.i, 1) && (self.next_by_lf_0_0_0(self.i, self.n)))
     }
@@ -7898,6 +7900,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 2 & 1 == 0 && self.held(2, Self::h_ann_lf)
     }
 
+    #[inline]
     fn h_ann_lf(&self) -> bool {
         (self.bit_at(self.i, 2) && { let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::SEMI_33 } && !self.next_ann_lf_0_0_0(self.i, self.n) && !self.next_ann_lf_0_1_0(self.i, self.n) && !self.next_ann_lf_0_2_0(self.i, self.n))
     }
@@ -7923,6 +7926,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 3 & 1 == 0 && self.held(3, Self::h_semi)
     }
 
+    #[inline]
     fn h_semi(&self) -> bool {
         ((if self.i < self.n { self.bit_at(self.i, 3) } else { true }) && { let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::SEMI_33 } && !self.next_semi_0_0_0(self.i, self.n) && !self.next_semi_0_1_0(self.i, self.n) && !self.next_semi_0_2_0(self.i, self.n))
     }
@@ -7969,6 +7973,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 4 & 1 == 0 && self.held(4, Self::h_semi_close)
     }
 
+    #[inline]
     fn h_semi_close(&self) -> bool {
         (self.bit_at(self.i, 4) && (self.next_semi_close_0_0_0(self.i, self.n)))
     }
@@ -7995,6 +8000,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 5 & 1 == 0 && self.held(5, Self::h_apart)
     }
 
+    #[inline]
     fn h_apart(&self) -> bool {
         (self.bit_at(self.i, 5))
     }
@@ -8020,6 +8026,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 6 & 1 == 0 && self.held(6, Self::h_real)
     }
 
+    #[inline]
     fn h_real(&self) -> bool {
         (self.bit_at(self.i, 6))
     }
@@ -8045,6 +8052,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 7 & 1 == 0 && self.held(7, Self::h_bt_cref)
     }
 
+    #[inline]
     fn h_bt_cref(&self) -> bool {
         (self.pat_bt_cref_0_0(self.i, self.n))
     }
@@ -8070,6 +8078,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 8 & 1 == 0 && self.held(8, Self::h_label_at)
     }
 
+    #[inline]
     fn h_label_at(&self) -> bool {
         (self.pat_label_at_0_0(self.i, self.n) && !self.next_label_at_0_0_0(self.i, self.n))
     }
@@ -8095,6 +8104,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 9 & 1 == 0 && self.held(9, Self::h_lab_loop)
     }
 
+    #[inline]
     fn h_lab_loop(&self) -> bool {
         (self.pat_lab_loop_0_0(self.i, self.n))
     }
@@ -8120,6 +8130,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 10 & 1 == 0 && self.held(10, Self::h_lab_lam)
     }
 
+    #[inline]
     fn h_lab_lam(&self) -> bool {
         (self.pat_lab_lam_0_0(self.i, self.n))
     }
@@ -8145,6 +8156,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::THIS_37) && self.taken >> 11 & 1 == 0 && self.held(11, Self::h_this_at)
     }
 
+    #[inline]
     fn h_this_at(&self) -> bool {
         (self.pat_this_at_0_0(self.i, self.n))
     }
@@ -8170,6 +8182,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::BREAK_62 | w::CONTINUE_61 | w::RETURN_60) && self.taken >> 12 & 1 == 0 && self.held(12, Self::h_jump_at)
     }
 
+    #[inline]
     fn h_jump_at(&self) -> bool {
         (self.pat_jump_at_0_0(self.i, self.n))
     }
@@ -8195,6 +8208,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::AS_10) && self.taken >> 13 & 1 == 0 && self.held(13, Self::h_as_q)
     }
 
+    #[inline]
     fn h_as_q(&self) -> bool {
         (self.pat_as_q_0_0(self.i, self.n))
     }
@@ -8220,6 +8234,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::QUEST_40) && self.taken >> 14 & 1 == 0 && self.held(14, Self::h_qdot)
     }
 
+    #[inline]
     fn h_qdot(&self) -> bool {
         (self.pat_qdot_0_0(self.i, self.n))
     }
@@ -8245,6 +8260,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::GT_27) && self.taken >> 15 & 1 == 0 && self.held(15, Self::h_ge)
     }
 
+    #[inline]
     fn h_ge(&self) -> bool {
         (self.pat_ge_0_0(self.i, self.n))
     }
@@ -8270,6 +8286,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 16 & 1 == 0 && self.held(16, Self::h_sfx)
     }
 
+    #[inline]
     fn h_sfx(&self) -> bool {
         (self.pat_sfx_0_0(self.i, self.n))
     }
@@ -8295,6 +8312,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::LBRACE_17) && self.taken >> 17 & 1 == 0 && self.held(17, Self::h_blk)
     }
 
+    #[inline]
     fn h_blk(&self) -> bool {
         (self.pat_blk_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::RPAREN_21 || self.word_at(p) == w::ELSE_54 || self.word_at(p) == w::DO_45 || self.word_at(p) == w::TRY_56 || self.word_at(p) == w::FINALLY_58 || self.word_at(p) == w::MINUS_GT_41) })
     }
@@ -8320,6 +8338,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::LBRACE_17) && self.taken >> 18 & 1 == 0 && self.held(18, Self::h_lam_bare)
     }
 
+    #[inline]
     fn h_lam_bare(&self) -> bool {
         (self.pat_lam_bare_0_0(self.i, self.n))
     }
@@ -8345,6 +8364,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::LBRACE_17) && self.taken >> 19 & 1 == 0 && self.held(19, Self::h_lam_params)
     }
 
+    #[inline]
     fn h_lam_params(&self) -> bool {
         (self.pat_lam_params_0_0(self.i, self.n))
     }
@@ -8370,6 +8390,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::AT_2) && self.taken >> 20 & 1 == 0 && self.held(20, Self::h_ann_expr)
     }
 
+    #[inline]
     fn h_ann_expr(&self) -> bool {
         (self.pat_ann_expr_0_0(self.i, self.n))
     }
@@ -8395,6 +8416,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::ABSTRACT_100 | w::ACTUAL_108 | w::ANNOTATION_1 | w::CONST_99 | w::CROSSINLINE_105 | w::DATA_52 | w::EXPECT_107 | w::EXTERNAL_98 | w::FINAL_101 | w::INFIX_96 | w::INLINE_97 | w::INNER_85 | w::INTERNAL_91 | w::LATEINIT_88 | w::NOINLINE_104 | w::OPEN_102 | w::OPERATOR_95 | w::OVERRIDE_87 | w::PRIVATE_90 | w::PROTECTED_92 | w::PUBLIC_89 | w::SEALED_84 | w::SUSPEND_24 | w::TAILREC_94 | w::VALUE_86 | w::VARARG_103) && self.taken >> 21 & 1 == 0 && self.held(21, Self::h_decl_mod)
     }
 
+    #[inline]
     fn h_decl_mod(&self) -> bool {
         (self.pat_decl_mod_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p >= self.n || ((p < self.n && !((self.word_at(p) == w::DOT_32 || self.word_at(p) == w::COLON_COLON_63)))) })
     }
@@ -8420,6 +8442,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::DELEGATE_114 | w::FIELD_109 | w::GET_34 | w::PARAM_112 | w::PROPERTY_110 | w::RECEIVER_111 | w::SETPARAM_113 | w::SET_35) && self.taken >> 22 & 1 == 0 && self.held(22, Self::h_use_site)
     }
 
+    #[inline]
     fn h_use_site(&self) -> bool {
         (self.pat_use_site_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::AT_2) })
     }
@@ -8445,6 +8468,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::AT_2) && self.taken >> 23 & 1 == 0 && self.held(23, Self::h_file_at)
     }
 
+    #[inline]
     fn h_file_at(&self) -> bool {
         (self.pat_file_at_0_0(self.i, self.n))
     }
@@ -8470,6 +8494,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::COMMA_20) && self.taken >> 24 & 1 == 0 && self.held(24, Self::h_trail)
     }
 
+    #[inline]
     fn h_trail(&self) -> bool {
         (self.pat_trail_0_0(self.i, self.n))
     }
@@ -8495,6 +8520,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::DOT_32) && self.taken >> 25 & 1 == 0 && self.held(25, Self::h_wild)
     }
 
+    #[inline]
     fn h_wild(&self) -> bool {
         (self.pat_wild_0_0(self.i, self.n))
     }
@@ -8520,6 +8546,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::OBJECT_31) && self.taken >> 26 & 1 == 0 && self.held(26, Self::h_obj_lit)
     }
 
+    #[inline]
     fn h_obj_lit(&self) -> bool {
         (self.pat_obj_lit_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p >= self.n || ((p < self.n && !((self.word_at(p) == w::COMPANION_30)))) })
     }
@@ -8545,6 +8572,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::DOT_32) && self.taken >> 27 & 1 == 0 && self.held(27, Self::h_ft_dot_at)
     }
 
+    #[inline]
     fn h_ft_dot_at(&self) -> bool {
         (self.pat_ft_dot_at_0_0(self.i, self.n))
     }
@@ -8570,6 +8598,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::LT_26) && self.taken >> 28 & 1 == 0 && self.held(28, Self::h_generic)
     }
 
+    #[inline]
     fn h_generic(&self) -> bool {
         (self.pat_generic_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.at_simple_identifier_at(p)) })
     }
@@ -8595,6 +8624,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::LPAREN_19) && self.taken >> 29 & 1 == 0 && self.held(29, Self::h_fn_paren)
     }
 
+    #[inline]
     fn h_fn_paren(&self) -> bool {
         (self.pat_fn_paren_0_0(self.i, self.n))
     }
@@ -8620,6 +8650,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::SUSPEND_24) && self.taken >> 30 & 1 == 0 && self.held(30, Self::h_ty_susp)
     }
 
+    #[inline]
     fn h_ty_susp(&self) -> bool {
         (self.pat_ty_susp_0_0(self.i, self.n))
     }
@@ -8645,6 +8676,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::SUSPEND_24) && self.taken >> 31 & 1 == 0 && self.held(31, Self::h_ds_susp)
     }
 
+    #[inline]
     fn h_ds_susp(&self) -> bool {
         (self.pat_ds_susp_0_0(self.i, self.n))
     }
@@ -8670,6 +8702,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::ABSTRACT_100 | w::ACTUAL_108 | w::ANNOTATION_1 | w::CONST_99 | w::CROSSINLINE_105 | w::DATA_52 | w::EXPECT_107 | w::EXTERNAL_98 | w::FINAL_101 | w::INFIX_96 | w::INLINE_97 | w::INNER_85 | w::INTERNAL_91 | w::LATEINIT_88 | w::NOINLINE_104 | w::OPEN_102 | w::OPERATOR_95 | w::OVERRIDE_87 | w::PRIVATE_90 | w::PROTECTED_92 | w::PUBLIC_89 | w::SEALED_84 | w::SUSPEND_24 | w::TAILREC_94 | w::VALUE_86 | w::VARARG_103) && self.taken >> 32 & 1 == 0 && self.held(32, Self::h_cp_mod)
     }
 
+    #[inline]
     fn h_cp_mod(&self) -> bool {
         (self.pat_cp_mod_0_0(self.i, self.n))
     }
@@ -8695,6 +8728,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 33 & 1 == 0 && self.held(33, Self::h_cref)
     }
 
+    #[inline]
     fn h_cref(&self) -> bool {
         (self.pat_cref_0_0(self.i, self.n))
     }
@@ -8720,6 +8754,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 34 & 1 == 0 && self.held(34, Self::h_named)
     }
 
+    #[inline]
     fn h_named(&self) -> bool {
         (self.pat_named_0_0(self.i, self.n)) || (self.pat_named_1_0(self.i, self.n))
     }
@@ -8745,6 +8780,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::ENUM_16) && self.taken >> 36 & 1 == 0 && self.held(36, Self::h_enum_class)
     }
 
+    #[inline]
     fn h_enum_class(&self) -> bool {
         (self.pat_enum_class_0_0(self.i, self.n))
     }
@@ -8770,6 +8806,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::FUN_14) && self.taken >> 37 & 1 == 0 && self.held(37, Self::h_fun_iface)
     }
 
+    #[inline]
     fn h_fun_iface(&self) -> bool {
         (self.pat_fun_iface_0_0(self.i, self.n))
     }
@@ -8795,6 +8832,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 38 & 1 == 0 && self.held(38, Self::h_fn_recv)
     }
 
+    #[inline]
     fn h_fn_recv(&self) -> bool {
         (self.pat_fn_recv_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p >= self.n || ((p < self.n && !((self.word_at(p) == w::DOT_32 || self.word_at(p) == w::LT_26 || self.word_at(p) == w::GT_27)))) } && !self.next_fn_recv_0_0_0(self.i, self.n))
     }
@@ -8820,6 +8858,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::GET_34 | w::SET_35) && self.taken >> 39 & 1 == 0 && self.held(39, Self::h_acc)
     }
 
+    #[inline]
     fn h_acc(&self) -> bool {
         (self.pat_acc_0_0(self.i, self.n) && !self.next_acc_0_0_0(self.i, self.n) && !self.next_acc_0_1_0(self.i, self.n) && !self.next_acc_0_2_0(self.i, self.n)) || (self.pat_acc_1_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::PRIVATE_90 || self.word_at(p) == w::PROTECTED_92 || self.word_at(p) == w::INTERNAL_91 || self.word_at(p) == w::PUBLIC_89) && self.bit_at(p, 3) } && !self.next_acc_1_0_0(self.i, self.n) && !self.next_acc_1_1_0(self.i, self.n) && !self.next_acc_1_2_0(self.i, self.n))
     }
@@ -8845,6 +8884,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 41 & 1 == 0 && self.held(41, Self::h_recv)
     }
 
+    #[inline]
     fn h_recv(&self) -> bool {
         (self.pat_recv_0_0(self.i, self.n) && !self.next_recv_0_0_0(self.i, self.n))
     }
@@ -8870,6 +8910,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::DOT_32) && self.taken >> 42 & 1 == 0 && self.held(42, Self::h_dotted)
     }
 
+    #[inline]
     fn h_dotted(&self) -> bool {
         (self.pat_dotted_0_0(self.i, self.n))
     }
@@ -9864,8 +9905,8 @@ impl<L: Layout> P<'_, L> {
     /// A mark no rule takes holds at the token (a mark not hidden).
     fn open_mark(&mut self) -> bool {
         match self.word() {
-            w::LT_26 => self.m_generic() || self.m_bt_cref() || self.m_lab_lam() || self.m_lab_loop() || self.m_label_at(),
-            _ => self.m_bt_cref() || self.m_lab_lam() || self.m_lab_loop() || self.m_label_at(),
+            w::LT_26 => (self.taken >> 28 & 1 == 0 && self.h_generic()) || (self.taken >> 7 & 1 == 0 && self.h_bt_cref()) || (self.taken >> 10 & 1 == 0 && self.h_lab_lam()) || (self.taken >> 9 & 1 == 0 && self.h_lab_loop()) || (self.taken >> 8 & 1 == 0 && self.h_label_at()),
+            _ => (self.taken >> 7 & 1 == 0 && self.h_bt_cref()) || (self.taken >> 10 & 1 == 0 && self.h_lab_lam()) || (self.taken >> 9 & 1 == 0 && self.h_lab_loop()) || (self.taken >> 8 & 1 == 0 && self.h_label_at()),
         }
     }
 

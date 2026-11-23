@@ -405,3 +405,13 @@ Now they are one vector of pairs (`levels`: the node open, the node made last in
 of 14), tier 2 went from 33.1–34.3 ms to 31.9–33.3 ms. Kotlin's file changes the same way.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
+
+## `open_mark` asks a token-only mark afresh (done)
+
+At each token taken, `open_mark` asked its marks through their once-a-token cache (`held`: `known` and `holds` read,
+set and written), for an answer only `open_mark` asks there. A mark whose test reads only the tokens (no flag, word or
+refusal the rules set) gives the same answer fresh. `open_mark` now asks such a mark's test directly, its `taken` bit
+first: `(self.taken >> 11 & 1 == 0 && self.h_end_on())`. The tests (`h_*`) are `#[inline]`. Side by side on spark1,
+tier 2 went from 32.4–32.9 ms to 31.6–32.5 ms. Kotlin's `open_mark` asks its token-only marks the same way.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.

@@ -6232,6 +6232,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 0 & 1 == 0 && self.held(0, Self::h_float_after)
     }
 
+    #[inline]
     fn h_float_after(&self) -> bool {
         (self.bit_at(self.i, 0))
     }
@@ -6257,6 +6258,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 1 & 1 == 0 && self.held(1, Self::h_line)
     }
 
+    #[inline]
     fn h_line(&self) -> bool {
         ((if self.i < self.n { self.bit_at(self.i, 1) } else { true }))
     }
@@ -6282,6 +6284,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::FIX_40) && self.taken >> 2 & 1 == 0 && self.held(2, Self::h_fix_on)
     }
 
+    #[inline]
     fn h_fix_on(&self) -> bool {
         (self.pat_fix_on_0_0(self.i, self.n))
     }
@@ -6307,6 +6310,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::SUPPRESS_42) && self.taken >> 3 & 1 == 0 && self.held(3, Self::h_suppress_on)
     }
 
+    #[inline]
     fn h_suppress_on(&self) -> bool {
         (self.pat_suppress_on_0_0(self.i, self.n))
     }
@@ -6332,6 +6336,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::OPTIONS_44) && self.taken >> 4 & 1 == 0 && self.held(4, Self::h_options_on)
     }
 
+    #[inline]
     fn h_options_on(&self) -> bool {
         (self.pat_options_on_0_0(self.i, self.n))
     }
@@ -6357,6 +6362,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::OVER_43) && self.taken >> 5 & 1 == 0 && self.held(5, Self::h_over_on)
     }
 
+    #[inline]
     fn h_over_on(&self) -> bool {
         (self.pat_over_on_0_0(self.i, self.n))
     }
@@ -6382,6 +6388,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::POLICY_53) && self.taken >> 6 & 1 == 0 && self.held(6, Self::h_policy_on)
     }
 
+    #[inline]
     fn h_policy_on(&self) -> bool {
         (self.pat_policy_on_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::DOT_13) })
     }
@@ -6407,6 +6414,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::LBRACE_20) && self.taken >> 7 & 1 == 0 && self.held(7, Self::h_one_name)
     }
 
+    #[inline]
     fn h_one_name(&self) -> bool {
         (self.pat_one_name_0_0(self.i, self.n))
     }
@@ -6432,6 +6440,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::LPAREN_10) && self.taken >> 8 & 1 == 0 && self.held(8, Self::h_empty_parens)
     }
 
+    #[inline]
     fn h_empty_parens(&self) -> bool {
         (self.pat_empty_parens_0_0(self.i, self.n))
     }
@@ -6457,6 +6466,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::LPAREN_10) && self.taken >> 9 & 1 == 0 && self.held(9, Self::h_no_value)
     }
 
+    #[inline]
     fn h_no_value(&self) -> bool {
         (self.pat_no_value_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::MIN_48 || self.word_at(p) == w::MAX_49 || self.word_at(p) == w::SUM_50 || self.word_at(p) == w::MEAN_51 || self.word_at(p) == w::JOIN_52) })
     }
@@ -6482,6 +6492,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 10 & 1 == 0 && self.held(10, Self::h_newline)
     }
 
+    #[inline]
     fn h_newline(&self) -> bool {
         ((if self.i < self.n { self.bit_at(self.i, 10) } else { true }) && { let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::COMMA_12 })
     }
@@ -6507,6 +6518,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::DOT_13) && self.taken >> 11 & 1 == 0 && self.held(11, Self::h_end_on)
     }
 
+    #[inline]
     fn h_end_on(&self) -> bool {
         (self.pat_end_on_0_0(self.i, self.n))
     }
@@ -6532,6 +6544,7 @@ impl<L: Layout> P<'_, L> {
         self.taken >> 12 & 1 == 0 && self.held(12, Self::h_json_bad)
     }
 
+    #[inline]
     fn h_json_bad(&self) -> bool {
         (self.bit_at(self.i, 12))
     }
@@ -6557,6 +6570,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::AT_23) && self.taken >> 13 & 1 == 0 && self.held(13, Self::h_fn_uncalled)
     }
 
+    #[inline]
     fn h_fn_uncalled(&self) -> bool {
         (self.pat_fn_uncalled_0_0(self.i, self.n))
     }
@@ -6582,6 +6596,7 @@ impl<L: Layout> P<'_, L> {
         matches!(self.word(), w::DOT_13) && self.taken >> 14 & 1 == 0 && self.held(14, Self::h_io_bare)
     }
 
+    #[inline]
     fn h_io_bare(&self) -> bool {
         (self.pat_io_bare_0_0(self.i, self.n))
     }
@@ -6766,9 +6781,9 @@ impl<L: Layout> P<'_, L> {
     /// A mark no rule takes holds at the token (a mark not hidden).
     fn open_mark(&mut self) -> bool {
         match self.word() {
-            w::AT_23 => self.m_fn_uncalled(),
-            w::DOT_13 => self.m_end_on() || self.m_io_bare(),
-            w::LPAREN_10 => self.m_no_value(),
+            w::AT_23 => (self.taken >> 13 & 1 == 0 && self.h_fn_uncalled()),
+            w::DOT_13 => (self.taken >> 11 & 1 == 0 && self.h_end_on()) || (self.taken >> 14 & 1 == 0 && self.h_io_bare()),
+            w::LPAREN_10 => (self.taken >> 9 & 1 == 0 && self.h_no_value()),
             _ => false,
         }
     }
