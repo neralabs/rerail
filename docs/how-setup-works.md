@@ -42,8 +42,10 @@ no agent connected, no daemon started.
 - **Two packages.** Core holds no engine. Each of the six engines is a package of its own
   ([the six](installation.md#registry-access)), and set-up installs the one for this computer's system and processor.
   It names that package in the install and tells npm to leave optional dependencies out, so exactly one engine is
-  installed whichever npm runs and whatever its settings, and the install fails, saying which package, if the registry
-  does not have it ([Troubleshooting](troubleshooting.md#npm-could-not-install--the-engine--runs-on-here)).
+  installed whichever npm runs and whatever its `omit` and `optional` settings, and the install fails, saying which
+  package, if the registry does not have it
+  ([Troubleshooting](troubleshooting.md#npm-could-not-install--the-engine--runs-on-here)). Only `include=optional` in
+  your npm settings changes that: npm then installs all six engines inside core as well.
 - **The npx copy** is different: plain npm installed it, with the engine packages as optional dependencies of core.
   npm 11.6.2 and the later npm 11 releases install all six there, on every computer, because they do not apply a
   package's `os` and `cpu` to the entries of a dependency's shrinkwrap. That is about 240 MB to download, once.
@@ -493,9 +495,9 @@ version on its channel and the `rerail packs add` command that installs them ([r
 <summary>Registry and credentials</summary>
 
 `@neralabs/rerail` and its engine packages are published only to npmjs (`https://registry.npmjs.org/`). Rerail adds
-no registry configuration: `setup` and `rerail update` run the `npm` next to their Node, with your normal npm
-configuration. A mirror or proxy named there must serve the engine packages as well as core
-([Registry access](installation.md#registry-access)).
+no registry configuration: `setup` and `rerail update` run the `npm` on your PATH (on Windows, the npm beside their
+Node), with your normal npm configuration. A mirror or proxy named there must serve the engine packages as well as
+core ([Registry access](installation.md#registry-access)).
 
 If your npm token for npmjs is invalid or expired, npm-backed commands such as `rerail update` report that the npm
 registry credentials are missing or expired; sign in again with `npm login`, or remove the token. Rerail redacts
@@ -517,7 +519,8 @@ as some private mirrors do, gets a warning naming it, and the update goes on.
 The engine package is checked once more: the integrity npm recorded for the one it installed must equal the integrity
 core's own `npm-shrinkwrap.json` pins for it, or the update stops with nothing installed. An engine named in the
 install is resolved by npm on its own, without core's shrinkwrap, so this comparison is what ties the engine to the
-core it came with.
+core it came with. Core pins a SHA-512. Where the registry gave npm only a SHA-1 to record, npm hashes the tarball it
+installed (`npm pack --dry-run`), and that SHA-512 is compared.
 
 </details>
 

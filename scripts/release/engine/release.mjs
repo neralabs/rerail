@@ -13,9 +13,10 @@
 //   RELEASE_VERSION=<version> RELEASE_CHANNEL=<dist-tag> node scripts/release/engine/release.mjs publish <folder>
 //   node scripts/release/engine/release.mjs specs <version> [<dist-tag>]
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { compareVersions, readPublishedManifestOrNone } from "../dist-tags.mjs";
 import { alreadyOnRegistry, REGISTRY } from "../packs.mjs";
 import { absentEnginePackages, ENGINE_PACKAGES, engineTarballsProblem, readEngineManifest } from "./packages.mjs";
@@ -132,7 +133,7 @@ async function unserved(entries, steps) {
   for (const entry of entries) {
     const served = await steps.readIntegrity(entry.name, entry.version);
     if (served !== null && served !== entry.integrity) {
-      throw new Error(`npm has ${specOf(entry)} as ${served}, and this run packed ${entry.integrity}: an earlier run or attempt published other bytes, which npm never replaces. Core pins this run's, so its install would have no engine there. Release the next version: re-running a run's failed jobs keeps its tarballs, while re-running all of its jobs, or retrying from main, builds them again`);
+      throw new Error(`npm has ${specOf(entry)} as ${served}, and this run packed ${entry.integrity}: an earlier run or attempt published other bytes, which npm never replaces. A core published from this run would pin this run's, so its install would have no engine there. Where core ${entry.version} is already on npm, it is released with the bytes npm has, and this run is not needed. Where it is not, release the next version: re-running a run's failed jobs keeps its tarballs, while re-running all of its jobs, or retrying from main, builds them again`);
     }
     if (served === null) pending.push(entry);
     else steps.log(`npm serves ${specOf(entry)} as packed`);
@@ -220,7 +221,22 @@ async function publishFolder(directory) {
 
 const USAGE = "usage: engine/release.mjs publish <folder written by engine/packages.mjs pack> | specs <version> [<dist-tag>]";
 
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+/**
+ * Whether Node was started on this file. Real paths on both sides: Node gives a module its real path, and the script
+ * can be started through a link. A comparison that failed there would run nothing and exit 0, which release.yml takes
+ * for all six published. A first argument that names no file is not this file: a script given with `-e` that imports
+ * this one has its own first argument there.
+ */
+function startedOnThisFile() {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
+
+if (startedOnThisFile()) {
   const [mode, ...rest] = process.argv.slice(2);
   if (mode === "specs" && rest[0] !== undefined) {
     console.log(engineSpecs(rest[0], rest[1]).join(" "));
@@ -228,7 +244,7 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(p
     try {
       await publishFolder(rest[0]);
     } catch (error) {
-      console.log(`::error title=Engine packages::${error instanceof Error ? error.message : String(error)}. Core is not published.`);
+      console.log(`::error title=Engine packages::${error instanceof Error ? error.message : String(error)}. This run publishes no core.`);
       process.exit(1);
     }
   } else {

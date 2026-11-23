@@ -251,24 +251,63 @@ function machinePackageRefusal(error: unknown, machineSpecs: readonly string[], 
   return undefined;
 }
 
+/** The digests of an npm integrity: it can hold several, separated by spaces. */
+const digestsOf = (integrity: string): readonly string[] => integrity.split(/\s+/u);
+
+/**
+ * The SHA-512 of the tarball npm installed for `spec`, whose lockfile entry, `recorded`, holds none. npm records the
+ * digests its registry's document gives for a version, and a registry whose documents carry only a SHA-1
+ * (`dist.shasum`, with no `dist.integrity`) leaves nothing there to hold against core's pin. `npm pack --dry-run`
+ * reads the same tarball, from npm's cache once the install has fetched it, writes no file, and prints its SHA-512
+ * beside its SHA-1. That SHA-1 must be the one recorded, so what npm hashed is what it installed. Run in a folder no
+ * repository configures, as the install is. Throws where npm prints neither, or another tarball's.
+ */
+async function hashedIntegrity(npm: NpmRunner, spec: string, recorded: string): Promise<string> {
+  const { stdout } = await outsideAnyProject(async cwd => await npm(["pack", spec, "--dry-run", "--json", "--ignore-scripts"], { cwd, timeoutMs: NPM_INSTALL_TIMEOUT_MS }));
+  const [packed] = JSON.parse(stdout) as [{ integrity?: unknown; shasum?: unknown }?];
+  const { integrity, shasum } = packed ?? {};
+  if (typeof integrity !== "string" || !integrity.startsWith("sha512-") || typeof shasum !== "string") throw new Error(`npm pack printed no SHA-512 and SHA-1 for ${spec}`);
+  const sha1 = `sha1-${Buffer.from(shasum, "hex").toString("base64")}`;
+  if (!digestsOf(recorded).includes(sha1)) throw new Error(`npm pack read a tarball whose SHA-1 is ${sha1}`);
+  return integrity;
+}
+
+/**
+ * The integrity to hold against core's pin for the `spec` npm installed with the integrity `recorded`: `recorded`
+ * itself where it holds a SHA-512, else the tarball's, hashed by npm ({@link hashedIntegrity}). An install whose
+ * tarball npm cannot hash is refused: unchecked is not the same as checked.
+ */
+async function comparableIntegrity(npm: NpmRunner, spec: string, recorded: string, coreSpec: string): Promise<string> {
+  if (digestsOf(recorded).some(digest => digest.startsWith("sha512-"))) return recorded;
+  try {
+    return await hashedIntegrity(npm, spec, recorded);
+  } catch (error) {
+    throw new Error(
+      `npm recorded no SHA-512 for the ${spec} it installed (its integrity is ${recorded}), and its tarball could not be hashed to check it against the one ${coreSpec} pins: ${error instanceof Error ? error.message : String(error)}. Nothing of it was run.`,
+      { cause: error },
+    );
+  }
+}
+
 /**
  * Fails unless npm installed each of `machineSpecs` into `prefix` with the integrity the core installed there pins for
  * it in its `npm-shrinkwrap.json`. npm resolves a package named in the install by itself, never through core's
  * shrinkwrap, so this comparison is what ties the engine installed to the core it was released with.
  */
-async function checkMachinePackages(prefix: string, machineSpecs: readonly string[], coreSpec: string): Promise<void> {
+async function checkMachinePackages(npm: NpmRunner, prefix: string, machineSpecs: readonly string[], coreSpec: string): Promise<void> {
   const installed = await lockedPackages(installedLockfile(prefix));
   const pinned = await lockedPackages(join(prefix, "node_modules", ...RERAIL_PACKAGE_NAME.split("/"), "npm-shrinkwrap.json"));
   for (const spec of machineSpecs) {
     const location = `node_modules/${specName(spec)}`;
     const expected = pinned[location]?.integrity;
-    const found = installed[location]?.integrity;
+    const recorded = installed[location]?.integrity;
     if (typeof expected !== "string") {
       throw new Error(`${coreSpec} pins no ${specName(spec)} in its npm-shrinkwrap.json, so the ${spec} npm installed cannot be checked against it. Nothing of either was run.`);
     }
-    if (typeof found !== "string") throw new Error(`npm installed ${coreSpec} without ${spec}, its engine on this system. Nothing of it was run.`);
-    // An integrity can hold several digests, separated by spaces; core pins the SHA-512.
-    if (!found.split(/\s+/u).includes(expected)) {
+    if (typeof recorded !== "string") throw new Error(`npm installed ${coreSpec} without ${spec}, its engine on this system. Nothing of it was run.`);
+    // Core pins the SHA-512, which the integrity npm recorded holds among its digests, or does not hold at all.
+    const found = await comparableIntegrity(npm, spec, recorded, coreSpec);
+    if (!digestsOf(found).includes(expected)) {
       throw new Error(
         `The ${spec} npm installed is not the one ${coreSpec} was released with: its integrity is ${found}, and ${coreSpec} pins ${expected}. The registry npm installs from serves another file under that name. Nothing of it was run.`,
       );
@@ -283,8 +322,10 @@ async function checkMachinePackages(prefix: string, machineSpecs: readonly strin
  * Core names every system's engine package as an optional dependency. npm 11.6.2 and later install all of them from
  * core's shrinkwrap, on any system, and `optional=false` in a person's npm settings installs none. So the install
  * leaves optional dependencies out (`--omit=optional`) and names this machine's packages itself: exactly those are
- * installed whichever npm runs and whatever its settings, and npm fails where its registry lacks one. npm is not run
- * at all on a system Rerail has no engine for ({@link machinePackageSpecs}).
+ * installed whichever npm runs and whatever its `omit` and `optional` settings, and npm fails where its registry lacks
+ * one. Only `include=optional` in a person's settings changes that: it outranks `--omit`, and npm then installs every
+ * system's inside core as well. npm is not run at all on a system Rerail has no engine for
+ * ({@link machinePackageSpecs}).
  */
 async function installForThisMachine(npm: NpmRunner, coreSpec: string, version: string, prefix: string): Promise<void> {
   const machineSpecs = machinePackageSpecs(version);
@@ -296,7 +337,7 @@ async function installForThisMachine(npm: NpmRunner, coreSpec: string, version: 
   } catch (error) {
     throw machinePackageRefusal(error, machineSpecs, coreSpec) ?? error;
   }
-  await checkMachinePackages(prefix, machineSpecs, coreSpec);
+  await checkMachinePackages(npm, prefix, machineSpecs, coreSpec);
 }
 
 export class NpmPackageRegistry implements PackageRegistry {

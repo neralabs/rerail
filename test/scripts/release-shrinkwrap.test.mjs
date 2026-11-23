@@ -341,6 +341,23 @@ describe("shrinkwrap-pack.mjs check", () => {
     expect(check.status).toBe(0);
   });
 
+  // The pins are one half of the check. The other holds every other entry to package-lock.json, as before the engine
+  // packages: a dependency core ships at another version than the lockfile gives is refused with the pins right.
+  it("fails a tarball that pins the six and ships another shrinkwrap than package-lock.json gives", () => {
+    const pinned = packEngines();
+    packCore(pinned);
+    const shrinkwrap = JSON.parse(shrinkwrapText(process.cwd(), pinned));
+    const dependency = Object.keys(shrinkwrap.packages).find((location) => location !== "" && shrinkwrap.packages[location].optional !== true);
+    shrinkwrap.packages[dependency].version = "0.0.0-stale";
+    writeFileSync(join(folder, "package", "npm-shrinkwrap.json"), JSON.stringify(shrinkwrap));
+    execFileSync("tar", ["-czf", "rerail.tgz", "package"], { cwd: folder, stdio: "ignore" });
+
+    const check = shrinkwrapPack(["check", tarball], engines);
+
+    expect(check.status).toBe(1);
+    expect(check.stderr).toContain("is not what package-lock.json gives");
+  });
+
   it("fails a tarball packed in a checkout: with no engine package, or with only the ones the checkout built", () => {
     const all = packEngines();
     packCore(undefined);

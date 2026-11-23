@@ -220,8 +220,9 @@ that version to npmjs on the channel it names, after a reviewer approves.
 `workflow_dispatch` builds a trial tarball, retries a failed release, or moves `latest`.
 
 - **No inputs:** uploads the seven tarballs as a run artifact, unpublished. Try them with
-  `npm install <core tarball> <your platform's engine tarball>`: core's tarball alone installs without an engine,
-  because its engine packages are on no registry yet.
+  `npm install <core tarball> <your platform's engine tarball>`: core's tarball alone takes its engine from the
+  registry, which has none for a version not yet published, and the released one, not this build's, for a version
+  that is.
 - **`publish` set to a version:** retries that version's release from `main`, to `next`; see below.
 - **`latest` set to a released plain version:** builds nothing and points `latest` at it: a newer version promotes it,
   as a release run's own promotion does once approved ([Promoting](#promoting)), an older one puts core back.
@@ -471,13 +472,14 @@ skips an optional dependency it cannot fetch or verify, so that core installs wi
 <summary>What stops the publish before core</summary>
 
 `node scripts/release/engine/release.mjs publish <folder>` does steps 1 and 2, on the folder
-`scripts/release/engine/packages.mjs pack` wrote. Its error ends `Core is not published.` when:
+`scripts/release/engine/packages.mjs pack` wrote. Its error ends `This run publishes no core.` when:
 
 - **`First publish needed`:** an engine package has never been published. Every name is asked before anything is
   published; publish the missing ones by hand ([runbook](publishing-the-engine-packages.md)) and run the job again.
 - **A publish fails.** A version npm already has is not a failure, so the job run again publishes what is left.
 - **npm has a version with other bytes** than this run packed: an earlier run or attempt published them, and npm
-  never replaces a version. Release the next version.
+  never replaces a version. If core of the version is on npm too, the earlier attempt finished: the version is
+  released with those bytes and this run was not needed. If it is not, release the next version.
 - **npm does not serve a version yet.** A new version can answer 404 for minutes, so the read-back reads up to 20
   times, 15 seconds apart, then fails without knowing: run the job again.
 
@@ -496,7 +498,7 @@ of the six, re-run the failed job of the same run.
   names yet.
 - **Re-run the failed job, not all jobs.** The failed job publishes the run's own tarballs again, the bytes core pins.
   A version npm already has counts as published, and the read-back then checks it. Re-running all jobs builds the
-  engines again; the read-back then refuses the packages published from the first build.
+  engines again; the job then finds the first build's packages on npm and stops before it publishes anything.
 - **Do not retry from `main`** (the `publish` input): it rebuilds too, and is refused once any engine package of the
   version is on npm ([Retrying a failed release](#manual-runs-and-put-back)).
 - **If the run's tarballs are gone** (its artifacts expired, say), the version cannot be completed: npm never replaces

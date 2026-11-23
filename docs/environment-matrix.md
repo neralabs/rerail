@@ -70,7 +70,7 @@ Up to ten checks run as the ordinary user, never root or SYSTEM, so set-up write
 2. **project**: a Git repository with a `package.json` and one commit, plus empty agent folders.
 3. **setup**: `npx @neralabs/rerail setup --json`, answered until Rerail is on.
 4. **shrinkwrap** (Linux and macOS, when the package under test is a tarball): npm read the package's shrinkwrap, so
-   `better-sqlite3` is installed inside it.
+   `better-sqlite3` is installed inside it, and the engine npm installed from it for the npx copy loads.
 5. **engine-package**: the managed install holds one engine package, this machine's.
 6. **status**: `rerail status` shows the daemon running with `Engine: ok`.
 7. **PATH**: a new shell finds `rerail`.

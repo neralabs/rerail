@@ -281,6 +281,10 @@ run_setup() {
 # npm installs a shrinkwrapped package's dependencies inside it (docs/release.md, "Shrinkwrap"). Beside it, npm
 # resolved them fresh, and this install says nothing about one from npmjs. npx's install runs install scripts; the
 # managed one under versions/ does not.
+#
+# npx's copy is also the one install npm made of core by name alone, so its engine is the one npm chose from the
+# entries of core's shrinkwrap and put inside core: what `npm install -g` and an update run by Rerail 0.1.5 get. The
+# managed install names its engine package, and set-up finishes without loading the copy's, so it is loaded here.
 check_shrinkwrap() {
   local install installs=()
   for install in "$(npm config get cache)"/_npx/*/node_modules/@neralabs/rerail \
@@ -292,6 +296,10 @@ check_shrinkwrap() {
     [ -d "$install/node_modules/better-sqlite3/prebuilds" ] \
       || { echo "npm did not read the shrinkwrap for $install: better-sqlite3 is not inside it"; return 1; }
     echo "shrinkwrap read: $install/node_modules/better-sqlite3"
+    case "$install" in */_npx/*) ;; *) continue ;; esac
+    (cd "$install/../../.." && node --input-type=module --eval 'import { nativeHealth } from "@neralabs/rerail"; if (!nativeHealth().ok) process.exit(1);') \
+      || { echo "the engine npm installed for $install from core's shrinkwrap does not load"; return 1; }
+    echo "engine loaded: $install"
   done
 }
 

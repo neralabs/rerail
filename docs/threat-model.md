@@ -664,7 +664,8 @@ code runs. No Nera-held signature is verified ([distribution-model.md](distribut
   (`scripts/release/shrinkwrap-pack.mjs check`).
   - **The managed install** names its engine package in the install, which npm then resolves without core's
     shrinkwrap. So the updater compares the integrity npm recorded for the installed engine package with core's pin
-    and discards the install when they differ.
+    and discards the install when they differ. Where npm recorded no SHA-512, because its registry gave only a SHA-1,
+    npm hashes the tarball it installed, and an install it cannot hash is discarded too.
   - **Plain npm** (the npx copy, `npm install -g`, an update run by Rerail 0.1.5), on npm 10 and 11, installs the
     engine packages from core's shrinkwrap entries and checks each tarball against its pinned integrity. One that does
     not match is left out, with exit code 0: Rerail then has no engine and says so, and no other bytes are loaded in

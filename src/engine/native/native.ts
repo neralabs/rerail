@@ -760,10 +760,15 @@ export function noEngineForSystem(platform: NodeJS.Platform = process.platform, 
   return platform === "linux" && (musl ?? (process.platform === "linux" && runsOnMusl())) ? NO_MUSL_ENGINE : undefined;
 }
 
-/** Another system's engine package installed for the Rerail at `packageRoot`, when there is one. */
+/**
+ * The one other system whose engine package is installed for the Rerail at `packageRoot`: an install made for that
+ * system. Undefined where none is installed, and where several are: npm 11.6.2 and later install every system's from
+ * core's shrinkwrap and skip one they cannot fetch, so several beside a missing one are an install npm made here.
+ */
 function otherSystemInstalled({ packageRoot, platform, architecture }: EngineLookup): (typeof NATIVE_ENGINE_SYSTEMS)[number] | undefined {
-  return NATIVE_ENGINE_SYSTEMS.find(([os, cpu]) =>
+  const others = NATIVE_ENGINE_SYSTEMS.filter(([os, cpu]) =>
     (os !== platform || cpu !== architecture) && installedPackageFolder(packageRoot, nativeEnginePackageName(os, cpu)) !== undefined);
+  return others.length === 1 ? others[0] : undefined;
 }
 
 /** Why no engine package was found for a system, and what to do about it. */
@@ -781,11 +786,11 @@ function enginePackageAbsent(lookup: EngineLookup, fileName: string, spec: strin
   const other = otherSystemInstalled(lookup);
   if (other !== undefined) {
     return new Error(
-      `The Rerail at ${packageRoot} was installed for ${systemName(...other)}, and this is ${system}: it has ${nativeEnginePackageName(...other)} and no ${spec}. Its folder came from another computer, or this Node is built for another processor than the Node that installed it. Run Rerail with that Node, or add this system's engine. ${installAdvice(packageRoot, spec, " --force")} \`--force\` has npm keep the other system's engine. ${otherwise}`,
+      `The Rerail at ${packageRoot} was installed for ${systemName(...other)}, and this is ${system}: it has ${nativeEnginePackageName(...other)} and no ${spec}. Its folder came from another computer, or this Node is built for another processor than the Node that installed it. Run Rerail with that Node, or add this system's engine. ${installAdvice(packageRoot, spec, true)} ${otherwise}`,
     );
   }
   return new Error(
-    `Rerail's engine for ${system} is not installed: the Rerail at ${packageRoot} has no ${spec}, an optional dependency of ${RERAIL_PACKAGE_NAME}. npm leaves optional dependencies out under --omit=optional (omit=optional or optional=false in an .npmrc), and when the registry or mirror it installs from lacks the package. ${installAdvice(packageRoot, spec)} ${otherwise}`,
+    `Rerail's engine for ${system} is not installed: the Rerail at ${packageRoot} has no ${spec}, an optional dependency of ${RERAIL_PACKAGE_NAME}. npm leaves optional dependencies out under --omit=optional (omit=optional or optional=false in an .npmrc), and when the registry or mirror it installs from lacks the package or serves another file for it. ${installAdvice(packageRoot, spec)} ${otherwise}`,
   );
 }
 
@@ -819,17 +824,34 @@ export function engineLoadFailure(error: unknown, site: Pick<NativeEngineSite, "
 }
 
 /**
- * The npm command that installs the engine package `spec` where the Rerail at `packageRoot` finds it. It names the
- * folder only where npm installed Rerail into one as a dependency (`<folder>/node_modules/@neralabs/rerail`, with a
- * `package.json` that names it), as set-up and `npx` do: an install into any other folder with `--prefix` removes the
- * packages its `package.json` does not name, which under a global install is every one.
+ * The folder an update stages a version in until it has validated it, `versions/.<version>.<uuid>.staging`
+ * (`ManagedUpdater` in src/setup/updater.ts, and the updater of every released version).
  */
-function installAdvice(packageRoot: string, spec: string, options = ""): string {
+const UPDATE_STAGING_FOLDER = /^\..+\.staging$/u;
+
+/**
+ * How to install the engine package `spec` where the Rerail at `packageRoot` finds it: an npm command, with `--force`
+ * where the install holds another system's engine (`keepOthers`), which npm would otherwise remove. The command names
+ * the folder only where npm installed Rerail into one as a dependency (`<folder>/node_modules/@neralabs/rerail`, with
+ * a `package.json` that names it), as set-up and `npx` do: an install into any other folder with `--prefix` removes
+ * the packages its `package.json` does not name, which under a global install is every one.
+ *
+ * A Rerail an update staged gets no command ({@link UPDATE_STAGING_FOLDER}): the update removes that folder as its
+ * check of the engine fails, so the update is what to run again. The updater of a version from before the engine
+ * packages installs core alone, and `npm_config_include=optional` has its npm install the optional dependencies that
+ * npm's settings leave out.
+ */
+function installAdvice(packageRoot: string, spec: string, keepOthers = false): string {
   const folder = resolve(packageRoot, "..", "..", "..");
+  if (UPDATE_STAGING_FOLDER.test(basename(folder))) {
+    return "An update staged this Rerail, and removes its folder when the update fails: run `rerail update` again once npm can install the package. Where npm's settings leave optional dependencies out, set the environment variable npm_config_include=optional for that run.";
+  }
   const dependency = join(folder, "node_modules", ...RERAIL_PACKAGE_NAME.split("/")) === resolve(packageRoot) && namesRerail(join(folder, "package.json"));
-  return dependency
+  const options = keepOthers ? " --force" : "";
+  const command = dependency
     ? `Install it with \`npm install --prefix "${folder}"${options} ${spec}\`.`
     : `Install it with \`npm install${options} ${spec}\`, run where ${RERAIL_PACKAGE_NAME} is installed (with \`-g\` for a global install).`;
+  return keepOthers ? `${command} \`--force\` has npm keep the other system's engine.` : command;
 }
 
 function namesRerail(manifestPath: string): boolean {

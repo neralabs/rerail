@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENGINE_PACKAGES, ENGINE_PACKAGES_FILE, fileIntegrity } from "../../scripts/release/engine/packages.mjs";
 import {
@@ -18,6 +19,7 @@ import {
   rebuildRefusal,
   releaseTarballs,
 } from "../../scripts/release/engine/release.mjs";
+import { linkFolder } from "../support/platform/links.ts";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const SCRIPT = join("scripts", "release", "engine", "release.mjs");
@@ -224,7 +226,8 @@ describe("publishEnginePackages", () => {
     const run = steps({ manifest, onNpm: { [macIntel.name]: other } });
     const failure = await publishEnginePackages(manifest, "next", run).catch((error) => error.message);
     expect(failure).toContain(`npm has ${macIntel.name}@1.2.0 as ${other}, and this run packed ${manifest.packages[1].integrity}`);
-    expect(failure).toContain("Release the next version");
+    // Whether core of the version is on npm is not asked, so the refusal covers both: an attempt that finished, and one that did not.
+    expect(failure).toContain("Where core 1.2.0 is already on npm, it is released with the bytes npm has, and this run is not needed. Where it is not, release the next version");
     expect(kinds(run.events)).not.toContain("publish");
     expect(run.events).not.toContain("wait");
   });
@@ -255,7 +258,27 @@ describe("engine/release.mjs publish", () => {
     const run = publish(folder, { RELEASE_VERSION: "1.2.1", RELEASE_CHANNEL: "next" });
     expect(run.status).toBe(1);
     expect(run.stdout).toContain("::error title=Engine packages::");
-    expect(run.stdout).toContain("holds the engine packages of 1.2.0, and the run releases 1.2.1. Core is not published.");
+    expect(run.stdout).toContain("holds the engine packages of 1.2.0, and the run releases 1.2.1. This run publishes no core.");
+  });
+
+  // Node gives a module its real path. Compared with the path as typed, a script started through a link would run no
+  // command and exit 0, and release.yml publishes core on that exit code alone.
+  it("runs its command, and refuses with exit code 1, when started through a link to the checkout", () => {
+    const linked = join(temporary(), "checkout");
+    linkFolder(process.cwd(), linked);
+    const script = join(linked, SCRIPT);
+    const specs = spawnSync(process.execPath, [script, "specs", "1.2.0", "next"], { encoding: "utf8" });
+    expect(specs.stdout.trim().split(" ")).toEqual(ENGINE_PACKAGES.map(({ name }) => `${name}@1.2.0:next`));
+    const run = spawnSync(process.execPath, [script, "publish", join(linked, "no-such-folder")], { encoding: "utf8", env: { ...process.env, RELEASE_VERSION: "1.2.0", RELEASE_CHANNEL: "next" } });
+    expect(run.status).toBe(1);
+    expect(run.stdout).toContain(`has no ${ENGINE_PACKAGES_FILE}`);
+  });
+
+  // package.yml and the install checks import this file from a script given with `-e`, whose first argument is theirs.
+  it("runs no command, and does not fail, when a script that imports it has a first argument that names no file", () => {
+    const run = spawnSync(process.execPath, ["--input-type=module", "-e", `const { engineSpecs } = await import(${JSON.stringify(pathToFileURL(SCRIPT).href)}); console.log(engineSpecs("1.2.0").length);`, "1.2.0"], { encoding: "utf8" });
+    expect(run.stderr).toBe("");
+    expect(run.stdout).toBe(`${ENGINE_PACKAGES.length}\n`);
   });
 
   it("refuses a tarball that is not the one the manifest lists, a folder with fewer than six, and a run that names no channel", () => {

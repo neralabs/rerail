@@ -24,11 +24,15 @@ const MAC: System = ["darwin", "arm64"];
 
 const engineFile = (system: System): string => `rerail_engine.${nativePlatformSuffix(...system)}.node`;
 
-/** A folder npm installed Rerail into: `<prefix>/node_modules/@neralabs/rerail`, named by the prefix's `package.json`. */
-function installedRerail(dependencies: Record<string, string> = { "@neralabs/rerail": VERSION }): { prefix: string; packageRoot: string } {
+/**
+ * A folder npm installed Rerail into: `<prefix>/node_modules/@neralabs/rerail`, named by the prefix's `package.json`.
+ * With `folder`, the prefix is that folder inside a new one, as an update's staging folder is inside `versions/`.
+ */
+function installedRerail(dependencies: Record<string, string> = { "@neralabs/rerail": VERSION }, folder?: string): { prefix: string; packageRoot: string } {
   // Node resolves a package to its real path, and macOS keeps its temporary folder behind a symlink.
-  const prefix = realpathSync(mkdtempSync(join(tmpdir(), "rerail-engine-package-")));
-  roots.push(prefix);
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-engine-package-")));
+  roots.push(root);
+  const prefix = folder === undefined ? root : join(root, folder);
   const packageRoot = join(prefix, "node_modules", "@neralabs", "rerail");
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: VERSION }));
@@ -138,7 +142,7 @@ describe("an engine Rerail cannot load", () => {
     const spec = `${nativeEnginePackageName(...LINUX)}@1.2.0`;
     expect(() => engineOf(packageRoot, LINUX)).toThrow(new Error(
       `Rerail's engine for Linux on x64 is not installed: the Rerail at ${packageRoot} has no ${spec}, an optional dependency of @neralabs/rerail. ` +
-      "npm leaves optional dependencies out under --omit=optional (omit=optional or optional=false in an .npmrc), and when the registry or mirror it installs from lacks the package. " +
+      "npm leaves optional dependencies out under --omit=optional (omit=optional or optional=false in an .npmrc), and when the registry or mirror it installs from lacks the package or serves another file for it. " +
       `Install it with \`npm install --prefix "${prefix}" ${spec}\`. ` +
       `Or set RERAIL_ENGINE_PATH to an engine file for this system (${engineFile(LINUX)}).`,
     ));
@@ -164,6 +168,33 @@ describe("an engine Rerail cannot load", () => {
       `Install it with \`npm install --prefix "${prefix}" --force ${spec}\`. \`--force\` has npm keep the other system's engine. ` +
       `Or set RERAIL_ENGINE_PATH to an engine file for this system (${engineFile(MAC)}).`,
     ));
+  });
+
+  // npm 11.6.2 and later install every system's engine package from core's shrinkwrap, on any system, and skip one
+  // they cannot fetch or verify with exit code 0: the five that remain are no install made for another system.
+  it("says the engine package is not installed where npm installed every other system's and not this one's", () => {
+    const { packageRoot } = installedRerail();
+    for (const system of NATIVE_ENGINE_SYSTEMS.filter(([platform, architecture]) => platform !== MAC[0] || architecture !== MAC[1])) enginePackage(packageRoot, system);
+    expect(() => engineOf(packageRoot, MAC)).toThrow(`Rerail's engine for macOS on arm64 is not installed: the Rerail at ${packageRoot} has no ${nativeEnginePackageName(...MAC)}@1.2.0`);
+    expect(() => engineOf(packageRoot, MAC)).not.toThrow("was installed for");
+  });
+
+  // An update loads the version it staged to check its engine, and removes the staging folder when that fails: a
+  // command that installs into the folder would be given for one already gone. The updater of a version from before
+  // the engine packages names no engine package, so its npm must be told to install core's optional dependencies.
+  it("gives no command for a Rerail an update staged, whose folder the update removes, and says to run the update again", () => {
+    const { prefix, packageRoot } = installedRerail(undefined, ".1.2.0.0b0f1d6e-5d1c-4f0e-9a43-6f7f0f3f2a10.staging");
+    const spec = `${nativeEnginePackageName(...LINUX)}@1.2.0`;
+    const again = "An update staged this Rerail, and removes its folder when the update fails: run `rerail update` again once npm can install the package. " +
+      "Where npm's settings leave optional dependencies out, set the environment variable npm_config_include=optional for that run.";
+    expect(() => engineOf(packageRoot, LINUX)).toThrow(new Error(
+      `Rerail's engine for Linux on x64 is not installed: the Rerail at ${packageRoot} has no ${spec}, an optional dependency of @neralabs/rerail. ` +
+      "npm leaves optional dependencies out under --omit=optional (omit=optional or optional=false in an .npmrc), and when the registry or mirror it installs from lacks the package or serves another file for it. " +
+      `${again} Or set RERAIL_ENGINE_PATH to an engine file for this system (${engineFile(LINUX)}).`,
+    ));
+    // The one other system's engine an npm on another processor's Node staged: no `--force` command either.
+    enginePackage(prefix, ["linux", "arm64"]);
+    expect(() => engineOf(packageRoot, LINUX)).toThrow(`Run Rerail with that Node, or add this system's engine. ${again} Or set RERAIL_ENGINE_PATH`);
   });
 
   it("says a checkout's engine is not built, and how to build or fetch one", () => {

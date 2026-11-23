@@ -214,6 +214,21 @@ if (held.length !== 1 || own.length !== 1) {
   }
 }
 
+# Loads the engine of the @neralabs/rerail npm installed at `Install` (`<prefix>\node_modules\@neralabs\rerail`) in
+# a node started in its prefix, as a program that depends on the package would, and throws unless the engine reports
+# itself healthy. scripts/host/azure/guest.sh makes the same check on Linux and macOS (check_shrinkwrap).
+function Assert-RerailEngineLoads([string]$Install) {
+  $ErrorActionPreference = "Continue"
+  Push-Location "$Install\..\..\.."
+  try {
+    & (Get-RerailNode) --input-type=module --eval "import { nativeHealth } from '@neralabs/rerail'; if (!nativeHealth().ok) process.exit(1);"
+    if ($LASTEXITCODE -ne 0) { throw "the engine npm installed for $Install from core's shrinkwrap does not load" }
+  } finally {
+    Pop-Location
+  }
+  "engine loaded: $Install"
+}
+
 # Each agent's registered SessionStart command run the way that agent runs it: Claude Code spawns its exec-form entry
 # directly (no shell), Codex passes its command to Windows PowerShell. The session ids are `<Prefix>-claude` and
 # `<Prefix>-codex`; ask the daemon for them afterwards (Assert-RerailSessionsRecorded), since a hook where Rerail is

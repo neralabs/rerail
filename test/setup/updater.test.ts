@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,7 +16,7 @@ import {
   type Installation,
   type PackageRegistry,
 } from "../../src/setup/updater.js";
-import { ENTRY_POINTS, nativePlatformSuffix } from "../../src/engine/index.js";
+import { ENTRY_POINTS, nativePlatformSuffix, resolveNativeBindingPath } from "../../src/engine/index.js";
 import type { NpmRunner, Progress } from "../../src/runtime/index.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -185,6 +186,28 @@ describe("ManagedUpdater", () => {
       current: { version: "1.0.0", packageRoot },
       lastCheckAt: "2026-09-01T12:00:00.000Z",
     });
+  });
+
+  // The loader's message for a missing engine gives the npm command that installs it into the Rerail's folder, but
+  // for a Rerail an update staged, whose folder this updater removes as the check fails. The loader knows a staging
+  // folder by its name alone (src/engine may not import from here): this holds the two to one name.
+  it("stages a version in a folder the engine's loader gives no install command for, and removes it when the check fails", async () => {
+    const { home, packageRoot } = await fixture();
+    const updater = new ManagedUpdater({
+      home,
+      packageRoot,
+      packageVersion: "1.0.0",
+      registry: new FakeRegistry("1.1.0"),
+      validateInstallation: async (staged) => {
+        resolveNativeBindingPath(undefined, { packageRoot: staged.packageRoot, platform: "linux", architecture: "x64", musl: false });
+      },
+    });
+
+    const failure = await updater.update().catch((error: unknown) => String(error));
+    expect(failure).toContain("Rerail's engine for Linux on x64 is not installed");
+    expect(failure).toContain("An update staged this Rerail, and removes its folder when the update fails: run `rerail update` again");
+    expect(failure).not.toContain("npm install --prefix");
+    expect(await readdir(updater.versionsRoot)).toEqual([]);
   });
 
   it("keeps the active link and launcher intact when an update fails after staging", async () => {
@@ -677,7 +700,15 @@ interface FakeInstall {
   pinned?: (name: string) => string | undefined;
   /** npm's output where the install fails. */
   failure?: (specs: readonly string[]) => string;
+  /** What `npm pack --dry-run --json` prints of the package's tarball: its SHA-512, and its SHA-1 in hex. */
+  packed?: (name: string) => { integrity?: string; shasum?: string };
 }
+
+/** The SHA-1 of a package's tarball on the fake registry, as a lockfile holds it and as `npm pack` prints it. */
+const releasedSha1 = (name: string): { integrity: string; shasum: string } => {
+  const sha1 = createHash("sha1").update(name).digest();
+  return { integrity: `sha1-${sha1.toString("base64")}`, shasum: sha1.toString("hex") };
+};
 
 /**
  * An npm whose registry has `@neralabs/rerail@1.1.0` at https://mirror.example/npm and whose `audit signatures`
@@ -686,7 +717,7 @@ interface FakeInstall {
  * call, whether the folder it ran in had a project `.npmrc` or `package.json`.
  */
 function fakeNpm(audit: () => Promise<void>, install: FakeInstall = {}): { npm: NpmRunner; calls: NpmCall[] } {
-  const { installed = releasedIntegrity, pinned = releasedIntegrity, failure } = install;
+  const { installed = releasedIntegrity, pinned = releasedIntegrity, failure, packed = name => ({ integrity: releasedIntegrity(name), shasum: releasedSha1(name).shasum }) } = install;
   const calls: NpmCall[] = [];
   const npm: NpmRunner = async (args, options = {}) => {
     const cwd = options.cwd ?? process.cwd();
@@ -701,6 +732,7 @@ function fakeNpm(audit: () => Promise<void>, install: FakeInstall = {}): { npm: 
       return { stdout: "", stderr: "" };
     }
     const specs = args.filter(argument => /^@[^@]+@/u.test(argument));
+    if (args[0] === "pack") return { stdout: JSON.stringify(specs.map(spec => ({ id: spec, ...packed(spec.slice(0, spec.lastIndexOf("@"))) }))), stderr: "" };
     if (failure !== undefined) throw new Error(`npm failed (1): ${failure(specs)}`);
     const prefix = args[args.indexOf("--prefix") + 1]!;
     const packageRoot = join(prefix, "node_modules", "@neralabs", "rerail");
@@ -892,6 +924,38 @@ describe("NpmPackageRegistry: one engine per machine", () => {
   it("takes an installed engine whose integrity holds the digest core pins among others", async () => {
     const run = await updateWith({ installed: name => `sha1-b2xkZXI= ${releasedIntegrity(name)}` });
     await expect(run.update).resolves.toMatchObject({ changed: true });
+  });
+
+  // npm records the digests its registry's document gives. A registry that gives only a SHA-1 (`dist.shasum`, no
+  // `dist.integrity`) serves the released tarball all the same, and npm hashes it from its cache.
+  it("takes an engine npm recorded only a SHA-1 for once npm hashes its tarball to the SHA-512 core pins", async () => {
+    const run = await updateWith({ installed: name => releasedSha1(name).integrity });
+    await expect(run.update).resolves.toMatchObject({ changed: true, current: { version: "1.1.0" } });
+    const pack = run.calls.find(call => call.args[0] === "pack")!;
+    expect(pack.args).toEqual(["pack", engineSpec, "--dry-run", "--json", "--ignore-scripts"]);
+    expect(pack.cwd).not.toBe(process.cwd());
+    expect(pack.projectConfig).toBe(false);
+    expect(pack.timeoutMs).toBe(1_200_000);
+    expect(run.calls.map(call => call.args[0])).toEqual(["view", "view", "install", "pack", "audit"]);
+  });
+
+  it("refuses an engine npm recorded only a SHA-1 for when its tarball hashes to another SHA-512 than core pins", async () => {
+    const run = await updateWith({ installed: name => releasedSha1(name).integrity, packed: name => ({ integrity: "sha512-b3RoZXIgYnl0ZXM=", shasum: releasedSha1(name).shasum }) });
+    await expect(run.update).rejects.toThrow(
+      `The ${engineSpec} npm installed is not the one @neralabs/rerail@1.1.0 was released with: its integrity is sha512-b3RoZXIgYnl0ZXM=, and @neralabs/rerail@1.1.0 pins ${releasedIntegrity(engine)}.`,
+    );
+    await expectNothingStaged(run);
+  });
+
+  it.each<[string, (name: string) => { integrity?: string; shasum?: string }, string]>([
+    ["hashes another tarball than the one it installed", name => ({ integrity: releasedIntegrity(name), shasum: releasedSha1("another tarball").shasum }), `npm pack read a tarball whose SHA-1 is ${releasedSha1("another tarball").integrity}`],
+    ["prints no SHA-512", name => ({ shasum: releasedSha1(name).shasum }), `npm pack printed no SHA-512 and SHA-1 for ${engineSpec}`],
+  ])("refuses an engine npm recorded only a SHA-1 for when npm %s: unchecked is not checked", async (_what, packed, why) => {
+    const run = await updateWith({ installed: name => releasedSha1(name).integrity, packed });
+    await expect(run.update).rejects.toThrow(
+      `npm recorded no SHA-512 for the ${engineSpec} it installed (its integrity is ${releasedSha1(engine).integrity}), and its tarball could not be hashed to check it against the one @neralabs/rerail@1.1.0 pins: ${why}. Nothing of it was run.`,
+    );
+    await expectNothingStaged(run);
   });
 
   it("refuses the install before running any of it when the engine npm installed is not the one core pins", async () => {
