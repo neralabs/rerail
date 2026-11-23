@@ -889,6 +889,14 @@ impl Facts {
     pub fn each_child(&self, id: u32, mut f: impl FnMut(u32)) {
         on_tape!(self, |t| rerail_tape_format::tape::children(&t, id as usize).for_each(|c| f(c as u32)))
     }
+    /// `id`'s children in order, each handed to `f` with its field code (`field`), read in one pass of the tape: a
+    /// probe of a field by its parent tests each child's field with no dispatch on the tape's format a child.
+    pub fn each_child_field(&self, id: u32, mut f: impl FnMut(u32, u16)) {
+        on_tape!(self, |t| {
+            let table = t.table();
+            rerail_tape_format::tape::children(&t, id as usize).for_each(|c| f(c as u32, table.entry(t.code(c)).field))
+        })
+    }
     /// Whether `id` has no children.
     pub fn is_leaf(&self, id: u32) -> bool {
         on_tape!(self, |t| t.subtree_end(id as usize) == id as usize + 1)
@@ -1162,6 +1170,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "visit_index" => &["n", "i"],
         "node_order" => &["n", "k"],
         "ast_depth" => &["n", "k"],
+        "def_unit" => &["n", "u"],
         "line_count" => &["d", "k"],
         "end_line" => &["n", "l"],
         "col" => &["n", "c"],

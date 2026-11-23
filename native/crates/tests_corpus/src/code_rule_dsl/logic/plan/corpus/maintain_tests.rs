@@ -240,10 +240,10 @@ fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
     }
 }
 
-/// R2 in a new process, whole: its kept rows are read where they lie, not decoded from the frames into memory (0353's
-/// frames copy, `shape::rows_decoded`). Met when the reads bind the kept blocks (0401 step 7, being merged).
+/// R2 in a new process, whole: its kept rows are read where they lie (decision 0439: the kept entries bound in place,
+/// `kept_read::gathered`'s views of their granules), not decoded into memory. No path decodes a kept row, so what
+/// is checked is that the kept entries were bound and no row was copied to state the change.
 #[test]
-#[ignore = "R2: a new process decodes its kept rows from the frames until the kept blocks are read in place (0401 step 7)"]
 fn r2_a_new_process_reads_its_kept_rows_in_place() {
     let mut s = kinds("r2-in-place");
     s.run_kept();
@@ -251,7 +251,8 @@ fn r2_a_new_process_reads_its_kept_rows_in_place() {
         s.write(file, body);
         let ran = s.run_kept();
         assert_eq!(ran.rows, s.fresh(), "R10: after {what}, the kept run's outputs are a fresh run's");
-        assert_eq!(ran.shape.rows_decoded, 0, "R2: after {what}, no kept row is decoded from the frames");
+        assert!(ran.shape.frames_read > 0, "R2: after {what}, the kept entries are bound where they lie");
+        assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, no kept row is copied");
     }
 }
 

@@ -130,6 +130,15 @@ pub fn lex_only(src: &[u8]) -> usize {
 mod tests {
     use super::*;
 
+    /// An argument that is `*` alone (`f(*)`, `g(a, *)`): the vararg test looks no further back than the argument's
+    /// first token (it read two before it, past the start, and overflowed on a Scala repository).
+    #[test]
+    fn a_lone_star_argument_is_no_vararg_and_no_overflow() {
+        for src in ["object A { f(*) }", "object A { g(a, *) }", "object A { h(b)(*) }"] {
+            let _ = tape(src.as_bytes());
+        }
+    }
+
     #[test]
     fn tables_fit_the_keys() {
         assert!(KINDS.len() < 1024 && FIELDS.len() <= 64);

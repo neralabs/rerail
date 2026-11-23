@@ -125,6 +125,50 @@ impl ViewInPlace {
     }
 }
 
+/// A join step's probe cursor (`Source::lookup_read_at`), kept by the step across its probes: where the last probe
+/// ended (`hint`: a view of the tape's document and granule), and the source's plan of what a match reads (`plan`),
+/// made on the step's first probe. A hint is checked, never trusted; a plan is kept only for the column and columns
+/// it was made for.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProbeCursor {
+    pub hint: [u32; 2],
+    pub plan: ReadPlan,
+    /// A second key column's value of this probe, `(column, value)`, which the source may keep its matches to (a
+    /// child by its place: `child(p, c, i)` by `p` and `i`). A hint too: the caller checks every key column.
+    pub also: Option<(usize, i64)>,
+}
+
+/// A source's plan of a probe's reads (`ProbeCursor::plan`): for the key column and output columns it was made for, one
+/// op a slot and the inputs a match needs, in the source's own codes. Decided once a step, not once a match.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReadPlan {
+    pub made: bool,
+    pub column: u8,
+    pub len: u8,
+    pub columns: [u8; 8],
+    pub ops: [u8; 8],
+    pub needs: u8,
+}
+
+impl ReadPlan {
+    /// Whether it was made for key `column` and output `columns`.
+    #[inline]
+    pub fn is_for(&self, column: usize, columns: &[usize]) -> bool {
+        self.made && usize::from(self.column) == column && usize::from(self.len) == columns.len() && columns.iter().zip(&self.columns).all(|(&c, &k)| c == usize::from(k))
+    }
+    /// An empty plan for key `column` and output `columns` (at most 8, each below 256), its ops to fill.
+    pub fn new(column: usize, columns: &[usize]) -> Option<Self> {
+        if columns.len() > 8 || column > 255 || columns.iter().any(|&c| c > 255) {
+            return None;
+        }
+        let mut cols = [0u8; 8];
+        for (k, &c) in columns.iter().enumerate() {
+            cols[k] = c as u8;
+        }
+        Some(ReadPlan { made: true, column: column as u8, len: columns.len() as u8, columns: cols, ops: [0; 8], needs: 0 })
+    }
+}
+
 /// The relation of the nodes whose text `@rr_node_text` reads, bound with the batch every node read goes through
 /// (the syntax table's `LongTexts`).
 pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
@@ -140,6 +184,9 @@ pub trait Source: Send + Sync {
     /// Node `n`'s text or value as the function `name` reads it (`NODE_READS`), for a binding of
     /// `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source or function.
     fn node_read(&self, _name: &str, _n: i64) -> Option<String> { None }
+    /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
+    /// one's nodes); `None` otherwise.
+    fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
     fn direct_all(&self,_equal:&[(usize,i64)])->Option<Vec<ReadRow>> {None}
     fn direct_one(&self,_column:usize,_values:&[i64])->Option<Vec<ReadRow>> {None}
@@ -195,6 +242,13 @@ pub trait Source: Send + Sync {
     /// a point read a row (decision 0353 step 2).
     fn lookup_read(&self, _column: usize, _value: i64, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64])) -> bool {
         false
+    }
+    /// `lookup_read` from a probe cursor (`hint`, the step's, zeroed at its start): where the last probe of the step
+    /// ended, which a source may keep its place in (a view of the tape: the document and granule). Probes in key
+    /// order (a scan's rows sorted by the next key, decision 0112) then find their place without a search. A hint is
+    /// checked, never trusted: any value gives the same rows.
+    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _cursor: &mut ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        self.lookup_read(column, value, columns, each)
     }
     /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
     /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's
@@ -275,6 +329,18 @@ pub trait Source: Send + Sync {
     /// both bound is an interval test on the tape, t50 step 4). `None`: the source has no such test; `lookup_all`.
     fn holds(&self, _equal: &[(usize, i64)]) -> Option<bool> {
         None
+    }
+    /// The rows whose every column `columns[i]` is `values[i]` (a probe binding several key columns), found where the
+    /// source can keep the probe to the rows the columns together name: a made relation's to the documents every
+    /// bound column routes to (`docof(n, d)` by both: none where `n`'s document is not `d`'s), none made for the
+    /// others. `None`: no such probe; the caller probes one column and checks the rest.
+    fn lookup_columns(&self, _columns: &[usize], _values: &[i64]) -> Option<Vec<usize>> {
+        None
+    }
+    /// Whether `lookup_columns` may answer: a probe of several columns is then that lookup, not one column's
+    /// streamed read with the rest checked.
+    fn looks_up_columns(&self) -> bool {
+        false
     }
     /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).
     fn doc_column(&self) -> Option<usize> {
@@ -372,6 +438,17 @@ pub trait Source: Send + Sync {
     /// Whether each value of `column` is at most one row, which `key_row` finds without allocating (a node's own
     /// column): a view of the source's columns held in place probes by it (`setfix::hold_view_in_place`).
     fn keys_rows(&self, _column: usize) -> bool {
+        false
+    }
+    /// Whether `column`'s values are document keys (`node`'s and `core_node`'s `d`, `docof`'s `d`): a key names the
+    /// documents its rows are of, as a node id's high bits do.
+    fn keys_documents(&self, _column: usize) -> bool {
+        false
+    }
+    /// Whether every row is of the source's own documents: each node id it holds, and each document key, one of
+    /// theirs (a view of a batch's tapes), never a host's that a place names. An admitted value's part of such a
+    /// relation is found by its own documents' keys alone (`values::Values::add`).
+    fn rows_of_own_documents(&self) -> bool {
         false
     }
     /// The row whose `column` (a `keys_rows` column) is `value`, if there is one: `lookup`'s answer, not allocated.
@@ -1582,6 +1659,49 @@ impl Relation {
         self
     }
 
+    /// Whether its rows lie in a part `other`'s do (decision 0616's tests: read where they lie, not copied).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn shares_rows(&self, other: &Relation) -> bool {
+        self.cells().shares(other.cells())
+    }
+    /// How many rows a reader binding it whole in one block reads (`rows::Rows::in_block`), parts merged.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn bound_rows(&self) -> Option<u32> {
+        self.cells().in_block().map(|b| b.rows)
+    }
+
+    /// How many parts hold its rows `range` (`rows::Rows::runs`): the segments a relation of them has.
+    pub fn parts_in(&self, range: std::ops::Range<usize>) -> usize {
+        if range.is_empty() {
+            return 0;
+        }
+        self.cells().runs(range.start as u32, range.end as u32).len()
+    }
+
+    /// A relation of `runs`' rows, in order: each run rows `lo..hi` of a relation of the same columns, read where
+    /// they lie (`rows::Part::range`), no row copied (decision 0616). The rows a later `grown` adds go on in a
+    /// relation of their own after them. Its orders are not known.
+    pub fn of_runs(columns: &[String], runs: &[(&Relation, std::ops::Range<usize>)]) -> Self {
+        let k = columns.len();
+        let mut parts = Vec::new();
+        for (r, range) in runs {
+            assert_eq!(&r.columns, columns, "a run of a relation of other columns");
+            parts.extend(r.cells().runs(range.start as u32, range.end as u32));
+        }
+        let cells = super::rows::Rows::of_parts(k, super::rows::Life::Source, parts);
+        let rows = cells.rows();
+        Relation {
+            columns: columns.to_vec(),
+            staged: Default::default(),
+            rows,
+            cells: OnceLock::from(cells),
+            indexes: columns.iter().map(|_| OnceLock::new()).collect(),
+            ordered: columns.iter().map(|_| None).collect(),
+            identity: OnceLock::new(),
+            grows: true,
+        }
+    }
+
     /// These rows and then `more`'s, as a batch grows by a round's documents (decision 0431 §6): this relation's rows
     /// shared, not rewritten (`Rows::shared`: their writer taken, so the rows that follow go on in the same block
     /// relation, which the device binds whole), and `more`'s written after them. This relation still reads its own
@@ -1661,6 +1781,11 @@ impl Relation {
         self.rows += 1;
         self.indexes.iter_mut().for_each(|i| *i = OnceLock::new());
         self.identity = OnceLock::new();
+    }
+    /// Column `c` of rows `range`, resolved once where they lie in one part (`Rows::range_reader`).
+    #[inline]
+    pub fn range_reader(&self, range: Range<usize>, c: usize) -> Option<super::rows::RangeRead<'_>> {
+        self.cells().range_reader(range.start as u32, range.end as u32, c)
     }
     /// The rows in their block: the staged ones written there at the first read, in one relation of their size.
     #[inline]

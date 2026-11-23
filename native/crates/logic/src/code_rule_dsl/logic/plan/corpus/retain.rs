@@ -1286,6 +1286,9 @@ impl Source for Renamed {
     fn range_indexed(&self, column: usize) -> bool {
         self.0.range_indexed(column)
     }
+    fn column_counts(&self, c: usize) -> Option<Vec<(i64, u64)>> {
+        self.0.column_counts(c)
+    }
     fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
         self.0.range_lookup(column, lower, upper)
     }
@@ -2164,9 +2167,13 @@ pub(in crate::code_rule_dsl) type BaseCounts = HashMap<u32, BaseCount>;
 
 const BASE_COUNTS: &str = "#base-counts";
 
-/// A counts row's words: key, digest (4), views' counts (4), facts' size (2), content (its kind, then 4 words: as the
+/// A counts row's words: key, digest (4), views' counts (`VIEW_COUNTS`), facts' size (2), content (its kind, then 4 words: as the
 /// documents' table's; 2 for none; 3 for a host file's guest, then its host, file, 1 for its tree and its tape tag).
-const COUNTS_WIDTH: usize = 16;
+const COUNTS_WIDTH: usize = KIND_AT + 5;
+/// The views' counts in a row (`ViewCounts`' length), and where the facts' size and the content's kind are.
+const VIEW_COUNTS: usize = std::mem::size_of::<crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts>() / 4;
+const SIZE_AT: usize = 5 + VIEW_COUNTS;
+const KIND_AT: usize = SIZE_AT + 2;
 
 /// The counts the store's frames in `space` keep for the cross part of `binds`; empty when none are kept (or kept in
 /// an earlier width, which a run counts again).
@@ -2181,27 +2188,28 @@ pub(in crate::code_rule_dsl) fn base_counts(store: &ContentStore, space: [u8; 32
     let mut out = HashMap::with_capacity(entry.len());
     let small = |w: i64| u32::try_from(w).ok();
     for r in words.as_chunks::<COUNTS_WIDTH>().0 {
-        let (Some(key), [Some(a), Some(b), Some(c), Some(d)], [Some(nodes), Some(codes)]) = (small(r[0]), [r[5], r[6], r[7], r[8]].map(small), [r[9], r[10]].map(small)) else { continue };
+        let (Some(key), Some(counts), [Some(nodes), Some(codes)]) = (small(r[0]), <[i64; VIEW_COUNTS]>::try_from(&r[5..SIZE_AT]).unwrap().map(small).into_iter().collect::<Option<Vec<u32>>>(), [r[SIZE_AT], r[SIZE_AT + 1]].map(small)) else { continue };
         let mut digest = [0u8; 32];
         for (i, w) in r[1..5].iter().enumerate() {
             digest[i * 8..i * 8 + 8].copy_from_slice(&w.to_le_bytes());
         }
-        let content = match r[11] {
-            0 => Some(super::memo::Content::Stored(crate::content_store::SourceId::from_raw(r[12]))),
+        let k = KIND_AT;
+        let content = match r[k] {
+            0 => Some(super::memo::Content::Stored(crate::content_store::SourceId::from_raw(r[k + 1]))),
             1 => {
                 let mut d = [0u8; 32];
-                for (i, w) in r[12..16].iter().enumerate() {
+                for (i, w) in r[k + 1..k + 5].iter().enumerate() {
                     d[i * 8..i * 8 + 8].copy_from_slice(&w.to_le_bytes());
                 }
                 Some(super::memo::Content::Unstored(d))
             }
             _ => None,
         };
-        let guest = (r[11] == 3).then(|| (small(r[12]), small(r[13]), u8::try_from(r[15]).ok())).and_then(|g| match g {
-            (Some(host), Some(file), Some(tag)) => Some(KeptGuest { host, file, tree: r[14] == 1, tag }),
+        let guest = (r[k] == 3).then(|| (small(r[k + 1]), small(r[k + 2]), u8::try_from(r[k + 4]).ok())).and_then(|g| match g {
+            (Some(host), Some(file), Some(tag)) => Some(KeptGuest { host, file, tree: r[k + 3] == 1, tag }),
             _ => None,
         });
-        out.insert(key, BaseCount { digest, counts: [a, b, c, d], size: [nodes, codes], content, guest });
+        out.insert(key, BaseCount { digest, counts: counts.try_into().unwrap(), size: [nodes, codes], content, guest });
     }
     Ok(out)
 }
@@ -2348,29 +2356,62 @@ pub(in crate::code_rule_dsl) struct KeptSemijoin {
     pub(in crate::code_rule_dsl) width: usize,
     held: std::ops::Range<usize>,
     rows: std::ops::Range<usize>,
-    entry: kept_read::Entry,
+    words: SemijoinWords,
+}
+
+/// Where a kept semi-join's words lie: the store's entry beside the documents' table, or a session's (decision 0458:
+/// a session holds its kept statistics and rows itself), its words as `SemijoinRows::encode` wrote them once.
+#[derive(Clone)]
+enum SemijoinWords {
+    Entry(kept_read::Entry),
+    Held(Arc<[i64]>),
+}
+
+impl SemijoinWords {
+    /// Each word, read where it lies.
+    fn read(&self, each: &mut dyn FnMut(&dyn Fn(usize) -> i64)) {
+        match self {
+            SemijoinWords::Entry(e) => {
+                let d = e.packed().col(0).dec();
+                each(&|i| d.get(i))
+            }
+            SemijoinWords::Held(w) => each(&|i| w[i]),
+        }
+    }
 }
 
 impl KeptSemijoin {
+    /// `rows`, held as a session holds them (`HeldCorpus::semijoin`): their words, encoded once.
+    pub(in crate::code_rule_dsl) fn of_rows(rows: &SemijoinRows) -> Option<KeptSemijoin> {
+        let words: Arc<[i64]> = rows.encode().into();
+        let l = SemijoinLayout::of(&|i| words[i], words.len())?;
+        Some(KeptSemijoin { exports: l.exports, stats: l.stats, width: l.width, held: l.held, rows: l.rows, words: SemijoinWords::Held(words) })
+    }
     /// The held nodes' number.
     pub(in crate::code_rule_dsl) fn held_len(&self) -> usize {
         self.held.len()
     }
     /// The held nodes, read where they lie.
-    pub(in crate::code_rule_dsl) fn held(&self) -> impl Iterator<Item = i64> + '_ {
-        let d = self.entry.packed().col(0).dec();
-        self.held.clone().map(move |i| d.get(i))
+    pub(in crate::code_rule_dsl) fn held(&self) -> Box<dyn Iterator<Item = i64> + '_> {
+        match &self.words {
+            SemijoinWords::Entry(e) => {
+                let d = e.packed().col(0).dec();
+                Box::new(self.held.clone().map(move |i| d.get(i)))
+            }
+            SemijoinWords::Held(w) => Box::new(w[self.held.clone()].iter().copied()),
+        }
     }
     /// Each row, read where it lies.
     pub(in crate::code_rule_dsl) fn each_row(&self, each: &mut dyn FnMut(&[i64])) {
-        let d = self.entry.packed().col(0).dec();
         let mut row = vec![0; self.width];
-        for at in self.rows.clone().step_by(self.width) {
-            for (c, w) in row.iter_mut().enumerate() {
-                *w = d.get(at + c);
+        self.words.read(&mut |get| {
+            for at in self.rows.clone().step_by(self.width) {
+                for (c, w) in row.iter_mut().enumerate() {
+                    *w = get(at + c);
+                }
+                each(&row);
             }
-            each(&row);
-        }
+        });
     }
 }
 
@@ -2387,7 +2428,7 @@ pub(in crate::code_rule_dsl) fn semijoin_rows(store: &ContentStore, space: [u8; 
         }
         let d = entry.packed().col(0).dec();
         let Some(l) = SemijoinLayout::of(&|i| d.get(i), entry.len()) else { continue };
-        let kept = KeptSemijoin { exports: l.exports, stats: l.stats, width: l.width, held: l.held, rows: l.rows, entry: entry.clone() };
+        let kept = KeptSemijoin { exports: l.exports, stats: l.stats, width: l.width, held: l.held, rows: l.rows, words: SemijoinWords::Entry(entry.clone()) };
         out.insert((*rel).to_owned(), (entry.digest(), kept));
     }
     Ok(out)
@@ -2670,6 +2711,9 @@ impl Source for Traced {
     }
     fn range_indexed(&self, column: usize) -> bool {
         self.inner.range_indexed(column)
+    }
+    fn column_counts(&self, c: usize) -> Option<Vec<(i64, u64)>> {
+        self.inner.column_counts(c)
     }
     fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
         self.whole("range_lookup (index)");
@@ -3020,7 +3064,6 @@ impl Retained {
             crate::code_rule_dsl::logic::profile::decision("fact admission", || "frames changed during admission; recompute the cut and derive again".into());
             return Ok(None);
         };
-        super::maintain::shape::rows_decoded(rows);
         let count = rels.len() + sources.len();
         // A relation whose statistics part was stored for the rows it has now takes them, under the address it has
         // in this process: it is not counted or measured again (decision 0120 §3).

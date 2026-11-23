@@ -247,9 +247,26 @@ pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], d
 /// The relations `prog` reads from earlier phases, by phase: `(the reader's relation, the export)`. A relation named
 /// `<phase>__<x>` that no rule of `prog` makes (by its rules' `shape`), where `<phase>` is a phase program.
 pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, dir: Option<&Path>) -> Result<BTreeMap<String, Vec<(String, String)>>> {
-    let own = declared(prog).map(|d| d.name);
+    let declared_here = declared(prog);
+    // Only the reads an output (or, in a phase, an export) reaches: a library a program includes for one rule may hold
+    // rules that read a phase no output needs (python/calls.rerail's points-to, for a policy that takes `call_arg`),
+    // and that phase would run at every run and every edit for nothing. A program that names no output reads all.
+    let roots: Vec<String> = prog.output_names().into_iter().chain(declared_here.iter().flat_map(|d| d.exports.iter().cloned())).collect();
+    let reached: Option<BTreeSet<&str>> = (!roots.is_empty()).then(|| {
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut todo: Vec<&str> = roots.iter().map(String::as_str).collect();
+        while let Some(r) = todo.pop() {
+            if seen.insert(r)
+                && let Some(reads) = shape.reads_of.get(r)
+            {
+                todo.extend(reads.iter().map(String::as_str));
+            }
+        }
+        seen
+    });
+    let own = declared_here.map(|d| d.name);
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-    for rel in shape.read.iter().map(String::as_str).filter(|r| !shape.made.contains(*r) && prog.declares(r)) {
+    for rel in shape.read.iter().map(String::as_str).filter(|r| !shape.made.contains(*r) && prog.declares(r) && reached.as_ref().is_none_or(|s| s.contains(r))) {
         let Some((phase, export)) = rel.split_once(SEP) else { continue };
         if phase.is_empty() || export.is_empty() || own.as_deref() == Some(phase) || phase.starts_with("rr_") {
             continue;

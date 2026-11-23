@@ -326,6 +326,14 @@ and each line span's place.
   reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
 - What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
   rows), deferred (Q121).
+- core.rerail's tape answers that `core_rr` made as rows are views (2026-11-22): `op` (`View::Op`: a numbered node's
+  anonymous children, the rank item `Item::Op`, zero-width ones included; a Python two-word operator is one child,
+  the grammar's alias, so no row is made for it or for any other), `end_point` (`View::End`: a node's position among `Locs::ends`),
+  `spread` (`View::Spread`: a rank item the walk marks from the code table) and the token order, `first_token`,
+  `last_token`, `token_before`, `token_after` (`View::Tok`, `syntax/tokens.rs`): the lexemes are a rank item,
+  each answer a rank and a select, each relation's rows the places marked as having one. The rank index's groups
+  are 15 words for its ten items. Tests hold each to what `core_rr` made (`the_token_order_is_the_sorted_tokens`,
+  `core_rr_relations_hold_what_core_rr_says`, `op_is_every_anonymous_child_and_op_ats_two_word_operators`).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by

@@ -3136,6 +3136,16 @@ name = "rerail-clif"
 version = "0.1.0"
 
 [[package]]
+name = "rerail-context"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "rayon",
+ "rayon-core",
+ "rustc-hash",
+]
+
+[[package]]
 name = "rerail-rr-syntax"
 version = "0.1.0"
 dependencies = [
@@ -3173,6 +3183,7 @@ dependencies = [
  "regex",
  "regex-automata",
  "regex-syntax",
+ "rerail-context",
  "rerail-simd8",
  "rerail-tape-format",
  "ruff_python_ast",
@@ -3208,7 +3219,7 @@ dependencies = [
  "memchr",
  "rerail-clif",
  "rerail-simd8",
- "sha2 0.10.9",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -3464,13 +3475,13 @@ dependencies = [
 
 [[package]]
 name = "sha1"
-version = "0.10.7"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
 dependencies = [
  "cfg-if",
- "cpufeatures 0.2.17",
- "digest 0.10.7",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -3488,7 +3499,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
- "sha2-asm",
 ]
 
 [[package]]
@@ -3500,15 +3510,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "digest 0.11.3",
-]
-
-[[package]]
-name = "sha2-asm"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -3847,9 +3848,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-generate"
-version = "0.27.1"
+version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60418c249e4317a2fc9a3959dab47e50ca60910460b8a82a7f73d6e28a73470d"
+checksum = "2bda1e3c7d894b84a0ffef541cfc6deb08e58beed98e39bd5a5b2067ed2dbdfb"
 dependencies = [
  "bitflags 2.13.2",
  "dunce",

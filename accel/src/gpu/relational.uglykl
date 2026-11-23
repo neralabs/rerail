@@ -218,7 +218,10 @@ UKL_REFLECT_STRUCT(ClosureArgs, n, words)
 //
 // 1. cl_init: each node sets, in its component's row, its own bit when the component is cyclic, and the bit of
 //    every successor in another component (device atomics on u32 halves: the result is the same in any order);
-// 2. cl_level, once per level from 1 up: each component ORs in its successors' rows, which are final (lower levels);
+// 2. cl_level, over the levels from 1 up: each component ORs in its successors' rows, which are final (lower levels).
+//    A launch takes a run of levels: a wide level alone, over as many groups as it needs; a run of narrow ones in one
+//    group, which ends each level at a group barrier (no group waits on another). So the launches are bounded by
+//    the wide levels the host picks, not by the depth (decision 0601);
 // 3. cl_gather: node v's row is its component's.
 DEFINE_KERNEL2(relational, cl_init,
                ROBUFFER, uint32_t, off,    "[n + 1]",
@@ -239,30 +242,37 @@ DEFINE_KERNEL2(relational, cl_init,
   }
 }
 
-typedef struct LevelArgs { uint32_t lo; uint32_t hi; uint32_t words; } LevelArgs;
-UKL_REFLECT_STRUCT(LevelArgs, lo, hi, words)
+// Levels [first, last), over `groups` groups: one level when groups > 1.
+typedef struct LevelArgs { uint32_t first; uint32_t last; uint32_t words; uint32_t groups; } LevelArgs;
+UKL_REFLECT_STRUCT(LevelArgs, first, last, words, groups)
 
-// One SIMD group per component of the level; lanes stride over the row's words.
+// One SIMD group per component of a level; lanes stride over the row's words. Every thread reaches each level's
+// barrier: none returns early.
 DEFINE_KERNEL2(relational, cl_level,
-               RWBUFFER, uint64_t, R,     "[components * words]",
-               ROBUFFER, uint32_t, order, "[components]",
-               ROBUFFER, uint32_t, soff,  "[components + 1]",
-               ROBUFFER, uint32_t, sdst,  "[soff[components]]",
+               RWBUFFER, uint64_t, R,      "[components * words]",
+               ROBUFFER, uint32_t, order,  "[components]",
+               ROBUFFER, uint32_t, soff,   "[components + 1]",
+               ROBUFFER, uint32_t, sdst,   "[soff[components]]",
+               ROBUFFER, uint32_t, lstart, "[levels + 1]",
                ARGS,     LevelArgs, args, ,
-               TGID0,    uint32_t, tg,    ,
-               LID0,     uint32_t, lid,   ,
-               LSZ0,     uint32_t, lsz,   )
+               TGID0,    uint32_t, tg,     ,
+               LID0,     uint32_t, lid,    ,
+               LSZ0,     uint32_t, lsz,    )
 {
   const uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, nsg = lsz / UKL_SIMD_WIDTH;
-  const uint32_t idx = args.lo + tg * nsg + sg;
-  if (idx >= args.hi) return;
-  const uint32_t c = order[idx];
-  const uint32_t s0 = soff[c], s1 = soff[c + 1u];
-  UKL_GLOBAL uint64_t* row = R + (uint64_t)c * args.words;
-  for (uint32_t w = lane; w < args.words; w += UKL_SIMD_WIDTH) {
-    uint64_t acc = row[w];
-    for (uint32_t k = s0; k < s1; k++) acc |= R[(uint64_t)sdst[k] * args.words + w];
-    row[w] = acc;
+  for (uint32_t l = args.first; l < args.last; l++) {
+    const uint32_t hi = lstart[l + 1u];
+    for (uint32_t idx = lstart[l] + tg * nsg + sg; idx < hi; idx += args.groups * nsg) {
+      const uint32_t c = order[idx];
+      const uint32_t s0 = soff[c], s1 = soff[c + 1u];
+      UKL_GLOBAL uint64_t* row = R + (uint64_t)c * args.words;
+      for (uint32_t w = lane; w < args.words; w += UKL_SIMD_WIDTH) {
+        uint64_t acc = row[w];
+        for (uint32_t k = s0; k < s1; k++) acc |= R[(uint64_t)sdst[k] * args.words + w];
+        row[w] = acc;
+      }
+    }
+    if (l + 1u < args.last) ukl_tg_barrier_device();
   }
 }
 

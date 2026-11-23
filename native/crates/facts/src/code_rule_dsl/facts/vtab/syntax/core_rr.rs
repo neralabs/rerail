@@ -6,7 +6,7 @@
 //!   `src_line` and `line_count` all read it, so they agree.
 //! - **Spans** past the nodes: a document's anonymous tokens, its whole text (`source`) and each line
 //!   (`src_line`), numbered after its nodes, so `text`, `line`, `end_line`, `col` and `docof` take either.
-//! - **Literals** (`literal`): `str`, `strprefix`, `value`, `value_type`, `name`, `comment` and `spread` of a node,
+//! - **Literals** (`literal`): `str`, `strprefix`, `value`, `value_type`, `name` and `comment` of a node,
 //!   from its kind and its text alone. Python strings decode as the engine's Python values do
 //!   (`value::python::str_value`); JavaScript strings as ECMAScript's (`value::ecma`); the others by the common
 //!   escapes, as rrlab's extractor does (`docs/rule-syntax/tools/rrlab`).
@@ -122,7 +122,7 @@ pub(super) fn unit_name<'a>(f: &'a Facts, dialect: &Dialect, id: u32) -> Option<
     f.children(id).iter().copied().find(|&c| f.named(c) && dialect.name(f, c) == "identifier").map(|c| f.text(c))
 }
 
-pub(super) fn is_comment(kind: &str) -> bool {
+pub fn is_comment(kind: &str) -> bool {
     kind.contains("comment")
 }
 
@@ -472,7 +472,11 @@ pub(super) struct CoreRows {
     /// The nodes whose `text` is made (`Projection::text_nodes`): of these kinds, or in one of these fields of their
     /// parent. `None` every node.
     pub(super) text_nodes: Option<super::TextNodes>,
-    op: Vec<[i64; 2]>,
+    /// The nodes whose `op` and `op_at` rows are made (`Projection::op_nodes`); `None` every node.
+    pub(super) op_nodes: Option<super::TextNodes>,
+    /// `text_nodes` and `op_nodes` as the walked document's dialect's codes (`for_dialect`).
+    text_codes: Option<super::NodesOf>,
+    op_codes: Option<super::NodesOf>,
     op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
     name: Vec<[i64; 2]>,
@@ -481,7 +485,6 @@ pub(super) struct CoreRows {
     /// `value(n, v)` with v's `value_type` t: (n, v, t).
     value: Vec<[i64; 3]>,
     comment: Vec<[i64; 2]>,
-    spread: Vec<i64>,
     syntax_error: Vec<[i64; 3]>,
     source: Vec<[i64; 2]>,
     src_line: Vec<[i64; 3]>,
@@ -489,12 +492,6 @@ pub(super) struct CoreRows {
     str_part: Vec<[i64; 5]>,
     str_part_start: Vec<[i64; 4]>,
     str_part_word: Vec<[i64; 5]>,
-    first_token: Vec<[i64; 2]>,
-    last_token: Vec<[i64; 2]>,
-    token_before: Vec<[i64; 2]>,
-    token_after: Vec<[i64; 2]>,
-    /// `end_point(n, p)`: node n's end point, a zero-width span (`Locs::ends`).
-    end_point: Vec<[i64; 2]>,
     structural_before: Vec<[i64; 2]>,
     structural_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
@@ -506,7 +503,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.first_token.as_slice()) + std::mem::size_of_val(self.last_token.as_slice()) + std::mem::size_of_val(self.token_before.as_slice()) + std::mem::size_of_val(self.token_after.as_slice()) + std::mem::size_of_val(self.end_point.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -517,8 +514,8 @@ impl CoreRows {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Visits {
     All,
-    /// Those whose text a rule reads (`text_nodes`): `node` makes no other row.
-    TextNodes,
+    /// Those whose text (`text`, `text_nodes`) or ops (`op`, `op_nodes`) a rule reads: `node` makes no other row.
+    Read { text: bool, op: bool },
     None,
 }
 
@@ -527,7 +524,6 @@ pub(super) struct Skip {
     /// `op`, `op_at`.
     pub(super) ops: bool,
     pub(super) comment: bool,
-    pub(super) spread: bool,
     pub(super) name: bool,
     /// `str`, `strprefix`, `value`, `static_value`, `value_type` (and `text` not read: a prefix makes a node token-like).
     pub(super) literal: bool,
@@ -569,21 +565,43 @@ pub(super) const RX_MEMO_TEXT: usize = 4096;
 impl CoreRows {
     /// Whether a rule reads node `id`'s `text` (`text_nodes`, `TextNodes::reads`).
     fn reads_text(&self, p: &Projected, dialect: &Dialect, id: u32) -> bool {
-        self.text_nodes.as_ref().is_none_or(|nodes| nodes.reads(p, id, dialect))
+        self.text_nodes.as_ref().is_none_or(|nodes| match self.text_codes.as_ref().filter(|c| c.is_of(dialect.tag)) {
+            Some(codes) => codes.reads(nodes, p, id, dialect),
+            None => nodes.reads(p, id, dialect),
+        })
     }
 
-    /// The nodes `node` visits. Where it makes no row but `text`, and the rules read only some nodes' (`text_nodes`),
-    /// those nodes; where it makes none, no node. A phase that reads a few names' text (phase 1's imports) then makes
-    /// its rows without a second walk of every node of every document (the main phase's).
+    /// Whether a rule reads node `id`'s `op` or `op_at` rows (`op_nodes`).
+    fn reads_op(&self, p: &Projected, dialect: &Dialect, id: u32) -> bool {
+        self.op_nodes.as_ref().is_none_or(|nodes| match self.op_codes.as_ref().filter(|c| c.is_of(dialect.tag)) {
+            Some(codes) => codes.reads(nodes, p, id, dialect),
+            None => nodes.reads(p, id, dialect),
+        })
+    }
+
+    /// `text_nodes` and `op_nodes` resolved to `dialect`'s codes, for a walk of one of its documents.
+    pub(super) fn for_dialect(&mut self, dialect: &Dialect) {
+        if let Some(nodes) = &self.text_nodes && !self.text_codes.as_ref().is_some_and(|c| c.is_of(dialect.tag)) {
+            self.text_codes = Some(nodes.of_dialect(dialect));
+        }
+        if let Some(nodes) = &self.op_nodes && !self.op_codes.as_ref().is_some_and(|c| c.is_of(dialect.tag)) {
+            self.op_codes = Some(nodes.of_dialect(dialect));
+        }
+    }
+
+    /// The nodes `node` visits. Where it makes no row but `text` and the ops, and the rules read only some nodes'
+    /// (`text_nodes`, `op_nodes`), those nodes; where it makes none, no node. A phase that reads a few names' text
+    /// (phase 1's imports) then makes its rows without a second walk of every node of every document (the main
+    /// phase's), and one reading the ops of a few kinds' nodes (`op(m, "|")` of a `binary_operator`) visits those.
     pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_text = s.ops && s.structural && s.comment && s.spread && s.name && s.literal_rows
+        let only_these = s.structural && s.comment && s.name && s.literal_rows
             && !(wants_parts || wants_part_starts || wants_words);
-        match (only_text, wants_text, self.text_nodes.is_some()) {
-            (false, _, _) | (true, true, false) => Visits::All,
-            (true, false, _) => Visits::None,
-            (true, true, true) => Visits::TextNodes,
+        let (text, op) = (wants_text, !s.ops);
+        if !only_these || text && self.text_nodes.is_none() || op && self.op_nodes.is_none() {
+            return Visits::All;
         }
+        if !text && !op { Visits::None } else { Visits::Read { text, op } }
     }
 
     /// Whether `visits` takes node `local` of `p`.
@@ -591,7 +609,7 @@ impl CoreRows {
         match visits {
             Visits::All => true,
             Visits::None => false,
-            Visits::TextNodes => self.reads_text(p, dialect, id),
+            Visits::Read { text, op } => text && self.reads_text(p, dialect, id) || op && self.reads_op(p, dialect, id),
         }
     }
 
@@ -603,12 +621,13 @@ impl CoreRows {
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
-        // `op`: every anonymous child the tape stores (none the grammar implies); `op_at`: those that are no
-        // punctuation, in order, Python's two-word operators as one ("not in", "is not"), which `op` has too.
+        // `op_at`: the anonymous children the tape stores that are no punctuation, in order, Python's two-word
+        // operators as one ("not in", "is not"). `op`, every anonymous child and each two-word operator, is the
+        // projection's view (`View::Op`: `Item::Op`, `Item::OpPair`): no row is made.
         let mut ops: Vec<String> = Vec::new();
-        for &c in children.iter().filter(|&&c| !self.skip.ops && !f.named(c)) {
+        let op_read = !self.skip.ops && self.reads_op(p, dialect, id);
+        for &c in children.iter().filter(|&&c| op_read && !f.named(c)) {
             let t = dialect.name(f, c);
-            self.op.push([n, string(t) as i64]);
             if !is_punct(t) {
                 let two = dialect.family == Family::Python && matches!((ops.last().map(String::as_str), t), (Some("not"), "in") | (Some("is"), "not"));
                 match ops.last_mut() {
@@ -619,9 +638,6 @@ impl CoreRows {
         }
         for (i, t) in ops.iter().enumerate() {
             self.op_at.push([n, i as i64, string(t) as i64]);
-            if t.contains(' ') {
-                self.op.push([n, string(t) as i64]);
-            }
         }
         // `structural_before`, `structural_after`: the source between each stored child and its
         // neighbours (the sibling before or after it, else the parent's edge); a root's, between
@@ -653,19 +669,23 @@ impl CoreRows {
             }
             token_like = true;
         } else {
-            if !self.skip.spread && is_spread(kind) {
-                self.spread.push(n);
-            }
             if self.skip.name {
             } else if let Some(s) = name(kind, text) {
                 self.name.push([n, string(&s) as i64]);
             } else if dialect.family == Family::Rr && kind == "variable" {
                 self.name.push([n, string(text) as i64]);
             }
-            let interpolated = !self.skip.literal && interpolated(f, dialect, kind, &children);
-            let mut lit = if self.skip.literal { Literal::default() } else { literal(dialect.family, kind, text, interpolated) };
+            // Where only `text` reads the literal (a prefix makes a node token-like), it is read only where that decides
+            // whether the node has text: a node whose text a rule reads, past the inline bound, with children. Decoded
+            // for every node of the walk (every node's, a program reading `op`), it was most of this walk.
+            let for_text_only = self.skip.literal_rows && self.skip.str && self.skip.literal_value;
+            let read_literal = !self.skip.literal
+                && (!for_text_only
+                    || wants_text && !token_like && !(text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) && self.reads_text(p, dialect, id));
+            let interpolated = read_literal && interpolated(f, dialect, kind, &children);
+            let mut lit = if read_literal { literal(dialect.family, kind, text, interpolated) } else { Literal::default() };
             // A format string's node: its value is its parser's (an `error`'s message, a `field_name`'s argument).
-            if !self.skip.literal
+            if read_literal
                 && dialect.family == Family::Format
                 && let Some(own) = dialect_facts(Family::Format)
             {
@@ -730,14 +750,10 @@ impl CoreRows {
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
     /// its tokens (none for a text-only document, `dialect` `None`: it has no node).
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
+    pub(super) fn document(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rerail's spans");
         let key = i64::from(p.key);
-        if x.ends > 0 {
-            let from = p.len() + x.ends_from();
-            self.end_point.extend(p.node_ids().take(x.ends as usize).map(|(l, _, n)| [n, p.global(from + l)]));
-        }
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
         if own_text {
             let source = p.len() + x.tokens;
@@ -778,37 +794,6 @@ impl CoreRows {
             }
         }
         drop(text_span);
-        let Some(dialect) = dialect.filter(|_| wants_tokens) else { return };
-        let _tokens_span = crate::code_rule_dsl::logic::profile::span(|| "tokens".into());
-        // Tokens: the leaves, named or anonymous, other than comments, in source order (ESLint's token store).
-        let mut toks: Vec<(u32, u32, i64)> = p.node_ids().filter_map(|(_, id, n)| {
-                let [a, b] = [f.start(id), f.end(id)];
-                (f.children(id).is_empty() && b > a && !is_comment(dialect.name(f, id))).then_some((a, b, n))
-            })
-            .collect();
-        toks.extend(p.token_ids().map(|(l, _, n)| {
-            let [a, b] = p.span(l);
-            (a, b, n)
-        }));
-        toks.sort_unstable();
-        let starts: Vec<u32> = toks.iter().map(|t| t.0).collect();
-        let ends: Vec<u32> = toks.iter().map(|t| t.1).collect();
-        for ((_, [a, b]), (_, id)) in p.spans().zip(p.loc_ids()).take((p.len() + x.tokens) as usize) {
-            let first = starts.partition_point(|&s| s < a);
-            if first < toks.len() && toks[first].1 <= b {
-                let last = ends.partition_point(|&e| e <= b) - 1;
-                self.first_token.push([id, toks[first].2]);
-                self.last_token.push([id, toks[last].2]);
-            }
-            let k = ends.partition_point(|&e| e <= a);
-            if k > 0 && toks[k - 1].2 != id {
-                self.token_before.push([id, toks[k - 1].2]);
-            }
-            let j = starts.partition_point(|&s| s < b);
-            if j < toks.len() && toks[j].2 != id {
-                self.token_after.push([id, toks[j].2]);
-            }
-        }
     }
 
     /// `ast_match(p, n, g, c)`: AST pattern `p` (``n ~ `p` ``, `rr::lower`) matches node `n`, and its metavariable
@@ -978,9 +963,7 @@ impl CoreRows {
         let value: Vec<[i64; 2]> = self.value.iter().map(|&[n, v, _]| [n, v]).collect();
         let mut value_type: Vec<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
-        let spread: Vec<[i64; 1]> = self.spread.iter().map(|&n| [n]).collect();
         vec![
-            ("op", node_sym(&self.op)),
             ("op_at", make(&["n", "i", "s"], &self.op_at, [false, false, true], atom)),
             ("text", node_sym(&self.text)),
             ("name", node_sym(&self.name)),
@@ -991,7 +974,6 @@ impl CoreRows {
             ("static_value", make(&["n", "v"], &value, [false, true], atom)),
             ("value_type", make(&["v", "t"], &value_type, [true, true], atom)),
             ("comment", node_sym(&self.comment)),
-            ("spread", make(&["n"], &spread, [false], atom)),
             ("syntax_error", make(&["d", "l", "msg"], &self.syntax_error, [false, false, true], atom)),
             ("source", pair(&["d", "sp"], &self.source)),
             ("src_line", make(&["d", "l", "sp"], &self.src_line, [false, false, false], atom)),
@@ -999,11 +981,6 @@ impl CoreRows {
             ("str_part", make(&["lit", "i", "v", "at", "spec"], &self.str_part, [false, false, true, false, false], atom)),
             ("str_part_word", make(&["lit", "i", "w", "at", "spec"], &self.str_part_word, [false, false, true, false, false], atom)),
             ("str_part_start", make(&["lit", "i", "l", "c"], &self.str_part_start, [false; 4], atom)),
-            ("first_token", pair(&["n", "t"], &self.first_token)),
-            ("last_token", pair(&["n", "t"], &self.last_token)),
-            ("token_before", pair(&["x", "t"], &self.token_before)),
-            ("token_after", pair(&["x", "t"], &self.token_after)),
-            ("end_point", pair(&["n", "p"], &self.end_point)),
             ("structural_before", node_sym(&self.structural_before)),
             ("structural_after", node_sym(&self.structural_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
