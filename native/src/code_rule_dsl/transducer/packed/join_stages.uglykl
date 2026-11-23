@@ -1470,7 +1470,8 @@ UKL_INLINE void lat_clear_one(JSPACE uint32_t* P, JSPACE uint32_t* best, JSPACE 
 UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t i)
 {
     LatP p = lat_load(pp);
-    if (i > p.hmask) return;
+    // A program's tail's growth of a map that did not grow (`omask` all ones, `Batch::lattice_tail`): nothing.
+    if (i > p.hmask || p.omask == 0xffffffffu) return;
     JSPACE uint32_t* H = (JSPACE uint32_t*)(HB + p.h_at);
     H[3 * i] = 0xffffffffu;
     H[3 * i + 1] = 0;
@@ -1482,7 +1483,7 @@ UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32
 UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB, JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t s)
 {
     LatP p = lat_load(pp);
-    if (s > p.omask) return;
+    if (s > p.omask || p.omask == 0xffffffffu) return;
     JSPACE const uint32_t* O = (JSPACE const uint32_t*)(OB + p.h0_at);
     uint32_t t = O[3 * s];
     if (t == 0xffffffffu) return;

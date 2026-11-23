@@ -602,10 +602,51 @@ whole (0295 §7), so the reach was real memory there. They are now mapped as the
   The first run found the two templates' gates of a head growing it apart: one gate's growth took 3,350 rows and the
   other 1,204, and its index kept the first. Its anti-join then missed rows, and the device made rows twice. A head's
   gates now share one mapped size.
-- **What is still committed on Metal:**
-  - A lattice head's room is its bound: its key map (`KeyMap`, twice its bound's slots) is a hash table placed by
-    key, which grows only by placing every key again (`Batch::lattice_grow`), a device job of its own.
-  - A non-recursive stratum's heads' rooms (`encode_place`, within `PLACE_ROOM_BYTES`).
+- **What is still committed on Metal:** a lattice head's room was its bound (done below), and a non-recursive
+  stratum's heads' rooms (`encode_place`, within `PLACE_ROOM_BYTES`).
 - **OpenCL runs no join program.** Its memory wrapped in place has no address, and a program names every buffer by
   one (`metal_join::address`): a stratum there is refused (`UnsupportedBackend: a stage's space for 1 rows`, on
   the mini's OpenCL) and runs on the host. The strict check has no launch of it to check.
+
+## Done (2026-11-22): a lattice head's rooms and key map mapped as its rounds reach them
+
+A lattice head's rows, its deltas' and its key map were reserved for its bound. They are now mapped as its rounds
+reach them, as a set head's are (above):
+
+- **Its first room** is `LiveHead::mapped`, a set head's. Its key map has room for those rows at half full (twice
+  them, a power of two), not for its bound's.
+- **Its gate's room check** parks the program as a set head's does. Its growth (`room_growth`) reserves its rows
+  and its deltas further. Where its places grow, it also makes a new key map in its block (`KeyMap::of`, unwritten)
+  and records it (`mj::MapGrown`: the new map's offset and places, the old one's).
+- **Its keys are placed again by the program, not the host:**
+  - The program has a tail (`Batch::lattice_tail`), past its last round's phases. For each growing lattice head, it
+    is a fold job's growth alone: its new map emptied (`lat_hclear_one`), then its old map's keys placed in it
+    (`lat_rehash_one`). Its items are for its bound's places, clamped by the map's masks.
+  - Then a jump (a round job, `Job::jump`) back to the phase after the gate.
+  - The tail's parameters say "nothing" (`omask` all ones) until a growth patches them: `hmask`, `omask`, `h_at`
+    and `h0_at`. The folds of the rounds after it read the new map (`hmask`, `h_at`, patched in `Kit::grow_rooms`).
+  - Released where a map grew (`Kit::release`), the program goes on at the tail, with the jump's next phase set to
+    the gate's next phase. Where none grew, it goes on after the gate as before. A head whose map did not grow keeps
+    its tail's `omask` all ones.
+  - The host evaluates nothing. Once the program is done, the head adopts the last map, and the maps it grew from
+    are kept to the program's end (`Kept::maps`).
+- **Counted:** `Done::maps_grown` and `Report::maps_grown`.
+- **The test:** `a_leveled_recursion_on_the_device_has_the_cpus_levels` runs again with each room one row past its
+  rows (`RERAIL_ROOMS_MAPPED=1`), for the set head and for the `min` lattice head. It asserts one program, no rerun,
+  a room remap, a key map grown (for the lattice), and the rows and levels the CPU's.
+- **Measured** (the setfix device, join and parity tests, 49; every stratum strict):
+
+  | Backend | Rooms | Tests |
+  |---|---|---|
+  | spark2's CPU backend | as reached, one row first | 49 of 49 |
+  | spark2's CUDA (GB10) | as reached, one row first | 49 of 49 |
+  | The mini's Metal (M1) | as reached, one row first | 49 of 49 |
+  | The mini's Metal (M1) | as reached (the setfix device tests) | 39 of 39 |
+
+  One earlier forced run on the mini failed one non-recursive text case of `parity_random_mixed` (#311: 15 rows
+  against the CPU's 141). That case's program has no gate room, and `RERAIL_ROOMS_MAPPED` does not reach it. 21
+  runs after it passed, and its failure message now carries the device's report.
+- **Point 3 on OpenCL:** a program names every buffer by its device address. OpenCL has addresses only for the
+  buffers it allocates itself, through Intel's unified shared memory (`RERAIL_OPENCL_USM`). Memory wrapped in place
+  (a block) has none there, and Apple's OpenCL 1.2 (the mini's) has neither USM nor SVM. A stratum there is refused
+  and runs on the host, so OpenCL has no launches to check.

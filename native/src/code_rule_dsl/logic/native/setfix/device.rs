@@ -2845,6 +2845,7 @@ fn tally(rep: &mut Report, done: &mj::Done) {
     rep.relaunches += done.relaunches;
     rep.remaps += done.remaps;
     rep.room_remaps += done.room_remaps;
+    rep.maps_grown += done.maps_grown;
     rep.taken += done.taken;
     rep.programs += done.programs;
     if done.launch_items != 0 {
@@ -2890,7 +2891,7 @@ struct SetHead {
 
 /// A key map where it lies, for the device to bind.
 fn map_at(m: &super::keys::KeyMap) -> mj::LatMap<'_> {
-    mj::LatMap { home: m.facts().expect("a map in a block"), at: m.words().offset(), places: m.places() }
+    mj::LatMap { home: m.facts().expect("a map in a block"), at: m.words().offset(), places: m.places(), grows: None }
 }
 
 fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
@@ -3062,6 +3063,16 @@ struct LiveHead {
     len: usize,
     /// Its rows mapped as its program's gates' rooms grew them (`room_growth`): one for all its rounds' gates.
     mapped_now: Rc<std::cell::Cell<usize>>,
+    /// A lattice head's key map as its rooms grew it: its offset in its block and its places now, its keys held when
+    /// the program began, and the maps grown (the last its map once the program is done).
+    lat_map: Option<LatGrowing>,
+}
+
+/// A lattice head's key map growing with its rows within a program (`room_growth`, `Batch::lattice_tail`).
+struct LatGrowing {
+    now: Rc<std::cell::Cell<(u64, usize)>>,
+    had: usize,
+    grown: Rc<std::cell::RefCell<Vec<super::keys::KeyMap>>>,
 }
 
 impl LiveHead {
@@ -3267,6 +3278,7 @@ struct Kept {
     rels: Vec<Rc<mj::DevRel>>,
     maps: Vec<super::keys::KeyMap>,
     ends: Vec<Vec<HeadEnd>>,
+    words: Vec<mj::Words>,
 }
 
 /// A head's round (`encode_live_tail`): the words of its rows' counts (`[union, distinct, new]`), a lattice head's
@@ -3340,7 +3352,7 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
             }
         };
         let fresh = || Part::for_writes_with_room(k, 1, DELTA_ROOM).map_err(|e| format!("a recursive head's delta: {e}"));
-        live.insert(h, LiveHead { total, deltas: [fresh()?, fresh()?], bound: 0, room: 1024, slack: 0, mapped: 0, len: 0, mapped_now: Rc::default() });
+        live.insert(h, LiveHead { total, deltas: [fresh()?, fresh()?], bound: 0, room: 1024, slack: 0, mapped: 0, len: 0, mapped_now: Rc::default(), lat_map: None });
     }
     let mut side = 0;
     let mut programs = 0;
@@ -3371,10 +3383,12 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
             // twice what a round could add (or a test's rows past them), within its bound; else its bound.
             l.len = len;
             l.mapped = match rooms {
-                Some(first) if !lp.lattices.contains_key(&h) => (len + if first == 0 { len + 2 * l.room } else { first }).min(l.bound),
-                _ => l.bound,
+                Some(first) => (len + if first == 0 { len + 2 * l.room } else { first }).min(l.bound),
+                None => l.bound,
             };
             l.mapped_now = Rc::new(std::cell::Cell::new(l.mapped));
+            // A lattice head's map grows with its rows (its place once the program's first growth made it).
+            l.lat_map = lp.lattices.get(&h).filter(|_| l.mapped < l.bound).map(|lh| LatGrowing { now: Rc::default(), had: lh.had, grown: Rc::default() });
             if !l.total.reserve(l.mapped as u64) || !l.deltas.iter().all(|d| d.reserve(l.slack_mapped() as u64)) {
                 return Err(format!("a recursive head of {} rows past its block's room", l.mapped));
             }
@@ -3401,6 +3415,15 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
         let (seeded, templates) = encode_program(seeding, deltas, heads, store, names, named, shared, lp, &live, &mut sizes, &mut sums, &logs, side, &round, &mut batch, &mut kept)?;
         let (t0, w0) = (Instant::now(), thread_cpu());
         let done = batch.finish().map_err(e)?;
+        // A lattice head's map as its rooms grew it: the last grown, its keys all placed in it (the program's tail).
+        for (&h, l) in &live {
+            let Some(g) = &l.lat_map else { continue };
+            let mut grown = g.grown.borrow_mut();
+            if let (Some(last), Some(lh)) = (grown.pop(), lp.lattices.get_mut(&h)) {
+                kept.maps.extend(lh.map.replace(last));
+            }
+            kept.maps.extend(grown.drain(..));
+        }
         lp.rep.wait_wall += t0.elapsed().as_secs_f64();
         lp.rep.wait_cpu += thread_cpu() - w0;
         tally(lp.rep, &done);
@@ -3519,9 +3542,10 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
     for (&h, l) in live {
         lp.own.total.insert(h, live_rel(&l.total, l.bound, store.rels[h].k, (l.mapped < l.bound).then(|| (l.mapped, l.buckets())))?);
     }
-    // A lattice head's key map with room for its bound's keys at half full: grown once, before the rounds fold into it.
+    // A lattice head's key map with room for its rows mapped at half full (its bound's, where its rows are not mapped
+    // as reached): grown once, before the rounds fold into it, and by the program's tail as its rooms grow.
     for (&h, lh) in lp.lattices.iter_mut() {
-        let need = (2 * live[&h].bound).next_power_of_two().max(16);
+        let need = (2 * live[&h].mapped).next_power_of_two().max(16);
         if lh.map.as_ref().is_some_and(|m| m.places() >= need) {
             continue;
         }
@@ -3532,6 +3556,12 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
         // Its keys so far placed again in it (none where its first round made none).
         batch.lattice_grow(&lp.own.total[&h], store.rels[h].k - 1, map_at(&map), lh.map.as_ref().map(map_at)).map_err(e)?;
         kept.maps.extend(lh.map.replace(map));
+    }
+    for (&h, lh) in lp.lattices.iter() {
+        if let (Some(g), Some(m)) = (&live[&h].lat_map, &lh.map) {
+            let m = map_at(m);
+            g.now.set((m.at as u64, m.places));
+        }
     }
     // The seed round: its rules read no delta, and its rows are the first round's delta, which template 0 reads.
     let seeded = match seeding {
@@ -3545,6 +3575,20 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
         kept.ends.push(ends);
         templates.push(runs);
     }
+    // Its tail: each lattice head whose rows are mapped as reached, its map grown with them (`Batch::lattice_tail`).
+    let growing: Vec<usize> = lp.lattices.keys().copied().filter(|h| live[h].mapped < live[h].bound).collect();
+    if !growing.is_empty() {
+        let (round_word, one) = (mj::Words::zeroed(1).map_err(e)?, mj::Words::zeroed(1).map_err(e)?);
+        one.set(0, 1);
+        let mut tail = Vec::new();
+        for &h in &growing {
+            let map = lp.lattices[&h].map.as_ref().expect("its key map");
+            let most = (2 * live[&h].bound).next_power_of_two().max(16);
+            tail.push((h, &*lp.own.total[&h], store.rels[h].k - 1, map_at(map), most));
+        }
+        batch.lattice_tail(&tail, &round_word, &one).map_err(e)?;
+        kept.words.extend([round_word, one]);
+    }
     kept.rels.extend(lp.own.total.values().cloned());
     Ok((seeded, templates))
 }
@@ -3553,13 +3597,14 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
 /// Head `l`'s room's growth for one of its rounds' gates (`mj::RoomGrow`), its round's new rows read by `new`: its rows
 /// mapped past its rows and those, twice what they need (at least twice its room), within its bound; its deltas' with
 /// them. Its rounds' gates share what it maps (`LiveHead::mapped_now`): a gate whose cap is behind it is given it.
-fn room_growth(l: &LiveHead, new: impl Fn() -> u32 + 'static) -> mj::RoomGrow {
+fn room_growth(h: usize, l: &LiveHead, new: impl Fn() -> u32 + 'static) -> mj::RoomGrow {
     let (total, deltas, bound, len0, now) = (l.total.clone(), l.deltas.clone(), l.bound, l.len, l.mapped_now.clone());
+    let lat = l.lat_map.as_ref().map(|m| (m.now.clone(), m.had, m.grown.clone()));
     let cap = std::cell::Cell::new(l.mapped);
     Box::new(move || {
         let need = total.len() as usize + new() as usize;
         // Past its room, within its bound (past it, the bound's check stops the round): mapped further.
-        let mut rels = Vec::new();
+        let (mut rels, mut maps) = (Vec::new(), Vec::new());
         if need > now.get() && need <= bound {
             let to = (2 * need).max(2 * now.get()).min(bound);
             if !total.reserve(to as u64) || !deltas.iter().all(|d| d.reserve((to - len0) as u64)) {
@@ -3567,12 +3612,27 @@ fn room_growth(l: &LiveHead, new: impl Fn() -> u32 + 'static) -> mj::RoomGrow {
             }
             now.set(to);
             rels = std::iter::once((&total, to)).chain(deltas.iter().map(|d| (d, to - len0))).map(|(p, rows)| (p.facts().clone(), p.rel_at() as u64, rows as u32)).collect();
+            // A lattice head's key map: room for its rows mapped at half full, a new map in its block, its keys placed
+            // again in it by the program's tail.
+            if let Some((map, had, grown)) = &lat {
+                let (old_at, old_places) = map.get();
+                let places = (2 * to).next_power_of_two().max(16);
+                if places > old_places {
+                    // SAFETY: the tail's growth (`lat_hclear_one`) writes every slot before any read.
+                    let words = unsafe { BlockVec::unwritten_in(Some(&total.home()), places * super::keys::SLOT) };
+                    let m = super::keys::KeyMap::of(words, *had);
+                    let at = m.words().offset() as u64;
+                    map.set((at, places));
+                    grown.borrow_mut().push(m);
+                    maps.push(mj::MapGrown { key: h, at, places, old_at, old_places });
+                }
+            }
         }
         if now.get() <= cap.get() {
             return Ok(None);
         }
         cap.set(now.get());
-        Ok(Some(mj::Grown { cap: now.get(), rels }))
+        Ok(Some(mj::Grown { cap: now.get(), rels, maps }))
     })
 }
 
@@ -3714,7 +3774,7 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
         let total = &lp.own.total[&m.end.head];
         checks.push((mj::At::Len(total), Some(n), l.bound));
         if l.mapped < l.bound {
-            rooms_grow.push((checks.len(), room_growth(l, m.end.words.reader(m.end.slot()))));
+            rooms_grow.push((checks.len(), room_growth(m.end.head, l, m.end.words.reader(m.end.slot()))));
             checks.push((mj::At::Len(total), Some(mj::At::Word(&m.end.words, m.end.slot())), l.mapped));
         }
     }
@@ -3734,7 +3794,8 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
                 let lh = &lp.lattices[&h];
                 let changed = batch.table(k, cap).map_err(e)?;
                 let lv = store.rels[h].keeps_levels().then_some(mj::LatLevel::Word(round));
-                batch.lattice_fold(&union, cap, &total, 0, k - 1, lh.code, map_at(lh.map.as_ref().expect("its key map")), mj::MapFirst::Ready, counters, &changed, shared.map(|a| &**a), lv, Some((&end.words, 0))).map_err(e)?;
+                let map = mj::LatMap { grows: (live[&h].mapped < live[&h].bound).then_some(h), ..map_at(lh.map.as_ref().expect("its key map")) };
+                batch.lattice_fold(&union, cap, &total, 0, k - 1, lh.code, map, mj::MapFirst::Ready, counters, &changed, shared.map(|a| &**a), lv, Some((&end.words, 0))).map_err(e)?;
                 copies.push((changed, cap, ends.len(), ident));
             }
             (Some(fresh), _) => {

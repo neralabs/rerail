@@ -3127,6 +3127,8 @@ pub struct Report {
     pub remaps: u32,
     /// Of the remaps, a gate's rooms' (a recursive component's rows mapped as its rounds reach them).
     pub room_remaps: u32,
+    /// Of those, the ones that grew a lattice head's key map.
+    pub maps_grown: u32,
     pub taken: u64,
     pub launch_items: u64,
     /// Its programs: one a stratum (a wave's first stratum's report, its wave's).

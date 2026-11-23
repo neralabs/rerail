@@ -1422,6 +1422,8 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) remaps: u32,
     /// Its remaps of a gate's rooms (`Batch::gate_rooms`): rows mapped as a recursive component's rounds reach them.
     pub(in crate::code_rule_dsl) room_remaps: u32,
+    /// Of those, the ones that grew a lattice head's key map (its keys placed again by the program's tail).
+    pub(in crate::code_rule_dsl) maps_grown: u32,
     /// Its programs' items taken, over all their launches, and a launch's budget of items (its workers' shares'), the
     /// least of its programs'.
     pub(in crate::code_rule_dsl) taken: u64,
@@ -2440,6 +2442,47 @@ impl Batch {
         Ok(())
     }
 
+    /// The program's tail of its rooms' growth (decision 0603's fewer reruns), after its rounds: for each of `heads`
+    /// (its head, its relation, its key's columns, its map now, and its map's places at most), a growth of its key
+    /// map, every key placed again, its parameters the host's at a park (`Kit::grow_rooms`: none grows where its map
+    /// did not); then a jump to the phase after the gate that parked, which the host writes. No phase reaches it but a
+    /// park's release, so the program ends before it (`Ran::last`).
+    pub(in crate::code_rule_dsl) fn lattice_tail(&mut self, heads: &[(usize, &DevRel, usize, LatMap<'_>, usize)], round: &Words, one: &Words) -> Result<(), Error> {
+        self.flush()?;
+        self.program.rooms.tail = Some(Tail { first: self.program.phases.len() as u32, grows: Vec::new(), jump: None });
+        for &(h, r, nkeys, map, most) in heads {
+            // Its items as its map's places at most; its masks the host's (none grows until it writes them).
+            let p = LatParams { top: 0, n: 0, had: 0, nkeys: nkeys as u32, code: 0, after: NONE, pmask: 0, hmask: (map.places - 1) as u32, level: 0, omask: u32::MAX,
+                                counted: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: map.at as u64 };
+            let hb = bound(map.home)?;
+            let mut job = Job::new(JobKind::Lattice, 0, Stage::default());
+            job.desc.s = job.reach(&r.buffer.buffer, 0, false)?;
+            job.desc.vc = job.reach(&hb.buffer, 0, true)?;
+            job.desc.g = job.reach(&hb.buffer, 0, false)?;
+            for d in [&mut job.desc.l, &mut job.desc.a, &mut job.desc.totals, &mut job.desc.h, &mut job.desc.o, &mut job.desc.counters, &mut job.desc.v] {
+                *d = job.desc.g;
+            }
+            job.p = Some(lat_bytes(&p).to_vec());
+            job.lat = Some((h, true));
+            (job.count, job.clear, job.lattice) = (0, 0, [most, most / 2]);
+            job.order(&[job.desc.s, job.desc.g], &[job.desc.vc]);
+            job.own.push(hb);
+            self.queue(job)?;
+        }
+        self.flush()?;
+        // The jump: a round's end of no claims (the round's arena is the round's, its folds still to read it).
+        let mut job = Job::new(JobKind::Round, 0, Stage::default());
+        let ra = job.reach(&round.buffer.buffer, 0, true)?;
+        let oa = job.reach(&one.buffer.buffer, 0, false)?;
+        let p: Vec<u64> = vec![ra, 1 | u64::from(u32::MAX) << 32, 0, 0, oa, 4 | 1 << 32];
+        job.p = Some(as_bytes(&p).to_vec());
+        job.count = 1;
+        job.jump = true;
+        job.order(&[oa], &[ra]);
+        self.queue(job)?;
+        self.flush()
+    }
+
     /// The phase the next level flushed begins (`Program::phase`): a round's first, which a round's end jumps to.
     pub(in crate::code_rule_dsl) fn next_phase(&mut self) -> Result<u32, Error> {
         self.flush()?;
@@ -2636,6 +2679,15 @@ impl Batch {
             for (t, grow) in j.rooms.drain(..) {
                 // Check `t`'s cap: after the gate's two words, three words a check, its third.
                 prog.rooms.gates.push(GateRoom { params: params.buffer.clone(), at: pat + 16 + 24 * t as u64 + 16, grow });
+            }
+            match j.lat.take() {
+                Some((h, false)) => prog.rooms.folds.push((h, params.buffer.clone(), pat)),
+                Some((h, true)) => prog.rooms.tail.as_mut().expect("the tail begun").grows.push((h, params.buffer.clone(), pat)),
+                None => {}
+            }
+            if j.jump {
+                // `RoundP::next`: after its round word's address and its ops' and max's word.
+                prog.rooms.tail.as_mut().expect("the tail begun").jump = Some((params.buffer.clone(), pat + 16));
             }
             if let Some((home, rel, index, rows)) = j.live_ix.take() {
                 level_live.push((prog.rooms.live_ix.len(), j.count));
@@ -2928,7 +2980,7 @@ impl Batch {
         let capacity = workers * (budget as usize + 1) + 2 * phase_max + 1;
         let format = prog.format.unwrap_or_else(run_view_format);
         self.done.levels += prog.levels;
-        let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, capacity, workers, budget, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms),
+        let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, capacity, workers, budget, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms), maps_grown: false,
                         rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))? } };
         let (ctl, slots) = (Words::zeroed(10 + 2 * kit.phase_items.len())?, Words::zeroed(kit.capacity)?);
         self.launch(kit, ctl, slots)
@@ -2996,7 +3048,9 @@ impl Batch {
             &args,
             kit.workers,
         );
-        self.programs.push(Ran { ctl, slots, last: nphases - 1, phases: nphases, items: kit.phase_items[nphases - 1][1], kit });
+        // Its last phase: the one before its tail (`Batch::lattice_tail`), which only a park's release reaches.
+        let last = kit.rooms.tail.as_ref().map_or(nphases, |t| t.first as usize) - 1;
+        self.programs.push(Ran { ctl, slots, last, phases: nphases, items: kit.phase_items[last][1], kit });
         Ok(())
     }
 
@@ -3024,9 +3078,11 @@ impl Batch {
                 if r.kit.grow_rooms()? {
                     self.done.remaps += 1;
                     self.done.room_remaps += 1;
+                    self.done.maps_grown += u32::from(r.kit.maps_grown);
                     r.compact();
                     r.ctl.set(6, flags & !32);
-                    r.ctl.set(9, 0x2000_0000 | (r.ctl.get(9) & 0x1fff_ffff));
+                    let p = r.ctl.get(9) & 0x1fff_ffff;
+                    r.ctl.set(9, r.kit.release(p));
                     again.push((r, true));
                     continue;
                 }
@@ -3487,6 +3543,8 @@ struct Kit {
     hold: Vec<Held>,
     /// Its gates' rooms, mapped as its rows reach them (`Batch::gate_rooms`), and what a room grown re-points.
     rooms: Rooms,
+    /// Whether the last growth grew a lattice head's map (`grow_rooms`): its release goes through the tail.
+    maps_grown: bool,
 }
 
 /// What a gate's room grew to (`RoomGrow`): its check's new cap, and the live relations grown with it (their block,
@@ -3494,6 +3552,19 @@ struct Kit {
 pub(in crate::code_rule_dsl) struct Grown {
     pub(in crate::code_rule_dsl) cap: usize,
     pub(in crate::code_rule_dsl) rels: Vec<(std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, u64, u32)>,
+    /// A lattice head's key map grown with its rows (`Batch::lattice_tail`): its keys placed again in it by the
+    /// program's tail before its fold reads it.
+    pub(in crate::code_rule_dsl) maps: Vec<MapGrown>,
+}
+
+/// A lattice head's key map grown (`Grown::maps`): the head (`LatMap::grows`), its new map's offset in its block and
+/// its places, and its old map's.
+pub(in crate::code_rule_dsl) struct MapGrown {
+    pub(in crate::code_rule_dsl) key: usize,
+    pub(in crate::code_rule_dsl) at: u64,
+    pub(in crate::code_rule_dsl) places: usize,
+    pub(in crate::code_rule_dsl) old_at: u64,
+    pub(in crate::code_rule_dsl) old_places: usize,
 }
 
 /// A gate's room's growth (`Batch::gate_rooms`), between its program's launches, once a round's rows passed it: its
@@ -3509,8 +3580,22 @@ struct Rooms {
     gates: Vec<GateRoom>,
     live_ix: Vec<LiveIx>,
     sorts: Vec<SortRoom>,
+    /// Each live fold's map (its head, `LatMap::grows`), its parameters (`LatParams`) at byte `.2` of `.1`.
+    folds: Vec<(usize, Buffer, u64)>,
+    /// The program's tail (`Batch::lattice_tail`): its first phase, each head's map growth's parameters, and its jump's
+    /// next phase (`RoundP::next`, a `u32`) at byte `.2` of `.1`.
+    tail: Option<Tail>,
     /// A parameters buffer and a word's byte offset in it.
     relocs: Vec<(Buffer, u64)>,
+}
+
+/// A program's tail of its rooms' growth (`Batch::lattice_tail`), past its rounds: each lattice head's map grown (its
+/// keys placed again), then a jump back to the phase after the gate that parked it. No phase reaches it but a park's
+/// release.
+struct Tail {
+    first: u32,
+    grows: Vec<(usize, Buffer, u64)>,
+    jump: Option<(Buffer, u64)>,
 }
 
 /// A gate's check of a room: its cap, a `u32` at byte `at` of `params`, and its growth.
@@ -3550,6 +3635,7 @@ impl Kit {
     fn grow_rooms(&mut self) -> Result<bool, Error> {
         type Rel = (std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, u64, u32);
         let mut grew: Vec<Rel> = Vec::new();
+        let mut maps: Vec<MapGrown> = Vec::new();
         let mut changed = false;
         for g in &mut self.rooms.gates {
             match (g.grow)() {
@@ -3559,6 +3645,7 @@ impl Kit {
                     // SAFETY: the check's cap, a `u32` within the parameters buffer; no work of the program runs.
                     unsafe { g.params.contents().cast::<u8>().add(g.at as usize).cast::<u32>().write_unaligned(cap) };
                     grew.extend(to.rels);
+                    maps.extend(to.maps);
                 }
                 Ok(None) => {}
                 Err(why) => {
@@ -3629,7 +3716,54 @@ impl Kit {
         for (old, len, new) in remapped {
             self.rebind(old, len, &new)?;
         }
+        self.maps_grown = !maps.is_empty();
+        if self.maps_grown {
+            let tail = self.rooms.tail.as_ref().expect("a program whose maps grow has a tail");
+            // Each head's growth: its new map and its old, or none (`omask` all ones) where its map did not grow.
+            for (key, params, at) in &tail.grows {
+                let g = maps.iter().filter(|m| m.key == *key).max_by_key(|m| m.places);
+                // SAFETY: the growth's `LatParams`, within its parameters buffer; no work of the program runs.
+                unsafe {
+                    let b = params.contents().cast::<u8>().add(*at as usize);
+                    match g {
+                        Some(g) => {
+                            b.add(std::mem::offset_of!(LatParams, hmask)).cast::<u32>().write_unaligned((g.places - 1) as u32);
+                            b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned((g.old_places - 1) as u32);
+                            b.add(std::mem::offset_of!(LatParams, h_at)).cast::<u64>().write_unaligned(g.at);
+                            b.add(std::mem::offset_of!(LatParams, h0_at)).cast::<u64>().write_unaligned(g.old_at);
+                        }
+                        None => b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned(u32::MAX),
+                    }
+                }
+            }
+            // Each fold of a head grown: its map the new one.
+            for (key, params, at) in &self.rooms.folds {
+                let Some(g) = maps.iter().filter(|m| m.key == *key).max_by_key(|m| m.places) else { continue };
+                // SAFETY: the fold's `LatParams`, within its parameters buffer; no work of the program runs.
+                unsafe {
+                    let b = params.contents().cast::<u8>().add(*at as usize);
+                    b.add(std::mem::offset_of!(LatParams, hmask)).cast::<u32>().write_unaligned((g.places - 1) as u32);
+                    b.add(std::mem::offset_of!(LatParams, h_at)).cast::<u64>().write_unaligned(g.at);
+                }
+            }
+        }
         Ok(true)
+    }
+
+    /// A park's release once its rooms grew (`grow_rooms`), the gate's phase `p` parked: the phase after it, or where
+    /// a lattice head's map grew, the program's tail first, which jumps back to it (`ctl[9]`, bit 29: the phase before
+    /// the one pushed).
+    fn release(&self, p: u32) -> u32 {
+        match (&self.rooms.tail, self.maps_grown) {
+            (Some(t), true) => {
+                if let Some((b, at)) = &t.jump {
+                    // SAFETY: the jump's `RoundP::next`, within its parameters buffer; no work of the program runs.
+                    unsafe { b.contents().cast::<u8>().add(*at as usize).cast::<u32>().write_unaligned(p + 1) };
+                }
+                0x2000_0000 | (t.first - 1)
+            }
+            _ => 0x2000_0000 | p,
+        }
     }
 
     /// A buffer the program reached at `old` (`len` bytes) now `new` (the same memory wrapped again: a block grown, a
@@ -4339,6 +4473,10 @@ struct Job {
     rooms: Vec<(usize, RoomGrow)>,
     /// A live relation's index build (`queue_index`): its relation's block, its relation's offset there, its entry.
     live_ix: Option<(std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, u64, usize, u32)>,
+    /// A live fold of head `.0`'s map, or (`.1`) the tail's growth of it (`Rooms::folds`, `Tail::grows`).
+    lat: Option<(usize, bool)>,
+    /// The tail's jump (`Tail::jump`).
+    jump: bool,
     /// Its output placed by its level's size script at its start, its rows a word's or its input's room, not
     /// after the level's scan (`made_sizes`): a union's (`Batch::append_rows`), a fold's changed rows.
     o_rows: Option<OutRows>,
@@ -4427,6 +4565,8 @@ impl Job {
             reached: Vec::new(),
             rooms: Vec::new(),
             live_ix: None,
+            lat: None,
+            jump: false,
         }
     }
 
@@ -5097,6 +5237,9 @@ pub(in crate::code_rule_dsl) struct LatMap<'a> {
     pub(in crate::code_rule_dsl) home: &'a std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
     pub(in crate::code_rule_dsl) at: usize,
     pub(in crate::code_rule_dsl) places: usize,
+    /// The head whose map this is, where it grows as its program's rounds reach it (`Grown::maps`): a fold of it is
+    /// re-pointed at its map grown.
+    pub(in crate::code_rule_dsl) grows: Option<usize>,
 }
 
 /// A lattice the device folds by (`Batch::lattice_fold`): 0 min, 1 max, 2 flat, 3 shortlex (its values arena texts,
@@ -5213,6 +5356,7 @@ impl Batch {
             reads.push(wa);
         }
         job.p = Some(lat_bytes(&p).to_vec());
+        job.lat = map.grows.map(|h| (h, false));
         (job.count, job.clear, job.lattice) = (n, pplaces, maps);
         job.order(&reads, &[job.desc.s, job.desc.vc, o, job.desc.counters]);
         job.own.extend([places, chosen, flags, hb]);

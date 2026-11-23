@@ -278,7 +278,9 @@
 
     /// A recursive component that keeps levels (decision 0311): the device's rows and each row's level are the CPU's,
     /// for a set head (its rows appended a round at a time) and a `min` lattice head (its values improved in place,
-    /// the level column `lat_merge` writes).
+    /// the level column `lat_merge` writes). Again with each head's room one row past its rows (decision 0603's fewer
+    /// reruns, `RERAIL_ROOMS_MAPPED=1`): its rooms, and the lattice head's key map, grown as its rounds reach them in
+    /// one program, none of its rounds run again.
     #[test]
     fn a_leveled_recursion_on_the_device_has_the_cpus_levels() {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
@@ -307,9 +309,10 @@
         let reach = (None, format!("pos {e} v0 v1\nhead v0 v1"), format!("pos d0 v0 v1\npos {e} v1 v2\nhead v0 v2"));
         // dist(y, 1) :- e(0, y).  dist(z, d + 1) :- dist(y, d), e(y, z).  (`min` by y)
         let dist = (Some(format!("lattice 0 1 {} -", hex("min"))), format!("pos {e} i:0 v0\nhead v0 i:1"), format!("pos d0 v0 v1\npos {e} v0 v2\nfunc rr_add v3 v1 i:1\nhead v2 v3"));
-        for (lattice, seed, join) in [reach, dist] {
+        for (rooms, (lattice, seed, join)) in [None, Some("1")].into_iter().flat_map(|r| [(r, reach.clone()), (r, dist.clone())]) {
             let mut got: Vec<Vec<(i64, i64, u32)>> = Vec::new();
             for device in [false, true] {
+                let _rooms = rooms.filter(|_| device).map(|n| crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_ROOMS_MAPPED", n)]));
                 db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
                 let mut spec = vec!["name dev_lev".to_owned()];
                 if device {
@@ -331,6 +334,10 @@
                     // in place in its one relation (decision 0384 step 5, R3). Every row placed: none read back (R4).
                     assert!(r.placed > 0, "{r:?}");
                     assert_eq!(r.placed, r.distinct, "no head row read back: {r:?}");
+                    if rooms.is_some() {
+                        assert!(r.programs == 1 && r.reruns == 0 && r.room_remaps > 0, "its rooms grown in one program: {r:?}");
+                        assert!(lattice.is_none() || r.maps_grown > 0, "its key map grown with its rooms: {r:?}");
+                    }
                 }
                 super::super::close(&db, "dev_lev").unwrap();
                 let held = super::super::held(&db, "h0").expect("the relation held");
