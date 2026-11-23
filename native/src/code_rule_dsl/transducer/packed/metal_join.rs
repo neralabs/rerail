@@ -2996,13 +2996,18 @@ impl Batch {
         // pushed once the one before is done), past those queued when it starts (one phase's, and a parked item); and
         // a slot a group gives up at its end.
         let phase_max = prog.phases.iter().map(|p| p[1] as usize).max().unwrap_or(0);
+        // The word that hands a phase's groups out (`phase_hand_out`, decision 0637) holds its phase and one in its top
+        // 12 bits and its groups below 2^20: a program past them is not the device's.
+        if prog.phases.len() >= (1 << 12) - 1 || phase_max >= 1 << 20 {
+            return Err(Error::BackendCapacity);
+        }
         let workers = phase_max.clamp(1, PROGRAM_WORKERS);
         let capacity = workers * (budget as usize + 1) + 2 * phase_max + 1;
         let format = prog.format.unwrap_or_else(run_view_format);
         self.done.levels += prog.levels;
         let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, capacity, workers, budget, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms), maps_grown: false,
                         rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))? } };
-        let (ctl, slots) = (Words::zeroed(10 + 2 * kit.phase_items.len())?, Words::zeroed(kit.capacity)?);
+        let (ctl, slots) = (Words::zeroed(11 + 2 * kit.phase_items.len())?, Words::zeroed(kit.capacity)?);
         self.launch(kit, ctl, slots)
     }
 
@@ -3166,6 +3171,15 @@ impl Batch {
             // It spent its budget with items left: launched again, where it goes on.
             if !overflow && (r.ctl.get(2) > 0 || r.ctl.get(5) < r.kit.phase_items[0][1]) {
                 self.done.relaunches += 1;
+                // Its groups as many as the phase it hands out has left (decision 0637), within `PROGRAM_WORKERS`:
+                // a phase's groups are its counts' when it runs, which its encoding did not know (its first launch's
+                // groups are its largest phase's items as encoded). A launch's budget is its groups' shares, so its
+                // GPU time stays its budget's items, and its launches its items over them.
+                let w = r.ctl.get(10 + 2 * r.phases);
+                if let Some(p) = (w >> 20).checked_sub(1) {
+                    let left = r.ctl.get(10 + r.phases + p as usize).saturating_sub(w & ((1 << 20) - 1)) as usize;
+                    r.kit.workers = r.kit.workers.max(left).clamp(1, PROGRAM_WORKERS);
+                }
                 r.compact();
                 again.push((r, false));
                 continue;

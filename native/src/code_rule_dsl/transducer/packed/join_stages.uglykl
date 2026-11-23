@@ -1744,6 +1744,11 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 #include <ukl/body/radix_tile.h>
 
 // What an item runs (`Program`'s `Item::what >> 24`).
+// A program's flags (`ctl[6]`) that end its polling groups (decision 0637): a push past its queue (1), a park for
+// the host (32), its end (256). A gate that stopped it (2) ends it once its phase is done (256).
+#define PROG_OVER (1u | 32u | 256u)
+// An idle group's polls in a row at most (decision 0637): what bounds a launch's GPU time past its budget's items.
+#define PROG_IDLE_POLLS (1u << 16)
 #define PK_COPY 1u
 #define PK_IX_KEY 2u
 #define PK_RADIX_HIST 3u
@@ -1780,16 +1785,27 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 // segment and one (`Seg`; 0: none).
 typedef struct Item { uint32_t what; uint32_t group; uint32_t phase; uint32_t seg; } Item;
 UKL_STATIC_ASSERT(sizeof(Item) == 16, "Item: size");
-// A job's items in its phase, as many as a count on the device needs (decision 0603 step 5): `ceil((*count + plus) /
-// per)` of its `items` from `first`, at most them; all of them where `per` is 0 (a job of no count). A phase of
-// segments pushes theirs, at least one item in all.
+// A job's items in its phase, as many groups as a count on the device needs (decisions 0603 step 5, 0637):
+// `ceil((*count + plus) / per)`, at most its phase's cap (`seg_cap`); all its `items` from `first` where `per` is 0 (a
+// job of no count). Its items past its first `items` are its first's, as another group (`phase_group`): its count's
+// rows when it runs, not the room its input had when it was encoded (a round's placed table's, the first round's
+// guess). A phase of segments hands theirs out, at least one item in all.
 typedef struct Seg { JSPACE const uint32_t* count; uint32_t first, items, per, plus; } Seg;
 UKL_STATIC_ASSERT(sizeof(Seg) == 24, "Seg: size");
-UKL_INLINE uint32_t seg_items(UKL_GLOBAL const Seg* g)
+// A phase's groups, handed out from one word (decision 0637), `ctl[10 + 2 * phases]`: the phase and one above
+// `DISP_K_BITS`, the groups taken below. A phase's groups are fewer than `DISP_K_MASK`, and the phases than
+// `DISP_PHASES` (the host's `run_program` holds a program to them).
+#define DISP_K_BITS 20u
+#define DISP_K_MASK ((1u << DISP_K_BITS) - 1u)
+#define DISP_PHASES ((1u << (32u - DISP_K_BITS)) - 1u)
+// A segment's groups at most, in a phase of `ns` segments: their sum below the word's count. Past it, a group strides
+// its job's rows (`prog_item`).
+UKL_INLINE uint32_t seg_cap(uint32_t ns) { return DISP_K_MASK / ukl_max(ns, 1u); }
+UKL_INLINE uint32_t seg_groups(UKL_GLOBAL const Seg* g, uint32_t cap)
 {
     if (g->per == 0u) return g->items;
     uint64_t need = ((uint64_t)*g->count + g->plus + g->per - 1u) / g->per;
-    return need < (uint64_t)g->items ? (uint32_t)need : g->items;
+    return need < (uint64_t)cap ? (uint32_t)need : cap;
 }
 
 // A scan's level: its `n` values scanned in place, its tiles' sums (their offsets once scanned), whether it has them.
@@ -1898,16 +1914,16 @@ typedef struct ProgLocal {
 
 // Item `it`'s work, a group of `JOIN_TG` threads (`l` this one's). The group runs one item at a time, so a tile
 // pass's barriers are the group's.
-UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel* scans, UKL_GLOBAL const SortPass* sorts, UKL_GLOBAL const Seg* segs, UKL_GLOBAL const SizeOp* script,
+UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel* scans, UKL_GLOBAL const SortPass* sorts, UKL_GLOBAL const Seg* segs, UKL_GLOBAL const uint32_t* phases, UKL_GLOBAL const SizeOp* script,
                           JSPACE uint32_t* counts, UKL_GLOBAL uint32_t* ctl, Item it, uint32_t l, ProgLocal m __UKL_PARAMS)
 {
     uint32_t kind = it.what >> 24, x = it.what & 0xffffffu, g = it.group, t = kind == PK_SIZE ? 0u : g * JOIN_TG + l;
-    // A segment's item strides its job's rows (decision 0603 step 5): its threads `t`, `t + step`, ..., below its
-    // count's, `step` the segment's items pushed. Its kernels are a thread a row.
+    // A segment's item strides its job's rows (decision 0603 step 5) past its phase's cap (`seg_cap`): its threads
+    // `t`, `t + step`, ..., below its count's, `step` the segment's groups handed out. Its kernels are a thread a row.
     uint32_t step = 0u, lim = 0u;
     if (it.seg != 0u && segs[it.seg - 1u].per != 0u) {
         UKL_GLOBAL const Seg* sg = &segs[it.seg - 1u];
-        step = seg_items(sg) * JOIN_TG;
+        step = seg_groups(sg, seg_cap(phases[4u * it.phase + 3u])) * JOIN_TG;
         lim = *sg->count + sg->plus;
     }
     if (kind == PK_SIZE) return l != 0u || size_one(script + x, g, 0u);
@@ -2006,32 +2022,46 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
     return true;
 }
 
-// Phase `q` about to be pushed (again, by a round or after a park): its count emptied before its items are (its last
-// run's all counted), and its items as its segments' counts need them, at least one. Whether none needs any (1).
-UKL_INLINE uint32_t phase_reset(UKL_GLOBAL const uint32_t* phases, UKL_GLOBAL const Seg* segs, UKL_GLOBAL uint32_t* done, UKL_GLOBAL uint32_t* target, uint32_t q)
+// Phase `q` handed out (again, by a round or after a park; decision 0637), by one thread: its count emptied (its last
+// run's all counted), its groups as its segments' counts need them (`seg_groups`, at least one in all) or all its
+// items, counted as the queue's active ones (`ctl[2]`: the host launches again while any are), and then the word
+// that hands them out (`ctl[10 + 2 * phases]`), its phase and none taken. A group that read the word before takes
+// none from it: its swap finds the word changed.
+UKL_INLINE void phase_hand_out(UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32_t* phases, UKL_GLOBAL const Seg* segs, UKL_GLOBAL uint32_t* done,
+                               UKL_GLOBAL uint32_t* target, uint32_t nphases, uint32_t q)
 {
-    uint32_t s0 = phases[4u * q + 2u], ns = phases[4u * q + 3u], m = 0u;
-    for (uint32_t g = 0u; g < ns; g++) m += seg_items(&segs[s0 + g]);
-    ukl_atomic_store(&target[q], ns == 0u ? 0u : ukl_max(m, 1u));
+    uint32_t count = phases[4u * q + 1u], s0 = phases[4u * q + 2u], ns = phases[4u * q + 3u], m = 0u, cap = seg_cap(ns);
+    for (uint32_t g = 0u; g < ns; g++) m += seg_groups(&segs[s0 + g], cap);
+    uint32_t n = ns == 0u ? count : ukl_max(m, 1u);
+    ukl_atomic_store(&target[q], n);
     ukl_atomic_store(&done[q], 0u);
-    return ns != 0u && m == 0u ? 1u : 0u;
+    ukl_atomic_add(&ctl[2], n);
+    ukl_fence_device();
+    ukl_atomic_store(&ctl[10u + 2u * nphases], (q + 1u) << DISP_K_BITS);
 }
 
-// The group's pushes of phase `next - 1`'s items (none when `next` is 0): its segments' counts' (the first segment's
-// first where `none`: the phase goes on), else all of them.
-UKL_INLINE void phase_push(UklWorkQueue q, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32_t* phases, UKL_GLOBAL const Seg* segs, uint32_t next, uint32_t none, uint32_t l)
+// Phase `q`'s `k`th group (decision 0637): its item, and in `group` the group it runs as. A phase of no segments, its
+// `k`th item; else its segments' groups in order, a segment's `k`th item (past its `items`, its first, as group `k`);
+// a phase whose counts need none, its first segment's first item, which goes on with no rows.
+UKL_INLINE uint32_t phase_group(UKL_GLOBAL const Item* items, UKL_GLOBAL const uint32_t* phases, UKL_GLOBAL const Seg* segs, uint32_t q, uint32_t k,
+                                UKL_PRIVATE uint32_t* group)
 {
-    if (next == 0u) return;
-    uint32_t pq = next - 1u, first = phases[4u * pq], count = phases[4u * pq + 1u], s0 = phases[4u * pq + 2u], ns = phases[4u * pq + 3u];
+    uint32_t first = phases[4u * q], s0 = phases[4u * q + 2u], ns = phases[4u * q + 3u], cap = seg_cap(ns);
     if (ns == 0u) {
-        for (uint32_t i = l; i < count; i += JOIN_TG)
-            if (!ukl_wq_push(q, first + i)) ukl_atomic_or(&ctl[6], 1u);
+        *group = items[first + k].group;
+        return first + k;
     }
     for (uint32_t g = 0u; g < ns; g++) {
-        uint32_t m = none != 0u && g == 0u ? 1u : seg_items(&segs[s0 + g]);
-        for (uint32_t i = l; i < m; i += JOIN_TG)
-            if (!ukl_wq_push(q, segs[s0 + g].first + i)) ukl_atomic_or(&ctl[6], 1u);
+        UKL_GLOBAL const Seg* sg = &segs[s0 + g];
+        uint32_t n = seg_groups(sg, cap);
+        if (k < n) {
+            *group = sg->per == 0u ? items[sg->first + k].group : k;
+            return sg->first + (k < sg->items ? k : 0u);
+        }
+        k -= n;
     }
+    *group = items[segs[s0].first].group;
+    return segs[s0].first;
 }
 
 // Phase `q`'s text items pushed again, by one thread, once its texts found the text arena full and the host mapped
@@ -2045,7 +2075,7 @@ UKL_INLINE void phase_texts(UklWorkQueue q, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL
     for (uint32_t pass = 0u; pass < 2u; pass++) {
         uint32_t m = 0u;
         for (uint32_t g = 0u; g < (ns == 0u ? 1u : ns); g++) {
-            uint32_t at = ns == 0u ? first : segs[s0 + g].first, n = ns == 0u ? count : seg_items(&segs[s0 + g]);
+            uint32_t at = ns == 0u ? first : segs[s0 + g].first, n = ns == 0u ? count : segs[s0 + g].items;
             for (uint32_t i = 0u; i < n; i++) {
                 if ((items[at + i].what >> 24) != PK_ROW_TEXT) continue;
                 m++;
@@ -2063,24 +2093,26 @@ UKL_INLINE void phase_texts(UklWorkQueue q, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL
 // The program (decision 0603; 0540 step 6's scheme): a group of `JOIN_TG` threads an item. The first phase's items
 // are there from the start (the seeds, taken from a counter); the group that finishes a phase's last item pushes the
 // next phase's, the continuation, and takes items on: a pushed item has a worker that is running. A group that finds
-// nothing to take ends, and so does one that finds the launch's budget spent (decision 0603 point 5): a launch's
+// nothing to take polls again, a bounded number of times (decision 0637: else the finisher would run each phase after
+// the first alone), and ends once the program is over; so does one that finds the launch's budget spent (decision 0603 point 5): a launch's
 // items are tickets the groups share (`ctl[8]`, the items taken, below `a.budget`, which the host sets at each launch
 // to the items taken so far and the launch's budget), so a group takes more than its share where the others ended,
 // up to the launch's. The host launches the program again over the same control words while items are left, so a
 // launch's GPU time is its budget's items, and its launches are its items over its budget, whatever its rounds and
-// however many of its groups run at once. No group waits for another.
+// however many of its groups run at once. No group needs another to run: a poller only takes what is there.
 //
 // `ctl`: 0-4 the queue's control (head, tail, active, overflow, base), 5 the seeds taken, 6 the program's flags (1:
 // a push past the queue's capacity; 2: a gate stopped it; 4, 16: a round's end stopped it past its rounds, ended it;
 // 32: a size script or a phase parked, its claims past its arena's room; 64: a text found the text arena full; 128: a
-// gate's room mapped past), `counts`
+// gate's room mapped past; 256: its end), `counts`
 // the arena (each level's counts at the offsets its size script claimed, decision 0603 step 5), 7 a round's end's jump,
 // 8 the items taken (a parked one again as it is put back), 9 the parked item and one, or a parked phase with its top bit
 // (the host puts the item back once the arena's pages are mapped; the phase, the next launch; released, bit 30), or a
 // phase parked after its gate's rooms with its top two bits (released, bit 29: its next phase pushed), then each
 // phase's items done (emptied as the phase is
-// pushed: a round runs a phase again), then each phase's items as pushed (0: all of them; a phase of segments,
-// theirs). `phases`: each phase's first item, its items, its first segment and its segments (`segs`). Ordering: a
+// pushed: a round runs a phase again), then each phase's items as handed out (0: all of them; a phase of segments,
+// their groups), then the word that hands out a phase's groups (`phase_hand_out`, decision 0637: a phase after the
+// first is not pushed, so any group that polls takes its share, however many its counts need). `phases`: each phase's first item, its items, its first segment and its segments (`segs`). Ordering: a
 // group's writes, a device barrier and fence, then its count; the pusher's fence, then its pushes; the taker's fence
 // after its take.
 DEFINE_KERNEL2(join, join_run,
@@ -2091,11 +2123,11 @@ DEFINE_KERNEL2(join, join_run,
                RWBUFFER, ScanLevel, scans,   "[scans]",
                ROBUFFER, SortPass,  sorts,   "[sorts]",
                ROBUFFER, SizeOp,    script,  "[ops]",
-               RWBUFFER, uint32_t,  ctl,     "[10 + 2 * phases]",
+               RWBUFFER, uint32_t,  ctl,     "[11 + 2 * phases]",
                RWBUFFER, uint32_t,  slots,   "[capacity]",
                RWBUFFER, uint32_t,  counts,  "[counts]",
                ARGS,     ProgP,     a,       ,
-               SHARED,   uint32_t,  took,    4,
+               SHARED,   uint32_t,  took,    5,
                SHARED,   uint32_t,  scratch, UKL_TG_SCRATCH,
                SHARED,   uint32_t,  h,       UKL_RADIX_DIGITS,
                SHARED,   uint32_t,  rcounts, UKL_RADIX_GROUPS * UKL_RADIX_DIGITS,
@@ -2119,7 +2151,9 @@ DEFINE_KERNEL2(join, join_run,
     m.digits = digits;
     UKL_GLOBAL uint32_t* done = ctl + 10u;
     UKL_GLOBAL uint32_t* target = ctl + 10u + a.phases;
-    // Bounded: each turn does an item or ends the group; the launch's budget spent, it ends.
+    // Bounded: each turn does an item, polls (`PROG_IDLE_POLLS` in a row at most) or ends the group; the launch's
+    // budget spent, or the program over, it ends.
+    uint32_t idle = 0u;
     for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
         if (turn == 0u) {
             // A phase parked as its texts found the text arena full, released by the host once it mapped the arena's
@@ -2128,45 +2162,67 @@ DEFINE_KERNEL2(join, join_run,
             // A phase parked after a gate's room was mapped past, released (bit 29, the phase): its next phase pushed,
             // as its finisher would have.
             if (l == 0u) {
-                took[2] = 0u;
-                took[3] = 0u;
                 uint32_t pp = ukl_atomic_poll(&ctl[9]);
                 if ((pp >> 30) == 1u && ukl_atomic_cas(&ctl[9], pp, 0u) == pp) phase_texts(q, ctl, items, phases, segs, done, target, pp & 0x3fffffffu);
                 if ((pp >> 29) == 1u && ukl_atomic_cas(&ctl[9], pp, 0u) == pp) {
                     uint32_t p = pp & 0x1fffffffu;
                     uint32_t jump = ukl_atomic_poll(&ctl[7]);
                     if (jump != 0u) ukl_atomic_store(&ctl[7], 0u);
-                    took[2] = jump != 0u ? (jump == 0xFFFFFFFFu ? 0u : jump) : p + 1u < a.phases ? p + 2u : 0u;
-                    if (took[2] != 0u) took[3] = phase_reset(phases, segs, done, target, took[2] - 1u);
+                    uint32_t next = jump != 0u ? (jump == 0xFFFFFFFFu ? 0u : jump) : p + 1u < a.phases ? p + 2u : 0u;
+                    if (next != 0u) phase_hand_out(ctl, phases, segs, done, target, a.phases, next - 1u);
                 }
             }
             ukl_tg_barrier_device();
-            phase_push(q, ctl, phases, segs, took[2], took[3], l);
-            ukl_tg_barrier_device();
         }
         if (l == 0u) {
-            // A ticket of the launch's budget (`ctl[8]` below `a.budget`), then a seed while any are left, else a
-            // continuation; else none (0), and the ticket given back.
-            uint32_t got = 0u, item = 0u;
-            bool ticket = ukl_atomic_add(&ctl[8], 1u) < a.budget;
-            if (ticket && ukl_atomic_poll(&ctl[5]) < a.seeds) {
-                item = ukl_atomic_add(&ctl[5], 1u);
-                got = item < a.seeds ? 1u : 0u;
-                item += phases[0];
+            // The program over (`PROG_OVER`: ended, stopped, parked, or past its queue), or the launch's budget spent:
+            // the group ends (4). Else, where a seed is left or a continuation is written, a ticket of the launch's
+            // budget (`ctl[8]` below `a.budget`), then a seed while any are left, else a continuation; else none (0),
+            // and the ticket given back.
+            // A phase's group (3) is taken from the word that hands them out (`phase_hand_out`), by a swap of the word
+            // as read: one past the groups it says are taken, below its phase's.
+            uint32_t got = 0u, item = 0u, group = 0u;
+            bool seed = ukl_atomic_poll(&ctl[5]) < a.seeds;
+            uint32_t w = ukl_atomic_poll(&ctl[10u + 2u * a.phases]), wp = w >> DISP_K_BITS;
+            bool out = wp != 0u && (w & DISP_K_MASK) < ukl_atomic_poll(&target[wp - 1u]);
+            if ((ukl_atomic_poll(&ctl[6]) & PROG_OVER) != 0u || ukl_atomic_poll(&ctl[8]) >= a.budget) {
+                got = 4u;
+            } else if (seed || out || ukl_wq_ready(q)) {
+                bool ticket = ukl_atomic_add(&ctl[8], 1u) < a.budget;
+                if (ticket && seed) {
+                    item = ukl_atomic_add(&ctl[5], 1u);
+                    got = item < a.seeds ? 1u : 0u;
+                    item += phases[0];
+                }
+                // Below its phase's groups again once taken: a word read a round before, its phase handed out again
+                // since and as far, is swapped too, against the groups of the round now.
+                if (ticket && got == 0u && out && ukl_atomic_cas(&ctl[10u + 2u * a.phases], w, w + 1u) == w
+                    && (w & DISP_K_MASK) < ukl_atomic_poll(&target[wp - 1u])) {
+                    item = phase_group(items, phases, segs, wp - 1u, w & DISP_K_MASK, &group);
+                    got = 3u;
+                }
+                if (ticket && got == 0u && ukl_wq_take_ready(q, &item)) got = 2u;
+                if (got == 0u) ukl_atomic_sub(&ctl[8], 1u);
+                if (got == 1u || got == 2u) group = items[item].group;
             }
-            if (ticket && got == 0u && ukl_wq_take(q, &item)) got = 2u;
-            if (got == 0u) ukl_atomic_sub(&ctl[8], 1u);
             // What the phase before wrote, seen after the take (the pusher's fence before its push).
             ukl_fence_device();
             took[0] = got;
             took[1] = item;
+            took[4] = group;
         }
         ukl_tg_barrier();
-        uint32_t got = took[0], item = took[1];
+        uint32_t got = took[0], item = took[1], group = took[4];
         ukl_tg_barrier();
-        if (got == 0u) return;
+        // Nothing to take: the group polls again while a phase runs, `PROG_IDLE_POLLS` in a row at most (decision
+        // 0637). A phase's items are pushed once its phase before is done, by the group that did its last item: a
+        // group that ended at its first empty poll left every phase after the first to that one group.
+        if (got == 4u || (got == 0u && ++idle > PROG_IDLE_POLLS)) return;
+        if (got == 0u) continue;
+        idle = 0u;
         Item it = items[item];
-        bool whole = prog_item(jobs, scans, sorts, segs, script, (JSPACE uint32_t*)counts, ctl, it, l, m __UKL_ARGS);
+        it.group = group;
+        bool whole = prog_item(jobs, scans, sorts, segs, phases, script, (JSPACE uint32_t*)counts, ctl, it, l, m __UKL_ARGS);
         // The group's writes, then the item counted: the one that brings its phase's count to its items pushes the
         // next phase's. A parked one is not counted: the host puts it back (lane 0's `whole`, a size script's).
         ukl_tg_barrier_device();
@@ -2174,16 +2230,12 @@ DEFINE_KERNEL2(join, join_run,
             ukl_atomic_store(&ctl[9], item + 1u);
             ukl_fence_device();
             ukl_atomic_or(&ctl[6], 32u);
-            took[2] = 0u;
-            took[3] = 0u;
         } else if (l == 0u) {
             ukl_fence_device();
             uint32_t p = it.phase;
             uint32_t finished = ukl_atomic_add(&done[p], 1u) + 1u;
             uint32_t want = ukl_atomic_poll(&target[p]);
             bool all = finished == (want != 0u ? want : phases[4u * p + 1u]);
-            took[2] = 0u;
-            took[3] = 0u;
             uint32_t flags = all ? ukl_atomic_poll(&ctl[6]) : 0u;
             // A gate's room mapped past (flag 128): where no check stopped the program, it parks after the gate's
             // phase (`ctl[9]`: the phase, its top two bits), and the host maps the rooms and releases it (bit 29).
@@ -2205,16 +2257,17 @@ DEFINE_KERNEL2(join, join_run,
                 // stopped the program (`ctl[6]`'s bit 2): no phase after it.
                 uint32_t jump = all ? ukl_atomic_poll(&ctl[7]) : 0u;
                 if (jump != 0u) ukl_atomic_store(&ctl[7], 0u);
-                took[2] = jump != 0u ? (jump == 0xFFFFFFFFu ? 0u : jump)
+                uint32_t next = jump != 0u ? (jump == 0xFFFFFFFFu ? 0u : jump)
                         : all && p + 1u < a.phases && (ukl_atomic_poll(&ctl[6]) & 2u) == 0u ? p + 2u : 0u;
-                if (took[2] != 0u) took[3] = phase_reset(phases, segs, done, target, took[2] - 1u);
+                if (next != 0u) phase_hand_out(ctl, phases, segs, done, target, a.phases, next - 1u);
+                // Its last phase done, or a gate or a round's end that ended it: the program over (256), and the
+                // groups polling for its next phase end (decision 0637).
+                if (all && next == 0u) ukl_atomic_or(&ctl[6], 256u);
             }
             ukl_fence_device();
         }
-        ukl_tg_barrier();
-        phase_push(q, ctl, phases, segs, took[2], took[3], l);
         ukl_tg_barrier_device();
-        if (l == 0u && got == 2u) ukl_wq_done(q);
+        if (l == 0u && (got == 2u || got == 3u)) ukl_wq_done(q);
     }
 }
 #endif
