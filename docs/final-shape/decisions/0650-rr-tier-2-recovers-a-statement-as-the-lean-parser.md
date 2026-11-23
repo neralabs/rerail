@@ -1,6 +1,6 @@
 # 0650: `.rerail`'s tier 2 recovers a statement, as the lean parser does
 
-Status: steps 1 to 4 done; 5 under way. The item is the user's (2026-11-23): lean's statement-level error
+Status: steps 1 to 4 done; step 5 not started (tier 1's errors still refuse the file). The item is the user's (2026-11-23): lean's statement-level error
 recovery in every executor of `rr.bitlex`'s tier 2, with A20 kept (no trial reads inside an expression; `reread` and
 the lookahead patterns stay).
 
