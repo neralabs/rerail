@@ -509,6 +509,12 @@ pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
 
 /// A new block for relations of `life` with room for `need` bytes and its others' margin: the chunk's, if a chunk's
 /// evaluation runs, counted while it lives.
+/// Whether a relation's chunks are sealed (decision 0622); `RERAIL_SEAL_CHUNKS=off` leaves them raw.
+fn seal_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("RERAIL_SEAL_CHUNKS").is_ok_and(|v| v == "off"))
+}
+
 fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<Facts>, String> {
     let f = Arc::new(Facts::shared(lease(2 * need + MARGIN, life)?, life));
     if let Some(c) = chunk {
@@ -1722,6 +1728,23 @@ impl Part {
         moved
     }
 
+    /// Its full chunks below its rows sealed in the frozen columns' encodings (decision 0622), where this part alone
+    /// holds its relation (a reader elsewhere may hold an address in its chunks), it continues no base, it has no room
+    /// lent, and it is the run's, not the device's: the raw chunks go back to its block's free list. Counted under
+    /// `what` in the profile.
+    fn seal_full(&self, what: &str) {
+        if self.life == Life::Device || Arc::strong_count(&self.held) != 1 || self.base.is_some() || self.lent.load(std::sync::atomic::Ordering::Acquire) != 0 {
+            return;
+        }
+        // SAFETY: rows below its length are written, and a writer goes on past them, in a chunk not yet full; this
+        // part alone holds the relation.
+        let (raw, sealed) = unsafe { self.rel().rows.seal(&self.facts.block) };
+        if raw > 0 && crate::code_rule_dsl::prof::on() {
+            crate::code_rule_dsl::prof::count_named(format!("{what}_raw_bytes"), raw);
+            crate::code_rule_dsl::prof::count_named(format!("{what}_bytes"), sealed);
+        }
+    }
+
     /// Appends rows `lo..hi` of `from` (as many columns).
     fn copy_from(&mut self, from: &Part, lo: u32, hi: u32) {
         let n = hi - lo;
@@ -2113,21 +2136,11 @@ impl Rows {
     /// holds its part (a reader elsewhere may hold an address in its chunks) and it is the run's, not the device's:
     /// its raw chunks go back to its block's free list. `RERAIL_SEAL_CHUNKS=off` leaves them raw.
     fn seal_segments(&self) {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if !*ON.get_or_init(|| !std::env::var("RERAIL_SEAL_CHUNKS").is_ok_and(|v| v == "off")) {
+        if !seal_on() {
             return;
         }
         for (_, p) in &self.segs {
-            if p.held.life == Life::Device || Arc::strong_count(&p.held) != 1 || p.held.base.is_some() {
-                continue;
-            }
-            // SAFETY: the part is frozen (its rows are written, and a writer that goes on from them writes past them,
-            // in chunks not yet full), and this `Rows` alone holds it.
-            let (raw, sealed) = unsafe { p.rel().rows.seal(&p.held.facts.block) };
-            if raw > 0 {
-                crate::code_rule_dsl::prof::count("rows.sealed_raw_bytes", raw);
-                crate::code_rule_dsl::prof::count("rows.sealed_bytes", sealed);
-            }
+            p.seal_full("rows.sealed");
         }
     }
 

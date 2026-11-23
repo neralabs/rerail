@@ -1,6 +1,6 @@
 # 0622. A relation's sealed chunks take the frozen columns' encodings
 
-Status: steps 1 and 2 built (2026-11-22); steps 3 and 4 open. t52 step 5: written before it was built, as t52's plan
+Status: steps 1 and 2 built (2026-11-22); step 3 measured and not kept (below); step 4 open. t52 step 5: written before it was built, as t52's plan
 asks. t52 named it 0605; it is numbered past the highest record in any worktree (0621).
 
 ## Intro
@@ -101,9 +101,18 @@ they lie.**
 - **On `all`, as built** (an M1 Max farm Mac, the same binary with `RERAIL_SEAL_CHUNKS=off` and on): 0.99 GB of chunks
   sealed into 0.34 GB. Peak 3.18 GB to 2.97 GB. CPU 181.8 s to 178.2 s. Instructions 1,828 G to 1,892 G (+3.5%,
   down from +9%). s1000's findings unchanged (`373cea39`), and every relation's rows the same.
-- **What is left for the peak.** It falls by 0.2 GB, not by the 0.65 GB sealed. A chunk is sealed when its rows
-  are frozen, and many freeze after the peak. A raw chunk freed goes to its block's free list, not to the system.
-  Step 3 (seal as the writers pass a chunk) is what reaches the peak.
+- **Why the peak falls by 0.2 GB, not 0.65 GB.** A freed raw chunk's pages go back to the system (`free_chunk`), so
+  the saving is real. But it is spread over the run. The peak is at the run's end, while the outputs are written and
+  the store writer stages a gather's rows. Most relations sealed by then are gone (`RERAIL_HEAP_SAMPLE=1`'s account
+  at the peak: 920 MB of relations' blocks, 1.3 GB of heap).
+- **Step 3, measured and not kept.** Sealing a tail's chunks as its writer passes them (`extend_from_slice`) sealed
+  the same 0.99 GB into 0.34 GB, only earlier. Peak 2.99 GB against 2.97 GB at freeze, with 1,929 G instructions
+  against 1,892 G and CPU 199.0 s against 178.2 s: the tails are read sealed while they are written. So a chunk is
+  sealed at its relation's freeze only.
+- **What holds the peak** (2.97 GB at freeze): the cross part's `text` rows made again by the corpus batch (`copy
+  (0353 step 3)`, 323 MB of heap); a kept block of `ask_p0`'s cone (472 MB); the cone's views and tables (273 MB);
+  `rf_in_loop`'s heap (111 MB). The first is 0353 step 3's: `text` read on the tape for each node bound, not every
+  document's node rows made (t50, "The cross part's `text`").
 
 ## Test
 

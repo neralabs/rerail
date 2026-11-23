@@ -782,7 +782,14 @@ Left, by size:
   corpus batch make every document's node rows and string annotations again: 3.3 s on one thread (`rf_unq_bare`'s
   `node rows` 2.15 s, `produced rows: string annotations` 1.18 s), where the chunks made them already. That is the
   site marked `copy (0353 step 3)`: core.rerail's per-node rows, which become tape views. It is the largest serial
-  item left in the run.
+  item left in the run, and the largest single holder at the run's peak (323 MB of heap, 0622).
+- **Not the fix: a file-local identifier text.** `rf_ident_text(e, x) :- rf_expr(_, e, _), kind(e, "identifier"),
+  text(e, x)`, read by the cross rules in place of `text(e, x)` (2026-11-22, m1max). The batch's node rows went from
+  the cross part, and the peak fell 2.99 → 2.59 GB, with rows the same. But `rf_expr` is cross-file, so the planner
+  inlined the relation and factored its file-local atoms: every identifier's text in each chunk
+  (`xd_fz…_fl…_rf_ref` 6.2 s, `fl…_rf_ref` 6.0 s, `fl…_rf_unq_bare` 5.1 s). Instructions went 1,819 → 2,131 G.
+  Not kept. The fix is the tape view: `text(e, x)` in the cross part read from `e`'s document tape for the `e` bound,
+  a few hundred thousand reads, not 9.6 M nodes' rows.
 
 ## Open
 
