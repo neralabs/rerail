@@ -1080,6 +1080,40 @@ impl MadeRows {
         };
         self.rows_at(keys, column, values, keep)
     }
+    /// `lookup_read` of one value of the column that names a row's document (`by`), where it names one document: that
+    /// document's group made if it is not, and its rows by the group's index of the column, read as found. No set,
+    /// list or row buffer a probe: a probe of a made relation by its document's node (`text(n, s)`) is one group's
+    /// index read. `false` where the read is not of that shape (the general route reads it).
+    fn read_one(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let by = self.by();
+        if by.column() != Some(column) || matches!(by, ByDocument::Host(_)) || columns.len() > 16 {
+            return false;
+        }
+        let Some(doc) = by.document(value).and_then(|k| self.batch.docs.position(k)) else { return false };
+        let group = |b: &Batch| {
+            let s = b.rows.state.lock();
+            s.of[doc].map(|g| (Arc::clone(&s.groups[g as usize]), Arc::clone(&s.rels[self.rel])))
+        };
+        let (g, r) = match group(&self.batch) {
+            Some(made) => made,
+            None => {
+                let before = self.batch.rows.groups();
+                self.batch.ensure(&[doc]);
+                if self.batch.rows.groups() > before {
+                    profile::decision("a batch's documents made by a probe (decision 0494)", || format!("{} column {column}", self.batch.rows.names[self.rel]));
+                }
+                let Some(made) = group(&self.batch) else { return false };
+                made
+            }
+        };
+        let index = g.index(self.rel, column, &r);
+        let mut v = [0i64; 16];
+        for &row in index.get(&value).into_iter().flatten() {
+            Source::row_at(r.as_ref(), row as usize, columns, &mut v[..columns.len()]);
+            each(row as usize, &v[..columns.len()]);
+        }
+        true
+    }
     /// Whether every read of `column` is routed (`route`): its document column (not a host's, whose guests may not
     /// be known), a node of the row's own document, or its document's key.
     fn routes(&self, column: usize) -> bool {
@@ -1236,6 +1270,9 @@ impl Source for MadeRows {
     fn lookup_read(&self, _column: usize, _value: i64, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64])) -> bool {
         if let Some(t) = self.done() {
             return t.lookup_read(_column, _value, _columns, _each);
+        }
+        if self.read_one(_column, _value, _columns, _each) {
+            return true;
         }
         let Some((r, rows)) = self.routed(_column, std::slice::from_ref(&_value), |_, _| true) else {
             return self.target().lookup_read(_column, _value, _columns, _each);

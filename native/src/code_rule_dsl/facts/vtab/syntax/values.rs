@@ -507,16 +507,21 @@ impl Source for Layered {
     }
     /// The cursor is the base's: a part's reads keep none (a value's rows are few).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        if !self.has_parts() {
+        // The relation's parts, loaded and found once a probe (`has_parts`' and `parts`' one lookup by name).
+        let all = self.values.parts.load();
+        let Some(p) = all.get(&self.name).filter(|p| p.total > 0) else {
             return self.base.lookup_read_at(column, value, columns, cursor, each);
-        }
+        };
         if self.made.is_some() || columns.len() > 8 || !self.base.lookup_read_at(column, value, columns, cursor, each) {
             return false;
+        }
+        if p.list.is_empty() {
+            return true;
         }
         let (base, docs) = (self.base_len(), self.base.keys_documents(column));
         let mut row = [0i64; 8];
         let row = &mut row[..columns.len()];
-        self.parts(|p| {
+        {
             p.of(value, docs, &mut |part| {
                 let at = base + part.start;
                 if part.src.lookup_read(column, value, columns, &mut |r, got| each(at + r, got)) {
@@ -528,7 +533,7 @@ impl Source for Layered {
                     each(at + r, row);
                 }
             })
-        });
+        }
         true
     }
     fn keys_documents(&self, column: usize) -> bool {

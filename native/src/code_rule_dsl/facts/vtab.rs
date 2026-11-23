@@ -133,6 +133,9 @@ impl ViewInPlace {
 pub struct ProbeCursor {
     pub hint: [u32; 2],
     pub plan: ReadPlan,
+    /// A second key column's value of this probe, `(column, value)`, which the source may keep its matches to (a
+    /// child by its place: `child(p, c, i)` by `p` and `i`). A hint too: the caller checks every key column.
+    pub also: Option<(usize, i64)>,
 }
 
 /// A source's plan of a probe's reads (`ProbeCursor::plan`): for the key column and output columns it was made for, one

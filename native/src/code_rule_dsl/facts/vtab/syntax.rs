@@ -4616,12 +4616,14 @@ impl Viewed {
         }
         let plan = cursor.plan;
         let (len, view, b) = (usize::from(plan.len), self.view, &*self.batch);
+        let cursor_also = cursor.also;
         let [doc_hint, granule] = &mut cursor.hint;
         let mut vals = [0i64; 8];
         // A match: its document, local id, tape node (`NONE`: unknown), own id and parent's id where known, and its place
         // and depth where the probe knows them (a probe by parent: the hop's counter, one below the parent).
         let mut emit = |doc: usize, local: u32, x: u32, id: Option<i64>, up: Option<i64>, known: Known| {
-            let row = if matches!(view, View::Op) { b.row_of_node(view, doc, local, x) } else { b.row(view, doc, local) };
+            // The row by the tape node in hand (the hop's): no select for a view whose rows are an item's.
+            let row = if x != NONE || matches!(view, View::Op) { b.row_of_node(view, doc, local, x) } else { b.row(view, doc, local) };
             let Some(row) = row else { return };
             let p = &b.docs[doc];
             let x = if x == NONE && plan.needs & NEED_X != 0 { p.node(local) } else { x };
@@ -4655,8 +4657,17 @@ impl Viewed {
                 let p = &b.docs[doc];
                 let depth = if plan.ops[..len].contains(&DEPTH) { p.depth(local as usize) + 1 } else { 0 };
                 let counted = !p.anchored;
+                // A child probed by its place too (`child(p, c, i)`): that child alone, where the hop counts places.
+                let at = match (view, cursor_also) {
+                    (View::Child, Some((2, i))) if counted => u32::try_from(i).ok(),
+                    _ => None,
+                };
                 let mut i = 0;
                 p.each_child_node(local, |c, x| {
+                    if at.is_some_and(|a| a != i) {
+                        i += 1;
+                        return;
+                    }
                     emit(doc, c, x, None, Some(value), if counted { Known { idx: Some(i), depth: Some(depth), prev: None } } else { Known::default() });
                     i += 1;
                 });
