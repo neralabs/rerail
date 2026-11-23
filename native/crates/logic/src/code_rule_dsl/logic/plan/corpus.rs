@@ -3473,7 +3473,7 @@ fn run_observed_within(
         let rels: Vec<(String, Vec<String>)> = split.exports.iter().map(|rel| (rel.clone(), (0..pf.width(rel)).map(|c| format!("c{c}")).collect())).collect();
         // An export's rows' document: its first node column's, as the chunks' totals read it (`Totals::add_rows`).
         let doc_at = split.exports.iter().map(|rel| (rel.clone(), pf.types(rel).iter().position(|t| *t == "node"))).collect();
-        k.begin(&rels, &memo_ids, doc_at, None);
+        k.begin(&rels, &memo_ids, doc_at);
     }
     // Decision 0117 step 1: a run keeps its cross-file part's inputs in the store's frames, so an
     // unchanged file's export and base rows are there already. Its memo hit reads only its entry's outputs (nodes,
@@ -3539,43 +3539,7 @@ fn run_observed_within(
     // The memo hits' exports are not measured while the keeper counts them: their statistics are its (after the chunks).
     let mut hits_unmeasured = false;
     let mut memo_kept = (0usize, 0usize);
-    // The hits whose export rows the counted exports hold, not held again (0096 step 3); not skipped once the cone of
-    // requests has started (its loads read the rows the chunks hold).
-    let held_by_count: std::cell::RefCell<Vec<(String, memo::Content, i64)>> = std::cell::RefCell::new(Vec::new());
-    let skip_counted = std::cell::Cell::new(true);
-    // The counted rows installed as the run's (`finish`); else the skipped hits whose base rows and tree counts are
-    // taken from the memo after all (with the statistics).
-    let installed = std::cell::Cell::new(false);
-    let given_up: std::cell::RefCell<Vec<(String, memo::Content, i64)>> = std::cell::RefCell::new(Vec::new());
-    // The tree counts of the files the keeper counted that were not skipped: what its sum holds beyond the skipped.
-    let mut own_seen = Own::default();
     let keeper = std::cell::RefCell::new(keeper);
-    // The counted exports given up: the hits they held are held from the memo now, as the replay would have.
-    let hold_after_all = || -> Result<()> {
-        if let Some(k) = keeper.borrow_mut().as_mut() {
-            k.fail("the counted exports given up this run");
-        }
-        let skipped = std::mem::take(&mut *held_by_count.borrow_mut());
-        if skipped.is_empty() {
-            return Ok(());
-        }
-        given_up.borrow_mut().extend(skipped.iter().cloned());
-        let _s = crate::code_rule_dsl::logic::profile::span(|| "hold the hits' exports after all".into());
-        let memo = memo.ok_or_else(|| Error::Plan("counted exports without a memo".to_owned()))?;
-        for (path, content, key) in skipped {
-            let entry = memo.lookup(content, world::store_path(&path), key, &memo_plan).map_err(|e| Error::Plan(e.to_string()))?.ok_or_else(|| Error::Plan(format!("{path}: its memo entry is gone, and the counted exports were given up")))?;
-            for (rel, (width, values)) in &entry.rows {
-                if values.is_empty() || !split.exports.contains(rel) {
-                    continue;
-                }
-                let cols: Vec<Option<Vec<i64>>> = (0..*width).map(|c| Some(values.iter().skip(c).step_by(*width).copied().collect())).collect();
-                let rows = crate::code_rule_dsl::logic::native::component::columns_source((0..*width).map(|c| format!("c{c}")).collect(), cols);
-                exports.borrow_mut().add(rel, *width, rows.as_ref());
-            }
-        }
-        crate::code_rule_dsl::logic::profile::decision("exports counted by file (0096 step 3)", || "given up this run: the hits' exports held from the memo".to_owned());
-        Ok(())
-    };
     let looking = memoised || recording;
     /// A file as the run found it before reading it in a wave (decision 0104): its stat, its content as the memo
     /// knows it (`None`: the store holds no such source yet, and its tape's write stores it), its entry, not
@@ -4118,7 +4082,7 @@ fn run_observed_within(
     } else {
         None
     };
-    // The entry a file was counted under: as found before the first wave, else (a session's, in memory) looked up.
+    // The entry a file was counted under: as found before the first wave, else looked up.
     let counted_entry = |path: &str, c: memo::Content, key: i64| -> Option<memo::Entry> {
         match counted_before.get(path) {
             Some(Some(found)) => found.entry(key).ok().flatten(),
@@ -4126,8 +4090,8 @@ fn run_observed_within(
             None => memo.and_then(|m| m.lookup(c, world::store_path(path), key, &memo_plan).ok().flatten()),
         }
     };
-    // The keeper's end, once every file of the run was seen: the files gone counted out, the statistics as kept (else
-    // `None`), and the run's exports the counted ones (else the skipped hits held after all).
+    // The keeper's end, once every file of the run was seen: the files gone counted out, and the statistics as kept
+    // (else `None`).
     let stats_kept: std::cell::RefCell<Option<std::result::Result<(usize, usize), String>>> = std::cell::RefCell::new(None);
     let finish = || -> Result<Option<BTreeMap<String, crate::code_rule_dsl::logic::plan::statkeep::RelStats>>> {
         let kept = keeper.borrow_mut().as_mut().and_then(|k| {
@@ -4143,31 +4107,11 @@ fn run_observed_within(
             *stats_kept.borrow_mut() = Some(ended.as_ref().map(|_| (counted_in, counted_out)).map_err(Clone::clone));
             ended.ok()
         });
-        let skipped = held_by_count.borrow().len();
-        let installed = {
-            let k = keeper.borrow();
-            match k.as_ref().filter(|_| kept.is_some()).and_then(|k| k.counted_exports()) {
-                Some(counted) if skipped > 0 => {
-                    let _s = crate::code_rule_dsl::logic::profile::span(|| "the counted exports".into());
-                    for rel in &split.exports {
-                        let width = pf.width(rel);
-                        exports.borrow_mut().install(rel, width, counted.source(rel, width));
-                    }
-                    crate::code_rule_dsl::logic::profile::decision("exports counted by file (0096 step 3)", || format!("{skipped} memo hits neither held again nor counted: {} export rows counted", counted.rows()));
-                    installed.set(true);
-                    true
-                }
-                _ => false,
-            }
-        };
-        if !installed && skipped > 0 {
-            hold_after_all()?;
-        }
         Ok(kept)
     };
     let mut finished: Option<Option<BTreeMap<String, crate::code_rule_dsl::logic::plan::statkeep::RelStats>>> = None;
-    // Each document this run reads, with its content as the memo knows it (`input_delta`): a session's next run
-    // reads its input deltas from the documents whose content changed.
+    // Each document this run reads, with its content as the memo knows it (`input_delta::Docs`): the documents'
+    // table the run keeps, and what its edits compare.
     let run_docs_held: std::sync::Mutex<input_delta::Docs> = std::sync::Mutex::new(HashMap::new());
     let run_docs = &run_docs_held;
     // The cross program's strata identities, read with the cross part's frames (kept as a stored fact, before the
@@ -5546,13 +5490,6 @@ fn run_observed_within(
                             let _ = memo;
                             k.file(&path, content, entry.key, &entry, &|c, key| counted_entry(&path, c, key));
                         }
-                        // The session's counted exports hold its export rows (0096 step 3): they are not held again. Listed,
-                        // so that a run whose keeper gives up later holds them after all.
-                        let counted = skip_counted.get() && content.is_some() && keeper.borrow().as_ref().is_some_and(|k| k.exports_held());
-                        if counted {
-                            hits_unmeasured = true;
-                            held_by_count.borrow_mut().push((path.clone(), content.expect("checked"), entry.key));
-                        }
                         // Read for its outputs alone: its export and base rows are the kept inputs' (decision 0117 step 1).
                         if kept_route && kept_hits.lock().contains_key(&path) {
                             hits_unmeasured = true;
@@ -5560,11 +5497,7 @@ fn run_observed_within(
                             memo_kept.1 += entry.rows.iter().filter(|(r, _)| !r.starts_with("own:")).map(|(_, (_, v))| v.len()).sum::<usize>();
                         }
                         nodes += entry.nodes as usize;
-                        // Its tree counts and base rows are the keeper's too, when counted.
-                        if !counted {
-                            own_totals.add_rows(&entry.rows);
-                            if keeper.borrow().is_some() { own_seen.add_rows(&entry.rows); }
-                        }
+                        own_totals.add_rows(&entry.rows);
                         // Its document, for the corpus batch (decision 0458): made from its tape once the chunks are done.
                         // Its tape values' requests (`memo::VALUES`): not an output.
                         let values = entry.outputs.remove(memo::VALUES).map(|(_, rows)| rows);
@@ -5575,7 +5508,7 @@ fn run_observed_within(
                         let _gather = crate::code_rule_dsl::logic::profile::span(|| "export rows gathered".into());
                         own_docs.push(entry.key);
                         for (rel, (width, values)) in entry.rows {
-                            if counted || values.is_empty() || !exported.contains(rel.as_str()) {
+                            if values.is_empty() || !exported.contains(rel.as_str()) {
                                 continue;
                             }
                             let at = split.locations.get(&rel).and_then(|l| l.first().copied()).filter(|a| *a < width && unchecked);
@@ -5977,7 +5910,6 @@ fn run_observed_within(
                 if let (Some(k), Some(entry), Some(_)) = (keeper.borrow_mut().as_mut(), entries.get(d), memo) {
                     let rows: usize = entry.rows.values().map(|(_, v)| v.len()).sum();
                     let _keep = crate::code_rule_dsl::logic::profile::span(|| format!("keep a file's entry ({rows} values)"));
-                    own_seen.add(&Own::taken(&entry.rows));
                     k.file(path, *source_id, *d, entry, &|c, key| counted_entry(path, c, key));
                 }
                 // Read no more here: handed to the store's writer (decision 0102). It holds every relation under its
@@ -6154,29 +6086,8 @@ fn run_observed_within(
         let load_stats = t_stats.clone();
         let (ask_tx, ask_rx) = std::sync::mpsc::channel::<(u64, String, Vec<Vec<i64>>)>();
         let (reply_tx, reply_rx) = std::sync::mpsc::channel::<(u64, std::result::Result<Vec<(String, Vec<Vec<i64>>)>, String>)>();
-        // The rows the cone starts from: the counted exports less those of the files not seen yet (gone, or a load
-        // of the last run's, not yet loaded), when the chunks did not hold the hits' rows again; from here on they do.
-        let counted_view: Option<Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>> = {
-            let k = keeper.borrow();
-            match (k.as_ref().filter(|k| k.exports_held() && !held_by_count.borrow().is_empty()), memo) {
-                (Some(k), Some(_)) => {
-                    let mut minus = exports::Counted::default();
-                    let whole = k.unseen().into_iter().all(|(path, c, key)| match counted_entry(&path, c, key) {
-                        Some(e) => per_file.iter().all(|rel| e.rows.get(rel).is_none_or(|(w, v)| minus.patch(rel, *w, v, 1))),
-                        None => false,
-                    });
-                    let counted = k.counted_exports().expect("held");
-                    whole.then(|| per_file.iter().map(|r| (r.clone(), counted.source_without(r, pf.width(r), &minus))).collect())
-                }
-                _ => None,
-            }
-        };
-        if counted_view.is_none() && !held_by_count.borrow().is_empty() {
-            hold_after_all()?;
-        }
-        skip_counted.set(false);
         let per_file_in: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> =
-            counted_view.unwrap_or_else(|| per_file.iter().map(|r| (r.clone(), exports.borrow().snapshot(r, pf.width(r)))).collect());
+            per_file.iter().map(|r| (r.clone(), exports.borrow().snapshot(r, pf.width(r)))).collect();
         // The constants of the run the cone reads (the observer's facts, an earlier phase's exports), bound in its own
         // connection as the main one binds them.
         let constants_in: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = load
@@ -7541,23 +7452,6 @@ fn run_observed_within(
                             exports.borrow_mut().add(rel, *width, rows.as_ref());
                         }
                     }
-                }
-            }
-        }
-        // The tree counts of the hits not held again (0096 step 3): the kept tree counts beyond those of the files it
-        // saw. Given up, the skipped hits' are taken from the memo, as the replay would have. Their base rows are the
-        // corpus batch's (decision 0458).
-        match keeper.as_ref().and_then(|k| k.counted_own()).filter(|_| installed.get()) {
-            Some(own) => {
-                let mut skipped = own.clone();
-                skipped.sub(&own_seen);
-                own_totals.add(&skipped);
-            }
-            None => {
-                let memo = memo.filter(|_| !given_up.borrow().is_empty());
-                for (path, content, key) in std::mem::take(&mut *given_up.borrow_mut()).into_iter().filter(|_| memo.is_some()) {
-                    let entry = memo.expect("checked").lookup(content, world::store_path(&path), key, &memo_plan).map_err(|e| Error::Plan(e.to_string()))?.ok_or_else(|| Error::Plan(format!("{path}: its memo entry is gone")))?;
-                    own_totals.add(&Own::taken(&entry.rows));
                 }
             }
         }
