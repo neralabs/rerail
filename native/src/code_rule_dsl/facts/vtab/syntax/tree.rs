@@ -30,6 +30,13 @@ use super::{Dialect, Projected, Relation};
 use crate::code_rule_dsl::facts::core::{Facts, NONE};
 use std::collections::BTreeSet;
 
+/// Tape node `x`'s operators, `op_at`'s in order: its children in field `operator` or `operators`, each its token
+/// ("<", "not in"). What `op_at`'s rows hold and `@rr_node_op_at` reads (decision 0353 step 3).
+pub(super) fn node_operators<'f>(f: &'f Facts, dialect: &'f Dialect, x: u32) -> impl Iterator<Item = &'f str> + 'f {
+    let fields = [dialect.operator, dialect.operators];
+    f.children(x).into_iter().filter(move |&c| f.field(c) != 0 && fields.contains(&Some(f.field(c)))).map(move |c| dialect.name(f, c))
+}
+
 #[derive(Default)]
 pub(super) struct Tree {
     op_at: bool,
@@ -60,19 +67,16 @@ impl Tree {
         }
     }
 
-    /// `op_at` of `p`'s nodes. A guest's (a string annotation's comparison, `x: "123 is not y"`) are made too: this
+    /// `op_at` of `p`'s nodes (`node_operators`). A guest's (a string annotation's comparison, `x: "123 is not y"`) are made too: this
     /// `op_at` stands in for `core_rr`'s, which holds every node's, the guests' included.
     pub(super) fn operators(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
         if !self.op_at {
             return;
         }
         let f = &*p.facts;
-        let fields = [dialect.operator, dialect.operators];
         for (_, id, n) in p.node_ids() {
-            let kids = f.children(id);
-            let operators = kids.iter().filter(|&&c| f.field(c) != 0 && fields.contains(&Some(f.field(c))));
-            for (i, &c) in operators.enumerate() {
-                self.op_ats.push([n, i as i64, string(dialect.name(f, c)) as i64]);
+            for (i, t) in node_operators(f, dialect, id).enumerate() {
+                self.op_ats.push([n, i as i64, string(t) as i64]);
             }
         }
     }

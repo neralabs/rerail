@@ -448,8 +448,9 @@ impl LongTexts {
     }
 
     /// A node read of `core.rerail`'s per-node relations (decision 0353 step 3), each the value `CoreRows::node` makes:
-    /// `structural_before`, `structural_after`, `name`, `comment`, `strprefix`.
-    fn core_read(&self, name: &str, n: i64) -> Option<String> {
+    /// `structural_before`, `structural_after`, `name`, `comment`, `strprefix`, and `op_at`'s operator at place `more[0]`
+    /// (`""` past the last: an operator is never empty).
+    fn core_read(&self, name: &str, n: i64, more: &[i64]) -> Option<String> {
         let (p, x, dialect) = self.core_node(n)?;
         let f = &*p.facts;
         match name {
@@ -458,6 +459,10 @@ impl LongTexts {
             "rr_node_name" => core_rr::node_name(f, dialect, x),
             "rr_node_comment" => core_rr::node_comment(f, dialect, x).map(str::to_owned),
             "rr_node_strprefix" => core_rr::node_strprefix(f, dialect, x),
+            "rr_node_op_at" => {
+                let i = usize::try_from(*more.first()?).ok();
+                Some(i.and_then(|i| tree::node_operators(f, dialect, x).nth(i)).unwrap_or_default().to_owned())
+            }
             _ => None,
         }
     }
@@ -467,13 +472,13 @@ impl Source for LongTexts {
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         Some(Arc::clone(&self.batch) as _)
     }
-    fn node_read(&self, name: &str, n: i64) -> Option<String> {
+    fn node_read(&self, name: &str, n: i64, more: &[i64]) -> Option<String> {
         match name {
             "rr_node_text" => self.long_text(n),
             "rr_node_text_any" => self.text_any(n),
             "rr_node_value" => self.value_any(n),
             "rr_node_str" => self.str_any(n),
-            _ => self.core_read(name, n),
+            _ => self.core_read(name, n, more),
         }
     }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
@@ -555,7 +560,7 @@ fn core_rows_for(projection: &Projection) -> core_rr::CoreRows {
     let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
     let mut c = core_rr::CoreRows::default();
     c.skip = core_rr::Skip {
-        ops: !wants_any(&["op", "op_at"]),
+        ops: !wants_any(&["op"]),
         comment: !projection.wants("comment"),
         spread: !projection.wants("spread"),
         name: !projection.wants("name"),

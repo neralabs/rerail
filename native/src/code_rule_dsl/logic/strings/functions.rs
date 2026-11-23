@@ -141,6 +141,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_node_name", &[Number], Text),
     ("rr_node_comment", &[Number], Text),
     ("rr_node_strprefix", &[Number], Text),
+    // `op_at(n, i, s)`'s `s`: node `n`'s operator at place `i`, `""` past its last (`core_rr::node_ops`).
+    ("rr_node_op_at", &[Number, Number], Text),
     // `.rerail`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -206,8 +208,10 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
     let data = crate::code_rule_dsl::facts::vtab::connection_data(db);
     for name in NODE_READS {
         let data = std::sync::Arc::clone(&data);
-        db.create_scalar_function(name, 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
-            let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_in(&data, LONG_TEXT_NODES).as_deref(), n));
+        let arity = signature(name).map_or(1, |(_, args, _)| args.len());
+        db.create_scalar_function(name, i32::try_from(arity).expect("few arguments"), FunctionFlags::SQLITE_UTF8, move |ctx| {
+            let more: Vec<i64> = (1..arity).map(|i| ctx.get::<Option<i64>>(i).map(Option::unwrap_or_default)).collect::<rusqlite::Result<_>>()?;
+            let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_in(&data, LONG_TEXT_NODES).as_deref(), n, &more));
             Ok(text.map_or(Value::Null, Value::Text))
         })?;
     }
@@ -218,8 +222,8 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
 /// A node read (`vtab::NODE_READS`) of node `n`: `@rr_node_text`'s text past `text`'s inline bound,
 /// `@rr_node_text_any`'s text at any length, `@rr_node_value`'s value, read through `nodes`, the run's binding of the
 /// long-text nodes with their batch (`syntax::LongTexts`); none without one. Its value is the run's, so `eval` has none.
-pub fn node_read(name: &str, nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64) -> Option<String> {
-    nodes?.node_read(name, n)
+pub fn node_read(name: &str, nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64, more: &[i64]) -> Option<String> {
+    nodes?.node_read(name, n, more)
 }
 
 /// `product x : {…}` as the SQL aggregate `rr_product(x)`: the product of the integers, saturating at i64's range;

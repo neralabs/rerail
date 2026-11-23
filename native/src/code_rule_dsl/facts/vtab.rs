@@ -133,15 +133,15 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 
 /// The functions that read a node's text or value from the run's batch (`Source::node_read`): their values are the run's,
 /// so `functions::eval` gives none.
-pub const NODE_READS: [&str; 9] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_before", "rr_node_after", "rr_node_name", "rr_node_comment", "rr_node_strprefix"];
+pub const NODE_READS: [&str; 10] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_before", "rr_node_after", "rr_node_name", "rr_node_comment", "rr_node_strprefix", "rr_node_op_at"];
 
 pub trait Source: Send + Sync {
     /// The syntax batch it reads (the syntax table's `Batch`, rerail-facts'), which its readers take as their own
     /// type (`syntax::PythonBatch`).
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> { None }
-    /// Node `n`'s text or value as the function `name` reads it (`NODE_READS`), for a binding of
-    /// `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source or function.
-    fn node_read(&self, _name: &str, _n: i64) -> Option<String> { None }
+    /// Node `n`'s text or value as the function `name` reads it (`NODE_READS`), its further arguments `more` (`op_at`'s
+    /// place), for a binding of `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source or function.
+    fn node_read(&self, _name: &str, _n: i64, _more: &[i64]) -> Option<String> { None }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
     fn direct_all(&self,_equal:&[(usize,i64)])->Option<Vec<ReadRow>> {None}
     fn direct_one(&self,_column:usize,_values:&[i64])->Option<Vec<ReadRow>> {None}

@@ -8705,11 +8705,12 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let value = if let Some(t) = found {
                     rusqlite::types::Value::Text(t)
                 } else if let Some(nodes) = texts {
+                    let more: Vec<i64> = args[1..].iter().map(|a| val(slots, *a)).collect();
                     let read = match nodes {
-                        NodeTexts::Held(nodes) => node_read(name, Some(&**nodes), val(slots, args[0])),
+                        NodeTexts::Held(nodes) => node_read(name, Some(&**nodes), val(slots, args[0]), &more),
                         NodeTexts::At(at) => {
                             let nodes = at.upgrade().and_then(|d| crate::code_rule_dsl::facts::vtab::bound_source_in(&d, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES));
-                            node_read(name, nodes.as_deref(), val(slots, args[0]))
+                            node_read(name, nodes.as_deref(), val(slots, args[0]), &more)
                         }
                     };
                     read.map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text)

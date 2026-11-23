@@ -693,6 +693,34 @@ impl RulePass for NodeReads {
             _ => None,
         };
         let tested = |l: &LitRef<'_>| matches!(l.view(), Lit::Atom(a) if self.tests.contains_key(v.rel_name(a.rel())));
+        // `op_at(n, i, o)` of a bound node at a known place, a constant or a variable another positive atom binds:
+        // `o = @rr_node_op_at(n, i), o != ""`; negated, with `o` a wildcard or a constant, `@rr_node_op_at(n, i) = ""`
+        // or `!= o` (`""`: no operator there, `core_rr::node_ops`).
+        let binds = |x: Slot, me: usize| body.iter().enumerate().any(|(j, l)| j != me && matches!(l.view(), Lit::Atom(a) if !a.neg() && v.rel_name(a.rel()) != "op_at" && a.args().any(|t| t.var() == Some(x))));
+        let op_at: Vec<usize> = body
+            .iter()
+            .enumerate()
+            .filter(|(i, l)| match l.view() {
+                Lit::Atom(a) if v.rel_name(a.rel()) == "op_at" => {
+                    let neg = a.neg();
+                    let a = args(a);
+                    let ok = a.len() == 3
+                        && matches!(a[0], TermRef::Var(x) if bound.contains(&x))
+                        && match a[1] {
+                            TermRef::Int(_) => true,
+                            TermRef::Var(x) => binds(x, *i),
+                            _ => false,
+                        }
+                        && (!neg || matches!(a[2], TermRef::Wild | TermRef::Str(_)));
+                    if !ok {
+                        self.kept.entry("op_at").or_default().insert(v.rel_name(r.head().rel()).to_owned());
+                    }
+                    ok
+                }
+                _ => false,
+            })
+            .map(|(i, _)| i)
+            .collect();
         let mut read: Vec<(usize, &'static str)> = Vec::new();
         for (i, l) in body.iter().enumerate() {
             match of(l) {
@@ -703,7 +731,7 @@ impl RulePass for NodeReads {
                 None => {}
             }
         }
-        if read.is_empty() && !body.iter().any(tested) {
+        if read.is_empty() && op_at.is_empty() && !body.iter().any(tested) {
             return Ok(Step::Keep);
         }
         // A fresh name for each `r(v, _)`'s value, the first a rule does not hold.
@@ -712,6 +740,21 @@ impl RulePass for NodeReads {
         let fresh_names: Vec<String> = read.iter().map(|_| fresh(&mut held, &mut count, "rr_text_of")).collect();
         let mut w = out.rule().head_from(v, r, r.head());
         for (i, l) in body.iter().enumerate() {
+            if op_at.contains(&i)
+                && let Lit::Atom(atom) = l.view()
+            {
+                let a = args(atom);
+                let call = || T::Call("rr_node_op_at", vec![t_of(r, a[0]), t_of(r, a[1])]);
+                w = match (atom.neg(), a[2]) {
+                    (true, TermRef::Wild) => w.cmp(call(), CmpOp::Eq, T::Str("")),
+                    (true, o) => w.cmp(call(), CmpOp::Ne, t_of(r, o)),
+                    (false, TermRef::Wild) => w.cmp(call(), CmpOp::Ne, T::Str("")),
+                    (false, o @ TermRef::Str(_)) => w.cmp(t_of(r, o), CmpOp::Eq, call()),
+                    (false, o) => w.cmp(t_of(r, o), CmpOp::Eq, call()).cmp(t_of(r, o), CmpOp::Ne, T::Str("")),
+                };
+                self.made += 1;
+                continue;
+            }
             let Some(k) = read.iter().position(|&(x, _)| x == i) else {
                 // A node test whose node is not bound reads its per-node atom as rows: `r(t, _)`.
                 if tested(l)

@@ -1302,8 +1302,20 @@ relation of its node, `h(v) :- r(v, _)` with guards of `v` against constants, re
 
 Left in row 7: `text` read as rows by 26 rules on the bench, each binding its node only through a relation the split
 puts in the cross part (`node_columns`: there an edit's old document is not the batch's, so a retraction's read
-would read the edited file), or not at all (a source line's `text`, p297); `op` and `op_at` (several rows a node);
-and T's shape's `NodeRows`.
+would read the edited file), or not at all (a source line's `text`, p297); `op` (several rows a node); and T's
+shape's `NodeRows`.
+
+`op_at` had two definitions: `core_rr`'s (a node's anonymous children that are no punctuation, Python's two-word
+operators joined) and `tree::Tree`'s (its children in field `operator` or `operators`), which the batch binds in
+`core_rr`'s place whenever a program reads `op_at`, so `core_rr`'s 0.8 MB were made and dropped. It has one now,
+`tree::node_operators`, and `core_rr` makes no `op_at`. A rule that reads `op_at(n, i, o)` of a bound node at a known
+place (a constant, or a variable another atom binds) reads `o = @rr_node_op_at(n, i), o != ""`, and `!op_at(n, i, _)`
+reads `@rr_node_op_at(n, i) = ""`: the read answers `""` past the last operator, which no operator is. A node read
+takes its further arguments (`Source::node_read`'s `more`; SQLite's function takes the entry's arity). Every
+library and bench rule reads `op_at` so; a place nothing binds is read as rows, and named in the profile. Tests:
+`a_node_read_answers_the_row_the_walk_makes` reads every node's operator at each place against `op_at`'s rows,
+`per_node_values_of_a_bound_node_are_read_in_place` the four forms. Bench 463, row 7 14.2 MB (`op` 0.9, `text` 16.0);
+hogql 1,629 (d82234cb).
 
 ## What it replaces
 

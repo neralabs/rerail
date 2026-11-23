@@ -526,7 +526,6 @@ pub(super) struct CoreRows {
     /// parent. `None` every node.
     pub(super) text_nodes: Option<super::TextNodes>,
     op: Vec<[i64; 2]>,
-    op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
     name: Vec<[i64; 2]>,
     str: Vec<[i64; 2]>,
@@ -559,7 +558,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.first_token.as_slice()) + std::mem::size_of_val(self.last_token.as_slice()) + std::mem::size_of_val(self.token_before.as_slice()) + std::mem::size_of_val(self.token_after.as_slice()) + std::mem::size_of_val(self.end_point.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.first_token.as_slice()) + std::mem::size_of_val(self.last_token.as_slice()) + std::mem::size_of_val(self.token_before.as_slice()) + std::mem::size_of_val(self.token_after.as_slice()) + std::mem::size_of_val(self.end_point.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -577,7 +576,7 @@ pub(super) enum Visits {
 
 #[derive(Default)]
 pub(super) struct Skip {
-    /// `op`, `op_at`.
+    /// `op`.
     pub(super) ops: bool,
     pub(super) comment: bool,
     pub(super) spread: bool,
@@ -678,24 +677,22 @@ impl CoreRows {
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
-        // `op`: every anonymous child the tape stores (none the grammar implies); `op_at`: those that are no
-        // punctuation, in order, Python's two-word operators as one ("not in", "is not"), which `op` has too.
-        let mut ops: Vec<String> = Vec::new();
-        for &c in children.iter().filter(|&&c| !self.skip.ops && !f.named(c)) {
-            let t = dialect.name(f, c);
-            self.op.push([n, string(t) as i64]);
-            if !is_punct(t) {
-                let two = dialect.family == Family::Python && matches!((ops.last().map(String::as_str), t), (Some("not"), "in") | (Some("is"), "not"));
-                match ops.last_mut() {
-                    Some(last) if two => *last = format!("{last} {t}"),
-                    _ => ops.push(t.to_owned()),
-                }
-            }
-        }
-        for (i, t) in ops.iter().enumerate() {
-            self.op_at.push([n, i as i64, string(t) as i64]);
-            if t.contains(' ') {
+        // `op`: every anonymous child the tape stores (none the grammar implies), and Python's two-word operators
+        // as one ("not in", "is not") where the tape stores their words apart. (`op_at` is `tree::node_operators`'.)
+        if !self.skip.ops {
+            let mut last: Option<&str> = None;
+            for &c in children.iter().filter(|&&c| !f.named(c)) {
+                let t = dialect.name(f, c);
                 self.op.push([n, string(t) as i64]);
+                if is_punct(t) {
+                    continue;
+                }
+                if dialect.family == Family::Python && matches!((last, t), (Some("not"), "in") | (Some("is"), "not")) {
+                    self.op.push([n, string(&format!("{} {t}", last.unwrap_or_default())) as i64]);
+                    last = None;
+                } else {
+                    last = Some(t);
+                }
             }
         }
         // `structural_before`, `structural_after`: the source between each stored child and its
@@ -1064,7 +1061,6 @@ impl CoreRows {
     pub(super) fn count_row7(&self) {
         for (name, bytes) in [
             ("op", std::mem::size_of_val(self.op.as_slice())),
-            ("op_at", std::mem::size_of_val(self.op_at.as_slice())),
             ("text", std::mem::size_of_val(self.text.as_slice())),
             ("name", std::mem::size_of_val(self.name.as_slice())),
             ("str", std::mem::size_of_val(self.str.as_slice())),
@@ -1104,7 +1100,6 @@ impl CoreRows {
         let spread: Vec<[i64; 1]> = self.spread.iter().map(|&n| [n]).collect();
         vec![
             ("op", node_sym(&self.op)),
-            ("op_at", make(&["n", "i", "s"], &self.op_at, [false, false, true], atom)),
             ("text", node_sym(&self.text)),
             ("name", node_sym(&self.name)),
             ("str", node_sym(&self.str)),
