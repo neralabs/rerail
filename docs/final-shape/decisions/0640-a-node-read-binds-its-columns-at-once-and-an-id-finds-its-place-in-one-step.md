@@ -71,3 +71,50 @@ them; only B does.
 - B is the id path's whole lever: most of those 4,473 samples, about 15% of the busiest frames.
 - The join's own loop is 2.6 times the id path. Its per-candidate cost in `cands` and `run_join_in_each`, measured per
   step, is the larger lever and comes first.
+
+## Why ids are stable, and how they need not be (the user's question, 2026-11-23)
+
+**Why.** 0083 §3 and 0094 §2 made a node id `document | granule slot | index in the granule`, the slot a hash of the
+definition's symbol. An edit inside one function then renumbers no other definition's nodes, so an edit's base delta
+is the size of the edit, and the per-file facts are maintained by that delta (0083 §2, 0117). 0094 already keeps the
+other job apart: **exports and kept findings never carry node ids**; they are keyed by symbol, so a moved definition's
+new ids stop at its exports.
+
+**What stable ids cost, measured.** The engine keeps the old numbering, `RERAIL_NODE_IDS=preorder` (`document |
+preorder`), whose reads skip the slot search and the granule bisections (`local_of` is the low bits itself). Both
+runs on m1max, `all`, one after the other at load 5–7, rows and findings identical (20,046):
+
+| | Stable (head) | Preorder |
+|---|---|---|
+| CPU | 167.6 s | 157.2 s |
+| Instructions | 1,653 G | 1,596 G |
+| Wall | 41.1 s | 39.0 s |
+| Per-file workers' CPU | 89.4 s | 82.6 s |
+| Peak | 2,481 MB | 2,409 MB |
+
+So stable ids cost about 6% of the CPU and 72 MB at the peak. They are not the gap to W; the join's loop is (§
+"What follows").
+
+**How unstable ids would work.** The user's rule, that no node id takes part in a cross-file join, holds by
+construction: a join on a node variable joins facts about one node, and a node is in one file. A node id crosses
+files only as a payload carried in a cross-part relation (`import_candidate(i, …)`'s `i`), never as a key that
+matches two files. So:
+
+1. **The id is `document << 32 | tape node`.** An id is its place: the tape node is the low bits, and its number
+   (the view's row) is a rank, one group word and a popcount (`Numbering::rank`). Both translations go, and so does
+   computing an emitted node's id (`low_of`). This goes past preorder ids, which still select a number's tape node.
+2. **The file is the unit an edit rederives.** An edit renumbers the file's nodes after it, so its per-file facts are
+   derived again whole. On `all` that is 82.6 s of per-file CPU over 3,089 files: about 27 ms a file on average.
+   The granule-sized delta of 0083 §2 is given up for a file-sized one.
+3. **What the cross part keeps across runs carries no node id.** 0094 already asks this of exports and kept
+   findings. Each cross-part relation that carries a node id as a payload is either keyed by symbol, with its
+   place in a side relation that only findings read (0083 §3's `struct.span`), or derived again with its file. The
+   next step lists them for `all`'s program.
+4. **Findings name places by line and column**, read off the tape at output, never by id.
+5. **The readers that use the granules** move to the tape: node order keys (0121) become preorder indexes, as
+   `RERAIL_NODE_IDS=preorder` already makes them; the per-file memo (0146) and kept frames (0212) key on the
+   file's content, which a renumbering doesn't change.
+
+What it would save, past the 6% measured: the rank-select from a number to its tape node, which preorder ids still
+pay (`Projected::node`, `Ranks::select`: 2,252 of the sample's busiest 30,600). What it costs: an edit's work
+becomes one file's, about 27 ms on average.
