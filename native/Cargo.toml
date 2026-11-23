@@ -165,7 +165,7 @@ tree-sitter = "=0.27.1"
 bitlex = { path = "../tools/bitlex", default-features = false }
 # CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 
 # The engine's crates (tools/cratify/apply.py): its sources, mounted in place.
 rerail-facts = { path = "crates/facts", default-features = false }
@@ -287,7 +287,7 @@ napi-build = "2.2"
 sha2 = "0.11"
 # The vendored grammars' build (`src/build_grammars.rs`), which the build script mounts; it runs in rerail-lang's
 # once the crate split gives it there (`BUILDS_GRAMMARS`).
-cc = "=1.11.1"
+cc = "=1.11.2"
 tree-sitter-generate = { version = "=0.27.2", default-features = false }
 flate2 = "=1.1.11"
 # Reads and validates the language registry (`languages/*.json`) the build generates tables from.

@@ -315,6 +315,7 @@ section.group{margin-bottom:24px}
 .enftag{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--radius-md);font-size:12px;font-weight:500;white-space:nowrap;justify-self:start;cursor:default}
 .enftag.steer{background:var(--steer-bg);color:var(--steer-fg)}
 .enftag.log{background:var(--log-bg);color:var(--log-fg)}
+.enftag.none{background:var(--subtle);color:var(--muted-foreground)}
 .row.off .enftag{opacity:.5}
 .count{font-size:13px;color:var(--muted-foreground);white-space:nowrap;text-align:right}
 .count b{color:var(--foreground);font-weight:600;font-size:14px}

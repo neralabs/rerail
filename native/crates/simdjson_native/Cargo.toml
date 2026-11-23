@@ -7,4 +7,4 @@ description = "The platform's part of JSON reading: simdjson (C++, vendored at n
 links = "rerail_simdjson"
 
 [build-dependencies]
-cc = "=1.11.1"
+cc = "=1.11.2"

@@ -105,12 +105,12 @@ describe("a promoted version's notes, since the last stable release", () => {
     "",
   ].join("\n");
 
-  it("brings every change since the last stable release, under the promoted version's lead, grouped by type and newest first", () => {
+  it("brings every change since the last stable release, under the promoted version's lead, grouped by type and newest first, saying only that the versions it passed over never reached latest, as a version npm refused never reached next either", () => {
     expect(githubRelease({ name: CORE, version: "0.2.1", distTag: "latest" }, changelog, "0.1.5").notes).toBe(
       [
         "0.2.1 brings the new rule engine, with the fixes its first candidate needed.",
         "",
-        "This release also brings 0.2.0, which was a release candidate on `next` and never reached `latest`.",
+        "This release also brings 0.2.0, which never reached `latest`.",
         "",
         "### Added",
         "",
@@ -136,14 +136,14 @@ describe("a promoted version's notes, since the last stable release", () => {
   it("does the same for a pack, its entries as packReleaseNotes reads them", () => {
     const pack = [`# ${PYTHON}`, "", "## 0.1.12", "", "### Fixed", "", "- Fewer false positives.", "", "## 0.1.11", "", "### Added", "", "- Two new rules.", "", "## 0.1.10", "", "### Fixed", "", "- Older.", ""].join("\n");
     expect(githubRelease({ name: PYTHON, version: "0.1.12", distTag: "latest" }, pack, "0.1.10").notes).toBe(
-      ["This release also brings 0.1.11, which was a release candidate on `next` and never reached `latest`.", "", "### Added", "", "- Two new rules.", "", "### Fixed", "", "- Fewer false positives."].join("\n"),
+      ["This release also brings 0.1.11, which never reached `latest`.", "", "### Added", "", "- Two new rules.", "", "### Fixed", "", "- Fewer false positives."].join("\n"),
     );
   });
 
   it("opens with no lead, rather than saying no entries were written, when the promoted version has none of its own", () => {
     const empty = changelog.replace(/(## 0\.2\.1 \(2026-11-27\)\n\n)[\s\S]*?(\n## 0\.2\.0)/u, `$1${NO_CHANGELOG_ENTRIES}\n$2`);
     expect(githubRelease({ name: CORE, version: "0.2.1", distTag: "latest" }, empty, "0.1.5").notes).toBe(
-      ["This release also brings 0.2.0, which was a release candidate on `next` and never reached `latest`.", "", "### Added", "", "- Code rules read Go.", "", "### Fixed", "", "- The daemon restarts after a crash."].join("\n"),
+      ["This release also brings 0.2.0, which never reached `latest`.", "", "### Added", "", "- Code rules read Go.", "", "### Fixed", "", "- The daemon restarts after a crash."].join("\n"),
     );
   });
 
@@ -153,7 +153,7 @@ describe("a promoted version's notes, since the last stable release", () => {
       [
         "0.2.1 brings the new rule engine, with the fixes its first candidate needed.",
         "",
-        "This release also brings 0.2.0, which was a release candidate on `next` and never reached `latest`.",
+        "This release also brings 0.2.0, which never reached `latest`.",
         "",
         "- Written under no type.",
         "",

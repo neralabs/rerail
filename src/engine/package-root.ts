@@ -39,6 +39,8 @@ export const ENTRY_POINTS = {
   claudeStatusShell: "dist/hosts/claude/claude-status.sh",
   codexHook: "dist/hosts/codex/codex-hook.js",
   cursorHook: "dist/hosts/cursor/cursor-hook.js",
+  /** The `.rerail` runner's child process (`src/engine/rr/rr-child.ts`). */
+  rrChild: "dist/engine/rr/rr-child.js",
 } as const;
 
 /** `<package>/model`: the bundled embedding model. */
