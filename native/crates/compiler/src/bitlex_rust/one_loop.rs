@@ -1328,6 +1328,13 @@ fn run_last(x: &[u64], s: usize) -> usize {
 }
 "#;
 
+/// Tier 2 of the grammar as calls over tier 1's records (the CPU's form, `records::tier2_calls`), with the mark bits its
+/// code reads of a record's code; none where the grammar is no records form.
+pub fn tier2_calls_reads(x: &Input<'_>) -> Option<Result<(String, u32), String>> {
+    let g = G::new(x);
+    (!x.marks.is_empty() || !x.extras.is_empty() || !g.flags.is_empty() || !g.readings.is_empty()).then(|| records::tier2_calls(x))
+}
+
 /// Tier 2 of the grammar as one loop (the module's doc), or why it is not written.
 pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     tier2_loop_reads(x).map(|(out, _)| out)

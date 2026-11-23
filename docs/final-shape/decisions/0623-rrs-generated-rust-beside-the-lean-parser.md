@@ -523,3 +523,33 @@ The mark questions' look-ahead (`word_at`, `at_K_at`) read a record's code after
 bound. Where a token is its record (no region read in parts), each reads it with one test, `self.recs.get(j)`, as the
 lean parser reads `self.t.get(j)`. Side by side, five rounds: the same within the host's swing (33.2–35.4 ms before,
 34.7–37.0 after); kept as lean's shape.
+
+## One structure, two lowerings: calls on the CPU, the loop on a device (done)
+
+What was left of tier 2's gap was the one loop's control flow: each level's return and each place after a call went
+through `match st`, one indirect jump that the CPU's predictor misses, and a level's call pushed and popped `stack`.
+Lean's level is a function and its return a native return, which the return-address predictor gets right. The parser
+is to run on a GPU as well (the user, 2026-11-23: "Consider that we want the parserse eventually to run on both CPU and
+GPU. What is the version of this decision which improves performance and closes the structural gap but allows us to
+generate GPU-shaped code too?").
+
+So the grammar's tier 2 is one structure, lowered two ways:
+
+| | Device (GPU, the JIT's targets) | CPU |
+|---|---|---|
+| A level | a range of places of `'run: loop { match st }` | a method |
+| A level's call | push the saved state and the return place, then jump | a call; the saved state in locals, restored on return |
+| The code after a call | a place | the code that follows |
+| A loop's head | a place | a loop |
+| Depth | `deeper`, `DEPTH`, then refuse | the same |
+
+Both are written from the grammar by the same rules' code (`G::code`) and the same sets: the rules a refusing level
+reaches (`refusers`, whose takes skip the refused-mark test elsewhere), the levels whose call saves the refused marks,
+and those whose code may set the level's word (`word_setters`). A call saves only what its level may change, in both.
+Only the call site, a level's end and the code after a call are written differently. The tests check the loop's tape
+equal to the calls' on every sample and corpus file (`tape_differs`), and both against the JIT's.
+
+`Compiled::rust` (and `rerail-rr-aot`'s `tier2.rs`, Kotlin's) is the calls form; `Compiled::rust_loop` (`tier2_loop.rs`)
+the loop. Side by side on spark1, three rounds in turns: tier 2 33.6–36.4 ms as the loop, 28.1–28.5 ms as calls (load
+2); 35.5–36.6 against 30.2–30.9 ms at load 13. Lean's tier 2 is 28.4 ms. All tests pass: rr_parser 52 (the loop's tapes
+equal to the calls'), kotlin_parser 70, `json_rust_is_current`, the product build.

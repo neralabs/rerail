@@ -112,11 +112,12 @@ pub struct Compiled {
     /// The provers' answers this compile made (decision 0414): what a later compile is given to
     /// answer the same questions without their proofs (`compile_proved`).
     pub proofs: Vec<(bitlex_prove::Key, bitlex_prove::Answer)>,
-    /// Tier 2 as Rust, written from the tree rules (`bitlex_rust`), or why it is not yet.
+    /// Tier 2 as Rust, written from the tree rules as calls (`bitlex_rust`; the CPU's form), or why it is not yet.
     pub rust: Option<Result<String, String>>,
     /// Tier 1 as Rust, written from the lexer's statements (`bitlex_lex_rust`), or why it is not yet.
     pub lexer_rust: Option<Result<String, String>>,
-    /// Tier 2 as Rust in one loop, written from the tree rules (`bitlex_rust::tier2_loop`), or why it is not yet.
+    /// Tier 2 as Rust in one loop, written from the tree rules (`bitlex_rust::tier2_loop`; the device's form), or why it
+    /// is not yet.
     pub rust_loop: Option<Result<String, String>>,
 }
 
@@ -829,10 +830,19 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 })
                 .collect();
             let x = crate::bitlex_rust::Input { tree: &low.tree_desugared, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds };
-            let rust = crate::bitlex_rust::tier2(&x);
-            low.rust = Some(rust);
+            // Tier 2 as calls, the CPU's form, and as one loop, the device's (decision 0618): over tier 1's records
+            // where its tokens are decided there, else the rules' methods.
+            let calls = crate::bitlex_rust::tier2_calls_reads(&x);
             let looped = crate::bitlex_rust::tier2_loop_reads(&x);
-            let tier2_reads = looped.as_ref().ok().and_then(|l| l.1);
+            // The bits either form reads of a record's code: tier 1 records them for both.
+            let tier2_reads = match (looped.as_ref().ok().and_then(|l| l.1), calls.as_ref().and_then(|c| c.as_ref().ok()).map(|c| c.1)) {
+                (Some(a), Some(b)) => Some(a | b),
+                (a, b) => a.or(b),
+            };
+            low.rust = Some(match calls {
+                Some(c) => c.map(|c| c.0),
+                None => crate::bitlex_rust::tier2(&x),
+            });
             low.rust_loop = Some(looped.map(|l| l.0));
             // Tier 1 as Rust, from the lexer's statements and the tables (`bitlex_lex_rust`).
             let mark_bits: Vec<Option<u8>> = t.mark_bits.iter().map(|b| b.0).collect();

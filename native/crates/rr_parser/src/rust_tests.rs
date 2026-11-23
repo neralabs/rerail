@@ -4,14 +4,15 @@
 
 use crate::{Compiled, SAMPLES, compiled};
 
-/// `rerail_rr_aot`'s `tier1.rs` and `tier2.rs` are the Bitlex compiler's output for the grammar, in the compile
+/// `rerail_rr_aot`'s `tier1.rs`, `tier2.rs` and `tier2_loop.rs` are the Bitlex compiler's output for the grammar, in the compile
 /// `compiled` makes (its codes and ids are the JIT's); `RERAIL_BLESS=1` writes them again.
 #[test]
 fn rust_is_current() {
     let c = compiled().expect("the grammar compiles");
     let tier1 = c.lexer_rust.clone().unwrap_or_else(|e| panic!("tier 1 as Rust: {e}"));
-    let tier2 = c.rust.clone().unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
-    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
+    let tier2 = c.rust.clone().unwrap_or_else(|e| panic!("tier 2 as calls: {e}"));
+    let tier2_loop = c.rust_loop.clone().unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
+    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2), ("tier2_loop.rs", tier2_loop)] {
         let path = format!("{}/../rr_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
         if std::env::var_os("RERAIL_BLESS").is_some() {
             std::fs::write(&path, &rust).expect("writes");
@@ -33,7 +34,13 @@ fn image_nodes(image: &[u8]) -> Nodes {
 /// node that differs.
 fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
     let theirs = c.parser.image(text.as_bytes()).ok().map(|i| image_nodes(&i));
-    let ours = rerail_rr_aot::parse(&rerail_rr_aot::padded(text.as_bytes()), text.len()).ok().map(|i| image_nodes(&i));
+    let buf = rerail_rr_aot::padded(text.as_bytes());
+    let ours = rerail_rr_aot::parse(&buf, text.len()).ok().map(|i| image_nodes(&i));
+    // The device's form (the one loop) parses as the CPU's: the same tape, or both refuse.
+    let looped = rerail_rr_aot::parse_loop(&buf, text.len()).ok().map(|i| image_nodes(&i));
+    if looped != ours {
+        return Some(format!("the one loop's tape is not the calls': {} nodes, {} nodes", looped.map_or(0, |l| l.len()), ours.as_ref().map_or(0, |o| o.len())));
+    }
     match (theirs, ours) {
         (None, None) => None,
         (Some(_), None) => Some("the JIT parses it, the parser as Rust refuses it".into()),

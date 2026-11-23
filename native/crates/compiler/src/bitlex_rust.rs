@@ -21,7 +21,7 @@ use ::bitlex::syntax::{Gram, Stmt, TokenElem};
 // Mounted by `rerail-bitlex` from the compiler's folder (`#[path]`): its submodule is found beside it.
 #[path = "bitlex_rust/one_loop.rs"]
 mod one_loop;
-pub use one_loop::{tier2_loop, tier2_loop_reads};
+pub use one_loop::{tier2_calls_reads, tier2_loop, tier2_loop_reads};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -126,6 +126,10 @@ struct G<'a> {
     /// rule takes may hold at, and the token kinds whose test (`at_K`) passes at none of them. None: a mark may hold at
     /// any token.
     mark_words: std::cell::RefCell<Option<(HashSet<String>, HashSet<String>)>>,
+    /// What a level's call saves of its caller's, where only some levels change it (`records`' calls form): the levels
+    /// that may refuse a mark or that a rule refusing one calls, and those whose code may set the level's word. None:
+    /// every call saves both.
+    call_saves: std::cell::RefCell<Option<(HashSet<String>, HashSet<String>)>>,
 }
 
 /// `s`'s lines at `p`.
@@ -241,7 +245,7 @@ impl<'a> G<'a> {
             }
         }
         let reads = refusing.values().filter(|&&b| b != u32::MAX).fold(0, |a, &b| a | b) | x.extra_bits.iter().fold(0, |a, (b, _)| a | 1 << b);
-        G { x, rules, order, flags, readings, remember, provisional, refusing, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default(), mark_words: Default::default() }
+        G { x, rules, order, flags, readings, remember, provisional, refusing, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -753,10 +757,15 @@ impl<'a> G<'a> {
                 } else {
                     format!("{pad}let asks = self.asks;\n{pad}self.asks = asks & {keep:#x} | {set:#x};\n{pad}self.{}()?;\n{pad}self.asks = asks;\n", rule_fn(n))
                 };
+                let saves = self.call_saves.borrow();
+                let (refuses, words) = match saves.as_ref() {
+                    Some((r, w)) => (r.contains(n.as_str()), w.contains(n.as_str())),
+                    None => (true, true),
+                };
                 // The level's word is the caller's again where the call returns (the machine's `PUSH`).
-                let call = if self.remember.is_empty() { call } else { format!("{pad}let word = self.word;\n{call}{pad}self.word = word;\n") };
+                let call = if self.remember.is_empty() || !words { call } else { format!("{pad}let word = self.word;\n{call}{pad}self.word = word;\n") };
                 // The marks the callee refuses (`refuse M in L`), the caller's again where it returns.
-                if self.refusing.is_empty() { call } else { format!("{pad}let refusing = self.refusing;\n{pad}self.refusing = {:#x};\n{call}{pad}self.refusing = refusing;\n", self.refusing.get(n.as_str()).copied().unwrap_or(0)) }
+                if self.refusing.is_empty() || !refuses { call } else { format!("{pad}let refusing = self.refusing;\n{pad}self.refusing = {:#x};\n{call}{pad}self.refusing = refusing;\n", self.refusing.get(n.as_str()).copied().unwrap_or(0)) }
             }
             Gram::Sym(n) if self.rules.contains_key(n.as_str()) => format!("{pad}self.{}()?;\n", rule_fn(n)),
             Gram::Sym(n) => return Err(format!("rule {rule}: `{n}`, no rule, mark or token")),
