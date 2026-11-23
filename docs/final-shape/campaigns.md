@@ -71,32 +71,33 @@ than the hub. The audit's statuses are this tree's. These are the counts on each
 
 ### The order of work
 
-Ordered to close the most campaigns soonest, given what the worktrees already have under way (next section).
-
-1. **Merge what is done.** The two hubs are mostly emptied on branches the hub has not taken:
-   - Native-and-GPU-strata: 26 commits, the marked copies from 27 to 5;
-   - Typing-support: 8 commits, the tables not yet facts from 8 to 0.
-
-   Then this tree merges the hub, and the audit is taken again on it. Before that, renumber django-bugs' 0638 and
-   Swift-Kotlin-Scala-support's 0591, which collide with the hub's.
-2. **Close now (1 campaign).** Lean parsers: no open records.
-3. **The short ones (6 campaigns).** Each has one or two open records, and none waits on the two hubs:
-   - **widening:** 0597 steps 4–7 are in the hub. What is left: the remaining `HIDDEN_KEYS`, `rr_narrow_` and
-     `one_document` references, then 0174 step 3 (long text on request), which also removes 0353's step 3 copy.
-     No worktree is on 0174.
-   - **embedded:** 0431's four loose ends. No worktree is on them.
-   - **hygiene:** the 4 `shared` statics, then 0094 §5–§6. No worktree is on them.
+1. **Merge what is done.** The two hubs are mostly emptied on branches the hub has not taken. Then this tree merges the hub, and the audit is taken again on it.
+   - **tape-blocks:** Native-and-GPU-strata: 26 commits; the marked copies from 27 to 5.
+   - **store:** Typing-support: 8 commits; the tables not yet facts from 8 to 0.
+   - Before that, renumber django-bugs' 0638 and Swift-Kotlin-Scala-support's 0591, which collide with the hub's.
+2. **Close now.**
+   - **lean-parsers:** No open records.
+3. **The short ones.** Each has one or two open records, and none waits on the two hubs.
+   - **widening:** 0597 steps 4–7 are in the hub. Left: the remaining `HIDDEN_KEYS`, `rr_narrow_` and `one_document` references, then 0174 step 3 (long text on request), which also removes 0353's step 3 copy.
+   - **embedded:** 0431's four loose ends.
+   - **hygiene:** The 4 `shared` statics, then 0094 §5–§6. No worktree is on it.
    - **programs:** 0246 stage 3, which final-shape-rr-align is specifying as 0639; then 0281 §3.
-   - **preprocessor:** Go-C-and-C-support is on 0613. Header units, the stored objects and the words on Metal have no
-     worktree.
-   - **cold-run:** 0113, then 0114. No worktree is on them.
-4. **What is left of the hubs.** 0353's last 5 copies: step 3, which is three worktrees' row 7, and step 4a. Then
-   0104's 6 maps, which are 0628's and 0387's statistics and kept plans.
-5. **What the hubs free (6 campaigns):** tape-blocks, store, planner, metal-rules (django-bugs: 0603 done, 0637,
-   0540's gate), edit-cost, and typing on 0090 and 0092's per-definition deltas. Edit cost and typing have no
-   worktree.
-6. **The long ones (3 campaigns):** parsers-shape (Parser-generators, Swift-Kotlin-Scala-support), rules-parity
-   (wolfeel, Bend-language-investigation, Benchmarks-and-parity), any-gpu (uglykl, CUDA-support).
+   - **preprocessor:** Go-C-and-C-support is on 0613. Header units, the stored objects and the words on Metal have no worktree.
+   - **cold-run:** 0113, then 0114. No worktree is on it.
+4. **What is left of the hubs.**
+   - **tape-blocks:** 0353's last 5 copies: step 3, which is three worktrees' row 7, and step 4a.
+   - **store:** 0104's 6 maps, which are 0628's and 0387's statistics and kept plans.
+5. **What the hubs free.**
+   - **tape-blocks:** 0266, 0260, 0458, 0336, 0156.
+   - **store:** 0115, 0053 §7, 0142, then 0164 and 0190.
+   - **planner:** 0387 (Two-pass-roots-and-cross-file's 0628 is its first half), 0361, 0354, 0202.
+   - **metal-rules:** 0549, 0540, 0095, 0098. django-bugs has 0603 done and 0540's gate passing.
+   - **edit-cost:** 0090, 0092 and 0093 in that order, then 0116, 0117, 0225, 0328, 0132. No worktree is on it.
+   - **typing:** 0083 and 0065 on 0090 and 0092's per-definition deltas, then 0089 and 0047. No worktree is on it.
+6. **The long ones.**
+   - **parsers-shape:** Kotlin's chain (Swift-Kotlin-Scala-support); 0623 and 0618 (Parser-generators); 0414; then Swift and Scala.
+   - **rules-parity:** Its device forms go with Metal's waves; W's speed (wolfeel, Bend-language-investigation); then 0044 and 0563.
+   - **any-gpu:** 0440 step 10 after 0353; 0567 step 3 (uglykl-CPU-SIMD-parallelization); 0617 (CUDA-support).
 
 Some open items reach past their campaign's invariant: a second hash, the Neural Engine lane, multi-GPU, more
 backends, deferred device functions. Each campaign lists them under "Beyond the invariant". Whether they stay in it
