@@ -131,14 +131,19 @@ fn make(path: &Path) {
     let _ = std::fs::remove_dir_all(&staging);
 }
 
-/// Phase 0 over every library module and the core program, then a run of the core program over an empty corpus:
-/// what a test's first run would do before it reads its own files.
+/// Phase 0 over every library module, the engine's phase programs and the core program, then a run of the core program
+/// over an empty corpus: what a test's first run would do before it reads its own files. Without the phase programs,
+/// each test whose runs had phases derived phase 1's graph (`typing/programs/sources.rerail`) in a bootstrap run of
+/// its own.
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
     let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
     let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rerail".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
+    if let Ok(phases) = dunce::canonicalize(super::phases::builtin_dir()) {
+        rule_files(&phases, &mut modules);
+    }
     modules.sort();
     seeds.extend(modules.into_iter().map(super::phase0::Seed::File));
     super::phase0::graphs(&seeds).map_err(|e| e.to_string())?;
