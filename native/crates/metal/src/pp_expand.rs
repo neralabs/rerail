@@ -1131,6 +1131,9 @@ pub struct Exp {
     /// The loop's queue and its pieces' words (`LPQ`, decision 0613 §4), for tops of `lpq_top` tokens.
     lpq: Buf,
     lpq_top: u32,
+    /// The expansions' rows (`XROWS`, decision 0613 §6: `lp_roll_rows`), 3 words each, `xrows_cap` of them.
+    xrows: Buf,
+    xrows_cap: u32,
     pub ctl: Buf,
     // `__COUNTER__`'s uses and their room.
     cnt: Buf,
@@ -1229,7 +1232,9 @@ impl Exp {
             tokens: zeroed(tok * 5)?,
             // The queue's slots (`lpq_cap`: the pieces', the requests' and their ends', a request's record
             // `RQ_ENTRIES` of the tokens' rows), then the pieces' three words.
-            lpq: zeroed(16 + 3 * top + 64 + tok / 3 + 3 * top)?,
+            lpq: zeroed(16 + 3 * top + 64 + tok / 3 + 5 * top)?,
+            xrows: zeroed(3 * tok)?,
+            xrows_cap: tok as u32,
             lpq_top: top as u32,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
@@ -1264,6 +1269,7 @@ impl Exp {
         l.at("OPV", &self.opv).at("OPBASE", &self.opbase).at("OPTOTAL", &self.opscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
         l.at("LPQ", &self.lpq).word("LPQ_TOP", self.lpq_top);
+        l.at("XROWS", &self.xrows).word("XROWS_CAP", self.xrows_cap);
         l.word("OUT_CAP", self.out_cap);
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
@@ -1346,6 +1352,32 @@ impl Exp {
     }
 
     /// The longest piece's steps in the run (`TRN[16]`, decision 0588).
+    /// The expansions' rows (decision 0613 §6), numbered from 1 in their order here: each one's definition's name,
+    /// its parent (0 the text) and its root call's name (`Expanded::expansions`).
+    pub fn expansions(&self) -> Vec<[u32; 3]> {
+        // SAFETY: the device finished; `ctl` holds 32 words and `xrows` 3 a row for its `xrows_cap` rows.
+        let (n, rows) = unsafe { (*self.ctl.host().cast::<u32>().add(26) as usize, std::slice::from_raw_parts(self.xrows.host().cast::<u32>(), 3 * self.xrows_cap as usize)) };
+        let n = n.min(self.xrows_cap as usize);
+        let mut id = vec![0u32; n + 1];
+        let mut out = Vec::new();
+        for g in 0..n {
+            if rows[3 * g] != 0 {
+                out.push([rows[3 * g] - 1, rows[3 * g + 1], rows[3 * g + 2]]);
+                id[g + 1] = out.len() as u32;
+            }
+        }
+        for r in &mut out {
+            r[1] = id.get(r[1] as usize).copied().unwrap_or(0);
+        }
+        out
+    }
+
+    /// The rows the roll-up walked (`CTL` 26, `lp_roll_rows`).
+    pub fn log_rows(&self) -> u32 {
+        // SAFETY: the device finished; `ctl` holds 32 words.
+        unsafe { *self.ctl.host().cast::<u32>().add(26) }
+    }
+
     pub fn steps(&self) -> u32 {
         // SAFETY: the device finished; `trn` holds 32 words.
         unsafe { *self.trn.host().cast::<u32>().add(16) }
@@ -1507,6 +1539,13 @@ pub struct Expanded {
     /// A round that made requests: the tree its P1 settled at, the next round's start (`Layout::entered`).
     pub tree: Option<Tree>,
     pub def_rung: u32,
+    /// The unit's expansions (decision 0613 §6, the sink's `Expansion` rows), in the roll-up's order: each one's
+    /// definition (its name's top token), its parent (a row's number from 1, 0 the text), and the top token its
+    /// root call's name is.
+    pub expansions: Vec<[u32; 3]>,
+    /// The rows the roll-up walked (`CTL` 26: each run's log, an occurrence's rows each time it is read): the
+    /// logs' use of the tokens' store, as the output's is the output's.
+    pub log_rows: u32,
     /// The command it ran in (`next_run`): a batch's units ran in one, and its GPU time is that command's.
     pub run: u64,
 }
@@ -1807,7 +1846,7 @@ impl<'u> Runs<'u> {
         };
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
-            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, run })
+            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, expansions: exp.expansions(), log_rows: exp.log_rows(), run })
         };
         // SAFETY: the device finished writing `room`.
         let why = |room: &str| {

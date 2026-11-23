@@ -578,6 +578,28 @@ So:
      holder's terms; the walk's depth is bounded, as `lp_leaves`'s is. The host reads the store into
      `ExpansionRow`s.
 
+
+   **Stage 5, built** (2026-11-23): the device's `Expansion` rows are the serial pass's
+   (`expansions_are_the_serial_passes`: chains, painting, arguments eight deep, a memo hit, on the CPU backend,
+   on CUDA and on Metal). The design above holds, with three changes.
+   - **A text-level occurrence is its hole.** A request posted from a piece logs nothing in the piece. Its hole
+     carries the call's row (the output piece's fifth word, `lp_hole_out`), and the roll-up walks the piece's
+     output chunks as `lp_roll_place` does: at each hole it reads the request's log, its row 0 the hole's call
+     and its text positions moved by the hole's shift, as the result's tokens are. So such a request's raw
+     tokens are the text's and carry no `ARG` marks. A memo hit's replayed holes carry the hitting call's row.
+     Only a request posted inside a request logs an occurrence (`LG_OCC`, with its shift and a row a raw entry).
+     On the M3 the occurrence block in `lp_rq_post` for every request failed from build to build (outputs memoized
+     wrong, faults and hangs) while the CPU backend and CUDA passed; with text occurrences in the roll-up it is
+     gone.
+   - **A taken argument is an occurrence with room.** `lp_arg_occ` logs `LG_TAKE` and reserves the request's row
+     count after it; the node's entry carries that base (`xp`), so a name read through the node refers to the
+     row the roll-up gives the request's. The request's raw tokens keep the caller's references, a caller's row
+     marked `XP_H` (read one level up). Nothing is copied: the rows are made by the roll-up, once.
+   - **The frame's kind and space share a word** (`kn`), the frame's seventh word its `xp`.
+
+   Every eval test passes on the CPU backend and on Metal; the corpus (m3, Metal) and Boost.Preprocessor's
+   `control` (CPU backend) are the serial pass's. Boost's `array` tests are refused for depth (the loop's
+   stacks) before this stage too.
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

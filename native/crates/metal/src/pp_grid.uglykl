@@ -81,7 +81,7 @@
         /* Each top's high water first (`Exp::room` sizes the next run from it). */                     \
         c_[8] = ukl_max(c_[8], c_[0]); c_[11] = ukl_max(c_[11], c_[4]); c_[12] = ukl_max(c_[12], c_[5]); \
         c_[14] = ukl_max(c_[14], AT(const uint32_t, OPTOTAL)[0]);                                       \
-        c_[0] = 0u; c_[4] = c_[6]; c_[5] = c_[7];                                                      \
+        c_[0] = 0u; c_[4] = c_[6]; c_[5] = c_[7]; c_[26] = 0u;                                         \
         AT(uint32_t, CNT)[1] = 0u;                                                                     \
     }                                                                                                  \
     BARRIER()
@@ -352,6 +352,8 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
     {
         PX_UA(DR);
         EACH(s, nt) lp_roll_place(xa, toks, AT(const uint32_t, XFLAG), AT(const uint32_t, THEADS), AT(const uint32_t, OBASE), AT(const uint32_t, OPBASE), s);
+        // The expansions' rows (decision 0613 §6).
+        EACH(s, nt) lp_roll_rows(xu, xa, toks, AT(const uint32_t, XFLAG), AT(uint32_t, XROWS), W(XROWS_CAP), s);
     }
     EACH(s, nt) lp_extend(AT(uint32_t, OUT), W(OUT_CAP), toks, AT(const uint32_t, XFLAG), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), AT(const uint32_t, THEADS), AT(const uint32_t, OPV), AT(const uint32_t, PLAST), s);
     BARRIER();
