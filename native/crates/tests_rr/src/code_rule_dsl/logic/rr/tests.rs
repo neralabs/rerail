@@ -4510,7 +4510,7 @@ fn library_modules_link_to_the_lowering_of_them_together() {
         }
         let files: Files = paths.iter().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect())).collect();
         let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
-        let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+        let modules = library_modules(&paths).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         // Each module read back from its image (decision 0246 §6) links to the same program, on versions (0377).
         let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(std::sync::Arc::new(module_image::encode(m).unwrap())).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
         let on_versions = super::link_library_versions(images).unwrap_or_else(|e| panic!("{}: linked on versions from its images: {e}", dir.display()));
@@ -5771,8 +5771,7 @@ fn spike_0639_programs_linked_from_modules() {
         let paths: Vec<PathBuf> = m.files.iter().map(|(p, _, _)| p.clone()).collect();
         if !libraries.contains_key(&paths) {
             let at = Instant::now();
-            let files: Files = paths.iter().map(|p| (p.clone(), no_includes(read(p).unwrap().0))).collect();
-            let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: the library's modules: {e}", path.display()));
+            let modules = library_modules(&paths).unwrap_or_else(|e| panic!("{}: the library's modules: {e}", path.display()));
             t_lib += at.elapsed().as_secs_f64();
             libraries.insert(paths.clone(), modules);
             pack_of.insert(paths.clone(), pack.clone());
@@ -5933,7 +5932,7 @@ fn spike_0639_programs_linked_from_modules() {
         let (w_dfs, w_canon) = (whole(&in_dfs), whole(&canonical));
         println!("E2 {pack}: {n} files, {cycles} in include cycles, the canonical order topological: {topological}; whole in include order against canonical: {}", if w_dfs == w_canon { "identical".to_owned() } else { differs(&w_dfs, &w_canon) });
         let ordered: Vec<PathBuf> = order.iter().map(|&i| dfs[i].clone()).collect();
-        match library_modules(&ordered, canonical.clone()).and_then(super::link_library_versions) {
+        match library_modules(&ordered).and_then(super::link_library_versions) {
             Ok(v) => {
                 let l = printed(&v);
                 println!("E2 {pack}: linked from modules in canonical order against whole in canonical order: {}", if l == w_canon { "identical".to_owned() } else { differs(&w_canon, &l) });
@@ -6386,16 +6385,14 @@ fn modules_named_by_content_link_to_the_whole_lowering() {
         let srcs: Vec<String> = programs.iter().map(|p| std::fs::read_to_string(p).unwrap()).collect();
         let m = super::modules_of(&srcs.iter().map(String::as_str).collect::<Vec<_>>()).into_iter().find_map(|m| m.ok().flatten()).unwrap_or_else(|| panic!("{pack}: no program includes the library"));
         let paths: Vec<PathBuf> = m.files.iter().map(|(p, _, _)| p.clone()).collect();
-        let files: Files = paths.iter().map(|p| (p.clone(), no_includes(read(p).unwrap().0))).collect();
-        let plan = super::library_plan(&paths).unwrap();
-        let whole: Vec<from_tape::Stmt> = plan.units.iter().flatten().flat_map(|&i| files[i].1.iter().cloned()).collect();
-        let modules = library_modules(&paths, files).unwrap();
-        for (u, members) in plan.units.iter().enumerate() {
+        let (modules, members, _) = super::library_modules_planned(&paths).unwrap();
+        let whole: Vec<from_tape::Stmt> = members.iter().flatten().flat_map(|p| no_includes(read(p).unwrap().0)).collect();
+        for (u, files) in members.iter().enumerate() {
             let image = module_image::encode(&modules[u]).unwrap();
-            for &i in members {
+            for path in files {
                 let has = |needle: &str| image.bytes().windows(needle.len()).any(|w| w == needle.as_bytes());
-                let file = paths[i].file_name().unwrap().to_string_lossy();
-                assert!(!has(&paths[i].display().to_string()) && !has(&file), "{pack}: the image of {} holds its path or name", paths[i].display());
+                let file = path.file_name().unwrap().to_string_lossy();
+                assert!(!has(&path.display().to_string()) && !has(&file), "{pack}: the image of {} holds its path or name", path.display());
             }
         }
         let linked = lower::link_versions(modules).unwrap();
@@ -6409,6 +6406,95 @@ fn modules_named_by_content_link_to_the_whole_lowering() {
         assert_eq!(helpers(&versions, "rr_m_").len(), helpers(&[whole.version()], "rr_m_").len(), "{pack}: the helpers named by module");
         assert!(!helpers(&versions, "rr_h_").is_empty(), "{pack}: a library makes helpers named by content");
     }
+}
+
+/// A printed program's rule lines as a set, each helper named by its module (`rr_m_`) by its stem, and each variable
+/// or helper a walk numbered (`$rr_agg17`, `rr_ord3`) by its stem: what decision 0639's module path and the whole
+/// lowering of the same text share (T1).
+fn rule_lines_names_aside(printed: &str) -> BTreeSet<String> {
+    let plain = |l: &str| -> String {
+        l.split_inclusive(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .map(|w| {
+                let (word, end) = w.split_at(w.len() - w.chars().last().filter(|c| !(c.is_alphanumeric() || *c == '_')).map_or(0, char::len_utf8));
+                let word = if word.starts_with("rr_m_") && word.len() > 33 && word.as_bytes()[word.len() - 33] == b'_' {
+                    &word[..word.len() - 33]
+                } else if word.starts_with("rr_") && !word.starts_with("rr_h_") {
+                    word.trim_end_matches(|c: char| c.is_ascii_digit())
+                } else {
+                    word
+                };
+                format!("{word}{end}")
+            })
+            .collect()
+    };
+    printed.lines().map(plain).collect()
+}
+
+/// T1 (decision 0639): a program that includes the library, read by `parse_version` (its library linked from its
+/// modules' images and its own text one more module), is the program its library files and its text lowered as one
+/// module make (the whole lowering, which a text read before decision 0639 step 4): the same rules and as many helpers,
+/// names aside (`rule_lines_names_aside`). The first `RERAIL_T1_N` (2) such programs of every pack and of the phase
+/// programs; the spike (`spike_0639_programs_linked_from_modules`) runs them all.
+#[test]
+fn a_program_linked_from_its_modules_is_its_whole_lowering() {
+    let lib = crate::code_rule_dsl::logic::rr::library();
+    let per: usize = std::env::var("RERAIL_T1_N").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+    let no_includes = |s: Vec<from_tape::Stmt>| -> Vec<from_tape::Stmt> { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(lib.join("../packs")).unwrap().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    dirs.sort();
+    dirs.push(crate::source_tree::native().join("src/code_rule_dsl/typing/programs"));
+    let mut compared = 0;
+    for dir in dirs {
+        let mut programs = walk_rr(&dir);
+        programs.sort();
+        let mut taken = 0;
+        for path in programs {
+            if taken == per {
+                break;
+            }
+            let Ok(src) = std::fs::read_to_string(&path) else { continue };
+            let Ok(Some(m)) = super::modules(&src) else { continue };
+            // A program the whole lowering refuses is not compared (the spike's seven, open items).
+            let mut all: Vec<from_tape::Stmt> = m.files.iter().flat_map(|(p, _, _)| no_includes(read(p).unwrap().0)).collect();
+            all.extend(no_includes(from_tape::RrFile::read(src.as_str()).unwrap().statements()));
+            let Ok(whole) = super::lower_statements_version(all).and_then(|v| crate::code_rule_dsl::logic::contexts::passes(&v)) else { continue };
+            let linked = parse_version(&src).unwrap_or_else(|e| panic!("{}: the module path: {e}", path.display()));
+            let helpers = |v: &Arc<Version>| v.declared_names().into_iter().filter(|r| r.starts_with("rr_")).count();
+            let (a, b) = (rule_lines_names_aside(&print_version(&linked).unwrap()), rule_lines_names_aside(&print_version(&whole).unwrap()));
+            assert!(a == b, "{}: {} lines and {}; only the module path's: {:#?}\nonly the whole lowering's: {:#?}", path.display(), a.len(), b.len(), a.difference(&b).take(6).collect::<Vec<_>>(), b.difference(&a).take(6).collect::<Vec<_>>());
+            assert_eq!(helpers(&linked), helpers(&whole), "{}: the helpers", path.display());
+            taken += 1;
+            compared += 1;
+        }
+    }
+    assert!(compared > 10, "{compared} programs compared");
+}
+
+/// T8 (decision 0639 §4): the link is a union with nothing to decide, so two modules that give one relation two
+/// declarations (`link_conflict`), or one helper's name two sets of rules (`helper_conflict`), fail it; modules that
+/// agree link. That no library has either is T1 and T2: every program links.
+#[test]
+fn a_link_of_modules_that_clash_fails() {
+    let module = |src: &str| lower::lower_module_in_written(from_tape::RrFile::read(src).unwrap().statements(), &[]).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    let agree = super::link_library_versions(vec![module(".decl shared(x: symbol)\nshared(\"a\").\n"), module(".decl shared(x: symbol)\nshared(\"b\").\n")]);
+    agree.expect("one declaration in two modules");
+    let clash = super::link_library_versions(vec![module(".decl shared(x: symbol)\n"), module(".decl shared(x: number)\n")]).expect_err("two declarations");
+    assert!(clash.to_string().contains("link_conflict") && clash.to_string().contains("shared"), "{clash}");
+    // Two of the Python library's modules that make helpers: one's renamed to the other's name, they are two helpers
+    // under one name.
+    let mut programs = walk_rr(&crate::code_rule_dsl::logic::rr::library().join("../packs/python"));
+    programs.sort();
+    let m = programs.iter().find_map(|p| super::modules(&std::fs::read_to_string(p).ok()?).ok().flatten()).expect("a program that includes the library");
+    let paths: Vec<PathBuf> = m.files.into_iter().map(|(p, _, _)| p).collect();
+    let mut modules: Vec<lower::Module> = super::library_modules(&paths).unwrap().into_iter().filter(|m| !lower::helper_names(m).is_empty()).collect();
+    assert!(modules.len() >= 2, "two modules make helpers");
+    let b = modules.pop().unwrap();
+    let a = modules.remove(0);
+    let ha = lower::helper_names(&a)[0].clone();
+    let hb = lower::helper_names(&b).iter().find(|h| !lower::helper_names(&a).contains(h)).cloned().expect("a helper of its own");
+    let b = lower::with_helper_renamed(b, &hb, &ha).unwrap();
+    let clash = super::link_library_versions(vec![a, b]).expect_err("one name, two helpers");
+    assert!(clash.to_string().contains("helper_conflict"), "{clash}");
 }
 
 /// T7 (decision 0639, Collisions 4): a helper's content name holds every header row that names it, its facts, and

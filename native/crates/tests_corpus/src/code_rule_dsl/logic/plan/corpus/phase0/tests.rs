@@ -184,7 +184,66 @@
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// T3 (decision 0639 §1): phase 0 plans a program's modules as the library's lowering does (`rr::library_plan`):
+    /// The module plan of library files `paths` (canonical, includes first), derived apart from phase 0, as the
+    /// library's lowering derived it before phase 0 planned it (decision 0639 step 4): files that reach each other are
+    /// one module; a module's scope is the modules its files reach; `core.rerail`, where it is one of `paths`, is in
+    /// every other file's scope. Each file's digest, what each reaches, the modules' files, and their scopes.
+    #[allow(clippy::type_complexity)]
+    fn reference_plan(paths: &[PathBuf]) -> (Vec<[u8; 32]>, Vec<std::collections::BTreeSet<usize>>, Vec<Vec<usize>>, Vec<std::collections::BTreeSet<usize>>) {
+        use crate::code_rule_dsl::logic::rr::{from_tape::S, library, read};
+        use std::collections::BTreeSet;
+        let canon = |p: &std::path::Path| dunce::canonicalize(p).ok();
+        let core = canon(&library().join("core.rerail"));
+        let canonical: Vec<PathBuf> = paths.iter().map(|p| canon(p).unwrap_or_else(|| p.clone())).collect();
+        let at = |p: &std::path::Path| canonical.iter().position(|q| q == p);
+        let n = paths.len();
+        let mut direct: Vec<BTreeSet<usize>> = Vec::with_capacity(n);
+        let mut digests: Vec<[u8; 32]> = Vec::with_capacity(n);
+        for (i, path) in paths.iter().enumerate() {
+            let (statements, file) = read(path).unwrap();
+            digests.push(file.sha256.unwrap_or_default());
+            let mut mine: BTreeSet<usize> = BTreeSet::new();
+            if let Some(c) = core.as_deref().and_then(at).filter(|&c| c != i) {
+                mine.insert(c);
+            }
+            for s in statements {
+                let Some(S::Include(name)) = s.what() else { continue };
+                let found = [library().join(name.as_str()), path.parent().unwrap().join(name.as_str())].into_iter().find_map(|p| canon(&p));
+                mine.insert(found.as_deref().and_then(at).unwrap_or_else(|| panic!("{}: {name} is not among the files", path.display())));
+            }
+            mine.remove(&i);
+            direct.push(mine);
+        }
+        let mut reach = direct;
+        loop {
+            let mut grew = false;
+            for i in 0..n {
+                let more: BTreeSet<usize> = reach[i].iter().flat_map(|&j| reach[j].iter().copied()).collect();
+                let before = reach[i].len();
+                reach[i].extend(more);
+                grew |= reach[i].len() != before;
+            }
+            if !grew {
+                break;
+            }
+        }
+        let mut unit_of = vec![usize::MAX; n];
+        let mut units: Vec<Vec<usize>> = Vec::new();
+        for i in 0..n {
+            if unit_of[i] != usize::MAX {
+                continue;
+            }
+            let members: Vec<usize> = (i..n).filter(|&j| j == i || (reach[i].contains(&j) && reach[j].contains(&i))).collect();
+            for &j in &members {
+                unit_of[j] = units.len();
+            }
+            units.push(members);
+        }
+        let scopes = units.iter().enumerate().map(|(u, members)| members.iter().flat_map(|&i| reach[i].iter().map(|&j| unit_of[j])).filter(|&v| v != u).collect()).collect();
+        (digests, reach, units, scopes)
+    }
+
+    /// T3 (decision 0639 §1): phase 0 plans a program's modules as a plan derived apart from it does (`reference_plan`):
     /// the same modules (each named by its variant and its files' digests), scopes and ranks, for programs of a pack,
     /// a program in T's shape (its modules without `core.rerail`) and a phase program. Every module has a key, one key
     /// whichever seed's graph holds it and whatever order the seeds are stated in.
@@ -209,24 +268,24 @@
         for (k, (seed, (file, text))) in seeds.iter().zip(files.iter().zip(&texts)).enumerate() {
             let graph = forward.of(seed, k);
             assert_eq!(graph.plan, backward.of(seed, seeds.len() - 1 - k).plan, "{}: the plan with the seeds stated in reverse", file.display());
-            // Rust's plan over the program's library files.
+            // The plan derived apart, over the program's library files.
             let paths: Vec<PathBuf> = crate::code_rule_dsl::logic::rr::modules(text).unwrap().expect("modular").files.into_iter().map(|(p, _, _)| p).collect();
-            let plan = crate::code_rule_dsl::logic::rr::library_plan(&paths).unwrap();
+            let (digests, reach, units, scopes) = reference_plan(&paths);
             let variant = if paths.iter().any(|p| p.ends_with("core.rerail") && p.starts_with(&lib)) { "core" } else { "bare" };
             bare += usize::from(variant == "bare");
             let name = |u: usize| {
-                let mut ds: Vec<String> = plan.units[u].iter().map(|&i| hex(&plan.digests[i])).collect();
+                let mut ds: Vec<String> = units[u].iter().map(|&i| hex(&digests[i])).collect();
                 ds.sort();
                 format!("{variant}:{}", ds.join("+"))
             };
-            let rust: BTreeMap<String, (i64, BTreeSet<String>)> = (0..plan.units.len())
+            let rust: BTreeMap<String, (i64, BTreeSet<String>)> = (0..units.len())
                 .map(|u| {
-                    let closure: BTreeSet<usize> = plan.units[u].iter().flat_map(|&i| plan.reach[i].iter().copied().chain([i])).collect();
-                    (name(u), (closure.len() as i64, plan.scopes[u].iter().map(|&v| name(v)).collect()))
+                    let closure: BTreeSet<usize> = units[u].iter().flat_map(|&i| reach[i].iter().copied().chain([i])).collect();
+                    (name(u), (closure.len() as i64, scopes[u].iter().map(|&v| name(v)).collect()))
                 })
                 .collect();
             let rules: BTreeMap<String, (i64, BTreeSet<String>)> = graph.plan.iter().map(|(m, r)| (m.clone(), (r.rank, r.scope.clone()))).collect();
-            assert_eq!(rules, rust, "{}: phase 0's plan against Rust's", file.display());
+            assert_eq!(rules, rust, "{}: phase 0's plan against the reference plan", file.display());
             for (m, r) in &graph.plan {
                 assert_eq!(r.key.len(), 64, "{}: {m} has a key", file.display());
                 assert_eq!(keys.entry(m.clone()).or_insert_with(|| r.key.clone()), &r.key, "{m}: one key in every graph");

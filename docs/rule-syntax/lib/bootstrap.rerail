@@ -190,15 +190,21 @@ p0_closure_edges(m, es) :- p0_module_rank(m, _), es = join e by e sep "," : { p0
 p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- env("rerail.build", b), p0_closure_digests(m, ds), p0_closure_edges(m, es).
 
 // Each module's lowering, asked of the engine (decision 0639 §3): its key, its rank, its files by path in its name's
-// order, and its scope's keys. The engine answers a wave's requests in rank order, each against the images of its
-// scope, which rank below it: so every module is asked at once, and one pause of the fixpoint answers them all. The
-// answer is the digest of the module's image, kept in the image store under the module's key.
+// order, its scope's keys and its scope's files. The engine answers a wave's requests in rank order, each against the
+// images of its scope, which rank below it: so every module is asked at once, and one pause of the fixpoint answers
+// them all. The answer is the digest of the module's image, kept in the image store under the module's key.
 .decl p0_module_files(m: symbol, fs: symbol)
 p0_module_files(m, fs) :- p0_module_rank(m, _), fs = join f by d sep "\n" : { p0_module_of(_, f, m), p0_digest(f, d) }.
 .decl p0_scope_keys(m: symbol, ks: symbol)
 p0_scope_keys(m, ks) :- p0_module_rank(m, _), ks = join k by k sep "," : { p0_scope(m, s), p0_module_key(s, k) }.
-.decl p0_lower_req(key: symbol, rank: number, files: symbol, scope: symbol)
-p0_lower_req(k, r, fs, ks) :- p0_module_key(m, k), p0_module_rank(m, r), p0_module_files(m, fs), p0_scope_keys(m, ks).
+// The files its scope's modules hold, by path: a file adds no rules or facts to their relations but the `extensible`
+// ones (decision 0263), which the engine checks of the module's files against theirs.
+.decl p0_scope_file(m: symbol, f: symbol, d: symbol)
+p0_scope_file(m, f, d) :- p0_closure(w, m, f), p0_module_of(w, f, s), s != m, p0_digest(f, d).
+.decl p0_scope_files(m: symbol, fs: symbol)
+p0_scope_files(m, fs) :- p0_module_rank(m, _), fs = join f by d sep "\n" : { p0_scope_file(m, f, d) }.
+.decl p0_lower_req(key: symbol, rank: number, files: symbol, scope: symbol, reached: symbol)
+p0_lower_req(k, r, fs, ks, rs) :- p0_module_key(m, k), p0_module_rank(m, r), p0_module_files(m, fs), p0_scope_keys(m, ks), p0_scope_files(m, rs).
 .decl p0_module_lowered(key: symbol, image: symbol)
 .answer p0_lower_req -> p0_module_lowered
 

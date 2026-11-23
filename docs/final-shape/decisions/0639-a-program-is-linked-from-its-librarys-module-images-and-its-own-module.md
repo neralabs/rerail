@@ -274,6 +274,29 @@ Python and Rust packs: a library's modules, linked by name, have the whole list'
 helper by its stem, and the walk's numbered variables, which a template takes by slot, aside), the same content
 names and as many module names.
 
+**As built (step 4, stage A: the plan's modules, the union's checks).** A modular text keeps its graph's plan
+(`Read::Modular`'s `plan`, `rr::plan_of`): its modules by rank, then name, each as its lowering request names it.
+`Text::lower_version(true)` reads each module from its image by its plan key and lowers the text's own statements as
+one more module against them (`linked_from_plan`); a module phase 0 could not lower is lowered there, so its error is
+the program's. `lower_library` (packs) takes its modules from the plan of the library files as seeds (a library file
+is a module of its own, step 2), merged over their graphs. `library_plan`, `module_key` and
+`library_modules_with_files` are gone. T3's reference plan is in its test. A plan key is the store's alias with the
+image format and the lowering switches (`planned_key`), as `module_key` had them.
+- **The closed relations check (0263)** moved into the module's lowering: the request names its scope's files
+  (`p0_scope_files`), and `lower_planned_module` checks each file of the module against their declarations.
+- **The union's checks.** `link_versions` refuses a relation two modules declare with other column types, make
+  natively otherwise, or give other kind sets (`lower::link_conflict`), and a helper name whose modules give it other
+  rules, compared by their sorted templates (`helper_conflict`). A content-named helper is declared with its first
+  reader's column names, so a declaration is its column types.
+- **A module reads its scope's bound families' declarations.** Lowered against git's modules, a module failed with
+  "bound-family: undeclared relation git_object_request": `bound_family::lower` looked up an inherited family's
+  relations in the module's own version, which leaves its scope's declarations out. It reads them from the scope's
+  seeded header too. The whole lowering never met this, as the family's declaration was in its one module.
+
+T1 `a_program_linked_from_its_modules_is_its_whole_lowering` (two programs of every pack and of the phase programs; the
+spike runs them all) and T8 `a_link_of_modules_that_clash_fails`. Stage B is the union as a view over the images
+(below), which removes `link_versions`' copying and `AppendModule`.
+
 **Why the tail stays Rust.** The tail's whole-program questions (which core relations are read, which kind sets are
 read) belong to preparation's fact spaces (0246 §3, 0225 §5).
 

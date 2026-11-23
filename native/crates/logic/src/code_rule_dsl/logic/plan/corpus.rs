@@ -6525,11 +6525,11 @@ fn run_observed_within(
                 asked.sort_by_key(|r| r.get(1).copied().unwrap_or_default());
                 let mut out = Vec::new();
                 for row in asked {
-                    let [key, _, files, scope] = row.as_slice() else { return Err(Error::Plan(format!("{rel} takes a key, a rank, files and a scope"))); };
+                    let [key, _, files, scope, reached] = row.as_slice() else { return Err(Error::Plan(format!("{rel} takes a key, a rank, files, a scope and its files"))); };
                     let key_text = text(*key)?;
                     // A module that does not lower is not answered: a program that reads it lowers it where it
                     // reads it, and meets the error there, in its own place.
-                    let image = match crate::code_rule_dsl::logic::rr::lower_planned_module(&key_text, &text(*files)?, &text(*scope)?) {
+                    let image = match crate::code_rule_dsl::logic::rr::lower_planned_module(&key_text, &text(*files)?, &text(*scope)?, &text(*reached)?) {
                         Ok(image) => image,
                         Err(e) => {
                             crate::code_rule_dsl::logic::profile::decision("a module phase 0 could not lower (decision 0639 §3)", || e.to_string());

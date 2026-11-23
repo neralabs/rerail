@@ -1146,7 +1146,7 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
     let version = std::mem::take(&mut l.out).version(std::mem::take(&mut l.prog))?;
     // A bound family's members (`.pragma "bound-family"`, its own and its includes'): each reader's request, and the
     // completeness a negated member needs.
-    let version = bound_family::lower(&version, &seeds.families, &l.deps)?.unwrap_or(version);
+    let version = bound_family::lower(&version, &seeds.families, &seeds.l.prog, &l.deps)?.unwrap_or(version);
     // Each `.shape` names what its rules read, in the version: a relation of their body, and the variables it waits
     // for.
     shapes_hold(&version, &shapes)?;
@@ -1599,14 +1599,81 @@ pub fn link_versions(modules: Vec<Module>) -> Result<LinkedVersions, Error> {
     append_fields(&mut l.prog.fields(), &*first, &mut stated, l.stated);
     l.stated = stated;
     l.appended = first.size();
+    // Each helper's module, by its name: the union keeps one, whose rules every module that names it must give.
+    let mut linked: Vec<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>> = vec![std::sync::Arc::clone(&v)];
+    let mut home: std::collections::HashMap<String, usize> = l.named.iter().map(|h| (h.clone(), 0)).collect();
     let mut appended = Vec::new();
     for m in modules {
+        for h in &m.l.named {
+            match home.get(h) {
+                Some(&k) if helper_rules(&linked[k], h) != helper_rules(&m.version, h) => {
+                    return Err(Error::Syntax(format!("helper_conflict: {h} is two helpers, its rules differ between two modules (decision 0639 §4)")));
+                }
+                Some(_) => {}
+                None => {
+                    home.insert(h.clone(), linked.len());
+                }
+            }
+        }
+        link_conflict(&l.prog.fields(), &*m.version)?;
+        linked.push(std::sync::Arc::clone(&m.version));
         let (own, b_stated) = l.link(m)?;
         appended.push((std::sync::Arc::clone(&own), l.stated, b_stated));
         append_fields(&mut l.prog.fields(), &*own, &mut l.stated, b_stated);
     }
     let lowered = whole_front(l)?;
     Ok(LinkedVersions { first, appended, lowered })
+}
+
+/// Module `m` with its helper `from` named `to`, its rules and its fields renamed (`relinked`): a test's way to build
+/// two modules whose helpers of one name differ (decision 0639 T8).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_helper_renamed(mut m: Module, from: &str, to: &str) -> Result<Module, Error> {
+    let rename = std::collections::HashMap::from([(from.to_owned(), to.to_owned())]);
+    m.version = relinked(&m.version, &rename, &[])?;
+    for h in m.l.named.iter_mut().filter(|h| *h == from) {
+        *h = to.to_owned();
+    }
+    Ok(m)
+}
+
+/// The names module `m`'s walk gave its helpers (decision 0639 §4).
+pub fn helper_names(m: &Module) -> &[String] {
+    &m.l.named
+}
+
+/// Helper `h`'s rules in `v`, each as its template (`template_bytes`), sorted: what a helper of its name is.
+fn helper_rules(v: &crate::code_rule_dsl::logic::program_image::Version, h: &str) -> Vec<Vec<u8>> {
+    let mut rules: Vec<Vec<u8>> = v.rules().filter(|r| v.rel_name(r.head().rel()) == h).map(|r| template_bytes(v, r)).collect();
+    rules.sort();
+    rules
+}
+
+/// The union's conflicts (decision 0639 §4's `link_conflict`): a relation module `b` declares with other column types,
+/// makes natively or gives a kind set, which the modules linked before it (`a`) give otherwise. No library has one (E7), and a link
+/// has no order to decide one by, so it is an error.
+pub fn link_conflict(a: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), b: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized)) -> Result<(), Error> {
+    let clash = |what: &str, rel: &str| Err(Error::Syntax(format!("link_conflict: two modules give {rel} two {what} (decision 0639 §4)")));
+    for rel in b.declared_names() {
+        // A declaration is its columns' types: a helper named by content is declared with its first reader's names.
+        let types = |cols: Option<Vec<(String, String)>>| cols.map(|cols| cols.into_iter().map(|(_, t)| t).collect::<Vec<_>>());
+        if a.declares(&rel) && types(a.columns_of(&rel)) != types(b.columns_of(&rel)) {
+            return clash("declarations", &rel);
+        }
+    }
+    let theirs = a.natives();
+    for (rel, n) in b.natives() {
+        if theirs.get(&rel).is_some_and(|m| *m != n) {
+            return clash("natives", &rel);
+        }
+    }
+    let theirs = a.kindsets();
+    for (rel, k) in b.kindsets() {
+        if theirs.get(&rel).is_some_and(|m| *m != k) {
+            return clash("kind sets", &rel);
+        }
+    }
+    Ok(())
 }
 
 /// A module's fields (`Lowerer::link`), `b`'s, added to `a`'s, the modules' linked so far: a version's edit's or a
