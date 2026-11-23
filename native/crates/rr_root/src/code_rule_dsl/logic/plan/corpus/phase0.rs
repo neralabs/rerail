@@ -221,14 +221,13 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     if let Some(images) = &images {
         let at = crate::code_rule_dsl::logic::rr::image_store_path();
         let retained = crate::code_rule_dsl::logic::profile::shared::<PhaseZeroRetained>();
-        for (seed, graph) in seeds.iter().zip(&found) {
-            if let Some(graph) = graph {
-                let key = images.key(seed);
-                if retained.0.lock().expect("phase 0's retained images").insert((at.clone(), key)) {
-                    crate::code_rule_dsl::logic::rr::retain_graph_image(images.store(), key, || images.encode(graph));
-                }
-            }
-        }
+        // Retained together: one read of the keys kept, their leases renewed together, and those not kept written
+        // as one record (`keep_graph_images`), so they lie in one segment.
+        let fresh: Vec<(crate::content_store::HashKey, &Graph)> = {
+            let mut held = retained.0.lock().expect("phase 0's retained images");
+            seeds.iter().zip(&found).filter_map(|(seed, graph)| Some((images.key(seed), graph.as_deref()?))).filter(|(key, _)| held.insert((at.clone(), *key))).collect()
+        };
+        crate::code_rule_dsl::logic::rr::retain_graph_images(images.store(), fresh.iter().map(|(key, _)| *key).collect(), |i| images.encode(fresh[i].1));
     }
     let wanted: Vec<Seed> = {
         let mut w: Vec<Seed> = seeds.iter().zip(&found).filter(|(_, g)| g.is_none()).map(|(s, _)| s.clone()).collect();
@@ -293,9 +292,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         // the same plans (`the_run_after_a_cold_one_writes_nothing`). Clearing them here as well (f7e047997, from
         // before images kept them) made the run that derived a graph name none and the run that read it name them.
         if let Some(images) = &images {
-            for (seed, g) in &made {
-                crate::code_rule_dsl::logic::rr::keep_graph_image(images.store(), images.key(seed), images.encode(g));
-            }
+            crate::code_rule_dsl::logic::rr::keep_graph_images(images.store(), made.iter().map(|(seed, g)| (images.key(seed), images.encode(g))).collect());
         }
         // A test store's template is filled in whichever test process asks first (`test_store`): its graphs are not
         // kept for the process, whose own runs then derived none, and prepared one program fewer than a process that

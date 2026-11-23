@@ -986,37 +986,66 @@ pub(in crate::code_rule_dsl) fn graph_images<T>(store: Option<&crate::content_st
 }
 
 /// A process can first read this graph for a different store. Keep it where this reader can find it on restart.
-pub(in crate::code_rule_dsl) fn retain_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, encode: impl FnOnce() -> Vec<u8>) {
+pub(in crate::code_rule_dsl) fn retain_graph_images(store: Option<&crate::content_store::ContentStore>, keys: Vec<crate::content_store::HashKey>, encode: impl Fn(usize) -> Vec<u8>) {
     let Some(store) = store else { return };
-    if images::shipped().is_some_and(|bundle| bundle.get(key).is_some()) { return; }
-    if let Ok(Some(id)) = store.source_by_alias(key) {
-        renew_image(store, id);
-    } else {
-        keep_graph_image(Some(store), key, encode());
+    let shipped = images::shipped();
+    let mut renew = Vec::new();
+    let mut keep = Vec::new();
+    for (i, key) in keys.into_iter().enumerate() {
+        if shipped.is_some_and(|bundle| bundle.get(key).is_some()) {
+            continue;
+        }
+        match store.source_by_alias(key) {
+            Ok(Some(id)) => renew.push(id),
+            _ => keep.push((key, encode(i))),
+        }
     }
+    renew_images(store, &renew);
+    keep_graph_images(Some(store), keep);
 }
 
-/// Keeps a graph's image (`graph_images`) where none is kept under its key yet. A seed's key names the seed, not the
-/// files its graph reached, so an edited library gives the same key another graph: the store's alias holds one
-/// image, and the first stays. A run then finds it does not hold (`Graph::holds`) and derives the graph, as without
-/// images. The shipped bundle's graphs are its library's; exported, the last derived is the one written.
-pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, bytes: Vec<u8>) {
+/// Keeps the graphs' images (`graph_images`) of one call of phase 0, each where none is kept under its key yet, as one
+/// record whose images the writer places in one segment: one record each, every image was a segment of its own, and a
+/// warm run that read the 317 seeds' graphs opened a file for each segment they lay in (22 ms of its 420). A seed's key
+/// names the seed, not the files its graph reached, so an edited library gives the same key another graph: the
+/// store's alias holds one image, and the first stays. A run then finds it does not hold (`Graph::holds`) and derives
+/// the graph, as without images. The shipped bundle's graphs are its library's; exported, the last derived is the one
+/// written.
+pub(in crate::code_rule_dsl) fn keep_graph_images(store: Option<&crate::content_store::ContentStore>, graphs: Vec<(crate::content_store::HashKey, Vec<u8>)>) {
     use crate::content_store::write_back::{Key, Syms};
-    const WHAT: &str = "phase 0's graph of a seed";
-    images::export(key, &bytes);
-    let Some(store) = store else { return };
-    // A record of its own (decision 0306), dropped where the queue is full, as `keep_image`'s: the graph in its byte
-    // area, the first kept under its key staying.
-    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
-        let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body(WHAT, body)?;
-        if cx.store.source_by_alias(key)?.is_some() {
-            return Ok(());
-        }
-        let id = cx.store.put_source(cx.bytes, &[key])?;
-        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    const WHAT: &str = "phase 0's graphs of seeds";
+    for (key, bytes) in &graphs {
+        images::export(*key, bytes);
     }
-    let queued = Key::of(&[WHAT.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
-    store.queue_record(Syms::None, WHAT, vec![queued], &key, Some(bytes), apply, true);
+    let Some(store) = store else { return };
+    if graphs.is_empty() {
+        return;
+    }
+    // The keys the body, the images the pieces, in the same order.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let keys: Vec<crate::content_store::HashKey> = crate::content_store::record::codec::from_body(WHAT, body)?;
+        if keys.len() != cx.pieces.len() {
+            return Err(crate::content_store::StoreError::Invalid(format!("{WHAT}: {} keys, {} images", keys.len(), cx.pieces.len())));
+        }
+        // The first kept under a key stays.
+        let mut new = Vec::with_capacity(keys.len());
+        for (i, key) in keys.iter().enumerate() {
+            if cx.store.source_by_alias(*key)?.is_none() {
+                new.push(i);
+            }
+        }
+        let aliases: Vec<[crate::content_store::HashKey; 1]> = new.iter().map(|&i| [keys[i]]).collect();
+        let sources: Vec<(&[u8], crate::content_store::HashKey, &[crate::content_store::HashKey])> =
+            new.iter().zip(&aliases).map(|(&i, a)| { let b: &[u8] = (*cx.pieces[i]).as_ref(); (b, crate::content_store::HashKey::sha256(b), &a[..]) }).collect();
+        for id in cx.store.put_sources_placed(&sources)? {
+            cx.store.pin_source(id, IMAGE_OWNER, image_lease())?;
+        }
+        Ok(())
+    }
+    let queued: Vec<Key> = graphs.iter().map(|(key, _)| Key::of(&[WHAT.as_bytes(), &key.sha256_bytes().unwrap_or_default()])).collect();
+    let keys: Vec<crate::content_store::HashKey> = graphs.iter().map(|(k, _)| *k).collect();
+    let pieces: Vec<crate::content_store::record::Bytes> = graphs.into_iter().map(|(_, b)| std::sync::Arc::new(b) as crate::content_store::record::Bytes).collect();
+    store.queue_record_held(Syms::None, WHAT, queued, &keys, pieces, apply, true);
 }
 
 /// The lease of image `id`, read by this run, renewed (`keep_image`) once more than half of it has run: a run that reads
