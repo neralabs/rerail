@@ -56,6 +56,46 @@
   "evidence": "Lines 195-223 sit between `// oxlint-disable react-hooks/rules-of-hooks` (line 194) and `// oxlint-enable react-hooks/rules-of-hooks` (line 224). ESLint reads no `oxlint-disable` comment and reports the conditional Hook call; the port carries `suppress.oxlint` `rules-of-hooks` (Oxlint 1.88.0 implements react-hooks/rules-of-hooks and matches a directive name with a `/` by its part after the last `/`), so the block silences it as it silences Oxlint, by design (docs/pack-format.md, check 4). With the two comments renamed the port reports all four lines."
  },
  {
+  "rule": "react-hooks-rules-of-hooks",
+  "source": "samples",
+  "path": "cypress-scripts-unit-semantic-commits-parse-changelog-spec.ts-0082cc301389/scripts/unit/semantic-commits/parse-changelog-spec.ts",
+  "line": 6,
+  "kind": "upstream-wrong",
+  "evidence": "`use(chaiAsPromised)` at the top level of a test file calls chai's `use`, which the file imports from chai (`import { expect, use } from 'chai'`, line 1), not React's `use` Hook. eslint-plugin-react-hooks 7.1.1's isHook goes by the callee's name alone (`use`, `useX`, or `Namespace.use…` with a PascalCase namespace; checked in src/rules/RulesOfHooks.ts at the pinned commit and by running the plugin on the same lines), so ESLint labels it a Hook call; the port does not take a `use` the file binds to anything but React for React's `use` (packs/react/README.md)."
+ },
+ {
+  "rule": "react-hooks-rules-of-hooks",
+  "source": "samples",
+  "path": "lepton-app-utilities-markdown-index.js-38538a07e157/app/utilities/markdown/index.js",
+  "line": 13,
+  "kind": "upstream-wrong",
+  "evidence": "`Md.use(MdTaskList)` registers a markdown-it plugin: `Md` is the file's own `const Md = MarkdownIt({...})` (line 8), not React. eslint-plugin-react-hooks 7.1.1's isHook goes by the callee's name alone (`use`, `useX`, or `Namespace.use…` with a PascalCase namespace; checked in src/rules/RulesOfHooks.ts at the pinned commit and by running the plugin on the same lines), so ESLint labels it a Hook call; the port does not take a `use` the file binds to anything but React for React's `use` (packs/react/README.md)."
+ },
+ {
+  "rule": "react-hooks-rules-of-hooks",
+  "source": "samples",
+  "path": "polar-clients-apps-web-e2e-utils-test.ts-e9cb20398534/clients/apps/web/e2e/utils/test.ts",
+  "line": 48,
+  "kind": "upstream-wrong",
+  "evidence": "`await use(app)`, inside a `try` block calls the `use` parameter of a Vitest fixture function (`async ({ ... }, use) => ...` in `base.extend`), which hands the fixture's value to the test; it is not React's `use` Hook. eslint-plugin-react-hooks 7.1.1's isHook goes by the callee's name alone (`use`, `useX`, or `Namespace.use…` with a PascalCase namespace; checked in src/rules/RulesOfHooks.ts at the pinned commit and by running the plugin on the same lines), so ESLint labels it a Hook call; the port does not take a `use` the file binds to anything but React for React's `use` (packs/react/README.md)."
+ },
+ {
+  "rule": "react-hooks-rules-of-hooks",
+  "source": "samples",
+  "path": "polar-clients-apps-web-e2e-utils-test.ts-e9cb20398534/clients/apps/web/e2e/utils/test.ts",
+  "line": 54,
+  "kind": "upstream-wrong",
+  "evidence": "`await use((specs) => openCheckout(app, specs))` calls the `use` parameter of a Vitest fixture function (`async ({ ... }, use) => ...` in `base.extend`), which hands the fixture's value to the test; it is not React's `use` Hook. eslint-plugin-react-hooks 7.1.1's isHook goes by the callee's name alone (`use`, `useX`, or `Namespace.use…` with a PascalCase namespace; checked in src/rules/RulesOfHooks.ts at the pinned commit and by running the plugin on the same lines), so ESLint labels it a Hook call; the port does not take a `use` the file binds to anything but React for React's `use` (packs/react/README.md)."
+ },
+ {
+  "rule": "react-hooks-rules-of-hooks",
+  "source": "samples",
+  "path": "polar-clients-apps-web-e2e-utils-test.ts-e9cb20398534/clients/apps/web/e2e/utils/test.ts",
+  "line": 57,
+  "kind": "upstream-wrong",
+  "evidence": "`await use({...})` calls the `use` parameter of a Vitest fixture function (`async ({ ... }, use) => ...` in `base.extend`), which hands the fixture's value to the test; it is not React's `use` Hook. eslint-plugin-react-hooks 7.1.1's isHook goes by the callee's name alone (`use`, `useX`, or `Namespace.use…` with a PascalCase namespace; checked in src/rules/RulesOfHooks.ts at the pinned commit and by running the plugin on the same lines), so ESLint labels it a Hook call; the port does not take a `use` the file binds to anything but React for React's `use` (packs/react/README.md)."
+ },
+ {
   "rule": "react-no-array-index-key",
   "source": "samples",
   "path": "streamlit-frontend-lib-src-components-widgets-dateinput-reorderedsegments.tsx-ab7f6c2959b5/frontend/lib/src/components/widgets/DateInput/ReorderedSegments.tsx",

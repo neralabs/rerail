@@ -13,7 +13,7 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   many of its conflicts are open and not quiet, Settings).
 - `routes.js` holds the routes as pure functions of the URL: `#overview`, `#pack/<id>`, `#created`, `#packs`,
   `#packs?review=1`, `#create`, `#history` (`?rule=<id>`, and `?outcome=steered|logged` for its chip), `#sessions`
-  (`?filter=violations|declined` for its chip), `#settings`, `#merge` (`?conflict=<id>` brings that conflict
+  (`?filter=violations|declined` for its chip), `#settings` (`?section=about` scrolls to About Rerail), `#merge` (`?conflict=<id>` brings that conflict
   into view, as the session's line links it) and `#rule/<id>`, and the links from before v8 (`#rules`, `#activity`,
   `#rule-packs`). `shell.js` applies them and holds what every view shares: render on demand, the toast and clipboard,
   the theme, the writes, opening and closing the sheet, navigation.
@@ -42,8 +42,8 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as filtered and sorted, the
   whole-pack switch's state, the catalog's kinds and order), `history-model.js` (which rules History by rule lists under
   its All · Log only · Steered · Declined chips, each violation in one outcome, and which one it shows), `sessions-model.js` (a session's events as turns and tool
-  calls, and the steers its coding agent declined, joined to their cards), `settings-model.js` (coding agent states and
-  the install date), `repo-rules.js` (what Settings and the repository menu say of a repository's rule counts) and
+  calls, and the steers its coding agent declined, joined to their cards), `settings-model.js` (coding agent states,
+  the install date, and the version: its release notes and whether a newer one is out), `repo-rules.js` (what Settings and the repository menu say of a repository's rule counts) and
   `merge-model.js` (Merge Assist's conflicts and their order, its status strip, readiness checklist and Settings form,
   the sidebar's count, and which pull request links are safe to open).
   `format.js` formats numbers and dates; `dom.js` builds and reconciles elements.

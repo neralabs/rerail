@@ -37,7 +37,7 @@ export class CommandTimeoutError extends Error {
 const lastLines = (text: string): string => text.split(/\r?\n/u).filter(line => line.trim() !== "").slice(-TIMEOUT_OUTPUT_LINES).join("\n");
 
 /** How long a command stopped for running too long has to exit after SIGTERM before it is killed. */
-const KILL_GRACE_MS = 5_000;
+export const KILL_GRACE_MS = 5_000;
 
 /**
  * Stops `child` once it has run `timeoutMs`, calling `stopping` first: SIGTERM, then SIGKILL if it is still running
