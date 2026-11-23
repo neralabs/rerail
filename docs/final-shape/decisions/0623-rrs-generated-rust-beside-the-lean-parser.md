@@ -1,6 +1,7 @@
 # 0623: `.rerail`'s generated Rust, read beside the lean parser
 
-Status: the comparison is made; the fixes are in the order below. The item is the user's (2026-11-22): "please
+Status: the comparison is made, and the order below is done but for step 3's second part (a common token as one table
+load). The item is the user's (2026-11-22): "please
 figure out how JIT is faster than AOT, that should not ever be true".
 
 ## The question
