@@ -146,7 +146,7 @@ pub fn translate_view_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str) -
         let outer = signature(f, &format!("{prefix}{n}"), family, hot)?;
         writeln!(head, "{outer};").unwrap();
         let args: String = (family.pointers()..f.signature.params.len()).map(|k| format!(",a{k}")).collect();
-        let pass = format!("t,a0,tt,v,ll{args}");
+        let pass = format!("t,a0,tt,v,ll,lo{args}");
         writeln!(
             each,
             "{outer}{{\n uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);\n if(clif_format==16u) return {prefix}f16_{n}({pass});\n if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ({ret},tt,v,{prefix}f16z_{n}({pass}))\n return {prefix}f15_{n}({pass});\n}}"
@@ -254,7 +254,9 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
         // 0612: in its tape, or in a slab's room beside it), whose words are the tape's and read as the tape's.
         Family::Relation => ("CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0", "t"),
         Family::Lines => ("UKL_GLOBAL const uint8_t* t,uint64_t a0", "t"),
-        Family::View => ("UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll", "t"),
+        // A view's lines are their home's base (8-byte aligned, as `ukl/memory.h` reads it) and their offset in it
+        // (`lo`): a format 16 tape's index lies at any multiple of 4, and CUDA faults on a word read at one of 8 + 4.
+        Family::View => ("UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t lo", "t"),
     }
 }
 
@@ -892,9 +894,9 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             let more: Vec<&String> = args.iter().skip(to.pointers()).collect();
             let pointers = match (family, to) {
                 (Family::View, Family::Tape) => "tt,v".to_owned(),
-                (Family::View, Family::Lines) => "ll,0".to_owned(),
+                (Family::View, Family::Lines) => "ll,lo".to_owned(),
                 (Family::Lines, Family::Lines) => "t,a0".to_owned(),
-                (Family::View, Family::View) => format!("t,{},tt,v,ll", args[0]),
+                (Family::View, Family::View) => format!("t,{},tt,v,ll,lo", args[0]),
                 (_, Family::Relation) => format!("t,{}", args[0]),
                 (Family::Tape, _) => pointers(family).1.to_owned(),
                 (from, to) => return Err(format!("a {from:?} read's call of a {to:?} read")),

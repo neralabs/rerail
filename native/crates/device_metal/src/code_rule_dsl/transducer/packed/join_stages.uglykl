@@ -83,18 +83,18 @@ UKL_COLD int64_t vread_dir(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t 
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
     UKL_GLOBAL const uint8_t* l = view_lines(d, e);
     switch (k) {
-        case 0u: return (int64_t)clif_view_node(c, e->entry, t, v, l, i, col);
-        case 1u: return (int64_t)clif_view_child(c, e->entry, t, v, l, i, col);
-        case 2u: return (int64_t)clif_view_field(c, e->entry, t, v, l, i, col);
-        case 3u: return (int64_t)clif_view_core(c, e->entry, t, v, l, i, col);
-        case 4u: return (int64_t)clif_view_line(c, e->entry, t, v, l, i, col);
-        case 5u: return (int64_t)clif_view_loc_line(c, e->entry, t, v, l, i, col);
-        case 6u: return (int64_t)clif_view_loc_end(c, e->entry, t, v, l, i, col);
-        case 7u: return (int64_t)clif_view_loc_col(c, e->entry, t, v, l, i, col);
-        case 8u: return (int64_t)clif_view_loc_docof(c, e->entry, t, v, l, i, col);
-        case 9u: return (int64_t)clif_view_tape(c, e->entry, t, v, l, i, col);
-        case 10u: return (int64_t)clif_view_depth(c, e->entry, t, v, l, i, col);
-        default: return (int64_t)clif_view_order(c, e->entry, t, v, l, i, col);
+        case 0u: return (int64_t)clif_view_node(c, e->entry, t, v, l, e->lines, i, col);
+        case 1u: return (int64_t)clif_view_child(c, e->entry, t, v, l, e->lines, i, col);
+        case 2u: return (int64_t)clif_view_field(c, e->entry, t, v, l, e->lines, i, col);
+        case 3u: return (int64_t)clif_view_core(c, e->entry, t, v, l, e->lines, i, col);
+        case 4u: return (int64_t)clif_view_line(c, e->entry, t, v, l, e->lines, i, col);
+        case 5u: return (int64_t)clif_view_loc_line(c, e->entry, t, v, l, e->lines, i, col);
+        case 6u: return (int64_t)clif_view_loc_end(c, e->entry, t, v, l, e->lines, i, col);
+        case 7u: return (int64_t)clif_view_loc_col(c, e->entry, t, v, l, e->lines, i, col);
+        case 8u: return (int64_t)clif_view_loc_docof(c, e->entry, t, v, l, e->lines, i, col);
+        case 9u: return (int64_t)clif_view_tape(c, e->entry, t, v, l, e->lines, i, col);
+        case 10u: return (int64_t)clif_view_depth(c, e->entry, t, v, l, e->lines, i, col);
+        default: return (int64_t)clif_view_order(c, e->entry, t, v, l, e->lines, i, col);
     }
 }
 
@@ -268,11 +268,11 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     UKL_GLOBAL const uint8_t* ch = view_block(d);
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
     UKL_GLOBAL const uint8_t* ls = view_lines(d, e);
-    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, (uint32_t)((uint64_t)key & 0xfffffffful));
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, e->lines, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
     uint32_t first = e->rows[1];
     if (l == 0u) { *lo = first; *hi = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[1] : s->nr; return; }
-    uint32_t c = clif_view_child_first(ch, e->entry, t, e->view, ls, l);
+    uint32_t c = clif_view_child_first(ch, e->entry, t, e->view, ls, e->lines, l);
     if (c == NONE) return;
     *lo = first + c; *hi = NONE; *how = 2u;
 }
@@ -281,7 +281,7 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
 UKL_INLINE uint32_t child_next(StageP s, uint32_t r) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 1u, r, NONE)];
-    uint32_t n = clif_view_child_next(view_block(d), e->entry, view_tape(d, e), e->view, view_lines(d, e), r - e->rows[1]);
+    uint32_t n = clif_view_child_next(view_block(d), e->entry, view_tape(d, e), e->view, view_lines(d, e), e->lines, r - e->rows[1]);
     return n == NONE ? NONE : e->rows[1] + n;
 }
 
@@ -314,25 +314,25 @@ UKL_INLINE void by_has(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIV
     UKL_GLOBAL const uint8_t* ch = view_block(d);
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
     UKL_GLOBAL const uint8_t* ls = view_lines(d, e);
-    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, (uint32_t)((uint64_t)key & 0xfffffffful));
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, e->lines, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
     uint32_t first = e->rows[0];
     if (s->v_has == 1u) {
         if (!has_member(s, first + l)) return;
-        uint32_t u = clif_view_up(ch, e->entry, t, e->view, ls, l);
+        uint32_t u = clif_view_up(ch, e->entry, t, e->view, ls, e->lines, l);
         if (u == NONE) return;
         *lo = first + u; *hi = NONE; *how = 3u;
         return;
     }
     *lo = first + l + 1u;
-    *hi = first + clif_view_end(ch, e->entry, t, e->view, ls, l);
+    *hi = first + clif_view_end(ch, e->entry, t, e->view, ls, e->lines, l);
 }
 
 // The next numbered ancestor's row of node row `q`, or `NONE`: its document as `vread` finds it, then the climb.
 UKL_INLINE uint32_t has_up(StageP s, uint32_t q) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 0u, q, NONE)];
-    uint32_t u = clif_view_up(view_block(d), e->entry, view_tape(d, e), e->view, view_lines(d, e), q - e->rows[0]);
+    uint32_t u = clif_view_up(view_block(d), e->entry, view_tape(d, e), e->view, view_lines(d, e), e->lines, q - e->rows[0]);
     return u == NONE ? NONE : e->rows[0] + u;
 }
 
