@@ -10,21 +10,7 @@ use std::collections::{BTreeMap, HashMap};
 /// `git_tree_entries.object_kind_id` of a subtree.
 const KIND_TREE: i64 = 1;
 
-/// One path whose object changed between two root trees: a directory (its tree hash) or a file
-/// or submodule (its blob or commit hash). `digest` is `ABSENT` where the path no longer exists.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TreeChange {
-    pub path: String,
-    pub tree: bool,
-    pub digest: [u8; 32],
-}
-
-/// The changes between two root trees and how many stored trees the walk read.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct TreeDiff {
-    pub changes: Vec<TreeChange>,
-    pub trees_read: usize,
-}
+pub use rerail_store_base::content_store::{TreeChange, TreeDiff};
 
 struct Entry {
     tree: bool,

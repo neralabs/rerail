@@ -1319,3 +1319,17 @@ dropped the `--timings` runs (2026-11-22).
       store and facts-base, next.
     - Checks: the workspace with `--tests` is clean on Linux, and the touched crates on macOS. Tests (Linux): metal,
       metal-programs, error, compiler and parser_tests' block tests, 108.
+  - **10b, the store.** It had 63 crates above it. Above facts-base, no crate's library calls the store. With an
+    empty `ContentStore` in their facades, the libraries of transducer-base, logic-core, run, adapters and rr all
+    compile. Only names under its path held them: its records, the upkeep and the atoms. facts-base calls 29 of its
+    methods and facts two (`intern_atoms`, `atoms_handle`); their tests open stores. So the store's interface is
+    those calls and its records, below it; the store and its atoms go above. In three parts:
+    - **10b-1, the records.** What the crates above hold of the store is data. A tape's or a source's bytes where
+      they lie (`ObjectBytes`, `ObjectFrame`, `TapeFrame`, `TapeBytes`), the programs recorded with a file's tape,
+      the derivations (`Binding`, `Derivation*`, `ABSENT`), `Sym`, the tree diff, a tape's prefilter rows, its
+      positional search index and lookups, and a queued write's `Key` are now in `rerail-store-base`. The store
+      re-exports each at its old path. `ObjectFrame::of` and `TapeFrame::set_programs` replace the private fields the
+      store wrote.
+    - **10b-2, the store's calls**: a trait in store-base that `ContentStore` implements. facts-base holds the store
+      through it.
+    - **10b-3, the atoms**: the interner as a crate of its own below the store, for facts, run and setfix.

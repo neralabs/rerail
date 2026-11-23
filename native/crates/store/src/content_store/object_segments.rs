@@ -8,7 +8,7 @@
 //! one segment and queued as one job, its tapes read there meanwhile ([`QueuedTape`]).
 
 use super::rows::{generation, intern_hash};
-use super::segments::{ALIGN, Place, SealedSegments, SegmentBytes, SegmentMaps, SegmentWriter};
+use super::segments::{ALIGN, Place, SealedSegments, SegmentMaps, SegmentWriter};
 use super::write_back::{Closed, Gather, Held, Key, Kind, Syms, Work};
 use super::{ContentStore, HashKey, SourceId, StoreError, StoreResult, TapeId, TapePayload};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -43,107 +43,7 @@ pub fn copy_beside(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// A tape's bytes where they live, which the writer takes as they are (decision 0353 step 4a: a tape's home, a
-/// slab's room).
-pub type TapeBytes = Arc<dyn TapeHeld>;
-
-/// What holds a tape's bytes: any byte owner, which its maker can find again (`Any`: the engine's tape home, whose
-/// room a later read of the queued tape reads in place).
-pub trait TapeHeld: AsRef<[u8]> + std::any::Any + Send + Sync {}
-impl<T: AsRef<[u8]> + std::any::Any + Send + Sync> TapeHeld for T {}
-
-/// A stored object's bytes: decompressed into memory (a row of its own), or where they are in a segment, mapped.
-#[derive(Clone)]
-pub enum ObjectBytes {
-    Heap(Arc<Vec<u8>>),
-    Mapped(SegmentBytes),
-    /// A tape queued for the writer, in its home (decision 0353 step 4a: a slab's room, read there).
-    Tape(TapeBytes),
-}
-
-impl std::ops::Deref for ObjectBytes {
-    type Target = [u8];
-    fn deref(&self) -> &[u8] {
-        match self {
-            ObjectBytes::Heap(b) => b,
-            ObjectBytes::Mapped(b) => b.bytes(),
-            ObjectBytes::Tape(b) => (**b).as_ref(),
-        }
-    }
-}
-
-impl ObjectBytes {
-    /// Its bytes as a vector of its own: a decompressed one as it is, a mapped one copied.
-    pub fn into_vec(self) -> Vec<u8> {
-        match self {
-            ObjectBytes::Heap(b) => Arc::try_unwrap(b).unwrap_or_else(|b| (*b).clone()),
-            ObjectBytes::Mapped(b) => b.bytes().to_vec(),
-            ObjectBytes::Tape(b) => (*b).as_ref().to_vec(),
-        }
-    }
-}
-
-impl AsRef<[u8]> for ObjectBytes {
-    fn as_ref(&self) -> &[u8] {
-        self
-    }
-}
-
-impl ObjectBytes {
-    /// Whether they are read where a segment holds them, mapped: not decompressed, hashed or copied.
-    pub fn in_place(&self) -> bool {
-        matches!(self, ObjectBytes::Mapped(_))
-    }
-}
-
-impl std::fmt::Debug for ObjectBytes {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ObjectBytes({} bytes)", self.len())
-    }
-}
-
-/// A stored object as its row names it: its bytes as they are, in a segment of `<store>.objects/`, mapped. Every
-/// source and tape is kept so (decision 0295 step 5; no row holds an object's bytes since floor 7, 2026-11-19).
-#[derive(Clone)]
-pub struct ObjectFrame(SegmentBytes);
-
-impl std::fmt::Debug for ObjectFrame {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ObjectFrame({} bytes)", self.len())
-    }
-}
-
-impl ObjectFrame {
-    /// Its bytes where they are.
-    pub fn segment(&self) -> &SegmentBytes {
-        &self.0
-    }
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-    /// Its bytes, read in place: refused where they are not `raw_length` long, as its row says.
-    pub fn bytes(&self, raw_length: usize) -> std::io::Result<ObjectBytes> {
-        if self.0.len() != raw_length {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "an object's length"));
-        }
-        Ok(ObjectBytes::Mapped(self.0.clone()))
-    }
-    /// Its first `n` bytes.
-    pub fn head(&self, n: usize) -> &[u8] {
-        &self.0.bytes()[..n.min(self.0.len())]
-    }
-    /// Its bytes into `out`, which is their length: a load from the segment into the object's home (a slab's room).
-    pub fn copy_into(&self, out: &mut [u8]) -> std::io::Result<()> {
-        if self.0.len() != out.len() {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "an object's length"));
-        }
-        out.copy_from_slice(self.0.bytes());
-        Ok(())
-    }
-}
+pub use rerail_store_base::content_store::{ObjectBytes, ObjectFrame, TapeBytes, TapeHeld};
 
 /// A row's object: the range of a segment it names (`seg`, `seg_at`, `seg_len`). `None` when that segment is not
 /// there or holds no such range (`seg` -1: it went missing): the object is absent, made again.
@@ -151,7 +51,7 @@ pub(super) fn row_frame(maps: &mut SegmentMaps, seg: i64, at: i64, len: i64) -> 
     if seg <= 0 {
         return None;
     }
-    maps.at(Place { seg, at: at as u64, len: len as usize }).map(ObjectFrame)
+    maps.at(Place { seg, at: at as u64, len: len as usize }).map(ObjectFrame::of)
 }
 
 /// Objects a writer outside a run's waves stores (a standalone build's file, a publication's, a test's), as they

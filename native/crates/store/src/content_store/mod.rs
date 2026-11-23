@@ -339,21 +339,6 @@ pub struct UnindexedTape {
     pub image: ObjectBytes,
 }
 
-/// A program recorded with a file's tape (decision 0431 step 6, `TapeFrame::programs`): its row, its text, and its
-/// tape's frame.
-#[derive(Clone)]
-pub struct StoredProgram {
-    pub document: StoredDocument,
-    pub text: std::sync::Arc<CachedBytes>,
-    pub tape: TapeFrame,
-}
-
-impl std::fmt::Debug for StoredProgram {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StoredProgram").field("document", &self.document).field("text", &self.text.len()).finish()
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct StoredLocalResult {
     pub candidate: CandidateClause,
