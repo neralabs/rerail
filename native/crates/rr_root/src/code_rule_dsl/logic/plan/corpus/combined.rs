@@ -185,38 +185,78 @@ fn entry_read(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<([u8; 
 /// The entry `key` keeps, as recorded (its files not checked): its program's digest, the library files it read (a miss
 /// with no digest), and the paths its includes resolved through.
 pub(in crate::code_rule_dsl) fn read_record(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<ReadRecord>> {
-    // The store's entry, or, where the store has none, the one the engine ships (decision 0264).
-    let facts = match stored(store, key)? {
-        Some(facts) => facts,
-        None if store.source_by_hash(holder_key(key))?.is_some() => return Ok(None),
-        None => match rr::images::shipped().and_then(|b| b.get(shipped_key(key))) {
+    // The store's entry, read where it is kept (`Entries::visit`), or, where the store has none, the one the engine
+    // ships (decision 0264).
+    let mut record = RecordRows::default();
+    if store.source_by_hash(holder_key(key))?.is_some() {
+        let (found, bad) = ENTRIES.visit(store, Some(&[Entries::part(key)]), &|rel| [READ_FILE, PROGRAM, RESOLVES].contains(&rel), &mut |_, rel, row| {
+            record.row(rel, row.at, |c| row.text(c))
+        });
+        if found.is_empty() || !bad.is_empty() {
+            return Ok(None);
+        }
+    } else {
+        match rr::images::shipped().and_then(|b| b.get(shipped_key(key))) {
             Some(bytes) => {
                 crate::code_rule_dsl::prof::count("corpus.combined_shipped", 1);
                 let Ok(facts) = program_facts::decode(bytes) else { return Ok(None) };
-                facts
+                for (rel, rows) in &facts {
+                    for (at, row) in rows.iter().enumerate() {
+                        if !record.row(rel, at as i64, |c| match row.get(c) { Some(Value::Str(x)) => Some(x.clone()), _ => None }) {
+                            return Ok(None);
+                        }
+                    }
+                }
             }
             None => return Ok(None),
-        },
-    };
-    let mut read = Vec::new();
-    for row in facts.get(READ_FILE).into_iter().flatten() {
-        let [Value::Str(path), Value::Str(digest)] = row.as_slice() else { return Ok(None) };
-        let sha256 = if digest.is_empty() {
-            None
-        } else {
-            let Some(hash) = unhex(digest) else { return Ok(None) };
-            Some(hash)
-        };
-        read.push(LibraryFile { path: PathBuf::from(path.as_str()), sha256 });
+        }
     }
-    let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
-    let Some(digest) = unhex(digest) else { return Ok(None) };
-    let mut resolutions = Vec::new();
-    for row in facts.get(RESOLVES).into_iter().flatten() {
-        let [Value::Str(path), Value::Str(target)] = row.as_slice() else { return Ok(None) };
-        resolutions.push((PathBuf::from(path.as_str()), PathBuf::from(target.as_str())));
+    Ok(record.record())
+}
+
+/// An entry's read record, as its rows are read (`read_record`): each row with its place, in whatever order they come.
+#[derive(Default)]
+struct RecordRows {
+    files: Vec<(i64, LibraryFile)>,
+    program: Option<[u8; 32]>,
+    resolutions: Vec<(i64, (PathBuf, PathBuf))>,
+}
+
+impl RecordRows {
+    /// Takes a row of `rel` at place `at`, its cells' texts by `text`; false where it does not read.
+    fn row(&mut self, rel: &str, at: i64, text: impl Fn(usize) -> Option<crate::code_rule_dsl::logic::front::Name>) -> bool {
+        match rel {
+            READ_FILE => {
+                let (Some(path), Some(digest)) = (text(0), text(1)) else { return false };
+                let sha256 = if digest.is_empty() {
+                    None
+                } else {
+                    let Some(hash) = unhex(&digest) else { return false };
+                    Some(hash)
+                };
+                self.files.push((at, LibraryFile { path: PathBuf::from(path.as_str()), sha256 }));
+            }
+            PROGRAM => {
+                // The first row's.
+                if at == 0 {
+                    let Some(digest) = text(0).and_then(|d| unhex(&d)) else { return false };
+                    self.program = Some(digest);
+                }
+            }
+            RESOLVES => {
+                let (Some(path), Some(target)) = (text(0), text(1)) else { return false };
+                self.resolutions.push((at, (PathBuf::from(path.as_str()), PathBuf::from(target.as_str()))));
+            }
+            _ => {}
+        }
+        true
     }
-    Ok(Some(ReadRecord { program: digest, files: read, resolutions }))
+
+    fn record(mut self) -> Option<ReadRecord> {
+        self.files.sort_by_key(|(at, _)| *at);
+        self.resolutions.sort_by_key(|(at, _)| *at);
+        Some(ReadRecord { program: self.program?, files: self.files.into_iter().map(|(_, f)| f).collect(), resolutions: self.resolutions.into_iter().map(|(_, r)| r).collect() })
+    }
 }
 
 thread_local! {
@@ -374,8 +414,8 @@ impl Drop for Pins<'_> {
 pub fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
     // Stored already (decision 0228): named now, kept meanwhile by the run's collection lease (decision 0306 step 4).
     if cache.source_by_hash(holder_key(key)).ok().flatten().is_some() {
-        if let Some(facts) = ENTRIES.get(cache, Entries::part(key)) {
-            let found = Named::of(&facts).sources(cache).ok().unwrap_or_default();
+        if let Some(named) = Named::read(cache, key) {
+            let found = named.sources(cache).ok().unwrap_or_default();
             late.lock().expect("the late sources").extend(found);
         }
         return;
@@ -386,13 +426,13 @@ pub fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<
     }
     // The entry's facts, kept behind the run as it was recorded, read here (a read waits for that write, not for the
     // record's); the writer looks up the sources they name by their digests, after the record item that stores them.
-    let Some(facts) = ENTRIES.get(cache, Entries::part(key)) else { return };
+    let Some(named) = Named::read(cache, key) else { return };
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
         let named: Named = crate::content_store::record::codec::from_body("the combined program's text, named", body)?;
         cx.name(named.sources(cx.store)?);
         Ok(())
     }
-    cache.record("the combined program's text, named", Vec::new(), &Named::of(&facts), None, apply);
+    cache.record("the combined program's text, named", Vec::new(), &named, None, apply);
 }
 
 /// The SHA-256 key of the small source that holds texts `key`'s entry.
@@ -402,14 +442,6 @@ fn holder_key(key: &[u8; 32]) -> HashKey {
 
 fn holder_digest(key: &[u8; 32]) -> [u8; 32] {
     holder_key(key).sha256_bytes().expect("a sha256 key")
-}
-
-/// Texts `key`'s entry as the store keeps it: while the small source holding it is stored.
-fn stored(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<Facts>> {
-    if store.source_by_hash(holder_key(key))?.is_none() {
-        return Ok(None);
-    }
-    Ok(ENTRIES.get(store, Entries::part(key)))
 }
 
 /// What an entry names that a run reading it names too: its program's text (`PROGRAM`), the images it read or kept
@@ -422,12 +454,29 @@ struct Named {
 }
 
 impl Named {
-    fn of(facts: &Facts) -> Named {
-        let one = |rel: &str| facts.get(rel).into_iter().flatten().filter_map(|row| match row.as_slice() {
-            [Value::Str(digest)] => unhex(digest),
-            _ => None,
+    /// What texts `key`'s entry names, read where the store keeps it (`Entries::visit`): `None` where it keeps none,
+    /// or one that does not read.
+    fn read(store: &ContentStore, key: &[u8; 32]) -> Option<Named> {
+        let (mut program, mut images, mut runs) = (Vec::new(), Vec::new(), Vec::new());
+        let (found, bad) = ENTRIES.visit(store, Some(&[Entries::part(key)]), &|rel| [PROGRAM, IMAGE, RUN].contains(&rel), &mut |_, rel, row| {
+            // A digest that does not read is left out, as a row of another shape is.
+            if let Some(digest) = row.text(0).and_then(|d| unhex(&d)) {
+                match rel {
+                    PROGRAM => program.push((row.at, digest)),
+                    IMAGE => images.push((row.at, digest)),
+                    _ => runs.push((row.at, digest)),
+                }
+            }
+            true
         });
-        Named { program: one(PROGRAM).next(), images: one(IMAGE).collect(), runs: one(RUN).collect() }
+        if found.is_empty() || !bad.is_empty() {
+            return None;
+        }
+        let ordered = |mut rows: Vec<(i64, [u8; 32])>| {
+            rows.sort_by_key(|(at, _)| *at);
+            rows.into_iter().map(|(_, d)| d).collect::<Vec<_>>()
+        };
+        Some(Named { program: ordered(program).first().copied(), images: ordered(images), runs: ordered(runs) })
     }
 
     /// The sources the store keeps of what it names: the program's text, the images (by alias, or facts kept by

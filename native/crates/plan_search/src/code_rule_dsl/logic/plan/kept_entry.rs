@@ -103,88 +103,88 @@ impl Entries {
         self.read(store, None, None, None)
     }
 
-    fn read(&self, store: &ContentStore, only: Option<&[i64]>, mut numbers: Option<(&str, &mut dyn FnMut(&[i64]))>, rels: Option<&dyn Fn(&str) -> bool>) -> BTreeMap<i64, Facts> {
-        let mut out: BTreeMap<i64, Facts> = BTreeMap::new();
-        let mut placed: BTreeMap<i64, BTreeMap<String, Vec<(i64, Vec<Value>)>>> = BTreeMap::new();
-        let mut bad = BTreeSet::new();
-        let Ok(Some(kept)) = store.kept_space(&self.space()) else { return out };
+    /// Each row of the entries of `only` (every partition where `None`) of the relations `rels` keeps, as the block
+    /// holds it (`Row`), handed to `each` with its partition and relation: in the blocks' order, not the rows' places
+    /// (`Row::at` gives a row's), and nothing decoded but the cells a reader asks for, each atom's text read once for
+    /// the call. A reader reads its rows here, in place (decision 0353), not through a copy of them as values. `each`
+    /// returns whether the row reads: a partition with a row that does not, or of a relation whose name does not say
+    /// its cells' kinds, is in the second set, beside the partitions found.
+    pub fn visit(&self, store: &ContentStore, only: Option<&[i64]>, rels: &dyn Fn(&str) -> bool, each: &mut dyn FnMut(i64, &str, &Row<'_>) -> bool) -> (BTreeSet<i64>, BTreeSet<i64>) {
+        let (mut found, mut bad) = (BTreeSet::new(), BTreeSet::new());
+        let Ok(Some(kept)) = store.kept_space(&self.space()) else { return (found, bad) };
         let chain = kept.view();
         // One partition's read merges its own entries alone: the space holds one a program, every engine build's.
         let entries: Box<dyn Iterator<Item = rerail_blocks::kept::Kept<'_>> + '_> = match only {
             Some(parts) => Box::new(parts.iter().flat_map(|&p| chain.of_part(p))),
             None => chain.all(),
         };
-        // Each atom's text read once for the entry, shared by the rows that hold it (the relations' and rules' names
+        // Each atom's text read once for the call, shared by the rows that hold it (the relations' and rules' names
         // repeat across a program's rows): read per cell, they were most of a warm run's kept plans' read.
-        let mut texts: std::collections::HashMap<u32, Option<super::super::front::Name>> = std::collections::HashMap::new();
+        let texts = Texts { store, seen: std::cell::RefCell::new(std::collections::HashMap::new()) };
         for entry in entries.filter(|e| *e.key.ident == self.ident(e.key.rel)) {
             let part = entry.key.part;
             let Some((rel, kinds)) = entry.key.rel.rsplit_once('#') else { continue };
-            if rels.is_some_and(|keep| !keep(rel)) {
+            if !rels(rel) {
                 continue;
             }
+            found.insert(part);
             let kinds = kinds.as_bytes();
             if kinds.len() + 1 != entry.types.len() {
                 bad.insert(part);
                 continue;
             }
-            if let Some((want, each)) = numbers.as_mut()
-                && *want == rel
-                && kinds.iter().all(|&k| k == b'i')
-            {
-                entry.each_row(|words| each(&words[1..]));
-                // The partition read, though its rows went to `each`: an entry of these rows alone is one.
-                placed.entry(part).or_default();
-                continue;
-            }
-            let rows = placed.entry(part).or_default().entry(rel.to_owned()).or_default();
             let mut broke = false;
             entry.each_row(|words| {
-                if broke {
-                    return;
-                }
-                let at = words[0];
-                let row: Option<Vec<Value>> = words[1..]
-                    .iter()
-                    .zip(kinds)
-                    .map(|(&w, &k)| {
-                        Some(match k {
-                            b'i' => Value::Int(w),
-                            b's' => {
-                                let atom = u32::try_from(w).ok()?;
-                                Value::Str(texts.entry(atom).or_insert_with(|| store.atom_value(atom).ok().flatten().map(Into::into)).clone()?)
-                            }
-                            b'n' | b'k' | b'f' => {
-                                let class = match k {
-                                    b'n' => Class::Name,
-                                    b'k' => Class::Kind,
-                                    _ => Class::Field,
-                                };
-                                Value::Branded(Branded { class, atom: u32::try_from(w).ok()? })
-                            }
-                            _ => return None,
-                        })
-                    })
-                    .collect();
-                match row {
-                    Some(row) => rows.push((at, row)),
-                    None => broke = true,
+                if !broke && !each(part, rel, &Row { at: words[0], cells: &words[1..], kinds, texts: &texts }) {
+                    broke = true;
                 }
             });
             if broke {
                 bad.insert(part);
             }
         }
-        for (part, rels) in placed {
-            let facts = out.entry(part).or_default();
-            for (rel, mut rows) in rels {
+        (found, bad)
+    }
+
+    fn read(&self, store: &ContentStore, only: Option<&[i64]>, mut numbers: Option<(&str, &mut dyn FnMut(&[i64]))>, rels: Option<&dyn Fn(&str) -> bool>) -> BTreeMap<i64, Facts> {
+        type Placed = BTreeMap<i64, BTreeMap<String, Vec<(i64, Vec<Value>)>>>;
+        let mut placed: Placed = BTreeMap::new();
+        // The rows of the entry being read: an entry's rows come together, so they are placed once it ends.
+        let mut current: Option<(i64, String, Vec<(i64, Vec<Value>)>)> = None;
+        let place = |placed: &mut Placed, (part, rel, rows): (i64, String, Vec<(i64, Vec<Value>)>)| {
+            placed.entry(part).or_default().entry(rel).or_default().extend(rows);
+        };
+        let keep = |rel: &str| rels.is_none_or(|keep| keep(rel));
+        let (found, bad) = self.visit(store, only, &keep, &mut |part, rel, row| {
+            if let Some((want, each)) = numbers.as_mut()
+                && *want == rel
+                && row.kinds.iter().all(|&k| k == b'i')
+            {
+                each(row.cells);
+                return true;
+            }
+            let Some(values) = (0..row.len()).map(|c| row.value(c)).collect::<Option<Vec<Value>>>() else { return false };
+            if current.as_ref().is_none_or(|(p, r, _)| *p != part || r != rel) {
+                if let Some(done) = current.take() {
+                    place(&mut placed, done);
+                }
+                current = Some((part, rel.to_owned(), Vec::new()));
+            }
+            current.as_mut().expect("set above").2.push((row.at, values));
+            true
+        });
+        if let Some(done) = current.take() {
+            place(&mut placed, done);
+        }
+        // A partition read, though its rows went to `numbers`: an entry of these rows alone is one. An entry with a
+        // value that no longer reads is not one.
+        let mut out: BTreeMap<i64, Facts> = BTreeMap::new();
+        for part in found.difference(&bad) {
+            let facts = out.entry(*part).or_default();
+            for (rel, mut rows) in placed.remove(part).unwrap_or_default() {
                 rows.sort_by_key(|(at, _)| *at);
                 facts.insert(rel, rows.into_iter().map(|(_, row)| row.into()).collect());
             }
-        }
-        // An entry with a value that no longer reads is not one.
-        for part in bad {
-            out.remove(&part);
         }
         out
     }
@@ -233,5 +233,63 @@ impl Entries {
         // the writer (`HOLDER`), so a run writes an entry inside its waves with no read of the store.
         puts.push(holder_put(part, holder, plan));
         store.queue_kept(self.space(), puts);
+    }
+}
+
+/// The atoms' texts a visit read (`Entries::visit`), each once.
+struct Texts<'s> {
+    store: &'s ContentStore,
+    seen: std::cell::RefCell<std::collections::HashMap<u32, Option<super::super::front::Name>>>,
+}
+
+/// A row of an entry as its block holds it (`Entries::visit`): its place among its relation's rows, and its cells,
+/// each of the kind its relation's name says, decoded only when asked.
+pub struct Row<'r> {
+    /// The row's place among its relation's rows.
+    pub at: i64,
+    cells: &'r [i64],
+    kinds: &'r [u8],
+    texts: &'r Texts<'r>,
+}
+
+impl Row<'_> {
+    pub fn len(&self) -> usize {
+        self.cells.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    /// Cell `c` as a number, where it is one.
+    pub fn int(&self, c: usize) -> Option<i64> {
+        (*self.kinds.get(c)? == b'i').then(|| self.cells[c])
+    }
+
+    /// Cell `c` as a string, where it is one: the atom's text, read once for the visit.
+    pub fn text(&self, c: usize) -> Option<super::super::front::Name> {
+        if *self.kinds.get(c)? != b's' {
+            return None;
+        }
+        let atom = u32::try_from(self.cells[c]).ok()?;
+        self.texts.seen.borrow_mut().entry(atom).or_insert_with(|| self.texts.store.atom_value(atom).ok().flatten().map(Into::into)).clone()
+    }
+
+    /// Cell `c` as the value it was kept from.
+    pub fn value(&self, c: usize) -> Option<Value> {
+        let w = *self.cells.get(c)?;
+        Some(match self.kinds[c] {
+            b'i' => Value::Int(w),
+            b's' => Value::Str(self.text(c)?),
+            k @ (b'n' | b'k' | b'f') => {
+                let class = match k {
+                    b'n' => Class::Name,
+                    b'k' => Class::Kind,
+                    _ => Class::Field,
+                };
+                Value::Branded(Branded { class, atom: u32::try_from(w).ok()? })
+            }
+            _ => return None,
+        })
     }
 }
