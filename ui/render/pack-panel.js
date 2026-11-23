@@ -170,17 +170,22 @@ function renderList(pack) {
   setContent(sheet.list, JSON.stringify(["list", pack.id, on, sheet.query, data.rules.size]), () => listContent(rows, on));
 }
 
+/** Once the pack is added here, outside the review: how its rules treat suppression comments; `null` before. */
+function sheetSuppressions(pack) {
+  if (!isAttached(pack) || reviewing()) return null;
+  // Every rule the pack added in some folder: a rule may also be added on its own elsewhere, and that folder comes first.
+  const present = [...data.rules.values()].filter(r => inPack(r, pack.id));
+  return present.length > 0 ? packSuppressions(present) : null;
+}
+
 export function renderPackPanel(root, pack) {
   if (sheet === null) build();
   if (sheet.root.parentNode !== root) { root.replaceChildren(sheet.root); delete root.dataset.sig; }
   if (sheet.packId !== pack.id) { sheet.packId = pack.id; sheet.query = ""; sheet.input.value = ""; }
   sheet.pack = pack;
-  const on = packOn(pack), added = isAttached(pack);
-  // Every rule the pack added in some folder: a rule may also be added on its own elsewhere, and that folder comes first.
-  const present = [...data.rules.values()].filter(r => inPack(r, pack.id));
-  const suppressions = added && !reviewing() && present.length > 0 ? packSuppressions(present) : null;
+  const on = packOn(pack);
   renderHead(pack, on);
-  renderIntro(pack, on, suppressions);
+  renderIntro(pack, on, sheetSuppressions(pack));
   sheet.filter.hidden = pack.rules.length <= SHEET_FILTER_AT;
   sheet.input.placeholder = `Filter ${fmt(pack.rules.length)} rules`;
   renderList(pack);

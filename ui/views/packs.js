@@ -12,7 +12,7 @@ import { h, setContent, icon } from "../dom.js";
 import { failed, fmt, plural } from "../format.js";
 import { isRerailPack, isRunning, isWorktreePack, publisherLabel } from "../derive.js";
 import { data, ui, isAttached, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../state.js";
-import { loadRecommendations } from "../poll.js";
+import { captureScope, inScope, recommendationsFor } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
 import { commonActions, keepPack } from "../actions.js";
 import { catalogKinds, catalogPacks, suggestedReason, suggestedSplit } from "../pack-model.js";
@@ -164,7 +164,7 @@ function review() {
 
 export function render(root) {
   const view = ui.view;
-  const sig = JSON.stringify([view, kind, data.packs.map(p => p.id), [...data.attachedPacks.keys()], isSetUp(), data.recommendations, ui.catView, ui.removeAsk,
+  const sig = JSON.stringify([view, kind, data.packs.map(p => [p.id, p.version]), [...data.attachedPacks.keys()], isSetUp(), data.recommendations, ui.catView, ui.removeAsk,
     [...ui.removedPacks], repoName(), stateHere(), runningCount()]);
   setContent(root, sig, () => (view === "review" ? review() : catalog()));
 }
@@ -176,7 +176,16 @@ export function render(root) {
 export function enter() {
   if (ui.view === "packs") kind = "all";
   if (ui.scope === null || data.recommendations !== null) return;
-  loadRecommendations().then(invalidate, error => toast(failed(`Couldn’t read ${repoName() || "this repo"} to pick rule packs`, error)));
+  const scope = captureScope(), repo = repoName() || "this repo", view = ui.view;
+  recommendationsFor(scope).then(invalidate, error => readFailed(scope, view, `Couldn’t read ${repo} to pick rule packs`, error));
+}
+
+/**
+ * A failed read of the recommendations says so on the review, which cannot list its picks without them, while the person
+ * is still on it for that repository. The catalog says nothing: it stays one list, and the next visit reads again.
+ */
+function readFailed(scope, view, title, error) {
+  if (view === "review" && ui.view === "review" && inScope(scope)) toast(failed(title, error));
 }
 
 export const actions = {

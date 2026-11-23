@@ -117,6 +117,8 @@ function versionButtons(version, latest) {
 let updateOpen = false;
 /** Copy takes the focus once the popover has drawn, when it has just opened. */
 let focusCopy = false;
+/** The chip takes the focus back once the popover has gone, when Copy closed it: the focus must not drop to the page. */
+let focusChip = false;
 
 /** The "Update available" chip, while a newer version is out. */
 const updateChip = () => (newerRelease(data.health) === null ? null : document.querySelector("#status .vnew"));
@@ -125,7 +127,7 @@ function renderUpdatePop() {
   const layer = $("updatelayer"), chip = updateChip();
   if (chip === null) updateOpen = false;
   else setAttr(chip, "aria-expanded", String(updateOpen));
-  if (!updateOpen) { setContent(layer, "", () => null); return; }
+  if (!updateOpen) { setContent(layer, "", () => null); refocusChip(chip); return; }
   const latest = newerRelease(data.health);
   setContent(layer, latest, () => updatePopover(latest));
   placeUnder(layer.firstChild, chip);
@@ -137,6 +139,12 @@ const updatePopover = latest => h("div.updpop", { role: "dialog", "aria-label": 
   h("div.updrow", null, h("div.updcmd", null, h("code", null, AGENT_UPDATE_COMMAND)), updateCopyButton("button.btn.sm.solid", "Copy")),
   h("p", null, "Paste it into a session with your coding agent. Your rule packs update too."),
   updateDetailsLink());
+
+function refocusChip(chip) {
+  if (!focusChip) return;
+  focusChip = false;
+  chip?.focus();
+}
 
 /** The popover hangs under the chip, its right edge on the chip's. */
 function placeUnder(pop, chip) {
@@ -159,6 +167,8 @@ function keepsUpdatePop(target) {
 export function closeUpdatePop(target) {
   if (!updateOpen || keepsUpdatePop(target)) return false;
   updateOpen = false;
+  // Details in Settings goes to another page, so only Copy hands the focus back to the chip.
+  focusChip = target instanceof Element && target.closest(".updpop [data-act=cmdcopy]") !== null;
   invalidate();
   return true;
 }
