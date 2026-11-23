@@ -642,8 +642,10 @@ pub(super) struct Crossing {
 pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> Crossing {
     let is_local = |rel: &str| local.contains(rel);
     let head = |r: &RuleRef<'_>| v.rel_name(r.head().rel());
+    // By relation id, each named once (a name made per atom read, twice over the rules, was 5 ms of a warm run).
     let read = |keep: &dyn Fn(&str) -> bool| -> BTreeSet<String> {
-        v.rules().filter(|r| keep(head(r))).flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect()
+        let ids: std::collections::HashSet<_> = v.rules().filter(|r| keep(head(r))).flat_map(|r| r.reads().map(|a| a.rel())).collect();
+        ids.into_iter().map(|r| v.rel_name(r).to_owned()).collect()
     };
     let cross_reads = read(&|h| !is_local(h));
     let projection = |rel: &str| {

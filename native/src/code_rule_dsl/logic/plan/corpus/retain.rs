@@ -2434,13 +2434,15 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         return Ok(Err("the space keeps no blocks".into()));
     };
     let atoms = store.atoms_handle();
+    let fields = prog.fields()?;
+    let traced = std::env::var_os("RERAIL_KEPT_READS").is_some();
     let mut out = HashMap::new();
     for rel in rels {
         let ident = input_ident(rel, prog, &binds);
         let Some(docs_entry) = bound.entry(rel, &ident, DOCS_PART) else {
             return Ok(Err(format!("{rel}: no entry of its documents")));
         };
-        let Some(width) = prog.fields()?.arity(rel) else { return Ok(Err(format!("{rel}: not declared by the cross part"))) };
+        let Some(width) = fields.arity(rel) else { return Ok(Err(format!("{rel}: not declared by the cross part"))) };
         let digest = docs_entry.digest();
         // Its granules: those its documents' entry records (`GRANULES_READ`), none read; or, for an entry written
         // before the keeper recorded them, its documents laid out now.
@@ -2472,14 +2474,11 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         }
         let starts: Vec<usize> = counts.iter().scan(0usize, |at, (_, n)| { let s = *at; *at += n; Some(s) }).collect();
         let layout = Arc::new(InputLayout { rel: rel.clone(), frame: Some(docs_entry), digest, atoms: Some(Arc::clone(&atoms)), granules: counts, laid: laid.map(|l| std::sync::OnceLock::from(Ok(l))).unwrap_or_default() });
-        let names: Vec<String> = prog.fields()?.columns(rel).unwrap_or_default().into_iter().map(|(n, _)| n.to_owned()).collect();
+        let names: Vec<String> = fields.columns(rel).unwrap_or_default().into_iter().map(|(n, _)| n.to_owned()).collect();
         let Some(held) = kept_read::gathered(&granules, width, &atoms) else { return Ok(Err(format!("{rel}: its rows' atoms are not this process's"))) };
         let source: Arc<dyn Source> = held.source(names);
-        let source: Arc<dyn Source> = match std::env::var_os("RERAIL_KEPT_READS") {
-            // Each granule's first row, in the order the rows were laid out.
-            Some(_) => Arc::new(Traced::new(rel.clone(), source, starts)),
-            None => source,
-        };
+        // Each granule's first row, in the order the rows were laid out.
+        let source: Arc<dyn Source> = if traced { Arc::new(Traced::new(rel.clone(), source, starts)) } else { source };
         // Its statistics at these rows: the entry under the documents' digest (an older entry is never matched).
         let stats = bound
             .entry(rel, &ident, kept_stats::PART)
