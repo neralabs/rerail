@@ -314,17 +314,17 @@ const STATE: &[(&str, &str)] = &[
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/base.rs", "KeptPlans", "6"),
-    ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),
     ("code_rule_dsl/logic/derived.rs", "Memoized", "6"),
-    ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
     // The observed keeps, a handle a strand enters (decision 0113 §4).
     ("code_rule_dsl/logic/plan/keeps.rs", "ObservedAt", "6"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised. 7 when a rule pattern's compiled form and a
 /// production's counter name were found to be state, no cache (t33 step 7, 2026-11-21); 6 when the prepared
 /// programs' pointers became kept facts, the map their in-memory copy (t33 step 2); 5 when a session's runs became
-/// its store's, a session its store and connections (t33 step 3).
-const NOT_YET_MAPS_PIN: usize = 5;
+/// its store's, a session its store and connections (t33 step 3); 3 when a session's plans and derived values between
+/// its runs went with it (t33 step 3: its runs read the store's plans, and derive their own values, as a new
+/// process's do).
+const NOT_YET_MAPS_PIN: usize = 3;
 
 /// The crate's source files, tests left out: a test may make what it likes.
 fn files(under: &Path, out: &mut Vec<PathBuf>) {

@@ -2016,11 +2016,10 @@ fn run_observed_within(
     let embedded = embedded_on(&*v);
     let host = |path: &str| embedded && embeds_label(path, label);
     // Taken once the files are listed: phase 1, run while they are, is a run of its own, with its session and plans.
-    // Plans are kept across this run's chunks (decision 0038), and a session's across its runs (decision 0090 step 5).
-    let across = session::generation();
-    let _plans = super::KeepPlans::start(across);
+    // Plans are kept across this run's chunks (decision 0038); across runs, a session's as any, by the store.
+    let _plans = super::KeepPlans::start();
     // And the values derived from them (`logic::derived`): each chunk's join specs.
-    let _derived = crate::code_rule_dsl::logic::derived::Keep::start(across);
+    let _derived = crate::code_rule_dsl::logic::derived::Keep::start();
     // A session's run (`session`, decision 0063): its store and its memo, held for the run.
     let held = session::current();
     let mut docs = docs;

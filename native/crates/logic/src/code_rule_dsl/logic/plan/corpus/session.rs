@@ -25,15 +25,10 @@ pub(in crate::code_rule_dsl) struct Session {
     connections: Arc<parking_lot::Mutex<super::connections::Connections>>,
 }
 
-static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
 /// A session, owned by whoever keeps it from run to run: a long-lived process (the browser's engine, `repeat`) keeps
 /// one, a test opens its own. Nothing about it is the process's: two sessions run side by side, each with its store.
 #[derive(Clone)]
 pub struct Handle {
-    /// Its runs' kept plans and derived values are taken back only by its own runs. Outside the lock, so a run can
-    /// name its session before it holds it.
-    generation: u64,
     session: Arc<parking_lot::Mutex<Session>>,
 }
 
@@ -42,9 +37,8 @@ impl Handle {
     pub fn open(dir: &Path) -> std::result::Result<Handle, String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = dir.join("session.sqlite");
-        let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let session = Session { path, connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())) };
-        Ok(Handle { generation, session: Arc::new(parking_lot::Mutex::new(session)) })
+        Ok(Handle { session: Arc::new(parking_lot::Mutex::new(session)) })
     }
 
     /// Makes the corpus runs this thread starts, until the guard is dropped, this session's runs.
@@ -92,14 +86,6 @@ impl Kept {
         }
         Ok(self.0.as_ref().map(|(_, handle)| handle.bind()))
     }
-}
-
-/// The generation of the session this thread's next run is a run of (`None`: no session, or a full run).
-pub(super) fn generation() -> Option<u64> {
-    if super::phase0::active() || crate::code_rule_dsl::logic::profile::bound::<Full>().0 {
-        return None;
-    }
-    crate::code_rule_dsl::logic::profile::with_bound(|s: &InSession| s.0.as_ref().map(|h| h.generation))
 }
 
 /// Runs `run` as a full run: as a process without a session would, compiling the program and evaluating every file,

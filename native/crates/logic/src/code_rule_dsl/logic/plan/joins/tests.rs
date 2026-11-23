@@ -231,7 +231,7 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     clear();
 
     // The memo: the line's best order ran 10,000 times its price; its next plan takes the other.
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     let key = model.reused_key(&b, None);
     let ((best, _, _), _) = model.plan_rule_reused(pf, &b, None).unwrap();
     assert_eq!(lead(&best), "a");
