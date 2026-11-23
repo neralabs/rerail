@@ -177,7 +177,7 @@ removed with nothing in its place but K1–K4.
 | `cross_rows`, `cross_blocks`, `cross_components` (0076) | an import component's file bytes | goes: cross-file relations in K1, partitioned by the document of their first location column, maintained by K4. 0092 §6: keys of bytes have no cutoff |
 | `slice_rules`, `slice_document`, `slice_match`, `slice_span`, `slice_fresh` | the slice's rules and documents | **built** (2026-11-21, `slice/kept.rs`): relations of the scope's space in K1, a document's rows its own partition. A run writes only the partitions of the documents it evaluated, reused or lost; the wave reads the others where they lie, through `kept_facts` (a temp view, no copy). The SQL column statistics of the two tables went with them. `slice_fresh` is the run's scratch |
 | `corpus_stats` | a path's stat to its source | goes: K2's `file_stat` |
-| `corpus_plans`, `corpus_plan_relations`, `corpus_manifests`, `corpus_manifest_plans`, `corpus_roots`, `corpus_live`, `corpus_state`, `corpus_decided`, `corpus_swept` (0053) | each run's manifest of what it used | collection is reachability: an object or a frame is live while a stored fact names it. How long an old state is kept is a `.cache` directive on the relation |
+| `corpus_plans`, `corpus_plan_relations`, `corpus_manifests`, `corpus_manifest_plans`, `corpus_roots`, `corpus_live`, `corpus_state`, `corpus_decided`, `corpus_swept` (0053) | each run's manifest of what it used | **Moved** (2026-11-23): kept facts of the store's corpus space, read by SQL through virtual tables of their names; `corpus_swept` is the state's `swept`. Next: collection is reachability: an object or a frame is live while a stored fact names it. How long an old state is kept is a `.cache` directive on the relation |
 | `session.rs` `SESSION` | the session's memo, cross part, phased exports, written outputs, statistics | the resident copy of K1's relations, written behind by 0102 |
 
 ### Step 4: the kept strata
@@ -318,6 +318,12 @@ Decided (user, 2026-11-21):
    7) once the hub brings in those branches' work and `engine-crating`'s matcher crate, so it builds on them. The
    `corpus_*` tables are collection's bookkeeping, not caches (kept facts' own collection reads `corpus_plans`), and
    stay; `run_record` goes with K4, not as a move of its own.
+
+   Corrected 2026-11-23: the `corpus_*` tables moved after all, in stages (the user's order): both forms written, the
+   readers switched to the kept form, then the writers, and the eight tables retired. They are now the store's corpus
+   space (`corpus_runs::kept`, one relation a table), written through `corpus_write`, which puts only the partitions
+   that differ. An old store's rows become kept facts once, when it is opened. SQL keeps the tables' names and
+   columns as virtual tables over the space (`prefilter/vtab.rs`), so `NOT_YET_TABLES` is empty.
 
    Corrected 2026-11-22: K4 is this branch's (no other is building it). The table `run_record` held more than the
    cutoff's records (the Git files' listing, the cone's rounds, the Git functors' answers, the constants), K4's own
