@@ -681,3 +681,17 @@ Tried first with every distance shifted, each neighbour byte tested: slower by 1
 (the digits only after a `\u`): putting back either the digits' reads or the fences' alone restored the time, so it was
 the token loop's code, not their work. With one byte, the same as before (20.5–21.1 ms against 20.5–20.7 ms, in
 turns). All tests pass.
+
+### Where tier 2's work is (counted, m3, 2026-11-23)
+
+Tier 2 alone (each tool's whole round less twice its lexer alone, `RR_ONLY=lex`) retires about one and a half times
+the lean parse's instructions on m3, in about 1.7 times its cycles; on spark1 the times are closer (26.8–28.5 ms
+against 25.4–27.3 ms). Its writer calls are the plain ones (no chain or window check), the mark tests are compiled out
+of almost every take (485 of 542 takes test neither), and its profile has no line above 8%: `wrap`'s insert (as the
+lean parser's `out.insert`), the record read of `advance`, the token's word. The rest is spread over the rules' calls:
+the levels stack's push and pop, the depth check, a comment test at each record (comments are records between the
+tokens, where the lean lexer keeps them apart), and the writer's columns zeroed at each file (`vec![0; cap]`, every cell
+written before it is read).
+
+Comments kept apart would change the records' layout, which the engine's executors share (`records::MARK_SHIFT`, read by
+the stream walk and the JIT's record loops), not only tier 2's.
